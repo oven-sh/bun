@@ -1,6 +1,7 @@
 use bun_ast::{Loc, Source};
 use bun_core::{MutableString, strings};
 use bun_paths::{PathBuffer, fs::FileSystem};
+use bun_ptr::RawSlice;
 
 use crate::{
     InternalSourceMap, LineOffsetTable, SourceMapState, append_mapping_to_buffer,
@@ -293,40 +294,71 @@ impl SourceMapFormatCtx for VLQSourceMap {
     }
 }
 
-pub struct NewBuilder<T: SourceMapFormatCtx> {
+/// The line-offset table `add_source_mapping` resolves source locations
+/// through, and who owns it.
+pub enum LineOffsetTables<'a> {
+    /// No table: every mapping is dropped (source maps disabled, or no table
+    /// was supplied for this source).
+    None,
+    /// `LinkerGraph.files[i].line_offset_table`. The linker keeps ownership
+    /// (one source prints into several chunks) and bulk-frees it with the
+    /// worker's AST heap.
+    Borrowed(&'a line_offset_table::List<bun_alloc::AstAlloc>),
+    /// Runtime/transpiler print path: the first `add_source_mapping` call
+    /// generates the table from `contents` (`Source.contents`) and replaces
+    /// this with `Owned`, so modules that emit no mappings (asset/JSON shims,
+    /// empty modules, fully-stripped files) never pay the full-source scan and
+    /// allocation.
+    Deferred {
+        contents: &'a [u8],
+        approximate_line_count: i32,
+    },
+    /// Generated from `Deferred`; freed with the builder.
+    Owned(OwnedLineOffsetTables),
+}
+
+impl LineOffsetTables<'_> {
+    #[inline]
+    fn len(&self) -> usize {
+        match self {
+            Self::Borrowed(list) => list.len(),
+            Self::Owned(table) => table.0.len(),
+            Self::None | Self::Deferred { .. } => 0,
+        }
+    }
+
+    /// The `byte_offset_to_start_of_line` and `byte_offset_to_first_non_ascii`
+    /// columns.
+    #[inline]
+    fn columns(&self) -> (&[u32], &[u32]) {
+        match self {
+            Self::Borrowed(list) => (
+                list.items_byte_offset_to_start_of_line(),
+                list.items_byte_offset_to_first_non_ascii(),
+            ),
+            Self::Owned(table) => (
+                table.0.items_byte_offset_to_start_of_line(),
+                table.0.items_byte_offset_to_first_non_ascii(),
+            ),
+            Self::None | Self::Deferred { .. } => (&[], &[]),
+        }
+    }
+
+    #[inline]
+    fn columns_for_non_ascii(&self, line: usize) -> &[i32] {
+        match self {
+            Self::Borrowed(list) => {
+                &list.items::<"columns_for_non_ascii", Box<[i32], bun_alloc::AstAlloc>>()[line]
+            }
+            Self::Owned(table) => &table.0.items::<"columns_for_non_ascii", Box<[i32]>>()[line],
+            Self::None | Self::Deferred { .. } => &[],
+        }
+    }
+}
+
+pub struct NewBuilder<'a, T: SourceMapFormatCtx> {
     pub source_map: SourceMapFormat<T>,
-    /// `ManuallyDrop` because in the bundler `printWithWriter` path this is a
-    /// shallow bitwise copy of `LinkerGraph.files[i].line_offset_table` and
-    /// must not be dropped here. The runtime/transpiler `printAst` path defers
-    /// table construction (see `lazy_line_offset_tables`), so this is left
-    /// `EMPTY` there.
-    pub line_offset_tables: core::mem::ManuallyDrop<line_offset_table::List<bun_alloc::AstAlloc>>,
-
-    /// Lazily-generated, *owned* line-offset table for the runtime/transpiler
-    /// print path. When no precomputed `line_offset_tables` is supplied and
-    /// `deferred_source` is set, this stays `None` until the first
-    /// `add_source_mapping` call, which fills it via `LineOffsetTable::generate`.
-    /// `AstAlloc`-typed because the only caller that supplies a precomputed
-    /// table is the bundler (`LinkerGraph.files[i].line_offset_table`), which
-    /// builds it with `generate_in::<AstAlloc>` so the slab and every per-row
-    /// `columns_for_non_ascii` payload bulk-free with the worker arena instead
-    /// of needing a per-file teardown loop. Runtime/transpiler callers leave
-    /// this `EMPTY` and use the `Global`-backed `lazy_line_offset_tables` below.
-    /// Building the table only on demand means
-    /// modules that emit no source mappings (asset/JSON shims, empty modules,
-    /// fully-stripped files) never pay the full-source scan + `MultiArrayList`
-    /// allocation. Unlike `line_offset_tables` (a `ManuallyDrop` bitwise alias
-    /// of borrowed linker storage) this table is uniquely owned;
-    /// [`OwnedLineOffsetTables`] drains its `columns_for_non_ascii` payloads on
-    /// drop (`MultiArrayList::Drop` is slab-only).
-    pub lazy_line_offset_tables: Option<OwnedLineOffsetTables>,
-
-    /// Source bytes + approximate line count for the lazy path. `&'static` is a
-    /// lifetime erasure of a borrow into `Source.contents` (same rationale as
-    /// `line_offset_table_byte_offset_list` below — a real lifetime would infect
-    /// every `Printer<'a, …>` instantiation). `None` ⇒ eager-table mode (a
-    /// precomputed table was supplied, or source maps are disabled).
-    pub deferred_source: Option<(&'static [u8], i32)>,
+    pub line_offset_tables: LineOffsetTables<'a>,
 
     pub prev_state: SourceMapState,
     pub last_generated_update: u32,
@@ -334,22 +366,14 @@ pub struct NewBuilder<T: SourceMapFormatCtx> {
     pub prev_loc: Loc,
     pub has_prev_state: bool,
 
-    /// Cached `byte_offset_to_start_of_line` column of whichever line-offset
-    /// table is in use (`line_offset_tables` or `lazy_line_offset_tables`).
-    ///
-    /// Borrows the heap storage owned by that table; both variants keep the
-    /// `MultiArrayList` header live and un-resized for the builder's lifetime
-    /// (`line_offset_tables` is a `ManuallyDrop` alias of linker storage;
-    /// `lazy_line_offset_tables` is built once and never mutated again), so the
-    /// pointer is stable across moves of `Self`. `&'static` is a lifetime
-    /// erasure of that self-borrow — threading a real `'a` would infect every
-    /// `Printer<'a, …>` instantiation for a field that's only ever read in
-    /// `add_source_mapping`. Populated lazily on the first mapping; reset to `&[]` when
-    /// the lazy table is generated so it re-derives against the new storage.
-    pub line_offset_table_byte_offset_list: &'static [u32],
-    /// Cached `byte_offset_to_first_non_ascii` column; same lifetime invariant
-    /// as `line_offset_table_byte_offset_list` above.
-    pub line_offset_table_first_non_ascii: &'static [u32],
+    /// `byte_offset_to_start_of_line` column of `line_offset_tables`, cached
+    /// by the first mapping. Points into the `Borrowed` linker table or into
+    /// this builder's own `Owned` table, neither of which is resized or
+    /// replaced once the cache is filled.
+    pub line_offset_table_byte_offset_list: RawSlice<u32>,
+    /// `byte_offset_to_first_non_ascii` column; same backing storage as
+    /// `line_offset_table_byte_offset_list`.
+    pub line_offset_table_first_non_ascii: RawSlice<u32>,
 
     // This is a workaround for a bug in the popular "source-map" library:
     // https://github.com/mozilla/source-map/issues/261. The library will
@@ -368,24 +392,20 @@ pub struct NewBuilder<T: SourceMapFormatCtx> {
     pub prepend_count: bool,
 }
 
-impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<T> {
+impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<'_, T> {
     /// `get_source_map_builder` returns this when source maps are disabled, so
     /// it only needs to be inert (never read) — but we zero everything for sanity.
     fn default() -> Self {
         Self {
             source_map: SourceMapFormat { ctx: T::default() },
-            line_offset_tables: core::mem::ManuallyDrop::new(line_offset_table::List::new_in(
-                bun_alloc::AstAlloc,
-            )),
-            lazy_line_offset_tables: None,
-            deferred_source: None,
+            line_offset_tables: LineOffsetTables::None,
             prev_state: SourceMapState::default(),
             last_generated_update: 0,
             generated_column: 0,
             prev_loc: Loc::EMPTY,
             has_prev_state: false,
-            line_offset_table_byte_offset_list: &[],
-            line_offset_table_first_non_ascii: &[],
+            line_offset_table_byte_offset_list: RawSlice::EMPTY,
+            line_offset_table_first_non_ascii: RawSlice::EMPTY,
             line_starts_with_mapping: false,
             cover_lines_without_mappings: false,
             approximate_input_line_count: 0,
@@ -399,12 +419,11 @@ impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<T> {
 ///
 /// `MultiArrayList::Drop` is **slab-only** — it frees the SoA buffer but never
 /// runs column destructors (a bitwise `clone` can alias two lists onto the same
-/// column heap pointers; see its docs). The bundler's eager
-/// `print_ast` path now uses `List<AstAlloc>` (bulk-freed
-/// with the per-worker AST heap) and leaves `Builder.line_offset_tables` empty,
-/// so they no longer need a guard. The lazily-built table here is `List<Global>`
-/// and still needs the per-row drain, so wrap it in a type that does it
-/// automatically. (A `Drop` impl on `NewBuilder` itself would forbid the
+/// column heap pointers; see its docs). The `LineOffsetTables::Borrowed` table
+/// is `List<AstAlloc>` and is never dropped here (it bulk-frees with the
+/// per-worker AST heap); the table generated for `LineOffsetTables::Deferred`
+/// is `List<Global>` and needs the per-row drain, so wrap it in a type that
+/// does it automatically. (A `Drop` impl on `NewBuilder` itself would forbid the
 /// `..Default::default()` struct-update used to build it in
 /// `get_source_map_builder`, hence the newtype.)
 pub struct OwnedLineOffsetTables(pub(crate) line_offset_table::List);
@@ -442,7 +461,7 @@ impl Drop for OwnedLineOffsetTables {
 // `update_generated_line_and_column_slow`, which is `#[inline(never)] #[cold]`
 // and lives once in this crate, adjacent to `flush_window`. The concrete
 // (non-generic) impl is what pins one copy per CGU.
-impl NewBuilder<VLQSourceMap> {
+impl NewBuilder<'_, VLQSourceMap> {
     #[inline(never)]
     pub fn generate_chunk(&mut self, output: &[u8]) -> Chunk {
         self.update_generated_line_and_column(output);
@@ -608,24 +627,6 @@ impl NewBuilder<VLQSourceMap> {
         self.has_prev_state = true;
     }
 
-    /// Defer line-offset-table construction to the first `add_source_mapping`
-    /// call. Use on the runtime/transpiler print path when no precomputed table
-    /// is supplied, so modules that emit no mappings skip the table's
-    /// full-source scan + allocation entirely. `contents` must point into the
-    /// live `Source.contents` and outlive the builder.
-    #[inline]
-    pub fn set_deferred_line_offset_table(&mut self, contents: &[u8], approximate_line_count: i32) {
-        debug_assert!(
-            self.line_offset_tables.len() == 0,
-            "deferred table requires no precomputed line_offset_tables",
-        );
-        // SAFETY: lifetime erased to `'static`; `contents` (`Source.contents`)
-        // outlives the builder. Same erasure as `line_offset_table_byte_offset_list`.
-        let contents: &'static [u8] =
-            unsafe { core::slice::from_raw_parts(contents.as_ptr(), contents.len()) };
-        self.deferred_source = Some((contents, approximate_line_count));
-    }
-
     #[inline(never)]
     pub fn add_source_mapping(&mut self, loc: Loc, output: &[u8]) {
         if
@@ -639,30 +640,22 @@ impl NewBuilder<VLQSourceMap> {
 
         self.prev_loc = loc;
 
-        // Lazily build the line-offset table on the first mapping. The
-        // runtime/transpiler path passes `deferred_source` instead of a
-        // precomputed table (see `set_deferred_line_offset_table`); modules that
-        // never reach this point skip the full-source scan + allocation.
-        if self.lazy_line_offset_tables.is_none() {
-            if let Some((contents, approx)) = self.deferred_source {
-                self.lazy_line_offset_tables = Some(OwnedLineOffsetTables(
-                    LineOffsetTable::generate(contents, approx).unwrap_or_default(),
-                ));
-                // The byte-offset cache below must re-derive against the new table.
-                self.line_offset_table_byte_offset_list = &[];
-            }
+        if let LineOffsetTables::Deferred {
+            contents,
+            approximate_line_count,
+        } = self.line_offset_tables
+        {
+            self.line_offset_tables = LineOffsetTables::Owned(OwnedLineOffsetTables(
+                LineOffsetTable::generate(contents, approximate_line_count).unwrap_or_default(),
+            ));
         }
 
-        // `line_offset_tables` (bundler-supplied, `AstAlloc`) and
-        // `lazy_line_offset_tables` (runtime-generated, `Global`) are different
-        // `List<A>` instantiations, so we can't unify them behind one `&List`.
-        // Instead, cache the two `u32` columns the hot path reads (both are
-        // `&[u32]` regardless of `A`) and re-dispatch only for the rare
+        // `Borrowed` (`AstAlloc`) and `Owned` (`Global`) are different `List<A>`
+        // instantiations, so we can't unify them behind one `&List`. Instead,
+        // cache the two `u32` columns the hot path reads (both are `&[u32]`
+        // regardless of `A`) and re-dispatch only for the rare
         // `columns_for_non_ascii` lookup below.
-        let list_len = match &self.lazy_line_offset_tables {
-            Some(t) => t.0.len(),
-            None => self.line_offset_tables.len(),
-        };
+        let list_len = self.line_offset_tables.len();
 
         // We have no sourcemappings.
         // This happens for example when importing an asset which does not support sourcemaps
@@ -674,35 +667,12 @@ impl NewBuilder<VLQSourceMap> {
             return;
         }
 
-        // PERF: cache the `byte_offset_to_start_of_line` / `…_first_non_ascii`
-        // columns once. The backing storage is heap-owned by whichever table is
-        // active — `line_offset_tables` (a `ManuallyDrop<MultiArrayList>`) or
-        // `lazy_line_offset_tables` (built once just above) — and both are kept
-        // live and un-resized for the builder's lifetime, so the slice stays
-        // valid across moves of `self`. We lazy-init here on the first mapping.
         if self.line_offset_table_byte_offset_list.len() != list_len {
-            let (start, first_na) = match &self.lazy_line_offset_tables {
-                Some(t) => (
-                    t.0.items_byte_offset_to_start_of_line(),
-                    t.0.items_byte_offset_to_first_non_ascii(),
-                ),
-                None => (
-                    self.line_offset_tables.items_byte_offset_to_start_of_line(),
-                    self.line_offset_tables
-                        .items_byte_offset_to_first_non_ascii(),
-                ),
-            };
-            // SAFETY: lifetime widened to `'static` per the invariant above —
-            // the backing table outlives every `add_source_mapping` call and is
-            // never reallocated.
-            self.line_offset_table_byte_offset_list =
-                unsafe { core::slice::from_raw_parts(start.as_ptr(), start.len()) };
-            // SAFETY: same invariant as above — backing table outlives every
-            // `add_source_mapping` call and is never reallocated.
-            self.line_offset_table_first_non_ascii =
-                unsafe { core::slice::from_raw_parts(first_na.as_ptr(), first_na.len()) };
+            let (start, first_na) = self.line_offset_tables.columns();
+            self.line_offset_table_byte_offset_list = RawSlice::new(start);
+            self.line_offset_table_first_non_ascii = RawSlice::new(first_na);
         }
-        let byte_offsets = self.line_offset_table_byte_offset_list;
+        let byte_offsets = self.line_offset_table_byte_offset_list.slice();
 
         // The printer emits mappings in (mostly) source order, so the previous
         // call's `original_line` is the right answer or one/two lines before
@@ -727,12 +697,7 @@ impl NewBuilder<VLQSourceMap> {
             // (the largest, ~16 B/line) is never touched on the hot ASCII path.
             let first_non_ascii = self.line_offset_table_first_non_ascii[idx];
             if original_column >= first_non_ascii as i32 {
-                let cols: &[i32] = match &self.lazy_line_offset_tables {
-                    Some(t) => &t.0.items::<"columns_for_non_ascii", Box<[i32]>>()[idx],
-                    None => &self
-                        .line_offset_tables
-                        .items::<"columns_for_non_ascii", Box<[i32], bun_alloc::AstAlloc>>()[idx],
-                };
+                let cols = self.line_offset_tables.columns_for_non_ascii(idx);
                 if !cols.is_empty() {
                     original_column = cols[(original_column as u32 - first_non_ascii) as usize];
                 }
@@ -770,4 +735,4 @@ impl NewBuilder<VLQSourceMap> {
     }
 }
 
-pub type Builder = NewBuilder<VLQSourceMap>;
+pub type Builder<'a> = NewBuilder<'a, VLQSourceMap>;

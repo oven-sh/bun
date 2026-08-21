@@ -129,7 +129,7 @@ impl bun_alloc::Allocator for CachedBytecode {}
 /// Symbol is definer-prefixed (`__bun_jsc_*`) per LAYERING_AUDIT — the body is
 /// jsc-internal setup, not bundler logic.
 #[unsafe(no_mangle)]
-fn __bun_jsc_generate_cached_bytecode(
+pub(crate) fn __bun_jsc_generate_cached_bytecode(
     format: Format,
     source: &[u8],
     source_provider_url: &mut BunString,

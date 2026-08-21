@@ -35,7 +35,7 @@ export interface Flag {
   when?: (cfg: Config) => boolean;
   /** Restrict to one language. Omitted = both C and C++. */
   lang?: "c" | "cxx";
-  /** What this flag does. Used by `--explain-flags`. */
+  /** What this flag does. */
   desc: string;
 }
 
@@ -286,6 +286,18 @@ export const globalFlags: Flag[] = [
     desc: "DWARF 4 debug info (dsymutil-compatible)",
   },
   {
+    // Must stay ahead of the -gN entries below: every -g flag clang sees
+    // resets the debug-info level, and -glldb (like plain -g) selects the
+    // full standalone kind. With it after -g1, release cc1 invocations got
+    // -debug-info-kind=standalone (check with -###) and every release TU,
+    // deps included, emitted full DWARF: 98% of the ~1.7 GB of objects bun's
+    // own C++ produced in a release build, 740 MB of .debug_* in bun-profile.
+    // test/internal/build-debug-info-flags.test.ts pins the order.
+    flag: "-glldb",
+    when: c => c.unix,
+    desc: "Tune debug info for LLDB (before the level flags; the last -g flag wins)",
+  },
+  {
     // Nix LLVM doesn't support zstd — but we target standard distros.
     // Nix users can override via profile if needed.
     flag: ["-g3", "-gz=zstd"],
@@ -293,14 +305,29 @@ export const globalFlags: Flag[] = [
     desc: "Full debug info, zstd-compressed",
   },
   {
-    flag: "-g1",
-    when: c => c.unix && c.release,
-    desc: "Minimal debug info for backtraces",
+    flag: ["-g", "-gz=zstd"],
+    when: c => c.unix && c.release && !c.lto,
+    desc: "Full debug info (types and variables) where no LTO link has to carry it: local release, asan, the non-LTO CI lanes",
   },
   {
-    flag: "-glldb",
-    when: c => c.unix,
-    desc: "Tune debug info for LLDB",
+    // -glldb implies -fstandalone-debug: every TU emits the definition of
+    // every type it can see, i.e. the whole JSC/WTF universe the PCH pulls
+    // in, again. Homing (clang's default on Linux) emits a type once, in the
+    // TU that defines its constructor or vtable, so bun's types come from
+    // bun's own objects and JSC's from the WebKit prebuilt, which carries its
+    // own DWARF. Same types and variables in the debugger; BunObject.cpp
+    // measured 8.2s -> 5.35s to compile (the line-tables-only build of the
+    // same file is 5.25s), object 9.0 MB -> 5.2 MB. Irrelevant to the LTO
+    // builds: line tables (-g1 below) carry no type definitions either way.
+    flag: "-fno-standalone-debug",
+    when: c => c.unix && (c.debug || !c.lto),
+    desc: "Emit each type's debug info once, where it is defined, instead of in every TU",
+  },
+  {
+    // The bitcode carries the debug info through the ThinLTO link, which is the longest step of a CI build; the -lto WebKit prebuilts make the same trade.
+    flag: "-g1",
+    when: c => c.unix && c.release && c.lto,
+    desc: "Line tables only for LTO builds (backtraces and symbolication; no types)",
   },
 
   // ─── ASAN (global — passed to deps so they link against the same runtime) ───
@@ -698,17 +725,12 @@ export const defines: Flag[] = [
     flag: [
       "_HAS_EXCEPTIONS=0",
       "LIBUS_USE_OPENSSL=1",
-      "LIBUS_USE_BORINGSSL=1",
-      "WITH_BORINGSSL=1",
       "STATICALLY_LINKED_WITH_JavaScriptCore=1",
-      "STATICALLY_LINKED_WITH_BMALLOC=1",
       "BUILDING_WITH_CMAKE=1",
       "JSC_OBJC_API_ENABLED=0",
-      "BUN_SINGLE_THREADED_PER_VM_ENTRY_SCOPE=1",
       "NAPI_EXPERIMENTAL=ON",
       "NODE_API_EXPERIMENTAL_NOGC_ENV_OPT_OUT=1",
       "NOMINMAX",
-      "IS_BUILD",
       "BUILDING_JSCONLY__",
     ],
     desc: "Core bun defines (always on)",
@@ -979,9 +1001,39 @@ export const linkerFlags: Flag[] = [
       "/delayload:ADVAPI32.dll",
       "/delayload:IPHLPAPI.dll",
       "/delayload:CRYPT32.dll",
+      "/delayload:USER32.dll",
+      "/delayload:SHELL32.dll",
+      "/delayload:OLEAUT32.dll",
+      "/delayload:USERENV.dll",
     ],
     when: c => c.windows && c.release,
     desc: "Release link opts + delay-load non-critical DLLs (faster startup)",
+  },
+  {
+    // A PE carries no symbol table — lld-link puts the names in the PDB — so
+    // these two maps stand in for it on the order file's behalf (see
+    // scripts/orderfile/windows-symbols.ts): the MSVC-style one lists every
+    // symbol by final address under the exact name /order takes, and lld's own
+    // says where each input chunk was placed, which is what tells a function
+    // apart from the labels the MSVC CRT leaves on data inside its code. They
+    // ship in the profile zip beside the binary, for the trace-order step
+    // (.buildkite/ci.mjs) and for verifyOrderFileApplied() in scripts/build/ci.ts.
+    flag: c => [`/lldmap:${slash(linkerMapPath(c))}`, `/map:${slash(symbolMapPath(c))}`],
+    when: c => c.windows && writesLinkerMap(c),
+    desc: "Linker maps: the order file tracer's symbol table (see windows-symbols.ts)",
+  },
+  {
+    // lld-link's spelling of the symbol ordering file (the Linux entry below
+    // explains it): one COMDAT leader name per line, laid out first in .text.
+    // Every function is its own COMDAT here — /Gy for bun's C++ and for the
+    // WebKit prebuilt, rustc's default function sections for the Rust side, and
+    // LTO output is per-function regardless — so one trace reorders all of
+    // them. /ignore:4037 is --no-warn-symbol-ordering's counterpart: the names
+    // were traced from an earlier build's binary (see usesOrderFile), and each
+    // one that no longer exists would otherwise be an LNK4037 warning.
+    flag: c => [`/order:@${slash(orderFilePath(c))}`, "/ignore:4037"],
+    when: c => c.windows && usesOrderFile(c),
+    desc: "Sort startup-hot functions to the front of .text (cuts resident binary pages)",
   },
 
   // ─── macOS ───
@@ -1081,7 +1133,7 @@ export const linkerFlags: Flag[] = [
     desc: "Suppress all linker warnings (workaround: no selective suppress for alignment warnings as of 2025-07)",
   },
   {
-    flag: c => ["-dead_strip", "-dead_strip_dylibs", `-Wl,-map,${c.buildDir}/${bunExeName(c)}.linker-map`],
+    flag: c => ["-dead_strip", "-dead_strip_dylibs", `-Wl,-map,${linkerMapPath(c)}`],
     when: c => c.darwin && c.release,
     desc: "Dead-code strip + emit linker map",
   },
@@ -1267,7 +1319,7 @@ export const linkerFlags: Flag[] = [
     // with `bun-profile`, so disabling ICF on the profile binary "for perf
     // symbolication" would also bloat the shipped binary's .text — and
     // `perf` symbolicates folded functions fine via the linker-map anyway.
-    flag: c => ["-Wl,-icf=safe", `-Wl,-Map=${c.buildDir}/${bunExeName(c)}.linker-map`],
+    flag: c => ["-Wl,-icf=safe", `-Wl,-Map=${linkerMapPath(c)}`],
     when: c => c.linux && c.release && !c.asan && !c.valgrind,
     desc: "Identical-code-folding (safe; perf symbolication uses the linker-map)",
   },
@@ -1363,7 +1415,7 @@ export const linkerFlags: Flag[] = [
       "-Wl,--build-id=sha1",
     ],
     when: c => c.freebsd,
-    desc: "FreeBSD linker tuning (same as Linux ELF)",
+    desc: "FreeBSD linker tuning (same as Linux ELF; here -z stack-size also sizes the main thread's stack)",
   },
   {
     // rust-lang/llvm-project doesn't enable `LLVM_ENABLE_ZLIB` (or `_ZSTD`) for
@@ -1400,13 +1452,18 @@ export const linkerFlags: Flag[] = [
 /**
  * Whether this target links with a symbol ordering file (lld
  * `--symbol-ordering-file` on linux, `-order_file` on darwin, which both Apple
- * ld and ld64.lld take). Only where the startup win is worth a relink: release
- * builds, not under a sanitizer — the tracer swaps `.text` out for a private
- * copy, and nobody measures startup RSS on an ASAN build anyway.
+ * ld and ld64.lld take, lld-link `/order` on windows). Only where the startup
+ * win is worth a relink: release builds, not under a sanitizer — the tracer
+ * swaps `.text` out for a private copy, and nobody measures startup RSS on an
+ * ASAN build anyway.
  *
  * This says where the order file is CONSUMED, not where it is produced. A
  * cross-compiled lane cannot trace its own binary (`canTraceOrderFile`), so it
- * inherits an earlier build's file instead and still links ordered.
+ * inherits an earlier build's file instead and still links ordered; the
+ * trace-order step in .buildkite/ci.mjs produces that file on the target's test
+ * fleet. Both windows targets work this way: their tracer is a debugger
+ * (scripts/orderfile/functrace-windows.c), so it needs no preload mechanism,
+ * and it plants INT3 or BRK depending on which architecture it is built for.
  *
  * linux gnu only: musl links statically, so LD_PRELOAD cannot load the tracer,
  * and no musl test host exists to trace on either. android has no order-file
@@ -1416,12 +1473,12 @@ export const linkerFlags: Flag[] = [
  * inherit and linking with an always-empty order file just adds noise.
  */
 export function usesOrderFile(
-  cfg: Pick<Config, "linux" | "darwin" | "abi" | "arm64" | "release" | "asan" | "valgrind">,
+  cfg: Pick<Config, "linux" | "darwin" | "windows" | "abi" | "arm64" | "release" | "asan" | "valgrind">,
 ): boolean {
   if (!cfg.release || cfg.asan || cfg.valgrind) return false;
   if (cfg.linux) return cfg.abi === "gnu";
   if (cfg.darwin) return cfg.arm64;
-  return false;
+  return cfg.windows;
 }
 
 /** The order file lives in the build directory — it is generated, never committed. */
@@ -1430,24 +1487,58 @@ export function orderFilePath(cfg: Pick<Config, "buildDir">): string {
 }
 
 /**
+ * Whether the link writes its map(s); mirrors the map flags above (linux: the
+ * `-icf=safe` entry, darwin: `-dead_strip`, windows: `/lldmap` + `/map`).
+ * `linkerMapOutputs()` names them: bun.ts declares those to ninja as the link's
+ * outputs, and ci.ts ships them in the profile zip — on windows the trace-order
+ * step cannot work without them (see the `/lldmap` entry).
+ */
+export function writesLinkerMap(
+  cfg: Pick<Config, "linux" | "darwin" | "windows" | "release" | "asan" | "valgrind">,
+): boolean {
+  if (!cfg.release) return false;
+  if (cfg.linux) return !cfg.asan && !cfg.valgrind;
+  return cfg.darwin || cfg.windows;
+}
+
+/** `<buildDir>/bun-profile.linker-map`: the linker's own map — lld's `-Map`, ld64's `-map`, lld-link's `/lldmap`. */
+export function linkerMapPath(cfg: Config): string {
+  return join(cfg.buildDir, `${bunExeName(cfg)}.linker-map`);
+}
+
+/**
+ * `<buildDir>/bun-profile.map`: lld-link's MSVC-style `/map`, every symbol by
+ * address. Windows only; the same name scripts/orderfile/windows-symbols.ts
+ * derives from the binary's.
+ */
+export function symbolMapPath(cfg: Config): string {
+  return join(cfg.buildDir, `${bunExeName(cfg)}.map`);
+}
+
+/** The map files the link writes (see writesLinkerMap), or none. */
+export function linkerMapOutputs(cfg: Config): string[] {
+  if (!writesLinkerMap(cfg)) return [];
+  return cfg.windows ? [linkerMapPath(cfg), symbolMapPath(cfg)] : [linkerMapPath(cfg)];
+}
+
+/**
  * Files the linker reads via flags above. Return as implicit inputs so
  * ninja relinks when exported symbols / version script change.
  * CMake tracks these via set_target_properties LINK_DEPENDS.
+ *
+ * The release symbol ordering file is one of them on every target that uses
+ * it: listing it here is what makes regenerating (or inheriting) it relink, and
+ * only relink.
  */
 export function linkDepends(cfg: Config): string[] {
   if (cfg.freebsd) return [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker-freebsd.lds")];
-  if (cfg.windows) return [join(cfg.cwd, "src/symbols.def")];
-  // The release symbol ordering file: listing it here is what makes
-  // regenerating it relink, and only relink.
-  if (cfg.darwin) {
-    const darwin = [join(cfg.cwd, "src/symbols.txt")];
-    if (usesOrderFile(cfg)) darwin.push(orderFilePath(cfg));
-    return darwin;
-  }
-  // linux: ELF dynamic-list + version script.
-  const linux = [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker.lds")];
-  if (usesOrderFile(cfg)) linux.push(orderFilePath(cfg));
-  return linux;
+  const depends = cfg.windows
+    ? [join(cfg.cwd, "src/symbols.def")]
+    : cfg.darwin
+      ? [join(cfg.cwd, "src/symbols.txt")]
+      : [join(cfg.cwd, "src/symbols.dyn"), join(cfg.cwd, "src/linker.lds")]; // linux: ELF dynamic-list + version script
+  if (usesOrderFile(cfg)) depends.push(orderFilePath(cfg));
+  return depends;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1586,6 +1677,12 @@ export const fileOverrides: FileOverride[] = [
     desc: "Vendored electron/rcedit; VersionInfo ctor throws std::system_error caught in OnEnumResourceLanguage. Self-contained throw/catch — already excluded from PCH",
   },
   {
+    file: "src/jsc/bindings/highway_xml.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the XML structural-index kernel must be optimized even in debug builds.",
+  },
+  {
     file: "src/jsc/bindings/highway_json.cpp",
     extraFlags: ["-O2"],
     when: c => c.debug,
@@ -1710,41 +1807,4 @@ export function extraFlagsFor(cfg: Config, srcRelPath: string): string[] {
     return resolveFlagValue(o.extraFlags, cfg);
   }
   return [];
-}
-
-/**
- * Produce a human-readable explanation of all active flags for `--explain-flags`.
- * Grouped by flag type, shows each flag alongside its description.
- */
-export function explainFlags(cfg: Config): string {
-  const lines: string[] = [];
-
-  const explainTable = (title: string, flags: Flag[]) => {
-    const active = flags.filter(f => !f.when || f.when(cfg));
-    if (active.length === 0) return;
-    lines.push(`\n─── ${title} ───`);
-    for (const f of active) {
-      const vals = resolveFlagValue(f.flag, cfg);
-      const langSuffix = f.lang ? ` [${f.lang}]` : "";
-      lines.push(`  ${vals.join(" ")}${langSuffix}`);
-      lines.push(`    ${f.desc}`);
-    }
-  };
-
-  explainTable("Global compiler flags (bun + deps)", globalFlags);
-  explainTable("Bun-only compiler flags", bunOnlyFlags);
-  explainTable("Defines", defines);
-  explainTable("Linker flags", linkerFlags);
-  explainTable("Strip flags", stripFlags);
-
-  const overrides = fileOverrides.filter(o => !o.when || o.when(cfg));
-  if (overrides.length > 0) {
-    lines.push("\n─── Per-file overrides ───");
-    for (const o of overrides) {
-      lines.push(`  ${o.file}: ${resolveFlagValue(o.extraFlags, cfg).join(" ")}`);
-      lines.push(`    ${o.desc}`);
-    }
-  }
-
-  return lines.join("\n");
 }

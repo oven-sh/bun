@@ -218,6 +218,84 @@ This is **bold** and *italic*.
     }
   });
 
+  test("every cached tag name resolves to its own tag", () => {
+    // Element types come from a per-global table of cached tag strings
+    // (BunMarkdownTagStrings), so one document exercising every tag the
+    // parser emits checks that each slot holds the right name.
+    const md = [
+      "# H1",
+      "## H2",
+      "### H3",
+      "#### H4",
+      "##### H5",
+      "###### H6",
+      "",
+      "Para *em* **strong** ~~del~~ `code` [a](x) ![i](y.png)  ",
+      "after br",
+      "",
+      "> quote",
+      "",
+      "- ul item",
+      "",
+      "1. ol item",
+      "",
+      "```",
+      "pre",
+      "```",
+      "",
+      "---",
+      "",
+      "<div>raw</div>",
+      "",
+      "| A |",
+      "|---|",
+      "| 1 |",
+      "",
+    ].join("\n");
+
+    const types: string[] = [];
+    function walk(node: any) {
+      if (typeof node !== "object" || node === null) return;
+      types.push(node.type);
+      const kids = node.props.children;
+      if (Array.isArray(kids)) kids.forEach(walk);
+    }
+    children(md).forEach(walk);
+
+    expect(types).toEqual([
+      "h1",
+      "h2",
+      "h3",
+      "h4",
+      "h5",
+      "h6",
+      "p",
+      "em",
+      "strong",
+      "del",
+      "code",
+      "a",
+      "img",
+      "br",
+      "blockquote",
+      "p",
+      "ul",
+      "li",
+      "ol",
+      "li",
+      "pre",
+      "hr",
+      "html",
+      "table",
+      "thead",
+      "tr",
+      "th",
+      "tbody",
+      "tr",
+      "td",
+    ]);
+  });
+
   test("blockquote contains nested React elements", () => {
     const bq = children("> quoted text\n")[0];
     expect(bq.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);

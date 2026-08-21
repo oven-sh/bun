@@ -4,13 +4,14 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
 use bun_alloc::AllocError;
-use bun_collections::{ArrayHashMapExt, GetOrPutResult, StringArrayHashMap};
+use bun_collections::{ArrayHashMapExt, GetOrPutResult, StringSet};
 use bun_core::{self, Output};
 use bun_core::{ZStr, strings};
 use bun_paths::{self, MAX_PATH_BYTES, PathBuffer};
 use bun_sys;
 use bun_url::URL;
 use bun_which::which;
+use enumset::EnumSet;
 
 use bun_core::analytics;
 
@@ -21,23 +22,56 @@ pub enum DotEnvFileSuffix {
     Test,
 }
 
+/// Declaration order is the order `print_loaded` lists the files in.
+#[derive(enumset::EnumSetType)]
+pub(crate) enum DefaultEnvFile {
+    DevelopmentLocal,
+    ProductionLocal,
+    TestLocal,
+    Local,
+    Development,
+    Production,
+    Test,
+    Env,
+}
+
+impl DefaultEnvFile {
+    fn name(self) -> &'static [u8] {
+        match self {
+            Self::DevelopmentLocal => b".env.development.local",
+            Self::ProductionLocal => b".env.production.local",
+            Self::TestLocal => b".env.test.local",
+            Self::Local => b".env.local",
+            Self::Development => b".env.development",
+            Self::Production => b".env.production",
+            Self::Test => b".env.test",
+            Self::Env => b".env",
+        }
+    }
+}
+
 /// Directory-entry probe used by `Loader::load`. `bun_dotenv` sits below
-/// `bun_resolver` in the crate graph, so the concrete
-/// `bun_resolver::fs::DirEntry` is taken generically; the only operation
-/// `load_default_files` performs is a fast O(1) lookup of a
-/// known-at-compile-time filename in the directory's entry map. Implemented
-/// for `bun_resolver::fs::DirEntry`.
+/// `bun_resolver` in the crate graph, so the directory listing is taken
+/// generically; the only operation `load_default_files` performs is a lookup
+/// of a known-at-compile-time filename. Callers snapshot the resolver's
+/// listing into a [`DirEntryKeys`] (the live `DirEntry` map may be rewritten
+/// in place by a concurrent resolver, so `load` must not probe it directly).
 pub trait DirEntryProbe {
     /// The argument MUST already be ASCII-lowercase.
     fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool;
 }
 
-// LAYERING: the concrete `DirEntry` lives in `bun_resolver::fs` (higher tier,
-// depends on this crate). `impl DirEntryProbe for bun_resolver::fs::DirEntry`
-// is provided there — see src/resolver/lib.rs. No impl here; that would be a
-// dep-cycle.
+/// Directory-listing basenames copied out under the resolver's
+/// `entries_mutex`, probed between the `.env` file reads in `Loader::load`.
+pub struct DirEntryKeys(pub Vec<Box<[u8]>>);
 
-/// schema.peechy — `enum(u32)`. Canonical definition; re-exported as
+impl DirEntryProbe for DirEntryKeys {
+    fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool {
+        self.0.iter().any(|k| **k == *query_lower)
+    }
+}
+
+/// Canonical definition; re-exported as
 /// `bun_options_types::schema::api::DotEnvBehavior` for higher tiers.
 #[repr(u32)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
@@ -54,8 +88,7 @@ pub enum DotEnvBehavior {
 #[allow(non_upper_case_globals)]
 impl DotEnvBehavior {
     // PascalCase aliases — downstream callers (bundler/options.rs, bundler/defines.rs,
-    // runtime/api/JSBundler.rs) name the variants both ways while the snake_case enum
-    // body above stays the schema ground truth.
+    // runtime/api/JSBundler.rs) name the variants both ways.
     pub const None: Self = Self::_none;
     pub const Disable: Self = Self::disable;
     pub const Prefix: Self = Self::prefix;
@@ -76,7 +109,7 @@ impl DotEnvBehavior {
             Ok((Self::load_all, None))
         } else if s == b"disable" {
             Ok((Self::disable, None))
-        } else if let Some(asterisk) = s.iter().position(|&b| b == b'*') {
+        } else if let Some(asterisk) = strings::index_of_char_usize(s, b'*') {
             if asterisk > 0 {
                 Ok((Self::prefix, Some(&s[..asterisk])))
             } else {
@@ -107,17 +140,10 @@ pub struct S3Credentials {
 pub struct Loader {
     pub map: Map,
     // allocator dropped — global mimalloc (see PORTING.md §Allocators)
-    pub(crate) env_local: Option<bun_ast::Source>,
-    pub(crate) env_development: Option<bun_ast::Source>,
-    pub(crate) env_production: Option<bun_ast::Source>,
-    pub(crate) env_test: Option<bun_ast::Source>,
-    pub(crate) env_development_local: Option<bun_ast::Source>,
-    pub(crate) env_production_local: Option<bun_ast::Source>,
-    pub(crate) env_test_local: Option<bun_ast::Source>,
-    pub(crate) env: Option<bun_ast::Source>,
+    pub(crate) default_files_loaded: EnumSet<DefaultEnvFile>,
 
     /// only populated with files specified explicitly (e.g. --env-file arg)
-    pub(crate) custom_files_loaded: StringArrayHashMap<bun_ast::Source>,
+    pub(crate) custom_files_loaded: StringSet,
 
     pub quiet: bool,
 
@@ -352,7 +378,7 @@ impl Loader {
             return false;
         }
 
-        for no_proxy_item in no_proxy_text.split(|&b| b == b',') {
+        for no_proxy_item in strings::split(no_proxy_text, b",") {
             let mut no_proxy_entry = strings::trim(no_proxy_item, &strings::WHITESPACE_CHARS);
             if no_proxy_entry.is_empty() {
                 continue;
@@ -372,7 +398,7 @@ impl Loader {
             // IPv6 addresses contain multiple colons (e.g., "::1", "2001:db8::1")
             // Bracketed IPv6 with port: "[::1]:8080"
             // Host with port: "localhost:8080" (single colon)
-            let colon_count = no_proxy_entry.iter().filter(|&&b| b == b':').count();
+            let colon_count = strings::count_char(no_proxy_entry, b':');
             let is_bracketed_ipv6 = strings::starts_with_char(no_proxy_entry, b'[');
             let has_port = 'blk: {
                 if is_bracketed_ipv6 {
@@ -560,15 +586,8 @@ impl Loader {
     pub fn init_with_map(map: Map) -> Loader {
         Loader {
             map,
-            env_local: None,
-            env_development: None,
-            env_production: None,
-            env_test: None,
-            env_development_local: None,
-            env_production_local: None,
-            env_test_local: None,
-            env: None,
-            custom_files_loaded: StringArrayHashMap::default(),
+            default_files_loaded: EnumSet::empty(),
+            custom_files_loaded: StringSet::new(),
             quiet: false,
             did_load_process: false,
             reject_unauthorized: Cell::new(None),
@@ -607,9 +626,6 @@ impl Loader {
         &mut self,
         str: &[u8],
     ) -> Result<(), AllocError> {
-        // Go straight to `parse_bytes` to avoid the
-        // `Source.contents: &'static [u8]` lifetime constraint (callers like
-        // `node:util.parseEnv` pass JS-owned non-'static buffers).
         let mut value_buffer: Vec<u8> = Vec::new();
         Parser::parse_bytes::<OVERWRITE, false, EXPAND>(str, &mut self.map, &mut value_buffer)
     }
@@ -659,7 +675,7 @@ impl Loader {
             let arg_value = strings::trim(env_files[i - 1], b" ");
             if !arg_value.is_empty() {
                 // ignore blank args
-                for file_path in arg_value.rsplit(|&b| b == b',') {
+                for file_path in strings::rsplit(arg_value, b",") {
                     if !file_path.is_empty() {
                         self.load_env_file_dynamic::<false>(file_path, value_buffer)?;
                         analytics::Features::dotenv_inc();
@@ -683,111 +699,79 @@ impl Loader {
     ) -> crate::Result<()> {
         let dir_handle = bun_sys::Fd::cwd();
 
-        // `bun_dotenv` sits below `bun_resolver` in the crate graph, so the
-        // directory entry is taken generically — `bun_resolver::fs::DirEntry`
-        // impls `DirEntryProbe`.
         match suffix {
-            DotEnvFileSuffix::Development => {
-                self.try_load_default(dir, dir_handle, b".env.development.local", value_buffer)?
-            }
-            DotEnvFileSuffix::Production => {
-                self.try_load_default(dir, dir_handle, b".env.production.local", value_buffer)?
-            }
+            DotEnvFileSuffix::Development => self.try_load_default(
+                dir,
+                dir_handle,
+                DefaultEnvFile::DevelopmentLocal,
+                value_buffer,
+            )?,
+            DotEnvFileSuffix::Production => self.try_load_default(
+                dir,
+                dir_handle,
+                DefaultEnvFile::ProductionLocal,
+                value_buffer,
+            )?,
             DotEnvFileSuffix::Test => {
-                self.try_load_default(dir, dir_handle, b".env.test.local", value_buffer)?
+                self.try_load_default(dir, dir_handle, DefaultEnvFile::TestLocal, value_buffer)?
             }
         }
 
         if suffix != DotEnvFileSuffix::Test {
-            self.try_load_default(dir, dir_handle, b".env.local", value_buffer)?;
+            self.try_load_default(dir, dir_handle, DefaultEnvFile::Local, value_buffer)?;
         }
 
         match suffix {
             DotEnvFileSuffix::Development => {
-                self.try_load_default(dir, dir_handle, b".env.development", value_buffer)?
+                self.try_load_default(dir, dir_handle, DefaultEnvFile::Development, value_buffer)?
             }
             DotEnvFileSuffix::Production => {
-                self.try_load_default(dir, dir_handle, b".env.production", value_buffer)?
+                self.try_load_default(dir, dir_handle, DefaultEnvFile::Production, value_buffer)?
             }
             DotEnvFileSuffix::Test => {
-                self.try_load_default(dir, dir_handle, b".env.test", value_buffer)?
+                self.try_load_default(dir, dir_handle, DefaultEnvFile::Test, value_buffer)?
             }
         }
 
-        self.try_load_default(dir, dir_handle, b".env", value_buffer)
+        self.try_load_default(dir, dir_handle, DefaultEnvFile::Env, value_buffer)
     }
 
-    /// Probe `dir` for a known `.env*` filename and, if present, load it into
-    /// its dedicated slot and bump the analytics counter. Shared body for the
-    /// eight call sites in `load_default_files`.
     #[inline]
     fn try_load_default<D: DirEntryProbe + ?Sized>(
         &mut self,
         dir: &D,
         dir_handle: bun_sys::Fd,
-        name: &'static [u8],
+        env_file: DefaultEnvFile,
         value_buffer: &mut Vec<u8>,
     ) -> crate::Result<()> {
-        if dir.has_comptime_query(name) {
-            self.load_env_file::<false>(dir_handle, name, value_buffer)?;
+        if dir.has_comptime_query(env_file.name()) {
+            self.load_env_file::<false>(dir_handle, env_file, value_buffer)?;
             analytics::Features::dotenv_inc();
         }
         Ok(())
     }
 
     pub(crate) fn print_loaded(&self, start: i128) {
-        let count: usize = (self.env_development_local.is_some() as usize)
-            + (self.env_production_local.is_some() as usize)
-            + (self.env_test_local.is_some() as usize)
-            + (self.env_local.is_some() as usize)
-            + (self.env_development.is_some() as usize)
-            + (self.env_production.is_some() as usize)
-            + (self.env_test.is_some() as usize)
-            + (self.env.is_some() as usize)
-            + self.custom_files_loaded.count();
+        let count: usize = self.default_files_loaded.len() + self.custom_files_loaded.count();
 
         if count == 0 {
             return;
         }
         let elapsed = (bun_core::time::nano_timestamp() - start) as f64 / 1_000_000.0;
 
-        const ALL: [&[u8]; 8] = [
-            b".env.development.local",
-            b".env.production.local",
-            b".env.test.local",
-            b".env.local",
-            b".env.development",
-            b".env.production",
-            b".env.test",
-            b".env",
-        ];
-        let loaded: [bool; 8] = [
-            self.env_development_local.is_some(),
-            self.env_production_local.is_some(),
-            self.env_test_local.is_some(),
-            self.env_local.is_some(),
-            self.env_development.is_some(),
-            self.env_production.is_some(),
-            self.env_test.is_some(),
-            self.env.is_some(),
-        ];
-
         let mut loaded_i: usize = 0;
         Output::print_elapsed(elapsed);
         bun_core::pretty_error!(" <d>");
 
-        for (i, &yes) in loaded.iter().enumerate() {
-            if yes {
-                loaded_i += 1;
-                if count == 1 || (loaded_i >= count && count > 1) {
-                    bun_core::pretty_error!("\"{}\"", bstr::BStr::new(ALL[i]));
-                } else {
-                    bun_core::pretty_error!("\"{}\", ", bstr::BStr::new(ALL[i]));
-                }
+        for env_file in self.default_files_loaded.iter() {
+            loaded_i += 1;
+            if count == 1 || (loaded_i >= count && count > 1) {
+                bun_core::pretty_error!("\"{}\"", bstr::BStr::new(env_file.name()));
+            } else {
+                bun_core::pretty_error!("\"{}\", ", bstr::BStr::new(env_file.name()));
             }
         }
 
-        // `iterator()` requires `&mut self`; iterate `keys()` slice instead.
         for k in self.custom_files_loaded.keys() {
             loaded_i += 1;
             if count == 1 || (loaded_i >= count && count > 1) {
@@ -801,30 +785,16 @@ impl Loader {
         Output::flush();
     }
 
-    /// Helper: maps a known `.env*` filename to its `Option<Source>` field.
-    fn default_file_slot(&mut self, base: &'static [u8]) -> &mut Option<bun_ast::Source> {
-        match base {
-            b".env.local" => &mut self.env_local,
-            b".env.development" => &mut self.env_development,
-            b".env.production" => &mut self.env_production,
-            b".env.test" => &mut self.env_test,
-            b".env.development.local" => &mut self.env_development_local,
-            b".env.production.local" => &mut self.env_production_local,
-            b".env.test.local" => &mut self.env_test_local,
-            b".env" => &mut self.env,
-            _ => unreachable!(),
-        }
-    }
-
     pub(crate) fn load_env_file<const OVERRIDE: bool>(
         &mut self,
         dir: bun_sys::Fd,
-        base: &'static [u8],
+        env_file: DefaultEnvFile,
         value_buffer: &mut Vec<u8>,
     ) -> crate::Result<()> {
-        if self.default_file_slot(base).is_some() {
+        if self.default_files_loaded.contains(env_file) {
             return Ok(());
         }
+        let base = env_file.name();
 
         // `bun_sys` is errno-based; the match arms below group the recoverable
         // errnos. Any errno not listed propagates.
@@ -836,8 +806,7 @@ impl Loader {
                     match err.get_errno() {
                         E::EISDIR | E::ENOENT => {
                             // prevent retrying
-                            *self.default_file_slot(base) =
-                                Some(bun_ast::Source::init_path_string(base, b""));
+                            self.default_files_loaded.insert(env_file);
                             return Ok(());
                         }
                         E::EBUSY | E::EACCES => {
@@ -849,8 +818,7 @@ impl Loader {
                                 );
                             }
                             // prevent retrying
-                            *self.default_file_slot(base) =
-                                Some(bun_ast::Source::init_path_string(base, b""));
+                            self.default_files_loaded.insert(env_file);
                             return Ok(());
                         }
                         _ => return Err(err.into()),
@@ -874,11 +842,7 @@ impl Loader {
             }
         }
 
-        // The file buffer is dropped after parsing because
-        // `bun_ast::Source.contents` is `&'static [u8]` and §Forbidden bans
-        // `Box::leak`. The stored `Source` is only ever checked for
-        // `.is_some()` / its path printed, so dropping the bytes is fine.
-        *self.default_file_slot(base) = Some(bun_ast::Source::init_path_string(base, b""));
+        self.default_files_loaded.insert(env_file);
         Ok(())
     }
 
@@ -895,12 +859,7 @@ impl Loader {
             Ok(f) => f,
             Err(_) => {
                 // prevent retrying
-                // `Source::init_path_string` requires a `'static` path; the
-                // map key already carries `file_path` (boxed), and the value is never
-                // read for its path/contents — only `.contains()` and key iteration —
-                // so an empty placeholder is observationally identical.
-                self.custom_files_loaded
-                    .put(file_path, bun_ast::Source::default())?;
+                self.custom_files_loaded.insert(file_path)?;
                 return Ok(());
             }
         };
@@ -921,10 +880,7 @@ impl Loader {
             }
         }
 
-        // See `load_env_file` — `Source.contents` is not retained; only
-        // `.contains()` / key iteration are ever observed.
-        self.custom_files_loaded
-            .put(file_path, bun_ast::Source::default())?;
+        self.custom_files_loaded.insert(file_path)?;
         Ok(())
     }
 }
@@ -1294,9 +1250,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// Same as [`parse`] but takes the source bytes directly. Exists so
-    /// `load_env_file*` can parse a transient `Vec<u8>` without constructing a
-    /// `bun_ast::Source` (whose `contents` field is currently `&'static [u8]`).
+    /// Builds a [`Parser`] over `src` (minus any UTF-8 BOM) and runs [`Parser::parse`] into `map`.
     fn parse_bytes<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
         src: &[u8],
         map: &mut Map,

@@ -1,6 +1,7 @@
 // Hardcoded module "node:crypto"
 const StringDecoder = require("node:string_decoder").StringDecoder;
 const LazyTransform = require("internal/streams/lazy_transform");
+const { guardCallback } = require("internal/shared");
 const { defineCustomPromisifyArgs } = require("internal/promisify");
 const Writable = require("internal/streams/writable");
 const { CryptoHasher } = Bun;
@@ -103,28 +104,13 @@ var Buffer = globalThis.Buffer;
 const { isAnyArrayBuffer, isArrayBufferView } = require("node:util/types");
 
 function getArrayBufferOrView(buffer, name, encoding?) {
-  if (buffer instanceof KeyObject) {
-    if (buffer.type !== "secret") {
-      const error = new TypeError(
-        `ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key object type ${key.type}, expected secret`,
-      );
-      error.code = "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE";
-      throw error;
-    }
-    buffer = buffer.export();
-  }
   if (isAnyArrayBuffer(buffer)) return buffer;
   if (typeof buffer === "string") {
     if (encoding === "buffer") encoding = "utf8";
     return Buffer.from(buffer, encoding);
   }
   if (!isArrayBufferView(buffer)) {
-    var error = new TypeError(
-      `ERR_INVALID_ARG_TYPE: The "${name}" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView. Received ` +
-        buffer,
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw $ERR_INVALID_ARG_TYPE(name, ["string", "ArrayBuffer", "Buffer", "TypedArray", "DataView"], buffer);
   }
   return buffer;
 }
@@ -164,9 +150,11 @@ function pbkdf2(password, salt, iterations, keylen, digest, callback) {
 
   const promise = _pbkdf2(password, salt, iterations, keylen, digest, callback);
   if (callback) {
+    // Guarded so a throw inside the callback is an uncaughtException, as in node.
+    const cb = guardCallback(callback);
     promise.then(
-      result => callback(null, result),
-      err => callback(err),
+      result => cb(null, result),
+      err => cb(err),
     );
     return;
   }

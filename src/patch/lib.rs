@@ -31,7 +31,7 @@ const WHITESPACE: &[u8] = b" \t\n\r";
 // original patch file text. The port generally avoids struct lifetimes, but
 // this parser's whole output is borrowed; raw `*const [u8]` everywhere would
 // be worse.
-pub enum PatchFilePart<'a> {
+enum PatchFilePart<'a> {
     FilePatch(Box<FilePatch<'a>>),
     FileDeletion(Box<FileDeletion<'a>>),
     FileCreation(Box<FileCreation<'a>>),
@@ -299,7 +299,7 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
     let file_line_count: usize;
     let lines_count: usize = {
         let mut count: usize = 0;
-        for _ in filebuf.split(|b| *b == b'\n') {
+        for _ in strings::split(&filebuf, b"\n") {
             count += 1;
         }
         file_line_count = count;
@@ -333,7 +333,7 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
     let mut lines: Vec<&[u8]> = Vec::with_capacity(lines_count);
     {
         let mut i: usize = 0;
-        for line in filebuf.split(|b| *b == b'\n') {
+        for line in strings::split(&filebuf, b"\n") {
             lines.push(line);
             i += 1;
         }
@@ -514,7 +514,7 @@ impl<'a> FileDeets<'a> {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Default)]
-pub struct PatchMutationPart<'a> {
+struct PatchMutationPart<'a> {
     pub(crate) ty: PartType,
     pub(crate) lines: Vec<&'a [u8]>,
     /// This technically can only be on the last part of a hunk
@@ -532,13 +532,13 @@ pub enum PartType {
 }
 
 #[derive(Default)]
-pub struct Hunk<'a> {
+struct Hunk<'a> {
     pub(crate) header: Header,
     pub(crate) parts: Vec<PatchMutationPart<'a>>,
 }
 
 #[derive(Copy, Clone)]
-pub struct HeaderRange {
+struct HeaderRange {
     pub(crate) start: u32,
     pub(crate) len: u32,
 }
@@ -593,7 +593,7 @@ impl<'a> Hunk<'a> {
 
 #[repr(u32)]
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum FileMode {
+enum FileMode {
     NonExecutable = 0o644,
     Executable = 0o755,
 }
@@ -616,34 +616,34 @@ impl FileMode {
 // FileRename / FileModeChange / FilePatch / FileDeletion / FileCreation
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct FileRename<'a> {
+struct FileRename<'a> {
     pub(crate) from_path: &'a [u8],
     pub(crate) to_path: &'a [u8],
 }
 // Does not allocate — no Drop needed.
 
-pub struct FileModeChange<'a> {
+struct FileModeChange<'a> {
     pub(crate) path: &'a [u8],
     pub(crate) old_mode: FileMode,
     pub(crate) new_mode: FileMode,
 }
 // Does not allocate — no Drop needed.
 
-pub struct FilePatch<'a> {
+struct FilePatch<'a> {
     pub(crate) path: &'a [u8],
     pub(crate) hunks: Vec<Hunk<'a>>,
     pub(crate) before_hash: Option<&'a [u8]>,
     pub(crate) after_hash: Option<&'a [u8]>,
 }
 
-pub struct FileDeletion<'a> {
+struct FileDeletion<'a> {
     pub(crate) path: &'a [u8],
     pub(crate) mode: FileMode,
     pub(crate) hunk: Option<Box<Hunk<'a>>>,
     pub(crate) hash: Option<&'a [u8]>,
 }
 
-pub struct FileCreation<'a> {
+struct FileCreation<'a> {
     pub(crate) path: &'a [u8],
     pub(crate) mode: FileMode,
     pub(crate) hunk: Option<Box<Hunk<'a>>>,
@@ -1038,11 +1038,9 @@ fn parse_file_mode(mode: &[u8]) -> Option<FileMode> {
 
 fn is_safe_patch_path(path: &[u8]) -> bool {
     !path.is_empty()
-        && !path.contains(&0)
+        && !strings::contains_char(path, 0)
         && !paths::is_absolute_loose(path)
-        && !path
-            .split(|&c| c == b'/' || c == b'\\')
-            .any(|part| part == b"..")
+        && !strings::split_any(path, b"/\\").any(|part| part == b"..")
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1171,7 +1169,7 @@ impl<'a> PatchLinesParser<'a> {
         let end = 'brk: {
             // Peek at the last segment after the final '\n'.
             let mut prev: usize = file_.len();
-            let last_nl = file_.iter().rposition(|b| *b == b'\n');
+            let last_nl = strings::last_index_of_char(file_, b'\n');
             let last_line = match last_nl {
                 Some(i) => &file_[i + 1..],
                 None => file_,

@@ -195,7 +195,7 @@ exports[`yarn.lock migration basic yarn.lock with npm aliases: aliases-yarn-migr
 
 exports[`yarn.lock migration basic yarn.lock with resolutions: resolutions-yarn-migration 1`] = `
 "{
-  "lockfileVersion": 2,
+  "lockfileVersion": 3,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -207,6 +207,9 @@ exports[`yarn.lock migration basic yarn.lock with resolutions: resolutions-yarn-
   },
   "overrides": {
     "acorn": "8.11.3",
+    "webpack": {
+      "acorn": "8.11.2",
+    },
   },
   "packages": {
     "acorn": ["acorn@8.11.3", "", { "bin": { "acorn": "bin/acorn" } }, "sha512-Y9rRfJG5jcKOE0CLisYbojUjIrIEE7AGMzA/Sm4BslANhbS+cDMpgBdcPT91oJ7OuJ9hYJBx59RjbhxVnrF8Xg=="],
@@ -3153,7 +3156,7 @@ exports[`bun pm migrate for existing yarn.lock yarn-stuff: yarn-stuff 1`] = `
 
     "remote": ["abbrev@https://registry.npmjs.org/abbrev/-/abbrev-1.1.1.tgz#f8f2c887ad10bf67f634f005b6987fed3179aac8", {}],
 
-    "symlink": ["symlink@file:./abbrev-link-target", {}],
+    "symlink": ["symlink@file:abbrev-link-target", {}],
 
     "tarball": ["tarball@abbrev-1.1.1.tgz", {}],
   }

@@ -487,6 +487,49 @@ pub fn save(manager: &mut PackageManager, root_dir: &[u8], entries: u64, package
     for nm in nm_dirs {
         stamp_tree(&mut out, &nm, 0);
     }
+    // Nested node_modules folders (hoisted: `node_modules/a/node_modules`, from the
+    // lockfile's tree list) and each isolated store entry's own `node_modules`: one
+    // lstat each, so a deleted nested package, `.bin` or dependency link is noticed.
+    {
+        let lockfile = &*manager.lockfile;
+        let mut iter = crate::lockfile::tree::Iterator::<
+            { crate::lockfile::tree::IteratorPathStyle::NodeModules },
+        >::init(lockfile);
+        while let Some(nm) = iter.next(None) {
+            if nm.depth == 0 {
+                continue;
+            }
+            let dir = join(root_dir, nm.relative_path.as_bytes());
+            for d in [dir.clone(), join(&dir, b".bin")] {
+                match lstat_stamp(&d) {
+                    Some(stamp) => {
+                        let _ = write!(out, "l {stamp:016x} ");
+                        out.extend_from_slice(&d);
+                        out.push(b'\n');
+                    }
+                    None => {
+                        let _ = write!(out, "n {:016x} ", 0);
+                        out.extend_from_slice(&d);
+                        out.push(b'\n');
+                    }
+                }
+            }
+        }
+        let store = join(&join(root_dir, b"node_modules"), b".bun");
+        if let Some(entries) = read_dir(&store) {
+            for (name, is_dir) in entries {
+                if !is_dir {
+                    continue;
+                }
+                let inner = join(&join(&store, &name), b"node_modules");
+                if let Some(stamp) = lstat_stamp(&inner) {
+                    let _ = write!(out, "l {stamp:016x} ");
+                    out.extend_from_slice(&inner);
+                    out.push(b'\n');
+                }
+            }
+        }
+    }
     if unreadable {
         return;
     }

@@ -292,16 +292,21 @@ fn err_throw<T>(global: &JSGlobalObject, code: ErrorCode, msg: &'static str) -> 
     Err(err_throw_cold(global, code, msg))
 }
 
-/// Terminate a node:http response whose handler failed (threw or rejected). The wire must
-/// never read as a complete success: status/body bytes already sent → close without valid
-/// framing (RFC 9112 §7); nothing sent yet → a well-formed 500.
-pub(crate) fn end_failed_node_http_response(raw: uws::AnyResponse, close_connection: bool) {
+/// Terminate a node:http response whose handler failed (threw or rejected), closing the
+/// connection either way. Nothing sent yet → a well-formed 500. Status/body bytes already
+/// sent → they stay on the wire as written and the close ends the message without its
+/// terminating chunk (RFC 9112 §7; the bytes node produces), so a failed handler never reads
+/// as a complete response.
+pub(crate) fn end_failed_node_http_response(raw: uws::AnyResponse) {
     let state = raw.state();
     if state.is_http_status_called() || state.is_http_write_called() {
-        raw.force_close();
+        raw.end_without_body(true);
+        // No-op inside the request dispatch (still corked: the uncork closes); closes the
+        // uncorked async-rejection path, which nothing else would otherwise close.
+        raw.close_if_done_and_marked();
     } else {
         raw.write_status(b"500 Internal Server Error");
-        raw.end_stream(close_connection);
+        raw.end_stream(true);
     }
 }
 
@@ -541,13 +546,19 @@ impl NodeHTTPResponse {
         );
     }
 
-    /// Every precondition under which [`Self::upgrade`] refuses. Callers that must not commit
-    /// the one-shot 101 preamble to the socket for an upgrade that will fail check this first;
-    /// `upgrade()` itself starts with it, so the two can never drift.
+    /// Every precondition under which [`Self::upgrade`] refuses. `server.upgrade()` checks it
+    /// before committing the one-shot 101 preamble to the socket and again after its option
+    /// getters ran user JS (which may have ended this response, closed the socket, or upgraded
+    /// it re-entrantly); `upgrade()` itself starts with it, so the callers and the upgrade can
+    /// never drift.
     pub(crate) fn can_upgrade(&self) -> bool {
         // `AnyServer` is a `Copy` type-erased pointer to the long-lived server, not `*self`.
         let mut server = self.server;
-        !self.upgrade_context.get().context.is_null()
+        !self
+            .flags
+            .get()
+            .intersects(Flags::ENDED | Flags::SOCKET_CLOSED | Flags::UPGRADED)
+            && !self.upgrade_context.get().context.is_null()
             && server.web_socket_handler().is_some()
             && !self.get_server_socket_value().is_empty()
     }
@@ -1572,10 +1583,7 @@ fn node_http_request_on_reject(global_object: &JSGlobalObject, callframe: &CallF
             raw_response.clear_on_data();
             raw_response.clear_on_writable();
             raw_response.clear_timeout();
-            end_failed_node_http_response(
-                raw_response,
-                raw_response.state().is_http_connection_close(),
-            );
+            end_failed_node_http_response(raw_response);
         }
 
         this.on_request_complete();

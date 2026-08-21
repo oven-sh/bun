@@ -1724,7 +1724,6 @@ where
         object: JSValue,
         optional: Option<JSValue>,
     ) -> JsResult<JSValue> {
-        use super::node_http_response::Flags as NodeHTTPResponseFlags;
         use bun_core::ZigStringSlice;
         use bun_jsc::HTTPHeaderName;
 
@@ -1756,20 +1755,10 @@ where
             // SAFETY: from_js returns a live *mut NodeHTTPResponse; shared —
             // its mutable state is `Cell`/`JsCell` and `upgrade` takes `&self`.
             let node_http_response = unsafe { &*node_http_response };
-            if node_http_response
-                .flags
-                .get()
-                .contains(NodeHTTPResponseFlags::ENDED)
-                || node_http_response
-                    .flags
-                    .get()
-                    .contains(NodeHTTPResponseFlags::SOCKET_CLOSED)
-            {
-                return Ok(JSValue::FALSE);
-            }
-            // upgrade() below cannot succeed for a request uWS never classified as a WebSocket
-            // upgrade: bail before the one-shot 101 status + headers are committed to the
-            // socket, so the app's fallback response stays well-formed (see #1339).
+            // upgrade() below cannot succeed for an ended response or for a request uWS never
+            // classified as a WebSocket upgrade: bail before the one-shot 101 status + headers
+            // are committed to the socket, so the app's fallback response stays well-formed
+            // (see #1339).
             if !node_http_response.can_upgrade() {
                 return Ok(JSValue::FALSE);
             }
@@ -1872,13 +1861,10 @@ where
                             fetch_headers_to_use
                                 .fast_remove(HTTPHeaderName::SecWebSocketExtensions);
                         }
-                        // Option getters ran user JS (res.end()/destroy()/re-entrant upgrade()
-                        // may have fired): re-check the guards (mirrors the native path below)
-                        // so the one-shot 101 preamble isn't committed for a refusing upgrade().
-                        if node_http_response.flags.get().intersects(
-                            NodeHTTPResponseFlags::ENDED | NodeHTTPResponseFlags::SOCKET_CLOSED,
-                        ) || !node_http_response.can_upgrade()
-                        {
+                        // The option getters ran user JS (res.end()/destroy()/a re-entrant
+                        // upgrade() may have fired): re-check before committing the one-shot
+                        // 101 preamble for an upgrade() that will refuse.
+                        if !node_http_response.can_upgrade() {
                             return Ok(JSValue::FALSE);
                         }
                         if let Some(raw_response) = node_http_response.raw_response.get() {

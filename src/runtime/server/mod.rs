@@ -1462,7 +1462,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             if !nhr_flags.contains(NhrFlags::REQUEST_HAS_COMPLETED)
                                 && raw.state().is_response_pending()
                             {
-                                node_http_response::end_failed_node_http_response(raw, true);
+                                node_http_response::end_failed_node_http_response(raw);
                             }
                         }
                     }

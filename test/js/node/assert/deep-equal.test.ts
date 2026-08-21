@@ -521,7 +521,6 @@ const cases: Case[] = [
     b: () => new DataView(new ArrayBuffer(2)),
     strict: true,
     loose: true,
-    looseBug: "reports not equal",
   },
   {
     name: "a Buffer and a Uint8Array with the same bytes",

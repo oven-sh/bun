@@ -1,6 +1,7 @@
 // this file is compatible with jest to test node.js' util.inspect as well as bun's
 
 const util = require("util");
+const { bunEnv, bunExe } = process.versions.bun ? require("harness") : {};
 
 test("util.inspect.custom exists", () => {
   expect(util.inspect.custom).toEqual(Symbol.for("nodejs.util.inspect.custom"));
@@ -311,7 +312,6 @@ describe("Web Streams [nodejs.util.inspect.custom]", () => {
   // unknown user options to the hooks as they are, and the native copy of the options
   // used to fail an assertion on an index key.
   test("accepts a user option whose key is an array index", async () => {
-    const { bunEnv, bunExe } = require("harness");
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

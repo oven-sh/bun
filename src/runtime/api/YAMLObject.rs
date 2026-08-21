@@ -540,13 +540,15 @@ impl Stringifier {
                     first = false;
 
                     self.append_string(&prop_name);
-                    self.builder.append_latin1(b": ");
 
                     self.indent += 1;
 
                     let prop_value = value.unwrap_boxed_primitive(global)?;
                     if prop_value_needs_newline(prop_value) {
+                        self.builder.append_lchar(b':');
                         self.newline();
+                    } else {
+                        self.builder.append_latin1(b": ");
                     }
 
                     self.stringify_unwrapped(global, prop_value)?;

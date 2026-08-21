@@ -616,20 +616,23 @@ impl S3UploadStreamWrapper {
 
     /// Whether `resolve` must release the pump's +1 (`upload_stream`) itself because
     /// its usual releaser can no longer run: `end_from_stream` (native source, which it
-    /// clears first) once S3 failed first, or a JS pump's `.then` shim once script is
-    /// forbidden. Nothing less proves that shim dead: a direct stream's pump promise
+    /// clears first) once S3 failed first, or a JS pump's `.then` shim once this VM has
+    /// forbidden execution (set on this thread, for good, before teardown's stop phase;
+    /// JSC discards every microtask from then on). Nothing less proves that shim dead:
+    /// `script_allowed()` goes false on the parent's `terminate()` call, while this
+    /// thread may still be draining microtasks, and a direct stream's pump promise
     /// settles from the user's pull promise even after its controller was collected.
     /// Read before settling: the failure path's `source.close()` clears `source`.
     fn pump_ref_is_stranded(&mut self) -> bool {
         let native_fast_path = !matches!(self.readable_stream_ref, ReadableStreamStrong::Empty);
-        let script_allowed = self.global.bun_vm().script_allowed();
+        let execution_forbidden = self.global.vm().execution_forbidden();
         let Some(sink) = self.sink_mut() else {
             return false;
         };
         match sink.source {
             crate::webcore::streams::SourceHandle::ByteStream(_)
             | crate::webcore::streams::SourceHandle::FileReader(_) => true,
-            _ => !native_fast_path && !script_allowed,
+            _ => !native_fast_path && execution_forbidden,
         }
     }
 

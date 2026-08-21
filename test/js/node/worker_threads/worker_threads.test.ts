@@ -2581,9 +2581,15 @@ describe("VM teardown ordering", () => {
   // "request out" rows cover the other order: the stop phase ends the upload
   // first, and the request coming back must not free anything twice, nor, now
   // that the upload is already finished, retry onto the VM that is going away.
-  // The multipart row ends an upload that has to roll back: during teardown the
-  // rollback is refused on the spot and not retried, and the upload still has
-  // to free itself.
+  // The "first part in flight" row ends an upload that has to roll back: during
+  // teardown the rollback is refused on the spot and not retried, and the upload
+  // still has to free itself. The "commit in flight" rows end an upload that has
+  // sent everything and only waits for its last answer, so the stop phase finds
+  // both the upload and a request of it. For a JS stream that is also the
+  // shape where the wrapper is still claimed by the stream's pump, which ends
+  // only when S3 answers: before the fix the wrapper and the upload both stayed
+  // allocated. The writer() variant passes before the fix too, and pins down
+  // that the two stops do not free anything twice.
   //
   // Two oracles. On a debug build, each object's own teardown log line: exactly
   // one MultiPartUpload deinit per row, and one S3UploadStreamWrapper deinit per
@@ -2601,11 +2607,12 @@ describe("VM teardown ordering", () => {
       // response body delivers one chunk and then stays open until the host ends it).
       start: string;
       endUpstream?: boolean;
-      // The host waits for the stand-in to receive a request (a part, for a multipart row)
-      // before it tears the VM down.
+      // The host waits for the stand-in to receive a request it leaves unanswered before it
+      // tears the VM down.
       waitForRequest?: boolean;
-      // The stand-in answers the multipart initiate, so the upload gets as far as its first part.
-      multipart?: boolean;
+      // How far the stand-in lets a multipart upload get: it answers the initiate, so the
+      // upload sends its first part, or also every part, so the upload sends its commit.
+      multipart?: "part" | "commit";
       wrappers: number;
       mainThread?: boolean;
       leakCheck?: false;
@@ -2643,9 +2650,24 @@ describe("VM teardown ordering", () => {
       {
         name: "s3file.write(new Response(jsStream)) with its first part in flight, worker terminated",
         start: `file.write(new Response(new ReadableStream({ pull(c) { c.enqueue(new Uint8Array(5 * 1024 * 1024)); return new Promise(() => {}); } }))).catch(() => {});`,
-        multipart: true,
+        multipart: "part",
         waitForRequest: true,
         wrappers: 1,
+      },
+      {
+        name: "s3file.write(new Response(jsStream)) with its commit in flight, worker terminated",
+        start: `file.write(new Response(new ReadableStream({ start(c) { c.enqueue(new Uint8Array(5 * 1024 * 1024)); c.close(); } }))).catch(() => {});`,
+        multipart: "commit",
+        waitForRequest: true,
+        wrappers: 1,
+      },
+      {
+        name: "s3file.writer() ended, commit in flight, worker terminated",
+        start: `const w = file.writer(); w.write(new Uint8Array(5 * 1024 * 1024)); w.end().catch(() => {});`,
+        multipart: "commit",
+        waitForRequest: true,
+        wrappers: 0,
+        leakCheck: false,
       },
       {
         name: "s3file.write(response) still waiting for bytes, process.exit() on the main thread",
@@ -2663,8 +2685,11 @@ describe("VM teardown ordering", () => {
         async fetch(req) {
           // Read, so the request left unanswered holds no body buffer of its own.
           await req.arrayBuffer();
-          if (${!!row.multipart} && req.method === "POST") {
+          if (${!!row.multipart} && new URL(req.url).searchParams.has("uploads")) {
             return new Response("<InitiateMultipartUploadResult><UploadId>upload-1</UploadId></InitiateMultipartUploadResult>");
+          }
+          if (${row.multipart === "commit"} && req.method === "PUT") {
+            return new Response("", { headers: { etag: '"part"' } });
           }
           gotRequest.resolve();
           return new Promise(() => {});

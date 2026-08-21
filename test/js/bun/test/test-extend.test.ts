@@ -740,6 +740,20 @@ describe.concurrent("test.extend lifecycle", () => {
     expect(exitCode).toBe(1);
   });
 
+  test("a destructured name that is not a fixture is undefined, even if Object.prototype has it", async () => {
+    const { stderr, exitCode } = await runFixtureFile(`
+      import { test, expect } from "bun:test";
+      Object.defineProperty(Object.prototype, "ghost", { value: "from the prototype", configurable: true });
+      const t = test.extend<{ real: number }>({ real: 1 });
+      t("context has no prototype", ({ real, ghost }: { real: number; ghost?: unknown }) => {
+        expect(real).toBe(1);
+        expect(ghost).toBeUndefined();
+      });
+    `);
+    expect(stderr).toContain("1 pass");
+    expect(exitCode).toBe(0);
+  });
+
   test("a bound fixture function fails the test instead of running without its dependencies", async () => {
     const { stderr, exitCode } = await runFixtureFile(`
       import { test } from "bun:test";

@@ -1,0 +1,8 @@
+{
+  "name": "appkit-react-fixtures",
+  "private": true,
+  "dependencies": {
+    "react": "19.2.0",
+    "react-reconciler": "0.33.0"
+  }
+}

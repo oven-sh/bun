@@ -1,0 +1,250 @@
+---
+title: AppKit
+description: Build native macOS windows and controls from JavaScript with Bun.AppKit, imperatively or with React
+---
+
+`Bun.AppKit` creates real AppKit windows and controls from JavaScript on macOS. There is no web view and no bundled UI toolkit: a `Button` is an `NSButton`, a `TextField` is an `NSTextField`, and layout is Auto Layout through `NSStackView`. The same objects back a React renderer, `bun:appkit/react`, so a component tree can drive native views.
+
+<Warning>This API is experimental and macOS-only. It may change in future releases.</Warning>
+
+```ts counter.ts icon="/icons/typescript.svg"
+import { app, Window, VStack, Text, Button } from "bun:appkit";
+
+let count = 0;
+const label = new Text({ text: "Count: 0", font: { size: 24, weight: "bold" } });
+const button = new Button({
+  title: "Increment",
+  onClick() {
+    count++;
+    label.text = `Count: ${count}`;
+  },
+});
+
+const stack = new VStack({ spacing: 12, padding: 20 });
+stack.append(label, button);
+
+const win = new Window({ title: "Counter", width: 280, height: 140, content: stack });
+win.show();
+```
+
+```sh
+bun counter.ts
+```
+
+The process stays alive while a window is open and exits when the last window closes, the same way it does for a server or an open socket. Nothing is linked into `bun` for this: AppKit is loaded with `dlopen` the first time you use it, so programs that never touch `Bun.AppKit` pay nothing.
+
+`Bun.AppKit` and `import ... from "bun:appkit"` are the same namespace.
+
+---
+
+## React
+
+`bun:appkit/react` is a React host renderer over the same classes. It uses the `react` (19 or newer) and `react-reconciler` packages from your project, so add them first:
+
+```sh
+bun add react react-reconciler
+```
+
+```tsx counter.tsx icon="/icons/typescript.svg"
+import { render, Window, VStack, Text, Button } from "bun:appkit/react";
+import { useState } from "react";
+
+function Counter() {
+  const [count, setCount] = useState(0);
+  return (
+    <Window title="Counter" width={280} height={140}>
+      <VStack spacing={12} padding={20}>
+        <Text font={{ size: 24, weight: "bold" }}>Count: {count}</Text>
+        <Button onClick={() => setCount(c => c + 1)}>Increment</Button>
+      </VStack>
+    </Window>
+  );
+}
+
+render(<Counter />);
+```
+
+Host components are exported as PascalCase constants (`Window`, `VStack`, `Text`, ...) with the same names and props as the imperative classes below. String children of `Text`, `Button`, `Checkbox`, `Radio` and `Group` become their `text` / `title`; text anywhere else is an error. `render()` returns a root with `unmount()`, and windows exist by the time it returns. `flushSync` is re-exported for tests.
+
+Porting a `react-dom` tree is mostly renaming: `<div style={{display:"flex"}}>` becomes `<VStack>` or `<HStack>`, `<span>` becomes `<Text>`, `<input>` becomes `<TextField>`, `onChange` handlers receive the value rather than an event.
+
+---
+
+## The `app` object
+
+```ts
+import { app } from "bun:appkit";
+
+app.name = "My Tool"; // menu bar title
+app.activationPolicy = "regular"; // "regular" (Dock icon + menu bar), "accessory" (no Dock icon), "background"
+app.badge = "3"; // Dock badge, "" to clear
+app.keepAlive = true; // keep running with no windows open (menu bar utilities)
+app.menu = [
+  {
+    title: "File",
+    items: [
+      { title: "New Window", key: "n", onClick: () => new Window({ title: "Untitled" }).show() },
+      "separator",
+      { title: "Close", key: "w", action: "performClose:" },
+    ],
+  },
+];
+
+app.windows; // open Window objects
+app.isDark; // system appearance
+app.activate(); // bring to front
+app.hide();
+app.quit(); // closes every window; the process then exits normally
+
+app.on("beforequit", e => e.preventDefault()); // Cmd-Q; veto by preventing default
+app.on("reopen", () => {}); // Dock icon clicked with no windows visible
+```
+
+The application starts lazily when the first `Window` is created or `app.activate()` is called. Set `app.activationPolicy` before that if you do not want a Dock icon. A standard menu bar (app menu, Edit with cut/copy/paste/undo, Window) is installed by default; assigning `app.menu` adds your menus after the app menu. Menu items take either an `onClick` callback or the name of a responder-chain `action` such as `"performClose:"`, plus `key` with optional `shift` / `option` / `control` / `command` (default `true`) modifiers.
+
+---
+
+## Windows
+
+```ts
+const win = new Window({
+  title: "Inspector",
+  width: 480, // content size in points; default 480 x 320
+  height: 320,
+  x: 100, // screen coordinates, bottom-left origin; omit both to center
+  y: 100,
+  minWidth: 200,
+  minHeight: 100,
+  resizable: true, // also closable, minimizable (default true)
+  titlebarTransparent: false,
+  fullSizeContent: false,
+  titleHidden: false,
+  background: "windowBackground",
+  content: someView,
+});
+
+win.show(); // orders front and activates the app the first time
+win.hide();
+win.center();
+win.focus();
+win.close(); // idempotent
+win.content = otherView; // replace the root view
+win.snapshot(); // Uint8Array PNG of the window contents (null before the window has a size)
+
+win.visible;
+win.closed;
+win.key; // has keyboard focus
+
+win.onClose = () => {};
+win.shouldClose = () => confirmDiscard(); // return false to keep the window open
+win.onResize = ({ width, height }) => {};
+win.onMove = ({ x, y }) => {};
+win.onFocus = () => {};
+win.onBlur = () => {};
+```
+
+The root view is pinned to the window's edges. A `VStack` root hugs the top and lets a child with `grow` (or a `ScrollView`, `TextEditor`, `Table`) take the remaining height.
+
+---
+
+## Views
+
+Every view is a class you construct with an optional props object and then mutate through accessors; the React props are the same keys. Containers (`VStack`, `HStack`, `ZStack`, `Group`, `ScrollView`, `SplitView`) additionally have `children`, `append(...views)`, `insertBefore(view, ref)`, `removeChild(view)` and `replaceChildren(...views)`. A view has at most one parent; `view.remove()` detaches it. `view.parent`, `view.window` and `view.frame` (`{ x, y, width, height }` in its parent's coordinates after layout) are read-only, and `view.snapshot()` returns a PNG of just that view.
+
+### Common props
+
+| Prop                                          | Type                  | Notes                                                                            |
+| --------------------------------------------- | --------------------- | -------------------------------------------------------------------------------- |
+| `hidden`                                      | `boolean`             | Hidden views keep their place in `children` but take no space in a stack.        |
+| `alpha`                                       | `number`              | 0 to 1.                                                                          |
+| `tooltip`                                     | `string`              |                                                                                  |
+| `id`                                          | `string`              | Accessibility identifier; useful for UI tests.                                   |
+| `width` `height`                              | `number \| undefined` | Fixed size in points. `undefined` removes the constraint.                        |
+| `minWidth` `maxWidth` `minHeight` `maxHeight` | `number \| undefined` |                                                                                  |
+| `grow`                                        | `number`              | `0` (default) hugs content; higher values take leftover space in a stack sooner. |
+| `background`                                  | `Color \| undefined`  | Fills the view's layer.                                                          |
+| `cornerRadius`                                | `number`              |                                                                                  |
+| `border`                                      | `{ width, color? }`   |                                                                                  |
+
+### Elements
+
+| Element                                 | AppKit class                   | Props                                                                                                                                  | Events                                                     | Readable state    |
+| --------------------------------------- | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- | ----------------- |
+| `VStack` `HStack`                       | `NSStackView`                  | `spacing` (8), `padding` (number or `{top,left,bottom,right}`), `align`, `distribution`                                                |                                                            |                   |
+| `ZStack`                                | `NSView`                       | children pinned to its edges                                                                                                           |                                                            |                   |
+| `Group`                                 | `NSBox`                        | `title`, `spacing`, `padding`, `align`, `distribution`                                                                                 |                                                            |                   |
+| `ScrollView`                            | `NSScrollView`                 | `scrollBars: { horizontal, vertical }`                                                                                                 |                                                            |                   |
+| `SplitView`                             | `NSSplitView`                  | `vertical`                                                                                                                             |                                                            |                   |
+| `Text`                                  | `NSTextField` (label)          | `text`, `font`, `color`, `textAlign`, `selectable`, `lineLimit` (1; `0` wraps)                                                         |                                                            |                   |
+| `Button`                                | `NSButton`                     | `title`, `kind` (`default` `primary` `destructive` `link` `toolbar`), `enabled`, `symbol`, `keyEquivalent`                             | `onClick()`                                                |                   |
+| `Checkbox` `Radio`                      | `NSButton`                     | `title`, `checked`, `enabled`                                                                                                          | `onChange(checked)`                                        | `checked`         |
+| `Switch`                                | `NSSwitch`                     | `checked`, `enabled`                                                                                                                   | `onChange(checked)`                                        | `checked`         |
+| `TextField` `SecureField` `SearchField` | `NSTextField` and subclasses   | `value`, `placeholder`, `editable`, `enabled`, `font`, `textAlign`, `continuous`                                                       | `onChange(value)` `onSubmit(value)` `onFocus()` `onBlur()` | `value`           |
+| `TextEditor`                            | `NSTextView` in a scroll view  | `value`, `editable`, `font`                                                                                                            | `onChange(value)`                                          | `value`           |
+| `Slider`                                | `NSSlider`                     | `value`, `min` (0), `max` (1), `step`, `continuous`                                                                                    | `onChange(value)`                                          | `value`           |
+| `Picker`                                | `NSPopUpButton`                | `items: string[]`, `selectedIndex`                                                                                                     | `onChange(index)`                                          | `selectedIndex`   |
+| `Segmented`                             | `NSSegmentedControl`           | `items: string[]`, `selectedIndex`                                                                                                     | `onChange(index)`                                          | `selectedIndex`   |
+| `Progress`                              | `NSProgressIndicator`          | `value`, `min`, `max`, `indeterminate`, `running`, `spinner`                                                                           |                                                            |                   |
+| `Image`                                 | `NSImageView`                  | `image` (`{ symbol }`, `{ file }` or bytes), `scaling` (`fit` `fill` `down` `none`), `tint`, `size`                                    |                                                            |                   |
+| `Divider`                               | `NSBox` separator              | `vertical`                                                                                                                             |                                                            |                   |
+| `Spacer`                                | `NSView`                       | `minLength`; grows to fill a stack                                                                                                     |                                                            |                   |
+| `Table`                                 | `NSTableView` in a scroll view | `columns: { id, title, width? }[]`, `rows: string[][]`, `selectedIndexes`, `multiple`, `headerVisible`, `alternatingRows`, `rowHeight` | `onSelect(indexes)` `onActivate(row)`                      | `selectedIndexes` |
+
+"Readable state" props read the live value back from the control, so `field.value` reflects what the user typed. All other getters return the last value you set. Setting a value from code (`field.value = "x"`, `slider.value = 3`, `checkbox.checked = true`) does not fire that view's `onChange`.
+
+`button.click()` performs a real click (`performClick:`), which is how tests drive the UI without a mouse.
+
+In a `VStack`, children stretch to the stack's width by default (`align: "fill"`); buttons keep their natural width. In an `HStack` children are vertically centered. `align` accepts `fill leading center trailing top bottom firstBaseline lastBaseline`; `distribution` accepts `fill fillEqually fillProportionally equalSpacing equalCentering gravity`.
+
+### Colors and fonts
+
+Colors are strings: `"#rgb"`, `"#rgba"`, `"#rrggbb"`, `"#rrggbbaa"`, `"rgb(r, g, b)"` / `"rgba(r, g, b, a)"`, or a system color name that follows the user's appearance and accent settings: `label secondaryLabel tertiaryLabel quaternaryLabel text placeholder link separator accent control controlText controlBackground windowBackground underPageBackground textBackground selectedContentBackground clear black white gray red orange yellow green mint teal cyan blue indigo purple pink brown`.
+
+`font` is a point size or `{ size?, weight?, design?, italic? }`. `weight` is CSS-style `100`-`900` or one of `ultralight thin light regular medium semibold bold heavy black`; `design` is `default`, `monospaced`, `rounded` or `serif`; `size: 0` or omitted means the standard control size.
+
+---
+
+## Event loop
+
+AppKit must run on the main thread, which is also the JavaScript thread. Bun keeps its own event loop as the outer loop and, only while the app is running, waits for I/O inside AppKit's event dispatch instead of directly in `kevent`. A file descriptor becoming ready wakes that wait immediately, so there is no polling interval and no added latency: timers, `fetch`, sockets, `Bun.serve`, subprocesses, `Worker` messages and file watchers all keep running while windows are open, and UI callbacks (`onClick`, `onChange`, window events) run in the same phase of the tick as socket callbacks, with microtasks drained before control returns to AppKit.
+
+Two consequences:
+
+- A long synchronous piece of JavaScript freezes the UI, exactly as it would freeze a server. Move heavy work to a `Worker`.
+- While AppKit runs a tracking loop of its own (the user is holding a menu open or dragging a window resize) JavaScript timers and I/O callbacks are paused and resume when it ends.
+
+Process lifetime follows the usual rule: open windows keep the process alive; when the last one closes and nothing else is pending, `beforeExit` / `exit` fire and the process ends. Cmd-Q emits `beforequit` and then closes every window rather than terminating the process directly, so cleanup code runs. Set `app.keepAlive = true` for menu-bar style tools that should outlive their windows.
+
+---
+
+## Testing
+
+Each view and window can render itself to PNG with `snapshot()`, `button.click()` triggers the real action, and readable props (`value`, `checked`, `selectedIndex`, ...) reflect control state, so UI logic is testable with `bun test` by driving the objects directly. Without a display (plain `ssh`, CI agents, sandboxes) everything still runs off screen: windows lay out, controls fire, snapshots render; they are just never shown. `app.hasDisplay` tells you which case you are in. `"ERR_APPKIT_UNAVAILABLE"` is only thrown if the system frameworks cannot be loaded at all.
+
+```ts
+import { test, expect } from "bun:test";
+import { app, Window, Button, Text, VStack } from "bun:appkit";
+
+app.activationPolicy = "accessory"; // no Dock icon while tests run
+
+test("counter increments", () => {
+  const label = new Text({ text: "0" });
+  const button = new Button({ title: "+", onClick: () => (label.text = String(Number(label.text) + 1)) });
+  const stack = new VStack();
+  stack.append(label, button);
+  const win = new Window({ content: stack });
+  button.click();
+  button.click();
+  expect(label.text).toBe("2");
+  win.close();
+});
+```
+
+---
+
+## Limitations
+
+- macOS only (arm64 and x64). On other platforms `Bun.AppKit` and `import "bun:appkit"` throw `AppKit is only available on macOS`.
+- Everything runs on the main thread; there is no separate UI thread. Do not touch these objects from a `Worker`.
+- Timers and I/O pause during AppKit tracking loops (open menus, live window resize).
+- No modal APIs (`NSAlert`, open/save panels, sheets) yet, no drag and drop, no custom drawing, and no `.app` bundling: the program is a normal `bun` process, so it has the generic executable icon in the Dock unless `activationPolicy` is `"accessory"`.

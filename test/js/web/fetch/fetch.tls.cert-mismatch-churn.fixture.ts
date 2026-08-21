@@ -81,13 +81,15 @@ const bump = (k: string) => counts.set(k, (counts.get(k) ?? 0) + 1);
 
 const failures: string[] = [];
 
-// Launched up front so the ~1s idle-timeout waits overlap the batch loop.
+// Launched up front so the idle-timeout waits overlap the batch loop. The 1s
+// env override is padded for the 4s sweep tick, so on_timeout fires at ~4-8s;
+// the AbortSignal budget must be larger for that path to stay reachable.
 const stallJobs: Promise<void>[] = [];
 for (let i = 0; i < 3; i++) {
   stallJobs.push(
     fetch(`https://localhost:${stallPort}/`, {
       tls: { ca: validTls.cert },
-      signal: AbortSignal.timeout(1200),
+      signal: AbortSignal.timeout(10_000),
     }).then(
       res => {
         failures.push(`stalled handshake fetch resolved with status ${res.status}`);

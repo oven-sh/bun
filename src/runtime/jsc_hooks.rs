@@ -2950,7 +2950,6 @@ fn transpile_source_code_inner(
                             if len == 0 {
                                 (core::ptr::null_mut(), 0)
                             } else {
-                                // C++ side becomes the owner.
                                 (bun_core::heap::into_raw(bytes).cast::<u8>(), len)
                             }
                         }
@@ -2963,6 +2962,7 @@ fn transpile_source_code_inner(
                         already_bundled: true,
                         bytecode_cache,
                         bytecode_cache_size,
+                        bytecode_cache_needs_free: !bytecode_cache.is_null(),
                         is_commonjs_module,
                         ..Default::default()
                     }));

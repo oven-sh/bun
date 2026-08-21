@@ -59,6 +59,22 @@ extern "C" bool BunTest__shouldGenerateCodeCoverage(BunString sourceURL);
 extern "C" void Bun__addSourceProviderSourceMap(void* bun_vm, SourceProvider* opaque_source_provider, BunString* specifier);
 extern "C" void Bun__removeSourceProviderSourceMap(void* bun_vm, SourceProvider* opaque_source_provider, BunString* specifier);
 
+// An owned `bytecode_cache` is a Rust `Box<[u8]>`, hence `defaultAllocatorFree`.
+static void freeSidecarBytecode(const void* ptr)
+{
+    Bun::defaultAllocatorFree(const_cast<void*>(ptr));
+}
+
+void freeOwnedBytecodeCache(ResolvedSource& resolvedSource)
+{
+    if (!resolvedSource.bytecode_cache_needs_free)
+        return;
+    resolvedSource.bytecode_cache_needs_free = false;
+    freeSidecarBytecode(resolvedSource.bytecode_cache);
+    resolvedSource.bytecode_cache = nullptr;
+    resolvedSource.bytecode_cache_size = 0;
+}
+
 Ref<SourceProvider> SourceProvider::create(
     Zig::GlobalObject* globalObject,
     ResolvedSource& resolvedSource,
@@ -103,20 +119,18 @@ Ref<SourceProvider> SourceProvider::create(
 
     const auto getProvider = [&]() -> Ref<SourceProvider> {
         if (resolvedSource.bytecode_cache != nullptr) {
-            const auto destructorPtr = [](const void* ptr) {
-                // `bytecode_cache` was `heap::into_raw`'d from a Rust `Box<[u8]>`
-                // (the global allocator); free with `defaultAllocatorFree` so
-                // it agrees with the `#[global_allocator]`.
-                Bun::defaultAllocatorFree(const_cast<void*>(ptr));
-            };
-            const auto destructorNoOp = [](const void* ptr) {
-                // no-op, for bun build --compile.
-            };
-            const auto destructor = resolvedSource.needsDeref ? destructorPtr : destructorNoOp;
+            // The CachedBytecode takes over an owned blob; clearing the flag keeps the
+            // copy stored in the provider and the caller's struct from freeing it too.
+            // Borrowed blobs (compile cache, standalone executable) get no destructor.
+            JSC::CachePayload::Destructor destructor;
+            if (resolvedSource.bytecode_cache_needs_free) {
+                resolvedSource.bytecode_cache_needs_free = false;
+                destructor = freeSidecarBytecode;
+            }
 
             auto origin = getSourceOrigin();
 
-            Ref<JSC::CachedBytecode> bytecode = JSC::CachedBytecode::create(std::span<uint8_t>(resolvedSource.bytecode_cache, resolvedSource.bytecode_cache_size), destructor, {});
+            Ref<JSC::CachedBytecode> bytecode = JSC::CachedBytecode::create(std::span<uint8_t>(resolvedSource.bytecode_cache, resolvedSource.bytecode_cache_size), WTF::move(destructor), {});
             auto provider = adoptRef(*new SourceProvider(
                 globalObject->bunVM(),
                 resolvedSource,

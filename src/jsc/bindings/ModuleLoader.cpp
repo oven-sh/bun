@@ -57,10 +57,14 @@ public:
 
     ~ResolvedSourceCodeHolder()
     {
-        if (res->success && res->result.value.source_code.tag == BunStringTag::WTFStringImpl && res->result.value.needsDeref) {
+        if (!res->success)
+            return;
+        if (res->result.value.source_code.tag == BunStringTag::WTFStringImpl && res->result.value.needsDeref) {
             res->result.value.needsDeref = false;
             res->result.value.source_code.impl.wtf->deref();
         }
+        // No-op once a SourceProvider has taken the blob.
+        Zig::freeOwnedBytecodeCache(res->result.value);
     }
 
     ErrorableResolvedSource* res;

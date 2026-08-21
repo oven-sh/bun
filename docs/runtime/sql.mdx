@@ -1274,6 +1274,24 @@ console.log(typeof x, x); // "bigint" 9223372036854777n
 
 ---
 
+## Dates and time zones
+
+A PostgreSQL `timestamp` (without time zone, OID 1114) value has no offset on the wire. The same is true for MySQL `DATETIME` and `TIMESTAMP` values. Bun decodes these values as **UTC**. The `Date` you get has the UTC wall clock that the database stored, regardless of the machine's time zone. The value is the same for `sql``.simple()` queries and for queries with parameters. Bun decodes a `date` value as UTC midnight.
+
+```ts
+// Column: created_at timestamp, stored value: 2024-01-15 12:00:00
+const [row] = await sql`SELECT created_at FROM events`;
+row.created_at.toISOString(); // "2024-01-15T12:00:00.000Z" on every host
+```
+
+With prepared statements (the default), Bun sends a bound `Date` parameter as its UTC instant. The host time zone does not change the value that Bun stores or the value that you read back.
+
+Bun currently decodes the elements of a PostgreSQL `timestamp[]` array as local time.
+
+`node-postgres` (`pg`), `postgres.js`, and PGlite decode a PostgreSQL `timestamp` as **local time** instead. `pg` also decodes a `date` as local midnight. If you migrate from one of them and the host is not UTC, the same stored value produces a `Date` for a different instant. `timestamptz` carries an explicit offset and decodes to the same instant in every driver. Prefer `timestamptz` for a column that stores a point in time.
+
+---
+
 ## Roadmap
 
 Things we haven't finished yet:
@@ -1367,7 +1385,7 @@ Bun converts MySQL types to JavaScript types:
 | BIT(1)                                  | boolean                  | BIT(1) in MySQL                                                                                  |
 | GEOMETRY                                | Buffer                   | Binary character set; the bytes are a 4-byte SRID followed by WKB                                |
 
-`DATETIME` and `TIMESTAMP` values have no timezone on the wire, so Bun reads them back as **UTC**. The `Date` you get has the same UTC wall-clock that was stored, regardless of the machine's timezone. Reading as UTC matches how Bun writes values (a bound `Date` stores its UTC components). PostgreSQL's `timestamp` (without time zone) behaves the same way. See [Timestamps and time zones](#timestamps-and-time-zones).
+`DATETIME` and `TIMESTAMP` values have no time zone on the wire, so Bun reads them back as **UTC**. See [Dates and time zones](#dates-and-time-zones).
 
 #### Differences from PostgreSQL
 
@@ -1382,20 +1400,6 @@ The API is unified, but behavior differs:
 We haven't implemented `LOAD DATA INFILE` support yet.
 
 ### PostgreSQL-Specific Features
-
-#### Timestamps and time zones
-
-A `timestamp` (without time zone, OID 1114) value has no offset on the wire. Bun decodes it as **UTC**: the `Date` you get has the same UTC wall clock that was stored, regardless of the machine's time zone. Bun decodes it the same way in regular queries and in `sql``.simple()` queries. This matches how Bun writes values (a bound `Date` stores its UTC components), so a `Date` round-trips exactly on any host.
-
-```ts
-// Column: created_at timestamp, stored value: 2024-01-15 12:00:00
-const [row] = await sql`SELECT created_at FROM events`;
-row.created_at.toISOString(); // "2024-01-15T12:00:00.000Z" on every host
-```
-
-`node-postgres` (`pg`), `postgres.js`, and PGlite decode `timestamp` as **local time** instead. If you migrate from one of them and the host is not UTC, the same stored value produces a `Date` for a different instant. `timestamptz` carries an explicit offset and decodes the same in every driver. Prefer `timestamptz` when a column stores a point in time.
-
-#### Not yet implemented
 
 We haven't implemented these yet:
 

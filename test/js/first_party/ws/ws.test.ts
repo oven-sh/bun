@@ -352,36 +352,40 @@ describe("WebSocketServer", () => {
       }
     }
 
-    // Like npm ws, binaryType applies to binary data frames only: ping and pong
-    // payloads are always a Buffer.
+    // npm ws emits ping and pong payloads as a Buffer in every mode. The shim keeps that
+    // where it can wrap the payload synchronously. A Blob cannot be wrapped, so "blob"
+    // applies to ping and pong payloads too, as it does on a Bun.serve socket.
     const serverBinaryTypes = [
-      { binaryType: "nodebuffer", shape: "Buffer" },
-      { binaryType: "arraybuffer", shape: "ArrayBuffer" },
-      { binaryType: "blob", shape: "Blob" },
+      { binaryType: "nodebuffer", shape: "Buffer", controlShape: "Buffer" },
+      { binaryType: "arraybuffer", shape: "ArrayBuffer", controlShape: "Buffer" },
+      { binaryType: "blob", shape: "Blob", controlShape: "Blob" },
     ] as const;
 
-    it.each(serverBinaryTypes)("$binaryType: binary frames arrive as $shape", async ({ binaryType, shape }) => {
-      const received = await receiveOnServer(
-        ws => {
-          // @types/ws 8.5 does not list "blob", ws 8.18 accepts it
-          ws.binaryType = binaryType as WebSocket["binaryType"];
-        },
-        client => {
-          client.ping(Buffer.from([4]));
-          client.pong(Buffer.from([5]));
-          client.send(Buffer.from([1, 2, 3]));
-          client.send(Buffer.alloc(0));
-        },
-        2,
-      );
+    it.each(serverBinaryTypes)(
+      "$binaryType: binary frames arrive as $shape, ping and pong payloads as $controlShape",
+      async ({ binaryType, shape, controlShape }) => {
+        const received = await receiveOnServer(
+          ws => {
+            // @types/ws 8.5 does not list "blob", ws 8.18 accepts it
+            ws.binaryType = binaryType as WebSocket["binaryType"];
+          },
+          client => {
+            client.ping(Buffer.from([4]));
+            client.pong(Buffer.from([5]));
+            client.send(Buffer.from([1, 2, 3]));
+            client.send(Buffer.alloc(0));
+          },
+          2,
+        );
 
-      expect(received).toEqual([
-        { event: "ping", shape: "Buffer", bytes: [4] },
-        { event: "pong", shape: "Buffer", bytes: [5] },
-        { event: "message", shape, bytes: [1, 2, 3], isBinary: true },
-        { event: "message", shape, bytes: [], isBinary: true },
-      ]);
-    });
+        expect(received).toEqual([
+          { event: "ping", shape: controlShape, bytes: [4] },
+          { event: "pong", shape: controlShape, bytes: [5] },
+          { event: "message", shape, bytes: [1, 2, 3], isBinary: true },
+          { event: "message", shape, bytes: [], isBinary: true },
+        ]);
+      },
+    );
 
     it("defaults to nodebuffer and applies a new value to the next frame", async () => {
       const binaryTypesSeen: string[] = [];
@@ -408,7 +412,7 @@ describe("WebSocketServer", () => {
       expect(received).toEqual([
         { event: "message", shape: "ArrayBuffer", bytes: [1], isBinary: true },
         // the ping arrives after the change to "blob"
-        { event: "ping", shape: "Buffer", bytes: [2] },
+        { event: "ping", shape: "Blob", bytes: [2] },
         { event: "message", shape: "Blob", bytes: [3], isBinary: true },
         { event: "message", shape: "Buffer", bytes: [4], isBinary: true },
       ]);

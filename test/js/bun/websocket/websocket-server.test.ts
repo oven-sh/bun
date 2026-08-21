@@ -57,6 +57,10 @@ const binaryTypes = [
     label: "uint8array",
     type: Uint8Array,
   },
+  {
+    label: "blob",
+    type: Blob,
+  },
 ] as const;
 
 let servers: Server[] = [];
@@ -736,6 +740,71 @@ describe("ServerWebSocket", () => {
         },
       }));
     }
+    test("keeps accepting the capitalized and 'buffer' spellings", done => ({
+      open(ws) {
+        try {
+          const seen: string[] = [];
+          for (const spelling of ["Buffer", "buffer", "ArrayBuffer", "Uint8Array", "nodebuffer"]) {
+            ws.binaryType = spelling as typeof ws.binaryType;
+            seen.push(ws.binaryType!);
+          }
+          expect(seen).toEqual(["nodebuffer", "nodebuffer", "arraybuffer", "uint8array", "nodebuffer"]);
+          done();
+        } catch (err) {
+          done(err);
+        }
+      },
+    }));
+    test("blob payloads carry the frame bytes", done => {
+      const received: { event: string; size: number; type: string; bytes: number[] }[] = [];
+      async function record(event: string, data: unknown) {
+        const blob = data as Blob;
+        received.push({ event, size: blob.size, type: blob.type, bytes: Array.from(await blob.bytes()) });
+      }
+      // The echo client answers a message with the same message, a pong with the same pong
+      // and a ping with the same ping. The client's WebSocket also answers a ping with an
+      // automatic pong, so the server pong is sent first and only the first pong is recorded.
+      return {
+        open(ws) {
+          try {
+            ws.binaryType = "blob";
+            ws.send(new Uint8Array([1, 2, 3]));
+          } catch (err) {
+            done(err);
+          }
+        },
+        async message(ws, data) {
+          try {
+            await record("message", data);
+            ws.pong(new Uint8Array([5]));
+          } catch (err) {
+            done(err);
+          }
+        },
+        async pong(ws, data) {
+          if (received.some(({ event }) => event === "pong")) return;
+          try {
+            await record("pong", data);
+            ws.ping(new Uint8Array([4]));
+          } catch (err) {
+            done(err);
+          }
+        },
+        async ping(_, data) {
+          try {
+            await record("ping", data);
+            expect(received).toEqual([
+              { event: "message", size: 3, type: "", bytes: [1, 2, 3] },
+              { event: "pong", size: 1, type: "", bytes: [5] },
+              { event: "ping", size: 1, type: "", bytes: [4] },
+            ]);
+            done();
+          } catch (err) {
+            done(err);
+          }
+        },
+      };
+    });
   });
   describe("send()", () => {
     for (const { label, message, bytes } of messages) {

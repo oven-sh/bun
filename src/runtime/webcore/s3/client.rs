@@ -614,14 +614,11 @@ impl S3UploadStreamWrapper {
         unsafe { &*self.task }
     }
 
-    /// Whether `resolve` must release the pump's +1 (`upload_stream`) itself because
-    /// its usual releaser can no longer run: `end_from_stream` (native source, which it
-    /// clears first) once S3 failed first, or a JS pump's `.then` shim once this VM has
-    /// forbidden execution (set on this thread, for good, before teardown's stop phase;
-    /// JSC discards every microtask from then on). Nothing less proves that shim dead:
-    /// `script_allowed()` goes false on the parent's `terminate()` call, while this
-    /// thread may still be draining microtasks, and a direct stream's pump promise
-    /// settles from the user's pull promise even after its controller was collected.
+    /// Whether `resolve` must release the pump's +1 (`upload_stream`) itself: a native
+    /// source is still attached (S3 failed before `end_from_stream`, which clears it), or
+    /// a JS pump's `.then` shim is a microtask on a VM that has forbidden execution, which
+    /// JSC never runs. `script_allowed()` is not that: a parent's `terminate()` clears it
+    /// while this thread may still drain microtasks, the shim among them.
     /// Read before settling: the failure path's `source.close()` clears `source`.
     fn pump_ref_is_stranded(&mut self) -> bool {
         let native_fast_path = !matches!(self.readable_stream_ref, ReadableStreamStrong::Empty);

@@ -1,7 +1,7 @@
 import { spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
 import { rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, readdirSorted, tmpdirSync } from "harness";
+import { bunExe, bunEnv as env, readdirSorted, tempDir } from "harness";
 import { join } from "path";
 import {
   dummyAfterAll,
@@ -16,13 +16,19 @@ import {
 
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
-setDefaultTimeout(1000 * 60 * 5);
 
 let cache_dir: string;
+// temp dirs created by a test; removed after it
+let dirs: { [Symbol.dispose](): void }[] = [];
+function mkdtemp(): string {
+  const d = tempDir("offline", {});
+  dirs.push(d);
+  return String(d);
+}
 
 beforeEach(async () => {
   await dummyBeforeEach({ linker: "hoisted" });
-  cache_dir = tmpdirSync();
+  cache_dir = mkdtemp();
   // dummyBeforeEach disables the cache; these tests are about the cache
   await writeFile(
     join(package_dir, "bunfig.toml"),
@@ -31,7 +37,11 @@ beforeEach(async () => {
     }),
   );
 });
-afterEach(dummyAfterEach);
+afterEach(async () => {
+  await dummyAfterEach();
+  for (const d of dirs) d[Symbol.dispose]();
+  dirs = [];
+});
 
 async function install(cwd: string, args: string[]) {
   await using proc = spawn({ cmd: [bunExe(), "install", ...args], cwd, env, stdout: "pipe", stderr: "pipe" });
@@ -39,12 +49,12 @@ async function install(cwd: string, args: string[]) {
   return { out, err, code };
 }
 
-async function newProject(deps: Record<string, string>) {
-  const dir = tmpdirSync();
+async function newProject(deps: Record<string, string>, cache = cache_dir) {
+  const dir = mkdtemp();
   await writeFile(
     join(dir, "bunfig.toml"),
     Bun.TOML.stringify({
-      install: { cache: { dir: cache_dir }, registry: root_url + "/", saveTextLockfile: true, linker: "hoisted" },
+      install: { cache: { dir: cache }, registry: root_url + "/", saveTextLockfile: true, linker: "hoisted" },
     }),
   );
   await writeFile(join(dir, "package.json"), JSON.stringify({ name: "app", version: "1.0.0", dependencies: deps }));
@@ -116,14 +126,15 @@ it("--offline never issues a request and fails cleanly on a cache miss", async (
 it("--prefer-offline and --offline use an expired cached manifest", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls, { "0.0.3": {}, "0.0.5": {} }));
-  await writeFile(
-    join(package_dir, "package.json"),
-    JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { baz: "0.0.3" } }),
-  );
-  expect((await install(package_dir, [])).code).toBe(0);
-  const before = urls.length;
   for (const flag of ["--prefer-offline", "--offline"]) {
-    const dir = await newProject({ baz: "^0.0.3" });
+    // each mode gets its own warmed cache so one cannot pre-fetch for the other
+    const cache = mkdtemp();
+    const warm = await newProject({ baz: "0.0.3" }, cache);
+    const w = await install(warm, []);
+    expect(w.err).not.toContain("error:");
+    expect(w.code).toBe(0);
+    const before = urls.length;
+    const dir = await newProject({ baz: "^0.0.3" }, cache);
     const r = await install(dir, ["--force", flag]);
     expect(r.err).not.toContain("error:");
     expect(r.code).toBe(0);
@@ -140,9 +151,13 @@ it('install.prefer = "offline" and install.offline = true in bunfig.toml behave 
     join(package_dir, "package.json"),
     JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { baz: "0.0.3" } }),
   );
-  expect((await install(package_dir, [])).code).toBe(0);
+  {
+    const w = await install(package_dir, []);
+    expect(w.err).not.toContain("error:");
+    expect(w.code).toBe(0);
+  }
   const before = urls.length;
-  const dir2 = tmpdirSync();
+  const dir2 = mkdtemp();
   await writeFile(
     join(dir2, "bunfig.toml"),
     Bun.TOML.stringify({
@@ -155,7 +170,7 @@ it('install.prefer = "offline" and install.offline = true in bunfig.toml behave 
   expect(r.code).toBe(0);
   expect(urls.length).toBe(before);
 
-  const dir3 = tmpdirSync();
+  const dir3 = mkdtemp();
   await writeFile(
     join(dir3, "bunfig.toml"),
     Bun.TOML.stringify({

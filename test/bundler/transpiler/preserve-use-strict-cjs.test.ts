@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { rmSync } from "fs";
-import { bunEnv, bunExe, bunRun, isWindows } from "harness";
+import { readFileSync, rmSync } from "fs";
+import { bunEnv, bunExe, bunRun, isWindows, tempDir } from "harness";
 import path from "path";
 
 test.concurrent(`"use strict'; preserves strict mode in CJS`, async () => {
@@ -36,4 +36,33 @@ test.concurrent(`"use strict"; after another directive preserves strict mode wit
   } finally {
     rmSync(socket, { force: true });
   }
+});
+
+test.concurrent(`"use strict"; after another directive preserves strict mode under bun test --coverage`, async () => {
+  // --coverage turns syntax minification off for the whole process, the same
+  // way the inspector does, so a test suite used to see such modules in
+  // sloppy mode only when coverage was enabled.
+  using dir = tempDir("use-strict-coverage", {
+    "lib.cjs": readFileSync(path.join(import.meta.dir, "strict-mode-after-directive-fixture.cjs"), "utf8"),
+    "lib.test.ts": `
+      import { expect, test } from "bun:test";
+      test("lib is strict", () => {
+        expect(require("./lib.cjs")).toEqual({ FORCE_COMMON_JS: true });
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "./lib.test.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // The fixture throws before it exports anything when it runs in sloppy mode.
+  expect(stderr).not.toContain("this is not undefined");
+  expect(stderr).toContain("1 pass");
+  // The test runner prints its banner to stdout too.
+  expect(stdout).toEndWith("strict\n");
+  expect(exitCode).toBe(0);
 });

@@ -2559,7 +2559,7 @@ mod draft {
                     return StackLine::in_foreign_image(&m.name, address - m.base_address);
                 }
                 return Some(StackLine {
-                    address: i32::try_from(address - m.base_address).expect("int cast"),
+                    address: i32::try_from(address - m.base_address).ok()?,
                     object: None,
                 });
             }

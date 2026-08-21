@@ -121,7 +121,10 @@ pub(crate) mod js_bindings {
             // SAFETY: RTLD_NEXT is a valid pseudo-handle and the name is NUL-terminated.
             let strlen = unsafe { bun_sys::c::dlsym(bun_sys::c::RTLD_NEXT, c"strlen".as_ptr()) };
             if strlen.is_null() {
-                return Err(global.throw(format_args!("dlsym(RTLD_NEXT, \"strlen\") failed")));
+                return Err(global.throw(format_args!(
+                    "dlsym(RTLD_NEXT, \"strlen\") failed: {}",
+                    bstr::BStr::new(&crate::ffi::get_dl_error())
+                )));
             }
             // ASAN owns SIGSEGV (see `js_segfault`): hand the handler the context the fault below would produce.
             if Environment::ENABLE_ASAN {

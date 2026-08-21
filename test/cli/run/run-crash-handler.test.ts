@@ -246,14 +246,9 @@ function decodeTraceFrames(payload: string): { object: string; address: number }
   throw new Error(`unterminated frame list in ${payload}`);
 }
 
-// A frame outside bun's own executable is encoded with the basename of the
-// image it is in, which bun.report shows as the frame's package: that is what
-// attributes a crash inside a native addon to the addon's `.node` file.
-// Windows has always encoded DLL names this way. macOS encoded every such
-// frame as unknown, and Linux encoded them as bun offsets, which symbolized to
-// unrelated bun functions. The fault here is inside libc, so frame 0 is libc's.
 // Crashes bun with `args`, receives the report it uploads, and returns the
-// crash's stderr together with the decoded frames of the uploaded trace string.
+// crash's stderr and exit code together with the decoded frames of the
+// uploaded trace string.
 async function uploadedCrashFrames(args: string[]) {
   const uploaded = Promise.withResolvers<string>();
   using server = Bun.serve({
@@ -276,17 +271,31 @@ async function uploadedCrashFrames(args: string[]) {
     stdio: ["ignore", "ignore", "pipe"],
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  expect(exitCode).not.toBe(0);
 
-  const pathname = await uploaded.promise;
+  // The upload comes from a curl the crashed process started, so it can arrive
+  // shortly after the exit. A process that died without reporting (for example
+  // with a JS error out of the test hook) never uploads: fail with its stderr
+  // instead of waiting for the test timeout.
+  const pathname = await Promise.race([
+    uploaded.promise,
+    Bun.sleep(2000).then(() => {
+      throw new Error(`no crash report was uploaded; exit code ${exitCode}, stderr:\n${stderr}`);
+    }),
+  ]);
   // `/` is also a VLQ digit, so the payload cannot be split out on it.
   const payload = pathname.match(/^\/[^/]+\/(.*)\/ack$/)?.[1];
   expect(payload, pathname).toBeDefined();
-  return { stderr, frames: decodeTraceFrames(payload!) };
+  return { stderr, exitCode, frames: decodeTraceFrames(payload!) };
 }
 
+// A frame outside bun's own executable is encoded with the basename of the
+// image it is in, which bun.report shows as the frame's package: that is what
+// attributes a crash inside a native addon to the addon's `.node` file.
+// Windows has always encoded DLL names this way. macOS encoded every such
+// frame as unknown, and Linux encoded them as bun offsets, which symbolized to
+// unrelated bun functions. The fault here is inside libc, so frame 0 is libc's.
 test.if(isPosix)("the uploaded trace string names the image of a frame outside bun", async () => {
-  const { stderr, frames } = await uploadedCrashFrames([
+  const { stderr, exitCode, frames } = await uploadedCrashFrames([
     path.join(import.meta.dir, "fixture-crash.js"),
     "segfaultInDll",
   ]);
@@ -302,6 +311,7 @@ test.if(isPosix)("the uploaded trace string names the image of a frame outside b
   // executable must not be mistaken for a foreign image, under any name.
   expect(frames.some(frame => frame.object === "bun")).toBe(true);
   expect(frames.map(frame => frame.object)).not.toContain(path.basename(bunExe()));
+  expect(exitCode).not.toBe(0);
 });
 
 // A crash used to upload at most 20 frames. An addon that aborts on the JS
@@ -312,7 +322,7 @@ test.if(isPosix)("the uploaded trace string names the image of a frame outside b
 // 60 levels of JS recursion under the crash give the walk more than 20 frames
 // to find.
 test.if(isPosix)("the uploaded trace string holds more than 20 frames", async () => {
-  const { stderr, frames } = await uploadedCrashFrames([
+  const { stderr, exitCode, frames } = await uploadedCrashFrames([
     "-e",
     `const { crash_handler } = require("bun:internal-for-testing");
      function recurse(depth) { return depth === 0 ? crash_handler.segfault() : recurse(depth - 1) + 1; }
@@ -322,6 +332,7 @@ test.if(isPosix)("the uploaded trace string holds more than 20 frames", async ()
   expect(stderr).toContain("Segmentation fault at address 0xDEADBEEF");
   expect(frames.length).toBeGreaterThan(20);
   expect(frames.length).toBeLessThanOrEqual(64);
+  expect(exitCode).not.toBe(0);
 });
 
 // The Windows crash handler is a Vectored Exception Handler, which sees every

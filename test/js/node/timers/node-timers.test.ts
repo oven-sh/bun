@@ -46,17 +46,32 @@ it("node.js util.promisify(setInterval) works", async () => {
 });
 
 it("timers expose util.promisify.custom as a lazy accessor without loading node:util first", async () => {
-  // Matches Node's lib/timers.js: an enumerable, non-configurable getter that resolves to timers/promises.
+  // Matches Node's lib/timers.js: an enumerable, non-configurable, getter-only accessor (a write throws)
+  // that resolves to timers/promises. The shape is read before any module is loaded, in the main thread
+  // and in a worker.
+  const shape = `const shape = fn => {
+    const d = Object.getOwnPropertyDescriptor(fn, Symbol.for("nodejs.util.promisify.custom"));
+    return d && { get: typeof d.get, set: typeof d.set, enumerable: d.enumerable, configurable: d.configurable };
+  };`;
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
-      `const sym = Symbol.for("nodejs.util.promisify.custom");
-       const shape = fn => { const d = Object.getOwnPropertyDescriptor(fn, sym); return d && { get: typeof d.get, set: typeof d.set, enumerable: d.enumerable, configurable: d.configurable }; };
+      `${shape}
+       const sym = Symbol.for("nodejs.util.promisify.custom");
        const before = [setTimeout, setInterval, setImmediate].map(shape);
+       let write = "no throw";
+       try { Object.assign(setTimeout, { [sym]: 1 }); } catch (e) { write = e.constructor.name; }
        const tp = require("node:timers/promises");
        const same = [setTimeout[sym] === tp.setTimeout, setInterval[sym] === tp.setInterval, setImmediate[sym] === tp.setImmediate];
-       console.log(JSON.stringify({ before, same }));`,
+       const { Worker } = require("node:worker_threads");
+       const worker = new Worker(
+         ${JSON.stringify(shape)} + 'require("node:worker_threads").parentPort.postMessage([setTimeout, setInterval, setImmediate].map(shape));',
+         { eval: true },
+       );
+       worker.once("message", inWorker => {
+         console.log(JSON.stringify({ before, write, same, inWorker }));
+       });`,
     ],
     env: bunEnv,
     stdout: "pipe",
@@ -64,7 +79,12 @@ it("timers expose util.promisify.custom as a lazy accessor without loading node:
   });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   const accessor = { get: "function", set: "undefined", enumerable: true, configurable: false };
-  expect(JSON.parse(stdout)).toEqual({ before: [accessor, accessor, accessor], same: [true, true, true] });
+  expect(JSON.parse(stdout)).toEqual({
+    before: [accessor, accessor, accessor],
+    write: "TypeError",
+    same: [true, true, true],
+    inWorker: [accessor, accessor, accessor],
+  });
   expect(exitCode).toBe(0);
 });
 

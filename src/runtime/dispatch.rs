@@ -254,13 +254,11 @@ pub(crate) fn run_task(
             holder.run()?;
         }
         task_tag::DuplexUpgradeContext => {
-            // SAFETY: tag identifies pointee; `run_event` may free the context,
-            // so it takes the raw pointer (no `&mut` at this boundary).
-            unsafe {
-                crate::socket::DuplexUpgradeContext::run_event(cast_ptr!(
-                    crate::socket::DuplexUpgradeContext
-                ))
-            };
+            // SAFETY: tag identifies pointee; the queue owns the live context
+            // until `run_event` (which may free it).
+            crate::socket::DuplexUpgradeContext::run_event(unsafe {
+                bun_ptr::ThisPtr::new(cast_ptr!(crate::socket::DuplexUpgradeContext))
+            });
         }
         #[cfg(windows)]
         task_tag::WindowsNamedPipeContext => {

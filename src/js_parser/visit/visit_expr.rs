@@ -97,8 +97,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // if e.LegacyOctalLoc.Start > 0 {
     }
 
-    fn e_number(_: &mut Self, _e: &mut Expr, _: ExprIn) {
-        // idc about legacy octal loc
+    fn e_number(p: &mut Self, e: &mut Expr, _: ExprIn) {
+        if !p.legacy_octal_literals.is_empty() && p.is_strict_mode() {
+            if let Some(r) = p.legacy_octal_literals.get(&e.loc).copied() {
+                p.mark_strict_mode_feature(StrictModeFeature::LegacyOctalLiteral, r, b"")
+                    .expect("unreachable");
+            }
+        }
     }
 
     fn e_this(p: &mut Self, e: &mut Expr, _: ExprIn) {

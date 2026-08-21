@@ -217,7 +217,12 @@ impl Scope {
     }
 
     pub fn recursive_set_strict_mode(&mut self, kind: StrictModeKind) {
-        if self.strict_mode == StrictModeKind::SloppyMode {
+        // Class bodies are unconditionally strict, so the class kind overrides
+        // `ImplicitStrictModeModuleType`, whose deferred errors may be discarded.
+        if self.strict_mode == StrictModeKind::SloppyMode
+            || (kind == StrictModeKind::ImplicitStrictModeClass
+                && self.strict_mode == StrictModeKind::ImplicitStrictModeModuleType)
+        {
             self.strict_mode = kind;
             for child in self.children.slice_mut() {
                 child.recursive_set_strict_mode(kind);

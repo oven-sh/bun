@@ -1194,6 +1194,11 @@ pub enum StrictModeKind {
     ImplicitStrictModeExport,
     ImplicitStrictModeTopLevelAwait,
     ImplicitStrictModeClass,
+    /// Strict only because ".mjs"/".mts" or package.json "type": "module"
+    /// forces ESM. Errors under this kind are deferred until `exports_kind`
+    /// is known and emitted only for `ExportsKind::Esm`; every other
+    /// classification executes as sloppy CommonJS and discards them.
+    ImplicitStrictModeModuleType,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]

@@ -512,9 +512,9 @@ impl Lockfile {
         debug_assert!(Fs::INSTANCE_LOADED.load(core::sync::atomic::Ordering::Relaxed));
 
         let mut lockfile_format = LockfileFormat::Text;
-        let file: File = 'file: {
+        let (file, size): (File, u64) = 'file: {
             match File::open_regular_at(dir, zstr!("bun.lock")) {
-                sys::Result::Ok((f, _)) => break 'file f,
+                sys::Result::Ok(opened) => break 'file opened,
                 sys::Result::Err(text_open_err) => {
                     if text_open_err.errno != sys::SystemErrno::ENOENT as u16 {
                         return LoadResult::Err(LoadResultErr {
@@ -528,7 +528,7 @@ impl Lockfile {
                     lockfile_format = LockfileFormat::Binary;
 
                     match File::open_regular_at(dir, zstr!("bun.lockb")) {
-                        sys::Result::Ok((f, _)) => break 'file f,
+                        sys::Result::Ok(opened) => break 'file opened,
                         sys::Result::Err(binary_open_err) => {
                             if binary_open_err.errno != sys::SystemErrno::ENOENT as u16 {
                                 return LoadResult::Err(LoadResultErr {
@@ -555,9 +555,7 @@ impl Lockfile {
             }
         };
 
-        // `bun_sys::File::read_to_end` returns `Maybe<Vec<u8>>`
-        // (fstat-presized, pread-from-0); map the error arm to `.read_file`.
-        let buf = match file.read_to_end() {
+        let buf = match file.read_to_end_sized(size) {
             Ok(bytes) => bytes,
             Err(e) => {
                 return LoadResult::Err(LoadResultErr {

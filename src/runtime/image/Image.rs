@@ -1548,7 +1548,7 @@ impl PipelineTask {
                 self.result = TaskResult::Err(codecs::Error::TooManyPixels);
                 return;
             }
-            match file.read_to_end() {
+            match file.read_to_end_sized(size) {
                 Ok(bytes) => owned_file = Some(bytes),
                 Err(e) => {
                     self.result = TaskResult::IoErr(e.with_path(p.as_bytes()));

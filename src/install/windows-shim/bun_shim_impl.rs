@@ -217,7 +217,6 @@ pub enum FailReason {
     NoDirname,
     CouldNotOpenShim,
     CouldNotReadShim,
-    InvalidShimDataSize,
     ShimNotFound,
     CreateProcessFailed,
     /// When encountering this outside of standalone mode, you should fallback
@@ -239,7 +238,6 @@ impl FailReason {
             FailReason::ShimNotFound => "could not find bin metadata file",
             FailReason::CouldNotOpenShim => "could not open bin metadata file",
             FailReason::CouldNotReadShim => "could not read bin metadata",
-            FailReason::InvalidShimDataSize => "bin metadata is corrupt (size)",
             FailReason::InvalidShimValidation => "bin metadata is corrupt (validate)",
             FailReason::InvalidShimBounds => "bin metadata is corrupt (bounds)",
             // The difference between these two is that one is with a shebang (#!/usr/bin/env node) and

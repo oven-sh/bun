@@ -42,11 +42,6 @@ using namespace JSC;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(MessageEvent);
 
-MessageEvent::MessageEvent()
-    : Event(MessageEventInterfaceType)
-{
-}
-
 inline MessageEvent::MessageEvent(const AtomString& type, Init&& initializer, IsTrusted isTrusted)
     : Event(MessageEventInterfaceType, type, initializer, isTrusted)
     , m_data(JSValueTag {})
@@ -76,11 +71,6 @@ Ref<MessageEvent> MessageEvent::create(const AtomString& type, DataType&& data, 
 Ref<MessageEvent> MessageEvent::create(DataType&& data, const String& origin, const String& lastEventId, RefPtr<MessagePort>&& source, Vector<RefPtr<MessagePort>>&& ports)
 {
     return create(eventNames().messageEvent, WTF::move(data), origin, lastEventId, WTF::move(source), WTF::move(ports));
-}
-
-Ref<MessageEvent> MessageEvent::createForBindings()
-{
-    return adoptRef(*new MessageEvent);
 }
 
 Ref<MessageEvent> MessageEvent::create(const AtomString& type, Init&& initializer, IsTrusted isTrusted)

@@ -179,9 +179,6 @@ function processPfxOptions(options) {
 }
 
 export {
-  VALID_TLS_ERROR_MESSAGE_TYPES,
-  isValidTLSArray,
-  isValidTLSItem,
   processPfxOptions,
   secureProtocolToVersionRange,
   throwOnInvalidTLSArray,

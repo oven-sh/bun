@@ -113,14 +113,17 @@ impl SecureContext {
         // The pfx arrives as a Buffer/TypedArray (binary DER) or a string;
         // a string-conversion would mangle the DER bytes, so read the raw
         // view when one exists.
+        let pfx_view;
         let pfx_string;
-        let pfx_bytes: &[u8] = if let Some(ab) = args[0].as_array_buffer(global) {
-            // SAFETY: the ArrayBuffer view is alive for the duration of the
-            // call (the argument is rooted by the call frame).
-            unsafe { core::slice::from_raw_parts(ab.ptr, ab.len) }
-        } else {
-            pfx_string = args[0].to_slice(global)?;
-            pfx_string.slice()
+        let pfx_bytes: &[u8] = match args[0].as_array_buffer(global) {
+            Some(view) => {
+                pfx_view = view;
+                pfx_view.byte_slice()
+            }
+            None => {
+                pfx_string = args[0].to_slice(global)?;
+                pfx_string.slice()
+            }
         };
         if pfx_bytes.is_empty() {
             return Err(global.throw(format_args!("PFX certificate argument is mandatory")));

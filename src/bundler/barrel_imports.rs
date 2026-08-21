@@ -315,11 +315,11 @@ struct BarrelWorkItem<'a> {
     is_star: bool,
 }
 
-/// Resolve, process, and patch import records for a single barrel. Called
-/// right after the BFS un-defers a record in it; `resolve_import_records`
-/// only touches the records it has not handled before, so this resolves the
-/// records un-deferred since the previous call.
-fn resolve_barrel_records(this: &mut BundleV2, barrel_idx: u32) -> i32 {
+/// Resolve the records (`un_deferred`, ascending indices) that the BFS just
+/// un-deferred in one barrel, schedule the modules they point at, and patch
+/// their source indices. The barrel's other records were handled when the
+/// barrel itself was resolved and are left alone.
+fn resolve_barrel_records(this: &mut BundleV2, barrel_idx: u32, un_deferred: &[u32]) -> i32 {
     let idx = barrel_idx as usize;
     let target = this.graph.ast.items_target()[idx];
     let loader = this.graph.input_files.items_loader()[idx];
@@ -338,6 +338,7 @@ fn resolve_barrel_records(this: &mut BundleV2, barrel_idx: u32) -> i32 {
         source: &source,
         loader,
         target,
+        only_records: Some(un_deferred),
     });
 
     this.graph.input_files.items_source_mut()[idx] = source;
@@ -351,7 +352,7 @@ fn resolve_barrel_records(this: &mut BundleV2, barrel_idx: u32) -> i32 {
             source_path,
             loader,
             target,
-            force_save: true,
+            only_records: Some(un_deferred),
             ..Default::default()
         },
     );
@@ -364,12 +365,12 @@ fn resolve_barrel_records(this: &mut BundleV2, barrel_idx: u32) -> i32 {
 /// After a new file's import records are patched with source_indices,
 /// record what this file requests from each target in requested_exports
 /// (eagerly, before barrels are known), then BFS through barrel chains
-/// to un-defer needed records. Un-deferred records are resolved through
-/// resolveImportRecords (same path as initial resolution) as soon as they are
-/// un-deferred, so the BFS can continue into the modules they point at. A
-/// request for a record that was never deferred resolves nothing: that record
-/// was handled when the barrel itself was resolved, whether or not it ended
-/// up with a source_index (external, unresolved, or onResolve plugin pending).
+/// to un-defer needed records. Each record is resolved through
+/// resolveImportRecords (same path as initial resolution) as soon as it is
+/// un-deferred, so the BFS can continue into the module it points at. Only
+/// the un-deferred records are resolved: a request for a record that was
+/// never deferred resolves nothing, whether or not that record has a
+/// source_index (external, unresolved, or onResolve plugin pending).
 /// Returns the number of newly scheduled parse tasks.
 pub(crate) fn schedule_barrel_deferred_imports(
     this: &mut BundleV2,
@@ -731,20 +732,15 @@ pub(crate) fn schedule_barrel_deferred_imports(
         let barrel_ir = &mut this.graph.ast.items_import_records_mut()[barrel_idx as usize];
 
         if item_is_star {
-            // Read flags by index, then mutate (borrowck).
-            let len = barrel_ir.len();
-            let mut un_deferred_any = false;
-            for idx in 0..len {
-                let flags = barrel_ir.as_slice()[idx].flags;
-                if flags.contains(import_record::Flags::IS_UNUSED)
-                    && !flags.contains(import_record::Flags::IS_INTERNAL)
-                {
-                    un_deferred_any |= un_defer_record(barrel_ir, idx);
+            let mut un_deferred: Vec<u32> = Vec::new();
+            for idx in 0..barrel_ir.len() {
+                if un_defer_record(barrel_ir, idx) {
+                    un_deferred.push(idx as u32);
                 }
             }
             // Resolve now: propagation below needs source indices.
-            if un_deferred_any {
-                newly_scheduled += resolve_barrel_records(this, barrel_idx);
+            if !un_deferred.is_empty() {
+                newly_scheduled += resolve_barrel_records(this, barrel_idx, &un_deferred);
             }
 
             // A namespace request covers every export: request each
@@ -842,7 +838,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
                 }
                 if un_defer_record(barrel_ir, star_idx as usize) {
                     // Resolve now: propagation below needs the source index.
-                    newly_scheduled += resolve_barrel_records(this, barrel_idx);
+                    newly_scheduled += resolve_barrel_records(this, barrel_idx, &[star_idx]);
                 }
                 let star_rec_si = this.graph.ast.items_import_records()[barrel_idx as usize]
                     .as_slice()[star_idx as usize]
@@ -862,7 +858,8 @@ pub(crate) fn schedule_barrel_deferred_imports(
         let barrel_ir = &mut this.graph.ast.items_import_records_mut()[barrel_idx as usize];
         if un_defer_record(barrel_ir, resolution.import_record_index as usize) {
             // Resolve now: propagation below needs the source index.
-            newly_scheduled += resolve_barrel_records(this, barrel_idx);
+            newly_scheduled +=
+                resolve_barrel_records(this, barrel_idx, &[resolution.import_record_index]);
         }
 
         // `original_alias` is an arena-backed `StoreStr` valid for the

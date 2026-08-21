@@ -1395,6 +1395,41 @@ describe("bundler", () => {
     run: { stdout: "resolved-by-plugin" },
   });
 
+  // --- Each barrel record is resolved once ---
+
+  // a.js is only discovered through the barrel, so its request for Broken and C
+  // always arrives after the barrel deferred both. Un-deferring Broken reports
+  // the failure. Un-deferring C must not resolve Broken (and report it) again.
+  itBundled("barrel/UnDeferReportsUnresolvableSiblingOnce", {
+    files: {
+      "/entry.js": /* js */ `
+        import { A } from 'oncelib';
+        console.log(A);
+      `,
+      "/node_modules/oncelib/package.json": JSON.stringify({
+        name: "oncelib",
+        main: "./index.js",
+        sideEffects: false,
+      }),
+      "/node_modules/oncelib/index.js": /* js */ `
+        export { A } from './a.js';
+        export { Broken } from './missing.js';
+        export { C } from './c.js';
+      `,
+      "/node_modules/oncelib/a.js": /* js */ `
+        import { Broken, C } from 'oncelib';
+        export const A = Broken + C;
+      `,
+      "/node_modules/oncelib/c.js": /* js */ `
+        export const C = "c";
+      `,
+    },
+    outfile: "/out.js",
+    bundleErrors: {
+      "/node_modules/oncelib/index.js": ['Could not resolve: "./missing.js"'],
+    },
+  });
+
   // A re-export that resolves as external never gets a source_index. Requests
   // for it from importers must not resolve the barrel again, so the onResolve
   // plugin runs once for the record.
@@ -1440,10 +1475,10 @@ describe("bundler", () => {
     };
   });
 
-  // Un-deferring one record resolves the barrel again. Records that were
-  // already resolved, including the external one, are skipped by that pass.
-  // late.js is loaded only after the react answer, so its request for A
-  // arrives after the barrel deferred a.js.
+  // Un-deferring a.js resolves only that record. The external record, which
+  // also has no source_index, is not dispatched to the plugin again. late.js is
+  // loaded only after the react answer, so its request for A arrives after the
+  // barrel deferred a.js.
   itBundled("barrel/ExternalReExportNotResolvedAgainOnUnDefer", () => {
     const resolved: string[] = [];
     return {

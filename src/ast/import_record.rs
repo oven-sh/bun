@@ -72,13 +72,6 @@ bitflags::bitflags! {
 
         const WAS_ORIGINALLY_REQUIRE = 1 << 9;
 
-        /// The bundler already ran resolution for this record. Also set when
-        /// resolution leaves `source_index` invalid: the import is external,
-        /// failed to resolve, or is waiting for an onResolve plugin. The
-        /// barrel optimization resolves a barrel's records again when it
-        /// un-defers one of them; records with this flag are skipped.
-        const RESOLVE_STARTED = 1 << 10;
-
         /// If true, this import can be removed if it's unused
         const IS_EXTERNAL_WITHOUT_SIDE_EFFECTS = 1 << 11;
 

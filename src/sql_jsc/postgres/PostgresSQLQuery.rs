@@ -209,7 +209,8 @@ impl PostgresSQLQuery {
             return;
         }
         let q = self.query.to_utf8();
-        if let Err(e) = crate::shared::otel::end_with_js_error(span, q.slice(), global_object, err) {
+        if let Err(e) = crate::shared::otel::end_with_js_error(span, q.slice(), global_object, err)
+        {
             let _ = bun_jsc::task::report_error_or_terminate(global_object, e);
         }
     }

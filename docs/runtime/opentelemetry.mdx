@@ -15,18 +15,18 @@ That is enough to get a trace per request in any OTLP-compatible backend (Jaeger
 
 ## What gets traced
 
-| Instrumentation | Spans                                                                                                            |
-| --------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `http`          | `Bun.serve` and `node:http` servers: one `SERVER` span per request, named `GET /route` when a route matched.     |
-| `fetch`         | `fetch()` and `node:http`/`node:https` clients: one `CLIENT` span per request. `traceparent` is injected.        |
-| `sql`           | `Bun.sql` (PostgreSQL, MySQL): one span per query with `db.query.text` (the parameterized statement).            |
-| `sqlite`        | `bun:sqlite`: one span per statement execution.                                                                  |
-| `redis`         | `Bun.redis`: one span per command.                                                                               |
-| `net`           | `Bun.connect` / `node:net` / `node:tls`: a `tcp.connect` span per outgoing connection.                           |
-| `websocket`     | `new WebSocket()` connect; `ServerWebSocket` message handlers (linked to the upgrade request's trace).           |
-| `fs`            | `node:fs`, `Bun.file()`, `Bun.write()`.                                                                          |
-| `spawn`         | `Bun.spawn` / `node:child_process`: one span from spawn to exit.                                                 |
-| `dns`           | `Bun.dns.lookup` / `node:dns` lookups.                                                                           |
+| Instrumentation | Spans                                                                                                        |
+| --------------- | ------------------------------------------------------------------------------------------------------------ |
+| `http`          | `Bun.serve` and `node:http` servers: one `SERVER` span per request, named `GET /route` when a route matched. |
+| `fetch`         | `fetch()` and `node:http`/`node:https` clients: one `CLIENT` span per request. `traceparent` is injected.    |
+| `sql`           | `Bun.sql` (PostgreSQL, MySQL): one span per query with `db.query.text` (the parameterized statement).        |
+| `sqlite`        | `bun:sqlite`: one span per statement execution.                                                              |
+| `redis`         | `Bun.redis`: one span per command.                                                                           |
+| `net`           | `Bun.connect` / `node:net` / `node:tls`: a `tcp.connect` span per outgoing connection.                       |
+| `websocket`     | `new WebSocket()` connect; `ServerWebSocket` message handlers (linked to the upgrade request's trace).       |
+| `fs`            | `node:fs`, `Bun.file()`, `Bun.write()`.                                                                      |
+| `spawn`         | `Bun.spawn` / `node:child_process`: one span from spawn to exit.                                             |
+| `dns`           | `Bun.dns.lookup` / `node:dns` lookups.                                                                       |
 
 By default `fs`, `sqlite`, `net`, `dns` and `spawn` only record when a span is already active (for example inside a request handler), so a script does not produce a trace per file read.
 
@@ -52,21 +52,21 @@ Any one of these turns tracing on for the process:
 
 Once enabled, Bun reads the standard OpenTelemetry environment variables:
 
-| Variable                                                                | Meaning                                                                                                          |
-| ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES`                          | Resource attributes.                                                                                             |
-| `OTEL_EXPORTER_OTLP_ENDPOINT`                                           | Collector base URL; Bun posts to `<endpoint>/v1/traces`. Default `http://localhost:4318`.                        |
-| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`                                    | Full traces URL, used as-is.                                                                                     |
-| `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_EXPORTER_OTLP_TRACES_HEADERS`       | `key=value,key2=value2` request headers (API keys).                                                              |
-| `OTEL_EXPORTER_OTLP_COMPRESSION`                                        | `gzip` or `none`.                                                                                                |
-| `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG`                        | `always_on`, `always_off`, `traceidratio`, `parentbased_always_on` (default), `parentbased_always_off`, `parentbased_traceidratio`. |
-| `OTEL_TRACES_EXPORTER`                                                  | `otlp` (default), `console`, `none`.                                                                             |
-| `OTEL_BSP_SCHEDULE_DELAY`, `OTEL_BSP_MAX_QUEUE_SIZE`, `OTEL_BSP_MAX_EXPORT_BATCH_SIZE`, `OTEL_BSP_EXPORT_TIMEOUT` | Batch processor tuning.                                                            |
-| `OTEL_PROPAGATORS`                                                      | `tracecontext` and/or `baggage`.                                                                                 |
-| `OTEL_SDK_DISABLED=true`                                                | Force tracing off.                                                                                               |
-| `BUN_OTEL_EXPORTER`                                                     | Vendor preset(s): `datadog`, `honeycomb`, `grafana`, `newrelic`, `axiom`, `dynatrace`, `sentry`, `otlp`. Credentials come from the vendor's env vars (`DD_API_KEY`, `HONEYCOMB_API_KEY`, …). |
-| `BUN_OTEL_INSTRUMENTATIONS`                                             | Allow-list, e.g. `http,fetch,sql`.                                                                               |
-| `BUN_OTEL_DISABLE`                                                      | Deny-list, e.g. `fs,dns`.                                                                                        |
+| Variable                                                                                                          | Meaning                                                                                                                                                                                      |
+| ----------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES`                                                                   | Resource attributes.                                                                                                                                                                         |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`                                                                                     | Collector base URL; Bun posts to `<endpoint>/v1/traces`. Default `http://localhost:4318`.                                                                                                    |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`                                                                              | Full traces URL, used as-is.                                                                                                                                                                 |
+| `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_EXPORTER_OTLP_TRACES_HEADERS`                                                 | `key=value,key2=value2` request headers (API keys).                                                                                                                                          |
+| `OTEL_EXPORTER_OTLP_COMPRESSION`                                                                                  | `gzip` or `none`.                                                                                                                                                                            |
+| `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG`                                                                  | `always_on`, `always_off`, `traceidratio`, `parentbased_always_on` (default), `parentbased_always_off`, `parentbased_traceidratio`.                                                          |
+| `OTEL_TRACES_EXPORTER`                                                                                            | `otlp` (default), `console`, `none`.                                                                                                                                                         |
+| `OTEL_BSP_SCHEDULE_DELAY`, `OTEL_BSP_MAX_QUEUE_SIZE`, `OTEL_BSP_MAX_EXPORT_BATCH_SIZE`, `OTEL_BSP_EXPORT_TIMEOUT` | Batch processor tuning.                                                                                                                                                                      |
+| `OTEL_PROPAGATORS`                                                                                                | `tracecontext` and/or `baggage`.                                                                                                                                                             |
+| `OTEL_SDK_DISABLED=true`                                                                                          | Force tracing off.                                                                                                                                                                           |
+| `BUN_OTEL_EXPORTER`                                                                                               | Vendor preset(s): `datadog`, `honeycomb`, `grafana`, `newrelic`, `axiom`, `dynatrace`, `sentry`, `otlp`. Credentials come from the vendor's env vars (`DD_API_KEY`, `HONEYCOMB_API_KEY`, …). |
+| `BUN_OTEL_INSTRUMENTATIONS`                                                                                       | Allow-list, e.g. `http,fetch,sql`.                                                                                                                                                           |
+| `BUN_OTEL_DISABLE`                                                                                                | Deny-list, e.g. `fs,dns`.                                                                                                                                                                    |
 
 The OTLP/HTTP protobuf protocol is supported. `grpc` is not.
 
@@ -82,7 +82,11 @@ Bun.otel.start({
   exporters: [
     { url: "https://otlp.example.com", headers: { "x-api-key": process.env.OTLP_KEY! } },
     // Function exporters receive decoded spans on the batch interval.
-    { export(spans) { for (const s of spans) console.log(s.name, s.endTime - s.startTime); } },
+    {
+      export(spans) {
+        for (const s of spans) console.log(s.name, s.endTime - s.startTime);
+      },
+    },
   ],
   sampler: 0.25, // keep 25% of new traces; follow the caller's decision for propagated ones
   instrumentations: { fs: false, sqlite: "always" },
@@ -102,7 +106,11 @@ Bun.otel.start({
     { type: "newrelic", apiKey: process.env.NEW_RELIC_LICENSE_KEY, site: "eu" },
     { type: "axiom", apiKey: process.env.AXIOM_TOKEN, id: "my-dataset" },
     { type: "dynatrace", id: "abc12345", apiKey: process.env.DT_API_TOKEN },
-    { type: "sentry", endpoint: "https://o1.ingest.us.sentry.io/api/2/integration/otlp/v1/traces", apiKey: "<dsn public key>" },
+    {
+      type: "sentry",
+      endpoint: "https://o1.ingest.us.sentry.io/api/2/integration/otlp/v1/traces",
+      apiKey: "<dsn public key>",
+    },
   ],
 });
 ```

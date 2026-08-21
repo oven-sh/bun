@@ -163,7 +163,12 @@ const contextManager = {
 // Tracers are native (JSTelemetryTracer): startSpan/startActiveSpan never
 // touch JS except to run the user callback.
 const createTracer = $newCppFunction("BunTelemetry.cpp", "jsTelemetryCreateTracer", 3);
-type Tracer = { readonly name: string; readonly version: string | undefined; startSpan: Function; startActiveSpan: Function };
+type Tracer = {
+  readonly name: string;
+  readonly version: string | undefined;
+  startSpan: Function;
+  startActiveSpan: Function;
+};
 
 const tracers = new Map<string, Tracer>();
 function getTracer(name?: string, version?: string): Tracer {
@@ -184,7 +189,6 @@ const tracerProvider = {
 };
 
 // ── W3C propagator (api TextMapPropagator) ────────────────────────────────
-
 
 class Baggage {
   #entries: Map<string, { value: string; metadata?: unknown }>;

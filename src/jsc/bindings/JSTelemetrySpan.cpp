@@ -25,7 +25,7 @@ struct BunStrRef {
 };
 struct BunAttrRef {
     // Not `= default`: keeps Vector::grow from zero-filling new slots.
-    BunAttrRef() { }
+    BunAttrRef() {}
     const void* keyPtr;
     uint32_t keyLen;
     uint8_t keyIs16;

@@ -10,6 +10,10 @@ BUN_DECLARE_HOST_FUNCTION(jsFunctionBunPlugin);
 BUN_DECLARE_HOST_FUNCTION(jsFunctionBunPluginClear);
 
 namespace Zig {
+JSC_DECLARE_HOST_FUNCTION(jsFunctionMockModuleResolved);
+}
+
+namespace Zig {
 
 using namespace JSC;
 

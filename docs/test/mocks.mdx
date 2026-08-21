@@ -292,6 +292,24 @@ test("mock.module", async () => {
 });
 ```
 
+If the factory returns a promise (for example an `async` function, or one that returns `import()`), the already-imported module is only updated once that promise settles. In that case `mock.module()` returns a promise that resolves after the update has been applied (or rejects with the factory's error), so `await` it before reading the mocked module:
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { test, expect, mock } from "bun:test";
+
+import { foo } from "./module";
+
+test("mock.module with an async factory", async () => {
+  expect(foo).toBe("bar");
+
+  await mock.module("./module", () => import("./module.mock"));
+
+  expect(foo).toBe("baz");
+});
+```
+
+When the module has not been imported yet, the factory is not called until the first import, and `mock.module()` returns `undefined`.
+
 ### Hoisting & Preloading
 
 To make sure a module is mocked before it's imported, use `--preload` to load your mocks before your tests run.

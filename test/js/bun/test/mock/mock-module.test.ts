@@ -1,13 +1,11 @@
 // TODO:
 // - Write tests for errors
-// - Write tests for Promise
-// - Write tests for Promise rejection
-// - Write tests for pending promise when a module already exists
 // - Write test for export * from
 // - Write test for export {foo} from "./foo"
 // - Write test for import {foo} from "./foo"; export {foo}
 
-import { expect, mock, spyOn, test } from "bun:test";
+import { describe, expect, mock, spyOn, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { default as defaultValue, fn, iCallFn, rexported, rexportedAs, variable } from "./mock-module-fixture";
 import * as spyFixture from "./spymodule-fixture";
 
@@ -212,4 +210,244 @@ test("onResolve plugin errors surface from mock.module; an unresolvable specifie
   } finally {
     Bun.plugin.clearAll();
   }
+});
+
+// https://github.com/oven-sh/bun/issues/6751
+describe("mock.module with an async factory when the module is already loaded", () => {
+  function check(name: string, files: Record<string, string>) {
+    test.concurrent(
+      name,
+      async () => {
+        using dir = tempDir("mock-module-async-factory", {
+          "dep.ts": `export const getValue = () => "real";\nexport const other = () => "real-other";\n`,
+          "dep.mock.ts": `export const getValue = () => "mocked";\n`,
+          ...files,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "test", "fixture.test.ts"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+          timeout: 10000,
+          killSignal: "SIGKILL",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stderr, signal: proc.signalCode }).toEqual({
+          stderr: expect.stringContaining("1 pass"),
+          signal: null,
+        });
+        expect(exitCode).toBe(0);
+      },
+      15000,
+    );
+  }
+
+  check("factory using import() does not hang and overrides the namespace", {
+    "fixture.test.ts": `
+      import { expect, test, mock } from "bun:test";
+      import { getValue } from "./dep";
+      await mock.module("./dep", () => import("./dep.mock"));
+      test("t", () => {
+        expect(getValue()).toBe("mocked");
+      });
+    `,
+  });
+
+  check("factory awaiting an event-loop tick does not hang and overrides the namespace", {
+    "fixture.test.ts": `
+      import { expect, test, mock } from "bun:test";
+      import { getValue } from "./dep";
+      await mock.module("./dep", async () => {
+        await new Promise(resolve => setImmediate(resolve));
+        return { getValue: () => "mocked" };
+      });
+      test("t", () => {
+        expect(getValue()).toBe("mocked");
+      });
+    `,
+  });
+
+  check("factory reached via a transitive static import does not hang", {
+    "consumer.ts": `
+      import { getValue } from "./dep";
+      export const callDep = () => getValue();
+    `,
+    "fixture.test.ts": `
+      import { expect, test, mock } from "bun:test";
+      import { callDep } from "./consumer";
+      await mock.module("./dep", () => import("./dep.mock"));
+      test("t", () => {
+        expect(callDep()).toBe("mocked");
+      });
+    `,
+  });
+
+  check("the returned promise is what signals that the override has been applied", {
+    "fixture.test.ts": `
+      import { expect, test, mock } from "bun:test";
+      import { getValue } from "./dep";
+      const pending = mock.module("./dep", () => import("./dep.mock"));
+      const seenBeforeSettling = getValue();
+      test("t", async () => {
+        expect(pending).toBeInstanceOf(Promise);
+        expect(seenBeforeSettling).toBe("real");
+        await expect(pending).resolves.toBeUndefined();
+        expect(getValue()).toBe("mocked");
+      });
+    `,
+  });
+
+  check("a dep loaded with require() is overridden once the factory settles", {
+    "dep.cjs": `module.exports = { getValue: () => "real" };\n`,
+    "fixture.test.ts": `
+      import { expect, test, mock } from "bun:test";
+      const before = require("./dep.cjs");
+      test("t", async () => {
+        expect(before.getValue()).toBe("real");
+        await mock.module("./dep.cjs", async () => {
+          await new Promise(resolve => setImmediate(resolve));
+          return { getValue: () => "mocked" };
+        });
+        expect(require("./dep.cjs").getValue()).toBe("mocked");
+      });
+    `,
+  });
+
+  check("factory that imports the module it is mocking gets the real module and leaves untouched exports alone", {
+    "fixture.test.ts": `
+      import { expect, test, mock } from "bun:test";
+      import { getValue, other } from "./dep";
+      await mock.module("./dep", async () => ({ ...(await import("./dep")), getValue: () => "mocked" }));
+      test("t", () => {
+        expect(getValue()).toBe("mocked");
+        expect(other()).toBe("real-other");
+      });
+    `,
+  });
+
+  check("factory rejecting propagates the rejection to the returned promise", {
+    "fixture.test.ts": `
+      import { expect, test, mock } from "bun:test";
+      import { getValue } from "./dep";
+      test("t", async () => {
+        const p = mock.module("./dep", async () => {
+          await new Promise(resolve => setImmediate(resolve));
+          throw new Error("factory-boom");
+        });
+        await expect(p).rejects.toThrow("factory-boom");
+        expect(getValue()).toBe("real");
+      });
+    `,
+  });
+
+  check("factory returning an already-rejected promise rejects the returned promise instead of throwing", {
+    "fixture.test.ts": `
+      import { expect, test, mock } from "bun:test";
+      import { getValue } from "./dep";
+      test("t", async () => {
+        const p = mock.module("./dep", async () => {
+          throw new Error("factory-boom");
+        });
+        await expect(p).rejects.toThrow("factory-boom");
+        expect(getValue()).toBe("real");
+      });
+    `,
+  });
+
+  check("a throwing export getter on the settled result rejects the promise and patches nothing", {
+    "fixture.test.ts": `
+      import { expect, test, mock } from "bun:test";
+      import { getValue, other } from "./dep";
+      test("t", async () => {
+        const p = mock.module("./dep", async () => {
+          await new Promise(resolve => setImmediate(resolve));
+          return {
+            getValue: () => "mocked",
+            get other() {
+              throw new Error("export getter");
+            },
+          };
+        });
+        await expect(p).rejects.toThrow("export getter");
+        expect(getValue()).toBe("real");
+        expect(other()).toBe("real-other");
+      });
+    `,
+  });
+
+  check("an entry that failed before linking is dropped even though the factory has not settled", {
+    "dep-unlinkable.ts": `
+      import { doesNotExist } from "./dep";
+      export const getValue = () => doesNotExist;
+    `,
+    "fixture.test.ts": `
+      import { expect, test, mock } from "bun:test";
+      test("t", async () => {
+        await expect(import("./dep-unlinkable")).rejects.toBeDefined();
+        expect(mock.module("./dep-unlinkable", () => import("./dep.mock"))).toBeUndefined();
+        const m = await import("./dep-unlinkable");
+        expect(m.getValue()).toBe("mocked");
+      });
+    `,
+  });
+
+  check("sync factory on an already-loaded module returns undefined", {
+    "fixture.test.ts": `
+      import { expect, test, mock } from "bun:test";
+      import { getValue } from "./dep";
+      test("t", () => {
+        const r = mock.module("./dep", () => ({ getValue: () => "mocked" }));
+        expect(r).toBeUndefined();
+        expect(getValue()).toBe("mocked");
+      });
+    `,
+  });
+
+  check("factory is not executed when the module has never been loaded", {
+    "fixture.test.ts": `
+      import { expect, test, mock } from "bun:test";
+      let called = 0;
+      test("t", async () => {
+        const r = mock.module("never-loaded-module", () => {
+          called++;
+          return { a: 1 };
+        });
+        expect(r).toBeUndefined();
+        expect(called).toBe(0);
+        const m = await import("never-loaded-module");
+        expect(m.a).toBe(1);
+        expect(called).toBe(1);
+      });
+    `,
+  });
+
+  check("factory returning a module namespace object overrides the already-loaded namespace", {
+    "fixture.test.ts": `
+      import { expect, test, mock } from "bun:test";
+      import { getValue } from "./dep";
+      import * as depMock from "./dep.mock";
+      mock.module("./dep", () => depMock);
+      test("t", () => {
+        expect(getValue()).toBe("mocked");
+      });
+    `,
+  });
+
+  check("a later mock.module() call supersedes a still-pending async factory", {
+    "fixture.test.ts": `
+      import { expect, test, mock } from "bun:test";
+      import { getValue } from "./dep";
+      test("t", async () => {
+        const p = mock.module("./dep", async () => {
+          await new Promise(resolve => setImmediate(resolve));
+          return { getValue: () => "A" };
+        });
+        mock.module("./dep", () => ({ getValue: () => "B" }));
+        expect(getValue()).toBe("B");
+        await p;
+        expect(getValue()).toBe("B");
+      });
+    `,
+  });
 });

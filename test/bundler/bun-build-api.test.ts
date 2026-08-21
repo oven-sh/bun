@@ -1,4 +1,5 @@
 import assert from "assert";
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
 import {
@@ -452,6 +453,71 @@ describe("Bun.build", () => {
       inspectShowsSourcemap: true,
       protectedBuildArtifact: 0,
     });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("in-memory BuildArtifact reports the output bytes as its size", async () => {
+    // Two entries with names of the same length, so the artifacts differ only
+    // in the output bytes they hold.
+    const payload = Buffer.alloc(64 * 1024, "abcdefghij").toString();
+    using dir = tempDir("build-artifact-size-in-memory", {
+      "small.js": "export const s = 1;",
+      "large.js": `export const s = ${JSON.stringify(payload)};`,
+    });
+    const [small] = (await Bun.build({ entrypoints: [join(String(dir), "small.js")] })).outputs;
+    const [large] = (await Bun.build({ entrypoints: [join(String(dir), "large.js")] })).outputs;
+    expect(large.path.length).toBe(small.path.length);
+    expect(large.size - small.size).toBeGreaterThanOrEqual(payload.length);
+    expect(estimateShallowMemoryUsageOf(large) - estimateShallowMemoryUsageOf(small)).toBe(large.size - small.size);
+  });
+
+  test.concurrent("outdir BuildArtifact reports the output path as its size", async () => {
+    // The same module under two names, so the two artifacts differ only in
+    // the length of the output path, which the artifact holds twice: as
+    // `.path` and as the path of the file it reads from.
+    const shortEntry = "entry.js";
+    const longEntry = "entry-" + Buffer.alloc(100, "x").toString() + ".js";
+    using dir = tempDir("build-artifact-size-outdir", {
+      [shortEntry]: "export const s = 1;",
+      [longEntry]: "export const s = 1;",
+    });
+    const outdir = join(String(dir), "out");
+    const [short] = (await Bun.build({ entrypoints: [join(String(dir), shortEntry)], outdir })).outputs;
+    const [long] = (await Bun.build({ entrypoints: [join(String(dir), longEntry)], outdir })).outputs;
+    const extraPathBytes = long.path.length - short.path.length;
+    expect(extraPathBytes).toBe(longEntry.length - shortEntry.length);
+    expect(estimateShallowMemoryUsageOf(long) - estimateShallowMemoryUsageOf(short)).toBe(2 * extraPathBytes);
+  });
+
+  test.concurrent("in-memory BuildArtifact bytes are reported to the GC", async () => {
+    const artifactBytes = 512 * 1024;
+    // After a full collection, extraMemorySize is what the objects that
+    // survived it reported while being marked. In a fresh process that is a
+    // few tens of KiB besides the artifact. The payload is written here rather
+    // than built in the child so that no JS string of that size is in there.
+    using dir = tempDir("build-artifact-extra-memory", {
+      "entry.js": `export const s = ${JSON.stringify(Buffer.alloc(artifactBytes, "abcdefghij").toString())};`,
+      "run.js": `
+        import { heapStats } from "bun:jsc";
+        const { outputs: [artifact] } = await Bun.build({ entrypoints: ["./entry.js"] });
+        Bun.gc(true);
+        const extraMemorySize = heapStats().extraMemorySize;
+        console.log(JSON.stringify({ size: artifact.size, extraMemorySize }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { size, extraMemorySize } = JSON.parse(stdout);
+    expect(size).toBeGreaterThanOrEqual(artifactBytes);
+    expect(extraMemorySize).toBeGreaterThanOrEqual(size);
+    expect(extraMemorySize).toBeLessThan(2 * size);
     expect(exitCode).toBe(0);
   });
 

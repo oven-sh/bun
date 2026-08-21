@@ -1923,6 +1923,11 @@ fn __bun_blob_from_build_artifact(value: JSValue) -> Option<*mut Blob> {
 }
 
 impl BuildArtifact {
+    pub(crate) fn estimated_size(&self) -> usize {
+        let fields_outside_blob = core::mem::size_of::<Self>() - core::mem::size_of::<Blob>();
+        fields_outside_blob + self.blob.estimated_size() + self.path.len()
+    }
+
     #[bun_jsc::host_fn(method)]
     pub(crate) fn get_text(
         this: &Self,

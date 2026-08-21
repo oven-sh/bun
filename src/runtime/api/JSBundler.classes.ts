@@ -35,6 +35,7 @@ export default [
     finalize: true,
     hasPendingActivity: false,
     configurable: false,
+    estimatedSize: true,
     klass: {},
     JSType: "0b11101110",
     // Per-class cached-stream slot. `Blob::get_stream` reads/writes the

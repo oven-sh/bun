@@ -159,11 +159,7 @@ it("bun pm cache unpack refuses hostile packs", async () => {
       rec(0, "", 0, ""),
     ]),
   );
-  r = await run(
-    ["pm", "cache", "unpack", join(dir, "escape.pack")],
-    dir,
-    join(victim, "..", basename(cache)),
-  );
+  r = await run(["pm", "cache", "unpack", join(dir, "escape.pack")], dir, join(victim, "..", basename(cache)));
   expect(r.code).not.toBe(0);
   expect(r.err).toMatch(/unsafe|traverses/);
   expect(existsSync(join(victim, "pwned"))).toBeFalse();

@@ -22,6 +22,7 @@
 // Tests adapted from https://github.com/nodejs/node/blob/main/test/parallel/test-util.js
 
 import assert from "assert";
+import { exposedInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import util from "util";
@@ -402,6 +403,32 @@ describe("util", () => {
         ...err,
         message: 'The "str" argument must be of type string. Received type number (1)',
       }),
+    );
+  });
+  // The validateObject block of node's test/parallel/test-validators.js (v26.3.0).
+  it("validateObject honors the kValidateObject* flags like Node", () => {
+    const { validateObject, kValidateObjectAllowNullable, kValidateObjectAllowArray, kValidateObjectAllowFunction } =
+      exposedInternals["internal/validators"];
+    const err = { code: "ERR_INVALID_ARG_TYPE", name: "TypeError" };
+    const fn = () => {};
+
+    validateObject({}, "foo");
+    validateObject({ a: 42, b: "foo" }, "foo");
+    for (const val of [undefined, null, true, false, 0, 0.0, 42, "", "string", [], fn]) {
+      expect(() => validateObject(val, "foo")).toThrow(expect.objectContaining(err));
+    }
+
+    validateObject(null, "foo", kValidateObjectAllowNullable);
+    validateObject([], "foo", kValidateObjectAllowArray);
+    validateObject(fn, "foo", kValidateObjectAllowFunction);
+    validateObject({}, "foo", kValidateObjectAllowNullable | kValidateObjectAllowArray | kValidateObjectAllowFunction);
+
+    // Each flag only admits its own kind of value.
+    expect(() => validateObject(null, "foo", kValidateObjectAllowArray)).toThrow(expect.objectContaining(err));
+    expect(() => validateObject([], "foo", kValidateObjectAllowNullable)).toThrow(expect.objectContaining(err));
+    expect(() => validateObject(fn, "foo", kValidateObjectAllowNullable)).toThrow(expect.objectContaining(err));
+    expect(() => validateObject(undefined, "foo", kValidateObjectAllowNullable)).toThrow(
+      expect.objectContaining({ ...err, message: 'The "foo" argument must be of type object. Received undefined' }),
     );
   });
 

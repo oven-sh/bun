@@ -63,7 +63,6 @@ const BooleanPrototypeValueOf = uncurryThis(Boolean.prototype.valueOf);
 const DatePrototypeGetTime = uncurryThis(Date.prototype.getTime);
 const DatePrototypeToISOString = uncurryThis(Date.prototype.toISOString);
 const DatePrototypeToString = uncurryThis(Date.prototype.toString);
-const ErrorCaptureStackTrace = Error.captureStackTrace;
 const ErrorPrototypeToString = uncurryThis(Error.prototype.toString);
 const FunctionPrototypeBind = uncurryThis(Function.prototype.bind);
 const FunctionPrototypeToString = uncurryThis(Function.prototype.toString);

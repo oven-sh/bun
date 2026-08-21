@@ -57,14 +57,21 @@ impl OtlpHttpExporter {
         }
         let mut headers = HeaderBuilder::default();
         let ct: &[u8] = b"application/x-protobuf";
+        let gzip = cfg.compression == Compression::Gzip;
         headers.count(b"content-type", ct);
         headers.count(b"user-agent", USER_AGENT.as_bytes());
+        if gzip {
+            headers.count(b"content-encoding", b"gzip");
+        }
         for (k, v) in &cfg.headers {
             headers.count(k.as_bytes(), v.as_bytes());
         }
         headers.allocate().map_err(|_| b"out of memory".to_vec())?;
         headers.append(b"content-type", ct);
         headers.append(b"user-agent", USER_AGENT.as_bytes());
+        if gzip {
+            headers.append(b"content-encoding", b"gzip");
+        }
         for (k, v) in &cfg.headers {
             headers.append(k.as_bytes(), v.as_bytes());
         }

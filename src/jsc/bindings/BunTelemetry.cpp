@@ -26,7 +26,7 @@ namespace Bun {
 
 static ALWAYS_INLINE JSTelemetrySpan* asSpan(JSValue value)
 {
-    return value.isCell() ? dynamicDowncast<JSTelemetrySpan>(value.asCell()) : nullptr;
+    return value && value.isCell() ? dynamicDowncast<JSTelemetrySpan>(value.asCell()) : nullptr;
 }
 
 static ALWAYS_INLINE JSTelemetrySpan* activeSpanFromSlot(JSValue slot)
@@ -44,6 +44,7 @@ static ALWAYS_INLINE JSTelemetrySpan* activeSpanFromSlot(JSValue slot)
 }
 
 } // namespace Bun
+
 
 extern "C" JSC::EncodedJSValue Bun__Telemetry__activeSpan(Zig::GlobalObject* globalObject)
 {
@@ -73,7 +74,7 @@ extern "C" JSC::EncodedJSValue Bun__Telemetry__enterWithExtras(Zig::GlobalObject
     JSValue prev = data->getInternalField(0);
     JSValue span = JSValue::decode(spanValue);
     JSValue extras = JSValue::decode(extrasValue);
-    bool hasExtras = extras.isCell();
+    bool hasExtras = extras && extras.isCell();
     JSValue next = span;
     JSArray* array = prev.isCell() ? dynamicDowncast<JSArray>(prev.asCell()) : nullptr;
     if (array || hasExtras) {
@@ -101,7 +102,7 @@ extern "C" JSC::EncodedJSValue Bun__Telemetry__enterWithExtras(Zig::GlobalObject
 
 extern "C" JSC::EncodedJSValue Bun__Telemetry__enter(Zig::GlobalObject* globalObject, JSC::EncodedJSValue spanValue)
 {
-    return Bun__Telemetry__enterWithExtras(globalObject, spanValue, JSValue::encode(JSValue()));
+    return Bun__Telemetry__enterWithExtras(globalObject, spanValue, JSValue::encode(jsUndefined()));
 }
 
 /// The api-Context extras riding with the active span, if any.
@@ -207,7 +208,7 @@ JSC_DEFINE_HOST_FUNCTION(jsEnterWithExtras, (JSC::JSGlobalObject * globalObject,
         // representable; callers pass a placeholder span (see telemetry.ts).
         span = jsNull();
     }
-    return Bun__Telemetry__enterWithExtras(uncheckedDowncast<Zig::GlobalObject>(globalObject), JSValue::encode(span), JSValue::encode(extras.isCell() ? extras : JSValue()));
+    return Bun__Telemetry__enterWithExtras(uncheckedDowncast<Zig::GlobalObject>(globalObject), JSValue::encode(span), JSValue::encode(extras));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsExitContext, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -225,6 +226,75 @@ JSC_DEFINE_HOST_FUNCTION(jsActiveExtras, (JSC::JSGlobalObject * globalObject, JS
 JSC_DEFINE_HOST_FUNCTION(jsIsTelemetrySpan, (JSC::JSGlobalObject*, JSC::CallFrame* callFrame))
 {
     return JSValue::encode(jsBoolean(asSpan(callFrame->argument(0)) != nullptr));
+}
+
+} // namespace Bun
+
+// ── VM::asyncContextLeaveAsyncFrameHook ────────────────────────────────────
+//
+// An async function's synchronous prefix runs in its caller's frame, so a
+// span activated there with `using span = tracer.startActiveSpan(...)` would
+// otherwise stay active in the caller after the function first suspends
+// (AsyncLocalStorage.enterWith has exactly that behaviour, by design). For the
+// span header we want structured semantics instead: when the function first
+// returns to its caller, the caller sees the span it had at the call. ALS
+// stores keep Node's enterWith semantics.
+namespace Bun {
+
+JSC::JSValue telemetryLeaveAsyncFrame(JSC::JSGlobalObject* globalObject, JSC::JSValue atEntry, JSC::JSValue current)
+{
+
+    auto header = [](JSValue v, JSValue& span, JSValue& extras, JSArray*& array, unsigned& pairsStart) {
+        span = JSValue();
+        extras = jsNull();
+        array = nullptr;
+        pairsStart = 0;
+        if (!v.isCell())
+            return;
+        if (Bun::asSpan(v)) {
+            span = v;
+            return;
+        }
+        if (auto* a = dynamicDowncast<JSArray>(v.asCell())) {
+            array = a;
+            if (a->length() >= 2 && Bun::asSpan(a->getIndexQuickly(0))) {
+                span = a->getIndexQuickly(0);
+                extras = a->getIndexQuickly(1);
+                pairsStart = 2;
+            }
+        }
+    };
+
+    JSValue entrySpan, entryExtras, currentSpan, currentExtras;
+    JSArray *entryArray, *currentArray;
+    unsigned entryPairs, currentPairs;
+    header(atEntry, entrySpan, entryExtras, entryArray, entryPairs);
+    header(current, currentSpan, currentExtras, currentArray, currentPairs);
+
+    if (entrySpan == currentSpan && entryExtras == currentExtras)
+        return current;
+
+    unsigned pairCount = currentArray ? currentArray->length() - currentPairs : 0;
+    if (!pairCount && !(entrySpan && entryExtras.isCell()))
+        return entrySpan ? entrySpan : jsUndefined();
+
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    MarkedArgumentBuffer args;
+    if (entrySpan) {
+        args.append(entrySpan);
+        args.append(entryExtras);
+    }
+    if (currentArray) {
+        for (unsigned i = currentPairs; i < currentArray->length(); ++i)
+            args.append(currentArray->getIndexQuickly(i));
+    }
+    JSValue result = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), args);
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return current;
+    }
+    return result;
 }
 
 } // namespace Bun

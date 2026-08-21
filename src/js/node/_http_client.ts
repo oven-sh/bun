@@ -34,6 +34,7 @@ const onClientRequestCreatedChannel = dc.channel("http.client.request.created");
 const onClientRequestStartChannel = dc.channel("http.client.request.start");
 const onClientRequestErrorChannel = dc.channel("http.client.request.error");
 const onClientResponseFinishChannel = dc.channel("http.client.response.finish");
+const otelHttpClientEnabled = $newRustFunction("telemetry.rs", "httpClientEnabled", 0);
 
 function emitErrorEvent(request, error) {
   if (onClientRequestErrorChannel.hasSubscribers) {
@@ -45,6 +46,7 @@ function emitErrorEvent(request, error) {
   // Every request-error path funnels here (ECONNREFUSED, DNS, parse error,
   // reset): close the trace span; deduped by the per-request flag.
   traceClientResponseEnd(request);
+  otelClientRequestEnd(request, undefined, error);
   request.emit("error", error);
 }
 
@@ -158,6 +160,53 @@ function traceClientResponseEnd(req) {
     req[kTraceRequestActive] = false;
     traceEvents.emitEvent("e", kHttpTraceCat, "http.client.request");
   }
+}
+
+// Native OpenTelemetry (Bun.otel): one CLIENT span per request, `traceparent`
+// injected before the header block is serialized. `otelHttpClientEnabled` is a
+// single native call that returns false unless tracing is on.
+const kOtelSpan = Symbol("kOtelSpan");
+let otel;
+function otelClientRequestStart(req, protocol, host, port) {
+  otel ??= require("internal/telemetry");
+  const span = otel.startClientSpan(req.method);
+  if (!span) return;
+  req[kOtelSpan] = span;
+  if (!req.getHeader("traceparent")) {
+    otel.propagator.inject(otel.contextWithSpan(span), req, otelHeaderSetter);
+  }
+  if (span.isRecording()) {
+    const defaultPort = protocol === "https:" ? 443 : 80;
+    const p = +port || defaultPort;
+    span.setAttributes({
+      "http.request.method": req.method,
+      "server.address": host,
+      "server.port": p,
+      "url.full": protocol + "//" + host + (p !== defaultPort ? ":" + p : "") + req.path,
+    });
+  }
+}
+const otelHeaderSetter = {
+  set(req, key, value) {
+    req.setHeader(key, value);
+  },
+};
+function otelClientRequestEnd(req, res, err) {
+  const span = req[kOtelSpan];
+  if (span === undefined) return;
+  req[kOtelSpan] = undefined;
+  if (res) {
+    const code = res.statusCode;
+    span.setAttribute("http.response.status_code", code);
+    if (code >= 400) {
+      span.setAttribute("error.type", String(code));
+      span.setStatus(2);
+    }
+  } else if (err) {
+    span.setAttribute("error.type", err?.code || err?.name || "Error");
+    span.setStatus(2, err?.message);
+  }
+  span.end();
 }
 
 function ClientRequest(input, options, cb) {
@@ -381,6 +430,8 @@ function ClientRequest(input, options, cb) {
       this.setHeader("Authorization", "Basic " + Buffer.from(auth).toString("base64"));
     }
 
+    if (otelHttpClientEnabled()) otelClientRequestStart(this, protocol, host, port);
+
     if (this.getHeader("expect")) {
       if (this._header) {
         throw $ERR_HTTP_HEADERS_SENT("render");
@@ -392,6 +443,7 @@ function ClientRequest(input, options, cb) {
       rewriteForProxiedHttp(this, optsWithoutSignal);
     }
   } else {
+    if (otelHttpClientEnabled()) otelClientRequestStart(this, protocol, host, port);
     rewriteForProxiedHttp(this, optsWithoutSignal);
     this._storeHeader(this.method + " " + this.path + " HTTP/1.1\r\n", optionsHeaders);
   }
@@ -509,6 +561,7 @@ ClientRequest.prototype.destroy = function destroy(err) {
   // Close the http.client.request trace span if no response ever arrived
   // (req.destroy()/abort before headers); deduped by the per-request flag.
   traceClientResponseEnd(this);
+  otelClientRequestEnd(this, undefined, err ?? { code: "aborted" });
 
   // If we're aborting, we don't care about any more response data.
   const res = this.res;
@@ -556,6 +609,7 @@ function socketCloseListenerInner() {
   // Socket-level close without a response (connection reset, abort):
   // close the trace span so it doesn't stay open forever.
   traceClientResponseEnd(req);
+  otelClientRequestEnd(req, undefined, { code: "ECONNRESET" });
   if (res) {
     // Socket closed before we emitted 'end' below.
     if (!res.complete) {
@@ -838,6 +892,7 @@ function parserOnIncomingClient(res, shouldKeepAlive) {
   // The response arrived: close the 'http.client.request' span (Node ends it
   // here, in parserOnIncomingClient, before handing the response to the user).
   traceClientResponseEnd(req);
+  otelClientRequestEnd(req, res, undefined);
   req.res = res;
   res.req = req;
 

@@ -115,6 +115,18 @@ We do not currently collect telemetry; this setting only controls anonymous cras
 telemetry = false
 ```
 
+### `[telemetry]`
+
+As a table, `telemetry` configures [OpenTelemetry tracing](/runtime/opentelemetry) instead. `OTEL_*` environment variables override these values.
+
+```toml title="bunfig.toml" icon="settings"
+[telemetry]
+enabled = true
+endpoint = "http://localhost:4318"
+serviceName = "my-api"
+headers = { "x-api-key" = "..." }
+```
+
 ### `env`
 
 Configure automatic `.env` file loading. Bun loads `.env` files by default. To disable this behavior:

@@ -253,8 +253,6 @@ pub(crate) mod lib_uv_backend {
         );
         // SAFETY: `request` just heap-allocated; exclusively owned here.
         unsafe { (*request).head.otel_begin(global_this, &query.name) };
-        // SAFETY: `request` just heap-allocated; exclusively owned here.
-        unsafe { (*request).head.otel_begin(global_this, &query.name) };
 
         let hints = query.options.to_libc();
         let mut port_buf = [0u8; 128];
@@ -1762,7 +1760,7 @@ impl DNSLookup {
         }
     }
 
-    fn otel_end(&mut self, error: bool) {
+    fn otel_end(&mut self, error: Option<&str>) {
         let stub = core::mem::replace(&mut self.otel, bun_telemetry::SpanStub::NONE);
         if !stub.is_recording() {
             return;
@@ -1777,9 +1775,9 @@ impl DNSLookup {
                 if let Some(n) = &name {
                     w.attr_opt("dns.question.name", n);
                 }
-                if error {
-                    w.attr("error.type", "lookup_failed");
-                    w.status(bun_telemetry::StatusCode::Error, b"");
+                if let Some(e) = error {
+                    w.attr("error.type", e);
+                    w.status(bun_telemetry::StatusCode::Error, e.as_bytes());
                 }
             },
         );
@@ -1806,6 +1804,7 @@ impl DNSLookup {
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
             if let Some(err) = c_ares::Error::init_eai(status) {
+                (*this).otel_end(Some(err.code()));
                 error_to_deferred(err, b"getaddrinfo", None, &mut (*this).promise)
                     .reject_later((*this).global_this());
                 Self::destroy(this);
@@ -1837,6 +1836,7 @@ impl DNSLookup {
         unsafe {
             let global_this = (*this).global_this();
             if let Some(err) = err_ {
+                (*this).otel_end(Some(err.code()));
                 error_to_deferred(err, b"getaddrinfo", None, &mut (*this).promise)
                     .reject_later(global_this);
                 Self::destroy(this);
@@ -1845,6 +1845,7 @@ impl DNSLookup {
 
             // `r` is the c-ares-allocated AddrInfo valid for the callback's duration.
             let Some(r) = result.filter(|r| !(**r).node.is_null()) else {
+                (*this).otel_end(Some(c_ares::Error::ENOTFOUND.code()));
                 error_to_deferred(
                     c_ares::Error::ENOTFOUND,
                     b"getaddrinfo",
@@ -1876,7 +1877,10 @@ impl DNSLookup {
         bun_output::scoped_log!(DNSLookup, "onCompleteWithArray");
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
-            (*this).otel_end(matches!(result, Outcome::Error(_)));
+            (*this).otel_end(match result {
+                Outcome::Error(_) => Some("lookup_failed"),
+                _ => None,
+            });
             let mut promise = core::mem::take(&mut (*this).promise);
             let global_this = (*this).global_this();
             result.settle(&mut promise, global_this);
@@ -5499,6 +5503,7 @@ impl Resolver {
         );
         // SAFETY: `request` just heap-allocated in `init()`; `tail` points at its inline `head`.
         let promise = unsafe { (*(*request).tail).promise.value() };
+        unsafe { (*request).head.otel_begin(global_this, &query.name) };
 
         // SAFETY: `channel` is the live c-ares channel owned by `self`; `request`
         // is the freshly heap-allocated GetAddrInfoRequest. c-ares stores the ctx

@@ -103,6 +103,26 @@ impl Default for Config {
     }
 }
 
+/// `bunfig.toml` `[telemetry]` table, recorded at startup and layered
+/// under the environment (env vars win, matching every other OTel SDK).
+#[derive(Default, Clone, Debug)]
+pub struct Bunfig {
+    pub enabled: Option<bool>,
+    pub endpoint: Option<String>,
+    pub headers: Vec<(String, String)>,
+    pub service_name: Option<String>,
+}
+
+static BUNFIG: std::sync::OnceLock<Bunfig> = std::sync::OnceLock::new();
+
+pub fn set_bunfig(b: Bunfig) {
+    let _ = BUNFIG.set(b);
+}
+
+pub fn bunfig() -> Option<&'static Bunfig> {
+    BUNFIG.get()
+}
+
 /// Outcome of reading the environment.
 pub struct EnvConfig {
     /// `BUN_OTEL` truthy (or `OTEL_BUN`), and not `OTEL_SDK_DISABLED`.
@@ -171,13 +191,20 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
     let mut c = Config::default();
     let mut warnings = Vec::new();
 
-    let mut enabled = get("BUN_OTEL").map(|v| truthy(&v)).unwrap_or(false)
-        || get("OTEL_BUN").map(|v| truthy(&v)).unwrap_or(false);
+    let bunfig = bunfig();
+    let mut enabled = get("BUN_OTEL")
+        .map(|v| truthy(&v))
+        .or_else(|| get("OTEL_BUN").map(|v| truthy(&v)))
+        .or_else(|| bunfig.and_then(|b| b.enabled))
+        .unwrap_or(false);
     if get("OTEL_SDK_DISABLED")
         .map(|v| truthy(&v))
         .unwrap_or(false)
     {
         enabled = false;
+    }
+    if let Some(b) = bunfig {
+        c.service_name = b.service_name.clone();
     }
 
     if let Some(v) = get("OTEL_SERVICE_NAME") {
@@ -316,15 +343,22 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
             } else {
                 Some(join_url(&v, "/v1/traces"))
             }
+        } else if let Some(v) = bunfig.and_then(|b| b.endpoint.as_deref()) {
+            Some(join_url(v, "/v1/traces"))
         } else if enabled {
             Some("http://localhost:4318/v1/traces".to_string())
         } else {
             None
         };
         if let Some(url) = url {
-            let mut headers = get("OTEL_EXPORTER_OTLP_HEADERS")
+            let mut headers = bunfig.map(|b| b.headers.clone()).unwrap_or_default();
+            for (k, val) in get("OTEL_EXPORTER_OTLP_HEADERS")
                 .map(|v| parse_kv_list(&v))
-                .unwrap_or_default();
+                .unwrap_or_default()
+            {
+                headers.retain(|(hk, _)| !hk.eq_ignore_ascii_case(&k));
+                headers.push((k, val));
+            }
             if let Some(v) = get("OTEL_EXPORTER_OTLP_TRACES_HEADERS") {
                 for (k, val) in parse_kv_list(&v) {
                     headers.retain(|(hk, _)| !hk.eq_ignore_ascii_case(&k));

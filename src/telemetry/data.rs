@@ -162,7 +162,7 @@ impl SpanData {
     }
     #[inline]
     pub fn is_recording(&self) -> bool {
-        self.stub.ctx.flags.sampled() && self.m.borrow().end_ns == 0
+        self.stub.is_recording() && self.m.borrow().end_ns == 0
     }
     #[inline]
     pub fn ended(&self) -> bool {
@@ -192,7 +192,7 @@ impl SpanData {
     }
 
     pub fn set_attribute(&self, key: &[u8], v: &Value<'_>, limits: &Limits) {
-        if !self.stub.ctx.flags.sampled() || key.is_empty() {
+        if !self.stub.is_recording() || key.is_empty() {
             return;
         }
         let Ok(mut m) = self.m.try_borrow_mut() else {
@@ -239,7 +239,7 @@ impl SpanData {
         attrs: &[(&[u8], Value<'_>)],
         limits: &Limits,
     ) {
-        if !self.stub.ctx.flags.sampled() {
+        if !self.stub.is_recording() {
             return;
         }
         let Ok(mut m) = self.m.try_borrow_mut() else {
@@ -278,7 +278,7 @@ impl SpanData {
         attrs: &[(&[u8], Value<'_>)],
         limits: &Limits,
     ) {
-        if !self.stub.ctx.flags.sampled() || !ctx.is_valid() {
+        if !self.stub.is_recording() || !ctx.is_valid() {
             return;
         }
         let Ok(mut m) = self.m.try_borrow_mut() else {
@@ -351,7 +351,7 @@ impl SpanData {
         } else {
             end_ns
         };
-        if !self.stub.ctx.flags.sampled() {
+        if !self.stub.is_recording() {
             m.attrs = Vec::new();
             m.extra = Vec::new();
             return false;

@@ -1,0 +1,309 @@
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { gunzipSync } from "node:zlib";
+
+const root = require("@opentelemetry/otlp-transformer/build/src/generated/root");
+const Req = root.opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest;
+
+type Received = { headers: Record<string, string>; body: any; raw: Uint8Array; url: string };
+
+/** A minimal OTLP/HTTP collector. `respond` lets a test inject failures. */
+function collector(respond?: (n: number) => Response | undefined) {
+  const received: Received[] = [];
+  let n = 0;
+  const server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const i = n++;
+      const override = respond?.(i);
+      let raw = new Uint8Array(await req.arrayBuffer());
+      if (req.headers.get("content-encoding") === "gzip") raw = new Uint8Array(gunzipSync(raw));
+      let body: any;
+      const ct = req.headers.get("content-type") ?? "";
+      if (ct.includes("json")) body = JSON.parse(new TextDecoder().decode(raw));
+      else body = Req.toObject(Req.decode(raw), { longs: String, defaults: false });
+      received.push({ headers: Object.fromEntries(req.headers), body, raw, url: req.url });
+      if (override) return override;
+      return new Response(new Uint8Array([]), { headers: { "content-type": "application/x-protobuf" } });
+    },
+  });
+  return {
+    server,
+    received,
+    url: `http://localhost:${server.port}`,
+    spans(): any[] {
+      return received.flatMap(
+        r => r.body.resourceSpans?.flatMap((rs: any) => rs.scopeSpans.flatMap((ss: any) => ss.spans)) ?? [],
+      );
+    },
+    [Symbol.dispose]() {
+      server.stop(true);
+    },
+  };
+}
+
+async function run(script: string, env: Record<string, string>) {
+  using dir = tempDir("otel-exporter", { "index.js": script });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    cwd: String(dir),
+    env: { ...bunEnv, ...env },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+describe.concurrent("OTLP/HTTP exporter", () => {
+  test("BUN_OTEL=1 + OTEL_EXPORTER_OTLP_ENDPOINT: spans are exported at exit with headers and resource", async () => {
+    using c = collector();
+    const { stderr, exitCode } = await run(
+      `
+        const server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+        await (await fetch("http://localhost:" + server.port + "/x")).text();
+        server.stop(true);
+      `,
+      {
+        BUN_OTEL: "1",
+        OTEL_EXPORTER_OTLP_ENDPOINT: c.url,
+        OTEL_EXPORTER_OTLP_HEADERS: "x-api-key=secret%20key,x-other=1",
+        OTEL_SERVICE_NAME: "env-svc",
+        OTEL_RESOURCE_ATTRIBUTES: "deployment.environment=ci,team=runtime",
+      },
+    );
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    expect(c.received.length).toBeGreaterThanOrEqual(1);
+    const r = c.received[0];
+    expect(new URL(r.url).pathname).toBe("/v1/traces");
+    expect(r.headers["content-type"]).toBe("application/x-protobuf");
+    expect(r.headers["x-api-key"]).toBe("secret key");
+    expect(r.headers["x-other"]).toBe("1");
+    expect(r.headers["user-agent"]).toMatch(/^Bun\/.+ OTLP-Exporter$/);
+    const attrs = Object.fromEntries(
+      r.body.resourceSpans[0].resource.attributes.map((a: any) => [a.key, Object.values(a.value)[0]]),
+    );
+    expect(attrs).toMatchObject({
+      "service.name": "env-svc",
+      "deployment.environment": "ci",
+      team: "runtime",
+      "telemetry.sdk.name": "bun",
+      "process.runtime.name": "bun",
+    });
+    const names = c
+      .spans()
+      .map((s: any) => s.name)
+      .sort();
+    expect(names).toEqual(["GET", "GET"]);
+    const scopes = r.body.resourceSpans[0].scopeSpans.map((s: any) => s.scope.name).sort();
+    expect(scopes).toEqual(["bun.http.client", "bun.http.server"]);
+  });
+
+  test("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT is used verbatim; gzip compression", async () => {
+    using c = collector();
+    const { stderr, exitCode } = await run(`Bun.otel.tracer("t").startSpan("s").end();`, {
+      BUN_OTEL: "1",
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: c.url + "/custom/path",
+      OTEL_EXPORTER_OTLP_COMPRESSION: "gzip",
+    });
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    expect(c.received).toHaveLength(1);
+    expect(new URL(c.received[0].url).pathname).toBe("/custom/path");
+    expect(c.received[0].headers["content-encoding"]).toBe("gzip");
+    expect(c.spans().map((s: any) => s.name)).toEqual(["s"]);
+  });
+
+  test("not enabled without BUN_OTEL even if OTEL_* vars are present", async () => {
+    using c = collector();
+    const { stdout, exitCode } = await run(
+      `Bun.otel.tracer("t").startSpan("s").end(); console.log(Bun.otel.enabled);`,
+      {
+        OTEL_EXPORTER_OTLP_ENDPOINT: c.url,
+      },
+    );
+    expect(stdout.trim()).toBe("false");
+    expect(exitCode).toBe(0);
+    expect(c.received).toHaveLength(0);
+  });
+
+  test("Bun.otel.start() with no options picks up OTEL_* env", async () => {
+    using c = collector();
+    const { exitCode } = await run(`Bun.otel.start(); Bun.otel.tracer("t").startSpan("s").end();`, {
+      OTEL_EXPORTER_OTLP_ENDPOINT: c.url,
+    });
+    expect(exitCode).toBe(0);
+    expect(c.spans().map((s: any) => s.name)).toEqual(["s"]);
+  });
+
+  test("OTEL_SDK_DISABLED wins", async () => {
+    using c = collector();
+    const { stdout, exitCode } = await run(`console.log(Bun.otel.enabled)`, {
+      BUN_OTEL: "1",
+      OTEL_SDK_DISABLED: "true",
+      OTEL_EXPORTER_OTLP_ENDPOINT: c.url,
+    });
+    expect(stdout.trim()).toBe("false");
+    expect(exitCode).toBe(0);
+    expect(c.received).toHaveLength(0);
+  });
+
+  test("periodic export while the process stays alive (OTEL_BSP_SCHEDULE_DELAY)", async () => {
+    using c = collector();
+    const script = `
+      Bun.otel.tracer("t").startSpan("early").end();
+      // Stay alive without calling forceFlush; the batch timer must fire on its own.
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        const r = await fetch(process.env.COLLECTOR + "/count");
+        if ((await r.text()) !== "0") break;
+        await Bun.sleep(20);
+      }
+      console.log("exported-before-exit");
+    `;
+    // The collector answers /count with how many exports it has seen so far.
+    let count = 0;
+    using probe = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        if (new URL(req.url).pathname === "/count") return new Response(String(count));
+        count++;
+        return c.server.fetch(req);
+      },
+    });
+    const { stdout, exitCode } = await run(script, {
+      BUN_OTEL: "1",
+      BUN_OTEL_INSTRUMENTATIONS: "user",
+      OTEL_EXPORTER_OTLP_ENDPOINT: `http://localhost:${probe.port}`,
+      COLLECTOR: `http://localhost:${probe.port}`,
+      OTEL_BSP_SCHEDULE_DELAY: "50",
+    });
+    expect(stdout.trim()).toBe("exported-before-exit");
+    expect(exitCode).toBe(0);
+    expect(c.spans().map((s: any) => s.name)).toContain("early");
+  });
+
+  test("retries 503 then succeeds; forceFlush waits for the retry", async () => {
+    using c = collector(i => (i === 0 ? new Response("busy", { status: 503 }) : undefined));
+    const { stdout, exitCode } = await run(
+      `
+        Bun.otel.start({ endpoint: process.env.COLLECTOR, batch: { delayMs: 20 } });
+        Bun.otel.tracer("t").startSpan("retried").end();
+        // First attempt gets a 503; the retry is driven by the batch timer.
+        const deadline = Date.now() + 10000;
+        while (Bun.otel.stats().spansExported === 0 && Date.now() < deadline) await Bun.sleep(20);
+        console.log(JSON.stringify(Bun.otel.stats()));
+      `,
+      { COLLECTOR: c.url },
+    );
+    expect(exitCode).toBe(0);
+    const stats = JSON.parse(stdout.trim());
+    expect(stats.spansExported).toBe(1);
+    expect(stats.exportsFailed).toBe(0);
+    expect(c.received.length).toBe(2);
+    expect(c.spans().map((s: any) => s.name)).toEqual(["retried", "retried"]);
+  });
+
+  test("non-retryable failure is reported once on stderr and counted", async () => {
+    using c = collector(() => new Response("nope", { status: 400 }));
+    const { stdout, stderr, exitCode } = await run(
+      `
+        Bun.otel.start({ endpoint: process.env.COLLECTOR });
+        Bun.otel.tracer("t").startSpan("a").end();
+        await Bun.otel.forceFlush();
+        Bun.otel.tracer("t").startSpan("b").end();
+        await Bun.otel.forceFlush();
+        console.log(JSON.stringify(Bun.otel.stats()));
+      `,
+      { COLLECTOR: c.url },
+    );
+    expect(exitCode).toBe(0);
+    expect(stderr.match(/\[otel\]/g)?.length).toBe(1);
+    expect(stderr).toContain("HTTP 400");
+    const stats = JSON.parse(stdout.trim());
+    expect(stats.exportsFailed).toBe(2);
+    expect(stats.spansDropped).toBe(2);
+  });
+
+  test("multiple exporters receive the same batch", async () => {
+    using a = collector();
+    using b = collector();
+    const { stdout, exitCode } = await run(
+      `
+        let js = 0;
+        Bun.otel.start({ exporters: [process.env.A, { url: process.env.B, headers: { "x-b": "yes" } }, { export(spans) { js += spans.length; } }, "console"] });
+        Bun.otel.tracer("t").startSpan("multi").end();
+        await Bun.otel.forceFlush();
+        console.log(js);
+      `,
+      { A: a.url, B: b.url },
+    );
+    expect(exitCode).toBe(0);
+    expect(stdout.trim()).toBe("1");
+    expect(a.spans().map((s: any) => s.name)).toEqual(["multi"]);
+    expect(b.spans().map((s: any) => s.name)).toEqual(["multi"]);
+    expect(b.received[0].headers["x-b"]).toBe("yes");
+  });
+
+  test("OTEL_TRACES_EXPORTER=console prints spans to stderr", async () => {
+    const { stderr, exitCode } = await run(
+      `Bun.otel.tracer("t").startSpan("printed", { attributes: { k: "v" } }).end();`,
+      {
+        BUN_OTEL: "1",
+        OTEL_TRACES_EXPORTER: "console",
+      },
+    );
+    expect(exitCode).toBe(0);
+    expect(stderr).toContain("[otel] t printed trace=");
+    expect(stderr).toContain('k="v"');
+  });
+
+  test("worker spans are exported through the shared processor", async () => {
+    using c = collector();
+    using dir = tempDir("otel-worker", {
+      "worker.js": `
+        Bun.otel.tracer("w").startSpan("in-worker").end();
+        postMessage("done");
+      `,
+      "index.js": `
+        const w = new Worker("./worker.js");
+        await new Promise(r => w.onmessage = r);
+        await w.terminate();
+        Bun.otel.tracer("m").startSpan("in-main").end();
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      cwd: String(dir),
+      env: { ...bunEnv, BUN_OTEL: "1", BUN_OTEL_INSTRUMENTATIONS: "user", OTEL_EXPORTER_OTLP_ENDPOINT: c.url },
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    expect(
+      c
+        .spans()
+        .map((s: any) => s.name)
+        .sort(),
+    ).toEqual(["in-main", "in-worker"]);
+  });
+
+  test("bunfig [telemetry] table enables and configures", async () => {
+    using c = collector();
+    using dir = tempDir("otel-bunfig", {
+      "bunfig.toml": `[telemetry]\nenabled = true\nendpoint = "${c.url}"\nserviceName = "from-bunfig"\n`,
+      "index.js": `Bun.otel.tracer("t").startSpan("bf").end();`,
+    });
+    await using proc = Bun.spawn({ cmd: [bunExe(), "index.js"], cwd: String(dir), env: bunEnv, stderr: "pipe" });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    expect(c.spans().map((s: any) => s.name)).toEqual(["bf"]);
+    const attrs = Object.fromEntries(
+      c.received[0].body.resourceSpans[0].resource.attributes.map((a: any) => [a.key, Object.values(a.value)[0]]),
+    );
+    expect(attrs["service.name"]).toBe("from-bunfig");
+  });
+});

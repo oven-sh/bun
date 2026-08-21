@@ -14,11 +14,11 @@ const nativeStartSpan = $newRustFunction("telemetry.rs", "startSpan", 6);
 const nativeActiveSpan = $newRustFunction("telemetry.rs", "activeSpan", 0);
 const wrapSpanContext = $newRustFunction("telemetry.rs", "wrapSpanContext", 1);
 const withContext = $newRustFunction("telemetry.rs", "withContext", 3);
-const currentContext = $newRustFunction("telemetry.rs", "currentContext", 0);
 const nativeForceFlush = $newRustFunction("telemetry.rs", "forceFlush", 0);
 const nativeStats = $newRustFunction("telemetry.rs", "stats", 0);
 const nativeDecode = $newRustFunction("telemetry.rs", "decode", 1);
 const nativeSetEnabled = $newRustFunction("telemetry.rs", "setEnabled", 2);
+const nativeStartLeafSpan = $newRustFunction("telemetry.rs", "startLeafSpan", 3);
 const enterWithExtras = $newCppFunction("BunTelemetry.cpp", "jsEnterWithExtras", 2);
 const exitContext = $newCppFunction("BunTelemetry.cpp", "jsExitContext", 1);
 const activeExtras = $newCppFunction("BunTelemetry.cpp", "jsActiveExtras", 0);
@@ -102,9 +102,16 @@ function activeContext(): BunContext {
 function unpackContext(ctx: any): [any, Map<symbol, unknown> | undefined] {
   if (ctx instanceof BunContext) return [ctx.span, ctx.extras];
   if (ctx && typeof ctx.getValue === "function") {
-    // Foreign Context (e.g. api's ROOT_CONTEXT / BaseContext). We can only see
-    // the keys we know about.
+    // Foreign Context (api's BaseContext keeps its values in `_currentContext`).
     const span = toNativeSpan(ctx.getValue(SPAN_KEY));
+    const values = ctx._currentContext;
+    if ($isMap(values)) {
+      let extras: Map<symbol, unknown> | undefined;
+      for (const [k, v] of values) {
+        if (k !== SPAN_KEY) (extras ??= new Map()).set(k, v);
+      }
+      return [span, extras];
+    }
     const bag = ctx.getValue(BAGGAGE_KEY);
     return [span, bag === undefined ? undefined : new Map([[BAGGAGE_KEY, bag]])];
   }
@@ -410,6 +417,17 @@ function installGlobal() {
   reg.propagation ??= propagator;
 }
 
+// ── node:http client (see _http_client.ts) ────────────────────────────────
+
+const clientScopeId = 1; // bun_telemetry::Instrument::HttpClient
+/** A CLIENT span under the active span, or undefined when disabled. */
+function startClientSpan(name: string) {
+  return nativeStartLeafSpan(clientScopeId, String(name), SpanKind.CLIENT);
+}
+function contextWithSpan(span: any) {
+  return new BunContext(span);
+}
+
 // ── Bun.otel ──────────────────────────────────────────────────────────────
 
 function start(options?: any) {
@@ -424,7 +442,6 @@ async function shutdown() {
 export default {
   start,
   tracer: getTracer,
-  getTracer,
   activeSpan: nativeActiveSpan,
   /** Run `fn` with `span` (a Span, SpanContext-like object, or api Context) active. */
   with(spanOrContext: any, fn: Function, thisArg?: unknown, ...args: any[]) {
@@ -449,9 +466,10 @@ export default {
   ROOT_CONTEXT,
   SpanKind,
   SpanStatusCode,
+  // internal, for node:http
+  startClientSpan,
+  contextWithSpan,
   [Symbol.for("nodejs.util.inspect.custom")]() {
     return `Bun.otel { enabled: ${nativeIsEnabled()} }`;
   },
-  // testing hooks
-  __currentContext: currentContext,
 };

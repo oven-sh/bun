@@ -17,4 +17,7 @@ JSC_DECLARE_HOST_FUNCTION(jsExitContext);
 JSC_DECLARE_HOST_FUNCTION(jsActiveExtras);
 JSC_DECLARE_HOST_FUNCTION(jsIsTelemetrySpan);
 
+/// Installed as VM::asyncContextLeaveAsyncFrameHook.
+JSC::JSValue telemetryLeaveAsyncFrame(JSC::JSGlobalObject*, JSC::JSValue atEntry, JSC::JSValue current);
+
 }

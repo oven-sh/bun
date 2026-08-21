@@ -205,30 +205,8 @@ impl PostgresSQLQuery {
 
     fn otel_end_js_error(&self, err: JSValue, global_object: &JSGlobalObject) {
         let Some(span) = self.otel.take() else { return };
-        let mut code = None;
-        let mut message = None;
-        if err.is_object() {
-            if let Ok(Some(c)) = err.get(global_object, "code") {
-                if c.is_string() {
-                    code = c.to_slice(global_object).ok();
-                }
-            }
-            if let Ok(Some(m)) = err.get(global_object, "message") {
-                if m.is_string() {
-                    message = m.to_slice(global_object).ok();
-                }
-            }
-        }
         let q = self.query.to_utf8();
-        bun_telemetry::db::end(
-            span,
-            q.slice(),
-            None,
-            Some((
-                code.as_ref().map(|c| c.slice()).unwrap_or(b"_OTHER"),
-                message.as_ref().map(|m| m.slice()).unwrap_or(b""),
-            )),
-        );
+        crate::shared::otel::end_with_js_error(span, q.slice(), global_object, err);
     }
 
     /// Finish the telemetry span (first call wins).

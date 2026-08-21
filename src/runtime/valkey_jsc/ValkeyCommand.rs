@@ -239,7 +239,9 @@ impl Promise {
                 &bun_telemetry::Value::Str(&name[..n]),
                 l,
             );
-            if bun_telemetry::rt::capture_db_statement() {
+            // Never record arguments of credential-bearing commands.
+            let sensitive = matches!(&name[..n], b"AUTH" | b"HELLO" | b"MIGRATE" | b"ACL" | b"CONFIG");
+            if bun_telemetry::rt::capture_db_statement() && !sensitive {
                 let first: &[u8] = match &command.args {
                     Args::Slices(a) => a.first().map(|s| s.slice()).unwrap_or(b""),
                     Args::Args(a) => a.first().map(|s| s.slice()).unwrap_or(b""),

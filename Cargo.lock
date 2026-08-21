@@ -325,6 +325,7 @@ dependencies = [
  "bun_resolver",
  "bun_standalone_graph",
  "bun_sys",
+ "bun_telemetry",
  "enum-map",
  "scopeguard",
  "thiserror",

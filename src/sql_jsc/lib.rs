@@ -31,6 +31,8 @@ pub mod shared {
     #[path = "ObjectIterator.rs"]
     pub mod object_iterator;
 
+    pub mod otel;
+
     #[path = "QueryBindingIterator.rs"]
     pub mod query_binding_iterator;
 

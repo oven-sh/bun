@@ -3488,6 +3488,7 @@ where
         // SAFETY: `request_object_ptr` is live; no other borrow is outstanding.
         let args = [unsafe { (*request_object_ptr).to_js(&global) }, server_js];
         args[0].ensure_still_alive();
+        let _otel = ctx.otel_begin(&global);
 
         let response_value = match this.config.on_request.call(&global, server_js, &args) {
             Ok(v) => v,

@@ -61,7 +61,7 @@ impl LinkerContext<'_> {
         }
 
         // SAFETY: `this` points to `BundleV2.linker` (caller is the worker-pool
-        // dispatch from `scanImportsAndExports`); `container_of` shape.
+        // dispatch from `scan_imports_and_exports`); `container_of` shape.
         // `Worker::get` only needs `&BundleV2`, so derive a shared ref — never
         // form `&mut BundleV2` here (concurrent tasks would alias it).
         let bundle_v2: &BundleV2<'_> = unsafe { &*LinkerContext::bundle_v2_ptr(this) };

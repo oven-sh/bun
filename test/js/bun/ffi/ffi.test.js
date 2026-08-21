@@ -1458,6 +1458,44 @@ describe("toBuffer borrowed-pointer ownership (no bad-free on GC)", () => {
   );
 });
 
+// toBuffer hands an arbitrary (pointer, byteLength) pair straight to the Buffer
+// hand-off that spawnSync, Bun.$ and others use for their output. That makes it
+// the one way to reach the hand-off with a byteLength above kMaxLength (2^32)
+// without 4 GiB of real bytes; the views below never touch the memory they
+// describe. Subprocess because unpatched builds abort inside JSC.
+describe("toBuffer at the Buffer length limit", () => {
+  it.concurrent("throws a RangeError above 2^32 bytes and still creates a view of exactly 2^32 bytes", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import { ptr, toBuffer } from "bun:ffi";
+        const backing = new Uint8Array(16);
+        let aboveLimit;
+        try {
+          aboveLimit = { length: toBuffer(ptr(backing), 0, 2 ** 32 + 1).length };
+        } catch (e) {
+          aboveLimit = { isRangeError: e instanceof RangeError };
+        }
+        const atLimit = { length: toBuffer(ptr(backing), 0, 2 ** 32).length };
+        console.log(JSON.stringify({ aboveLimit, atLimit }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ result: JSON.parse(stdout.trim() || "null"), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      result: { aboveLimit: { isRangeError: true }, atLimit: { length: 2 ** 32 } },
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+});
+
 describe.skipIf(!FFI_FIXTURE_PATH)("engine-native FFI (single implementation)", () => {
   const lib = FFI_FIXTURE_PATH;
   it("linkSymbols() binds and calls symbols from raw pointers", () => {

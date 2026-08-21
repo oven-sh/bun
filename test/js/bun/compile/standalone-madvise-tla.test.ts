@@ -2,6 +2,8 @@
 // entrypoint has top-level await. loadEntryPoint() returns a promise without
 // blocking, so the call site at bun.js.zig:466 is hit synchronously before the
 // main event loop spins — TLA resolution happens later in that loop.
+// BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE, read by the compiled binary at
+// runtime, skips the hint.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
 import path from "node:path";
@@ -29,10 +31,22 @@ test.skipIf(isWindows || !isDebug)(
     expect(build.stderr.toString()).not.toContain("error:");
     expect(build.exitCode).toBe(0);
 
-    {
+    // BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE is read by the compiled
+    // executable at runtime (the binary above was built without it); a falsy
+    // value leaves the hint enabled. With the flag set, the function returns
+    // before logging anything, so the only evidence is the missing line.
+    for (const [flag, hinted] of [
+      [undefined, true],
+      ["0", true],
+      ["1", false],
+    ] as const) {
       await using proc = Bun.spawn({
         cmd: [out],
-        env: { ...bunEnv, BUN_DEBUG_StandaloneModuleGraph: "1" },
+        env: {
+          ...bunEnv,
+          BUN_DEBUG_StandaloneModuleGraph: "1",
+          BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE: flag,
+        },
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -42,7 +56,11 @@ test.skipIf(isWindows || !isDebug)(
       expect(stdout).toContain("after-await");
       // Scoped loggers write to the debug-writer stream (stdout by default).
       // Either the success or failure variant proves the call site is reached.
-      expect(stdout).toContain("hintSourcePagesDontNeed:");
+      if (hinted) {
+        expect(stdout).toContain("hintSourcePagesDontNeed:");
+      } else {
+        expect(stdout).not.toContain("hintSourcePagesDontNeed:");
+      }
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     }

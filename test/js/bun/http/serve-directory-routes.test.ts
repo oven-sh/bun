@@ -1,8 +1,31 @@
 import { serve, type Server } from "bun";
 import { afterEach, describe, expect, it } from "bun:test";
 import { symlinkSync } from "fs";
-import { isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { join } from "path";
+
+const strace = isLinux ? Bun.which("strace") : null;
+const straceEnv = {
+  ...bunEnv,
+  ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+  LSAN_OPTIONS: "detect_leaks=0",
+};
+const straceInjectArgs = (traceFile: string) => [
+  "-o",
+  traceFile,
+  "-e",
+  "trace=openat2",
+  "-e",
+  "inject=openat2:error=EPERM:when=1",
+];
+const canInjectOpenat2Error =
+  !!strace &&
+  Bun.spawnSync({
+    cmd: [strace, ...straceInjectArgs("/dev/null"), bunExe(), "--version"],
+    env: straceEnv,
+    stdout: "ignore",
+    stderr: "ignore",
+  }).exitCode === 0;
 
 describe("Bun.serve() directory routes", () => {
   let server: Server | undefined;
@@ -373,6 +396,42 @@ describe("Bun.serve() directory routes", () => {
       expect(await res.text()).not.toContain("SECRET");
       expect(res.status).toBe(404);
     }
+  });
+
+  it.skipIf(!canInjectOpenat2Error)("keeps clamping symlinks to the root after an open error on one path", async () => {
+    using dir = tempDir("serve-dir-open-error", {
+      "secret.txt": "SECRET",
+      "public/ok.txt": "ok",
+    });
+    const root = String(dir);
+    symlinkSync("../secret.txt", join(root, "public", "escape-rel"));
+    symlinkSync(join(root, "secret.txt"), join(root, "public", "escape-abs"));
+
+    const script = `
+        const server = Bun.serve({
+          port: 0,
+          routes: { "/static/*": { dir: ${JSON.stringify(join(root, "public"))} } },
+        });
+        const out = [];
+        for (const p of ["escape-rel", "escape-abs", "ok.txt"]) {
+          const res = await fetch(server.url + "static/" + p);
+          out.push([res.status, await res.text()]);
+        }
+        server.stop(true);
+        console.log(JSON.stringify(out));
+      `;
+    const traceFile = join(root, "strace.log");
+    await using proc = Bun.spawn({
+      cmd: [strace!, ...straceInjectArgs(traceFile), bunExe(), "-e", script],
+      env: straceEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const trace = await Bun.file(traceFile).text();
+    expect(trace, stderr).toMatch(/openat2\(.*"escape-rel".*= -1 EPERM .*\(INJECTED\)/);
+    expect(stdout.trim(), stderr).toBe(`[[404,""],[404,""],[200,"ok"]]`);
+    expect(exitCode).toBe(0);
   });
 
   it("percent-decodes file names", async () => {

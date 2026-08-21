@@ -45,7 +45,7 @@ pub type Digest = [u8; 32];
 /// `eql` still compares the full digest. `store_hash = false` since recompute
 /// is a single load.
 #[derive(Default)]
-pub struct DigestContext;
+struct DigestContext;
 
 impl ArrayHashContext<Digest> for DigestContext {
     #[inline]

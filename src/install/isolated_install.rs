@@ -2666,7 +2666,9 @@ pub(crate) fn install_isolated_packages(
         // all exist only once every entry is done, so this pass runs after
         // the install loop instead of inside the per-entry bin step.
         {
+            let pkg_names = lockfile.packages.items_name();
             let pkg_resolutions = lockfile.packages.items_resolution();
+            let string_buf = lockfile.buffers.string_bytes.as_slice();
             let entry_node_ids = store.entries.items_node_id();
             let node_pkg_ids = store.nodes.items_pkg_id();
             for _entry_id in 0..store.entries.len() {
@@ -2679,7 +2681,15 @@ pub(crate) fn install_isolated_packages(
                     continue;
                 }
                 if let Err(err) = installer.link_dependency_bins(entry_id, true) {
-                    Output::err(err, "failed to link binaries", format_args!(""));
+                    Output::err(
+                        err,
+                        "failed to link binaries for package: {}@{}",
+                        (
+                            bstr::BStr::new(pkg_names[pkg_id as usize].slice(string_buf)),
+                            pkg_resolutions[pkg_id as usize]
+                                .fmt(string_buf, bun_core::fmt::PathSep::Auto),
+                        ),
+                    );
                     if installer.manager().options.enable.fail_early() {
                         Global::exit(1);
                     }

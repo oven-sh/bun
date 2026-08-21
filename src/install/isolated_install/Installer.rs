@@ -2572,31 +2572,19 @@ impl<'a> Installer<'a> {
                             ResolutionTag::Workspace => {
                                 let workspace_path = pkg_res.workspace().slice(string_buf);
                                 if let Some(dir) = paths::dirname(workspace_path) {
-                                    if target_node_modules_path.append(dir).is_err() {
-                                        return Err(crate::Error::Sys(
-                                            bun_errno::SystemErrno::ENAMETOOLONG,
-                                        ));
-                                    }
+                                    target_node_modules_path.append(dir).assume_ok();
                                 }
                                 strings::StringOrTinyString::init(paths::basename(workspace_path))
                             }
                             ResolutionTag::Symlink => {
                                 let symlink_dir_path: &[u8] = &self.manager().global_link_dir_path;
                                 paths::PathLike::clear(&mut target_node_modules_path);
-                                if target_node_modules_path.append(symlink_dir_path).is_err() {
-                                    return Err(crate::Error::Sys(
-                                        bun_errno::SystemErrno::ENAMETOOLONG,
-                                    ));
-                                }
+                                target_node_modules_path.append(symlink_dir_path).assume_ok();
                                 // keep the `@scope/` segment of a scoped link
                                 // name in the directory part
                                 let link_name = pkg_res.symlink().slice(string_buf);
                                 if let Some(dir) = paths::dirname(link_name) {
-                                    if target_node_modules_path.append(dir).is_err() {
-                                        return Err(crate::Error::Sys(
-                                            bun_errno::SystemErrno::ENAMETOOLONG,
-                                        ));
-                                    }
+                                    target_node_modules_path.append(dir).assume_ok();
                                 }
                                 strings::StringOrTinyString::init(paths::basename(link_name))
                             }

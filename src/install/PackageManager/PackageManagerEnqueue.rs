@@ -1128,12 +1128,30 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                         }
 
                                         // Was it recent enough to just load it without the network call?
-                                        if this.options.enable.manifest_cache_control() && !expired
+                                        // `--prefer-offline` / `--offline` accept a cached manifest of
+                                        // any age.
+                                        if (this.options.enable.manifest_cache_control() && !expired)
+                                            || this.options.offline != crate::package_manager_real::options::OfflineMode::Online
                                         {
                                             let _ = this.network_dedupe_map.remove(&task_id);
                                             continue 'retry_from_manifests_ptr;
                                         }
                                     }
+                                }
+
+                                if this.options.offline
+                                    == crate::package_manager_real::options::OfflineMode::Offline
+                                {
+                                    let _ = this.network_dedupe_map.remove(&task_id);
+                                    let _ = this.log_mut().add_error_fmt(
+                                        None,
+                                        bun_ast::Loc::EMPTY,
+                                        format_args!(
+                                            "--offline: no cached manifest for \"{}\" (run once online, or use --prefer-offline)",
+                                            bstr::BStr::new(&name_str),
+                                        ),
+                                    );
+                                    return Ok(());
                                 }
 
                                 if verbose_install() {

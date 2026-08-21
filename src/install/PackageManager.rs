@@ -1408,6 +1408,7 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
         public_hoist_pattern,
         hoist_pattern,
         hoist,
+        offline,
     } = bunfig;
 
     if let Some(registry) = default_registry {
@@ -1462,6 +1463,7 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
         public_hoist_pattern,
         hoist_pattern,
         hoist,
+        offline,
     );
 }
 
@@ -2239,6 +2241,16 @@ pub fn init(
             ctx.install.as_deref(),
             subcommand,
         )?;
+
+        // `install.prefer = "offline"` in bunfig (also what `bun --prefer-offline` sets
+        // for the runtime's auto-install) means prefer-offline for `bun install` too,
+        // unless a flag already asked for more.
+        if manager.options.offline == options::OfflineMode::Online
+            && ctx.debug.offline_mode_setting
+                == Some(bun_options_types::offline_mode::OfflineMode::Offline)
+        {
+            manager.options.offline = options::OfflineMode::PreferOffline;
+        }
 
         if let Some(config) = ctx.install.as_deref_mut() {
             if let Some(p) = config.public_hoist_pattern.take() {

@@ -1,4 +1,18 @@
 use crate::bun_schema::api as Api;
+
+/// Network policy for this install.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum OfflineMode {
+    /// Default: revalidate stale manifests, download what is missing.
+    #[default]
+    Online,
+    /// `--prefer-offline` / `install.prefer = "offline"`: a cached manifest of any age
+    /// satisfies resolution; only what is missing from the cache is fetched.
+    PreferOffline,
+    /// `--offline` / `install.offline = true`: never touch the network; anything not
+    /// in the cache is an error.
+    Offline,
+}
 use bun_core::ZStr;
 use bun_core::{Output, env_var};
 use bun_paths::PathBuffer;
@@ -81,6 +95,9 @@ pub struct Options {
     /// fallback (pnpm's `hoist=false`); takes precedence over `hoist_pattern`.
     pub(crate) hoist: bool,
 
+    /// `--offline` / `--prefer-offline` (or `install.offline` / `install.prefer = "offline"`).
+    pub offline: OfflineMode,
+
     // Security scanner module path
     pub security_scanner: Option<&'static [u8]>,
 
@@ -156,6 +173,7 @@ impl Default for Options {
             public_hoist_pattern: None,
             hoist_pattern: None,
             hoist: true,
+            offline: OfflineMode::Online,
             security_scanner: None,
             minimum_release_age_ms: None,
             minimum_release_age_excludes: None,
@@ -473,6 +491,10 @@ impl Options {
 
             if let Some(hoist) = config.hoist {
                 self.hoist = hoist;
+            }
+
+            if config.offline == Some(true) {
+                self.offline = OfflineMode::Offline;
             }
 
             if let Some(security_scanner) = config.security_scanner.as_deref() {
@@ -804,6 +826,11 @@ impl Options {
 
             if cli.no_verify {
                 self.do_.set(Do::VERIFY_INTEGRITY, false);
+            }
+            if cli.offline {
+                self.offline = OfflineMode::Offline;
+            } else if cli.prefer_offline && self.offline == OfflineMode::Online {
+                self.offline = OfflineMode::PreferOffline;
             }
 
             if cli.yarn {

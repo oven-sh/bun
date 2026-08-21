@@ -1,0 +1,131 @@
+import { spawn } from "bun";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
+import { rm, writeFile } from "fs/promises";
+import { bunExe, bunEnv as env, readdirSorted, tmpdirSync } from "harness";
+import { join } from "path";
+import {
+  dummyAfterAll,
+  dummyAfterEach,
+  dummyBeforeAll,
+  dummyBeforeEach,
+  dummyRegistry,
+  package_dir,
+  root_url,
+  setHandler,
+} from "./dummy.registry";
+
+beforeAll(dummyBeforeAll);
+afterAll(dummyAfterAll);
+setDefaultTimeout(1000 * 60 * 5);
+
+let cache_dir: string;
+
+beforeEach(async () => {
+  await dummyBeforeEach({ linker: "hoisted" });
+  cache_dir = tmpdirSync();
+  // dummyBeforeEach disables the cache; these tests are about the cache
+  await writeFile(
+    join(package_dir, "bunfig.toml"),
+    Bun.TOML.stringify({ install: { cache: { dir: cache_dir }, registry: root_url + "/", saveTextLockfile: true, linker: "hoisted" } }),
+  );
+});
+afterEach(dummyAfterEach);
+
+async function install(cwd: string, args: string[]) {
+  await using proc = spawn({ cmd: [bunExe(), "install", ...args], cwd, env, stdout: "pipe", stderr: "pipe" });
+  const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { out, err, code };
+}
+
+async function newProject(deps: Record<string, string>) {
+  const dir = tmpdirSync();
+  await writeFile(
+    join(dir, "bunfig.toml"),
+    Bun.TOML.stringify({ install: { cache: { dir: cache_dir }, registry: root_url + "/", saveTextLockfile: true, linker: "hoisted" } }),
+  );
+  await writeFile(join(dir, "package.json"), JSON.stringify({ name: "app", version: "1.0.0", dependencies: deps }));
+  return dir;
+}
+
+it("--prefer-offline resolves from cached manifests without touching the network", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls, { "0.0.3": {}, "0.0.5": {} }));
+  await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { baz: "0.0.3" } }));
+  // 1. online install populates the manifest + tarball cache
+  let r = await install(package_dir, []);
+  expect(r.err).not.toContain("error:");
+  expect(r.code).toBe(0);
+  const before = urls.length;
+  expect(before).toBeGreaterThan(0);
+
+  // 2. a fresh project without a lockfile: the (possibly stale) cached manifest satisfies
+  //    the range and the tarball comes from the cache: zero requests
+  const dir2 = await newProject({ baz: "<=0.0.3" });
+  r = await install(dir2, ["--prefer-offline"]);
+  expect(r.err).not.toContain("error:");
+  expect(r.code).toBe(0);
+  expect(urls.slice(before)).toEqual([]);
+  expect(await readdirSorted(join(dir2, "node_modules", "baz"))).toContain("package.json");
+});
+
+it("--offline never issues a request and fails cleanly on a cache miss", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls, { "0.0.3": {}, "0.0.5": {} }));
+  await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { baz: "0.0.3" } }));
+  let r = await install(package_dir, []);
+  expect(r.code).toBe(0);
+  const before = urls.length;
+
+  // everything cached → works
+  const dir2 = await newProject({ baz: "0.0.3" });
+  r = await install(dir2, ["--offline"]);
+  expect(r.err).not.toContain("error:");
+  expect(r.code).toBe(0);
+  expect(urls.length).toBe(before);
+
+  // manifest for `bar` was never fetched → clean error, still no request
+  const dir3 = await newProject({ bar: "0.0.2" });
+  r = await install(dir3, ["--offline"]);
+  expect(r.code).not.toBe(0);
+  expect(r.err).toContain("--offline");
+  expect(urls.length).toBe(before);
+
+  // manifest cached but that version's tarball evicted → clean error, no request
+  for (const entry of await readdirSorted(cache_dir)) {
+    if (entry.startsWith("baz@0.0.3")) await rm(join(cache_dir, entry), { recursive: true, force: true });
+  }
+  const dir4 = await newProject({ baz: "0.0.3" });
+  r = await install(dir4, ["--offline"]);
+  expect(r.code).not.toBe(0);
+  expect(r.err).toContain("--offline");
+  expect(urls.length).toBe(before);
+});
+
+it("install.prefer = \"offline\" and install.offline = true in bunfig.toml behave like the flags", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls, { "0.0.3": {} }));
+  await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { baz: "0.0.3" } }));
+  expect((await install(package_dir, [])).code).toBe(0);
+  const before = urls.length;
+  const dir2 = tmpdirSync();
+  await writeFile(
+    join(dir2, "bunfig.toml"),
+    Bun.TOML.stringify({ install: { cache: { dir: cache_dir }, registry: root_url + "/", prefer: "offline", linker: "hoisted" } }),
+  );
+  await writeFile(join(dir2, "package.json"), JSON.stringify({ name: "app", dependencies: { baz: "^0.0.3" } }));
+  let r = await install(dir2, []);
+  expect(r.err).not.toContain("error:");
+  expect(r.code).toBe(0);
+  expect(urls.length).toBe(before);
+
+  const dir3 = tmpdirSync();
+  await writeFile(
+    join(dir3, "bunfig.toml"),
+    Bun.TOML.stringify({ install: { cache: { dir: cache_dir }, registry: root_url + "/", offline: true, linker: "hoisted" } }),
+  );
+  await writeFile(join(dir3, "package.json"), JSON.stringify({ name: "app", dependencies: { bar: "0.0.2" } }));
+  r = await install(dir3, []);
+  expect(r.code).not.toBe(0);
+  expect(r.err).toContain("--offline");
+  expect(urls.length).toBe(before);
+});

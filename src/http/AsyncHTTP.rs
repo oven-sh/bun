@@ -356,7 +356,16 @@ impl Preconnect {
 }
 
 pub fn preconnect(url: URL<'static>, is_url_owned: bool) {
-    if !FeatureFlags::IS_FETCH_PRECONNECT_SUPPORTED {
+    // Write-before-read: `Bun__fetchPreconnect` reaches here without going
+    // through any path that calls `HTTPThread::init`, so `schedule()` below
+    // would deref the uninitialized `HTTP_THREAD` static (UB on niche-bearing
+    // fields) if `fetch.preconnect()` is the process's first HTTP operation.
+    // Every other JS-side entry point (`send_sync`, `fetch()`, S3) passes
+    // default opts too. A preconnect is only a hint, so when the thread cannot
+    // start there is nothing to report here: the request that follows reports it.
+    if !FeatureFlags::IS_FETCH_PRECONNECT_SUPPORTED
+        || crate::http_thread::init(&Default::default()).is_err()
+    {
         if is_url_owned {
             // SAFETY: `is_url_owned` is the caller's promise that `url.href` is a
             // global-allocator `Box<[u8]>` we now own.
@@ -364,14 +373,6 @@ pub fn preconnect(url: URL<'static>, is_url_owned: bool) {
         }
         return;
     }
-
-    // Write-before-read: `Bun__fetchPreconnect` reaches here without going
-    // through any path that calls `HTTPThread::init`, so `schedule()` below
-    // would deref the uninitialized `HTTP_THREAD` static (UB on niche-bearing
-    // fields) if `fetch.preconnect()` is the process's first HTTP operation.
-    // `init` is idempotent (`Once`) and every other JS-side entry point
-    // (`send_sync`, `FetchTasklet::start`, S3) passes default opts too.
-    crate::http_thread::init(&Default::default());
 
     let this: *mut Preconnect = bun_core::heap::into_raw(Box::new(Preconnect {
         async_http: None,
@@ -617,7 +618,7 @@ impl<'a> AsyncHTTP<'a> {
         &mut self,
         response_buffer: &mut MutableString,
     ) -> crate::Result<crate::HTTPResponseMetadata> {
-        crate::http_thread::init(&Default::default());
+        crate::http_thread::init(&Default::default())?;
 
         // Note: `Box::leak` is forbidden (PORTING.md §Forbidden);
         // allocate via `heap::alloc` and reclaim once

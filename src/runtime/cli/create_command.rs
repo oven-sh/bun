@@ -269,7 +269,9 @@ impl CreateCommand {
             long_running: false,
             ..Default::default()
         });
-        HTTP::http_thread::init(&Default::default());
+        // Warm-up only: `send_sync` starts the thread itself and reports a
+        // refused thread as the error of the request that needed it.
+        let _ = HTTP::http_thread::init(&Default::default());
 
         let mut create_options = CreateOptions::parse(ctx)?;
         let positionals = &create_options.positionals;

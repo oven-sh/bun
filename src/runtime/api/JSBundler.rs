@@ -1370,6 +1370,25 @@ pub mod js_bundler {
         let mut plugins: Option<*mut Plugin> = None;
         let config = Config::from_js(global_this, arguments[0], &mut plugins)?;
 
+        // A thread the OS refuses rejects this build; the next build tries to
+        // start it again. The plugin object is released the way a finished
+        // build's task releases it (`JSBundleCompletionTask::deinit`); `config`
+        // drops with its fields.
+        if let Err(err) = bun_bundler::bundle_v2::singleton::start::<
+            crate::api::js_bundle_completion_task::JSBundleCompletionTask,
+        >() {
+            if let Some(plugin) = plugins {
+                Plugin::destroy(plugin);
+            }
+            let err = jsc::SystemError {
+                code: BunString::static_(err.code()).into(),
+                message: BunString::create_format(format_args!("{err}")).into(),
+                ..Default::default()
+            }
+            .to_error_instance(global_this);
+            return Ok(jsc::JSPromise::rejected_promise(global_this, err).to_js());
+        }
+
         // `BundleV2.generateFromJavaScript` — the completion-task struct lives in
         // `crate::api::js_bundle_completion_task` (bun_runtime owns it because its
         // fields name `Config`/`Plugin`/`HTMLBundle::Route`; lower-tier crates

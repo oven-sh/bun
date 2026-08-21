@@ -212,10 +212,10 @@ impl WebSocketProxyTunnel {
 
         let ssl = wrapper.ssl.get();
 
-        this.ssl.set(ssl);
         if this.wrapper.set(wrapper).is_err() {
             return Err(crate::Error::InvalidOptions);
         }
+        this.ssl.set(ssl);
 
         // Configure SNI with hostname.
         //
@@ -247,8 +247,9 @@ impl WebSocketProxyTunnel {
         }
 
         // `start*()` synchronously fires `on_open(ctx)` / `write_encrypted(ctx)`
-        // / etc. Those callbacks touch only `Cell`/`JsCell` fields disjoint from
-        // `wrapper`, so the `&SslWrapper` formed here is never invalidated.
+        // / etc. Those callbacks never touch `wrapper` and mutate only
+        // `Cell`/`JsCell` fields, so the `&SslWrapper` formed here is never
+        // invalidated.
         if let Some(w) = this.wrapper.get() {
             if !initial_data.is_empty() {
                 w.start_with_payload(initial_data);

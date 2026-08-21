@@ -735,9 +735,7 @@ public:
         uint8_t attributes;
     };
     WTF::UncheckedKeyHashMap<WTF::RefPtr<WTF::UniquedStringImpl>, Entry> ownProperties;
-    // Module keys present at capture time (i.e. loaded by --preload). Evicted
-    // on reset so preload re-evaluates and re-registers its hooks; the
-    // node_modules-keeping only applies to what the test file loaded on top.
+    // Module keys loaded by --preload; evicted on reset so preload re-evaluates and re-registers its hooks.
     WTF::UncheckedKeyHashSet<WTF::RefPtr<WTF::UniquedStringImpl>> preloadModuleKeys;
     WTF::UncheckedKeyHashSet<WTF::String> preloadRequireKeys;
     JSC::Strong<JSC::Unknown> prepareStackTraceValue;
@@ -750,8 +748,7 @@ public:
     unsigned reuseCount { 0 };
     unsigned swapCount { 0 };
 
-    // The captured global is being replaced: release its values now rather than
-    // when the next global's capture overwrites them.
+    // The captured global is being replaced: release its values now, not at the next capture.
     bool noteSwap()
     {
         ownProperties.clear();
@@ -767,10 +764,7 @@ static TestIsolationBaseline* testIsolationBaselineFor(Zig::GlobalObject* global
     return baseline && baseline->capturedGlobal == globalObject ? baseline : nullptr;
 }
 
-// State the reuse scrub cannot undo. mock.module() rewrote the exports of records the scrub
-// keeps; an ActiveDOMObject (Worker, WebSocket, MessagePort, BroadcastChannel) with pending
-// activity may still fire events into this file's realm and is only stopped by the swap path's
-// context stop.
+// State the reuse scrub cannot undo: mock.module() rewrites of kept records, or an ActiveDOMObject with pending activity (only the swap path's context stop silences it).
 static bool hasUnscrubbableStateForTestIsolation(Zig::GlobalObject* globalObject)
 {
     if (globalObject->moduleMockCalledSinceTestIsolationBaseline)
@@ -785,9 +779,7 @@ static bool hasUnscrubbableStateForTestIsolation(Zig::GlobalObject* globalObject
 
 } // namespace Bun
 
-// Records the post-preload own-property set of `globalObject` so the next
-// file's swap can compare against it. Called from Rust between preload and the
-// file's own module load, and only on the first file after a fresh global.
+// Records the post-preload shape of `globalObject` for the next file-boundary compare; called from Rust between preload and the file's own module load.
 extern "C" void Zig__GlobalObject__captureTestIsolationBaseline(Zig::GlobalObject* globalObject)
 {
     JSC::VM& vm = globalObject->vm();
@@ -803,9 +795,7 @@ extern "C" void Zig__GlobalObject__captureTestIsolationBaseline(Zig::GlobalObjec
     globalObject->moduleMockCalledSinceTestIsolationBaseline = false;
     baseline.lexicalSymbolTableSize = globalObject->globalLexicalEnvironment()->symbolTable()->size();
 
-    // Reify static hash-table entries (setTimeout, fetch, process, …) into
-    // own-property storage so the baseline holds their canonical values and the
-    // scrub never mistakes a lazy reification for a user leak.
+    // Reify static hash-table entries so the scrub never mistakes a lazy reification for a user leak.
     if (!globalObject->staticPropertiesReified())
         globalObject->reifyAllStaticProperties(globalObject);
     if (scope.exception()) [[unlikely]] {
@@ -828,10 +818,7 @@ extern "C" void Zig__GlobalObject__captureTestIsolationBaseline(Zig::GlobalObjec
         return true;
     });
 
-    // On a re-capture (same global reused) the module maps also hold
-    // node_modules the previous file loaded on top; re-snapshotting would tag
-    // them as preload keys and evict them next reset. The preload graph is
-    // stable across reuses, so the first capture's snapshot stays correct.
+    // On a re-capture the module maps also hold the previous file's node_modules; re-snapshotting would evict them as preload keys, and the preload graph is stable across reuses anyway.
     if (isRecapture)
         return;
 
@@ -853,11 +840,7 @@ extern "C" void Zig__GlobalObject__captureTestIsolationBaseline(Zig::GlobalObjec
     }
 }
 
-// First half of the file boundary, called before the runtime-side cleanup. The swap path stops
-// the finished file's ScriptExecutionContext (Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation),
-// which is permanent: every Worker / MessagePort / WebSocket the next file creates on a stopped
-// context is stopped at construction. So a global is only left unstopped when it may still be
-// reused; tryResetForTestIsolation makes the final call once the cleanup has run.
+// Called before the runtime-side cleanup: the swap path's context stop is permanent (everything constructed on a stopped context starts stopped), so only a global that cannot be reused is stopped; tryResetForTestIsolation makes the final call after cleanup.
 extern "C" bool Zig__GlobalObject__isTestIsolationReuseCandidate(Zig::GlobalObject* globalObject)
 {
     JSC::JSLockHolder locker(globalObject->vm());
@@ -869,11 +852,7 @@ extern "C" bool Zig__GlobalObject__isTestIsolationReuseCandidate(Zig::GlobalObje
     return true;
 }
 
-// Returns true if `globalObject` was scrubbed in place and can be reused for
-// the next file; false if a full swap (createForTestIsolation) is required.
-// Callers have already run the runtime-side cleanup (sockets, timers, handles),
-// which can run user JS (microtasks, close callbacks), so everything the
-// candidate check looked at is checked again here.
+// Scrubs `globalObject` in place for reuse; returns false when a full swap is required. The runtime-side cleanup that ran since the candidate check can run user JS, so every condition is re-checked here.
 extern "C" bool Zig__GlobalObject__tryResetForTestIsolation(Zig::GlobalObject* globalObject)
 {
     JSC::VM& vm = globalObject->vm();
@@ -898,8 +877,7 @@ extern "C" bool Zig__GlobalObject__tryResetForTestIsolation(Zig::GlobalObject* g
         || !globalObject->setIteratorProtocolWatchpointSet().isStillValid())
         return swap();
 
-    // Top-level `let`/`const`/`class` in a sloppy-mode script land here and
-    // can't be deleted.
+    // Top-level `let`/`const`/`class` land here and cannot be deleted.
     if (globalObject->globalLexicalEnvironment()->symbolTable()->size() != baseline->lexicalSymbolTableSize)
         return swap();
     if (globalObject->symbolTable()->size() != baseline->varSymbolTableSize)
@@ -911,17 +889,14 @@ extern "C" bool Zig__GlobalObject__tryResetForTestIsolation(Zig::GlobalObject* g
         || globalObject->m_errorConstructorPrepareStackTraceValue.get() != baseline->prepareStackTraceValue.get())
         return swap();
 
-    // Restore spies before the own-property compare so a spyOn(globalThis, ...)
-    // is reverted (baseline then matches) and the scrub can't be undone by
-    // clearSpy putDirect'ing a deleted key back.
+    // Restore spies before the compare: spyOn(globalThis, ...) reverts to match the baseline, and no later clearSpy can putDirect a deleted key back.
     JSMock__resetSpies(globalObject);
     if (scope.exception()) [[unlikely]] {
         scope.clearException();
         return swap();
     }
 
-    // A changed baseline slot value/attributes = user overwrote a built-in;
-    // an extra own property = leak to scrub.
+    // A changed baseline slot means a built-in was overwritten; an extra own property is a leak to scrub.
     WTF::Vector<JSC::Identifier, 16> toDelete;
     unsigned seen = 0;
     bool dirty = false;
@@ -951,9 +926,7 @@ extern "C" bool Zig__GlobalObject__tryResetForTestIsolation(Zig::GlobalObject* g
         }
     }
 
-    // Drop project modules and everything preload loaded (so the preload chain
-    // re-evaluates and re-registers its hooks); keep node_modules the test file
-    // loaded on top so their CodeBlocks survive.
+    // Drop project modules and the preload graph (so preload re-registers its hooks); keep the test file's node_modules so their CodeBlocks survive.
     auto isProjectPath = [](WTF::StringView key) {
         if (key.isEmpty())
             return false;
@@ -1001,8 +974,7 @@ extern "C" bool Zig__GlobalObject__tryResetForTestIsolation(Zig::GlobalObject* g
     }
 
     globalObject->mockModule.activeMocks.clear();
-    // The listener half of what the swap path's prepareForDestruction() does; the context
-    // itself stays live (no ActiveDOMObject with pending activity exists, checked above).
+    // The listener half of the swap path's prepareForDestruction(); the context itself stays live.
     globalObject->scriptExecutionContext()->removeAllEventListeners();
     globalObject->overridenDateNow = JSC::PNaN;
     globalObject->onLoadPlugins.clear();

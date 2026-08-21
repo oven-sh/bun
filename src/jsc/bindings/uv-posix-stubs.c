@@ -56,24 +56,6 @@ UV_EXTERN int uv_chdir(const char* dir)
     __builtin_unreachable();
 }
 
-UV_EXTERN int uv_check_init(uv_loop_t*, uv_check_t* check)
-{
-    __bun_throw_not_implemented("uv_check_init");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_check_start(uv_check_t* check, uv_check_cb cb)
-{
-    __bun_throw_not_implemented("uv_check_start");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_check_stop(uv_check_t* check)
-{
-    __bun_throw_not_implemented("uv_check_stop");
-    __builtin_unreachable();
-}
-
 UV_EXTERN int uv_clock_gettime(uv_clock_id clock_id, uv_timespec64_t* ts)
 {
     __bun_throw_not_implemented("uv_clock_gettime");
@@ -750,24 +732,6 @@ UV_EXTERN uv_handle_type uv_guess_handle(uv_file file)
     __builtin_unreachable();
 }
 
-UV_EXTERN int uv_idle_init(uv_loop_t*, uv_idle_t* idle)
-{
-    __bun_throw_not_implemented("uv_idle_init");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_idle_start(uv_idle_t* idle, uv_idle_cb cb)
-{
-    __bun_throw_not_implemented("uv_idle_start");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_idle_stop(uv_idle_t* idle)
-{
-    __bun_throw_not_implemented("uv_idle_stop");
-    __builtin_unreachable();
-}
-
 UV_EXTERN int uv_if_indextoiid(unsigned int ifindex,
     char* buffer,
     size_t* size)
@@ -950,12 +914,6 @@ UV_EXTERN uint64_t uv_metrics_idle_time(uv_loop_t* loop)
 UV_EXTERN int uv_metrics_info(uv_loop_t* loop, uv_metrics_t* metrics)
 {
     __bun_throw_not_implemented("uv_metrics_info");
-    __builtin_unreachable();
-}
-
-UV_EXTERN uint64_t uv_now(const uv_loop_t*)
-{
-    __bun_throw_not_implemented("uv_now");
     __builtin_unreachable();
 }
 
@@ -1171,24 +1129,6 @@ UV_EXTERN int uv_poll_start(uv_poll_t* handle, int events, uv_poll_cb cb)
 UV_EXTERN int uv_poll_stop(uv_poll_t* handle)
 {
     __bun_throw_not_implemented("uv_poll_stop");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_prepare_init(uv_loop_t*, uv_prepare_t* prepare)
-{
-    __bun_throw_not_implemented("uv_prepare_init");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_prepare_start(uv_prepare_t* prepare, uv_prepare_cb cb)
-{
-    __bun_throw_not_implemented("uv_prepare_start");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_prepare_stop(uv_prepare_t* prepare)
-{
-    __bun_throw_not_implemented("uv_prepare_stop");
     __builtin_unreachable();
 }
 
@@ -1617,51 +1557,6 @@ UV_EXTERN int uv_thread_setpriority(uv_thread_t tid, int priority)
     __builtin_unreachable();
 }
 
-UV_EXTERN int uv_timer_again(uv_timer_t* handle)
-{
-    __bun_throw_not_implemented("uv_timer_again");
-    __builtin_unreachable();
-}
-
-UV_EXTERN uint64_t uv_timer_get_due_in(const uv_timer_t* handle)
-{
-    __bun_throw_not_implemented("uv_timer_get_due_in");
-    __builtin_unreachable();
-}
-
-UV_EXTERN uint64_t uv_timer_get_repeat(const uv_timer_t* handle)
-{
-    __bun_throw_not_implemented("uv_timer_get_repeat");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_timer_init(uv_loop_t*, uv_timer_t* handle)
-{
-    __bun_throw_not_implemented("uv_timer_init");
-    __builtin_unreachable();
-}
-
-UV_EXTERN void uv_timer_set_repeat(uv_timer_t* handle, uint64_t repeat)
-{
-    __bun_throw_not_implemented("uv_timer_set_repeat");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_timer_start(uv_timer_t* handle,
-    uv_timer_cb cb,
-    uint64_t timeout,
-    uint64_t repeat)
-{
-    __bun_throw_not_implemented("uv_timer_start");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_timer_stop(uv_timer_t* handle)
-{
-    __bun_throw_not_implemented("uv_timer_stop");
-    __builtin_unreachable();
-}
-
 UV_EXTERN int uv_translate_sys_error(int sys_errno)
 {
     __bun_throw_not_implemented("uv_translate_sys_error");
@@ -1873,12 +1768,6 @@ UV_EXTERN int uv_udp_try_send2(uv_udp_t* handle,
 UV_EXTERN int uv_udp_using_recvmmsg(const uv_udp_t* handle)
 {
     __bun_throw_not_implemented("uv_udp_using_recvmmsg");
-    __builtin_unreachable();
-}
-
-UV_EXTERN void uv_update_time(uv_loop_t*)
-{
-    __bun_throw_not_implemented("uv_update_time");
     __builtin_unreachable();
 }
 

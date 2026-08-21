@@ -4076,9 +4076,6 @@ mod uv_functions_to_export {
         pub(super) fn uv_barrier_wait();
         pub(super) fn uv_buf_init();
         pub(super) fn uv_chdir();
-        pub(super) fn uv_check_init();
-        pub(super) fn uv_check_start();
-        pub(super) fn uv_check_stop();
         pub(super) fn uv_clock_gettime();
         pub(super) fn uv_cond_broadcast();
         pub(super) fn uv_cond_destroy();
@@ -4172,9 +4169,6 @@ mod uv_functions_to_export {
         pub(super) fn uv_handle_size();
         pub(super) fn uv_handle_type_name();
         pub(super) fn uv_hrtime();
-        pub(super) fn uv_idle_init();
-        pub(super) fn uv_idle_start();
-        pub(super) fn uv_idle_stop();
         pub(super) fn uv_if_indextoiid();
         pub(super) fn uv_if_indextoname();
         pub(super) fn uv_inet_ntop();
@@ -4213,7 +4207,6 @@ mod uv_functions_to_export {
         pub(super) fn uv_mutex_lock();
         pub(super) fn uv_mutex_trylock();
         pub(super) fn uv_mutex_unlock();
-        pub(super) fn uv_now();
         pub(super) fn uv_once();
         pub(super) fn uv_open_osfhandle();
         pub(super) fn uv_os_environ();
@@ -4251,9 +4244,6 @@ mod uv_functions_to_export {
         pub(super) fn uv_poll_init_socket();
         pub(super) fn uv_poll_start();
         pub(super) fn uv_poll_stop();
-        pub(super) fn uv_prepare_init();
-        pub(super) fn uv_prepare_start();
-        pub(super) fn uv_prepare_stop();
         pub(super) fn uv_print_active_handles();
         pub(super) fn uv_print_all_handles();
         pub(super) fn uv_process_get_pid();
@@ -4323,13 +4313,6 @@ mod uv_functions_to_export {
         pub(super) fn uv_thread_setaffinity();
         pub(super) fn uv_thread_setname();
         pub(super) fn uv_thread_setpriority();
-        pub(super) fn uv_timer_again();
-        pub(super) fn uv_timer_get_due_in();
-        pub(super) fn uv_timer_get_repeat();
-        pub(super) fn uv_timer_init();
-        pub(super) fn uv_timer_set_repeat();
-        pub(super) fn uv_timer_start();
-        pub(super) fn uv_timer_stop();
         pub(super) fn uv_translate_sys_error();
         pub(super) fn uv_try_write();
         pub(super) fn uv_try_write2();
@@ -4361,7 +4344,6 @@ mod uv_functions_to_export {
         pub(super) fn uv_udp_try_send();
         pub(super) fn uv_udp_try_send2();
         pub(super) fn uv_udp_using_recvmmsg();
-        pub(super) fn uv_update_time();
         pub(super) fn uv_uptime();
         pub(super) fn uv_utf16_length_as_wtf8();
         pub(super) fn uv_utf16_to_wtf8();
@@ -4552,9 +4534,6 @@ pub(crate) fn fix_dead_code_elimination() {
             uv_barrier_wait,
             uv_buf_init,
             uv_chdir,
-            uv_check_init,
-            uv_check_start,
-            uv_check_stop,
             uv_clock_gettime,
             uv_cond_broadcast,
             uv_cond_destroy,
@@ -4648,9 +4627,6 @@ pub(crate) fn fix_dead_code_elimination() {
             uv_handle_size,
             uv_handle_type_name,
             uv_hrtime,
-            uv_idle_init,
-            uv_idle_start,
-            uv_idle_stop,
             uv_if_indextoiid,
             uv_if_indextoname,
             uv_inet_ntop,
@@ -4689,7 +4665,6 @@ pub(crate) fn fix_dead_code_elimination() {
             uv_mutex_lock,
             uv_mutex_trylock,
             uv_mutex_unlock,
-            uv_now,
             uv_once,
             uv_open_osfhandle,
             uv_os_environ,
@@ -4727,9 +4702,6 @@ pub(crate) fn fix_dead_code_elimination() {
             uv_poll_init_socket,
             uv_poll_start,
             uv_poll_stop,
-            uv_prepare_init,
-            uv_prepare_start,
-            uv_prepare_stop,
             uv_print_active_handles,
             uv_print_all_handles,
             uv_process_get_pid,
@@ -4799,13 +4771,6 @@ pub(crate) fn fix_dead_code_elimination() {
             uv_thread_setaffinity,
             uv_thread_setname,
             uv_thread_setpriority,
-            uv_timer_again,
-            uv_timer_get_due_in,
-            uv_timer_get_repeat,
-            uv_timer_init,
-            uv_timer_set_repeat,
-            uv_timer_start,
-            uv_timer_stop,
             uv_translate_sys_error,
             uv_try_write,
             uv_try_write2,
@@ -4837,7 +4802,6 @@ pub(crate) fn fix_dead_code_elimination() {
             uv_udp_try_send,
             uv_udp_try_send2,
             uv_udp_using_recvmmsg,
-            uv_update_time,
             uv_uptime,
             uv_utf16_length_as_wtf8,
             uv_utf16_to_wtf8,

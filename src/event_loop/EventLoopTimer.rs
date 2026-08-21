@@ -209,6 +209,8 @@ pub enum Tag {
     CronJob,
     GcRepeating,
     QuicEndpoint,
+    /// An N-API addon's `uv_timer_t` (posix, where Bun stands in for libuv).
+    UvTimer,
 }
 
 impl Tag {

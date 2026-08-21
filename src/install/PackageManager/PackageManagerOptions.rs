@@ -97,6 +97,9 @@ pub struct Options {
 
     /// `--offline` / `--prefer-offline` (or `install.offline` / `install.prefer = "offline"`).
     pub offline: OfflineMode,
+    /// Record/consult the whole-install fingerprint (`install_state.rs`) so a repeat
+    /// `bun install` with nothing to do returns immediately. `install.stateFile`.
+    pub install_state: bool,
 
     // Security scanner module path
     pub security_scanner: Option<&'static [u8]>,
@@ -174,6 +177,7 @@ impl Default for Options {
             hoist_pattern: None,
             hoist: true,
             offline: OfflineMode::Online,
+            install_state: true,
             security_scanner: None,
             minimum_release_age_ms: None,
             minimum_release_age_excludes: None,
@@ -493,6 +497,9 @@ impl Options {
                 self.hoist = hoist;
             }
 
+            if let Some(v) = config.install_state {
+                self.install_state = v;
+            }
             if config.offline == Some(true) {
                 self.offline = OfflineMode::Offline;
             }

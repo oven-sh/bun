@@ -1566,6 +1566,9 @@ impl<'a> Parser<'a> {
         if let Some(v) = install_obj.get(b"offline").and_then(|e| e.as_bool()) {
             install.offline = Some(v);
         }
+        if let Some(v) = install_obj.get(b"stateFile").and_then(|e| e.as_bool()) {
+            install.install_state = Some(v);
+        }
 
         Ok(())
     }

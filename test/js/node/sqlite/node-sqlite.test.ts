@@ -106,11 +106,6 @@ describe("DatabaseSync", () => {
     db.close();
   });
 
-  // #40001: close() must finalize outstanding prepared statements. With an
-  // unfinalized statement, sqlite3_close_v2 only zombifies the connection
-  // and the OS file handle stays open until every statement wrapper is
-  // GC'd. On Windows that handle locks the database file, so the common
-  // "close, then delete the temp dir" pattern fails with EBUSY.
   test("close() finalizes outstanding prepared statements and releases the file", () => {
     using dir = tempDir("node-sqlite-close-finalize", {});
     const dbPath = path.join(String(dir), "x.db");
@@ -153,9 +148,7 @@ describe("DatabaseSync", () => {
       db.close();
       stmt = null;
     }
-    // close() already finalized the statement's handle; the wrapper's
-    // destructor must observe that and skip its own finalize (ASAN builds
-    // crash here on a double-free).
+    // Sweep the wrapper; a double sqlite3_finalize would crash ASAN builds.
     Bun.gc(true);
     expect(db.isOpen).toBe(false);
   });

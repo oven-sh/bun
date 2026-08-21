@@ -1993,29 +1993,23 @@ test.concurrent("a context nothing references is collected while it is still the
         return new WeakRef(sandbox);
       },
     };
-    // Creating the context leaves pointers to it in the stack memory below the current frame. The
-    // collector scans the stack conservatively, and the frames Bun.gc() pushes over that memory do not
-    // overwrite all of it, so some of those pointers would still count as roots. Filling that memory
-    // with frames of numbers first removes them.
-    function scrub(depth, a, b, c, d, e, f, g, h) {
-      if (depth === 0) return a + b + c + d + e + f + g + h;
-      return scrub(depth - 1, b, c, d, e, f, g, h, a + 1);
+    // The collector scans the stack conservatively, and the call that creates a context leaves pointers
+    // to it in the stack memory that call used. So the context is created 1000 frames down: when the
+    // loop below calls Bun.gc(), all of that memory is below the stack pointer and is not scanned.
+    function createDeep(makeRef, depth) {
+      if (depth > 0) return createDeep(makeRef, depth - 1);
+      return makeRef();
     }
-    // Each round runs one frame deeper than the one before, so the frames it pushes land on different
-    // addresses. A stray pointer can pin one round. The shared structure pinned the context in every round.
-    function contextIsCollected(makeRef, extraFrames) {
-      if (extraFrames > 0) return contextIsCollected(makeRef, extraFrames - 1);
-      const ref = makeRef();
-      scrub(500, 1, 2, 3, 4, 5, 6, 7, 8);
-      // Bun.gc() also ends this job's keep-alive of WeakRef targets before it collects.
-      Bun.gc(true);
-      return ref.deref() === undefined;
-    }
+    // A case counts as collectable when any of its rounds collected the context. The shared structure
+    // kept the context alive in every round.
     const collectedRounds = {};
     for (const name in cases) {
       collectedRounds[name] = 0;
       for (let round = 0; round < 3; round++) {
-        if (contextIsCollected(cases[name], round)) collectedRounds[name]++;
+        const ref = createDeep(cases[name], 1000);
+        // Bun.gc() also ends this job's keep-alive of WeakRef targets before it collects.
+        Bun.gc(true);
+        if (ref.deref() === undefined) collectedRounds[name]++;
       }
     }
     console.log(JSON.stringify(collectedRounds));

@@ -876,7 +876,7 @@ fn validate_node_options(env: &[u8]) {
         }
         // Compare the option name (before any '='), treating '_' as '-' the
         // way Node canonicalizes option names.
-        let name_end = token.iter().position(|&b| b == b'=').unwrap_or(token.len());
+        let name_end = strings::index_of_char_usize(&token, b'=').unwrap_or(token.len());
         let canonical: Vec<u8> = token[..name_end]
             .iter()
             .map(|&b| if b == b'_' { b'-' } else { b })

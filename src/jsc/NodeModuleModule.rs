@@ -205,8 +205,7 @@ fn find_package_json(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
     }
 }
 
-/// The `specifier` or `base` argument: a path or a URL, the latter as a `URL`
-/// or as a string (`import.meta.url`, `import.meta.resolve()`).
+/// A `specifier` or `base` argument: a path, or a `file:` URL to convert.
 enum Location {
     Url(JSValue),
     /// Like Node, any value that is not a `URL` is used as `${value}`.

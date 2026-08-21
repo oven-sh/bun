@@ -34,6 +34,7 @@ describe.concurrent("isDockerServiceEnabled", () => {
     expect(JSON.parse(stdout), stderr).toEqual({
       unconfigured: dockerProbe,
       override: true,
+      emptyOverride: dockerProbe,
       overrideForAnotherService: dockerProbe,
       coordinator: true,
     });

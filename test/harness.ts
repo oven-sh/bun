@@ -1136,6 +1136,7 @@ export function isDockerEnabled(): boolean {
  * `describeWithContainer()` applies this gate itself.
  */
 export function isDockerServiceEnabled(service: ServiceName): boolean {
+  // An empty value counts as unset, which is how ensure() reads it too.
   if (process.env["BUN_TEST_SERVICE_" + service] || process.env.BUN_DOCKER_COORDINATOR) {
     return true;
   }

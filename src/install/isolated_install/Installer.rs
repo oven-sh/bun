@@ -1842,25 +1842,13 @@ impl Task {
                         bin_linker.target_node_modules_path = bin_linker.node_modules_path;
                         bin_linker.target_package_name =
                             strings::StringOrTinyString::init(dep_name);
-                        // Clear a stale redirect-attempt error only when the
-                        // attempt failed before it linked anything (`seen`
-                        // unchanged): left set, it would make the retry delete
-                        // its own link. Once a dest is in `seen` the retry
-                        // skips it, so the error must stay and be reported.
-                        if bin_linker
-                            .seen
-                            .as_deref()
-                            .is_some_and(|seen| seen.len() == seen_count_before_link)
-                        {
-                            bin_linker.err = None;
-                        }
-                        bin_linker.skipped_due_to_missing_bin = false;
+                        bin_linker.reset_for_retry(seen_count_before_link);
 
                         if manager_ref.options.log_level.is_verbose() {
                             bun_core::pretty_errorln!(
                                 "<d>[Bin Linker]<r> {} -> {} retrying without native bin link",
                                 bstr::BStr::new(dep_name),
-                                bstr::BStr::new(bin_linker.target_package_name.slice()),
+                                bstr::BStr::new(target_package_name.slice()),
                             );
                         }
 
@@ -2433,19 +2421,7 @@ impl<'a> Installer<'a> {
             {
                 bin_linker.target_node_modules_path = bin_linker.node_modules_path;
                 bin_linker.target_package_name = package_name;
-                // Clear a stale redirect-attempt error only when the attempt
-                // failed before it linked anything (`seen` unchanged): left
-                // set, it would make the retry delete its own link. Once a
-                // dest is in `seen` the retry skips it, so the error must
-                // stay and be reported.
-                if bin_linker
-                    .seen
-                    .as_deref()
-                    .is_some_and(|seen| seen.len() == seen_count_before_link)
-                {
-                    bin_linker.err = None;
-                }
-                bin_linker.skipped_due_to_missing_bin = false;
+                bin_linker.reset_for_retry(seen_count_before_link);
 
                 if self.manager().options.log_level.is_verbose() {
                     bun_core::pretty_errorln!(
@@ -2514,13 +2490,15 @@ impl<'a> Installer<'a> {
         let pkg_resolutions_buffer = lockfile.buffers.resolutions.as_slice();
         let pkg_bins = pkgs.items_bin();
 
-        let parent_node_id = entry_node_ids[parent_entry_id.get() as usize];
-        let parent_pkg_id = node_pkg_ids[parent_node_id.get() as usize];
-        let is_importer = parent_entry_id == StoreEntryId::ROOT
-            || pkg_resolutions[parent_pkg_id as usize].tag == ResolutionTag::Workspace;
-        if !is_importer {
-            return Ok(());
-        }
+        // the caller gates on this: only importers run the peer-bin pass
+        debug_assert!(
+            parent_entry_id == StoreEntryId::ROOT
+                || pkg_resolutions[node_pkg_ids
+                    [entry_node_ids[parent_entry_id.get() as usize].get() as usize]
+                    as usize]
+                    .tag
+                    == ResolutionTag::Workspace
+        );
 
         let mut visited = Bitset::init_empty(entries.len())?;
         visited.set(parent_entry_id.get() as usize);
@@ -2649,19 +2627,7 @@ impl<'a> Installer<'a> {
                     own_store_node_modules_path = p;
                     bin_linker.target_node_modules_path = &raw const own_store_node_modules_path;
                     bin_linker.target_package_name = package_name;
-                    // Clear a stale redirect-attempt error only when the
-                    // attempt failed before it linked anything (`seen`
-                    // unchanged): left set, it would make the retry delete
-                    // its own link. Once a dest is in `seen` the retry skips
-                    // it, so the error must stay and be reported.
-                    if bin_linker
-                        .seen
-                        .as_deref()
-                        .is_some_and(|seen| seen.len() == seen_count_before_link)
-                    {
-                        bin_linker.err = None;
-                    }
-                    bin_linker.skipped_due_to_missing_bin = false;
+                    bin_linker.reset_for_retry(seen_count_before_link);
 
                     if self.manager().options.log_level.is_verbose() {
                         bun_core::pretty_errorln!(

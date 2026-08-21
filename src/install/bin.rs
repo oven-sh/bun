@@ -851,6 +851,23 @@ impl<'a> Linker<'a> {
         }
     }
 
+    /// Reset state between a native-binlink redirect attempt and its
+    /// fallback `link()`. Clears a stale redirect error only when the
+    /// attempt failed before it linked anything (`seen` unchanged): left
+    /// set, the error would make the retry delete its own link. Once a
+    /// dest is in `seen` the retry skips it, so that error must stay and
+    /// be reported.
+    pub fn reset_for_retry(&mut self, seen_count_before_link: usize) {
+        if self
+            .seen
+            .as_deref()
+            .is_some_and(|seen| seen.len() == seen_count_before_link)
+        {
+            self.err = None;
+        }
+        self.skipped_due_to_missing_bin = false;
+    }
+
     fn unlink_bin_or_shim(abs_dest: &ZStr) {
         #[cfg(not(windows))]
         {

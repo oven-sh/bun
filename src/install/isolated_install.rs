@@ -2690,6 +2690,7 @@ pub(crate) fn install_isolated_packages(
                                 .fmt(string_buf, bun_core::fmt::PathSep::Auto),
                         ),
                     );
+                    Output::flush();
                     if installer.manager().options.enable.fail_early() {
                         Global::exit(1);
                     }

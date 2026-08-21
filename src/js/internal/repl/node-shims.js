@@ -195,7 +195,10 @@ function addBuiltinLibsToObject(object, _dummy) {
   getBuiltinLibs().forEach(name => {
     // Node filters slash-modules here (not in getBuiltinLibs), so
     // repl.builtinModules and require-completion still offer them.
-    if (StringPrototypeIncludes(name, "/") || Object.getOwnPropertyDescriptor(object, name)) {
+    // Under --interactive / -e the builtins already sit on globalThis as lazy
+    // custom-value properties (ExposeNodeModuleGlobals.cpp): hasOwn leaves them
+    // unloaded, getOwnPropertyDescriptor would load every module (node:wasi warns).
+    if (StringPrototypeIncludes(name, "/") || Object.hasOwn(object, name)) {
       return;
     }
 

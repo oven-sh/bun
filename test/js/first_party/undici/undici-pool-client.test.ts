@@ -1,12 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { Pool, Client, Agent, stream } from "undici";
-import * as undici from "undici";
-import { Readable, Writable, Transform } from "stream";
 import net from "node:net";
 import tls from "node:tls";
+import { Readable, Transform, Writable } from "stream";
+import * as undici from "undici";
+import { Agent, Client, Pool, stream } from "undici";
 
-import { createServer } from "../../../http-test-server";
 import { tls as serverTls } from "harness";
+import { createServer } from "../../../http-test-server";
 
 // Raw TCP server helper for connect()/upgrade() tests. Returns the bound port
 // and an async disposer so callers can use `await using` for cleanup.
@@ -951,8 +951,12 @@ describe("undici", () => {
         { method: "GET", path: "/get" },
         {
           onConnect() {},
-          onHeaders() { return true; },
-          onData() { return true; },
+          onHeaders() {
+            return true;
+          },
+          onData() {
+            return true;
+          },
           onComplete() {},
           onError(err) {
             resolve(err);

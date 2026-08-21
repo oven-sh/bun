@@ -1039,7 +1039,10 @@ class Pool extends Dispatcher {
   async request(opts, callback) {
     if (this.#closed) {
       const err = new ClientClosedError("The pool is closed");
-      if ($isCallable(callback)) { callback(err, null); return; }
+      if ($isCallable(callback)) {
+        callback(err, null);
+        return;
+      }
       throw err;
     }
     if ($isCallable(callback)) {
@@ -1055,7 +1058,10 @@ class Pool extends Dispatcher {
   stream(opts, factory, callback) {
     if (this.#closed) {
       const err = new ClientClosedError("The pool is closed");
-      if ($isCallable(callback)) { callback(err, null); return; }
+      if ($isCallable(callback)) {
+        callback(err, null);
+        return;
+      }
       return Promise.reject(err);
     }
     return stream(this.#origin, opts, factory, callback);
@@ -1104,7 +1110,10 @@ class Client extends Dispatcher {
   async request(opts, callback) {
     if (this.#closed) {
       const err = new ClientClosedError("The client is closed");
-      if ($isCallable(callback)) { callback(err, null); return; }
+      if ($isCallable(callback)) {
+        callback(err, null);
+        return;
+      }
       throw err;
     }
     if ($isCallable(callback)) {
@@ -1120,7 +1129,10 @@ class Client extends Dispatcher {
   stream(opts, factory, callback) {
     if (this.#closed) {
       const err = new ClientClosedError("The client is closed");
-      if ($isCallable(callback)) { callback(err, null); return; }
+      if ($isCallable(callback)) {
+        callback(err, null);
+        return;
+      }
       return Promise.reject(err);
     }
     return stream(this.#origin, opts, factory, callback);

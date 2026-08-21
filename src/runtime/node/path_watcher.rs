@@ -1107,9 +1107,11 @@ impl Linux {
                         .as_bytes()
                     };
 
-                    // Leave the dedup map before the listener can re-watch the path:
-                    // the IN_IGNORED that also does it (above) may land a read() later.
-                    if owner_subpath.is_empty() && ev.mask & IN::DELETE_SELF != 0 {
+                    // The path no longer leads to this watch: leave the dedup map before
+                    // the listener can re-watch the path (a removal's IN_IGNORED, above,
+                    // may land a read() later, and a move has none).
+                    if owner_subpath.is_empty() && ev.mask & (IN::DELETE_SELF | IN::MOVE_SELF) != 0
+                    {
                         manager.unlink_watcher_locked(owner_watcher);
                     }
 
@@ -1629,8 +1631,10 @@ impl Kqueue {
                     entry.subpath.as_bytes()
                 };
 
-                // A dead root leaves the dedup map, as in the inotify backend above.
-                if entry.subpath.is_empty() && kev.fflags & (NOTE::DELETE | NOTE::REVOKE) != 0 {
+                // A removed or moved root leaves the dedup map, as in the inotify backend.
+                if entry.subpath.is_empty()
+                    && kev.fflags & (NOTE::DELETE | NOTE::RENAME | NOTE::REVOKE) != 0
+                {
                     manager.unlink_watcher_locked(entry.watcher);
                 }
 

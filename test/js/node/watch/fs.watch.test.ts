@@ -611,33 +611,46 @@ describe("fs.watch", () => {
     ]);
   });
 
-  // Removing the watched directory ends its OS watch. The FSWatcher stays open
-  // until it is closed, and a watch() of the same path from then on (here: of
-  // the directory recreated inside the removal callback) must start a new OS
-  // watch instead of joining the dead one. The new watch's first event also
-  // bounds what the first watcher reports.
+  // Once the watched directory is removed or moved away, its path no longer
+  // leads to its OS watch. The FSWatcher stays open until it is closed (a moved
+  // directory keeps reporting), but a watch() of the path from then on (here:
+  // of the directory recreated inside the callback) must start a new OS watch
+  // instead of joining the old one. The new watch's first event also bounds
+  // what the first watcher reports.
   //
   // Windows: libuv reports the removal as a rename named with the directory's
   // own absolute path and re-arms the watch, which fails the same way on every
   // tick of the event loop (nodejs/node#61398); bun reports it once, by
-  // basename, and stops the watch. Linux: inotify queues IN_DELETE_SELF and
-  // IN_IGNORED, reported like libuv reports them (a recursive root keeps the
-  // root-relative name, which is empty). macOS: FSEvents watches the path, so
-  // the old watch sees the recreated directory and nothing ends; not covered.
+  // basename, and stops the watch. A move is not reported on Windows at all,
+  // so that axis is Linux only. Linux: inotify reports IN_DELETE_SELF and the
+  // IN_IGNORED that retires the wd, or IN_MOVE_SELF, like libuv reports them
+  // (a recursive root keeps the root-relative name, which is empty). macOS:
+  // FSEvents watches the path, so the old watch sees the recreated directory
+  // and nothing ends; not covered.
   describe.each([false, true])("recursive: %p", recursive => {
-    const removalEvents = isWindows
-      ? [["rename", "watched-dir"]]
-      : recursive
-        ? [["rename", undefined]]
-        : [
-            ["rename", "watched-dir"],
-            ["rename", "watched-dir"],
-          ];
+    const selfEvent = isWindows || !recursive ? ["rename", "watched-dir"] : ["rename", undefined];
+    const cases = [
+      {
+        op: "removed",
+        runsHere: isWindows || isLinux,
+        disturb: (target: string) => fs.rmdirSync(target),
+        // A removed root also gets inotify's IN_IGNORED rename, except in recursive mode.
+        firstWatcherEvents: isLinux && !recursive ? [selfEvent, selfEvent] : [selfEvent],
+        afterRewatch: (_root: string) => {},
+      },
+      {
+        op: "moved away",
+        runsHere: isLinux,
+        disturb: (target: string) => fs.renameSync(target, target + "-moved"),
+        // The old watch follows the moved directory: it alone reports the entry created there.
+        firstWatcherEvents: [selfEvent, ["rename", "in-moved"]],
+        afterRewatch: (target: string) => fs.mkdirSync(path.join(target + "-moved", "in-moved")),
+      },
+    ];
 
-    test.skipIf(!isWindows && !isLinux)(
-      "removing the watched directory ends the watch and a new watch of the path starts fresh",
-      async () => {
-        using dir = tempDir("fs-watch-rmdir-self", { "watched-dir": {} });
+    for (const { op, runsHere, disturb, firstWatcherEvents, afterRewatch } of cases) {
+      test.skipIf(!runsHere)(`after the watched directory is ${op}, a new watch of the path starts fresh`, async () => {
+        using dir = tempDir("fs-watch-self", { "watched-dir": {} });
         const target = path.join(String(dir), "watched-dir");
         // Everything the first watcher reports, in order.
         const events: unknown[][] = [];
@@ -650,6 +663,7 @@ describe("fs.watch", () => {
             fs.mkdirSync(target);
             again = fs.watch(target, { recursive }, (...event) => seenByNewWatch.resolve(event));
             again.once("error", seenByNewWatch.reject);
+            afterRewatch(target);
             fs.writeFileSync(path.join(target, "created-after.txt"), "x");
           } catch (err) {
             seenByNewWatch.reject(err);
@@ -661,16 +675,16 @@ describe("fs.watch", () => {
         });
         watcher.on("close", () => events.push(["close"]));
         try {
-          fs.rmdirSync(target);
+          disturb(target);
           const [, filename] = await seenByNewWatch.promise;
           expect(filename).toBe("created-after.txt");
-          expect(events).toEqual(removalEvents);
+          expect(events).toEqual(firstWatcherEvents);
         } finally {
           again?.close();
           watcher.close();
         }
-      },
-    );
+      });
+    }
 
     // A watch path that ends in a separator (a drive root, or given that way)
     // reaches libuv as such, and libuv then reports new entries as "\name".
@@ -712,6 +726,45 @@ describe("fs.watch", () => {
       },
     );
   });
+
+  // On Windows a watched file's directory being removed reaches libuv as a
+  // failed ReadDirectoryChangesW: the watcher gets one 'error' and closes, as
+  // in node. The OS watch is over at that point too, so a watch() of the path
+  // from inside the 'error' listener must start a new one.
+  test.skipIf(!isWindows)(
+    "after a watched file's directory is removed, a new watch of the path starts fresh (windows)",
+    async () => {
+      using dir = tempDir("fs-watch-file-parent-removed", { "parent": { "watched.txt": "1" } });
+      const parent = path.join(String(dir), "parent");
+      const target = path.join(parent, "watched.txt");
+      const events: unknown[][] = [];
+      const seenByNewWatch = Promise.withResolvers<[string, string | null]>();
+      let again: FSWatcher | undefined;
+      const watcher = fs.watch(target, (eventType, filename) => events.push([eventType, filename]));
+      watcher.on("error", (err: NodeJS.ErrnoException) => {
+        events.push(["error", err.code]);
+        try {
+          fs.mkdirSync(parent);
+          fs.writeFileSync(target, "2");
+          again = fs.watch(target, (...event) => seenByNewWatch.resolve(event));
+          again.once("error", seenByNewWatch.reject);
+          fs.appendFileSync(target, "3");
+        } catch (err) {
+          seenByNewWatch.reject(err);
+        }
+      });
+      watcher.on("close", () => events.push(["close"]));
+      try {
+        fs.rmSync(parent, { recursive: true });
+        expect(await seenByNewWatch.promise).toEqual(["change", "watched.txt"]);
+        // The file's own removal is reported first; what follows it is fixed.
+        expect(events.slice(-2)).toEqual([["error", "EPERM"], ["close"]]);
+      } finally {
+        again?.close();
+        watcher.close();
+      }
+    },
+  );
 
   // Past fs.inotify.max_queued_events the kernel drops events and queues one
   // IN_Q_OVERFLOW; Bun reports it as ('change', null) on every watcher sharing

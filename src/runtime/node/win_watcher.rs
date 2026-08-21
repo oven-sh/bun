@@ -219,6 +219,11 @@ impl PathWatcher {
         let timestamp = unsafe { (*me.handle.loop_).time };
 
         if let Some(err) = status.to_error(sys::Tag::watch) {
+            // The handlers close on the error, so the watch is over: retire it before
+            // one of them can re-watch the path.
+            Self::retire(this);
+            // SAFETY: as above; borrowed again because `retire` wrote to the handle.
+            let me = unsafe { &*this };
             me.emit_in_progress.set(true);
 
             let keys: Vec<_> = me.handlers.get().keys().iter().copied().collect();
@@ -271,7 +276,8 @@ impl PathWatcher {
 
         // The watched directory itself was removed: libuv names that report with
         // the path it was given, volume included, and repeats it on every loop
-        // iteration until the handle is stopped (nodejs/node#61398).
+        // iteration until the handle is stopped (nodejs/node#61398). Reported
+        // once, by name, as the other backends report it.
         if !is_file
             && event_type == WatchEventKind::Rename
             && bun_paths::resolve_path::windows_volume_name_len(name).0 != 0

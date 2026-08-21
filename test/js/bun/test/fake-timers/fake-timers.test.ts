@@ -132,6 +132,132 @@ describe("advanceTimersByTime", () => {
     expect(order.takeOrderMessages()).toEqual([]);
     vi.useRealTimers();
   });
+
+  test("useRealTimers() from a fired callback is not undone when the advance completes", () => {
+    const realBefore = performance.now();
+    vi.useFakeTimers({ now: 0 });
+    setTimeout(() => vi.useRealTimers(), 10);
+    vi.advanceTimersByTime(100);
+    expect(vi.isFakeTimers()).toBe(false);
+    // Still on the real clock, not re-pinned to the fake epoch + 100ms.
+    expect(Date.now()).toBeGreaterThan(1e12);
+    expect(performance.now()).not.toBe(100);
+    expect(performance.now()).toBeGreaterThanOrEqual(realBefore);
+  });
+
+  test("useFakeTimers() from a fired callback installs a fresh clock the outer advance stops driving", () => {
+    vi.useFakeTimers({ now: 0 });
+    const fired: string[] = [];
+    setTimeout(() => {
+      fired.push("reinstall");
+      vi.useFakeTimers({ now: 5000 });
+      setTimeout(() => fired.push("on new clock"), 50);
+    }, 10);
+    setTimeout(() => fired.push("dropped with old clock"), 20);
+    vi.advanceTimersByTime(100);
+    // The outer advance belonged to the old clock: it neither fires timers on
+    // the new one nor moves it to the old target.
+    expect(fired).toEqual(["reinstall"]);
+    expect({ date: Date.now(), perf: performance.now(), count: vi.getTimerCount() }).toEqual({
+      date: 5000,
+      perf: 0,
+      count: 1,
+    });
+    vi.advanceTimersByTime(50);
+    expect(fired).toEqual(["reinstall", "on new clock"]);
+    expect(Date.now()).toBe(5050);
+  });
+
+  test("a firing setInterval whose callback installs a fresh clock is dropped with the old one", () => {
+    vi.useFakeTimers({ now: 0 });
+    let fired = 0;
+    setInterval(() => {
+      fired++;
+      vi.useFakeTimers({ now: 5000 });
+    }, 100);
+    vi.advanceTimersByTime(100);
+    expect({ fired, count: vi.getTimerCount() }).toEqual({ fired: 1, count: 0 });
+    vi.advanceTimersByTime(1000);
+    expect(fired).toBe(1);
+  });
+
+  test("…unless the callback refresh()es it, which schedules it on the new clock", () => {
+    vi.useFakeTimers({ now: 0 });
+    let fired = 0;
+    const interval = setInterval(() => {
+      if (++fired === 1) {
+        vi.useFakeTimers({ now: 5000 });
+        interval.refresh();
+      }
+    }, 100);
+    vi.advanceTimersByTime(100);
+    expect({ fired, count: vi.getTimerCount() }).toEqual({ fired: 1, count: 1 });
+    // One full period on the new clock, not the old timeline's next deadline.
+    vi.advanceTimersByTime(99);
+    expect(fired).toBe(1);
+    vi.advanceTimersByTime(1);
+    expect({ fired, now: Date.now() }).toEqual({ fired: 2, now: 5100 });
+    clearInterval(interval);
+  });
+
+  // A setInterval retired from inside its own callback — because the callback
+  // swapped the fake clock, or cleared `_repeat` — is out of every heap and
+  // unreachable from JS, so its Timeout wrapper must be collectable. It used
+  // to stay pinned by the native side for the rest of the process.
+  test("a setInterval retired from inside its own callback does not leak its Timeout", () => {
+    const N = 200;
+    const liveTimeouts = () => {
+      Bun.gc(true);
+      Bun.gc(true);
+      return heapStats().objectTypeCounts.Timeout ?? 0;
+    };
+    const before = liveTimeouts();
+    for (let i = 0; i < N; i++) {
+      vi.useFakeTimers({ now: 0 });
+      // Fires first (insertion order) while the clock is still the same.
+      setInterval(function (this: any) {
+        this._repeat = null;
+      }, 10);
+      setInterval(() => vi.useFakeTimers({ now: 1 }), 10);
+      vi.advanceTimersByTime(10);
+      vi.useRealTimers();
+    }
+    expect(liveTimeouts() - before).toBeLessThan(2 * N * 0.1);
+  });
+
+  test("a firing setInterval whose callback calls useRealTimers() does not escape onto the real clock", async () => {
+    vi.useFakeTimers({ now: 0 });
+    let fired = 0;
+    const interval = setInterval(() => {
+      fired++;
+      vi.useRealTimers();
+    }, 5);
+    vi.advanceTimersByTime(5);
+    expect({ fired, fake: vi.isFakeTimers() }).toEqual({ fired: 1, fake: false });
+    // An escaped 5ms interval would have gone round several times by now.
+    await Bun.sleep(50);
+    clearInterval(interval);
+    expect(fired).toBe(1);
+  });
+});
+
+describe("useFakeTimers while already active", () => {
+  test("installs a fresh clock and drops timers pending on the old one", () => {
+    vi.useFakeTimers({ now: 1000 });
+    let fired = 0;
+    setTimeout(() => fired++, 10);
+    vi.advanceTimersByTime(5);
+    expect(vi.getTimerCount()).toBe(1);
+
+    vi.useFakeTimers({ now: 9000 });
+    expect({ date: Date.now(), perf: performance.now(), count: vi.getTimerCount() }).toEqual({
+      date: 9000,
+      perf: 0,
+      count: 0,
+    });
+    vi.runAllTimers();
+    expect(fired).toBe(0);
+  });
 });
 describe("runOnlyPendingTimers", () => {
   test("two setIntervals", () => {
@@ -432,6 +558,46 @@ describe("Bun.cron() job dropped from the fake heap", () => {
       });
     },
   );
+
+  // A job whose own tick swaps the clock is out of the heap at that moment,
+  // so dropping "the heap" misses it; it has to be stopped like the rest.
+  test("a firing job whose tick installs a fresh clock is stopped with the old one", () => {
+    vi.useFakeTimers({ now: 0 });
+    let fired = 0;
+    using job = Bun.cron("* * * * *", () => {
+      fired++;
+      vi.useFakeTimers({ now: 0 });
+    });
+    vi.advanceTimersByTime(60_000);
+    expect({ fired, count: vi.getTimerCount() }).toEqual({ fired: 1, count: 0 });
+    vi.advanceTimersByTime(10 * 60_000);
+    expect(fired).toBe(1);
+  });
+
+  test("a firing job whose tick calls useRealTimers() does not keep the process alive", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { jest } = Bun.jest();
+         jest.useFakeTimers({ now: 0 });
+         Bun.cron("* * * * *", () => { console.log("tick"); jest.useRealTimers(); });
+         jest.advanceTimersByTime(60_000);
+         console.log("exiting", jest.isFakeTimers());`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 10_000,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "tick\nexiting false\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
 });
 describe("isFakeTimers", () => {
   test("returns true when fake timers are active", () => {
@@ -518,6 +684,86 @@ describe("Date.now() mocking", () => {
     // The time captured in the callback should match
     expect(capturedTime).toBe(start + 500);
     expect(Date.now()).toBe(start + 500);
+  });
+});
+
+describe.concurrent("fake clock is per-VM", () => {
+  test("workers with fake timers do not share a clock", async () => {
+    // Each worker pins its own system time, drains its pending timers, and
+    // checks that Date.now() landed where *its* clock says it should. With a
+    // shared clock the other worker's setSystemTime()/timer fires leak in.
+    const workerSrc = /* js */ `
+      const { jest } = Bun.jest(__filename);
+      const { parentPort, workerData } = require("worker_threads");
+      const { now, target } = workerData;
+      const mismatches = [];
+      for (let r = 0; r < 400; r++) {
+        jest.useFakeTimers({ now });
+        let n = 0;
+        setTimeout(() => n++, 1000);
+        const iv = setInterval(() => { if (n++ > 3) clearInterval(iv); }, 100);
+        jest.setSystemTime(target);
+        jest.runOnlyPendingTimers();
+        const after = Date.now();
+        if (after !== target + 1000) mismatches.push({ round: r, after, expected: target + 1000 });
+        jest.useRealTimers();
+      }
+      parentPort.postMessage(mismatches);
+    `;
+    const mainSrc = /* js */ `
+      const { Worker } = require("worker_threads");
+      const results = {};
+      const configs = [{ now: 0, target: 1e12 }, { now: 2 ** 40, target: 0 }];
+      let done = 0;
+      for (const workerData of configs) {
+        const w = new Worker(${JSON.stringify(workerSrc)}, { eval: true, workerData });
+        w.on("error", err => { console.error(err); process.exit(1); });
+        w.on("message", mismatches => {
+          results[workerData.now] = mismatches;
+          if (++done === configs.length) {
+            console.log(JSON.stringify(results));
+            process.exit(0);
+          }
+        });
+      }
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", mainSrc],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ "0": [], [2 ** 40]: [] });
+    expect(exitCode).toBe(0);
+  });
+
+  test("a worker's fake clock does not leak into main-thread timer scheduling", async () => {
+    // The worker exits with fake timers still active and its clock advanced.
+    // A real 20ms timer armed on the main thread afterwards must be scheduled
+    // against the real monotonic clock, not the worker's fake epoch (which is
+    // far in the past relative to process uptime and would fire it at once).
+    const src = /* js */ `
+      const { Worker } = require("worker_threads");
+      const w = new Worker(
+        'const { jest } = Bun.jest("worker"); jest.useFakeTimers({ now: 0 }); jest.advanceTimersByTime(5000); require("worker_threads").parentPort.postMessage(Date.now());',
+        { eval: true },
+      );
+      w.on("error", err => { console.error(err); process.exit(1); });
+      w.on("message", workerNow => {
+        const armed = performance.now();
+        setTimeout(() => {
+          console.log(JSON.stringify({ workerNow, firedEarly: performance.now() - armed < 19, mainDateReal: Date.now() > 1.7e12 }));
+          process.exit(0);
+        }, 20);
+      });
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ workerNow: 5000, firedEarly: false, mainDateReal: true });
+    expect(exitCode).toBe(0);
   });
 });
 
@@ -689,6 +935,11 @@ describe("useFakeTimers with options", () => {
 
   test("useFakeTimers still rejects non-string non-object arguments", () => {
     expect(() => vi.useFakeTimers(123 as any)).toThrow("useFakeTimers() expects an options object");
+    expect(vi.isFakeTimers()).toBe(false);
+  });
+
+  test.each([NaN, Infinity, -Infinity, new Date("invalid")])("useFakeTimers({ now: %p }) throws", now => {
+    expect(() => vi.useFakeTimers({ now })).toThrow("'now' must be a finite number or a valid Date");
     expect(vi.isFakeTimers()).toBe(false);
   });
 });

@@ -403,7 +403,7 @@ unsafe fn init_runtime_state(
     RUNTIME_STATE.with(|c| c.set(state));
 
     // `Timespec::now_allow_mocked_time` reads `bun_core::mock_time` directly;
-    // `FakeTimers::CurrentTime::{set,clear}` write that storage so timers
+    // `FakeTimers::{set_now,clear_now}` write that storage so timers
     // scheduled under `jest.useFakeTimers()` use the mocked epoch.
 
     // ── vm.transpiler ────────────────────────────────────────────────────
@@ -1766,8 +1766,8 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResu
         // JS thread, no re-entry while we hold the field borrow.
         if !all.is_null() && unsafe { (*all).fake_timers.is_active() } {
             let global = vm.global();
-            // SAFETY: as above; only touches `fake_timers.active` and the
-            // `CURRENT_TIME` static.
+            // SAFETY: as above; only touches `fake_timers`' clock state and
+            // the VM, never the heaps.
             unsafe { (*all).fake_timers.reset_for_isolation(global) };
         }
     }

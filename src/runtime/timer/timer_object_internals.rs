@@ -21,7 +21,7 @@ use core::cell::Cell;
 use crate::jsc::virtual_machine::VirtualMachine;
 
 use super::{
-    ElTimespec, EventLoopTimer, EventLoopTimerState, ID, ImmediateObject, Kind, KindBig,
+    ElTimespec, EventLoopTimer, EventLoopTimerState, ID, ImmediateObject, InHeap, Kind, KindBig,
     TimeoutObject,
 };
 
@@ -559,6 +559,15 @@ impl TimerObjectInternals {
 
         let state = crate::jsc_hooks::runtime_state();
         debug_assert!(!state.is_null(), "RuntimeState not installed");
+        // The fake clock this timer was popped from, if it was a fake timer
+        // (`in_heap` still names the heap until it is re-inserted or removed).
+        // SAFETY: `event_loop_timer()` points into the live parent.
+        let fake_clock_before_call = if unsafe { (*s.event_loop_timer()).in_heap } == InHeap::Fake {
+            // SAFETY: `state` is the boxed per-thread `RuntimeState`.
+            unsafe { (*state).timer.fake_timers.clock_id() }
+        } else {
+            None
+        };
 
         // SAFETY: `vm` is live; `event_loop()` returns `*mut` to the embedded
         // EventLoop. Re-entrancy is permitted by the raw-ptr contract above.
@@ -603,9 +612,22 @@ impl TimerObjectInternals {
                     if !s.should_reschedule_timer(repeat, idle_timeout) {
                         break 'is_timer_done true;
                     }
+                    // The callback uninstalled (`useRealTimers()`) or replaced
+                    // (`useFakeTimers()`) the fake clock this interval was
+                    // scheduled on, so `time_before_call` is on a timeline
+                    // that no longer exists.
+                    let fake_clock_replaced = fake_clock_before_call.is_some()
+                        // SAFETY: as for `fake_clock_before_call`.
+                        && unsafe { (*state).timer.fake_timers.clock_id() }
+                            != fake_clock_before_call;
                     // `ref_()` above pins the parent across the deref.
                     match s.event_loop_timer_state() {
                         EventLoopTimerState::FIRED => {
+                            // Goes with the replaced clock's other timers
+                            // instead of hopping heaps at a stale deadline.
+                            if fake_clock_replaced {
+                                break 'is_timer_done true;
+                            }
                             // If we didn't clear the setInterval, reschedule it starting from
                             // SAFETY: `state` is the boxed per-thread `RuntimeState`;
                             // single-threaded JS heap so no concurrent `&mut` to
@@ -625,12 +647,16 @@ impl TimerObjectInternals {
                         }
                         EventLoopTimerState::ACTIVE => {
                             // The developer called timer.refresh() synchronously in the callback.
-                            // SAFETY: as above.
-                            unsafe {
-                                (*state)
-                                    .timer
-                                    .update(s.event_loop_timer(), &time_before_call)
-                            };
+                            // After a clock swap that refresh is already the
+                            // schedule on the new clock; keep it.
+                            if !fake_clock_replaced {
+                                // SAFETY: as above.
+                                unsafe {
+                                    (*state)
+                                        .timer
+                                        .update(s.event_loop_timer(), &time_before_call)
+                                };
+                            }
 
                             // Balance out the ref count.
                             // the transition from "FIRED" -> "ACTIVE" caused it to increment.
@@ -678,6 +704,11 @@ impl TimerObjectInternals {
 
             if is_timer_done {
                 s.set_enable_keeping_event_loop_alive(vm, false);
+                // A `setInterval` keeps its wrapper Strong across the callback
+                // (it normally reschedules); one retired here without going
+                // through `cancel()` must drop that pin or the wrapper never
+                // finalizes. No-op for the already-Weak paths.
+                s.this_value.with_mut(|r| r.downgrade());
                 // The timer will not be re-entered into the event loop at this point.
                 s.deref();
             }

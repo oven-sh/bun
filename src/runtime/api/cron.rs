@@ -39,7 +39,7 @@ use bun_resolver::fs::RealFS;
 #[cfg(not(windows))]
 use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status};
-use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, InHeap};
 use bun_core::ZStr;
 use bun_core::strings;
 use bun_io::pipe_reader::BufferedReaderParent;
@@ -1810,6 +1810,14 @@ impl CronJob {
         // holds the raw pointer (not `&mut`) so re-entrant JS can re-borrow.
         let _ev_guard = vm.enter_event_loop_scope();
 
+        // The fake clock this tick was popped from, if the job is a fake timer
+        // (`in_heap` still names the heap until it is re-inserted or removed).
+        let fake_clock_before_call = if this_ref.event_loop_timer.get().in_heap == InHeap::Fake {
+            timer_all().fake_timers.clock_id()
+        } else {
+            None
+        };
+
         this_ref.in_fire.set(true);
         // A top-level call: what the tick throws is reported here (before the
         // job is re-armed, so an `uncaughtException` handler's `stop()` is
@@ -1818,6 +1826,15 @@ impl CronJob {
         let result =
             vm.event_loop_mut()
                 .run_callback_with_result(cb, &this_ref.global, js_this, &[]);
+        // The tick uninstalled (`useRealTimers()`) or replaced
+        // (`useFakeTimers()`) that clock. Already popped, this job was out of
+        // `FakeTimers::clear`'s reach; stop it like the rest of that clock's
+        // timers (deferred while `in_fire`, finished by `schedule_next`).
+        if fake_clock_before_call.is_some()
+            && timer_all().fake_timers.clock_id() != fake_clock_before_call
+        {
+            Self::self_stop(this, vm);
+        }
         this_ref.in_fire.set(false);
 
         // terminate() may have arrived while the callback was running; bail out

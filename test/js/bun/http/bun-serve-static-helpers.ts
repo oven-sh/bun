@@ -138,7 +138,9 @@ const batchSize = isWindows ? 8 : 64;
 // (purge_delay), so one release reading can still include a batch of buffers
 // that the other reading does not. Observed post-GC deltas on /big: within
 // +-215MB in release (leak signal 1GB at 4 batches), -49MB to +29MB under ASAN,
-// whose allocator has no purge delay (leak signal 512MB at 2 batches).
+// whose allocator has no purge delay (leak signal 512MB at 2 batches). The
+// 8-wide Windows batches put the signal (128MB, 64MB) under either bound, so
+// this check is only a sanity bound there. The Linux and macOS lanes cover leaks.
 const measuredBatches = isASAN || isDebug ? 2 : 4;
 const rssDeltaBoundMB = isASAN || isDebug ? 192 : 512;
 
@@ -155,21 +157,22 @@ export async function runStress(stress: StressServer, path: StressPath, accessBo
     body: await comparable(method === "blob" ? expected.blob : await expected.blob[method]()),
   };
 
-  // The first mismatch rejects the batch. The responses still in flight then
-  // skip their comparison: diffing a 4MB body costs hundreds of ms per response,
-  // and 63 of them would run on into the next test.
-  let failed = false;
+  // A batch reports its first failure once every request in it has finished.
+  // After that failure the other responses only drain their bodies: diffing a
+  // 4MB body costs hundreds of ms per response, and a request left in flight
+  // would be counted by the next case.
+  let failure: { error: unknown } | undefined;
 
   async function request() {
-    const res = await fetch(url);
-    if (accessBody) {
-      // Materialize the ReadableStream first; res[method]() then has to drain
-      // the stream instead of taking the buffered-body fast path.
-      expect(res.body).toBeInstanceOf(ReadableStream);
-    }
-    const body = await comparable(await res[method]());
-    if (failed) return;
     try {
+      const res = await fetch(url);
+      if (accessBody) {
+        // Materialize the ReadableStream first; res[method]() then has to drain
+        // the stream instead of taking the buffered-body fast path.
+        expect(res.body).toBeInstanceOf(ReadableStream);
+      }
+      const body = await comparable(await res[method]());
+      if (failure) return;
       expect({
         status: res.status,
         url: res.url,
@@ -179,13 +182,13 @@ export async function runStress(stress: StressServer, path: StressPath, accessBo
         body,
       }).toEqual(expectedResponse);
     } catch (error) {
-      failed = true;
-      throw error;
+      failure ??= { error };
     }
   }
 
   async function batch() {
     await Promise.all(Array.from({ length: batchSize }, request));
+    if (failure) throw failure.error;
     Bun.gc(true);
   }
 

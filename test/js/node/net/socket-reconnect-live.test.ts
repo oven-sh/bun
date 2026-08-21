@@ -49,9 +49,10 @@ describe.concurrent("socket.connect() on an already-connected socket", () => {
           const { createServer, connect } = require("node:net");
           const { once } = require("node:events");
           let connections = 0;
+          const wrote = Promise.withResolvers();
           const srv = createServer(c => {
             c.on("error", () => {});
-            if (++connections === 2) c.end("hello");
+            if (++connections === 2) c.end("hello", wrote.resolve);
           });
           srv.listen(0, "127.0.0.1", async () => {
             const port = srv.address().port;
@@ -76,9 +77,13 @@ describe.concurrent("socket.connect() on an already-connected socket", () => {
             s.pause();
             s.connect({ port, host: "127.0.0.1" });
             await once(s, "connect");
-            // Two turns: whatever the second connection's handle reads while it should
-            // be paused has been dispatched by then.
-            setImmediate(() => setImmediate(() => { resumed = true; s.resume(); }));
+            // "hello" is queued on the second connection once the server's end() callback
+            // ran. The loop polls once between the two immediates, so a handle that still
+            // reads delivers it (to the callback above, while !resumed) before resume().
+            await wrote.promise;
+            await new Promise(done => setImmediate(() => setImmediate(done)));
+            resumed = true;
+            s.resume();
           });
         `,
       ],

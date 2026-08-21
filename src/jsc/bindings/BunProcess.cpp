@@ -187,8 +187,6 @@ BUN_DECLARE_HOST_FUNCTION(Bun__Process__send);
 extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global);
 extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValue value);
 
-extern "C" void Bun__suppressCrashOnProcessKillSelfIfDesired();
-
 static Process* getProcessObject(JSC::JSGlobalObject* lexicalGlobalObject, JSValue thisValue);
 bool setProcessExitCodeInner(JSC::JSGlobalObject* lexicalGlobalObject, Process* process, JSValue code);
 
@@ -4659,9 +4657,9 @@ static bool killReachesThisProcess(int pid, int ownPid)
 }
 
 // Same as process.abort(). forwardSignal as the disposition means a JS listener owns the signal.
-static void bypassCrashHandlerForSelfSentSignal(int signalNumber)
+static void bypassCrashHandlerForSelfSentSignal(int pid, int ownPid, int signalNumber)
 {
-    if (!CrashHandler__isCrashSignal(signalNumber))
+    if (!CrashHandler__isCrashSignal(signalNumber) || !killReachesThisProcess(pid, ownPid))
         return;
     struct sigaction current;
     if (sigaction(signalNumber, nullptr, &current) != 0 || current.sa_handler == forwardSignal)
@@ -4699,10 +4697,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill, (JSC::JSGlobalObject * glob
     }
 
 #if !OS(WINDOWS)
-    if (killReachesThisProcess(pid, ownPid)) {
-        Bun__suppressCrashOnProcessKillSelfIfDesired();
-        bypassCrashHandlerForSelfSentSignal(signal);
-    }
+    bypassCrashHandlerForSelfSentSignal(pid, ownPid, signal);
     int result = kill(pid, signal);
     if (result < 0)
         result = errno;

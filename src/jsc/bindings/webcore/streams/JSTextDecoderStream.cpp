@@ -48,7 +48,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSTextDecoderStreamPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSTextDecoderStreamPrototype* ptr = new (NotNull, JSC::allocateCell<JSTextDecoderStreamPrototype>(vm)) JSTextDecoderStreamPrototype(vm, structure);
+        JSTextDecoderStreamPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSTextDecoderStreamPrototype))) JSTextDecoderStreamPrototype(vm, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -62,7 +62,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -107,23 +107,14 @@ DEFINE_VISIT_CHILDREN_WITH_MODIFIER(template<>, JSTextDecoderStreamConstructor);
 
 template<> GCClient::IsoSubspace* JSTextDecoderStreamConstructor::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSTextDecoderStreamConstructor, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForTextDecoderStreamConstructor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTextDecoderStreamConstructor = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForTextDecoderStreamConstructor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForTextDecoderStreamConstructor = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSTextDecoderStreamConstructor, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForTextDecoderStreamConstructor, m_subspaceForTextDecoderStreamConstructor));
 }
 
 template<> void JSTextDecoderStreamConstructor::finishCreation(VM& vm, JSDOMGlobalObject& globalObject)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-    putDirect(vm, vm.propertyNames->length, jsNumber(0), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "TextDecoderStream"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSTextDecoderStream::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 0, "TextDecoderStream"_s, JSTextDecoderStream::prototype(vm, globalObject));
     m_instanceStructure.set(vm, this, getDOMStructure<JSTextDecoderStream>(vm, globalObject));
 }
 
@@ -208,20 +199,20 @@ JSC_DEFINE_HOST_FUNCTION(jsTextDecoderStreamPrototype_inspectCustom, (JSGlobalOb
     if (!thisObject) [[unlikely]]
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "TextDecoderStream"_s);
     JSObject* data = constructEmptyObject(lexicalGlobalObject);
-    data->putDirect(vm, Identifier::fromString(vm, "encoding"_s), Bun::toJS(lexicalGlobalObject, thisObject->m_encodingLabel), 0);
-    data->putDirect(vm, Identifier::fromString(vm, "fatal"_s), jsBoolean(thisObject->m_fatal), 0);
-    data->putDirect(vm, Identifier::fromString(vm, "ignoreBOM"_s), jsBoolean(thisObject->m_ignoreBOM), 0);
-    data->putDirect(vm, Identifier::fromString(vm, "readable"_s), thisObject->m_readable.get() ? JSValue(thisObject->m_readable.get()) : jsUndefined(), 0);
-    data->putDirect(vm, Identifier::fromString(vm, "writable"_s), thisObject->m_writable.get() ? JSValue(thisObject->m_writable.get()) : jsUndefined(), 0);
+    Bun::putDirectNamed(vm, data, "encoding"_s, Bun::toJS(lexicalGlobalObject, thisObject->m_encodingLabel));
+    Bun::putDirectNamed(vm, data, "fatal"_s, jsBoolean(thisObject->m_fatal));
+    Bun::putDirectNamed(vm, data, "ignoreBOM"_s, jsBoolean(thisObject->m_ignoreBOM));
+    Bun::putDirectNamed(vm, data, "readable"_s, thisObject->m_readable.get() ? JSValue(thisObject->m_readable.get()) : jsUndefined());
+    Bun::putDirectNamed(vm, data, "writable"_s, thisObject->m_writable.get() ? JSValue(thisObject->m_writable.get()) : jsUndefined());
     RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "TextDecoderStream"_s, data));
 }
 
 void JSTextDecoderStreamPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSTextDecoderStream::info(), JSTextDecoderStreamPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSTextDecoderStream::info(), JSTextDecoderStreamPrototypeTableValues, *this);
     Bun::WebStreams::installInspectCustom(vm, this, jsTextDecoderStreamPrototype_inspectCustom);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 // JSTextDecoderStream
@@ -242,7 +233,7 @@ JSTextDecoderStream* JSTextDecoderStream::create(VM& vm, Structure* structure)
 
 Structure* JSTextDecoderStream::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 JSObject* JSTextDecoderStream::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -264,12 +255,7 @@ JSValue JSTextDecoderStream::getConstructor(VM& vm, const JSGlobalObject* global
 
 GCClient::IsoSubspace* JSTextDecoderStream::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSTextDecoderStream, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForTextDecoderStream.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTextDecoderStream = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForTextDecoderStream.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForTextDecoderStream = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSTextDecoderStream, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForTextDecoderStream, m_subspaceForTextDecoderStream));
 }
 
 // Prototype accessors

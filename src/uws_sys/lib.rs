@@ -139,7 +139,6 @@ pub struct Opcode(pub i32);
 impl Opcode {
     pub const Text: Opcode = Opcode(1);
     pub const Binary: Opcode = Opcode(2);
-    pub const Close: Opcode = Opcode(8);
     pub const Ping: Opcode = Opcode(9);
     pub const Pong: Opcode = Opcode(10);
     // Upper-case aliases for callers that use the screaming-snake names
@@ -471,7 +470,6 @@ pub mod fault_inject {
 }
 pub use socket::{
     AnySocket, ConnectError, InternalSocket, NewSocketHandler, SocketHandler, SocketTCP, SocketTLS,
-    SocketTcp, SocketTls,
 };
 
 // ───────────────────────────── re-exports ────────────────────────────────────
@@ -483,8 +481,7 @@ pub use loop_::{Loop, NOW_NS_UNKNOWN, PosixLoop};
 pub use socket_kind::SocketKind;
 #[cfg(windows)]
 pub use timer::Timer;
-#[cfg(not(windows))]
-pub type WindowsLoop = loop_::PosixLoop; // unified on non-Windows
+
 pub use body_reader_mixin::BodyReaderMixin;
 pub use connecting_socket::ConnectingSocket;
 pub use listen_socket::ListenSocket;

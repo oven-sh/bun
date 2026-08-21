@@ -183,7 +183,6 @@ mod node {
 // `validators::*` — `super::util::validators` is a `pub use` of a
 // crate-private module, which trips E0365 if we `pub use` it again. Import it
 // privately at file scope instead and call as `validators::foo` directly.
-use super::MaybeTodo as _;
 use super::util::validators;
 
 // Trait imports for inherent-looking method calls on upstream types:
@@ -2902,14 +2901,6 @@ pub mod args {
         pub path: PathLike,
         pub(crate) mode: Mode,
     }
-    impl Default for Chmod {
-        fn default() -> Self {
-            Self {
-                path: PathLike::default(),
-                mode: 0x777,
-            }
-        }
-    }
     fs_args_path_forwarders!(Chmod; path);
     impl Chmod {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Chmod> {
@@ -2936,14 +2927,6 @@ pub mod args {
     pub struct FChmod {
         pub(crate) fd: FD,
         pub(crate) mode: Mode,
-    }
-    impl Default for FChmod {
-        fn default() -> Self {
-            Self {
-                fd: FD::INVALID,
-                mode: 0x777,
-            }
-        }
     }
     impl FChmod {
         pub(crate) fn to_thread_safe(&self) {}
@@ -2997,15 +2980,6 @@ pub mod args {
         pub path: PathLike,
         pub(crate) big_int: bool,
         pub(crate) throw_if_no_entry: bool,
-    }
-    impl Default for Stat {
-        fn default() -> Self {
-            Self {
-                path: PathLike::default(),
-                big_int: false,
-                throw_if_no_entry: true,
-            }
-        }
     }
     fs_args_path_forwarders!(Stat; path);
     impl Stat {
@@ -3264,17 +3238,6 @@ pub mod args {
         pub(crate) recursive: bool,
         pub(crate) retry_delay: c_uint,
     }
-    impl Default for RmDir {
-        fn default() -> Self {
-            Self {
-                path: PathLike::default(),
-                force: false,
-                max_retries: 0,
-                recursive: false,
-                retry_delay: 100,
-            }
-        }
-    }
     fs_args_path_forwarders!(RmDir; path);
     impl RmDir {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<RmDir> {
@@ -3419,18 +3382,6 @@ pub mod args {
         pub(crate) prefix: PathLike,
         pub(crate) encoding: Encoding,
     }
-    impl Default for MkdirTemp {
-        fn default() -> Self {
-            Self {
-                prefix: PathLike::Buffer(Buffer {
-                    buffer: bun_jsc::ArrayBuffer::EMPTY,
-                    owns_buffer: false,
-                    pinned: false,
-                }),
-                encoding: Encoding::Utf8,
-            }
-        }
-    }
     fs_args_path_forwarders!(MkdirTemp; prefix);
     impl MkdirTemp {
         pub fn from_js(
@@ -3519,15 +3470,6 @@ pub mod args {
         pub path: PathLike,
         pub(crate) flags: FileSystemFlags,
         pub(crate) mode: Mode,
-    }
-    impl Default for Open {
-        fn default() -> Self {
-            Self {
-                path: PathLike::default(),
-                flags: FileSystemFlags::R,
-                mode: DEFAULT_PERMISSION,
-            }
-        }
     }
     fs_args_path_forwarders!(Open; path);
     impl Open {
@@ -4381,7 +4323,6 @@ pub mod args {
         }
     }
 
-    pub(crate) type UnwatchFile = ();
     pub(crate) type Watch<'a> = super::Watcher::Arguments<'a>;
     // `StatWatcher::Arguments` owns its `PathLike` (no borrowed slice), so it
     // has no lifetime parameter — unlike `Watcher::Arguments<'a>` above.
@@ -4434,11 +4375,6 @@ impl StringOrUndefined {
 
 /// For use in `Return`'s definitions to act as `void` while returning `null` to JavaScript
 pub struct Null;
-impl Null {
-    pub fn to_js(&self, _: &JSGlobalObject) -> JSValue {
-        JSValue::NULL
-    }
-}
 
 pub mod ret {
     use super::*;
@@ -4553,7 +4489,6 @@ pub mod ret {
     pub(crate) type Symlink = ();
     pub(crate) type Truncate = ();
     pub(crate) type Unlink = ();
-    pub(crate) type UnwatchFile = ();
     pub(crate) type Watch = JSValue;
     pub(crate) type WatchFile = JSValue;
     pub(crate) type Utimes = ();
@@ -4714,13 +4649,14 @@ impl NodeFS {
                 unsafe { libc::posix_fadvise(src_fd.native(), 0, 0, libc::POSIX_FADV_SEQUENTIAL) };
         }
 
-        let mut stack_buf = [0u8; 64 * 1024];
-        let stack_buf_len = stack_buf.len();
+        const STACK_BUF_LEN: usize = 64 * 1024;
+        let mut stack_buf = bun_core::vec::UninitBuf::<STACK_BUF_LEN>::uninit();
         let mut buf_to_free: Vec<u8> = Vec::new();
-        let mut buf: &mut [u8] = &mut stack_buf;
+        // SAFETY: `Syscall::read` is the only writer of `buf`; each iteration reads back only `buf[..amt]`.
+        let mut buf: &mut [u8] = unsafe { stack_buf.as_bytes_mut() };
 
         'maybe_allocate_large_temp_buf: {
-            if stat_size > stack_buf_len * 16 {
+            if stat_size > STACK_BUF_LEN * 16 {
                 // Don't allocate more than 8 MB at a time
                 let clamped_size: usize = stat_size.min(8 * 1024 * 1024);
                 // The slab must stay uninitialised: `Vec::resize` here was a
@@ -5478,7 +5414,7 @@ impl NodeFS {
         #[cfg(windows)]
         {
             let _ = args;
-            return Maybe::<ret::Lchmod>::todo();
+            return Err(sys::Error::todo());
         }
         #[cfg(target_os = "android")]
         {
@@ -8096,14 +8032,6 @@ impl NodeFS {
         }
     }
 
-    pub(crate) fn unwatch_file(
-        &mut self,
-        _: args::UnwatchFile,
-        _: Flavor,
-    ) -> Maybe<ret::UnwatchFile> {
-        Maybe::<ret::UnwatchFile>::todo()
-    }
-
     pub(crate) fn utimes(&mut self, args: &args::Utimes, _: Flavor) -> Maybe<ret::Utimes> {
         #[cfg(windows)]
         {
@@ -8685,7 +8613,7 @@ impl NodeFS {
             let _ = reuse_stat;
             // https://manpages.debian.org/testing/manpages-dev/ioctl_ficlone.2.en.html
             if mode.is_force_clone() {
-                return Maybe::<ret::CopyFile>::todo();
+                return Err(sys::Error::todo());
             }
 
             let src_fd = match Syscall::open(src, sys::O::RDONLY | sys::O::NOFOLLOW, 0o644) {
@@ -8981,7 +8909,7 @@ impl NodeFS {
                 // fall back to a non-CoW `CopyFileW`, per
                 // Node.js' documented FICLONE_FORCE contract and matching the
                 // Linux/FreeBSD arms above. Return a concrete ENOSYS rather
-                // than `Maybe::todo()` so debug builds do not panic.
+                // than `sys::Error::todo()` so debug builds do not panic.
                 return Err(sys::Error {
                     errno: SystemErrno::ENOSYS as _,
                     syscall: sys::Tag::copyfile,
@@ -9128,7 +9056,7 @@ impl NodeFS {
         )))]
         {
             let _ = (src, dest, mode, reuse_stat);
-            Maybe::<ret::CopyFile>::todo()
+            Err(sys::Error::todo())
         }
     }
 

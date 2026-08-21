@@ -155,11 +155,9 @@ pub(super) use crate::bake::dev_server::serialized_failure::SerializedFailure;
 pub(super) use crate::bake::dev_server::source_map_store::SourceMapStore;
 
 bun_output::declare_scope!(DevServer, visible);
-bun_output::declare_scope!(IncrementalGraph, visible);
 bun_output::declare_scope!(SourceMapStore, visible);
 
 bun_output::define_scoped_log!(debug_log, crate::bake::dev_server_body::DevServer);
-bun_output::define_scoped_log!(ig_log, crate::bake::dev_server_body::IncrementalGraph);
 bun_output::define_scoped_log!(map_log, crate::bake::dev_server_body::SourceMapStore);
 pub(crate) use map_log;
 
@@ -2356,10 +2354,7 @@ impl DevServer {
                 }
             }
             route_bundle::Data::Html(html) => {
-                entry_points.append(
-                    &html.html_bundle.bundle.path,
-                    entry_point_list::Flags::CLIENT,
-                )?;
+                entry_points.append_html(&html.html_bundle.bundle.path)?;
             }
         }
 
@@ -2767,8 +2762,15 @@ impl DevServer {
         debug_assert!(route_bundle.server_state == route_bundle::State::Loaded);
         debug_assert!(html.html_bundle.dev_server_id.get() == Some(route_bundle_index));
         debug_assert!(html.cached_response.is_none());
-        let script_injection_offset = html.script_injection_offset.unwrap().get_usize();
-        let bundled_html = html.bundled_html_text.as_ref().unwrap();
+        // `report_html_routes_without_html` keeps a route without these out of the loaded state.
+        let script_injection_offset = html
+            .script_injection_offset
+            .expect("loaded html route has no script injection offset")
+            .get_usize();
+        let bundled_html = html
+            .bundled_html_text
+            .as_ref()
+            .expect("loaded html route has no bundled html");
 
         // The bundler records an offsets in development mode, splitting the HTML
         // file into two chunks. DevServer is able to insert style/script tags
@@ -3328,6 +3330,51 @@ impl DevServer {
                 bun_core::debug_warn!("dev.log should not be written into when using DevServer");
             }
             let _ = self.log.print(std::ptr::from_mut(Output::error_writer()));
+        }
+        Ok(())
+    }
+
+    /// A route that a bundle left without html must not reach the loaded state: fail its file instead.
+    fn report_html_routes_without_html(&mut self) -> crate::Result<()> {
+        for route_bundle in &self.route_bundles {
+            let route_bundle::Data::Html(html) = &route_bundle.data else {
+                continue;
+            };
+            if html.bundled_html_text.is_some() {
+                continue;
+            }
+            let file_index = html.bundled_file;
+            let failed_in_this_bundle = |failure: &SerializedFailure| {
+                matches!(
+                    failure.get_owner(),
+                    serialized_failure::Owner::Client(owner) if owner == file_index
+                )
+            };
+            let has_failure = match route_bundle.server_state {
+                route_bundle::State::Unqueued | route_bundle::State::DeferredToNextBundle => {
+                    continue;
+                }
+                // `finalize_bundle` answers this bundle's requests from the failures it added: re-add an older one.
+                route_bundle::State::Bundling => self
+                    .incremental_result
+                    .failures_added
+                    .iter()
+                    .any(failed_in_this_bundle),
+                // An earlier failure still gates the route, unless this bundle cleared it without delivering html.
+                route_bundle::State::PossibleBundlingFailures | route_bundle::State::Loaded => {
+                    self.client_graph.bundled_files.values()[file_index.get() as usize].failed
+                }
+            };
+            if has_failure {
+                continue;
+            }
+
+            let log = html.html_bundle.bundle.no_html_page_log();
+            self.client_graph.insert_failure(
+                incremental_graph::InsertFailureKey::Index(file_index.get()),
+                &log,
+                false,
+            )?;
         }
         Ok(())
     }
@@ -4110,7 +4157,11 @@ pub(super) fn finalize_bundle(
             .get_cached_index(bake::Side::Client, index)
             .unwrap::<{ bake::Side::Client }>()
             .expect("unresolved index");
-        let route_bundle_index = dev.client_graph.html_route_bundle_index(client_index);
+        // Not the file of a route: a plugin resolved a route's file to it, or loaded it as html.
+        let Some(route_bundle_index) = dev.client_graph.html_route_bundle_index(client_index)
+        else {
+            continue;
+        };
         let route_bundle = dev.route_bundle_ptr(route_bundle_index);
         debug_assert!(route_bundle.data.html().bundled_file == client_index);
         // Note: split borrow — `invalidate_client_bundle` needs `&mut RouteBundle`
@@ -4153,6 +4204,7 @@ pub(super) fn finalize_bundle(
     dev.incremental_result.had_adjusted_edges = false;
 
     dev.prepare_and_log_resolution_failures()?;
+    dev.report_html_routes_without_html()?;
 
     // Pass 2, update the graph's edges by performing import diffing on each
     // changed file, removing dependencies. This pass also flags what routes
@@ -4952,7 +5004,7 @@ impl DevServer {
         log: &Log,
         bv2: &mut BundleV2,
     ) -> Result<(), AllocError> {
-        let _g = self.graph_safety_lock.guard();
+        let graph_lock = self.graph_safety_lock.guard();
 
         debug_log!(
             "handleParseTaskFailure({}, .{}, {}, {} messages)",
@@ -4962,13 +5014,31 @@ impl DevServer {
             log.msgs.len(),
         );
 
+        let mut watch_for_route_file = false;
         if matches!(err.name(), "ENOENT" | "FileNotFound" | "ModuleNotFound") {
-            // Special-case files being deleted.
+            // Special-case files being deleted: the importers report them.
             match graph {
                 bake::Graph::Server | bake::Graph::Ssr => {
                     self.server_graph.on_file_deleted(abs_path, bv2)?
                 }
-                bake::Graph::Client => self.client_graph.on_file_deleted(abs_path, bv2)?,
+                bake::Graph::Client => {
+                    self.client_graph.on_file_deleted(abs_path, bv2)?;
+                    // The html file of a route has no importer.
+                    if let Some(file) = self
+                        .client_graph
+                        .bundled_files
+                        .get(abs_path)
+                        .filter(|file| file.html_route_bundle_index.is_some())
+                    {
+                        // `failed` is cleared by the next successful bundle.
+                        watch_for_route_file = !file.failed;
+                        self.client_graph.insert_failure(
+                            incremental_graph::InsertFailureKey::AbsPath(abs_path),
+                            log,
+                            false,
+                        )?;
+                    }
+                }
             }
         } else {
             match graph {
@@ -4988,6 +5058,18 @@ impl DevServer {
                     false,
                 )?,
             }
+        }
+        // `track_resolution_failure` takes the graph lock itself.
+        drop(graph_lock);
+
+        if watch_for_route_file {
+            // Bundles the route again once its html file exists, like a failed import.
+            self.directory_watchers.track_resolution_failure(
+                abs_path,
+                paths::basename(abs_path),
+                bake::Graph::Client,
+                Loader::Html,
+            )?;
         }
         Ok(())
     }
@@ -5176,7 +5258,9 @@ impl DevServer {
             // This is the dev server's entry from Bun.serve's static-route
             // trampoline (`StaticRouteLike`, which otherwise never enters
             // JS): what bundling left pending is folded at this boundary.
-            Err(jsc::JsError::Thrown) => crate::dispatch::fold(Err(jsc::JsError::Thrown)),
+            Err(err @ (jsc::JsError::Thrown | jsc::JsError::Terminated)) => {
+                crate::dispatch::fold(Err(err))
+            }
             Err(jsc::JsError::OutOfMemory) => return Err(AllocError),
         }
         Ok(())
@@ -5205,6 +5289,22 @@ impl DevServer {
         }
 
         let _g = self.graph_safety_lock.guard();
+
+        // A file delivers its html to one route bundle only: a route `server.reload()` re-registers reuses it.
+        if let route_bundle::UnresolvedIndex::Html(html) = route {
+            // SAFETY: caller guarantees `html` is a live IntrusiveRc-managed
+            // allocation; single-threaded (uws JS-thread callback).
+            let html_ref = unsafe { &*html };
+            if let Some(existing) = self
+                .client_graph
+                .bundled_files
+                .get(&html_ref.bundle.path)
+                .and_then(|file| file.html_route_bundle_index)
+            {
+                html_ref.dev_server_id.set(Some(existing));
+                return Ok(existing);
+            }
+        }
 
         let bundle_index =
             route_bundle::Index::init(u32::try_from(self.route_bundles.len()).expect("int cast"));
@@ -5333,9 +5433,7 @@ impl DevServer {
         let post = "</script></body></html>";
 
         buf.extend_from_slice(pre.as_bytes());
-        buf.extend_from_slice(
-            bun_core::runtime_embed_file!(CodegenEager, "bake.error.js").as_bytes(),
-        );
+        buf.extend_from_slice(bun_zstd::embed_compressed!(codegen "bake.error.js"));
         buf.extend_from_slice(post.as_bytes());
 
         match resp {
@@ -6032,6 +6130,8 @@ pub mod entry_point_list {
             const SSR = 1 << 2;
             /// When this is set, also set CLIENT
             const CSS = 1 << 3;
+            /// The html file of a route. When this is set, also set CLIENT
+            const HTML = 1 << 4;
         }
     }
 }
@@ -6056,6 +6156,14 @@ impl EntryPointList {
         self.append(
             abs_path,
             entry_point_list::Flags::CLIENT | entry_point_list::Flags::CSS,
+        )
+    }
+
+    /// The html file of a route: an import attribute or a bunfig `[loader]` entry may have made it html.
+    pub(crate) fn append_html(&mut self, abs_path: &[u8]) -> crate::Result<()> {
+        self.append(
+            abs_path,
+            entry_point_list::Flags::CLIENT | entry_point_list::Flags::HTML,
         )
     }
 

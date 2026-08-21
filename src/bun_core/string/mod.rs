@@ -1835,17 +1835,6 @@ impl SliceWithUnderlyingString {
         }
     }
 
-    /// `fromUTF8` — wrap a borrowed UTF-8 slice (caller keeps it alive).
-    #[inline]
-    pub fn from_utf8(utf8: &[u8]) -> SliceWithUnderlyingString {
-        SliceWithUnderlyingString {
-            utf8: ZigStringSlice::from_utf8_never_free(utf8),
-            underlying: String::DEAD,
-            #[cfg(debug_assertions)]
-            did_report_extra_memory_debug: false,
-        }
-    }
-
     /// `slice` — the UTF-8 byte view.
     #[inline]
     pub fn slice(&self) -> &[u8] {

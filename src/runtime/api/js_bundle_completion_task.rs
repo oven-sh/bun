@@ -578,8 +578,9 @@ impl JSBundleCompletionTask {
     ///   cell, promise, keep-alive), return the count, and leave the inert rest
     ///   for the bundle thread to free when it dequeues it — the VM does not
     ///   wait behind other VMs' builds.
-    /// * Already on the bundle thread: tombstone the plugin, cancel and wake it;
-    ///   it fails what the plugins hold, fails the build and posts the
+    /// * Already on the bundle thread: tombstone the plugin — which answers what
+    ///   the plugins still hold as cancelled — then cancel and wake the bundle
+    ///   thread; it consumes those answers, fails the build and posts the
     ///   completion, which teardown waits for and releases.
     ///
     /// # Safety
@@ -854,7 +855,6 @@ fn from_completion_handle<'a>(c: NonNull<Bv2OpaqueCompletion>) -> &'a JSBundleCo
 }
 
 static COMPLETION_VTABLE: dispatch::CompletionDispatch = dispatch::CompletionDispatch {
-    result_is_err: |c| matches!(from_completion_handle(c).result, BundleV2Result::Err(_)),
     is_cancelled: |c| {
         from_completion_handle(c)
             .cancelled
@@ -938,23 +938,19 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.entry_points = config.entry_points.keys().to_vec().into_boxed_slice();
         // Convert API JSX config back to options.JSX.Pragma
         let jsx_import = &config.jsx.import_source;
+        let default_factory = options::jsx::MemberList::Static(options::jsx::defaults::FACTORY);
+        let default_fragment = options::jsx::MemberList::Static(options::jsx::defaults::FRAGMENT);
         transpiler.options.jsx = options::jsx::Pragma {
-            factory: if !config.jsx.factory.is_empty() {
-                options::jsx::Pragma::member_list_to_components_if_different(
-                    options::jsx::MemberList::Static(options::jsx::defaults::FACTORY),
-                    &config.jsx.factory,
-                )?
-            } else {
-                options::jsx::MemberList::Static(options::jsx::defaults::FACTORY)
-            },
-            fragment: if !config.jsx.fragment.is_empty() {
-                options::jsx::Pragma::member_list_to_components_if_different(
-                    options::jsx::MemberList::Static(options::jsx::defaults::FRAGMENT),
-                    &config.jsx.fragment,
-                )?
-            } else {
-                options::jsx::MemberList::Static(options::jsx::defaults::FRAGMENT)
-            },
+            factory: options::jsx::Pragma::member_list_to_components_if_different(
+                &default_factory,
+                &config.jsx.factory,
+            )
+            .unwrap_or(default_factory),
+            fragment: options::jsx::Pragma::member_list_to_components_if_different(
+                &default_fragment,
+                &config.jsx.fragment,
+            )
+            .unwrap_or(default_fragment),
             runtime: options::jsx::Runtime::from(config.jsx.runtime),
             development: config.jsx.development,
             package_name: if !jsx_import.is_empty() {

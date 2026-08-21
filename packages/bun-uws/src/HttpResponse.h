@@ -408,6 +408,11 @@ public:
                 f((HttpResponse<SSL> *) this, -1);
             }
         }
+        if (((AsyncSocketData<SSL> *) responseData)->filteredAccept) {
+            for (auto &f : httpContextData->filterHandlers) {
+                f((HttpResponse<SSL> *) this, -2);
+            }
+        }
 
         /* Destroy HttpResponseData (the IsNodeHttp=true type on node:http
          * compat contexts; upgrade() is not on a templated handler path, so it

@@ -703,7 +703,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             match side {
                 bun_bundler::options::Side::Client => {
                     // Client-side resources will be written to disk for usage on the client side
-                    if let Err(err) = file.write_to_disk(root_dir.fd(), b".") {
+                    if let Err(err) = file.write_to_disk(root_dir.fd()) {
                         bun_core::handle_error_return_trace(err);
                         Output::err(
                             err,
@@ -714,7 +714,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                 }
                 bun_bundler::options::Side::Server => {
                     if ctx.bundler_options.bake_debug_dump_server {
-                        if let Err(err) = file.write_to_disk(root_dir.fd(), b".") {
+                        if let Err(err) = file.write_to_disk(root_dir.fd()) {
                             bun_core::handle_error_return_trace(err);
                             Output::err(
                                 err,
@@ -794,7 +794,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         });
         if any_client_chunks {
             let runtime_file: &OutputFile = &bundled_outputs_list[runtime_file_index as usize];
-            if let Err(err) = runtime_file.write_to_disk(root_dir.fd(), b".") {
+            if let Err(err) = runtime_file.write_to_disk(root_dir.fd()) {
                 bun_core::handle_error_return_trace(err);
                 Output::err(
                     err,
@@ -1600,20 +1600,6 @@ extern "C" fn BakeProdLoad(pt: *mut PerThread, key: BunString) -> BunString {
         log!("  found in module_map: {}\n", BStr::new(utf8.slice()));
         // Zero-copy: alias the chunk bytes; `pt.bundled_outputs` owns them for
         // the lifetime of the attached `PerThread` (see `Value::to_bun_string_ref`).
-        return pt.bundled_outputs[value.get() as usize]
-            .value
-            .to_bun_string_ref();
-    }
-    BunString::dead()
-}
-
-#[unsafe(no_mangle)]
-extern "C" fn BakeProdSourceMap(pt: *mut PerThread, key: BunString) -> BunString {
-    // SAFETY: `pt` is the non-null pointer previously attached via
-    // BakeGlobalObject__attachPerThreadData; C++ only calls this while attached.
-    let pt = unsafe { &*pt };
-    let utf8 = key.to_utf8();
-    if let Some(value) = pt.source_maps.get(utf8.slice()) {
         return pt.bundled_outputs[value.get() as usize]
             .value
             .to_bun_string_ref();

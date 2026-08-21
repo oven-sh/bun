@@ -29,6 +29,7 @@ pub use ::bun_install_types::resolver_hooks::{INVALID_PACKAGE_ID, PackageID};
 // resolver never needs); callers here use the map API directly.
 pub type StringMap = StringArrayHashMap<Box<[u8]>>;
 pub use bun_collections::StringHashMapUnownedKey;
+use bun_collections::index_sort;
 use bun_glob as glob;
 
 // Assume they're not going to have hundreds of main fields or browser map
@@ -51,17 +52,6 @@ pub struct DependencyMap {
     // Borrows the package.json source contents; lifetime-erased to 'static,
     // kept alive by `PackageJSON::source_contents`.
     pub source_buf: &'static [u8],
-}
-
-impl Clone for DependencyMap {
-    /// Deep-clones the small key/value vecs; `SemverString`/`Dependency` are
-    /// POD over `source_buf`.
-    fn clone(&self) -> Self {
-        Self {
-            map: self.map.clone().expect("OOM"),
-            source_buf: self.source_buf,
-        }
-    }
 }
 
 // Inherent impls cannot carry associated type aliases (stable), so use a free alias.
@@ -1146,7 +1136,9 @@ impl<'a> Visitor<'a> {
         // Let expansionKeys be the list of keys of matchObj either ending in "/"
         // or containing only a single "*", sorted by the sorting function
         // PATTERN_KEY_COMPARE which orders in descending order of specificity.
-        expansion_keys.sort_by(|a, b| strings::glob_length_compare(&a.key, &b.key));
+        index_sort::sort_slice_by(&mut expansion_keys, |a, b| {
+            strings::glob_length_compare(&a.key, &b.key)
+        });
 
         Entry {
             data: EntryData::Map(EntryDataMap {
@@ -1335,16 +1327,6 @@ pub struct Package<'a> {
     pub(crate) version: &'a [u8],
     /// Borrows from the `subpath_buf` argument to `Package::parse`.
     pub(crate) subpath: &'a [u8],
-}
-
-impl Default for Package<'_> {
-    fn default() -> Self {
-        Package {
-            name: b"",
-            version: b"",
-            subpath: b"",
-        }
-    }
 }
 
 #[derive(Clone, Copy, Default)]

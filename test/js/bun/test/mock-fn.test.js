@@ -737,6 +737,18 @@ describe("mock()", () => {
       ),
     ).toThrow("from callback");
   });
+  test("withImplementation restores a queued mockImplementationOnce chain", () => {
+    const fn = jest.fn(() => "base");
+    fn.mockImplementationOnce(() => "a").mockImplementationOnce(() => "b");
+    fn.withImplementation(
+      () => "temp",
+      () => {
+        expect(fn()).toBe("temp");
+      },
+    );
+    fn.mockImplementationOnce(() => "c");
+    expect([fn(), fn(), fn(), fn()]).toEqual(["a", "b", "c", "base"]);
+  });
   test("copying name/length from the implementation propagates getter errors", () => {
     const impl = function () {};
     Object.defineProperty(impl, "length", {

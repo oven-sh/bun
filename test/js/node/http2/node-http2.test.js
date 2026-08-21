@@ -3180,6 +3180,27 @@ it("http2 server rejects requests carrying connection-specific or repeated pseud
       Buffer.from([0x86]), // :scheme: http
       Buffer.from([0x84]), // :path: /
     ]),
+    // nghttp2 http_request_on_header runs Host through the same check_pseudo_header() as
+    // :authority: an empty or repeated Host is PROTOCOL_ERROR, not a missing one.
+    "empty host standing in for :authority": Buffer.concat([
+      Buffer.from([0x82]), // :method: GET
+      Buffer.from([0x86]), // :scheme: http
+      Buffer.from([0x84]), // :path: /
+      Buffer.from([0x00]), // literal header field without indexing, new name
+      literal("host"),
+      literal(""),
+    ]),
+    "repeated host standing in for :authority": Buffer.concat([
+      Buffer.from([0x82]), // :method: GET
+      Buffer.from([0x86]), // :scheme: http
+      Buffer.from([0x84]), // :path: /
+      Buffer.from([0x00]),
+      literal("host"),
+      literal("a"),
+      Buffer.from([0x00]),
+      literal("host"),
+      literal("b"),
+    ]),
     "CONNECT carrying :scheme and :path": Buffer.concat([
       Buffer.from([0x02]), // :method (literal without indexing, name index 2)
       literal("CONNECT"),
@@ -3316,6 +3337,67 @@ it("http2 server rejects malformed extended-CONNECT requests", async () => {
   }
 });
 
+// A server runs a request's trailer section through the same field rules as the request block
+// (nghttp2 http_request_on_header, whose `host` case ignores the trailer flag): the request has
+// already been delivered, then an empty or repeated Host in the trailers resets the stream with
+// PROTOCOL_ERROR and no 'trailers' event, while a single non-empty Host is delivered. node
+// v26.3.0 (nghttp2 1.69.0) behaves the same way for all three blocks.
+it("http2 server rejects a request trailer section carrying an empty or repeated host header", async () => {
+  const requestBlock = Buffer.concat([
+    Buffer.from([0x83]), // :method: POST (static table index 3)
+    Buffer.from([0x86]), // :scheme: http
+    Buffer.from([0x84]), // :path: /
+    Buffer.from([0x01]), // :authority
+    literal("localhost"),
+  ]);
+  const hostField = value => Buffer.concat([Buffer.from([0x00]), literal("host"), literal(value)]);
+  const cases = {
+    "empty host": {
+      trailerBlock: hostField(""),
+      rstCode: http2.constants.NGHTTP2_PROTOCOL_ERROR,
+      trailers: [],
+    },
+    "repeated host": {
+      trailerBlock: Buffer.concat([hostField("a"), hostField("b")]),
+      rstCode: http2.constants.NGHTTP2_PROTOCOL_ERROR,
+      trailers: [],
+    },
+    "single host": { trailerBlock: hostField("a"), rstCode: undefined, trailers: ["a"] },
+  };
+
+  const requests = [];
+  const server = http2.createServer();
+  server.on("stream", stream => {
+    const request = { trailers: [] };
+    requests.push(request);
+    stream.on("trailers", headers => request.trailers.push(headers.host));
+    stream.on("error", () => {});
+  });
+  const { promise: listening, resolve: onListening } = Promise.withResolvers();
+  server.listen(0, "127.0.0.1", onListening);
+  await listening;
+  const port = server.address().port;
+
+  try {
+    for (const [caseName, { trailerBlock, rstCode, trailers }] of Object.entries(cases)) {
+      const frames = await exchangeFrames(port, [
+        new http2utils.HeadersFrame(1, requestBlock, 0, true, false).data,
+        new http2utils.HeadersFrame(1, trailerBlock, 0, true, true).data,
+      ]);
+      const rst = frames.find(f => f.type === 3 && f.streamId === 1);
+      expect({
+        caseName,
+        delivered: requests.length,
+        rstCode: rst?.payload.readUInt32BE(0),
+        trailers: requests.at(-1)?.trailers,
+      }).toEqual({ caseName, delivered: 1, rstCode, trailers });
+      requests.length = 0;
+    }
+  } finally {
+    server.close();
+  }
+});
+
 // RFC 9113 §8.3.2 (nghttp2_http_on_response_headers): a response block must carry :status
 // and must not carry a request pseudo-header. node RST_STREAMs and never emits 'response'.
 it("http2 client rejects a response missing :status or carrying a request pseudo-header", async () => {
@@ -3385,9 +3467,10 @@ it("http2 client rejects a response missing :status or carrying a request pseudo
   }
 });
 
-// The Host rules above only apply to request blocks: nghttp2's http_response_on_header has
-// no `host` case, so a response carrying an empty or repeated Host header is delivered to
-// the client (node keeps the first value) instead of being answered with RST_STREAM.
+// The Host rules above apply to the blocks nghttp2 routes through http_request_on_header
+// (everything a server receives, plus PUSH_PROMISE); http_response_on_header has no `host`
+// case, so a response carrying an empty or repeated Host header is delivered to the client
+// (node keeps the first value) instead of being answered with RST_STREAM.
 it("http2 client delivers a response carrying an empty or repeated host header", async () => {
   const responseBlock = Buffer.concat([
     Buffer.from([0x88]), // :status: 200 (static table index 8)

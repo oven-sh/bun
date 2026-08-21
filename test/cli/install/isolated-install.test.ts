@@ -645,6 +645,14 @@ describe("resolved peer bins", () => {
   // `node_modules/.bin` (pnpm links bins of resolved peers the same way).
   const whatBin = process.platform === "win32" ? "what-bin.bunx" : "what-bin";
 
+  // CI exports BUN_INSTALL_CACHE_DIR, which overrides bunfig's `cache` and
+  // makes these concurrent tests share one cache. Concurrent first installs
+  // of the same package then race its cache extraction; pin the cache per
+  // test like the other tests in this file do.
+  function installEnv(packageDir: string) {
+    return { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") };
+  }
+
   async function runWhatBin(runDir: string) {
     const { exited, stderr } = spawn({
       cmd: [bunExe(), "run", "what-bin"],
@@ -672,7 +680,7 @@ describe("resolved peer bins", () => {
     );
 
     async function checkInstall(savesLockfile: boolean) {
-      await runBunInstall(bunEnv, packageDir, { savesLockfile });
+      await runBunInstall(installEnv(packageDir), packageDir, { savesLockfile });
 
       // the peer is wired only inside the store, not the project root
       expect(existsSync(join(packageDir, "node_modules", "what-bin"))).toBe(false);
@@ -703,7 +711,7 @@ describe("resolved peer bins", () => {
         devDependencies: { "optional-peer-what-bin": "1.0.0" },
       }),
     );
-    await runBunInstall(bunEnv, packageDir);
+    await runBunInstall(installEnv(packageDir), packageDir);
 
     expect(existsSync(join(packageDir, "node_modules", "what-bin"))).toBe(false);
     expect(existsSync(join(packageDir, "node_modules", ".bin", whatBin))).toBe(true);
@@ -721,7 +729,7 @@ describe("resolved peer bins", () => {
         dependencies: { "provides-optional-peer-what-bin": "1.0.0" },
       }),
     );
-    await runBunInstall(bunEnv, packageDir);
+    await runBunInstall(installEnv(packageDir), packageDir);
 
     expect(existsSync(join(packageDir, "node_modules", ".bin", whatBin))).toBe(true);
     expect(await runWhatBin(packageDir)).toBe("what-bin@1.0.0");
@@ -739,7 +747,7 @@ describe("resolved peer bins", () => {
     );
     // `what-bin@1.5.0` does not satisfy the `"what-bin": "1.0.0"` peer range,
     // which warns; the direct dependency still owns the bin name.
-    await runBunInstall(bunEnv, packageDir, { allowWarnings: true });
+    await runBunInstall(installEnv(packageDir), packageDir, { allowWarnings: true });
 
     if (process.platform !== "win32") {
       expect(readlinkSync(join(packageDir, "node_modules", ".bin", "what-bin"))).toBe(
@@ -773,7 +781,7 @@ describe("resolved peer bins", () => {
       join(packageDir, "packages", "what-bin", "what-bin.js"),
       `#!/usr/bin/env node\nrequire("fs").writeFileSync("what-bin.txt", "what-bin@workspace");\n`,
     );
-    await runBunInstall(bunEnv, packageDir);
+    await runBunInstall(installEnv(packageDir), packageDir);
 
     expect(existsSync(join(packageDir, "node_modules", ".bin", whatBin))).toBe(true);
     expect(await runWhatBin(packageDir)).toBe("what-bin@workspace");
@@ -797,7 +805,7 @@ describe("resolved peer bins", () => {
         dependencies: { "peer-what-bin": "1.0.0" },
       }),
     );
-    await runBunInstall(bunEnv, packageDir);
+    await runBunInstall(installEnv(packageDir), packageDir);
 
     // the workspace is its own importer: the bin belongs to the workspace's
     // bin dir, not the root's

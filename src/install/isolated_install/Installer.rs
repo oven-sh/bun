@@ -1841,6 +1841,10 @@ impl Task {
                         bin_linker.target_node_modules_path = bin_linker.node_modules_path;
                         bin_linker.target_package_name =
                             strings::StringOrTinyString::init(dep_name);
+                        // a stale error from the redirect attempt would make
+                        // the retry delete its own link and fail the install
+                        bin_linker.err = None;
+                        bin_linker.skipped_due_to_missing_bin = false;
 
                         if manager_ref.options.log_level.is_verbose() {
                             bun_core::pretty_errorln!(

@@ -1141,17 +1141,34 @@ mod draft {
                             ).is_err() { abort(); }
                             } else if let Some(module) = &native_module {
                                 let colors = enable_ansi_colors_stderr();
-                                if write!(
-                                    writer,
-                                    "Bun has crashed inside the native module {}\"{}\"{}.\n\nThis is most likely a bug in that module, not in Bun.\nTo send a redacted crash report to Bun's team,\nplease file a GitHub issue using the link below:\n\n",
-                                    Output::pretty_fmt_rt("<red><d>", colors),
-                                    bstr::BStr::new(module.const_slice()),
-                                    Output::pretty_fmt_rt("<r>", colors),
-                                )
-                                .is_err()
+                                if writer
+                                    .write_all(b"Bun has crashed inside the native module ")
+                                    .is_err()
                                 {
                                     abort();
                                 }
+                                if colors
+                                    && writer
+                                        .write_all(&Output::pretty_fmt::<true>("<red><d>"))
+                                        .is_err()
+                                {
+                                    abort();
+                                }
+                                if write!(writer, "\"{}\"", bstr::BStr::new(module.const_slice()))
+                                    .is_err()
+                                {
+                                    abort();
+                                }
+                                if colors
+                                    && writer
+                                        .write_all(&Output::pretty_fmt::<true>("<r>"))
+                                        .is_err()
+                                {
+                                    abort();
+                                }
+                                if writer.write_all(
+                                b".\n\nThis is most likely a bug in that module, not in Bun.\nTo send a redacted crash report to Bun's team,\nplease file a GitHub issue using the link below:\n\n",
+                            ).is_err() { abort(); }
                             } else {
                                 if writer.write_all(
                                 b"Bun has crashed. This indicates a bug in Bun, not your code.\n\nTo send a redacted crash report to Bun's team,\nplease file a GitHub issue using the link below:\n\n",
@@ -2622,7 +2639,7 @@ mod draft {
                 let m = bun_sys::elf::find_loaded_module(address)?;
                 if m.is_main_program {
                     return Some(StackLine {
-                        address: i32::try_from(address - m.base_address).expect("int cast"),
+                        address: i32::try_from(address - m.base_address).ok()?,
                         object: Object::Bun,
                     });
                 }

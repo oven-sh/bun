@@ -7,6 +7,7 @@ import {
   isASAN,
   isDebug,
   isLinux,
+  isMacOS,
   isPosix,
   isWindows,
   mergeWindowEnvs,
@@ -820,7 +821,8 @@ describe("crash inside a native module", () => {
 
     expect(stderr).toContain("oh no: Bun has crashed. This indicates a bug in Bun, not your code.");
     expect(stderr).not.toContain("inside the native module");
-    expect(objects[0]).not.toBeOneOf(["bun", "?", "js", ""]);
+    // labs() is in libc (ld-musl-*.so.1 on musl), Sleep() in kernel32.
+    expect(objects[0]).toMatch(isWindows ? /^kernel32\.dll$/i : isMacOS ? /^libsystem_/ : /^(libc\.|ld-musl-)/);
     expectBunCallers(objects);
     expect(features).not.toContain("native_module_crash");
   });

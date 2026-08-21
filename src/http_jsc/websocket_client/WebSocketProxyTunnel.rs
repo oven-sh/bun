@@ -36,6 +36,7 @@ use core::ptr::NonNull;
 
 use bun_boringssl as boringssl;
 use bun_io::StreamBuffer;
+use bun_ptr::ThisPtr;
 use bun_uws::ssl_wrapper::{Handlers as SslHandlers, SslWrapper};
 use bun_uws::{NewSocketHandler, us_bun_verify_error_t};
 
@@ -55,50 +56,40 @@ bun_core::declare_scope!(WebSocketProxyTunnel, visible);
 /// holding a borrow of the tunnel across the re-entrant call.
 #[derive(Clone, Copy)]
 pub(crate) enum UpgradeClientUnion {
-    Http(*mut HttpUpgradeClient),
-    Https(*mut HttpsUpgradeClient),
+    Http(ThisPtr<HttpUpgradeClient>),
+    Https(ThisPtr<HttpsUpgradeClient>),
     None,
 }
 
 impl UpgradeClientUnion {
     fn handle_decrypted_data(&self, data: &[u8]) {
         match self {
-            // SAFETY: BACKREF — caller (WebSocketUpgradeClient) outlives the tunnel during handshake phase
-            UpgradeClientUnion::Http(client) => unsafe {
+            UpgradeClientUnion::Http(client) => {
                 HttpUpgradeClient::handle_decrypted_data(*client, data)
-            },
-            // SAFETY: BACKREF — caller (WebSocketUpgradeClient) outlives the tunnel during handshake phase
-            UpgradeClientUnion::Https(client) => unsafe {
+            }
+            UpgradeClientUnion::Https(client) => {
                 HttpsUpgradeClient::handle_decrypted_data(*client, data)
-            },
+            }
             UpgradeClientUnion::None => {}
         }
     }
 
     fn terminate(&self, code: ErrorCode) {
         match self {
-            // SAFETY: BACKREF — caller (WebSocketUpgradeClient) outlives the tunnel during handshake phase
-            UpgradeClientUnion::Http(client) => unsafe {
-                HttpUpgradeClient::terminate(*client, code)
-            },
-            // SAFETY: BACKREF — caller (WebSocketUpgradeClient) outlives the tunnel during handshake phase
-            UpgradeClientUnion::Https(client) => unsafe {
-                HttpsUpgradeClient::terminate(*client, code)
-            },
+            UpgradeClientUnion::Http(client) => HttpUpgradeClient::terminate(*client, code),
+            UpgradeClientUnion::Https(client) => HttpsUpgradeClient::terminate(*client, code),
             UpgradeClientUnion::None => {}
         }
     }
 
     fn on_proxy_tls_handshake_complete(&self) {
         match self {
-            // SAFETY: BACKREF — caller (WebSocketUpgradeClient) outlives the tunnel during handshake phase
-            UpgradeClientUnion::Http(client) => unsafe {
+            UpgradeClientUnion::Http(client) => {
                 HttpUpgradeClient::on_proxy_tls_handshake_complete(*client)
-            },
-            // SAFETY: BACKREF — caller (WebSocketUpgradeClient) outlives the tunnel during handshake phase
-            UpgradeClientUnion::Https(client) => unsafe {
+            }
+            UpgradeClientUnion::Https(client) => {
                 HttpsUpgradeClient::on_proxy_tls_handshake_complete(*client)
-            },
+            }
             UpgradeClientUnion::None => {}
         }
     }
@@ -144,7 +135,7 @@ type SslWrapperType = SslWrapper<*mut WebSocketProxyTunnel>;
 impl WebSocketProxyTunnel {
     /// Initialize a new proxy tunnel with all required parameters
     pub(crate) fn init<const SSL: bool>(
-        upgrade_client: *mut NewHttpUpgradeClient<SSL>,
+        upgrade_client: ThisPtr<NewHttpUpgradeClient<SSL>>,
         socket: NewSocketHandler<SSL>,
         sni_hostname: &[u8],
         reject_unauthorized: bool,
@@ -152,15 +143,19 @@ impl WebSocketProxyTunnel {
         // const-generic bool → variant selection. The pointer cast is
         // identity when SSL matches the alias (HttpUpgradeClient = NewHttpUpgradeClient<false>,
         // etc); `assume_ssl`/`assume_tcp` rebuild the handler around the same
-        // `InternalSocket` so no `unsafe` is needed.
+        // `InternalSocket`. The upgrade client detaches itself
+        // (`detach_upgrade_client`) before it can be freed, so the stored
+        // `ThisPtr` is live whenever a callback dispatches through it.
         let (upgrade_client, socket) = if SSL {
             (
-                UpgradeClientUnion::Https(upgrade_client.cast::<HttpsUpgradeClient>()),
+                // SAFETY: identity cast (SSL == true); liveness per the comment above.
+                UpgradeClientUnion::Https(unsafe { ThisPtr::new(upgrade_client.as_ptr().cast()) }),
                 SocketUnion::Ssl(socket.assume_ssl()),
             )
         } else {
             (
-                UpgradeClientUnion::Http(upgrade_client.cast::<HttpUpgradeClient>()),
+                // SAFETY: identity cast (SSL == false); liveness per the comment above.
+                UpgradeClientUnion::Http(unsafe { ThisPtr::new(upgrade_client.as_ptr().cast()) }),
                 SocketUnion::Tcp(socket.assume_tcp()),
             )
         };

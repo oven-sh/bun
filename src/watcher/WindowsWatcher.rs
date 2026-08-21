@@ -22,9 +22,7 @@ pub struct WindowsWatcher {
     pub(crate) watcher: DirWatcher,
     pub(crate) buf: PathBuffer,
     pub(crate) base_idx: usize,
-    /// `realpath(root)` plus a separator, if it differs from the root in `buf`.
-    /// The cwd keeps the spelling it was started with (8.3 names, junctions) and
-    /// watched paths come in both spellings, so both are roots.
+    /// Paths come in the cwd's spelling (8.3 names, junctions) or the real one, so both are roots.
     pub(crate) real_root: Option<Box<[u8]>>,
 }
 

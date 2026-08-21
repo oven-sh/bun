@@ -188,7 +188,6 @@ public:
     bool isEmpty() const { return m_queue.isEmpty(); }
     size_t size() const { return m_queue.size(); }
     double totalSize() const { return m_totalSize; } // [[queueTotalSize]]
-    void setTotalSize(double totalSize) { m_totalSize = totalSize; }
     void adjustTotalSize(double delta) { m_totalSize += delta; }
 
     // GC: called from the owner's visitChildrenImpl, inside the SAME single

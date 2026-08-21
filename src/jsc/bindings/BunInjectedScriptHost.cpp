@@ -37,7 +37,7 @@ static JSObject* constructInternalProperty(VM& vm, JSGlobalObject* exec, const S
 {
     auto* object = constructEmptyObject(exec);
     object->putDirect(vm, vm.propertyNames->name, jsString(vm, name));
-    object->putDirect(vm, Identifier::fromString(vm, "value"_s), value);
+    Bun::putDirectNamed(vm, object, "value"_s, value);
     return object;
 }
 
@@ -45,7 +45,7 @@ static JSObject* constructInternalProperty(VM& vm, JSGlobalObject* exec, const I
 {
     auto* object = constructEmptyObject(exec);
     object->putDirect(vm, vm.propertyNames->name, JSC::identifierToJSValue(vm, name));
-    object->putDirect(vm, Identifier::fromString(vm, "value"_s), value);
+    Bun::putDirectNamed(vm, object, "value"_s, value);
     return object;
 }
 
@@ -77,10 +77,10 @@ static JSObject* objectForEventTargetListeners(VM& vm, JSGlobalObject* exec, Eve
 
             auto* propertiesForListener = constructEmptyObject(exec);
             RETURN_IF_EXCEPTION(scope, {});
-            propertiesForListener->putDirect(vm, Identifier::fromString(vm, "callback"_s), jsFunction);
-            propertiesForListener->putDirect(vm, Identifier::fromString(vm, "capture"_s), jsBoolean(eventListener->useCapture()));
-            propertiesForListener->putDirect(vm, Identifier::fromString(vm, "passive"_s), jsBoolean(eventListener->isPassive()));
-            propertiesForListener->putDirect(vm, Identifier::fromString(vm, "once"_s), jsBoolean(eventListener->isOnce()));
+            Bun::putDirectNamed(vm, propertiesForListener, "callback"_s, jsFunction);
+            Bun::putDirectNamed(vm, propertiesForListener, "capture"_s, jsBoolean(eventListener->useCapture()));
+            Bun::putDirectNamed(vm, propertiesForListener, "passive"_s, jsBoolean(eventListener->isPassive()));
+            Bun::putDirectNamed(vm, propertiesForListener, "once"_s, jsBoolean(eventListener->isOnce()));
             listenersForEvent->putDirectIndex(exec, listenersForEventIndex++, propertiesForListener);
         }
 

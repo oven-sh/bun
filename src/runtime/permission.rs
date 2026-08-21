@@ -557,10 +557,15 @@ fn publish_permission_event(
     resource: &[u8],
     dropped: bool,
 ) -> JsResult<()> {
-    let module = Bun__Permission__requireInternalPermissionModule(global);
-    if global.has_exception() {
-        return Err(JsError::Thrown);
-    }
+    // `requireId` owns a ThrowScope whose dtor simulates a throw; observe it
+    // through a local scope so the next `has_exception()`/scope ctor doesn't
+    // trip `verifyExceptionCheckNeedIsSatisfied`.
+    let module = {
+        bun_jsc::top_scope!(exc, global);
+        let module = Bun__Permission__requireInternalPermissionModule(global);
+        exc.return_if_exception()?;
+        module
+    };
     let Some(publish) = module.get(global, b"publishPermissionEvent")? else {
         return Ok(());
     };

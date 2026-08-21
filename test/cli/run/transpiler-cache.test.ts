@@ -249,6 +249,49 @@ describe("transpiler cache", () => {
     expect(run(["--feature=OTHER", "--feature=SUPER_SECRET"])).toBe("enabled");
     expect(newCacheCount()).toBe(0); // cache hit, order doesn't matter
   });
+
+  // Serving the entry point from the cache must not change how the modules it
+  // loads are resolved. Both of these are gated on the `has_loaded` flag, which
+  // used to be set only on the path that runs the printer.
+  describe("a cached entry point does not change how later modules load", () => {
+    // Padding so the entry point clears MINIMUM_CACHE_SIZE (4 KiB) and is
+    // eligible for the cache at all.
+    const filler = "\n//" + Buffer.alloc(5 * 1024, "f").toString();
+
+    test("require.extensions is still consulted", async () => {
+      writeFileSync(
+        join(temp_dir, "entry.js"),
+        `require.extensions[".data"] = (module, filename) => {
+           module.exports = "custom-loader";
+         };
+         console.log(require("./asset.data"));${filler}`,
+      );
+      // If the custom loader is skipped, this is transpiled as JS/TS instead.
+      writeFileSync(join(temp_dir, "asset.data"), `module.exports = "default-loader";`);
+
+      expect(await bunRun(join(temp_dir, "entry.js"), env)).toSpawn("custom-loader");
+      expect(newCacheCount()).toBe(1);
+
+      expect(await bunRun(join(temp_dir, "entry.js"), env)).toSpawn("custom-loader");
+      expect(newCacheCount()).toBe(0);
+    });
+
+    test("unknown extensions still use the file loader", async () => {
+      writeFileSync(
+        join(temp_dir, "entry.mjs"),
+        `import asset from "./asset.someext";
+         console.log(typeof asset === "string" ? "file-loader" : "???");${filler}`,
+      );
+      // Not valid JS/TS, so a non-file loader fails the run outright.
+      writeFileSync(join(temp_dir, "asset.someext"), `hello world contents\n`);
+
+      expect(await bunRun(join(temp_dir, "entry.mjs"), env)).toSpawn("file-loader");
+      expect(newCacheCount()).toBe(1);
+
+      expect(await bunRun(join(temp_dir, "entry.mjs"), env)).toSpawn("file-loader");
+      expect(newCacheCount()).toBe(0);
+    });
+  });
 });
 
 test("rejects cached module records containing out-of-range string indices", () => {

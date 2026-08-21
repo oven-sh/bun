@@ -96,7 +96,7 @@ use bun_core::Mutex;
 /// sha256(region, service, secret))`. The lock owns the data — the mutex
 /// wraps both `cache` and `date`.
 #[derive(Default)]
-pub struct AWSSignatureCache(Mutex<AWSSignatureCacheInner>);
+struct AWSSignatureCache(Mutex<AWSSignatureCacheInner>);
 
 #[derive(Default)]
 struct AWSSignatureCacheInner {
@@ -405,7 +405,7 @@ impl S3Credentials {
                     // The bucket is interpolated into the host; a `/` (or `\`,
                     // which encode_uri_component normalizes to `/`) would let a
                     // crafted bucket redirect the signed request to another host.
-                    if bucket.contains(&b'/') {
+                    if strings::contains_char(bucket, b'/') {
                         return Err(SignError::InvalidEndpoint);
                     }
                     // default to https://<BUCKET_NAME>.s3.<REGION>.amazonaws.com/

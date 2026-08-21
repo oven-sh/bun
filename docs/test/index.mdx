@@ -25,7 +25,7 @@ Bun ships with a fast, built-in, Jest-compatible test runner. Tests run in the B
 bun test
 ```
 
-Tests are written in JavaScript or TypeScript with a Jest-like API. See [Writing tests](/test/writing-tests).
+You write tests in JavaScript or TypeScript with a Jest-like API. See [Writing tests](/test/writing-tests).
 
 ```ts math.test.ts icon="/icons/typescript.svg"
 import { expect, test } from "bun:test";
@@ -107,7 +107,7 @@ JUnit XML is a popular format for reporting test results in CI/CD pipelines.
 
 ## Timeouts
 
-Use the `--timeout` flag to specify a _per-test_ timeout in milliseconds. If a test times out, it is marked as failed. The default value is `5000`.
+Use the `--timeout` flag to specify a _per-test_ timeout in milliseconds. If a test times out, Bun marks it as failed. The default value is `5000`.
 
 ```bash terminal icon="terminal"
 # default value is 5000
@@ -142,7 +142,7 @@ bun test --concurrent --max-concurrency 4
 bun test --concurrent
 ```
 
-This helps prevent resource exhaustion when running many concurrent tests. The default value is 20.
+The limit helps prevent resource exhaustion when running many concurrent tests. The default value is 20.
 
 ### `test.concurrent`
 
@@ -202,7 +202,7 @@ test.failing.each([1, 2, 3])("chained qualifiers %d", input => {
 
 ## Retry failed tests
 
-Use the `--retry` flag to automatically retry failed tests up to a given number of times. If a test fails and then passes on a subsequent attempt, it is reported as passing.
+Use the `--retry` flag to automatically retry failed tests up to a given number of times. If a test fails and then passes on a subsequent attempt, Bun reports it as passing.
 
 ```sh terminal icon="terminal"
 bun test --retry 3
@@ -245,7 +245,7 @@ Use the `--randomize` flag to run tests in a random order. This helps detect tes
 bun test --randomize
 ```
 
-With `--randomize`, the seed used for randomization is displayed in the test summary:
+With `--randomize`, Bun displays the seed used for randomization in the test summary:
 
 ```sh terminal icon="terminal"
 bun test --randomize
@@ -370,15 +370,15 @@ See [DOM testing](/test/dom).
 
 ## Large codebases
 
-For a suite with thousands of test files, `bun test` has several knobs that stack — worker processes, isolation level, sharding across machines, and duration-aware scheduling. Each is covered in depth on [Parallel & isolated test runs](/test/parallel); here is how they fit together, roughly in order of payoff:
+For a suite with thousands of test files, `bun test` has several knobs that stack: worker processes, isolation level, sharding across machines, and duration-aware scheduling. [Parallel & isolated test runs](/test/parallel) covers each in depth. Here is how they fit together, roughly in order of payoff:
 
 **1. Use every core: [`--parallel`](/test/parallel#--parallel).** One worker per core, files handed out one at a time.
 
-**2. Decide how much isolation you need.** `--parallel` gives every file a fresh global, which is the safe default and what Jest/Vitest do. If your files don't leak state into each other (they already pass under plain `bun test`, which shares one global), [`--parallel --no-isolate`](/test/parallel#every-file-is-isolated-unless-you-opt-out) lets each worker evaluate your imports and preloads once instead of once per file. On suites made of many small files that is the single biggest win — see [how it compares](/test/parallel#how-it-compares).
+**2. Decide how much isolation you need.** `--parallel` gives every file a fresh global, which is the safe default and what Jest/Vitest do. If your files don't leak state into each other (they already pass under plain `bun test`, which shares one global), [`--parallel --no-isolate`](/test/parallel#every-file-is-isolated-unless-you-opt-out) lets each worker evaluate your imports and preloads once instead of once per file. On suites made of many small files, that is the single biggest win. See [how it compares](/test/parallel#how-it-compares).
 
-**3. Split across machines: [`--shard=i/n`](/test/parallel#splitting-a-suite-across-ci-machines-with---shard).** Deterministic, no coordinator; each CI job runs one slice, and each slice still uses `--parallel` locally.
+**3. Split across machines: [`--shard=i/n`](/test/parallel#splitting-a-suite-across-ci-machines-with---shard).** Deterministic, no coordinator. Each CI job runs one slice, and each slice still uses `--parallel` locally.
 
-**4. Balance by time, not count: [`--timings`](/test/parallel#balancing-with---timings).** With recorded durations, shards are cut so each gets about the same total time (longest-processing-time style, but keeping path-neighbours together so a worker's module cache stays warm), each worker starts its slowest file first, and idle workers steal the slowest remaining file — so the run isn't held up by one long file that happened to start last.
+**4. Balance by time, not count: [`--timings`](/test/parallel#balancing-with---timings).** With recorded durations, Bun cuts shards so each gets about the same total time. The split is longest-processing-time style, but keeps path-neighbours together so a worker's module cache stays warm. Each worker starts its slowest file first, and idle workers steal the slowest remaining file. That way, one long file that happened to start last doesn't hold up the run.
 
 **5. Keep the timings fresh automatically: `--update-timings`.** Each shard writes the durations of the files it ran; the next run reads all of them. In GitHub Actions that looks like:
 
@@ -421,7 +421,7 @@ jobs:
           key: bun-test-timings-${{ github.run_id }}
 ```
 
-Every shard must read the _same set_ of timings files for the shards to add up to the whole suite, which is why a run reads the previous run's files (restored from the cache) and writes its own where sibling shards still in flight won't pick them up (`next/` above). Add `--no-isolate` to the `bun test` line if step 2 applies to you.
+Every shard must read the _same set_ of timings files for the shards to add up to the whole suite. That is why a run reads the previous run's files (restored from the cache), and why it writes its own where sibling shards still in flight won't pick them up (`next/` above). Add `--no-isolate` to the `bun test` line if step 2 applies to you.
 
 **6. Within a file: [`test.concurrent`](#concurrent-test-execution)** for I/O-bound tests that spend their time awaiting.
 
@@ -445,7 +445,7 @@ Set any of the following environment variables to enable AI-friendly output:
 
 ### Behavior
 
-When an AI agent environment is detected:
+When Bun detects an AI agent environment:
 
 - Only test failures are displayed in detail
 - Passing, skipped, and todo test indicators are hidden

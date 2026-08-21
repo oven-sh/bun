@@ -36,6 +36,10 @@ namespace WebCore {
 
 class WEBCORE_EXPORT DOMGuardedObject : public RefCounted<DOMGuardedObject>, public ActiveDOMCallback {
 public:
+    // ActiveDOMCallback.
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     ~DOMGuardedObject();
 
     bool isSuspended() const { return !m_guarded || !canInvokeCallback(); } // The wrapper world has gone away or active DOM objects have been suspended.
@@ -48,14 +52,7 @@ public:
     void clear();
 
 protected:
-    // Used by subclasses whose guarded JS object's liveness is driven by a JS
-    // wrapper (which marks it in visitChildren) rather than by the global
-    // object's m_guardedObjects root set. Avoids GC-root cycles when the
-    // guarded object indirectly references its own JS wrapper.
-    struct DoNotRegisterWithGlobalObjectTag {};
-
     DOMGuardedObject(JSDOMGlobalObject&, JSC::JSCell&);
-    DOMGuardedObject(JSDOMGlobalObject&, JSC::JSCell&, DoNotRegisterWithGlobalObjectTag);
 
     void contextDestroyed();
     bool isEmpty() const { return !m_guarded; }
@@ -71,10 +68,6 @@ template<typename T> class DOMGuarded : public DOMGuardedObject {
 protected:
     DOMGuarded(JSDOMGlobalObject& globalObject, T& guarded)
         : DOMGuardedObject(globalObject, guarded)
-    {
-    }
-    DOMGuarded(JSDOMGlobalObject& globalObject, T& guarded, DoNotRegisterWithGlobalObjectTag tag)
-        : DOMGuardedObject(globalObject, guarded, tag)
     {
     }
     T* guarded() const { return dynamicDowncast<T>(guardedObject()); }

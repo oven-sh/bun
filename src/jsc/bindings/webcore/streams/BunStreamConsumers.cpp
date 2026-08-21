@@ -1533,14 +1533,18 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onIntoArrayReadManyFulfilled, (JSGl
     RELEASE_AND_RETURN(scope, JSValue::encode(Bun::WebStreams::intoArrayLoop(vm, globalObject, reader, chunks, callFrame->argument(0))));
 }
 
-// The persistent-op pump: settle the op's result promise with an error, releasing the reader.
-// Settle, then release the reader (the original `finally { reader.releaseLock() }`).
+// The persistent-op pump: settle, then release the reader (the original
+// `finally { reader.releaseLock() }`). If that release throws after a successful settle, the
+// boundary delivers the error here again with the result already fulfilled; only the first
+// settle counts.
 static void intoArraySettle(JSC::VM& vm, JSGlobalObject* globalObject, WebCore::JSReadableStreamDefaultReader* reader, JSPromise* resultPromise, JSValue chunks, JSValue error)
 {
-    if (error)
-        resultPromise->reject(vm, error);
-    else
-        resultPromise->fulfill(vm, chunks);
+    if (resultPromise->status() == JSPromise::Status::Pending) {
+        if (error)
+            resultPromise->reject(vm, error);
+        else
+            resultPromise->fulfill(vm, chunks);
+    }
     if (reader->m_stream)
         Bun::WebStreams::readableStreamDefaultReaderRelease(globalObject, reader);
 }

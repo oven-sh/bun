@@ -353,6 +353,42 @@ describe("bun", () => {
     });
   });
 
+  // https://github.com/oven-sh/bun/issues/10323
+  test.each(["devDependencies", "optionalDependencies"])("respect dependency order declared in %s", group => {
+    using dir = tempDir("testworkspace", {
+      dep0: {
+        // dep0 stays alive past dep1's startup so that, if dep1 were wrongly
+        // started in parallel, dep1 reads out.txt before dep0 has written it.
+        "index.js": ["await Bun.sleep(100)", "await Bun.write('out.txt', 'success')"].join(";"),
+        "package.json": JSON.stringify({
+          name: "dep0",
+          scripts: {
+            script: `${bunExe()} run index.js`,
+          },
+        }),
+      },
+      dep1: {
+        "index.js": 'console.log(await Bun.file("../dep0/out.txt").text())',
+        "package.json": JSON.stringify({
+          name: "dep1",
+          [group]: {
+            dep0: "*",
+          },
+          scripts: {
+            script: `${bunExe()} run index.js`,
+          },
+        }),
+      },
+    });
+    runInCwdSuccess({
+      cwd: dir,
+      pattern: "*",
+      target_pattern: [/dep0 script: Exited with code 0[\s\S]*dep1 script: success/],
+      antipattern: [/ENOENT/],
+      command: ["script"],
+    });
+  });
+
   test("respect dependency order when dependency name is larger than 8 characters", () => {
     const largeNamePkgName = "larger-than-8-char";
     const fileContent = `${largeNamePkgName} - ${new Date().getTime()}`;

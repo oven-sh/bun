@@ -815,37 +815,30 @@ impl Status {
         None
     }
 
-    /// The platform-independent name of the signal that terminated (or
-    /// stopped) the process. `None` when it exited normally or the platform
-    /// number has no name in the table (see `Status::Signaled`).
-    pub fn signal_code(&self) -> Option<bun_core::SignalCode> {
+    /// The signal that terminated (or stopped) the process, as the platform
+    /// numbers it. `None` when the process exited on its own. This is the
+    /// number to re-raise or to turn into a `128 + n` exit code.
+    pub fn signal(&self) -> Option<bun_sys::SignalCode> {
         let raw = match self {
             Status::Signaled(sig) => *sig,
-            Status::Exited(exit) => exit.signal,
+            Status::Exited(exit) if exit.signal != 0 => exit.signal,
             _ => return None,
         };
-        bun_sys::SignalCode(raw).canonical()
+        Some(bun_sys::SignalCode(raw))
     }
-}
 
-/// Local shim — `bun_core::SignalCode` does not yet expose this.
-/// Shell-convention: 128 + the platform's signal number, else `None`.
-pub trait SignalCodeExt {
-    fn to_exit_code(self) -> Option<u8>;
-}
-impl SignalCodeExt for bun_core::SignalCode {
-    #[inline]
-    fn to_exit_code(self) -> Option<u8> {
-        bun_sys::SignalCode::from_canonical(self)?.to_exit_code()
+    /// The table entry for [`Self::signal`], for naming or classifying it.
+    /// `None` also when the platform number has no entry (see
+    /// `Status::Signaled`).
+    pub fn signal_code(&self) -> Option<bun_core::SignalCode> {
+        self.signal()?.canonical()
     }
 }
 
 impl core::fmt::Display for Status {
     fn fmt(&self, writer: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        if let Some(signal_code) = self.signal_code() {
-            if let Some(code) = signal_code.to_exit_code() {
-                return write!(writer, "code: {}", code);
-            }
+        if let Some(code) = self.signal().and_then(bun_sys::SignalCode::to_exit_code) {
+            return write!(writer, "code: {}", code);
         }
 
         match self {

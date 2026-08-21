@@ -70,42 +70,42 @@ impl SignalCode {
     }
 }
 
-fn description(code: bun_core::SignalCode) -> Option<&'static str> {
+fn description(code: bun_core::SignalCode) -> &'static str {
     use bun_core::SignalCode as S;
     // Description names copied from fish
     // https://github.com/fish-shell/fish-shell/blob/00ffc397b493f67e28f18640d3de808af29b1434/fish-rust/src/signal.rs#L420
     match code {
-        S::SIGHUP => Some("Terminal hung up"),
-        S::SIGINT => Some("Quit request"),
-        S::SIGQUIT => Some("Quit request"),
-        S::SIGILL => Some("Illegal instruction"),
-        S::SIGTRAP => Some("Trace or breakpoint trap"),
-        S::SIGABRT => Some("Abort"),
-        S::SIGBUS => Some("Misaligned address error"),
-        S::SIGFPE => Some("Floating point exception"),
-        S::SIGKILL => Some("Forced quit"),
-        S::SIGUSR1 => Some("User defined signal 1"),
-        S::SIGUSR2 => Some("User defined signal 2"),
-        S::SIGSEGV => Some("Address boundary error"),
-        S::SIGPIPE => Some("Broken pipe"),
-        S::SIGALRM => Some("Timer expired"),
-        S::SIGTERM => Some("Polite quit request"),
-        S::SIGCHLD => Some("Child process status changed"),
-        S::SIGCONT => Some("Continue previously stopped process"),
-        S::SIGSTOP => Some("Forced stop"),
-        S::SIGTSTP => Some("Stop request from job control (^Z)"),
-        S::SIGTTIN => Some("Stop from terminal input"),
-        S::SIGTTOU => Some("Stop from terminal output"),
-        S::SIGURG => Some("Urgent socket condition"),
-        S::SIGXCPU => Some("CPU time limit exceeded"),
-        S::SIGXFSZ => Some("File size limit exceeded"),
-        S::SIGVTALRM => Some("Virtual timefr expired"),
-        S::SIGPROF => Some("Profiling timer expired"),
-        S::SIGWINCH => Some("Window size change"),
-        S::SIGIO => Some("I/O on asynchronous file descriptor is possible"),
-        S::SIGSYS => Some("Bad system call"),
-        S::SIGPWR => Some("Power failure"),
-        S::SIGSTKFLT => None,
+        S::SIGHUP => "Terminal hung up",
+        S::SIGINT => "Quit request",
+        S::SIGQUIT => "Quit request",
+        S::SIGILL => "Illegal instruction",
+        S::SIGTRAP => "Trace or breakpoint trap",
+        S::SIGABRT => "Abort",
+        S::SIGBUS => "Misaligned address error",
+        S::SIGFPE => "Floating point exception",
+        S::SIGKILL => "Forced quit",
+        S::SIGUSR1 => "User defined signal 1",
+        S::SIGUSR2 => "User defined signal 2",
+        S::SIGSEGV => "Address boundary error",
+        S::SIGPIPE => "Broken pipe",
+        S::SIGALRM => "Timer expired",
+        S::SIGTERM => "Polite quit request",
+        S::SIGSTKFLT => "Stack fault",
+        S::SIGCHLD => "Child process status changed",
+        S::SIGCONT => "Continue previously stopped process",
+        S::SIGSTOP => "Forced stop",
+        S::SIGTSTP => "Stop request from job control (^Z)",
+        S::SIGTTIN => "Stop from terminal input",
+        S::SIGTTOU => "Stop from terminal output",
+        S::SIGURG => "Urgent socket condition",
+        S::SIGXCPU => "CPU time limit exceeded",
+        S::SIGXFSZ => "File size limit exceeded",
+        S::SIGVTALRM => "Virtual timefr expired",
+        S::SIGPROF => "Profiling timer expired",
+        S::SIGWINCH => "Window size change",
+        S::SIGIO => "I/O on asynchronous file descriptor is possible",
+        S::SIGPWR => "Power failure",
+        S::SIGSYS => "Bad system call",
     }
 }
 
@@ -118,17 +118,15 @@ pub struct Fmt {
 impl fmt::Display for Fmt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let signal = self.signal;
-        if let Some(code) = signal.canonical() {
-            if let Some(desc) = description(code) {
-                let name = code.name();
-                if self.enable_ansi_colors {
-                    return write!(f, "{} {}({}){}", name, output::DIM, desc, output::RESET);
-                } else {
-                    return write!(f, "{} ({})", name, desc);
-                }
-            }
+        let Some(code) = signal.canonical() else {
+            return write!(f, "code {}", signal.0);
+        };
+        let (name, desc) = (code.name(), description(code));
+        if self.enable_ansi_colors {
+            write!(f, "{} {}({}){}", name, output::DIM, desc, output::RESET)
+        } else {
+            write!(f, "{} ({})", name, desc)
         }
-        write!(f, "code {}", signal.0)
     }
 }
 

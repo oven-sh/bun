@@ -7685,6 +7685,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         printer.print(b";");
         printer.print_newline();
     }
+    printer.writer.get_error()?;
 
     if !printer.options.bundling
         && tree.uses_require_ref

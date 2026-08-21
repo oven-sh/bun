@@ -46,25 +46,25 @@ describe.concurrent("run-cjs", () => {
   });
 
   test('"use strict" still applies inside the CJS module wrapper', async () => {
-    const dir = tmpdirSync();
-    mkdirSync(dir, { recursive: true });
-    await Bun.write(
-      join(dir, "strict.cjs"),
-      `"use strict";
+    using dir = tempDir("run-cjs-strict", {
+      "strict.cjs": `"use strict";
 try {
   undeclared = 1;
   console.log("sloppy");
 } catch (e) {
   console.log(e.constructor.name);
 }`,
-    );
+    });
     await using proc = Bun.spawn({
-      cmd: [bunExe(), join(dir, "strict.cjs")],
-      cwd: dir,
+      cmd: [bunExe(), join(String(dir), "strict.cjs")],
+      cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
+      stderr: "pipe",
     });
-    const stdout = await proc.stdout.text();
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toEqual("ReferenceError\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 });

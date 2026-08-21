@@ -12,4 +12,5 @@ workspace = true
 [dependencies]
 bstr.workspace = true
 bun_core.workspace = true
+bun_url.workspace = true
 bun_threading.workspace = true

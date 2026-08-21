@@ -806,7 +806,7 @@ pub extern "C" fn Bun__Telemetry__nativeAddEvent(handle: u64, event: &EventRef) 
     let borrowed: Vec<(&[u8], Value<'_>)> =
         pairs.iter().map(|(k, v)| (&k[..], v.value())).collect();
     pool::with(NativeSpan(handle), |s| {
-        s.add_event(&name, event.time_ns, &borrowed)
+        s.add_event(&name, event.time_ns, &borrowed, limits())
     });
 }
 
@@ -832,7 +832,7 @@ pub extern "C" fn Bun__Telemetry__nativeAddLink(handle: u64, link: &LinkRef) {
     let borrowed: Vec<(&[u8], Value<'_>)> =
         pairs.iter().map(|(k, v)| (&k[..], v.value())).collect();
     pool::with(NativeSpan(handle), |s| {
-        bun_telemetry::otlp::encode_link(&mut s.extra, &ctx, b"", &borrowed)
+        s.add_link(&ctx, &borrowed, limits())
     });
 }
 

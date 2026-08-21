@@ -15,6 +15,7 @@ use crate::span::{SpanKind, SpanStub};
 pub const FLAG_HTTPS: u8 = 1;
 pub const FLAG_ABORTED: u8 = 2;
 pub const FLAG_HANDLER_ERROR: u8 = 4;
+pub const FLAG_HAS_QUERY: u8 = 8;
 
 // Indexes into `Facts::lens` (strings live back-to-back in `Facts::raw`).
 pub const S_URL: usize = 0;
@@ -98,6 +99,9 @@ impl Facts {
         self.raw.extend_from_slice(ua);
         self.lens = [url.len() as u32, host.len() as u32, ua.len() as u32, 0];
         self.path_len = path_len.min(url.len()) as u32;
+        if (self.path_len as usize) + 1 < url.len() {
+            self.flags |= FLAG_HAS_QUERY;
+        }
     }
 
     #[inline]
@@ -135,6 +139,8 @@ pub struct SpanParts<'a> {
     pub trace_state: &'a [u8],
     pub attrs: &'a [u8],
     pub dropped_attrs: u16,
+    pub dropped_events: u16,
+    pub dropped_links: u16,
     pub extra: &'a [u8],
     pub status: StatusCode,
     pub status_message: &'a [u8],
@@ -150,6 +156,8 @@ struct Template {
     ip_len: u8,
     status: u16,
     dropped: u16,
+    dropped_events: u16,
+    dropped_links: u16,
     lens: [u32; 3],
     /// after_url | attrs | extra | trace_state | name_override | status_message
     pieces: Vec<u8>,
@@ -175,6 +183,8 @@ impl Template {
             || self.ip_len != facts.ip_len
             || self.ip != facts.ip
             || self.dropped != p.dropped_attrs
+            || self.dropped_events != p.dropped_events
+            || self.dropped_links != p.dropped_links
             || self.lens != [facts.lens[1], facts.lens[2], facts.lens[3]]
         {
             return false;
@@ -329,6 +339,8 @@ fn encode_miss(
         ip_len: facts.ip_len,
         status: facts.status,
         dropped: p.dropped_attrs,
+        dropped_events: p.dropped_events,
+        dropped_links: p.dropped_links,
         lens: [facts.lens[1], facts.lens[2], facts.lens[3]],
         pieces: all,
         piece_len,
@@ -472,7 +484,7 @@ fn encode_head(
     };
     a.put("http.request.method", Value::Str(method));
     // url.path / url.query are appended per request (tail).
-    a.n += 2;
+    a.n += if flags & FLAG_HAS_QUERY != 0 { 2 } else { 1 };
     a.put(
         "url.scheme",
         Value::Str(if flags & FLAG_HTTPS != 0 {
@@ -539,6 +551,12 @@ fn encode_head(
     let dropped = p.dropped_attrs as u32 + n_attrs.saturating_sub(budget);
     if dropped != 0 {
         w.dropped_attributes(dropped);
+    }
+    if p.dropped_events != 0 {
+        w.dropped_events(p.dropped_events as u32);
+    }
+    if p.dropped_links != 0 {
+        w.dropped_links(p.dropped_links as u32);
     }
     w.status(span_status, msg);
     w.leak();

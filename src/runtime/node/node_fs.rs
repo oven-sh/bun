@@ -630,6 +630,7 @@ mod _async_tasks {
         pub(crate) result: Maybe<R>,
         pub(crate) r#ref: KeepAlive,
         pub(crate) tracker: AsyncTaskTracker,
+        pub(crate) otel: bun_telemetry::SpanStub,
     }
 
     #[cfg(windows)]
@@ -664,6 +665,7 @@ mod _async_tasks {
                 req: bun_core::ffi::zeroed(),
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker::init(vm),
+                otel: crate::telemetry::start_leaf(global_object, bun_telemetry::Instrument::Fs),
             });
             // Transfer ownership to libuv: the box outlives the async request and is
             // reclaimed in `destroy()` (run_from_js_thread → scopeguard). `heap::release`
@@ -933,6 +935,14 @@ mod _async_tasks {
             // Move `result` out so the `global_object()` `&self` borrow can coexist
             // with `&mut result` below; the sentinel left behind is dropped in `destroy()`.
             let mut result = core::mem::replace(&mut self.result, Err(sys::Error::default()));
+            if self.otel.is_some() {
+                crate::telemetry::fs::end(
+                    &self.otel,
+                    F.otel_name(false),
+                    self.args.otel_path(),
+                    result.as_ref().err(),
+                );
+            }
             let global_object = self.global_object();
             let success = matches!(result, Ok(_));
             let promise_value = self.promise.value();

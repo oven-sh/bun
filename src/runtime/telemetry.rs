@@ -147,6 +147,8 @@ impl VmState {
         if !core::ptr::eq(self.global.get(), global) {
             self.global.set(core::ptr::from_ref(global));
             self.api_installed.set(false);
+            // JS exporters hold callbacks from the previous realm.
+            exporter::JsExporter::detach_all_for_vm(self);
         }
     }
 

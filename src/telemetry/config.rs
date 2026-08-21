@@ -144,19 +144,8 @@ pub fn parse_kv_list(v: &[u8]) -> Vec<(String, String)> {
 
 fn percent_decode(v: &[u8]) -> String {
     let mut out = Vec::with_capacity(v.len());
-    let mut i = 0;
-    while i < v.len() {
-        if v[i] == b'%' && i + 2 < v.len() {
-            let h = |c: u8| (c as char).to_digit(16);
-            if let (Some(a), Some(b)) = (h(v[i + 1]), h(v[i + 2])) {
-                out.push((a * 16 + b) as u8);
-                i += 3;
-                continue;
-            }
-        }
-        out.push(v[i]);
-        i += 1;
-    }
+    // OTel spec: header values are percent-decoded; malformed escapes are kept verbatim.
+    let _ = bun_url::PercentEncoding::decode_fault_tolerant::<_, true>(&mut out, v);
     bstr::ByteVec::into_string_lossy(out)
 }
 

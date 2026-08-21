@@ -53,6 +53,10 @@ pub struct Slot {
     pub status: StatusCode,
     pub n_attrs: u16,
     pub dropped_attrs: u16,
+    pub n_events: u16,
+    pub n_links: u16,
+    pub dropped_events: u16,
+    pub dropped_links: u16,
     pub name: Vec<u8>,
     /// Pre-encoded `Span.attributes` entries, append-only.
     pub attrs: Vec<u8>,
@@ -77,6 +81,10 @@ impl Slot {
             status: StatusCode::Unset,
             n_attrs: 0,
             dropped_attrs: 0,
+            n_events: 0,
+            n_links: 0,
+            dropped_events: 0,
+            dropped_links: 0,
             name: Vec::new(),
             attrs: Vec::with_capacity(512),
             extra: Vec::new(),
@@ -93,6 +101,10 @@ impl Slot {
         self.status = StatusCode::Unset;
         self.n_attrs = 0;
         self.dropped_attrs = 0;
+        self.n_events = 0;
+        self.n_links = 0;
+        self.dropped_events = 0;
+        self.dropped_links = 0;
         self.name.clear();
         self.attrs.clear();
         self.extra.clear();
@@ -220,13 +232,38 @@ impl Slot {
         }
     }
 
-    pub fn add_event(&mut self, name: &[u8], time_ns: u64, attrs: &[(&[u8], Value<'_>)]) {
+    pub fn add_event(
+        &mut self,
+        name: &[u8],
+        time_ns: u64,
+        attrs: &[(&[u8], Value<'_>)],
+        limits: &Limits,
+    ) {
+        if self.n_events >= limits.events {
+            self.dropped_events = self.dropped_events.saturating_add(1);
+            return;
+        }
+        self.n_events += 1;
         let t = if time_ns == 0 {
             clock::now_unix_nanos()
         } else {
             time_ns
         };
         otlp::encode_event(&mut self.extra, name, t, attrs);
+    }
+
+    pub fn add_link(
+        &mut self,
+        ctx: &crate::SpanContext,
+        attrs: &[(&[u8], Value<'_>)],
+        limits: &Limits,
+    ) {
+        if self.n_links >= limits.links {
+            self.dropped_links = self.dropped_links.saturating_add(1);
+            return;
+        }
+        self.n_links += 1;
+        otlp::encode_link(&mut self.extra, ctx, b"", attrs);
     }
 
     fn write(&self, out: &mut Vec<u8>, end_ns: u64, extra: &mut dyn FnMut(&mut SpanWriter<'_>)) {
@@ -244,6 +281,8 @@ impl Slot {
                     trace_state: &self.trace_state,
                     attrs: &self.attrs,
                     dropped_attrs: self.dropped_attrs,
+                    dropped_events: self.dropped_events,
+                    dropped_links: self.dropped_links,
                     extra: &self.extra,
                     status: self.status,
                     status_message: &self.status_message,
@@ -259,6 +298,12 @@ impl Slot {
         w.raw(&self.extra);
         if self.dropped_attrs != 0 {
             w.dropped_attributes(self.dropped_attrs as u32);
+        }
+        if self.dropped_events != 0 {
+            w.dropped_events(self.dropped_events as u32);
+        }
+        if self.dropped_links != 0 {
+            w.dropped_links(self.dropped_links as u32);
         }
         w.status(self.status, &self.status_message);
         w.finish();

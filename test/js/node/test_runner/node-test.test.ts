@@ -893,6 +893,68 @@ test.concurrent.each([
 test.concurrent.each([
   ["process", ""],
   ["none", ", isolation: 'none'"],
+] as const)("run() with %s isolation reports a todo suite's own failures as advisory like node", async (_label, isolationArg) => {
+  // A todo suite's own body or hook failure still fails the suite (reported
+  // with the todo directive) and cancels its children, while a failing child
+  // leaves the suite passing, and none of it fails the run or a plain parent.
+  using dir = tempDir("node-test-todo-suite-own-failures", {
+    "f.test.mjs": `
+      import { describe, it, before, after } from 'node:test';
+      describe.todo('body-sync', () => { it('declared', () => {}); throw new Error('boom'); });
+      describe.todo('body-async', async () => { throw new Error('boom'); });
+      describe.todo('before-fails', () => { before(() => { throw new Error('b'); }); it('child', () => {}); });
+      describe.todo('after-fails', () => { after(() => { throw new Error('a'); }); it('child2', () => {}); });
+      describe.todo('child-fails', () => { it('bad', () => { throw new Error('c'); }); });
+      describe('plain-parent', () => { describe.todo('todo-child-throws', () => { throw new Error('d'); }); it('sibling', () => {}); });
+    `,
+    "driver.mjs": `
+      import { run } from 'node:test';
+      import { fileURLToPath } from 'node:url';
+      const stream = run({ files: [fileURLToPath(new URL('./f.test.mjs', import.meta.url))]${isolationArg} });
+      const out = { events: [], success: null };
+      const tag = t => (t.todo === undefined ? '' : '#todo');
+      stream.on('test:fail', t => out.events.push(['fail', t.name + tag(t), t.details?.error?.failureType]));
+      stream.on('test:pass', t => out.events.push(['pass', t.name + tag(t)]));
+      stream.on('test:summary', t => { if (t.file === undefined) out.success = t.success; });
+      for await (const _ of stream);
+      console.log(JSON.stringify(out));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", join(String(dir), "driver.mjs")],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Verbatim node v26.3.0 output for this fixture in both isolation modes.
+  expect({ result: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
+    result: {
+      events: [
+        ["fail", "declared#todo", "cancelledByParent"],
+        ["fail", "body-sync#todo", "testCodeFailure"],
+        ["fail", "body-async#todo", "testCodeFailure"],
+        ["fail", "child#todo", "cancelledByParent"],
+        ["fail", "before-fails#todo", "hookFailed"],
+        ["pass", "child2#todo"],
+        ["fail", "after-fails#todo", "hookFailed"],
+        ["fail", "bad#todo", "testCodeFailure"],
+        ["pass", "child-fails#todo"],
+        ["fail", "todo-child-throws#todo", "testCodeFailure"],
+        ["pass", "sibling"],
+        ["pass", "plain-parent"],
+      ],
+      success: true,
+    },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+test.concurrent.each([
+  ["process", ""],
+  ["none", ", isolation: 'none'"],
 ] as const)("run() with %s isolation wraps hook failures with node's fixed message", async (_label, isolationArg) => {
   using dir = tempDir("node-test-hook-wrapper-msg", {
     "f.test.mjs": `

@@ -965,6 +965,7 @@ function reportCancelledNode(node: TestNode) {
       reportCancelledNode(child.node);
     }
   }
+  const todoEffective = node.todoFlag || hasTodoAncestor(node);
   const data = {
     __proto__: null,
     name: node.name,
@@ -973,6 +974,7 @@ function reportCancelledNode(node: TestNode) {
     testId: runTestIdFor(node),
     parentId: runParentIdFor(node),
     duration_ms: 0,
+    todo: todoEffective ? (node.directiveMessage ?? true) : undefined,
     type: node.isSuite ? "suite" : "test",
     tags: node.tags,
     error: makeCancelledByParentError(),
@@ -987,7 +989,7 @@ function reportCancelledNode(node: TestNode) {
   }
   reportStartChain(node);
   emitRunChildEvent("test:fail", data);
-  noteRunChildDone(node.parent, true);
+  noteRunChildDone(node.parent, !todoEffective);
 }
 
 function reportFailedImportNode(node: TestNode, error: unknown) {
@@ -1095,13 +1097,20 @@ function reportStartChain(node: TestNode) {
   }
 }
 
+// A todo node's failure is advisory: it is reported as a failing todo but does
+// not fail its parent (node's countCompletedTest). Tests apply the same rule in
+// reportNodeToRunParent; cancelled nodes in reportCancelledNode.
+function failurePropagates(node: TestNode): boolean {
+  return node.childrenFailed > 0 && !(node.todoFlag || hasTodoAncestor(node));
+}
+
 function noteRunChildDone(parent: TestNode | undefined, failed: boolean) {
   if (!runEventsEnabled()) return;
   while (parent !== undefined && parent.parent !== undefined) {
     parent.childrenDone++;
     if (failed) parent.childrenFailed++;
     if (!maybeCompleteSuite(parent)) return;
-    failed = parent.childrenFailed > 0;
+    failed = failurePropagates(parent);
     parent = parent.parent;
   }
 }
@@ -1111,8 +1120,10 @@ function maybeCompleteSuite(suite: TestNode): boolean {
   if (suite.childrenDone < suite.childrenCount) return false;
   suite.suiteReported = true;
   const isTodo = suite.todoFlag || hasTodoAncestor(suite);
-  if (isTodo) suite.childrenFailed = 0;
-  const cancelledByHookFailure = !isTodo && hasHookFailedAncestorSuite(suite);
+  // childrenFailed holds only the suite's own body/hook failures plus
+  // non-advisory children: todo children never propagate, so a todo suite
+  // still fails on its own error (node reports `not ok ... # TODO`).
+  const cancelledByHookFailure = hasHookFailedAncestorSuite(suite);
   if (cancelledByHookFailure && suite.childrenFailed === 0) suite.childrenFailed = 1;
   let suiteFailed = suite.childrenFailed > 0;
   const failedCount = suite.childrenFailed;
@@ -1163,7 +1174,7 @@ function noteSuiteCollectionSettled(suite: TestNode) {
   if (!runEventsEnabled()) return;
   suite.collectionSettled = true;
   if (maybeCompleteSuite(suite)) {
-    noteRunChildDone(suite.parent, suite.childrenFailed > 0);
+    noteRunChildDone(suite.parent, failurePropagates(suite));
   }
 }
 
@@ -3215,8 +3226,6 @@ async function settleSuiteBuild(entry: StandaloneEntry): Promise<void> {
   try {
     await build;
   } catch (err) {
-    // A todo suite's failure is advisory, like in the run() child.
-    if (node.todoFlag || hasTodoAncestor(node)) return;
     node.childrenFailed++;
     node.error ??= err ?? makeTestFailure("suite failed");
   }
@@ -3494,22 +3503,20 @@ async function runStandaloneEntry(entry: StandaloneEntry) {
     return;
   }
   node.startedAtMs = performance.now();
-  const isTodoSuite = node.todoFlag || hasTodoAncestor(node);
   // Normally settled by awaitSuiteBuilds before pruning; this covers an entry
-  // registered during execution.
+  // registered during execution. A todo suite records its own failures like
+  // any other (they are made advisory at propagation, see failurePropagates).
   await settleSuiteBuild(entry);
-  let setupFailed = !isTodoSuite && node.error != null;
+  let setupFailed = node.error != null;
   if (!setupFailed) {
     for (const hook of node.hooks.before) {
       try {
         await runHook(hook, node, node.getSuiteCtx(), "before");
       } catch (err) {
-        if (!isTodoSuite) {
-          node.childrenFailed++;
-          node.error ??= err;
-          setupFailed = true;
-          break;
-        }
+        node.childrenFailed++;
+        node.error ??= err;
+        setupFailed = true;
+        break;
       }
     }
   }
@@ -3526,10 +3533,8 @@ async function runStandaloneEntry(entry: StandaloneEntry) {
     try {
       await runHook(hook, node, node.getSuiteCtx(), "after");
     } catch (err) {
-      if (!isTodoSuite) {
-        node.childrenFailed++;
-        node.error ??= err;
-      }
+      node.childrenFailed++;
+      node.error ??= err;
     }
   }
   noteSuiteCollectionSettled(node);
@@ -3879,7 +3884,6 @@ function addSuite(
     effectiveMode === "skip"
       ? kDefaultFunction
       : function wrappedSuiteBuilder() {
-          const isTodoAdvisory = runChildReporterEnabled && (suiteNode.todoFlag || hasTodoAncestor(suiteNode));
           function buildWrappedSuiteFn() {
             return invokeSuiteFn(fn, suiteNode.getSuiteCtx());
           }
@@ -3902,16 +3906,13 @@ function addSuite(
                 settleAndDone();
                 return;
               }
-              const isTodo = suiteNode.todoFlag || hasTodoAncestor(suiteNode);
               async function runSuiteAfterHooks() {
                 for (const hook of hooks) {
                   try {
                     await runHook(hook, suiteNode, suiteNode.getSuiteCtx(), "after");
                   } catch (err) {
-                    if (!isTodo) {
-                      suiteNode.childrenFailed++;
-                      suiteNode.error ??= err;
-                    }
+                    suiteNode.childrenFailed++;
+                    suiteNode.error ??= err;
                   }
                 }
               }
@@ -3921,11 +3922,13 @@ function addSuite(
           function recordSuiteBodyFailed(err: unknown) {
             suiteNode.childrenFailed++;
             suiteNode.error = err ?? makeTestFailure("suite failed");
-            if (!isTodoAdvisory) suiteNode.hookSetupFailed = true;
+            suiteNode.hookSetupFailed = true;
           }
+          // Under run-child the failure is reported through the event stream;
+          // under plain bun:test it is rethrown so bun:test fails the describe.
           function onWrappedSuiteFailed(err: unknown) {
             recordSuiteBodyFailed(err);
-            if (isTodoAdvisory || runChildReporterEnabled) return undefined;
+            if (runChildReporterEnabled) return undefined;
             throw err;
           }
           let built: unknown;
@@ -3933,7 +3936,7 @@ function addSuite(
             built = runWithNode(suiteNode, buildWrappedSuiteFn);
           } catch (err) {
             recordSuiteBodyFailed(err);
-            if (isTodoAdvisory || runChildReporterEnabled) {
+            if (runChildReporterEnabled) {
               settleSuiteAfterHooks();
               return undefined;
             }
@@ -4054,10 +4057,7 @@ function before(arg0: unknown, arg1: unknown) {
       done();
     }
     function onHookFailed(err: unknown) {
-      if (runChildReporterEnabled && (owner.todoFlag || hasTodoAncestor(owner))) {
-        done();
-        return;
-      }
+      // Recorded for todo suites too; failurePropagates keeps it advisory.
       if (runChildReporterEnabled && owner.parent !== undefined) {
         owner.childrenFailed++;
         owner.error ??= err as Error;

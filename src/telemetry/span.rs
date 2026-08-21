@@ -96,7 +96,7 @@ impl TraceId {
 impl SpanId {
     pub const INVALID: SpanId = SpanId([0; 8]);
     #[inline]
-    pub fn is_valid(&self) -> bool {
+    pub fn is_valid(self) -> bool {
         self.0 != [0; 8]
     }
     #[inline]
@@ -108,7 +108,7 @@ impl SpanId {
             }
         }
     }
-    pub fn to_hex(&self, out: &mut [u8; 16]) {
+    pub fn to_hex(self, out: &mut [u8; 16]) {
         hex_encode(&self.0, out);
     }
     pub fn from_hex(s: &[u8]) -> Option<SpanId> {
@@ -118,7 +118,7 @@ impl SpanId {
         if s.is_valid() { Some(s) } else { None }
     }
     #[inline]
-    pub fn as_u64(&self) -> u64 {
+    pub fn as_u64(self) -> u64 {
         u64::from_be_bytes(self.0)
     }
     #[inline]

@@ -394,19 +394,19 @@ impl<'a> Parser<'a> {
                         self.expect(&e, ExprTag::EString)?;
                         cfg.exporter = e
                             .as_string(self.bump)
-                            .map(|s| String::from_utf8_lossy(s).into_owned());
+                            .map(|s| bstr::ByteSlice::to_str_lossy(s).into_owned());
                     }
                     if let Some(e) = expr.get(b"endpoint") {
                         self.expect(&e, ExprTag::EString)?;
                         cfg.endpoint = e
                             .as_string(self.bump)
-                            .map(|s| String::from_utf8_lossy(s).into_owned());
+                            .map(|s| bstr::ByteSlice::to_str_lossy(s).into_owned());
                     }
                     if let Some(e) = expr.get(b"serviceName") {
                         self.expect(&e, ExprTag::EString)?;
                         cfg.service_name = e
                             .as_string(self.bump)
-                            .map(|s| String::from_utf8_lossy(s).into_owned());
+                            .map(|s| bstr::ByteSlice::to_str_lossy(s).into_owned());
                     }
                     if let Some(h) = expr.get(b"headers") {
                         self.expect(&h, ExprTag::EObject)?;
@@ -420,8 +420,8 @@ impl<'a> Parser<'a> {
                                 (k.as_string(self.bump), v.as_string(self.bump))
                             {
                                 cfg.headers.push((
-                                    String::from_utf8_lossy(k).into_owned(),
-                                    String::from_utf8_lossy(v).into_owned(),
+                                    bstr::ByteSlice::to_str_lossy(k).into_owned(),
+                                    bstr::ByteSlice::to_str_lossy(v).into_owned(),
                                 ));
                             }
                         }

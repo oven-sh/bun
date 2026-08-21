@@ -5503,6 +5503,7 @@ impl Resolver {
         );
         // SAFETY: `request` just heap-allocated in `init()`; `tail` points at its inline `head`.
         let promise = unsafe { (*(*request).tail).promise.value() };
+        // SAFETY: as above.
         unsafe { (*request).head.otel_begin(global_this, &query.name) };
 
         // SAFETY: `channel` is the live c-ares channel owned by `self`; `request`

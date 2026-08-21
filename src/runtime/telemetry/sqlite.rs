@@ -17,10 +17,10 @@ pub extern "C" fn Bun__Telemetry__sqliteBegin(
     if !bun_telemetry::enabled(Instrument::Sqlite) {
         return 0;
     }
-    // SAFETY: caller passes a valid (ptr,len) or (null,0).
     let file: &[u8] = if file.is_null() {
         b""
     } else {
+        // SAFETY: caller passes a valid (ptr,len) or (null,0).
         unsafe { core::slice::from_raw_parts(file.cast::<u8>(), file_len) }
     };
     // `db.namespace` for SQLite is the main database file's base name.
@@ -43,6 +43,7 @@ pub extern "C" fn Bun__Telemetry__sqliteBegin(
 
 /// Finish a span from `Bun__Telemetry__sqliteBegin`. `errcode == 0` ⇒ ok.
 #[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn Bun__Telemetry__sqliteEnd(
     span: u64,
     sql: *const c_char,
@@ -57,6 +58,7 @@ pub extern "C" fn Bun__Telemetry__sqliteEnd(
     let sql: &[u8] = if sql.is_null() {
         b""
     } else {
+        // SAFETY: caller passes a valid (ptr,len) or (null,0).
         unsafe { core::slice::from_raw_parts(sql.cast::<u8>(), sql_len) }
     };
     if errcode == 0 {
@@ -66,6 +68,7 @@ pub extern "C" fn Bun__Telemetry__sqliteEnd(
         let msg: &[u8] = if errmsg.is_null() {
             b""
         } else {
+            // SAFETY: non-null `errmsg` is sqlite3_errmsg()'s NUL-terminated string.
             unsafe { core::ffi::CStr::from_ptr(errmsg) }.to_bytes()
         };
         db::end(span, sql, None, Some((code.as_bytes(), msg)));

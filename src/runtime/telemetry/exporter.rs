@@ -1,9 +1,10 @@
 //! Exporters: OTLP/HTTP (protobuf) via Bun's HTTP thread, `console`, and JS
 //! callback exporters. Plus the protobuf → JS object decoder they share.
 
+use bun_threading::Guarded;
 use core::cell::RefCell;
 use core::mem::MaybeUninit;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use bun_core::MutableString;
 use bun_event_loop::ManagedTask::ManagedTask;
@@ -28,7 +29,7 @@ pub struct OtlpHttpExporter {
     timeout_seconds: u32,
     /// Payloads waiting for a retry, with the attempt count and the
     /// `clock::now_unix_nanos()` after which to try again.
-    retry: Mutex<Vec<Retry>>,
+    retry: Guarded<Vec<Retry>>,
     warned: core::sync::atomic::AtomicBool,
 }
 
@@ -41,9 +42,10 @@ struct Retry {
 
 const MAX_ATTEMPTS: u32 = 5;
 
-// SAFETY: VM-free: only owned byte buffers and the `Mutex`-guarded retry
+// SAFETY: VM-free: only owned byte buffers and the mutex-guarded retry
 // list; nothing here references a VirtualMachine or JS heap.
 unsafe impl Send for OtlpHttpExporter {}
+// SAFETY: see `Send` above; shared state is behind `Guarded`/atomics.
 unsafe impl Sync for OtlpHttpExporter {}
 
 impl OtlpHttpExporter {
@@ -81,7 +83,7 @@ impl OtlpHttpExporter {
             headers,
             compression: cfg.compression,
             timeout_seconds: (cfg.timeout_ms / 1000).max(1),
-            retry: Mutex::new(Vec::new()),
+            retry: Guarded::new(Vec::new()),
             warned: core::sync::atomic::AtomicBool::new(false),
         })
     }
@@ -109,7 +111,7 @@ impl OtlpHttpExporter {
     ) {
         let task = Box::into_raw(Box::new(InflightExport {
             http: MaybeUninit::uninit(),
-            exporter: self.clone(),
+            exporter: Arc::clone(self),
             processor,
             payload,
             attempt,
@@ -187,7 +189,7 @@ impl OtlpHttpExporter {
 
     fn send_retries(&self, processor: &'static Processor, all: bool) {
         let due: Vec<Retry> = {
-            let mut q = self.retry.lock().unwrap();
+            let mut q = self.retry.lock();
             if q.is_empty() {
                 return;
             }
@@ -208,9 +210,10 @@ impl OtlpHttpExporter {
             .warned
             .swap(true, core::sync::atomic::Ordering::Relaxed)
         {
-            bun_core::Output::warn(format_args!(
-                "[otel] {args} (further export errors from this exporter are silenced; see Bun.otel.stats())"
-            ));
+            bun_core::warn!(
+                "[otel] {} (further export errors from this exporter are silenced; see Bun.otel.stats())",
+                args
+            );
             bun_core::Output::flush();
         }
     }
@@ -251,6 +254,7 @@ impl Drop for InflightExport {
 
 impl InflightExport {
     /// HTTP-thread callback.
+    #[allow(clippy::needless_pass_by_value)] // signature fixed by HTTPClientResultCallback
     fn callback(
         this: *mut Self,
         async_http: *mut AsyncHTTP<'static>,
@@ -277,9 +281,9 @@ impl InflightExport {
         };
         // SAFETY: HTTP thread exclusively owns `this` during the callback.
         let me = unsafe { &*this };
-        let exporter = me.exporter.clone();
+        let exporter = Arc::clone(&me.exporter);
         let processor = me.processor;
-        let payload = me.payload.clone();
+        let payload = Arc::clone(&me.payload);
         let attempt = me.attempt;
         // SAFETY: allocated in `send`; the HTTP thread is done with it.
         drop(unsafe { Box::from_raw(this) });
@@ -288,7 +292,7 @@ impl InflightExport {
             Err((retryable, msg)) if retryable && attempt + 1 < MAX_ATTEMPTS => {
                 let backoff_ms = 1000u64 << attempt.min(4);
                 let due_ns = bun_telemetry::clock::now_unix_nanos() + backoff_ms * 1_000_000;
-                exporter.retry.lock().unwrap().push(Retry {
+                exporter.retry.lock().push(Retry {
                     payload,
                     attempt: attempt + 1,
                     due_ns,
@@ -311,13 +315,14 @@ impl InflightExport {
     /// HTTP thread parked at process exit; the request will never complete.
     unsafe fn release_at_shutdown(this: *mut ()) {
         let this = this.cast::<Self>();
+        // SAFETY: allocated in `send`; the HTTP thread hands ownership back exactly once.
         let me = unsafe { Box::from_raw(this) };
         me.processor.export_done(&me.payload, ExportResult::Failure);
     }
 }
 
 impl Exporter for OtlpHttpExporter {
-    fn export(self: &Self, processor: &'static Processor, payload: Arc<ExportPayload>) {
+    fn export(&self, processor: &'static Processor, payload: Arc<ExportPayload>) {
         // `Arc<Self>` receiver isn't available through `dyn Exporter`; recover it.
         let me = self.arc();
         me.send(processor, payload, 0);
@@ -338,7 +343,7 @@ impl Exporter for OtlpHttpExporter {
     }
 
     fn flush_parked_blocking(&self, deadline_ns: u64) {
-        let parked: Vec<Retry> = self.retry.lock().unwrap().drain(..).collect();
+        let parked: Vec<Retry> = self.retry.lock().drain(..).collect();
         for r in parked {
             let result = self.send_blocking(&r.payload, deadline_ns);
             r.processor.record_result(&r.payload, result);
@@ -346,7 +351,7 @@ impl Exporter for OtlpHttpExporter {
     }
 
     fn pending_retries(&self) -> usize {
-        self.retry.lock().unwrap().len()
+        self.retry.lock().len()
     }
 
     fn name(&self) -> &str {
@@ -362,7 +367,7 @@ impl OtlpHttpExporter {
         // `telemetry::configure`; incrementing the strong count from `&self`
         // is the documented `Arc::increment_strong_count` pattern.
         unsafe {
-            let ptr = self as *const Self;
+            let ptr = core::ptr::from_ref(self);
             Arc::increment_strong_count(ptr);
             Arc::from_raw(ptr)
         }
@@ -616,11 +621,7 @@ fn any_value_to_js(global: &JSGlobalObject, body: &[u8]) -> JsResult<JSValue> {
             f::AV_BOOL => JSValue::from(v.as_u64() != 0),
             f::AV_INT => {
                 let i = v.as_u64() as i64;
-                if i.unsigned_abs() < (1u64 << 53) {
-                    JSValue::js_number(i as f64)
-                } else {
-                    JSValue::js_number(i as f64)
-                }
+                JSValue::js_number(i as f64)
             }
             f::AV_DOUBLE => JSValue::js_number(v.as_f64()),
             f::AV_BYTES => bun_jsc::JSUint8Array::from_bytes_copy(global, v.as_bytes()),
@@ -909,6 +910,7 @@ pub struct JsExporter {
 // SAFETY: `vm` is a `VmHandle` (holds the VM's Ticket while tasks are in
 // flight); `callback` is only touched on `thread` (checked).
 unsafe impl Send for JsExporter {}
+// SAFETY: see `Send` above.
 unsafe impl Sync for JsExporter {}
 
 struct JsExportTask {
@@ -924,7 +926,7 @@ impl JsExporter {
         this: JSValue,
         format: JsFormat,
     ) -> Arc<JsExporter> {
-        let owner = super::vm_state_or_init(global) as *const super::VmState;
+        let owner = core::ptr::from_ref(super::vm_state_or_init(global));
         Arc::new(JsExporter {
             callback: RefCell::new(Some((
                 Strong::create(f, global),
@@ -1008,13 +1010,15 @@ fn run_js_export_task(task: *mut JsExportTask) -> JsResult<()> {
 }
 
 fn s_global(s: &super::VmState) -> &JSGlobalObject {
+    // SAFETY: a live VmState's global outlives it (thread-local to the VM's thread).
     unsafe { &*s.global }
 }
 
 impl Exporter for JsExporter {
     fn export(&self, processor: &'static Processor, payload: Arc<ExportPayload>) {
+        // SAFETY: every JsExporter lives in an Arc created by `JsExporter::new`.
         let me = unsafe {
-            let ptr = self as *const Self;
+            let ptr = core::ptr::from_ref(self);
             Arc::increment_strong_count(ptr);
             Arc::from_raw(ptr)
         };
@@ -1025,14 +1029,14 @@ impl Exporter for JsExporter {
         let task = Box::into_raw(Box::new(JsExportTask {
             exporter: me,
             processor,
-            payload: payload.clone(),
+            payload,
         }));
         let managed = ManagedTask::new(task, run_js_export_task);
         let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::create(managed);
         match self.vm.post(bun_jsc::LoopKind::Regular, ct) {
             bun_jsc::Posted::Queued => {}
             bun_jsc::Posted::Refused(ct) => {
-                // VM gone: free the carrier + ManagedTask, then our payload.
+                // SAFETY: VM gone; `ct` was refused unqueued and `task` was allocated above and never shared.
                 unsafe {
                     bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct);
                     let t = Box::from_raw(task);
@@ -1066,6 +1070,7 @@ pub(crate) fn post_flush_wake(handle: &VmHandle) {
     let managed = ManagedTask::new(core::ptr::NonNull::<u8>::dangling().as_ptr(), run);
     let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::create(managed);
     if let bun_jsc::Posted::Refused(ct) = handle.post(bun_jsc::LoopKind::Regular, ct) {
+        // SAFETY: `ct` was refused unqueued; we still own it.
         unsafe { bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct) };
     }
 }

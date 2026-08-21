@@ -63,13 +63,16 @@ pub fn resolve(p: &PresetInput<'_>, env: EnvGet<'_>) -> Result<OtlpExporterConfi
                     "/v1/traces",
                 )
             }
-            None => join(
-                p.endpoint
-                    .as_deref()
-                    .or(env("DD_OTLP_ENDPOINT").as_deref())
-                    .unwrap_or("http://localhost:4318"),
-                "/v1/traces",
-            ),
+            None => {
+                let dd_endpoint = env("DD_OTLP_ENDPOINT");
+                join(
+                    p.endpoint
+                        .as_deref()
+                        .or(dd_endpoint.as_deref())
+                        .unwrap_or("http://localhost:4318"),
+                    "/v1/traces",
+                )
+            }
         },
         "honeycomb" => {
             let k = key(&["HONEYCOMB_API_KEY"])
@@ -101,7 +104,7 @@ pub fn resolve(p: &PresetInput<'_>, env: EnvGet<'_>) -> Result<OtlpExporterConfi
             bun_base64_encode(format!("{instance}:{token}").as_bytes(), &mut auth);
             headers.push((
                 "authorization".into(),
-                format!("Basic {}", String::from_utf8(auth).unwrap_or_default()),
+                format!("Basic {}", bstr::ByteVec::into_string_lossy(auth)),
             ));
             let base = match (
                 &p.endpoint,

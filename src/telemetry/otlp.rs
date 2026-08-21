@@ -380,13 +380,13 @@ impl<'a> SpanWriter<'a> {
         message: &[u8],
         stack: &[u8],
     ) -> &mut Self {
-        let mut attrs: [(&[u8], Value<'_>); 3] = [
+        let attrs: [(&[u8], Value<'_>); 3] = [
             (b"exception.type", Value::Str(ty)),
             (b"exception.message", Value::Str(message)),
             (b"exception.stacktrace", Value::Str(stack)),
         ];
         let n = if stack.is_empty() { 2 } else { 3 };
-        encode_event(self.out, b"exception", time_ns, &mut attrs[..n]);
+        encode_event(self.out, b"exception", time_ns, &attrs[..n]);
         self
     }
 
@@ -546,7 +546,7 @@ impl Padded {
         out.extend_from_slice(&[0x80, 0x80, 0x80, 0x00]);
         Padded { len_at }
     }
-    fn finish(self, out: &mut Vec<u8>) {
+    fn finish(self, out: &mut [u8]) {
         let n = out.len() - self.len_at - 4;
         debug_assert!(n < (1 << 28));
         out[self.len_at] = (n as u8 & 0x7f) | 0x80;

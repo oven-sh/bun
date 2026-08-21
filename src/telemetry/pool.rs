@@ -148,7 +148,7 @@ impl Slot {
     pub fn push_str(&mut self, key: &'static str, v: &[u8], limits: &Limits) {
         let v = otlp::truncate_utf8(v, limits.attribute_value_length as usize);
         if !v.is_ascii() && core::str::from_utf8(v).is_err() {
-            let lossy = String::from_utf8_lossy(v);
+            let lossy = bstr::ByteSlice::to_str_lossy(v);
             return self.push_attribute(key.as_bytes(), &Value::Str(lossy.as_bytes()), limits);
         }
         let key = key.as_bytes();
@@ -380,9 +380,7 @@ pub fn end_with(
     let recorded = POOL.with(|p| {
         let mut p = p.borrow_mut();
         let p = &mut *p;
-        let Some(slot) = p.slots.get_mut(handle.index()) else {
-            return None;
-        };
+        let slot = p.slots.get_mut(handle.index())?;
         if !slot.live || slot.generation != handle.generation() {
             return None;
         }
@@ -441,7 +439,7 @@ pub fn stub_ptr(handle: NativeSpan) -> *const SpanStub {
     POOL.with(|p| {
         let p = p.borrow();
         match p.slots.get(handle.index()) {
-            Some(slot) if slot.generation == handle.generation() => &slot.stub as *const SpanStub,
+            Some(slot) if slot.generation == handle.generation() => &raw const slot.stub,
             _ => core::ptr::null(),
         }
     })

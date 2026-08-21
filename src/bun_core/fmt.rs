@@ -568,12 +568,7 @@ pub(crate) fn format_utf16_type_with_path_options(
         } else {
             let mut ptr = to_write;
             while let Some(i) = crate::strings::index_of_any(ptr, b"\\/") {
-                let sep = match opts.path_sep {
-                    PathSep::Windows => b'\\',
-                    PathSep::Posix => b'/',
-                    PathSep::Auto => crate::SEP,
-                    PathSep::Any => ptr[i],
-                };
+                let sep = opts.path_sep.apply(ptr[i]);
                 write_bytes(writer, &ptr[..i])?;
                 writer.write_char(sep as char)?;
                 if opts.escape_backslashes && sep == b'\\' {
@@ -626,12 +621,7 @@ impl Display for FormatUTF8<'_> {
 
             let mut ptr = self.buf;
             while let Some(i) = crate::strings::index_of_any(ptr, b"\\/") {
-                let sep = match opts.path_sep {
-                    PathSep::Windows => b'\\',
-                    PathSep::Posix => b'/',
-                    PathSep::Auto => crate::SEP,
-                    PathSep::Any => ptr[i],
-                };
+                let sep = opts.path_sep.apply(ptr[i]);
                 write!(f, "{}", bstr::BStr::new(&ptr[..i]))?;
                 f.write_char(sep as char)?;
                 if opts.escape_backslashes && sep == b'\\' {
@@ -674,6 +664,17 @@ pub enum PathSep {
     Posix,
     /// Replace all path separators with `\`.
     Windows,
+}
+
+impl PathSep {
+    fn apply(self, found: u8) -> u8 {
+        match self {
+            PathSep::Windows => b'\\',
+            PathSep::Posix => b'/',
+            PathSep::Auto => crate::SEP,
+            PathSep::Any => found,
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -1177,19 +1178,32 @@ impl Display for URLFormatter<'_> {
 // HostFormatter
 // ───────────────────────────────────────────────────────────────────────────
 
+/// Writes `host`, then `:port` unless `host` already carries one or `port` is the scheme default.
 pub struct HostFormatter<'a> {
+    /// `example.com`, `example.com:8080`, `[::1]` or `[::1]:8080`.
     pub host: &'a [u8],
     pub port: Option<u16>,
     pub is_https: bool,
 }
 
+impl HostFormatter<'_> {
+    fn host_has_port(&self) -> bool {
+        // The colons inside an IPv6 literal's brackets are not a port separator.
+        let after_brackets = match self.host.first() {
+            Some(b'[') => crate::strings::index_of_char_usize(self.host, b']')
+                .map_or(self.host, |end| &self.host[end + 1..]),
+            _ => self.host,
+        };
+        crate::strings::contains_char(after_brackets, b':')
+    }
+}
+
 impl Display for HostFormatter<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        if crate::strings::index_of_char_usize(self.host, b':').is_some() {
-            return write_bytes(f, self.host);
-        }
-
         write_bytes(f, self.host)?;
+        if self.host_has_port() {
+            return Ok(());
+        }
 
         let is_port_optional = self.port.is_none()
             || (self.is_https && self.port == Some(443))
@@ -3353,29 +3367,12 @@ impl OutOfRangeValue for i64 {
         "i64"
     }
 }
-impl OutOfRangeValue for i32 {
-    fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, " Received {}", self)
-    }
-    fn type_name() -> &'static str {
-        "i32"
-    }
-}
 impl<'a> OutOfRangeValue for &'a [u8] {
     fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, " Received {}", bstr::BStr::new(self))
     }
     fn type_name() -> &'static str {
         "[]const u8"
-    }
-}
-// MOVE_DOWN: bun_core::String → bun_alloc (T0). Re-import from there.
-impl OutOfRangeValue for bun_alloc::String {
-    fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, " Received {}", self)
-    }
-    fn type_name() -> &'static str {
-        "bun.String"
     }
 }
 

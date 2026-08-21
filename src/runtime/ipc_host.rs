@@ -34,20 +34,17 @@ pub(crate) fn attach_windows_socket_payload(
     message: JSValue,
     fd: bun_sys::Fd,
     peer_pid: u32,
-) -> Option<Box<[u8]>> {
+) -> JsResult<Option<Box<[u8]>>> {
     if peer_pid == 0 {
-        return None;
+        return Ok(None);
     }
     let Some(hex) = IPC::windows_export_socket_hex(fd, peer_pid) else {
         log!("attachWindowsSocketPayload: WSADuplicateSocketW failed");
-        return None;
+        return Ok(None);
     };
-    let Ok(str_js) = bun_jsc::bun_string_jsc::create_utf8_for_js(global, &hex) else {
-        global.clear_exception();
-        return None;
-    };
+    let str_js = bun_jsc::bun_string_jsc::create_utf8_for_js(global, &hex)?;
     message.put(global, IPC::WIN_SOCKET_INFO_KEY, str_js);
-    Some(hex)
+    Ok(Some(hex))
 }
 
 #[bun_jsc::host_fn]
@@ -234,31 +231,35 @@ pub(crate) fn do_send(
             }
         }
     }
-    // serialize() already detached a non-keepOpen net.Socket; if it is not sent after all, close it here (node: postSend on error).
-    let close_detached = |global_object: &JSGlobalObject, target: JSValue| {
-        if target.is_object() {
-            match target.get(global_object, "close") {
-                Ok(Some(f)) if f.is_callable() => {
-                    if let Err(e) = f.call(global_object, target, &[]) {
-                        global_object.report_active_exception_as_unhandled(e);
+    // serialize() already detached a non-keepOpen net.Socket; if it is not sent after all, close it
+    // here (node: postSend on error). The handle's `close()`/`pause()` are calls of their own: what
+    // one throws is reported (this host function is its landing frame), and the send goes on to
+    // deliver its own result.
+    let call_handle_method =
+        |global_object: &JSGlobalObject, target: JSValue, name: &'static str| -> JsResult<()> {
+            if target.is_object() {
+                if let Some(f) = target.get(global_object, name)? {
+                    if f.is_callable() {
+                        crate::dispatch::fold(f.call(global_object, target, &[]).map(drop));
                     }
                 }
-                Ok(_) => {}
-                Err(e) => global_object.report_active_exception_as_unhandled(e),
             }
-        }
+            Ok(())
+        };
+    let close_detached = |global_object: &JSGlobalObject, target: JSValue| {
+        call_handle_method(global_object, target, "close")
     };
 
     #[cfg(not(windows))]
     if let Some(e) = dup_err {
         use bun_jsc::SysErrorJsc as _;
-        close_detached(global_object, pause_target);
+        close_detached(global_object, pause_target)?;
         return do_send_err(global_object, callback, e.to_js(global_object), from);
     }
 
     #[cfg(windows)]
     if let Some(h) = &mut zig_handle {
-        match attach_windows_socket_payload(global_object, message, h.fd, peer_pid) {
+        match attach_windows_socket_payload(global_object, message, h.fd, peer_pid)? {
             Some(hex) => {
                 h.win_export_hex = Some(hex);
                 h.peer_pid = peer_pid;
@@ -268,30 +269,19 @@ pub(crate) fn do_send(
     }
     if zig_handle.is_none() {
         message = original_message;
-        close_detached(global_object, pause_target);
+        close_detached(global_object, pause_target)?;
         pause_target = JSValue::UNDEFINED;
     }
 
     let status =
         ipc_data.serialize_and_send(global_object, message, is_internal, callback, zig_handle);
 
-    if status != SerializeAndSendResult::Failure
-        && !pause_target.is_undefined()
-        && pause_target.is_object()
-    {
-        match pause_target.get(global_object, "pause") {
-            Ok(Some(f)) if f.is_callable() => {
-                if let Err(e) = f.call(global_object, pause_target, &[]) {
-                    global_object.report_active_exception_as_unhandled(e);
-                }
-            }
-            Ok(_) => {}
-            Err(e) => global_object.report_active_exception_as_unhandled(e),
-        }
+    if status != SerializeAndSendResult::Failure {
+        call_handle_method(global_object, pause_target, "pause")?;
     }
 
     if status == SerializeAndSendResult::Failure {
-        close_detached(global_object, pause_target);
+        close_detached(global_object, pause_target)?;
         let ex = global_object.create_type_error_instance(format_args!("process.send() failed"));
         ex.put(
             global_object,

@@ -105,25 +105,11 @@ pub struct ParseUrl {
     pub source_contents: Option<Box<[u8]>>,
 }
 
-pub enum ParseResult {
-    Fail(ParseResultFail),
-    Success(ParsedSourceMap),
-}
+pub type ParseResult = core::result::Result<ParsedSourceMap, ParseFail>;
 
-pub struct ParseResultFail {
+pub struct ParseFail {
     pub loc: bun_ast::Loc,
-    pub(crate) err: crate::Error,
-    pub msg: &'static [u8],
-}
-
-impl Default for ParseResultFail {
-    fn default() -> Self {
-        Self {
-            loc: bun_ast::Loc::default(),
-            err: crate::Error::Unknown,
-            msg: b"",
-        }
-    }
+    pub err: crate::Error,
 }
 
 /// The sourcemap spec says line and column offsets are zero-based.
@@ -699,22 +685,10 @@ pub mod SerializedSourceMap {
             let decompressed = self.decompressed_files[index].get_or_init(|| {
                 let sp = self.map.compressed_source_file_at(index);
                 let compressed_file = sp.slice(self.map.bytes);
-                let size = bun_zstd::get_decompressed_size(compressed_file);
-
-                let mut bytes = vec![0u8; size];
-                match bun_zstd::decompress(&mut bytes, compressed_file) {
-                    bun_zstd::Result::Err(err) => {
-                        bun_core::warn!(
-                            "Source map decompression error: {}",
-                            ::bstr::BStr::new(err.as_bytes()),
-                        );
-                        Vec::new()
-                    }
-                    bun_zstd::Result::Success(n) => {
-                        bytes.truncate(n);
-                        bytes
-                    }
-                }
+                bun_zstd::decompress_alloc(compressed_file).unwrap_or_else(|err| {
+                    bun_core::warn!("Source map decompression error: {}", err);
+                    Vec::new()
+                })
             });
             if decompressed.is_empty() {
                 None
@@ -980,8 +954,8 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
                 sort: true,
             },
         ) {
-            ParseResult::Success(x) => x,
-            ParseResult::Fail(fail) => return Err(fail.err),
+            Ok(x) => x,
+            Err(fail) => return Err(fail.err),
         };
 
         if let ParseUrlResultHint::All {

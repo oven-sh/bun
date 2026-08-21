@@ -2396,8 +2396,8 @@ fn relative_posix_t<'a, T: PathCharCwd>(
     from: &[T],
     to: &[T],
     buf: &'a mut [T],
-    buf2: &mut [T],
-    buf3: &mut [T],
+    from_buf: &mut [T],
+    tmp_buf: &mut [T],
 ) -> MaybeSlice<'a, T> {
     // validateString of `from` and `to` are performed in pub fn relative.
     if from == to {
@@ -2405,8 +2405,8 @@ fn relative_posix_t<'a, T: PathCharCwd>(
     }
 
     // Trim leading forward slashes.
-    // Backed by expandable buf2 because fromOrig may be long.
-    let from_orig = resolve_posix_t(&[from], buf2, buf3)?;
+    // Backed by from_buf.
+    let from_orig = resolve_posix_t(&[from], from_buf, tmp_buf)?;
     let from_orig_len = from_orig.len();
     // Backed by buf.
     // Borrowck: resolve into buf, then operate via raw indices.
@@ -2415,7 +2415,7 @@ fn relative_posix_t<'a, T: PathCharCwd>(
     // resolved value.
     let to_orig_len = {
         let (ptr, len) = {
-            let r = resolve_posix_t(&[to], buf, buf3)?;
+            let r = resolve_posix_t(&[to], buf, tmp_buf)?;
             (r.as_ptr(), r.len())
         };
         if ptr != buf.as_ptr() {
@@ -2484,7 +2484,7 @@ fn relative_posix_t<'a, T: PathCharCwd>(
     let mut buf_offset: usize;
     let mut buf_size: usize = 0;
 
-    // Backed by buf3.
+    // Backed by tmp_buf.
     let mut out_len: usize = 0;
     // Add a block to isolate `i`.
     {
@@ -2501,13 +2501,13 @@ fn relative_posix_t<'a, T: PathCharCwd>(
                 if out_len > 0 {
                     buf_offset = buf_size;
                     buf_size += 3;
-                    buf3[buf_offset] = T::from_u8(CHAR_FORWARD_SLASH);
-                    buf3[buf_offset + 1] = T::from_u8(CHAR_DOT);
-                    buf3[buf_offset + 2] = T::from_u8(CHAR_DOT);
+                    tmp_buf[buf_offset] = T::from_u8(CHAR_FORWARD_SLASH);
+                    tmp_buf[buf_offset + 1] = T::from_u8(CHAR_DOT);
+                    tmp_buf[buf_offset + 2] = T::from_u8(CHAR_DOT);
                 } else {
                     buf_size = 2;
-                    buf3[0] = T::from_u8(CHAR_DOT);
-                    buf3[1] = T::from_u8(CHAR_DOT);
+                    tmp_buf[0] = T::from_u8(CHAR_DOT);
+                    tmp_buf[1] = T::from_u8(CHAR_DOT);
                 }
                 out_len = buf_size;
             }
@@ -2530,7 +2530,7 @@ fn relative_posix_t<'a, T: PathCharCwd>(
         buf.copy_within(to_start..to_start + slice_size, buf_offset);
     }
     if out_len > 0 {
-        memmove(&mut buf[0..out_len], &buf3[0..out_len]);
+        memmove(&mut buf[0..out_len], &tmp_buf[0..out_len]);
     }
     buf[buf_size] = T::default();
     Ok(&buf[0..buf_size])
@@ -2542,16 +2542,16 @@ fn relative_windows_t<'a, T: PathCharCwd>(
     from: &[T],
     to: &[T],
     buf: &'a mut [T],
-    buf2: &mut [T],
-    buf3: &mut [T],
+    from_buf: &mut [T],
+    tmp_buf: &mut [T],
 ) -> MaybeSlice<'a, T> {
     // validateString of `from` and `to` are performed in pub fn relative.
     if from == to {
         return Ok(&[]);
     }
 
-    // Backed by expandable buf2 because fromOrig may be long.
-    let from_orig = resolve_windows_t(&[from], buf2, buf3)?;
+    // Backed by from_buf.
+    let from_orig = resolve_windows_t(&[from], from_buf, tmp_buf)?;
     let from_orig_len = from_orig.len();
     // Backed by buf.
     // Borrowck: resolve into buf, then operate via raw indices.
@@ -2560,7 +2560,7 @@ fn relative_windows_t<'a, T: PathCharCwd>(
     // resolved value.
     let to_orig_len = {
         let (ptr, len) = {
-            let r = resolve_windows_t(&[to], buf, buf3)?;
+            let r = resolve_windows_t(&[to], buf, tmp_buf)?;
             (r.as_ptr(), r.len())
         };
         if ptr != buf.as_ptr() {
@@ -2661,7 +2661,7 @@ fn relative_windows_t<'a, T: PathCharCwd>(
     let mut buf_offset: usize;
     let mut buf_size: usize = 0;
 
-    // Backed by buf3.
+    // Backed by tmp_buf.
     let mut out_len: usize = 0;
     // Add a block to isolate `i`.
     {
@@ -2675,13 +2675,13 @@ fn relative_windows_t<'a, T: PathCharCwd>(
                 if out_len > 0 {
                     buf_offset = buf_size;
                     buf_size += 3;
-                    buf3[buf_offset] = T::from_u8(CHAR_BACKWARD_SLASH);
-                    buf3[buf_offset + 1] = T::from_u8(CHAR_DOT);
-                    buf3[buf_offset + 2] = T::from_u8(CHAR_DOT);
+                    tmp_buf[buf_offset] = T::from_u8(CHAR_BACKWARD_SLASH);
+                    tmp_buf[buf_offset + 1] = T::from_u8(CHAR_DOT);
+                    tmp_buf[buf_offset + 2] = T::from_u8(CHAR_DOT);
                 } else {
                     buf_size = 2;
-                    buf3[0] = T::from_u8(CHAR_DOT);
-                    buf3[1] = T::from_u8(CHAR_DOT);
+                    tmp_buf[0] = T::from_u8(CHAR_DOT);
+                    tmp_buf[1] = T::from_u8(CHAR_DOT);
                 }
                 out_len = buf_size;
             }
@@ -2715,7 +2715,7 @@ fn relative_windows_t<'a, T: PathCharCwd>(
             // Use copy_within because toOrig and buf overlap.
             buf.copy_within(to_start..to_start + slice_size, buf_offset);
         }
-        memmove(&mut buf[0..out_len], &buf3[0..out_len]);
+        memmove(&mut buf[0..out_len], &tmp_buf[0..out_len]);
         buf[buf_size] = T::default();
         return Ok(&buf[0..buf_size]);
     }
@@ -2732,10 +2732,10 @@ fn relative_posix_js_t<T: PathCharCwd>(
     from: &[T],
     to: &[T],
     buf: &mut [T],
-    buf2: &mut [T],
-    buf3: &mut [T],
+    from_buf: &mut [T],
+    tmp_buf: &mut [T],
 ) -> JsResult<JSValue> {
-    match relative_posix_t(from, to, buf, buf2, buf3) {
+    match relative_posix_t(from, to, buf, from_buf, tmp_buf) {
         Ok(r) => create_js_string_t::<T>(global_object, r),
         Err(e) => Ok(e.to_js(global_object)),
     }
@@ -2746,10 +2746,10 @@ fn relative_windows_js_t<T: PathCharCwd>(
     from: &[T],
     to: &[T],
     buf: &mut [T],
-    buf2: &mut [T],
-    buf3: &mut [T],
+    from_buf: &mut [T],
+    tmp_buf: &mut [T],
 ) -> JsResult<JSValue> {
-    match relative_windows_t(from, to, buf, buf2, buf3) {
+    match relative_windows_t(from, to, buf, from_buf, tmp_buf) {
         Ok(r) => create_js_string_t::<T>(global_object, r),
         Err(e) => Ok(e.to_js(global_object)),
     }
@@ -2768,14 +2768,14 @@ fn relative_js_t<T: PathCharCwd>(
     let buf_len =
         ((from.len() + max_path_size::<T>() + 1) * 2 + to.len() + max_path_size::<T>() + 1)
             .max(path_size::<T>());
-    // +1 for null terminator; ×3 for buf/buf2/buf3 carved from one slab.
+    // +1 for null terminator; ×3 for buf/from_buf/tmp_buf carved from one slab.
     let mut scratch = PathScratch::<T>::new(pool, (buf_len + 1) * 3);
     let (buf, rest) = scratch.slice().split_at_mut(buf_len + 1);
-    let (buf2, buf3) = rest.split_at_mut(buf_len + 1);
+    let (from_buf, tmp_buf) = rest.split_at_mut(buf_len + 1);
     if is_windows {
-        relative_windows_js_t(global_object, from, to, buf, buf2, buf3)
+        relative_windows_js_t(global_object, from, to, buf, from_buf, tmp_buf)
     } else {
-        relative_posix_js_t(global_object, from, to, buf, buf2, buf3)
+        relative_posix_js_t(global_object, from, to, buf, from_buf, tmp_buf)
     }
 }
 

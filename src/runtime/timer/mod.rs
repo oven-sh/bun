@@ -427,10 +427,9 @@ impl DateHeaderTimer {
 }
 
 pub struct EventLoopDelayMonitor {
-    // TODO: bare `JSValue` heap field with no Strong/visitChildren rooting —
-    // the histogram object can be GC'd while `monitorEventLoopDelay` is active.
-    // Needs JsRef-style rooting.
-    js_histogram: JSValue,
+    /// Weak, so a leaked monitor does not pin the retired `--isolate` realm.
+    /// `stop_active_handles` drops it before `~VM` (`All` outlives the heap).
+    histogram: bun_jsc::Weak<()>,
     pub(crate) event_loop_timer: EventLoopTimer,
     pub(crate) resolution_ms: i32,
     pub(crate) last_fire_ns: u64,
@@ -439,7 +438,7 @@ pub struct EventLoopDelayMonitor {
 impl Default for EventLoopDelayMonitor {
     fn default() -> Self {
         Self {
-            js_histogram: JSValue::default(),
+            histogram: bun_jsc::Weak::default(),
             event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::EventLoopDelayMonitor),
             resolution_ms: 10,
             last_fire_ns: 0,
@@ -455,14 +454,12 @@ impl EventLoopDelayMonitor {
 
     fn enable(
         &mut self,
-        _vm: &mut bun_jsc::virtual_machine::VirtualMachine,
+        vm: &mut bun_jsc::virtual_machine::VirtualMachine,
         histogram: JSValue,
         resolution_ms: i32,
     ) {
-        if self.enabled {
-            return;
-        }
-        self.js_histogram = histogram;
+        self.disable();
+        self.histogram = bun_jsc::Weak::create_passive(histogram, vm.global());
         self.resolution_ms = resolution_ms;
         self.enabled = true;
 
@@ -479,16 +476,19 @@ impl EventLoopDelayMonitor {
         unsafe { (*Self::timer_all()).insert(elt) };
     }
 
-    fn disable(&mut self, _vm: &mut bun_jsc::virtual_machine::VirtualMachine) {
+    pub(crate) fn disable(&mut self) {
         if !self.enabled {
             return;
         }
         self.enabled = false;
-        self.js_histogram = JSValue::default();
+        self.histogram = bun_jsc::Weak::default();
         self.last_fire_ns = 0;
-        let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
-        // SAFETY: see `enable` — disjoint-field access on `All`.
-        unsafe { (*Self::timer_all()).remove(elt) };
+        // FIRED (not linked) when called from `on_fire`.
+        if self.event_loop_timer.state == EventLoopTimerState::ACTIVE {
+            let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
+            // SAFETY: see `enable` — disjoint-field access on `All`.
+            unsafe { (*Self::timer_all()).remove(elt) };
+        }
     }
 
     /// Record `now - last_fire_ns`
@@ -498,9 +498,14 @@ impl EventLoopDelayMonitor {
         _vm: &mut bun_jsc::virtual_machine::VirtualMachine,
         now: &bun_event_loop::EventLoopTimer::Timespec,
     ) {
-        if !self.enabled || self.js_histogram.is_empty() {
+        self.event_loop_timer.state = EventLoopTimerState::FIRED;
+        if !self.enabled {
             return;
         }
+        let Some(histogram) = self.histogram.get() else {
+            self.disable();
+            return;
+        };
 
         let now_ns = now.ns();
         if self.last_fire_ns > 0 {
@@ -518,7 +523,7 @@ impl EventLoopDelayMonitor {
                         delay_ns: i64,
                     );
                 }
-                JSNodePerformanceHooksHistogram_recordDelay(self.js_histogram, delay_ns);
+                JSNodePerformanceHooksHistogram_recordDelay(histogram, delay_ns);
             }
         }
 
@@ -938,7 +943,12 @@ impl All {
                 nsec: now.nsec,
             };
             // SAFETY: `min` is live; no guard or borrow of `All` is held here.
-            unsafe { EventLoopTimer::fire(min, &el_now, vm) };
+            let fired = unsafe { EventLoopTimer::fire(min, &el_now, vm) };
+            // WTF timers run JSC-internal work, not user JS; a stop found here
+            // is the loop's to act on at its next gate, and the heap's next
+            // deadline is still reported to the poll.
+            // SAFETY: `vm` is the erased per-thread VM per fn contract.
+            let _ = unsafe { fold_timer(vm, fired) };
         }
     }
 
@@ -1106,7 +1116,11 @@ impl All {
             // `fire` dispatches through the FIRE_TIMER hook (§Dispatch hot
             // path) and may re-enter `(*runtime_state()).timer` — no `&mut`
             // to `All` is live here.
-            unsafe { EventLoopTimer::fire(t, &el_now, vm) };
+            let fired = unsafe { EventLoopTimer::fire(t, &el_now, vm) };
+            // SAFETY: `vm` per fn contract.
+            if unsafe { fold_timer(vm, fired) }.is_err() {
+                break;
+            }
         }
     }
 
@@ -1348,14 +1362,6 @@ pub(crate) struct ID {
     pub id: i32,
     pub kind: KindBig,
 }
-impl Default for ID {
-    fn default() -> Self {
-        Self {
-            id: 0,
-            kind: KindBig::SetTimeout,
-        }
-    }
-}
 impl ID {
     #[inline]
     fn async_id(self) -> u64 {
@@ -1371,3 +1377,27 @@ impl ID {
 
 const US_PER_S: i64 = bun_core::time::US_PER_S as i64;
 const NS_PER_US: i64 = bun_core::time::NS_PER_US as i64;
+
+/// The timer drain's fold: report what a fired timer's handler left pending
+/// as uncaught, or — if it is the VM's termination — tell the drain to stop.
+///
+/// # Safety
+/// `vm` is the erased per-thread `*mut VirtualMachine`.
+#[inline]
+unsafe fn fold_timer(
+    vm: *mut (),
+    fired: bun_event_loop::JsResult<()>,
+) -> Result<(), bun_jsc::Stopped> {
+    #[cold]
+    #[inline(never)]
+    unsafe fn report(vm: *mut (), err: bun_jsc::JsError) -> Result<(), bun_jsc::Stopped> {
+        // SAFETY: fn contract.
+        let global = unsafe { (*vm.cast::<bun_jsc::virtual_machine::VirtualMachine>()).global() };
+        bun_jsc::task::report_error_or_terminate(global, err)
+    }
+    match fired {
+        Ok(()) => Ok(()),
+        // SAFETY: fn contract.
+        Err(err) => unsafe { report(vm, err) },
+    }
+}

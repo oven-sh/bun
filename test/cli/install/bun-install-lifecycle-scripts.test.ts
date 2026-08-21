@@ -3395,7 +3395,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           // trustedDependencies.
 
           err = await stderr.text();
-          expect(err).toContain("Saved lockfile");
+          expect(err).not.toContain("Saved lockfile");
           expect(err).not.toContain("not found");
           expect(err).not.toContain("error:");
           out = await stdout.text();

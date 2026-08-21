@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, test } from "bun:test";
 import { exists, mkdir, writeFile } from "fs/promises";
-import { bunEnv, bunExe, bunEnv as env, readdirSorted, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, bunEnv as env, normalizeBunSnapshot, readdirSorted, tempDir, tmpdirSync } from "harness";
 import { cpSync } from "node:fs";
 import { join } from "path";
 import {
@@ -528,6 +528,154 @@ it("should list nothing with --trusted when no dependencies are trusted", async 
   expect(await stdout.text()).toBe(`${package_dir} node_modules (1)
 `);
   expect(await exited).toBe(0);
+});
+
+async function spawnAndCollect(...args: string[]): Promise<[stdout: string, stderr: string, exitCode: number]> {
+  await using proc = spawn({
+    cmd: [bunExe(), ...args],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+}
+
+// The root package has one dependency entry per workspace member plus one per
+// declaration: ws-once has two entries, ws-twice three, ws-undeclared one, and
+// the registry package bar two. `bun pm ls` must print one line per node_modules
+// entry. bar-alias is its own node_modules entry even though it resolves to the
+// same package as bar, so it stays listed.
+async function installWorkspacesTheRootDependsOn(saveTextLockfile: boolean) {
+  await writeFile(
+    join(package_dir, "bunfig.toml"),
+    Bun.TOML.stringify({
+      install: {
+        cache: false,
+        registry: `${root_url}/`,
+        saveTextLockfile,
+      },
+    }),
+  );
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      workspaces: ["packages/*"],
+      dependencies: {
+        bar: "latest",
+        "bar-alias": "npm:bar",
+        "ws-twice": "workspace:*",
+      },
+      devDependencies: {
+        bar: "latest",
+        "ws-once": "workspace:*",
+        "ws-twice": "workspace:*",
+      },
+      trustedDependencies: ["ws-once"],
+    }),
+  );
+  for (const name of ["ws-once", "ws-twice", "ws-undeclared"]) {
+    await mkdir(join(package_dir, "packages", name), { recursive: true });
+    await writeFile(join(package_dir, "packages", name, "package.json"), JSON.stringify({ name, version: "1.0.0" }));
+  }
+  const [, err, exitCode] = await spawnAndCollect("install");
+  expect(err).not.toContain("error:");
+  expect(err).toContain("Saved lockfile");
+  expect(exitCode).toBe(0);
+}
+
+it.each([
+  { lockfile: "bun.lock", saveTextLockfile: true },
+  { lockfile: "bun.lockb", saveTextLockfile: false },
+])("should list a workspace the root also depends on once ($lockfile)", async ({ lockfile, saveTextLockfile }) => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await installWorkspacesTheRootDependsOn(saveTextLockfile);
+  expect(await exists(join(package_dir, lockfile))).toBeTrue();
+  urls.length = 0;
+
+  const [stdout, stderr, exitCode] = await spawnAndCollect("pm", "ls");
+  expect(stderr).toBe("");
+  expect(normalizeBunSnapshot(stdout, package_dir)).toMatchInlineSnapshot(`
+    "<dir> node_modules (5)
+    ├── bar@0.0.2
+    ├── bar-alias@0.0.2
+    ├── ws-once@workspace:packages/ws-once
+    ├── ws-twice@workspace:packages/ws-twice
+    └── ws-undeclared@workspace:packages/ws-undeclared"
+  `);
+  expect(exitCode).toBe(0);
+  expect(urls).toEqual([]);
+});
+
+// bun.lockb stores only the hashes of trustedDependencies and bun does not trust
+// a hash alone, so --trusted lists nothing from a bun.lockb. Use bun.lock here.
+it("should list a trusted workspace the root also depends on once with --trusted", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await installWorkspacesTheRootDependsOn(true);
+  urls.length = 0;
+
+  const [stdout, stderr, exitCode] = await spawnAndCollect("pm", "ls", "--trusted");
+  expect(stderr).toBe("");
+  expect(normalizeBunSnapshot(stdout, package_dir)).toMatchInlineSnapshot(`
+    "<dir> node_modules (5)
+    └── ws-once@workspace:packages/ws-once"
+  `);
+  expect(exitCode).toBe(0);
+  expect(urls).toEqual([]);
+});
+
+// The root's optional peer on bar is bound to the copy of bar that moo brings
+// in. The listing must still show it: it is one of the root's own dependencies.
+it("should list a root optional peer that a dependency provides", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        moo: "./moo",
+      },
+      peerDependencies: {
+        bar: "*",
+      },
+      peerDependenciesMeta: {
+        bar: { optional: true },
+      },
+    }),
+  );
+  await mkdir(join(package_dir, "moo"));
+  await writeFile(
+    join(package_dir, "moo", "package.json"),
+    JSON.stringify({
+      name: "moo",
+      version: "0.1.0",
+      dependencies: {
+        bar: "latest",
+      },
+    }),
+  );
+  const [, err, installExitCode] = await spawnAndCollect("install");
+  expect(err).not.toContain("error:");
+  expect(err).toContain("Saved lockfile");
+  expect(installExitCode).toBe(0);
+  urls.length = 0;
+
+  const [stdout, stderr, exitCode] = await spawnAndCollect("pm", "ls");
+  expect(stderr).toBe("");
+  expect(normalizeBunSnapshot(stdout, package_dir)).toMatchInlineSnapshot(`
+    "<dir> node_modules (2)
+    ├── bar@0.0.2
+    └── moo@moo"
+  `);
+  expect(exitCode).toBe(0);
+  expect(urls).toEqual([]);
 });
 
 it("should remove all cache", async () => {

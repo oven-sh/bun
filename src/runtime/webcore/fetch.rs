@@ -349,10 +349,15 @@ fn reject_on_exception(
 ) -> JsResult<JSValue> {
     let err = match result {
         Ok(v) if !v.is_empty() => return Ok(v),
-        Err(jsc::JsError::Terminated) => return Err(jsc::JsError::Terminated),
         Err(jsc::JsError::OutOfMemory) => global_this.create_out_of_memory_error(),
+        // A terminated worker gets no rejected promise: its termination keeps unwinding.
+        Ok(_) | Err(jsc::JsError::Thrown | jsc::JsError::Terminated)
+            if global_this.has_pending_termination_exception() =>
+        {
+            return Err(jsc::JsError::Thrown);
+        }
+        Err(jsc::JsError::Terminated) => return Err(jsc::JsError::Terminated),
         Ok(_) | Err(jsc::JsError::Thrown) => match global_this.try_take_exception() {
-            Some(exc) if exc.is_termination_exception() => return Err(jsc::JsError::Terminated),
             Some(exc) => exc.to_error().unwrap_or(exc),
             None => {
                 // `fetch_impl` only returns Ok(ZERO)/Err(Thrown) with an exception
@@ -1238,7 +1243,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
 
             if matches!(*body_value, BodyValue::Locked(_)) {
-                if let Some(readable) = req.get_body_readable_stream(global_this) {
+                if let Some(readable) = req.get_body_readable_stream() {
                     if readable.is_disturbed(global_this) || readable.is_locked(global_this) {
                         return Err(global_this
                             .err(
@@ -1256,7 +1261,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     if locked.readable.has() {
                         break 'extract_body Some(HTTPRequestBody::ReadableStream(
                             readable_stream::Strong::init(
-                                locked.readable.get(global_this).unwrap(),
+                                locked.readable.get().unwrap(),
                                 global_this,
                             ),
                         ));
@@ -1268,7 +1273,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         if locked.readable.has() {
                             break 'extract_body Some(HTTPRequestBody::ReadableStream(
                                 readable_stream::Strong::init(
-                                    locked.readable.get(global_this).unwrap(),
+                                    locked.readable.get().unwrap(),
                                     global_this,
                                 ),
                             ));
@@ -1626,8 +1631,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         if sig.aborted() {
             let reason = sig.js_reason(global_this);
             if let HTTPRequestBody::ReadableStream(stream_ref) = &body {
-                if let Some(stream) = stream_ref.get(global_this) {
-                    stream.cancel_with_reason(global_this, reason);
+                if let Some(stream) = stream_ref.get() {
+                    stream.cancel_with_reason(global_this, reason)?;
                 }
             }
             body.detach();
@@ -1949,7 +1954,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             let _ = s3::upload_stream(
                 credentials_with_options.credentials.dupe(),
                 s3_path,
-                readable_stream.get(global_this).unwrap(),
+                readable_stream.get().unwrap(),
                 global_this,
                 credentials_with_options.options,
                 credentials_with_options.acl,
@@ -2082,7 +2087,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         proxy_headers: proxy_headers.take(),
         url_proxy_buffer: url_proxy_boxed,
         signal: signal.take(),
-        global_this: Some(global_this.into()),
         ssl_config: ssl_config.take(),
         hostname: hostname.take(),
         upgraded_connection,
@@ -2126,7 +2130,7 @@ struct S3StreamWrapper<'a> {
 }
 
 impl<'a> S3StreamWrapper<'a> {
-    fn resolve(result: s3::S3UploadResult, self_: *mut Self) -> Result<(), bun_jsc::JsTerminated> {
+    fn resolve(result: s3::S3UploadResult, self_: *mut Self) -> JsResult<()> {
         // SAFETY: self_ was created via heap::alloc in fetch_impl; we reclaim
         // ownership here exactly once on the resolve callback.
         let mut self_ = unsafe { bun_core::heap::take(self_) };

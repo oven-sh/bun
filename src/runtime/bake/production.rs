@@ -97,7 +97,7 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
 
     // Create a VM + global for loading the config file, plugins, and
     // performing build time prerendering.
-    jsc::initialize(false);
+    jsc::initialize(jsc::InitializeOptions::default());
     bun_ast::initialize_store();
 
     let mut arena = Arena::new();
@@ -197,7 +197,7 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
     vm.is_main_thread = true;
     jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
 
-    // SAFETY: vm.jsc_vm is the live JSC::VM* set in `VirtualMachine::initBake`;
+    // SAFETY: vm.jsc_vm is the live JSC::VM* set in `VirtualMachine::init_bake`;
     // raw-ptr deref yields an unbounded `&VM` so the `ApiLock<'_>` does not
     // borrow `vm` (the VirtualMachine) and the body below can keep using it.
     //
@@ -347,7 +347,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     // (`load_and_evaluate_module_ptr` returned a live JSC-heap cell).
     jsc::JSInternalPromise::opaque_mut(config_promise_ptr).set_handled();
     vm.wait_for_promise(AnyPromise::Internal(config_promise_ptr))
-        .map_err(|_| js_err(jsc::JsError::Terminated))?;
+        .map_err(|stopped| js_err(stopped.throw(vm.global())))?;
     let jsc_vm = vm.jsc_vm_mut();
     // Promise cell is still live (rooted via the module loader).
     let mut options = match jsc::JSInternalPromise::opaque_mut(config_promise_ptr)
@@ -703,7 +703,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             match side {
                 bun_bundler::options::Side::Client => {
                     // Client-side resources will be written to disk for usage on the client side
-                    if let Err(err) = file.write_to_disk(root_dir.fd(), b".") {
+                    if let Err(err) = file.write_to_disk(root_dir.fd()) {
                         bun_core::handle_error_return_trace(err);
                         Output::err(
                             err,
@@ -714,7 +714,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                 }
                 bun_bundler::options::Side::Server => {
                     if ctx.bundler_options.bake_debug_dump_server {
-                        if let Err(err) = file.write_to_disk(root_dir.fd(), b".") {
+                        if let Err(err) = file.write_to_disk(root_dir.fd()) {
                             bun_core::handle_error_return_trace(err);
                             Output::err(
                                 err,
@@ -794,7 +794,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         });
         if any_client_chunks {
             let runtime_file: &OutputFile = &bundled_outputs_list[runtime_file_index as usize];
-            if let Err(err) = runtime_file.write_to_disk(root_dir.fd(), b".") {
+            if let Err(err) = runtime_file.write_to_disk(root_dir.fd()) {
                 bun_core::handle_error_return_trace(err);
                 Output::err(
                     err,
@@ -985,34 +985,13 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         // Fetch the output file fresh at each use site instead of binding it.
 
         // Count how many JS+CSS files associated with this route and prepare `pattern`
-        pattern.prepend_part(route.part);
-        match route.part {
-            framework_router::Part::Param(name) => {
-                params_buf.push(name);
-            }
-            framework_router::Part::CatchAll(name) => {
-                params_buf.push(name);
-            }
-            framework_router::Part::CatchAllOptional(_) => {
-                return Err(js_err(global.throw(format_args!(
-                    "catch-all routes are not supported in static site generation",
-                ))));
-            }
-            _ => {}
-        }
         let mut file_count: u32 = 1;
-        if route.file_layout.is_some() {
-            file_count += 1;
-        }
-        let mut next: Option<framework_router::RouteIndex> = route.parent;
-        while let Some(parent_index) = next {
-            let parent = router.route_ptr(parent_index);
-            pattern.prepend_part(parent.part);
-            match parent.part {
-                framework_router::Part::Param(name) => {
-                    params_buf.push(name);
-                }
-                framework_router::Part::CatchAll(name) => {
+        let mut next: Option<framework_router::RouteIndex> = Some(route_index);
+        while let Some(current_index) = next {
+            let current = router.route_ptr(current_index);
+            pattern.prepend_part(current.part);
+            match current.part {
+                framework_router::Part::Param(name) | framework_router::Part::CatchAll(name) => {
                     params_buf.push(name);
                 }
                 framework_router::Part::CatchAllOptional(_) => {
@@ -1020,12 +999,12 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                         "catch-all routes are not supported in static site generation",
                     ))));
                 }
-                _ => {}
+                framework_router::Part::Text(_) | framework_router::Part::Group(_) => {}
             }
-            if parent.file_layout.is_some() {
+            if current.file_layout.is_some() {
                 file_count += 1;
             }
-            next = parent.parent;
+            next = current.parent;
         }
 
         // Fill styles and file_list
@@ -1202,7 +1181,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     // earlier `&mut` under Stacked Borrows.
     let vm = VirtualMachine::get().as_mut();
     vm.wait_for_promise(AnyPromise::Normal(render_promise))
-        .map_err(|_| js_err(jsc::JsError::Terminated))?;
+        .map_err(|stopped| js_err(stopped.throw(vm.global())))?;
     let jsc_vm = vm.jsc_vm_mut();
     match render_promise.unwrap(jsc_vm, UnwrapMode::MarkHandled) {
         Unwrapped::Pending => unreachable!(),
@@ -1242,7 +1221,7 @@ fn load_module(
     vm_ref
         .as_mut()
         .wait_for_promise(AnyPromise::Internal(promise))
-        .map_err(|_| js_err(jsc::JsError::Terminated))?;
+        .map_err(|stopped| js_err(stopped.throw(vm_ref.global())))?;
     // TODO: Specially draining microtasks here because `waitForPromise` has a
     //       bug which forgets to do it, but I don't want to fix it right now as it
     //       could affect a lot of the codebase. This should be removed.
@@ -1384,9 +1363,8 @@ extern "C" fn BakeProdResolve(
 /// to enqueue the entry points.
 ///
 /// Canonical definition lives in `bun_bundler::bake_types::production` (lower
-/// tier) so the bundler and runtime share ONE nominal type. Re-exported here
-/// for `bake::production::EntryPointMap` callers.
-pub use bun_bundler::bake_types::production::EntryPointMap;
+/// tier) so the bundler and runtime share ONE nominal type.
+pub(crate) use bun_bundler::bake_types::production::EntryPointMap;
 use bun_bundler::bake_types::production::{EntryPointHashMap, InputFile};
 
 impl framework_router::InsertionHandler for EntryPointMap {
@@ -1419,10 +1397,7 @@ impl framework_router::InsertionHandler for EntryPointMap {
     ) -> Result<(), bun_alloc::AllocError> {
         bun_core::err_generic!(
             "Multiple {} matching the same route pattern is ambiguous",
-            match ty {
-                framework_router::FileKind::Page => "pages",
-                framework_router::FileKind::Layout => "layout",
-            }
+            ty.collision_noun()
         );
         bun_core::pretty_errorln!("  - <blue>{}<r>", BStr::new(rel_path));
         bun_core::pretty_errorln!(
@@ -1631,24 +1606,10 @@ extern "C" fn BakeProdLoad(pt: *mut PerThread, key: BunString) -> BunString {
     BunString::dead()
 }
 
-#[unsafe(no_mangle)]
-extern "C" fn BakeProdSourceMap(pt: *mut PerThread, key: BunString) -> BunString {
-    // SAFETY: `pt` is the non-null pointer previously attached via
-    // BakeGlobalObject__attachPerThreadData; C++ only calls this while attached.
-    let pt = unsafe { &*pt };
-    let utf8 = key.to_utf8();
-    if let Some(value) = pt.source_maps.get(utf8.slice()) {
-        return pt.bundled_outputs[value.get() as usize]
-            .value
-            .to_bun_string_ref();
-    }
-    BunString::dead()
-}
-
 /// Packed: type (u8) | no_client (bool, 1 bit) | unused (u23)
 #[repr(transparent)]
 #[derive(Clone, Copy)]
-pub struct TypeAndFlags(i32);
+pub(crate) struct TypeAndFlags(i32);
 
 impl TypeAndFlags {
     pub(crate) const fn new(ty: u8, no_client: bool) -> Self {

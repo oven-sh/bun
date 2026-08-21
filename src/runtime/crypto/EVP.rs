@@ -10,7 +10,7 @@ pub struct EVP {
     pub ctx: boringssl::EVP_MD_CTX,
     // FFI: BoringSSL EVP_MD singletons are static for the process lifetime.
     md: *const boringssl::EVP_MD,
-    pub(crate) algorithm: Algorithm,
+    algorithm: Algorithm,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -162,6 +162,10 @@ pub(crate) fn lookup_ignore_case(bytes: &[u8]) -> Option<Algorithm> {
 }
 
 impl EVP {
+    pub fn algorithm(&self) -> Algorithm {
+        self.algorithm
+    }
+
     /// # Safety
     /// `md` must be a valid `EVP_MD` pointer (BoringSSL static singleton) and
     /// `engine` must be either null or a valid `ENGINE` pointer.

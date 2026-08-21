@@ -152,6 +152,31 @@ pub mod api {
         pub email: Box<[u8]>,
     }
 
+    impl NpmRegistry {
+        pub fn from_url(str: &[u8]) -> NpmRegistry {
+            let url = bun_url::URL::parse(str);
+            let mut registry = NpmRegistry::default();
+
+            if url.username.is_empty() && !url.password.is_empty() {
+                registry.token = Box::from(url.password);
+                registry.url = url.href_without_auth();
+            } else if !url.username.is_empty() && !url.password.is_empty() {
+                registry.username = Box::from(url.username);
+                registry.password = Box::from(url.password);
+                registry.url = url.href_without_auth();
+            } else {
+                // Do not include a trailing slash. There might be parameters at the end.
+                registry.url = Box::from(url.href);
+            }
+
+            registry
+        }
+
+        pub fn has_credentials(&self) -> bool {
+            !self.token.is_empty() || !self.username.is_empty() || !self.password.is_empty()
+        }
+    }
+
     /// Per-scope npm registry overrides, keyed by scope name.
     #[derive(Default)]
     pub struct NpmRegistryMap {

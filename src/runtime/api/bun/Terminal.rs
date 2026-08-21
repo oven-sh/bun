@@ -10,8 +10,6 @@
 //! - Callbacks are stored via `values` in classes.ts, accessed via js.gc
 
 use core::cell::Cell;
-#[cfg(unix)]
-use core::ffi::c_ulong;
 use core::ffi::{c_int, c_void};
 #[cfg(windows)]
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -41,11 +39,11 @@ bun_output::declare_scope!(Terminal, hidden);
 // Generated bindings — `jsc.Codegen.JSTerminal`. The `.classes.ts` codegen
 // emits `crate::generated_classes::js_Terminal` with `from_js`/`to_js` and the
 // cached-value accessors; re-export here so callers continue to spell `js::*`.
-pub use self::js::{from_js, from_js_direct, to_js};
+pub use self::js::to_js;
 pub mod js {
     pub use crate::generated_classes::js_Terminal::{
         data_get_cached, data_set_cached, drain_get_cached, drain_set_cached, exit_get_cached,
-        exit_set_cached, from_js, from_js_direct, get_constructor, to_js,
+        exit_set_cached, from_js, get_constructor, to_js,
     };
 
     /// Typed accessor for the `values:` slots.
@@ -344,12 +342,6 @@ impl From<CreatePtyError> for InitError {
             CreatePtyError::DupFailed => InitError::DupFailed,
             CreatePtyError::NotSupported => InitError::NotSupported,
         }
-    }
-}
-
-impl From<InitError> for crate::Error {
-    fn from(e: InitError) -> Self {
-        crate::Error::TerminalInit(e)
     }
 }
 
@@ -835,12 +827,6 @@ pub enum CreatePtyError {
     NotSupported,
 }
 
-impl From<CreatePtyError> for crate::Error {
-    fn from(e: CreatePtyError) -> Self {
-        crate::Error::TerminalInit(e.into())
-    }
-}
-
 fn create_pty(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
     #[cfg(unix)]
     {
@@ -920,8 +906,9 @@ mod lib_util {
 
 #[cfg(unix)]
 fn get_open_pty_fn() -> Option<OpenPtyFn> {
-    // On macOS, openpty is in libc, so we can use it directly
-    #[cfg(target_os = "macos")]
+    // openpty is linked directly on macOS (libc) and FreeBSD (libutil, see
+    // scripts/build/bun.ts).
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     {
         // Declared locally (not via the `libc` crate) so the `OpenPtyFn`
         // type unifies with the Linux dlsym path.
@@ -947,7 +934,12 @@ fn get_open_pty_fn() -> Option<OpenPtyFn> {
         return lib_util::get_open_pty();
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "android",
+        target_os = "freebsd"
+    )))]
     None
 }
 
@@ -1565,11 +1557,6 @@ impl Terminal {
 
         #[cfg(unix)]
         {
-            #[cfg(target_os = "macos")]
-            const TIOCSWINSZ: c_ulong = 0x80087467;
-            #[cfg(not(target_os = "macos"))]
-            const TIOCSWINSZ: c_ulong = 0x5414;
-
             let winsize = bun_core::Winsize {
                 row: new_rows,
                 col: new_cols,
@@ -1582,7 +1569,7 @@ impl Terminal {
             let ioctl_result = unsafe {
                 libc::ioctl(
                     self.master_fd.get().native(),
-                    TIOCSWINSZ as _,
+                    libc::TIOCSWINSZ as _,
                     &raw const winsize,
                 )
             };
@@ -1964,17 +1951,21 @@ impl Terminal {
         // MarkedArrayBuffer::from_bytes takes a `&mut [u8]` it will own (freed
         // via mimalloc on the C++ side) — leak the Box and hand over the slice.
         let bytes: &'static mut [u8] = Box::leak(v.into_boxed_slice());
+        // This is the pipe reader's landing frame: a buffer that cannot be
+        // built (allocation failure, a terminating VM) is folded here and
+        // reading goes on.
         let data = match MarkedArrayBuffer::from_bytes(bytes, jsc::JSType::Uint8Array)
             .to_node_buffer(global_this)
         {
             Ok(data) => data,
-            // OOM / a termination request: that exception is reported by the loop.
             Err(err) => {
-                global_this.report_active_exception_as_unhandled(err);
+                crate::dispatch::fold(Err(err));
                 return true;
             }
         };
 
+        // Each chunk's `data` callback is its own top-level call: reported and
+        // reading continues, as a stream 'data' listener that throws does.
         global_this.bun_vm().event_loop_mut().run_callback(
             callback,
             global_this,
@@ -2042,14 +2033,18 @@ impl BufferedReaderParent for Terminal {
         bun_io::BufferedReaderParentLinkKind::Terminal;
     const HAS_ON_READ_CHUNK: bool = true;
 
-    unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], has_more: ReadState) -> bool {
-        Self::from_parent_ptr(this).on_read_chunk(chunk, has_more)
+    unsafe fn on_read_chunk(
+        this: *mut Self,
+        chunk: bun_io::Chunk<'_>,
+        has_more: ReadState,
+    ) -> bool {
+        Self::from_parent_ptr(this).on_read_chunk(&chunk, has_more)
     }
     unsafe fn on_reader_done(this: *mut Self) {
-        Self::from_parent_ptr(this).on_reader_done()
+        Self::from_parent_ptr(this).on_reader_done();
     }
     unsafe fn on_reader_error(this: *mut Self, err: sys::Error) {
-        Self::from_parent_ptr(this).on_reader_error(&err)
+        Self::from_parent_ptr(this).on_reader_error(&err);
     }
     unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
         // Delegate to the inherent `Terminal::loop_()` which is cfg-split:
@@ -2072,16 +2067,16 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
     const POLL_OWNER_TAG: bun_io::PollTag = bun_io::posix_event_loop::poll_tag::TERMINAL_POLL;
     const HAS_ON_READY: bool = true;
     unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
-        Self::from_parent_ptr(this).on_write(amount, status)
+        Self::from_parent_ptr(this).on_write(amount, status);
     }
     unsafe fn on_error(this: *mut Self, err: sys::Error) {
-        Self::from_parent_ptr(this).on_writer_error(&err)
+        Self::from_parent_ptr(this).on_writer_error(&err);
     }
     unsafe fn on_ready(this: *mut Self) {
-        Self::from_parent_ptr(this).on_writer_ready()
+        Self::from_parent_ptr(this).on_writer_ready();
     }
     unsafe fn on_close(this: *mut Self) {
-        Self::from_parent_ptr(this).on_writer_close()
+        Self::from_parent_ptr(this).on_writer_close();
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
         Self::from_parent_ptr(this)
@@ -2116,15 +2111,15 @@ impl bun_io::pipe_writer::WindowsWriterParent for Terminal {
 impl bun_io::pipe_writer::WindowsStreamingWriterParent for Terminal {
     const HAS_ON_WRITABLE: bool = true;
     unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
-        Self::from_parent_ptr(this).on_write(amount, status)
+        Self::from_parent_ptr(this).on_write(amount, status);
     }
     unsafe fn on_error(this: *mut Self, err: sys::Error) {
-        Self::from_parent_ptr(this).on_writer_error(&err)
+        Self::from_parent_ptr(this).on_writer_error(&err);
     }
     unsafe fn on_writable(this: *mut Self) {
-        Self::from_parent_ptr(this).on_writer_ready()
+        Self::from_parent_ptr(this).on_writer_ready();
     }
     unsafe fn on_close(this: *mut Self) {
-        Self::from_parent_ptr(this).on_writer_close()
+        Self::from_parent_ptr(this).on_writer_close();
     }
 }

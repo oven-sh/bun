@@ -535,7 +535,10 @@ impl UpgradeCommand {
     }
 
     fn _exec(ctx: Command::Context) -> crate::Result<()> {
-        HTTP::http_thread::init(&Default::default()).map_err(HTTP::Error::from)?;
+        HTTP::http_thread::init(&Default::default()).map_err(|err| {
+            err.print();
+            HTTP::Error::from(err)
+        })?;
 
         // SAFETY: FileSystem::init returns the process-global singleton; valid for 'static.
         let filesystem = unsafe { &mut *fs::FileSystem::init(None)? };

@@ -87,6 +87,26 @@ const result = await Bun.build({ entrypoints });
 print({ afterwards: result.success, text: await result.outputs[0].text() });
 `;
 
+// An HTML route builds on the same bundle thread. `hmr: false` takes the plain
+// route, which builds again on every request, so the request after the refused
+// one starts the thread. The HTTP client thread is started by the first request,
+// before threads are refused.
+const HTML_ROUTE_FIXTURE = /* js */ `
+${WHILE_REFUSED}
+import index from "./index.html";
+using server = Bun.serve({
+  port: 0,
+  hostname: "127.0.0.1",
+  development: { hmr: false },
+  routes: { "/": index, "/ping": new Response("pong") },
+});
+await (await fetch(new URL("/ping", server.url))).text();
+const { resolved: refused } = await whileRefused(() => fetch(server.url));
+print({ status: refused.status, body: await refused.text() });
+const afterwards = await fetch(server.url);
+print({ afterwards: afterwards.status, html: (await afterwards.text()).includes("<h1>hello</h1>") });
+`;
+
 // The read runs on a work pool thread, so a regular file is read first, while
 // that thread can still be started. The pipe has no data, so the next read
 // parks on the IO thread, which is the one that is refused. The process exits
@@ -236,6 +256,30 @@ test.concurrent.skipIf(!canRun)(
         { afterwards: true, text: expect.stringContaining("42") },
       ],
       stderr: "",
+      refused: ATTEMPTS_PER_START,
+      exitCode: 0,
+    });
+  },
+);
+
+test.concurrent.skipIf(!canRun)(
+  "an HTML route answers 500 when the bundle thread cannot be started; the next request starts it",
+  async () => {
+    using dir = tempDir("refuse-threads-html-route", {
+      "fixture.js": HTML_ROUTE_FIXTURE,
+      "index.html": "<!DOCTYPE html><html><body><h1>hello</h1></body></html>\n",
+    });
+    const { stdout, stderr, refused, exitCode } = await runFixture(String(dir));
+
+    expect({ stdout: jsonLines(stdout), stderr, refused, exitCode }).toEqual({
+      stdout: [
+        { status: 500, body: "" },
+        { afterwards: 200, html: true },
+      ],
+      // The development server prints the build error.
+      stderr: expect.stringContaining(
+        "Failed to start the bundler thread: Resource temporarily unavailable (os error 11)",
+      ),
       refused: ATTEMPTS_PER_START,
       exitCode: 0,
     });

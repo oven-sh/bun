@@ -1,3 +1,4 @@
+import { blackholeListener } from "blackhole";
 import { RedisClient } from "bun";
 import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { describe, expect, mock, test } from "bun:test";
@@ -87,14 +88,19 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
     });
 
     test("should handle connection timeout", async () => {
-      // Use a non-routable IP address with a very short timeout
-      const client = new RedisClient("redis://192.0.2.1:6379", {
-        connectionTimeout: 2, // 2ms second timeout
+      // The connect never completes, so the short timeout is what fails it.
+      using blackhole = await blackholeListener();
+      const client = new RedisClient(`redis://${blackhole.hostname}:${blackhole.port}`, {
+        connectionTimeout: 2,
         autoReconnect: false,
       });
-      expect(async () => {
-        await client.get("any-key");
-      }).toThrowErrorMatchingInlineSnapshot(`"Connection timeout reached after 2ms"`);
+      try {
+        await expect(client.get("any-key")).rejects.toThrowErrorMatchingInlineSnapshot(
+          `"Connection timeout reached after 2ms"`,
+        );
+      } finally {
+        await client.close();
+      }
     });
 
     test("should report correct connected status", async () => {

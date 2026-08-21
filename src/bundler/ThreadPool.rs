@@ -246,8 +246,9 @@ impl ThreadPool {
         if self.worker_pool_is_owned {
             // SAFETY: worker_pool was heap-allocated in `init()` when owned.
             unsafe { drop(bun_core::heap::take(self.worker_pool)) };
-            self.worker_pool = ptr::null_mut();
         }
+        // Also for a shared pool, so that `worker_pool()` catches a late task on every path.
+        self.worker_pool = ptr::null_mut();
         if Self::uses_io_pool() {
             io_thread_pool::release();
         }
@@ -262,8 +263,9 @@ impl ThreadPool {
             !self.worker_pool.is_null(),
             "bundler worker pool used after ThreadPool::deinit"
         );
-        // SAFETY: non-null means `deinit` has not run, so the pool is live;
-        // all driver methods take `&self`.
+        // SAFETY: non-null means `deinit` has not run. Until then an owned pool is
+        // not freed and a shared one is the process-lifetime `WorkPool`; all
+        // driver methods take `&self`.
         unsafe { &*self.worker_pool }
     }
 

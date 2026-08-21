@@ -88,6 +88,7 @@ use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
 use crate::webcore::s3::simple_request::S3HttpSimpleTask;
 use crate::webcore::streams::Pending as StreamPending;
 
+use crate::api::H2FrameParser;
 use crate::api::bun_subprocess::Subprocess;
 #[cfg(not(windows))]
 use crate::api::bun_terminal_body::Poll as TerminalPoll;
@@ -399,6 +400,10 @@ pub(crate) fn run_task(
         }
         // ── bake dev-server (cold — hoisted to `run_task_cold`) ──────────
         task_tag::BakeHotReloadEvent => run_task_cold(task),
+        task_tag::H2FrameParserResume => {
+            // SAFETY: §Dispatch — the parser queued with a held ref; `run_resume_task` releases it.
+            unsafe { H2FrameParser::run_resume_task(cast_ptr!(H2FrameParser)) }?;
+        }
         task_tag::FSWatchTask => {
             // The task is heap-allocated
             // (cloned from `FSWatcher.current_task` at enqueue). `deinit` is
@@ -591,7 +596,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 61,
+    task_tag::COUNT == 62,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1242,6 +1247,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             release!(crate::webcore::fetch::fetch_tasklet::FetchTaskletPromiseSettle)
         }
         task_tag::FSWatchTask => release!(FSWatchTask),
+        task_tag::H2FrameParserResume => release!(H2FrameParser),
         task_tag::HotReloadTask => release!(hot_reloader::HotReloadTask),
         task_tag::WatchReloadTask => release!(hot_reloader::WatchReloadTask),
         task_tag::JSBundleCompletionTask => {

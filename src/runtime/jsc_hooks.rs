@@ -942,6 +942,26 @@ unsafe fn ensure_debugger(vm: *mut VirtualMachine, block_until_connected: bool) 
     }
 }
 
+/// `EventLoop::loop_depth` for the extent of one `auto_tick`/`auto_tick_active`.
+struct LoopDepth(*mut bun_jsc::event_loop::EventLoop);
+
+impl LoopDepth {
+    /// # Safety
+    /// `el` is the live per-thread event loop and outlives the guard.
+    unsafe fn enter(el: *mut bun_jsc::event_loop::EventLoop) -> Self {
+        // SAFETY: per fn contract; short-lived access, no `&mut` held across the tick.
+        unsafe { (*el).loop_depth += 1 };
+        Self(el)
+    }
+}
+
+impl Drop for LoopDepth {
+    fn drop(&mut self) {
+        // SAFETY: as `enter`.
+        unsafe { (*self.0).loop_depth -= 1 };
+    }
+}
+
 /// `eventLoop().autoTick()`. Needs
 /// `timer::All` for the poll-timeout calculation, hence dispatched here.
 ///
@@ -958,6 +978,8 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     let el: *mut bun_jsc::event_loop::EventLoop = unsafe { &*vm }.event_loop;
     // SAFETY: `el` is the live per-thread event loop (field of `*vm`).
     let loop_ = unsafe { (*el).usockets_loop() };
+    // SAFETY: `el` is the live per-thread event loop.
+    let _driving = unsafe { LoopDepth::enter(el) };
 
     // ── tick_immediate_tasks ────────────────────────────────────────────
     // After this call `immediate_tasks` reflects next-tick immediates, so
@@ -1122,6 +1144,8 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
     let el: *mut bun_jsc::event_loop::EventLoop = unsafe { &*vm }.event_loop;
     // SAFETY: `el` is the live per-thread event loop (field of `*vm`).
     let loop_ = unsafe { (*el).usockets_loop() };
+    // SAFETY: `el` is the live per-thread event loop.
+    let _driving = unsafe { LoopDepth::enter(el) };
 
     // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
     unsafe { (*el).tick_immediate_tasks(vm) };

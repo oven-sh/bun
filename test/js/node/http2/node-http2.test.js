@@ -5137,6 +5137,199 @@ it("remoteSettings/localSettings are never null before the peer's SETTINGS arriv
   }
 });
 
+// https://github.com/oven-sh/bun/issues/39796
+// The continuation of `await firstResponse` runs in the microtask checkpoint that follows the
+// frame callback which resolved it. expect().resolves then spins the event loop from there. The
+// client used to take that checkpoint while its inbound engine was still mid-batch, so every
+// byte that arrived during the nested loop (the second response, the server's PINGs) was queued
+// behind the batch and never parsed: the session went silent until something else failed it.
+it("client keeps parsing inbound frames when the event loop is spun from an awaited response", async () => {
+  const server = http2.createServer();
+  let pingTimedOut = false;
+  server.on("session", session => {
+    let lastAck = Date.now();
+    const timer = setInterval(() => {
+      // Failure path only: a client that stopped parsing never ACKs, so end the session instead
+      // of letting the nested expect() below wait forever.
+      if (Date.now() - lastAck > 4000) {
+        pingTimedOut = true;
+        clearInterval(timer);
+        session.destroy();
+        return;
+      }
+      session.ping(err => {
+        if (!err) lastAck = Date.now();
+      });
+    }, 100);
+    session.on("close", () => clearInterval(timer));
+  });
+  let streams = 0;
+  server.on("stream", stream => {
+    const n = ++streams;
+    stream.respond({ ":status": 200 });
+    // Answer on a later turn so the response is never in the same read as the request's echo.
+    setImmediate(() => stream.end(`response ${n}`));
+  });
+  await new Promise(r => server.listen(0, r));
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  try {
+    await new Promise((resolve, reject) => {
+      client.on("connect", resolve);
+      client.on("error", reject);
+    });
+    const request = () =>
+      new Promise((resolve, reject) => {
+        const req = client.request({ ":path": "/" });
+        req.setEncoding("utf8");
+        let body = "";
+        req.on("data", chunk => (body += chunk));
+        req.on("end", () => resolve(body));
+        req.on("error", reject);
+        req.end();
+      });
+
+    const first = await request();
+    expect(first).toBe("response 1");
+    // Runs inside the checkpoint that delivered `first`; spins the loop until the second
+    // response has been parsed.
+    await expect(request()).resolves.toBe("response 2");
+    expect(pingTimedOut).toBe(false);
+  } finally {
+    client.close();
+    server.close();
+  }
+});
+
+// Same nested loop, with a body larger than the stream window and a consumer that pauses the
+// stream on every chunk: the resume comes from inside the nested loop and must still open the
+// window, or the peer never sends the rest.
+it("client replenishes a stream resumed from a nested event loop", async () => {
+  const BIG = 400 * 1024;
+  const server = http2.createServer();
+  server.on("stream", (stream, headers) => {
+    stream.respond({ ":status": 200 });
+    if (headers[":path"] === "/big") stream.end(Buffer.alloc(BIG, "x"));
+    else setImmediate(() => stream.end("small"));
+  });
+  await new Promise(r => server.listen(0, r));
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  try {
+    await new Promise((resolve, reject) => {
+      client.on("connect", resolve);
+      client.on("error", reject);
+    });
+    const small = await new Promise((resolve, reject) => {
+      const req = client.request({ ":path": "/" });
+      req.setEncoding("utf8");
+      let body = "";
+      req.on("data", chunk => (body += chunk));
+      req.on("end", () => resolve(body));
+      req.on("error", reject);
+      req.end();
+    });
+    expect(small).toBe("small");
+    // Failure path only: the matcher below spins the loop synchronously, so the runner's own
+    // timeout cannot interrupt a stall; destroying the session settles the promise instead.
+    const watchdog = setTimeout(() => client.destroy(new Error("stream stalled")), 8000);
+    let pauses = 0;
+    await expect(
+      new Promise((resolve, reject) => {
+        const req = client.request({ ":path": "/big" });
+        req.end();
+        let total = 0;
+        req.on("data", chunk => {
+          total += chunk.length;
+          pauses++;
+          req.pause();
+          // A timer, not setImmediate: immediates queued under a nested wait only run once
+          // something else wakes the loop.
+          setTimeout(() => req.resume(), 0);
+        });
+        req.on("end", () => resolve(total));
+        req.on("error", reject);
+      }),
+    ).resolves.toBe(BIG);
+    clearTimeout(watchdog);
+    expect(pauses).toBeGreaterThan(1);
+  } finally {
+    client.close();
+    server.close();
+  }
+});
+
+// The other direction: bytes a transport hands back synchronously while a frame callback is still
+// running are not a nested event loop and must wait for that callback to return, so a server
+// 'stream' handler never runs inside another one.
+it("frame callbacks do not nest over a synchronous in-memory transport", async () => {
+  let clientSide, serverSide;
+  clientSide = new Duplex({
+    read() {},
+    write(chunk, enc, cb) {
+      serverSide.push(chunk);
+      cb();
+    },
+    final(cb) {
+      serverSide.push(null);
+      cb();
+    },
+  });
+  serverSide = new Duplex({
+    read() {},
+    write(chunk, enc, cb) {
+      clientSide.push(chunk);
+      cb();
+    },
+    final(cb) {
+      clientSide.push(null);
+      cb();
+    },
+  });
+  const server = http2.createServer();
+  const events = [];
+  let depth = 0;
+  server.on("stream", (stream, headers) => {
+    depth++;
+    events.push(`enter ${headers[":path"]} depth=${depth}`);
+    stream.respond({ ":status": 200 });
+    stream.end("ok");
+    events.push(`exit ${headers[":path"]} closed=${stream.closed}`);
+    depth--;
+  });
+  server.emit("connection", serverSide);
+  const client = http2.connect("http://localhost", { createConnection: () => clientSide });
+  try {
+    const get = path =>
+      new Promise((resolve, reject) => {
+        const req = client.request({ ":path": path });
+        req.setEncoding("utf8");
+        let body = "";
+        req.on("data", chunk => (body += chunk));
+        req.on("end", () => resolve(body));
+        req.on("error", reject);
+        req.end();
+      });
+    // The second request goes out from the first response's 'response' event, i.e. while the
+    // server is still inside the write issued by its first 'stream' handler.
+    const both = await new Promise((resolve, reject) => {
+      const req = client.request({ ":path": "/1" });
+      req.setEncoding("utf8");
+      let body = "";
+      let second;
+      req.on("response", () => {
+        second = get("/2");
+      });
+      req.on("data", chunk => (body += chunk));
+      req.on("end", () => second.then(body2 => resolve(body + body2), reject));
+      req.on("error", reject);
+      req.end();
+    });
+    expect(both).toBe("okok");
+    expect(events).toEqual(["enter /1 depth=1", "exit /1 closed=false", "enter /2 depth=1", "exit /2 closed=false"]);
+  } finally {
+    client.close();
+  }
+});
+
 describe("frames issued from inside a user-supplied Duplex transport's _write", () => {
   // A transport wrapper that sends a frame of its own from its _write (a keepalive ping, a
   // settings update, a goaway, another request) must see that frame sequenced AFTER the unit

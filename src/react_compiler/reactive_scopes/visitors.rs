@@ -9,9 +9,9 @@
 
 use crate::diagnostics::CompilerError;
 use crate::hir::{
-    EvaluationOrder, FunctionId, InstructionValue, ParamPattern, Place, PrunedReactiveScopeBlock,
-    ReactiveBlock, ReactiveFunction, ReactiveInstruction, ReactiveScopeBlock, ReactiveStatement,
-    ReactiveTerminal, ReactiveTerminalStatement, ReactiveValue, environment::Environment,
+    EvaluationOrder, FunctionId, InstructionValue, Place, PrunedReactiveScopeBlock, ReactiveBlock,
+    ReactiveFunction, ReactiveInstruction, ReactiveScopeBlock, ReactiveStatement, ReactiveTerminal,
+    ReactiveTerminalStatement, ReactiveValue, environment::Environment,
 };
 
 // =============================================================================
@@ -46,10 +46,7 @@ pub(crate) trait ReactiveFunctionVisitor {
     fn visit_hir_function(&self, func_id: FunctionId, state: &mut Self::State) {
         let inner_func = &self.env().functions[func_id.0 as usize];
         for param in &inner_func.params {
-            let place = match param {
-                ParamPattern::Place(p) => p,
-                ParamPattern::Spread(s) => &s.place,
-            };
+            let place = param.place();
             self.visit_param(place, state);
         }
         let block_ids: Vec<_> = inner_func.body.blocks.keys().copied().collect();

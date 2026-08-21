@@ -21,7 +21,7 @@ use bun_jsc::JsCell;
 use bun_sys::{self as sys, Fd};
 use bun_uws::{AnyResponse, WriteResult};
 
-use crate::server::jsc::{EventLoopHandle, Task, VirtualMachine};
+use crate::server::jsc::{EventLoopHandle, VirtualMachine};
 
 bun_output::declare_scope!(FileResponseStream, hidden);
 
@@ -46,7 +46,6 @@ pub(crate) struct FileResponseStream {
 
     mode: Cell<Mode>,
     reader: JsCell<BufferedReader>,
-    max_size: Cell<Option<u64>>,
     sendfile: JsCell<Sendfile>,
 
     state: Cell<State>,
@@ -146,7 +145,6 @@ impl FileResponseStream {
                     Mode::Reader
                 }),
                 reader: JsCell::new(BufferedReader::init::<FileResponseStream>()),
-                max_size: Cell::new(None),
                 sendfile: JsCell::new(Sendfile::default()),
                 state: Cell::new(State::default()),
             }));
@@ -192,7 +190,6 @@ impl FileResponseStream {
         }
 
         // BufferedReader path
-        this_ref.max_size.set(opts.length);
         this_ref.reader.with_mut(|reader| {
             reader.flags.remove(ReaderFlags::CLOSE_HANDLE); // we own fd via auto_close
             reader.flags.set(ReaderFlags::POLLABLE, opts.pollable);
@@ -203,6 +200,8 @@ impl FileResponseStream {
             if opts.file_type == FileType::Socket {
                 reader.flags.insert(ReaderFlags::SOCKET);
             }
+            // The reader reports the end of the body as EOF, so `on_read_chunk` ends the response there like at a real EOF.
+            reader.set_limit(opts.length.map(|len| len as usize));
             reader.set_parent(this.cast::<c_void>());
         });
 
@@ -268,34 +267,10 @@ impl FileResponseStream {
         unsafe { &mut *self.reader.as_ptr() }
     }
 
-    fn on_read_chunk(&self, chunk_: &[u8], state_: ReadState) -> bool {
+    fn on_read_chunk(&self, chunk: &[u8], state: ReadState) -> bool {
         if self.state.get().contains(State::RESPONSE_DONE) {
             return false;
         }
-
-        let (chunk, state) = 'brk: {
-            if let Some(max) = self.max_size.get() {
-                let c = &chunk_[..chunk_.len().min(usize::try_from(max).unwrap_or(usize::MAX))];
-                let remaining = max.saturating_sub(c.len() as u64);
-                self.max_size.set(Some(remaining));
-                if state_ != ReadState::Eof && remaining == 0 {
-                    #[cfg(not(unix))]
-                    // SAFETY: reader entry point; `pause()` does not call back
-                    // into this object.
-                    self.reader_mut().pause();
-                    // Ref for the queued task; adopted in the
-                    // `FileResponseStreamEof` dispatch/shutdown arms.
-                    self.ref_();
-                    // SAFETY: `vm.event_loop()` returns the live JS loop.
-                    unsafe {
-                        (*self.vm.get().event_loop()).enqueue_task(Task::init(self.as_ptr()));
-                    }
-                    break 'brk (c, ReadState::Eof);
-                }
-                break 'brk (c, state_);
-            }
-            (chunk_, state_)
-        };
 
         let resp = self.resp.get();
         resp.timeout(self.idle_timeout.get());
@@ -479,6 +454,24 @@ impl FileResponseStream {
         let resp = self.resp.get();
         resp.end_send_file(self.sendfile.get().offset, resp.should_close_connection());
         (self.on_complete.get())(self.ctx.get(), resp);
+        // `end_send_file` bypasses every shouldCloseConnection() gate: it does
+        // not go through internalEnd, and the onWritable gate is skipped
+        // because this frame returns `false` to it. Run the gate here — after
+        // `on_complete`, which must see a live socket — so Connection: close
+        // and the graceful-stop close-when-idle mark actually close.
+        //
+        // `resp` is still valid here: usockets never frees a socket
+        // synchronously — us_socket_close only links it onto the loop's
+        // closed list, freed by us_internal_free_closed_sockets at the end of
+        // the loop iteration — so the allocation outlives this frame no
+        // matter what `on_complete` did (the same invariant that makes
+        // passing `resp` to `on_complete` after the end sound). It is still
+        // *this* HTTP socket: an upgrade (us_socket_adopt) is only reachable
+        // from a live in-flight request, and this one just completed. And if
+        // anything in the frame closed it, the shim's leading
+        // us_socket_is_closed check returns before touching the destructed
+        // ext. Only `finish()` runs after this, and it never touches `resp`.
+        resp.close_if_done_and_marked();
         self.finish();
     }
 
@@ -510,11 +503,7 @@ impl FileResponseStream {
         self.finish();
     }
 
-    /// Clear all uWS callbacks pointing at us. Must run while `resp` is still
-    /// live (i.e., before `resp.end()` / `end_send_file()` / `force_close()` give
-    /// the socket back to uWS, which may free it on the next loop tick). After
-    /// this runs, `finish()` — which can be reached from the deferred `eof_task`
-    /// — will not touch `resp` again.
+    /// Clears the uWS callbacks pointing at us; runs before `resp.end()` / `end_send_file()` / `force_close()` hand the socket back to uWS, after which nothing here touches `resp`.
     fn detach_resp(&self) {
         if self.state.get().contains(State::RESP_DETACHED) {
             return;
@@ -543,6 +532,10 @@ impl FileResponseStream {
             let resp = self.resp.get();
             resp.end_without_body(resp.should_close_connection());
             (self.on_complete.get())(self.ctx.get(), resp);
+            // This end runs uncorked (reader callbacks), so no cork or parser
+            // gate will run the close check; do it here, after `on_complete`
+            // like `end_sendfile`, so the callbacks see a live socket.
+            resp.close_if_done_and_marked();
         }
 
         // Release the owner ref from `heap::into_raw` in `start()`. Every entry
@@ -583,7 +576,7 @@ bun_io::impl_buffered_reader_parent! {
     has_on_read_chunk = true;
     on_read_chunk   = |this, chunk, state| {
         let _guard = bun_ptr::ScopedRef::<Self>::new(this);
-        (*this).on_read_chunk(chunk, state)
+        (*this).on_read_chunk(&chunk, state)
     };
     on_reader_done  = |this| {
         let _guard = bun_ptr::ScopedRef::<Self>::new(this);
@@ -595,6 +588,9 @@ bun_io::impl_buffered_reader_parent! {
     };
     loop_           = |this| (*this).r#loop();
     event_loop      = |this| (*this).event_loop_handle.get().as_event_loop_ctx();
+    // The reader still uses itself (embedded here) after dispatching the `on_reader_done` that releases the owning ref.
+    ref_            = |this| (*this).ref_();
+    deref           = |this| Self::deref(this);
 }
 
 impl Drop for FileResponseStream {
@@ -635,8 +631,4 @@ fn can_sendfile(resp: AnyResponse, file_type: FileType, length: Option<u64>) -> 
         // Below ~1MB the syscall + dual-readiness overhead doesn't pay off.
         len >= (1 << 20)
     }
-}
-
-impl bun_event_loop::Taskable for FileResponseStream {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FileResponseStreamEof;
 }

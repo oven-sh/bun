@@ -397,11 +397,6 @@ var require_constants = __commonJS({
 // node_modules/wasi-js/dist/wasi.js
 var require_wasi = __commonJS({
   "node_modules/wasi-js/dist/wasi.js"(exports) {
-    var __importDefault =
-      (exports && exports.__importDefault) ||
-      function (mod) {
-        return mod && mod.__esModule ? mod : { default: mod };
-      };
     let fs;
     Object.defineProperty(exports, "__esModule", { value: true });
     var SC_OPEN_MAX = 32768;
@@ -1792,8 +1787,12 @@ const {
   validateInt32,
   validateObject,
   validateString,
-  validateUndefined,
 } = require("internal/validators");
+
+// node's validateUndefined (lib/internal/validators.js); internal/validators no longer exports it.
+function validateUndefined(value, name) {
+  if (value !== undefined) throw $ERR_INVALID_ARG_TYPE(name, "undefined", value);
+}
 
 const kExitCode = Symbol("kExitCode");
 const kSetMemory = Symbol("kSetMemory");

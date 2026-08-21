@@ -44,6 +44,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
             inspector_server_id: _,
             configuration_hash_key: _,
             vm: _,
+            vm_handle: _,
             server: _,
             router: _,
             route_bundles: _,

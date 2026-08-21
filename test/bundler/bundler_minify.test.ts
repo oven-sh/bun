@@ -1398,6 +1398,80 @@ describe("bundler", () => {
       expect(code).toMatch(/=>\s*\{\s*return a \+ 1;?\s*\}/);
     },
   });
+
+  // A single-use `let` is substituted into whichever child of the next
+  // expression reads it. `a` is used where the substitution must happen;
+  // `keep` where a side effect in between must block it.
+  itBundled("minify/SingleUseSubstitutionIntoEachChild", {
+    files: {
+      "/entry.js": /* js */ `
+        export function newTarget(c) { let a = c; return new a(); }
+        export function newArgs(c, v) { let a = v; return new c(1, a); }
+        export function spread(v) { let a = v; return [...a]; }
+        export async function awaited(v) { let a = v; return await a; }
+        export function* yielded(v) { let a = v; yield a; }
+        export function dynamicImport(v) { let a = v; return import(a); }
+        export function unary(v) { let a = v; return -a; }
+        export function dot(v) { let a = v; return a.b; }
+        export function binaryLeft(v, w) { let a = v; return a + w; }
+        export function binaryRight(v, w) { let a = v; return w + a; }
+        export function ifTest(v, w, u) { let a = v; return a ? w : u; }
+        export function ifYes(v, w, u) { let a = v; return w ? a : u; }
+        export function ifNo(v, w, u) { let a = v; return w ? u : a; }
+        export function indexTarget(v, i) { let a = v; return a[i]; }
+        export function indexIndex(v, i) { let a = i; return v[a]; }
+        export function callTarget(v) { let a = v; return a(); }
+        export function array(v) { let a = v; return [1, a, 2]; }
+        export function objectValue(v) { let a = v; return { k: 1, v: a }; }
+        export function objectComputedKey(v) { let a = v; return { [a]: 1 }; }
+        export function templateTag(t) { let a = t; return a\`x\`; }
+        export function templateParts(v) { let a = v; return \`1-\${v}-\${a}\`; }
+
+        export function newArgsWithSideEffect(c) { let keep = g(); return new c(keep); }
+        export function* yieldWithoutOperand(v) { let keep = v; yield; return keep; }
+        export function mutatingUnary(v) { let keep = v; return keep++; }
+        export function binaryRightAfterSideEffect(w) { let keep = g(); return w.z + keep; }
+        export function updateAssignment() { let keep = g(); total += keep; }
+        export function ifBranchWithSideEffect(w, u) { let keep = g(); return w ? keep : u; }
+        export function optionalCallArg() { let keep = g(); return f?.(keep); }
+        export function callTargetChangingThis(o) { let keep = o.m; return keep(); }
+        export function objectValueAfterComputedKey() { let keep = g(); return { [k()]: 1, v: keep }; }
+        export function templatePartAfterSideEffect() { let keep = g(); return \`\${h()}-\${keep}\`; }
+      `,
+    },
+    minifySyntax: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).not.toContain("let a");
+      for (const substituted of [
+        "new c;",
+        "new c(1, v)",
+        "[...v]",
+        "await v",
+        "yield v",
+        "import(v)",
+        "return -v",
+        "return v.b",
+        "return v + w",
+        "return w + v",
+        "v ? w : u",
+        "w ? v : u",
+        "w ? u : v",
+        "return v()",
+        "[1, v, 2]",
+        "{ k: 1, v }",
+        "{ [v]: 1 }",
+        "t`x`",
+        "`1-${v}-${v}`",
+      ]) {
+        expect(code).toContain(substituted);
+      }
+      // indexTarget and indexIndex both end up here.
+      expect(code.match(/return v\[i\];/g)).toHaveLength(2);
+      expect(code.match(/let keep = /g)).toHaveLength(10);
+    },
+  });
 });
 
 // The runtime transpiler (`bun run`/`bun test`) implicitly enables

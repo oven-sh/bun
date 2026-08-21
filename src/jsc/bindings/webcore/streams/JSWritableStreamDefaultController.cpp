@@ -81,7 +81,7 @@ static JSC::JSPromise* invokePromiseReturningMethodFast(JSC::VM& vm, JSC::JSGlob
 
 // The [[writeAlgorithm]] dispatch. The reachable SinkKind set on a writable default
 // controller is {JavaScript, Nothing, Transform} (CrossRealm: transferable streams are not
-// implemented, so setUpCrossRealmTransformWritable never creates one).
+// implemented, so nothing creates one).
 // Returns nullptr with no exception pending when the write completed synchronously with a
 // non-thenable result: the caller queues the upon-fulfillment handler without a wrapper promise.
 static JSC::JSPromise* performWriteAlgorithm(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSWritableStreamDefaultController* controller, JSC::JSValue chunk)
@@ -183,7 +183,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSWritableStreamDefaultControllerPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSWritableStreamDefaultControllerPrototype* ptr = new (NotNull, JSC::allocateCell<JSWritableStreamDefaultControllerPrototype>(vm)) JSWritableStreamDefaultControllerPrototype(vm, globalObject, structure);
+        JSWritableStreamDefaultControllerPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSWritableStreamDefaultControllerPrototype))) JSWritableStreamDefaultControllerPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -197,7 +197,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -234,9 +234,9 @@ JSC_DEFINE_HOST_FUNCTION(jsWritableStreamDefaultControllerPrototype_inspectCusto
 void JSWritableStreamDefaultControllerPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSWritableStreamDefaultController::info(), JSWritableStreamDefaultControllerPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSWritableStreamDefaultController::info(), JSWritableStreamDefaultControllerPrototypeTableValues, *this);
     Bun::WebStreams::installInspectCustom(vm, this, jsWritableStreamDefaultControllerPrototype_inspectCustom);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 template<> const ClassInfo JSWritableStreamDefaultControllerConstructor::s_info = { "WritableStreamDefaultController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWritableStreamDefaultControllerConstructor) };
@@ -249,11 +249,7 @@ template<> JSValue JSWritableStreamDefaultControllerConstructor::prototypeForStr
 
 template<> void JSWritableStreamDefaultControllerConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(0), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "WritableStreamDefaultController"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSWritableStreamDefaultController::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 0, "WritableStreamDefaultController"_s, JSWritableStreamDefaultController::prototype(vm, globalObject));
 }
 
 const ClassInfo JSWritableStreamDefaultController::s_info = { "WritableStreamDefaultController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWritableStreamDefaultController) };
@@ -285,7 +281,7 @@ void JSWritableStreamDefaultController::destroy(JSCell* cell)
 
 Structure* JSWritableStreamDefaultController::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 JSObject* JSWritableStreamDefaultController::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -307,12 +303,7 @@ JSValue JSWritableStreamDefaultController::getConstructor(VM& vm, const JSGlobal
 
 GCClient::IsoSubspace* JSWritableStreamDefaultController::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSWritableStreamDefaultController, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForWritableStreamDefaultController.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForWritableStreamDefaultController = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForWritableStreamDefaultController.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForWritableStreamDefaultController = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSWritableStreamDefaultController, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForWritableStreamDefaultController, m_subspaceForWritableStreamDefaultController));
 }
 
 template<typename Visitor>
@@ -564,8 +555,10 @@ void writableStreamDefaultControllerError(JSGlobalObject* globalObject, JSWritab
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* stream = controller->m_stream.get();
     ASSERT(stream->m_state == WritableStreamState::Writable);
+    writableStreamStartErroring(globalObject, stream, error);
+    // After StartErroring, not before as in the spec: it reaches an in-flight codec chunk through the algorithms.
     writableStreamDefaultControllerClearAlgorithms(controller);
-    RELEASE_AND_RETURN(scope, writableStreamStartErroring(globalObject, stream, error));
+    RETURN_IF_EXCEPTION(scope, );
 }
 
 void writableStreamDefaultControllerErrorIfNeeded(JSGlobalObject* globalObject, JSWritableStreamDefaultController* controller, JSValue error)

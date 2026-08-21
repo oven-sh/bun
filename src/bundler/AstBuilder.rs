@@ -387,7 +387,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                         self.record_export(st.default_name.loc, b"default", default_ref)?;
                         // convertStmt: AstBuilder only emits the `.expr` arm
                         // (`registerClientReference(...)`), which is not
-                        // `canBeMoved()` — generate a temp const binding and
+                        // `can_be_moved()` — generate a temp const binding and
                         // reference it from `export_props`.
                         // SAFETY: `StmtOrExpr` lives in the arena and has no
                         // Drop fields, so a bitwise read is a plain value copy.

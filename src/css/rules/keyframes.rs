@@ -104,7 +104,7 @@ impl KeyframesName {
 impl KeyframesName {
     pub fn parse(input: &mut css::Parser) -> css::Result<KeyframesName> {
         use bun_core::strings;
-        let tok = input.next()?.clone();
+        let tok = *input.next()?;
         match tok {
             css::Token::Ident(s) => {
                 // CSS-wide keywords without quotes throws an error.

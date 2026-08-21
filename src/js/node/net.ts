@@ -140,6 +140,13 @@ const kSetTOS = Symbol("kSetTOS");
 const kSetKeepAlive = Symbol("kSetKeepAlive");
 const kSyncWriteFd = Symbol("kSyncWriteFd");
 const kSetKeepAliveInitialDelay = Symbol("kSetKeepAliveInitialDelay");
+
+// The keepalive delay is stored in whole seconds, as node does for libuv. Bun's
+// native setKeepAlive takes an int32 of milliseconds, so convert at the call
+// and clamp: node never rejects a large delay, it passes the seconds on.
+function keepAliveDelayMs(seconds) {
+  return MathMin(seconds * 1000, 2147483647);
+}
 const kConnectOptions = Symbol("connect-options");
 const kAttach = Symbol("kAttach");
 const kCloseRawConnection = Symbol("kCloseRawConnection");
@@ -503,7 +510,7 @@ const SocketHandlers: SocketHandler = {
     }
 
     if (self[kSetKeepAlive]) {
-      socket.setKeepAlive(true, self[kSetKeepAliveInitialDelay] * 1000);
+      socket.setKeepAlive(true, keepAliveDelayMs(self[kSetKeepAliveInitialDelay]));
     }
 
     // A TOS value set before the connection existed (setTypeOfService before
@@ -1216,7 +1223,7 @@ function onconnection(err, clientHandle) {
   if (self.keepAlive && clientHandle.setKeepAlive) {
     _socket[kSetKeepAlive] = true;
     _socket[kSetKeepAliveInitialDelay] = self.keepAliveInitialDelay;
-    clientHandle.setKeepAlive(true, self.keepAliveInitialDelay * 1000);
+    clientHandle.setKeepAlive(true, keepAliveDelayMs(self.keepAliveInitialDelay));
   }
 
   self._connections++;
@@ -1585,8 +1592,8 @@ function Socket(options?) {
 
   this[kSetNoDelay] = Boolean(noDelay);
   this[kSetKeepAlive] = Boolean(keepAlive);
-  // Node stores whole seconds here (libuv's unit); call sites convert back to
-  // milliseconds for Bun's native _handle.setKeepAlive.
+  // Node stores whole seconds here (libuv's unit); keepAliveDelayMs converts
+  // for Bun's native _handle.setKeepAlive.
   this[kSetKeepAliveInitialDelay] = MathMax(0, ~~(keepAliveInitialDelay / 1000));
 
   this[khandlers] = SocketHandlers2;
@@ -1873,7 +1880,7 @@ Socket.prototype[kAttach] = function (port, socket) {
   }
 
   if (this[kSetKeepAlive]) {
-    socket.setKeepAlive(true, this[kSetKeepAliveInitialDelay] * 1000);
+    socket.setKeepAlive(true, keepAliveDelayMs(this[kSetKeepAliveInitialDelay]));
   }
 
   if (!this[kupgraded]) {
@@ -2596,8 +2603,8 @@ Socket.prototype.resetAndDestroy = function resetAndDestroy() {
 Socket.prototype.setKeepAlive = function setKeepAlive(enable = false, initialDelayMsecs = 0) {
   enable = Boolean(enable);
   // Node truncates to whole seconds (libuv's TCP_KEEPIDLE unit) and stores
-  // seconds in kSetKeepAliveInitialDelay; Bun's native setKeepAlive takes
-  // milliseconds, so call sites convert back with * 1000.
+  // seconds in kSetKeepAliveInitialDelay; keepAliveDelayMs converts for the
+  // native call.
   const initialDelay = MathMax(0, ~~(initialDelayMsecs / 1000));
 
   if (!this._handle) {
@@ -2611,7 +2618,7 @@ Socket.prototype.setKeepAlive = function setKeepAlive(enable = false, initialDel
   if (enable !== this[kSetKeepAlive] || (enable && this[kSetKeepAliveInitialDelay] !== initialDelay)) {
     this[kSetKeepAlive] = enable;
     this[kSetKeepAliveInitialDelay] = initialDelay;
-    this._handle.setKeepAlive(enable, initialDelay * 1000);
+    this._handle.setKeepAlive(enable, keepAliveDelayMs(initialDelay));
   }
   return this;
 };
@@ -3382,7 +3389,7 @@ function afterConnect(status, handle, req, readable, writable) {
     }
 
     if (self[kSetKeepAlive] && self._handle.setKeepAlive) {
-      self._handle.setKeepAlive(true, self[kSetKeepAliveInitialDelay] * 1000);
+      self._handle.setKeepAlive(true, keepAliveDelayMs(self[kSetKeepAliveInitialDelay]));
     }
 
     self.emit("connect");

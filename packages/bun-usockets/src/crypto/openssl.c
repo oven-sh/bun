@@ -2974,6 +2974,14 @@ int us_socket_server_name_reject_unauthorized(struct us_socket_t *s) {
   return us_ssl_ctx_reject_unauthorized(SSL_get_SSL_CTX(s_ssl(s)));
 }
 
+int us_socket_server_name_request_cert(struct us_socket_t *s) {
+  if (!s->ssl || us_ctx_sni_policy_ex_idx < 0) return 0;
+  SSL_CTX *ctx = SSL_get_SSL_CTX(s_ssl(s));
+  if (!ctx) return 0;
+  uintptr_t packed = (uintptr_t)SSL_CTX_get_ex_data(ctx, us_ctx_sni_policy_ex_idx);
+  return (packed & US_SNI_POLICY_REQUEST_CERT) != 0;
+}
+
 /* Extracts the host_name from the ClientHello's server_name extension.
  * Returns the length written to `out` (NUL-terminated), or 0 if absent /
  * malformed. BoringSSL does document SSL_get_servername as usable inside

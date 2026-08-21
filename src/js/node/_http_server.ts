@@ -1769,18 +1769,14 @@ function getNodeHTTPServerSocket() {
       return typeof name === "string" && name.length > 0 ? name : false;
     }
 
-    // Like Node's server-side TLSSocket: `authorized` is only ever true when the
-    // server requested a client certificate and its verification succeeded;
-    // `authorizationError` carries the X.509 verification error code otherwise.
+    // Like Node: false / null unless the context this connection was accepted under requested a client certificate.
     get authorized() {
       if (!this.encrypted) return undefined;
-      if (!this.server?.[tlsSymbol]?.requestCert) return false;
       return this[kHandle]?.peerCertVerified === true;
     }
 
     get authorizationError() {
       if (!this.encrypted) return undefined;
-      if (!this.server?.[tlsSymbol]?.requestCert) return null;
       return this[kHandle]?.authorizationError ?? null;
     }
 

@@ -329,6 +329,27 @@ impl<'a> URL<'a> {
         Ok(OwnedURL { href: owned })
     }
 
+    /// An S3 endpoint, `[scheme://]host[:port][/prefix]` with `https` as the default scheme,
+    /// normalized by WTF::URL so that `host_with_path()` names the host `new URL(endpoint)`
+    /// names. `parse` alone ends the authority only at `/` and `?`, so it reads
+    /// `http://a:1#@b:2` and `http://a:1\@b:2` as host `b:2`.
+    ///
+    /// Returns `None` when `parse` finds no host, and keeps the input as written when WTF::URL
+    /// rejects it, so this accepts exactly the endpoints `parse` accepts.
+    pub fn from_s3_endpoint(input: &[u8]) -> Option<OwnedURL> {
+        let as_written = URL::parse(input);
+        if as_written.host_with_path().is_empty() {
+            return None;
+        }
+        let normalized = if as_written.protocol.is_empty() {
+            let with_scheme = [b"https://".as_slice(), input].concat();
+            URL::from_string(&BunString::borrow_utf8(&with_scheme))
+        } else {
+            URL::from_string(&BunString::borrow_utf8(input))
+        };
+        Some(normalized.unwrap_or_else(|_| OwnedURL::from_href(Box::from(input))))
+    }
+
     pub fn display_protocol(&self) -> &[u8] {
         if !self.protocol.is_empty() {
             return self.protocol;

@@ -8,7 +8,6 @@ const path = require("node:path");
 const {
   ArrayPrototypeJoin,
   ArrayPrototypeMap,
-  ArrayPrototypePush,
   ArrayPrototypeSlice,
   RegExpPrototypeExec,
   RegExpPrototypeSymbolReplace,
@@ -299,8 +298,6 @@ function stopSigintWatchdog() {
 // ---- internalBinding('util') ----------------------------------------------
 
 const ALL_PROPERTIES = 0;
-const ONLY_ENUMERABLE = 2;
-const SKIP_STRINGS = 8;
 const SKIP_SYMBOLS = 16;
 
 const getOwnNonIndexProperties = $newCppFunction("UtilInspect.cpp", "jsFunctionGetOwnNonIndexProperties", 2);

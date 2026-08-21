@@ -50,6 +50,16 @@ describe("undici", () => {
       expect(json.data).toBe("Hello world");
     });
 
+    it("should stream a node:stream Readable body", async () => {
+      const { Readable } = require("node:stream");
+      const { body } = await request(`${hostUrl}/post`, {
+        method: "POST",
+        body: Readable.from([Buffer.from("Hello "), Buffer.from([0xef, 0xbc, 0xb7]), "world"]),
+      });
+      const json = (await body.json()) as { data: string; headers: Record<string, string> };
+      expect(json.data).toBe("Hello \uff37world");
+    });
+
     it("should accept a URL class object", async () => {
       const { body } = await request(new URL(`${hostUrl}/get`));
       expect(body).toBeDefined();

@@ -3321,28 +3321,38 @@ describe("bundler", () => {
       }),
     },
   });
+  // In CommonJS output the names are reserved, so the injected declarations do not shadow
+  // the __dirname parameter of the wrapper. A module that only reaches the name through
+  // eval() therefore sees the directory of the output file (out/).
   itBundled("edgecase/DirnameFilenamePerModuleCJSFormat", {
     files: {
       "/entry.ts": /* ts */ `
         import * as a from "./a/a";
         import * as b from "./b/b";
+        import { viaEval } from "./e/e";
         ${dirnameEntryPrelude}
         console.log(JSON.stringify({
           entry: [rel(__dirname), rel(__filename)],
           a: [rel(a.dir()), rel(a.file())],
           b: [rel(b.dir()), rel(b.file())],
+          wrapper: rel(viaEval()),
         }));
       `,
       "/a/a.ts": dirnameModule,
       "/b/b.ts": dirnameModule,
+      "/e/e.ts": /* ts */ `
+        export function viaEval() { return eval("__dirname"); }
+      `,
     },
     target: "bun",
     format: "cjs",
+    outdir: "/out",
     run: {
       stdout: JSON.stringify({
         entry: ["", "/entry.ts"],
         a: ["/a", "/a/a.ts"],
         b: ["/b", "/b/b.ts"],
+        wrapper: "/out",
       }),
     },
   });

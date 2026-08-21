@@ -116,14 +116,12 @@ pub(crate) fn get_credentials_with_options(
                         if str.tag() != BunStringTag::Empty && str.tag() != BunStringTag::Dead {
                             let utf8 = str.to_utf8();
                             let endpoint = utf8.slice();
-                            if let Some(endpoint_url) = URL::from_s3_endpoint(endpoint) {
-                                let url = endpoint_url.url();
-                                new_credentials.credentials.endpoint =
-                                    Box::<[u8]>::from(url.host_with_path());
+                            if let Some(parsed) = URL::parse_s3_endpoint(endpoint) {
+                                new_credentials.credentials.endpoint = parsed.host_with_path;
 
                                 // Default to https://
                                 // Only use http:// if the endpoint specifically starts with 'http://'
-                                new_credentials.credentials.insecure_http = url.is_http();
+                                new_credentials.credentials.insecure_http = parsed.is_http;
 
                                 new_credentials.changed_credentials = true;
                             } else if !endpoint.is_empty() {

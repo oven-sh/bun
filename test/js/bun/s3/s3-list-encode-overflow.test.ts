@@ -106,6 +106,8 @@ describe("S3Client endpoint option", () => {
     "http://127.0.0.1:1\\@127.0.0.1:2",
     "http://127.0.0.1:1?@127.0.0.1:2",
     "http://user:p@ss@127.0.0.1:1",
+    "http://user:@127.0.0.1:1",
+    "http://user@127.0.0.1:1",
     "http://127.0.0.1:1/x/../prefix/",
     "http://127.1:1",
     "https://acct.supabase.co/storage/v1/s3",

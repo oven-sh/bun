@@ -274,14 +274,13 @@ impl Loader {
 
             let mut endpoint: Box<[u8]> = Box::default();
             let mut insecure_http = false;
-            if let Some(endpoint_url) = self
+            if let Some(parsed) = self
                 .get(b"S3_ENDPOINT")
                 .or_else(|| self.get(b"AWS_ENDPOINT"))
-                .and_then(URL::from_s3_endpoint)
+                .and_then(URL::parse_s3_endpoint)
             {
-                let url = endpoint_url.url();
-                endpoint = Box::from(url.host_with_path());
-                insecure_http = url.is_http();
+                endpoint = parsed.host_with_path;
+                insecure_http = parsed.is_http;
             }
 
             let bucket: Box<[u8]> = self

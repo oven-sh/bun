@@ -7,7 +7,7 @@ use core::cell::RefCell;
 
 use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
 use bun_core::{self, fmt as bun_fmt};
-use bun_core::{String as BunString, Tag as BunStringTag, strings};
+use bun_core::{OwnedString, String as BunString, Tag as BunStringTag, strings};
 use bun_paths::resolve_path::{self, platform};
 use bun_wyhash::hash as wyhash;
 
@@ -149,6 +149,30 @@ pub mod whatwg {
             URL__deinit(self)
         }
     }
+
+    /// A `URL` this handle owns; `Drop` frees it.
+    pub struct Parsed(core::ptr::NonNull<URL>);
+
+    impl Parsed {
+        pub fn from_utf8(input: &[u8]) -> Option<Self> {
+            URL::from_utf8(input).map(Self)
+        }
+    }
+
+    impl core::ops::Deref for Parsed {
+        type Target = URL;
+        fn deref(&self) -> &URL {
+            // SAFETY: `from_utf8` returned a live heap `WTF::URL` that only `Drop` frees.
+            unsafe { self.0.as_ref() }
+        }
+    }
+
+    impl Drop for Parsed {
+        fn drop(&mut self) {
+            // SAFETY: this handle is the only owner of the `WTF::URL`, so it is deleted once.
+            unsafe { self.0.as_mut() }.deinit();
+        }
+    }
 }
 // Re-export the free helpers at crate root so lower-tier callers can write
 // `bun_url::join(...)` / `bun_url::href_from_string(...)` (install, http, bake, js_parser).
@@ -232,6 +256,13 @@ impl OwnedURL {
     pub fn from_href(href: Box<[u8]>) -> Self {
         Self { href }
     }
+}
+
+/// What `S3Credentials` keeps of an endpoint. See `URL::parse_s3_endpoint`.
+pub struct S3Endpoint {
+    /// `host[:port][/prefix]`, the form `URL::host_with_path` returns.
+    pub host_with_path: Box<[u8]>,
+    pub is_http: bool,
 }
 
 impl<'a> URL<'a> {
@@ -329,25 +360,40 @@ impl<'a> URL<'a> {
         Ok(OwnedURL { href: owned })
     }
 
-    /// An S3 endpoint, `[scheme://]host[:port][/prefix]` with `https` as the default scheme,
-    /// normalized by WTF::URL so that `host_with_path()` names the host `new URL(endpoint)`
-    /// names. `parse` alone ends the authority only at `/` and `?`, so it reads
-    /// `http://a:1#@b:2` and `http://a:1\@b:2` as host `b:2`.
+    /// Reads an S3 endpoint, `[scheme://]host[:port][/prefix]` with `https` as the default
+    /// scheme, the way `new URL(endpoint)` reads it. Host, port and path are taken from WTF::URL,
+    /// which ends the authority at `#`, `\` and the last `@` and keeps credentials out of the
+    /// host. `parse` does neither: it reads `http://a:1#@b:2` as host `b:2`, and a normalized
+    /// `http://user@b:2/` as host `user@b:2`.
     ///
-    /// Returns `None` when `parse` finds no host, and keeps the input as written when WTF::URL
-    /// rejects it, so this accepts exactly the endpoints `parse` accepts.
-    pub fn from_s3_endpoint(input: &[u8]) -> Option<OwnedURL> {
+    /// Returns `None` when `parse` finds no host, and what `parse` reads when WTF::URL rejects
+    /// the input, so exactly the endpoints `parse` accepts are accepted.
+    pub fn parse_s3_endpoint(input: &[u8]) -> Option<S3Endpoint> {
         let as_written = URL::parse(input);
         if as_written.host_with_path().is_empty() {
             return None;
         }
         let normalized = if as_written.protocol.is_empty() {
-            let with_scheme = [b"https://".as_slice(), input].concat();
-            URL::from_string(&BunString::borrow_utf8(&with_scheme))
+            whatwg::Parsed::from_utf8(&[b"https://".as_slice(), input].concat())
         } else {
-            URL::from_string(&BunString::borrow_utf8(input))
+            whatwg::Parsed::from_utf8(input)
         };
-        Some(normalized.unwrap_or_else(|_| OwnedURL::from_href(Box::from(input))))
+        let Some(url) = normalized else {
+            return Some(S3Endpoint {
+                host_with_path: Box::from(as_written.host_with_path()),
+                is_http: as_written.is_http(),
+            });
+        };
+        let is_http = OwnedString::new(url.protocol()).eql_comptime(b"http");
+        // `whatwg::URL::hostname` is the host with its port.
+        let mut host_with_path = OwnedString::new(url.hostname()).to_utf8_bytes();
+        let pathname = OwnedString::new(url.pathname());
+        let path = pathname.to_utf8();
+        host_with_path.extend_from_slice(strings::without_suffix_comptime(path.slice(), b"/"));
+        Some(S3Endpoint {
+            host_with_path: host_with_path.into_boxed_slice(),
+            is_http,
+        })
     }
 
     pub fn display_protocol(&self) -> &[u8] {

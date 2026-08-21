@@ -1139,6 +1139,22 @@ pub(crate) unsafe fn __bun_fire_timer(
             crate::node::quic::QuicEndpoint::on_timer_fire(c);
             Ok(())
         }
+        EventLoopTimerTag::UvTimer => {
+            #[cfg(unix)]
+            {
+                use crate::napi::uv_posix::UvTimerNode;
+                let c: *mut UvTimerNode = owner!(UvTimerNode, event_loop_timer);
+                // SAFETY: per fn contract; the node of a started `uv_timer_t`.
+                unsafe { UvTimerNode::on_fire(c) }
+            }
+            #[cfg(not(unix))]
+            {
+                if cfg!(debug_assertions) {
+                    unreachable!("UvTimer timer on Windows, where addons get libuv's");
+                }
+                Ok(())
+            }
+        }
     };
     fired
 }

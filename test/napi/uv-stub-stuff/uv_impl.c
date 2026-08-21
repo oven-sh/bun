@@ -192,8 +192,9 @@ static napi_value test_tty_reset_mode_concurrent(napi_env env,
 }
 
 // ---------------------------------------------------------------------------
-// The loop-backed functions: uv_default_loop, uv_async_t, uv_queue_work, and
-// the header-only helpers around them. Every test below reports back through
+// The loop-backed functions: uv_default_loop, the uv_async_t, uv_idle_t,
+// uv_prepare_t, uv_check_t and uv_timer_t handles, uv_queue_work, and the
+// header-only helpers around them. Every test below reports back through
 // a JS callback `(event, a, b)` so the test can see the order of the
 // callbacks, and which thread and loop turn they ran on. The tests run these
 // in a child process: on a bun whose uv_* are still stubs they abort it.
@@ -249,6 +250,13 @@ static napi_value make_int32_array(napi_env env, const int32_t *values,
     napi_set_element(env, array, (uint32_t)i, value);
   }
   return array;
+}
+
+static void set_int32(napi_env env, napi_value object, const char *name,
+                      int32_t value) {
+  napi_value number;
+  napi_create_int32(env, value, &number);
+  napi_set_named_property(env, object, name, number);
 }
 
 static void get_args(napi_env env, napi_callback_info info, napi_value *args,
@@ -365,21 +373,52 @@ static napi_value test_loops(napi_env env, napi_callback_info info) {
   return result;
 }
 
-// testErrors(): [uv_async_init without a loop, uv_queue_work without a
-// work_cb, uv_cancel of a request that is not a work request], all UV_EINVAL.
+// testErrors(): the argument errors, all UV_EINVAL (see uv.test.ts for the
+// list). The two handles it initialises are closed again so that the process
+// exits; they are static because a handle must outlive its close.
 static void unused_async_cb(uv_async_t *handle) { (void)handle; }
+static void unused_idle_cb(uv_idle_t *handle) { (void)handle; }
+static void unused_timer_cb(uv_timer_t *handle) { (void)handle; }
+
+static uv_idle_t errors_idle;
+static uv_timer_t errors_timer;
 
 static napi_value test_errors(napi_env env, napi_callback_info info) {
+  uv_loop_t *loop = get_loop(env, false);
   uv_async_t async;
+  uv_check_t check;
+  uv_timer_t timer;
   uv_work_t work;
   uv_req_t not_work;
   memset(&not_work, 0, sizeof(not_work));
-  int32_t results[3] = {
+  if (uv_idle_init(loop, &errors_idle) != 0 ||
+      uv_timer_init(loop, &errors_timer) != 0) {
+    napi_throw_error(env, NULL, "init failed");
+    return NULL;
+  }
+  int32_t results[] = {
       uv_async_init(NULL, &async, unused_async_cb),
-      uv_queue_work(get_loop(env, false), &work, NULL, NULL),
+      uv_check_init(NULL, &check),
+      uv_timer_init(NULL, &timer),
+      uv_queue_work(loop, &work, NULL, NULL),
       uv_cancel(&not_work),
+      // No callback.
+      uv_idle_start(&errors_idle, NULL),
+      uv_timer_start(&errors_timer, NULL, 0, 0),
+      // Never started, so there is nothing to repeat.
+      uv_timer_again(&errors_timer),
+      // A handle of another type.
+      uv_prepare_start((uv_prepare_t *)&errors_idle,
+                       (uv_prepare_cb)unused_idle_cb),
+      uv_prepare_stop((uv_prepare_t *)&errors_idle),
+      uv_idle_start((uv_idle_t *)&errors_timer, unused_idle_cb),
+      uv_timer_start((uv_timer_t *)&errors_idle, unused_timer_cb, 0, 0),
+      uv_timer_stop((uv_timer_t *)&errors_idle),
+      uv_timer_again((uv_timer_t *)&errors_idle),
   };
-  return make_int32_array(env, results, 3);
+  uv_close((uv_handle_t *)&errors_idle, NULL);
+  uv_close((uv_handle_t *)&errors_timer, NULL);
+  return make_int32_array(env, results, sizeof(results) / sizeof(results[0]));
 }
 
 // --- uv_async_t -------------------------------------------------------------
@@ -682,9 +721,418 @@ static napi_value test_cancel_work(napi_env env, napi_callback_info info) {
   return result;
 }
 
+// --- uv_idle_t / uv_prepare_t / uv_check_t -----------------------------------
+
+struct watcher_test {
+  uv_idle_t idle;
+  uv_prepare_t prepare;
+  uv_check_t check;
+  struct reporter reporter;
+  int iterations;
+  bool close_requested;
+  int open;
+};
+
+// Reports "close <type name>": the name comes from the type the init stored.
+static void watcher_test_close_cb(uv_handle_t *handle) {
+  struct watcher_test *test = uv_handle_get_data(handle);
+  char event[32];
+  snprintf(event, sizeof(event), "close %s",
+           uv_handle_type_name(uv_handle_get_type(handle)));
+  report(&test->reporter, event, uv_is_closing(handle), uv_is_active(handle));
+  if (--test->open == 0) {
+    reporter_destroy(&test->reporter);
+    free(test);
+  }
+}
+
+// Called from inside a check callback: closes the handles from within the
+// walk over them, the check handle itself included.
+static void watcher_test_close_all(struct watcher_test *test) {
+  if (test->open == 3)
+    uv_close((uv_handle_t *)&test->idle, watcher_test_close_cb);
+  uv_close((uv_handle_t *)&test->prepare, watcher_test_close_cb);
+  uv_close((uv_handle_t *)&test->check, watcher_test_close_cb);
+  report(&test->reporter, "closing", uv_is_closing((uv_handle_t *)&test->check),
+         uv_is_active((uv_handle_t *)&test->check));
+}
+
+static struct watcher_test *init_watchers(napi_env env, napi_value callback,
+                                          bool with_idle) {
+  struct watcher_test *test = calloc(1, sizeof(*test));
+  reporter_init(&test->reporter, env, callback);
+  uv_loop_t *loop = get_loop(env, false);
+  int rc =
+      uv_prepare_init(loop, &test->prepare) | uv_check_init(loop, &test->check);
+  test->open = 2;
+  if (with_idle) {
+    rc |= uv_idle_init(loop, &test->idle);
+    test->open = 3;
+    uv_handle_set_data((uv_handle_t *)&test->idle, test);
+  }
+  if (rc != 0) {
+    napi_throw_error(env, NULL, "init failed");
+    return NULL;
+  }
+  uv_handle_set_data((uv_handle_t *)&test->prepare, test);
+  uv_handle_set_data((uv_handle_t *)&test->check, test);
+  return test;
+}
+
+static void loop_idle_cb(uv_idle_t *handle) {
+  struct watcher_test *test = handle->data;
+  test->iterations++;
+  report(&test->reporter, "idle", test->iterations,
+         uv_is_active((uv_handle_t *)handle));
+}
+
+static void loop_prepare_cb(uv_prepare_t *handle) {
+  struct watcher_test *test = handle->data;
+  report(&test->reporter, "prepare", test->iterations,
+         uv_is_active((uv_handle_t *)handle));
+}
+
+static void loop_check_cb(uv_check_t *handle) {
+  struct watcher_test *test = handle->data;
+  report(&test->reporter, "check", test->iterations,
+         uv_is_active((uv_handle_t *)handle));
+  if (test->iterations == 2)
+    watcher_test_close_all(test);
+}
+
+// testLoopWatchers(callback): an idle, a prepare and a check handle. The idle
+// handle counts the iterations, and it is what keeps the poll from blocking:
+// nothing else would wake the loop. Every iteration runs the three in libuv's
+// order; the check callback of the second iteration closes all three. Events:
+//   idle 1 1 / prepare 1 1 / check 1 1 / idle 2 1 / prepare 2 1 / check 2 1
+//   closing 1 0 / close idle 1 0 / close prepare 1 0 / close check 1 0
+static napi_value test_loop_watchers(napi_env env, napi_callback_info info) {
+  napi_value args[1];
+  get_args(env, info, args, 1);
+  struct watcher_test *test = init_watchers(env, args[0], true);
+  if (test == NULL)
+    return NULL;
+  if ((uv_idle_start(&test->idle, loop_idle_cb) |
+       uv_prepare_start(&test->prepare, loop_prepare_cb) |
+       uv_check_start(&test->check, loop_check_cb)) != 0)
+    napi_throw_error(env, NULL, "start failed");
+  return NULL;
+}
+
+static struct watcher_test *io_test;
+
+static void io_prepare_cb(uv_prepare_t *handle) {
+  struct watcher_test *test = handle->data;
+  test->iterations++;
+  report(&test->reporter, "prepare", test->iterations,
+         uv_is_active((uv_handle_t *)handle));
+}
+
+static void io_check_cb(uv_check_t *handle) {
+  struct watcher_test *test = handle->data;
+  report(&test->reporter, "check", test->iterations,
+         uv_is_active((uv_handle_t *)handle));
+  if (test->close_requested) {
+    io_test = NULL;
+    watcher_test_close_all(test);
+  }
+}
+
+// testPrepareAndCheckAroundIo(callback): a prepare and a check handle and no
+// idle handle, so between the two the loop blocks in its poll until I/O
+// arrives. The script does some socket I/O and calls requestClose() from its
+// I/O callback. That callback runs inside the poll, so it lands between the
+// prepare and the check event of one iteration, and the check callback of
+// that iteration closes both handles.
+static napi_value test_prepare_and_check_around_io(napi_env env,
+                                                   napi_callback_info info) {
+  napi_value args[1];
+  get_args(env, info, args, 1);
+  struct watcher_test *test = init_watchers(env, args[0], false);
+  if (test == NULL)
+    return NULL;
+  if ((uv_prepare_start(&test->prepare, io_prepare_cb) |
+       uv_check_start(&test->check, io_check_cb)) != 0) {
+    napi_throw_error(env, NULL, "start failed");
+    return NULL;
+  }
+  io_test = test;
+  return NULL;
+}
+
+static napi_value request_close(napi_env env, napi_callback_info info) {
+  if (io_test != NULL)
+    io_test->close_requested = true;
+  return NULL;
+}
+
+static uv_idle_t state_idle;
+static uv_check_t state_check;
+static void unused_check_cb(uv_check_t *handle) { (void)handle; }
+
+// testWatcherStates(): the start/stop state machine, observed synchronously.
+// Both handles are closed before the loop turns, so no callback ever runs and
+// the process exits; the started idle handle would otherwise spin forever.
+static napi_value test_watcher_states(napi_env env, napi_callback_info info) {
+  uv_loop_t *loop = get_loop(env, false);
+  uv_handle_t *idle = (uv_handle_t *)&state_idle;
+  uv_handle_t *check = (uv_handle_t *)&state_check;
+  napi_value result;
+  napi_create_object(env, &result);
+  set_int32(env, result, "init",
+            uv_idle_init(loop, &state_idle) |
+                uv_check_init(loop, &state_check));
+  set_int32(env, result, "activeAfterInit", uv_is_active(idle));
+  set_int32(env, result, "refAfterInit", uv_has_ref(idle));
+  set_int32(env, result, "typeIsIdle", uv_handle_get_type(idle) == UV_IDLE);
+  set_int32(env, result, "typeIsCheck", uv_handle_get_type(check) == UV_CHECK);
+  set_int32(env, result, "loopIsSet", uv_handle_get_loop(idle) == loop);
+  set_int32(env, result, "start", uv_idle_start(&state_idle, unused_idle_cb));
+  set_int32(env, result, "activeAfterStart", uv_is_active(idle));
+  set_int32(env, result, "startAgain",
+            uv_idle_start(&state_idle, unused_idle_cb));
+  set_int32(env, result, "stop", uv_idle_stop(&state_idle));
+  set_int32(env, result, "activeAfterStop", uv_is_active(idle));
+  set_int32(env, result, "stopAgain", uv_idle_stop(&state_idle));
+  set_int32(env, result, "restart", uv_idle_start(&state_idle, unused_idle_cb));
+  set_int32(env, result, "activeAfterRestart", uv_is_active(idle));
+  uv_unref(idle);
+  set_int32(env, result, "refAfterUnref", uv_has_ref(idle));
+  set_int32(env, result, "activeAfterUnref", uv_is_active(idle));
+  uv_ref(idle);
+  set_int32(env, result, "refAfterRef", uv_has_ref(idle));
+  set_int32(env, result, "checkStart",
+            uv_check_start(&state_check, unused_check_cb));
+  uv_close(idle, NULL);
+  uv_close(check, NULL);
+  set_int32(env, result, "activeAfterClose", uv_is_active(idle));
+  set_int32(env, result, "closingAfterClose", uv_is_closing(idle));
+  set_int32(env, result, "refAfterClose", uv_has_ref(idle));
+  set_int32(env, result, "startAfterClose",
+            uv_idle_start(&state_idle, unused_idle_cb));
+  set_int32(env, result, "activeAfterStartAfterClose", uv_is_active(idle));
+  return result;
+}
+
+// --- uv_timer_t --------------------------------------------------------------
+
+struct timer_test {
+  uv_timer_t handle;
+  struct reporter reporter;
+  int fires;
+};
+
+static void timer_test_close_cb(uv_handle_t *handle) {
+  struct timer_test *test = handle->data;
+  report(&test->reporter, "close timer", uv_is_closing(handle),
+         uv_is_active(handle));
+  reporter_destroy(&test->reporter);
+  free(test);
+}
+
+static struct timer_test *init_timer(napi_env env, napi_value callback) {
+  struct timer_test *test = calloc(1, sizeof(*test));
+  reporter_init(&test->reporter, env, callback);
+  test->handle.data = test;
+  if (uv_timer_init(get_loop(env, false), &test->handle) != 0) {
+    napi_throw_error(env, NULL, "uv_timer_init failed");
+    return NULL;
+  }
+  return test;
+}
+
+static napi_value timer_state(napi_env env, struct timer_test *test) {
+  uv_handle_t *handle = (uv_handle_t *)&test->handle;
+  napi_value result;
+  napi_create_object(env, &result);
+  set_int32(env, result, "typeIsTimer", uv_handle_get_type(handle) == UV_TIMER);
+  set_int32(env, result, "isActive", uv_is_active(handle));
+  set_int32(env, result, "hasRef", uv_has_ref(handle));
+  set_int32(env, result, "dueIn", (int32_t)uv_timer_get_due_in(&test->handle));
+  set_int32(env, result, "repeat", (int32_t)uv_timer_get_repeat(&test->handle));
+  return result;
+}
+
+static void timer_once_cb(uv_timer_t *handle) {
+  struct timer_test *test = handle->data;
+  // A one-shot timer is stopped by the time its callback runs, as in libuv.
+  report(&test->reporter, "timer", uv_is_active((uv_handle_t *)handle),
+         (int32_t)uv_timer_get_due_in(handle));
+  uv_close((uv_handle_t *)handle, timer_test_close_cb);
+}
+
+// testTimer(callback): a 10ms one-shot timer. The script returns at once; the
+// timer keeps the process alive until it fires. Events `timer 0 0`, then
+// `close timer 1 0`. Returns the state right after the start.
+static napi_value test_timer(napi_env env, napi_callback_info info) {
+  napi_value args[1];
+  get_args(env, info, args, 1);
+  struct timer_test *test = init_timer(env, args[0]);
+  if (test == NULL)
+    return NULL;
+  if (uv_timer_start(&test->handle, timer_once_cb, 10, 0) != 0) {
+    napi_throw_error(env, NULL, "uv_timer_start failed");
+    return NULL;
+  }
+  return timer_state(env, test);
+}
+
+static void timer_repeat_cb(uv_timer_t *handle) {
+  struct timer_test *test = handle->data;
+  test->fires++;
+  // A repeating timer is armed again by the time its callback runs.
+  report(&test->reporter, "repeat", test->fires,
+         uv_is_active((uv_handle_t *)handle));
+  if (test->fires < 3)
+    return;
+  uv_timer_stop(handle);
+  report(&test->reporter, "stopped", uv_is_active((uv_handle_t *)handle),
+         (int32_t)uv_timer_get_repeat(handle));
+  uv_close((uv_handle_t *)handle, timer_test_close_cb);
+}
+
+// testTimerRepeat(callback): timeout 1ms, repeat 1ms. Events `repeat 1 1`,
+// `repeat 2 1`, `repeat 3 1`, `stopped 0 1`, `close timer 1 0`.
+static napi_value test_timer_repeat(napi_env env, napi_callback_info info) {
+  napi_value args[1];
+  get_args(env, info, args, 1);
+  struct timer_test *test = init_timer(env, args[0]);
+  if (test == NULL)
+    return NULL;
+  uv_timer_start(&test->handle, timer_repeat_cb, 1, 1);
+  return timer_state(env, test);
+}
+
+// testTimerAgain(callback): a timer started to fire in an hour gets a 1ms
+// repeat and uv_timer_again, which restarts it with the repeat: the events
+// are testTimerRepeat's. Returns { dueInBefore, again, dueInAfter, repeat }.
+static napi_value test_timer_again(napi_env env, napi_callback_info info) {
+  napi_value args[1];
+  get_args(env, info, args, 1);
+  struct timer_test *test = init_timer(env, args[0]);
+  if (test == NULL)
+    return NULL;
+  uv_timer_start(&test->handle, timer_repeat_cb, 60 * 60 * 1000, 0);
+  napi_value result;
+  napi_create_object(env, &result);
+  set_int32(env, result, "dueInBefore",
+            (int32_t)uv_timer_get_due_in(&test->handle));
+  uv_timer_set_repeat(&test->handle, 1);
+  set_int32(env, result, "again", uv_timer_again(&test->handle));
+  set_int32(env, result, "dueInAfter",
+            (int32_t)uv_timer_get_due_in(&test->handle));
+  set_int32(env, result, "repeat", (int32_t)uv_timer_get_repeat(&test->handle));
+  return result;
+}
+
+// testTimerRestart(callback): a started one-hour timer restarted as a 10ms
+// one: uv_timer_start on a started timer reschedules it, so the events are
+// testTimer's. Returns the state after the restart.
+static napi_value test_timer_restart(napi_env env, napi_callback_info info) {
+  napi_value args[1];
+  get_args(env, info, args, 1);
+  struct timer_test *test = init_timer(env, args[0]);
+  if (test == NULL)
+    return NULL;
+  uv_timer_start(&test->handle, timer_once_cb, 60 * 60 * 1000, 0);
+  uv_timer_start(&test->handle, timer_once_cb, 10, 0);
+  return timer_state(env, test);
+}
+
+// testTimerClosedBeforeItFires(callback): a started one-hour timer that is
+// closed at once. The only event is `close timer 1 0`, and the process exits.
+// Returns the state right after uv_close.
+static napi_value test_timer_closed_before_it_fires(napi_env env,
+                                                    napi_callback_info info) {
+  napi_value args[1];
+  get_args(env, info, args, 1);
+  struct timer_test *test = init_timer(env, args[0]);
+  if (test == NULL)
+    return NULL;
+  uv_timer_start(&test->handle, timer_once_cb, 60 * 60 * 1000, 0);
+  uv_close((uv_handle_t *)&test->handle, timer_test_close_cb);
+  // Allowed until close_cb has run; none of these may start it again.
+  uv_timer_start(&test->handle, timer_once_cb, 0, 0);
+  uv_timer_again(&test->handle);
+  uv_timer_stop(&test->handle);
+  return timer_state(env, test);
+}
+
+static void timer_unref_cb(uv_timer_t *handle) {
+  struct timer_test *test = handle->data;
+  report(&test->reporter, "fired", 0, 0);
+}
+
+// testTimerUnref(callback): a started one-hour timer that is unref'd. The
+// process must exit although the timer is never stopped or closed, so `fired`
+// is never reported. Returns the state after the unref.
+static napi_value test_timer_unref(napi_env env, napi_callback_info info) {
+  napi_value args[1];
+  get_args(env, info, args, 1);
+  struct timer_test *test = init_timer(env, args[0]);
+  if (test == NULL)
+    return NULL;
+  uv_timer_start(&test->handle, timer_unref_cb, 60 * 60 * 1000, 0);
+  uv_unref((uv_handle_t *)&test->handle);
+  return timer_state(env, test);
+}
+
+// testNow(): uv_now advances while the process spins for 5ms of uv_hrtime.
+// Returns { nowIsPositive, advancedMs }.
+static napi_value test_now(napi_env env, napi_callback_info info) {
+  uv_loop_t *loop = get_loop(env, false);
+  uv_update_time(loop);
+  uint64_t before = uv_now(loop);
+  uint64_t start = uv_hrtime();
+  while (uv_hrtime() - start < 5 * 1000 * 1000)
+    ;
+  uv_update_time(loop);
+  uint64_t after = uv_now(loop);
+  napi_value result;
+  napi_create_object(env, &result);
+  set_int32(env, result, "nowIsPositive", before > 0);
+  set_int32(env, result, "advancedMs", (int32_t)(after - before));
+  return result;
+}
+
 napi_value Init(napi_env env, napi_value exports) {
   // Register all test functions
   napi_value fn;
+
+  napi_create_function(env, NULL, 0, test_loop_watchers, NULL, &fn);
+  napi_set_named_property(env, exports, "testLoopWatchers", fn);
+
+  napi_create_function(env, NULL, 0, test_prepare_and_check_around_io, NULL,
+                       &fn);
+  napi_set_named_property(env, exports, "testPrepareAndCheckAroundIo", fn);
+
+  napi_create_function(env, NULL, 0, request_close, NULL, &fn);
+  napi_set_named_property(env, exports, "requestClose", fn);
+
+  napi_create_function(env, NULL, 0, test_watcher_states, NULL, &fn);
+  napi_set_named_property(env, exports, "testWatcherStates", fn);
+
+  napi_create_function(env, NULL, 0, test_timer, NULL, &fn);
+  napi_set_named_property(env, exports, "testTimer", fn);
+
+  napi_create_function(env, NULL, 0, test_timer_repeat, NULL, &fn);
+  napi_set_named_property(env, exports, "testTimerRepeat", fn);
+
+  napi_create_function(env, NULL, 0, test_timer_again, NULL, &fn);
+  napi_set_named_property(env, exports, "testTimerAgain", fn);
+
+  napi_create_function(env, NULL, 0, test_timer_restart, NULL, &fn);
+  napi_set_named_property(env, exports, "testTimerRestart", fn);
+
+  napi_create_function(env, NULL, 0, test_timer_closed_before_it_fires, NULL,
+                       &fn);
+  napi_set_named_property(env, exports, "testTimerClosedBeforeItFires", fn);
+
+  napi_create_function(env, NULL, 0, test_timer_unref, NULL, &fn);
+  napi_set_named_property(env, exports, "testTimerUnref", fn);
+
+  napi_create_function(env, NULL, 0, test_now, NULL, &fn);
+  napi_set_named_property(env, exports, "testNow", fn);
 
   napi_create_function(env, NULL, 0, test_version, NULL, &fn);
   napi_set_named_property(env, exports, "testVersion", fn);

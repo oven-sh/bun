@@ -1032,6 +1032,16 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         return;
     }
 
+    // ── addons' uv_idle_t / uv_prepare_t ────────────────────────────────
+    // Before `has_pending_immediate` is read: their callbacks may queue work.
+    // SAFETY: `state` is the live per-thread `RuntimeState`; `uv_loop` is
+    // reached per-field, so the `timer` accesses its callbacks make through
+    // `runtime_state()` do not alias this borrow.
+    #[cfg(unix)]
+    let uv_idle_started = unsafe { (*state).uv_loop.before_poll() };
+    #[cfg(not(unix))]
+    let uv_idle_started = false;
+
     // Call `ctx.timer.getTimeout(..)` ONLY inside
     // `if (loop.isActive())` — `get_timeout` has side effects (pops + fires
     // due `WTFTimer` heap entries), so it must stay guarded by `is_active()`
@@ -1040,9 +1050,10 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         // Read `immediate_tasks` AFTER
         // `tickImmediateTasks` swaps `next_immediate_tasks` in, so this
         // reflects next-tick immediates (queued during the drain above).
-        // SAFETY: `el` is the live per-thread event loop.
+        // A started idle handle keeps the poll from blocking, as in libuv.
         // SAFETY: `el` is the live per-thread event loop.
         let has_pending_immediate = has_yielded_tasks
+            || uv_idle_started
             || !unsafe { &*el }.immediate_tasks.is_empty()
             || unsafe { &*el }.has_pending_tasks();
         // Fold the QUIC deadline into the poll timeout.
@@ -1101,6 +1112,9 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
 
     #[cfg(unix)]
     {
+        // ── addons' uv_check_t: libuv runs them right after its poll ────
+        // SAFETY: as for `before_poll` above.
+        unsafe { (*state).uv_loop.after_poll() };
         // Note (§Forbidden aliased-&mut): `drain_timers` fires user
         // `setTimeout` callbacks which may re-enter `timer::All::insert`/
         // `remove` via `runtime_state()`. Pass raw `*mut Self` so no
@@ -1177,10 +1191,16 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
         return;
     }
 
+    // SAFETY: see the matching call in `auto_tick`.
+    #[cfg(unix)]
+    let uv_idle_started = unsafe { (*state).uv_loop.before_poll() };
+    #[cfg(not(unix))]
+    let uv_idle_started = false;
+
     {
         // SAFETY: `el` is the live per-thread event loop.
-        // SAFETY: `el` is the live per-thread event loop.
         let has_pending_immediate = has_yielded_tasks
+            || uv_idle_started
             || !unsafe { &*el }.immediate_tasks.is_empty()
             || unsafe { &*el }.has_pending_tasks();
         // SAFETY: `loop_` is the live per-thread uws loop.
@@ -1228,6 +1248,8 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
 
     #[cfg(unix)]
     {
+        // SAFETY: see the matching calls in `auto_tick`.
+        unsafe { (*state).uv_loop.after_poll() };
         // SAFETY: `state` is the live per-thread `RuntimeState`; see Note
         // on `auto_tick` re: aliased-&mut across `fire()`.
         unsafe { timer::All::drain_timers(&mut (*state).timer, vm.cast()) };

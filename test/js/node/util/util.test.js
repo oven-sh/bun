@@ -398,7 +398,10 @@ describe("util", () => {
       util.inspect.defaultOptions = saved;
     }
     expect(() => util.stripVTControlCharacters(1)).toThrow(
-      expect.objectContaining({ ...err, message: 'The "str" argument must be of type string. Received type number (1)' }),
+      expect.objectContaining({
+        ...err,
+        message: 'The "str" argument must be of type string. Received type number (1)',
+      }),
     );
   });
 

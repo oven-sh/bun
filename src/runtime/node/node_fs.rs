@@ -539,11 +539,15 @@ pub(crate) mod fs_perm {
     /// the two fs scopes the path needs.
     pub(crate) fn open(path: &PathLike, flags: i32) -> Option<Denied> {
         let rw = flags & (bun_sys::O::RDONLY | bun_sys::O::WRONLY | bun_sys::O::RDWR);
-        // Flags with write-like side effects even when opening read-only
-        // (O_TEMPORARY exists only on Windows libuv; Bun's flag parser maps it
-        // into these POSIX-shaped bits before this point).
+        // `_O_TEMPORARY` deletes the file on close, so node counts it as a write.
+        // The flag parser keeps it as a marker bit that the open itself ignores.
+        #[cfg(windows)]
+        const TEMPORARY: i32 = bun_libuv_sys::O::BUN_O_TEMPORARY;
+        #[cfg(not(windows))]
+        const TEMPORARY: i32 = 0;
+        // Flags with write-like side effects even when opening read-only.
         let write_as_side_effect =
-            flags & (bun_sys::O::APPEND | bun_sys::O::CREAT | bun_sys::O::TRUNC) != 0;
+            flags & (bun_sys::O::APPEND | bun_sys::O::CREAT | bun_sys::O::TRUNC | TEMPORARY) != 0;
         if rw != bun_sys::O::WRONLY {
             if let Some(denied) = read(path) {
                 return Some(denied);

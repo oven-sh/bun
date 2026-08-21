@@ -274,6 +274,20 @@ test("path.resolve() and path.relative() use an overridden process.cwd()", () =>
     expect([path.posix.relative("a", "b"), calls]).toEqual(["../../two/b", 2]);
     calls = 0;
     expect([path.posix.relative("/one/a", "b"), calls]).toEqual(["../b", 1]);
+    // ...including the fast path's extra reading for a '' or '.' operand: it returns an
+    // absolute reading as it is, and otherwise the operand resolves against a second reading.
+    let trivialAnswers = ["/a/./b"];
+    calls = 0;
+    process.cwd = () => trivialAnswers[calls++];
+    expect([path.posix.relative(".", "/a/b/c"), calls]).toEqual(["../../b/c", 1]);
+    trivialAnswers = ["one", "two", "three"];
+    calls = 0;
+    expect([path.posix.relative("", "b"), calls]).toEqual(["..three/b", 3]);
+    trivialAnswers = ["rel", "rel", "rel"];
+    calls = 0;
+    expect([path.posix.relative("b", ""), calls]).toEqual(["..", 3]);
+    calls = 0;
+    expect([path.posix.relative(".", "."), calls]).toEqual(["", 0]);
     calls = 0;
     const winAnswers = ["C:\\one", "C:\\two"];
     process.cwd = () => winAnswers[calls++];

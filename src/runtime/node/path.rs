@@ -858,8 +858,52 @@ mod posix {
     }
 
     #[inline]
-    pub(super) fn needs_cwd(path: &Chars<'_>) -> bool {
+    fn needs_cwd(path: &Chars<'_>) -> bool {
         path.len() == 0 || path.at(0) != CHAR_FORWARD_SLASH as u32
+    }
+
+    /// How `posix.resolve(operand)` ended up using `process.cwd()`.
+    pub(super) enum OperandCwd<'a> {
+        /// An absolute operand: not read.
+        NotRead,
+        /// `resolve('')` / `resolve('.')` with an absolute cwd: the result, as read.
+        Returned(Input<'a>),
+        /// What the operand is resolved against.
+        Against(Input<'a>),
+    }
+
+    impl<'a> OperandCwd<'a> {
+        pub(super) fn input(&self) -> Option<&Input<'a>> {
+            match self {
+                OperandCwd::NotRead => None,
+                OperandCwd::Returned(cwd) | OperandCwd::Against(cwd) => Some(cwd),
+            }
+        }
+    }
+
+    /// Reads `process.cwd()` as often, and at the same points, as `posix.resolve(operand)`
+    /// does in lib/path.js: not at all for an absolute operand, once for a relative one, and
+    /// for `''` / `'.'` once in the fast path, which returns the reading if it is absolute,
+    /// plus once more in the fallback if it is not. (Observable when `process.cwd` has been
+    /// replaced by something stateful.)
+    pub(super) fn operand_cwd<'a>(
+        global: &JSGlobalObject,
+        operand: &Chars<'_>,
+        storage: &'a mut Buf<u16>,
+        fallback_storage: &'a mut Buf<u16>,
+    ) -> JsResult<OperandCwd<'a>> {
+        if !needs_cwd(operand) {
+            return Ok(OperandCwd::NotRead);
+        }
+        let first = cwd(global, storage)?;
+        if !is_trivial_arg(operand) {
+            return Ok(OperandCwd::Against(first));
+        }
+        if first.len() > 0 && first.at(0) == CHAR_FORWARD_SLASH as u32 {
+            return Ok(OperandCwd::Returned(first));
+        }
+        first.keep_alive();
+        Ok(OperandCwd::Against(cwd(global, fallback_storage)?))
     }
 
     /// `resolve()` once the arguments have been reduced to the strings that
@@ -901,26 +945,27 @@ mod posix {
         Ok(&out[..1])
     }
 
-    /// `posix.resolve(path)` for a single already-validated string; `cwd` must be
-    /// provided when [`needs_cwd`].
+    /// `posix.resolve(path)` for a single already-validated string and its
+    /// [`operand_cwd`].
     pub(super) fn resolve1<'o, C: Unit>(
         path: Chars<'_>,
-        cwd: Option<&Input<'_>>,
+        cwd: &OperandCwd<'_>,
         out: &'o mut Buf<C>,
     ) -> Result<&'o [C], TooLong> {
-        if let Some(cwd) = cwd {
-            // Fast path for current directory: lib/path.js returns `posixCwd()` un-normalized.
-            if is_trivial_arg(&path) && cwd.len() > 0 && cwd.at(0) == CHAR_FORWARD_SLASH as u32 {
+        let mut parts: [Chars<'_>; 2] = [Chars::Latin1(&[]), Chars::Latin1(&[])];
+        let mut n = 0;
+        match cwd {
+            OperandCwd::Returned(cwd) => {
+                // Fast path for current directory: lib/path.js returns `posixCwd()` un-normalized.
                 let o = reserve(out, cwd.len());
                 cwd.chars.copy_to(o);
                 return Ok(&out[..]);
             }
-        }
-        let mut parts: [Chars<'_>; 2] = [Chars::Latin1(&[]), Chars::Latin1(&[])];
-        let mut n = 0;
-        if needs_cwd(&path) {
-            parts[n] = cwd.expect("cwd required for a relative path").chars;
-            n += 1;
+            OperandCwd::Against(cwd) => {
+                parts[n] = cwd.chars;
+                n += 1;
+            }
+            OperandCwd::NotRead => {}
         }
         if path.len() > 0 {
             parts[n] = path;
@@ -982,14 +1027,14 @@ mod posix {
         Ok(normalize::<C>(joined, out))
     }
 
-    /// `from_cwd` / `to_cwd` are the `process.cwd()` reads of the two `resolve()`
-    /// calls in lib/path.js, present for whichever operands [`needs_cwd`].
+    /// `from_cwd` / `to_cwd` are the [`operand_cwd`]s of the two `resolve()` calls
+    /// lib/path.js makes.
     pub(super) fn relative<C: Unit>(
         global: &JSGlobalObject,
         from_in: Chars<'_>,
         to_in: Chars<'_>,
-        from_cwd: Option<&Input<'_>>,
-        to_cwd: Option<&Input<'_>>,
+        from_cwd: &OperandCwd<'_>,
+        to_cwd: &OperandCwd<'_>,
     ) -> JsResult<JSValue> {
         // Trim leading forward slashes.
         let mut from_buf: Buf<C> = Buf::new();
@@ -2744,43 +2789,40 @@ fn relative<const WIN: bool>(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
         return Ok(empty_string(global));
     }
 
-    // lib/path.js resolves the two operands with two independent resolve() calls, so each
-    // operand that needs the cwd reads process.cwd() for itself (observable when it has been
-    // replaced by something stateful); the reads are hoisted here only to pick the width.
+    // lib/path.js resolves the two operands with two independent resolve() calls, each
+    // reading process.cwd() for itself; the reads are hoisted here only to pick the width.
     let mut from_cwd_storage: Buf<u16> = Buf::new();
     let mut to_cwd_storage: Buf<u16> = Buf::new();
     if !WIN {
-        let mut all_8bit = from.is_8bit() && to.is_8bit();
-        let mut from_cwd: Option<Input<'_>> = None;
-        let mut to_cwd: Option<Input<'_>> = None;
-        if posix::needs_cwd(&from.chars) {
-            let c = posix::cwd(global, &mut from_cwd_storage)?;
-            all_8bit &= c.is_8bit();
-            from_cwd = Some(c);
-        }
-        if posix::needs_cwd(&to.chars) {
-            let c = posix::cwd(global, &mut to_cwd_storage)?;
-            all_8bit &= c.is_8bit();
-            to_cwd = Some(c);
-        }
+        let mut from_fallback_storage: Buf<u16> = Buf::new();
+        let mut to_fallback_storage: Buf<u16> = Buf::new();
+        let from_cwd = posix::operand_cwd(
+            global,
+            &from.chars,
+            &mut from_cwd_storage,
+            &mut from_fallback_storage,
+        )?;
+        let to_cwd = posix::operand_cwd(
+            global,
+            &to.chars,
+            &mut to_cwd_storage,
+            &mut to_fallback_storage,
+        )?;
+        let all_8bit = from.is_8bit()
+            && to.is_8bit()
+            && [&from_cwd, &to_cwd]
+                .into_iter()
+                .filter_map(posix::OperandCwd::input)
+                .all(Input::is_8bit);
         let result = if all_8bit {
-            posix::relative::<u8>(
-                global,
-                from.chars,
-                to.chars,
-                from_cwd.as_ref(),
-                to_cwd.as_ref(),
-            )
+            posix::relative::<u8>(global, from.chars, to.chars, &from_cwd, &to_cwd)
         } else {
-            posix::relative::<u16>(
-                global,
-                from.chars,
-                to.chars,
-                from_cwd.as_ref(),
-                to_cwd.as_ref(),
-            )
+            posix::relative::<u16>(global, from.chars, to.chars, &from_cwd, &to_cwd)
         };
-        for cwd in [from_cwd, to_cwd].into_iter().flatten() {
+        for cwd in [&from_cwd, &to_cwd]
+            .into_iter()
+            .filter_map(posix::OperandCwd::input)
+        {
             cwd.keep_alive();
         }
         result

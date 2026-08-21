@@ -43,6 +43,12 @@ function _format(sep, pathObject) {
   return dir === pathObject.root ? `${dir}${base}` : `${dir}${sep}${base}`;
 }
 
+// posix only; the win32 one is native.
+function toNamespacedPath(path) {
+  // Non-op on posix systems
+  return path;
+}
+
 type Glob = import("bun").Glob;
 
 // The functions each platform defines in JS. They are created inside one
@@ -77,11 +83,6 @@ function platformFunctions(isWindows: boolean) {
           return path.length > 0 && path.charCodeAt(0) === CHAR_FORWARD_SLASH;
         },
 
-    toNamespacedPath: function toNamespacedPath(path) {
-      // Non-op on posix systems
-      return path;
-    },
-
     matchesGlob: function matchesGlob(path, pattern) {
       validateString(path, "path");
       if (isWindows) path = path.replaceAll("\\", "/");
@@ -110,7 +111,7 @@ const posix = {
   isAbsolute: posixJs.isAbsolute,
   join: nativePosix.join,
   relative: nativePosix.relative,
-  toNamespacedPath: posixJs.toNamespacedPath,
+  toNamespacedPath,
   dirname: nativePosix.dirname,
   basename: nativePosix.basename,
   extname: nativePosix.extname,

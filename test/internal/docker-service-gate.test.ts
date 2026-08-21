@@ -7,7 +7,7 @@
 // so every answer that reached the docker probe shows up as false, or as
 // "threw" on Linux with CI set.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, mergeWindowEnvs, tempDir } from "harness";
 import { join } from "node:path";
 
 describe.concurrent("isDockerServiceEnabled", () => {
@@ -16,7 +16,7 @@ describe.concurrent("isDockerServiceEnabled", () => {
     ["in CI", true, isLinux ? "threw" : false],
   ])("%s, without docker: env override and coordinator win, nothing else does", async (_, ci, dockerProbe) => {
     using emptyPath = tempDir("docker-service-gate", {});
-    const env: NodeJS.Dict<string> = { ...bunEnv, PATH: String(emptyPath) };
+    const env = mergeWindowEnvs([bunEnv, { PATH: String(emptyPath) }]);
     if (ci) {
       env.CI = "1";
     } else {

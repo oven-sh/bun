@@ -712,6 +712,22 @@ describe("node-style -e / -p composition", () => {
     expect(exitCode).toBe(9);
   });
 
+  // -pe is the short cluster -p + -e, so a bare -pe is -e missing its argument,
+  // whether the script runs as `bun -pe` or `bun run -pe`.
+  test.each([[["-pe"]], [["run", "-pe"]]])("bare %j is a missing -e argument (exit 9)", async args => {
+    const { stdout, stderr, exitCode } = await runBun(args);
+    expect(stderr.split(/\r?\n/)[0]).toBe(`${process.execPath}: -e requires an argument`);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(9);
+  });
+
+  test("process.execArgv keeps the script passed to -pe", async () => {
+    const { stdout, stderr, exitCode } = await runBun(["-pe", "process.execArgv.length"]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("2\n");
+    expect(exitCode).toBe(0);
+  });
+
   // Node only unescapes a leading "\-" for a separate argument, so the '=' form
   // keeps the backslash and the expression is a syntax error.
   test("--eval=\\-42 does not unescape the leading dash", async () => {

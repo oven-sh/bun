@@ -896,11 +896,6 @@ fn validate_node_options(env: &[u8]) {
     }
 }
 
-/// node aliases `-pe` to `--print --eval` as a whole token (node_options.cc):
-/// it can't be a short in either runtime, being ambiguous with `-p` carrying
-/// the attached value `e`. Bun's `-p` takes the code, so `-pe X` is `-p X`.
-pub const NODE_SHORT_ALIASES: &[(&[u8], &[u8])] = &[(b"-pe", b"-p")];
-
 /// Parse `argv` into `api::TransformOptions` for the given subcommand.
 ///
 /// `command::tag_params(cmd)` does a runtime lookup of the per-subcommand
@@ -918,11 +913,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 CommandTag::RunCommand => 2,
                 CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => 1,
                 _ => 0,
-            },
-            // Only the paths standing in for `node` get node's aliases.
-            short_aliases: match cmd {
-                CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => NODE_SHORT_ALIASES,
-                _ => &[],
             },
         },
     ) {

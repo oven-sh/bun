@@ -326,11 +326,7 @@ struct us_socket_t {
    * would-block/transient nor a known peer-gone error (see
    * us_socket_write_check_error). Reset by any send that makes progress.
    * Lives in the pad-to-pointer gap before `group`, so it costs nothing. */
-  /* 7 bits fit the 32-cap retry counter; the spare bit marks a paused
-   * socket whose peer FIN was deferred behind buffered data (libuv path -
-   * the sweep escalates via SO_ERROR when the peer later resets). */
-  unsigned char unclassified_send_failures : 7;
-  unsigned char fin_deferred : 1;
+  unsigned char unclassified_send_failures;
 
   struct us_socket_group_t *group;
   /* NULL for plain TCP. Direct BoringSSL `SSL*`; set by us_internal_ssl_attach

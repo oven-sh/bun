@@ -1963,3 +1963,73 @@ describe("node:vm lineOffset/columnOffset at the edge of int32", () => {
     expect(position).toBeLessThanOrEqual(INT32_MAX);
   });
 });
+
+// A vm context has no process object of its own, so an exception the runtime reports against one (the
+// realm of a FinalizationRegistry or of a listener function created in the context) goes to this thread's
+// process, as in Node. It used to be printed and set exit code 1 without running any of the handlers.
+// Node prints the same lines and exits 0 for each of these children.
+describe("an exception reported against a vm context reaches the process uncaughtException handlers", () => {
+  const thrower = `vm.runInNewContext('(function () { throw new Error("thrown in vm context"); })')`;
+
+  async function run(consumer: string, trigger: string) {
+    const code = `
+      const vm = require("node:vm");
+      process.on("uncaughtExceptionMonitor", (err, origin) => console.log("monitor:", err.message, origin));
+      ${consumer}
+      ${trigger}
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  }
+
+  const listener = `process.on("uncaughtException", (err, origin) => console.log("uncaughtException:", err.message, origin));`;
+
+  test.concurrent.each([
+    [
+      "a FinalizationRegistry created in the context",
+      `
+        let ran = false;
+        const context = vm.createContext({ markRan: () => { ran = true; } });
+        vm.runInContext(\`
+          globalThis.registry = new FinalizationRegistry(() => { markRan(); throw new Error("thrown in vm context"); });
+          registry.register({}, 1);
+        \`, context);
+        for (let i = 0; i < 1000 && !ran; i++) {
+          Bun.gc(true);
+          await Bun.sleep(1);
+        }
+        if (!ran) console.log("the cleanup callback never ran");
+      `,
+    ],
+    ["a process 'exit' listener created in a context", `process.on("exit", ${thrower});`],
+    [
+      "an EventTarget listener created in a context",
+      `
+        const target = new EventTarget();
+        target.addEventListener("ping", ${thrower});
+        target.dispatchEvent(new Event("ping"));
+      `,
+    ],
+  ])("%s", async (_, trigger) => {
+    const [stdout, stderr, exitCode] = await run(listener, trigger);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(
+      "monitor: thrown in vm context uncaughtException\nuncaughtException: thrown in vm context uncaughtException\n",
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("process.setUncaughtExceptionCaptureCallback() receives it too", async () => {
+    const [stdout, stderr, exitCode] = await run(
+      `process.setUncaughtExceptionCaptureCallback(err => console.log("captured:", err.message));`,
+      `
+        const target = new EventTarget();
+        target.addEventListener("ping", ${thrower});
+        target.dispatchEvent(new Event("ping"));
+      `,
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toBe("monitor: thrown in vm context uncaughtException\ncaptured: thrown in vm context\n");
+    expect(exitCode).toBe(0);
+  });
+});

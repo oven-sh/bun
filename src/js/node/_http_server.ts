@@ -3062,12 +3062,8 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   }
 
   if (!handle) {
-    // Standalone response (no native handle): use the OutgoingMessage
-    // machinery unconditionally so `finished` / `writableEnded` transition and
-    // the chunk is buffered into outputData like Node.js, regardless of whether
-    // writeHead() rendered `_header` first. The original chunk passes through
-    // (mirroring write()): write_() has its own !_hasBody handling, including
-    // the rejectNonStandardBodyWrites throw.
+    // Standalone response: OutgoingMessage.end() owns the finished/outputData
+    // transition, whether or not writeHead() already rendered _header.
     return OutgoingMessagePrototype.end.$call(this, chunk, encoding, callback);
   }
 
@@ -3110,13 +3106,9 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
 
   const flags = handle.flags;
   if (!!(flags & NodeHTTPResponseFlags.closed_or_completed)) {
-    // The underlying socket is already closed (or the response completed
-    // natively). Node.js's OutgoingMessage.end() still transitions to
-    // `finished` and emits 'prefinish' in this state; the `finish` callback
-    // that would emit 'finish' is dropped by _writeRaw()'s conn.destroyed
-    // early-return, so 'finish' never fires and the end() callback (registered
-    // on 'finish') is never called. 'close' is emitted by the socket close
-    // path.
+    // Socket already gone. Like Node, end() still finishes the response and
+    // emits 'prefinish'; 'finish' (and the end() callback) never fire, and
+    // 'close' comes from the socket close path.
     this._header = " ";
     const req = this.req;
     if (!req._consuming && !req?._readableState?.resumeScheduled) {
@@ -3292,8 +3284,7 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
 
   const flags = handle.flags;
   if (!!(flags & NodeHTTPResponseFlags.closed_or_completed)) {
-    // Node.js's OutgoingMessage._writeRaw() returns false when the assigned
-    // socket is destroyed; the write callback is dropped (never invoked).
+    // Socket already gone: like Node's _writeRaw(), report false and drop the callback.
     return false;
   }
 

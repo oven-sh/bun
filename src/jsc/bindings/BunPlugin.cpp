@@ -412,9 +412,13 @@ public:
     using Base = JSC::JSNonFinalObject;
 
     mutable WriteBarrier<JSObject> callbackFunctionOrCachedResult;
+    mutable WriteBarrier<JSString> specifierValue;
+    // Already-loaded module objects to patch once an async factory settles.
+    mutable WriteBarrier<JSC::JSModuleNamespaceObject> pendingNamespace;
+    mutable WriteBarrier<Bun::JSCommonJSModule> pendingCommonJSModule;
     bool hasCalledModuleMock = false;
 
-    static JSModuleMock* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSObject* callback);
+    static JSModuleMock* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSObject* callback, JSC::JSString* specifier);
     static Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 
     DECLARE_INFO;
@@ -432,14 +436,14 @@ public:
     void finishCreation(JSC::VM&);
 
 private:
-    JSModuleMock(JSC::VM&, JSC::Structure*, JSC::JSObject* callback);
+    JSModuleMock(JSC::VM&, JSC::Structure*, JSC::JSObject* callback, JSC::JSString* specifier);
 };
 
 const JSC::ClassInfo JSModuleMock::s_info = { "ModuleMock"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSModuleMock) };
 
-JSModuleMock* JSModuleMock::create(JSC::VM& vm, JSC::Structure* structure, JSC::JSObject* callback)
+JSModuleMock* JSModuleMock::create(JSC::VM& vm, JSC::Structure* structure, JSC::JSObject* callback, JSC::JSString* specifier)
 {
-    JSModuleMock* ptr = new (NotNull, JSC::allocateCell<JSModuleMock>(vm)) JSModuleMock(vm, structure, callback);
+    JSModuleMock* ptr = new (NotNull, JSC::allocateCell<JSModuleMock>(vm)) JSModuleMock(vm, structure, callback, specifier);
     ptr->finishCreation(vm);
     return ptr;
 }
@@ -449,9 +453,10 @@ void JSModuleMock::finishCreation(JSC::VM& vm)
     Base::finishCreation(vm);
 }
 
-JSModuleMock::JSModuleMock(JSC::VM& vm, JSC::Structure* structure, JSC::JSObject* callback)
+JSModuleMock::JSModuleMock(JSC::VM& vm, JSC::Structure* structure, JSC::JSObject* callback, JSC::JSString* specifier)
     : Base(vm, structure)
     , callbackFunctionOrCachedResult(callback, JSC::WriteBarrierEarlyInit)
+    , specifierValue(specifier, JSC::WriteBarrierEarlyInit)
 {
 }
 
@@ -495,6 +500,78 @@ JSObject* JSModuleMock::executeOnce(JSC::JSGlobalObject* lexicalGlobalObject)
     this->callbackFunctionOrCachedResult.set(vm, this, object);
 
     return object;
+}
+
+static void applyModuleMockOverrides(Zig::GlobalObject* globalObject, JSC::JSModuleNamespaceObject* moduleNamespaceObject, Bun::JSCommonJSModule* commonJSModule, JSValue exportsValue)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (moduleNamespaceObject) {
+        if (auto* object = exportsValue.getObject()) {
+            JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+            object->methodTable()->getOwnPropertyNames(object, globalObject, names, DontEnumPropertiesMode::Exclude);
+            RETURN_IF_EXCEPTION(scope, );
+
+            // Read every export before overriding any, so a throwing getter leaves the
+            // namespace untouched.
+            MarkedArgumentBuffer values;
+            values.ensureCapacity(names.size());
+            for (auto& name : names) {
+                JSValue value = object->get(globalObject, name);
+                RETURN_IF_EXCEPTION(scope, );
+                values.append(value);
+            }
+            if (values.hasOverflowed()) [[unlikely]] {
+                throwOutOfMemoryError(globalObject, scope);
+                return;
+            }
+            for (size_t i = 0; i < names.size(); ++i) {
+                moduleNamespaceObject->overrideExportValue(globalObject, names[i], values.at(i));
+                RETURN_IF_EXCEPTION(scope, );
+            }
+        } else {
+            // if it's not an object, I guess we just set the default export?
+            moduleNamespaceObject->overrideExportValue(globalObject, vm.propertyNames->defaultKeyword, exportsValue);
+            RETURN_IF_EXCEPTION(scope, );
+        }
+    }
+
+    if (commonJSModule) {
+        commonJSModule->setExportsObject(exportsValue);
+        commonJSModule->hasEvaluated = true;
+    }
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionMockModuleResolved, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
+
+    JSValue exportsValue = callframe->argument(0);
+    auto* mock = dynamicDowncast<JSModuleMock>(callframe->argument(1));
+    if (!mock) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+
+    if (auto* object = exportsValue.getObject())
+        mock->callbackFunctionOrCachedResult.set(vm, mock, object);
+
+    JSC::JSModuleNamespaceObject* moduleNamespaceObject = mock->pendingNamespace.get();
+    Bun::JSCommonJSModule* commonJSModule = mock->pendingCommonJSModule.get();
+    mock->pendingNamespace.clear();
+    mock->pendingCommonJSModule.clear();
+
+    WTF::String specifier = mock->specifierValue.get()->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto* virtualModules = globalObject->onLoadPlugins.virtualModules;
+    if (!virtualModules || virtualModules->get(specifier).get() != mock)
+        return JSValue::encode(jsUndefined());
+
+    applyModuleMockOverrides(globalObject, moduleNamespaceObject, commonJSModule, exportsValue);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    return JSValue::encode(jsUndefined());
 }
 
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsModuleMock);
@@ -590,115 +667,34 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
 
     JSC::JSObject* callback = callbackValue.getObject();
 
-    JSModuleMock* mock = JSModuleMock::create(vm, globalObject->mockModule.mockModuleStructure.getInitializedOnMainThread(globalObject), callback);
-
-    auto getJSValue = [&]() -> JSValue {
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        JSValue result = mock->executeOnce(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-
-        if (result && result.isObject()) {
-            while (JSC::JSPromise* promise = dynamicDowncast<JSC::JSPromise>(result)) {
-                switch (promise->status()) {
-                case JSC::JSPromise::Status::Rejected: {
-                    result = promise->result();
-                    scope.throwException(globalObject, result);
-                    return {};
-                    break;
-                }
-                case JSC::JSPromise::Status::Fulfilled: {
-                    result = promise->result();
-                    break;
-                }
-                // TODO: blocking wait for promise
-                default: {
-                    break;
-                }
-                }
-            }
-        }
-
-        return result;
-    };
-
-    bool removeFromESM = false;
-    bool removeFromCJS = false;
+    JSModuleMock* mock = JSModuleMock::create(vm, globalObject->mockModule.mockModuleStructure.getInitializedOnMainThread(globalObject), callback, specifierString);
 
     auto specifierIdent = JSC::Identifier::fromString(vm, specifierString->value(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
+
+    JSC::JSModuleNamespaceObject* moduleNamespaceObject = nullptr;
+    bool removeFromESM = false;
     if (auto* entry = globalObject->moduleLoader()->registryEntry(specifierIdent)) {
         removeFromESM = true;
         if (auto* mod = entry->record()) {
             // getModuleNamespace asserts the record has progressed past linking.
-            // A previous import that failed during link (e.g. unresolved binding)
-            // leaves the record at New/Unlinked; in that case there is no
-            // namespace to patch — drop the stale entry so the mock takes over
-            // on the next import.
             bool linked = true;
             if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(mod))
                 linked = cyclic->status() >= JSC::CyclicModuleRecord::Status::Linked;
             if (linked) {
-                {
-                    JSC::JSModuleNamespaceObject* moduleNamespaceObject = mod->getModuleNamespace(globalObject);
-                    RETURN_IF_EXCEPTION(scope, {});
-                    if (moduleNamespaceObject) {
-                        JSValue exportsValue = getJSValue();
-                        RETURN_IF_EXCEPTION(scope, {});
-                        auto* object = exportsValue.getObject();
-                        removeFromESM = false;
-
-                        if (object) {
-                            JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-                            JSObject::getOwnPropertyNames(object, globalObject, names, DontEnumPropertiesMode::Exclude);
-                            RETURN_IF_EXCEPTION(scope, {});
-
-                            // Read every export before overriding any, so a throwing getter leaves the
-                            // namespace untouched.
-                            MarkedArgumentBuffer values;
-                            values.ensureCapacity(names.size());
-                            for (auto& name : names) {
-                                JSValue value = object->get(globalObject, name);
-                                RETURN_IF_EXCEPTION(scope, {});
-                                values.append(value);
-                            }
-                            if (values.hasOverflowed()) [[unlikely]] {
-                                throwOutOfMemoryError(globalObject, scope);
-                                return {};
-                            }
-                            for (size_t i = 0; i < names.size(); ++i) {
-                                moduleNamespaceObject->overrideExportValue(globalObject, names[i], values.at(i));
-                                RETURN_IF_EXCEPTION(scope, {});
-                            }
-
-                        } else {
-                            // if it's not an object, I guess we just set the default export?
-                            moduleNamespaceObject->overrideExportValue(globalObject, vm.propertyNames->defaultKeyword, exportsValue);
-                            RETURN_IF_EXCEPTION(scope, {});
-                        }
-
-                        // TODO: do we need to handle intermediate loading state here?
-                        // entry->putDirect(vm, Identifier::fromString(vm, String("evaluated"_s)), jsBoolean(true), 0);
-                        // entry->putDirect(vm, Identifier::fromString(vm, String("state"_s)), jsNumber(JSC::JSModuleLoader::Status::Ready), 0);
-                    }
-                }
+                moduleNamespaceObject = mod->getModuleNamespace(globalObject);
+                RETURN_IF_EXCEPTION(scope, {});
+                removeFromESM = moduleNamespaceObject == nullptr;
             }
         }
     }
 
-    JSValue entryValue = globalObject->requireMap()->get(globalObject, specifierString);
+    JSValue requireMapEntry = globalObject->requireMap()->get(globalObject, specifierString);
     RETURN_IF_EXCEPTION(scope, {});
-    if (entryValue) {
-        removeFromCJS = true;
-        if (auto* moduleObject = entryValue ? dynamicDowncast<Bun::JSCommonJSModule>(entryValue) : nullptr) {
-            JSValue exportsValue = getJSValue();
-            RETURN_IF_EXCEPTION(scope, {});
+    auto* commonJSModule = dynamicDowncast<Bun::JSCommonJSModule>(requireMapEntry);
+    bool removeFromCJS = !commonJSModule && !requireMapEntry.isUndefined();
 
-            moduleObject->putDirect(vm, Bun::builtinNames(vm).exportsPublicName(), exportsValue, 0);
-            moduleObject->hasEvaluated = true;
-            removeFromCJS = false;
-        }
-    }
-
+    // Removed before the factory runs: an async factory may never settle.
     if (removeFromESM) {
         auto* moduleLoader = globalObject->moduleLoader();
         WTF::Locker locker { moduleLoader->cellLock() };
@@ -709,6 +705,37 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
         globalObject->requireMap()->remove(globalObject, specifierString);
         RETURN_IF_EXCEPTION(scope, {});
     }
+
+    if (!moduleNamespaceObject && !commonJSModule) {
+        globalObject->onLoadPlugins.addModuleMock(vm, specifier, mock);
+        return JSValue::encode(jsUndefined());
+    }
+
+    JSValue result = mock->executeOnce(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (auto* promise = dynamicDowncast<JSC::JSPromise>(result)) {
+        if (promise->status() != JSC::JSPromise::Status::Fulfilled) {
+            // Rejected takes this path too: attaching the reaction marks the promise handled.
+            if (moduleNamespaceObject)
+                mock->pendingNamespace.set(vm, mock, moduleNamespaceObject);
+            if (commonJSModule)
+                mock->pendingCommonJSModule.set(vm, mock, commonJSModule);
+            globalObject->onLoadPlugins.addModuleMock(vm, specifier, mock);
+
+            auto* resultPromise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+            JSFunction* onFulfilled = globalObject->mockModule.mockModuleResolvedFunction.getInitializedOnMainThread(globalObject);
+            promise->performPromiseThenWithContext(vm, globalObject, onFulfilled, jsUndefined(), resultPromise, mock);
+            return JSValue::encode(resultPromise);
+        }
+        result = promise->result();
+    }
+
+    if (auto* object = result.getObject())
+        mock->callbackFunctionOrCachedResult.set(vm, mock, object);
+
+    applyModuleMockOverrides(globalObject, moduleNamespaceObject, commonJSModule, result);
+    RETURN_IF_EXCEPTION(scope, {});
 
     globalObject->onLoadPlugins.addModuleMock(vm, specifier, mock);
 
@@ -723,6 +750,9 @@ void JSModuleMock::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(mock, visitor);
 
     visitor.append(mock->callbackFunctionOrCachedResult);
+    visitor.append(mock->specifierValue);
+    visitor.append(mock->pendingNamespace);
+    visitor.append(mock->pendingCommonJSModule);
 }
 
 DEFINE_VISIT_CHILDREN(JSModuleMock);

@@ -122,14 +122,10 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
       esModule = namespace.__esModule;
       moduleExports = namespace["module.exports"];
     } catch {}
-    // In Bun, when __esModule is not defined, it's a CustomAccessor on the prototype.
-    // Various libraries expect __esModule to be set when using ESM from require().
-    // We don't want to always inject the __esModule export into every module,
-    // And creating an Object wrapper causes the actual exports to not be own properties.
-    // So instead of either of those, we make it so that the __esModule property can be set at runtime.
-    // It only supports "true" and undefined. Anything non-truthy is treated as undefined.
-    // https://github.com/oven-sh/bun/issues/14411
-    if (esModule === undefined) {
+    // Match Node: require(esm) marks the namespace with an own `__esModule: true`
+    // when the module has a `default` export (#14411). `in` is [[HasProperty]],
+    // which cannot throw for a TDZ export during a require cycle.
+    if (esModule === undefined && "default" in namespace) {
       try {
         namespace.__esModule = true;
       } catch {
@@ -210,14 +206,10 @@ export function requireESMFromHijackedExtension(this: JSCommonJSModule, id: stri
     esModule = namespace.__esModule;
     moduleExports = namespace["module.exports"];
   } catch {}
-  // In Bun, when __esModule is not defined, it's a CustomAccessor on the prototype.
-  // Various libraries expect __esModule to be set when using ESM from require().
-  // We don't want to always inject the __esModule export into every module,
-  // And creating an Object wrapper causes the actual exports to not be own properties.
-  // So instead of either of those, we make it so that the __esModule property can be set at runtime.
-  // It only supports "true" and undefined. Anything non-truthy is treated as undefined.
-  // https://github.com/oven-sh/bun/issues/14411
-  if (esModule === undefined) {
+  // Match Node: require(esm) marks the namespace with an own `__esModule: true`
+  // when the module has a `default` export (#14411). `in` is [[HasProperty]],
+  // which cannot throw for a TDZ export during a require cycle.
+  if (esModule === undefined && "default" in namespace) {
     try {
       namespace.__esModule = true;
     } catch {

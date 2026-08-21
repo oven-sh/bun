@@ -3698,23 +3698,16 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     }
 
     if (referrerAsyncOrder == -1 && vm.topCallFrame) {
-        // The lexical referrer of this import() has no asyncEvaluationOrder,
-        // but the call can still run synchronously inside the body of a module
-        // that is mid top-level-await (a helper module's function invoked from
-        // that body). If that module awaits the import() result, even
-        // transitively, waiting on it at innerModuleEvaluation 12.b.v is the
-        // same deadlock the referrerAsyncOrder skip exists for, so take the
-        // order from the nearest caller frame whose module has one. #39831.
-        // Whether the caller will await the result is not observable here, so
-        // the skip also fires for a fire-and-forget import() whose target
-        // cycles back: that target then sees the caller's partial bindings,
-        // the same as when the import() is written in the caller directly.
+        // A mid-TLA module body can reach import() through a helper module's
+        // function, so the lexical referrer has no order. Waiting on that
+        // module at innerModuleEvaluation 12.b.v deadlocks when it awaits the
+        // import() result (#39831), and awaitedness is not observable here,
+        // so assume it: use the order of the nearest module body frame on the
+        // stack. A fire-and-forget import() whose target cycles back then
+        // sees partial bindings, the same as with import() in the caller.
         auto* moduleLoader = globalObject->moduleLoader();
         JSC::StackVisitor::visit(vm.topCallFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
-            // Only module body frames matter: a module's asyncEvaluationOrder
-            // is live exactly while its body runs (pre-first-await) on this
-            // stack. This also keeps the walk cheap for the common case of an
-            // import() with no module body on the stack at all.
+            // Only a module body frame carries a live asyncEvaluationOrder.
             if (visitor->codeType() != JSC::StackVisitor::Frame::Module)
                 return WTF::IterationStatus::Continue;
             auto* codeBlock = visitor->codeBlock();

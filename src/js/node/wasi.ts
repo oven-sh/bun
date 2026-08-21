@@ -3,6 +3,7 @@
 // Node reference: https://github.com/nodejs/node/blob/main/lib/wasi.js
 
 const nodeFsConstants = $processBindingConstants.fs;
+const isWindows = process.platform === "win32";
 
 var __getOwnPropNames = Object.getOwnPropertyNames;
 
@@ -1447,7 +1448,12 @@ var require_wasi = __commonJS({
             this.refreshMemory();
             const p = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
             const full = RESOLVE_PATH(stats, p);
-            const r = fs.readlinkSync(full);
+            let r = fs.readlinkSync(full);
+            if (isWindows) {
+              // fs.symlinkSync stores the guest's "./x" target as ".\x" on Windows
+              // (preprocessSymlinkDestination); hand it back in WASI's "/" form.
+              r = r.replaceAll("\\", "/");
+            }
             const used = Buffer.from(this.memory.buffer).write(r, buf, bufLen);
             this.view.setUint32(bufused, used, true);
             return constants_1.WASI_ESUCCESS;
@@ -1828,9 +1834,10 @@ class WASI extends WASIEngine {
   constructor(options = {}) {
     validateObject(options, "options");
 
-    validateString(options.version, "options.version");
+    const { version } = options;
+    validateString(version, "options.version");
     let bindingName;
-    switch (options.version) {
+    switch (version) {
       case "unstable":
         bindingName = "wasi_unstable";
         break;
@@ -1838,18 +1845,20 @@ class WASI extends WASIEngine {
         bindingName = "wasi_snapshot_preview1";
         break;
       default:
-        throw $ERR_INVALID_ARG_VALUE("options.version", options.version, "unsupported WASI version");
+        throw $ERR_INVALID_ARG_VALUE("options.version", version, "unsupported WASI version");
     }
 
-    if (options.args !== undefined) {
-      validateArray(options.args, "options.args");
+    const argsOption = options.args;
+    if (argsOption !== undefined) {
+      validateArray(argsOption, "options.args");
     }
-    const args = (options.args || []).map(String);
+    const args = (argsOption || []).map(String);
 
     const env = { __proto__: null };
-    if (options.env !== undefined) {
-      validateObject(options.env, "options.env");
-      for (const { 0: key, 1: value } of Object.entries(options.env)) {
+    const envOption = options.env;
+    if (envOption !== undefined) {
+      validateObject(envOption, "options.env");
+      for (const { 0: key, 1: value } of Object.entries(envOption)) {
         if (value !== undefined) {
           env[key] = `${value}`;
         }
@@ -1857,9 +1866,10 @@ class WASI extends WASIEngine {
     }
 
     const preopens = { __proto__: null };
-    if (options.preopens !== undefined) {
-      validateObject(options.preopens, "options.preopens");
-      for (const { 0: key, 1: value } of Object.entries(options.preopens)) {
+    const preopensOption = options.preopens;
+    if (preopensOption !== undefined) {
+      validateObject(preopensOption, "options.preopens");
+      for (const { 0: key, 1: value } of Object.entries(preopensOption)) {
         preopens[`${key}`] = `${value}`;
       }
     }
@@ -1872,9 +1882,10 @@ class WASI extends WASIEngine {
     super({ args, env, preopens, stdio: [stdin, stdout, stderr] });
 
     let returnOnExit = true;
-    if (options.returnOnExit !== undefined) {
-      validateBoolean(options.returnOnExit, "options.returnOnExit");
-      returnOnExit = options.returnOnExit;
+    const returnOnExitOption = options.returnOnExit;
+    if (returnOnExitOption !== undefined) {
+      validateBoolean(returnOnExitOption, "options.returnOnExit");
+      returnOnExit = returnOnExitOption;
     }
 
     // Until start()/initialize() provides the instance memory, every host

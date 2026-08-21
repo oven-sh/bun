@@ -231,3 +231,32 @@ it("path_* syscalls cannot escape the preopened directory", () => {
   );
   expect(wasi.FD_MAP.has(4)).toBe(true);
 });
+
+it("path_readlink returns the target path_symlink was given", () => {
+  using dir = tempDir("wasi-readlink", {
+    "target.txt": "target",
+  });
+  const wasi = new WASI({ version: "preview1", preopens: { "/": String(dir) } });
+  wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+  const memory = Buffer.from(wasi.memory.buffer);
+  const view = new DataView(wasi.memory.buffer);
+
+  const WASI_ESUCCESS = 0;
+  const preopenFd = 3;
+  const target = "./target.txt";
+  const targetPtr = 1024;
+  const linkPtr = 2048;
+  const outPtr = 4096;
+  const outLen = 256;
+  const bufusedPtr = 8192;
+
+  const targetLen = memory.write(target, targetPtr);
+  const linkLen = memory.write("link", linkPtr);
+  expect(wasi.wasiImport.path_symlink(targetPtr, targetLen, preopenFd, linkPtr, linkLen)).toBe(WASI_ESUCCESS);
+  expect(fs.readFileSync(path.join(String(dir), "link"), "utf8")).toBe("target");
+
+  // On Windows the host stores the target as ".\\target.txt"; the guest must still read back what it wrote.
+  expect(wasi.wasiImport.path_readlink(preopenFd, linkPtr, linkLen, outPtr, outLen, bufusedPtr)).toBe(WASI_ESUCCESS);
+  const bufused = view.getUint32(bufusedPtr, true);
+  expect(memory.toString("utf8", outPtr, outPtr + bufused)).toBe(target);
+});

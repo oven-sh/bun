@@ -22,9 +22,7 @@ pub struct WindowsWatcher {
     pub(crate) watcher: DirWatcher,
     pub(crate) buf: PathBuffer,
     pub(crate) base_idx: usize,
-    /// A `ReadDirectoryChangesW` is outstanding on `watcher.overlapped` and
-    /// `watcher.buf`. Set by [`Self::arm`], cleared when [`Self::next`]
-    /// dequeues its completion.
+    /// A `ReadDirectoryChangesW` into `watcher` is outstanding.
     read_pending: bool,
 }
 
@@ -304,19 +302,10 @@ impl WindowsWatcher {
         Ok(())
     }
 
-    /// Issue the `ReadDirectoryChangesW` that [`Self::next`] waits on, unless
-    /// one is already outstanding.
-    ///
-    /// The kernel records changes to the directory only while a read has been
-    /// issued on the handle: changes made before the first call are never
-    /// reported, changes made between a completion and the next call are held
-    /// in the kernel's buffer. `Watcher::start` calls this on the starting
-    /// thread before the watcher thread exists, so a file written while that
-    /// thread is still being scheduled (for example right after the entry
-    /// point's first evaluation under `--hot`) is not lost. Must only be
-    /// called once `self` is at its final address: the outstanding read writes
-    /// into `watcher.buf` and `watcher.overlapped` until it completes or
-    /// [`Self::stop`] retires it, so `stop` has to run before `self` is freed.
+    /// Issues the read that [`Self::next`] waits on, unless one is outstanding.
+    /// The kernel records changes only once the first read has been issued.
+    /// The read writes into `self`, so `self` must not move or be freed until
+    /// the read completes or [`Self::stop`] has run.
     pub(crate) fn arm(&mut self) -> bun_sys::Result<()> {
         if self.read_pending {
             return Ok(());
@@ -348,8 +337,7 @@ impl WindowsWatcher {
                 )
             };
             if overlapped == &raw mut self.watcher.overlapped {
-                // Our read completed (with or without an error); `buf` and
-                // `overlapped` are free to reuse.
+                // Completed, successfully or not.
                 self.read_pending = false;
             }
             if rc == 0 {
@@ -410,17 +398,15 @@ impl WindowsWatcher {
         }
     }
 
-    /// Close the directory and the port. After this returns the kernel holds
-    /// no pointer into `self`, so the owner may free it.
+    /// Closes the directory and the port. Once it returns, `self` can be freed.
     pub(crate) fn stop(&mut self) {
         // SAFETY: handles were opened in init() and are valid until stop() is called once.
         unsafe {
             w::CloseHandle(self.watcher.dir_handle);
         }
         if self.read_pending {
-            // Closing the directory retires the outstanding read, and its
-            // completion packet still arrives on the port. Take it, so that
-            // `buf` and `overlapped` are not written after the owner frees them.
+            // Closing the directory fails the read; its packet reaching the port
+            // is what proves the kernel is done with `buf` and `overlapped`.
             let mut nbytes: w::DWORD = 0;
             let mut key: w::ULONG_PTR = 0;
             let mut overlapped: *mut w::OVERLAPPED = ptr::null_mut();
@@ -432,7 +418,7 @@ impl WindowsWatcher {
                         &raw mut nbytes,
                         &raw mut key,
                         &raw mut overlapped,
-                        RETIRE_READ_TIMEOUT_MS,
+                        w::INFINITE,
                     )
                 };
                 if overlapped == &raw mut self.watcher.overlapped {
@@ -440,15 +426,14 @@ impl WindowsWatcher {
                     break;
                 }
                 if rc == 0 && overlapped.is_null() {
-                    // Timed out, or the port itself is unusable.
+                    // The port itself failed, so no packet can arrive.
                     bun_core::scoped_log!(
                         watcher,
-                        "stop(): no completion for the outstanding ReadDirectoryChangesW: {}",
+                        "stop(): GetQueuedCompletionStatus failed: {}",
                         w::Win32Error::get().0
                     );
                     break;
                 }
-                // A packet for something else (spurious); keep waiting for ours.
             }
         }
         // SAFETY: see above.
@@ -457,12 +442,6 @@ impl WindowsWatcher {
         }
     }
 }
-
-/// How long `stop` waits for the read retired by closing the directory to
-/// report back. The file system completes it inside the close, so the packet
-/// is normally already queued; the bound only keeps a broken port from
-/// hanging shutdown.
-const RETIRE_READ_TIMEOUT_MS: w::DWORD = 1000;
 
 #[repr(u32)]
 #[derive(Copy, Clone, Eq, PartialEq)]

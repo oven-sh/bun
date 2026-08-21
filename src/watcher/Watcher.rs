@@ -233,15 +233,13 @@ impl Watcher {
 
     pub fn start(&mut self) -> Result<(), crate::Error> {
         debug_assert!(!self.watchloop_handle.load());
-        // Windows reports no change made before the first ReadDirectoryChangesW
-        // on the handle. Issue it here, before the caller goes on to run the
-        // entry point, instead of on the watcher thread, which under load can
-        // get scheduled after the first write the user makes. inotify and
-        // kqueue queue events from the moment a file is added to the watchlist.
-        // `self` is the boxed watcher here, so the buffers the read writes into
-        // do not move.
+        // Windows records changes only while a read is outstanding, and the
+        // watcher thread can get scheduled after the user's first write.
         #[cfg(windows)]
-        self.platform.arm()?;
+        if let Err(err) = self.platform.arm() {
+            self.platform.stop();
+            return Err(err.into());
+        }
         self.watchloop_handle.store(true);
         // Watcher must be Send across the spawned thread boundary; we pass a
         // raw pointer (as usize) and uphold the safety contract manually.
@@ -267,9 +265,7 @@ impl Watcher {
             Ok(handle) => handle,
             Err(e) => {
                 self.watchloop_handle.store(false);
-                // No thread will ever take the read armed above. Retire it
-                // now: the caller frees `self` through `shutdown`'s no-thread
-                // path, and the read points into `self`.
+                // The read armed above points into `self`, which the caller frees.
                 #[cfg(windows)]
                 self.platform.stop();
                 // Windows: raw_os_error() is a Win32 GetLastError() code, so
@@ -382,9 +378,7 @@ impl Watcher {
                 running
             }
             Ok(()) => {
-                // `shutdown` handed the allocation to this thread and
-                // `thread_main` frees it next. The last cycle re-armed a read
-                // into it, so retire that read first.
+                // `thread_main` frees `self` next; the last cycle re-armed a read into it.
                 #[cfg(windows)]
                 self.platform.stop();
                 false

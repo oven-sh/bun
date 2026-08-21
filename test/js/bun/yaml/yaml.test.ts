@@ -3873,6 +3873,28 @@ config:
         expect(() => YAML.stringify(deep)).toThrow("Maximum call stack size exceeded");
       });
 
+      test("stack overflow protection in the write pass", () => {
+        let deep = {};
+        let current = deep;
+        for (let i = 0; i < 1000000; i++) {
+          current.next = {};
+          current = current.next;
+        }
+
+        // stringify reads every property twice: once to find anchors and once
+        // to write. Hand the first read a shallow value so that only the write
+        // pass walks the deep structure.
+        let reads = 0;
+        const root = {
+          get value() {
+            return reads++ === 0 ? {} : deep;
+          },
+        };
+
+        expect(() => YAML.stringify(root)).toThrow("Maximum call stack size exceeded");
+        expect(reads).toBe(2);
+      });
+
       test("handles arrays as root with references", () => {
         const shared = { shared: true };
         const arr = [shared, "middle", shared];

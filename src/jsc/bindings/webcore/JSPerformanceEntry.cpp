@@ -39,7 +39,6 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
 #include <JavaScriptCore/ObjectConstructor.h>
-#include <JavaScriptCore/ObjectConstructorInlines.h>
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
@@ -129,7 +128,7 @@ void JSPerformanceEntryPrototype::finishCreation(VM& vm)
     Bun::reifyStaticPropertyTable(vm, JSPerformanceEntry::info(), JSPerformanceEntryPrototypeTableValues, *this);
     // Node prints entries as `<ClassName> { ...toJSON() }` (lib/internal/perf/performance_entry.js);
     // the fields here are prototype accessors, so util.inspect would otherwise show `{}`.
-    putDirect(vm, Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.util.inspect.custom"_s)),
+    putDirect(vm, builtinNames(vm).inspectCustomPublicName(),
         JSFunction::create(vm, globalObject(), 2, "[nodejs.util.inspect.custom]"_s, jsPerformanceEntryPrototypeFunction_inspectCustom, ImplementationVisibility::Public),
         static_cast<unsigned>(PropertyAttribute::DontEnum));
     Bun::putToStringTagWithoutTransition(vm, this, info());
@@ -267,26 +266,30 @@ JSC_DEFINE_HOST_FUNCTION(jsPerformanceEntryPrototypeFunction_inspectCustom, (JSG
     auto* entry = dynamicDowncast<JSObject>(thisValue);
     if (depth < 0 || !entry)
         return JSValue::encode(thisValue);
-    // A prototype object is not an entry (and toJSON below is brand-checked): same
-    // `obj.constructor.prototype === obj` check util.inspect uses to skip custom inspectors.
-    PropertySlot constructorSlot(entry, PropertySlot::InternalMethodType::GetOwnProperty);
-    bool hasOwnConstructor = entry->getOwnPropertySlot(entry, lexicalGlobalObject, vm.propertyNames->constructor, constructorSlot);
+
+    // util.inspect skips the hook on a prototype object (`obj.constructor.prototype === obj`),
+    // but console.log / Bun.inspect call it, and toJSON below is brand-checked. On the WebCore
+    // prototypes `constructor` is a custom getter, so this has to be a [[Get]], not an own-value check.
+    JSValue constructor = entry->get(lexicalGlobalObject, vm.propertyNames->constructor);
     RETURN_IF_EXCEPTION(throwScope, {});
-    if (hasOwnConstructor && constructorSlot.isValue()) {
-        JSValue ownConstructor = constructorSlot.getValue(lexicalGlobalObject, vm.propertyNames->constructor);
+    JSValue constructorName = jsUndefined();
+    if (constructor.isObject()) {
+        JSValue prototype = constructor.get(lexicalGlobalObject, vm.propertyNames->prototype);
         RETURN_IF_EXCEPTION(throwScope, {});
-        if (auto* ownConstructorObject = dynamicDowncast<JSObject>(ownConstructor)) {
-            JSValue prototype = ownConstructorObject->get(lexicalGlobalObject, vm.propertyNames->prototype);
-            RETURN_IF_EXCEPTION(throwScope, {});
-            if (prototype == thisValue)
-                return JSValue::encode(thisValue);
-        }
+        if (prototype == thisValue)
+            return JSValue::encode(thisValue);
+        constructorName = constructor.get(lexicalGlobalObject, vm.propertyNames->name);
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
+    auto nameString = constructorName.toWTFString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     JSValue options = callFrame->argument(1);
     JSValue inspect = callFrame->argument(2);
-    if (!inspect.isCallable())
+    if (!inspect.isCallable()) {
         inspect = defaultGlobalObject(lexicalGlobalObject)->utilInspectFunction();
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
 
     // { ...options, depth: options.depth == null ? null : options.depth - 1 }
     JSObject* innerOptions = constructEmptyObject(lexicalGlobalObject);
@@ -318,13 +321,6 @@ JSC_DEFINE_HOST_FUNCTION(jsPerformanceEntryPrototypeFunction_inspectCustom, (JSG
     JSValue inspected = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, inspect, JSC::getCallData(inspect), jsUndefined(), inspectArgs);
     RETURN_IF_EXCEPTION(throwScope, {});
     auto inspectedString = inspected.toWTFString(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(throwScope, {});
-
-    JSValue constructor = entry->get(lexicalGlobalObject, vm.propertyNames->constructor);
-    RETURN_IF_EXCEPTION(throwScope, {});
-    JSValue constructorName = constructor.isObject() ? constructor.get(lexicalGlobalObject, vm.propertyNames->name) : jsUndefined();
-    RETURN_IF_EXCEPTION(throwScope, {});
-    auto nameString = constructorName.toWTFString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
 
     RELEASE_AND_RETURN(throwScope, JSValue::encode(jsString(vm, makeString(nameString, " "_s, inspectedString))));

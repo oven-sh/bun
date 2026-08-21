@@ -221,7 +221,16 @@ test("mark/measure toJSON and inspection include detail without perf_hooks being
        console.log(JSON.stringify({
          json,
          inspected: [inspect(mark), inspect(measure, { depth: 0 }), inspect(mark, { depth: -1 })],
-         proto: inspect(PerformanceMark.prototype).startsWith("PerformanceEntry"),
+         nativeInspected: Bun.inspect(mark),
+         // util.inspect never calls the hook on a prototype object. Bun.inspect / console.log do,
+         // and the hook has to fall back to the default formatting there instead of throwing
+         // from the brand-checked toJSON.
+         protos: [
+           inspect(PerformanceMark.prototype),
+           Bun.inspect(PerformanceEntry.prototype).split("\\n")[0],
+           Bun.inspect(PerformanceMark.prototype).split("\\n")[0],
+           Bun.inspect(PerformanceMeasure.prototype).split("\\n")[0],
+         ],
          descriptor: { ...Object.getOwnPropertyDescriptor(PerformanceEntry.prototype, custom), value: PerformanceEntry.prototype[custom].name },
          toJSONEnumerable: Object.getOwnPropertyDescriptor(PerformanceMark.prototype, "toJSON").enumerable,
          generic: PerformanceEntry.prototype[custom].call({ constructor: { name: "Fake" }, toJSON: () => ({ z: 1 }) }, 1, {}, inspect),
@@ -229,9 +238,10 @@ test("mark/measure toJSON and inspection include detail without perf_hooks being
     ],
     env: bunEnv,
     stdout: "pipe",
-    stderr: "inherit",
+    stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
   const result = JSON.parse(stdout);
   expect(result.json).toEqual([
     { name: "m", entryType: "mark", startTime: expect.any(Number), duration: 0, detail: { a: 1 } },
@@ -241,7 +251,13 @@ test("mark/measure toJSON and inspection include detail without perf_hooks being
   expect(result.inspected[0]).toContain("detail: { a: 1 }");
   expect(result.inspected[1]).toBe("PerformanceMeasure [Object]");
   expect(result.inspected[2]).toBe("PerformanceMark {}");
-  expect(result.proto).toBe(true);
+  expect(result.nativeInspected).toStartWith("PerformanceMark {\n  name: 'm',");
+  expect(result.protos).toEqual([
+    "PerformanceEntry [PerformanceMark] { detail: [Getter] }",
+    "PerformanceEntry {",
+    "PerformanceMark {",
+    "PerformanceMeasure {",
+  ]);
   expect(result.descriptor).toEqual({
     value: "[nodejs.util.inspect.custom]",
     writable: true,

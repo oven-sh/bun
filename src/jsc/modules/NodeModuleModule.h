@@ -20,7 +20,6 @@ namespace Bun {
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIsModuleResolveFilenameSlowPathEnabled);
 JSC::JSValue createStreamIterEnabledFlag(Zig::GlobalObject*);
 void addNodeModuleConstructorProperties(JSC::VM &vm, Zig::GlobalObject *globalObject);
-JSC::JSObject* createRequireCacheObject(JSC::VM&, JSC::JSGlobalObject*);
 
 extern "C" JSC::EncodedJSValue Resolver__nodeModulePathsJSValue(BunString specifier, JSC::JSGlobalObject*, bool use_dirname);
 extern "C" bool ModuleLoader__isBuiltin(const char* data, size_t len);

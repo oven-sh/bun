@@ -3067,22 +3067,6 @@ extern "C" [[ZIG_EXPORT(nothrow)]] double JSC__JSGlobalObject__jsDateNow(JSC::JS
 
 // ====================== end conditional builtin globals ======================
 
-// require.cache / Module._cache. A failed initialization (the builtin threw) leaves the lazy
-// property null with the exception pending; retry here so one stack-exhausted access does not
-// poison it for the lifetime of the global.
-JSObject* GlobalObject::lazyRequireCacheObject()
-{
-    if (JSObject* object = m_lazyRequireCacheObject.getInitializedOnMainThread(this)) [[likely]]
-        return object;
-    auto& vm = this->vm();
-    if (vm.exceptionForInspection())
-        return nullptr;
-    JSObject* object = Bun::createRequireCacheObject(vm, this);
-    if (object)
-        m_lazyRequireCacheObject.set(vm, this, object);
-    return object;
-}
-
 uint8_t GlobalObject::drainMicrotasks()
 {
     auto& vm = this->vm();

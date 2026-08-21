@@ -608,13 +608,8 @@ JSC_DEFINE_CUSTOM_SETTER(setterRequireFunction,
 
 static JSValue getModuleCacheObject(VM& vm, JSObject* moduleObject)
 {
-    // PropertyCallback builder: TopExceptionScope for the same reason as the `process` builders
-    // (reifyAllStaticProperties only inspects the VM between builders). Empty with the exception
-    // pending if creating the cache object threw.
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    JSObject* cache = uncheckedDowncast<Zig::GlobalObject>(moduleObject->globalObject())->lazyRequireCacheObject();
-    RETURN_IF_EXCEPTION(scope, {});
-    return cache;
+    return uncheckedDowncast<Zig::GlobalObject>(moduleObject->globalObject())
+        ->lazyRequireCacheObject();
 }
 
 static JSValue getModuleExtensionsObject(VM& vm, JSObject* moduleObject)
@@ -1116,15 +1111,6 @@ extern "C" JSC::EncodedJSValue Bun__createNodeModuleSourceMapOriginObject(
     return JSValue::encode(object);
 }
 
-JSObject* createRequireCacheObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
-{
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* function = JSFunction::create(vm, globalObject, static_cast<JSC::FunctionExecutable*>(commonJSCreateRequireCacheCodeGenerator(vm)), globalObject);
-    auto result = JSC::profiledCall(globalObject, ProfilingReason::API, function, JSC::getCallData(function), globalObject, ArgList());
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    RELEASE_AND_RETURN(scope, result.toObject(globalObject));
-}
-
 void addNodeModuleConstructorProperties(JSC::VM& vm,
     Zig::GlobalObject* globalObject)
 {
@@ -1179,9 +1165,15 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
 
     globalObject->m_lazyRequireCacheObject.initLater(
         [](const Zig::GlobalObject::Initializer<JSObject>& init) {
-            // Null with the exception pending if the builtin threw (termination / stack
-            // exhaustion); lazyRequireCacheObject() retries on the next access.
-            init.property.setMayBeNull(init.vm, init.owner, createRequireCacheObject(init.vm, init.owner));
+            JSC::VM& vm = init.vm;
+            JSC::JSGlobalObject* globalObject = init.owner;
+
+            auto* function = JSFunction::create(vm, globalObject, static_cast<JSC::FunctionExecutable*>(commonJSCreateRequireCacheCodeGenerator(vm)), globalObject);
+
+            NakedPtr<JSC::Exception> returnedException = nullptr;
+            auto result = JSC::profiledCall(globalObject, ProfilingReason::API, function, JSC::getCallData(function), globalObject, ArgList(), returnedException);
+            ASSERT(!returnedException);
+            init.set(result.toObject(globalObject));
         });
 
     globalObject->m_lazyRequireExtensionsObject.initLater(

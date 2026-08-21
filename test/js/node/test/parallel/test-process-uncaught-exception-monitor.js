@@ -16,10 +16,8 @@ const fixtures = require('../common/fixtures');
       assert.strictEqual(Object.getPrototypeOf(err).name, 'Error');
       assert.strictEqual(stdout, 'Monitored: Shall exit\n');
       const errLines = stderr.trim().split(/[\r\n]+/);
-      // Bun renders a base Error as "error: <message>" instead of Node's
-      // "Error: <message>" stack header.
-      const errLine = errLines.find((l) => /^(?:E|e)rror/.exec(l));
-      assert.strictEqual(errLine, 'error: Shall exit');
+      const errLine = errLines.find((l) => /^Error/.exec(l));
+      assert.strictEqual(errLine, 'Error: Shall exit');
     })
   );
 }

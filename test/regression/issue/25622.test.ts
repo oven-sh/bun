@@ -43,7 +43,7 @@ test("child tsconfig paths replace parent paths (not merge)", async () => {
 
   // Before the fix, Bun merged paths and this would print "should not resolve"
   // with exit 0. Now it should fail to resolve @helpers/x.
-  expect(stderr).toContain("Cannot find module '@helpers/x'");
+  expect(stderr).toMatch(/Cannot find (?:module|package) '@helpers\/x'/);
   expect(stdout).not.toContain("should not resolve");
   expect(exitCode).not.toBe(0);
 });

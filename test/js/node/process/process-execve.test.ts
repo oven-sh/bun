@@ -223,8 +223,8 @@ describe.concurrent("process.execve", () => {
     const [_stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).not.toContain("ERR_INVALID_ARG_TYPE");
-    expect(stderr).toContain('code: "ENOENT"');
-    expect(stderr).toContain('syscall: "execve"');
+    expect(stderr).toContain("code: 'ENOENT'");
+    expect(stderr).toContain("syscall: 'execve'");
     expect(exitCode).not.toBe(0);
   });
 

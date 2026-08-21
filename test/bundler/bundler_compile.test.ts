@@ -967,7 +967,7 @@ describe("bundler", () => {
 5 |   // hello world
 6 |           throw   new
                       ^
-error: Hello World`,
+Error: Hello World`,
         );
         expect(stderr).toInclude("entry.ts:6:19");
       },
@@ -1005,7 +1005,7 @@ console.log(ReactDom);`,
 7 |   // hello world
 8 |           throw   new
                       ^
-error: Hello World`,
+Error: Hello World`,
         );
         expect(stderr).toInclude("entry.ts:8:19");
       },

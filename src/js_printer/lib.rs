@@ -1802,7 +1802,17 @@ pub(crate) mod __gated_printer {
             if !IS_BUN_PLATFORM {
                 unreachable!();
             }
-            self.print_internal_bun_import(import, Some(b"globalThis.Bun"));
+            let src: &'static [u8] = if self.options.bundling {
+                b"globalThis.Bun"
+            } else {
+                // Runtime: NoOpRenamer can't protect a bare `globalThis`, and
+                // `import` is ESM-only so `import.meta` is always valid here.
+                if let Some(mi) = self.module_info() {
+                    mi.flags.contains_import_meta = true;
+                }
+                b"import.meta.require(\"bun\")"
+            };
+            self.print_internal_bun_import(import, Some(src));
         }
 
         fn print_internal_bun_import(
@@ -2475,7 +2485,7 @@ pub(crate) mod __gated_printer {
             let record = self.import_record(import_record_index as usize);
             let module_type = self.options.module_type;
 
-            if IS_BUN_PLATFORM {
+            if IS_BUN_PLATFORM && self.options.bundling {
                 // "bun" is not a real module. It's just globalThis.Bun.
                 //
                 //  transform from:
@@ -2486,6 +2496,9 @@ pub(crate) mod __gated_printer {
                 //      const foo = await Promise.resolve(globalThis.Bun)
                 //      const bar = globalThis.Bun
                 //
+                // Gated on `bundling`: the runtime transpiler uses NoOpRenamer, so a
+                // user `let globalThis` would capture the literal (#8058). Fall through
+                // to the external require/import paths there instead.
                 if record.tag == ImportRecordTag::Bun {
                     if record.kind == ImportKind::Dynamic {
                         self.print(b"Promise.resolve(globalThis.Bun)");

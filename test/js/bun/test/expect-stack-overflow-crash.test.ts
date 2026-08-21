@@ -125,11 +125,11 @@ describe.concurrent("failing matcher when formatting a value throws", () => {
         console.log(JSON.stringify(e.message));
       }
     `);
+    expect(result).toMatchObject({ stderr: "", exitCode: 0 });
     const message = JSON.parse(result.stdout);
     expect(message).toStartWith("expect(received).toEqual(expected)\n\n");
     expect(message).toContain('"a": 1');
     expect(message).not.toContain("boom");
-    expect(result).toMatchObject({ stderr: "", exitCode: 0 });
   });
 
   test("a getter that overflows the stack while the message is formatted", async () => {

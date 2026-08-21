@@ -61,8 +61,8 @@ struct Http3ResponseData {
     bool endAfterDrain = false;
 
     /* WebTransport. Set once the extended CONNECT on this stream has been
-     * upgraded; until then all three are inert and cost a request nothing
-     * beyond their size. The capsule buffer is separate from `backpressure`
+     * upgraded; until then every one of them is inert and costs a request
+     * nothing beyond its size. The capsule buffer is separate from `backpressure`
      * because capsules arrive on the same stream as the request body did and
      * a session has no body — reusing the buffer would only tangle the two
      * lifetimes together. */

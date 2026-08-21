@@ -71,9 +71,12 @@ struct Http3WebTransportSession {
     void *getUserData() { return getData()->wtUserData; }
     void setUserData(void *ud) { getData()->wtUserData = ud; }
 
-    /* Returns the payload length when queued, 0 when the connection's queue
-     * is full (drop it -- this path is unreliable by construction), or -1 when
-     * the payload is larger than the peer will accept. */
+    /* Returns the bytes that will go on the wire -- the payload plus the
+     * session's quarter-stream-id prefix, so that an empty payload reports
+     * success rather than colliding with the 0 below -- or 0 when the
+     * connection's queue is full (drop it; this path is unreliable by
+     * construction), or -1 when the payload is larger than the peer will
+     * accept. */
     int sendDatagram(const char *data, unsigned len) {
         return us_quic_wt_send_datagram(stream(), data, len);
     }
@@ -111,9 +114,23 @@ struct Http3WebTransportSession {
         n += (unsigned) reason.size();
 
         if (us_quic_stream_write(stream(), buf, n) < (int) n) {
-            /* The peer is not going to see a well-formed capsule, so do not
-             * dress it up as a close. */
+            /* Connection-level flow control is shared, so a large response
+             * body on the same connection can leave no room for this. The
+             * partial capsule goes with the reset, which drops the stream's
+             * buffered bytes, so the peer never sees a truncated one -- it
+             * learns the session is over abruptly instead, which is the truth.
+             *
+             * The report still happens: locally this session is finished
+             * either way, and skipping it would leave `closed` false and
+             * `sendDatagram` queueing for a peer that has just been reset.
+             *
+             * Untested, and not for want of trying: lsquic refuses any
+             * flow-control window under LSQUIC_MIN_FCW (16 KB), so no client
+             * can advertise one small enough to make a 1032-byte capsule come
+             * back short, and a session stream has no body write to consume a
+             * real one with. */
             us_quic_stream_reset(stream());
+            reportClose(code, reason);
             return;
         }
         /* Flush, then FIN the write half and nothing else. The capsule is

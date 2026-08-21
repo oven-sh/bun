@@ -1782,6 +1782,7 @@ describe("Bun.serve WebTransport", () => {
   test("sendDatagram reports queued, refused and dropped apart", async () => {
     const results: number[] = [];
     let max = 0;
+    let dropped = -1;
     await using server = Bun.serve({
       port: 0,
       tls,
@@ -1796,6 +1797,16 @@ describe("Bun.serve WebTransport", () => {
           results.push(session.sendDatagram(new Uint8Array(max + 1)));
           // The largest it will.
           results.push(session.sendDatagram(new Uint8Array(max)));
+          // And then past what the connection's queue holds. Nothing drains it
+          // until the next turn of the event loop, so a handler that keeps
+          // sending reaches the drop -- which is the third answer, and the one
+          // a caller is most likely to meet in anger.
+          for (let i = 0; i < 200; i++) {
+            if (session.sendDatagram(new Uint8Array(max)) === 0) {
+              dropped = i;
+              break;
+            }
+          }
         },
       },
       fetch: () => new Response("plain http/3"),
@@ -1807,6 +1818,11 @@ describe("Bun.serve WebTransport", () => {
       expect(await wt.until(() => results.length >= 3, 3000)).toBe(true);
       expect(max).toBeGreaterThan(0);
       expect(results).toEqual([1, -1, max + 1]);
+      // The ring is 64 KB of [uint16 length][payload] records, so a queue of
+      // largest-sized datagrams runs out in the fifties rather than at some
+      // round number worth asserting exactly.
+      expect(dropped).toBeGreaterThan(0);
+      expect(dropped).toBeLessThan(200);
     } finally {
       await wt.close();
     }

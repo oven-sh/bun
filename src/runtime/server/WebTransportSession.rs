@@ -139,11 +139,20 @@ impl WebTransportSession {
         // receive buffer would be faster and wrong: the buffer is lsquic's and
         // is reused before the next turn of the event loop, so anything the
         // handler kept would change underneath it.
-        let Ok(bytes) = crate::server::jsc::ArrayBuffer::create::<
+        let bytes = match crate::server::jsc::ArrayBuffer::create::<
             { crate::server::jsc::JSType::Uint8Array },
-        >(global, data) else {
-            // The only failure here is the allocation, which has already thrown.
-            return;
+        >(global, data)
+        {
+            Ok(bytes) => bytes,
+            // Allocation failure, which has already thrown. Take it here:
+            // this frame returns into lsquic's packet processing, and an
+            // exception left pending would be found by whichever JS ran next
+            // and reported against that instead.
+            Err(e) => {
+                let err = global.take_exception(e);
+                report(global, err);
+                return;
+            }
         };
         let vm = VirtualMachine::get();
         let _loop_guard = vm.enter_event_loop_scope();

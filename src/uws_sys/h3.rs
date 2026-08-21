@@ -375,8 +375,9 @@ bun_core::impl_tag_error!(AddServerNameError);
 
 /// Stamps one `pub fn $name<UD, H>(&mut self, p, ud, h)` per HTTP verb,
 /// each forwarding to [`App::route`] with the matching [`RouteKind`].
-/// `connect`/`trace` are intentionally omitted — h3 exposes those only via
-/// [`App::method`].
+/// `trace` is intentionally omitted — h3 exposes it only via [`App::method`].
+/// `connect` is here because the WebTransport route needs it: a session
+/// arrives as an extended CONNECT, registered by `NewServer::listen`.
 macro_rules! h3_route_methods {
     ($($name:ident => $kind:ident),* $(,)?) => {$(
         pub fn $name<UD, H>(&mut self, p: &[u8], ud: *mut UD, h: H)

@@ -816,7 +816,7 @@ static void us_quic_on_datagram(lsquic_conn_t *conn, const void *buf, size_t sz)
     unsigned int n = us_quic_varint_read((const unsigned char *) buf, sz, &qsid);
     if (!n) return;
     /* A datagram naming a session this connection does not have is dropped
-     * rather than treated as an error: RFC 9297 §5.2 expects exactly that in
+     * rather than treated as an error: RFC 9297 §2.1 expects exactly that in
      * the window where one side has closed the session and the other has not
      * heard about it yet. */
     us_quic_stream_t *session = us_quic_wt_find(qs, qsid);

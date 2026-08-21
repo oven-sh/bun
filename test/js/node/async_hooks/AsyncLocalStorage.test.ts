@@ -230,7 +230,9 @@ describe("AsyncLocalStorage", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "store\nundefined\n", stderr: "", exitCode: 0 });
+    expect(stderr).toBe("");
+    expect(stdout).toBe("store\nundefined\n");
+    expect(exitCode).toBe(0);
   });
 
   // Same assertions, observed directly: the context array and the store that
@@ -270,7 +272,9 @@ describe("AsyncLocalStorage", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "0\n", stderr: "", exitCode: 0 });
+    expect(stderr).toBe("");
+    expect(stdout).toBe("0\n");
+    expect(exitCode).toBe(0);
   });
 });
 

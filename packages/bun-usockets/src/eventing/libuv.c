@@ -178,10 +178,9 @@ static void check_cb(uv_check_t *p) {
 /* Not used for polls: their uv handle is a separate allocation */
 static void close_cb_free(uv_handle_t *h) { us_free(h->data); }
 
-/* A poll's uv_poll_t is owned by libuv from us_poll_stop's uv_close until
- * this runs; the us_poll_t is freed independently by us_poll_free, in either
- * order (us_internal_free_closed_sockets is deferred to the outermost tick, by
- * which time a nested uv_run may already have completed the close). */
+/* A poll's uv_poll_t is a separate allocation that libuv keeps linked into
+ * the loop until its close completes; us_poll_free hands it over with
+ * uv_close and this frees it. The us_poll_t itself is freed by us_poll_free. */
 static void close_cb_free_uv_poll(uv_handle_t *h) { us_free(h); }
 
 static void timer_cb(uv_timer_t *t) {
@@ -203,11 +202,17 @@ void us_poll_init(struct us_poll_t *p, LIBUS_SOCKET_DESCRIPTOR fd,
 }
 
 void us_poll_free(struct us_poll_t *p, struct us_loop_t *loop) {
-  /* uv_p is NULL once the poll was stopped (libuv frees the handle in its
-   * close callback) or resized away; it is only still ours if the poll was
-   * never started, in which case libuv has never seen it. */
+  /* NULL when a resize moved the handle to the new block. */
   if (p->uv_p) {
-    us_free(p->uv_p);
+    if (p->uv_p->type == UV_POLL) {
+      /* us_poll_start_rc initialised it (uv__handle_init linked it into the
+       * loop): only libuv can unlink it, and it is freed once that completes.
+       * This is the one place a poll handle is uv_close'd - see us_poll_stop. */
+      uv_close((uv_handle_t *)p->uv_p, close_cb_free_uv_poll);
+    } else {
+      /* Never initialised: libuv has not seen this block. */
+      us_free(p->uv_p);
+    }
   }
   us_free(p);
 }
@@ -221,9 +226,9 @@ int us_poll_start_rc(struct us_poll_t *p, struct us_loop_t *loop, int events) {
   /* uv_poll_init_socket (win/poll.c) can fail either before uv__handle_init
    * (ioctlsocket FIONBIO) or after it (getsockopt SO_PROTOCOL_INFOW). The
    * latter leaves the handle linked into loop->handle_queue with
-   * submitted_events_* still unset. Zero first so, on failure, ->type
-   * distinguishes the two states and the fields uv__poll_close reads are 0
-   * rather than garbage. */
+   * submitted_events_* still unset. Zero first so, on failure, ->type tells
+   * us_poll_free which of the two states it is in and the fields
+   * uv__poll_close reads are 0 rather than garbage. */
   memset(p->uv_p, 0, sizeof(uv_poll_t));
   p->uv_p->data = p;
 
@@ -237,16 +242,8 @@ int us_poll_start_rc(struct us_poll_t *p, struct us_loop_t *loop, int events) {
 #endif
   rc = uv_poll_init_socket(loop->uv_loop, p->uv_p, p->fd);
   if (rc < 0) {
+    /* The caller's us_poll_free disposes of uv_p either way (see there). */
     int saved = LIBUS_ERR;
-    if (p->uv_p->type == UV_POLL) {
-      /* uv__handle_init ran: the handle is in loop->handle_queue. Close it
-       * through libuv so it is unlinked and freed by the close callback. */
-      uv_close((uv_handle_t *)p->uv_p, close_cb_free_uv_poll);
-    } else {
-      /* Never reached uv__handle_init: uv_p is still our raw block. */
-      us_free(p->uv_p);
-    }
-    p->uv_p = NULL;
     errno = saved ? saved : -rc;
     return rc;
   }
@@ -282,12 +279,17 @@ int us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
 
 void us_poll_stop(struct us_poll_t *p, struct us_loop_t *loop) {
   if(!p->uv_p) return;
+  /* Stop only; the uv_close waits for us_poll_free. A socket is routinely
+   * closed from inside its own poll_cb, and JS run from there may drive the
+   * loop again (waitForPromise) before poll_cb returns. Starting the close
+   * here would let that nested uv_run complete it and free the uv_poll_t
+   * while libuv's uv__fast_poll_process_poll_req for this very handle is still
+   * on the stack: once poll_cb returns it reads the freed handle and queues
+   * its endgame a second time (double close callback, corrupted handle
+   * queue). us_poll_free runs from the outermost us_internal_loop_post, which
+   * is never inside a poll_cb. uv_poll_stop alone already guarantees poll_cb
+   * is not invoked for this handle again. */
   uv_poll_stop(p->uv_p);
-  /* The handle stays linked into the loop until libuv finishes closing it
-   * (outstanding AFD poll requests must complete first), so hand it over:
-   * close_cb_free_uv_poll frees it, and us_poll_free no longer waits on it. */
-  uv_close((uv_handle_t *)p->uv_p, close_cb_free_uv_poll);
-  p->uv_p = NULL;
 }
 
 int us_poll_events(struct us_poll_t *p) {
@@ -409,6 +411,8 @@ struct us_poll_t *us_create_poll(struct us_loop_t *loop, int fallthrough,
   struct us_poll_t *p =
       (struct us_poll_t *)us_malloc(sizeof(struct us_poll_t) + ext_size);
   p->uv_p = us_malloc(sizeof(uv_poll_t));
+  /* Not a libuv handle until us_poll_start_rc; us_poll_free checks this. */
+  p->uv_p->type = UV_UNKNOWN_HANDLE;
   p->uv_p->data = p;
   return p;
 }

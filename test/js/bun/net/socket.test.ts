@@ -4355,7 +4355,7 @@ describe.concurrent("a socket closed by data() while its peer's reset is being d
   });
 });
 
-describe("a socket closed by data() which then re-enters the event loop before returning", () => {
+describe.concurrent("a socket closed by data() which then re-enters the event loop before returning", () => {
   // The fixture runs under `bun test` so that expect(promise).resolves can drive
   // nested event-loop ticks from inside the data callback. The closed socket must
   // stay allocated until the dispatch that invoked data() has returned; the loop
@@ -4365,7 +4365,7 @@ describe("a socket closed by data() which then re-enters the event loop before r
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", fileURLToPath(new URL("./close-inside-data-reentrant-fixture.ts", import.meta.url))],
       env: bunEnv,
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);

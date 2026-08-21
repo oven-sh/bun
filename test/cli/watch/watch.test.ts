@@ -134,6 +134,21 @@ setInterval(() => {}, 1000);
 // LD_PRELOAD shim arms on inotify_init1 (which Watcher::init() calls on Linux
 // immediately before start()) and fails the very next pthread_create.
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+
+/** Compiles `dir/shim.c` to a shared object and returns the value to put in LD_PRELOAD. */
+async function compileShim(dir: string): Promise<string> {
+  const shimPath = join(dir, "shim.so");
+  await using ccProc = Bun.spawn({
+    cmd: [cc!, "-shared", "-fPIC", "-o", shimPath, join(dir, "shim.c"), "-ldl", "-lpthread"],
+    env: bunEnv,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [ccOut, ccErr, ccExit] = await Promise.all([ccProc.stdout.text(), ccProc.stderr.text(), ccProc.exited]);
+  if (ccExit !== 0) throw new Error(`shim compile failed: ${ccErr || ccOut}`);
+  return bunEnv.LD_PRELOAD ? `${shimPath}:${bunEnv.LD_PRELOAD}` : shimPath;
+}
+
 it.skipIf(!isLinux || !cc)("propagates FileWatcher thread spawn failure instead of panicking in start()", async () => {
   const SHIM_C = /* c */ `
 #define _GNU_SOURCE
@@ -173,23 +188,14 @@ int pthread_create(pthread_t *t, const pthread_attr_t *a, void *(*f)(void *), vo
     "shim.c": SHIM_C,
     "watchee.js": "console.log('unreachable');\n",
   });
-  const shimPath = join(String(dir), "shim.so");
-  await using ccProc = Bun.spawn({
-    cmd: [cc!, "-shared", "-fPIC", "-o", shimPath, join(String(dir), "shim.c"), "-ldl", "-lpthread"],
-    env: bunEnv,
-    stderr: "pipe",
-    stdout: "pipe",
-  });
-  const [ccOut, ccErr, ccExit] = await Promise.all([ccProc.stdout.text(), ccProc.stderr.text(), ccProc.exited]);
-  if (ccExit !== 0) throw new Error(`shim compile failed: ${ccErr || ccOut}`);
+  const LD_PRELOAD = await compileShim(String(dir));
 
-  const existing = bunEnv.LD_PRELOAD;
   await using proc = Bun.spawn({
     // --debug-crash-handler-use-trace-string skips the debug build's slow
     // backtrace symbolication so the child exits promptly.
     cmd: [bunExe(), "--debug-crash-handler-use-trace-string", "--watch", "watchee.js"],
     cwd: String(dir),
-    env: { ...bunEnv, LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath },
+    env: { ...bunEnv, LD_PRELOAD },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -212,8 +218,8 @@ int pthread_create(pthread_t *t, const pthread_attr_t *a, void *(*f)(void *), vo
 //
 // The LD_PRELOAD shim stands in for the kernel so that the race is deterministic: from the moment
 // bun calls execve() it fails every pthread_create in the process, tells the script to run its
-// first collection, waits for the failed pthread_create and for the abort behind it to land, and
-// only then execs for real.
+// first collection, and execs for real once the crash behind that failure has been parked. bun
+// parks a thread in pause(), which the shim interposes too, so that is directly observable.
 //
 // The JS thread is not necessarily the only thread that crashes in that window (every thread that
 // creates a thread right then fails the same way), and the crash handler, with SA_RESETHAND, used to
@@ -231,20 +237,29 @@ it.skipIf(!isLinux || !cc)(
 #include <pthread.h>
 #include <stdlib.h>
 #include <sys/resource.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 
 static int (*real_pthread_create)(pthread_t *, const pthread_attr_t *, void *(*)(void *), void *);
 static int (*real_execve)(const char *, char *const *, char *const *);
+static int (*real_pause)(void);
 static volatile int in_execve;
-static volatile int failed_create;
-static volatile int abort_thread_ready;
-static volatile int trap_thread_ready;
+/* The threads that crash: the one whose pthread_create fails, the aborting one, the trapping one. */
+static volatile long crashing[3];
+static volatile long parked[16];
+static volatile int parked_count;
 
-/* Without the fix the abort takes the default action; keep its core file out of CI's crash scan. */
-__attribute__((constructor)) static void no_core(void) {
+__attribute__((constructor)) static void init(void) {
+  /* Without the fix the crashes take the default action; keep the core file out of CI's crash scan. */
   struct rlimit rl = {0, 0};
   setrlimit(RLIMIT_CORE, &rl);
+  /* pause() below runs inside bun's signal handler, where dlsym is not safe. */
+  real_pthread_create = dlsym(RTLD_NEXT, "pthread_create");
+  real_execve = dlsym(RTLD_NEXT, "execve");
+  real_pause = dlsym(RTLD_NEXT, "pause");
 }
+
+static long tid(void) { return syscall(SYS_gettid); }
 
 static void create_marker(const char *env) {
   const char *path = getenv(env);
@@ -252,24 +267,38 @@ static void create_marker(const char *env) {
   if (fd >= 0) close(fd);
 }
 
+/* bun parks a thread that crashes during the reload in pause(). */
+int pause(void) {
+  int i = __sync_fetch_and_add(&parked_count, 1);
+  if (i < 16) parked[i] = tid();
+  return real_pause();
+}
+
+static int is_parked(long t) {
+  int n = parked_count < 16 ? parked_count : 16;
+  for (int i = 0; i < n; i++)
+    if (t && parked[i] == t) return 1;
+  return 0;
+}
+
 static void *abort_thread(void *unused) {
   (void)unused;
+  crashing[1] = tid();
   create_marker("RELOAD_TEST_ABORTED_MARKER");
-  abort_thread_ready = 1;
   abort();
 }
 
 static void *trap_thread(void *unused) {
   (void)unused;
+  crashing[2] = tid();
   create_marker("RELOAD_TEST_TRAPPED_MARKER");
-  trap_thread_ready = 1;
   __builtin_trap();
 }
 
 int pthread_create(pthread_t *t, const pthread_attr_t *a, void *(*f)(void *), void *arg) {
   if (!real_pthread_create) real_pthread_create = dlsym(RTLD_NEXT, "pthread_create");
   if (in_execve) {
-    failed_create = 1;
+    crashing[0] = tid();
     create_marker("RELOAD_TEST_FAILED_CREATE_MARKER");
     return EAGAIN;
   }
@@ -278,18 +307,16 @@ int pthread_create(pthread_t *t, const pthread_attr_t *a, void *(*f)(void *), vo
 
 int execve(const char *path, char *const argv[], char *const envp[]) {
   pthread_t t;
-  if (!real_execve) real_execve = dlsym(RTLD_NEXT, "execve");
-  if (!real_pthread_create) real_pthread_create = dlsym(RTLD_NEXT, "pthread_create");
   in_execve = 1;
   create_marker("RELOAD_TEST_IN_EXECVE_MARKER");
-  for (int i = 0; i < 2000 && !failed_create; i++) usleep(5000);
+  for (int i = 0; i < 10000 && !crashing[0]; i++) usleep(1000);
   real_pthread_create(&t, 0, abort_thread, 0);
   real_pthread_create(&t, 0, trap_thread, 0);
-  for (int i = 0; i < 2000 && !(abort_thread_ready && trap_thread_ready); i++) usleep(5000);
-  /* The thread whose pthread_create failed aborts right away, and the two threads above crash as
-   * soon as they have set their flag. Give the signals time to land: without the fix the first of
-   * them has killed the process long before this returns. */
-  usleep(1000000);
+  /* Without the fix the first crash kills the process while this waits. The deadline only matters
+   * for a build that gets a crashing thread out of the way without pause(); the reload must still
+   * go through then. */
+  for (int i = 0; i < 10000 && !(is_parked(crashing[0]) && is_parked(crashing[1]) && is_parked(crashing[2])); i++)
+    usleep(1000);
   return real_execve(path, argv, envp);
 }
 `;
@@ -307,23 +334,14 @@ int execve(const char *path, char *const argv[], char *const envp[]) {
     });
     // Kept outside the watched directory so that the markers do not show up as file events.
     using markers = tempDir("watch-reload-abort-in-execve-markers", {});
-    const shimPath = join(String(dir), "shim.so");
-    await using ccProc = Bun.spawn({
-      cmd: [cc!, "-shared", "-fPIC", "-o", shimPath, join(String(dir), "shim.c"), "-ldl", "-lpthread"],
-      env: bunEnv,
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-    const [ccOut, ccErr, ccExit] = await Promise.all([ccProc.stdout.text(), ccProc.stderr.text(), ccProc.exited]);
-    if (ccExit !== 0) throw new Error(`shim compile failed: ${ccErr || ccOut}`);
+    const LD_PRELOAD = await compileShim(String(dir));
 
-    const existing = bunEnv.LD_PRELOAD;
     const proc = spawn({
       cmd: [bunExe(), "--watch", "app.js"],
       cwd: String(dir),
       env: {
         ...bunEnv,
-        LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath,
+        LD_PRELOAD,
         RELOAD_TEST_IN_EXECVE_MARKER: join(String(markers), "in-execve"),
         RELOAD_TEST_FAILED_CREATE_MARKER: join(String(markers), "failed-create"),
         RELOAD_TEST_ABORTED_MARKER: join(String(markers), "aborted"),
@@ -363,6 +381,48 @@ int execve(const char *path, char *const argv[], char *const envp[]) {
   },
   30000,
 );
+
+// The other branch of the same handler: a crash on the reloading thread itself, after the
+// handler is installed, has to stay fatal. Parked, it would leave a watcher that never reloads.
+it.skipIf(!isLinux || !cc)("--watch dies when the watcher thread itself aborts on its way into execve", async () => {
+  using dir = tempDir("watch-reload-abort-on-reloading-thread", {
+    "shim.c": /* c */ `
+#include <stdlib.h>
+#include <sys/resource.h>
+
+/* The abort is the expected outcome; keep its core file out of CI's crash scan. */
+__attribute__((constructor)) static void no_core(void) {
+  struct rlimit rl = {0, 0};
+  setrlimit(RLIMIT_CORE, &rl);
+}
+
+int execve(const char *path, char *const argv[], char *const envp[]) {
+  (void)path; (void)argv; (void)envp;
+  abort();
+}
+`,
+    "app.js": `require("node:fs").writeSync(1, "iter first\\n"); setInterval(() => {}, 1000);`,
+  });
+  const LD_PRELOAD = await compileShim(String(dir));
+
+  const proc = spawn({
+    cmd: [bunExe(), "--watch", "app.js"],
+    cwd: String(dir),
+    env: { ...bunEnv, LD_PRELOAD },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  watchee = proc;
+  const stderr = proc.stderr.text();
+  const { waitFor, release } = stdoutWaiter(proc);
+
+  await waitFor("iter first");
+  await Bun.write(join(String(dir), "app.js"), `console.log("unreachable");`);
+  await proc.exited;
+  release();
+
+  expect(proc.signalCode, await stderr).toBe("SIGABRT");
+});
 
 // A script that registers a SIGTERM handler and then spins in synchronous
 // code must still restart on file change: the watcher thread posts the reload

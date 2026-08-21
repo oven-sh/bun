@@ -91,7 +91,7 @@ _bun_completions() {
 
     local SUBCOMMANDS="dev bun create run install add remove upgrade completions discord help init pm x test repl update audit dedupe prune outdated link unlink build";
 
-    GLOBAL_OPTIONS[LONG_OPTIONS]="--use --cwd --bunfile --server-bunfile --config --disable-react-fast-refresh --disable-hmr --env-file --extension-order --jsx-factory --jsx-fragment --extension-order --jsx-factory --jsx-fragment --jsx-import-source --jsx-production --jsx-runtime --main-fields --no-summary --version --platform --public-dir --tsconfig-override --define --external --help --inject --loader --origin --port --dump-environment-variables --dump-limits --disable-bun-js";
+    GLOBAL_OPTIONS[LONG_OPTIONS]="--use --cwd --bunfile --server-bunfile --config --check --disable-react-fast-refresh --disable-hmr --env-file --extension-order --jsx-factory --jsx-fragment --extension-order --jsx-factory --jsx-fragment --jsx-import-source --jsx-production --jsx-runtime --main-fields --no-summary --version --platform --public-dir --tsconfig-override --define --external --help --inject --loader --origin --port --dump-environment-variables --dump-limits --disable-bun-js";
     GLOBAL_OPTIONS[SHORT_OPTIONS]="-c -v -d -e -h -i -l -u -p";
 
     PACKAGE_OPTIONS[ADD_OPTIONS_LONG]="--development --optional --peer --catalog --filter";
@@ -118,7 +118,7 @@ _bun_completions() {
 
     case "${prev}" in
         help|--help|-h|-v|--version) return;;
-        -c|--config)      _file_arguments "!*.toml" && return;;
+        --config)         _file_arguments "!*.toml" && return;;
         --bunfile)        _file_arguments "!*.bun" && return;;
         --server-bunfile) _file_arguments "!*.server.bun" && return;;
         --backend)
@@ -198,11 +198,11 @@ _bun_completions() {
             COMPREPLY=( $(compgen -W "--version --cwd --help -v -h") );
             return;;
         repl)
-            COMPREPLY=( $(compgen -W "--help -h --eval -e --print -p --preload -r --smol --config -c --cwd --env-file --no-env-file" -- "${cur_word}") );
+            COMPREPLY=( $(compgen -W "--help -h --eval -e --print -p --preload -r --smol --config --cwd --env-file --no-env-file" -- "${cur_word}") );
             return;;
         run)
             _file_arguments "!(*.@(js|ts|jsx|tsx|mjs|cjs)?($|))";
-            COMPREPLY+=( $(compgen -W "--version --cwd --help --silent -v -h" -- "${cur_word}" ) );
+            COMPREPLY+=( $(compgen -W "--version --cwd --check --help --silent -v -c -h" -- "${cur_word}" ) );
             _read_scripts_in_package_json;
             return;;
         pm)

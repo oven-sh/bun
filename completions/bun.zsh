@@ -567,7 +567,6 @@ _bun_repl_completion() {
         '-r[Import a module before other modules are loaded]:preload' \
         '--smol[Use less memory, but run garbage collection more often]' \
         '--config[Specify path to Bun config file]: :->config' \
-        '-c[Specify path to Bun config file]: :->config' \
         '--cwd[Absolute path to resolve files & entry points from]:cwd' \
         '--env-file[Load environment variables from the specified file(s)]:env-file' \
         '--no-env-file[Disable automatic loading of .env files]' &&

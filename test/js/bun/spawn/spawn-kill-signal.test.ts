@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isWindows, shellExe } from "harness";
+import { isLinux, isWindows, shellExe } from "harness";
 import { constants } from "os";
 
 const inputs = {
@@ -160,3 +160,35 @@ test.skipIf(unsupportedSignal === undefined)(
     expect(() => Bun.spawnSync({ cmd, ...quiet, timeout: 1, killSignal: name })).toThrow(error);
   },
 );
+
+// Linux real-time signals have no name in Bun's table (SIGRTMIN is 34 on glibc
+// and 35 on musl, SIGRTMAX is 64 on both), so signalCode is the number itself.
+// Bun's own kill() only sends signals below 32, so the signal comes from
+// process.kill or from the child. Before, signalCode was null and `exited` read
+// after the exit was 254.
+describe.concurrent.skipIf(!isLinux)("a signal with no name", () => {
+  test.each([40, 64])("signalCode is the number and exited is 128 + it (%d)", async signal => {
+    await using proc = Bun.spawn({ cmd: ["sleep", "1000"], ...quiet });
+    process.kill(proc.pid, signal);
+    const exited = await proc.exited;
+    expect({ exited, exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({
+      exited: 128 + signal,
+      exitCode: null,
+      signalCode: signal,
+    });
+  });
+
+  test.each([40, 64])("exited first read after the exit also gives 128 + the signal (%d)", async signal => {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    await using proc = Bun.spawn({ cmd: ["sleep", "1000"], ...quiet, onExit: () => resolve() });
+    process.kill(proc.pid, signal);
+    await promise;
+    // The promise is created now, from the stored status (this used to give 254).
+    expect(await proc.exited).toBe(128 + signal);
+  });
+
+  test("spawnSync reports the number too", () => {
+    const { exitCode, signalCode } = Bun.spawnSync({ cmd: ["sh", "-c", "kill -40 $$"], ...quiet });
+    expect({ exitCode, signalCode }).toEqual({ exitCode: null, signalCode: 40 });
+  });
+});

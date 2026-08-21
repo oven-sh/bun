@@ -212,8 +212,7 @@ fn run_install(argv: &mut Vec<&[u8]>) -> Result<(), crate::Error> {
         }
         bun_sys::Result::Ok(spawn_result) => {
             if !spawn_result.status.is_ok() {
-                if let Some(exit_code) = spawn_result.status.signal().and_then(|s| s.to_exit_code())
-                {
+                if let Some(exit_code) = spawn_result.status.signal().map(|s| s.to_exit_code()) {
                     Global::exit(exit_code as u32);
                 }
 
@@ -388,7 +387,7 @@ pub(crate) fn generate_files(
                     bun_sys::Result::Ok(spawn_result) => {
                         if !spawn_result.status.is_ok() {
                             if let Some(exit_code) =
-                                spawn_result.status.signal().and_then(|s| s.to_exit_code())
+                                spawn_result.status.signal().map(|s| s.to_exit_code())
                             {
                                 Global::exit(exit_code as u32);
                             }
@@ -449,8 +448,7 @@ pub(crate) fn generate_files(
         }
         bun_sys::Result::Ok(spawn_result) => {
             if !spawn_result.status.is_ok() {
-                if let Some(exit_code) = spawn_result.status.signal().and_then(|s| s.to_exit_code())
-                {
+                if let Some(exit_code) = spawn_result.status.signal().map(|s| s.to_exit_code()) {
                     Global::exit(exit_code as u32);
                 }
 

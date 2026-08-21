@@ -2,11 +2,7 @@ use core::fmt;
 
 use bun_core::output;
 
-// Any u8 is a valid
-// inhabitant. A Rust `#[repr(u8)] enum` with only the named variants would be
-// UB for the `from()` path (which accepts arbitrary bytes), so this is modeled
-// as a transparent newtype with associated consts.
-/// A signal as the current platform numbers it; the names live in `bun_core::SignalCode`.
+/// A platform signal number; any `u8` is valid (RT signals). Names live in `bun_core::SignalCode`.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub struct SignalCode(pub u8);
@@ -40,13 +36,9 @@ impl SignalCode {
         self.canonical().map(bun_core::SignalCode::name)
     }
 
-    /// Shell scripts use exit codes 128 + signal number
-    /// https://tldp.org/LDP/abs/html/exitcodes.html
-    pub fn to_exit_code(self) -> Option<u8> {
-        match self.0 {
-            1..=31 => Some(128u8.wrapping_add(self.0)),
-            _ => None,
-        }
+    /// The shell convention for a signal death: https://tldp.org/LDP/abs/html/exitcodes.html
+    pub fn to_exit_code(self) -> u8 {
+        128u8.wrapping_add(self.0)
     }
 
     pub fn from<T: bytemuck::NoUninit>(value: T) -> SignalCode {

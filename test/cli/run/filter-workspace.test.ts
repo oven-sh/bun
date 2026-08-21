@@ -1,8 +1,9 @@
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { existsSync, symlinkSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
+import { constants } from "os";
 import { join } from "path";
 
 const cwd_root = tempDirWithFiles("testworkspace", {
@@ -525,6 +526,30 @@ describe("bun", () => {
     expect(stdoutval).toMatch(/code 0/);
     expect(stdoutval).toMatch(/code 23/);
     expect(exitCode).toBe(23);
+  });
+
+  // A signaled script exits with 128 + the signal, and the signal is labeled
+  // with the OS's name for its number. Signal 40 is a Linux real-time signal
+  // with no name; it used to make bun exit 1.
+  const signaled = [
+    { signal: constants.signals.SIGUSR1, label: "SIGUSR1" },
+    ...(isLinux ? [{ signal: 40, label: "UNKNOWN" }] : []),
+  ];
+  test.skipIf(isWindows).each(signaled)("exit code of a script killed by signal $signal", ({ signal, label }) => {
+    using dir = tempDir("testworkspace", {
+      dep0: {
+        "package.json": JSON.stringify({ name: "dep0", scripts: { script: `kill -${signal} $$` } }),
+      },
+    });
+    const { exitCode, stdout } = spawnSync({
+      cwd: dir,
+      cmd: [bunExe(), "run", "--filter", "*", "script"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stdout.toString()).toContain(`Signaled with code ${label}`);
+    expect(exitCode).toBe(128 + signal);
   });
 
   function runElideLinesTest({

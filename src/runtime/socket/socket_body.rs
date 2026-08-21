@@ -596,11 +596,14 @@ impl<const SSL: bool> NewSocket<SSL> {
         } else {
             uws::SocketKind::BunSocketTcp
         };
-        let flags: i32 = if self.flags.get().contains(Flags::ALLOW_HALF_OPEN) {
-            uws::LIBUS_SOCKET_ALLOW_HALF_OPEN
-        } else {
-            0
-        };
+        let socket_flags = self.flags.get();
+        let mut flags: i32 = 0;
+        if socket_flags.contains(Flags::ALLOW_HALF_OPEN) {
+            flags |= uws::LIBUS_SOCKET_ALLOW_HALF_OPEN;
+        }
+        if socket_flags.contains(Flags::PAUSE_ON_CONNECT) {
+            flags |= uws::LIBUS_SOCKET_OPEN_PAUSED;
+        }
         let ssl_ctx: Option<*mut uws::SslCtx> = if SSL {
             self.owned_ssl_ctx.get().map(|p| p.cast::<uws::SslCtx>())
         } else {
@@ -729,11 +732,15 @@ impl<const SSL: bool> NewSocket<SSL> {
         if this.flags.get().contains(Flags::BYPASS_TLS) {
             return Ok(JSValue::UNDEFINED);
         }
-        if !this.flags.get().contains(Flags::IS_PAUSED) {
-            let paused = this.socket.get().pause_stream();
-            this.update_flags(|f| f.set(Flags::IS_PAUSED, paused));
-        }
+        this.pause_reads();
         Ok(JSValue::UNDEFINED)
+    }
+
+    fn pause_reads(&self) {
+        if !self.flags.get().contains(Flags::IS_PAUSED) {
+            let paused = self.socket.get().pause_stream();
+            self.update_flags(|f| f.set(Flags::IS_PAUSED, paused));
+        }
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1423,6 +1430,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         // update the internal socket instance to the one that was just connected
         // This socket must be replaced because the previous one is a connecting socket not a uSockets socket
         this.socket.set(socket);
+        if !SSL && this.flags.get().contains(Flags::PAUSE_ON_CONNECT) {
+            this.pause_reads();
+        }
         jsc::mark_binding!();
 
         // Add SNI support for TLS (mongodb and others requires this)
@@ -1818,6 +1828,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             if let Some(twin) = this.twin.get().as_ref() {
                 twin.update_flags(|f| f.insert(Flags::REJECTED));
             }
+        } else if SSL && flags.contains(Flags::PAUSE_ON_CONNECT) {
+            this.pause_reads();
         }
 
         let mut callback = handlers.on_handshake();
@@ -4158,6 +4170,10 @@ bitflags::bitflags! {
         /// even though its `Handlers` mode is `Client` (no listener), so the
         /// client-only server-identity check must not run against its peer.
         const TLS_SERVER_ROLE      = 1 << 14;
+        /// node:net's `pauseOnConnect`: paused before JS sees the socket, in `on_open`
+        /// (a plain usockets socket was created without read interest already, see
+        /// `LIBUS_SOCKET_OPEN_PAUSED`) or after the handshake for TLS, which reads until then.
+        const PAUSE_ON_CONNECT     = 1 << 15;
     }
 }
 

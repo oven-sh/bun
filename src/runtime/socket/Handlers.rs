@@ -452,6 +452,9 @@ pub struct SocketConfig {
     pub(crate) allow_half_open: bool,
     pub(crate) reuse_port: bool,
     pub(crate) ipv6_only: bool,
+    /// node:net's `pauseOnConnect`, read off the options like `localAddress`:
+    /// the socket (or every socket this listener accepts) opens paused.
+    pub(crate) pause_on_connect: bool,
 }
 
 impl SocketConfig {
@@ -471,6 +474,9 @@ impl SocketConfig {
         }
         if self.ipv6_only {
             flags |= uws::LIBUS_SOCKET_IPV6_ONLY;
+        }
+        if self.pause_on_connect {
+            flags |= uws::LIBUS_SOCKET_OPEN_PAUSED;
         }
 
         flags
@@ -518,6 +524,7 @@ impl SocketConfig {
                 allow_half_open: false,
                 reuse_port: false,
                 ipv6_only: false,
+                pause_on_connect: false,
             };
         };
         // On any `?` below, `result` drops and releases what it owns — no
@@ -582,7 +589,11 @@ impl SocketConfig {
         mode: SocketMode,
     ) -> JsResult<SocketConfig> {
         let generated = GeneratedSocketConfig::from_js(global_object, opts)?;
-        Self::from_generated(vm, global_object, &generated, mode)
+        let mut config = Self::from_generated(vm, global_object, &generated, mode)?;
+        config.pause_on_connect = opts
+            .get_truthy(global_object, "pauseOnConnect")?
+            .is_some_and(|v| v.to_boolean());
+        Ok(config)
     }
 }
 

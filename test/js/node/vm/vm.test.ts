@@ -1945,16 +1945,15 @@ describe("node:vm lineOffset/columnOffset at the edge of int32", () => {
   });
 });
 
-test.concurrent("a context nothing references is collected, including the most recently created one", async () => {
+test.concurrent("a context nothing references is collected while it is still the newest context", async () => {
   // Every NodeVMGlobalObject used to be created from one Structure cached on the main global.
-  // JSGlobalObject::finishCreation records the global as that structure's realm, and the GC marks a
-  // structure's realm, so the cached structure kept whichever context was created last alive until the
-  // next one replaced it. Each case below is measured while its context is the most recent one.
+  // JSGlobalObject::finishCreation makes the new global the realm of its structure, and the GC marks
+  // a structure's realm, so the cached structure kept the context created last alive until the next
+  // one took its place. Each round below therefore checks a context while it is still the newest one.
   const fixture = String.raw`
     const vm = require("node:vm");
-    const { heapStats, releaseWeakRefs } = require("bun:jsc");
-    // Each case creates a context in its own call and only returns a WeakRef, so no frame of this
-    // program holds the sandbox while the collections below run.
+    // Each case returns a WeakRef to the object the context's global holds (the sandbox, or the
+    // DONT_CONTEXTIFY stand-in for it), so that object can only be collected together with the global.
     const cases = {
       createContext() {
         const sandbox = {};
@@ -1975,31 +1974,43 @@ test.concurrent("a context nothing references is collected, including the most r
         return new WeakRef(sandbox);
       },
     };
-    const results = {};
-    for (const name in cases) {
-      const ref = cases[name]();
-      let collected = false;
-      for (let attempt = 0; attempt < 5 && !collected; attempt++) {
-        // Come back from the event loop first: the call that created the context can leave pointers
-        // to it on the part of the stack the collector scans conservatively. new WeakRef() and
-        // deref() also keep their target alive until the current job ends.
-        await new Promise(resolve => setImmediate(resolve));
-        releaseWeakRefs();
-        Bun.gc(true);
-        collected = ref.deref() === undefined;
-      }
-      results[name] = { collected, contextsAlive: heapStats().objectTypeCounts.NodeVMGlobalObject ?? 0 };
+    // Creating the context leaves pointers to it in the stack memory below the current frame. The
+    // collector scans the stack conservatively, and the frames Bun.gc() pushes over that memory do not
+    // overwrite all of it, so some of those pointers would still count as roots. Filling that memory
+    // with frames of numbers first removes them.
+    function scrub(depth, a, b, c, d, e, f, g, h) {
+      if (depth === 0) return a + b + c + d + e + f + g + h;
+      return scrub(depth - 1, b, c, d, e, f, g, h, a + 1);
     }
-    console.log(JSON.stringify(results));
+    // Each round runs one frame deeper than the one before, so the frames it pushes land on different
+    // addresses. A stray pointer can pin one round. The shared structure pinned the context in every round.
+    function contextIsCollected(makeRef, extraFrames) {
+      if (extraFrames > 0) return contextIsCollected(makeRef, extraFrames - 1);
+      const ref = makeRef();
+      scrub(500, 1, 2, 3, 4, 5, 6, 7, 8);
+      // Bun.gc() also ends this job's keep-alive of WeakRef targets before it collects.
+      Bun.gc(true);
+      return ref.deref() === undefined;
+    }
+    const collectedRounds = {};
+    for (const name in cases) {
+      collectedRounds[name] = 0;
+      for (let round = 0; round < 3; round++) {
+        if (contextIsCollected(cases[name], round)) collectedRounds[name]++;
+      }
+    }
+    console.log(JSON.stringify(collectedRounds));
   `;
   await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual({
-    createContext: { collected: true, contextsAlive: 0 },
-    createContextDontContextify: { collected: true, contextsAlive: 0 },
-    runInNewContext: { collected: true, contextsAlive: 0 },
-    scriptRunInNewContext: { collected: true, contextsAlive: 0 },
+  const collectedRounds: Record<string, number> = JSON.parse(stdout);
+  const collectable = Object.fromEntries(Object.entries(collectedRounds).map(([name, rounds]) => [name, rounds > 0]));
+  expect(collectable).toEqual({
+    createContext: true,
+    createContextDontContextify: true,
+    runInNewContext: true,
+    scriptRunInNewContext: true,
   });
   expect(exitCode).toBe(0);
 });

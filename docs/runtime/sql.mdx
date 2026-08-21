@@ -1367,7 +1367,7 @@ Bun converts MySQL types to JavaScript types:
 | BIT(1)                                  | boolean                  | BIT(1) in MySQL                                                                                  |
 | GEOMETRY                                | Buffer                   | Binary character set; the bytes are a 4-byte SRID followed by WKB                                |
 
-`DATETIME` and `TIMESTAMP` values have no timezone on the wire, so Bun reads them back as **UTC**. The `Date` you get has the same UTC wall-clock that was stored, regardless of the machine's timezone. Reading as UTC matches how Bun writes values (a bound `Date` stores its UTC components). PostgreSQL's `timestamp` (without time zone) behaves the same way, see [Timestamps and time zones](#timestamps-and-time-zones).
+`DATETIME` and `TIMESTAMP` values have no timezone on the wire, so Bun reads them back as **UTC**. The `Date` you get has the same UTC wall-clock that was stored, regardless of the machine's timezone. Reading as UTC matches how Bun writes values (a bound `Date` stores its UTC components). PostgreSQL's `timestamp` (without time zone) behaves the same way. See [Timestamps and time zones](#timestamps-and-time-zones).
 
 #### Differences from PostgreSQL
 

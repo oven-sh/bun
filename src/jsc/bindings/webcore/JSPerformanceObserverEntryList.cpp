@@ -249,11 +249,4 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
     return wrap(lexicalGlobalObject, globalObject, impl);
 }
 
-PerformanceObserverEntryList* JSPerformanceObserverEntryList::toWrapped(JSC::VM&, JSC::JSValue value)
-{
-    if (auto* wrapper = dynamicDowncast<JSPerformanceObserverEntryList>(value))
-        return &wrapper->wrapped();
-    return nullptr;
-}
-
 }

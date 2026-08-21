@@ -278,19 +278,4 @@ bool JSEventListener::operator==(const EventListener& listener) const
     return m_jsFunction == other.m_jsFunction && m_isAttribute == other.m_isAttribute;
 }
 
-String JSEventListener::functionName() const
-{
-    if (!m_wrapper || !m_jsFunction || !m_isolatedWorld)
-        return {};
-
-    auto& vm = m_isolatedWorld->vm();
-    JSC::JSLockHolder lock(vm);
-
-    auto* handlerFunction = dynamicDowncast<JSC::JSFunction>(m_jsFunction.get());
-    if (!handlerFunction)
-        return {};
-
-    return handlerFunction->name(vm);
-}
-
 } // namespace WebCore

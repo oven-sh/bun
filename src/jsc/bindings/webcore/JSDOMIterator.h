@@ -35,17 +35,15 @@
 #include "JavaScriptCore/Interpreter.h"
 namespace WebCore {
 
-enum class JSDOMIteratorType { Set,
-    Map };
+enum class JSDOMIteratorType { Map };
 
 // struct IteratorTraits {
-//     static constexpr JSDOMIteratorType type = [Map|Set];
-//     using KeyType = [IDLType|void];
+//     static constexpr JSDOMIteratorType type = Map;
+//     using KeyType = [IDLType];
 //     using ValueType = [IDLType];
 // };
 
 template<typename T, typename U = void> using EnableIfMap = typename std::enable_if<T::type == JSDOMIteratorType::Map, U>::type;
-template<typename T, typename U = void> using EnableIfSet = typename std::enable_if<T::type == JSDOMIteratorType::Set, U>::type;
 
 template<typename JSWrapper, typename IteratorTraits> class JSDOMIteratorPrototype final : public JSC::JSNonFinalObject {
 public:
@@ -119,7 +117,6 @@ protected:
     }
 
     template<typename IteratorValue, typename T = Traits> EnableIfMap<T, JSC::JSValue> asJS(JSC::JSGlobalObject&, IteratorValue&);
-    template<typename IteratorValue, typename T = Traits> EnableIfSet<T, JSC::JSValue> asJS(JSC::JSGlobalObject&, IteratorValue&);
 
     static void destroy(JSC::JSCell*);
 
@@ -170,39 +167,11 @@ template<typename IteratorValue, typename T> inline EnableIfMap<T, JSC::JSValue>
     return {};
 }
 
-template<typename JSWrapper, typename IteratorTraits>
-template<typename IteratorValue, typename T> inline EnableIfSet<T, JSC::JSValue> JSDOMIteratorBase<JSWrapper, IteratorTraits>::asJS(JSC::JSGlobalObject& lexicalGlobalObject, IteratorValue& value)
-{
-    ASSERT(value);
-
-    auto globalObject = this->globalObject();
-    auto result = toJS<typename Traits::ValueType>(lexicalGlobalObject, *globalObject, value);
-
-    switch (m_kind) {
-    case IterationKind::Keys:
-    case IterationKind::Values:
-        return result;
-    case IterationKind::Entries:
-        return jsPair(lexicalGlobalObject, *globalObject, result, result);
-    };
-
-    ASSERT_NOT_REACHED();
-    return {};
-}
-
 template<typename JSIterator, typename IteratorValue> EnableIfMap<typename JSIterator::Traits> appendForEachArguments(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, JSC::MarkedArgumentBuffer& arguments, IteratorValue& value)
 {
     ASSERT(value);
     arguments.append(toJS<typename JSIterator::Traits::ValueType>(lexicalGlobalObject, globalObject, value->value));
     arguments.append(toJS<typename JSIterator::Traits::KeyType>(lexicalGlobalObject, globalObject, value->key));
-}
-
-template<typename JSIterator, typename IteratorValue> EnableIfSet<typename JSIterator::Traits> appendForEachArguments(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, JSC::MarkedArgumentBuffer& arguments, IteratorValue& value)
-{
-    ASSERT(value);
-    auto argument = toJS<typename JSIterator::Traits::ValueType>(lexicalGlobalObject, globalObject, value);
-    arguments.append(argument);
-    arguments.append(argument);
 }
 
 template<typename JSIterator> JSC::JSValue iteratorForEach(JSC::JSGlobalObject& lexicalGlobalObject, JSC::CallFrame& callFrame, typename JSIterator::Wrapper& thisObject)

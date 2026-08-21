@@ -773,13 +773,6 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
     return wrap(lexicalGlobalObject, globalObject, impl);
 }
 
-URLSearchParams* JSURLSearchParams::toWrapped(JSC::VM& vm, JSC::JSValue value)
-{
-    if (auto* wrapper = dynamicDowncast<JSURLSearchParams>(value))
-        return &wrapper->wrapped();
-    return nullptr;
-}
-
 size_t JSURLSearchParams::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
 {
     auto* thisObject = uncheckedDowncast<JSURLSearchParams>(cell);

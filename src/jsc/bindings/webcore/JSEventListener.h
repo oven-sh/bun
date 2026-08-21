@@ -46,21 +46,13 @@ public:
     // Returns true if this event listener was created for an event handler attribute, like "onload" or "onclick".
     bool isAttribute() const final { return m_isAttribute; }
 
-    bool wasCreatedFromMarkup() const { return m_wasCreatedFromMarkup; }
-
     JSC::JSObject* ensureJSFunction(ScriptExecutionContext&) const;
     DOMWrapperWorld* isolatedWorld() const { return m_isolatedWorld.get(); }
 
     JSC::JSObject* jsFunction() const final { return m_jsFunction.get(); }
     JSC::JSObject* wrapper() const final { return m_wrapper.get(); }
 
-    String functionName() const;
-
     void replaceJSFunctionForAttributeListener(JSC::JSObject* function, JSC::JSObject* wrapper);
-    static bool wasCreatedFromMarkup(const EventListener& listener)
-    {
-        return is<JSEventListener>(listener) && downcast<JSEventListener>(listener).wasCreatedFromMarkup();
-    }
 
 private:
     virtual JSC::JSObject* initializeJSFunction(ScriptExecutionContext&) const;

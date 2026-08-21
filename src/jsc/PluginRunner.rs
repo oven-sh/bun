@@ -20,8 +20,6 @@ pub struct PluginRunner {
     pub(crate) global_object: BackRef<JSGlobalObject>,
 }
 
-// Re-export the JSC-free static helpers so callers in this crate can keep
-// writing `PluginRunner::could_be_plugin(...)` without naming `bun_bundler`.
 impl PluginRunner {
     /// Borrow the JS global stored by `Bun__onDidAppendPlugin`.
     ///
@@ -36,10 +34,6 @@ impl PluginRunner {
     #[inline]
     pub fn extract_namespace(specifier: &[u8]) -> &[u8] {
         bun_bundler::transpiler::PluginRunner::extract_namespace(specifier)
-    }
-    #[inline]
-    pub fn could_be_plugin(specifier: &[u8]) -> bool {
-        bun_bundler::transpiler::PluginRunner::could_be_plugin(specifier)
     }
 }
 

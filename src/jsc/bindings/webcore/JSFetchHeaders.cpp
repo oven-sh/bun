@@ -689,11 +689,4 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
 {
     return wrap(lexicalGlobalObject, globalObject, impl);
 }
-
-FetchHeaders* JSFetchHeaders::toWrapped(JSC::VM& vm, JSC::JSValue value)
-{
-    if (auto* wrapper = dynamicDowncast<JSFetchHeaders>(value))
-        return &wrapper->wrapped();
-    return nullptr;
-}
 }

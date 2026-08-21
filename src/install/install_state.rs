@@ -28,6 +28,7 @@ use std::io::Write as _;
 
 use crate::lockfile::package::PackageColumns as _;
 use bun_paths::SEP;
+use bun_sys::Fd;
 
 use crate::PackageManager;
 use crate::package_manager_real::Subcommand;
@@ -38,27 +39,47 @@ fn h(bytes: &[u8]) -> u64 {
     bun_wyhash::hash(bytes)
 }
 
-fn hash_file(path: &[u8]) -> Option<u64> {
-    let p = std::path::Path::new(unsafe { std::str::from_utf8_unchecked(path) });
-    match std::fs::read(p) {
-        Ok(b) => Some(h(&b)),
-        Err(_) => None,
-    }
+fn zpath(path: &[u8]) -> bun_core::ZBox {
+    let mut v = Vec::with_capacity(path.len() + 1);
+    v.extend_from_slice(path);
+    v.push(0);
+    bun_core::ZBox::from_vec_with_nul(v)
 }
 
+fn read_file(path: &[u8]) -> Option<Vec<u8>> {
+    bun_sys::File::read_from(Fd::cwd(), path).ok()
+}
+
+fn hash_file(path: &[u8]) -> Option<u64> {
+    read_file(path).map(|b| h(&b))
+}
+
+fn mtime_ns(st: &bun_sys::Stat) -> u64 {
+    let t = bun_sys::stat_mtime(st);
+    (t.sec as u64)
+        .wrapping_mul(1_000_000_000)
+        .wrapping_add(t.nsec as u64)
+}
+
+/// mtime of `path` (following symlinks), None if it does not exist.
 fn dir_stamp(path: &[u8]) -> Option<u64> {
+    bun_sys::stat(&zpath(path)).ok().map(|st| mtime_ns(&st))
+}
+
+/// mtime of `path` itself (not following symlinks), None if it does not exist.
+fn lstat_stamp(path: &[u8]) -> Option<u64> {
+    bun_sys::lstat(&zpath(path)).ok().map(|st| mtime_ns(&st))
+}
+
+fn is_directory(path: &[u8]) -> bool {
+    matches!(bun_sys::stat(&zpath(path)), Ok(st) if bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode) == bun_sys::FileKind::Directory)
+}
+
+/// Iterate a directory with std's reader; the path bytes are ours.
+fn read_dir(path: &[u8]) -> Option<std::fs::ReadDir> {
+    // SAFETY: only hands our own path bytes to `read_dir`; never inspected as `str`.
     let p = std::path::Path::new(unsafe { std::str::from_utf8_unchecked(path) });
-    let m = std::fs::metadata(p).ok()?;
-    let t = m
-        .modified()
-        .ok()?
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()?;
-    Some(
-        t.as_secs()
-            .wrapping_mul(1_000_000_000)
-            .wrapping_add(u64::from(t.subsec_nanos())),
-    )
+    std::fs::read_dir(p).ok()
 }
 
 fn join(root: &[u8], rel: &[u8]) -> Vec<u8> {
@@ -139,14 +160,12 @@ fn state_path(manager: &mut PackageManager, root: &[u8], create_dir: bool) -> Op
     } else {
         join(root, b"node_modules/.cache")
     };
-    if !std::path::Path::new(unsafe { std::str::from_utf8_unchecked(&cache_path) }).is_dir() {
+    if !is_directory(&cache_path) {
         return None;
     }
     let dir = join(&cache_path, b".install-state");
     if create_dir {
-        let _ = std::fs::create_dir_all(std::path::Path::new(unsafe {
-            std::str::from_utf8_unchecked(&dir)
-        }));
+        let _ = bun_sys::mkdir_recursive(&dir);
     }
     let mut name: Vec<u8> = Vec::with_capacity(20);
     let _ = write!(&mut name, "{:016x}", h(root));
@@ -186,10 +205,7 @@ fn parse(text: &[u8]) -> Option<Recorded> {
 /// `Some(summary)` when the recorded state exists and every input is unchanged.
 pub fn is_up_to_date(manager: &mut PackageManager, root_dir: &[u8]) -> Option<Summary> {
     let sp = state_path(manager, root_dir, false)?;
-    let text = std::fs::read(std::path::Path::new(unsafe {
-        std::str::from_utf8_unchecked(&sp)
-    }))
-    .ok()?;
+    let text = read_file(&sp)?;
     let rec = parse(&text)?;
     if rec.lines.is_empty() {
         return None;
@@ -206,11 +222,7 @@ pub fn is_up_to_date(manager: &mut PackageManager, root_dir: &[u8]) -> Option<Su
             b'a' => hash_file(path).is_none(),
             b'd' => dir_stamp(path) == Some(*val),
             b'n' => dir_stamp(path).is_none(),
-            b'l' => {
-                lstat_stamp(std::path::Path::new(unsafe {
-                    std::str::from_utf8_unchecked(path)
-                })) == Some(*val)
-            }
+            b'l' => lstat_stamp(path) == Some(*val),
             b'p' => manifest_stamp(path) == *val,
             b'e' => {
                 saw_env = true;
@@ -365,9 +377,7 @@ pub fn save(manager: &mut PackageManager, root_dir: &[u8], entries: u64, package
     // manifest (`packages/*` → `packages/`), recorded even when it does not exist yet,
     // so creating the first workspace under it is noticed.
     let root_manifest_path = join(root_dir, b"package.json");
-    if let Ok(root_json) = std::fs::read(std::path::Path::new(unsafe {
-        std::str::from_utf8_unchecked(&root_manifest_path)
-    })) {
+    if let Some(root_json) = read_file(&root_manifest_path) {
         if let Some(globs) = workspace_globs(&root_json) {
             for g in globs {
                 let g: &[u8] = g.strip_prefix(b"./").unwrap_or(&g);
@@ -376,7 +386,7 @@ pub fn save(manager: &mut PackageManager, root_dir: &[u8], entries: u64, package
                     .position(|c| matches!(*c, b'*' | b'?' | b'[' | b'{' | b'!'))
                     .unwrap_or(g.len());
                 let lit = &g[..literal_end];
-                let dir_end = lit.iter().rposition(|c| *c == b'/').map_or(0, |i| i);
+                let dir_end = lit.iter().rposition(|c| *c == b'/').unwrap_or(0);
                 let prefix = &lit[..dir_end];
                 let abs = if prefix.is_empty() {
                     root_dir.to_vec()
@@ -453,47 +463,21 @@ pub fn save(manager: &mut PackageManager, root_dir: &[u8], entries: u64, package
     );
     let _ = writeln!(out, "s {entries:016x} {packages}");
 
-    let sp_str = unsafe { std::str::from_utf8_unchecked(&sp) };
-    let tmp = format!("{sp_str}.tmp");
-    if std::fs::write(&tmp, &out).is_ok() {
-        let _ = std::fs::rename(&tmp, sp_str);
+    let mut tmp = sp.clone();
+    tmp.extend_from_slice(b".tmp");
+    if let Ok(f) = bun_sys::File::create(Fd::cwd(), &tmp, true) {
+        if f.write_all(&out).is_ok() {
+            let _ = bun_sys::renameat(Fd::cwd(), &zpath(&tmp), Fd::cwd(), &zpath(&sp));
+        }
     }
-}
-
-fn lstat_stamp(path: &std::path::Path) -> Option<u64> {
-    let m = std::fs::symlink_metadata(path).ok()?;
-    let t = m
-        .modified()
-        .ok()?
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()?;
-    Some(
-        t.as_secs()
-            .wrapping_mul(1_000_000_000)
-            .wrapping_add(u64::from(t.subsec_nanos())),
-    )
 }
 
 /// `<mtime ns> ^ <size>` of a package's package.json, following symlinks (so an
 /// isolated-linker entry is checked in the store it points at). 0 when missing.
 fn manifest_stamp(pkg_dir: &[u8]) -> u64 {
     let pj = join(pkg_dir, b"package.json");
-    match std::fs::metadata(std::path::Path::new(unsafe {
-        std::str::from_utf8_unchecked(&pj)
-    })) {
-        Ok(m) => {
-            let t = m
-                .modified()
-                .ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| {
-                    d.as_secs()
-                        .wrapping_mul(1_000_000_000)
-                        .wrapping_add(u64::from(d.subsec_nanos()))
-                })
-                .unwrap_or(0);
-            (t ^ m.len().rotate_left(40)) | 1
-        }
+    match bun_sys::stat(&zpath(&pj)) {
+        Ok(st) => (mtime_ns(&st) ^ (st.st_size as u64).rotate_left(40)) | 1,
         Err(_) => 0,
     }
 }
@@ -502,12 +486,13 @@ fn manifest_stamp(pkg_dir: &[u8]) -> u64 {
 /// package.json stamp (`p`). Scope dirs are descended one level; bookkeeping dirs
 /// (`.bin`, `.bun`, …) get only the `l` stamp.
 fn stamp_tree(out: &mut Vec<u8>, dir: &[u8], depth: u8) {
-    let p = std::path::Path::new(unsafe { std::str::from_utf8_unchecked(dir) });
-    let Some(stamp) = lstat_stamp(p) else { return };
+    let Some(stamp) = lstat_stamp(dir) else {
+        return;
+    };
     let _ = write!(out, "l {stamp:016x} ");
     out.extend_from_slice(dir);
     out.push(b'\n');
-    let Ok(rd) = std::fs::read_dir(p) else { return };
+    let Some(rd) = read_dir(dir) else { return };
     for e in rd.flatten() {
         let name = e.file_name();
         let name = name.as_encoded_bytes();
@@ -519,9 +504,7 @@ fn stamp_tree(out: &mut Vec<u8>, dir: &[u8], depth: u8) {
             stamp_tree(out, &child, depth + 1);
             continue;
         }
-        if let Some(stamp) = lstat_stamp(std::path::Path::new(unsafe {
-            std::str::from_utf8_unchecked(&child)
-        })) {
+        if let Some(stamp) = lstat_stamp(&child) {
             let _ = write!(out, "l {stamp:016x} ");
             out.extend_from_slice(&child);
             out.push(b'\n');
@@ -532,6 +515,10 @@ fn stamp_tree(out: &mut Vec<u8>, dir: &[u8], depth: u8) {
             out.push(b'\n');
         }
     }
+}
+
+fn strings_contains(hay: &[u8], needle: &[u8]) -> bool {
+    bun_core::strings::index_of(hay, needle).is_some()
 }
 
 /// The `workspaces` glob patterns of a root package.json (`["a/*"]` or
@@ -565,21 +552,13 @@ fn workspace_globs(json_bytes: &[u8]) -> Option<Vec<Vec<u8>>> {
     Some(out)
 }
 
-fn strings_contains(hay: &[u8], needle: &[u8]) -> bool {
-    hay.windows(needle.len()).any(|w| w == needle)
-}
-
 /// Collect existing subdirectories of `dir` up to `depth` levels (bounded), skipping
 /// node_modules / dot dirs, into `out`.
 fn collect_dirs(dir: &[u8], depth: usize, out: &mut Vec<Vec<u8>>, budget: &mut usize) {
     if depth == 0 || *budget == 0 {
         return;
     }
-    let Ok(rd) = std::fs::read_dir(std::path::Path::new(unsafe {
-        std::str::from_utf8_unchecked(dir)
-    })) else {
-        return;
-    };
+    let Some(rd) = read_dir(dir) else { return };
     for e in rd.flatten() {
         if *budget == 0 {
             return;
@@ -605,14 +584,13 @@ fn collect_dirs(dir: &[u8], depth: usize, out: &mut Vec<Vec<u8>>, budget: &mut u
 /// Recursively record `l` stamps for a local-source directory (skipping node_modules
 /// and VCS dirs). Returns false if the walk exceeded `budget` entries or failed.
 fn stamp_source_tree(out: &mut Vec<u8>, dir: &[u8], budget: &mut usize) -> bool {
-    let p = std::path::Path::new(unsafe { std::str::from_utf8_unchecked(dir) });
-    let Some(stamp) = lstat_stamp(p) else {
+    let Some(stamp) = lstat_stamp(dir) else {
         return false;
     };
     let _ = write!(out, "l {stamp:016x} ");
     out.extend_from_slice(dir);
     out.push(b'\n');
-    let Ok(rd) = std::fs::read_dir(p) else {
+    let Some(rd) = read_dir(dir) else {
         return false;
     };
     for e in rd.flatten() {
@@ -631,9 +609,7 @@ fn stamp_source_tree(out: &mut Vec<u8>, dir: &[u8], budget: &mut usize) -> bool 
             if !stamp_source_tree(out, &child, budget) {
                 return false;
             }
-        } else if let Some(stamp) = lstat_stamp(std::path::Path::new(unsafe {
-            std::str::from_utf8_unchecked(&child)
-        })) {
+        } else if let Some(stamp) = lstat_stamp(&child) {
             let _ = write!(out, "l {stamp:016x} ");
             out.extend_from_slice(&child);
             out.push(b'\n');
@@ -648,7 +624,5 @@ pub fn invalidate(manager: &mut PackageManager, root_dir: &[u8]) {
     let Some(sp) = state_path(manager, root_dir, false) else {
         return;
     };
-    let _ = std::fs::remove_file(std::path::Path::new(unsafe {
-        std::str::from_utf8_unchecked(&sp)
-    }));
+    let _ = bun_sys::unlinkat(Fd::cwd(), &zpath(&sp));
 }

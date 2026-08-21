@@ -55,7 +55,7 @@ function validateWorkerFilename(filename) {
 
 const {
   MessageChannel,
-  BroadcastChannel,
+  BroadcastChannel: WebBroadcastChannel,
   Worker: WebWorker,
 } = globalThis as typeof globalThis & {
   // The Worker constructor secretly takes an extra parameter to provide the node:worker_threads
@@ -64,6 +64,55 @@ const {
   Worker: new (...args: [...ConstructorParameters<typeof globalThis.Worker>, nodeWorker: Worker]) => WebWorker;
 };
 const SHARE_ENV = Symbol.for("nodejs.worker_threads.SHARE_ENV");
+
+// node's BroadcastChannel (lib/internal/worker/io.js) adds non-WHATWG argument handling:
+// ERR_MISSING_ARGS, non-symbol name stringified, postMessage() arg required, closed => DOMException.
+class BroadcastChannel extends WebBroadcastChannel {
+  #closed = false;
+
+  constructor(name?: unknown) {
+    if (arguments.length === 0) throw $ERR_MISSING_ARGS("name");
+    // node's `${name}` under V8; JSC words the symbol failure differently.
+    if (typeof name === "symbol") throw new TypeError("Cannot convert a Symbol value to a string");
+    super(`${name}`);
+  }
+
+  // node brand-checks `this` on every member before anything else
+  // (ERR_INVALID_THIS, checked ahead of argument validation).
+  static #check(channel: BroadcastChannel) {
+    if (!(#closed in channel)) throw $ERR_INVALID_THIS("BroadcastChannel");
+  }
+
+  get name() {
+    BroadcastChannel.#check(this);
+    return super.name;
+  }
+
+  close() {
+    BroadcastChannel.#check(this);
+    this.#closed = true;
+    super.close();
+  }
+
+  postMessage(message: unknown) {
+    BroadcastChannel.#check(this);
+    if (arguments.length === 0) throw $ERR_MISSING_ARGS("message");
+    if (this.#closed) throw new DOMException("BroadcastChannel is closed.", "InvalidStateError");
+    super.postMessage(message);
+  }
+
+  ref() {
+    BroadcastChannel.#check(this);
+    super.ref();
+    return this;
+  }
+
+  unref() {
+    BroadcastChannel.#check(this);
+    super.unref();
+    return this;
+  }
+}
 
 const isMainThread = Bun.isMainThread;
 const {
@@ -946,7 +995,7 @@ class Worker extends EventEmitter {
     // threadId is only assigned once the WebWorker exists; register the hub-side
     // control port with the messaging hub now.
     this.#messagingThreadId = this.#worker.threadId;
-    messaging.registerMainThreadPort(this.#messagingThreadId, portToMain);
+    messaging.registerMainThreadPort(this.#messagingThreadId, portToMain, this.#onCouldNotSerializeError.bind(this));
     // The transfer is committed - release fds that were transferred but are
     // not referenced from workerData (nothing will deserialize them).
     options[kFinalizeJSTransferables]?.();
@@ -1197,6 +1246,12 @@ class Worker extends EventEmitter {
     }
     this.#onExitPromise = e.code;
     this.emit("exit", e.code);
+  }
+
+  // node's Worker[kOnCouldNotSerializeErr]: the worker reported that
+  // serializing its uncaught exception failed.
+  #onCouldNotSerializeError() {
+    this.emit("error", $ERR_WORKER_UNSERIALIZABLE_ERROR("Serializing an uncaught exception failed"));
   }
 
   #onError(event: ErrorEvent) {

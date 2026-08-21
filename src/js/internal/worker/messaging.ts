@@ -11,6 +11,8 @@
 
 const { validateNumber } = require("internal/validators");
 const { SafeMap } = require("internal/primordials");
+const { messageTypes: envMessageTypes } = require("internal/worker/io");
+const { kInternalAssertionSuffix } = require("internal/shared");
 
 const messageTypes = {
   REGISTER_MAIN_THREAD_PORT: "registerMainThreadPort",
@@ -27,6 +29,10 @@ let isMainThread = true;
 // SafeMap: its prototype is a frozen null-proto snapshot taken at bootstrap, so the
 // cross-thread routing table can't be broken by user code replacing Map.prototype.
 const threadsPorts = new SafeMap<number, any>();
+
+// Main-thread hub only: threadId -> callback invoked when that thread reports
+// `couldNotSerializeError` on its control port (node: Worker[kOnCouldNotSerializeErr]).
+const couldNotSerializeErrHandlers = new SafeMap<number, () => void>();
 
 // Only populated on child threads; always undefined on the main thread.
 let mainThreadPort: any;
@@ -48,7 +54,9 @@ function initThreadInfo(threadId: number, mainThread: boolean) {
 }
 
 // This event handler is always executed on the main thread only.
-function handleMessageFromThread(message) {
+// `sourceThreadId` is 0 for the hub's own synchronous calls; port-delivered
+// messages carry the registering thread's id (see makeThreadMessageHandler).
+function handleMessageFromThread(message, sourceThreadId = 0) {
   switch (message.type) {
     case messageTypes.REGISTER_MAIN_THREAD_PORT: {
       const { threadId, port } = message;
@@ -58,13 +66,16 @@ function handleMessageFromThread(message) {
 
       // Handle messages on this port. When another thread wants to register a
       // child, this takes care of relaying it, so any thread links to the main one.
-      port.on("message", handleMessageFromThread);
+      port.on("message", makeThreadMessageHandler(threadId));
 
       // Self-clean when the peer dies without an UNREGISTER (e.g. a grandchild
       // whose intermediate parent was terminated, so that parent's Worker#onClose
       // never ran); otherwise the stale entry lingers in the hub forever.
       port.on("close", () => {
-        if (threadsPorts.get(threadId) === port) threadsPorts.delete(threadId);
+        if (threadsPorts.get(threadId) === port) {
+          threadsPorts.delete(threadId);
+          couldNotSerializeErrHandlers.delete(threadId);
+        }
       });
 
       // Never block the thread on this port.
@@ -77,6 +88,7 @@ function handleMessageFromThread(message) {
         port.close();
         threadsPorts.delete(message.threadId);
       }
+      couldNotSerializeErrHandlers.delete(message.threadId);
       break;
     }
     case messageTypes.SEND_MESSAGE_TO_WORKER: {
@@ -84,7 +96,24 @@ function handleMessageFromThread(message) {
       sendMessageToWorker(source, destination, value, transferList, memory);
       break;
     }
+    case envMessageTypes.COULD_NOT_SERIALIZE_ERROR: {
+      // node: the parent's Worker[kOnCouldNotSerializeErr] emits
+      // ERR_WORKER_UNSERIALIZABLE_ERROR (lib/internal/worker.js).
+      const onCouldNotSerializeErr = couldNotSerializeErrHandlers.get(sourceThreadId);
+      if (onCouldNotSerializeErr) onCouldNotSerializeErr();
+      break;
+    }
+    default:
+      // node's Worker[kOnMessage] crashes the receiving thread on unknown
+      // control-message types (assert.fail in lib/internal/worker.js).
+      throw $ERR_INTERNAL_ASSERTION(`Unknown worker message type ${message.type}` + kInternalAssertionSuffix);
   }
+}
+
+function makeThreadMessageHandler(sourceThreadId: number) {
+  return function handleThreadMessage(message) {
+    handleMessageFromThread(message, sourceThreadId);
+  };
 }
 
 function handleMessageFromMainThread(message) {
@@ -167,7 +196,7 @@ function createMessagingChannel() {
 
 // Bun half of Node's createMainThreadPort: register the hub-side port now that the
 // child's threadId is known. Called after `new Worker`.
-function registerMainThreadPort(threadId: number, portToMain: any) {
+function registerMainThreadPort(threadId: number, portToMain: any, onCouldNotSerializeErr?: () => void) {
   const registrationMessage = {
     type: messageTypes.REGISTER_MAIN_THREAD_PORT,
     threadId,
@@ -175,6 +204,9 @@ function registerMainThreadPort(threadId: number, portToMain: any) {
   };
 
   if (isMainThread) {
+    // The callback can only be delivered on the thread that owns the Worker
+    // object, so it is tracked only when that owner is the hub itself.
+    if (onCouldNotSerializeErr) couldNotSerializeErrHandlers.set(threadId, onCouldNotSerializeErr);
     handleMessageFromThread(registrationMessage);
   } else if (mainThreadPort) {
     mainThreadPort.postMessage(registrationMessage, [portToMain]);
@@ -287,8 +319,15 @@ async function postMessageToThread(threadId, value, transferList, timeout) {
   }
 }
 
+// internalBinding('worker').getEnvMessagePort for the vendored test suite: the
+// calling thread's port to the main-thread hub (undefined on the main thread).
+function getMainThreadPort() {
+  return mainThreadPort;
+}
+
 export default {
   initThreadInfo,
+  getMainThreadPort,
   createMessagingChannel,
   registerMainThreadPort,
   destroyMainThreadPort,

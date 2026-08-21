@@ -283,6 +283,14 @@ impl All {
         ))
     }
 
+    /// The id a JS number names, whether JSC holds it as an int32 or as a double.
+    fn timer_id_from_number(value: JSValue) -> Option<i32> {
+        let number = value.as_number();
+        // `as` saturates and maps NaN to 0; the round trip rejects those and fractions.
+        let id = number as i32;
+        (f64::from(id) == number).then_some(id)
+    }
+
     fn remove_timer_by_id(&mut self, id: i32) -> Option<*mut TimeoutObject> {
         let value: *mut EventLoopTimer = if let Some(idx) = self.maps.set_timeout.get_index(&id) {
             self.maps.set_timeout.swap_remove_at(idx).1
@@ -307,9 +315,14 @@ impl All {
         let all = timer_all_mut();
 
         let timer: Option<*mut TimerObjectInternals> = 'brk: {
-            if timer_id_value.is_int32() {
+            if timer_id_value.is_number() {
+                // Node.js looks the id up by value (`knownTimersById[id]`): a double holding an
+                // integer names the same timer as the int32. Anything else clears nothing.
+                let Some(id) = Self::timer_id_from_number(timer_id_value) else {
+                    return Ok(());
+                };
                 // Immediates don't have numeric IDs in Node.js so we only have to look up timeouts and intervals
-                let Some(t) = all.remove_timer_by_id(timer_id_value.as_int32()) else {
+                let Some(t) = all.remove_timer_by_id(id) else {
                     return Ok(());
                 };
                 // SAFETY: t is a valid TimeoutObject pointer

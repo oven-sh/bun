@@ -111,6 +111,23 @@ impl<const SSL: bool> App<SSL> {
         c::uws_app_close_idle(Self::SSL_FLAG, self.as_raw(), i32::from(close_when_idle))
     }
 
+    /// Send a close frame with `code`/`message` to every open WebSocket and
+    /// fire its close handler (the WebSocket closing handshake). Unlike
+    /// [`Self::close`], peers observe `code` rather than an abnormal 1006.
+    pub fn end_all_websockets(&mut self, code: i32, message: &[u8]) {
+        // SAFETY: uWS copies `message` into the close frame before returning,
+        // so the slice only has to live for the duration of the call.
+        unsafe {
+            c::uws_app_end_all_websockets(
+                Self::SSL_FLAG,
+                self.as_raw(),
+                code,
+                message.as_ptr(),
+                message.len(),
+            )
+        }
+    }
+
     pub fn create(opts: &BunSocketContextOptions) -> Option<*mut Self> {
         // SAFETY: FFI call; uws_create_app returns null on failure.
         let app = unsafe { c::uws_create_app(Self::SSL_FLAG, *opts) };
@@ -524,6 +541,13 @@ pub mod c {
             app: &mut uws_app_s,
             close_when_idle: i32,
         ) -> usize;
+        pub(crate) fn uws_app_end_all_websockets(
+            ssl: i32,
+            app: &mut uws_app_s,
+            code: c_int,
+            message: *const u8,
+            length: usize,
+        );
         // safe: `&mut uws_app_s` is ABI-identical to a non-null `*mut`;
         // `handler`/`user_data` are stored opaquely (never dereferenced by the
         // C++ shim itself) — no preconditions on this call.

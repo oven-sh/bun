@@ -293,17 +293,6 @@ function validateLocalAddresses(first, second) {
   }
 }
 
-let invalidHostnameWarningEmitted = false;
-function emitInvalidHostnameWarning(hostname) {
-  if (invalidHostnameWarningEmitted) return;
-  invalidHostnameWarningEmitted = true;
-  process.emitWarning(
-    `The provided hostname "${String(hostname)}" is not a valid hostname, and is supported in the dns module solely for compatibility.`,
-    "DeprecationWarning",
-    "DEP0118",
-  );
-}
-
 function translateLookupOptions(options) {
   if (!options || typeof options !== "object") {
     options = { family: options };
@@ -437,13 +426,7 @@ function lookup(hostname, options, callback) {
   validateLookupOptions(options);
 
   if (!hostname) {
-    emitInvalidHostnameWarning(hostname);
-    if (options.all) {
-      process.nextTick(callback, null, []);
-    } else {
-      process.nextTick(callback, null, null, options.family === 6 ? 6 : 4);
-    }
-    return;
+    throw $ERR_INVALID_ARG_VALUE("hostname", hostname, "must be a non-empty string");
   }
 
   const family = isIP(hostname);
@@ -947,10 +930,11 @@ const promises = {
     options = translateLookupOptions(options);
     validateLookupOptions(options);
 
+    // Unlike the callback form, the promise form reports an empty hostname by
+    // rejecting: node only reaches this check inside createLookupPromise().
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/dns/promises.js#L124
     if (!hostname) {
-      emitInvalidHostnameWarning(hostname);
-      const family = options.family === 6 ? 6 : 4;
-      return Promise.$resolve(options.all ? [] : { address: null, family });
+      return Promise.$reject($ERR_INVALID_ARG_VALUE("hostname", hostname, "must be a non-empty string"));
     }
 
     const family = isIP(hostname);

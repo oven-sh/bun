@@ -637,9 +637,33 @@ static lsquic_stream_ctx_t *us_quic_on_new_stream(void *if_ctx, lsquic_stream_t 
     return (lsquic_stream_ctx_t *) s;
 }
 
+/* From lsquic_stream.h (not in the public header). */
+void lsquic_stream_maybe_reset(struct lsquic_stream *, uint64_t error_code, int);
+
+/* A WebTransport stream the peer opened on one of its sessions.
+ *
+ * Only datagrams are implemented, and a stream nobody is ever going to read is
+ * a worse answer than a refused one: with no reset the peer waits on it until
+ * its own timeout, having been told nothing. lsquic sets the flag while
+ * parsing the 0x41 prefix, which happens inside lsquic_stream_read, so this is
+ * checked after each read rather than once on entry.
+ *
+ * WEBTRANSPORT_SESSION_GONE (0x170d7b68) from draft-ietf-webtrans-http3 §4.6,
+ * which is the code for a stream whose session will not carry it. */
+static int us_quic_refuse_webtransport_stream(us_quic_stream_t *s, lsquic_stream_t *stream) {
+    if (!lsquic_stream_is_webtransport_client_bidi_stream(stream)) return 0;
+    lsquic_stream_maybe_reset(stream, 0x170d7b68, 1);
+    lsquic_stream_wantread(stream, 0);
+    lsquic_stream_close(stream);
+    (void) s;
+    return 1;
+}
+
 static void us_quic_on_read(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
     us_quic_stream_t *s = (us_quic_stream_t *) h;
     us_quic_socket_context_t *ctx = s->ctx;
+
+    if (us_quic_refuse_webtransport_stream(s, stream)) return;
 
     /* lsquic queues a fresh hset for every HEADERS block (1xx interims,
      * the final response, trailers). lsquic_stream_get_hset returns the
@@ -661,6 +685,7 @@ static void us_quic_on_read(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
 
     ssize_t r;
     while ((r = lsquic_stream_read(stream, ctx->read_buf, US_QUIC_READ_BUF)) > 0) {
+        if (us_quic_refuse_webtransport_stream(s, stream)) return;
         if (ctx->on_stream_data)
             ctx->on_stream_data(s, ctx->read_buf, (unsigned int) r, 0);
         if (!s->stream) return;
@@ -830,6 +855,11 @@ int us_quic_stream_accept_webtransport(us_quic_stream_t *s) {
     us_quic_socket_t *qs = (us_quic_socket_t *)
         lsquic_conn_get_ctx(lsquic_stream_conn(s->stream));
     if (!qs) return -1;
+
+    /* WT_MAX_SESSIONS is advertised in SETTINGS, so it has to be honoured
+     * here too: a peer that ignores it gets its CONNECT refused rather than
+     * growing this array for as long as it keeps asking. */
+    if (qs->wt_session_count >= US_QUIC_WT_MAX_SESSIONS) return -1;
 
     if (qs->wt_session_count == qs->wt_session_cap) {
         unsigned int ncap = qs->wt_session_cap ? qs->wt_session_cap * 2 : 4;
@@ -1320,9 +1350,6 @@ void us_quic_stream_shutdown_read(us_quic_stream_t *s) {
 void us_quic_stream_close(us_quic_stream_t *s) {
     if (s->stream) lsquic_stream_close(s->stream);
 }
-
-/* From lsquic_stream.h (not in the public header). */
-void lsquic_stream_maybe_reset(struct lsquic_stream *, uint64_t error_code, int);
 
 /* Abort the send half with RESET_STREAM(H3_REQUEST_CANCELLED) instead of
  * FIN. lsquic_stream_close/shutdown queue FIN after the buffered tail,

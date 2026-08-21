@@ -134,6 +134,14 @@ export const lsquic: Dependency = {
     // on top of the one node-quic-accessors.patch already writes, and a
     // repeated setting identifier is H3_SETTINGS_ERROR (RFC 9114 7.2.4.1).
     "patches/lsquic/webtransport-settings.patch",
+    // The WebTransport flags are declared in `enum stream_b_flags`, which is
+    // the `sm_bflags` field, but every one of the five places lsquic reads or
+    // writes them uses `stream_flags` instead. In that enum bit 14 is
+    // STREAM_HEAD_IN_FIN and bit 15 is STREAM_FRAMES_ELIDED, so marking a
+    // stream as a session corrupted lsquic's own record of the request, and
+    // asking whether a stream was WebTransport answered yes for any ordinary
+    // request whose frames had been elided.
+    "patches/lsquic/webtransport-stream-flags.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

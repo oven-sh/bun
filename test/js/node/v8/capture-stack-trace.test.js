@@ -1,7 +1,7 @@
 import { nativeFrameForTesting } from "bun:internal-for-testing";
 import { noInline } from "bun:jsc";
 import { afterEach, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
   Error.prepareStackTrace = origPrepareStackTrace;
@@ -1120,4 +1120,77 @@ test("lazy error-info materialization does not store an empty stack value when t
     signalCode: null,
   });
   expect(exitCode).toBe(0);
+});
+
+test("Error.prepareStackTrace call sites keep their own file when a hidden frame is on the stack", async () => {
+  // A bound function call is a frame with private implementation visibility. JSC omits it from the
+  // trace unless showPrivateScriptsInStackTraces is on (debug builds turn it on); Bun then has to
+  // drop it while building the CallSites, and the frames after it must keep their own file.
+  using dir = tempDir("prepare-stack-trace-hidden-frame", {
+    "main.cjs": [
+      `const { outer, viaAsyncLocalStorage } = require("./callers.cjs");`,
+      `function inner() {`,
+      `  const error = new Error("boom");`,
+      `  return error;`,
+      `}`,
+      `function main() {`,
+      `  const error = outer(inner.bind(null));`,
+      `  return error;`,
+      `}`,
+      `const { basename } = require("node:path");`,
+      `const wanted = new Set(["inner", "outer", "main", "run", "viaAsyncLocalStorage"]);`,
+      `Error.prepareStackTrace = (_error, callSites) =>`,
+      `  callSites`,
+      `    .filter(callSite => wanted.has(callSite.getFunctionName()))`,
+      `    .map(callSite => ({`,
+      `      name: callSite.getFunctionName(),`,
+      `      file: basename(callSite.getFileName()),`,
+      `      line: callSite.getLineNumber(),`,
+      `    }));`,
+      `console.log(JSON.stringify({ bound: main().stack, asyncLocalStorage: viaAsyncLocalStorage(inner.bind(null)).stack }));`,
+    ].join("\n"),
+    "callers.cjs": [
+      `const { AsyncLocalStorage } = require("node:async_hooks");`,
+      `exports.outer = function outer(callback) {`,
+      `  const error = callback();`,
+      `  return error;`,
+      `};`,
+      `const storage = new AsyncLocalStorage();`,
+      `exports.viaAsyncLocalStorage = function viaAsyncLocalStorage(callback) {`,
+      `  const error = storage.run("store", callback);`,
+      `  return error;`,
+      `};`,
+    ].join("\n"),
+  });
+
+  const results = await Promise.all(
+    ["0", "1"].map(async showPrivateScriptsInStackTraces => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.cjs"],
+        cwd: String(dir),
+        env: { ...bunEnv, BUN_JSC_showPrivateScriptsInStackTraces: showPrivateScriptsInStackTraces },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { showPrivateScriptsInStackTraces, callSites: stdout && JSON.parse(stdout), stderr, exitCode };
+    }),
+  );
+
+  const expected = {
+    bound: [
+      { name: "inner", file: "main.cjs", line: 3 },
+      { name: "outer", file: "callers.cjs", line: 3 },
+      { name: "main", file: "main.cjs", line: 7 },
+    ],
+    asyncLocalStorage: [
+      { name: "inner", file: "main.cjs", line: 3 },
+      { name: "run", file: "node:async_hooks", line: expect.any(Number) },
+      { name: "viaAsyncLocalStorage", file: "callers.cjs", line: 8 },
+    ],
+  };
+  expect(results).toEqual([
+    { showPrivateScriptsInStackTraces: "0", callSites: expected, stderr: "", exitCode: 0 },
+    { showPrivateScriptsInStackTraces: "1", callSites: expected, stderr: "", exitCode: 0 },
+  ]);
 });

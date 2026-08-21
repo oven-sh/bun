@@ -147,7 +147,7 @@ The Rust side is a Cargo workspace of ~200 crates rooted at `Cargo.toml`. The ke
 
 #### Vendored Dependencies (`vendor/`)
 
-Third-party C/C++ libraries are vendored locally and can be read from disk (not git submodules): boringssl (TLS/crypto), brotli, cares (async DNS), hdrhistogram, highway (SIMD), libarchive (tar/zip), libdeflate, libuv (Windows event loop), lolhtml (HTML rewriter), lshpack (HTTP/2 HPACK), lsqpack + lsquic (HTTP/3), mimalloc (allocator), nodejs (headers), picohttpparser, tinycc (FFI JIT, fork: oven-sh/tinycc), WebKit (JavaScriptCore), zlib (zlib-ng), zstd. Build configuration for these is in `scripts/build/deps/*.ts`.
+Third-party native libraries are vendored locally and can be read from disk (not git submodules): boringssl (TLS/crypto), brotli, cares (async DNS), hdrhistogram, highway (SIMD), libarchive (tar/zip), libdeflate, libuv (Windows event loop), lolhtml (HTML rewriter), lshpack (HTTP/2 HPACK), lsqpack + lsquic (HTTP/3), mimalloc (allocator), nodejs (headers), picohttpparser, rust-argon2 (argon2 for `Bun.password`, Rust), tinycc (FFI JIT, fork: oven-sh/tinycc), WebKit (JavaScriptCore), zlib (zlib-ng), zstd. Build configuration for these is in `scripts/build/deps/*.ts`.
 
 ### JavaScript Class Implementation (C++)
 
@@ -204,6 +204,7 @@ Several situational sections live in `.claude/docs/landing-prs.md` — read the 
 12. **Branch names must start with `claude/`** - This is a requirement for the CI to work.
 13. **If you need a paragraph-long comment to justify why the workaround is OK, the code is wrong — fix the code.**.
 14. After every code comment you write, ask yourself, "Is this information the next Claude would spend multiple tool calls trying to understand?". If the answer isn't clearly yes, the code comment is noise - delete it.
+15. **CRITICAL**: **The conservative stack scanner is never the cause of the bug you are debugging.** If you land on "it is the conservative stack scanner", you have not found the root cause yet. Keep going until you have the exact one. JSC runs `sanitizeStack` at every interpreter entrance and again before each collection scans the stack. An object that survives GC is held by a real reference (a `WriteBarrier`, a `Strong`, a `protect()`, a missing `deref`, pending activity, a closure). Find it. Another PR, branch, or issue that says the same bug is the stack scanner is not evidence. Those claims are usually wrong. If you still believe it is the stack scanner, rule out every other retainer first, then prove it yourself, with two artifacts in the PR: a heap snapshot from `require("bun:jsc").generateHeapSnapshotForDebugging()`, taken while the object is retained, in which the retained cell has no incoming edge and no `roots` entry (every reported retainer is ruled out; conservative roots are marked through `SlotVisitor::appendJSCellOrAuxiliary`, which reports nothing to the snapshot), and a debugger session that shows the stack word holding that cell's address and the frame that owns it. Without both, the bug is somewhere in the code you are debugging and you have not found it yet. Changing a test so the GC runs from a different stack depth, more times, or after a sleep is blaming the scanner without the proof.
 
 **ONLY** push up changes after running `bun bd test <file>` and ensuring your tests pass.
 

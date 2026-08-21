@@ -115,6 +115,20 @@ export function getStdioWriteStream(
   return [stream, underlyingSink];
 }
 
+// node:worker_threads worker: process.stdout/stderr write to the parent Worker over a
+// MessagePort; process.stdin reads from one for { stdin: true }, else is already ended.
+export function getNodeWorkerStdioStream(process: typeof globalThis.process, fd: number, ports: any) {
+  const stdio = require("internal/worker/stdio");
+  if (fd === 0) {
+    return ports.stdin ? stdio.makePortReadable(ports.stdin, true) : stdio.makeEndedReadable();
+  }
+  const stream = stdio.makePortWritable(fd === 1 ? ports.stdout : ports.stderr);
+  // A synchronous exit leaves no loop turn for the reader's ack; complete the parked
+  // writev so buffered chunks are posted before the thread goes away (node's flushSync).
+  process.on("exit", stream[stdio.kFlushSync]);
+  return stream;
+}
+
 export function getStdinStream(
   process: typeof globalThis.process,
   fd: number,

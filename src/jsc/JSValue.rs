@@ -181,12 +181,6 @@ impl JSValue {
     ) {
         self.then2(global, ctx, resolve, reject)
     }
-
-    /// Reinterpret a raw pointer's address as a JSValue bit-pattern.
-    #[inline]
-    pub fn cast<T>(ptr: *const T) -> JSValue {
-        JSValue(ptr as usize, PhantomData)
-    }
 }
 
 // `pub fn format(...) !void { @compileError(...) }` — intentionally NOT
@@ -226,6 +220,14 @@ impl JSValue {
         // NotCellMask = NumberTag | OtherTag (0xfffe_0000_0000_0000 | 0x2).
         const NOT_CELL_MASK: usize = 0xfffe_0000_0000_0002;
         !self.is_empty() && (self.0 & NOT_CELL_MASK) == 0
+    }
+    /// False for a cell the last completed GC found dead but the sweeper has not destroyed yet.
+    #[inline]
+    pub fn is_live_cell(self) -> bool {
+        unsafe extern "C" {
+            safe fn JSC__JSValue__isLiveCell(this: JSValue) -> bool;
+        }
+        JSC__JSValue__isLiveCell(self)
     }
     #[inline]
     pub fn is_int32(self) -> bool {
@@ -372,19 +374,6 @@ impl JSValue {
             safe fn JSC__JSValue__isAggregateError(this: JSValue, global: &JSGlobalObject) -> bool;
         }
         JSC__JSValue__isAggregateError(self, global)
-    }
-    /// `JSValue.getErrorsProperty(globalObject)`. Returns the
-    /// own `errors` data property via `JSObject::getDirect` — no prototype
-    /// walk, no getters invoked, nothrow. Used for `AggregateError.errors`.
-    #[inline]
-    pub(crate) fn get_errors_property(self, global: &JSGlobalObject) -> JSValue {
-        unsafe extern "C" {
-            safe fn JSC__JSValue__getErrorsProperty(
-                this: JSValue,
-                global: &JSGlobalObject,
-            ) -> JSValue;
-        }
-        JSC__JSValue__getErrorsProperty(self, global)
     }
     /// `JSValue.isTerminationException()` — true if this
     /// value is the VM's termination-exception sentinel.
@@ -627,13 +616,13 @@ impl JSValue {
         })
     }
     /// `JSValue.createBufferWithCtx` — wrap a foreign-owned byte
-    /// range in a Node `Buffer`, transferring ownership to JS. `free(ctx, ptr)`
-    /// runs when the Buffer's backing store is collected.
+    /// range in a Node `Buffer`, transferring ownership to JS. `free(ptr, ctx)`
+    /// runs exactly once: when the Buffer's backing store is collected, or
+    /// before this returns `Err`.
     ///
     /// # Safety
     /// `bytes` must describe a valid allocation whose ownership transfers to
-    /// JSC; `ctx` is forwarded to `free` on collection and must remain valid
-    /// until then.
+    /// JSC; `ctx` must remain valid until `free` runs.
     pub unsafe fn create_buffer_with_ctx(
         global: &JSGlobalObject,
         bytes: core::ptr::NonNull<[u8]>,
@@ -663,6 +652,24 @@ impl JSValue {
     #[track_caller]
     pub fn from_uint64_no_truncate(global: &JSGlobalObject, i: u64) -> JsResult<JSValue> {
         host_fn::from_js_host_call(global, || JSC__JSValue__fromUInt64NoTruncate(global, i))
+    }
+    /// A BigInt from a decimal integer literal (optional `-`, then digits).
+    /// Returns `Ok(None)` when `digits` is not such a literal.
+    #[track_caller]
+    pub fn big_int_from_decimal(
+        global: &JSGlobalObject,
+        digits: &[u8],
+    ) -> JsResult<Option<JSValue>> {
+        let unsigned = digits.strip_prefix(b"-").unwrap_or(digits);
+        if unsigned.is_empty() || !unsigned.iter().all(u8::is_ascii_digit) {
+            return Ok(None);
+        }
+        // Only text StringToBigInt accepts gets here, so empty means it threw (too large).
+        let value = host_fn::from_js_host_call(global, || {
+            // SAFETY: `digits` is a live slice for the duration of the call.
+            unsafe { JSC__JSValue__bigIntFromLatin1(global, digits.as_ptr(), digits.len()) }
+        })?;
+        Ok(Some(value))
     }
     /// `JSValue.fromTimevalNoTruncate` — encode a `struct timeval`
     /// as a BigInt (`sec * 1_000_000 + nsec`) without precision loss. May allocate
@@ -1982,6 +1989,11 @@ unsafe extern "C" {
     safe fn JSC__JSValue__dateInstanceFromNumber(global: &JSGlobalObject, n: f64) -> JSValue;
     safe fn JSC__JSValue__fromInt64NoTruncate(global: &JSGlobalObject, i: i64) -> JSValue;
     safe fn JSC__JSValue__fromUInt64NoTruncate(global: &JSGlobalObject, i: u64) -> JSValue;
+    fn JSC__JSValue__bigIntFromLatin1(
+        global: &JSGlobalObject,
+        ptr: *const u8,
+        len: usize,
+    ) -> JSValue;
     safe fn JSC__JSValue__fromTimevalNoTruncate(
         global: &JSGlobalObject,
         nsec: i64,
@@ -2326,9 +2338,9 @@ impl JSValue {
     pub fn unwrap_boxed_primitive(self, global: &JSGlobalObject) -> JsResult<JSValue> {
         host_fn::from_js_host_call(global, || JSC__JSValue__unwrapBoxedPrimitive(global, self))
     }
-    /// `JSValue.getPrototype`.
-    pub fn get_prototype(self, global: &JSGlobalObject) -> JSValue {
-        JSC__JSValue__getPrototype(self, global)
+    /// `JSValue.getPrototype`; runs a Proxy's `getPrototypeOf` trap, so it may throw.
+    pub fn get_prototype(self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        host_fn::from_js_host_call(global, || JSC__JSValue__getPrototype(self, global))
     }
 
     // ── Reflection / naming. ───────────────

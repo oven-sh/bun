@@ -45,14 +45,6 @@
 using namespace JSC;
 extern "C" BunString BunString__fromBytes(const char* bytes, size_t length);
 
-extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__WTFStringImpl__deref(WTF::StringImpl* impl)
-{
-    impl->deref();
-}
-extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__WTFStringImpl__ref(WTF::StringImpl* impl)
-{
-    impl->ref();
-}
 // Cold path for the Rust-side inlined `deref()`: caller has already brought
 // the refcount to zero via `fetch_sub`, so this is destroy-only.
 extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__WTFStringImpl__destroy(WTF::StringImpl* impl)
@@ -145,22 +137,6 @@ JSC::JSValue BunString::transferToJS(JSC::JSGlobalObject* globalObject)
 extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__transferToJS(BunString* bunString, JSC::JSGlobalObject* globalObject)
 {
     return JSValue::encode(bunString->transferToJS(globalObject));
-}
-
-// int64_t max to say "not a number"
-extern "C" [[ZIG_EXPORT(nothrow)]] int64_t BunString__toInt32(const BunString* bunString)
-{
-    if (bunString->tag == BunStringTag::Empty || bunString->tag == BunStringTag::Dead) {
-        return std::numeric_limits<int64_t>::max();
-    }
-
-    String str = bunString->toWTFString();
-    auto val = WTF::parseIntegerAllowingTrailingJunk<int32_t>(str);
-    if (val) {
-        return val.value();
-    }
-
-    return std::numeric_limits<int64_t>::max();
 }
 
 namespace Bun {
@@ -347,25 +323,6 @@ static Ref<WTF::StringImpl> isolatedCopyForSharing(WTF::StringImpl& impl)
         copy->setNeverAtomize();
     }
     return copy;
-}
-
-Ref<WTF::StringImpl> toCrossThreadShareable(Ref<WTF::StringImpl> impl)
-{
-    if (impl->isAtom() || impl->isSymbol())
-        return isolatedCopyForSharing(impl);
-
-    if (impl->bufferOwnership() == StringImpl::BufferSubstring)
-        return isolatedCopyForSharing(impl);
-
-    if (impl->length() < kMinCrossThreadShareableLength)
-        return isolatedCopyForSharing(impl);
-
-    // 3) Ensure we won't lazily touch hash/flags on the consumer thread
-    // Force hash computation on this thread before sharing
-    impl->hash();
-    impl->setNeverAtomize();
-
-    return impl;
 }
 
 WTF::String toCrossThreadShareable(const WTF::String& string)
@@ -739,20 +696,6 @@ extern "C" uint32_t URL__port(WTF::URL* url)
 extern "C" BunString URL__pathname(WTF::URL* url)
 {
     return Bun::toStringRef(url->path().toStringWithoutCopying());
-}
-
-size_t BunString::utf8ByteLength(const WTF::String& str)
-{
-    if (str.isEmpty())
-        return 0;
-
-    if (str.is8Bit()) {
-        const auto s = str.span8();
-        return simdutf::utf8_length_from_latin1(reinterpret_cast<const char*>(s.data()), static_cast<size_t>(s.size()));
-    } else {
-        const auto s = str.span16();
-        return simdutf::utf8_length_from_utf16(reinterpret_cast<const char16_t*>(s.data()), static_cast<size_t>(s.size()));
-    }
 }
 
 WTF::String BunString::toWTFString() const

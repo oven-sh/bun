@@ -1109,12 +1109,11 @@ impl CryptoHasherZig {
 // ───────────────────────────────────────────────────────────────────────────
 
 /// Trait abstracting over the `bun_sha_hmac::sha::evp::*` hasher types.
-/// When `HAS_ENGINE` is true, `hash()` takes a BoringSSL ENGINE*.
+/// `hash()` takes the VM-owned BoringSSL ENGINE*.
 pub trait StaticHasher: 'static {
     const NAME: &'static str;
     const DIGEST: usize;
     type Digest: AsRef<[u8]> + AsMut<[u8]>; // = [u8; Self::DIGEST]
-    const HAS_ENGINE: bool;
 
     fn init() -> Self;
     fn new_digest() -> Self::Digest;
@@ -1138,7 +1137,6 @@ macro_rules! impl_static_hasher {
             const NAME: &'static str = $name;
             const DIGEST: usize = $len;
             type Digest = [u8; $len];
-            const HAS_ENGINE: bool = true;
 
             #[inline]
             fn init() -> Self {
@@ -1307,14 +1305,8 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         }
 
         // SAFETY: `boring_engine` returns the VM-owned engine (live for the
-        // process) or null; the else arm passes null.
-        unsafe {
-            if H::HAS_ENGINE {
-                H::hash(input.slice(), &mut output_digest_buf, boring_engine(global));
-            } else {
-                H::hash(input.slice(), &mut output_digest_buf, core::ptr::null_mut());
-            }
-        }
+        // process) or null.
+        unsafe { H::hash(input.slice(), &mut output_digest_buf, boring_engine(global)) };
 
         encoding.encode_with_max_size(global, EVP_MAX_MD_SIZE_USIZE, output_digest_buf.as_ref())
     }
@@ -1344,14 +1336,8 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         }
 
         // SAFETY: `boring_engine` returns the VM-owned engine (live for the
-        // process) or null; the else arm passes null.
-        unsafe {
-            if H::HAS_ENGINE {
-                H::hash(input.slice(), output_digest_slice, boring_engine(global));
-            } else {
-                H::hash(input.slice(), output_digest_slice, core::ptr::null_mut());
-            }
-        }
+        // process) or null.
+        unsafe { H::hash(input.slice(), output_digest_slice, boring_engine(global)) };
 
         if let Some(output_buf) = output {
             Ok(output_buf.value)

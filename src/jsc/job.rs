@@ -13,7 +13,7 @@
 //! [`JobContext::Js`] is the completion's JS-thread state (promise, callback,
 //! wrapper refs, pins, protected buffers) and is only ever touched on the JS
 //! thread. JS-backed memory the body reads in place is reachable through
-//! [`JsPtr`], dereferenceable only with the job's ticket or a [`JsThread`].
+//! [`JsPtr`], dereferenceable only with the job's ticket.
 //!
 //! Node's equivalent is `ThreadPoolWork` + `req_wrap`; WebCore's is
 //! `WorkerRunLoop::postTask` with `ActiveDOMObject`-owned completions.
@@ -32,10 +32,9 @@ use crate::{JSGlobalObject, JsResult};
 
 // ── tokens ────────────────────────────────────────────────────────────────
 
-/// Proof that the holder is on `global`'s JS thread with its heap alive: what
-/// it takes to dereference a [`JsPtr`] outside a pool body. Host functions and
-/// event-loop dispatch have one by construction ([`JSGlobalObject::js_thread`]).
-/// Not `Send`.
+/// Proof that the holder is on `global`'s JS thread with its heap alive. Host
+/// functions and event-loop dispatch have one by construction
+/// ([`JSGlobalObject::js_thread`]). Not `Send`.
 pub struct JsThread<'a> {
     global: &'a JSGlobalObject,
     _not_send: PhantomData<*mut ()>,
@@ -141,10 +140,10 @@ impl Drop for Protected {
 /// A pointer into JS-owned memory (an ArrayBuffer's bytes, a pinned cell, the
 /// creating global) that a job carries off-thread. It can be *passed around*
 /// anywhere but dereferenced only with proof the VM is alive: the job's
-/// [`Ticket`] or a [`JsThread`].
+/// [`Ticket`].
 #[repr(transparent)]
 pub struct JsPtr<T: ?Sized>(NonNull<T>);
-// SAFETY: dereferenceable only under a Ticket/JsThread (see type doc).
+// SAFETY: dereferenceable only under a Ticket (see type doc).
 unsafe impl<T: ?Sized> Send for JsPtr<T> {}
 impl<T: ?Sized> Clone for JsPtr<T> {
     fn clone(&self) -> Self {
@@ -173,14 +172,6 @@ impl<T: ?Sized> JsPtr<T> {
         // SAFETY: ticket held ⇒ VM alive ⇒ pointee alive (type contract); aliasing per fn contract.
         unsafe { &mut *self.0.as_ptr() }
     }
-    /// # Safety
-    /// No other live reference aliases the pointee for `'b`.
-    #[inline]
-    #[allow(clippy::mut_from_ref)] // the `&JsThread` is a thread witness, not the pointee
-    pub unsafe fn on_js_thread<'b>(self, _: &'b JsThread<'_>) -> &'b mut T {
-        // SAFETY: JS thread with heap alive; aliasing per fn contract.
-        unsafe { &mut *self.0.as_ptr() }
-    }
 }
 
 // ── Job ───────────────────────────────────────────────────────────────────
@@ -202,9 +193,7 @@ pub trait JobContext: Sized + 'static {
     /// job's ticket: proof the VM is alive (for [`JsPtr::under_ticket`]), and
     /// `script_allowed()` on it says whether the result still has a consumer.
     /// `off` borrows the job, which the JS thread may free the moment
-    /// [`Completion::finish`] queues it: do not touch it after finishing (work
-    /// that continues past `run` reaches its state through
-    /// [`Completion::off_thread`]).
+    /// [`Completion::finish`] queues it: do not touch it after finishing.
     fn run(off: &mut Self::OffThread, done: Completion<Self>) -> Option<Completion<Self>>;
 
     /// JS thread, VM still running script: the completion. Both halves are
@@ -425,14 +414,6 @@ impl<C: JobContext> Completion<C> {
     #[inline]
     pub fn ticket(&self) -> &Ticket {
         &self.ticket
-    }
-    /// The job's off-thread part, for work that continues after `run` returned.
-    ///
-    /// # Safety
-    /// No other reference to it is live (the pool callback has returned).
-    pub unsafe fn off_thread(&self) -> *mut C::OffThread {
-        // SAFETY: live job.
-        unsafe { &raw mut (*self.job.as_ptr()).off }
     }
 }
 impl<C: JobContext> Drop for Completion<C> {

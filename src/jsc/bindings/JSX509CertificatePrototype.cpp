@@ -93,8 +93,8 @@ const ClassInfo JSX509CertificatePrototype::s_info = { "X509Certificate"_s, &Bas
 void JSX509CertificatePrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSX509Certificate::info(), JSX509CertificatePrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSX509Certificate::info(), JSX509CertificatePrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncToString, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -534,7 +534,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_subject, (JSGlobalObject * glob
         return {};
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(undefinedIfEmpty(thisObject->subject())));
+    JSString* subject = thisObject->subject();
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(undefinedIfEmpty(subject));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_subjectAltName, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -598,7 +600,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_issuer, (JSGlobalObject * globa
         return {};
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(undefinedIfEmpty(thisObject->issuer())));
+    JSString* issuer = thisObject->issuer();
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(undefinedIfEmpty(issuer));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_issuerCertificate, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))

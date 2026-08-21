@@ -86,7 +86,7 @@ use bun_core::{String as BunString, strings};
 // resolved at link time.
 unsafe extern "Rust" {
     /// Compile `pattern` with no flags. `None` ⇔ `error.InvalidRegExp`.
-    /// Performs `jsc::initialize(false)` lazily on first call.
+    /// Performs `jsc::initialize` lazily on first call.
     fn __bun_regex_compile(pattern: BunString) -> Option<NonNull<()>>;
     fn __bun_regex_matches(regex: NonNull<()>, input: &BunString) -> bool;
     fn __bun_regex_drop(regex: NonNull<()>);
@@ -155,15 +155,6 @@ bun_core::impl_tag_error!(FromExprError);
 
 bun_core::oom_from_alloc!(FromExprError);
 
-impl From<CreateMatcherError> for FromExprError {
-    fn from(e: CreateMatcherError) -> Self {
-        match e {
-            CreateMatcherError::OutOfMemory => Self::OutOfMemory,
-            CreateMatcherError::InvalidRegExp => Self::InvalidRegExp,
-        }
-    }
-}
-
 impl PnpmMatcher {
     // `bun_ast::ExprData` exposes the real value-shaped enum
     // (`EString`/`EArray` via `StoreRef<E::*>`). The arena-taking
@@ -180,9 +171,6 @@ impl PnpmMatcher {
         // Freed on return; the patterns are consumed by
         // `create_matcher` before then.
         let arena = Arena::new();
-
-        // bun.jsc.initialize(false) is now performed lazily inside
-        // `__bun_regex_compile` (tier-6 owns it).
 
         let mut matchers: Vec<Matcher> = Vec::new();
         let mut has_include = false;
@@ -369,7 +357,7 @@ pub fn create_matcher(raw: &[u8], buf: &mut Vec<u8>) -> Result<Matcher, CreateMa
     buf.push(b'$');
 
     // `__bun_regex_compile` is a link-time extern (cold path) and performs
-    // `jsc::initialize(false)` before compiling.
+    // `jsc::initialize` before compiling.
     let regex = compile_regex(BunString::clone_utf8(buf.as_slice()))
         .ok_or(CreateMatcherError::InvalidRegExp)?;
 

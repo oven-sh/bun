@@ -1,5 +1,6 @@
 #include "BunProcess.h"
 #include "headers.h"
+#include "BunClientData.h"
 #include "node_api.h"
 #include "root.h"
 #include "JavaScriptCore/ConstructData.h"
@@ -97,7 +98,11 @@ using namespace Zig;
     /* PREAMBLE then sees as an unchecked exception. If you need to throw */    \
     /* or clear exceptions, make your own scope. */                             \
     auto napi_preamble_throw_scope__ = DECLARE_TOP_EXCEPTION_SCOPE(_env->vm()); \
-    NAPI_RETURN_IF_EXCEPTION(_env)
+    NAPI_RETURN_IF_EXCEPTION(_env);                                             \
+    /* Node: RETURN_STATUS_IF_FALSE(env, env->can_call_into_js(), ...) */       \
+    if (WebCore::clientData(_env->vm())->isStoppingOrStopped(_env->vm()))       \
+        [[unlikely]]                                                            \
+        return napi_set_last_error(_env, _env->napiModule().nm_version >= 10 ? napi_cannot_run_js : napi_pending_exception);
 
 // Only use this for functions that need their own throw or catch scope. Functions that call into
 // JS code that might throw should use NAPI_RETURN_IF_EXCEPTION.
@@ -1082,13 +1087,9 @@ static napi_status throwErrorWithCStrings(napi_env env, const char* code_utf8, c
 // panic. See #30286 and #22259.
 //
 // We use a TopExceptionScope (not a throw scope) so a pre-existing exception
-// does not force an early return. But we must NOT leave a *new* exception
-// pending either: getString() resolves rope strings and can throw
-// OutOfMemoryError, and returning napi_ok with an unchecked exception on the
-// VM crashes later. So we clear only what our own string resolution / error
-// construction raised, leaving any pre-existing exception untouched (matching
-// Node.js, which never disturbs the caller's pending exception) and never
-// clearing a termination exception (which must keep unwinding).
+// does not force an early return. A *new* exception (getString() resolving a
+// rope can throw OutOfMemoryError) is left pending and reported as
+// napi_pending_exception, like any other napi call that threw.
 static napi_status createErrorWithNapiValues(napi_env env, napi_value code, napi_value message, JSC::ErrorType type, napi_value* result)
 {
     auto* globalObject = toJS(env);
@@ -1105,14 +1106,18 @@ static napi_status createErrorWithNapiValues(napi_env env, napi_value code, napi
 
     JSC::Exception* preExisting = scope.exception();
     auto wtf_code = js_code.isEmpty() ? WTF::String() : js_code.getString(globalObject);
+    if (scope.exception() != preExisting) [[unlikely]]
+        return napi_set_last_error(env, napi_pending_exception);
     auto wtf_message = js_message.getString(globalObject);
+    if (scope.exception() != preExisting) [[unlikely]]
+        return napi_set_last_error(env, napi_pending_exception);
 
     *result = toNapi(
         createErrorWithCode(vm, globalObject, wtf_code, wtf_message, type),
         globalObject);
 
-    if (scope.exception() && scope.exception() != preExisting)
-        scope.clearExceptionExceptTermination();
+    if (scope.exception() != preExisting) [[unlikely]]
+        return napi_set_last_error(env, napi_pending_exception);
     return napi_set_last_error(env, napi_ok);
 }
 
@@ -1138,7 +1143,7 @@ extern "C" napi_status napi_create_reference(napi_env env, napi_value value,
     bool can_be_weak = true;
 
     if (!(val.isObject() || val.isCallable() || val.isSymbol())) {
-        NAPI_RETURN_EARLY_IF_FALSE(env, env->napiModule().nm_version == NAPI_VERSION_EXPERIMENTAL, napi_invalid_arg);
+        NAPI_RETURN_EARLY_IF_FALSE(env, env->napiModule().nm_version >= 10, napi_invalid_arg);
         can_be_weak = false;
     }
 
@@ -2077,7 +2082,10 @@ extern "C" napi_status napi_get_all_property_names(
             if (key_mode == napi_key_include_prototypes) {
                 // Climb up the prototype chain to find inherited properties
                 while (!owner->getOwnPropertyDescriptor(globalObject, propKey, desc)) {
-                    JSObject* proto = owner->getPrototype(globalObject).getObject();
+                    NAPI_RETURN_IF_EXCEPTION(env);
+                    JSValue protoValue = owner->getPrototype(globalObject);
+                    NAPI_RETURN_IF_EXCEPTION(env);
+                    JSObject* proto = protoValue ? protoValue.getObject() : nullptr;
                     if (!proto) {
                         break;
                     }
@@ -2085,6 +2093,7 @@ extern "C" napi_status napi_get_all_property_names(
                 }
             } else {
                 owner->getOwnPropertyDescriptor(globalObject, propKey, desc);
+                NAPI_RETURN_IF_EXCEPTION(env);
             }
 
             // V8 never applies ONLY_WRITABLE/ONLY_CONFIGURABLE to Proxy keys

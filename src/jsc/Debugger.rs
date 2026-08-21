@@ -491,7 +491,7 @@ impl Debugger {
             Bun__startJSDebuggerThread(global, ctx_id, &mut url, 0, is_connect, is_node_inspector);
         }
 
-        this.global().handle_rejected_promises();
+        let _ = this.global().handle_rejected_promises();
 
         if let Some(log) = this.log_ref() {
             if !log.msgs.is_empty() {

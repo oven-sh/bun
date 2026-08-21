@@ -42,7 +42,7 @@ pub struct NetworkTask {
     // sibling fields, so the lifetime is erased to `'static`.
     // `MaybeUninit` because the slot comes from `HiveArrayFallback`
     // as *uninitialized* memory (often zero-page on first mmap, but not
-    // guaranteed — `get()`'s heap fallback is `Box::new_uninit()`) and is
+    // guaranteed — `claim()`'s heap fallback is `Box::new_uninit()`) and is
     // overwritten by plain `=` in `for_manifest`/`for_tarball`.
     // `MaybeUninit<T>` is the spec-correct mapping for that semantic — unlike
     // `ManuallyDrop<T>`, it suppresses `T`'s validity invariant, so
@@ -408,6 +408,34 @@ fn count_auth(header_builder: &mut HeaderBuilder, scope: &npm::registry::Scope) 
     header_builder.count("npm-auth-type", "legacy");
 }
 
+/// Splits `http://user:pass@host/pkg.tgz` into `user:pass` and `http://host/pkg.tgz`; only an `@` in the authority counts, not `/@scope/`.
+fn split_url_userinfo(url: &[u8]) -> Option<(&[u8], Box<[u8]>)> {
+    let authority_start = strings::index_of(url, b"://")? + b"://".len();
+    let rest = &url[authority_start..];
+    let authority = &rest[..strings::index_of_any(rest, b"/?#").unwrap_or(rest.len())];
+    let at = strings::last_index_of_char(authority, b'@')?;
+
+    let mut without_userinfo = Vec::with_capacity(url.len() - (at + 1));
+    without_userinfo.extend_from_slice(&url[..authority_start]);
+    without_userinfo.extend_from_slice(&rest[at + 1..]);
+    Some((&rest[..at], without_userinfo.into_boxed_slice()))
+}
+
+/// `Basic base64(userinfo)` as written (no percent-decoding, `user` means `user:`), matching what npm sends via node's `auth` option.
+fn basic_authorization_from_userinfo(userinfo: &[u8]) -> Vec<u8> {
+    const SCHEME: &[u8] = b"Basic ";
+    let mut user_pass = Vec::with_capacity(userinfo.len() + 1);
+    user_pass.extend_from_slice(userinfo);
+    if !strings::contains_char(userinfo, b':') {
+        user_pass.push(b':');
+    }
+    let mut value = vec![0u8; SCHEME.len() + bun_core::base64::encode_len(&user_pass)];
+    value[..SCHEME.len()].copy_from_slice(SCHEME);
+    let encoded_len = bun_core::base64::encode(&mut value[SCHEME.len()..], &user_pass);
+    value.truncate(SCHEME.len() + encoded_len);
+    value
+}
+
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum ForManifestError {
     #[error("OutOfMemory")]
@@ -422,11 +450,6 @@ impl From<ForManifestError> for crate::Error {
             ForManifestError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
             ForManifestError::InvalidURL => crate::Error::InvalidURL,
         }
-    }
-}
-impl PartialEq<crate::Error> for ForManifestError {
-    fn eq(&self, other: &crate::Error) -> bool {
-        <&'static str>::from(self) == other.name()
     }
 }
 impl bun_core::output::ErrName for ForManifestError {
@@ -784,6 +807,17 @@ impl NetworkTask {
             return Err(ForTarballError::InvalidURL);
         }
 
+        // Userinfo becomes a header and leaves the URL: `bun_url` keeps it in `origin`, which the redirect same-origin check compares.
+        let url_authorization: Option<Vec<u8>> = match split_url_userinfo(&self.url_buf) {
+            Some((userinfo, url_without_userinfo)) => {
+                let value =
+                    (!userinfo.is_empty()).then(|| basic_authorization_from_userinfo(userinfo));
+                self.url_buf = url_without_userinfo;
+                value
+            }
+            None => None,
+        };
+
         // Only attach the registry `Authorization` header when the tarball URL
         // origin matches the configured registry scope origin. The npm manifest
         // is registry-controlled, so a malicious registry could otherwise point
@@ -815,9 +849,21 @@ impl NetworkTask {
             count_auth(&mut header_builder, scope);
         }
 
+        // Registry credentials win over URL userinfo, as in npm.
+        let url_authorization = match url_authorization {
+            Some(value) if header_builder.header_count == 0 => {
+                header_builder.count("Authorization", &value);
+                Some(value)
+            }
+            _ => None,
+        };
+
         let header_buf: &'static [u8] = if header_builder.header_count > 0 {
             header_builder.allocate()?;
-            append_auth(&mut header_builder, scope);
+            match &url_authorization {
+                Some(value) => header_builder.append("Authorization", value),
+                None => append_auth(&mut header_builder, scope),
+            }
             debug_assert_eq!(header_builder.content.len, header_builder.content.cap);
             self.header_buf = header_builder.content.move_to_slice();
             // SAFETY: `self.header_buf` outlives the request; it is freed when the slot returns to the pool.
@@ -901,7 +947,7 @@ impl NetworkTask {
         if !self.streaming_extract_task.is_null() {
             // ARENA: returned to `preallocated_resolve_tasks` pool, not freed.
             // SAFETY: `streaming_extract_task` was obtained from this same
-            // `preallocated_resolve_tasks` pool via `get()` and is not aliased
+            // `preallocated_resolve_tasks` pool via `get_init()` and is not aliased
             // (cleared immediately below); `put()` runs `Task::drop` on the
             // slot — the Task was fully initialized via
             // `enqueue::create_extract_task_for_streaming` so this is sound.
@@ -927,11 +973,11 @@ impl NetworkTask {
 
     /// Initialize a freshly-vended pool slot in place — a full struct overwrite
     /// that resets every other field to its struct default. The slot may be
-    /// uninitialized heap memory (from `HiveArrayFallback::get()`'s
+    /// uninitialized heap memory (from `HiveArrayFallback::claim()`'s
     /// `Box::new_uninit()` fallback) or stale (reused hive slot whose prior
     /// contents ARE now dropped on `put` since 1e76047), so each field is
     /// written via `addr_of_mut!().write()` without dropping the previous
-    /// value — the slot is freshly poisoned/uninit from `get()`.
+    /// value — the slot is freshly poisoned/uninit from `claim()`.
     ///
     /// Caller-initialized fields (`unsafe_http_client`, `callback`,
     /// `response_buffer`) are written here with drop-safe
@@ -943,7 +989,7 @@ impl NetworkTask {
     ///
     /// # Safety
     /// `slot` must be the unique handle to a `HiveArrayFallback<NetworkTask>`
-    /// slot returned by `get()`; its prior contents are treated as garbage
+    /// slot returned by `claim()`; its prior contents are treated as garbage
     /// (no destructors run).
     pub(crate) unsafe fn write_init(
         slot: *mut NetworkTask,

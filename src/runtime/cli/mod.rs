@@ -4,8 +4,6 @@
 //! against lower-tier crates. `Command::start()` (full dispatch) and
 //! per-command exec bodies live in the sibling `*_command.rs` modules.
 
-use core::cell::Cell;
-
 use bun_core::strings;
 use bun_core::{self as bun, Global, Output};
 use bun_core::{pretty, pretty_error, pretty_errorln};
@@ -356,6 +354,12 @@ pub mod pack_command;
 pub(crate) mod patch_command;
 #[path = "patch_commit_command.rs"]
 pub(crate) mod patch_commit_command;
+#[path = "pm_diff_command.rs"]
+pub mod pm_diff_command;
+pub mod pm_diff_normalize;
+pub mod pm_diff_profile;
+pub mod pm_diff_relayout;
+pub mod pm_diff_semantic;
 #[path = "pm_licenses_command.rs"]
 pub(crate) mod pm_licenses_command;
 #[path = "pm_pkg_command.rs"]
@@ -489,10 +493,6 @@ fn cli_dupe_z(s: &[u8]) -> *const core::ffi::c_char {
     buf.as_ptr().cast::<core::ffi::c_char>()
 }
 
-thread_local! {
-    pub(crate) static IS_MAIN_THREAD: Cell<bool> = const { Cell::new(false) };
-}
-
 /// This is set `true` during `Command.which()` if argv0 is "node", in which the CLI is going
 /// to pretend to be node.js by always choosing RunCommand with a relative filepath.
 ///
@@ -549,12 +549,8 @@ pub mod cli {
     /// shared with bundler/install/css/panic-format bodies.
     #[inline(never)]
     pub fn start() {
-        IS_MAIN_THREAD.with(|c| c.set(true));
-        // Mirror the threadlocal into the crash-handler crate's global so
         // `bun_crash_handler::cli_state::is_main_thread()` (used to print the
-        // `panic(main thread): …` header) returns true on this thread. The
-        // crash handler lives in a lower tier and can't read `IS_MAIN_THREAD`
-        // directly, so it compares against a stored OS tid instead.
+        // `panic(main thread): …` header) compares against a stored OS tid.
         bun_crash_handler::cli_state::set_main_thread_id(bun_threading::current_thread_id());
         bun_core::set_start_time(bun_core::time::nano_timestamp());
         // SAFETY: single-threaded process startup

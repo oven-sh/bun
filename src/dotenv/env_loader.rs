@@ -1289,12 +1289,6 @@ pub struct Map {
     pub map: HashTable,
 }
 
-impl Default for Map {
-    fn default() -> Self {
-        Self::init()
-    }
-}
-
 impl Map {
     /// Builds a NULL-terminated `K=V\0` envp array. Returns an owning struct so
     /// dropping it frees the joined buffers (PORTING.md §Forbidden: no Box::leak).

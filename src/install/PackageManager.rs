@@ -736,6 +736,8 @@ impl PackageManager {
         if p.is_null() {
             None
         } else {
+            // SAFETY: same as `get()` — non-null means `allocate_package_manager()`
+            // ran and the singleton lives for the process.
             Some(unsafe { &*p })
         }
     }

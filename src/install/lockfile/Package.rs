@@ -2911,6 +2911,11 @@ impl Package<u64> {
                                 .workspace_versions
                                 .put(external_name.hash, version)?;
                         }
+                        if entry.hoisting_limits {
+                            lockfile
+                                .self_contained_workspaces
+                                .put(external_name.hash, ())?;
+                        }
                     }
                 }
             } else {

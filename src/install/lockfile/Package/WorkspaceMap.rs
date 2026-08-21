@@ -26,6 +26,9 @@ pub struct Entry {
     pub(crate) name: Box<[u8]>,
     pub(crate) version: Option<Box<[u8]>>,
     pub(crate) name_loc: bun_ast::Loc,
+    /// `"installConfig": { "hoistingLimits": "workspaces" }` — this workspace's
+    /// node_modules must be self-contained (see `Lockfile::self_contained_workspaces`).
+    pub(crate) hoisting_limits: bool,
 }
 
 impl WorkspaceMap {
@@ -67,6 +70,7 @@ impl WorkspaceMap {
             name: value.name,
             version: value.version,
             name_loc: value.name_loc,
+            hoisting_limits: value.hoisting_limits,
         };
         Ok(())
     }
@@ -155,6 +159,17 @@ fn process_workspace_name(
     let entry = Entry {
         name: Box::<[u8]>::from(name),
         name_loc: name_expr.loc,
+        hoisting_limits: workspace_json
+            .root
+            .get(b"installConfig")
+            .and_then(|c| c.get(b"hoistingLimits"))
+            .and_then(|h| {
+                h.as_string_cloned(&scratch)
+                    .ok()
+                    .flatten()
+                    .map(|s| s == b"workspaces")
+            })
+            .unwrap_or(false),
         version: 'brk: {
             if let Some(version_expr) = workspace_json.root.get(b"version") {
                 if let Some(version) = version_expr.as_string_cloned(&scratch)? {
@@ -354,6 +369,7 @@ impl WorkspaceMap {
                     name: workspace_entry.name,
                     name_loc: workspace_entry.name_loc,
                     version: workspace_entry.version,
+                    hoisting_limits: workspace_entry.hoisting_limits,
                 },
             )?;
         }
@@ -548,6 +564,7 @@ impl WorkspaceMap {
                             name: workspace_entry.name,
                             version: workspace_entry.version,
                             name_loc: workspace_entry.name_loc,
+                            hoisting_limits: workspace_entry.hoisting_limits,
                         },
                     )?;
                 }

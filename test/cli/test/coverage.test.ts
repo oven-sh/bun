@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "path";
 
 test("coverage crash", () => {
@@ -588,4 +588,97 @@ All files  |    0.00 |    0.00 |
 Ran 1 test across 1 file."
 `);
   expect(result.exitCode).toBe(0);
+});
+
+// https://github.com/oven-sh/bun/issues/12216
+// bunfig `[test]` coverage settings must not override explicit CLI flags.
+const issue12216Files = {
+  "helper.ts": `
+export function covered() { return 42; }
+export function uncovered() { return 43; }
+`,
+  "my.test.ts": `
+import { test, expect } from "bun:test";
+import { covered } from "./helper";
+test("cov", () => { expect(covered()).toBe(42); });
+`,
+};
+
+test.concurrent("--coverage overrides bunfig [test] coverage = false", async () => {
+  using dir = tempDir("cov-cli-over-bunfig", {
+    ...issue12216Files,
+    "bunfig.toml": "[test]\ncoverage = false\n",
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "my.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("% Funcs");
+  expect(stderr).toContain("helper.ts");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("bunfig [test] coverage = true still enables coverage without CLI flag", async () => {
+  using dir = tempDir("cov-bunfig-on", {
+    ...issue12216Files,
+    "bunfig.toml": "[test]\ncoverage = true\n",
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "my.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("% Funcs");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("--coverage-reporter overrides bunfig [test] coverageReporter", async () => {
+  using dir = tempDir("cov-reporter-cli-over-bunfig", {
+    ...issue12216Files,
+    "bunfig.toml": '[test]\ncoverage = true\ncoverageReporter = "lcov"\n',
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage-reporter", "text", "my.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("% Funcs");
+  expect(existsSync(path.join(String(dir), "coverage", "lcov.info"))).toBe(false);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("--coverage-dir overrides bunfig [test] coverageDir", async () => {
+  using dir = tempDir("cov-dir-cli-over-bunfig", {
+    ...issue12216Files,
+    "bunfig.toml": '[test]\ncoverage = true\ncoverageReporter = "lcov"\ncoverageDir = "from-bunfig"\n',
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage-dir", "from-cli", "my.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(existsSync(path.join(String(dir), "from-cli", "lcov.info"))).toBe(true);
+  expect(existsSync(path.join(String(dir), "from-bunfig"))).toBe(false);
+  expect(exitCode).toBe(0);
 });

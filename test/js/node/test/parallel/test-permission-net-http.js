@@ -1,7 +1,6 @@
 'use strict';
 
 const common = require('../common');
-if (process.versions.bun) common.skip('Bun does not implement the Node.js permission model (--permission)');
 const { isMainThread } = require('worker_threads');
 
 if (!isMainThread) {

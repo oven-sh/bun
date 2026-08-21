@@ -4259,6 +4259,98 @@ describe("allowHalfOpen socket whose peer resets behind pending writes", () => {
   });
 });
 
+// A paused socket must not wake the event loop for data it is not going to read. epoll and
+// AFD do not report data without readable interest; kqueue keeps a read knote registered on a
+// non-reading socket so the peer's FIN/RST still arrive, and that knote used to fire once per
+// incoming segment. The paused socket lives in a child so nothing else turns its loop: it
+// samples the usockets loop iteration counter, we send SEGMENTS one-byte writes from here,
+// then it samples again. A loop that wakes per segment reports ~SEGMENTS iterations; one that
+// does not reports the handful caused by our two control lines.
+it("a paused socket does not wake the event loop for every segment its peer sends", async () => {
+  const SEGMENTS = 200;
+  await using child = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const { getEventLoopStats } = require("bun:internal-for-testing");
+      let socket;
+      const server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          open(s) {
+            socket = s;
+            s.pause();
+            process.stdout.write("port " + server.port + "\\n");
+          },
+          data() {
+            process.stdout.write("data while paused\\n");
+          },
+          close() {},
+          drain() {},
+        },
+      });
+      process.stdout.write("port " + server.port + "\\n");
+      let before;
+      for await (const line of console) {
+        if (line === "start") {
+          before = getEventLoopStats().iteration;
+          process.stdout.write("started\\n");
+        } else if (line === "stop") {
+          process.stdout.write("iterations " + (getEventLoopStats().iteration - before) + "\\n");
+          server.stop(true);
+          process.exit(0);
+        }
+      }
+      `,
+    ],
+    env: bunEnv,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const reader = child.stdout.getReader();
+  let buffered = "";
+  async function line() {
+    while (!buffered.includes("\n")) {
+      const { value, done } = await reader.read();
+      if (done) return buffered;
+      buffered += new TextDecoder().decode(value);
+    }
+    const i = buffered.indexOf("\n");
+    const out = buffered.slice(0, i);
+    buffered = buffered.slice(i + 1);
+    return out;
+  }
+  const port = Number((await line()).split(" ")[1]);
+  const peer = await Bun.connect({
+    hostname: "127.0.0.1",
+    port,
+    socket: { data() {}, open() {}, close() {}, drain() {} },
+  });
+  expect(await line()).toBe(`port ${port}`); // open() ran: the socket is paused
+  child.stdin.write("start\n");
+  await child.stdin.flush();
+  expect(await line()).toBe("started");
+  for (let i = 0; i < SEGMENTS; i++) {
+    peer.write("x");
+    peer.flush();
+    // Separate segments need separate event-loop turns on our side; this paces the sender,
+    // it is not waiting for a condition in the child.
+    await new Promise<void>(resolve => setTimeout(resolve, 1));
+  }
+  child.stdin.write("stop\n");
+  await child.stdin.flush();
+  const result = await line();
+  peer.end();
+  expect(result).toMatch(/^iterations \d+$/);
+  // Two stdin lines and process bookkeeping account for a few turns; per-segment wakeups
+  // would put this near SEGMENTS.
+  expect(Number(result.split(" ")[1])).toBeLessThan(SEGMENTS / 4);
+  expect(await child.exited).toBe(0);
+});
+
 // A paused socket polls for nothing, but a peer reset still reaches it (epoll reports EPOLLERR
 // regardless of interest; kqueue keeps a read knote registered while reads are off, see
 // epoll_kqueue.c). The reset is the end of the connection, so the pause no longer protects

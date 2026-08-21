@@ -283,12 +283,11 @@ pub static OVERRIDDEN_DEFAULT_USER_AGENT: std::sync::OnceLock<&'static [u8]> =
 /// body-phase reads; response-header reads do not re-arm it, so it is an
 /// absolute deadline for the header block to complete (undici `headersTimeout`
 /// semantics). 0 disables the timer (matching `disable_timeout = true`).
-/// Overridable via `BUN_CONFIG_HTTP_IDLE_TIMEOUT`. Default is 5 minutes — the
-/// previous hard-coded value — so unchanged environments see identical
-/// behaviour except that the handshake phase is now also covered. The stored
-/// value is already padded for the timer-wheel sweep (see
-/// [`normalize_idle_timeout_seconds`]), so the timer fires at the configured
-/// duration plus up to one wheel period, never earlier.
+/// Overridable via `BUN_CONFIG_HTTP_IDLE_TIMEOUT`. Default is 5 minutes.
+/// `HTTPThread::on_start` replaces this initial value with the configured one
+/// padded for the timer-wheel sweep (see [`normalize_idle_timeout_seconds`]),
+/// so the timer fires at the configured duration plus up to one wheel period,
+/// never earlier.
 pub(crate) static IDLE_TIMEOUT_SECONDS: AtomicU32 = AtomicU32::new(300);
 
 /// Safe accessor for [`IDLE_TIMEOUT_SECONDS`].

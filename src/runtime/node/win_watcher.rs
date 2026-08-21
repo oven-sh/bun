@@ -283,8 +283,7 @@ impl PathWatcher {
             return;
         }
 
-        // A watched path that ends in a separator (a drive root, or given that way)
-        // makes libuv report its entries as `\name`.
+        // libuv reports the entries of a watch path that ends in a separator as `\name`.
         let name = name.strip_prefix(b"\\").unwrap_or(name);
         // Intentional wrap to bun_watcher::HashType
         let hash = me.handle.hash(name, events, status) as bun_watcher::HashType;

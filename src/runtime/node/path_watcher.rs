@@ -970,13 +970,12 @@ impl Linux {
 
                 // Kernel retired this wd: `remove_watch` issued an explicit
                 // `inotify_rm_watch` (it deletes the `wd_map` entry first, so no
-                // owners remain to notify) or the watched inode is gone. A watch
-                // whose root is gone leaves the dedup map, so that a watch() of the
-                // path (recreated, say) starts a new one; its handlers keep it
-                // alive until they close. libuv turns the retirement into one
-                // more "rename" after IN_DELETE_SELF, so a deleted watch root
-                // reports two. Recursive sub-wds stay silent; their parent
-                // directory's IN_DELETE already reported it.
+                // owners remain to notify) or the watched inode is gone. A dead
+                // root also leaves the dedup map: a watch() of the path must start
+                // a new watch. libuv turns the retirement into one more "rename"
+                // after IN_DELETE_SELF, so a deleted watch root reports two.
+                // Recursive sub-wds stay silent; their parent directory's
+                // IN_DELETE already reported it.
                 if ev.mask & IN::IGNORED != 0 {
                     // SAFETY: holding manager.mutex; exclusive access to `wd_map`.
                     let wd_map = unsafe { &mut (*plat).wd_map };
@@ -1108,9 +1107,8 @@ impl Linux {
                         .as_bytes()
                     };
 
-                    // Leave the dedup map (see IN_IGNORED above) before the event is
-                    // queued, so a listener that recreates and re-watches the path
-                    // cannot join this watch; IN_IGNORED may land a read() later.
+                    // Leave the dedup map before the listener can re-watch the path:
+                    // the IN_IGNORED that also does it (above) may land a read() later.
                     if owner_subpath.is_empty() && ev.mask & IN::DELETE_SELF != 0 {
                         manager.unlink_watcher_locked(owner_watcher);
                     }
@@ -1631,8 +1629,7 @@ impl Kqueue {
                     entry.subpath.as_bytes()
                 };
 
-                // The watched path itself is gone: leave the dedup map, as the inotify
-                // backend does, so that a watch() of the path starts a new one.
+                // A dead root leaves the dedup map, as in the inotify backend above.
                 if entry.subpath.is_empty() && kev.fflags & (NOTE::DELETE | NOTE::REVOKE) != 0 {
                     manager.unlink_watcher_locked(entry.watcher);
                 }

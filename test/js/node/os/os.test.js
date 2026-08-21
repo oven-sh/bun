@@ -117,8 +117,8 @@ it("userInfo", () => {
   const info = os.userInfo();
 
   if (process.platform !== "win32") {
-    expect(info.username).toBe(process.env.USER);
-    expect(info.shell).toBe(process.env.SHELL || "unknown");
+    expect(info.username).toBe(process.env.USER ?? "unknown");
+    expect(info.shell).toBe(process.env.SHELL ?? "unknown");
     expect(info.uid >= 0).toBe(true);
     expect(info.gid >= 0).toBe(true);
   } else {
@@ -308,4 +308,24 @@ it("setPriority throws ESRCH for a nonexistent pid", () => {
       info: { errno: isWindows ? -4040 : -3, code: "ESRCH", message: "no such process", syscall: "uv_os_setpriority" },
     }),
   );
+});
+
+// https://github.com/oven-sh/bun/issues/32103
+it("native os functions are inspected as functions, not classes", () => {
+  for (const name of [
+    "freemem",
+    "getPriority",
+    "homedir",
+    "hostname",
+    "loadavg",
+    "networkInterfaces",
+    "release",
+    "setPriority",
+    "totalmem",
+    "uptime",
+    "userInfo",
+    "version",
+  ]) {
+    expect(Bun.inspect(os[name])).toBe(`[Function: ${name}]`);
+  }
 });

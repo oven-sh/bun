@@ -1769,6 +1769,85 @@ describe.skipIf(!isWindows)("Bun.connect named-pipe client Handlers lifecycle", 
   });
 });
 
+// A socket over a Windows named pipe frees its native context from a task
+// that is queued when the socket closes. A handler can close the socket and
+// then spin the event loop before it returns (`expect().resolves` blocks on
+// the promise and runs queued tasks), so the context is gone by the time the
+// libuv read callback that invoked the handler gets control back. The
+// callback must keep the context alive until it is done with it.
+describe.concurrent.skipIf(!isWindows)("named-pipe socket closed and event loop spun inside a read callback", () => {
+  // `trigger` is the server handler that tears the socket down: "end" runs
+  // from the EOF read callback, "data" from the data read callback.
+  function fixture(trigger: "end" | "data") {
+    return /* js */ `
+      import { expect } from "bun:test";
+
+      const pipe = "\\\\\\\\.\\\\pipe\\\\bun-test-${trigger}-teardown-" + Math.random().toString(36).slice(2);
+      const serverOpened = Promise.withResolvers();
+      const serverClosed = Promise.withResolvers();
+      const clientClosed = Promise.withResolvers();
+
+      function closeAndSpinEventLoop(socket) {
+        socket.end();
+        // Blocks until the promise settles. Every queued task, including the
+        // one that frees the native context of this socket, runs before this returns.
+        expect(new Promise(resolve => setImmediate(resolve))).resolves.toBeUndefined();
+      }
+
+      using server = Bun.listen({
+        unix: pipe,
+        socket: {
+          open() { serverOpened.resolve(); },
+          data(socket) { ${trigger === "data" ? "closeAndSpinEventLoop(socket);" : ""} },
+          end(socket) { ${trigger === "end" ? "closeAndSpinEventLoop(socket);" : ""} },
+          close() { serverClosed.resolve(); },
+          error() {},
+        },
+      });
+
+      const client = await Bun.connect({
+        unix: pipe,
+        socket: {
+          open() {},
+          data() {},
+          close() { clientClosed.resolve(); },
+          error() {},
+        },
+      });
+      await serverOpened.promise;
+
+      ${trigger === "data" ? 'client.write("x");' : "client.end();"}
+
+      await serverClosed.promise;
+      await clientClosed.promise;
+      console.log("OK");
+    `;
+  }
+
+  it.each(["end", "data"] as const)("%s handler", async trigger => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture(trigger)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 15_000,
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({
+      stdout: stdout.trim(),
+      stderr: stderr.trim(),
+      exitCode,
+      signalCode: proc.signalCode ?? null,
+    }).toMatchObject({
+      stdout: "OK",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+});
+
 it("reload() backs out cleanly when a handler getter closes the socket mid-reload", async () => {
   // socket.reload() reads the new callbacks off the user object property by
   // property, so a getter can run arbitrary JS — including terminating the
@@ -4179,17 +4258,17 @@ it("a paused socket does not wake the event loop for every segment its peer send
   expect(await child.exited).toBe(0);
 });
 
-// A paused socket polls for nothing. epoll reports the reset anyway (EPOLLERR cannot be
-// masked); kqueue only reports it through the read knote that epoll_kqueue.c keeps
-// registered while reads are off. Before that, the pause left a one-shot writable event
-// behind and nothing else: a reset that landed after it was consumed was never reported,
-// and the socket stayed paused for good. The greeting round trip below guarantees the
-// one-shot has been consumed before the reset is sent. The node:net and node:tls shapes
-// of this scenario are in test/js/node/tls/node-tls-server.test.ts.
+// A paused socket polls for nothing, but a peer reset still reaches it (epoll reports EPOLLERR
+// regardless of interest; kqueue keeps a read knote registered while reads are off, see
+// epoll_kqueue.c). The reset is the end of the connection, so the pause no longer protects
+// anything: the data queued ahead of the reset is delivered, then the socket closes with read
+// ECONNRESET. Closing without reading discarded that data (a streamed body cut short although
+// every byte arrived, #39846). Windows discards the receive queue on a reset itself. The
+// node:net and node:tls shapes are in test/js/node/tls/node-tls-server.test.ts.
 describe.concurrent.each(["tcp", "tls"] as const)("%s socket paused when its peer resets the connection", transport => {
-  it("closes with read ECONNRESET while still paused and delivers none of the unread data", async () => {
+  it("delivers the data queued ahead of the reset, then closes with read ECONNRESET, while still paused", async () => {
     const closedWith = Promise.withResolvers<Error | undefined>();
-    let dataCalls = 0;
+    let received = "";
     const pauseAndGreet = (socket: Socket) => {
       socket.pause();
       socket.write("greeting");
@@ -4207,8 +4286,8 @@ describe.concurrent.each(["tcp", "tls"] as const)("%s socket paused when its pee
           if (success) pauseAndGreet(socket);
           else closedWith.reject(authorizationError ?? new Error("server handshake failed"));
         },
-        data() {
-          dataCalls++;
+        data(_socket, chunk) {
+          received += chunk.toString();
         },
         close(_socket, error) {
           closedWith.resolve(error);
@@ -4230,21 +4309,65 @@ describe.concurrent.each(["tcp", "tls"] as const)("%s socket paused when its pee
     });
     const peer = await greeted.promise;
     peer.write("queued behind the pause");
+    peer.flush();
     peer.terminate();
 
     const error = (await closedWith.promise) as NodeJS.ErrnoException | undefined;
     expect({
+      received: isWindows ? "" : received,
       reported: error instanceof Error,
       syscall: error?.syscall,
-      dataCalls,
       code: error?.code,
     }).toEqual({
+      received: isWindows ? "" : "queued behind the pause",
       reported: true,
       syscall: "read",
-      dataCalls: 0,
       code: "ECONNRESET",
     });
   });
+});
+
+// A paused socket with a backpressured write of its own must also close on the reset: an owner
+// that resumes only after 'drain' (node:http's flood guard) would otherwise wait forever.
+it("a paused socket with a backpressured write still closes when its peer resets", async () => {
+  const closedWith = Promise.withResolvers<Error | undefined>();
+  let backpressured!: () => void;
+  const isBackpressured = new Promise<void>(resolve => (backpressured = resolve));
+  const big = Buffer.alloc(4 * 1024 * 1024, "x");
+  using server = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      open(socket) {
+        socket.pause();
+        // The peer never reads, so this fills both kernel buffers and is refused part-way.
+        while (socket.write(big) === big.length) {}
+        backpressured();
+      },
+      drain(socket) {
+        while (socket.write(big) === big.length) {}
+      },
+      data() {},
+      close(_socket, error) {
+        closedWith.resolve(error);
+      },
+    },
+  });
+  const peer = await Bun.connect({
+    hostname: "127.0.0.1",
+    port: server.port,
+    socket: {
+      open(socket) {
+        socket.pause();
+      },
+      data() {},
+      close() {},
+    },
+  });
+  await isBackpressured;
+  peer.terminate();
+  const error = (await closedWith.promise) as NodeJS.ErrnoException | undefined;
+  expect(error?.code).toBe("ECONNRESET");
 });
 
 // A close that the event loop initiated passes the read error to close(). usockets

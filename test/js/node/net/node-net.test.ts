@@ -1191,6 +1191,79 @@ describe.concurrent("socket that already sent FIN and is paused with unread data
   });
 });
 
+// A reset that reaches a read-stopped handle ends the connection, and the bytes the kernel
+// still holds ahead of it are read off the socket before it is closed rather than discarded
+// with the fd (#39846: a streamed fetch() body was cut short under receive backpressure this
+// way). They land in the paused stream's buffer, so bytesRead accounts for every byte the peer
+// sent. Windows discards the receive queue on a reset itself.
+describe.concurrent("read-stopped socket whose peer resets behind unread data", () => {
+  it("reads the queued bytes off the socket before reporting ECONNRESET", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const net = require("net");
+        const server = net.createServer({ allowHalfOpen: true, highWaterMark: 64 * 1024 }, s => {
+          // 64 KiB reaches the highWaterMark so the handle is read-stopped; the next
+          // 32 KiB and the reset stay in the kernel.
+          s.pause();
+          const events = [];
+          s.on("end", () => events.push("end"));
+          s.on("error", e => events.push("error " + e.code));
+          s.on("close", () => {
+            events.push("close");
+            console.log(JSON.stringify({ events, bytesRead: s.bytesRead, buffered: s.readableLength }));
+            process.exit(0);
+          });
+          (function waitReadStopped() {
+            if (s.readableLength >= 64 * 1024) console.log("read-stopped");
+            else setImmediate(waitReadStopped);
+          })();
+        });
+        server.listen(0, "127.0.0.1", () => console.log("port " + server.address().port));
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const reader = proc.stdout.getReader();
+    let buffered = "";
+    async function line() {
+      while (!buffered.includes("\n")) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffered += new TextDecoder().decode(value);
+      }
+      const i = buffered.indexOf("\n");
+      const out = i === -1 ? buffered : buffered.slice(0, i);
+      buffered = i === -1 ? "" : buffered.slice(i + 1);
+      return out;
+    }
+    const port = Number((await line()).split(" ")[1]);
+    const peer = await Bun.connect({
+      hostname: "127.0.0.1",
+      port,
+      socket: { data() {}, drain() {}, close() {}, error() {} },
+    });
+    expect(peer.write(Buffer.alloc(64 * 1024, "a"))).toBe(64 * 1024);
+    peer.flush();
+    expect(await line()).toBe("read-stopped");
+    // In the kernel ahead of the reset: same connection, so TCP orders them.
+    expect(peer.write(Buffer.alloc(32 * 1024, "b"))).toBe(32 * 1024);
+    peer.flush();
+    peer.terminate();
+    const result = JSON.parse(await line());
+    expect(result).toEqual({
+      events: ["error ECONNRESET", "close"],
+      bytesRead: isWindows ? result.bytesRead : 96 * 1024,
+      buffered: isWindows ? result.buffered : 96 * 1024,
+    });
+    expect(await proc.exited).toBe(0);
+  });
+});
+
 // A socket whose reads are stopped for backpressure must not hold the process
 // open: in node a handle that is not reading is inactive, so a program that
 // never consumes a reply (or a request) still exits. Each fixture leaves such a

@@ -433,30 +433,34 @@ describe("node-style CLI errors", () => {
     expect(exitCode).toBe(9);
   });
 
-  test.each(["--allow-fs-read=*", "--allow-fs-write=*"])("%s without --permission is rejected", async flag => {
+  test.each(["--allow-fs-read=*", "--allow-fs-write=*", "--allow-child-process", "--allow-net"])(
+    "%s without --permission is rejected",
+    async flag => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), flag, "-e", "1"],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout).toBe("");
+      expect(stderr).toContain("--permission is required");
+      expect(exitCode).toBe(1);
+    },
+  );
+
+  test("--permission enables the model and defines process.permission", async () => {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), flag, "-e", "1"],
+      cmd: [bunExe(), "--permission", "-e", "process.stdout.write(String(typeof process.permission.has))"],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout).toBe("");
-    expect(stderr).toContain("--permission is required");
-    expect(exitCode).toBe(1);
-  });
-
-  test("--permission enables the permission model", async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "--permission", "-p", "process.permission.has('fs.write')"],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    expect(stdout).toBe("false\n");
+    expect(stderr).toBe("");
+    expect(stdout).toBe("function");
     expect(exitCode).toBe(0);
   });
 });
@@ -659,4 +663,34 @@ test("process._eval (undefined for normal run)", async () => {
   expect(stdout.toString("utf8")).toEqual("undefined\n");
 
   rmSync(cwd, { recursive: true, force: true });
+});
+
+test("uncaught error from a CommonJS-sniffed eval entry reports and exits 1", async () => {
+  // The presence of require() makes the eval source evaluate as CommonJS,
+  // which used to swallow a top-level throw entirely: no stderr output and
+  // exit code 0.
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `require("assert"); throw new Error("eval-cjs-uncaught");`],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("eval-cjs-uncaught");
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(1);
+});
+
+test("uncaught error from a CommonJS-sniffed stdin entry reports and exits 1", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-"],
+    env: bunEnv,
+    stdin: Buffer.from(`require("assert"); throw new Error("stdin-cjs-uncaught");`),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("stdin-cjs-uncaught");
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(1);
 });

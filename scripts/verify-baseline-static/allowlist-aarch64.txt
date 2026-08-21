@@ -5,18 +5,24 @@
 
 # ----------------------------------------------------------------------------
 # Bun's Highway SVE/SVE2 targets. Gate: hwy::SupportedTargets via getauxval(AT_HWCAP).
-# (133 symbols)
+# (168 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun10N_SVE2_12810MemMemImplEPKhmS2_m                                      [SVE]
 _ZN3bun10N_SVE2_12811MemRMemImplEPKhmS2_m                                     [SVE]
 _ZN3bun10N_SVE2_12812MemMem16ImplEPKtmS2_m                                    [SVE]
 _ZN3bun10N_SVE2_12813MemRMem16ImplEPKtmS2_m                                   [SVE]
 _ZN3bun10N_SVE2_12813JsonIndexImplEPKhmmPjPmS4_S3_                            [SVE]
+_ZN3bun10N_SVE2_12812XmlIndexImplEPKhmmPjPm                                  [SVE]
+_ZN3bun10N_SVE2_12814XmlIndex16ImplEPKtmmPjPm                                [SVE]
 _ZN3bun10N_SVE2_12814DecodeHex8ImplEPKhPhm                                    [SVE]
 _ZN3bun10N_SVE2_12814LowerAsciiImplEPKhmPh                                    [SVE]
 _ZN3bun10N_SVE2_12815CopyU16ToU8ImplEPKtmPh                                   [SVE]
 _ZN3bun10N_SVE2_12815DecodeHex16ImplEPKtPhm                                   [SVE]
 _ZN3bun10N_SVE2_12815IndexOfCharImplEPKhmh                                    [SVE]
+_ZN3bun10N_SVE2_12813CountCharImplEPKhmh                                      [SVE]
+_ZN3bun10N_SVE2_12818IndexOfNotCharImplEPKhmh                                 [SVE]
+_ZN3bun10N_SVE2_12819LastIndexOfCharImplEPKhmh                                [SVE]
+_ZN3bun10N_SVE2_12822LastIndexOfAnyCharImplEPKhmS2_m                          [SVE]
 _ZN3bun10N_SVE2_12816LowerAscii16ImplEPKtmPt                                  [SVE]
 _ZN3bun10N_SVE2_12818EncodeHexLowerImplEPKhmPh                                [SVE]
 _ZN3bun10N_SVE2_12818FirstNonAscii8ImplEPKhm                                  [SVE]
@@ -53,6 +59,10 @@ _ZN3bun5N_SVE14LowerAsciiImplEPKhmPh                                          [S
 _ZN3bun5N_SVE15CopyU16ToU8ImplEPKtmPh                                         [SVE]
 _ZN3bun5N_SVE15DecodeHex16ImplEPKtPhm                                         [SVE]
 _ZN3bun5N_SVE15IndexOfCharImplEPKhmh                                          [SVE]
+_ZN3bun5N_SVE13CountCharImplEPKhmh                                            [SVE]
+_ZN3bun5N_SVE18IndexOfNotCharImplEPKhmh                                       [SVE]
+_ZN3bun5N_SVE19LastIndexOfCharImplEPKhmh                                      [SVE]
+_ZN3bun5N_SVE22LastIndexOfAnyCharImplEPKhmS2_m                                [SVE]
 _ZN3bun5N_SVE16LowerAscii16ImplEPKtmPt                                        [SVE]
 _ZN3bun5N_SVE18EncodeHexLowerImplEPKhmPh                                      [SVE]
 _ZN3bun5N_SVE18FirstNonAscii8ImplEPKhm                                        [SVE]
@@ -89,6 +99,10 @@ _ZN3bun6N_SVE214LowerAsciiImplEPKhmPh                                         [S
 _ZN3bun6N_SVE215CopyU16ToU8ImplEPKtmPh                                        [SVE]
 _ZN3bun6N_SVE215DecodeHex16ImplEPKtPhm                                        [SVE]
 _ZN3bun6N_SVE215IndexOfCharImplEPKhmh                                         [SVE]
+_ZN3bun6N_SVE213CountCharImplEPKhmh                                           [SVE]
+_ZN3bun6N_SVE218IndexOfNotCharImplEPKhmh                                      [SVE]
+_ZN3bun6N_SVE219LastIndexOfCharImplEPKhmh                                     [SVE]
+_ZN3bun6N_SVE222LastIndexOfAnyCharImplEPKhmS2_m                               [SVE]
 _ZN3bun6N_SVE216LowerAscii16ImplEPKtmPt                                       [SVE]
 _ZN3bun6N_SVE218EncodeHexLowerImplEPKhmPh                                     [SVE]
 _ZN3bun6N_SVE218FirstNonAscii8ImplEPKhm                                       [SVE]
@@ -125,6 +139,10 @@ _ZN3bun9N_SVE_25614LowerAsciiImplEPKhmPh                                      [S
 _ZN3bun9N_SVE_25615CopyU16ToU8ImplEPKtmPh                                     [SVE]
 _ZN3bun9N_SVE_25615DecodeHex16ImplEPKtPhm                                     [SVE]
 _ZN3bun9N_SVE_25615IndexOfCharImplEPKhmh                                      [SVE]
+_ZN3bun9N_SVE_25613CountCharImplEPKhmh                                        [SVE]
+_ZN3bun9N_SVE_25618IndexOfNotCharImplEPKhmh                                   [SVE]
+_ZN3bun9N_SVE_25619LastIndexOfCharImplEPKhmh                                  [SVE]
+_ZN3bun9N_SVE_25622LastIndexOfAnyCharImplEPKhmS2_m                            [SVE]
 _ZN3bun9N_SVE_25616LowerAscii16ImplEPKtmPt                                    [SVE]
 _ZN3bun9N_SVE_25618EncodeHexLowerImplEPKhmPh                                  [SVE]
 _ZN3bun9N_SVE_25618FirstNonAscii8ImplEPKhm                                    [SVE]
@@ -152,11 +170,16 @@ _ZN3bun9N_SVE_25646IndexOfInterestingCharacterInStringLiteralImplEPKhmh       [S
 _ZN3bun9N_SVE_25646IndexOfNeedsEscapeForJavaScriptStringImplQuoteEPKhmh       [SVE]
 _ZN3bun9N_SVE_25649IndexOfInterestingCharacterInMultilineCommentImplEPKhm     [SVE]
 _ZN3bun9N_SVE_25649IndexOfNeedsEscapeForJavaScriptStringImplBacktickEPKhmh    [SVE]
+_ZN3bun10N_SVE2_12811BSwap16ImplEPhm                                           [SVE]
+_ZN3bun10N_SVE2_12811BSwap32ImplEPhm                                           [SVE]
+_ZN3bun10N_SVE2_12811BSwap64ImplEPhm                                           [SVE]
+_ZN3bun10N_SVE2_128L12MemMemSearchILb0EtEEmPKT0_mS4_mmmPm                      [SVE]
+_ZN3bun10N_SVE2_128L12MemMemSearchILb1EtEEmPKT0_mS4_mmmPm                      [SVE]
 
 
 # ----------------------------------------------------------------------------
 # Bun source-map VLQ decoder (src/jsc/bindings/highway_sourcemap.cpp).
-# Gate: HWY_DYNAMIC_DISPATCH via hwy::SupportedTargets. (8 symbols)
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (8 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun5N_SVE15CountDelimsImplEPKhm                                           [SVE]
 _ZN3bun5N_SVE17ParseMappingsImplEPKhmPiS3_S3_S3_miS3_Pm                       [SVE]
@@ -265,7 +288,7 @@ adler32_arm_neon_dotprod  [DotProd]
 
 
 # ----------------------------------------------------------------------------
-# Bun.Image highway kernels (image_resize.cpp). Gate: HWY_DYNAMIC_DISPATCH ->
+# Bun.Image highway kernels (image_resize.cpp). Gate: BUN_HWY_DISPATCH ->
 # hwy::SupportedTargets() via getauxval(AT_HWCAP). Same gate as the
 # highway_strings.cpp block above.
 # (5 symbols)

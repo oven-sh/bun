@@ -1,0 +1,54 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      one-dep:
+        specifier: 1.0.0
+        version: 1.0.0
+      provides-peer-deps-1-0-0:
+        specifier: 1.0.0
+        version: 1.0.0
+
+packages:
+
+  no-deps@1.0.0:
+    resolution: {integrity: sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw==}
+
+  no-deps@1.0.1:
+    resolution: {integrity: sha512-3X6cn4+UJdXJuLPu11v8i/fGLe2PdI6v1yKTELam04lY5esCAFdG/qQts6N6rLrL6g1YRq+MKBAwxbmUQk355A==}
+
+  one-dep@1.0.0:
+    resolution: {integrity: sha512-qG6lZjwM1vFmRCHwP+XpOKu6FkrBmwr20+54+qaHGdjZlw/wz8aJrhFqX4dZksqmBLZtj2mzL77Yf04WKs1+Kg==}
+
+  peer-deps@1.0.0:
+    resolution: {integrity: sha512-CHQ5sQXwUo38G++dkzJ/rJ9Ge98MeMTQjjC9UK2t0frp8Lrhm3zNooOLakFyHW4UcyD3vuTS3Qv324Bj6B5Tjw==}
+    peerDependencies:
+      no-deps: '*'
+
+  provides-peer-deps-1-0-0@1.0.0:
+    resolution: {integrity: sha512-DSOgqUXTkw06FqE/14D5KvaGbl3e3Rri71F9UeSRGV1CtQE84mO69ZXE1QhSed5zM0EQy1n/zkwDdtwsmOaFsA==}
+
+snapshots:
+
+  no-deps@1.0.0: {}
+
+  no-deps@1.0.1: {}
+
+  one-dep@1.0.0:
+    dependencies:
+      no-deps: 1.0.1
+
+  peer-deps@1.0.0(no-deps@1.0.0):
+    dependencies:
+      no-deps: 1.0.0
+
+  provides-peer-deps-1-0-0@1.0.0:
+    dependencies:
+      no-deps: 1.0.0
+      peer-deps: 1.0.0(no-deps@1.0.0)

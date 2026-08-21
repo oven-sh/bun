@@ -33,18 +33,16 @@
 #include "SerializedScriptValue.h"
 #include <wtf/TZoneMallocInlines.h>
 
-extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
-
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(BroadcastChannel);
 
 BroadcastChannel::BroadcastChannel(ScriptExecutionContext& context, const String& name)
-    : ContextDestructionObserver(&context)
+    : ActiveDOMObject(&context)
     , m_name(name.isolatedCopy())
     , m_contextId(context.identifier())
 {
-    initializeWeakPtrFactory();
+    EventTarget::initializeWeakPtrFactory();
     BunBroadcastChannelRegistry::singleton().subscribe(m_name, m_contextId, *this);
     jsRef(context.jsGlobalObject());
 }
@@ -100,13 +98,15 @@ void BroadcastChannel::dispatchPendingMessage()
     dispatchMessage(message.releaseNonNull());
 }
 
-JSC::JSValue BroadcastChannel::tryTakeMessage(JSC::JSGlobalObject* lexicalGlobalObject)
+JSC::JSValue BroadcastChannel::tryTakeMessage(JSC::JSGlobalObject* lexicalGlobalObject, bool& hadMessage)
 {
+    hadMessage = false;
     if (isClosed())
         return JSC::jsUndefined();
     auto message = BunBroadcastChannelRegistry::singleton().takePending(m_name, *this);
     if (!message)
         return JSC::jsUndefined();
+    hadMessage = true;
     return message->deserialize(*lexicalGlobalObject, lexicalGlobalObject, SerializationErrorMode::NonThrowing);
 }
 
@@ -132,7 +132,7 @@ void BroadcastChannel::eventListenersDidChange()
         m_state.fetch_and(~uint64_t(HasMessageListener), std::memory_order_acq_rel);
 }
 
-bool BroadcastChannel::hasPendingActivity() const
+bool BroadcastChannel::virtualHasPendingActivity() const
 {
     // Called from the GC thread; a single atomic load covers everything.
     // Queued-but-undelivered messages are NOT counted as pending activity:
@@ -153,7 +153,7 @@ void BroadcastChannel::jsRef(JSGlobalObject* lexicalGlobalObject)
         return;
     if (!m_hasRef) {
         m_hasRef = true;
-        Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, 1);
+        Bun__eventLoop__refKeepAlive(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, 1);
     }
 }
 
@@ -161,7 +161,7 @@ void BroadcastChannel::jsUnref(JSGlobalObject* lexicalGlobalObject)
 {
     if (m_hasRef) {
         m_hasRef = false;
-        Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, -1);
+        Bun__eventLoop__refKeepAlive(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, -1);
     }
 }
 

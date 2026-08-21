@@ -1744,13 +1744,11 @@ fn stop_dns_for_vm_teardown() -> SweepResult {
 /// `--isolate` swap: a microtask still pending at end-of-file (queued by
 /// `tick_immediate_tasks` or `handle_rejected_promises`) can register new
 /// handles when it runs, so drain first so they land in the registry before it
-/// empties, then stop. A stop can queue more of them (a failed upload's `.catch`
-/// opening a server): the swap drains those after this and then closes every
-/// socket blind, so a handle they register would be stopped on top of its
-/// closed socket at the next swap. Hence drain and stop again while a round
-/// stopped something, a bounded number of times: a `.catch` that starts its
-/// upload again would otherwise keep this going. (VM teardown must *not* drain
-/// here — its prepareForDestruction discards the pre-exit queues.)
+/// empties, then stop. A stop can queue such microtasks too (a failed upload's
+/// `.catch`), and the swap closes every socket blind right after this, so
+/// repeat while a round stopped something. Bounded: a `.catch` that restarts
+/// its upload would otherwise never let this end. (VM teardown must *not*
+/// drain here — its prepareForDestruction discards the pre-exit queues.)
 pub(crate) fn stop_active_handles_for_test_isolation(vm: &mut VirtualMachine) {
     const MAX_ROUNDS: usize = 8;
     for _ in 0..MAX_ROUNDS {

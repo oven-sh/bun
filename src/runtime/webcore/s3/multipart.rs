@@ -213,12 +213,10 @@ impl MultiPartUpload {
         )
     }
 
-    /// VM teardown's stop phase and the `bun test --isolate` swap (JS thread):
-    /// nothing feeds this upload any more, so fail it. A request still out drops
-    /// its own ref when its response finds `state == Finished`. The rollback a
-    /// multipart upload sends from here is refused during teardown; under
-    /// `--isolate` it goes out (`outlives_test_isolation`) and completes on the
-    /// next file's loop.
+    /// Stop phase (teardown or the `--isolate` swap): nothing feeds this upload any
+    /// more, so fail it. A request still out drops its ref when it finds the upload
+    /// finished; the rollback this may send is refused during teardown and, under
+    /// `--isolate`, completes on the next file's loop (`outlives_test_isolation`).
     ///
     /// # Safety
     /// `this` is live; JS thread. May free it.

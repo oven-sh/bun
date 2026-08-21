@@ -569,15 +569,13 @@ pub struct S3UploadStreamWrapper {
     pub(crate) callback_context: *mut c_void,
     /// this is owned by the task not by the wrapper
     pub path: bun_ptr::RawSlice<u8>,
-    /// Pins the source ReadableStream on the native ByteStream fast-path (no JS
-    /// reader to lock it); empty on the `assign_to_stream` path.
+    /// Pins the source ReadableStream when the native ByteStream fast-path is
+    /// taken (no JS reader to lock it). Empty on the `assign_to_stream` path.
     pub readable_stream_ref: ReadableStreamStrong,
     pub global: GlobalRef, // JSC_BORROW
-    /// The `NativePromiseContext` holding the JS pump's claim (the +1 from
-    /// `upload_stream`) while the pump promise is unsettled, or `ZERO`. Not
-    /// visited: the promise reaction keeps the cell alive, and the cell's
-    /// destructor clears this before it could dangle (`pump_cell_collected`).
-    /// `resolve` reclaims the claim through it as soon as the upload is over.
+    /// The `NativePromiseContext` holding the JS pump's +1 while the pump promise
+    /// is unsettled, or `ZERO`. Not visited: the reaction keeps the cell alive, and
+    /// the cell's destructor clears this first (`pump_cell_collected`).
     pump_cell: Cell<JSValue>,
 }
 
@@ -622,13 +620,12 @@ impl S3UploadStreamWrapper {
         unsafe { &*self.task }
     }
 
-    /// Whether `resolve` now owns the pump's +1 (`upload_stream`) and must release it:
-    /// it takes a JS pump's claim out of `pump_cell` (the shims and the cell's
-    /// destructor then find nothing), or a native source is still attached, so
-    /// `end_from_stream` (which clears it first) has not released it and, once
-    /// `resolve` closes the source, never will. Called before anything allocates:
-    /// a collection could free the cell, and the failure path's `source.close()`
-    /// clears `source`.
+    /// Whether `resolve` must release the pump's +1 (`upload_stream`) itself: it takes
+    /// it out of `pump_cell` (the shims and the cell's destructor then find nothing),
+    /// or a native source is still attached, so `end_from_stream`, which clears it
+    /// first, has not released it and never will once `resolve` closes the source.
+    /// Runs before anything allocates (a collection could free the cell) and before
+    /// the failure path's `source.close()` clears `source`.
     fn take_pump_claim(&mut self) -> bool {
         let cell = self.pump_cell.replace(JSValue::ZERO);
         if !cell.is_empty() && native_promise_context::take::<Self>(cell).is_some() {
@@ -643,18 +640,17 @@ impl S3UploadStreamWrapper {
         )
     }
 
-    /// The cell's destructor (GC sweep): the pump promise was collected unsettled, so
-    /// the claim is released by `release_collected_pump_claim` one tick later. A plain
-    /// field write, safe during sweep; the claim keeps this wrapper alive through it.
+    /// The cell's destructor (GC sweep; the cell's +1 keeps this alive): a plain field
+    /// write here, `release_collected_pump_claim` a tick later.
     pub(crate) fn pump_cell_collected(&self) {
         self.pump_cell.set(JSValue::ZERO);
     }
 
-    /// Releases the claim whose cell was collected (`pump_cell_collected`): no shim
-    /// will ever run, and nothing will feed the sink again.
+    /// The pump promise was collected unsettled: no shim will run, nothing will feed
+    /// the sink, so release the +1 the cell held.
     ///
     /// # Safety
-    /// `this` is live: the claim being released has kept it so. JS thread.
+    /// `this` is live (the +1 being released keeps it so); JS thread.
     pub(crate) unsafe fn release_collected_pump_claim(this: *mut Self) {
         bun_output::scoped_log!(S3UploadStream, "pump collected");
         // SAFETY: fn contract; the borrow ends before the deref, which may free it.
@@ -789,10 +785,9 @@ impl S3UploadStreamWrapper {
     }
 }
 
-/// The pump promise settled: the wrapper, whose claim the shim now holds (its
-/// `handle_*_stream` releases it), or `None` when `resolve` or the cell's destructor
-/// took the claim first, in which case the wrapper may already be gone and there
-/// is nothing left to do.
+/// The pump promise settled: the wrapper, now owing the +1 its `handle_*_stream`
+/// releases, or `None` if `resolve` or the cell's destructor took it first (the
+/// wrapper may be gone; nothing is left to do).
 fn s3_upload_stream_take_pump_claim(
     callframe: &CallFrame,
 ) -> Option<NonNull<S3UploadStreamWrapper>> {
@@ -1032,9 +1027,8 @@ pub(crate) fn upload_stream(
 
     let ctx_ptr: *mut S3UploadStreamWrapper =
         bun_core::heap::into_raw(Box::new(S3UploadStreamWrapper {
-            // +1 for the stream pump, released by whichever ends it: `handle_*_stream`
-            // (inline, or from a shim holding the claim), `end_from_stream`, `resolve`
-            // (`take_pump_claim`), or the collected `pump_cell`.
+            // +1 for the stream pump: `handle_*_stream`, `end_from_stream`, `resolve`
+            // (`take_pump_claim`) or the collected `pump_cell` releases it, whichever ends it.
             ref_count: Cell::new(2),
             sink: None,
             callback,
@@ -1137,8 +1131,9 @@ pub(crate) fn upload_stream(
                 // Wake the producer after the older bytes are in the sink.
                 byte_stream.signal_drained();
             }
-            // `!had_last`: the pump +1 (rc=2) is released by `end_from_stream` after
-            // the terminal write/fail, or by `resolve` (`take_pump_claim`).
+            // `!had_last`: the stream-pump +1 (rc=2) is released by
+            // `NetworkSink::end_from_stream` after the terminal write/fail so the
+            // sink outlives the synchronous `resolve()` re-entry.
             return Ok(end_promise_value);
         }
         // sink already attached: fall through to the JS pump.
@@ -1161,9 +1156,7 @@ pub(crate) fn upload_stream(
         if let Some(promise) = assignment_result.as_any_promise() {
             match promise.status() {
                 bun_jsc::js_promise::Status::Pending => {
-                    // The pump's +1 becomes the cell's claim: taken by the shim that
-                    // runs, or by `resolve` first, or released by the cell's destructor
-                    // if the pump promise is collected unsettled.
+                    // The cell takes over the pump's +1 (see `pump_cell`).
                     let cell = native_promise_context::create(global_this, ctx_ptr, JSValue::ZERO);
                     ctx.pump_cell.set(cell);
                     assignment_result.then_with_value(

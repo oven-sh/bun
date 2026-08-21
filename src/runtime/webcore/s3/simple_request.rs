@@ -530,10 +530,9 @@ pub struct S3SimpleRequestOptions<'a> {
     pub(crate) acl: Option<ACL>,
     pub(crate) storage_class: Option<StorageClass>,
     pub(crate) request_payer: bool,
-    /// The `bun test --isolate` swap stops every request of the finished file,
-    /// except one that is itself the cleanup of something the swap stopped (a
-    /// failed upload's rollback, which the swap itself sends): that one goes out
-    /// and completes, without script, on the next file's loop.
+    /// The `bun test --isolate` swap stops the finished file's requests, except
+    /// one that is cleanup the swap itself caused (a failed upload's rollback):
+    /// that one completes, without script, on the next file's loop.
     pub(crate) outlives_test_isolation: bool,
 }
 

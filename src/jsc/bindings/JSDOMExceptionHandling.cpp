@@ -58,12 +58,6 @@ void reportException(JSGlobalObject* lexicalGlobalObject, JSC::Exception* except
     (void)scope.tryClearException();
     vm.clearLastException();
 
-    auto* globalObject = uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject);
-    // if (auto* window = dynamicDowncast<JSDOMWindow>( globalObject)) {
-    //     if (!window->wrapped().isCurrentlyDisplayedInFrame())
-    //         return;
-    // }
-
     int lineNumber = 0;
     int columnNumber = 0;
     String exceptionSourceURL;
@@ -73,7 +67,8 @@ void reportException(JSGlobalObject* lexicalGlobalObject, JSC::Exception* except
     //     exceptionSourceURL = callFrame->sourceURL();
     // }
 
-    Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+    // The listener's realm may be a node:vm context, not a Zig::GlobalObject.
+    Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(lexicalGlobalObject, exception);
 
     if (exceptionDetails) {
         auto errorMessage = retrieveErrorMessage(*lexicalGlobalObject, vm, exception->value(), scope);

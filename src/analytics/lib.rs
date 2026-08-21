@@ -301,6 +301,9 @@ pub mod features {
         59 => (ffi_dlopen, "ffi_dlopen"),
         /// Set while crashing when the crash is inside a native module, not in Bun.
         60 => (native_module_crash, "native_module_crash"),
+        /// `bun:ffi` `cc()` compiled C into the process. It runs from anonymous memory,
+        /// so a crash in it has no image to be attributed to.
+        61 => (ffi_cc, "ffi_cc"),
     }
 
     // C++ declares these as `extern "C" size_t Bun__...;` and

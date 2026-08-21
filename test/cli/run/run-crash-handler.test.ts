@@ -759,20 +759,22 @@ describe("crash inside a native module", () => {
     if (isPosix) expect(objects.slice(1)).toContain("bun");
   }
 
+  const loadFixture = () => `const lib = dlopen(${JSON.stringify(fixture)}, {
+    crash_in_native_module: { args: [], returns: "void" },
+    address_in_system_library: { args: [], returns: "ptr" },
+  });`;
+
   // `realFault`: the process dies from the re-raised signal like any crashed
   // process, so on the --coredump-upload lanes it would leave a core file
   // behind, which the runner reports as a failure. The test hooks suppress
   // core dumps themselves.
-  async function crashWith(script: string, { realFault = false } = {}) {
+  async function crashWith(script: string, { realFault = false, load = loadFixture() } = {}) {
     const bun = [
       bunExe(),
       "-e",
-      `const { dlopen } = require("bun:ffi");
+      `const { cc, dlopen } = require("bun:ffi");
        const { crash_handler } = require("bun:internal-for-testing");
-       const lib = dlopen(${JSON.stringify(fixture)}, {
-         crash_in_native_module: { args: [], returns: "void" },
-         address_in_system_library: { args: [], returns: "ptr" },
-       });
+       ${load}
        ${script}
        console.log("SHOULD NOT REACH");`,
       // Debug builds otherwise symbolize the trace instead of printing the
@@ -835,5 +837,22 @@ describe("crash inside a native module", () => {
     expect(objects[0]).toBe(fixtureName);
     expect(objects).not.toContain(path.basename(bunExe()));
     expect(features).toContain("native_module_crash");
+  });
+
+  // C compiled by bun:ffi's cc() runs from anonymous memory: there is no image
+  // to attribute the crash to, so it is reported like a Bun crash. The ffi_cc
+  // bit is the only trace of it in the report.
+  test.concurrent("a fault inside cc() code is reported as a Bun crash with the ffi_cc bit", async () => {
+    // The function hands out its own address: `.ptr` of a cc() function is
+    // not usable for this (it is the pointer's bits read as a double).
+    using dir = tempDir("crash-in-cc", { "f.c": "void* f(void) { return (void*)&f; }" });
+    const { stderr, features, objects } = await crashWith("crash_handler.segfaultAtPc(Number(lib.symbols.f()));", {
+      load: `const lib = cc({ source: ${JSON.stringify(path.join(String(dir), "f.c"))}, symbols: { f: { args: [], returns: "ptr" } } });`,
+    });
+
+    expect(stderr).toContain("oh no: Bun has crashed. This indicates a bug in Bun, not your code.");
+    expect(objects[0]).toBe("?");
+    expect(features).toContain("ffi_cc");
+    expect(features).not.toContain("native_module_crash");
   });
 });

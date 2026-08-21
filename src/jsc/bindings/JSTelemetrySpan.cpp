@@ -6,6 +6,9 @@
 #include "BunClientData.h"
 #include "WebCoreJSBuiltins.h"
 #include <JavaScriptCore/DateInstance.h>
+#include <JavaScriptCore/DOMJITSignature.h>
+#include <JavaScriptCore/DFGAbstractHeap.h>
+#include <JavaScriptCore/FrameTracers.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSInternalFieldObjectImplInlines.h>
 #include <JavaScriptCore/Lookup.h>
@@ -20,14 +23,31 @@ struct BunStrRef {
     uint8_t is16;
 };
 struct BunAttrRef {
-    BunStrRef key;
+    const void* keyPtr;
+    uint32_t keyLen;
+    uint8_t keyIs16;
     uint8_t kind; // 0 str 1 bool 2 int 3 double 4 array
-    BunStrRef str;
-    double num;
-    int64_t integer;
-    const BunAttrRef* items;
-    uint32_t nItems;
+    union {
+        struct {
+            const void* ptr;
+            uint32_t len;
+            uint8_t is16;
+        } str;
+        double num;
+        int64_t integer;
+        struct {
+            const BunAttrRef* items;
+            uint32_t n;
+        } array;
+    } u;
+    void setKey(BunStrRef k)
+    {
+        keyPtr = k.ptr;
+        keyLen = k.len;
+        keyIs16 = k.is16;
+    }
 };
+static_assert(sizeof(BunAttrRef) == 32);
 struct BunEventRef {
     BunStrRef name;
     uint64_t timeNs;
@@ -136,13 +156,26 @@ JSTelemetrySpan* toTelemetrySpan(JSValue v)
 
 // ─── helpers ───
 
+static inline BunStrRef strRef(const StringImpl* s)
+{
+    if (!s || !s->length())
+        return { nullptr, 0, 0 };
+    if (s->is8Bit())
+        return { s->span8().data(), s->length(), 0 };
+    return { s->span16().data(), s->length(), 1 };
+}
+
 static inline BunStrRef strRef(const String& s)
 {
-    if (s.isNull() || s.isEmpty())
-        return { nullptr, 0, 0 };
-    if (s.is8Bit())
-        return { s.span8().data(), s.length(), 0 };
-    return { s.span16().data(), s.length(), 1 };
+    return strRef(s.impl());
+}
+
+// The resolved StringImpl of a JSString, owned by the (live) JSString.
+static inline const StringImpl* implOf(JSGlobalObject* globalObject, JSString* str)
+{
+    if (const StringImpl* impl = str->tryGetValueImpl())
+        return impl;
+    return str->value(globalObject).data.impl();
 }
 
 static const char hexDigits[] = "0123456789abcdef";
@@ -202,58 +235,62 @@ static uint64_t timeInputToNs(JSGlobalObject* globalObject, JSValue v)
 // Attribute gathering. Strings referenced by BunAttrRef must stay alive until
 // the Rust call returns; `keep` owns resolved rope/number strings.
 struct AttrScratch {
-    Vector<BunAttrRef, 16> attrs;
     Vector<BunAttrRef, 8> arrayItems;
-    Vector<String, 16> keep;
+    // Owned strings (BigInt → decimal) that BunAttrRefs point into.
+    Vector<String, 2> keep;
 };
 
 static bool fillValue(JSGlobalObject* globalObject, AttrScratch& sc, BunAttrRef& out, JSValue v, bool allowArray)
 {
     if (v.isString()) {
-        auto s = asString(v)->value(globalObject);
-        sc.keep.append(s);
+        const StringImpl* impl = implOf(globalObject, asString(v));
         out.kind = 0;
-        out.str = strRef(sc.keep.last());
+        out.u.str.ptr = impl->is8Bit() ? static_cast<const void*>(impl->span8().data()) : static_cast<const void*>(impl->span16().data());
+        out.u.str.len = impl->length();
+        out.u.str.is16 = !impl->is8Bit();
         return true;
     }
     if (v.isInt32()) {
         out.kind = 2;
-        out.integer = v.asInt32();
+        out.u.integer = v.asInt32();
         return true;
     }
     if (v.isNumber()) {
         double d = v.asNumber();
         if (std::isfinite(d) && std::trunc(d) == d && std::abs(d) < 9007199254740992.0) {
             out.kind = 2;
-            out.integer = static_cast<int64_t>(d);
+            out.u.integer = static_cast<int64_t>(d);
         } else {
             out.kind = 3;
-            out.num = d;
+            out.u.num = d;
         }
         return true;
     }
     if (v.isBoolean()) {
         out.kind = 1;
-        out.integer = v.asBoolean();
+        out.u.integer = v.asBoolean();
         return true;
     }
     if (v.isBigInt()) {
 #if USE(BIGINT32)
         if (v.isBigInt32()) {
             out.kind = 2;
-            out.integer = v.bigInt32AsInt32();
+            out.u.integer = v.bigInt32AsInt32();
             return true;
         }
 #endif
         auto* big = v.asHeapBigInt();
         if (big->length() <= 1) {
             out.kind = 2;
-            out.integer = JSBigInt::toBigInt64(big);
+            out.u.integer = JSBigInt::toBigInt64(big);
             return true;
         }
         sc.keep.append(big->toString(globalObject, 10));
+        BunStrRef r = strRef(sc.keep.last());
         out.kind = 0;
-        out.str = strRef(sc.keep.last());
+        out.u.str.ptr = r.ptr;
+        out.u.str.len = r.len;
+        out.u.str.is16 = r.is16;
         return true;
     }
     if (allowArray && v.isCell()) {
@@ -271,9 +308,10 @@ static bool fillValue(JSGlobalObject* globalObject, AttrScratch& sc, BunAttrRef&
             }
             sc.arrayItems.shrink(start + w);
             out.kind = 4;
-            out.items = nullptr; // patched after all arrays are gathered (vector may move)
-            out.integer = static_cast<int64_t>(start);
-            out.nItems = w;
+            // Index for now; patchArrays() turns it into a pointer once the
+            // vector can no longer move.
+            out.u.array.items = reinterpret_cast<const BunAttrRef*>(start);
+            out.u.array.n = w;
             return true;
         }
     }
@@ -284,35 +322,48 @@ static bool fillValue(JSGlobalObject* globalObject, AttrScratch& sc, BunAttrRef&
 static void gatherAttrs(JSGlobalObject* globalObject, AttrScratch& sc, JSArray* flat, Vector<BunAttrRef, 16>& out)
 {
     unsigned n = flat->length() & ~1u;
+    if (!n)
+        return;
+    IndexingType type = flat->indexingType() & IndexingShapeMask;
+    bool contiguous = type == ContiguousShape || type == Int32Shape;
     for (unsigned i = 0; i < n; i += 2) {
-        JSValue k = flat->getIndex(globalObject, i);
-        JSValue v = flat->getIndex(globalObject, i + 1);
+        JSValue k, v;
+        if (contiguous) [[likely]] {
+            k = flat->butterfly()->contiguous().at(flat, i).get();
+            v = flat->butterfly()->contiguous().at(flat, i + 1).get();
+        } else {
+            k = flat->getIndex(globalObject, i);
+            v = flat->getIndex(globalObject, i + 1);
+        }
         if (!k || !k.isString() || !v || v.isUndefinedOrNull())
             continue;
-        auto ks = asString(k)->value(globalObject);
-        BunAttrRef ref {};
-        if (!fillValue(globalObject, sc, ref, v, true))
-            continue;
+        const StringImpl* key = implOf(globalObject, asString(k));
+        BunStrRef keyRef = strRef(key);
         // Later duplicate wins but keeps the key's original position (so the
         // attribute-count limit drops the right ones).
-        bool replaced = false;
+        BunAttrRef* slot = nullptr;
         for (auto& e : out) {
-            StringView existing = e.key.is16
-                ? StringView(std::span(static_cast<const char16_t*>(e.key.ptr), e.key.len))
-                : StringView(std::span(static_cast<const Latin1Character*>(e.key.ptr), e.key.len));
-            if (existing == StringView(ks)) {
-                BunStrRef key = e.key;
-                e = ref;
-                e.key = key;
-                replaced = true;
+            if (e.keyLen != keyRef.len)
+                continue;
+            StringView existing = e.keyIs16
+                ? StringView(std::span(static_cast<const char16_t*>(e.keyPtr), e.keyLen))
+                : StringView(std::span(static_cast<const Latin1Character*>(e.keyPtr), e.keyLen));
+            if (existing == StringView(*key)) {
+                slot = &e;
                 break;
             }
         }
-        if (replaced)
+        bool appended = !slot;
+        if (appended) {
+            out.grow(out.size() + 1);
+            slot = &out.last();
+        }
+        if (!fillValue(globalObject, sc, *slot, v, true)) {
+            if (appended)
+                out.shrink(out.size() - 1);
             continue;
-        sc.keep.append(ks);
-        ref.key = strRef(sc.keep.last());
-        out.append(ref);
+        }
+        slot->setKey(keyRef);
     }
 }
 
@@ -320,7 +371,7 @@ static void patchArrays(AttrScratch& sc, Vector<BunAttrRef, 16>& attrs)
 {
     for (auto& a : attrs) {
         if (a.kind == 4)
-            a.items = sc.arrayItems.begin() + static_cast<size_t>(a.integer);
+            a.u.array.items = sc.arrayItems.begin() + reinterpret_cast<size_t>(a.u.array.items);
     }
 }
 
@@ -444,6 +495,74 @@ static void inheritPropagation(VM& vm, Zig::GlobalObject* globalObject, JSTeleme
     child->field(JSTelemetrySpan::Field::Extra).set(vm, child, extra);
 }
 
+// ─── JSTelemetryBinding: `createSpan(scopeKind, name)` fast path (CallDOM) ───
+//
+// scopeKind = scope << 3 | kind. Parent is the active span.
+
+static ALWAYS_INLINE JSTelemetrySpan* createSpanFast(Zig::GlobalObject* globalObject, int32_t scopeKind, JSString* name)
+{
+    auto& vm = globalObject->vm();
+    JSValue active = JSValue::decode(Bun__Telemetry__activeSpanCell(globalObject));
+    JSTelemetrySpan* parentCell = toTelemetrySpan(active);
+    SpanStub stub;
+    Bun__Telemetry__stubStart(&stub, parentCell ? &parentCell->m_stub : nullptr, 0);
+    auto* span = JSTelemetrySpan::create(vm, globalObject, stub, static_cast<uint16_t>(scopeKind >> 3), static_cast<uint8_t>(scopeKind & 7), name, 0);
+    if (parentCell) [[unlikely]] {
+        if (parentCell->m_native || parentCell->get(JSTelemetrySpan::Field::Extra).isObject())
+            inheritPropagation(vm, globalObject, span, parentCell);
+    }
+    return span;
+}
+
+JSC_DECLARE_HOST_FUNCTION(jsTelemetryBindingCreateSpan);
+JSC_DECLARE_JIT_OPERATION(telemetryBindingCreateSpanWithoutTypeCheck, JSC::EncodedJSValue, (JSGlobalObject*, JSTelemetryBinding*, int32_t, JSString*));
+
+JSC_DEFINE_HOST_FUNCTION(jsTelemetryBindingCreateSpan, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    int32_t scopeKind = callFrame->argument(0).isInt32() ? callFrame->argument(0).asInt32() : (Bun__Telemetry__userScope() << 3);
+    JSString* name = callFrame->argument(1).toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(createSpanFast(globalObject, scopeKind, name));
+}
+
+JSC_DEFINE_JIT_OPERATION(telemetryBindingCreateSpanWithoutTypeCheck, JSC::EncodedJSValue, (JSGlobalObject * lexicalGlobalObject, JSTelemetryBinding*, int32_t scopeKind, JSString* name))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    IGNORE_WARNINGS_BEGIN("frame-address")
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    IGNORE_WARNINGS_END
+    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    return { JSValue::encode(createSpanFast(defaultGlobalObject(lexicalGlobalObject), scopeKind, name)) };
+}
+
+const ClassInfo JSTelemetryBinding::s_info = { "TelemetryBinding"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTelemetryBinding) };
+
+static const JSC::DOMJIT::Signature signatureTelemetryBindingCreateSpan(
+    telemetryBindingCreateSpanWithoutTypeCheck,
+    JSTelemetryBinding::info(),
+    JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
+    SpecObjectOther,
+    SpecInt32Only,
+    SpecString);
+
+JSTelemetryBinding* JSTelemetryBinding::create(VM& vm, Zig::GlobalObject* globalObject)
+{
+    Structure* structure = Structure::create(vm, globalObject, globalObject->objectPrototype(), TypeInfo(ObjectType, StructureFlags), info());
+    auto* binding = new (NotNull, allocateCell<JSTelemetryBinding>(vm)) JSTelemetryBinding(vm, structure);
+    binding->finishCreation(vm);
+    binding->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "createSpan"_s), 2, jsTelemetryBindingCreateSpan, ImplementationVisibility::Public, NoIntrinsic, &signatureTelemetryBindingCreateSpan, static_cast<unsigned>(PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
+    return binding;
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsTelemetryCreateBinding, (JSGlobalObject * lexicalGlobalObject, CallFrame*))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    return JSValue::encode(JSTelemetryBinding::create(globalObject->vm(), globalObject));
+}
+
 // startSpan(scope, name, kind, parent, startTime)
 JSC_DEFINE_HOST_FUNCTION(jsTelemetryStartSpan, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -546,17 +665,16 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryNativeSpanOp, (JSGlobalObject * lexicalGloba
         if (!fillValue(globalObject, sc, ref, b, true))
             break;
         RETURN_IF_EXCEPTION(scope, {});
-        sc.keep.append(asString(a)->value(globalObject));
-        ref.key = strRef(sc.keep.last());
+        ref.setKey(strRef(implOf(globalObject, asString(a))));
         if (ref.kind == 4)
-            ref.items = sc.arrayItems.begin() + static_cast<size_t>(ref.integer);
+            ref.u.array.items = sc.arrayItems.begin() + reinterpret_cast<size_t>(ref.u.array.items);
         Bun__Telemetry__nativeSetAttribute(span->m_native, &ref);
         break;
     }
     case 1: { // setName(name)
-        auto s = a.toWTFString(globalObject);
+        auto str = a.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        BunStrRef r = strRef(s);
+        BunStrRef r = strRef(str);
         Bun__Telemetry__nativeSetName(span->m_native, &r);
         break;
     }
@@ -618,103 +736,126 @@ static void endSpan(Zig::GlobalObject* globalObject, JSTelemetrySpan* span, uint
     if (state & JSTelemetrySpan::StateEnded)
         return;
     span->setState(vm, (state | JSTelemetrySpan::StateEnded) & ~JSTelemetrySpan::StateRecording);
-    if (!endNs)
-        endNs = Bun__Telemetry__nowNs();
-    span->m_endNs = endNs;
     if (span->m_native) {
         Bun__Telemetry__nativeEnd(span->m_native, endNs);
         return;
     }
     if (!(state & JSTelemetrySpan::StateRecording))
         return;
+    if (!endNs)
+        endNs = Bun__Telemetry__nowNs();
 
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     AttrScratch sc;
     Vector<BunAttrRef, 16> attrs;
     JSValue attrsV = span->get(JSTelemetrySpan::Field::Attributes);
-    if (auto* flat = attrsV.isCell() ? dynamicDowncast<JSArray>(attrsV.asCell()) : nullptr)
-        gatherAttrs(globalObject, sc, flat, attrs);
+    if (attrsV.isCell())
+        gatherAttrs(globalObject, sc, uncheckedDowncast<JSArray>(attrsV.asCell()), attrs);
 
     JSValue nameV = span->get(JSTelemetrySpan::Field::Name);
-    String name = nameV.isString() ? asString(nameV)->value(globalObject) : String();
+    const StringImpl* name = nameV.isString() ? implOf(globalObject, asString(nameV)) : nullptr;
 
-    uint8_t status = 0;
-    String statusMessage, traceState;
+    BunEndDesc desc {
+        &span->m_stub,
+        span->m_scope,
+        span->m_kind,
+        0,
+        endNs,
+        strRef(name),
+        { nullptr, 0, 0 },
+        { nullptr, 0, 0 },
+        nullptr,
+        0,
+        static_cast<uint32_t>(static_cast<uint32_t>(state) >> 8),
+        nullptr,
+        0,
+        nullptr,
+        0,
+    };
+
+    JSValue extraV = span->get(JSTelemetrySpan::Field::Extra);
+    if (!extraV.isObject()) [[likely]] {
+        patchArrays(sc, attrs);
+        desc.attrs = attrs.begin();
+        desc.nAttrs = attrs.size();
+        Bun__Telemetry__encodeSpan(&desc);
+        span->field(JSTelemetrySpan::Field::Attributes).setWithoutWriteBarrier(jsNull());
+        return;
+    }
+
+    // Slow path: status / events / links / tracestate.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    const StringImpl* statusMessage = nullptr;
+    const StringImpl* traceState = nullptr;
+    String traceStateOwned;
     Vector<BunEventRef, 4> events;
     Vector<BunLinkRef, 4> links;
     Vector<Vector<BunAttrRef, 16>, 4> nestedAttrs;
-    JSValue extraV = span->get(JSTelemetrySpan::Field::Extra);
-    if (extraV.isObject()) {
-        JSObject* extra = extraV.getObject();
-        auto getField = [&](ASCIILiteral n) -> JSValue {
-            JSValue v = extra->getDirect(vm, Identifier::fromString(vm, n));
-            return v ? v : jsUndefined();
-        };
-        JSValue sV = getField("s"_s);
-        if (sV.isInt32())
-            status = static_cast<uint8_t>(sV.asInt32());
-        JSValue mV = getField("m"_s);
-        if (mV.isString())
-            statusMessage = asString(mV)->value(globalObject);
-        JSValue tV = getField("t"_s);
-        if (tV.isString())
-            traceState = asString(tV)->value(globalObject);
-        else if (tV.isObject()) {
-            // api TraceState object: serialize()
-            JSValue ser = tV.getObject()->get(globalObject, Identifier::fromString(vm, "serialize"_s));
-            if (!scope.exception() && ser.isCallable()) {
-                MarkedArgumentBuffer noArgs;
-                JSValue out = call(globalObject, ser, jsUndefined(), noArgs, "serialize"_s);
-                if (!scope.exception() && out.isString())
-                    traceState = asString(out)->value(globalObject);
-            }
-            if (scope.exception())
-                (void)scope.tryClearException();
-        }
-        JSValue eV = getField("e"_s);
-        if (auto* ev = eV.isCell() ? dynamicDowncast<JSArray>(eV.asCell()) : nullptr) {
-            unsigned n = ev->length() / 3;
-            nestedAttrs.grow(nestedAttrs.size() + n);
-            for (unsigned i = 0; i < n; ++i) {
-                JSValue en = ev->getIndex(globalObject, i * 3);
-                JSValue et = ev->getIndex(globalObject, i * 3 + 1);
-                JSValue ea = ev->getIndex(globalObject, i * 3 + 2);
-                if (!en || !en.isString())
-                    continue;
-                sc.keep.append(asString(en)->value(globalObject));
-                BunEventRef ref { strRef(sc.keep.last()), et ? timeInputToNs(globalObject, et) : 0, nullptr, 0 };
-                auto& na = nestedAttrs[nestedAttrs.size() - n + i];
-                if (auto* flat = ea && ea.isCell() ? dynamicDowncast<JSArray>(ea.asCell()) : nullptr) {
-                    gatherAttrs(globalObject, sc, flat, na);
-                    ref.nAttrs = na.size();
-                }
-                events.append(ref);
+    JSObject* extra = extraV.getObject();
+    auto getField = [&](ASCIILiteral n) -> JSValue {
+        JSValue v = extra->getDirect(vm, Identifier::fromString(vm, n));
+        return v ? v : jsUndefined();
+    };
+    JSValue sV = getField("s"_s);
+    if (sV.isInt32())
+        desc.status = static_cast<uint8_t>(sV.asInt32());
+    JSValue mV = getField("m"_s);
+    if (mV.isString())
+        statusMessage = implOf(globalObject, asString(mV));
+    JSValue tV = getField("t"_s);
+    if (tV.isString())
+        traceState = implOf(globalObject, asString(tV));
+    else if (tV.isObject()) {
+        // api TraceState object: serialize()
+        JSValue ser = tV.getObject()->get(globalObject, Identifier::fromString(vm, "serialize"_s));
+        if (!scope.exception() && ser.isCallable()) {
+            MarkedArgumentBuffer noArgs;
+            JSValue out = call(globalObject, ser, tV, noArgs, "serialize"_s);
+            if (!scope.exception() && out.isString()) {
+                traceStateOwned = asString(out)->value(globalObject);
+                traceState = traceStateOwned.impl();
             }
         }
-        JSValue lV = getField("l"_s);
-        if (auto* lk = lV.isCell() ? dynamicDowncast<JSArray>(lV.asCell()) : nullptr) {
-            unsigned n = lk->length() / 4;
-            size_t base = nestedAttrs.size();
-            nestedAttrs.grow(base + n);
-            for (unsigned i = 0; i < n; ++i) {
-                JSValue lt = lk->getIndex(globalObject, i * 4);
-                JSValue ls = lk->getIndex(globalObject, i * 4 + 1);
-                JSValue lf = lk->getIndex(globalObject, i * 4 + 2);
-                JSValue la = lk->getIndex(globalObject, i * 4 + 3);
-                if (!lt || !lt.isString() || !ls || !ls.isString())
-                    continue;
-                sc.keep.append(asString(lt)->value(globalObject));
-                BunStrRef tRef = strRef(sc.keep.last());
-                sc.keep.append(asString(ls)->value(globalObject));
-                BunStrRef sRef = strRef(sc.keep.last());
-                BunLinkRef ref { tRef, sRef, static_cast<uint8_t>(lf && lf.isInt32() ? lf.asInt32() : 0), nullptr, 0 };
-                auto& na = nestedAttrs[base + i];
-                if (auto* flat = la && la.isCell() ? dynamicDowncast<JSArray>(la.asCell()) : nullptr) {
-                    gatherAttrs(globalObject, sc, flat, na);
-                    ref.nAttrs = na.size();
-                }
-                links.append(ref);
+        if (scope.exception())
+            (void)scope.tryClearException();
+    }
+    JSValue eV = getField("e"_s);
+    if (auto* ev = eV.isCell() ? dynamicDowncast<JSArray>(eV.asCell()) : nullptr) {
+        unsigned n = ev->length() / 3;
+        nestedAttrs.grow(nestedAttrs.size() + n);
+        for (unsigned i = 0; i < n; ++i) {
+            JSValue en = ev->getIndex(globalObject, i * 3);
+            JSValue et = ev->getIndex(globalObject, i * 3 + 1);
+            JSValue ea = ev->getIndex(globalObject, i * 3 + 2);
+            if (!en || !en.isString())
+                continue;
+            BunEventRef ref { strRef(implOf(globalObject, asString(en))), et ? timeInputToNs(globalObject, et) : 0, nullptr, 0 };
+            auto& na = nestedAttrs[nestedAttrs.size() - n + i];
+            if (auto* flat = ea && ea.isCell() ? dynamicDowncast<JSArray>(ea.asCell()) : nullptr) {
+                gatherAttrs(globalObject, sc, flat, na);
+                ref.nAttrs = na.size();
             }
+            events.append(ref);
+        }
+    }
+    JSValue lV = getField("l"_s);
+    if (auto* lk = lV.isCell() ? dynamicDowncast<JSArray>(lV.asCell()) : nullptr) {
+        unsigned n = lk->length() / 4;
+        size_t base = nestedAttrs.size();
+        nestedAttrs.grow(base + n);
+        for (unsigned i = 0; i < n; ++i) {
+            JSValue lt = lk->getIndex(globalObject, i * 4);
+            JSValue ls = lk->getIndex(globalObject, i * 4 + 1);
+            JSValue lf = lk->getIndex(globalObject, i * 4 + 2);
+            JSValue la = lk->getIndex(globalObject, i * 4 + 3);
+            if (!lt || !lt.isString() || !ls || !ls.isString())
+                continue;
+            BunLinkRef ref { strRef(implOf(globalObject, asString(lt))), strRef(implOf(globalObject, asString(ls))), static_cast<uint8_t>(lf && lf.isInt32() ? lf.asInt32() : 0), nullptr, 0 };
+            auto& na = nestedAttrs[base + i];
+            if (auto* flat = la && la.isCell() ? dynamicDowncast<JSArray>(la.asCell()) : nullptr) {
+                gatherAttrs(globalObject, sc, flat, na);
+                ref.nAttrs = na.size();
+            }
+            links.append(ref);
         }
     }
     if (scope.exception()) [[unlikely]]
@@ -723,36 +864,25 @@ static void endSpan(Zig::GlobalObject* globalObject, JSTelemetrySpan* span, uint
     // All gathering done: vectors are stable, patch item pointers.
     patchArrays(sc, attrs);
     {
-        size_t ei = 0, li = 0, k = 0;
-        for (; k < nestedAttrs.size() && ei < events.size(); ++k, ++ei) {
+        size_t k = 0;
+        for (size_t ei = 0; k < nestedAttrs.size() && ei < events.size(); ++k, ++ei) {
             patchArrays(sc, nestedAttrs[k]);
             events[ei].attrs = nestedAttrs[k].begin();
         }
-        for (; k < nestedAttrs.size() && li < links.size(); ++k, ++li) {
+        for (size_t li = 0; k < nestedAttrs.size() && li < links.size(); ++k, ++li) {
             patchArrays(sc, nestedAttrs[k]);
             links[li].attrs = nestedAttrs[k].begin();
         }
     }
-
-    BunEndDesc desc {
-        &span->m_stub,
-        span->m_scope,
-        span->m_kind,
-        status,
-        endNs,
-        strRef(name),
-        strRef(statusMessage),
-        strRef(traceState),
-        attrs.begin(),
-        static_cast<uint32_t>(attrs.size()),
-        static_cast<uint32_t>(static_cast<uint32_t>(state) >> 8),
-        events.begin(),
-        static_cast<uint32_t>(events.size()),
-        links.begin(),
-        static_cast<uint32_t>(links.size()),
-    };
+    desc.attrs = attrs.begin();
+    desc.nAttrs = attrs.size();
+    desc.statusMessage = strRef(statusMessage);
+    desc.traceState = strRef(traceState);
+    desc.events = events.begin();
+    desc.nEvents = events.size();
+    desc.links = links.begin();
+    desc.nLinks = links.size();
     Bun__Telemetry__encodeSpan(&desc);
-    // Attributes are on the wire; let them be collected.
     span->field(JSTelemetrySpan::Field::Attributes).setWithoutWriteBarrier(jsNull());
     span->field(JSTelemetrySpan::Field::Extra).setWithoutWriteBarrier(jsNull());
 }
@@ -764,6 +894,25 @@ static JSTelemetrySpan* thisSpan(JSGlobalObject* globalObject, CallFrame* callFr
         throwTypeError(globalObject, scope, "not a Span"_s);
     return span;
 }
+
+// DFG/FTL call `end()` (no arguments) through this directly (CallDOM): no
+// JS call frame, `this` already type-checked.
+JSC_DEFINE_JIT_OPERATION(telemetrySpanEndWithoutTypeCheck, JSC::EncodedJSValue, (JSGlobalObject * lexicalGlobalObject, JSTelemetrySpan* span))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    IGNORE_WARNINGS_BEGIN("frame-address")
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    IGNORE_WARNINGS_END
+    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    endSpan(defaultGlobalObject(lexicalGlobalObject), span, 0);
+    return { JSValue::encode(jsUndefined()) };
+}
+
+static const JSC::DOMJIT::Signature signatureTelemetrySpanEnd(
+    telemetrySpanEndWithoutTypeCheck,
+    JSTelemetrySpan::info(),
+    JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
+    SpecOther);
 
 JSC_DEFINE_HOST_FUNCTION(jsTelemetrySpanProtoFuncEnd, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -966,7 +1115,7 @@ static const HashTableValue JSTelemetrySpanPrototypeTableValues[] = {
     { "recordException"_s, static_cast<unsigned>(PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, telemetrySpanRecordExceptionCodeGenerator, 2 } },
     { "addLink"_s, static_cast<unsigned>(PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, telemetrySpanAddLinkCodeGenerator, 1 } },
     { "addLinks"_s, static_cast<unsigned>(PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, telemetrySpanAddLinksCodeGenerator, 1 } },
-    { "end"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTelemetrySpanProtoFuncEnd, 1 } },
+    { "end"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, jsTelemetrySpanProtoFuncEnd, &signatureTelemetrySpanEnd } },
     { "spanContext"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTelemetrySpanProtoFuncSpanContext, 0 } },
     { "enter"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTelemetrySpanProtoFuncEnter, 0 } },
     { "exit"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTelemetrySpanProtoFuncExit, 0 } },

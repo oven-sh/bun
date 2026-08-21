@@ -11,6 +11,9 @@ const nativeStart = $newRustFunction("telemetry.rs", "start", 1);
 const nativeIsEnabled = $newRustFunction("telemetry.rs", "isEnabled", 0);
 const createScope = $newRustFunction("telemetry.rs", "createScope", 2);
 const nativeStartSpan = $newCppFunction("BunTelemetry.cpp", "jsTelemetryStartSpan", 5);
+// `binding.createSpan(scope << 3 | kind, name)`: parent = active span. Kept as a
+// method on a native object so DFG/FTL emit it as a direct operation call.
+const binding = $newCppFunction("BunTelemetry.cpp", "jsTelemetryCreateBinding", 0)();
 const nativeActiveSpan = $newRustFunction("telemetry.rs", "activeSpan", 0);
 const wrapSpanContext = $newCppFunction("BunTelemetry.cpp", "jsTelemetryWrapSpanContext", 1);
 const withContext = $newRustFunction("telemetry.rs", "withContext", 3);
@@ -162,6 +165,7 @@ const contextManager = {
 
 class Tracer {
   #scope: number;
+  #scopeKind: number;
   readonly name: string;
   readonly version: string | undefined;
 
@@ -169,6 +173,7 @@ class Tracer {
     this.name = name;
     this.version = version;
     this.#scope = createScope(name, version);
+    this.#scopeKind = this.#scope << 3;
   }
 
   /**
@@ -176,6 +181,9 @@ class Tracer {
    * Does not activate the span.
    */
   startSpan(name: string, options?: any, context?: any) {
+    if (options == null && context === undefined) {
+      return binding.createSpan(this.#scopeKind, name + "");
+    }
     let parent: any = undefined; // undefined → active span
     if (options?.root) {
       parent = null;
@@ -185,7 +193,13 @@ class Tracer {
     } else if (options?.parent !== undefined) {
       parent = options.parent === null ? null : toNativeSpan(options.parent);
     }
-    const span = nativeStartSpan(this.#scope, String(name), options?.kind | 0, parent, options?.startTime);
+    const kind = options?.kind | 0;
+    let span;
+    if (parent === undefined && options?.startTime === undefined) {
+      span = binding.createSpan(this.#scopeKind + kind, name + "");
+    } else {
+      span = nativeStartSpan(this.#scope, name + "", kind, parent, options?.startTime);
+    }
     if (options) {
       if (options.attributes) span.setAttributes(options.attributes);
       if (options.links) span.addLinks(options.links);

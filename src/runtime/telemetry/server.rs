@@ -84,10 +84,11 @@ pub fn begin(
             s.push_attribute(b"user_agent.original", &Value::Str(ua), l);
         }
         if !bun_telemetry::exp(4) {
-            if let Some(info) = resp.get_remote_socket_info() {
-                s.push_attribute(b"client.address", &Value::Str(info.ip()), l);
-                if info.port > 0 {
-                    s.push_attribute(b"client.port", &Value::Int(info.port as i64), l);
+            if let Some((ip, port)) = resp.get_remote_address_raw() {
+                let mut buf = [0u8; 46];
+                s.push_attribute(b"client.address", &Value::Str(ip.format(&mut buf)), l);
+                if port > 0 {
+                    s.push_attribute(b"client.port", &Value::Int(port as i64), l);
                 }
             }
         }

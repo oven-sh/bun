@@ -303,9 +303,8 @@ static void unset_cloexec(int fd)
 
 static pthread_t reloading_thread;
 
-// While reloading_thread is inside execve, the kernel fails clone() on every other thread with
-// EAGAIN, and WTF::Thread::create aborts on that. Such a thread parks here until the execve tears
-// it down. A crash on reloading_thread itself stays fatal.
+// The execve on reloading_thread makes clone() fail with EAGAIN on every other thread, and
+// WTF::Thread::create aborts on that. The thread parks here and the execve tears it down.
 static void park_thread_crashing_during_reload(int sig)
 {
     if (pthread_equal(pthread_self(), reloading_thread)) {

@@ -428,7 +428,12 @@ impl<const SSL: bool> Response<SSL> {
     pub fn get_remote_address_raw(&mut self) -> Option<(RawIp, u16)> {
         let mut out = [0u8; 16];
         let mut port: i32 = 0;
-        match c::uws_res_get_remote_address_raw(Self::ssl_flag(), self.as_raw(), &mut out, &mut port) {
+        match c::uws_res_get_remote_address_raw(
+            Self::ssl_flag(),
+            self.as_raw(),
+            &mut out,
+            &mut port,
+        ) {
             4 => Some((RawIp::V4([out[0], out[1], out[2], out[3]]), port as u16)),
             16 => Some((RawIp::V6(out), port as u16)),
             _ => None,
@@ -859,7 +864,9 @@ impl AnyResponse {
                 if let Ok(v4) = text.parse::<std::net::Ipv4Addr>() {
                     return Some((RawIp::V4(v4.octets()), port));
                 }
-                text.parse::<std::net::Ipv6Addr>().ok().map(|v6| (RawIp::V6(v6.octets()), port))
+                text.parse::<std::net::Ipv6Addr>()
+                    .ok()
+                    .map(|v6| (RawIp::V6(v6.octets()), port))
             }
         }
     }

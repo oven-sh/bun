@@ -1,60 +1,69 @@
-//! HTTP server spans are recorded as a compact "facts" record on the request
-//! path and expanded into an OTLP `Span` when the batch is exported, so the
-//! per-request cost on the JS thread is a handful of copies rather than
-//! attribute-by-attribute protobuf encoding.
-//!
-//! A record travels in the per-scope span buffer as `ScopeSpans` field
-//! [`FIELD`] (unused by the OTLP schema); [`expand_into`] rewrites a buffer
-//! that may contain records into plain `spans` entries.
+//! HTTP server spans: the request path captures raw facts (a few copies) and
+//! the span is encoded at `end()` from a per-thread template. Consecutive
+//! requests usually differ only in ids, times, path and client port, so the
+//! encoding of everything else is cached and a hit is one copy plus
+//! fixed-offset patches and a short per-request tail.
 
+use core::cell::RefCell;
+
+use crate::StatusCode;
 use crate::data::Limits;
 use crate::otlp::{self, SpanWriter, Value, field as f};
 use crate::proto;
-use crate::span::{Flags, SpanContext, SpanId, SpanKind, SpanStub, TraceId};
-use crate::StatusCode;
-
-/// `ScopeSpans` field number carrying a record (wire type LEN).
-pub const FIELD: u32 = 15;
-pub const TAG: u8 = (FIELD << 3 | 2) as u8;
+use crate::span::{SpanKind, SpanStub};
 
 pub const FLAG_HTTPS: u8 = 1;
 pub const FLAG_ABORTED: u8 = 2;
 pub const FLAG_HANDLER_ERROR: u8 = 4;
 
-// Tags of the length-prefixed strings in `Facts::raw` (u8 tag, u16 le len).
-pub const S_URL: u8 = 1;
-pub const S_HOST: u8 = 2;
-pub const S_UA: u8 = 3;
-pub const S_ROUTE: u8 = 4;
-
-const HEADER_LEN: usize = 82;
+// Indexes into `Facts::lens` (strings live back-to-back in `Facts::raw`).
+pub const S_URL: usize = 0;
+pub const S_HOST: usize = 1;
+pub const S_UA: usize = 2;
+pub const S_ROUTE: usize = 3;
 
 /// Request facts captured at begin; lives in the pool slot.
 pub struct Facts {
-    /// Tagged strings: url, host, user-agent, route.
+    /// url, host, user-agent, route back to back (see `lens`).
     pub raw: Vec<u8>,
+    pub lens: [u32; 4],
+    /// Length of the path part of the url (`url.len()` if no query).
+    pub path_len: u32,
     pub method: [u8; 8],
     pub ip: [u8; 16],
     pub ip_len: u8,
     pub flags: u8,
     pub client_port: u16,
     pub status: u16,
-    /// This slot holds an HTTP server record rather than a generic span.
+    /// This slot holds an HTTP server span rather than a generic one.
     pub active: bool,
 }
 
 impl Facts {
     pub const fn new() -> Facts {
-        Facts { raw: Vec::new(), method: [0; 8], ip: [0; 16], ip_len: 0, flags: 0, client_port: 0, status: 0, active: false }
+        Facts {
+            raw: Vec::new(),
+            lens: [0; 4],
+            path_len: 0,
+            method: [0; 8],
+            ip: [0; 16],
+            ip_len: 0,
+            flags: 0,
+            client_port: 0,
+            status: 0,
+            active: false,
+        }
     }
 
     #[inline]
     pub fn reset(&mut self) {
         self.raw.clear();
+        self.lens = [0; 4];
         self.active = false;
         self.flags = 0;
         self.status = 0;
         self.ip_len = 0;
+        self.ip = [0; 16];
         if self.raw.capacity() > 16 * 1024 {
             self.raw = Vec::new();
         }
@@ -68,249 +77,134 @@ impl Facts {
         self.method[1..1 + n].copy_from_slice(&m[..n]);
     }
 
-    /// Append one tagged string (truncated to u16).
     #[inline]
-    pub fn push(&mut self, tag: u8, s: &[u8]) {
-        let s = &s[..s.len().min(u16::MAX as usize)];
-        let n = s.len() as u16;
-        self.raw.reserve(3 + s.len());
-        self.raw.extend_from_slice(&[tag, n as u8, (n >> 8) as u8]);
-        self.raw.extend_from_slice(s);
+    fn method(&self) -> &[u8] {
+        &self.method[1..1 + (self.method[0].min(7) as usize)]
     }
 
-    /// Emit the record for this span into `out` (a scope span buffer).
-    pub fn write(
-        &self,
-        out: &mut Vec<u8>,
-        stub: &SpanStub,
-        end_ns: u64,
-        name_override: &[u8],
-        trace_state: &[u8],
-        attrs: &[u8],
-        dropped_attrs: u16,
-        extra: &[u8],
-        status: StatusCode,
-        status_message: &[u8],
-    ) {
-        let name_override = &name_override[..name_override.len().min(u16::MAX as usize)];
-        let trace_state = &trace_state[..trace_state.len().min(u16::MAX as usize)];
-        let status_message = &status_message[..status_message.len().min(u16::MAX as usize)];
-        let body = HEADER_LEN
-            + 4 + self.raw.len()
-            + 4 + attrs.len()
-            + 4 + extra.len()
-            + 2 + trace_state.len()
-            + 2 + name_override.len()
-            + 3 + status_message.len();
-        out.reserve(6 + body);
-        let mut h = [0u8; HEADER_LEN + 6];
-        h[0] = TAG;
-        let mut n = 1 + proto::write_varint_into(&mut h[1..6], body as u64);
-        let base = n;
-        h[n] = 1;
-        h[n + 1] = self.flags;
-        h[n + 2..n + 10].copy_from_slice(&self.method);
-        h[n + 10] = self.ip_len;
-        h[n + 11..n + 27].copy_from_slice(&self.ip);
-        h[n + 27..n + 29].copy_from_slice(&self.client_port.to_le_bytes());
-        h[n + 29..n + 31].copy_from_slice(&self.status.to_le_bytes());
-        h[n + 31..n + 39].copy_from_slice(&stub.start_ns.to_le_bytes());
-        h[n + 39..n + 47].copy_from_slice(&end_ns.to_le_bytes());
-        h[n + 47..n + 63].copy_from_slice(&stub.ctx.trace_id.0);
-        h[n + 63..n + 71].copy_from_slice(&stub.ctx.span_id.0);
-        h[n + 71..n + 79].copy_from_slice(&stub.parent.0);
-        h[n + 79] = stub.ctx.flags.0;
-        h[n + 80..n + 82].copy_from_slice(&dropped_attrs.to_le_bytes());
-        n += HEADER_LEN;
-        debug_assert_eq!(n - base, HEADER_LEN);
-        out.extend_from_slice(&h[..n]);
-        put32(out, &self.raw);
-        put32(out, attrs);
-        put32(out, extra);
-        put16(out, trace_state);
-        put16(out, name_override);
-        out.push(status as u8);
-        put16(out, status_message);
+    #[inline]
+    fn ip(&self) -> &[u8] {
+        &self.ip[..(self.ip_len as usize).min(16)]
     }
-}
 
-#[inline]
-fn put32(out: &mut Vec<u8>, s: &[u8]) {
-    out.extend_from_slice(&(s.len() as u32).to_le_bytes());
-    out.extend_from_slice(s);
-}
+    /// Set the request strings in one go (must be called before `set_route`).
+    #[inline]
+    pub fn set_request(&mut self, url: &[u8], path_len: usize, host: &[u8], ua: &[u8]) {
+        let url = &url[..url.len().min(u16::MAX as usize)];
+        let host = &host[..host.len().min(u16::MAX as usize)];
+        let ua = &ua[..ua.len().min(u16::MAX as usize)];
+        self.raw.clear();
+        self.raw.reserve(url.len() + host.len() + ua.len());
+        self.raw.extend_from_slice(url);
+        self.raw.extend_from_slice(host);
+        self.raw.extend_from_slice(ua);
+        self.lens = [url.len() as u32, host.len() as u32, ua.len() as u32, 0];
+        self.path_len = path_len.min(url.len()) as u32;
+    }
 
-#[inline]
-fn put16(out: &mut Vec<u8>, s: &[u8]) {
-    out.extend_from_slice(&(s.len() as u16).to_le_bytes());
-    out.extend_from_slice(s);
-}
+    #[inline]
+    pub fn set_route(&mut self, route: &[u8]) {
+        let route = &route[..route.len().min(u16::MAX as usize)];
+        let end = (self.lens[0] + self.lens[1] + self.lens[2]) as usize;
+        self.raw.truncate(end);
+        self.raw.extend_from_slice(route);
+        self.lens[3] = route.len() as u32;
+    }
 
-struct Cursor<'a> {
-    b: &'a [u8],
-}
-
-impl<'a> Cursor<'a> {
-    fn take(&mut self, n: usize) -> Option<&'a [u8]> {
-        if self.b.len() < n {
-            return None;
+    /// (url, everything after the url, host, ua, route)
+    #[inline]
+    fn strings(&self) -> (&[u8], &[u8], &[u8], &[u8], &[u8]) {
+        let [a, b, c, d] = self.lens.map(|x| x as usize);
+        let r = &self.raw[..];
+        if r.len() < a + b + c + d {
+            return (b"", b"", b"", b"", b"");
         }
-        let (a, rest) = self.b.split_at(n);
-        self.b = rest;
-        Some(a)
-    }
-    fn u16(&mut self) -> Option<u16> {
-        self.take(2).map(|b| u16::from_le_bytes([b[0], b[1]]))
-    }
-    fn u32(&mut self) -> Option<u32> {
-        self.take(4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-    }
-    fn str32(&mut self) -> Option<&'a [u8]> {
-        let n = self.u32()? as usize;
-        self.take(n)
-    }
-    fn str16(&mut self) -> Option<&'a [u8]> {
-        let n = self.u16()? as usize;
-        self.take(n)
+        (
+            &r[..a],
+            &r[a..],
+            &r[a..a + b],
+            &r[a + b..a + b + c],
+            &r[a + b + c..a + b + c + d],
+        )
     }
 }
 
-/// Whether `spans` (a scope buffer) contains any record needing expansion.
-pub fn has_records(spans: &[u8]) -> bool {
-    let mut r = proto::Reader::new(spans);
-    while let Ok(Some((field, _))) = r.next() {
-        if field == FIELD {
-            return true;
-        }
-    }
-    false
+/// Everything `encode` needs besides the facts.
+pub struct SpanParts<'a> {
+    pub stub: &'a SpanStub,
+    pub end_ns: u64,
+    pub name_override: &'a [u8],
+    pub trace_state: &'a [u8],
+    pub attrs: &'a [u8],
+    pub dropped_attrs: u16,
+    pub extra: &'a [u8],
+    pub status: StatusCode,
+    pub status_message: &'a [u8],
 }
 
-/// Copy `spans` into `out`, expanding records into `Span` entries.
-pub fn expand_into(out: &mut Vec<u8>, spans: &[u8], limits: &Limits) {
-    let mut x = Expander::new(limits);
-    let mut r = proto::Reader::new(spans);
-    let mut last = 0;
-    loop {
-        let start = r.pos;
-        let Ok(Some((field, body))) = r.next() else { break };
-        if field != FIELD {
-            continue;
-        }
-        out.extend_from_slice(&spans[last..start]);
-        last = r.pos;
-        x.expand_one(out, body.as_bytes());
-    }
-    out.extend_from_slice(&spans[last..]);
-}
-
-/// Consecutive server spans usually differ only in ids, times, path and
-/// client port. The encoding of everything else is cached as a template
-/// keyed by the remaining record bytes; a hit is one copy plus fixed-offset
-/// patches and the per-request attributes appended at the end.
 struct Template {
-    hash: u64,
-    key: Vec<u8>,
+    // Key.
+    flags: u8,
+    status_code: u8,
+    has_parent: bool,
+    method: [u8; 8],
+    ip: [u8; 16],
+    ip_len: u8,
+    status: u16,
+    dropped: u16,
+    lens: [u32; 3],
+    /// after_url | attrs | extra | trace_state | name_override | status_message
+    pieces: Vec<u8>,
+    piece_len: [u32; 6],
     /// Encoded span up to (not including) the per-request tail.
     bytes: Vec<u8>,
-    has_parent: bool,
 }
 
-const TEMPLATES: usize = 8;
-
-pub struct Expander<'l> {
-    limits: &'l Limits,
-    templates: Vec<Template>,
-    next_evict: usize,
-    key: Vec<u8>,
-}
-
-struct Parsed<'a> {
-    flags: u8,
-    method: &'a [u8],
-    ip: &'a [u8],
-    client_port: u16,
-    status: u16,
-    start_ns: u64,
-    end_ns: u64,
-    trace_id: [u8; 16],
-    span_id: [u8; 8],
-    parent: [u8; 8],
-    trace_flags: u8,
-    dropped_attrs: u16,
-    url: &'a [u8],
-    host: &'a [u8],
-    ua: &'a [u8],
-    route: &'a [u8],
-    attrs: &'a [u8],
-    extra: &'a [u8],
-    trace_state: &'a [u8],
-    name_override: &'a [u8],
-    status_code: u8,
-    status_message: &'a [u8],
-    /// `raw` minus the leading url entry (template key material).
-    raw_rest: &'a [u8],
-}
-
-fn parse(body: &[u8]) -> Option<Parsed<'_>> {
-    let mut c = Cursor { b: body };
-    let h = c.take(HEADER_LEN)?;
-    if h[0] != 1 {
-        return None;
-    }
-    let raw = c.str32()?;
-    let attrs = c.str32()?;
-    let extra = c.str32()?;
-    let trace_state = c.str16()?;
-    let name_override = c.str16()?;
-    let status_code = c.take(1)?[0];
-    let status_message = c.str16()?;
-    let (mut url, mut host, mut ua, mut route): (&[u8], &[u8], &[u8], &[u8]) = (b"", b"", b"", b"");
-    let mut raw_rest = raw;
-    let mut s = Cursor { b: raw };
-    let mut first = true;
-    while let Some(t) = s.take(3) {
-        let n = u16::from_le_bytes([t[1], t[2]]) as usize;
-        let Some(v) = s.take(n) else { break };
-        match t[0] {
-            S_URL => {
-                url = v;
-                if first {
-                    raw_rest = s.b;
-                }
-            }
-            S_HOST => host = v,
-            S_UA => ua = v,
-            S_ROUTE => route = v,
-            _ => {}
+impl Template {
+    #[inline]
+    fn matches(
+        &self,
+        facts: &Facts,
+        p: &SpanParts<'_>,
+        has_parent: bool,
+        pieces: &[&[u8]; 6],
+    ) -> bool {
+        if self.flags != facts.flags
+            || self.status != facts.status
+            || self.status_code != p.status as u8
+            || self.has_parent != has_parent
+            || self.method != facts.method
+            || self.ip_len != facts.ip_len
+            || self.ip != facts.ip
+            || self.dropped != p.dropped_attrs
+            || self.lens != [facts.lens[1], facts.lens[2], facts.lens[3]]
+        {
+            return false;
         }
-        first = false;
+        let mut off = 0usize;
+        for (i, piece) in pieces.iter().enumerate() {
+            let n = self.piece_len[i] as usize;
+            if n != piece.len() {
+                return false;
+            }
+            // (empty pieces are the common case; skip the memcmp call)
+            if n != 0 && self.pieces.get(off..off + n) != Some(*piece) {
+                return false;
+            }
+            off += n;
+        }
+        true
     }
-    Some(Parsed {
-        flags: h[1],
-        method: &h[3..3 + (h[2].min(7) as usize)],
-        ip: &h[11..11 + (h[10] as usize).min(16)],
-        client_port: u16::from_le_bytes([h[27], h[28]]),
-        status: u16::from_le_bytes([h[29], h[30]]),
-        start_ns: u64::from_le_bytes(h[31..39].try_into().ok()?),
-        end_ns: u64::from_le_bytes(h[39..47].try_into().ok()?),
-        trace_id: h[47..63].try_into().ok()?,
-        span_id: h[63..71].try_into().ok()?,
-        parent: h[71..79].try_into().ok()?,
-        trace_flags: h[79],
-        dropped_attrs: u16::from_le_bytes([h[80], h[81]]),
-        url,
-        host,
-        ua,
-        route,
-        attrs,
-        extra,
-        trace_state,
-        name_override,
-        status_code,
-        status_message,
-        raw_rest,
-    })
+}
+
+const TEMPLATES: usize = 4;
+
+struct Cache {
+    entries: Vec<Template>,
+}
+
+thread_local! {
+    static CACHE: RefCell<Cache> = const { RefCell::new(Cache { entries: Vec::new() }) };
 }
 
 // Byte offsets inside an encoded span (see SpanWriter::begin): tag, two
@@ -320,88 +214,205 @@ const OFF_SPAN_ID: usize = OFF_TRACE_ID + 16 + 2;
 const OFF_PARENT: usize = OFF_SPAN_ID + 8 + 2;
 #[inline]
 fn off_start(has_parent: bool) -> usize {
-    (if has_parent { OFF_PARENT + 8 } else { OFF_SPAN_ID + 8 }) + 2 + 1
+    (if has_parent {
+        OFF_PARENT + 8
+    } else {
+        OFF_SPAN_ID + 8
+    }) + 2
+        + 1
 }
 
-impl<'l> Expander<'l> {
-    pub fn new(limits: &'l Limits) -> Self {
-        Expander { limits, templates: Vec::with_capacity(TEMPLATES), next_evict: 0, key: Vec::with_capacity(256) }
+/// Encode one server span into `out` (a scope span buffer).
+#[inline]
+pub fn encode(out: &mut Vec<u8>, facts: &Facts, p: &SpanParts<'_>, limits: &Limits) {
+    if limits.attributes < 16 {
+        return encode_untemplated(out, facts, p, limits);
     }
-
-    pub fn expand_one(&mut self, out: &mut Vec<u8>, body: &[u8]) -> Option<()> {
-        let p = parse(body)?;
-        // Tiny attribute budgets make the appended tail interact with the
-        // dropped count; not worth templating.
-        if self.limits.attributes < 16 {
-            return expand_slow(out, &p, self.limits, true).map(|_| ());
-        }
-        let has_parent = p.parent != [0u8; 8];
-        let key = &mut self.key;
-        key.clear();
-        key.extend_from_slice(&[p.flags, has_parent as u8, p.status_code, p.method.len() as u8, p.ip.len() as u8]);
-        key.extend_from_slice(p.method);
-        key.extend_from_slice(p.ip);
-        key.extend_from_slice(&p.status.to_le_bytes());
-        key.extend_from_slice(&p.dropped_attrs.to_le_bytes());
-        for part in [p.raw_rest, p.attrs, p.extra, p.trace_state, p.name_override, p.status_message] {
-            key.extend_from_slice(&(part.len() as u32).to_le_bytes());
-            key.extend_from_slice(part);
-        }
-        let hash = bun_wyhash::hash(key);
-        let idx = self.templates.iter().position(|t| t.hash == hash && t.key == *key);
-        let idx = match idx {
-            Some(i) => i,
-            None => {
-                let start = out.len();
-                let tail_at = expand_slow(out, &p, self.limits, false)?;
-                let t = Template { hash, key: key.clone(), bytes: out[start..tail_at].to_vec(), has_parent };
-                debug_assert_eq!(&t.bytes[OFF_TRACE_ID..OFF_TRACE_ID + 16], &p.trace_id);
-                debug_assert_eq!(&t.bytes[OFF_SPAN_ID..OFF_SPAN_ID + 8], &p.span_id);
-                debug_assert_eq!(&t.bytes[off_start(has_parent)..off_start(has_parent) + 8], &p.start_ns.to_le_bytes());
-                debug_assert_eq!(&t.bytes[off_start(has_parent) + 9..off_start(has_parent) + 17], &p.end_ns.to_le_bytes());
-                // Finish this span: append the per-request tail and patch the length.
-                append_tail(out, start, &p, self.limits);
-                if self.templates.len() < TEMPLATES {
-                    self.templates.push(t);
-                } else {
-                    let i = self.next_evict;
-                    self.templates[i] = t;
-                    self.next_evict = (i + 1) % TEMPLATES;
-                }
-                return Some(());
-            }
+    let (url, after_url, _, _, _) = facts.strings();
+    let has_parent = p.stub.parent.is_valid();
+    let pieces: [&[u8]; 6] = [
+        after_url,
+        p.attrs,
+        p.extra,
+        p.trace_state,
+        p.name_override,
+        p.status_message,
+    ];
+    let hit = CACHE.with(|c| {
+        let mut c = c.borrow_mut();
+        let Some(i) = c
+            .entries
+            .iter()
+            .position(|t| t.matches(facts, p, has_parent, &pieces))
+        else {
+            return false;
         };
-        let t = &self.templates[idx];
-        let s = out.len();
-        out.extend_from_slice(&t.bytes);
-        out[s + OFF_TRACE_ID..s + OFF_TRACE_ID + 16].copy_from_slice(&p.trace_id);
-        out[s + OFF_SPAN_ID..s + OFF_SPAN_ID + 8].copy_from_slice(&p.span_id);
-        if t.has_parent {
-            out[s + OFF_PARENT..s + OFF_PARENT + 8].copy_from_slice(&p.parent);
+        if i != 0 {
+            c.entries.swap(0, i);
         }
-        let st = s + off_start(t.has_parent);
-        out[st..st + 8].copy_from_slice(&p.start_ns.to_le_bytes());
+        let t = &c.entries[0];
+        let s = out.len();
+        out.reserve(t.bytes.len() + 64 + url.len());
+        out.extend_from_slice(&t.bytes);
+        out[s + OFF_TRACE_ID..s + OFF_TRACE_ID + 16].copy_from_slice(&p.stub.ctx.trace_id.0);
+        out[s + OFF_SPAN_ID..s + OFF_SPAN_ID + 8].copy_from_slice(&p.stub.ctx.span_id.0);
+        if has_parent {
+            out[s + OFF_PARENT..s + OFF_PARENT + 8].copy_from_slice(&p.stub.parent.0);
+        }
+        let st = s + off_start(has_parent);
+        out[st..st + 8].copy_from_slice(&p.stub.start_ns.to_le_bytes());
         out[st + 9..st + 17].copy_from_slice(&p.end_ns.to_le_bytes());
         // flags: 2-byte tag then fixed32
-        out[st + 19..st + 23].copy_from_slice(&Flags(p.trace_flags).otlp().to_le_bytes());
-        append_tail(out, s, &p, self.limits);
-        Some(())
+        out[st + 19..st + 23].copy_from_slice(&p.stub.ctx.flags.otlp().to_le_bytes());
+        append_tail(out, s, url, facts, limits);
+        true
+    });
+    if !hit {
+        encode_miss(out, facts, p, limits, has_parent);
     }
+}
+
+#[cold]
+#[inline(never)]
+fn encode_untemplated(out: &mut Vec<u8>, facts: &Facts, p: &SpanParts<'_>, limits: &Limits) {
+    let (url, _, host, ua, route) = facts.strings();
+    let start = out.len();
+    encode_head(out, facts, p, host, ua, route, limits);
+    append_tail(out, start, url, facts, limits);
+}
+
+#[cold]
+#[inline(never)]
+fn encode_miss(
+    out: &mut Vec<u8>,
+    facts: &Facts,
+    p: &SpanParts<'_>,
+    limits: &Limits,
+    has_parent: bool,
+) {
+    let (url, after_url, host, ua, route) = facts.strings();
+    let pieces: [&[u8]; 6] = [
+        after_url,
+        p.attrs,
+        p.extra,
+        p.trace_state,
+        p.name_override,
+        p.status_message,
+    ];
+    let start = out.len();
+    encode_head(out, facts, p, host, ua, route, limits);
+    let bytes = out[start..].to_vec();
+    debug_assert_eq!(
+        &bytes[OFF_TRACE_ID..OFF_TRACE_ID + 16],
+        &p.stub.ctx.trace_id.0
+    );
+    debug_assert_eq!(&bytes[OFF_SPAN_ID..OFF_SPAN_ID + 8], &p.stub.ctx.span_id.0);
+    debug_assert_eq!(
+        &bytes[off_start(has_parent)..off_start(has_parent) + 8],
+        &p.stub.start_ns.to_le_bytes()
+    );
+    debug_assert_eq!(
+        &bytes[off_start(has_parent) + 9..off_start(has_parent) + 17],
+        &p.end_ns.to_le_bytes()
+    );
+    append_tail(out, start, url, facts, limits);
+    let mut piece_len = [0u32; 6];
+    let mut all = Vec::with_capacity(pieces.iter().map(|x| x.len()).sum());
+    for (i, piece) in pieces.iter().enumerate() {
+        piece_len[i] = piece.len() as u32;
+        all.extend_from_slice(piece);
+    }
+    let t = Template {
+        flags: facts.flags,
+        status_code: p.status as u8,
+        has_parent,
+        method: facts.method,
+        ip: facts.ip,
+        ip_len: facts.ip_len,
+        status: facts.status,
+        dropped: p.dropped_attrs,
+        lens: [facts.lens[1], facts.lens[2], facts.lens[3]],
+        pieces: all,
+        piece_len,
+        bytes,
+    };
+    CACHE.with(|c| {
+        let mut c = c.borrow_mut();
+        if c.entries.len() >= TEMPLATES {
+            c.entries.pop();
+        }
+        c.entries.insert(0, t);
+    });
 }
 
 /// Per-request attributes after the templated part, then the span length.
-fn append_tail(out: &mut Vec<u8>, span_start: usize, p: &Parsed<'_>, limits: &Limits) {
+#[inline]
+fn append_tail(out: &mut Vec<u8>, span_start: usize, url: &[u8], facts: &Facts, limits: &Limits) {
     let max = limits.attribute_value_length as usize;
-    let (path, query) = match otlp_memchr(p.url, b'?') {
-        Some(i) => (&p.url[..i], &p.url[i + 1..]),
-        None => (p.url, &b""[..]),
-    };
-    otlp::write_key_value(out, f::ATTRIBUTES, b"url.path", &Value::Str(otlp::truncate_utf8(path, max)));
-    if !query.is_empty() {
-        otlp::write_key_value(out, f::ATTRIBUTES, b"url.query", &Value::Str(otlp::truncate_utf8(query, max)));
+    let pl = (facts.path_len as usize).min(url.len());
+    let (path, query) = (&url[..pl], url.get(pl + 1..).unwrap_or(b""));
+    let path = otlp::truncate_utf8(path, max);
+    // client.port (fixed shape, 3-byte padded varint) + url.path header in
+    // one piece, then the path bytes; url.query only when present.
+    let mut head = [0u8; 40];
+    let mut n = 0;
+    if facts.ip_len != 0 && facts.client_port > 0 {
+        let v = facts.client_port as u32;
+        head[..21].copy_from_slice(&[
+            (f::ATTRIBUTES << 3 | 2) as u8,
+            19,
+            (f::KV_KEY << 3 | 2) as u8,
+            11,
+            b'c',
+            b'l',
+            b'i',
+            b'e',
+            b'n',
+            b't',
+            b'.',
+            b'p',
+            b'o',
+            b'r',
+            b't',
+            (f::KV_VALUE << 3 | 2) as u8,
+            4,
+            (f::AV_INT << 3) as u8,
+            (v as u8 & 0x7f) | 0x80,
+            ((v >> 7) as u8 & 0x7f) | 0x80,
+            (v >> 14) as u8,
+        ]);
+        n = 21;
     }
-    if (p.ip.len() == 4 || p.ip.len() == 16) && p.client_port > 0 {
-        otlp::write_key_value(out, f::ATTRIBUTES, b"client.port", &Value::Int(p.client_port as i64));
+    if path.len() < 128 - 16 {
+        let kv = 2 + 8 + 2 + 2 + path.len();
+        head[n..n + 16].copy_from_slice(&[
+            (f::ATTRIBUTES << 3 | 2) as u8,
+            kv as u8,
+            (f::KV_KEY << 3 | 2) as u8,
+            8,
+            b'u',
+            b'r',
+            b'l',
+            b'.',
+            b'p',
+            b'a',
+            b't',
+            b'h',
+            (f::KV_VALUE << 3 | 2) as u8,
+            (2 + path.len()) as u8,
+            (f::AV_STRING << 3 | 2) as u8,
+            path.len() as u8,
+        ]);
+        n += 16;
+        out.reserve(n + path.len() + 8);
+        out.extend_from_slice(&head[..n]);
+        out.extend_from_slice(path);
+    } else {
+        out.extend_from_slice(&head[..n]);
+        otlp::write_key_value(out, f::ATTRIBUTES, b"url.path", &Value::Str(path));
+    }
+    if !query.is_empty() {
+        push_str(out, b"url.query", otlp::truncate_utf8(query, max));
     }
     let body_len = out.len() - span_start - 3;
     if body_len < (1 << 14) {
@@ -413,32 +424,54 @@ fn append_tail(out: &mut Vec<u8>, span_start: usize, p: &Parsed<'_>, limits: &Li
         let old_len = out.len();
         out.resize(old_len + extra, 0);
         out.copy_within(span_start + 3..old_len, span_start + 3 + extra);
-        proto::write_varint_into(&mut out[span_start + 1..span_start + 1 + need], body_len as u64);
+        proto::write_varint_into(
+            &mut out[span_start + 1..span_start + 1 + need],
+            body_len as u64,
+        );
     }
 }
 
-/// Encode everything except the per-request tail; returns the offset where
-/// the tail starts (== out.len()). With `with_tail`, also appends the tail
-/// and finishes the span (used when templating is off).
-fn expand_slow(out: &mut Vec<u8>, p: &Parsed<'_>, limits: &Limits, with_tail: bool) -> Option<usize> {
-    let flags = p.flags;
-    let method = p.method;
-    let ip = p.ip;
-    let status = p.status;
-    let (host, ua, route) = (p.host, p.ua, p.route);
-    let (attrs, extra, trace_state, name_override, status_code, status_message) =
-        (p.attrs, p.extra, p.trace_state, p.name_override, p.status_code, p.status_message);
-    let dropped_attrs = p.dropped_attrs;
-    let stub = SpanStub {
-        ctx: SpanContext { trace_id: TraceId(p.trace_id), span_id: SpanId(p.span_id), flags: Flags(p.trace_flags) },
-        parent: SpanId(p.parent),
-        start_ns: p.start_ns,
-    };
-    let end_ns = p.end_ns;
-    let span_start = out.len();
+/// `KeyValue{key, AnyValue{string}}` with a short literal key.
+#[inline]
+fn push_str(out: &mut Vec<u8>, key: &[u8], v: &[u8]) {
+    let kv = 2 + key.len() + 2 + 2 + v.len();
+    if kv >= 128 {
+        return otlp::write_key_value(out, f::ATTRIBUTES, key, &Value::Str(v));
+    }
+    out.reserve(kv + 2);
+    out.extend_from_slice(&[
+        (f::ATTRIBUTES << 3 | 2) as u8,
+        kv as u8,
+        (f::KV_KEY << 3 | 2) as u8,
+        key.len() as u8,
+    ]);
+    out.extend_from_slice(key);
+    out.extend_from_slice(&[
+        (f::KV_VALUE << 3 | 2) as u8,
+        (2 + v.len()) as u8,
+        (f::AV_STRING << 3 | 2) as u8,
+        v.len() as u8,
+    ]);
+    out.extend_from_slice(v);
+}
+
+/// Encode everything except the per-request tail, leaving the span length
+/// unpatched (append_tail patches it).
+fn encode_head(
+    out: &mut Vec<u8>,
+    facts: &Facts,
+    p: &SpanParts<'_>,
+    host: &[u8],
+    ua: &[u8],
+    route: &[u8],
+    limits: &Limits,
+) {
+    let method = facts.method();
+    let flags = facts.flags;
+    let status = facts.status;
     let mut name_buf = [0u8; 8 + 256];
-    let name: &[u8] = if !name_override.is_empty() {
-        name_override
+    let name: &[u8] = if !p.name_override.is_empty() {
+        p.name_override
     } else if !route.is_empty() && route.len() <= 256 {
         name_buf[..method.len()].copy_from_slice(method);
         name_buf[method.len()] = b' ';
@@ -447,8 +480,8 @@ fn expand_slow(out: &mut Vec<u8>, p: &Parsed<'_>, limits: &Limits, with_tail: bo
     } else {
         method
     };
-    let mut w = SpanWriter::begin(out, &stub, name, SpanKind::Server, end_ns);
-    w.trace_state(trace_state);
+    let mut w = SpanWriter::begin(out, p.stub, name, SpanKind::Server, p.end_ns);
+    w.trace_state(p.trace_state);
     let max = limits.attribute_value_length as usize;
     let lim = |s| otlp::truncate_utf8(s, max);
     let budget = limits.attributes as u32;
@@ -466,21 +499,33 @@ fn expand_slow(out: &mut Vec<u8>, p: &Parsed<'_>, limits: &Limits, with_tail: bo
             self.n += 1;
         }
     }
-    let mut a = Attrs { w: &mut w, n: 0, budget };
+    let mut a = Attrs {
+        w: &mut w,
+        n: 0,
+        budget,
+    };
     a.put("http.request.method", Value::Str(method));
     // url.path / url.query / client.port are appended per request (tail).
     a.n += 3;
-    a.put("url.scheme", Value::Str(if flags & FLAG_HTTPS != 0 { b"https" } else { b"http" }));
+    a.put(
+        "url.scheme",
+        Value::Str(if flags & FLAG_HTTPS != 0 {
+            b"https"
+        } else {
+            b"http"
+        }),
+    );
     if !host.is_empty() {
         let (hname, port) = split_host_port(host);
         a.put("server.address", Value::Str(lim(hname)));
-        if let Some(p) = port {
-            a.put("server.port", Value::Int(p as i64));
+        if let Some(port) = port {
+            a.put("server.port", Value::Int(port as i64));
         }
     }
     if !ua.is_empty() {
         a.put("user_agent.original", Value::Str(lim(ua)));
     }
+    let ip = facts.ip();
     if ip.len() == 4 || ip.len() == 16 {
         let mut buf = [0u8; 46];
         let s = format_ip(ip, &mut buf);
@@ -490,18 +535,18 @@ fn expand_slow(out: &mut Vec<u8>, p: &Parsed<'_>, limits: &Limits, with_tail: bo
         a.put("http.route", Value::Str(lim(route)));
     }
     // Attributes encoded on the request path (captured headers, JS-set).
-    a.w.raw(attrs);
-    a.n += otlp::count_fields(attrs, f::ATTRIBUTES) as u32;
-    let mut span_status = match status_code {
-        1 => StatusCode::Ok,
-        2 => StatusCode::Error,
-        _ => StatusCode::Unset,
-    };
-    let mut msg: &[u8] = status_message;
+    a.w.raw(p.attrs);
+    a.n += otlp::count_fields(p.attrs, f::ATTRIBUTES) as u32;
+    let mut span_status = p.status;
+    let mut msg: &[u8] = p.status_message;
     if status != 0 {
         a.put("http.response.status_code", Value::Int(status as i64));
         if status >= 500 {
-            let code = [b'0' + ((status / 100) % 10) as u8, b'0' + ((status / 10) % 10) as u8, b'0' + (status % 10) as u8];
+            let code = [
+                b'0' + ((status / 100) % 10) as u8,
+                b'0' + ((status / 10) % 10) as u8,
+                b'0' + (status % 10) as u8,
+            ];
             a.put("error.type", Value::Str(&code));
             if span_status == StatusCode::Unset {
                 span_status = StatusCode::Error;
@@ -524,23 +569,13 @@ fn expand_slow(out: &mut Vec<u8>, p: &Parsed<'_>, limits: &Limits, with_tail: bo
         }
     }
     let n_attrs = a.n;
-    w.raw(extra);
-    let dropped = dropped_attrs as u32 + n_attrs.saturating_sub(budget);
+    w.raw(p.extra);
+    let dropped = p.dropped_attrs as u32 + n_attrs.saturating_sub(budget);
     if dropped != 0 {
         w.dropped_attributes(dropped);
     }
     w.status(span_status, msg);
     w.leak();
-    let tail_at = out.len();
-    if with_tail {
-        append_tail(out, span_start, p, limits);
-    }
-    Some(tail_at)
-}
-
-#[inline]
-fn otlp_memchr(s: &[u8], c: u8) -> Option<usize> {
-    bun_core::strings::index_of_char_usize(s, c)
 }
 
 /// Split `host[:port]` (Host header / URL authority).
@@ -582,10 +617,11 @@ fn parse_port(s: &[u8]) -> Option<u16> {
     u16::try_from(v).ok()
 }
 
-/// Dotted-quad / RFC 5952 text for a raw address (v4-mapped v6 prints as v4).
+/// Dotted-quad / RFC 5952 text for a raw address (v4-mapped v6 prints as
+/// `::ffff:a.b.c.d`, matching `requestIP()`).
 pub fn format_ip<'b>(ip: &[u8], buf: &'b mut [u8; 46]) -> &'b [u8] {
-    fn v4<'b>(a: &[u8], buf: &'b mut [u8; 46]) -> &'b [u8] {
-        let mut n = 0;
+    fn v4(a: &[u8], buf: &mut [u8], at: usize) -> usize {
+        let mut n = at;
         for (i, &oct) in a.iter().enumerate() {
             if i > 0 {
                 buf[n] = b'.';
@@ -602,22 +638,21 @@ pub fn format_ip<'b>(ip: &[u8], buf: &'b mut [u8; 46]) -> &'b [u8] {
             buf[n] = b'0' + oct % 10;
             n += 1;
         }
-        &buf[..n]
+        n
     }
     if ip.len() == 4 {
-        return v4(ip, buf);
+        let n = v4(ip, buf, 0);
+        return &buf[..n];
     }
     if ip.len() != 16 {
         return &buf[..0];
     }
     if ip[..10].iter().all(|&b| b == 0) && ip[10] == 0xff && ip[11] == 0xff {
-        let mut tmp = [0u8; 46];
-        let v = v4(&ip[12..16], &mut tmp);
         buf[..7].copy_from_slice(b"::ffff:");
-        buf[7..7 + v.len()].copy_from_slice(v);
-        return &buf[..7 + v.len()];
+        let n = v4(&ip[12..16], buf, 7);
+        return &buf[..n];
     }
-    // RFC 5952: collapse the longest run of zero groups.
+    // RFC 5952: collapse the longest run (>= 2) of zero groups.
     let mut g = [0u16; 8];
     for i in 0..8 {
         g[i] = u16::from_be_bytes([ip[2 * i], ip[2 * i + 1]]);

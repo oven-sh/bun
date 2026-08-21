@@ -22,10 +22,6 @@ pub fn begin(
     if !bun_telemetry::enabled(Instrument::HttpServer) {
         return None;
     }
-    let exp = exp_knobs();
-    if exp & 1 != 0 {
-        return None; // EXP=1: enabled but do nothing
-    }
     let st = state();
     let h = req.telemetry_headers();
     let mut parent = None;
@@ -45,9 +41,15 @@ pub fn begin(
     let now = clock::now_unix_nanos();
     let stub = SpanStub::start(parent.as_ref(), &st.sampler, now);
     let method_name = http::method_name(method).as_bytes();
-    let span = pool::begin(stub, ScopeId::from(Instrument::HttpServer), b"", SpanKind::Server);
+    let span = pool::begin(
+        stub,
+        ScopeId::from(Instrument::HttpServer),
+        b"",
+        SpanKind::Server,
+    );
     let baggage = if st.propagate_baggage {
-        h.baggage().filter(|b| propagation::baggage_is_reasonable(b))
+        h.baggage()
+            .filter(|b| propagation::baggage_is_reasonable(b))
     } else {
         None
     };
@@ -63,8 +65,8 @@ pub fn begin(
         let f = &mut s.http;
         f.active = true;
         f.set_method(method_name);
-        if !stub.ctx.flags.sampled() || exp & 2 != 0 {
-            return; // EXP=2: no facts
+        if !stub.ctx.flags.sampled() {
+            return;
         }
         f.flags = if is_https { R::FLAG_HTTPS } else { 0 };
         if let Some((ip, port)) = resp.get_remote_address_raw() {
@@ -74,16 +76,17 @@ pub fn begin(
             f.client_port = port;
         }
         let url = req.url();
-        let host = h.host().unwrap_or(b"");
-        let ua = h.user_agent().unwrap_or(b"");
-        f.raw.reserve(9 + url.len() + host.len() + ua.len());
-        f.push(R::S_URL, url);
-        if !host.is_empty() {
-            f.push(R::S_HOST, host);
-        }
-        if !ua.is_empty() {
-            f.push(R::S_UA, ua);
-        }
+        let path_len = if h.path_len == u32::MAX {
+            bun_core::strings::index_of_char_usize(url, b'?').unwrap_or(url.len())
+        } else {
+            h.path_len as usize
+        };
+        f.set_request(
+            url,
+            path_len,
+            h.host().unwrap_or(b""),
+            h.user_agent().unwrap_or(b""),
+        );
         if !st.capture_request_headers.is_empty() {
             let l = &st.limits;
             for name in &st.capture_request_headers {
@@ -96,16 +99,10 @@ pub fn begin(
             }
         }
     });
-    if exp & 4 != 0 {
-        // EXP=4: don't enter the async context
-        return Some((span, Entered::new_noop(global)));
-    }
-    Some((span, Entered::new(global, super::native_context_value(span))))
-}
-
-pub fn exp_knobs() -> u32 {
-    static K: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-    *K.get_or_init(|| std::env::var("BUN_OTEL_EXP").ok().and_then(|v| v.parse().ok()).unwrap_or(0))
+    Some((
+        span,
+        Entered::new(global, super::native_context_value(span)),
+    ))
 }
 
 /// Refine the span name to `METHOD /route` once the matched route is known.
@@ -115,7 +112,7 @@ pub fn set_route(span: NativeSpan, _method: Method, route: &[u8]) {
     }
     pool::with(span, |s| {
         if s.stub.ctx.flags.sampled() {
-            s.http.push(R::S_ROUTE, route);
+            s.http.set_route(route);
         }
     });
 }
@@ -129,11 +126,6 @@ pub fn end(span: NativeSpan, status: u16, aborted: bool) {
 /// `handler_error`: the JS handler threw or rejected (node:http), which is an
 /// error even when the status line that went out was not 5xx.
 pub fn end_with(span: NativeSpan, status: u16, aborted: bool, handler_error: bool) {
-    if exp_knobs() & 8 != 0 {
-        // EXP=8: discard instead of recording
-        super::discard_native(span);
-        return;
-    }
     pool::with(span, |s| {
         s.http.status = status;
         if aborted {

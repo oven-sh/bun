@@ -60,23 +60,25 @@ pub fn end(stub: &SpanStub, method: Method, url: &[u8], status: u16, error: Opti
             w.attr("http.request.method", name);
             let u = URL::parse(url);
             // url.full MUST NOT contain credentials.
-        let scheme_end = bun_core::strings::index_of(url, b"://").map(|i| i + 3).unwrap_or(0);
-        let authority_end = bun_core::strings::index_of_any(&url[scheme_end..], b"/?#")
-            .map(|i| i + scheme_end)
-            .unwrap_or(url.len());
-        match bun_core::strings::last_index_of_char(&url[scheme_end..authority_end], b'@') {
-            None => {
-                w.attr("url.full", url);
+            let scheme_end = bun_core::strings::index_of(url, b"://")
+                .map(|i| i + 3)
+                .unwrap_or(0);
+            let authority_end = bun_core::strings::index_of_any(&url[scheme_end..], b"/?#")
+                .map(|i| i + scheme_end)
+                .unwrap_or(url.len());
+            match bun_core::strings::last_index_of_char(&url[scheme_end..authority_end], b'@') {
+                None => {
+                    w.attr("url.full", url);
+                }
+                Some(at) => {
+                    let mut redacted = Vec::with_capacity(url.len());
+                    redacted.extend_from_slice(&url[..scheme_end]);
+                    redacted.extend_from_slice(b"REDACTED:REDACTED");
+                    redacted.extend_from_slice(&url[scheme_end + at..]);
+                    w.attr("url.full", &redacted[..]);
+                }
             }
-            Some(at) => {
-                let mut redacted = Vec::with_capacity(url.len());
-                redacted.extend_from_slice(&url[..scheme_end]);
-                redacted.extend_from_slice(b"REDACTED:REDACTED");
-                redacted.extend_from_slice(&url[scheme_end + at..]);
-                w.attr("url.full", &redacted[..]);
-            }
-        }
-        w.attr_opt("server.address", u.display_hostname());
+            w.attr_opt("server.address", u.display_hostname());
             let port = u.get_port_auto();
             if port != 0 {
                 w.attr("server.port", port);

@@ -31,7 +31,12 @@ fn set_command_attrs(s: &mut Slot, argv: &[*const c_char]) {
 
 /// Wrap the pre-spawn `stub` into a span once the child exists.
 pub fn begin(stub: SpanStub, argv: &[*const c_char], pid: i64) -> NativeSpan {
-    let span = pool::begin(stub, ScopeId::from(Instrument::ChildProcess), b"spawn", SpanKind::Internal);
+    let span = pool::begin(
+        stub,
+        ScopeId::from(Instrument::ChildProcess),
+        b"spawn",
+        SpanKind::Internal,
+    );
     if stub.is_recording() {
         pool::with(span, |s| {
             set_command_attrs(s, argv);
@@ -46,7 +51,12 @@ pub fn failed(stub: &SpanStub, argv: &[*const c_char], error: &str) {
     if !stub.is_recording() {
         return;
     }
-    let span = pool::begin(*stub, ScopeId::from(Instrument::ChildProcess), b"spawn", SpanKind::Internal);
+    let span = pool::begin(
+        *stub,
+        ScopeId::from(Instrument::ChildProcess),
+        b"spawn",
+        SpanKind::Internal,
+    );
     pool::with(span, |s| set_command_attrs(s, argv));
     super::end_native(span, 0, |w| {
         w.attr("error.type", error);

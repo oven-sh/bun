@@ -12,7 +12,6 @@ use crate::otlp::{self, SpanWriter, Value, field};
 use crate::span::{SpanKind, SpanStub, StatusCode};
 use crate::{Limits, ScopeId, clock};
 
-
 /// `index | generation << 32`; 0 is the empty handle (generation starts at 1).
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 #[repr(transparent)]
@@ -128,12 +127,17 @@ impl Slot {
         }
         self.n_attrs += 1;
         match *v {
-            Value::Str(s) if s.len() > limits.attribute_value_length as usize => otlp::write_key_value(
-                &mut self.attrs,
-                field::ATTRIBUTES,
-                key,
-                &Value::Str(otlp::truncate_utf8(s, limits.attribute_value_length as usize)),
-            ),
+            Value::Str(s) if s.len() > limits.attribute_value_length as usize => {
+                otlp::write_key_value(
+                    &mut self.attrs,
+                    field::ATTRIBUTES,
+                    key,
+                    &Value::Str(otlp::truncate_utf8(
+                        s,
+                        limits.attribute_value_length as usize,
+                    )),
+                )
+            }
             _ => otlp::write_key_value(&mut self.attrs, field::ATTRIBUTES, key, v),
         }
     }
@@ -155,9 +159,19 @@ impl Slot {
         self.n_attrs += 1;
         let out = &mut self.attrs;
         out.reserve(kv + 2);
-        out.extend_from_slice(&[(field::ATTRIBUTES << 3 | 2) as u8, kv as u8, (1 << 3 | 2) as u8, key.len() as u8]);
+        out.extend_from_slice(&[
+            (field::ATTRIBUTES << 3 | 2) as u8,
+            kv as u8,
+            (1 << 3 | 2) as u8,
+            key.len() as u8,
+        ]);
         out.extend_from_slice(key);
-        out.extend_from_slice(&[(2 << 3 | 2) as u8, (2 + v.len()) as u8, (1 << 3 | 2) as u8, v.len() as u8]);
+        out.extend_from_slice(&[
+            (2 << 3 | 2) as u8,
+            (2 + v.len()) as u8,
+            (1 << 3 | 2) as u8,
+            v.len() as u8,
+        ]);
         out.extend_from_slice(v);
     }
 
@@ -172,7 +186,12 @@ impl Slot {
         let kv = 2 + key.len() + 2 + 2;
         let out = &mut self.attrs;
         out.reserve(kv + 2);
-        out.extend_from_slice(&[(field::ATTRIBUTES << 3 | 2) as u8, kv as u8, (1 << 3 | 2) as u8, key.len() as u8]);
+        out.extend_from_slice(&[
+            (field::ATTRIBUTES << 3 | 2) as u8,
+            kv as u8,
+            (1 << 3 | 2) as u8,
+            key.len() as u8,
+        ]);
         out.extend_from_slice(key);
         out.extend_from_slice(&[(2 << 3 | 2) as u8, 2, (3 << 3) as u8, v as u8]);
     }
@@ -198,23 +217,34 @@ impl Slot {
     }
 
     pub fn add_event(&mut self, name: &[u8], time_ns: u64, attrs: &[(&[u8], Value<'_>)]) {
-        let t = if time_ns == 0 { clock::now_unix_nanos() } else { time_ns };
+        let t = if time_ns == 0 {
+            clock::now_unix_nanos()
+        } else {
+            time_ns
+        };
         otlp::encode_event(&mut self.extra, name, t, attrs);
     }
 
     fn write(&self, out: &mut Vec<u8>, end_ns: u64, extra: impl FnOnce(&mut SpanWriter<'_>)) {
         if self.http.active {
-            self.http.write(
+            let limits = crate::rt::hooks()
+                .map(|h| (h.limits)())
+                .unwrap_or(crate::data::DEFAULT_LIMITS);
+            crate::http_record::encode(
                 out,
-                &self.stub,
-                end_ns,
-                &self.name,
-                &self.trace_state,
-                &self.attrs,
-                self.dropped_attrs,
-                &self.extra,
-                self.status,
-                &self.status_message,
+                &self.http,
+                &crate::http_record::SpanParts {
+                    stub: &self.stub,
+                    end_ns,
+                    name_override: &self.name,
+                    trace_state: &self.trace_state,
+                    attrs: &self.attrs,
+                    dropped_attrs: self.dropped_attrs,
+                    extra: &self.extra,
+                    status: self.status,
+                    status_message: &self.status_message,
+                },
+                &limits,
             );
             return;
         }
@@ -307,11 +337,19 @@ pub struct Ended {
 /// End the span: encode it into this thread's batch (if recording) and
 /// release the slot. `extra` adds integration attributes at end time.
 /// Returns `None` if the handle was stale.
-pub fn end(handle: NativeSpan, end_ns: u64, extra: impl FnOnce(&mut SpanWriter<'_>)) -> Option<Ended> {
+pub fn end(
+    handle: NativeSpan,
+    end_ns: u64,
+    extra: impl FnOnce(&mut SpanWriter<'_>),
+) -> Option<Ended> {
     if !handle.is_some() {
         return None;
     }
-    let end_ns = if end_ns == 0 { clock::now_unix_nanos() } else { end_ns };
+    let end_ns = if end_ns == 0 {
+        clock::now_unix_nanos()
+    } else {
+        end_ns
+    };
     // Encode while borrowed, but hand the batch to the processor (which may
     // take locks / call out) after the borrow is released.
     let recorded = POOL.with(|p| {
@@ -342,7 +380,10 @@ pub fn end(handle: NativeSpan, end_ns: u64, extra: impl FnOnce(&mut SpanWriter<'
     if full {
         crate::batch::flush_local();
     }
-    Some(Ended { recorded: true, js_cell })
+    Some(Ended {
+        recorded: true,
+        js_cell,
+    })
 }
 
 /// Release without recording (e.g. the owner was torn down mid-flight and

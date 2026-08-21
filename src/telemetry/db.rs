@@ -142,7 +142,12 @@ fn op_len(op: &[u8; 16]) -> usize {
 
 /// Finish a query span. `statement` is recorded as `db.query.text` when
 /// statement capture is on; `error` = (error.type, message).
-pub fn end(span: NativeSpan, statement: &[u8], operation: Option<&[u8]>, error: Option<(&[u8], &[u8])>) {
+pub fn end(
+    span: NativeSpan,
+    statement: &[u8],
+    operation: Option<&[u8]>,
+    error: Option<(&[u8], &[u8])>,
+) {
     if !span.is_some() {
         return;
     }
@@ -167,7 +172,10 @@ pub fn end(span: NativeSpan, statement: &[u8], operation: Option<&[u8]>, error: 
         }
         if capture && !statement.is_empty() {
             // Cap very large statements; collectors reject multi-MB attributes.
-            w.attr("db.query.text", crate::otlp::truncate_utf8(statement, 16 * 1024));
+            w.attr(
+                "db.query.text",
+                crate::otlp::truncate_utf8(statement, 16 * 1024),
+            );
         }
         if let Some((ty, msg)) = error {
             w.attr_opt("error.type", ty);

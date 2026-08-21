@@ -2570,7 +2570,12 @@ impl NodeHTTPResponse {
         if span.is_some() {
             let flags = self.flags.get();
             let aborted = flags.contains(Flags::SOCKET_CLOSED) && !flags.contains(Flags::ENDED);
-            crate::telemetry::server::end_with(span, self.otel_status.get(), aborted, self.otel_handler_error.get());
+            crate::telemetry::server::end_with(
+                span,
+                self.otel_status.get(),
+                aborted,
+                self.otel_handler_error.get(),
+            );
         }
     }
 

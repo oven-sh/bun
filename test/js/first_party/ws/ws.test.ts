@@ -1635,6 +1635,51 @@ describe("server socket close lifecycle", () => {
     }
   });
 
+  it.skipIf(isWindows)("terminate() with messages still queued fails their callbacks", async () => {
+    const wss = new WebSocketServer({ port: 0 });
+    try {
+      const connected = Promise.withResolvers<WebSocket>();
+      wss.on("connection", ws => connected.resolve(ws));
+
+      const client = await rawClient(wss);
+      client.socket.pause();
+      const ws = await connected.promise;
+
+      const payload = Buffer.alloc(1024 * 1024, "a");
+      const frames = 26;
+      const sends: string[] = [];
+      for (let i = 0; i < frames; i++) ws.send(payload, err => sends.push(err ? err.message : "ok"));
+
+      const closed = closeEvent(ws);
+      ws.close(4000, "never sent");
+      // waits for the queue, so the socket is still there to terminate
+      expect(ws.readyState).toBe(WebSocket.CLOSING);
+      const lateSend = sendResult(ws, "late");
+      ws.terminate();
+
+      const notOpen = "WebSocket is not open: readyState 2 (CLOSING)";
+      expect({
+        closed: await closed,
+        lateSend: await lateSend,
+        callbacks: sends.length,
+        failed: sends.filter(result => result === notOpen).length > 0,
+        other: sends.filter(result => result !== "ok" && result !== notOpen),
+        // only the late send() still counts, the queued messages are gone
+        bufferedAmount: ws.bufferedAmount,
+      }).toEqual({
+        closed: { code: 1006, reason: Buffer.alloc(0), readyState: WebSocket.CLOSED },
+        lateSend: notOpen,
+        callbacks: frames,
+        failed: true,
+        other: [],
+        bufferedAmount: 4,
+      });
+      client.socket.destroy();
+    } finally {
+      wss.close();
+    }
+  });
+
   it.skipIf(isWindows)("bufferedAmount includes what the native socket has buffered", async () => {
     const wss = new WebSocketServer({ port: 0 });
     try {

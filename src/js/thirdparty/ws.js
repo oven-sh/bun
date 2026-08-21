@@ -145,8 +145,10 @@ function controlPayload(binaryType, data) {
 
 function payloadByteLength(data) {
   if (typeof data === "string") return Buffer.byteLength(data);
-  const byteLength = data?.byteLength ?? data?.size;
-  return typeof byteLength === "number" ? byteLength : 0;
+  if (data == null) return 0;
+  const byteLength = data.byteLength ?? data.size;
+  // anything else goes out as the text frame of its string form
+  return typeof byteLength === "number" ? byteLength : Buffer.byteLength(String(data));
 }
 
 // ServerWebSocket.send() returns the bytes written (-1 once buffered), so 0 is a drop unless the frame was empty.
@@ -1093,8 +1095,10 @@ class BunWebSocketMocked extends EventEmitter {
     const undelivered = this.#enquedMessages;
     if (undelivered.length) {
       this.#enquedMessages = [];
-      this.#bufferedAmount = 0;
-      for (const [, , cb] of undelivered) sendAfterClose(ReadyState_CLOSING, cb);
+      for (const [, , cb, byteLength] of undelivered) {
+        this.#bufferedAmount -= byteLength;
+        sendAfterClose(ReadyState_CLOSING, cb);
+      }
     }
 
     process.nextTick(() => {

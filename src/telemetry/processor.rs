@@ -39,8 +39,11 @@ pub trait Exporter: Send + Sync {
         0
     }
     /// Send parked retries now instead of at their backoff deadline
-    /// (`forceFlush()` / shutdown).
+    /// (`forceFlush()`).
     fn retry_now(&self, _processor: &'static Processor) {}
+    /// Synchronously deliver parked retries at process exit (when there is a
+    /// pending payload, `export_blocking` covers them).
+    fn flush_parked_blocking(&self, _deadline_ns: u64) {}
     fn name(&self) -> &str;
 }
 
@@ -177,24 +180,20 @@ impl Processor {
 
     /// Instrumentation scope for a user tracer (`Bun.otel.tracer(name, version)`).
     pub fn register_scope(&self, name: &[u8], version: &[u8]) -> ScopeId {
-        {
-            let names = self.scope_names.read().unwrap();
-            // Linear scan: a process has a handful of tracers.
-            for (i, n) in names.iter().enumerate().skip(Instrument::COUNT) {
-                if &**n == name
-                    && &*self.scopes.read().unwrap()[i] == &*otlp::encode_scope(name, version)
-                {
-                    return ScopeId(i as u16);
-                }
-            }
-        }
+        let encoded = otlp::encode_scope(name, version);
         let mut names = self.scope_names.write().unwrap();
         let mut scopes = self.scopes.write().unwrap();
+        // Linear scan: a process has a handful of tracers.
+        for (i, n) in names.iter().enumerate().skip(Instrument::COUNT) {
+            if &**n == name && *scopes[i] == *encoded {
+                return ScopeId(i as u16);
+            }
+        }
         if scopes.len() >= u16::MAX as usize {
             return ScopeId::from(Instrument::User);
         }
         names.push(name.into());
-        scopes.push(otlp::encode_scope(name, version).into_boxed_slice());
+        scopes.push(encoded.into_boxed_slice());
         ScopeId((scopes.len() - 1) as u16)
     }
 
@@ -396,20 +395,17 @@ impl Processor {
         let cfg = *self.config.read().unwrap();
         let deadline = clock::now_unix_nanos() + (cfg.export_timeout_ms as u64) * 1_000_000;
         // Anything already handed to async exporters: give it the same budget.
-        if let Some(payload) = self.take_payload() {
-            let exporters = self.exporters.read().unwrap().clone();
-            for e in exporters {
-                match e.export_blocking(payload.clone(), deadline) {
-                    ExportResult::Success => {
-                        self.stats
-                            .spans_exported
-                            .fetch_add(payload.span_count as u64, Ordering::Relaxed);
-                    }
-                    ExportResult::Failure => {
-                        self.stats
-                            .spans_dropped
-                            .fetch_add(payload.span_count as u64, Ordering::Relaxed);
-                    }
+        let exporters = self.exporters.read().unwrap().clone();
+        match self.take_payload() {
+            Some(payload) => {
+                for e in exporters {
+                    let result = e.export_blocking(payload.clone(), deadline);
+                    self.record_result(&payload, result);
+                }
+            }
+            None => {
+                for e in exporters {
+                    e.flush_parked_blocking(deadline);
                 }
             }
         }

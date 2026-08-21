@@ -291,7 +291,7 @@ impl SpanStub {
     pub fn start(parent: Option<&SpanContext>, sampler: &crate::Sampler, now_ns: u64) -> SpanStub {
         let mut ids = [0u64; 3];
         let (trace_id, parent_id, parent_remote) = match parent {
-            Some(p) if p.trace_id.is_valid() => {
+            Some(p) if p.is_valid() => {
                 next_ids(&mut ids[..1]);
                 (p.trace_id, p.span_id, p.flags.remote())
             }

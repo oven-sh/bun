@@ -11,8 +11,9 @@ struct W {
 
 impl W {
     fn str(&mut self, s: &[u8]) {
+        let s = String::from_utf8_lossy(s);
         self.out.push(b'"');
-        for &c in s {
+        for &c in s.as_bytes() {
             match c {
                 b'"' => self.out.extend_from_slice(b"\\\""),
                 b'\\' => self.out.extend_from_slice(b"\\\\"),

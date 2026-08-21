@@ -1,5 +1,6 @@
 //! Attribute/event/link limits (OTEL_SPAN_*_LIMIT).
 
+#[derive(Clone, Copy, Debug)]
 pub struct Limits {
     pub attributes: u16,
     pub events: u16,

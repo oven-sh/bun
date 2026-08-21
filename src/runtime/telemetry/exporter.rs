@@ -146,6 +146,45 @@ impl OtlpHttpExporter {
         }
     }
 
+    fn send_blocking(&self, p: &Arc<ExportPayload>, deadline_ns: u64) -> ExportResult {
+        if bun_telemetry::clock::now_unix_nanos() >= deadline_ns {
+            return ExportResult::Failure;
+        }
+        let url = URL::parse(&self.url);
+        let mut req = AsyncHTTP::init(
+            Method::POST,
+            url,
+            self.headers.entries.clone().expect("OOM"),
+            self.headers.content.written_slice(),
+            &p.body,
+            HTTPClientResultCallback::new::<()>(core::ptr::null_mut(), noop_result_callback),
+            FetchRedirect::Follow,
+            self.options(),
+        );
+        let mut response = MutableString::default();
+        match req.send_sync(&mut response) {
+            Ok(meta) if (200..300).contains(&meta.response.status_code) => ExportResult::Success,
+            Ok(meta) => {
+                self.warn_once(format_args!(
+                    "exporting {} span(s) to {} at exit failed: HTTP {}",
+                    p.span_count,
+                    bstr::BStr::new(&self.url),
+                    meta.response.status_code
+                ));
+                ExportResult::Failure
+            }
+            Err(e) => {
+                self.warn_once(format_args!(
+                    "exporting {} span(s) to {} at exit failed: {}",
+                    p.span_count,
+                    bstr::BStr::new(&self.url),
+                    bstr::BStr::new(e.name())
+                ));
+                ExportResult::Failure
+            }
+        }
+    }
+
     fn send_retries(&self, processor: &'static Processor, all: bool) {
         let due: Vec<Retry> = {
             let mut q = self.retry.lock().unwrap();
@@ -294,58 +333,15 @@ impl Exporter for OtlpHttpExporter {
 
     fn export_blocking(&self, payload: Arc<ExportPayload>, deadline_ns: u64) -> ExportResult {
         // Retries still queued get this one last synchronous attempt too.
+        self.flush_parked_blocking(deadline_ns);
+        self.send_blocking(&payload, deadline_ns)
+    }
+
+    fn flush_parked_blocking(&self, deadline_ns: u64) {
         let parked: Vec<Retry> = self.retry.lock().unwrap().drain(..).collect();
-        let mut payloads: Vec<(Arc<ExportPayload>, Option<&'static Processor>)> =
-            parked.into_iter().map(|r| (r.payload, Some(r.processor))).collect();
-        payloads.push((payload, None));
-        let mut all_ok = true;
-        for (p, parked_on) in payloads {
-            if bun_telemetry::clock::now_unix_nanos() >= deadline_ns {
-                return ExportResult::Failure;
-            }
-            let url = URL::parse(&self.url);
-            let mut req = AsyncHTTP::init(
-                Method::POST,
-                url,
-                self.headers.entries.clone().expect("OOM"),
-                self.headers.content.written_slice(),
-                &p.body,
-                HTTPClientResultCallback::new::<()>(core::ptr::null_mut(), noop_result_callback),
-                FetchRedirect::Follow,
-                self.options(),
-            );
-            let mut response = MutableString::default();
-            let sent = req.send_sync(&mut response);
-            if let Some(proc_) = parked_on {
-                let ok = matches!(&sent, Ok(meta) if (200..300).contains(&meta.response.status_code));
-                proc_.record_result(&p, if ok { ExportResult::Success } else { ExportResult::Failure });
-            }
-            match sent {
-                Ok(meta) if (200..300).contains(&meta.response.status_code) => {}
-                Ok(meta) => {
-                    all_ok = false;
-                    self.warn_once(format_args!(
-                        "exporting {} span(s) to {} at exit failed: HTTP {}",
-                        p.span_count,
-                        bstr::BStr::new(&self.url),
-                        meta.response.status_code
-                    ));
-                }
-                Err(e) => {
-                    all_ok = false;
-                    self.warn_once(format_args!(
-                        "exporting {} span(s) to {} at exit failed: {}",
-                        p.span_count,
-                        bstr::BStr::new(&self.url),
-                        bstr::BStr::new(e.name())
-                    ));
-                }
-            }
-        }
-        if all_ok {
-            ExportResult::Success
-        } else {
-            ExportResult::Failure
+        for r in parked {
+            let result = self.send_blocking(&r.payload, deadline_ns);
+            r.processor.record_result(&r.payload, result);
         }
     }
 
@@ -511,10 +507,7 @@ pub struct DecodedSpan<'a> {
 
 fn hex(bytes: &[u8], out: &mut [u8]) {
     const HEX: &[u8; 16] = b"0123456789abcdef";
-    for (i, b) in bytes.iter().enumerate() {
-        if i * 2 + 1 >= out.len() + 0 && i * 2 + 1 > out.len() - 1 {
-            break;
-        }
+    for (i, b) in bytes.iter().enumerate().take(out.len() / 2) {
         out[i * 2] = HEX[(b >> 4) as usize];
         out[i * 2 + 1] = HEX[(b & 0xf) as usize];
     }
@@ -684,12 +677,7 @@ fn attributes_field_to_js(
 fn hex_js(global: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
     let mut buf = [0u8; 64];
     let n = bytes.len().min(32);
-    hex(&bytes[..n], &mut buf[..n * 2 + 0]);
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    for (i, b) in bytes[..n].iter().enumerate() {
-        buf[i * 2] = HEX[(b >> 4) as usize];
-        buf[i * 2 + 1] = HEX[(b & 0xf) as usize];
-    }
+    hex(&bytes[..n], &mut buf[..n * 2]);
     bun_string_jsc::create_utf8_for_js(global, &buf[..n * 2])
 }
 

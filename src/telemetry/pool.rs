@@ -135,6 +135,10 @@ impl Slot {
     #[inline(always)]
     pub fn push_str(&mut self, key: &'static str, v: &[u8], limits: &Limits) {
         let v = otlp::truncate_utf8(v, limits.attribute_value_length as usize);
+        if !v.is_ascii() && core::str::from_utf8(v).is_err() {
+            let lossy = String::from_utf8_lossy(v);
+            return self.push_attribute(key.as_bytes(), &Value::Str(lossy.as_bytes()), limits);
+        }
         let key = key.as_bytes();
         let kv = 2 + key.len() + 2 + 2 + v.len();
         if self.n_attrs >= limits.attributes || kv >= 128 {

@@ -520,7 +520,7 @@ pub fn encode_request(resource: &[u8], scopes: &[ScopeChunk<'_>]) -> Vec<u8> {
 }
 
 /// Number of `spans` entries in a concatenated buffer (walks tags only).
-pub fn count_spans(mut spans: &[u8]) -> usize {
+pub fn count_spans(spans: &[u8]) -> usize {
     let mut n = 0;
     let mut r = proto::Reader::new(spans);
     while let Ok(Some((field, _))) = r.next() {
@@ -528,8 +528,6 @@ pub fn count_spans(mut spans: &[u8]) -> usize {
             n += 1;
         }
     }
-    spans = &[];
-    let _ = spans;
     n
 }
 

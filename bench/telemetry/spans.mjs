@@ -47,13 +47,13 @@ group("startActiveSpan(fn) with 2 awaits inside", () => {
       });
     });
   bench("sdk-trace-base + ALS", async () => {
-    await api.context.with(api.ROOT_CONTEXT, () =>
-      sdkTracer.startActiveSpan("op", {}, cm.active(), async s => {
-        await 0;
-        await 0;
-        s.end();
-      }),
-    );
+    const parent = cm.active();
+    const s = sdkTracer.startSpan("op", {}, parent);
+    await cm.with(api.trace.setSpan(parent, s), async () => {
+      await 0;
+      await 0;
+      s.end();
+    });
   });
 });
 

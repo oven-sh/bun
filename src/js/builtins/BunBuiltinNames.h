@@ -58,7 +58,6 @@ using namespace JSC;
     macro(bytes) \
     macro(cancel) \
     macro(checkBufferRead) \
-    macro(telemetryNativeSpanOp) \
     macro(checks) \
     macro(close) \
     macro(cmd) \
@@ -178,6 +177,7 @@ using namespace JSC;
     macro(statusText) \
     macro(stream) \
     macro(syscall) \
+    macro(telemetryNativeSpanOp) \
     macro(text) \
     macro(textDecoderStreamDecoder) \
     macro(textEncoderStreamEncoder) \

@@ -245,7 +245,7 @@ pub fn configure(global: &JSGlobalObject, cfg: bun_telemetry::Config) -> Result<
     let p = processor();
     let new_state = Box::into_raw(Box::new(State {
         sampler: cfg.sampler,
-        limits: cfg.limits.clone(),
+        limits: cfg.limits,
         propagate_trace_context: cfg.propagate_trace_context,
         propagate_baggage: cfg.propagate_baggage,
         capture_db_statement: cfg.capture_db_statement,

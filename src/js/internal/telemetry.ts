@@ -185,7 +185,6 @@ const tracerProvider = {
 
 // ── W3C propagator (api TextMapPropagator) ────────────────────────────────
 
-const HEX = /^[0-9a-f]+$/;
 
 class Baggage {
   #entries: Map<string, { value: string; metadata?: unknown }>;

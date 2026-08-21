@@ -1532,6 +1532,38 @@ describe("server socket close lifecycle", () => {
     }
   });
 
+  // 'connection' is emitted from inside the HTTP upgrade handler. Rejecting a
+  // client right there is the common case for a listener added after close().
+  it("close() inside the 'connection' handler emits 'close' to a listener added after it", async () => {
+    const wss = new WebSocketServer({ port: 0 });
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<Record<string, unknown>>();
+      wss.on("connection", async ws => {
+        try {
+          ws.close(4001, "unauthorized");
+          expect(ws.readyState).toBe(WebSocket.CLOSING);
+          resolve(await closeEvent(ws));
+        } catch (err) {
+          reject(err);
+        }
+      });
+
+      using client = await rawClient(wss);
+      const wire = wireBytes(client);
+      const seen = await promise;
+      const bytes = await wire;
+      expect({ ...seen, closeFrameHeader: [...bytes.subarray(0, 2)] }).toEqual({
+        code: 4001,
+        reason: Buffer.from("unauthorized"),
+        readyState: WebSocket.CLOSED,
+        // a Close frame with the 2 byte code and the 12 byte reason
+        closeFrameHeader: [0x88, 14],
+      });
+    } finally {
+      wss.close();
+    }
+  });
+
   it("terminate() leaves the socket CLOSING, then emits 'close' with 1006", async () => {
     const wss = new WebSocketServer({ port: 0 });
     try {

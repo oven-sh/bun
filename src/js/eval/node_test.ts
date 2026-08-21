@@ -37,7 +37,10 @@ function parseExecArgv() {
     const eq = arg.indexOf("=");
     const name = eq === -1 ? arg : arg.slice(0, eq);
     if (!isTestRunnerFlag(name)) {
-      if (name !== "--watch" && name !== "--hot") passthrough.push(arg);
+      // Recorded (not forwarded) so hasFlag("--watch") can reject the
+      // randomize flags below.
+      if (name === "--watch" || name === "--hot") bools.add(name);
+      else passthrough.push(arg);
       continue;
     }
     let value: string | undefined;
@@ -80,9 +83,9 @@ function fatal(err: unknown): never {
   process.exit(1);
 }
 
-// File discovery — node's createTestFileList / kDefaultPattern:
-// https://github.com/nodejs/node/blob/main/lib/internal/test_runner/runner.js
-// Split into two globs: Bun.Glob mis-parses `test/**/*` nested in a brace group.
+// File discovery — node's createTestFileList (lib/internal/test_runner/runner.js).
+// Default patterns from utils.js kDefaultPattern; split in two because Bun.Glob
+// mis-parses `test/**/*` nested inside a brace group.
 const kDefaultPatterns = ["**/{test,test-*,*[._-]test}.{js,mjs,cjs}", "**/test/**/*.{js,mjs,cjs}"];
 const kGlobMagic = /[*?[\]{}!]/;
 function hasNoGlobMagic(pattern) {
@@ -259,41 +262,69 @@ async function main() {
   const forceExit = hasFlag("--test-force-exit");
   runOptions.forceExit = forceExit;
 
-  // run() applies these by pruning the merged queue, which only exists under
-  // isolation 'none'; under process isolation it would silently run every test,
-  // so keep failing loudly there.
+  // Name/skip patterns prune the merged queue under isolation 'none' and are
+  // forwarded to the children under process isolation; `only` still only
+  // reaches tests under 'none', so keep failing loudly there.
   const namePatterns = getFlagList("--test-name-pattern");
   const skipPatterns = getFlagList("--test-skip-pattern");
   const onlyFlag = hasFlag("--test-only");
-  if (isolation === "none") {
-    if (namePatterns.length > 0) runOptions.testNamePatterns = namePatterns;
-    if (skipPatterns.length > 0) runOptions.testSkipPatterns = skipPatterns;
-  } else {
-    if (namePatterns.length > 0) {
-      fatal(new Error("--test-name-pattern is not yet implemented in Bun's node:test CLI mode"));
-    }
-    if (skipPatterns.length > 0) {
-      fatal(new Error("--test-skip-pattern is not yet implemented in Bun's node:test CLI mode"));
-    }
-    if (onlyFlag) {
-      fatal(new Error("--test-only is not yet implemented in Bun's node:test CLI mode"));
-    }
+  if (namePatterns.length > 0) runOptions.testNamePatterns = namePatterns;
+  if (skipPatterns.length > 0) runOptions.testSkipPatterns = skipPatterns;
+  if (isolation !== "none" && onlyFlag) {
+    fatal(new Error("--test-only is not yet implemented in Bun's node:test CLI mode"));
   }
   const tagFilters = getFlagList("--experimental-test-tag-filter");
-  if (tagFilters.length > 0) {
-    // run() applies tag filters only under isolation 'none' (the child runner
-    // has no tag filter yet); fail loudly like the sibling filter flags rather
-    // than run every test.
-    if (isolation !== "none") {
-      fatal(new Error("--experimental-test-tag-filter requires --test-isolation=none in Bun's node:test CLI mode"));
-    }
-    runOptions.testTagFilters = tagFilters;
+  if (tagFilters.includes("")) {
+    // Node's option parser rejects the empty spelling before the runner runs.
+    const { basename } = require("node:path");
+    console.error(`${basename(process.execPath)}: --experimental-test-tag-filter requires an argument`);
+    process.exit(9);
   }
+  if (tagFilters.length > 0) runOptions.testTagFilters = tagFilters;
 
   if (hasFlag("--experimental-test-coverage")) runOptions.coverage = true;
-  if (hasFlag("--test-randomize") || getFlag("--test-random-seed") !== undefined) {
-    fatal(new Error("--test-randomize is not yet implemented in Bun's node:test CLI mode"));
+
+  // Randomization: seed implies randomize; watch mode rejects both (seed first).
+  // https://github.com/nodejs/node/blob/main/lib/internal/test_runner/runner.js
+  const randomizeFlag = hasFlag("--test-randomize");
+  const seedFlag = getFlag("--test-random-seed");
+  let randomSeed: number | undefined;
+  if (seedFlag !== undefined) {
+    const value = Number(seedFlag);
+    if (!Number.isInteger(value)) {
+      const error = new RangeError(
+        `The value of "--test-random-seed" is out of range. It must be an integer. Received ${seedFlag}`,
+      );
+      (error as { code?: string }).code = "ERR_OUT_OF_RANGE";
+      fatal(error);
+    }
+    if (value < 0 || value > 4294967295) {
+      const error = new RangeError(
+        `The value of "--test-random-seed" is out of range. It must be >= 0 && <= 4294967295. Received ${value}`,
+      );
+      (error as { code?: string }).code = "ERR_OUT_OF_RANGE";
+      fatal(error);
+    }
+    randomSeed = value;
   }
+  if (hasFlag("--watch")) {
+    if (randomSeed !== undefined) {
+      const error = new TypeError(
+        `The property 'options.randomSeed' is not supported with watch mode. Received ${randomSeed}`,
+      );
+      (error as { code?: string }).code = "ERR_INVALID_ARG_VALUE";
+      fatal(error);
+    }
+    if (randomizeFlag) {
+      const error = new TypeError("The property 'options.randomize' is not supported with watch mode. Received true");
+      (error as { code?: string }).code = "ERR_INVALID_ARG_VALUE";
+      fatal(error);
+    }
+  }
+  if (randomizeFlag) runOptions.randomize = true;
+  if (randomSeed !== undefined) runOptions.randomSeed = randomSeed;
+  const rerunFailuresFilePath = getFlag("--test-rerun-failures");
+  if (rerunFailuresFilePath !== undefined) runOptions.rerunFailuresFilePath = rerunFailuresFilePath;
   const globalSetup = getFlag("--test-global-setup");
   if (globalSetup !== undefined) runOptions.globalSetupPath = resolve(cwd, globalSetup);
   if (isolation !== undefined) runOptions.isolation = isolation;

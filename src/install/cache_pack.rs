@@ -163,6 +163,19 @@ impl Write for FileWriter {
         Ok(())
     }
 }
+/// `std::io::Write` over a borrowed fd (the `Tmpfile` keeps ownership).
+struct FdWriter(bun_sys::Fd);
+impl Write for FdWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        bun_sys::File { handle: self.0 }
+            .write_all(buf)
+            .map_err(sys_err)
+            .map(|()| buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
 
 /// The cache folder name for every fetchable package in the lockfile, and whether
 /// the package is expected on this platform (os/cpu/libc) — used only to decide
@@ -221,6 +234,20 @@ pub fn cache_folder_names(pm: &mut PackageManager) -> Vec<(Vec<u8>, bool)> {
     out
 }
 
+fn write_header(
+    w: &mut impl Write,
+    kind: u8,
+    path: &[u8],
+    mode: u32,
+    size: u64,
+) -> std::io::Result<()> {
+    w.write_all(&[kind])?;
+    w.write_all(&(path.len() as u32).to_le_bytes())?;
+    w.write_all(path)?;
+    w.write_all(&mode.to_le_bytes())?;
+    w.write_all(&size.to_le_bytes())
+}
+
 fn write_record(
     w: &mut impl Write,
     kind: u8,
@@ -228,11 +255,7 @@ fn write_record(
     mode: u32,
     data: &[u8],
 ) -> std::io::Result<()> {
-    w.write_all(&[kind])?;
-    w.write_all(&(path.len() as u32).to_le_bytes())?;
-    w.write_all(path)?;
-    w.write_all(&mode.to_le_bytes())?;
-    w.write_all(&(data.len() as u64).to_le_bytes())?;
+    write_header(w, kind, path, mode, data.len() as u64)?;
     w.write_all(data)
 }
 
@@ -261,19 +284,45 @@ fn pack_dir(
             bun_sys::FileKind::SymLink => {
                 let mut buf = [0u8; 4096];
                 let n = bun_sys::readlink(&z(&abs), &mut buf).map_err(sys_err)?;
-                write_record(w, 3, &child_rel, 0o777, &buf[..n])?;
+                let target = &buf[..n];
+                // only links that stay inside the package can be restored; refuse to
+                // produce a pack that unpack would reject
+                if !symlink_target_stays_inside(&child_rel, target) {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!(
+                            "cache entry contains a symlink that points outside its package: {} -> {}",
+                            bstr::BStr::new(&abs),
+                            bstr::BStr::new(target)
+                        ),
+                    ));
+                }
+                write_record(w, 3, &child_rel, 0o777, target)?;
             }
             bun_sys::FileKind::File => {
                 let f = bun_sys::File::openat(bun_sys::Fd::cwd(), &abs, bun_sys::O::RDONLY, 0)
                     .map_err(sys_err)?;
+                let st = bun_sys::fstat(f.handle()).map_err(sys_err)?;
                 #[cfg(unix)]
-                let mode = bun_sys::fstat(f.handle()).map_err(sys_err)?.st_mode as u32;
+                let mode = st.st_mode as u32;
                 #[cfg(not(unix))]
                 let mode = 0o644u32;
-                let data = f.read_to_end().map_err(sys_err)?;
+                let size = u64::try_from(st.st_size).unwrap_or(0);
+                // header first (size from fstat), then stream the contents in chunks —
+                // peak memory is one buffer, not the largest file
+                write_header(w, 2, &child_rel, mode, size)?;
+                let copied = std::io::copy(&mut FileReader(f).take(size), w)?;
+                if copied != size {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!(
+                            "{} changed while it was being packed",
+                            bstr::BStr::new(&abs)
+                        ),
+                    ));
+                }
                 *files += 1;
-                *bytes += data.len() as u64;
-                write_record(w, 2, &child_rel, mode, &data)?;
+                *bytes += size;
             }
             // sockets, fifos, devices: not part of a package
             _ => {}
@@ -289,24 +338,34 @@ pub fn pack(
     out_path: &[u8],
 ) -> std::io::Result<PackSummary> {
     let folders = cache_folder_names(pm);
-    let mut tmp = out_path.to_vec();
-    let _ = write!(tmp, ".{}.tmp", std::process::id());
-    let result = pack_impl(&folders, cache_dir, out_path, &tmp);
+    // written next to the destination under a temporary name, moved into place at the end
+    let out_dir = parent(out_path).unwrap_or(b".");
+    let out_dir_fd = bun_sys::open_dir_at(bun_sys::Fd::cwd(), out_dir).map_err(sys_err)?;
+    let mut tmpname_buf = [0u8; 256];
+    let tmpname =
+        bun_paths::fs::FileSystem::tmpname(b"pack", &mut tmpname_buf, bun_wyhash::hash(out_path))
+            .map_err(|_| std::io::Error::other("could not build a temporary file name"))?;
+    let mut tmpfile = bun_sys::Tmpfile::create(out_dir_fd, tmpname).map_err(sys_err)?;
+    let result = pack_impl(&folders, cache_dir, FdWriter(tmpfile.fd)).and_then(|s| {
+        let dest = z(bun_paths::basename(out_path));
+        tmpfile.finish(&dest).map_err(sys_err)?;
+        Ok(s)
+    });
     if result.is_err() {
         // never leave a partial temp file behind (ENOSPC, unreadable cache entry, …)
-        let _ = bun_sys::unlinkat(bun_sys::Fd::cwd(), &z(&tmp));
+        let _ = bun_sys::unlinkat(out_dir_fd, tmpname);
     }
+    let _ = bun_sys::close(tmpfile.fd);
+    let _ = bun_sys::close(out_dir_fd);
     result
 }
 
 fn pack_impl(
     folders: &[(Vec<u8>, bool)],
     cache_dir: &[u8],
-    out_path: &[u8],
-    tmp: &[u8],
+    file: FdWriter,
 ) -> std::io::Result<PackSummary> {
-    let file = bun_sys::File::create(bun_sys::Fd::cwd(), tmp, true).map_err(sys_err)?;
-    let mut w = BufWriter::with_capacity(1 << 20, FileWriter(file));
+    let mut w = BufWriter::with_capacity(1 << 20, file);
     w.write_all(MAGIC)?;
     let mut summary = PackSummary {
         packages: 0,
@@ -330,7 +389,6 @@ fn pack_impl(
     write_record(&mut w, 0, b"", 0, &[])?;
     w.flush()?;
     drop(w);
-    rename(tmp, out_path)?;
     Ok(summary)
 }
 
@@ -495,7 +553,17 @@ fn unpack_impl(cache_dir: &[u8], pack_path: &[u8]) -> std::io::Result<UnpackSumm
                 }
                 summary.packages += 1;
                 let final_path = join(cache_dir, &path);
-                if lstat_kind(&final_path)?.is_some() {
+                let existing = lstat_kind(&final_path)?;
+                if existing.is_some() && existing != Some(bun_sys::FileKind::Directory) {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!(
+                            "{} exists in the cache but is not a directory; remove it and retry",
+                            bstr::BStr::new(&final_path)
+                        ),
+                    ));
+                }
+                if existing.is_some() {
                     skipping = true;
                     summary.already_present += 1;
                     current = None;
@@ -505,10 +573,16 @@ fn unpack_impl(cache_dir: &[u8], pack_path: &[u8]) -> std::io::Result<UnpackSumm
                         // `@scope/` directory for scoped packages
                         mkdir_p(parent)?;
                     }
-                    let staging = join(
-                        cache_dir,
-                        format!(".unpack-{}-{}", pid, summary.packages).as_bytes(),
-                    );
+                    let mut name_buf = [0u8; 256];
+                    let name = bun_paths::fs::FileSystem::tmpname(
+                        b"unpack",
+                        &mut name_buf,
+                        u64::from(summary.packages),
+                    )
+                    .map_err(|_| bad("could not build a staging directory name", record_no))?;
+                    let mut prefixed = format!(".unpack-{pid}-").into_bytes();
+                    prefixed.extend_from_slice(name.as_bytes());
+                    let staging = join(cache_dir, &prefixed);
                     rm_rf(&staging);
                     mkdir_p(&staging)?;
                     current = Some((final_path, staging));
@@ -563,17 +637,8 @@ fn unpack_impl(cache_dir: &[u8], pack_path: &[u8]) -> std::io::Result<UnpackSumm
                         if let Some(parent) = parent(&dest) {
                             mkdir_p(parent)?;
                         }
-                        #[cfg(unix)]
                         bun_sys::symlinkat(&z(&target), bun_sys::Fd::cwd(), &z(&dest))
                             .map_err(sys_err)?;
-                        #[cfg(not(unix))]
-                        {
-                            let _ = (target, dest);
-                            return Err(std::io::Error::new(
-                                std::io::ErrorKind::Unsupported,
-                                "this pack contains symbolic links, which `bun pm cache unpack` cannot restore on this platform yet",
-                            ));
-                        }
                     }
                     _ => {
                         if let Some(parent) = parent(&dest) {

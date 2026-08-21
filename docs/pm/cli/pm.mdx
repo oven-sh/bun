@@ -343,7 +343,7 @@ bun pm cache unpack .ci/bun-cache.pack
 bun install --frozen-lockfile
 ```
 
-This exists for CI caches: object-store caches move one large sequential file much faster than tens of thousands of small ones, and restoring a directory cache pays a create+write per file before `bun install` even starts. The pack is uncompressed (CI cache layers already compress) and contains only the packages referenced by `bun.lock` that are present locally (optional packages for other platforms are skipped). `unpack` recreates only the entries missing from the target cache, so it is cheap to run unconditionally, and it refuses entries with absolute or traversing paths.
+This exists for CI caches: object-store caches move one large sequential file much faster than tens of thousands of small ones, and restoring a directory cache pays a create+write per file before `bun install` even starts. The pack is uncompressed (CI cache layers already compress) and contains every package referenced by `bun.lock` that is present in the local cache; a package that is missing locally is left out — with a warning, unless it is an optional package for another platform, which is expected to be absent. `unpack` recreates only the entries missing from the target cache, so it is cheap to run unconditionally, and it refuses entries with absolute or traversing paths.
 
 ## migrate
 

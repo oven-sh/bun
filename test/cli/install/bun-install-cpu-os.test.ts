@@ -706,7 +706,10 @@ describe("bun install --cpu and --os flags", () => {
     setHandler(dummyRegistry(urls, { "1.0.0": { os: ["linux"], libc: ["glibc"] } }));
     await writeFile(
       join(package_dir, "bunfig.toml"),
-      (await Bun.file(join(package_dir, "bunfig.toml")).text()).replace("saveTextLockfile = false", "saveTextLockfile = true"),
+      (await Bun.file(join(package_dir, "bunfig.toml")).text()).replace(
+        "saveTextLockfile = false",
+        "saveTextLockfile = true",
+      ),
     );
     await writeFile(
       join(package_dir, "package.json"),

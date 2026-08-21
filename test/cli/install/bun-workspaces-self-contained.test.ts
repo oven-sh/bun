@@ -46,25 +46,47 @@ async function install(cwd: string, args: string[] = []) {
 async function writeProject(desktopExtra: object, bunfigExtra: object) {
   await writeFile(
     join(package_dir, "bunfig.toml"),
-    Bun.TOML.stringify({ install: { cache: false, registry: root_url + "/", saveTextLockfile: true, linker: "hoisted", ...bunfigExtra } }),
+    Bun.TOML.stringify({
+      install: { cache: false, registry: root_url + "/", saveTextLockfile: true, linker: "hoisted", ...bunfigExtra },
+    }),
   );
   await mkdir(join(package_dir, "apps", "desktop"), { recursive: true });
   await mkdir(join(package_dir, "apps", "web"), { recursive: true });
   await mkdir(join(package_dir, "packages", "shared"), { recursive: true });
   await writeFile(
     join(package_dir, "package.json"),
-    JSON.stringify({ name: "root", private: true, workspaces: ["apps/*", "packages/*"], dependencies: { bar: "0.0.2" } }),
+    JSON.stringify({
+      name: "root",
+      private: true,
+      workspaces: ["apps/*", "packages/*"],
+      dependencies: { bar: "0.0.2" },
+    }),
   );
   await writeFile(
     join(package_dir, "apps", "desktop", "package.json"),
-    JSON.stringify({ name: "desktop", version: "1.0.0", ...desktopExtra, dependencies: { "@barn/moo": "0.1.0", shared: "workspace:*" } }),
+    JSON.stringify({
+      name: "desktop",
+      version: "1.0.0",
+      ...desktopExtra,
+      dependencies: { "@barn/moo": "0.1.0", shared: "workspace:*" },
+    }),
   );
-  await writeFile(join(package_dir, "apps", "web", "package.json"), JSON.stringify({ name: "web", version: "1.0.0", dependencies: { bar: "0.0.2", qux: "0.0.2" } }));
-  await writeFile(join(package_dir, "packages", "shared", "package.json"), JSON.stringify({ name: "shared", version: "1.0.0", dependencies: { baz: "0.0.3" } }));
+  await writeFile(
+    join(package_dir, "apps", "web", "package.json"),
+    JSON.stringify({ name: "web", version: "1.0.0", dependencies: { bar: "0.0.2", qux: "0.0.2" } }),
+  );
+  await writeFile(
+    join(package_dir, "packages", "shared", "package.json"),
+    JSON.stringify({ name: "shared", version: "1.0.0", dependencies: { baz: "0.0.3" } }),
+  );
 }
 
 describe.each([
-  ["installConfig.hoistingLimits in the workspace's package.json", { installConfig: { hoistingLimits: "workspaces" } }, {}],
+  [
+    "installConfig.hoistingLimits in the workspace's package.json",
+    { installConfig: { hoistingLimits: "workspaces" } },
+    {},
+  ],
   ["install.selfContainedWorkspaces in bunfig.toml", {}, { selfContainedWorkspaces: ["apps/desktop"] }],
 ] as const)("self-contained workspace via %s", (_label, desktopExtra, bunfigExtra) => {
   it("gets a complete, physical node_modules while other workspaces still hoist", async () => {

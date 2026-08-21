@@ -1,9 +1,10 @@
 // @ts-nocheck
+import { bunEnv, bunExe } from "harness";
 import { createTest } from "node-harness";
 import { EventEmitter } from "node:events";
 import readline from "node:readline";
 import { PassThrough, Writable } from "node:stream";
-const { beforeEach, describe, it, createDoneDotAll, createCallCheckCtx, assert } = createTest(import.meta.path);
+const { beforeEach, describe, it, expect, createDoneDotAll, createCallCheckCtx, assert } = createTest(import.meta.path);
 
 var {
   CSI,
@@ -2103,5 +2104,64 @@ describe("readline.createInterface()", () => {
 
     assert.strictEqual(closed, true);
     assert.strictEqual(rl.closed, true);
+  });
+});
+
+describe("module loading", () => {
+  it("createInterface() does not load node:fs, node:util, node:vm or node:os", async () => {
+    // Every Interface owns a ReplHistory (internal/repl/history), which only needs
+    // fs/os/path and internal/repl/node-shims (node:util, node:vm, ...) once the REPL
+    // asks it to persist history to a file. Each module below leaves a structure
+    // behind when it loads: node:fs creates the NodeJSFS binding, node:util creates
+    // the MIMEType class, node:vm creates the vm module classes, and node:os reads
+    // the lazy `os` entry of process.binding("constants").
+    const fixture = String.raw`
+      const { heapStats, describe } = require("bun:jsc");
+      const { EventEmitter } = require("node:events");
+      const readline = require("node:readline");
+
+      function loaded() {
+        const counts = heapStats().objectTypeCounts;
+        const constants = /\{([^}]*)\}/.exec(describe(process.binding("constants")))[1];
+        return {
+          fs: (counts.NodeJSFS ?? 0) > 0,
+          util: (counts.MIMEType ?? 0) > 0,
+          vm: (counts.NodeVMModule ?? 0) > 0,
+          os: constants.split(",").some(entry => entry.trim().split(":")[0] === "os"),
+        };
+      }
+
+      const input = new EventEmitter();
+      input.resume = input.pause = input.write = () => {};
+      const rl = readline.createInterface({ input, output: input, terminal: true });
+      let line;
+      rl.on("line", value => (line = value));
+      input.emit("data", "1 + 1\r");
+      const afterInterface = loaded();
+      rl.close();
+
+      require("node:fs");
+      require("node:util");
+      require("node:vm");
+      require("node:os");
+      console.log(JSON.stringify({ line, history: rl.history, afterInterface, markersWork: loaded() }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // markersWork guards the detector: if one of these modules stops creating its
+    // structure at load time, this test needs a new marker for it.
+    expect(JSON.parse(stdout)).toEqual({
+      line: "1 + 1",
+      history: ["1 + 1"],
+      afterInterface: { fs: false, util: false, vm: false, os: false },
+      markersWork: { fs: true, util: true, vm: true, os: true },
+    });
+    expect(exitCode).toBe(0);
   });
 });

@@ -130,22 +130,25 @@ export default function (
   enableNodeCDP: boolean,
   isWaitingForDebuggerFor: (executionContextId: number) => boolean,
   isAcceptingConnectionsFor: (executionContextId: number) => boolean,
+  willBreakOnStartFor: (executionContextId: number) => boolean,
 ): void {
   const isWaitingForDebugger = isWaitingForDebuggerFor.bind(undefined, executionContextId);
   const isAcceptingConnections = isAcceptingConnectionsFor.bind(undefined, executionContextId);
+  const willBreakOnStart = willBreakOnStartFor.bind(undefined, executionContextId);
   if (urlIsServer) {
     connectToUnixServer(executionContextId, url, createBackend, send, close);
     return;
   }
 
-  if (isNodeInspector) {
-    // inspector.open(): CDP connections, URL reported back, control callback for close/forward.
-    // https://github.com/nodejs/node/blob/main/lib/inspector.js
-    let debug: Debugger | undefined;
+  // Control channel from the inspected thread to a node:inspector-owned
+  // server: close() stops it, open() restarts it here, and an in-process
+  // Session forwards Debugger.* to the shared backend. `initial` may be nil.
+  function createNodeInspectorControl(initial: Debugger | undefined) {
+    let debug = initial;
     let sessionBackend: Backend | undefined;
     let sessionAdapter: any;
     let sessionRefs = 0;
-    const control = (message: string) => {
+    function control(message: string) {
       let parsed: any;
       try {
         parsed = JSON.parse(message);
@@ -198,6 +201,7 @@ export default function (
               false,
               isWaitingForDebugger,
               isAcceptingConnections,
+              willBreakOnStart,
             );
             reportNodeInspectorServerStarted(debug.url!.href, control, undefined);
           } catch (error) {
@@ -235,8 +239,15 @@ export default function (
           return;
         }
       }
-    };
+    }
+    return control;
+  }
 
+  if (isNodeInspector) {
+    // node:inspector's inspector.open(): serve CDP, report the URL back (for
+    // Node's "Debugger listening on ..." line), and hand back a control
+    // callback so the inspected thread can close the server / forward commands.
+    let debug: Debugger | undefined;
     try {
       debug = new Debugger(
         executionContextId,
@@ -248,16 +259,21 @@ export default function (
         false,
         isWaitingForDebugger,
         isAcceptingConnections,
+        willBreakOnStart,
       );
     } catch (error) {
       // Register the control callback even though the server failed to start
       // (e.g. the port is in use), so a later inspector.open() can retry with
       // an "open" control message on this already-running debugger thread.
-      reportNodeInspectorServerStarted("", control, nodeInspectorListenErrorDetail(error));
+      reportNodeInspectorServerStarted(
+        "",
+        createNodeInspectorControl(undefined),
+        nodeInspectorListenErrorDetail(error),
+      );
       return;
     }
 
-    reportNodeInspectorServerStarted(debug.url!.href, control, undefined);
+    reportNodeInspectorServerStarted(debug.url!.href, createNodeInspectorControl(debug), undefined);
     return;
   }
 
@@ -273,37 +289,47 @@ export default function (
       enableNodeCDP,
       isWaitingForDebugger,
       isAcceptingConnections,
+      willBreakOnStart,
     );
   } catch (error) {
     exit("Failed to start inspector:\n", error);
   }
 
-  // If the user types --inspect, we print the URL to the console.
-  // If the user is using an editor extension, don't print anything.
+  const { cdpUrl } = debug;
+
+  // Print the URL for --inspect (not for editor extensions), *before*
+  // reportNodeInspectorServerStarted releases the inspected thread: Node's
+  // banner precedes script output and stderr-scraping tools rely on that order.
   if (!isAutomatic) {
     const debugUrl = debug.url;
     if (debugUrl) {
       const { protocol, href, host, pathname } = debugUrl;
       if (!protocol.includes("unix")) {
-        Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n");
-        Bun.write(Bun.stderr, `Listening:\n  ${dim(href)}\n`);
+        const rule = dim("--------------------- Bun Inspector ---------------------") + reset() + "\n";
+        let banner = rule + `Listening:\n  ${dim(href)}\n`;
         if (protocol.includes("ws")) {
-          Bun.write(Bun.stderr, `Inspect in browser:\n  ${link(`https://debug.bun.sh/#${host}${pathname}`)}\n`);
+          banner += `Inspect in browser:\n  ${link(`https://debug.bun.sh/#${host}${pathname}`)}\n`;
         }
-        Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n");
-        const cdpUrl = debug.cdpUrl;
+        banner += rule;
+        // One write: Node's test-inspector-port-zero reads the first stderr chunk that holds a
+        // newline and expects the "Debugger listening on" line to be in it.
         if (cdpUrl) {
-          Bun.write(
-            Bun.stderr,
-            `Debugger listening on ${cdpUrl}\nFor help, see: https://nodejs.org/learn/getting-started/debugging\n`,
-          );
+          banner += `Debugger listening on ${cdpUrl}\nFor help, see: https://nodejs.org/learn/getting-started/debugging\n`;
         }
+        Bun.write(Bun.stderr, banner);
       }
     } else {
       Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n");
       Bun.write(Bun.stderr, `Listening on ${dim(url)}\n`);
       Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n");
     }
+  }
+
+  // Report --inspect's CDP endpoint so node:inspector's url()/open()/close()
+  // behave as Node does for a CLI-started inspector; this also releases the
+  // inspected thread, which blocks on the report.
+  if (enableNodeCDP && cdpUrl) {
+    reportNodeInspectorServerStarted(cdpUrl, createNodeInspectorControl(debug), undefined);
   }
 
   const notifyUrl = process.env["BUN_INSPECT_NOTIFY"] || "";
@@ -389,6 +415,7 @@ class Debugger {
   #enableNodeCDP = false;
   #isWaitingForDebugger: () => boolean;
   #isAcceptingConnections: () => boolean;
+  #willBreakOnStart: () => boolean;
   #disconnectNotify: { handshakeStarted: boolean; retaining: number; adapters: Set<InspectorCDPAdapter> | undefined } =
     {
       handshakeStarted: false,
@@ -408,11 +435,13 @@ class Debugger {
     enableNodeCDP: boolean = false,
     isWaitingForDebugger: () => boolean = () => false,
     isAcceptingConnections: () => boolean = () => true,
+    willBreakOnStart: () => boolean = () => false,
   ) {
     this.#nodeInspector = isNodeInspector;
     this.#enableNodeCDP = enableNodeCDP;
     this.#isWaitingForDebugger = isWaitingForDebugger;
     this.#isAcceptingConnections = isAcceptingConnections;
+    this.#willBreakOnStart = willBreakOnStart;
     this.#backendFactory = createBackend;
     this.#backendSend = send;
     this.#backendClose = close;
@@ -723,6 +752,7 @@ class Debugger {
         allocateRemoteBackendId,
         this.#isWaitingForDebugger,
         this.#disconnectNotify,
+        this.#willBreakOnStart,
       );
 
       data.client = client;

@@ -187,6 +187,11 @@ static HAS_CREATED_DEBUGGER: AtomicBool = AtomicBool::new(false);
 /// `NodeRuntime.waitingForDebugger` event also travels via `postTaskConcurrently`
 /// (whose lock fences), so a stale read can only delay it by one task, not drop it.
 static WAITING_FOR_DEBUGGER_CONTEXT: AtomicU32 = AtomicU32::new(0);
+/// The waiting context whose entry point carries `--inspect-brk`'s injected
+/// `debugger;`, so the CDP adapter can label the pause it causes "Break on
+/// start" (Node's label) while `--inspect-wait` / `inspector.open(…, true)`
+/// releases keep their first pause's real reason. Same lifecycle as above.
+static BREAK_ON_START_CONTEXT: AtomicU32 = AtomicU32::new(0);
 
 /// What the debugger thread takes from the debuggee VM's thread.
 struct DebuggerThreadInit {
@@ -230,23 +235,14 @@ impl Debugger {
         // over once this returns, including the `Wait::Shortly` timeout, so
         // clear the flag `NodeRuntime.enable` reads here too.
         let _reset = scopeguard::guard((), |()| {
-            let _ = WAITING_FOR_DEBUGGER_CONTEXT.compare_exchange(
-                ctx_id,
-                0,
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            );
+            clear_waiting_context(ctx_id);
             if let Some(d) = this.debugger_mut() {
                 d.must_block_until_connected = false;
             }
         });
 
         bun_core::scoped_log!(debugger, "spin");
-        // `FUTEX_ATOMIC` starts at 0 and nothing ever stores `1` before this
-        // load, so this loop is a no-op on first call.
-        while FUTEX_ATOMIC.load(Ordering::Relaxed) > 0 {
-            bun_threading::Futex::wait_forever(&FUTEX_ATOMIC, 1);
-        }
+        Debugger::wait_for_thread_startup();
         if bun_core::Environment::ENABLE_LOGS {
             bun_core::scoped_log!(
                 debugger,
@@ -386,6 +382,15 @@ impl Debugger {
         }
     }
 
+    /// Block until the debugger thread finishes startup: `create()` arms the
+    /// futex before spawning, `start_js_debugger_thread` clears it on every
+    /// exit path. No-op once the thread already started.
+    pub fn wait_for_thread_startup() {
+        while FUTEX_ATOMIC.load(Ordering::Relaxed) > 0 {
+            bun_threading::Futex::wait_forever(&FUTEX_ATOMIC, 1);
+        }
+    }
+
     /// `Debugger.create(vm, global)` — first-time debugger setup: create the
     /// JSC inspector context, spawn the debugger VM thread, and arm the
     /// keep-alive on the parent loop.
@@ -415,6 +420,10 @@ impl Debugger {
 
         if !this_ref.has_started_debugger {
             this_ref.as_mut().has_started_debugger = true;
+            // Armed before spawn, cleared on every `start_js_debugger_thread`
+            // exit; `wait_for_thread_startup` blocks on it so `--inspect`
+            // prints its banner before script output, as Node does.
+            FUTEX_ATOMIC.store(1, Ordering::Relaxed);
             // Everything the debugger thread needs from this VM, copied here;
             // it reaches back only through the (uncounted) handle to wake us.
             let init = DebuggerThreadInit {
@@ -443,6 +452,9 @@ impl Debugger {
             dbg.poll_ref.ref_(get_vm_ctx(AllocatorType::Js));
             dbg.must_block_until_connected = true;
             WAITING_FOR_DEBUGGER_CONTEXT.store(dbg.script_execution_context_id, Ordering::Relaxed);
+            if dbg.set_breakpoint_on_first_line {
+                BREAK_ON_START_CONTEXT.store(dbg.script_execution_context_id, Ordering::Relaxed);
+            }
         }
         Ok(())
     }
@@ -667,17 +679,23 @@ pub fn abandon_node_inspector_wait() {
         dbg.must_block_until_connected = false;
         dbg.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
     }
-    let _ = WAITING_FOR_DEBUGGER_CONTEXT.compare_exchange(
-        ctx_id,
-        0,
-        Ordering::Relaxed,
-        Ordering::Relaxed,
-    );
+    clear_waiting_context(ctx_id);
+}
+
+fn clear_waiting_context(ctx_id: u32) {
+    for slot in [&WAITING_FOR_DEBUGGER_CONTEXT, &BREAK_ON_START_CONTEXT] {
+        let _ = slot.compare_exchange(ctx_id, 0, Ordering::Relaxed, Ordering::Relaxed);
+    }
 }
 
 // HOST_EXPORT(Debugger__isWaitingForDebugger, c)
 pub fn is_waiting_for_debugger(ctx_id: u32) -> bool {
     ctx_id != 0 && WAITING_FOR_DEBUGGER_CONTEXT.load(Ordering::Relaxed) == ctx_id
+}
+
+// HOST_EXPORT(Debugger__willBreakOnStart, c)
+pub fn will_break_on_start(ctx_id: u32) -> bool {
+    ctx_id != 0 && BREAK_ON_START_CONTEXT.load(Ordering::Relaxed) == ctx_id
 }
 
 pub fn wait_for_debugger_to_disconnect(vm: &VirtualMachine) {
@@ -715,6 +733,15 @@ pub fn debug_end() {
     }
 }
 
+/// `process.binding('inspector').isEnabled()`: whether this thread has an
+/// inspector agent that `process._debugEnd()` has not stopped.
+// HOST_EXPORT(Debugger__isEnabled, c)
+pub fn is_enabled() -> bool {
+    VirtualMachine::get()
+        .debugger_mut()
+        .is_some_and(|dbg| !dbg.debug_ended)
+}
+
 // HOST_EXPORT(Debugger__didConnect, c)
 pub fn did_connect() {
     let this = VirtualMachine::get().as_mut();
@@ -730,12 +757,7 @@ pub fn did_connect() {
         dbg.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
         this.event_loop_mut().wakeup();
     }
-    let _ = WAITING_FOR_DEBUGGER_CONTEXT.compare_exchange(
-        ctx_id,
-        0,
-        Ordering::Relaxed,
-        Ordering::Relaxed,
-    );
+    clear_waiting_context(ctx_id);
 }
 
 // ──────────────────────────────────────────────────────────────────────────

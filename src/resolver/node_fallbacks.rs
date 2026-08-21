@@ -175,10 +175,8 @@ pub fn contents_from_path(path: &[u8]) -> Option<&'static [u8]> {
     debug_assert!(path.starts_with(IMPORT_PATH));
 
     let module_name = &path[IMPORT_PATH.len()..];
-    let module_name = &module_name[..module_name
-        .iter()
-        .position(|&b| b == b'/')
-        .unwrap_or(module_name.len())];
+    let module_name = &module_name
+        [..bun_core::strings::index_of_char_usize(module_name, b'/').unwrap_or(module_name.len())];
 
     if let Some(module) = map().get(module_name) {
         return Some((module.code)().as_bytes());

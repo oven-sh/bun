@@ -95,11 +95,7 @@ type CreateBackendFn = (
   executionContextId: number,
   refEventLoop: boolean,
   receive: (...messages: string[]) => void,
-  // Marks a connection whose frontend speaks CDP, so the inspected thread can
-  // send it events only InspectorCDPAdapter understands.
   isCDP?: boolean,
-  // Node's InspectorSession::preventShutdown(): a remote frontend takes part in
-  // the exit handshake; the in-process inspector.Session does not.
   preventShutdown?: boolean,
 ) => unknown;
 
@@ -111,8 +107,6 @@ let lazyInspectorCDPAdapter: any;
 let nextRemoteBackendId = 50_000_000;
 function allocateRemoteBackendId() {
   const id = nextRemoteBackendId++;
-  // Wrap below the in-process range (inspector.ts counts from 100M) so a
-  // long-lived session can never collide with in-process command ids.
   if (nextRemoteBackendId >= 100_000_000) nextRemoteBackendId = 50_000_000;
   return id;
 }
@@ -137,9 +131,7 @@ export default function (
   isWaitingForDebuggerFor: (executionContextId: number) => boolean,
   isAcceptingConnectionsFor: (executionContextId: number) => boolean,
 ): void {
-  // Per context: a waiting worker must not answer for the main thread.
   const isWaitingForDebugger = isWaitingForDebuggerFor.bind(undefined, executionContextId);
-  // False once the exit handshake has begun; see #fetch.
   const isAcceptingConnections = isAcceptingConnectionsFor.bind(undefined, executionContextId);
   if (urlIsServer) {
     connectToUnixServer(executionContextId, url, createBackend, send, close);
@@ -166,9 +158,6 @@ export default function (
           try {
             sessionBackend?.close();
             sessionBackend = undefined;
-            // The leaked native connection keeps the adapter reachable; drop
-            // its per-session script/breakpoint state like Debugger.#close
-            // does for WebSocket adapters.
             sessionAdapter?.handleClientDisconnect();
             sessionAdapter = undefined;
             sessionRefs = 0;
@@ -317,8 +306,6 @@ export default function (
           Bun.write(Bun.stderr, `Inspect in browser:\n  ${link(`https://debug.bun.sh/#${host}${pathname}`)}\n`);
         }
         Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n");
-        // Node's banner, verbatim, for the CDP endpoint served alongside the
-        // JSC one: Node-shaped tools scrape stderr for this exact line.
         const cdpUrl = debug.cdpUrl;
         if (cdpUrl) {
           Bun.write(
@@ -419,20 +406,11 @@ class Debugger {
   // node:inspector mode: connections speak the V8 Chrome DevTools Protocol and
   // /json discovery endpoints are served.
   #nodeInspector = false;
-  // --inspect* mode: a second pathname (plus the /json discovery endpoints)
-  // serving the V8 CDP. The JSC-protocol pathname above is unaffected.
   #cdpPathname?: string;
-  // Host advertised in the "Debugger listening on" line; Node prints 127.0.0.1
-  // for the default bind, not "localhost".
   #cdpHost?: string;
   #enableNodeCDP = false;
-  // Reads the inspected context's wait-for-frontend state; see cdp.ts.
   #isWaitingForDebugger: () => boolean;
-  // False once the inspected thread has begun its exit handshake.
   #isAcceptingConnections: () => boolean;
-  // Shared by every CDP session on this server so the exit handshake's
-  // notify-vs-executionContextDestroyed choice is made across sessions, as
-  // Node's notifyWaitingForDisconnect does. `adapters` is populated by cdp.ts.
   #disconnectNotify: { handshakeStarted: boolean; retaining: number; adapters: Set<InspectorCDPAdapter> | undefined } =
     {
       handshakeStarted: false,
@@ -440,7 +418,6 @@ class Debugger {
       adapters: undefined,
     };
   #server?: WebSocketServer;
-  // Secondary loopback listener; see #listen().
   #loopbackServer?: WebSocketServer;
 
   constructor(
@@ -500,8 +477,6 @@ class Debugger {
     return this.#url;
   }
 
-  // The CDP endpoint's ws:// URL, when one is served alongside the JSC one
-  // (--inspect*). Undefined for node:inspector servers and non-listening modes.
   get cdpUrl(): string | undefined {
     if (!this.#cdpPathname || !this.#url) return undefined;
     return `ws://${this.#cdpHost ?? this.#url.host}${this.#cdpPathname}`;
@@ -541,13 +516,8 @@ class Debugger {
       this.#url!.hostname = server.hostname;
       this.#url!.port = `${server.port}`;
       if (this.#enableNodeCDP) {
-        // A distinct random pathname, like the JSC one, so it also acts as a
-        // bearer token: knowing the port is not enough to attach.
         this.#cdpPathname = `/${randomId()}`;
         if (hostname === defaultHostname) {
-          // "localhost" binds one address family only, but Node's inspector
-          // listens on 127.0.0.1 and CDP clients dial loopback over either
-          // family. Additively bind whichever loopback address is still free.
           let v4Held = false;
           for (const loopback of ["127.0.0.1", "::1"]) {
             try {
@@ -559,13 +529,9 @@ class Debugger {
               });
               break;
             } catch (e) {
-              // Already bound by the primary listener, or unavailable.
-              // EADDRINUSE on 127.0.0.1 is itself proof the primary holds it.
               if (loopback === "127.0.0.1" && (e as any)?.code === "EADDRINUSE") v4Held = true;
             }
           }
-          // Advertise 127.0.0.1 (Node's default) only when provably bound: ::1 listener
-          // succeeding or EADDRINUSE on 127.0.0.1 both prove the primary holds it.
           if (this.#loopbackServer || v4Held) this.#cdpHost = `127.0.0.1:${server.port}`;
         }
       }
@@ -635,16 +601,10 @@ class Debugger {
     });
   }
 
-  // internalAllowAnySecWebSocketKey is intentionally absent from the public
-  // WebSocketHandler type, so widen the return type rather than casting the
-  // literal, which would drop checking on every handler in it.
   get #websocket(): WebSocketHandler<Connection> & { internalAllowAnySecWebSocketKey: boolean } {
     return {
       idleTimeout: 0,
       closeOnBackpressureLimit: false,
-      // Node's inspector accepts a Sec-WebSocket-Key of any length (its own
-      // test helper sends `key==`); Bun otherwise enforces the RFC 6455 shape,
-      // matching `ws`. This server, and only this server, opts out.
       internalAllowAnySecWebSocketKey: true,
       open: ws => this.#open(ws, webSocketWriter(ws)),
       message: (ws, message) => {
@@ -663,8 +623,6 @@ class Debugger {
   // reachable URLs (rejected hosts filtered in #fetch). https://github.com/nodejs/node/tree/main/src/inspector
   #nodeInspectorTargets(host: string | null): unknown[] {
     const { hostname, port } = this.#url!;
-    // For --inspect*, discovery must point CDP clients at the CDP pathname, not
-    // at the JSC-protocol one they cannot speak.
     const pathname = this.#cdpPathname ?? this.#url!.pathname;
     const id = pathname.slice(1);
     const wsAddress = `${host || `${hostname}:${port}`}${pathname}`;
@@ -708,8 +666,8 @@ class Debugger {
 
     switch (pathname) {
       case "/json/version":
-        // Unchanged for --inspect*: debug.bun.sh and the VSCode extension
-        // identify a Bun target by these fields.
+        // Unlike /json/list below, CLI --inspect keeps the Bun shape: that payload
+        // predates the CDP endpoint and test/cli/inspect/inspect.test.ts pins it.
         return Response.json(this.#nodeInspector ? nodeVersionInfo() : versionInfo());
       case "/json":
       case "/json/list":
@@ -761,8 +719,11 @@ class Debugger {
 
     if (this.#nodeInspector || data.isCDP) {
       // Node prints this on every remote attach; tools gate on it. fs.writeSync avoids reifying
-      // Bun.stderr (its lazy Blob would leak at exit under LSAN).
-      require("node:fs").writeSync(2, "Debugger attached.\n");
+      // Bun.stderr (its lazy Blob would leak at exit under LSAN). Best-effort like Node's
+      // fprintf: a closed fd 2 (EBADF/EPIPE) must not abort the attach.
+      try {
+        require("node:fs").writeSync(2, "Debugger attached.\n");
+      } catch {}
       // CDP adapter between WebSocket and JSC backend. Never ref the event loop (`true` = no ref):
       // Node exits with a debugger attached. https://github.com/nodejs/node/blob/main/src/inspector_agent.cc
       let adapter: any;
@@ -777,13 +738,7 @@ class Debugger {
       function writeToRemoteClient(message: string) {
         void client.write(message);
       }
-      const backend = this.#createBackend(
-        true,
-        deliverToRemoteAdapter,
-        true,
-        // A remote frontend: exit waits for it to disconnect, as Node does.
-        true,
-      );
+      const backend = this.#createBackend(true, deliverToRemoteAdapter, true, true);
       adapter = new (cdpAdapterConstructor())(
         writeToRemoteBackend,
         writeToRemoteClient,
@@ -836,13 +791,9 @@ class Debugger {
     const { data } = connection;
     const { backend, adapter } = data;
     console.error(error);
-    // CDP frontends: close socket with backend so exit handshake can't finish with a dangling
-    // connection. JSC clients take no part in the handshake, so leave their socket alone.
     adapter?.handleClientDisconnect();
     backend?.close();
     if (this.#nodeInspector || data.isCDP) {
-      // 1003 (unsupported data) only fits the binary-frame case; anything
-      // else is an internal error (1011).
       const binary = error?.message === "Unexpected binary message";
       connection.close?.(binary ? 1003 : 1011, binary ? "Unexpected binary message" : "Internal error");
     }
@@ -1131,14 +1082,11 @@ function exit(...args: unknown[]): never {
 
 type ConnectionOwner = {
   data: Connection;
-  // Bun.serve passes the ServerWebSocket itself to these handlers; #error
-  // closes it so a retired session cannot linger with its socket open.
   close?: (code?: number, reason?: string) => void;
 };
 
 type Connection = {
   refEventLoop: boolean;
-  // True for a connection on the CDP pathname of a --inspect* server.
   isCDP?: boolean;
   client?: Writer;
   backend?: Backend;

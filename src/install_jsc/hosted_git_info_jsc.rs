@@ -3,7 +3,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
 
 /// Extension trait providing `.to_js()` on `HostedGitInfo`.
-pub trait HostedGitInfoJsc {
+trait HostedGitInfoJsc {
     fn to_js(&self, go: &JSGlobalObject) -> JsResult<JSValue>;
 }
 

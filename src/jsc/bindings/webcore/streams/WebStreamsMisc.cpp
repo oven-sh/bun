@@ -139,6 +139,17 @@ JSC::JSString* streamingUTF8Decode(JSGlobalObject* globalObject, std::span<const
     return asString(decoded);
 }
 
+bool nativeSinkWriteIsBackpressure(JSC::VM& vm, JSValue wrote)
+{
+    if (wrote.isNumber())
+        return wrote.asNumber() < 0;
+    if (auto* p = dynamicDowncast<JSC::JSPromise>(wrote)) {
+        markPromiseAsHandled(vm, p);
+        return p->status() == JSC::JSPromise::Status::Pending;
+    }
+    return false;
+}
+
 // spec IsNonNegativeNumber(v). Non-throwing leaf: pure type + range test, no coercion.
 bool isNonNegativeNumber(JSValue value)
 {

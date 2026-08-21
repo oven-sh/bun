@@ -479,13 +479,9 @@ test("inspector.waitForDebugger() blocks until a client resumes the process", as
       stderrText += decoder.decode(value);
       if (stderrText.includes(DISCONNECT_NOTICE)) waitingToDisconnect.resolve();
     }
-    // Resolve on EOF too so a regressed handshake fails on the assertion below
-    // rather than hanging until the suite timeout.
     waitingToDisconnect.resolve();
   })();
 
-  // Node's exit handshake: the fixture is done but blocks while this client is
-  // still attached, so detach before awaiting exit.
   await waitingToDisconnect.promise;
   expect(stderrText).toContain(DISCONNECT_NOTICE);
   ws.close();
@@ -655,12 +651,8 @@ test("Session errors carry Node's ERR_INSPECTOR_* codes and post() validates its
   expect(() => session.post("Runtime.enable", (() => {}) as any, () => {})).toThrow(
     expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
   );
-  // Like Node, a callback-less post() of an unknown method returns undefined
-  // rather than throwing; the ERR_INSPECTOR_COMMAND error goes to the callback.
   expect(() => session.post("Nonexistent.domain")).not.toThrow();
   expect(session.post("Nonexistent.domain")).toBeUndefined();
-  // The Network handlers follow the same contract: protocol errors reach the
-  // callback and are unobservable without one (node returns undefined here).
   session.post("Network.enable");
   expect(session.post("Network.getResponseBody", { requestId: "nope" })).toBeUndefined();
   expect(session.post("Network.getRequestPostData", { requestId: "nope" })).toBeUndefined();
@@ -852,8 +844,6 @@ test("Network.requestWillBeSent / webSocketCreated populate initiator.stack with
       expect(evt.initiator.type).toBe("script");
       const frames = evt.initiator.stack?.callFrames;
       expect(Array.isArray(frames)).toBe(true);
-      // Like Node, internal node:inspector frames precede the caller; the first
-      // user frame must be our call site.
       const firstUser = frames.find((f: any) => f.url === thisFile);
       expect(firstUser).toMatchObject({ functionName: "callerFrame", url: thisFile });
       expect(typeof firstUser.lineNumber).toBe("number");
@@ -1023,8 +1013,6 @@ export { after };
       stderrText += decoder.decode(value);
       if (stderrText.includes(DISCONNECT_NOTICE)) waitingToDisconnect.resolve();
     }
-    // Resolve on EOF too so a regressed handshake fails on the assertion below
-    // rather than hanging until the suite timeout.
     waitingToDisconnect.resolve();
   })();
 
@@ -1084,9 +1072,6 @@ export { after };
   // the socket first. The JSON on stdout is the real proof the resume landed.
   ws.send(JSON.stringify({ id: nextId++, method: "Debugger.resume" }));
 
-  // process.exit(0) blocks in Node's exit handshake while this client is
-  // attached, so detach once the child announces the wait; stdout only reaches
-  // EOF after the child is actually gone.
   awaiting = "the exit handshake";
   await waitingToDisconnect.promise;
   expect(stderrText).toContain(DISCONNECT_NOTICE);
@@ -1104,6 +1089,79 @@ export { after };
   expect(JSON.parse(stdoutText.trim().split("\n").at(-1)!)).toEqual({ after: 1, beforeOpen: 1 });
   expect(await proc.exited).toBe(0);
 }, 30_000);
+
+// JSC's Debugger.scriptParsed classifies a script with scriptType ("program",
+// "module" or "webassembly"); V8 clients read isModule and scriptLanguage. The
+// fixture is its own CDP client: it enables the Debugger domain, then loads one
+// script of each kind and prints what the adapter reported for them.
+const scriptParsedFixture = `
+import inspector from "node:inspector";
+
+inspector.open(0, "127.0.0.1", false);
+const ws = new WebSocket(inspector.url());
+const pending = new Map();
+const scripts = [];
+let nextId = 1;
+ws.onmessage = event => {
+  const message = JSON.parse(event.data);
+  if (message.id) {
+    pending.get(message.id)(message);
+    pending.delete(message.id);
+  } else if (message.method === "Debugger.scriptParsed") {
+    scripts.push(message.params);
+  }
+};
+const send = (method, params) =>
+  new Promise(resolve => {
+    const id = nextId++;
+    pending.set(id, resolve);
+    ws.send(JSON.stringify({ id, method, params }));
+  });
+await new Promise(resolve => (ws.onopen = resolve));
+
+await send("Debugger.enable", {});
+await import("./esm.mjs");
+await import("./lib.cjs");
+// The empty module: just the wasm magic and version.
+new WebAssembly.Module(new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]));
+// The backend answers commands through the same ordered queue it emits events
+// on, so this reply arriving proves the scriptParsed events for the three
+// scripts above have arrived too.
+await send("Debugger.setBreakpointsActive", { active: true });
+inspector.close();
+
+console.log(
+  JSON.stringify(
+    scripts
+      .filter(({ url }) => /\\/esm\\.mjs$|\\/lib\\.cjs$|\\.wasm$/.test(url))
+      .map(({ url, isModule, scriptLanguage }) => ({ url, isModule, scriptLanguage })),
+  ),
+);
+`;
+
+test("Debugger.scriptParsed reports isModule and scriptLanguage from JSC's scriptType", async () => {
+  using dir = tempDir("inspector-script-parsed", {
+    "fixture.mjs": scriptParsedFixture,
+    "esm.mjs": `export const esm = true;\n`,
+    "lib.cjs": `module.exports = { cjs: true };\n`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+
+  expect(JSON.parse(stdout.trim().split("\n").at(-1)!)).toEqual([
+    { url: expect.stringMatching(/^file:\/\/.*\/esm\.mjs$/), isModule: true, scriptLanguage: "JavaScript" },
+    { url: expect.stringMatching(/^file:\/\/.*\/lib\.cjs$/), isModule: false, scriptLanguage: "JavaScript" },
+    // JSC names a WebAssembly.Module compiled from bytes <n>.wasm itself.
+    { url: expect.stringMatching(/\.wasm$/), isModule: false, scriptLanguage: "WebAssembly" },
+  ]);
+});
 
 test("disconnect does not clobber a console method reassigned by user code", () => {
   const session = new inspector.Session();
@@ -1138,8 +1196,6 @@ function f() {
 setInterval(f, 50);
 `;
 
-// Drives one inspector endpoint of a `--inspect-brk` child to its first two
-// pauses. `banner` picks the endpoint out of the startup notice.
 async function pausesAt(banner: RegExp, enable: [string, unknown?][], resume: string) {
   const dir = tempDir("inspector-positions", { "gnarly.js": transpileShiftFixture });
   const proc = Bun.spawn({
@@ -1149,8 +1205,6 @@ async function pausesAt(banner: RegExp, enable: [string, unknown?][], resume: st
     stdout: "ignore",
     stderr: "pipe",
   });
-  // Any throw below (banner timeout, rejected send, failed pause wait) must
-  // not leak the never-exiting --inspect-brk child or its temp dir.
   const reap = async () => {
     proc.kill();
     // Windows: the child must exit before rm'ing its cwd or rmSync EBUSYs.
@@ -1247,16 +1301,11 @@ test("CDP clients see positions and source from the file the user wrote", async 
   );
 
   try {
-    // Node reports both of these against the original file. Bun prepends the
-    // break-on-start `debugger;` and reflows everything below it, so untranslated
-    // these are lines 0 and 4.
     expect(line(0)).toBe(2);
     expect(line(1)).toBe(10);
 
     const { scriptSource } = await send("Debugger.getScriptSource", { scriptId: userScript.scriptId });
     expect(scriptSource).toBe(transpileShiftFixture);
-    // Bun's own map describes text this client never sees; forwarding it would
-    // make a client that applies source maps translate a second time.
     expect(userScript.sourceMapURL).toBe("");
     expect(userScript.endLine).toBe(13);
 
@@ -1282,8 +1331,6 @@ test("JSC-protocol clients keep seeing generated positions and Bun's source map"
   );
 
   try {
-    // debug.bun.sh and the VS Code extension apply the map themselves, so this
-    // endpoint must keep reporting the transpiler's own coordinates.
     expect(line(0)).toBe(0);
     expect(line(1)).toBe(4);
 
@@ -1295,12 +1342,6 @@ test("JSC-protocol clients keep seeing generated positions and Bun's source map"
     await done();
   }
 }, 30_000);
-// The lazy module reuses the fixture's shift-inducing shape (quote rewrite,
-// blank-line collapse) so its original coordinates differ from the
-// transpiler's output. `poke` runs on an interval so the first call after
-// the debugger thread's breakpoint re-set has landed hits it; calls before
-// that simply return (the child is killed in finally, so the interval
-// cannot leak).
 const lazyShiftFixture = `// leading comment
 
 const value = 'single quotes';
@@ -1383,9 +1424,6 @@ test("a by-URL breakpoint set before its script parses is re-resolved through th
     await send("Runtime.enable", {});
     await send("Debugger.enable", {});
 
-    // lazy.js has not parsed yet: the breakpoint names original line 10
-    // (\`return value.length;\`), which only lands there if the adapter
-    // re-translates once the script's map exists.
     const fileUrl = pathToFileURL(join(String(dir), "lazy.js")).href;
     const set = await send("Debugger.setBreakpointByUrl", { lineNumber: 10, url: fileUrl });
     expect(typeof set.breakpointId).toBe("string");
@@ -1401,8 +1439,6 @@ test("a by-URL breakpoint set before its script parses is re-resolved through th
     await sawPauses.promise;
 
     const hit = pauses[1];
-    // The pause reports the line the user named, in original coordinates,
-    // and credits the breakpointId the client was originally given.
     expect(hit.callFrames[0].location.lineNumber).toBe(10);
     expect(hit.hitBreakpoints).toEqual([set.breakpointId]);
     ws.close();
@@ -1415,11 +1451,6 @@ test("a by-URL breakpoint set before its script parses is re-resolved through th
 }, 30_000);
 
 test("a pre-parse breakpoint never surfaces its stale binding to the client", async () => {
-  // Race regression: the pre-parse set goes out at original coordinates (no
-  // map yet); the correction posted at scriptParsed can lose to execution,
-  // and the stale binding fired one line early (resolved@stale, paused@stale,
-  // then the corrected resolved). The adapter must suppress the stale events
-  // and only surface the corrected coordinate.
   const dir = tempDir("inspector-preparse-race", {
     "main.js": `await import("./lazy.js");\n`,
     "lazy.js": lazyShiftFixture,
@@ -1496,8 +1527,6 @@ test("a pre-parse breakpoint never surfaces its stale binding to the client", as
     await send("Runtime.runIfWaitingForDebugger", {});
     await sawBpPause.promise;
 
-    // Every surfaced event for this breakpoint reports the named line in
-    // original coordinates — the stale one-line-early binding never leaks.
     expect(pausesForBp[0].callFrames[0].location.lineNumber).toBe(10);
     for (const ev of resolvedEvents) {
       expect(ev.location.lineNumber).toBe(10);
@@ -1511,8 +1540,6 @@ test("a pre-parse breakpoint never surfaces its stale binding to the client", as
 }, 30_000);
 
 test("Session.post matches node's return and throw contract", async () => {
-  // Verified on node v26.3.0: post() always returns undefined, and without a
-  // callback a protocol error is silent (callback-only delivery).
   const session = new inspector.Session();
   session.connect();
   try {
@@ -1529,8 +1556,6 @@ test("Session.post matches node's return and throw contract", async () => {
 });
 
 test("pending posts at disconnect settle with node's -32000 error", async () => {
-  // Runtime.evaluate routes through JSC's InjectedScript, so this runs in a
-  // child under inspectorChildEnv (see the comment on that helper).
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -1577,9 +1602,6 @@ console.log("survived");`,
 });
 
 test("Debugger.stepOver from a paused listener re-pauses instead of resuming", async () => {
-  // The pause loop's auto-continue must not run when the listener already
-  // ended the pause with a step: continueProgram() clears the next-pause
-  // state first, which would silently downgrade the step to a full resume.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -1601,8 +1623,6 @@ session.post("Runtime.evaluate", { expression: "debugger; globalThis.x = 1; glob
   console.log(JSON.stringify({ pauses }));
 });`,
     ],
-    // Children drive Runtime.evaluate — same validator-env strip as the
-    // sibling subprocess tests above.
     env: inspectorChildEnv,
     stderr: "pipe",
   });
@@ -1615,9 +1635,6 @@ session.post("Runtime.evaluate", { expression: "debugger; globalThis.x = 1; glob
 });
 
 test("Debugger.paused from a pause nested inside a post() dispatch reaches listeners before execution continues", async () => {
-  // A debugger statement evaluated via session.post pauses inside the
-  // dispatch; the event must deliver synchronously so the listener can use
-  // the pause (evaluateOnCallFrame) before resuming.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -1643,14 +1660,49 @@ session.post("Runtime.evaluate", { expression: "debugger; 42" }, function onDone
   console.log(JSON.stringify({ sawPausedDuringDispatch, evalOnFrame, result: res?.result?.value }));
 });`,
     ],
-    // Children drive Runtime.evaluate — same validator-env strip as the
-    // sibling subprocess tests above.
     env: inspectorChildEnv,
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: JSON.parse(stdout), stderr, exitCode }).toEqual({
     stdout: { sawPausedDuringDispatch: true, evalOnFrame: 2, result: 42 },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+test("Debugger events only reach the in-process Sessions that enabled the domain", async () => {
+  // All in-process Sessions share one JSC frontend, which broadcasts every
+  // event to every adapter; like Node's per-session agents, a Session that
+  // never enabled Debugger must not observe another Session's enable.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const inspector = require("node:inspector");
+const vm = require("node:vm");
+const a = new inspector.Session();
+const b = new inspector.Session();
+a.connect();
+b.connect();
+let aParsed = 0;
+let bParsed = 0;
+a.on("Debugger.scriptParsed", () => aParsed++);
+b.on("Debugger.scriptParsed", () => bParsed++);
+// Routes to the shared backend, so A has an adapter, without enabling Debugger.
+a.post("Debugger.setAsyncCallStackDepth", { maxDepth: 4 });
+b.post("Debugger.enable");
+vm.runInThisContext("1 + 1", { filename: "probe.js" });
+console.log(JSON.stringify({ aParsed, bSawProbe: bParsed >= 1 }));
+a.disconnect();
+b.disconnect();`,
+    ],
+    env: inspectorChildEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: JSON.parse(stdout), stderr, exitCode }).toEqual({
+    stdout: { aParsed: 0, bSawProbe: true },
     stderr: "",
     exitCode: 0,
   });

@@ -923,4 +923,272 @@ describe("bundler", () => {
       },
     });
   });
+
+  // https://github.com/oven-sh/bun/issues/6858
+  // The automatic JSX runtime import is synthesized by the bundler. When every
+  // JSX expression in a file is tree-shaken, nothing references the generated
+  // `jsx`/`jsxDEV`/`Fragment` bindings and the import itself should disappear
+  // instead of being kept "for side effects" and dragging React into the bundle.
+  describe("autoImportTreeShaking", () => {
+    itBundledDevAndProd("jsx/AutoImportDroppedWhenJsxUnusedExternal", {
+      files: {
+        "/index.tsx": /* tsx */ `
+          const unused = <div>dead</div>;
+          export default 'hi';
+        `,
+      },
+      external: ["react", "react/*"],
+      jsx: { runtime: "automatic" },
+      onAfterBundle(api) {
+        const file = api.readFile("out.js");
+        expect(file).not.toContain("react/jsx-runtime");
+        expect(file).not.toContain("react/jsx-dev-runtime");
+        expect(file).not.toContain("jsxDEV");
+        expect(file).not.toContain("jsx(");
+        expect(file).not.toContain("unused");
+      },
+    });
+
+    // With jsx.sideEffects: true the lowered calls carry no pure annotation,
+    // so even otherwise-unused JSX keeps the call and therefore the import.
+    itBundledDevAndProd("jsx/AutoImportKeptWhenJsxSideEffectsTrue", {
+      files: {
+        "/index.tsx": /* tsx */ `
+          const unused = <div>dead</div>;
+          export default 'hi';
+        `,
+      },
+      external: ["react", "react/*"],
+      jsx: { runtime: "automatic", sideEffects: true },
+      onAfterBundle(api) {
+        const file = api.readFile("out.js");
+        expect(file).toMatch(/from\s*"react\/jsx-(dev-)?runtime"/);
+        expect(file).toMatch(/jsx(DEV)?\(/);
+      },
+    });
+
+    itBundledDevAndProd("jsx/AutoImportKeptWhenJsxUsedExternal", {
+      files: {
+        "/index.tsx": /* tsx */ `
+          const unused = <div>dead</div>;
+          export const live = <span>live</span>;
+        `,
+      },
+      external: ["react", "react/*"],
+      jsx: { runtime: "automatic" },
+      onAfterBundle(api) {
+        const file = api.readFile("out.js");
+        expect(file).toMatch(/from\s*"react\/jsx-(dev-)?runtime"/);
+        expect(file).toContain("live");
+        expect(file).not.toContain("unused");
+      },
+    });
+
+    itBundledDevAndProd("jsx/AutoImportDroppedFragUnusedExternal", {
+      files: {
+        "/index.tsx": /* tsx */ `
+          const unused = <><a/><b/></>;
+          export default 1;
+        `,
+      },
+      external: ["react", "react/*"],
+      jsx: { runtime: "automatic" },
+      onAfterBundle(api) {
+        const file = api.readFile("out.js");
+        expect(file).not.toContain("react");
+        expect(file).not.toContain("Fragment");
+        expect(file).not.toContain("unused");
+      },
+    });
+
+    // CommonJS JSX source with no "sideEffects" field: previously the
+    // auto-import forced the whole module into the bundle even though the JSX
+    // was dead code.
+    itBundled("jsx/AutoImportDroppedWhenJsxUnusedBundledCjs", {
+      files: {
+        "/index.tsx": /* tsx */ `
+          const unused = <div>dead</div>;
+          console.log('only-this');
+        `,
+        "/node_modules/react/package.json": JSON.stringify({
+          name: "react",
+          exports: {
+            "./jsx-runtime": "./jsx-runtime.js",
+            "./jsx-dev-runtime": "./jsx-dev-runtime.js",
+          },
+        }),
+        "/node_modules/react/jsx-runtime.js": /* js */ `
+          console.log('JSX_RUNTIME_SIDE_EFFECT');
+          exports.jsx = function (type, props) { return { type, props }; };
+          exports.jsxs = exports.jsx;
+          exports.Fragment = 'F';
+        `,
+        "/node_modules/react/jsx-dev-runtime.js": /* js */ `
+          console.log('JSX_RUNTIME_SIDE_EFFECT');
+          exports.jsxDEV = function (type, props) { return { type, props }; };
+          exports.Fragment = 'F';
+        `,
+      },
+      target: "bun",
+      jsx: { runtime: "automatic" },
+      onAfterBundle(api) {
+        const file = api.readFile("out.js");
+        expect(file).not.toContain("JSX_RUNTIME_SIDE_EFFECT");
+        expect(file).not.toContain("jsx-runtime");
+        expect(file).not.toContain("unused");
+      },
+      run: { stdout: "only-this" },
+    });
+
+    // Same CJS source, but the JSX is actually used: the JSX source must still
+    // be bundled and its top-level code must still run.
+    itBundled("jsx/AutoImportKeptWhenJsxUsedBundledCjs", {
+      files: {
+        "/index.tsx": /* tsx */ `
+          const el = <div>live</div>;
+          console.log(JSON.stringify(el));
+        `,
+        "/node_modules/react/package.json": JSON.stringify({
+          name: "react",
+          exports: {
+            "./jsx-runtime": "./jsx-runtime.js",
+            "./jsx-dev-runtime": "./jsx-dev-runtime.js",
+          },
+        }),
+        "/node_modules/react/jsx-runtime.js": /* js */ `
+          console.log('JSX_RUNTIME_SIDE_EFFECT');
+          exports.jsx = function (type, props) { return { type: type, props: props }; };
+          exports.jsxs = exports.jsx;
+          exports.Fragment = 'F';
+        `,
+        "/node_modules/react/jsx-dev-runtime.js": /* js */ `
+          console.log('JSX_RUNTIME_SIDE_EFFECT');
+          exports.jsxDEV = function (type, props) { return { type: type, props: props }; };
+          exports.Fragment = 'F';
+        `,
+      },
+      target: "bun",
+      jsx: { runtime: "automatic" },
+      run: {
+        stdout: `JSX_RUNTIME_SIDE_EFFECT\n{"type":"div","props":{"children":"live"}}`,
+      },
+    });
+
+    // key-after-spread falls back to `createElement` from the bare JSX package,
+    // which is a second synthesized JsxImport part. When the only reference is
+    // inside a dead function, that import must go too.
+    itBundled("jsx/AutoImportDroppedCreateElementDeadFunction", {
+      files: {
+        "/index.tsx": /* tsx */ `
+          function dead() {
+            const p = {};
+            return <div {...p} key="k" />;
+          }
+          export default 'hi';
+        `,
+      },
+      external: ["react", "react/*"],
+      jsx: { runtime: "automatic" },
+      bundleWarnings: {
+        "/index.tsx": ['"key" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.'],
+      },
+      onAfterBundle(api) {
+        const file = api.readFile("out.js");
+        expect(file).not.toContain("createElement");
+        expect(file).not.toContain('"react"');
+        expect(file).not.toContain("react/jsx");
+        expect(file).not.toContain("dead");
+      },
+    });
+
+    // JSX that only appears under a compile-time-false branch is dropped by
+    // define-DCE before tree-shaking runs. The synthesized import must follow.
+    itBundled("jsx/AutoImportDroppedDefineDeadBranch", {
+      files: {
+        "/index.tsx": /* tsx */ `
+          if (process.env.DEBUG) {
+            console.log(<div/>);
+          }
+          console.log('only-this');
+        `,
+      },
+      external: ["react", "react/*"],
+      jsx: { runtime: "automatic" },
+      define: { "process.env.DEBUG": "false" },
+      onAfterBundle(api) {
+        const file = api.readFile("out.js");
+        expect(file).not.toContain("react");
+        expect(file).not.toContain("jsxDEV");
+      },
+    });
+
+    // React Compiler can hoist a callback that contains the file's only JSX
+    // into a separate top-level function. The original component's part still
+    // carries the jsx symbol use that was recorded while visiting the
+    // unhoisted body, so the JSX import must remain live.
+    itBundled("jsx/AutoImportKeptReactCompilerOutlined", {
+      files: {
+        "/index.tsx": /* tsx */ `
+          import { useMemo } from "react";
+          export function Live({items}) {
+            const mapped = useMemo(() => items.map(x => <li key={x}>{x}</li>), [items]);
+            return mapped;
+          }
+        `,
+      },
+      external: ["react", "react/*"],
+      jsx: { runtime: "automatic" },
+      reactCompiler: true,
+      onAfterBundle(api) {
+        const file = api.readFile("out.js");
+        expect(file).toMatch(/from\s*"react\/jsx-(dev-)?runtime"/);
+        expect(file).toMatch(/jsx(DEV)?\(/);
+      },
+    });
+
+    // Transpile-only output (--no-bundle, same single-file path as the
+    // runtime transpiler) never tree-shakes parts, so the synthesized runtime
+    // import must survive even when every JSX expression is dead.
+    itBundled("jsx/AutoImportKeptWhenNotBundling", {
+      files: {
+        "/index.tsx": /* tsx */ `
+          const unused = <div>dead</div>;
+          console.log('only-this');
+        `,
+      },
+      bundling: false,
+      jsx: { runtime: "automatic" },
+      onAfterBundle(api) {
+        const file = api.readFile("out.js");
+        expect(file).toMatch(/from\s*"react\/jsx-(dev-)?runtime"/);
+        // Transpile-only keeps the hashed import alias, e.g. `jsx_w77yafs4(`.
+        expect(file).toMatch(/jsx(DEV)?(_\w+)?\(/);
+      },
+    });
+
+    // Two entry modules: one where JSX survives, one where it is all dead.
+    // The JSX source must be bundled (for the live entry) without leaking an
+    // extra import into the dead entry's chunk.
+    itBundled("jsx/AutoImportMixedEntries", {
+      files: {
+        "/live.tsx": /* tsx */ `
+          export const el = <div>live</div>;
+        `,
+        "/dead.tsx": /* tsx */ `
+          const unused = <div>dead</div>;
+          export default 'dead-entry';
+        `,
+      },
+      entryPoints: ["/live.tsx", "/dead.tsx"],
+      external: ["react", "react/*"],
+      jsx: { runtime: "automatic" },
+      onAfterBundle(api) {
+        const live = api.readFile("out/live.js");
+        const dead = api.readFile("out/dead.js");
+        expect(live).toMatch(/from\s*"react\/jsx-(dev-)?runtime"/);
+        expect(dead).not.toContain("react");
+        expect(dead).not.toContain("unused");
+      },
+    });
+  });
 });

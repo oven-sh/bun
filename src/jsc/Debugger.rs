@@ -117,13 +117,7 @@ pub struct Debugger {
     // default `""`.
     pub from_environment_variable: &'static [u8],
     pub script_execution_context_id: u32,
-    /// Set once the exit handshake has run for this thread; see
-    /// `wait_for_debugger_to_disconnect`.
     pub has_waited_for_disconnect: bool,
-    /// `process._debugEnd()` on this thread. Node's `_debugEnd` drops this
-    /// agent's IO thread, after which `WaitForDisconnect` has no `io_` and
-    /// does not wait; a later `inspector.open()` undoes it. Per-thread, like
-    /// Node's per-agent state — a worker must not disarm the main thread.
     pub debug_ended: bool,
     pub next_debugger_id: u64,
     pub poll_ref: KeepAlive,
@@ -171,7 +165,7 @@ impl Default for Debugger {
 unsafe extern "C" {
     safe fn Bun__createJSDebugger(global: &JSGlobalObject) -> u32;
     safe fn BunDebugger__notifyWaitingForDebugger(ctx_id: u32);
-    safe fn BunDebugger__waitForDebuggerToDisconnect(ctx_id: u32, is_worker: bool);
+    safe fn BunDebugger__waitForDebuggerToDisconnect(ctx_id: u32);
     safe fn Bun__ensureDebugger(ctx_id: u32, wait: bool);
     safe fn Bun__startJSDebuggerThread(
         global: &JSGlobalObject,
@@ -186,15 +180,23 @@ unsafe extern "C" {
 
 static FUTEX_ATOMIC: AtomicU32 = AtomicU32::new(0);
 static HAS_CREATED_DEBUGGER: AtomicBool = AtomicBool::new(false);
-/// Script execution context of the thread currently blocked waiting for a
-/// frontend (`--inspect-brk`, `--inspect-wait`, `inspector.waitForDebugger()`),
-/// or 0 when none is. Contexts are what inspector connections are keyed by, so
-/// a waiting worker must not answer for the main thread. Read from the debugger
-/// thread to answer `NodeRuntime.enable`, hence atomic.
 /// A single slot suffices because only one context can wait today (workers
 /// publish no CDP target); with two simultaneous waiters the second store
 /// would win.
+/// Relaxed suffices: a single word with no dependent data, and the observable
+/// `NodeRuntime.waitingForDebugger` event also travels via `postTaskConcurrently`
+/// (whose lock fences), so a stale read can only delay it by one task, not drop it.
 static WAITING_FOR_DEBUGGER_CONTEXT: AtomicU32 = AtomicU32::new(0);
+
+/// What the debugger thread takes from the debuggee VM's thread.
+struct DebuggerThreadInit {
+    debuggee: crate::VmHandle,
+    ctx_id: u32,
+    is_connect: bool,
+    is_node_inspector: bool,
+    from_env: &'static [u8],
+    path_or_port: Option<&'static [u8]>,
+}
 
 impl Debugger {
     /// `Debugger.waitForDebuggerIfNecessary(vm)` — block on the futex until
@@ -422,26 +424,23 @@ impl Debugger {
             // exit; `wait_for_thread_startup` blocks on it so `--inspect`
             // prints its banner before script output, as Node does.
             FUTEX_ATOMIC.store(1, Ordering::Relaxed);
-            // `std::thread::spawn` requires `Send`; raw `*mut
-            // VirtualMachine` is `!Send`. Wrap in a `Send` newtype — the
-            // pointer is only ever dereferenced on the debugger thread under
-            // `holdAPILock` (see `start_js_debugger_thread` doc), and the VM
-            // outlives the process.
-            struct SendVmPtr(*mut VirtualMachine);
-            // SAFETY: see comment above — cross-thread access is mediated
-            // by `holdAPILock` / the futex; the VM allocation is `'static`.
-            unsafe impl Send for SendVmPtr {}
-            let send_vm = SendVmPtr(this);
+            // Everything the debugger thread needs from this VM, copied here;
+            // it reaches back only through the (uncounted) handle to wake us.
+            let init = DebuggerThreadInit {
+                debuggee: this_ref.handle(),
+                ctx_id: dbg.script_execution_context_id,
+                is_connect: dbg.mode == Mode::Connect,
+                is_node_inspector: dbg.protocol == Protocol::NodeInspector,
+                from_env: dbg.from_environment_variable,
+                path_or_port: dbg.path_or_port,
+            };
             // Rust's `std::thread` default stack (2 MiB) is too small to run
             // a full `VirtualMachine::init` + JS module load on this thread,
             // so use 16 MiB.
             std::thread::Builder::new()
                 .name("Debugger".to_string())
                 .stack_size(16 * 1024 * 1024)
-                .spawn(move || {
-                    let send_vm = send_vm;
-                    Debugger::start_js_debugger_thread(send_vm.0);
-                })
+                .spawn(move || Debugger::start_js_debugger_thread(init))
                 .map_err(|_| crate::CrateError::ThreadSpawnFailed)?;
             // The `JoinHandle` is dropped here, detaching the thread.
         }
@@ -452,24 +451,14 @@ impl Debugger {
         if dbg.wait_for_connection != Wait::Off {
             dbg.poll_ref.ref_(get_vm_ctx(AllocatorType::Js));
             dbg.must_block_until_connected = true;
-            // Armed here, before the debugger thread can accept a frontend, so
-            // a client that attaches immediately still sees the waiting state.
-            // No broadcast: no connection can exist yet.
             WAITING_FOR_DEBUGGER_CONTEXT.store(dbg.script_execution_context_id, Ordering::Relaxed);
         }
         Ok(())
     }
 
     /// Debugger-thread entry: build a second `VirtualMachine`, hold the API
-    /// lock, run `start()`.
-    ///
-    /// `other_vm` is the *parent thread's* VM. The parent thread
-    /// continues executing (and mutating that VM) concurrently with this
-    /// thread.
-    /// Taking `&mut VirtualMachine` here would assert exclusive access we do
-    /// not have — UB. We hold a raw `*VirtualMachine` and
-    /// never materialize a `&`/`&mut VirtualMachine` to the foreign-thread VM.
-    pub(crate) fn start_js_debugger_thread(other_vm: *mut VirtualMachine) {
+    /// lock, and run [`Debugger::start`] inside it.
+    fn start_js_debugger_thread(init: DebuggerThreadInit) {
         // The global allocator is mimalloc and `InitOptions` does not carry
         // `allocator`/`env_loader` (those are wired by
         // `RuntimeHooks::init_runtime_state`).
@@ -493,73 +482,34 @@ impl Debugger {
         vm.event_loop_mut().ensure_waker();
 
         extern "C" fn start_trampoline(ctx: *mut c_void) {
-            // Forward the raw pointer unchanged — see fn doc above
-            // for why we never form `&mut VirtualMachine` to the parent VM.
-            Debugger::start(ctx.cast::<VirtualMachine>());
+            // SAFETY: `ctx` is `&mut slot` below; `hold_api_lock` calls this
+            // synchronously on the same frame.
+            let init = unsafe { (*ctx.cast::<Option<DebuggerThreadInit>>()).take() };
+            Debugger::start(init.expect("init"));
         }
+        let mut slot = Some(init);
         #[allow(deprecated)]
         vm.global()
             .vm()
-            .hold_api_lock(other_vm.cast(), start_trampoline);
+            .hold_api_lock((&raw mut slot).cast(), start_trampoline);
     }
 
-    /// Runs inside `holdAPILock` on the
-    /// debugger thread. Publishes the inspector URL(s), wakes the futex the
-    /// parent VM is blocked on, then spins this thread's event loop forever.
-    ///
-    /// Aliasing: every `VirtualMachine` / `EventLoop` access here
-    /// goes through a raw pointer with a fresh short-lived `&mut *p` formed at
-    /// the call site, never bound to a long-lived reference. Reasons:
-    ///
-    /// 1. `other_vm` is owned by the parent thread (see
-    ///    `start_js_debugger_thread` doc); after the futex wake the parent
-    ///    resumes its tick loop concurrently. Holding `&mut VirtualMachine`
-    ///    across that point is a data race on a `&mut`-covered allocation.
-    /// 2. `this.event_loop()` returns a self-pointer into the inline
-    ///    `regular_event_loop` field (VirtualMachine.rs:489), so a long-lived
-    ///    `&mut EventLoop` overlaps any later `&mut VirtualMachine` use.
-    /// 3. `Bun__startJSDebuggerThread` and `tick()` re-enter JS, which calls
-    ///    `VirtualMachine::get()` / `event_loop()` and mints fresh `&mut` to
-    ///    the same allocations — holding our own across those calls is UB.
-    fn start(other_vm: *mut VirtualMachine) {
+    /// Runs inside `holdAPILock` on the debugger thread. Publishes the
+    /// inspector URL(s), wakes the futex the debuggee VM is blocked on, then
+    /// spins this thread's event loop forever.
+    fn start(init: DebuggerThreadInit) {
         jsc::mark_binding();
 
-        // `this` is this thread's own VM (created in `start_js_debugger_thread`)
-        // — safe to hold as `&'static`. `other_vm` remains a raw pointer (see
-        // aliasing note above): the parent thread mutates it concurrently after the
-        // futex wake, so forming `&VirtualMachine` to it would be a data race.
         let this: &VirtualMachine = VirtualMachine::get();
-        // SAFETY: `other_vm` is the parent-thread VM, live for process
-        // lifetime. We read its `event_loop` self-pointer once *before* the
-        // futex wake (while the parent is still blocked / not yet past the
-        // wait-loop) and reuse the raw pointer for the cross-thread `wakeup()`
-        // calls below. `wakeup()` takes `&self` and is the documented
-        // thread-safe path (event_loop.rs:779).
-        let other_loop: *mut crate::event_loop::EventLoop = unsafe { (*other_vm).event_loop() };
         let global: &JSGlobalObject = this.global();
-
-        // Copy the four scalars we need from the parent VM's
-        // debugger before re-entering JS or waking the parent. We run inside
-        // an `extern "C"` trampoline where unwinding is UB — if `debugger` is
-        // missing, wake the parent and bail instead (unreachable in
-        // practice; `create()` always populates `debugger` before spawning).
-        // SAFETY: `other_vm` live; short-lived shared borrow of `debugger`
-        // ends before any other access to `*other_vm`.
-        let (ctx_id, is_connect, is_node_inspector, from_env, path_or_port) =
-            match unsafe { (*other_vm).debugger.as_deref() } {
-                Some(d) => (
-                    d.script_execution_context_id,
-                    d.mode == Mode::Connect,
-                    d.protocol == Protocol::NodeInspector,
-                    d.from_environment_variable,
-                    d.path_or_port,
-                ),
-                None => {
-                    FUTEX_ATOMIC.store(0, Ordering::Relaxed);
-                    bun_threading::Futex::wake(&FUTEX_ATOMIC, 1);
-                    return;
-                }
-            };
+        let DebuggerThreadInit {
+            debuggee,
+            ctx_id,
+            is_connect,
+            is_node_inspector,
+            from_env,
+            path_or_port,
+        } = init;
 
         if !from_env.is_empty() {
             let mut url = BunString::clone_utf8(from_env);
@@ -570,9 +520,6 @@ impl Debugger {
         if let Some(path_or_port) = path_or_port {
             let mut url = BunString::clone_utf8(path_or_port);
             let _scope = this.enter_event_loop_scope();
-            // A `--inspect*` listener keeps its JSC-protocol pathname and adds
-            // Node's `/json` endpoints plus a second, CDP-speaking pathname.
-            // `inspector.open()` servers are already CDP-only.
             let enable_node_cdp = !is_node_inspector && !is_connect;
             Bun__startJSDebuggerThread(
                 global,
@@ -585,7 +532,7 @@ impl Debugger {
             );
         }
 
-        this.global().handle_rejected_promises();
+        let _ = this.global().handle_rejected_promises();
 
         if let Some(log) = this.log_ref() {
             if !log.msgs.is_empty() {
@@ -601,16 +548,12 @@ impl Debugger {
         FUTEX_ATOMIC.store(0, Ordering::Relaxed);
         bun_threading::Futex::wake(&FUTEX_ATOMIC, 1);
 
-        // SAFETY: `other_loop` is the parent VM's event loop, live for process
-        // lifetime; `wakeup()` takes `&self` and is thread-safe.
-        unsafe { (*other_loop).wakeup() };
-        // Re-read `this.event_loop()` here rather than reusing
-        // the cached `loop` — `vm.event_loop` may have flipped between
-        // `regular_event_loop` and `macro_event_loop` inside the re-entrant JS
-        // above. `event_loop_mut()` re-reads the slot on every call.
+        debuggee.wake();
+        // `vm.event_loop` may have flipped between `regular_event_loop` and
+        // `macro_event_loop` inside the re-entrant JS above;
+        // `event_loop_mut()` re-reads the slot.
         this.event_loop_mut().tick();
-        // SAFETY: see above.
-        unsafe { (*other_loop).wakeup() };
+        debuggee.wake();
 
         loop {
             // Each call forms a fresh short-lived `&`/`&mut` (via the safe
@@ -710,9 +653,6 @@ pub fn wait_for_node_inspector_connection() {
         }
         dbg.must_block_until_connected = true;
     }
-    // A frontend may already be attached with the NodeRuntime domain enabled
-    // (inspector.open() then waitForDebugger()); Node announces the new wait to
-    // it, so tell the debugger thread before blocking.
     let ctx_id = match this.debugger.as_deref() {
         Some(d) => d.script_execution_context_id,
         None => 0,
@@ -744,17 +684,11 @@ pub fn abandon_node_inspector_wait() {
     );
 }
 
-/// Answers `NodeRuntime.enable` on the debugger thread: Node emits
-/// `NodeRuntime.waitingForDebugger` from that command exactly while the
-/// inspected thread is blocked waiting for a frontend.
 // HOST_EXPORT(Debugger__isWaitingForDebugger, c)
 pub fn is_waiting_for_debugger(ctx_id: u32) -> bool {
     ctx_id != 0 && WAITING_FOR_DEBUGGER_CONTEXT.load(Ordering::Relaxed) == ctx_id
 }
 
-/// Node's `Agent::WaitForDisconnect`, run from the exit funnel: announce the
-/// teardown to every attached CDP frontend and block until each disconnects.
-/// A no-op unless a CDP frontend is attached to this thread's context.
 pub fn wait_for_debugger_to_disconnect(vm: &VirtualMachine) {
     // The borrow must end before the call below: it blocks, and pumping the
     // inspector runs user JS on this thread (Runtime.evaluate), which can
@@ -764,7 +698,6 @@ pub fn wait_for_debugger_to_disconnect(vm: &VirtualMachine) {
         let Some(dbg) = vm.debugger_mut() else {
             return;
         };
-        // process.exit() inside an exit handler re-enters the funnel; wait once.
         if dbg.has_waited_for_disconnect || dbg.debug_ended {
             return;
         }
@@ -774,12 +707,9 @@ pub fn wait_for_debugger_to_disconnect(vm: &VirtualMachine) {
     if ctx_id == 0 {
         return;
     }
-    BunDebugger__waitForDebuggerToDisconnect(ctx_id, !vm.is_main_thread());
+    BunDebugger__waitForDebuggerToDisconnect(ctx_id);
 }
 
-/// `inspector.open()` brings this thread's inspector back up, so a previous
-/// `process._debugEnd()` no longer suppresses the exit handshake. The reopen
-/// path reuses the existing `Debugger`, so clearing it here is required.
 // HOST_EXPORT(Debugger__clearDebugEnd, c)
 pub fn clear_debug_end() {
     if let Some(dbg) = VirtualMachine::get().debugger_mut() {
@@ -787,8 +717,6 @@ pub fn clear_debug_end() {
     }
 }
 
-/// `process._debugEnd()`. Only the exit-handshake half of Node's `_debugEnd`
-/// is implemented: this thread's listener and any live session stay up.
 // HOST_EXPORT(Debugger__debugEnd, c)
 pub fn debug_end() {
     if let Some(dbg) = VirtualMachine::get().debugger_mut() {
@@ -820,8 +748,6 @@ pub fn did_connect() {
         dbg.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
         this.event_loop_mut().wakeup();
     }
-    // Matches Node's runIfWaitingForDebugger -> unsetWaitingForDebugger: the
-    // wait is resolved, so NodeRuntime.enable must stop announcing it.
     let _ = WAITING_FOR_DEBUGGER_CONTEXT.compare_exchange(
         ctx_id,
         0,
@@ -831,7 +757,7 @@ pub fn did_connect() {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// AsyncTaskTracker — stable surface (used by WorkTask / event_loop).
+// AsyncTaskTracker — stable surface (used by pool jobs / event_loop).
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Default, Copy, Clone)]

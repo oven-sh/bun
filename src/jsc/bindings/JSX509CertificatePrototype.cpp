@@ -82,9 +82,9 @@ static const HashTableValue JSX509CertificatePrototypeTableValues[] = {
     { "toLegacyObject"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsX509CertificateProtoFuncToLegacyObject, 0 } },
     { "toString"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsX509CertificateProtoFuncToString, 0 } },
     { "validFrom"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_validFrom, 0 } },
-    { "validFromDate"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessorOrValue), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_validFromDate, 0 } },
+    { "validFromDate"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_validFromDate, 0 } },
     { "validTo"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_validTo, 0 } },
-    { "validToDate"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessorOrValue), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_validToDate, 0 } },
+    { "validToDate"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_validToDate, 0 } },
     { "verify"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsX509CertificateProtoFuncVerify, 1 } },
 };
 
@@ -114,34 +114,6 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncToString, (JSGlobalObject * g
     return JSValue::encode(jsString(vm, pemString));
 }
 
-// function getFlags(options = kEmptyObject) {
-//   validateObject(options, 'options');
-//   const {
-//     subject = 'default',  // Can be 'default', 'always', or 'never'
-//     wildcards = true,
-//     partialWildcards = true,
-//     multiLabelWildcards = false,
-//     singleLabelSubdomains = false,
-//   } = { ...options };
-//   let flags = 0;
-//   validateString(subject, 'options.subject');
-//   validateBoolean(wildcards, 'options.wildcards');
-//   validateBoolean(partialWildcards, 'options.partialWildcards');
-//   validateBoolean(multiLabelWildcards, 'options.multiLabelWildcards');
-//   validateBoolean(singleLabelSubdomains, 'options.singleLabelSubdomains');
-//   switch (subject) {
-//     case 'default': /* Matches OpenSSL's default, no flags. */ break;
-//     case 'always': flags |= X509_CHECK_FLAG_ALWAYS_CHECK_SUBJECT; break;
-//     case 'never': flags |= X509_CHECK_FLAG_NEVER_CHECK_SUBJECT; break;
-//     default:
-//       throw new ERR_INVALID_ARG_VALUE('options.subject', subject);
-//   }
-//   if (!wildcards) flags |= X509_CHECK_FLAG_NO_WILDCARDS;
-//   if (!partialWildcards) flags |= X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS;
-//   if (multiLabelWildcards) flags |= X509_CHECK_FLAG_MULTI_LABEL_WILDCARDS;
-//   if (singleLabelSubdomains) flags |= X509_CHECK_FLAG_SINGLE_LABEL_SUBDOMAINS;
-//   return flags;
-// }
 static uint32_t getFlags(JSC::VM& vm, JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSValue options)
 {
     if (options.isUndefined())

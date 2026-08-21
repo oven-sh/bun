@@ -100,8 +100,6 @@ pub enum Representation {
     Shortcut,
     /// git+ssh://git@domain/user/project.git#committish
     Sshurl,
-    /// ssh://domain/user/project.git#committish
-    Ssh,
     /// https://domain/user/project.git#committish
     Https,
     /// git://domain/user/project.git#committish
@@ -653,6 +651,7 @@ impl<'a> UrlProtocol<'a> {
     }
 }
 
+#[derive(Clone)]
 pub(crate) enum UrlProtocolPairUrl<'a> {
     Managed(Box<[u8]>),
     Unmanaged(&'a [u8]),
@@ -868,24 +867,14 @@ pub(crate) fn correct_url<'a>(
         });
     }
 
-    if col_idx == -1 && matches!(url_proto_pair.protocol, UrlProtocol::Unknown) {
-        // `normalize_protocol` only ever returns `Unmanaged` here, so re-borrow
-        // rather than move; the `Managed` arm clones for completeness.
-        return Ok(UrlProtocolPair {
-            url: match &url_proto_pair.url {
-                UrlProtocolPairUrl::Unmanaged(s) => UrlProtocolPairUrl::Unmanaged(s),
-                UrlProtocolPairUrl::Managed(s) => UrlProtocolPairUrl::Managed(s.clone()),
-            },
-            protocol: UrlProtocol::WellFormed(WellDefinedProtocol::GitPlusSsh),
-        });
-    }
-
+    let protocol = if col_idx == -1 && matches!(url_proto_pair.protocol, UrlProtocol::Unknown) {
+        UrlProtocol::WellFormed(WellDefinedProtocol::GitPlusSsh)
+    } else {
+        url_proto_pair.protocol
+    };
     Ok(UrlProtocolPair {
-        url: match &url_proto_pair.url {
-            UrlProtocolPairUrl::Unmanaged(s) => UrlProtocolPairUrl::Unmanaged(s),
-            UrlProtocolPairUrl::Managed(s) => UrlProtocolPairUrl::Managed(s.clone()),
-        },
-        protocol: url_proto_pair.protocol,
+        url: url_proto_pair.url.clone(),
+        protocol,
     })
 }
 
@@ -1046,7 +1035,7 @@ pub(crate) mod formatters {
             let pathname_owned = url.pathname().to_owned_slice();
             let pathname = strings::trim_prefix(&pathname_owned, b"/");
 
-            let mut iter = pathname.split(|&b| b == b'/');
+            let mut iter = strings::split(pathname, b"/");
             let Some(user_part) = iter.next() else {
                 return Ok(None);
             };
@@ -1114,7 +1103,7 @@ pub(crate) mod formatters {
             let pathname_owned = url.pathname().to_owned_slice();
             let pathname = strings::trim_prefix(&pathname_owned, b"/");
 
-            let mut iter = pathname.split(|&b| b == b'/');
+            let mut iter = strings::split(pathname, b"/");
             let Some(user_part) = iter.next() else {
                 return Ok(None);
             };
@@ -1226,7 +1215,7 @@ pub(crate) mod formatters {
             let pathname_owned = url.pathname().to_owned_slice();
             let pathname = strings::trim_prefix(&pathname_owned, b"/");
 
-            let mut iter = pathname.split(|&b| b == b'/');
+            let mut iter = strings::split(pathname, b"/");
             let Some(mut user_part) = iter.next() else {
                 return Ok(None);
             };
@@ -1311,7 +1300,7 @@ pub(crate) mod formatters {
             let pathname_owned = url.pathname().to_owned_slice();
             let pathname = strings::trim_prefix(&pathname_owned, b"/");
 
-            let mut iter = pathname.split(|&b| b == b'/');
+            let mut iter = strings::split(pathname, b"/");
             let Some(user_part) = iter.next() else {
                 return Ok(None);
             };

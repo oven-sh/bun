@@ -1,0 +1,7 @@
+{
+  "name": "link-dep-lifecycle-scripts",
+  "version": "1.0.0",
+  "dependencies": {
+    "a": "file:./a"
+  }
+}

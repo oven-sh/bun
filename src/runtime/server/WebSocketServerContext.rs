@@ -14,9 +14,6 @@ pub struct WebSocketServerContext {
     pub(crate) send_pings_automatically: bool,
     pub(crate) reset_idle_timeout_on_send: bool,
     pub(crate) close_on_backpressure_limit: bool,
-    /// Internal, undocumented, not part of `Bun.serve({ websocket })`: accept a
-    /// `Sec-WebSocket-Key` of any non-zero length. Only the inspector server in
-    /// `src/js/internal/debugger.ts` sets it, to match Node's inspector.
     pub(crate) allow_any_sec_websocket_key: bool,
 }
 
@@ -74,6 +71,11 @@ impl Handler {
         self.vm.get()
     }
 
+    /// Route an error a websocket handler produced to the `error` handler (a
+    /// top-level call: what it throws is reported and the handler goes on), or
+    /// — with none — to the uncaught-exception path. `Err` is only a termination
+    /// pending from the preceding callback.
+    ///
     /// `on_error` must be copied to a stack local by the caller before any
     /// user JS runs: a re-entrant `ws.close()` on the last socket of a stopped
     /// server can downgrade the wrapper (the sole GC root for `wsOnError`)
@@ -84,23 +86,28 @@ impl Handler {
         on_error: JSValue,
         global_object: &JSGlobalObject,
         error_value: JSValue,
-    ) {
+    ) -> JsResult<()> {
         // Termination raised inside the preceding callback.call() cannot be
-        // cleared; entering JS again trips executeCallImpl's assertNoException.
+        // cleared; it is the caller's `Err`, not an error to hand to `error`.
         if global_object.has_exception() {
-            return;
+            return Err(bun_jsc::JsError::Thrown);
         }
         if !on_error.is_empty_or_undefined_or_null() {
-            let _ = on_error
-                .call(global_object, JSValue::UNDEFINED, &[error_value])
-                .map_err(|err| self.global_object.report_active_exception_as_unhandled(err));
-            return;
+            // A top-level call of its own: what `error` throws is reported here.
+            global_object.bun_vm().event_loop_mut().run_callback(
+                on_error,
+                global_object,
+                JSValue::UNDEFINED,
+                &[error_value],
+            );
+            return Ok(());
         }
 
         let _ =
             VirtualMachine::get()
                 .as_mut()
                 .uncaught_exception(global_object, error_value, false);
+        Ok(())
     }
 
     pub fn from_js(global_object: &JSGlobalObject, object: JSValue) -> JsResult<Handler> {

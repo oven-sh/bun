@@ -118,8 +118,34 @@ function runInNewContext(code, context, options) {
   } else {
     options = { ...options };
   }
-  context = createContext(context, options);
+  // The context is created here (rather than by Script.prototype.runInNewContext) so measureMemory() can see it.
+  context = createContext(context, getContextOptions(options));
   return createScript(code, options).runInNewContext(context, options);
+}
+
+// lib/vm.js getContextOptions: a run's context* options are the new context's options.
+function getContextOptions(options) {
+  const {
+    contextName: name,
+    contextOrigin: origin,
+    contextCodeGeneration,
+    microtaskMode,
+    importModuleDynamically,
+  } = options;
+  if (name !== undefined) validateString(name, "options.contextName");
+  if (origin !== undefined) validateString(origin, "options.contextOrigin");
+  let codeGeneration: { strings?: boolean; wasm?: boolean } | undefined;
+  if (contextCodeGeneration !== undefined) {
+    validateObject(contextCodeGeneration, "options.contextCodeGeneration");
+    const { strings, wasm } = contextCodeGeneration;
+    if (strings !== undefined) validateBoolean(strings, "options.contextCodeGeneration.strings");
+    if (wasm !== undefined) validateBoolean(wasm, "options.contextCodeGeneration.wasm");
+    codeGeneration = {};
+    if (strings !== undefined) codeGeneration.strings = strings;
+    if (wasm !== undefined) codeGeneration.wasm = wasm;
+  }
+  if (microtaskMode !== undefined) validateString(microtaskMode, "options.microtaskMode");
+  return { name, origin, codeGeneration, microtaskMode, importModuleDynamically };
 }
 
 function createScript(code, options) {

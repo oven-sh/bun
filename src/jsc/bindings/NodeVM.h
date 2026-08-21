@@ -43,6 +43,10 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
 JSPromise* importModule(JSGlobalObject* globalObject, JSString* moduleNameValue, RefPtr<JSC::ScriptFetchParameters> parameters, const SourceOrigin& sourceOrigin);
 bool isContext(JSC::JSGlobalObject* globalObject, JSValue);
 bool getContextArg(JSC::JSGlobalObject* globalObject, JSValue& contextArg);
+// Makes `sandbox` (which must not already be one) a context: creates its global, registers it for isContext(), and
+// returns the object that stands for the context (the sandbox, or for DONT_CONTEXTIFY the new global's proxy). Null on
+// exception.
+JSObject* contextify(JSC::JSGlobalObject* globalObject, JSObject* sandbox, const NodeVMContextOptions& options, JSValue importer);
 bool isUseMainContextDefaultLoaderConstant(JSC::JSGlobalObject* globalObject, JSValue value);
 
 } // namespace NodeVM
@@ -87,33 +91,6 @@ public:
     bool ownMicrotaskQueue = false;
 };
 
-class NodeVMGlobalObject;
-
-class NodeVMSpecialSandbox final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-
-    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesGetOwnPropertySlot;
-
-    static NodeVMSpecialSandbox* create(VM& vm, NodeVMGlobalObject* globalObject);
-
-    DECLARE_INFO;
-    DECLARE_VISIT_CHILDREN;
-    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);
-    static Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
-
-    static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, JSC::PropertyName, JSC::PropertySlot&);
-
-    NodeVMGlobalObject* parentGlobal() const { return m_parentGlobal.get(); }
-
-private:
-    WriteBarrier<NodeVMGlobalObject> m_parentGlobal;
-
-    NodeVMSpecialSandbox(VM& vm, Structure* structure, NodeVMGlobalObject* globalObject);
-
-    void finishCreation(VM&);
-};
-
 // This class represents a sandboxed global object for vm contexts
 class NodeVMGlobalObject final : public Bun::GlobalScope {
 public:
@@ -136,29 +113,33 @@ public:
     static void destroy(JSCell* cell);
     void setContextifiedObject(JSC::JSObject* contextifiedObject);
     JSObject* contextifiedObject() const { return m_sandbox.get(); }
-    bool isNotContextified() const { return m_contextOptions.notContextified; }
+    // The object standing in front of this global's properties, or null for a DONT_CONTEXTIFY context (whose
+    // properties simply live on the global object).
+    JSObject* sandbox() const { return m_contextOptions.notContextified ? nullptr : m_sandbox.get(); }
     bool hasOwnMicrotaskQueue() const { return m_contextOptions.ownMicrotaskQueue; }
     // Performs a microtask checkpoint on this context's own queue
     // (microtaskMode: "afterEvaluate" contexts only; no-op otherwise).
     void drainOwnMicrotasks();
-    NodeVMSpecialSandbox* specialSandbox() const { return m_specialSandbox.get(); }
-    void setSpecialSandbox(NodeVMSpecialSandbox* sandbox) { m_specialSandbox.set(vm(), this, sandbox); }
     JSValue dynamicImportCallback() const { return m_dynamicImportCallback.get(); }
 
     // Override property access to delegate to contextified object
+    // With a sandbox object (a contextified context) these implement Node's contextify interceptors
+    // (node_contextify.cc): the sandbox is consulted first and receives writes, definitions and deletions; the
+    // global object itself keeps the builtins and the declared-variable bindings behind it.
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, JSC::PropertyName, JSC::PropertySlot&);
     static bool getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned index, JSC::PropertySlot&);
     static bool put(JSCell*, JSGlobalObject*, JSC::PropertyName, JSC::JSValue, JSC::PutPropertySlot&);
+    static bool putByIndex(JSCell*, JSGlobalObject*, unsigned index, JSC::JSValue, bool shouldThrow);
     static void getOwnPropertyNames(JSObject*, JSGlobalObject*, JSC::PropertyNameArrayBuilder&, JSC::DontEnumPropertiesMode);
     static bool defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow);
     static bool deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSC::DeletePropertySlot& slot);
+    static bool deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index);
+    static bool preventExtensions(JSObject*, JSGlobalObject*);
     static JSC::JSPromise* moduleLoaderImportModule(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSString* moduleNameValue, RefPtr<JSC::ScriptFetchParameters> parameters, const JSC::SourceOrigin&, bool deferred);
 
 private:
-    // The contextified object that acts as the global proxy
+    // The object that stands for this context: the user's sandbox, or for DONT_CONTEXTIFY the global's own proxy.
     WriteBarrier<JSObject> m_sandbox;
-    // A special object used when the context is not contextified.
-    WriteBarrier<NodeVMSpecialSandbox> m_specialSandbox;
     WriteBarrier<Unknown> m_dynamicImportCallback;
     NodeVMContextOptions m_contextOptions {};
 

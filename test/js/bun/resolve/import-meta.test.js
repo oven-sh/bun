@@ -32,7 +32,7 @@ it("import.meta.main", () => {
   expect(exitCode).toBe(0);
 });
 
-it("import.meta.main follows a Bun.main override, is readable from a vm context, and is false in workers", async () => {
+it("import.meta.main follows a Bun.main override but not an own path property, is readable from a vm context, and is false in workers", async () => {
   using dir = tempDir("import-meta-main", {
     "entry.mjs": `
       import { runInNewContext } from "node:vm";
@@ -44,11 +44,16 @@ it("import.meta.main follows a Bun.main override, is readable from a vm context,
           worker.once("error", reject);
         });
         const other = await import("./other.mjs");
+        const entryPath = import.meta.path;
         const before = [import.meta.main, other.main()];
         const vmContext = [import.meta, other.meta].map(meta => runInNewContext("meta.main", { meta }));
         Bun.main = other.path;
         const after = [import.meta.main, other.main()];
-        console.log(JSON.stringify({ before, vmContext, after, worker: await fromWorker }));
+        // main is computed from the module's own path, so swapping the visible path properties changes nothing.
+        Object.defineProperty(import.meta, "path", { value: other.path });
+        Object.defineProperty(other.meta, "path", { value: entryPath });
+        const ownPath = [import.meta.main, other.main()];
+        console.log(JSON.stringify({ before, vmContext, after, ownPath, worker: await fromWorker }));
         await worker.terminate();
       } else {
         parentPort.postMessage(import.meta.main);
@@ -72,6 +77,7 @@ it("import.meta.main follows a Bun.main override, is readable from a vm context,
     before: [true, false],
     vmContext: [true, false],
     after: [false, true],
+    ownPath: [false, true],
     worker: false,
   });
   expect(exitCode).toBe(0);

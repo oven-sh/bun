@@ -1042,10 +1042,19 @@ impl Fd {
             .copied()
             .unwrap_or(Fd::INVALID)
     }
+    /// The Windows counterpart of `AT_FDCWD`. Kernel handles are multiples of
+    /// 4, so no real handle has this value. [`Fd::decode_windows`] resolves it
+    /// to the handle ntdll currently keeps in the PEB, which `chdir` closes
+    /// and replaces. Handing out that handle itself would make the `Fd` a
+    /// snapshot: after a `chdir` it no longer compares equal to `Fd::cwd()`,
+    /// and closing it closes whatever object was given the old value since.
+    #[cfg(windows)]
+    const WINDOWS_CWD: u64 = 1;
+
     #[cfg(windows)]
     #[inline]
     pub fn cwd() -> Fd {
-        Fd::from_system(fd::windows_current_directory_handle())
+        Fd(Self::WINDOWS_CWD)
     }
 
     /// Whether this is the process's stdin/stdout/stderr.
@@ -1097,9 +1106,12 @@ impl Fd {
         match self.kind() {
             FdKind::System => {
                 // A stored value of 0 decodes to INVALID_HANDLE_VALUE.
-                let n = self.value_as_system();
-                let h = if n == 0 { usize::MAX } else { n as usize };
-                DecodeWindows::Windows(h as *mut core::ffi::c_void)
+                let h = match self.value_as_system() {
+                    0 => usize::MAX as *mut core::ffi::c_void,
+                    Self::WINDOWS_CWD => fd::windows_current_directory_handle(),
+                    n => n as usize as *mut core::ffi::c_void,
+                };
+                DecodeWindows::Windows(h)
             }
             // Direct extract — do NOT recurse into self.uv() (which calls decode_windows).
             FdKind::Uv => DecodeWindows::Uv((self.0 & FD_VALUE_MASK) as u32 as i32),
@@ -1450,6 +1462,9 @@ impl core::fmt::Display for Fd {
         }
         #[cfg(windows)]
         {
+            if fd == Fd::cwd() {
+                return w.write_str("[cwd]");
+            }
             match fd.decode_windows() {
                 DecodeWindows::Windows(_) => write!(w, "{}[handle]", fd.value_as_system()),
                 DecodeWindows::Uv(n) => write!(w, "{}[libuv]", n),

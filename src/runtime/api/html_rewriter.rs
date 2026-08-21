@@ -2794,7 +2794,6 @@ impl EndTag {
     lol_content_ops! { RawEndTag, end_tag, JSValue::NULL;
         before / before_,
         after / after_,
-        replace / replace_,
     }
 
     #[bun_jsc::host_fn(method)]

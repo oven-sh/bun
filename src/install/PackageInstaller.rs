@@ -1356,7 +1356,7 @@ impl<'a> PackageInstaller<'a> {
                 }
                 self.summary.fail += 1;
                 self.increment_tree_install_count(
-                    !IS_PENDING_PACKAGE_INSTALL,
+                    !is_pending_package_install,
                     self.current_tree_id,
                     log_level,
                 );

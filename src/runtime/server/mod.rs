@@ -179,18 +179,6 @@ impl AnyRoute {
         }
     }
 
-    pub fn ref_(&self) {
-        match self {
-            AnyRoute::Static(p) => bun_ptr::BackRef::from(*p).ref_(),
-            AnyRoute::File(p) => bun_ptr::BackRef::from(*p).ref_(),
-            AnyRoute::Directory(p) => bun_ptr::BackRef::from(*p).ref_(),
-            AnyRoute::Html(r) => {
-                // SAFETY: RefPtr keeps the pointee live while held in the route table.
-                unsafe { bun_ptr::RefCount::<html_bundle::Route>::ref_(r.as_ptr()) };
-            }
-            AnyRoute::FrameworkRouter(_) => {} // not reference counted
-        }
-    }
     pub(crate) fn deref_(&self) {
         match self {
             // SAFETY: intrusive refcount; ptr was heap-allocated with rc=1.
@@ -333,7 +321,9 @@ pub struct UserRoute<const SSL: bool, const DEBUG: bool> {
 
 impl<const SSL: bool, const DEBUG: bool> Drop for NewServer<SSL, DEBUG> {
     fn drop(&mut self) {
-        // The remaining owned fields (config, base_url, h3_alt_svc, dev_server,
+        // Before `config`, which owns the arena the dev server's transpilers and views live in.
+        drop(self.dev_server.take());
+        // The remaining owned fields (config, base_url, h3_alt_svc,
         // user_routes, all_closed_promise) drop automatically.
         if let Some(p) = self.plugins.take() {
             // SAFETY: `plugins` carries the `heap::alloc` provenance from

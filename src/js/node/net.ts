@@ -2132,8 +2132,8 @@ Socket.prototype.connect = function connect(...args) {
 
   if (!this._handle) {
     this._handle = newDetachedSocket(typeof this[bunTlsSymbol] === "function");
+    initSocketHandle(this);
   }
-  initSocketHandle(this);
 
   if (!pipe) {
     lookupAndConnect(this, options);
@@ -4270,10 +4270,8 @@ function initSocketHandle(self) {
   const handle = self._handle;
   if (handle) {
     handle[owner_symbol] = self;
-    // The new connection (fresh handle, autoSelectFamily retry, or reconnect through a
-    // live handle) inherits a prior unref()/pause(), not the previous connection's hold.
+    // A fresh handle (e.g. an autoSelectFamily retry) inherits a prior unref()/pause().
     if (self[kUserUnrefed] || self[kPausedUnref]) handle.unref?.();
-    else handle.ref?.();
   }
 }
 

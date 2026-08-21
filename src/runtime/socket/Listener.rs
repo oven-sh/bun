@@ -626,7 +626,7 @@ impl Listener {
             owned_ssl_ctx: Cell::new(None),
             this_value: JsCell::new(jsc::JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
-            user_wants_ref: Cell::new(true),
+            ref_pollref_on_connect: Cell::new(true),
             connection: JsCell::new(None),
             local_binding: JsCell::new(None),
             server_name: JsCell::new(None),
@@ -672,7 +672,7 @@ impl Listener {
             owned_ssl_ctx: Cell::new(None),
             this_value: JsCell::new(jsc::JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
-            user_wants_ref: Cell::new(true),
+            ref_pollref_on_connect: Cell::new(true),
             connection: JsCell::new(None),
             local_binding: JsCell::new(None),
             server_name: JsCell::new(None),
@@ -1256,7 +1256,7 @@ impl Listener {
                             flags: Cell::new(SocketFlags::default()),
                             this_value: JsCell::new(jsc::JsRef::empty()),
                             poll_ref: JsCell::new(KeepAlive::init()),
-                            user_wants_ref: Cell::new(true),
+                            ref_pollref_on_connect: Cell::new(true),
                             buffered_data_for_node_net: Default::default(),
                             bytes_written: Cell::new(0),
                             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
@@ -1342,7 +1342,7 @@ impl Listener {
                             flags: Cell::new(SocketFlags::default()),
                             this_value: JsCell::new(jsc::JsRef::empty()),
                             poll_ref: JsCell::new(KeepAlive::init()),
-                            user_wants_ref: Cell::new(true),
+                            ref_pollref_on_connect: Cell::new(true),
                             buffered_data_for_node_net: Default::default(),
                             bytes_written: Cell::new(0),
                             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
@@ -1584,7 +1584,7 @@ fn connect_finish<const IS_SSL: bool>(
             flags: Cell::new(SocketFlags::default()),
             this_value: JsCell::new(jsc::JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
-            user_wants_ref: Cell::new(true),
+            ref_pollref_on_connect: Cell::new(true),
             buffered_data_for_node_net: Default::default(),
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
@@ -1619,7 +1619,7 @@ fn connect_finish<const IS_SSL: bool>(
         f.set(SocketFlags::ALLOW_HALF_OPEN, allow_half_open);
         socket_ref.flags.set(f);
     }
-    // Held for the connect attempt regardless of `user_wants_ref`; `on_open` applies that.
+    // Held for the connect attempt regardless of `ref_pollref_on_connect`; `on_open` applies that.
     socket_ref
         .poll_ref
         .with_mut(|p| p.ref_(bun_io::js_vm_ctx()));

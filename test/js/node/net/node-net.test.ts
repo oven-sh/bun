@@ -787,6 +787,46 @@ describe.concurrent("unref()/pause() around connect()", () => {
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
+
+  // A pause() that reached the native socket mid-connect used to latch its paused bit while the
+  // open re-armed reads, so backpressure could never pause it again and the buffer grew unbounded.
+  it("pause() while the connect is in flight still lets backpressure stop reads", async () => {
+    const chunk = Buffer.alloc(64 * 1024, "x");
+    await using server = createServer(c => {
+      const pump = () => {
+        while (!c.destroyed && c.write(chunk)) {}
+      };
+      c.on("drain", pump);
+      c.on("error", () => {});
+      pump();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const s = new Socket();
+    try {
+      s.connect((server.address() as any).port, "127.0.0.1");
+      await new Promise<void>(resolve =>
+        process.nextTick(() =>
+          process.nextTick(() => {
+            s.pause();
+            resolve();
+          }),
+        ),
+      );
+      await once(s, "connect");
+      // Once the buffer passes the high-water mark reads must stop. Unpatched, every loop turn
+      // delivered another recv; allow at most a couple that were already in flight.
+      const deadline = performance.now() + 5000;
+      while (performance.now() < deadline && s.readableLength < s.readableHighWaterMark)
+        await new Promise(r => setTimeout(r, 1));
+      expect(s.readableLength).toBeGreaterThanOrEqual(s.readableHighWaterMark);
+      const settled = s.bytesRead;
+      for (let i = 0; i < 100; i++) await new Promise(r => setTimeout(r, 0));
+      const recvBuffer = 512 * 1024;
+      expect(s.bytesRead - settled).toBeLessThanOrEqual(2 * recvBuffer);
+    } finally {
+      s.destroy();
+    }
+  });
 });
 
 it("socket should keep process alive if unref is not called", async () => {

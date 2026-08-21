@@ -308,7 +308,7 @@ pub struct NewSocket<const SSL: bool> {
     /// downgraded to weak once the socket is closed/inactive so GC can reclaim it.
     pub this_value: JsCell<JsRef>,
     pub poll_ref: JsCell<KeepAlive>,
-    pub(crate) user_wants_ref: Cell<bool>,
+    pub(crate) ref_pollref_on_connect: Cell<bool>,
     pub(crate) connection: JsCell<Option<super::listener::UnixOrHost>>,
     /// `localAddress`/`localPort` from the connect options: the socket is
     /// bound to this address before connecting. Always a literal IP.
@@ -1423,7 +1423,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         // update the internal socket instance to the one that was just connected
         // This socket must be replaced because the previous one is a connecting socket not a uSockets socket
         this.socket.set(socket);
-        if !this.user_wants_ref.get() {
+        // Stale if node:net reconnected through this wrapper while it was paused.
+        this.update_flags(|f| f.remove(Flags::IS_PAUSED));
+        if !this.ref_pollref_on_connect.replace(true) {
             this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
         }
         jsc::mark_binding!();
@@ -3227,10 +3229,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
-        this.user_wants_ref.set(true);
-        // Not yet established: `connect_finish` holds the loop and `on_open` applies this.
         if this.socket.get().is_established() {
             this.poll_ref.with_mut(|p| p.ref_(js_loop_ctx()));
+        } else {
+            // `connect_finish` holds the loop until then; `on_open` applies this.
+            this.ref_pollref_on_connect.set(true);
         }
         Ok(JSValue::UNDEFINED)
     }
@@ -3242,9 +3245,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
-        this.user_wants_ref.set(false);
         if this.socket.get().is_established() {
             this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
+        } else {
+            this.ref_pollref_on_connect.set(false);
         }
         Ok(JSValue::UNDEFINED)
     }
@@ -3586,7 +3590,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             flags: Cell::new(initial_flags),
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
-            user_wants_ref: Cell::new(this.user_wants_ref.get()),
+            ref_pollref_on_connect: Cell::new(true),
             buffered_data_for_node_net: JsCell::new(Vec::new()),
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(NativeCallbacks::None),
@@ -3693,7 +3697,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             flags: Cell::new(Flags::BYPASS_TLS | Flags::IS_ACTIVE | Flags::OWNED_PROTOS),
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
-            user_wants_ref: Cell::new(true),
+            ref_pollref_on_connect: Cell::new(true),
             buffered_data_for_node_net: JsCell::new(Vec::new()),
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(NativeCallbacks::None),
@@ -4813,7 +4817,7 @@ pub fn js_upgrade_duplex_to_tls(
         flags: Cell::new(initial_flags),
         this_value: JsCell::new(JsRef::empty()),
         poll_ref: JsCell::new(KeepAlive::init()),
-        user_wants_ref: Cell::new(true),
+        ref_pollref_on_connect: Cell::new(true),
         buffered_data_for_node_net: JsCell::new(Vec::new()),
         bytes_written: Cell::new(0),
         native_callback: JsCell::new(NativeCallbacks::None),

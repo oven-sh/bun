@@ -481,16 +481,39 @@ pub(crate) const DEFAULT_PERMISSION: Mode = 0;
 // the thread-pool wrappers that back every `fs.promises.*` call (and the shell
 // `cp` builtin).
 
-/// Node's `THROW_IF_INSUFFICIENT_PERMISSIONS` checks, keyed by argument struct;
-/// the denial `resource` is the path exactly as passed.
+/// Node's `THROW_IF_INSUFFICIENT_PERMISSIONS` checks, keyed by argument struct.
 /// https://github.com/nodejs/node/blob/main/src/node_file.cc
 pub(crate) mod fs_perm {
+    use bun_jsc::{JSGlobalObject, JSValue};
+
+    use super::NodeFSFunctionEnum;
     use crate::node::types::{PathLike, PathOrFileDescriptor};
     use crate::permission::{self, Scope};
 
     pub struct Denied {
         pub scope: Scope,
+        /// The path exactly as passed.
         pub resource: Vec<u8>,
+    }
+
+    impl Denied {
+        /// The `ERR_ACCESS_DENIED` node raises. node_file.cc runs the path
+        /// through `ToNamespacedPath` before checking it, so `resource` is
+        /// reported as `path.toNamespacedPath()` of the argument (identity off
+        /// Windows), except for the ops that check the argument as passed.
+        /// `op` is `None` for the bindings outside [`NodeFSFunctionEnum`],
+        /// all of which namespace.
+        pub(crate) fn to_error(
+            &self,
+            global: &JSGlobalObject,
+            op: Option<NodeFSFunctionEnum>,
+        ) -> JSValue {
+            if op.is_some_and(NodeFSFunctionEnum::permission_resource_as_passed) {
+                return permission::access_denied_error(global, self.scope, &self.resource);
+            }
+            let resource = crate::node::path::to_namespaced_path_owned(&self.resource);
+            permission::access_denied_error(global, self.scope, &resource)
+        }
     }
 
     pub(crate) fn check(scope: Scope, path: &[u8]) -> Option<Denied> {
@@ -10478,6 +10501,14 @@ impl NodeFSFunctionEnum {
                 | Self::Readlink
                 | Self::Symlink
         )
+    }
+
+    /// Ops whose node_file.cc check runs on the argument as passed rather
+    /// than on its `ToNamespacedPath` form (lstat checks first; mkdtemp
+    /// checks the raw template), so the denial's `resource` is reported
+    /// un-namespaced on Windows too. See [`fs_perm::Denied::to_error`].
+    pub const fn permission_resource_as_passed(self) -> bool {
+        matches!(self, Self::Lstat | Self::Mkdtemp)
     }
 
     /// The event-loop [`TaskTag`] of the ops that are libuv requests on

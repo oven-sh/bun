@@ -62,7 +62,8 @@ function openAsBlob(path, options) {
       resource = resource instanceof URL ? Bun.fileURLToPath(resource) : String(resource);
     }
     if (!permission.has("fs.read", resource)) {
-      throw permission.accessDeniedError("fs.read", resource);
+      // node checks the toNamespacedPath form, which is what its error reports.
+      throw permission.accessDeniedError("fs.read", require("node:path").toNamespacedPath(resource));
     }
   }
   return Promise.$resolve(Bun.file(path, options));

@@ -1,5 +1,7 @@
-//! Intrusive reference counting (single-threaded and thread-safe) + `RefPtr<T>`
-//! debug-tracking wrapper.
+//! Intrusive reference counting (single-threaded and thread-safe) + the handles
+//! over it: `OwnedRef<T>` (owns one ref, releases on drop), `ScopedRef<T>`
+//! (holds one ref for a scope) and `RefPtr<T>` (owns one ref, released by
+//! hand; carries the debug tracking).
 //!
 //! Each ref-count mixin is a pair of (embedded struct + trait the host
 //! type implements). See `RefCounted` / `ThreadSafeRefCounted`.
@@ -520,8 +522,10 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
     #[cfg(debug_assertions)]
     #[doc(hidden)]
     #[inline]
-    pub fn debug_data_ptr(&mut self) -> *mut dyn DebugDataOps {
-        &raw mut self.debug
+    pub fn debug_data_ptr(&self) -> *mut dyn DebugDataOps {
+        // Only `&self` methods are ever called through this pointer; it is
+        // spelled `*mut` because `rc_debug_data`'s signature is.
+        core::ptr::from_ref::<dyn DebugDataOps>(&self.debug).cast_mut()
     }
 
     // `getRefCount` / `is_ref_count` / `ref_count_options` — see
@@ -542,7 +546,7 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
 /// the canonical inc/dec/destroy-at-zero logic.
 ///
 /// Use `#[derive(CellRefCounted)]` to derive this trait together with the
-/// [`AnyRefCounted`] bridge (so [`RefPtr`] / [`ScopedRef`] accept the type)
+/// [`AnyRefCounted`] bridge (so [`OwnedRef`] / [`RefPtr`] / [`ScopedRef`] accept the type)
 /// and inherent `ref_()`/`deref()` forwarders (so existing call sites that
 /// invoke them as inherent methods keep compiling without importing the
 /// trait).
@@ -675,25 +679,20 @@ struct NoopDebugData;
 #[cfg(debug_assertions)]
 impl DebugDataOps for NoopDebugData {
     fn assert_valid_dyn(&self) {}
-    fn acquire(&mut self, _return_address: usize) -> TrackedRefId {
+    fn acquire(&self, _return_address: usize) -> TrackedRefId {
         TrackedRefId::new(0)
     }
-    fn release(&mut self, _id: TrackedRefId, _return_address: usize) {}
+    fn release(&self, _id: TrackedRefId, _return_address: usize) {}
 }
 
 #[cfg(debug_assertions)]
 #[doc(hidden)]
 pub fn noop_debug_data() -> *mut dyn DebugDataOps {
-    // Per-call leaked stub — `RefPtr` only calls `acquire`/`release` on it,
-    // both of which are no-ops, so a shared static would also be sound; but
-    // `*mut dyn` from a `static mut` is unergonomic. Debug-only.
-    // SAFETY: NonNull::dangling is fine here? No — `RefPtr` derefs it.
-    // Use a thread-local static to avoid per-ref allocation.
-    thread_local! {
-        static NOOP: core::cell::UnsafeCell<NoopDebugData> =
-            const { core::cell::UnsafeCell::new(NoopDebugData) };
-    }
-    NOOP.with(|n| n.get() as *mut dyn DebugDataOps)
+    static NOOP: NoopDebugData = NoopDebugData;
+    // Every `DebugDataOps` method takes `&self`, so the `*mut` spelling of
+    // this pointer (fixed by `rc_debug_data`'s signature) is never written
+    // through.
+    core::ptr::from_ref::<dyn DebugDataOps>(&NOOP).cast_mut()
 }
 
 // A blanket `impl<T: ThreadSafeRefCounted> AnyRefCounted for T` would overlap
@@ -728,9 +727,9 @@ pub fn noop_debug_data() -> *mut dyn DebugDataOps {
 ///   someone else (the inverse of [`from_raw`](Self::from_raw)).
 ///
 /// Any new struct field of `RefPtr<T>` type must document, at the field site,
-/// which of its owners' methods discharges this obligation. (Newtypes like
-/// `CookieMapRef` wrap a single owned ref *and* implement `Drop` themselves —
-/// `RefPtr` itself does not.)
+/// which of its owners' methods discharges this obligation. For a field or a
+/// container element, prefer [`OwnedRef`], which releases on drop; `RefPtr`
+/// is for the call sites that need to release by hand.
 ///
 /// See [`RefCount`]'s comment for examples & best practices.
 pub struct RefPtr<T: AnyRefCounted> {
@@ -851,6 +850,19 @@ impl<T: AnyRefCounted> RefPtr<T> {
     #[inline]
     pub fn into_raw(self) -> *mut T {
         self.leak()
+    }
+
+    /// Turn this handle into an [`OwnedRef`] holding the same ref, so that it
+    /// is released by drop instead of by a `deref()` call. The count is
+    /// untouched; this handle's debug tracking entry is closed by `leak`.
+    #[inline]
+    pub fn into_owned(self) -> OwnedRef<T>
+    where
+        T::DestructorCtx: Default,
+    {
+        // SAFETY: `leak` hands over the ref this handle owned on a live `T`,
+        // through the pointer it was created with.
+        unsafe { OwnedRef::from_raw(self.leak()) }
     }
 
     /// Borrow the inner `*mut T` without affecting the refcount (analogous to
@@ -1014,6 +1026,187 @@ where
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// OwnedRef
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Exactly one intrusive ref on a `T`, released when this value is dropped.
+///
+/// This is the owning handle to store in fields and containers. The pointee
+/// is live for as long as the `OwnedRef` exists, so it derefs to `&T` without
+/// any `unsafe` at the use site; `clone()` takes another ref; and dropping it,
+/// whether explicitly, by `Option::take()`, by popping it out of a queue or by
+/// the holder being destroyed, is what releases the ref. A ref held this way
+/// cannot be released twice, and cannot be forgotten without naming
+/// [`into_raw`](Self::into_raw).
+///
+/// How it relates to the other handles in this module:
+/// - [`ScopedRef`] is the same `rc_ref` / `rc_deref` pair, but holds the ref
+///   for one scope and cannot be dereferenced or stored; it brackets a
+///   re-entrant call. `OwnedRef` is that ref as a value that can be moved.
+/// - [`RefPtr`] owns a ref too, but has no `Drop` impl, so every holder has to
+///   call `deref()` by hand on every path; in exchange it records each holder
+///   in the debug ref tracker. Use `OwnedRef` unless a call site needs that;
+///   [`RefPtr::into_owned`] converts an existing handle.
+///
+/// Constructors: [`new`](Self::new) allocates a `T` and owns its initial ref,
+/// [`acquire`](Self::acquire) takes a ref on an existing `T`, and
+/// [`from_raw`](Self::from_raw) takes over a ref the caller already owns (the
+/// inverse of `into_raw`, which hands a ref to code that will release it some
+/// other way, typically a C or C++ callback calling back into `deref`).
+/// Inside a callback that already has a [`ThisPtr`](crate::ThisPtr),
+/// [`ThisPtr::owned_ref`](crate::ThisPtr::owned_ref) is the safe way to take
+/// one.
+///
+/// For a `T` that hands out refs to itself while an operation is in flight
+/// (a socket, a timer, a queued request), the natural shape is a field of
+/// type `Cell<Option<OwnedRef<Self>>>` that is filled when the operation
+/// starts and `take()`n when it completes: dropping the taken value is the
+/// release, and because the count cannot reach zero while the field is
+/// filled, `T`'s destructor only ever sees the field empty.
+///
+/// Threads: an `OwnedRef<T>` is `Send` and `Sync` under the same bounds as
+/// `Arc<T>` (`T: Send + Sync`), so a task can carry the ref it holds on a
+/// [`ThreadSafeRefCounted`] host to the work pool and release it there. Hosts
+/// of the two single-threaded counts can never meet those bounds, because
+/// `RefCount` and `CellRefCounted`'s `Cell<u32>` are `!Sync`.
+#[must_use = "dropping immediately releases the ref"]
+pub struct OwnedRef<T: AnyRefCounted>(NonNull<T>)
+where
+    T::DestructorCtx: Default;
+
+impl<T: AnyRefCounted> OwnedRef<T>
+where
+    T::DestructorCtx: Default,
+{
+    /// Allocate `value` on the heap and own its initial ref. `value`'s count
+    /// must start at 1 (`RefCount::init()` and friends), since that is the ref
+    /// this handle releases; anything above it could never be released.
+    pub fn new(value: T) -> Self {
+        let ptr = bun_core::heap::into_raw(Box::new(value));
+        // SAFETY: freshly boxed, so live, with the full allocation's provenance.
+        debug_assert!(unsafe { T::rc_has_one_ref(ptr) });
+        // SAFETY: as above; the initial ref is the one this handle takes over.
+        unsafe { Self::from_raw(ptr) }
+    }
+
+    /// Take a new ref on `*ptr`; whatever ref the caller holds is untouched.
+    ///
+    /// # Safety
+    /// `ptr` must point to a live `T`, with the provenance the host's
+    /// `deref()` requires (the pointer the allocation was created with, or one
+    /// derived from it), since the returned value may be the one that ends up
+    /// destroying `*ptr`.
+    #[inline]
+    pub unsafe fn acquire(ptr: *mut T) -> Self {
+        // SAFETY: caller contract — `ptr` is live.
+        unsafe { T::rc_ref(ptr) };
+        // SAFETY: caller contract; the ref just taken is the one this handle owns.
+        unsafe { Self::from_raw(ptr) }
+    }
+
+    /// Take over a ref that the caller already owns, without touching the
+    /// count. Inverse of [`into_raw`](Self::into_raw).
+    ///
+    /// # Safety
+    /// As for [`acquire`](Self::acquire), and additionally the caller must own
+    /// one ref on `*ptr` that nothing else will release: this value now owns it.
+    #[inline]
+    pub unsafe fn from_raw(ptr: *mut T) -> Self {
+        // SAFETY: caller contract — a live `T` is not at address zero.
+        Self(unsafe { NonNull::new_unchecked(ptr) })
+    }
+
+    /// Give up the ref without releasing it and return the pointer. Whoever
+    /// receives the pointer now owns the ref and must eventually release it,
+    /// normally by passing it back to [`from_raw`](Self::from_raw).
+    #[inline]
+    pub fn into_raw(self) -> *mut T {
+        core::mem::ManuallyDrop::new(self).0.as_ptr()
+    }
+
+    /// The pointee's address, for identity comparisons and for APIs that take
+    /// a raw pointer. Holding this pointer does not hold a ref: it is valid
+    /// only while this `OwnedRef` (or another ref) is alive.
+    #[inline]
+    pub fn as_ptr(&self) -> *mut T {
+        self.0.as_ptr()
+    }
+
+    /// [`as_ptr`](Self::as_ptr) as a `NonNull`, for the call sites that key
+    /// or compare on one.
+    #[inline]
+    pub fn as_non_null(&self) -> NonNull<T> {
+        self.0
+    }
+
+    /// A [`ThisPtr`](crate::ThisPtr) to the pointee, for the FFI-shaped call
+    /// sites that take one. Valid while this `OwnedRef` (or another ref) is
+    /// alive.
+    #[inline]
+    pub fn this_ptr(&self) -> crate::ThisPtr<T> {
+        // SAFETY: we own a ref, so the pointee is live and non-null.
+        unsafe { crate::ThisPtr::new(self.0.as_ptr()) }
+    }
+}
+
+impl<T: AnyRefCounted> Clone for OwnedRef<T>
+where
+    T::DestructorCtx: Default,
+{
+    /// Takes another ref on the same pointee.
+    #[inline]
+    fn clone(&self) -> Self {
+        // SAFETY: our own ref keeps the pointee live, and `self.0` is the
+        // pointer a ref was taken through, so it has the provenance `acquire`
+        // asks for.
+        unsafe { Self::acquire(self.0.as_ptr()) }
+    }
+}
+
+impl<T: AnyRefCounted> core::ops::Deref for OwnedRef<T>
+where
+    T::DestructorCtx: Default,
+{
+    type Target = T;
+
+    #[inline]
+    fn deref(&self) -> &T {
+        // SAFETY: holding an `OwnedRef` means holding a ref, so the pointee is
+        // live for as long as `&self` is. Hosts are interior-mutable behind
+        // `&T` (single-threaded counts are `!Sync`, thread-safe hosts
+        // synchronise their own fields), so no `&mut T` is ever formed from one.
+        unsafe { self.0.as_ref() }
+    }
+}
+
+impl<T: AnyRefCounted> Drop for OwnedRef<T>
+where
+    T::DestructorCtx: Default,
+{
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: this value owns one ref (taken in `acquire` or handed over in
+        // `from_raw`), and `Drop` is the one place it is released; `into_raw`
+        // moves `self` into a `ManuallyDrop` so the two never both run.
+        unsafe { T::rc_deref(self.0.as_ptr()) };
+    }
+}
+
+// SAFETY: the `Arc<T>` argument. Moving an `OwnedRef<T>` to another thread
+// moves a `&T` there (`T: Sync`) and may make that thread the one that runs
+// `T`'s destructor (`T: Send`). Everything this type does to the count is
+// `rc_ref` / `rc_deref`, and the only count that can be embedded in a host
+// meeting these bounds is the atomic `ThreadSafeRefCount` (`RefCount` and the
+// `Cell<u32>` behind `CellRefCounted` are `!Sync`, so hosts embedding them
+// never qualify). A `RefPtr` to the same object held by some other thread
+// is also fine: its debug tracking goes through `&self` methods and a lock,
+// so nothing forms a `&mut` to the count while this thread uses it.
+unsafe impl<T: AnyRefCounted + Send + Sync> Send for OwnedRef<T> where T::DestructorCtx: Default {}
+// SAFETY: `&OwnedRef<T>` only yields `&T` (needs `T: Sync`) and clones, which
+// are atomic increments for the hosts these bounds admit (see above).
+unsafe impl<T: AnyRefCounted + Send + Sync> Sync for OwnedRef<T> where T::DestructorCtx: Default {}
+
+// ──────────────────────────────────────────────────────────────────────────
 // TrackedRef / TrackedDeref
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -1044,8 +1237,11 @@ struct TrackedDeref;
 #[cfg(debug_assertions)]
 pub trait DebugDataOps {
     fn assert_valid_dyn(&self);
-    fn acquire(&mut self, return_address: usize) -> TrackedRefId;
-    fn release(&mut self, id: TrackedRefId, return_address: usize);
+    /// Records a new holder. Takes `&self` because holders of a thread-safe
+    /// count come and go on several threads at once, while other threads may
+    /// be reading the count through a shared borrow.
+    fn acquire(&self, return_address: usize) -> TrackedRefId;
+    fn release(&self, id: TrackedRefId, return_address: usize);
 }
 
 #[cfg(debug_assertions)]
@@ -1059,11 +1255,18 @@ const MAGIC_VALID: u128 = 0x2f84_e51d;
 #[cfg(debug_assertions)]
 pub struct DebugData<Count> {
     magic: u128,
-    lock: bun_core::Mutex<()>,
     next_id: AtomicU32,
-    map: HashMap<TrackedRefId, TrackedRef>,
-    frees: ArrayHashMap<TrackedRefId, TrackedDeref>,
+    holders: bun_core::Mutex<Holders>,
     _count: core::marker::PhantomData<Count>,
+}
+
+/// The tables behind [`DebugData`]'s lock: the refs currently held, and the
+/// ids that have been released (so a double release can be told apart from a
+/// release of an id that was never issued).
+#[cfg(debug_assertions)]
+struct Holders {
+    live: HashMap<TrackedRefId, TrackedRef>,
+    frees: ArrayHashMap<TrackedRefId, TrackedDeref>,
 }
 
 #[cfg(debug_assertions)]
@@ -1072,10 +1275,11 @@ impl<Count> DebugData<Count> {
     pub(crate) fn empty() -> Self {
         Self {
             magic: MAGIC_VALID,
-            lock: bun_core::Mutex::new(()),
             next_id: AtomicU32::new(0),
-            map: HashMap::new(),
-            frees: ArrayHashMap::new(),
+            holders: bun_core::Mutex::new(Holders {
+                live: HashMap::new(),
+                frees: ArrayHashMap::new(),
+            }),
             _count: core::marker::PhantomData,
         }
     }
@@ -1089,25 +1293,16 @@ impl<Count> DebugData<Count> {
         TrackedRefId::new(self.next_id.fetch_add(1, Ordering::SeqCst))
     }
 
-    fn release_impl(&mut self, id: TrackedRefId, return_address: usize) {
-        // If this triggers ASAN, the RefCounted object is double-freed.
-        let _guard = self.lock.lock();
-        let _ = return_address;
-        if self.map.remove(&id).is_none() {
-            return;
-        }
-        self.frees.insert(id, TrackedDeref);
-    }
-
+    /// Runs on the last release, so nothing else can still reach `self`.
     fn deinit(&mut self, ret_addr: usize) {
         self.assert_valid();
         self.magic = 0;
-        let _guard = self.lock.lock();
-        self.map.clear();
-        self.map.shrink_to_fit();
+        let holders = self.holders.get_mut();
+        holders.live.clear();
+        holders.live.shrink_to_fit();
         // Clear and release the allocation.
-        self.frees.clear();
-        self.frees.shrink_to_fit();
+        holders.frees.clear();
+        holders.frees.shrink_to_fit();
         let _ = ret_addr;
     }
 }
@@ -1118,16 +1313,21 @@ impl<Count> DebugDataOps for DebugData<Count> {
         self.assert_valid();
     }
 
-    fn acquire(&mut self, return_address: usize) -> TrackedRefId {
-        let _guard = self.lock.lock();
+    fn acquire(&self, return_address: usize) -> TrackedRefId {
         let id = self.alloc_id();
         let _ = return_address;
-        self.map.insert(id, TrackedRef);
+        self.holders.lock().live.insert(id, TrackedRef);
         id
     }
 
-    fn release(&mut self, id: TrackedRefId, return_address: usize) {
-        self.release_impl(id, return_address);
+    fn release(&self, id: TrackedRefId, return_address: usize) {
+        // If this triggers ASAN, the RefCounted object is double-freed.
+        let _ = return_address;
+        let mut holders = self.holders.lock();
+        if holders.live.remove(&id).is_none() {
+            return;
+        }
+        holders.frees.insert(id, TrackedDeref);
     }
 }
 
@@ -1299,6 +1499,140 @@ mod tests {
         assert_eq!(drops(), before + 1);
     }
 
+    /// Current count of a live `Thing`.
+    fn count(t: *mut Thing) -> u32 {
+        // SAFETY: callers pass a `Thing` they still hold a ref on.
+        unsafe { (*RefCounted::get_ref_count(t)).get() }
+    }
+
+    #[test]
+    fn owned_ref_new_takes_a_ref_and_drop_releases_it() {
+        let _serial = serial();
+        let before = drops();
+        let t = Thing::new(5);
+        {
+            // SAFETY: `t` is live (we hold its initial ref).
+            let owned = unsafe { OwnedRef::acquire(t) };
+            assert_eq!(count(t), 2);
+            assert_eq!(*owned.payload, 5);
+            assert_eq!(owned.as_ptr(), t);
+            assert_eq!(owned.as_non_null().as_ptr(), t);
+            assert_eq!(owned.this_ptr().as_ptr(), t);
+        }
+        assert_eq!(count(t), 1);
+        assert_eq!(drops(), before);
+        // SAFETY: releasing the initial ref destroys it.
+        unsafe { RefCount::<Thing>::deref(t) };
+        assert_eq!(drops(), before + 1);
+    }
+
+    #[test]
+    fn owned_ref_last_one_out_destroys() {
+        let _serial = serial();
+        let before = drops();
+        let t = Thing::new(6);
+        // SAFETY: `t` is live and this adopts its initial ref, so from here on
+        // every ref is held by an `OwnedRef`.
+        let first = unsafe { OwnedRef::from_raw(t) };
+        let second = first.clone();
+        let held: Vec<OwnedRef<Thing>> = (0..3).map(|_| first.clone()).collect();
+        assert_eq!(count(t), 5);
+
+        drop(held);
+        assert_eq!(count(t), 2);
+        drop(second);
+        assert_eq!(count(t), 1);
+        assert_eq!(drops(), before);
+        drop(first);
+        assert_eq!(drops(), before + 1);
+    }
+
+    #[test]
+    fn owned_ref_into_raw_hands_the_ref_off_and_from_raw_takes_it_back() {
+        let _serial = serial();
+        let before = drops();
+        let owned = OwnedRef::new(Thing {
+            ref_count: RefCount::init(),
+            payload: Box::new(8),
+        });
+        let raw = owned.into_raw();
+        // The ref survived `into_raw`: nothing was released or destroyed.
+        assert_eq!(count(raw), 1);
+        assert_eq!(drops(), before);
+        // SAFETY: `raw` carries the ref `into_raw` handed off.
+        let owned = unsafe { OwnedRef::from_raw(raw) };
+        assert_eq!(*owned.payload, 8);
+        drop(owned);
+        assert_eq!(drops(), before + 1);
+    }
+
+    #[test]
+    fn owned_ref_option_take_releases_exactly_once() {
+        let _serial = serial();
+        let before = drops();
+        let t = Thing::new(9);
+        // The in-flight-operation shape: a slot that is filled while something
+        // holds a ref and emptied, releasing it, when that something finishes.
+        // SAFETY: `t` is live.
+        let slot: Cell<Option<OwnedRef<Thing>>> = Cell::new(Some(unsafe { OwnedRef::acquire(t) }));
+        assert_eq!(count(t), 2);
+        drop(slot.take());
+        assert_eq!(count(t), 1);
+        // A second take finds nothing, so nothing is released twice.
+        assert!(slot.take().is_none());
+        assert_eq!(count(t), 1);
+        assert_eq!(drops(), before);
+        // SAFETY: releasing the initial ref destroys it.
+        unsafe { RefCount::<Thing>::deref(t) };
+        assert_eq!(drops(), before + 1);
+    }
+
+    #[test]
+    fn ref_ptr_into_owned_keeps_the_count_and_releases_on_drop() {
+        let _serial = serial();
+        let before = drops();
+        let p = RefPtr::new(Thing {
+            ref_count: RefCount::init(),
+            payload: Box::new(10),
+        });
+        let t = p.as_ptr();
+        let owned = p.into_owned();
+        assert_eq!(count(t), 1);
+        assert_eq!(*owned.payload, 10);
+        assert_eq!(drops(), before);
+        drop(owned);
+        assert_eq!(drops(), before + 1);
+    }
+
+    #[test]
+    fn this_ptr_owned_ref_outlives_the_callback_that_took_it() {
+        let _serial = serial();
+        let before = drops();
+        let t = Thing::new(12);
+        // What a dispatch callback does: wrap the incoming pointer, park a ref
+        // somewhere that outlives the callback frame.
+        let parked = {
+            // SAFETY: `t` is live for the whole block (we hold its initial ref).
+            let this = unsafe { crate::ThisPtr::new(t) };
+            this.owned_ref()
+        };
+        assert_eq!(count(t), 2);
+        // SAFETY: releasing the initial ref; `parked` keeps it alive.
+        unsafe { RefCount::<Thing>::deref(t) };
+        assert_eq!(drops(), before);
+        assert_eq!(*parked.payload, 12);
+        drop(parked);
+        assert_eq!(drops(), before + 1);
+    }
+
+    #[test]
+    fn owned_ref_option_uses_the_null_niche() {
+        assert_eq!(
+            size_of::<Option<OwnedRef<Thing>>>(),
+            size_of::<OwnedRef<Thing>>()
+        );
+    }
+
     #[test]
     fn finalize_js_box_releases_one_ref() {
         let _serial = serial();
@@ -1389,6 +1723,100 @@ mod tests {
             assert_eq!(drops(), before);
             drop(bun_core::heap::take(s));
         }
+        assert_eq!(drops(), before + 1);
+    }
+
+    // What `#[derive(ThreadSafeRefCounted)]` emits for real hosts; spelled out
+    // because the derive expands to `::bun_ptr::` paths that do not resolve
+    // inside this crate.
+    impl AnyRefCounted for Shared {
+        type DestructorCtx = ();
+        unsafe fn rc_ref(this: *mut Self) {
+            // SAFETY: caller contract.
+            unsafe { ThreadSafeRefCount::<Shared>::ref_(this) }
+        }
+        unsafe fn rc_deref_with_context(this: *mut Self, (): ()) {
+            // SAFETY: caller contract.
+            unsafe { ThreadSafeRefCount::<Shared>::deref(this) }
+        }
+        unsafe fn rc_has_one_ref(this: *const Self) -> bool {
+            // SAFETY: caller contract.
+            unsafe { (*ThreadSafeRefCounted::get_ref_count(this.cast_mut())).has_one_ref() }
+        }
+        unsafe fn rc_assert_no_refs(this: *const Self) {
+            // SAFETY: caller contract.
+            unsafe { (*ThreadSafeRefCounted::get_ref_count(this.cast_mut())).assert_no_refs() }
+        }
+        #[cfg(debug_assertions)]
+        unsafe fn rc_debug_data(this: *mut Self) -> *mut dyn DebugDataOps {
+            // SAFETY: caller contract.
+            unsafe { (*ThreadSafeRefCounted::get_ref_count(this)).debug_data_ptr() }
+        }
+    }
+
+    // SAFETY: what a real thread-safe host declares. The count is atomic and
+    // `payload` is only ever read, so `&Shared` can be used from any thread
+    // and the last thread out may run the destructor.
+    unsafe impl Send for Shared {}
+    // SAFETY: as above.
+    unsafe impl Sync for Shared {}
+
+    #[test]
+    fn owned_ref_clones_cross_threads_and_the_last_one_destroys() {
+        let _serial = serial();
+        let before = drops();
+        let main_ref = OwnedRef::new(Shared {
+            ref_count: ThreadSafeRefCount::init(),
+            payload: Box::new(5),
+        });
+
+        // Each thread is handed its own clone and releases it by dropping it;
+        // `OwnedRef<Shared>: Send` is what lets the clone move into the closure.
+        let workers: Vec<_> = (0..4)
+            .map(|_| {
+                let theirs = main_ref.clone();
+                std::thread::spawn(move || *theirs.payload)
+            })
+            .collect();
+        for worker in workers {
+            assert_eq!(worker.join().unwrap(), 5);
+        }
+        assert_eq!(drops(), before);
+        // SAFETY: we still hold `main_ref`.
+        assert!(unsafe { <Shared as AnyRefCounted>::rc_has_one_ref(main_ref.as_ptr()) });
+
+        // The destroying release may also happen off the creating thread.
+        std::thread::spawn(move || drop(main_ref)).join().unwrap();
+        assert_eq!(drops(), before + 1);
+    }
+
+    #[test]
+    fn ref_ptr_tracking_coexists_with_owned_refs_on_other_threads() {
+        let _serial = serial();
+        let before = drops();
+        let tracked = RefPtr::new(Shared {
+            ref_count: ThreadSafeRefCount::init(),
+            payload: Box::new(7),
+        });
+        // SAFETY: `tracked` holds a ref, and `as_ptr` is the allocation's pointer.
+        let owned = unsafe { OwnedRef::acquire(tracked.as_ptr()) };
+        let workers: Vec<_> = (0..4)
+            .map(|_| {
+                let theirs = owned.clone();
+                std::thread::spawn(move || *theirs.payload)
+            })
+            .collect();
+        // Meanwhile this thread keeps driving the tracked handle: each
+        // `dupe_ref` / `deref` pair records and releases a holder entry.
+        for _ in 0..16 {
+            tracked.dupe_ref().deref();
+        }
+        for worker in workers {
+            assert_eq!(worker.join().unwrap(), 7);
+        }
+        drop(owned);
+        assert_eq!(drops(), before);
+        tracked.deref();
         assert_eq!(drops(), before + 1);
     }
 

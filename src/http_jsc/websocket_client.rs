@@ -181,8 +181,6 @@ impl<const SSL: bool> WebSocket<SSL> {
             // SAFETY: `tunnel` holds a live ref until the `deref` below.
             let tunnel = unsafe { ThisPtr::new(tunnel_ptr) };
             tunnel.clear_connected_web_socket();
-            // `shutdown` may synchronously fire SSLWrapper callbacks that
-            // re-enter the tunnel allocation (see WebSocketProxyTunnel::shutdown).
             WebSocketProxyTunnel::shutdown(tunnel);
             // SAFETY: `tunnel` (NonNull) held a live intrusive ref; release it.
             unsafe { WebSocketProxyTunnel::deref(tunnel_ptr) };
@@ -898,8 +896,6 @@ impl<const SSL: bool> WebSocket<SSL> {
     fn enqueue_encoded_bytes(&self, bytes: &[u8]) -> bool {
         // For tunnel mode, write through the tunnel instead of direct socket
         if let Some(tunnel) = self.proxy_tunnel.get() {
-            // `write_data()` may fire `write_encrypted(ctx)` which re-enters
-            // the tunnel allocation; `write` never holds a `&mut` across it.
             // SAFETY: `proxy_tunnel` holds a live ref on `tunnel`.
             let tunnel = unsafe { ThisPtr::new(tunnel.as_ptr()) };
             let wrote = match WebSocketProxyTunnel::write(tunnel, bytes) {
@@ -1065,9 +1061,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             debug_assert!(!out_buf.is_empty());
             if let Some(tunnel) = self.proxy_tunnel.get() {
                 // In tunnel mode, route through the tunnel's TLS layer
-                // instead of the detached raw socket. `write_data()` may fire
-                // `write_encrypted(ctx)` which re-enters the tunnel; `write`
-                // never holds a `&mut WebSocketProxyTunnel` across that dispatch.
+                // instead of the detached raw socket.
                 // SAFETY: `proxy_tunnel` holds a live ref on `tunnel`.
                 let tunnel = unsafe { ThisPtr::new(tunnel.as_ptr()) };
                 match WebSocketProxyTunnel::write(tunnel, out_buf) {

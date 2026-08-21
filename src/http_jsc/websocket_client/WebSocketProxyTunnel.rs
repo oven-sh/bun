@@ -20,8 +20,6 @@
 //! `wrapper` is a write-once `OnceCell` set in `start()` before it is first
 //! driven, so every access — from a driving entry or from a re-entered
 //! callback — is a short shared borrow; no `&mut Self` is ever formed.
-//! Callbacks never touch `wrapper`; the `*mut SSL` needed by `on_handshake` is
-//! snapshotted into `self.ssl` in `start()`.
 //!
 //! `*WebSocketProxyTunnel` is freely aliased across callbacks.
 
@@ -115,12 +113,6 @@ pub struct WebSocketProxyTunnel {
     socket: SocketUnion,
     /// Write buffer for encrypted data (maintains TLS record ordering)
     write_buffer: JsCell<StreamBuffer>,
-    /// Snapshot of `wrapper.ssl` taken in `start()`.
-    ///
-    /// Callbacks fired from inside `SslWrapper::{start,receive_data,...}` run while
-    /// the caller holds a live `&SslWrapper`. Snapshotting the `*mut SSL` here
-    /// lets `on_handshake` read it without touching `wrapper` at all.
-    ssl: Cell<Option<NonNull<boringssl::c::SSL>>>,
     /// Hostname for SNI (Server Name Indication)
     sni_hostname: Option<Box<[u8]>>,
     /// Whether to reject unauthorized certificates
@@ -162,7 +154,6 @@ impl WebSocketProxyTunnel {
             wrapper: OnceCell::new(),
             socket,
             write_buffer: JsCell::new(StreamBuffer::default()),
-            ssl: Cell::new(None),
             sni_hostname: Some(Box::<[u8]>::from(sni_hostname)),
             reject_unauthorized,
         });
@@ -210,12 +201,9 @@ impl WebSocketProxyTunnel {
         )
         .map_err(|_| crate::Error::InvalidOptions)?;
 
+        debug_assert!(this.wrapper.get().is_none(), "start() called twice");
+        let wrapper = this.wrapper.get_or_init(|| wrapper);
         let ssl = wrapper.ssl.get();
-
-        if this.wrapper.set(wrapper).is_err() {
-            return Err(crate::Error::InvalidOptions);
-        }
-        this.ssl.set(ssl);
 
         // Configure SNI with hostname.
         //
@@ -247,15 +235,11 @@ impl WebSocketProxyTunnel {
         }
 
         // `start*()` synchronously fires `on_open(ctx)` / `write_encrypted(ctx)`
-        // / etc. Those callbacks never touch `wrapper` and mutate only
-        // `Cell`/`JsCell` fields, so the `&SslWrapper` formed here is never
-        // invalidated.
-        if let Some(w) = this.wrapper.get() {
-            if !initial_data.is_empty() {
-                w.start_with_payload(initial_data);
-            } else {
-                w.start();
-            }
+        // / etc.; those callbacks mutate only `Cell`/`JsCell` fields.
+        if !initial_data.is_empty() {
+            wrapper.start_with_payload(initial_data);
+        } else {
+            wrapper.start();
         }
         Ok(())
     }
@@ -266,10 +250,7 @@ impl WebSocketProxyTunnel {
         let this = unsafe { ThisPtr::new(this) };
         let _guard = this.ref_guard();
         bun_core::scoped_log!(WebSocketProxyTunnel, "onOpen");
-        // SNI configuration is done in `start()` before the wrapper is driven;
-        // see the note there. This callback intentionally does not touch
-        // `this.wrapper` — the caller (`SslWrapper::start`) holds `&self`
-        // over those bytes.
+        // SNI configuration is done in `start()` before the wrapper is driven.
     }
 
     /// SSLWrapper callback: Called with decrypted data from the network
@@ -339,10 +320,9 @@ impl WebSocketProxyTunnel {
                 return;
             }
 
-            // Verify server identity via the `ssl` snapshot + `sni_hostname`;
-            // this path deliberately does not touch `wrapper` (the
-            // `receive_data()` frame holds `&SslWrapper`).
-            let failed_identity = match (this.ssl.get(), this.sni_hostname.as_deref()) {
+            // Verify server identity.
+            let ssl = this.wrapper.get().and_then(|w| w.ssl.get());
+            let failed_identity = match (ssl, this.sni_hostname.as_deref()) {
                 (Some(ssl_ptr), Some(hostname)) => {
                     // SAFETY: ssl_ptr is a live `*mut SSL` owned by the wrapper
                     // (heap-allocated by BoringSSL; disjoint from the tunnel struct).
@@ -458,27 +438,29 @@ impl WebSocketProxyTunnel {
             let _ = w.flush();
         }
 
-        // Send buffered encrypted data. `write_encrypted` above may have
-        // mutated `write_buffer`, so read it fresh; lend it out for the socket
-        // write so no borrow of the cell spans that call.
-        if this.write_buffer.get().is_not_empty() {
-            let mut buf = this.write_buffer.replace(StreamBuffer::default());
-            let to_send_len = buf.slice().len();
-            let written = this.socket.write(buf.slice());
+        // Send buffered encrypted data (`write_encrypted` above may have
+        // appended to it). A raw uws socket write does not re-enter the tunnel.
+        let still_backpressured = this.write_buffer.with_mut(|buf| {
+            let to_send = buf.slice();
+            if to_send.is_empty() {
+                return false;
+            }
+            let to_send_len = to_send.len();
+            let written = this.socket.write(to_send);
             if written < 0 {
-                this.write_buffer.set(buf);
-                return;
+                return true;
             }
-
-            let written_usize = usize::try_from(written).expect("int cast");
-            if written_usize == to_send_len {
+            let written = usize::try_from(written).expect("int cast");
+            if written == to_send_len {
                 buf.reset();
-                this.write_buffer.set(buf);
+                false
             } else {
-                buf.cursor += written_usize;
-                this.write_buffer.set(buf);
-                return; // still have backpressure
+                buf.wrote(written);
+                true
             }
+        });
+        if still_backpressured {
+            return;
         }
 
         // Tunnel drained - let the connected WebSocket flush its send_buffer.
@@ -510,6 +492,9 @@ impl WebSocketProxyTunnel {
     /// Takes `ThisPtr<Self>` because `write_data()` fires `write_encrypted(ctx)`
     /// and may fire `on_handshake(ctx)`/`on_close(ctx)`.
     pub(crate) fn write(this: ThisPtr<Self>, data: &[u8]) -> crate::Result<usize> {
+        // The caller's ref (the client's `proxy`/`proxy_tunnel` field) can be
+        // released from inside `write_data` via `on_close`; keep `w` alive.
+        let _guard = this.ref_guard();
         if let Some(w) = this.wrapper.get() {
             return w
                 .write_data(data)
@@ -523,6 +508,7 @@ impl WebSocketProxyTunnel {
     /// Takes `ThisPtr<Self>` because `shutdown()` may fire
     /// `on_close(ctx)`/`write_encrypted(ctx)`.
     pub(crate) fn shutdown(this: ThisPtr<Self>) {
+        let _guard = this.ref_guard();
         if let Some(w) = this.wrapper.get() {
             let _ = w.shutdown(true); // Fast shutdown
         }

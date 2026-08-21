@@ -192,6 +192,108 @@ describe("ReadStream.prototype.setRawMode", () => {
   });
 });
 
+describe("isatty", () => {
+  // On Windows, `bun_sys::isatty()` for a HANDLE-backed fd used to test only
+  // `GetFileType == FILE_TYPE_CHAR`, which is true for any character device
+  // (`NUL`, `COM1`, `CON`, ...), not just a console. libuv's `uv_guess_handle`
+  // (what `tty.isatty()` uses) additionally gates on `GetConsoleMode`
+  // succeeding. `Fd::stdin()/stdout()/stderr()` are HANDLE-backed on Windows,
+  // so any Rust caller of `bun_sys::isatty(Fd::stdin())` disagreed with
+  // `tty.isatty(0)` when stdin was NUL (e.g. spawned with stdin: "ignore").
+  //
+  // There is no JS-visible API that routes through the HANDLE-backed branch on
+  // Windows (`tty.isatty` is `uv_guess_handle` in C++; `process.std*.isTTY`
+  // reads the `GetConsoleMode`-based startup probe), so this test reaches
+  // through `bun:internal-for-testing` to call `bun_sys::isatty` directly.
+  test.each(["ignore", "pipe"] as const)(
+    "bun_sys::isatty(Fd::std*) agrees with tty.isatty() when stdio is not a terminal (stdin: %p)",
+    async stdinOption => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const { isattyStdioHandles } = require("bun:internal-for-testing");
+            const { isatty } = require("node:tty");
+            const sys = isattyStdioHandles();
+            const uv = { stdin: isatty(0), stdout: isatty(1), stderr: isatty(2) };
+            console.log(JSON.stringify({ sys, uv }));
+          `,
+        ],
+        env: bunEnv,
+        stdin: stdinOption,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const { sys, uv } = JSON.parse(stdout.trim());
+      // tty.isatty(): pipes and NUL are not a terminal.
+      expect(uv).toEqual({ stdin: false, stdout: false, stderr: false });
+      // bun_sys::isatty on the HANDLE-backed stdio fds must give the same answer.
+      expect(sys).toEqual(uv);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // Positive case: under a real terminal (openpty / ConPTY) both probes report
+  // true. Without this, a `FdKind::System => return false` regression would
+  // pass the negative cases above.
+  test("bun_sys::isatty(Fd::std*) agrees with tty.isatty() under a terminal", async () => {
+    let output = "";
+    const decoder = new TextDecoder();
+    const done = Promise.withResolvers<void>();
+    const eof = Promise.withResolvers<void>();
+
+    const proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { isattyStdioHandles } = require("bun:internal-for-testing");
+          const { isatty } = require("node:tty");
+          const sys = isattyStdioHandles();
+          process.stdout.write(
+            "RESULT " +
+              JSON.stringify([sys.stdin, sys.stdout, sys.stderr, isatty(0), isatty(1), isatty(2)]),
+          );
+        `,
+      ],
+      env: bunEnv,
+      terminal: {
+        // Wide enough that ConPTY does not hard-wrap the RESULT line.
+        cols: 200,
+        rows: 24,
+        data(_t, chunk: Uint8Array) {
+          output += decoder.decode(chunk, { stream: true });
+          if (output.includes("RESULT ") && output.includes("]")) done.resolve();
+        },
+        exit() {
+          eof.resolve();
+        },
+      },
+    });
+
+    await Promise.race([done.promise, eof.promise]);
+    proc.kill();
+    await proc.exited;
+    proc.terminal?.close();
+    output += decoder.decode();
+
+    const stripped = Bun.stripANSI(output).replace(/[\r\n]/g, "");
+    // ConPTY can interleave cursor-save/restore and other noise around the
+    // payload; stripANSI removes escape sequences, and `[^\]]*` keeps the
+    // match within the first array literal so trailing noise cannot bleed in.
+    const match = stripped.match(/RESULT (\[[^\]]*\])/);
+    if (!match) {
+      throw new Error("child did not emit RESULT; terminal output was: " + JSON.stringify(output));
+    }
+    const [sysIn, sysOut, sysErr, uvIn, uvOut, uvErr] = JSON.parse(match[1]);
+    expect({ uvIn, uvOut, uvErr }).toEqual({ uvIn: true, uvOut: true, uvErr: true });
+    expect({ sysIn, sysOut, sysErr }).toEqual({ sysIn: uvIn, sysOut: uvOut, sysErr: uvErr });
+  });
+});
+
 describe("WriteStream.prototype.getColorDepth", () => {
   const getColorDepth = (env: Record<string, string>) => WriteStream.prototype.getColorDepth.call(undefined, env);
 

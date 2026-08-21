@@ -75,6 +75,17 @@ async function makeScratchRepo(dir: string): Promise<void> {
   await git(dir, "-c", "core.autocrlf=false", "commit", "-q", "-m", "init");
 }
 
+// `git check-attr -a` prints one "<path>: <attr>: <value>" line per attribute
+// that applies to the path. Returns the sorted "<attr>: <value>" parts.
+async function attributesOf(dir: string, name: string): Promise<string[]> {
+  const stdout = await git(dir, "check-attr", "-a", "--", name);
+  return stdout
+    .split("\n")
+    .filter(Boolean)
+    .map(line => line.slice(`${name}: `.length))
+    .sort();
+}
+
 test.concurrent("every text file checks out as LF under core.autocrlf=true", async () => {
   using dir = tempDir("gitattributes-lf", { ".gitattributes": gitattributes, ...lfFiles });
   await makeScratchRepo(String(dir));
@@ -99,4 +110,20 @@ test.concurrent("files committed with CRLF keep their bytes", async () => {
   // A renormalize must not rewrite them either.
   await git(clone, "-c", "core.autocrlf=true", "add", "--renormalize", ".");
   expect(await git(clone, "status", "--porcelain")).toBe("");
+});
+
+// The catch-all only pins eol. The per-extension lines also set the whitespace
+// policy, and .cjs/.cts must get the same one as .js/.ts.
+test.concurrent(".cjs and .cts carry the same attributes as .js and .ts", async () => {
+  using dir = tempDir("gitattributes-siblings", { ".gitattributes": gitattributes });
+  await git(String(dir), "init", "-q", "-b", "main");
+
+  for (const [sibling, reference] of [
+    ["a.cjs", "a.js"],
+    ["a.cts", "a.ts"],
+  ]) {
+    const expected = await attributesOf(String(dir), reference);
+    expect(expected, reference).toContain("eol: lf");
+    expect(await attributesOf(String(dir), sibling), sibling).toEqual(expected);
+  }
 });

@@ -137,7 +137,16 @@ function makeEntries(): Entry[] {
 // the BUN_INSTALL_STREAMING_MIN_SIZE gate.
 // -------------------------------------------------------------------
 
-async function makeRegistry(tgz: Buffer, shasum: string, integrity: string, chunkBytes: number) {
+async function makeRegistry(
+  tgz: Buffer,
+  shasum: string,
+  integrity: string,
+  chunkBytes: number,
+  // Picks the body served for the Nth tarball download (1-based), so a test
+  // can serve corrupt bytes on the first attempt and the real tarball on a
+  // retry. Defaults to always serving `tgz`.
+  tgzForHit?: (hit: number) => Buffer,
+) {
   let tarballHits = 0;
   const server: Server = createServer((req, res) => {
     const url = new URL(req.url!, "http://x");
@@ -164,17 +173,18 @@ async function makeRegistry(tgz: Buffer, shasum: string, integrity: string, chun
     }
     if (url.pathname.endsWith("/stream-pkg-1.0.0.tgz")) {
       tarballHits++;
+      const body = tgzForHit ? tgzForHit(tarballHits) : tgz;
       res.setHeader("content-type", "application/octet-stream");
-      res.setHeader("content-length", String(tgz.length));
+      res.setHeader("content-length", String(body.length));
       // Prevent Nagle coalescing so each write() is its own packet.
       req.socket.setNoDelay(true);
       let i = 0;
       const step = () => {
-        if (i >= tgz.length) {
+        if (i >= body.length) {
           res.end();
           return;
         }
-        res.write(tgz.subarray(i, Math.min(i + chunkBytes, tgz.length)));
+        res.write(body.subarray(i, Math.min(i + chunkBytes, body.length)));
         i += chunkBytes;
         setImmediate(step);
       };
@@ -432,6 +442,68 @@ describe("streaming tarball extraction", () => {
 
     const { stderr, exitCode } = await runInstall(String(dir));
     expect(stderr).toContain("Integrity check failed");
+    expect(exitCode).not.toBe(0);
+  });
+
+  // A streaming extraction can fail mid-download from causes the next
+  // attempt does not hit (a transient transport or filesystem error, or
+  // corrupt bytes on the wire). Such a failure must be retried like a
+  // failed download: the retry downloads the whole body again and takes
+  // the buffered path, which verifies integrity before extracting.
+  // Issue #39972 is an intermittent "Fail extracting tarball" in the wild
+  // that this retry absorbs.
+  test("retries a failed streaming extraction through the buffered path", async () => {
+    // Valid gzip prefix, then garbage: libarchive fails partway through
+    // the first (streamed) attempt with a fatal error.
+    const corrupt = Buffer.concat([tgz.subarray(0, tgz.length >> 1), Buffer.alloc(tgz.length - (tgz.length >> 1), 0xff)]);
+    await using reg = await makeRegistry(tgz, shasum, integrity, chunkBytes, hit => (hit === 1 ? corrupt : tgz));
+    const registry = reg.url;
+
+    using dir = tempDir("streaming-extract-retry", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "stream-pkg": "1.0.0" },
+      }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry } }),
+    });
+
+    const { stderr, exitCode } = await runInstall(String(dir));
+    // The failed first attempt stays out of the error log; with --verbose
+    // the retry announces itself instead.
+    expect(stderr).not.toContain("error:");
+    expect(stderr).toContain("Retrying 1/");
+    expect(reg.tarballHits).toBe(2);
+
+    const pkgRoot = join(String(dir), "node_modules", "stream-pkg");
+    for (const { path, body } of entries) {
+      const got = readFileSync(join(pkgRoot, path));
+      expect([path, got.equals(body)]).toEqual([path, true]);
+    }
+    expect(exitCode).toBe(0);
+  });
+
+  test("reports the libarchive error when a streaming extraction fails for good", async () => {
+    const corrupt = Buffer.concat([tgz.subarray(0, tgz.length >> 1), Buffer.alloc(tgz.length - (tgz.length >> 1), 0xff)]);
+    await using reg = await makeRegistry(tgz, shasum, integrity, chunkBytes, () => corrupt);
+    const registry = reg.url;
+
+    using dir = tempDir("streaming-extract-fail", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "stream-pkg": "1.0.0" },
+      }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry } }),
+    });
+
+    // With retries disabled, the streaming failure is final and the error
+    // carries libarchive's message so a bug report pinpoints the failure.
+    const { stderr, exitCode } = await runInstall(String(dir), {
+      BUN_CONFIG_HTTP_RETRY_COUNT: "0",
+    });
+    expect(stderr).toMatch(/Fail extracting tarball for "stream-pkg": \S/);
+    expect(reg.tarballHits).toBe(1);
     expect(exitCode).not.toBe(0);
   });
 

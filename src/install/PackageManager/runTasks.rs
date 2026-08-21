@@ -1151,7 +1151,12 @@ fn run_tasks_erased(
                 } else {
                     core::ptr::null_mut()
                 };
+                // `Cell` so the streaming-retry path below can cancel the
+                // release: a retried network task is back in flight and must
+                // not return to the pool (nor lose its AsyncHTTP).
+                let net_release = Cell::new(net_ptr);
                 scopeguard::defer! {
+                    let net_ptr = net_release.get();
                     if !net_ptr.is_null() {
                         // SAFETY: see the put-task `defer!` above — `manager_ptr` is the
                         // function-scope provenance root; `net_ptr` (checked non-null) is
@@ -1183,6 +1188,52 @@ fn run_tasks_erased(
 
                 if task.status == Task::Status::Fail {
                     let err = task.err.unwrap_or(crate::Error::TarballFailedToExtract);
+
+                    // A failed streaming extraction is downloaded again through
+                    // the buffered path, which verifies integrity before it
+                    // extracts — mirroring how a failed download retries.
+                    // `populate_result` kept this failure out of the error log
+                    // under the same predicate. `streaming_committed` is still
+                    // set here: it is only cleared when the task completes the
+                    // buffered path or retries below.
+                    // SAFETY: `net_ptr` (when non-null) is the network task
+                    // owned by this resolve task; this loop iteration is its
+                    // exclusive owner until it is re-enqueued below.
+                    let retry_streaming = !net_ptr.is_null()
+                        && TarballStream::should_retry_streaming_failure(err)
+                        && unsafe {
+                            (*net_ptr).streaming_committed
+                                && (*net_ptr).retried < manager.options.max_retry_count
+                        };
+                    if retry_streaming {
+                        // SAFETY: see `retry_streaming` above.
+                        let retried = unsafe {
+                            (*net_ptr).retried += 1;
+                            (*net_ptr).prepare_buffered_retry();
+                            (*net_ptr).retried
+                        };
+                        enqueue::enqueue_network_task(manager, net_ptr);
+                        // The network task is in flight again: the defer above
+                        // must not release it.
+                        net_release.set(core::ptr::null_mut());
+
+                        if manager.options.log_level.is_verbose() {
+                            bun_ast::add_warning_pretty!(
+                                manager.log_mut(),
+                                None,
+                                bun_ast::Loc::EMPTY,
+                                "{} extracting tarball <b>{}@{}<r>. Retrying {}/{}...",
+                                bstr::BStr::new(err.name().as_bytes()),
+                                bstr::BStr::new(alias),
+                                resolution
+                                    .fmt(&manager.lockfile.buffers.string_bytes, PathSep::Auto),
+                                retried,
+                                manager.options.max_retry_count,
+                            );
+                        }
+
+                        continue;
+                    }
 
                     // Extract-task failure (integrity check, libarchive error, etc.)
                     // is symmetric with the HTTP 4xx/5xx branch above: mark the

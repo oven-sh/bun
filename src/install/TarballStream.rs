@@ -152,6 +152,10 @@ pub struct TarballStream {
     bytes_received: usize,
     entry_count: u32,
     fail: Option<crate::Error>,
+    /// libarchive's error string at the moment `fail` was set to
+    /// `Error::Fail`; surfaced in the user-facing message so an
+    /// intermittent extraction failure is diagnosable from a bug report.
+    fail_detail: Vec<u8>,
     invalid_name: bool,
 
     /// Thread-pool task that runs `drain`. Re-enqueued whenever new data
@@ -263,6 +267,7 @@ impl TarballStream {
             bytes_received: 0,
             entry_count: 0,
             fail: None,
+            fail_detail: Vec::new(),
             invalid_name: false,
             drain_task: thread_pool::Task {
                 node: thread_pool::Node::default(),
@@ -570,6 +575,7 @@ impl TarballStream {
                                     "readNextHeader: {}",
                                     bstr::BStr::new(msg)
                                 );
+                                (*this).set_fail_detail(msg);
                                 return Err(crate::Error::Fail);
                             }
                         }
@@ -596,6 +602,7 @@ impl TarballStream {
                                     "read_data_block: {}",
                                     bstr::BStr::new(msg)
                                 );
+                                (*this).set_fail_detail(msg);
                                 return Err(crate::Error::Fail);
                             }
                         }
@@ -676,6 +683,8 @@ impl TarballStream {
                     "archive_read_open: {}",
                     bstr::BStr::new(archive.error_string())
                 );
+                // SAFETY: see fn-level # Safety — raw-ptr field write.
+                unsafe { (*this).set_fail_detail(archive.error_string()) };
                 return Err(crate::Error::Fail);
             }
         }
@@ -716,6 +725,23 @@ impl TarballStream {
             .into_raw(),
         );
         Ok(())
+    }
+
+    fn set_fail_detail(&mut self, msg: &[u8]) {
+        const MAX: usize = 256;
+        self.fail_detail.clear();
+        self.fail_detail
+            .extend_from_slice(&msg[..msg.len().min(MAX)]);
+    }
+
+    /// Whether a failed streaming extraction should be downloaded again
+    /// through the buffered path. `InstallFailed` covers the deterministic
+    /// failures (invalid package name, cache-dir move, package.json read),
+    /// everything else is transport- or timing-dependent. The same predicate
+    /// runs in `populate_result` (to keep a retried failure out of the error
+    /// log) and in `run_tasks` (to enqueue the retry).
+    pub(crate) fn should_retry_streaming_failure(err: crate::Error) -> bool {
+        err != crate::Error::InstallFailed
     }
 
     fn close_output_file(&mut self) {
@@ -1083,6 +1109,22 @@ impl TarballStream {
                 extract: ManuallyDrop::new(Default::default()),
             };
 
+            // When the main thread will retry this download through the
+            // buffered path (see the `Task::Status::Fail` arm in `run_tasks`),
+            // keep the failure out of the error log: the retry warning there
+            // is the only thing the user should see, matching how a failed
+            // download is retried. `retried` is stable here — it is only
+            // mutated on the main thread between attempts, and this task is
+            // still in flight.
+            // SAFETY: `network_task`/`package_manager` are live (struct-level
+            // contract); both reads are of plain fields no other thread
+            // mutates while this stream is in flight.
+            let will_retry = |err: crate::Error| {
+                Self::should_retry_streaming_failure(err)
+                    && (*self.network_task).retried
+                        < (*self.package_manager).options.max_retry_count
+            };
+
             if let Some(err) = self.fail {
                 if self.invalid_name {
                     (*task).log.add_error_fmt(
@@ -1093,14 +1135,16 @@ impl TarballStream {
                             bun_fmt::s(tarball.name_and_basename().0),
                         ),
                     );
-                } else {
+                } else if !will_retry(err) {
                     (*task).log.add_error_fmt(
                         None,
                         bun_ast::Loc::EMPTY,
                         format_args!(
-                            "{} extracting tarball for \"{}\"",
+                            "{} extracting tarball for \"{}\"{}{}",
                             err.name(),
                             bstr::BStr::new(tarball.name.slice()),
+                            if self.fail_detail.is_empty() { "" } else { ": " },
+                            bstr::BStr::new(&self.fail_detail),
                         ),
                     );
                 }
@@ -1111,14 +1155,16 @@ impl TarballStream {
 
             if !tarball.skip_verify && tarball.integrity.tag.is_supported() {
                 if !self.hasher.verify() {
-                    (*task).log.add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "Integrity check failed for tarball: {}",
-                            bstr::BStr::new(tarball.name.slice()),
-                        ),
-                    );
+                    if !will_retry(crate::Error::IntegrityCheckFailed) {
+                        (*task).log.add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "Integrity check failed for tarball: {}",
+                                bstr::BStr::new(tarball.name.slice()),
+                            ),
+                        );
+                    }
                     (*task).err = Some(crate::Error::IntegrityCheckFailed);
                     (*task).status = TaskStatus::Fail;
                     return;

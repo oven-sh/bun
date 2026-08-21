@@ -508,13 +508,7 @@ impl VirtualMachine {
     #[track_caller]
     #[inline]
     pub fn ticket(&self) -> Ticket {
-        let h = self.handle_ref();
-        h.assert_js_thread();
-        debug_assert!(
-            h.0.state() != State::Closed,
-            "off-thread work started after the VM finished draining"
-        );
-        Ticket::issue(&h.0, self.current_loop_kind())
+        self.issue_ticket(self.current_loop_kind())
     }
 
     /// Like [`ticket`](Self::ticket), but pinned to the regular loop: for
@@ -523,13 +517,19 @@ impl VirtualMachine {
     #[track_caller]
     #[inline]
     pub fn regular_ticket(&self) -> Ticket {
+        self.issue_ticket(LoopKind::Regular)
+    }
+
+    #[track_caller]
+    #[inline]
+    fn issue_ticket(&self, kind: LoopKind) -> Ticket {
         let h = self.handle_ref();
         h.assert_js_thread();
         debug_assert!(
             h.0.state() != State::Closed,
             "off-thread work started after the VM finished draining"
         );
-        Ticket::issue(&h.0, LoopKind::Regular)
+        Ticket::issue(&h.0, kind)
     }
 }
 

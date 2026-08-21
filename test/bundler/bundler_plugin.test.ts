@@ -446,18 +446,43 @@ describe("bundler", () => {
     files: {
       "index.ts": /* ts */ `
         import React from "react";
-        console.log(React);
+        import { createRoot } from "react-dom/client";
+        export { h } from "preact";
+        export * from "mobx";
+        console.log(React, createRoot, await import("lodash"));
       `,
     },
     plugins(builder) {
-      builder.onResolve({ filter: /^react$/ }, () => {
-        return { path: "https://esm.sh/react@19", external: true };
+      builder.onResolve({ filter: /^(react|react-dom\/client|preact|mobx|lodash)$/ }, args => {
+        return { path: "https://esm.sh/" + args.path, external: true };
       });
     },
     onAfterBundle(api) {
       const contents = api.readFile("/out.js");
-      expect(contents).toContain(`from "https://esm.sh/react@19"`);
-      expect(contents).not.toContain(`from "react"`);
+      expect(contents).toContain(`from "https://esm.sh/react"`);
+      expect(contents).toContain(`from "https://esm.sh/react-dom/client"`);
+      expect(contents).toContain(`from "https://esm.sh/preact"`);
+      expect(contents).toContain(`from "https://esm.sh/mobx"`);
+      expect(contents).toContain(`import("https://esm.sh/lodash")`);
+      for (const original of ["react", "react-dom/client", "preact", "mobx", "lodash"]) {
+        expect(contents).not.toContain(`"${original}"`);
+      }
+    },
+  });
+  itBundled("plugin/ResolveExternalSamePath", {
+    files: {
+      "index.ts": /* ts */ `
+        import React from "react";
+        console.log(React);
+      `,
+    },
+    plugins(builder) {
+      builder.onResolve({ filter: /^react$/ }, args => {
+        return { path: args.path, external: true };
+      });
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain(`from "react"`);
     },
   });
   itBundled("plugin/ResolveExternalRewritesPathRequire", {

@@ -51,10 +51,45 @@ pub use bv2_impl::JSBundleCompletionTask;
 /// `jsc::api::JSBundler::FileMap` — re-exported from the canonical def below.
 pub use api::JSBundler::FileMap;
 
+/// An onResolve plugin answer for one import record of an importer whose
+/// records may not be on the graph yet (see
+/// `resolve_tasks_waiting_for_import_source_index`).
 #[derive(Clone, Copy)]
-pub struct PendingImport {
-    pub(crate) to_source_index: Index,
-    pub(crate) import_record_index: u32,
+pub enum PendingImport {
+    SourceIndex {
+        import_record_index: u32,
+        to_source_index: Index,
+    },
+    /// `{ path, external: true }`: the record is printed with `path`, whose
+    /// bytes are parked on `BundleV2::free_list`.
+    ExternalPath {
+        import_record_index: u32,
+        path: bun_paths::fs::Path<'static>,
+    },
+}
+
+impl PendingImport {
+    pub(crate) fn import_record_index(self) -> u32 {
+        match self {
+            Self::SourceIndex {
+                import_record_index,
+                ..
+            }
+            | Self::ExternalPath {
+                import_record_index,
+                ..
+            } => import_record_index,
+        }
+    }
+
+    pub(crate) fn apply(self, import_record: &mut bun_ast::ImportRecord) {
+        match self {
+            Self::SourceIndex {
+                to_source_index, ..
+            } => import_record.source_index = to_source_index,
+            Self::ExternalPath { path, .. } => import_record.path = path,
+        }
+    }
 }
 
 pub struct BundleV2<'a> {
@@ -4873,13 +4908,12 @@ pub mod bv2_impl {
                 }
                 jsc_api::JSBundler::ResolveValue::Success(result) => {
                     let mut out_source_index: Option<Index> = None;
-                    // SAFETY: `result.{path,namespace}` are `Box<[u8]>` whose heap
-                    // allocations are moved into `this.free_list` below (in the
-                    // `!found_existing` and `external` branches) and thus outlive `BundleV2`.
-                    // Erase to `'static` so `Fs::Path<'static>` can borrow them across
-                    // `path_with_pretty_initialized` / `ParseTask`. In the `found_existing`
-                    // branch `path` is dead before the boxes drop, so the dangling
-                    // `'static` is never observed.
+                    // SAFETY: `result.{path,namespace}` are `Box<[u8]>`. Every arm below
+                    // either moves both boxes into `this.free_list`, which outlives the
+                    // graph, before it stores `path` (`!found_existing`, and the external
+                    // rewrite), or drops them after its last read of `path` without
+                    // storing it (`found_existing`, entry point, unchanged specifier). So
+                    // the erased `'static` borrow is never read after the bytes are freed.
                     let (result_path_static, result_ns_static): (&'static [u8], &'static [u8]) = unsafe {
                         (
                             &*std::ptr::from_ref::<[u8]>(result.path.as_ref()),
@@ -5028,28 +5062,20 @@ pub mod bv2_impl {
                         );
                         drop(result.namespace);
                         drop(result.path);
+                    } else if strings::eql_long(&resolve.import_record.specifier, path.text, true) {
+                        drop(result.namespace);
+                        drop(result.path);
                     } else {
                         // Like esbuild, the external import is printed with the plugin's path.
-                        let source_import_records = &mut this.graph.ast.items_import_records_mut()
-                            [resolve.import_record.importer_source_index as usize];
-                        if (source_import_records.len() as u32)
-                            > resolve.import_record.import_record_index
-                        {
-                            let import_record: &mut ImportRecord = &mut source_import_records
-                                .as_mut_slice()
-                                [resolve.import_record.import_record_index as usize];
-                            if !strings::eql_long(import_record.path.text, path.text, true) {
-                                import_record.path = path_as_static(&path);
-                                this.free_list.push(result.namespace);
-                                this.free_list.push(result.path);
-                            } else {
-                                drop(result.namespace);
-                                drop(result.path);
-                            }
-                        } else {
-                            drop(result.namespace);
-                            drop(result.path);
-                        }
+                        this.free_list.push(result.namespace);
+                        this.free_list.push(result.path);
+                        this.apply_or_defer_pending_import(
+                            resolve.import_record.importer_source_index,
+                            PendingImport::ExternalPath {
+                                import_record_index: resolve.import_record.import_record_index,
+                                path: path_as_static(&path),
+                            },
+                        );
                     }
 
                     if let Some(source_index) = out_source_index {
@@ -5065,32 +5091,13 @@ pub mod bv2_impl {
                                 .entry_point_original_names
                                 .put(source_index.get(), &resolve.import_record.specifier);
                         } else {
-                            let source_import_records =
-                                &mut this.graph.ast.items_import_records_mut()
-                                    [resolve.import_record.importer_source_index as usize];
-                            if source_import_records.len() as u32
-                                <= resolve.import_record.import_record_index
-                            {
-                                let entry = this
-                                    .resolve_tasks_waiting_for_import_source_index
-                                    .get_or_put(resolve.import_record.importer_source_index)
-                                    .expect("oom");
-                                if !entry.found_existing {
-                                    *entry.value_ptr = Vec::new();
-                                }
-                                let _ = entry.value_ptr.push(PendingImport {
-                                    to_source_index: source_index,
+                            this.apply_or_defer_pending_import(
+                                resolve.import_record.importer_source_index,
+                                PendingImport::SourceIndex {
                                     import_record_index: resolve.import_record.import_record_index,
-                                });
-                            } else {
-                                let import_record: &mut ImportRecord = &mut source_import_records
-                                    .as_mut_slice()
-                                    [resolve.import_record.import_record_index as usize];
-                                import_record.source_index = source_index;
-                                this.schedule_barrel_imports_after_plugin_resolve(
-                                    resolve.import_record.importer_source_index,
-                                );
-                            }
+                                    to_source_index: source_index,
+                                },
+                            );
                         }
                     }
                 }
@@ -6985,6 +6992,31 @@ pub mod bv2_impl {
     }
 
     impl<'a> BundleV2<'a> {
+        /// Writes a plugin answer to the importer's record, or queues it for
+        /// `patch_import_record_source_indices` while the importer's records are
+        /// not on the graph yet.
+        fn apply_or_defer_pending_import(&mut self, importer: IndexInt, pending: PendingImport) {
+            let import_records = &mut self.graph.ast.items_import_records_mut()[importer as usize];
+            if let Some(import_record) = import_records
+                .as_mut_slice()
+                .get_mut(pending.import_record_index() as usize)
+            {
+                pending.apply(import_record);
+                if matches!(pending, PendingImport::SourceIndex { .. }) {
+                    self.schedule_barrel_imports_after_plugin_resolve(importer);
+                }
+                return;
+            }
+            let entry = self
+                .resolve_tasks_waiting_for_import_source_index
+                .get_or_put(importer)
+                .expect("oom");
+            if !entry.found_existing {
+                *entry.value_ptr = Vec::new();
+            }
+            let _ = entry.value_ptr.push(pending);
+        }
+
         /// Patch source_index on import records from pathToSourceIndexMap and
         /// resolve_tasks_waiting_for_import_source_index. Called after
         /// processResolveQueue has registered new modules.
@@ -7003,22 +7035,30 @@ pub mod bv2_impl {
                 || ctx.loader == Loader::Html
                 || ctx.loader.is_css();
 
-            if let Some(idx) = self
+            let pending = self
                 .resolve_tasks_waiting_for_import_source_index
                 .get_index(&ctx.source_index.get())
-            {
-                let (_, value) = self
-                    .resolve_tasks_waiting_for_import_source_index
-                    .swap_remove_at(idx);
-                for to_assign in value.slice() {
-                    if save_import_record_source_index
-                        || input_file_loaders[to_assign.to_source_index.get() as usize].is_css()
+                .map(|idx| {
+                    self.resolve_tasks_waiting_for_import_source_index
+                        .swap_remove_at(idx)
+                        .1
+                });
+            if let Some(pending) = &pending {
+                for to_assign in pending.slice() {
+                    if let PendingImport::SourceIndex {
+                        import_record_index,
+                        to_source_index,
+                    } = *to_assign
                     {
-                        import_records.as_mut_slice()[to_assign.import_record_index as usize]
-                            .source_index = to_assign.to_source_index;
+                        if save_import_record_source_index
+                            || input_file_loaders[to_source_index.get() as usize].is_css()
+                        {
+                            to_assign.apply(
+                                &mut import_records.as_mut_slice()[import_record_index as usize],
+                            );
+                        }
                     }
                 }
-                drop(value);
             }
 
             // Inlined `self.path_to_source_index_map(ctx.target)` (== `&mut self.graph.build_graphs[target]`)
@@ -7039,6 +7079,18 @@ pub mod bv2_impl {
                         if compare == i as u32 {
                             let _ = path_to_source_index_map.put(ctx.source_path, source_index); // OOM-only Result
                         }
+                    }
+                }
+            }
+
+            // After the map pass: an external path must not be looked up as a module.
+            if let Some(pending) = pending {
+                for to_assign in pending.slice() {
+                    if matches!(to_assign, PendingImport::ExternalPath { .. }) {
+                        to_assign.apply(
+                            &mut import_records.as_mut_slice()
+                                [to_assign.import_record_index() as usize],
+                        );
                     }
                 }
             }

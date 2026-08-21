@@ -841,36 +841,19 @@ impl EventLoop {
         }
     }
 
-    /// Move whatever other threads posted (`concurrent_tasks`) into
-    /// `self.tasks`, freeing the heap `ConcurrentTask` carriers, so one pass
-    /// over `self.tasks` releases everything. Called by `release_queued_tasks`
-    /// in teardown, after `join_child_workers()` (every child has posted its
-    /// close task by then) and before the JSC VM is destroyed (so captured
-    /// `Ref<>`s in queued C++ lambdas drop against a live heap).
-    fn take_concurrent_tasks(&mut self) {
-        let mut iter = self.concurrent_tasks.pop_batch().iterator();
-        loop {
-            let node = iter.next();
-            if node.is_null() {
-                break;
-            }
-            // SAFETY: `node` is non-null and owned by the popped batch; the
-            // iterator advanced past it before returning.
-            let task =
-                unsafe { ConcurrentTask::ConcurrentTask::into_task(NonNull::new_unchecked(node)) };
-            let _ = self.tasks.write_item(task);
-        }
-    }
-
     /// Release, without running, every task still queued — what other
     /// threads posted and what this thread enqueued — through each type's
     /// `Taskable::release_unrun`, and refuse (release on arrival) anything
     /// enqueued from here on. Teardown phase B (JS thread, script forbidden,
     /// JSC heap alive, children joined): called on every turn of the wait, and
-    /// once more after `Closed`.
+    /// once more after `Closed`. Runs after `join_child_workers()` (every
+    /// child has posted its close task by then) and before the JSC VM is
+    /// destroyed (so captured `Ref<>`s in queued C++ lambdas drop against a
+    /// live heap).
     pub fn release_queued_tasks(&mut self) {
         self.closed_for_tasks = true;
-        self.take_concurrent_tasks();
+        let posted = self.concurrent_tasks.pop_batch();
+        self.take_concurrent_batch(posted);
         let _ = self.promote_yield_tasks();
         while let Some(task) = self.tasks.read_item() {
             // SAFETY: JS thread, heap alive; `task` just left the queue.

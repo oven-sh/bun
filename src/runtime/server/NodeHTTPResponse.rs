@@ -2472,22 +2472,6 @@ impl NodeHTTPResponse {
     }
 }
 
-fn handle_corked(
-    global_object: &JSGlobalObject,
-    function: JSValue,
-    result: &mut JSValue,
-    is_exception: &mut bool,
-) {
-    *result = match function.call(global_object, JSValue::UNDEFINED, &[]) {
-        Ok(v) => v,
-        Err(err) => {
-            *result = global_object.take_exception(err);
-            *is_exception = true;
-            return;
-        }
-    };
-}
-
 impl NodeHTTPResponse {
     pub(crate) fn set_timeout(&self, seconds: u8) {
         let flags = self.flags.get();
@@ -2537,8 +2521,7 @@ impl NodeHTTPResponse {
             );
         }
 
-        let mut result: JSValue = JSValue::ZERO;
-        let mut is_exception: bool = false;
+        let mut result: JsResult<JSValue> = Ok(JSValue::UNDEFINED);
 
         // R-2: this method takes `&self`, so the `noalias` miscompile
         // (b818e70e1c57) is structurally impossible — `&T` is `readonly`, not
@@ -2560,29 +2543,17 @@ impl NodeHTTPResponse {
                 // Capture `this` so a `self`-derived pointer reaches the FFI
                 // closure-data slot (see the R-2 note above).
                 let _escape = this;
-                handle_corked(global_object, corked_fn, &mut result, &mut is_exception)
+                result = corked_fn.call(global_object, JSValue::UNDEFINED, &[]);
             });
         } else {
-            handle_corked(global_object, corked_fn, &mut result, &mut is_exception);
+            result = corked_fn.call(global_object, JSValue::UNDEFINED, &[]);
         }
-
-        let ret: JsResult<JSValue> = if is_exception {
-            if !result.is_empty() {
-                Err(global_object.throw_value(result))
-            } else {
-                Err(global_object.throw(format_args!("unknown error")))
-            }
-        } else if result.is_empty() {
-            Ok(JSValue::UNDEFINED)
-        } else {
-            Ok(result)
-        };
 
         // BACKREF: `this` held alive by the `ref_()` above; this is the
         // balancing release. Explicit `.get()` so the inherent refcount
         // `NodeHTTPResponse::deref(&self)` is selected, not `<BackRef as Deref>::deref`.
         this.get().deref();
-        ret
+        result
     }
 
     pub(crate) fn finalize(self: Box<Self>) {

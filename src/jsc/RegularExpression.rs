@@ -91,8 +91,11 @@ impl RegularExpression {
 
 #[unsafe(no_mangle)]
 fn __bun_regex_compile(pattern: BunString) -> Option<core::ptr::NonNull<()>> {
-    // Initialize JSC before first compile (idempotent).
-    crate::initialize(false);
+    // bunfig's hoistPattern is compiled during config load, before the CLI initializes JSC itself.
+    crate::initialize(crate::InitializeOptions {
+        one_shot: crate::is_one_shot_eval_invocation(),
+        ..Default::default()
+    });
     match RegularExpression::init(pattern, Flags::None) {
         Ok(r) => core::ptr::NonNull::new(r.cast()),
         Err(_) => None,

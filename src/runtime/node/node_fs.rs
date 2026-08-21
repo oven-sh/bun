@@ -9773,6 +9773,9 @@ pub(crate) fn zig_delete_tree(
             let entry = match stack[top_idx].iter.next() {
                 Ok(Some(e)) => e,
                 Ok(None) => break,
+                // Linux readdir reports ENOENT once another deleter has removed
+                // the directory we hold open: nothing left to delete in it.
+                Err(err) if err.get_errno() == E::ENOENT => break,
                 Err(err) => return Err(dt_err(err.get_errno())),
             };
             // `entry.name` borrows the iterator's internal buffer and
@@ -10046,6 +10049,7 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
                 let entry = match dir_it.next() {
                     Ok(Some(e)) => e,
                     Ok(None) => break 'dir_it,
+                    Err(err) if err.get_errno() == E::ENOENT => break 'dir_it,
                     Err(err) => break 'scan_dir Err(dt_err(err.get_errno())),
                 };
                 let entry_name: Vec<u8> = entry.name.slice().to_vec();

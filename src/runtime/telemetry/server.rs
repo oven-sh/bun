@@ -41,12 +41,6 @@ pub fn begin(
     let now = clock::now_unix_nanos();
     let stub = SpanStub::start(parent.as_ref(), &st.sampler, now);
     let method_name = http::method_name(method).as_bytes();
-    let span = pool::begin(
-        stub,
-        ScopeId::from(Instrument::HttpServer),
-        b"",
-        SpanKind::Server,
-    );
     let baggage = if st.propagate_baggage {
         h.baggage()
             .filter(|b| propagation::baggage_is_reasonable(b))
@@ -55,50 +49,55 @@ pub fn begin(
     };
     // Facts only; attributes are encoded when the batch is exported
     // (bun_telemetry::http_record).
-    pool::with(span, |s| {
-        if !trace_state.is_empty() {
-            s.trace_state.extend_from_slice(trace_state);
-        }
-        if let Some(b) = baggage {
-            s.baggage.extend_from_slice(b);
-        }
-        let f = &mut s.http;
-        f.active = true;
-        f.set_method(method_name);
-        if !stub.ctx.flags.sampled() {
-            return;
-        }
-        f.flags = if is_https { R::FLAG_HTTPS } else { 0 };
-        if let Some((ip, port)) = resp.get_remote_address_raw() {
-            let raw = ip.bytes();
-            f.ip_len = raw.len() as u8;
-            f.ip[..raw.len()].copy_from_slice(raw);
-            f.client_port = port;
-        }
-        let url = req.url();
-        let path_len = if h.path_len == u32::MAX {
-            bun_core::strings::index_of_char_usize(url, b'?').unwrap_or(url.len())
-        } else {
-            h.path_len as usize
-        };
-        f.set_request(
-            url,
-            path_len,
-            h.host().unwrap_or(b""),
-            h.user_agent().unwrap_or(b""),
-        );
-        if !st.capture_request_headers.is_empty() {
-            let l = &st.limits;
-            for name in &st.capture_request_headers {
-                if let Some(v) = req.header(name) {
-                    let mut key = Vec::with_capacity(20 + name.len());
-                    key.extend_from_slice(b"http.request.header.");
-                    key.extend_from_slice(name);
-                    s.push_attribute(&key, &Value::Str(v), l);
+    let span = pool::begin_with(
+        stub,
+        ScopeId::from(Instrument::HttpServer),
+        b"",
+        SpanKind::Server,
+        |s| {
+            if !trace_state.is_empty() {
+                s.trace_state.extend_from_slice(trace_state);
+            }
+            if let Some(b) = baggage {
+                s.baggage.extend_from_slice(b);
+            }
+            let f = &mut s.http;
+            f.active = true;
+            f.set_method(method_name);
+            if !stub.ctx.flags.sampled() {
+                return;
+            }
+            f.flags = if is_https { R::FLAG_HTTPS } else { 0 };
+            if let Some((ip, _port)) = resp.get_remote_address_raw() {
+                let raw = ip.bytes();
+                f.ip_len = raw.len() as u8;
+                f.ip[..raw.len()].copy_from_slice(raw);
+            }
+            let url = req.url();
+            let path_len = if h.path_len == u32::MAX {
+                bun_core::strings::index_of_char_usize(url, b'?').unwrap_or(url.len())
+            } else {
+                h.path_len as usize
+            };
+            f.set_request(
+                url,
+                path_len,
+                h.host().unwrap_or(b""),
+                h.user_agent().unwrap_or(b""),
+            );
+            if !st.capture_request_headers.is_empty() {
+                let l = &st.limits;
+                for name in &st.capture_request_headers {
+                    if let Some(v) = req.header(name) {
+                        let mut key = Vec::with_capacity(20 + name.len());
+                        key.extend_from_slice(b"http.request.header.");
+                        key.extend_from_slice(name);
+                        s.push_attribute(&key, &Value::Str(v), l);
+                    }
                 }
             }
-        }
-    });
+        },
+    );
     Some((
         span,
         Entered::new(global, super::native_context_value(span)),
@@ -126,14 +125,18 @@ pub fn end(span: NativeSpan, status: u16, aborted: bool) {
 /// `handler_error`: the JS handler threw or rejected (node:http), which is an
 /// error even when the status line that went out was not 5xx.
 pub fn end_with(span: NativeSpan, status: u16, aborted: bool, handler_error: bool) {
-    pool::with(span, |s| {
-        s.http.status = status;
-        if aborted {
-            s.http.flags |= R::FLAG_ABORTED;
-        }
-        if handler_error {
-            s.http.flags |= R::FLAG_HANDLER_ERROR;
-        }
-    });
-    super::end_native(span, 0, |_| {});
+    super::end_native_with(
+        span,
+        0,
+        |s| {
+            s.http.status = status;
+            if aborted {
+                s.http.flags |= R::FLAG_ABORTED;
+            }
+            if handler_error {
+                s.http.flags |= R::FLAG_HANDLER_ERROR;
+            }
+        },
+        |_| {},
+    );
 }

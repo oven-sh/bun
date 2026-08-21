@@ -52,7 +52,6 @@ describe("Bun.serve", () => {
       expect(s.attributes["url.query"]).toBe(q);
       expect(s.attributes["http.response.status_code"]).toBe(e.status);
       expect(s.attributes["user_agent.original"]).toBe(e.ua);
-      expect(s.attributes["client.port"]).toEqual(expect.any(Number));
       expect(s.name).toBe(p.startsWith("/r/") ? "GET /r/:id" : "GET");
       if (e.traceId) {
         expect(s.traceId).toBe(e.traceId);
@@ -108,7 +107,6 @@ describe("Bun.serve", () => {
       "server.port": server.port,
       "user_agent.original": "otel-test",
       "client.address": expect.any(String),
-      "client.port": expect.any(Number),
       "http.response.status_code": 201,
     });
     expect(srv.status.code).toBe(0);

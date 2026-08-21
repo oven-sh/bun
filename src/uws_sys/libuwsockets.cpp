@@ -44,6 +44,19 @@ static int uws_res_remote_address_raw(uWS::HttpResponse<SSL> *res, uint8_t *out,
     return data->remoteAddressLength;
   }
 
+/* Case-insensitive compare of a header name against a lowercase literal
+ * without a libc call: names are ASCII, so OR-ing 0x20 folds A-Z onto a-z
+ * (and leaves '-' and a-z unchanged). */
+template <size_t N>
+static inline bool uws_header_is(std::string_view k, const char (&lit)[N]) {
+  if (k.length() != N - 1) return false;
+  for (size_t i = 0; i < N - 1; i++) {
+    if ((static_cast<unsigned char>(k[i]) | 0x20) != static_cast<unsigned char>(lit[i])) return false;
+  }
+  return true;
+}
+
+
 extern "C"
 {
 
@@ -1737,11 +1750,11 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
       std::string_view k = header.first;
       int slot = -1;
       switch (k.length()) {
-      case 4: if ((k[0] | 0x20) == 'h' && !strncasecmp(k.data(), "host", 4)) slot = 0; break;
-      case 10: if ((k[0] | 0x20) == 'u' && !strncasecmp(k.data(), "user-agent", 10)) slot = 1;
-               else if ((k[0] | 0x20) == 't' && !strncasecmp(k.data(), "tracestate", 10)) slot = 3; break;
-      case 11: if ((k[0] | 0x20) == 't' && !strncasecmp(k.data(), "traceparent", 11)) slot = 2; break;
-      case 7: if ((k[0] | 0x20) == 'b' && !strncasecmp(k.data(), "baggage", 7)) slot = 4; break;
+      case 4: if (uws_header_is(k, "host")) slot = 0; break;
+      case 10: if (uws_header_is(k, "user-agent")) slot = 1;
+               else if (uws_header_is(k, "tracestate")) slot = 3; break;
+      case 11: if (uws_header_is(k, "traceparent")) slot = 2; break;
+      case 7: if (uws_header_is(k, "baggage")) slot = 4; break;
       default: break;
       }
       if (slot >= 0 && !out->ptr[slot]) {

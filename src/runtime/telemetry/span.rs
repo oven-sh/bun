@@ -247,7 +247,18 @@ pub(crate) fn for_each_attribute(
 /// End a native-owned span into this thread's batch.
 #[inline]
 pub fn end_native(span: NativeSpan, end_ns: u64, extra: impl FnOnce(&mut SpanWriter<'_>)) {
-    if let Some(e) = pool::end(span, end_ns, extra) {
+    end_native_with(span, end_ns, |_| {}, extra)
+}
+
+/// [`end_native`] with a closure that updates the slot first (one pool borrow).
+#[inline]
+pub fn end_native_with(
+    span: NativeSpan,
+    end_ns: u64,
+    prep: impl FnOnce(&mut pool::Slot),
+    extra: impl FnOnce(&mut SpanWriter<'_>),
+) {
+    if let Some(e) = pool::end_with(span, end_ns, prep, extra) {
         release_cell(e.js_cell);
         super::after_record();
     }

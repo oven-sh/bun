@@ -427,11 +427,8 @@ impl DateHeaderTimer {
 }
 
 pub struct EventLoopDelayMonitor {
-    /// Weak rather than Strong: the histogram belongs to one realm, and this
-    /// per-thread monitor outlives the realms `bun test --isolate` retires. A
-    /// Strong would pin every retired realm whose file left the monitor on.
-    /// `jsc_hooks::stop_active_handles` releases it (via [`Self::disable`])
-    /// before `~VM`, because `All` itself is dropped after the heap is gone.
+    /// Weak, so a leaked monitor does not pin the retired `--isolate` realm.
+    /// `stop_active_handles` drops it before `~VM` (`All` outlives the heap).
     histogram: bun_jsc::Weak<()>,
     pub(crate) event_loop_timer: EventLoopTimer,
     pub(crate) resolution_ms: i32,

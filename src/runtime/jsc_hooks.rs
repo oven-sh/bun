@@ -1759,8 +1759,7 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResu
     // intact: `swap_global_for_test_isolation` runs `cancel_all_timeout_objects`
     // next, which walks both heaps and releases `TimeoutObject` pins and
     // discards `AbortSignalTimeout` timers at a point where no user JS can
-    // touch the outgoing signals. Same for the `monitorEventLoopDelay()`
-    // monitor, whose histogram belongs to the outgoing global.
+    // touch the outgoing signals.
     {
         let all = timer_all();
         // SAFETY: `state` is non-null so `timer_all()` is non-null; single

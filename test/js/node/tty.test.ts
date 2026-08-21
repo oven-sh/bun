@@ -1,5 +1,5 @@
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows } from "harness";
 import { WriteStream } from "node:tty";
 
 describe("ReadStream.prototype.setRawMode", () => {
@@ -189,6 +189,48 @@ describe("ReadStream.prototype.setRawMode", () => {
       afterStdinCooked: false,
     });
     expect(await proc.exited).toBe(0);
+  });
+
+  // tcgetattr on a non-terminal fd (/dev/null) fails with ENOTTY on Linux and
+  // ENODEV on Darwin; setRawMode must emit an ErrnoException (code/errno/syscall
+  // populated) rather than a bare Error.
+  test.skipIf(isWindows)("emits an ErrnoException (code/errno/syscall) on failure", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { ReadStream } = require("node:tty");
+          const { openSync } = require("node:fs");
+          const fd = openSync("/dev/null", "r");
+          const s = new ReadStream(fd);
+          s.on("error", e => {
+            console.log(JSON.stringify({
+              code: e?.code ?? null,
+              errno: e?.errno ?? null,
+              syscall: e?.syscall ?? null,
+              isError: e instanceof Error,
+            }));
+            process.exit(0);
+          });
+          s.setRawMode(true);
+          console.log(JSON.stringify({ via: "no-error" }));
+          process.exit(0);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const expected = isMacOS ? { code: "ENODEV", errno: -19 } : { code: "ENOTTY", errno: -25 };
+    expect({ ...JSON.parse(stdout.trim()), stderr, exitCode }).toEqual({
+      ...expected,
+      syscall: "setRawMode",
+      isError: true,
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });
 

@@ -121,6 +121,11 @@ console.log(next); // => next local midnight
 
 Bun interprets schedules in the system's **local time zone**, the same way crontab, launchd, and Windows Task Scheduler read them. The OS-level form and the in-process callback form fire at the same wall-clock time.
 
+<Note>
+  Prior to Bun v1.4, `Bun.cron.parse()` and the in-process `Bun.cron(schedule, handler)` interpreted schedules in
+  **UTC**. If you're upgrading and relied on that, pass `{ tz: "UTC" }` to keep the previous behavior.
+</Note>
+
 To override, pass an IANA time-zone name as `{ tz }` to `Bun.cron.parse()` or the in-process `Bun.cron(schedule, handler, options)`:
 
 ```ts

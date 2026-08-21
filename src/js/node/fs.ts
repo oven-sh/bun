@@ -1273,6 +1273,14 @@ function globSync(pattern: string | string[], options): string[] {
   return Array.from(lazyGlob().globSync(pattern, options ?? kEmptyObject));
 }
 
+// The stream classes are accessors on `exports` so that loading node:fs does not load node:stream. The first read, or
+// an assignment, replaces the accessor with a data property. Once user code has sealed or frozen `exports` the accessor
+// is not configurable: Reflect.defineProperty returns false instead of throwing and the accessor stays in place.
+function materializeStream(name: string, value: unknown) {
+  Reflect.defineProperty(exports, name, { value, writable: true, configurable: true });
+  return value;
+}
+
 var exports = {
   appendFile,
   appendFileSync,
@@ -1378,54 +1386,34 @@ var exports = {
   Dir,
   Stats,
   get ReadStream() {
-    return (exports.ReadStream = require("internal/fs/streams").ReadStream);
+    return materializeStream("ReadStream", require("internal/fs/streams").ReadStream);
   },
   set ReadStream(value) {
-    Object.defineProperty(exports, "ReadStream", {
-      value,
-      writable: true,
-      configurable: true,
-    });
+    materializeStream("ReadStream", value);
   },
   get WriteStream() {
-    return (exports.WriteStream = require("internal/fs/streams").WriteStream);
+    return materializeStream("WriteStream", require("internal/fs/streams").WriteStream);
   },
   set WriteStream(value) {
-    Object.defineProperty(exports, "WriteStream", {
-      value,
-      writable: true,
-      configurable: true,
-    });
+    materializeStream("WriteStream", value);
   },
   get FileReadStream() {
-    return (exports.FileReadStream = require("internal/fs/streams").ReadStream);
+    return materializeStream("FileReadStream", require("internal/fs/streams").ReadStream);
   },
   set FileReadStream(value) {
-    Object.defineProperty(exports, "FileReadStream", {
-      value,
-      writable: true,
-      configurable: true,
-    });
+    materializeStream("FileReadStream", value);
   },
   get Utf8Stream() {
-    return (exports.Utf8Stream = require("internal/streams/fast-utf8-stream"));
+    return materializeStream("Utf8Stream", require("internal/streams/fast-utf8-stream"));
   },
   set Utf8Stream(value) {
-    Object.defineProperty(exports, "Utf8Stream", {
-      value,
-      writable: true,
-      configurable: true,
-    });
+    materializeStream("Utf8Stream", value);
   },
   get FileWriteStream() {
-    return (exports.FileWriteStream = require("internal/fs/streams").WriteStream);
+    return materializeStream("FileWriteStream", require("internal/fs/streams").WriteStream);
   },
   set FileWriteStream(value) {
-    Object.defineProperty(exports, "FileWriteStream", {
-      value,
-      writable: true,
-      configurable: true,
-    });
+    materializeStream("FileWriteStream", value);
   },
   promises,
 };

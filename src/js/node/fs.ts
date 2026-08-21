@@ -101,7 +101,8 @@ function openAsBlob(path, options) {
       resource = resource instanceof URL ? Bun.fileURLToPath(resource) : String(resource);
     }
     if (!permission.has("fs.read", resource)) {
-      throw permission.accessDeniedError("fs.read", resource);
+      // node checks the toNamespacedPath form, which is what its error reports.
+      throw permission.accessDeniedError("fs.read", require("node:path").toNamespacedPath(resource));
     }
   }
   return Promise.$resolve(Bun.file(path, options));
@@ -1093,11 +1094,12 @@ realpathSync.native = fs.realpathNativeSync.bind(fs);
 // and on MacOS, simple cases of recursive directory trees can be done in a single `clonefile()`
 // using filter and other options uses a lazily loaded js fallback ported from node.js
 function cpSync(src, dest, options) {
-  const { cpSyncFn, validateCpOptions, tryNativeFastPathSync } = require("internal/fs/cp-sync");
+  const { checkCpPermissions, cpSyncFn, validateCpOptions, tryNativeFastPathSync } = require("internal/fs/cp-sync");
   const { getValidatedFsPath } = require("internal/validators");
   options = validateCpOptions(options);
   src = getValidatedFsPath(src, "src");
   dest = getValidatedFsPath(dest, "dest");
+  checkCpPermissions(src, dest);
   const { filter, dereference, preserveTimestamps, verbatimSymlinks, mode, errorOnExist, force, recursive } = options;
   if (!filter && !dereference && !preserveTimestamps && !verbatimSymlinks && !mode && !errorOnExist && force) {
     const { ok, checked } = tryNativeFastPathSync(src, dest, options);

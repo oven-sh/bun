@@ -252,7 +252,9 @@ function decodeTraceFrames(payload: string): { object: string; address: number }
 // Windows has always encoded DLL names this way. macOS encoded every such
 // frame as unknown, and Linux encoded them as bun offsets, which symbolized to
 // unrelated bun functions. The fault here is inside libc, so frame 0 is libc's.
-test.if(isPosix)("the uploaded trace string names the image of a frame outside bun", async () => {
+// Crashes bun with `args`, receives the report it uploads, and returns the
+// crash's stderr together with the decoded frames of the uploaded trace string.
+async function uploadedCrashFrames(args: string[]) {
   const uploaded = Promise.withResolvers<string>();
   using server = Bun.serve({
     port: 0,
@@ -263,7 +265,7 @@ test.if(isPosix)("the uploaded trace string names the image of a frame outside b
   });
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "segfaultInDll"],
+    cmd: [bunExe(), ...args],
     env: {
       ...bunEnv,
       BUN_CRASH_REPORT_URL: server.url.origin,
@@ -274,16 +276,23 @@ test.if(isPosix)("the uploaded trace string names the image of a frame outside b
     stdio: ["ignore", "ignore", "pipe"],
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-
-  // strlen() read from the bad pointer, possibly rounded down to its alignment.
-  expect(stderr).toContain("Segmentation fault at address 0xDEADBEE");
   expect(exitCode).not.toBe(0);
 
   const pathname = await uploaded.promise;
   // `/` is also a VLQ digit, so the payload cannot be split out on it.
   const payload = pathname.match(/^\/[^/]+\/(.*)\/ack$/)?.[1];
   expect(payload, pathname).toBeDefined();
-  const frames = decodeTraceFrames(payload!);
+  return { stderr, frames: decodeTraceFrames(payload!) };
+}
+
+test.if(isPosix)("the uploaded trace string names the image of a frame outside bun", async () => {
+  const { stderr, frames } = await uploadedCrashFrames([
+    path.join(import.meta.dir, "fixture-crash.js"),
+    "segfaultInDll",
+  ]);
+
+  // strlen() read from the bad pointer, possibly rounded down to its alignment.
+  expect(stderr).toContain("Segmentation fault at address 0xDEADBEE");
 
   // Frame 0 is the faulting strlen, in libc (or, under ASAN, its interceptor
   // in the sanitizer runtime); either way in a shared library that is not bun.
@@ -293,6 +302,26 @@ test.if(isPosix)("the uploaded trace string names the image of a frame outside b
   // executable must not be mistaken for a foreign image, under any name.
   expect(frames.some(frame => frame.object === "bun")).toBe(true);
   expect(frames.map(frame => frame.object)).not.toContain(path.basename(bunExe()));
+});
+
+// A crash used to upload at most 20 frames. An addon that aborts on the JS
+// thread has that many frames of its own and libc's before the first bun one,
+// so such reports showed no bun frame at all (Sentry BUN-4MN5), and an addon
+// thread's report (BUN-2PFR) could not be told apart from those. The capture
+// now holds 64 frames and the encoder keeps as many as fit the trace string.
+// 60 levels of JS recursion under the crash give the walk more than 20 frames
+// to find.
+test.if(isPosix)("the uploaded trace string holds more than 20 frames", async () => {
+  const { stderr, frames } = await uploadedCrashFrames([
+    "-e",
+    `const { crash_handler } = require("bun:internal-for-testing");
+     function recurse(depth) { return depth === 0 ? crash_handler.segfault() : recurse(depth - 1) + 1; }
+     recurse(60);`,
+  ]);
+
+  expect(stderr).toContain("Segmentation fault at address 0xDEADBEEF");
+  expect(frames.length).toBeGreaterThan(20);
+  expect(frames.length).toBeLessThanOrEqual(64);
 });
 
 // The Windows crash handler is a Vectored Exception Handler, which sees every

@@ -64,11 +64,13 @@ impl PBKDF2 {
     // `ThreadSafe<PBKDF2>`, whose `Drop` additionally unprotects JS-rooted
     // buffers via the `Unprotect` impl below.
 
+    /// The second element is the validated callback on the `Async` flavor and
+    /// `JSValue::UNDEFINED` on `Sync` (as `Scrypt::from_js`).
     pub(crate) fn from_js(
         global_this: &JSGlobalObject,
         call_frame: &CallFrame,
         flavor: Flavor,
-    ) -> JsResult<PBKDF2> {
+    ) -> JsResult<(PBKDF2, JSValue)> {
         let [arg0, arg1, arg2, arg3, mut arg4, mut arg5] = call_frame.arguments_as_array::<6>();
         // pbkdf2(password, salt, iterations, keylen, callback): digest omitted.
         if flavor == Flavor::Async && arg4.is_function() {
@@ -236,18 +238,22 @@ impl PBKDF2 {
             }
         }
 
-        if flavor == Flavor::Async {
-            if !arg5.is_function() {
-                return Err(global_this.throw_invalid_argument_type_value(
-                    b"callback",
-                    b"function",
-                    arg5,
-                ));
+        let callback = match flavor {
+            Flavor::Async => {
+                if !arg5.is_function() {
+                    return Err(global_this.throw_invalid_argument_type_value(
+                        b"callback",
+                        b"function",
+                        arg5,
+                    ));
+                }
+                arg5
             }
-        }
+            Flavor::Sync => JSValue::UNDEFINED,
+        };
 
         scopeguard::ScopeGuard::into_inner(guard);
-        Ok(out)
+        Ok((out, callback))
     }
 }
 

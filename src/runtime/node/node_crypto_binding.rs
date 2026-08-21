@@ -1142,23 +1142,16 @@ mod _impl {
 
     #[bun_jsc::host_fn]
     fn pbkdf2(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let data = PBKDF2::from_js(global_this, call_frame, Flavor::Async)?;
-        // `from_js` accepted the callback in either the 5th or 6th position.
-        let callback = if call_frame.argument(4).is_function() {
-            call_frame.argument(4)
-        } else {
-            call_frame.argument(5)
-        };
+        let (data, callback) = PBKDF2::from_js(global_this, call_frame, Flavor::Async)?;
         pbkdf2::create_job(global_this, data, callback);
         Ok(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn]
     fn pbkdf2_sync(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let data = PBKDF2::from_js(global_this, call_frame, Flavor::Sync)?;
         // `PBKDF2`'s `StringOrBuffer` fields release on `Drop`, so the local
         // just goes out of scope.
-        let mut data = data;
+        let (mut data, _) = PBKDF2::from_js(global_this, call_frame, Flavor::Sync)?;
         // `create_buffer_from_length` → `JSBuffer__bufferFromLength`, which constructs
         // with `JSBufferSubclassStructure` (a Node.js `Buffer`, not a plain Uint8Array/ArrayBuffer).
         // `pbkdf2Sync()` MUST return a Buffer — `Buffer.isBuffer(result)` and Buffer-only methods
@@ -1335,7 +1328,7 @@ mod _impl {
         crypto.put(
             global,
             b"pbkdf2",
-            JSFunction::create(global, "pbkdf2", __jsc_host_pbkdf2, 5, Default::default()),
+            JSFunction::create(global, "pbkdf2", __jsc_host_pbkdf2, 6, Default::default()),
         );
         crypto.put(
             global,

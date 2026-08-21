@@ -210,7 +210,7 @@ Object.defineProperty(assert, "AssertionError", {
     return AssertionError;
   },
   set(value) {
-    AssertionError = value;
+    Object.defineProperty(this, "AssertionError", { value, writable: true, enumerable: true, configurable: true });
   },
   configurable: true,
   enumerable: true,
@@ -917,7 +917,7 @@ Object.defineProperty(assert, "CallTracker", {
     return CallTracker;
   },
   set(value) {
-    CallTracker = value;
+    Object.defineProperty(this, "CallTracker", { value, writable: true, enumerable: true, configurable: true });
   },
   configurable: true,
   enumerable: true,

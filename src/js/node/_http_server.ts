@@ -285,31 +285,25 @@ function Server(options, callback): void {
   } else {
     validateObject(options, "options");
     options = { ...options };
-    const {
-      throwOnInvalidTLSArray,
-      tlsStringToProtocolVersion,
-      secureProtocolToVersionRange,
-      processPfxOptions,
-      validateSecureProtocol,
-    } = require("internal/tls");
+    const tlsHelpers = options.pfx || options.cert || options.key || options.ca ? require("internal/tls") : undefined;
 
     // Node's https.Server accepts PKCS#12 bundles (pfx [+ passphrase]); fold
     // them into plain key/cert/ca so the native TLS config sees PEM material.
     let tlsOptions = options;
     if (options.pfx) {
-      tlsOptions = processPfxOptions(options);
+      tlsOptions = tlsHelpers.processPfxOptions(options);
       this[isTlsSymbol] = true;
     }
 
     let cert = tlsOptions.cert;
     if (cert) {
-      throwOnInvalidTLSArray("options.cert", cert);
+      tlsHelpers.throwOnInvalidTLSArray("options.cert", cert);
       this[isTlsSymbol] = true;
     }
 
     let key = tlsOptions.key;
     if (key) {
-      throwOnInvalidTLSArray("options.key", key);
+      tlsHelpers.throwOnInvalidTLSArray("options.key", key);
       this[isTlsSymbol] = true;
     }
 
@@ -322,7 +316,7 @@ function Server(options, callback): void {
       ca = ca == null ? pfxExtraCAs : $isArray(ca) ? [...ca, ...pfxExtraCAs] : [ca, ...pfxExtraCAs];
     }
     if (ca) {
-      throwOnInvalidTLSArray("options.ca", ca);
+      tlsHelpers.throwOnInvalidTLSArray("options.ca", ca);
       this[isTlsSymbol] = true;
     }
 
@@ -342,6 +336,7 @@ function Server(options, callback): void {
     }
 
     if (this[isTlsSymbol]) {
+      const { validateSecureProtocol, secureProtocolToVersionRange, tlsStringToProtocolVersion } = tlsHelpers;
       // Translate minVersion/maxVersion/secureProtocol into the integer
       // protocol range the native layer applies (secureProtocol wins, like
       // Node's SecureContext::Init); 0 keeps the native defaults.
@@ -1472,7 +1467,7 @@ let NodeHTTPServerSocket;
 type NodeHTTPServerSocket = InstanceType<ReturnType<typeof makeNodeHTTPServerSocket>>;
 function makeNodeHTTPServerSocket() {
   const { Socket: NetSocket } = require("node:net");
-  NodeHTTPServerSocket = class Socket extends NetSocket {
+  const Socket = class Socket extends NetSocket {
     bytesRead = 0;
     connecting = false;
     timeout = 0;
@@ -1986,8 +1981,8 @@ function makeNodeHTTPServerSocket() {
       return this[kHandle]?.response;
     }
   } as unknown as typeof import("node:net").Socket;
-  Object.defineProperty(NodeHTTPServerSocket, "name", { value: "Socket" });
-  return NodeHTTPServerSocket;
+  Object.defineProperty(Socket, "name", { value: "Socket" });
+  return Socket;
 }
 
 // Node validates the `Trailer` header inside _storeHeader, after the body framing has

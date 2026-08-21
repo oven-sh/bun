@@ -71,6 +71,7 @@ function makePortReadable(port: MessagePort, incrementsPortRef: boolean) {
 // Writable that forwards chunks over a MessagePort (worker.stdin on the parent,
 // process.stdout/stderr in the worker). final() posts null as EOF.
 function makePortWritable(port: MessagePort) {
+  const Writable = require("internal/streams/writable");
   // Reader-side acks complete the in-flight writev. The listener refs the
   // event loop; release that immediately — the port is re-ref'd only while a
   // batch is awaiting its ack, so unflushed data keeps the writer alive
@@ -86,7 +87,6 @@ function makePortWritable(port: MessagePort) {
   }
   port.addEventListener("message", onAck);
   port.unref();
-  const Writable = require("internal/streams/writable");
   const stream = new Writable({
     decodeStrings: false,
     writev(chunks, cb) {

@@ -40,11 +40,8 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         // A prologue "use strict" was consumed into module-scope strict mode and dropped, but
         // node's repl still evaluates the directive as a string expression. Reinject it at the
         // front, like the CJS wrapper's preserve_strict_mode.
-        let reinject_strict = self.module_scope().strict_mode
-            == js_ast::StrictModeKind::ExplicitStrictMode
-            && !(!parts.is_empty()
-                && !parts[0].stmts.is_empty()
-                && matches!(parts[0].stmts[0].data, StmtData::SDirective(_)));
+        let reinject_strict =
+            self.module_scope().strict_mode == js_ast::StrictModeKind::ExplicitStrictMode;
         total_stmts_count += usize::from(reinject_strict);
 
         if total_stmts_count == 0 {
@@ -54,12 +51,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         // Collect all statements into a single array
         let mut all_stmts = BumpVec::with_capacity_in(total_stmts_count, bump);
         if reinject_strict {
-            all_stmts.push(self.s(
-                S::Directive {
-                    value: b"use strict".into(),
-                },
-                self.module_scope_directive_loc,
-            ));
+            all_stmts.push(self.use_strict_directive());
         }
         for part in parts.iter() {
             for stmt in part.stmts.iter() {

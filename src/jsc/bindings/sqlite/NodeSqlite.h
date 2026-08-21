@@ -74,12 +74,12 @@ struct NodeSqliteSessionRecord : public WTF::RefCounted<NodeSqliteSessionRecord>
 
 // Shared bookkeeping between a DatabaseSync and every StatementSync prepared
 // on one open()ed connection. An explicit close() finalizes all outstanding
-// sqlite3_stmts (sqlite3_next_stmt walk) so sqlite3_close_v2 really closes
-// the file — an unfinalized statement zombifies the connection and keeps the
-// OS handle open, which locks the database file on Windows. Statement
-// wrappers are GC cells whose sweep order relative to the database is
-// undefined, so they learn "close() already finalized my handle" through
-// this refcounted record instead of reaching back into the database cell.
+// sqlite3_stmts (a sqlite3_next_stmt walk) so sqlite3_close_v2 really closes
+// the file; an unfinalized statement zombifies the connection and the open
+// OS handle locks the database file on Windows. Statement wrappers are GC
+// cells whose sweep order relative to the database is undefined, so they
+// learn "close() already finalized my handle" through this refcounted
+// record instead of reaching back into the database cell.
 struct NodeSqliteConnectionRecord : public WTF::RefCounted<NodeSqliteConnectionRecord> {
     bool statementsFinalized { false };
 };
@@ -137,11 +137,10 @@ public:
     // Open the underlying connection. Throws on the scope if it fails or the
     // database is already open.
     bool open(JSC::JSGlobalObject*, JSC::ThrowScope&);
-    // FinalizeStatements::Yes (the explicit close()/Symbol.dispose paths)
-    // finalizes every outstanding prepared statement so sqlite3_close_v2
-    // actually closes the file instead of zombifying the connection.
-    // Finalizing a half-stepped statement can fire a user aggregate's xFinal
-    // (JS), so the GC-destructor and VM-termination paths must pass No.
+    // Yes (the explicit close()/Symbol.dispose paths) finalizes every
+    // outstanding prepared statement so close_v2 actually closes the file.
+    // Finalizing a half-stepped statement can fire a user aggregate's
+    // xFinal (JS), so GC-destructor and VM-termination paths pass No.
     enum class FinalizeStatements : bool { No, Yes };
     void closeInternal(FinalizeStatements = FinalizeStatements::No);
 

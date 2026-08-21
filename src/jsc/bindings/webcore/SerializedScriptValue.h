@@ -39,14 +39,16 @@
 #include <wtf/text/WTFString.h>
 #include "JavaScriptCore/WasmModule.h"
 
-#if ENABLE(WEBASSEMBLY)
 namespace JSC {
+class JSObject;
+class VM;
+#if ENABLE(WEBASSEMBLY)
 namespace Wasm {
 class Module;
 class MemoryHandle;
 }
-}
 #endif
+}
 
 namespace WebCore {
 
@@ -99,6 +101,13 @@ using ArrayBufferContentsArray = Vector<JSC::ArrayBufferContents>;
 using WasmModuleArray = Vector<RefPtr<JSC::Wasm::Module>>;
 using WasmMemoryHandleArray = Vector<RefPtr<JSC::SharedArrayBufferContents>>;
 #endif
+
+// node's markAsUncloneable() / markAsUntransferable(): the tag is a DontEnum JSC private name
+// (node uses a v8 Private), invisible to and unforgeable from user JS, and not removable.
+// Serialization rejects a tagged object with a DataCloneError: anywhere in the value for
+// uncloneable, in the transfer list for untransferable.
+void markAsUncloneable(JSC::VM&, JSC::JSObject&);
+void markAsUntransferable(JSC::VM&, JSC::JSObject&);
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(SerializedScriptValue);
 class SerializedScriptValue : public ThreadSafeRefCounted<SerializedScriptValue> {

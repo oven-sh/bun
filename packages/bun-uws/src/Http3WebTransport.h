@@ -19,9 +19,10 @@ namespace uWS {
  * thing that does not follow from the stream is the datagram framing, and
  * that lives a layer down in quic.c.
  *
- * Only datagrams are implemented. WebTransport streams would need the peer's
- * 0x41 stream type routed back to the session that owns it; lsquic parses
- * that much, but nothing above here asks for it yet.
+ * Only datagrams are implemented. A stream the peer opens on a session is
+ * refused in quic.c with WEBTRANSPORT_SESSION_GONE rather than left hanging;
+ * carrying one would need the 0x41 stream type routed back to the session that
+ * owns it, which lsquic parses but nothing above here asks for yet.
  */
 
 /* Capsule types, draft-ietf-webtrans-http3 §5. Everything else on the CONNECT
@@ -115,14 +116,34 @@ struct Http3WebTransportSession {
             us_quic_stream_reset(stream());
             return;
         }
-        /* Flush, then end both halves. The capsule is buffered until something
-         * pushes it out — a session has no body write to do that — and lsquic
-         * only schedules on_close once neither half is live, so shutting only
-         * the write side leaves the session waiting on a peer that has no
-         * reason to answer. */
+        /* Flush, then FIN the write half and nothing else. The capsule is
+         * buffered until something pushes it out — a session has no body write
+         * to do that. Shutting the read half too would be a STOP_SENDING on
+         * the CONNECT stream, which the draft gives no meaning to and which
+         * Chrome reports as `Connection lost` instead of the code and reason
+         * just written. */
         us_quic_stream_flush(stream());
         us_quic_stream_shutdown(stream());
-        us_quic_stream_shutdown_read(stream());
+        reportClose(code, reason);
+    }
+
+    /* Report a close the server itself made, now rather than when the stream
+     * finally goes. Waiting would mean waiting for the peer's answering FIN,
+     * and a peer that never sends one holds the handler back until the idle
+     * timeout — on exactly the path where a server is trying to let go of a
+     * session promptly.
+     *
+     * Detaching is what makes that safe: the callback releases the JS
+     * wrapper's last reference, so once it has run nothing may route a
+     * datagram here again. Clearing wtOnClose is what keeps the stream's own
+     * on_close, still to come, from reporting the same session twice. */
+    void reportClose(uint32_t code, std::string_view reason) {
+        Http3ResponseData *rd = getData();
+        auto cb = rd->wtOnClose;
+        rd->wtOnClose = nullptr;
+        us_quic_wt_detach(stream());
+        if (cb) cb(this, code, reason.data(), reason.size());
+        rd->wtUserData = nullptr;
     }
 
     /* Drop the session without a capsule. For the cases where the peer is not

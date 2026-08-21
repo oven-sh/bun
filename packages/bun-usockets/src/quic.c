@@ -650,12 +650,10 @@ void lsquic_stream_maybe_reset(struct lsquic_stream *, uint64_t error_code, int)
  *
  * WEBTRANSPORT_SESSION_GONE (0x170d7b68) from draft-ietf-webtrans-http3 §4.6,
  * which is the code for a stream whose session will not carry it. */
-static int us_quic_refuse_webtransport_stream(us_quic_stream_t *s, lsquic_stream_t *stream) {
+static int us_quic_refuse_webtransport_stream(lsquic_stream_t *stream) {
     if (!lsquic_stream_is_webtransport_client_bidi_stream(stream)) return 0;
+    /* The trailing 1 is do_close: the reset shuts both halves down itself. */
     lsquic_stream_maybe_reset(stream, 0x170d7b68, 1);
-    lsquic_stream_wantread(stream, 0);
-    lsquic_stream_close(stream);
-    (void) s;
     return 1;
 }
 
@@ -663,7 +661,7 @@ static void us_quic_on_read(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
     us_quic_stream_t *s = (us_quic_stream_t *) h;
     us_quic_socket_context_t *ctx = s->ctx;
 
-    if (us_quic_refuse_webtransport_stream(s, stream)) return;
+    if (us_quic_refuse_webtransport_stream(stream)) return;
 
     /* lsquic queues a fresh hset for every HEADERS block (1xx interims,
      * the final response, trailers). lsquic_stream_get_hset returns the
@@ -685,7 +683,7 @@ static void us_quic_on_read(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
 
     ssize_t r;
     while ((r = lsquic_stream_read(stream, ctx->read_buf, US_QUIC_READ_BUF)) > 0) {
-        if (us_quic_refuse_webtransport_stream(s, stream)) return;
+        if (us_quic_refuse_webtransport_stream(stream)) return;
         if (ctx->on_stream_data)
             ctx->on_stream_data(s, ctx->read_buf, (unsigned int) r, 0);
         if (!s->stream) return;
@@ -710,19 +708,8 @@ static void us_quic_on_close(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
     if (!s) return;
     if (s->ctx->on_stream_close) s->ctx->on_stream_close(s);
     /* Unregister before the free, or an inbound datagram naming this session
-     * finds a dangling stream. Datagrams already queued for it stay queued —
-     * they carry a quarter stream id the peer will no longer route, which
-     * costs one wasted packet and is cheaper than walking the ring. */
-    if (s->wt_conn) {
-        us_quic_socket_t *qs = s->wt_conn;
-        for (unsigned int i = 0; i < qs->wt_session_count; i++) {
-            if (qs->wt_sessions[i] == s) {
-                qs->wt_sessions[i] = qs->wt_sessions[--qs->wt_session_count];
-                break;
-            }
-        }
-        s->wt_conn = NULL;
-    }
+     * finds a dangling stream. */
+    us_quic_wt_detach(s);
     s->stream = NULL;
     us_quic_hset_free(s->hset);
     us_free(s);
@@ -802,8 +789,7 @@ static us_quic_stream_t *us_quic_wt_find(us_quic_socket_t *qs, uint64_t qsid) {
  * a minimum set, lsquic picks a packet with room for it, and the buffer handed
  * to on_dg_write is that big. Left at zero the callback can be given less room
  * than the queued record on a nearly-full packet, and a record that never fits
- * is a queue that never drains. Returns 0, or -1 when the head is larger than
- * the peer will accept — in which case it cannot ever be sent. */
+ * is a queue that never drains. */
 static void us_quic_wt_arm_dgram(us_quic_socket_t *qs) {
     /* A head the peer will not accept can never leave, and leaving it there
      * would stop every record behind it as well as keeping the connection
@@ -854,6 +840,26 @@ static ssize_t us_quic_on_dg_write(lsquic_conn_t *conn, void *buf, size_t sz) {
 }
 
 int us_quic_stream_is_webtransport(us_quic_stream_t *s) { return s->wt_conn != NULL; }
+
+/* Take the session out of its connection's table. Called both when the stream
+ * goes and when the server closes the session itself, which reports the close
+ * without waiting for the peer's answering FIN — after that no datagram may be
+ * routed to a wrapper that has already been told the session is over.
+ *
+ * Datagrams already queued for it stay queued: they carry a quarter stream id
+ * the peer will no longer route, which costs one wasted packet and is cheaper
+ * than walking the ring. */
+void us_quic_wt_detach(us_quic_stream_t *s) {
+    us_quic_socket_t *qs = s->wt_conn;
+    if (!qs) return;
+    for (unsigned int i = 0; i < qs->wt_session_count; i++) {
+        if (qs->wt_sessions[i] == s) {
+            qs->wt_sessions[i] = qs->wt_sessions[--qs->wt_session_count];
+            break;
+        }
+    }
+    s->wt_conn = NULL;
+}
 
 int us_quic_stream_accept_webtransport(us_quic_stream_t *s) {
     if (s->wt_conn) return 0;

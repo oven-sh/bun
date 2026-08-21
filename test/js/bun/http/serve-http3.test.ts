@@ -1555,7 +1555,8 @@ async function webTransportSession(port: number) {
       status = headers[":status"];
     },
   });
-  stream.closed.catch(() => {});
+  let streamError = "";
+  stream.closed.catch((e: Error) => (streamError = String(e?.message ?? e)));
   stream.sendHeaders(
     {
       ":method": "CONNECT",
@@ -1566,6 +1567,18 @@ async function webTransportSession(port: number) {
     },
     { terminal: false },
   );
+
+  // Everything the server writes on the CONNECT stream, which for a session is
+  // capsules and nothing else. Read rather than ignored so that a test can
+  // assert the bytes of a close rather than only its local effect: the close
+  // handler firing says the server thinks the session ended, not that it told
+  // the peer so in a form the peer can read.
+  const inbound: number[] = [];
+  const pump = (async () => {
+    for await (const batch of stream as AsyncIterable<Uint8Array[]>) {
+      for (const chunk of batch) inbound.push(...chunk);
+    }
+  })().catch(() => {});
 
   const until = async (predicate: () => boolean, ms = 5000) => {
     const deadline = Date.now() + ms;
@@ -1582,6 +1595,10 @@ async function webTransportSession(port: number) {
     get status() {
       return status;
     },
+    get streamError() {
+      return streamError;
+    },
+    inbound,
     datagrams,
     send(payload: string) {
       const body = Buffer.from(payload);
@@ -1597,6 +1614,7 @@ async function webTransportSession(port: number) {
       // finish, and a session's CONNECT stream is open on purpose — it took
       // eleven seconds to time out instead of the millisecond this needs.
       if (!client.destroyed) client.destroy();
+      await pump;
       await endpoint[Symbol.asyncDispose]?.();
     },
   };
@@ -1749,7 +1767,42 @@ describe("Bun.serve WebTransport", () => {
     try {
       wt.send("bye");
       expect(await wt.until(() => closes.length > 0, 3000)).toBe(true);
-      expect(closes).toEqual([{ code: 0, reason: "", closedFlag: true, sendAfter: 0 }]);
+      // The server's own code and reason, reported without waiting for the
+      // peer's answering FIN: a peer that never sends one would otherwise hold
+      // the handler back until the idle timeout.
+      expect(closes).toEqual([{ code: 7, reason: "done here", closedFlag: true, sendAfter: 0 }]);
+    } finally {
+      await wt.close();
+    }
+  });
+
+  test("close() writes a CLOSE_WEBTRANSPORT_SESSION capsule and nothing else", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      webtransport: {
+        datagram(session) {
+          session.close(4242, "bye");
+        },
+      },
+      fetch: () => new Response("plain http/3"),
+    });
+
+    const wt = await webTransportSession(server.port);
+    try {
+      wt.send("close me");
+      expect(await wt.until(() => wt.inbound.length >= 10, 3000)).toBe(true);
+      // varint(0x2843), varint(4 + 3), the code big-endian, then the reason.
+      // Asserted as bytes because the close handler firing on the server only
+      // says the server believes the session ended -- the peer's view of it is
+      // this, and the two came apart once already.
+      expect(wt.inbound).toEqual([0x68, 0x43, 0x07, 0x00, 0x00, 0x10, 0x92, 0x62, 0x79, 0x65]);
+      // An orderly close is the capsule and a FIN. Anything else on the
+      // CONNECT stream -- a STOP_SENDING, a reset -- is an abrupt termination
+      // to the peer, which then reports the connection as lost instead of the
+      // code and reason just written.
+      expect(wt.streamError).toBe("");
     } finally {
       await wt.close();
     }

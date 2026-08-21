@@ -194,6 +194,7 @@ const struct us_quic_header_t *us_quic_stream_header(us_quic_stream_t *s, unsign
  * negotiate the extension or the session table could not grow. */
 int us_quic_stream_accept_webtransport(us_quic_stream_t *s);
 int us_quic_stream_is_webtransport(us_quic_stream_t *s);
+void us_quic_wt_detach(us_quic_stream_t *s);
 
 /* Queue one datagram on `s`'s session. Returns the bytes queued — the payload
  * plus its quarter-stream-id prefix, so a zero-length payload still reports a

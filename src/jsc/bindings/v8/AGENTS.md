@@ -158,10 +158,10 @@ __ZN2v88NewClass3NewEPNS_7IsolateE...
 __ZNK2v88NewClass10SomeMethodEv
 ```
 
-Linux and FreeBSD need no per-symbol entry: the version scripts
-`src/linker.lds` and `src/linker-freebsd.lds` export every `v8::*` and
-`node::*` symbol. `test/internal/source-lints/posix-export-lists.test.ts`
-checks that everything in `src/symbols.txt` is covered by both scripts.
+Linux and FreeBSD need no per-symbol entry: the version script
+`src/linker.lds` exports every `v8::*` and `node::*` symbol.
+`test/internal/source-lints/posix-export-lists.test.ts` checks that it covers
+everything in `src/symbols.txt`.
 
 **Note:** `src/symbols.def` is Windows-only and typically doesn't contain V8 symbols.
 

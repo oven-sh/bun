@@ -1382,8 +1382,16 @@ export const linkerFlags: Flag[] = [
     // not name, and lld keeps a symbol the version script made local out of
     // .dynsym even when a --dynamic-list names it. So there is no second list.
     flag: c => ["-Wl,-Bsymbolic-functions", "-rdynamic", `-Wl,--version-script=${c.cwd}/src/linker.lds`],
-    when: c => c.linux,
+    when: c => c.linux || c.freebsd,
     desc: "Version script (the ELF export list)",
+  },
+  {
+    // A second version node for the two libc symbols only FreeBSD defines;
+    // lld merges every --version-script it is given. Placed after linker.lds
+    // so BUN_1.2 keeps the first version index.
+    flag: c => `-Wl,--version-script=${c.cwd}/src/linker-freebsd.lds`,
+    when: c => c.freebsd,
+    desc: "FreeBSD additions to the export list (environ, __progname)",
   },
   // ─── FreeBSD ───
   {
@@ -1435,12 +1443,6 @@ export const linkerFlags: Flag[] = [
     flag: "-Wl,--gc-sections",
     when: c => c.freebsd && c.release,
     desc: "Garbage-collect unused sections",
-  },
-  {
-    // Same as the linux entry above; the script adds environ/__progname.
-    flag: c => ["-Wl,-Bsymbolic-functions", "-rdynamic", `-Wl,--version-script=${c.cwd}/src/linker-freebsd.lds`],
-    when: c => c.freebsd,
-    desc: "Version script (the ELF export list; FreeBSD adds environ/__progname)",
   },
 ];
 
@@ -1526,12 +1528,12 @@ export function linkerMapOutputs(cfg: Config): string[] {
  * only relink.
  */
 export function linkDepends(cfg: Config): string[] {
-  if (cfg.freebsd) return [join(cfg.cwd, "src/linker-freebsd.lds")];
   const depends = cfg.windows
     ? [join(cfg.cwd, "src/symbols.def")]
     : cfg.darwin
       ? [join(cfg.cwd, "src/symbols.txt")]
       : [join(cfg.cwd, "src/linker.lds")];
+  if (cfg.freebsd) depends.push(join(cfg.cwd, "src/linker-freebsd.lds"));
   if (usesOrderFile(cfg)) depends.push(orderFilePath(cfg));
   return depends;
 }

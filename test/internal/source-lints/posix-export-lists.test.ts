@@ -11,16 +11,17 @@ import path from "node:path";
 //                            per line. A Mach-O name is the C or Itanium
 //                            mangled name with one more leading underscore:
 //                            `_uv_close`, `__ZN2v87Isolate10GetCurrentEv`.
-//   src/linker.lds           Linux, `--version-script`. ELF names, globs such
-//                            as `napi*`, and demangled globs such as `v8::*`
-//                            inside the `extern "C++"` block. `local: *` hides
-//                            everything else.
-//   src/linker-freebsd.lds   FreeBSD. linker.lds plus two libc symbols.
+//   src/linker.lds           Linux and FreeBSD, `--version-script`. ELF names,
+//                            globs such as `napi*`, and demangled globs such as
+//                            `v8::*` inside the `extern "C++"` block.
+//                            `local: *` hides everything else. (FreeBSD also
+//                            passes src/linker-freebsd.lds, which adds two libc
+//                            symbols that are not part of bun's surface.)
 //
-// The linker does not report a name that one list has and another lacks: the
-// symbol is simply not exported on that platform. This lint keeps the three
-// lists in step. (src/symbols.def, the Windows list, differs on purpose: it
-// exports the real libuv, and the C++ shims are exported with dllexport.)
+// The linker does not report a name that one list has and the other lacks: the
+// symbol is simply not exported on that platform. This lint keeps the two lists
+// in step. (src/symbols.def, the Windows list, differs on purpose: it exports
+// the real libuv, and the C++ shims are exported with dllexport.)
 
 const srcDir = path.resolve(import.meta.dir, "..", "..", "..", "src");
 const read = (name: string) => readFileSync(path.join(srcDir, name), "utf8");
@@ -120,43 +121,32 @@ function exportsName(script: VersionScript, elfName: string): boolean {
 }
 
 const symbolsTxt = parseExportedSymbolsList(read("symbols.txt"));
-const linux = parseVersionScript("linker.lds");
-const freebsd = parseVersionScript("linker-freebsd.lds");
+const elf = parseVersionScript("linker.lds");
 
 test("the lists parse into something to compare", () => {
   expect(symbolsTxt.length).toBeGreaterThan(0);
   expect(symbolsTxt.filter(name => !name.startsWith("_"))).toEqual([]);
-  expect(linux.names.size).toBeGreaterThan(0);
-  expect(linux.globs.length).toBeGreaterThan(0);
-  expect(linux.cxxGlobs.length).toBeGreaterThan(0);
+  expect(elf.names.size).toBeGreaterThan(0);
+  expect(elf.globs.length).toBeGreaterThan(0);
+  expect(elf.cxxGlobs.length).toBeGreaterThan(0);
   // A bare `*` in the global section would export everything, and the checks
   // below would pass for any symbols.txt.
-  expect(linux.globs).not.toContain("*");
-  expect(freebsd.globs).not.toContain("*");
+  expect(elf.globs).not.toContain("*");
 });
 
 test("src/linker.lds exports every symbol src/symbols.txt exports", () => {
   const missing = symbolsTxt
     .filter(machoName => !machoOnly.has(machoName))
     .map(machoName => machoName.slice(1))
-    .filter(elfName => !exportsName(linux, elfName))
+    .filter(elfName => !exportsName(elf, elfName))
     .map(elfName => `_${elfName} is in src/symbols.txt but nothing in src/linker.lds exports ${elfName}`);
   expect(missing).toEqual([]);
 });
 
 test("src/symbols.txt exports every symbol src/linker.lds names one by one", () => {
   const machoNames = new Set(symbolsTxt);
-  const missing = Array.from(linux.names)
+  const missing = Array.from(elf.names)
     .filter(elfName => !machoNames.has(`_${elfName}`))
     .map(elfName => `${elfName} is in src/linker.lds but _${elfName} is not in src/symbols.txt`);
-  expect(missing).toEqual([]);
-});
-
-test("src/linker-freebsd.lds exports everything src/linker.lds exports", () => {
-  const missing = [
-    ...Array.from(linux.names).filter(name => !freebsd.names.has(name)),
-    ...linux.globs.filter(glob => !freebsd.globs.includes(glob)),
-    ...linux.cxxGlobs.filter(glob => !freebsd.cxxGlobs.includes(glob)),
-  ].map(entry => `${entry} is in src/linker.lds but not in src/linker-freebsd.lds`);
   expect(missing).toEqual([]);
 });

@@ -204,10 +204,6 @@ pub mod package_manager {
         MapEntry as WorkspacePackageJsonCacheEntry, WorkspacePackageJSONCache,
     };
 
-    /// `PackageManifestMap.load` `When` enum — re-export the real enum so
-    /// callers naming either path agree on one type.
-    pub use crate::package_manifest_map::CacheBehavior as ManifestLoad;
-
     /// `CommandLineArguments.AuditLevel` (subset surfaced for
     /// `bun_runtime::cli::audit_command`). Re-exported alongside the full
     /// `command_line_arguments` module from `package_manager_real`.
@@ -291,14 +287,13 @@ pub use integrity::Integrity;
 
 pub use bin::Bin;
 pub use lockfile_real::bun_lock as TextLockfile;
-pub use patch_install as patch;
 
 pub use dependency::Tag as DependencyVersionTag;
 pub use extract_tarball::ExtractTarball;
 pub use lockfile::{LoadResult, LoadStep, Lockfile, PatchedDep};
 pub use package_manager::Options::LogLevel;
 pub use package_manager::{
-    GetJsonOptions, GetJsonResult, ManifestLoad, WorkspaceFilter, WorkspacePackageJsonCacheEntry,
+    GetJsonOptions, GetJsonResult, WorkspaceFilter, WorkspacePackageJsonCacheEntry,
 };
 pub use repository::{Repository, RepositoryExt};
 pub use resolution::Tag as ResolutionTag;

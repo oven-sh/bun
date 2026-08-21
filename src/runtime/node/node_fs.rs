@@ -6375,15 +6375,11 @@ impl NodeFS {
         Ok(())
     }
 
-    /// Whether an error on a subdirectory of a recursive readdir ends that
-    /// subdirectory instead of failing the whole call. The parent listed the
-    /// subdirectory a moment ago, so these errors mean it was removed or
-    /// replaced in the meantime, or that it cannot be entered at all. (Node
-    /// fails the whole call when the open of a subdirectory fails.) The same
-    /// check applies to the reads: Linux reports a directory removed after it
-    /// was opened as ENOENT from `getdents64`, which libc's readdir(3), and so
-    /// node, turn into the end of the directory. Errors on the root directory
-    /// are always returned.
+    /// A subdirectory that fails with one of these ends that subdirectory
+    /// instead of the whole call: its parent listed it a moment ago, so it was
+    /// removed or replaced since, or cannot be entered. This applies to the
+    /// reads too. `getdents64` reports a directory removed after it was opened
+    /// as ENOENT, which libc's readdir(3) reports as the end of the directory.
     fn readdir_recursive_skips_subdir(errno: E) -> bool {
         matches!(errno, E::ENOENT | E::ENOTDIR | E::EPERM)
     }

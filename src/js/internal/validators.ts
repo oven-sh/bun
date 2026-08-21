@@ -125,6 +125,8 @@ hideFromStack(validateLinkHeaderValue);
 hideFromStack(validateString, validateFunction, validateBoolean);
 hideFromStack(getValidatedPath, getValidatedFsPath, throwIfNullBytesInFileName);
 
+// Must match jsFunction_validateObject in NodeValidator.cpp. The values are node's:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/validators.js#L224-L227
 const kValidateObjectNone = 0;
 const kValidateObjectAllowNullable = 1 << 0;
 const kValidateObjectAllowArray = 1 << 1;

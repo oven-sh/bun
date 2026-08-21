@@ -602,6 +602,8 @@ JSC::EncodedJSValue V::validateOneOf(JSC::ThrowScope& scope, JSC::JSGlobalObject
 
 // validateObject(value, name[, options]) where options is Node's bitmask:
 // kValidateObjectAllowNullable | kValidateObjectAllowArray | kValidateObjectAllowFunction.
+// The values must match internal/validators.ts. They are node's:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/validators.js#L224-L270
 JSC_DEFINE_HOST_FUNCTION(jsFunction_validateObject, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();

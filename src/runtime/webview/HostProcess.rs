@@ -116,10 +116,7 @@ bun_spawn::link_impl_ProcessExit! {
         // pending promises and mark the host dead.
         on_process_exit(_process, status, _rusage) => {
             scoped_log!(WebViewHost, "child exited: {}", status);
-            let signo: i32 = status
-                .signal_code()
-                .and_then(bun_core::SignalCode::platform_number)
-                .unwrap_or(0);
+            let signo: i32 = status.signal().map_or(0, |signal| i32::from(signal.0));
             Bun__WebViewHost__childDied(signo);
             // `this` was heap-allocated in spawn(); process is the
             // intrusive-rc *mut Process whose strong ref we hold. `deref()`

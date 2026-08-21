@@ -459,7 +459,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                             bun_crash_handler::suppress_reporting();
                         }
 
-                        Global::raise_ignoring_panic_handler(sig);
+                        Global::raise_ignoring_panic_handler_raw(::core::ffi::c_int::from(
+                            exit_code.signal,
+                        ));
                     }
                 }
 
@@ -478,11 +480,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             }
 
             SpawnStatus::Signaled(raw_signal) => {
-                // Only the *print* is gated on a valid signal code;
-                // `suppress_reporting` + `raise_ignoring_panic_handler`
-                // run unconditionally.
-                let signal_code = spawn_result.status.signal_code();
-                if let Some(sig) = signal_code {
+                // Only the *print* needs a signal the table knows; the
+                // re-raise forwards whatever the child died from.
+                if let Some(sig) = spawn_result.status.signal_code() {
                     if sig != bun_core::SignalCode::SIGINT && !silent {
                         pretty_errorln!(
                             "<r><red>error<r><d>:<r> script <b>\"{}\"<r> was terminated by signal {}<r>",
@@ -500,12 +500,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     bun_crash_handler::suppress_reporting();
                 }
 
-                if let Some(sig) = signal_code {
-                    Global::raise_ignoring_panic_handler(sig);
-                }
-                // `.signaled` always carries 1..=31 in practice; fallback only
-                // for type-totality.
-                Global::exit(1);
+                Global::raise_ignoring_panic_handler_raw(::core::ffi::c_int::from(raw_signal));
             }
 
             SpawnStatus::Err(ref err) => {
@@ -2187,7 +2182,9 @@ impl RunCommand {
                                 bun_crash_handler::suppress_reporting();
                             }
 
-                            Global::raise_ignoring_panic_handler(sc);
+                            Global::raise_ignoring_panic_handler_raw(::core::ffi::c_int::from(
+                                exit_code.signal,
+                            ));
                         }
 
                         let code = exit_code.code;

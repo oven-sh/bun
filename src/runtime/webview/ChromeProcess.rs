@@ -171,10 +171,7 @@ impl ChromeProcess {
         chrome.close_transport();
         // SAFETY: caller contract; this drops the strong ref taken by to_process.
         unsafe { Process::deref(process) };
-        let signo: i32 = status
-            .signal_code()
-            .and_then(bun_core::SignalCode::platform_number)
-            .unwrap_or(0);
+        let signo: i32 = status.signal().map_or(0, |signal| i32::from(signal.0));
         #[cfg(windows)]
         PipeEvent::Exited { signo }.post(chrome.generation);
         #[cfg(not(windows))]

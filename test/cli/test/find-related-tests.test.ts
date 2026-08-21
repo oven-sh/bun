@@ -86,8 +86,9 @@ describe.concurrent("bun test --find-related-tests", () => {
       "package.json": fixture["package.json"],
     });
 
-    const { stderr, exitCode } = await runRelated(String(dir), ["src/missing.ts"]);
+    const { stdout, stderr, exitCode } = await runRelated(String(dir), ["src/missing.ts"]);
 
+    expect(stdout).toBeEmpty();
     expect(stderr).toContain("source file not found");
     expect(exitCode).not.toBe(0);
   });
@@ -95,10 +96,11 @@ describe.concurrent("bun test --find-related-tests", () => {
   test("rejects --changed with --find-related-tests", async () => {
     using dir = tempDir("find-related-changed", fixture);
 
-    const { stderr, exitCode } = await runRelated(String(dir), ["src/helper.ts"], "--find-related-tests", [
+    const { stdout, stderr, exitCode } = await runRelated(String(dir), ["src/helper.ts"], "--find-related-tests", [
       "--changed",
     ]);
 
+    expect(stdout).toBeEmpty();
     expect(stderr).toContain("--changed and --find-related-tests cannot be used together");
     expect(exitCode).not.toBe(0);
   });

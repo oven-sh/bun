@@ -57,6 +57,7 @@ public:
     WEBCORE_EXPORT bool removeAllListeners(const Identifier& eventType);
 
     WEBCORE_EXPORT bool emit(const Identifier&, const MarkedArgumentBuffer&);
+    WEBCORE_EXPORT bool emit(const Identifier&, const MarkedArgumentBuffer&, WTF::NakedPtr<JSC::Exception>& returnedException);
 
     WEBCORE_EXPORT Vector<Identifier> getEventNames();
     WEBCORE_EXPORT Vector<JSObject*> getListeners(const Identifier& eventType);
@@ -102,7 +103,7 @@ private:
     {
     }
 
-    bool innerInvokeEventListeners(const Identifier&, SimpleEventListenerVector, const MarkedArgumentBuffer& arguments);
+    bool innerInvokeEventListeners(const Identifier&, SimpleEventListenerVector, const MarkedArgumentBuffer& arguments, WTF::NakedPtr<JSC::Exception>* returnedException = nullptr);
 
     EventEmitterData m_eventTargetData;
     unsigned m_maxListeners { 10 };

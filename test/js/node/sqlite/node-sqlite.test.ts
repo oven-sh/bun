@@ -153,6 +153,28 @@ describe("DatabaseSync", () => {
     expect(db.isOpen).toBe(false);
   });
 
+  test("close() finalizes statements parked mid-aggregate", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE t (x INTEGER)");
+    db.exec("INSERT INTO t VALUES (1), (2), (3)");
+    db.aggregate("agg_sum", {
+      start: 0,
+      step: (a: number, x: number) => a + x,
+      inverse: (a: number, x: number) => a - x,
+      result: (a: number) => a,
+    });
+    // Park both iterators between rows so the finalize walk runs over
+    // statements with live aggregate state.
+    const grouped = db.prepare("SELECT agg_sum(x) AS v FROM t GROUP BY x").iterate();
+    const windowed = db.prepare("SELECT agg_sum(x) OVER (ORDER BY x) AS v FROM t").iterate();
+    expect(grouped.next().value).toEqual({ __proto__: null, v: 1 });
+    expect(windowed.next().value).toEqual({ __proto__: null, v: 1 });
+    db.close();
+    Bun.gc(true);
+    expect(db.isOpen).toBe(false);
+    expect(() => grouped.next()).toThrow(/statement has been finalized/);
+  });
+
   test("Symbol.dispose swallows errors on closed databases", () => {
     const db = new DatabaseSync(":memory:", { open: false });
     expect(() => db[Symbol.dispose]()).not.toThrow();

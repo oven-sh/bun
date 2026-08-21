@@ -951,14 +951,19 @@ void JSDatabaseSync::closeInternal(FinalizeStatements finalizeStatements)
         // finalize early is still in the connection's list, and the walk
         // re-fetches the head each iteration, so nothing is leaked.
         record->statementsFinalized = true;
+        ++m_closeWalkDepth;
         while (sqlite3_stmt* stmt = sqlite3_next_stmt(handle, nullptr))
             sqlite3_finalize(stmt);
+        --m_closeWalkDepth;
     }
     sqlite3_close_v2(handle);
-    // An xFinal callback during the walk may have re-opened the database.
-    // The registered-callback roots then belong to the new connection, so
-    // leave them alone; they are cleared when that connection closes.
-    if (!m_db) {
+    // m_registeredCallbacks is the only GC root for the raw JSObject*s in
+    // SQLite's UDF contexts, traced while it lives on this cell. Keep it
+    // intact while an outer walk is still running (m_closeWalkDepth: a
+    // re-entrant close from the walk's xFinal lands here) and while an
+    // xFinal re-opened the database (m_db: the roots then belong to the new
+    // connection). The outermost walk's tail clears it once both are down.
+    if (!m_db && !m_closeWalkDepth) {
         m_namedRegistrations.clear();
         Locker locker { cellLock() };
         m_registeredCallbacks.clear();
@@ -983,9 +988,14 @@ void JSDatabaseSync::finishDeferredClose()
     m_connectionRecord = nullptr;
     sqlite3_close_v2(handle);
     unregisterOpenDatabase(this);
-    m_namedRegistrations.clear();
-    Locker locker { cellLock() };
-    m_registeredCallbacks.clear();
+    // Same guard as closeInternal(): a deferred close can complete while an
+    // outer walk still needs the callback roots (walk xFinal -> open() ->
+    // exec() whose UDF defers a close; its BusyScope unwind lands here).
+    if (!m_closeWalkDepth) {
+        m_namedRegistrations.clear();
+        Locker locker { cellLock() };
+        m_registeredCallbacks.clear();
+    }
 }
 
 // Called from the exiting VM's teardown once script is forbidden and its child workers are

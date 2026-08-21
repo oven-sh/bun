@@ -264,6 +264,12 @@ private:
     sqlite3* m_deferredClose = nullptr;
     unsigned m_openGeneration = 0;
     unsigned m_busyDepth = 0;
+    // Non-zero while closeInternal()'s statement walk is on the C stack. An
+    // xFinal fired by the walk can re-enter open()+close() (or defer a close
+    // that finishes on BusyScope unwind); their teardown must not clear
+    // m_registeredCallbacks while it still roots the UDF contexts the rest
+    // of the outer walk invokes.
+    unsigned m_closeWalkDepth = 0;
     // Sessions must be deleted before sqlite3_close_v2() to avoid
     // use-after-free inside the preupdate hook; track them through shared
     // records (not JS objects) so close() can sweep regardless of GC

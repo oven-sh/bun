@@ -97,7 +97,7 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
 
     // Create a VM + global for loading the config file, plugins, and
     // performing build time prerendering.
-    jsc::initialize(false);
+    jsc::initialize(jsc::InitializeOptions::default());
     bun_ast::initialize_store();
 
     let mut arena = Arena::new();

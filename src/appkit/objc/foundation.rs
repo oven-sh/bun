@@ -8,7 +8,7 @@ use super::{Bool, Id, Object, Ptr, objc_class, objc_global, objc_methods, rt};
 
 objc_class!(pub struct NSObject = "NSObject");
 objc_methods! { impl NSObject {
-    pub(crate) fn responds_to_selector(&self, sel: super::Sel) -> bool = "respondsToSelector:";
+    // pub(crate) fn responds_to_selector(&self, sel: super::Sel) -> bool = "respondsToSelector:";
     pub fn is_equal(&self, other: Option<&NSObject>) -> bool = "isEqual:";
     fn autorelease_raw(&self) -> Ptr = "autorelease";
     fn retain_raw(&self) -> Ptr = "retain";
@@ -175,12 +175,11 @@ impl NSArray {
     }
 }
 
-objc_class!(pub struct NSMutableArray: NSArray = "NSMutableArray");
-objc_methods! { impl NSMutableArray {
-    pub fn with_capacity(capacity: usize) -> NSMutableArray = "arrayWithCapacity:";
-    pub fn add(&self, object: &NSObject) = "addObject:";
-}}
-
+// objc_class!(pub struct NSMutableArray: NSArray = "NSMutableArray");
+// objc_methods! { impl NSMutableArray {
+// pub fn with_capacity(capacity: usize) -> NSMutableArray = "arrayWithCapacity:";
+// pub fn add(&self, object: &NSObject) = "addObject:";
+// }}
 objc_global!(pub(crate) fn default_run_loop_mode() -> NSString = "NSDefaultRunLoopMode");
 objc_global!(pub(crate) fn common_run_loop_modes() -> NSString = "NSRunLoopCommonModes");
 
@@ -222,7 +221,7 @@ objc_methods! { impl NSIndexSet {
     fn first_index(&self) -> usize = "firstIndex";
     /// `NSNotFound` past the last.
     fn index_greater_than(&self, index: usize) -> usize = "indexGreaterThanIndex:";
-    pub fn contains(&self, index: usize) -> bool = "containsIndex:";
+    // pub fn contains(&self, index: usize) -> bool = "containsIndex:";
 }}
 
 impl NSIndexSet {
@@ -253,12 +252,11 @@ impl NSMutableIndexSet {
     }
 }
 
-objc_class!(pub struct NSNumber: NSObject = "NSNumber");
-objc_methods! { impl NSNumber {
-    pub fn with_f64(value: f64) -> NSNumber = "numberWithDouble:";
-    pub fn f64_value(&self) -> f64 = "doubleValue";
-}}
-
+// objc_class!(pub struct NSNumber: NSObject = "NSNumber");
+// objc_methods! { impl NSNumber {
+// pub fn with_f64(value: f64) -> NSNumber = "numberWithDouble:";
+// pub fn f64_value(&self) -> f64 = "doubleValue";
+// }}
 objc_class!(pub struct NSProcessInfo: NSObject = "NSProcessInfo");
 objc_methods! { impl NSProcessInfo {
     pub fn process_info() -> NSProcessInfo = "processInfo";
@@ -268,12 +266,12 @@ objc_methods! { impl NSProcessInfo {
 objc_class!(pub struct NSError: NSObject = "NSError");
 objc_methods! { impl NSError {
     pub fn localized_description(&self) -> NSString = "localizedDescription";
-    pub fn code(&self) -> isize = "code";
-    pub fn domain(&self) -> NSString = "domain";
+    // pub fn code(&self) -> isize = "code";
+    // pub fn domain(&self) -> NSString = "domain";
 }}
 
-objc_class!(pub struct NSURL: NSObject = "NSURL");
-objc_methods! { impl NSURL {
-    pub fn file_url(path: &NSString) -> NSURL = "fileURLWithPath:";
-    pub fn path(&self) -> Option<NSString> = "path";
-}}
+// objc_class!(pub struct NSURL: NSObject = "NSURL");
+// objc_methods! { impl NSURL {
+// pub fn file_url(path: &NSString) -> NSURL = "fileURLWithPath:";
+// pub fn path(&self) -> Option<NSString> = "path";
+// }}

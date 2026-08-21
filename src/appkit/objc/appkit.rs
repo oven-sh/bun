@@ -6,7 +6,7 @@
 //! `Retained<Option<T>>` +1 nullable (both `Retained` forms yield `T` /
 //! `Option<T>` from the generated method). Nullability follows Apple's headers.
 
-use super::foundation::{NSArray, NSData, NSDate, NSIndexSet, NSObject, NSString, NSURL};
+use super::foundation::{NSArray, NSData, NSDate, NSIndexSet, NSObject, NSString};
 use super::{CGColorRef, Sel, objc_class, objc_global, objc_methods};
 use crate::geometry::{Insets, Point, Rect, Size};
 
@@ -29,7 +29,7 @@ objc_methods! { impl NSApplication {
     pub fn finish_launching(&self) = "finishLaunching";
     pub fn run(&self) = "run";
     pub fn stop(&self, sender: Option<&NSObject>) = "stop:";
-    pub fn is_running(&self) -> bool = "isRunning";
+    // pub fn is_running(&self) -> bool = "isRunning";
     pub fn hide(&self, sender: Option<&NSObject>) = "hide:";
     pub fn unhide(&self, sender: Option<&NSObject>) = "unhide:";
     pub fn next_event(&self, mask: u64, until: Option<&NSDate>, mode: &NSString, dequeue: bool) -> Option<NSEvent>
@@ -44,8 +44,8 @@ objc_methods! { impl NSApplication {
     pub fn dock_tile(&self) -> NSDockTile = "dockTile";
     pub fn effective_appearance(&self) -> NSAppearance = "effectiveAppearance";
     pub fn windows(&self) -> NSArray = "windows";
-    pub fn key_window(&self) -> Option<NSWindow> = "keyWindow";
-    pub fn set_application_icon_image(&self, image: Option<&NSImage>) = "setApplicationIconImage:";
+    // pub fn key_window(&self) -> Option<NSWindow> = "keyWindow";
+    // pub fn set_application_icon_image(&self, image: Option<&NSImage>) = "setApplicationIconImage:";
 }}
 
 objc_class!(pub struct NSDockTile: NSObject = "NSDockTile");
@@ -55,7 +55,7 @@ objc_methods! { impl NSDockTile {
 
 objc_class!(pub struct NSAppearance: NSObject = "NSAppearance");
 objc_methods! { impl NSAppearance {
-    pub fn named(name: &NSString) -> Option<NSAppearance> = "appearanceNamed:";
+    // pub fn named(name: &NSString) -> Option<NSAppearance> = "appearanceNamed:";
     pub fn name(&self) -> NSString = "name";
 }}
 
@@ -71,11 +71,11 @@ objc_methods! { impl NSEvent {
 
 objc_class!(pub struct NSScreen: NSObject = "NSScreen");
 objc_methods! { impl NSScreen {
-    pub fn main() -> Option<NSScreen> = "mainScreen";
+    // pub fn main() -> Option<NSScreen> = "mainScreen";
     pub fn screens() -> NSArray = "screens";
-    pub fn frame(&self) -> Rect = "frame";
-    pub fn visible_frame(&self) -> Rect = "visibleFrame";
-    pub fn backing_scale_factor(&self) -> f64 = "backingScaleFactor";
+    // pub fn frame(&self) -> Rect = "frame";
+    // pub fn visible_frame(&self) -> Rect = "visibleFrame";
+    // pub fn backing_scale_factor(&self) -> f64 = "backingScaleFactor";
 }}
 
 // ─────────────────────────────── menus ─────────────────────────────────────
@@ -85,9 +85,9 @@ objc_methods! { impl NSMenu {
     pub fn init_with_title(this: Allocated<Self>, title: &NSString) -> Retained<NSMenu> = "initWithTitle:";
     pub fn title(&self) -> NSString = "title";
     pub fn add_item(&self, item: &NSMenuItem) = "addItem:";
-    pub fn remove_all_items(&self) = "removeAllItems";
-    pub fn set_autoenables_items(&self, flag: bool) = "setAutoenablesItems:";
-    pub fn item_array(&self) -> NSArray = "itemArray";
+    // pub fn remove_all_items(&self) = "removeAllItems";
+    // pub fn set_autoenables_items(&self, flag: bool) = "setAutoenablesItems:";
+    // pub fn item_array(&self) -> NSArray = "itemArray";
 }}
 
 objc_class!(pub struct NSMenuItem: NSObject = "NSMenuItem");
@@ -114,56 +114,56 @@ objc_methods! { impl NSWindow {
     pub fn set_delegate(&self, delegate: Option<&NSObject>) = "setDelegate:";
     pub fn set_title(&self, title: &NSString) = "setTitle:";
     pub fn title(&self) -> NSString = "title";
-    pub fn set_subtitle(&self, subtitle: &NSString) = "setSubtitle:";
-    pub fn set_content_view(&self, view: Option<&NSView>) = "setContentView:";
+    // pub fn set_subtitle(&self, subtitle: &NSString) = "setSubtitle:";
+    // pub fn set_content_view(&self, view: Option<&NSView>) = "setContentView:";
     pub fn content_view(&self) -> Option<NSView> = "contentView";
     pub fn set_content_size(&self, size: Size) = "setContentSize:";
     pub fn set_content_min_size(&self, size: Size) = "setContentMinSize:";
     pub fn set_content_max_size(&self, size: Size) = "setContentMaxSize:";
     pub fn content_rect_for_frame_rect(&self, frame: Rect) -> Rect = "contentRectForFrameRect:";
-    pub fn frame_rect_for_content_rect(&self, content: Rect) -> Rect = "frameRectForContentRect:";
+    // pub fn frame_rect_for_content_rect(&self, content: Rect) -> Rect = "frameRectForContentRect:";
     pub fn frame(&self) -> Rect = "frame";
-    pub fn set_frame(&self, frame: Rect, display: bool) = "setFrame:display:";
+    // pub fn set_frame(&self, frame: Rect, display: bool) = "setFrame:display:";
     pub fn set_frame_origin(&self, origin: Point) = "setFrameOrigin:";
-    pub fn set_frame_top_left_point(&self, point: Point) = "setFrameTopLeftPoint:";
-    pub fn set_style_mask(&self, mask: usize) = "setStyleMask:";
-    pub fn style_mask(&self) -> usize = "styleMask";
+    // pub fn set_frame_top_left_point(&self, point: Point) = "setFrameTopLeftPoint:";
+    // pub fn set_style_mask(&self, mask: usize) = "setStyleMask:";
+    // pub fn style_mask(&self) -> usize = "styleMask";
     pub fn make_key_and_order_front(&self, sender: Option<&NSObject>) = "makeKeyAndOrderFront:";
-    pub fn order_front(&self, sender: Option<&NSObject>) = "orderFront:";
+    // pub fn order_front(&self, sender: Option<&NSObject>) = "orderFront:";
     pub fn order_out(&self, sender: Option<&NSObject>) = "orderOut:";
     pub fn center(&self) = "center";
     pub fn close(&self) = "close";
-    pub fn perform_close(&self, sender: Option<&NSObject>) = "performClose:";
+    // pub fn perform_close(&self, sender: Option<&NSObject>) = "performClose:";
     pub fn is_visible(&self) -> bool = "isVisible";
     pub fn is_key_window(&self) -> bool = "isKeyWindow";
-    pub fn is_miniaturized(&self) -> bool = "isMiniaturized";
-    pub fn miniaturize(&self, sender: Option<&NSObject>) = "miniaturize:";
-    pub fn deminiaturize(&self, sender: Option<&NSObject>) = "deminiaturize:";
-    pub fn is_zoomed(&self) -> bool = "isZoomed";
-    pub fn zoom(&self, sender: Option<&NSObject>) = "zoom:";
-    pub fn toggle_full_screen(&self, sender: Option<&NSObject>) = "toggleFullScreen:";
+    // pub fn is_miniaturized(&self) -> bool = "isMiniaturized";
+    // pub fn miniaturize(&self, sender: Option<&NSObject>) = "miniaturize:";
+    // pub fn deminiaturize(&self, sender: Option<&NSObject>) = "deminiaturize:";
+    // pub fn is_zoomed(&self) -> bool = "isZoomed";
+    // pub fn zoom(&self, sender: Option<&NSObject>) = "zoom:";
+    // pub fn toggle_full_screen(&self, sender: Option<&NSObject>) = "toggleFullScreen:";
     pub fn set_titlebar_appears_transparent(&self, flag: bool) = "setTitlebarAppearsTransparent:";
     pub fn set_title_visibility(&self, visibility: WindowTitleVisibility) = "setTitleVisibility:";
-    pub fn set_movable_by_window_background(&self, flag: bool) = "setMovableByWindowBackground:";
+    // pub fn set_movable_by_window_background(&self, flag: bool) = "setMovableByWindowBackground:";
     pub fn set_background_color(&self, color: Option<&NSColor>) = "setBackgroundColor:";
-    pub fn set_opaque(&self, flag: bool) = "setOpaque:";
-    pub fn set_has_shadow(&self, flag: bool) = "setHasShadow:";
-    pub fn set_level(&self, level: isize) = "setLevel:";
+    // pub fn set_opaque(&self, flag: bool) = "setOpaque:";
+    // pub fn set_has_shadow(&self, flag: bool) = "setHasShadow:";
+    // pub fn set_level(&self, level: isize) = "setLevel:";
     pub fn set_alpha_value(&self, alpha: f64) = "setAlphaValue:";
-    pub fn set_min_size(&self, size: Size) = "setMinSize:";
-    pub fn set_max_size(&self, size: Size) = "setMaxSize:";
+    // pub fn set_min_size(&self, size: Size) = "setMinSize:";
+    // pub fn set_max_size(&self, size: Size) = "setMaxSize:";
     pub fn set_frame_autosave_name(&self, name: &NSString) -> bool = "setFrameAutosaveName:";
     pub fn set_collection_behavior(&self, behavior: usize) = "setCollectionBehavior:";
-    pub fn make_first_responder(&self, responder: Option<&NSView>) -> bool = "makeFirstResponder:";
-    pub fn set_initial_first_responder(&self, view: Option<&NSView>) = "setInitialFirstResponder:";
-    pub fn set_document_edited(&self, flag: bool) = "setDocumentEdited:";
-    pub fn set_represented_filename(&self, path: &NSString) = "setRepresentedFilename:";
-    pub fn screen(&self) -> Option<NSScreen> = "screen";
-    pub fn backing_scale_factor(&self) -> f64 = "backingScaleFactor";
-    pub fn set_appearance(&self, appearance: Option<&NSAppearance>) = "setAppearance:";
+    // pub fn make_first_responder(&self, responder: Option<&NSView>) -> bool = "makeFirstResponder:";
+    // pub fn set_initial_first_responder(&self, view: Option<&NSView>) = "setInitialFirstResponder:";
+    // pub fn set_document_edited(&self, flag: bool) = "setDocumentEdited:";
+    // pub fn set_represented_filename(&self, path: &NSString) = "setRepresentedFilename:";
+    // pub fn screen(&self) -> Option<NSScreen> = "screen";
+    // pub fn backing_scale_factor(&self) -> f64 = "backingScaleFactor";
+    // pub fn set_appearance(&self, appearance: Option<&NSAppearance>) = "setAppearance:";
     pub fn layout_if_needed(&self) = "layoutIfNeeded";
-    pub fn display_if_needed(&self) = "displayIfNeeded";
-    pub fn set_default_button_cell(&self, cell: Option<&NSCell>) = "setDefaultButtonCell:";
+    // pub fn display_if_needed(&self) = "displayIfNeeded";
+    // pub fn set_default_button_cell(&self, cell: Option<&NSCell>) = "setDefaultButtonCell:";
 }}
 
 // ─────────────────────────────── views ─────────────────────────────────────
@@ -179,37 +179,37 @@ objc_methods! { impl NSView {
     pub fn is_descendant_of(&self, view: &NSView) -> bool = "isDescendantOf:";
     pub fn superview(&self) -> Option<NSView> = "superview";
     pub fn subviews(&self) -> NSArray = "subviews";
-    pub fn window(&self) -> Option<NSWindow> = "window";
+    // pub fn window(&self) -> Option<NSWindow> = "window";
     pub fn set_hidden(&self, hidden: bool) = "setHidden:";
-    pub fn is_hidden(&self) -> bool = "isHidden";
+    // pub fn is_hidden(&self) -> bool = "isHidden";
     pub fn set_alpha_value(&self, alpha: f64) = "setAlphaValue:";
     pub fn set_tool_tip(&self, text: Option<&NSString>) = "setToolTip:";
     pub fn set_identifier(&self, identifier: Option<&NSString>) = "setIdentifier:";
-    pub fn identifier(&self) -> Option<NSString> = "identifier";
+    // pub fn identifier(&self) -> Option<NSString> = "identifier";
     pub fn set_wants_layer(&self, flag: bool) = "setWantsLayer:";
     pub fn layer(&self) -> Option<CALayer> = "layer";
     pub fn frame(&self) -> Rect = "frame";
-    pub fn set_frame(&self, frame: Rect) = "setFrame:";
-    pub fn set_frame_size(&self, size: Size) = "setFrameSize:";
+    // pub fn set_frame(&self, frame: Rect) = "setFrame:";
+    // pub fn set_frame_size(&self, size: Size) = "setFrameSize:";
     pub fn bounds(&self) -> Rect = "bounds";
-    pub fn fitting_size(&self) -> Size = "fittingSize";
-    pub fn intrinsic_content_size(&self) -> Size = "intrinsicContentSize";
+    // pub fn fitting_size(&self) -> Size = "fittingSize";
+    // pub fn intrinsic_content_size(&self) -> Size = "intrinsicContentSize";
     pub fn content_hugging_priority(&self, orientation: Orientation) -> f32 = "contentHuggingPriorityForOrientation:";
     pub fn set_content_hugging_priority(&self, priority: f32, orientation: Orientation) = "setContentHuggingPriority:forOrientation:";
     pub fn content_compression_resistance_priority(&self, orientation: Orientation) -> f32
         = "contentCompressionResistancePriorityForOrientation:";
     pub fn set_content_compression_resistance_priority(&self, priority: f32, orientation: Orientation)
         = "setContentCompressionResistancePriority:forOrientation:";
-    pub fn set_needs_display(&self, flag: bool) = "setNeedsDisplay:";
-    pub fn set_needs_layout(&self, flag: bool) = "setNeedsLayout:";
+    // pub fn set_needs_display(&self, flag: bool) = "setNeedsDisplay:";
+    // pub fn set_needs_layout(&self, flag: bool) = "setNeedsLayout:";
     pub fn layout_subtree_if_needed(&self) = "layoutSubtreeIfNeeded";
     pub fn constraints(&self) -> NSArray = "constraints";
-    pub fn set_autoresizing_mask(&self, mask: usize) = "setAutoresizingMask:";
+    // pub fn set_autoresizing_mask(&self, mask: usize) = "setAutoresizingMask:";
     pub fn bitmap_image_rep_for_caching_display_in_rect(&self, rect: Rect) -> Option<NSBitmapImageRep>
         = "bitmapImageRepForCachingDisplayInRect:";
     pub fn cache_display_in_rect(&self, rect: Rect, rep: &NSBitmapImageRep) = "cacheDisplayInRect:toBitmapImageRep:";
-    pub fn enclosing_scroll_view(&self) -> Option<NSScrollView> = "enclosingScrollView";
-    pub fn scroll_point(&self, point: Point) = "scrollPoint:";
+    // pub fn enclosing_scroll_view(&self) -> Option<NSScrollView> = "enclosingScrollView";
+    // pub fn scroll_point(&self, point: Point) = "scrollPoint:";
 }}
 
 objc_class!(pub struct CALayer: NSObject = "CALayer");
@@ -225,8 +225,8 @@ objc_class!(pub struct NSBitmapImageRep: NSObject = "NSBitmapImageRep");
 objc_methods! { impl NSBitmapImageRep {
     pub fn representation(&self, file_type: BitmapImageFileType, properties: Option<&NSObject>) -> Option<NSData>
         = "representationUsingType:properties:";
-    pub fn pixels_wide(&self) -> isize = "pixelsWide";
-    pub fn pixels_high(&self) -> isize = "pixelsHigh";
+    // pub fn pixels_wide(&self) -> isize = "pixelsWide";
+    // pub fn pixels_high(&self) -> isize = "pixelsHigh";
 }}
 
 /// `NSLayoutAttribute`.
@@ -258,11 +258,10 @@ pub(crate) enum LayoutRelation {
 /// `NSWindowOrderingMode`, also the `positioned:` of `addSubview:positioned:relativeTo:`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(isize)]
-#[allow(dead_code)]
 pub(crate) enum WindowOrderingMode {
-    Above = 1,
+    // Above = 1,
     Below = -1,
-    Out = 0,
+    // Out = 0,
 }
 
 /// `NSUserInterfaceLayoutOrientation` / `NSLayoutConstraintOrientation`.
@@ -328,67 +327,61 @@ pub(crate) mod priority {
 /// `NSLineBreakMode`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(usize)]
-#[allow(dead_code)]
 pub(crate) enum LineBreakMode {
     ByWordWrapping = 0,
-    ByCharWrapping = 1,
-    ByClipping = 2,
-    ByTruncatingHead = 3,
+    // ByCharWrapping = 1,
+    // ByClipping = 2,
+    // ByTruncatingHead = 3,
     ByTruncatingTail = 4,
-    ByTruncatingMiddle = 5,
+    // ByTruncatingMiddle = 5,
 }
 
 /// `NSBoxType`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(usize)]
-#[allow(dead_code)]
 pub(crate) enum BoxType {
-    Primary = 0,
+    // Primary = 0,
     Separator = 2,
-    Custom = 4,
+    // Custom = 4,
 }
 
 /// `NSTitlePosition`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(usize)]
-#[allow(dead_code)]
 pub(crate) enum TitlePosition {
     NoTitle = 0,
-    AboveTop = 1,
+    // AboveTop = 1,
     AtTop = 2,
-    BelowTop = 3,
-    AboveBottom = 4,
-    AtBottom = 5,
-    BelowBottom = 6,
+    // BelowTop = 3,
+    // AboveBottom = 4,
+    // AtBottom = 5,
+    // BelowBottom = 6,
 }
 
 /// `NSSplitViewDividerStyle`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(isize)]
-#[allow(dead_code)]
 pub(crate) enum SplitViewDividerStyle {
-    Thick = 1,
+    // Thick = 1,
     Thin = 2,
-    PaneSplitter = 3,
+    // PaneSplitter = 3,
 }
 
 /// `NSBorderType`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(usize)]
-#[allow(dead_code)]
 pub(crate) enum BorderType {
     NoBorder = 0,
-    Line = 1,
-    Bezel = 2,
-    Groove = 3,
+    // Line = 1,
+    // Bezel = 2,
+    // Groove = 3,
 }
 
 /// `NSControlStateValue`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(isize)]
-#[allow(dead_code)]
 pub(crate) enum ControlStateValue {
-    Mixed = -1,
+    // Mixed = -1,
     Off = 0,
     On = 1,
 }
@@ -408,42 +401,39 @@ impl ControlStateValue {
 /// `NSBezelStyle`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(usize)]
-#[allow(dead_code)]
 pub(crate) enum BezelStyle {
-    Automatic = 0,
+    // Automatic = 0,
     Push = 1,
-    FlexiblePush = 2,
-    Disclosure = 5,
-    Circular = 7,
-    HelpButton = 9,
-    SmallSquare = 10,
+    // FlexiblePush = 2,
+    // Disclosure = 5,
+    // Circular = 7,
+    // HelpButton = 9,
+    // SmallSquare = 10,
     Toolbar = 11,
-    AccessoryBarAction = 12,
-    AccessoryBar = 13,
-    PushDisclosure = 14,
-    Badge = 15,
+    // AccessoryBarAction = 12,
+    // AccessoryBar = 13,
+    // PushDisclosure = 14,
+    // Badge = 15,
 }
 
 /// `NSCellImagePosition`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(usize)]
-#[allow(dead_code)]
 pub(crate) enum CellImagePosition {
     NoImage = 0,
     ImageOnly = 1,
     ImageLeft = 2,
-    ImageRight = 3,
-    ImageBelow = 4,
-    ImageAbove = 5,
-    ImageOverlaps = 6,
-    ImageLeading = 7,
-    ImageTrailing = 8,
+    // ImageRight = 3,
+    // ImageBelow = 4,
+    // ImageAbove = 5,
+    // ImageOverlaps = 6,
+    // ImageLeading = 7,
+    // ImageTrailing = 8,
 }
 
 /// `NSProgressIndicatorStyle`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(usize)]
-#[allow(dead_code)]
 pub(crate) enum ProgressIndicatorStyle {
     Bar = 0,
     Spinning = 1,
@@ -452,55 +442,50 @@ pub(crate) enum ProgressIndicatorStyle {
 /// `NSControlSize`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(usize)]
-#[allow(dead_code)]
 pub(crate) enum ControlSize {
     Regular = 0,
-    Small = 1,
-    Mini = 2,
-    Large = 3,
+    // Small = 1,
+    // Mini = 2,
+    // Large = 3,
 }
 
 /// `NSTableViewColumnAutoresizingStyle`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(usize)]
-#[allow(dead_code)]
 pub(crate) enum ColumnAutoresizingStyle {
-    NoAutoresizing = 0,
-    Uniform = 1,
-    Sequential = 2,
-    ReverseSequential = 3,
+    // NoAutoresizing = 0,
+    // Uniform = 1,
+    // Sequential = 2,
+    // ReverseSequential = 3,
     LastColumnOnly = 4,
-    FirstColumnOnly = 5,
+    // FirstColumnOnly = 5,
 }
 
 /// `NSSegmentSwitchTracking`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(usize)]
-#[allow(dead_code)]
 pub(crate) enum SegmentSwitchTracking {
     SelectOne = 0,
-    SelectAny = 1,
-    Momentary = 2,
-    MomentaryAccelerator = 3,
+    // SelectAny = 1,
+    // Momentary = 2,
+    // MomentaryAccelerator = 3,
 }
 
 /// `NSSegmentDistribution`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(isize)]
-#[allow(dead_code)]
 pub(crate) enum SegmentDistribution {
-    Fit = 0,
+    // Fit = 0,
     Fill = 1,
-    FillEqually = 2,
-    FillProportionally = 3,
+    // FillEqually = 2,
+    // FillProportionally = 3,
 }
 
 /// `NSWindowTitleVisibility`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(isize)]
-#[allow(dead_code)]
 pub(crate) enum WindowTitleVisibility {
-    Visible = 0,
+    // Visible = 0,
     Hidden = 1,
 }
 
@@ -514,14 +499,13 @@ pub(crate) enum BackingStoreType {
 /// `NSBitmapImageFileType`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(usize)]
-#[allow(dead_code)]
 pub(crate) enum BitmapImageFileType {
-    Tiff = 0,
-    Bmp = 1,
-    Gif = 2,
-    Jpeg = 3,
+    // Tiff = 0,
+    // Bmp = 1,
+    // Gif = 2,
+    // Jpeg = 3,
     Png = 4,
-    Jpeg2000 = 5,
+    // Jpeg2000 = 5,
 }
 
 objc_class!(pub struct NSLayoutConstraint: NSObject = "NSLayoutConstraint");
@@ -546,12 +530,12 @@ objc_methods! { impl NSStackView {
     pub fn set_alignment(&self, attribute: LayoutAttribute) = "setAlignment:";
     pub fn set_distribution(&self, distribution: StackDistribution) = "setDistribution:";
     pub fn arranged_subviews(&self) -> NSArray = "arrangedSubviews";
-    pub fn add_arranged_subview(&self, view: &NSView) = "addArrangedSubview:";
+    // pub fn add_arranged_subview(&self, view: &NSView) = "addArrangedSubview:";
     pub fn insert_arranged_subview(&self, view: &NSView, index: usize) = "insertArrangedSubview:atIndex:";
     pub fn remove_arranged_subview(&self, view: &NSView) = "removeArrangedSubview:";
     pub fn set_detaches_hidden_views(&self, flag: bool) = "setDetachesHiddenViews:";
     pub fn set_hugging_priority(&self, priority: f32, orientation: Orientation) = "setHuggingPriority:forOrientation:";
-    pub fn set_custom_spacing_after(&self, spacing: f64, view: &NSView) = "setCustomSpacing:afterView:";
+    // pub fn set_custom_spacing_after(&self, spacing: f64, view: &NSView) = "setCustomSpacing:afterView:";
 }}
 
 objc_class!(pub struct NSClipView: NSView = "NSClipView");
@@ -583,8 +567,8 @@ objc_methods! { impl NSSplitView {
     pub fn arranged_subviews(&self) -> NSArray = "arrangedSubviews";
     pub fn insert_arranged_subview(&self, view: &NSView, index: usize) = "insertArrangedSubview:atIndex:";
     pub fn remove_arranged_subview(&self, view: &NSView) = "removeArrangedSubview:";
-    pub fn set_position_of_divider(&self, position: f64, index: isize) = "setPosition:ofDividerAtIndex:";
-    pub fn set_holding_priority(&self, priority: f32, index: isize) = "setHoldingPriority:forSubviewAtIndex:";
+    // pub fn set_position_of_divider(&self, position: f64, index: isize) = "setPosition:ofDividerAtIndex:";
+    // pub fn set_holding_priority(&self, priority: f32, index: isize) = "setHoldingPriority:forSubviewAtIndex:";
 }}
 
 objc_class!(pub struct NSBox: NSView = "NSBox");
@@ -595,9 +579,9 @@ objc_methods! { impl NSBox {
     pub fn set_title_position(&self, position: TitlePosition) = "setTitlePosition:";
     pub fn set_content_view(&self, view: Option<&NSView>) = "setContentView:";
     pub fn content_view(&self) -> Option<NSView> = "contentView";
-    pub fn set_content_view_margins(&self, size: Size) = "setContentViewMargins:";
-    pub fn set_transparent(&self, flag: bool) = "setTransparent:";
-    pub fn set_fill_color(&self, color: &NSColor) = "setFillColor:";
+    // pub fn set_content_view_margins(&self, size: Size) = "setContentViewMargins:";
+    // pub fn set_transparent(&self, flag: bool) = "setTransparent:";
+    // pub fn set_fill_color(&self, color: &NSColor) = "setFillColor:";
 }}
 
 // ───────────────────────────── controls ────────────────────────────────────
@@ -607,31 +591,31 @@ objc_methods! { impl NSControl {
     pub fn set_target(&self, target: Option<&NSObject>) = "setTarget:";
     pub fn set_action(&self, action: Option<Sel>) = "setAction:";
     pub fn set_enabled(&self, enabled: bool) = "setEnabled:";
-    pub fn is_enabled(&self) -> bool = "isEnabled";
+    // pub fn is_enabled(&self) -> bool = "isEnabled";
     pub fn set_string_value(&self, value: &NSString) = "setStringValue:";
     pub fn string_value(&self) -> NSString = "stringValue";
     pub fn set_double_value(&self, value: f64) = "setDoubleValue:";
     pub fn double_value(&self) -> f64 = "doubleValue";
-    pub fn set_integer_value(&self, value: isize) = "setIntegerValue:";
-    pub fn integer_value(&self) -> isize = "integerValue";
+    // pub fn set_integer_value(&self, value: isize) = "setIntegerValue:";
+    // pub fn integer_value(&self) -> isize = "integerValue";
     pub fn set_font(&self, font: Option<&NSFont>) = "setFont:";
     pub fn set_alignment(&self, alignment: TextAlignment) = "setAlignment:";
-    pub fn set_control_size(&self, size: ControlSize) = "setControlSize:";
+    // pub fn set_control_size(&self, size: ControlSize) = "setControlSize:";
     pub fn set_continuous(&self, flag: bool) = "setContinuous:";
-    pub fn size_to_fit(&self) = "sizeToFit";
+    // pub fn size_to_fit(&self) = "sizeToFit";
     pub fn perform_click(&self, sender: Option<&NSObject>) = "performClick:";
-    pub fn set_tag(&self, tag: isize) = "setTag:";
-    pub fn tag(&self) -> isize = "tag";
+    // pub fn set_tag(&self, tag: isize) = "setTag:";
+    // pub fn tag(&self) -> isize = "tag";
     pub fn set_line_break_mode(&self, mode: LineBreakMode) = "setLineBreakMode:";
     pub fn set_uses_single_line_mode(&self, flag: bool) = "setUsesSingleLineMode:";
     pub fn cell(&self) -> Option<NSCell> = "cell";
-    pub fn current_editor(&self) -> Option<NSTextView> = "currentEditor";
+    // pub fn current_editor(&self) -> Option<NSTextView> = "currentEditor";
 }}
 
 objc_class!(pub struct NSCell: NSObject = "NSCell");
 objc_methods! { impl NSCell {
     pub fn set_scrollable(&self, flag: bool) = "setScrollable:";
-    pub fn set_wraps(&self, flag: bool) = "setWraps:";
+    // pub fn set_wraps(&self, flag: bool) = "setWraps:";
     pub fn set_truncates_last_visible_line(&self, flag: bool) = "setTruncatesLastVisibleLine:";
     pub fn set_sends_action_on_end_editing(&self, flag: bool) = "setSendsActionOnEndEditing:";
 }}
@@ -640,21 +624,21 @@ objc_class!(pub struct NSTextField: NSControl = "NSTextField");
 objc_methods! { impl NSTextField {
     pub fn init_with_frame(this: Allocated<Self>, frame: Rect) -> Retained<NSTextField> = "initWithFrame:";
     pub fn label(text: &NSString) -> NSTextField = "labelWithString:";
-    pub fn wrapping_label(text: &NSString) -> NSTextField = "wrappingLabelWithString:";
-    pub fn editable(text: &NSString) -> NSTextField = "textFieldWithString:";
+    // pub fn wrapping_label(text: &NSString) -> NSTextField = "wrappingLabelWithString:";
+    // pub fn editable(text: &NSString) -> NSTextField = "textFieldWithString:";
     pub fn set_text_color(&self, color: Option<&NSColor>) = "setTextColor:";
     pub fn set_placeholder_string(&self, text: Option<&NSString>) = "setPlaceholderString:";
     pub fn set_editable(&self, flag: bool) = "setEditable:";
     pub fn set_selectable(&self, flag: bool) = "setSelectable:";
     pub fn set_bezeled(&self, flag: bool) = "setBezeled:";
-    pub fn set_bordered(&self, flag: bool) = "setBordered:";
+    // pub fn set_bordered(&self, flag: bool) = "setBordered:";
     pub fn set_draws_background(&self, flag: bool) = "setDrawsBackground:";
-    pub fn set_background_color(&self, color: Option<&NSColor>) = "setBackgroundColor:";
+    // pub fn set_background_color(&self, color: Option<&NSColor>) = "setBackgroundColor:";
     pub fn set_maximum_number_of_lines(&self, lines: isize) = "setMaximumNumberOfLines:";
-    pub fn set_preferred_max_layout_width(&self, width: f64) = "setPreferredMaxLayoutWidth:";
+    // pub fn set_preferred_max_layout_width(&self, width: f64) = "setPreferredMaxLayoutWidth:";
     pub fn set_delegate(&self, delegate: Option<&NSObject>) = "setDelegate:";
-    pub fn select_text(&self, sender: Option<&NSObject>) = "selectText:";
-    pub fn set_allows_editing_text_attributes(&self, flag: bool) = "setAllowsEditingTextAttributes:";
+    // pub fn select_text(&self, sender: Option<&NSObject>) = "selectText:";
+    // pub fn set_allows_editing_text_attributes(&self, flag: bool) = "setAllowsEditingTextAttributes:";
 }}
 
 objc_class!(pub struct NSSecureTextField: NSTextField = "NSSecureTextField");
@@ -665,7 +649,7 @@ objc_methods! { impl NSSecureTextField {
 objc_class!(pub struct NSSearchField: NSTextField = "NSSearchField");
 objc_methods! { impl NSSearchField {
     pub fn init_with_frame(this: Allocated<Self>, frame: Rect) -> Retained<NSSearchField> = "initWithFrame:";
-    pub fn set_sends_search_string_immediately(&self, flag: bool) = "setSendsSearchStringImmediately:";
+    // pub fn set_sends_search_string_immediately(&self, flag: bool) = "setSendsSearchStringImmediately:";
     pub fn set_sends_whole_search_string(&self, flag: bool) = "setSendsWholeSearchString:";
 }}
 
@@ -679,17 +663,17 @@ objc_methods! { impl NSButton {
     pub fn set_bezel_style(&self, style: BezelStyle) = "setBezelStyle:";
     pub fn set_bordered(&self, flag: bool) = "setBordered:";
     pub fn set_key_equivalent(&self, key: &NSString) = "setKeyEquivalent:";
-    pub fn set_key_equivalent_modifier_mask(&self, mask: usize) = "setKeyEquivalentModifierMask:";
+    // pub fn set_key_equivalent_modifier_mask(&self, mask: usize) = "setKeyEquivalentModifierMask:";
     pub fn set_state(&self, state: ControlStateValue) = "setState:";
     pub fn state(&self) -> isize = "state";
     pub fn set_image(&self, image: Option<&NSImage>) = "setImage:";
     pub fn set_image_position(&self, position: CellImagePosition) = "setImagePosition:";
-    pub fn set_image_scaling(&self, scaling: ImageScaling) = "setImageScaling:";
+    // pub fn set_image_scaling(&self, scaling: ImageScaling) = "setImageScaling:";
     pub fn set_content_tint_color(&self, color: Option<&NSColor>) = "setContentTintColor:";
-    pub fn set_bezel_color(&self, color: Option<&NSColor>) = "setBezelColor:";
+    // pub fn set_bezel_color(&self, color: Option<&NSColor>) = "setBezelColor:";
     pub fn set_has_destructive_action(&self, flag: bool) = "setHasDestructiveAction:";
-    pub fn set_shows_border_only_while_mouse_inside(&self, flag: bool) = "setShowsBorderOnlyWhileMouseInside:";
-    pub fn set_allows_mixed_state(&self, flag: bool) = "setAllowsMixedState:";
+    // pub fn set_shows_border_only_while_mouse_inside(&self, flag: bool) = "setShowsBorderOnlyWhileMouseInside:";
+    // pub fn set_allows_mixed_state(&self, flag: bool) = "setAllowsMixedState:";
 }}
 
 objc_class!(pub struct NSSwitch: NSControl = "NSSwitch");
@@ -709,7 +693,7 @@ objc_methods! { impl NSSlider {
     pub fn max_value(&self) -> f64 = "maxValue";
     pub fn set_number_of_tick_marks(&self, count: isize) = "setNumberOfTickMarks:";
     pub fn set_allows_tick_mark_values_only(&self, flag: bool) = "setAllowsTickMarkValuesOnly:";
-    pub fn set_vertical(&self, flag: bool) = "setVertical:";
+    // pub fn set_vertical(&self, flag: bool) = "setVertical:";
 }}
 
 objc_class!(pub struct NSPopUpButton: NSButton = "NSPopUpButton");
@@ -733,8 +717,8 @@ objc_methods! { impl NSSegmentedControl {
     /// `-1` deselects every segment.
     pub fn set_selected_segment(&self, segment: isize) = "setSelectedSegment:";
     pub fn selected_segment(&self) -> isize = "selectedSegment";
-    pub fn set_selected_for_segment(&self, selected: bool, segment: isize) = "setSelected:forSegment:";
-    pub fn set_tracking_mode(&self, mode: SegmentSwitchTracking) = "setTrackingMode:";
+    // pub fn set_selected_for_segment(&self, selected: bool, segment: isize) = "setSelected:forSegment:";
+    // pub fn set_tracking_mode(&self, mode: SegmentSwitchTracking) = "setTrackingMode:";
     pub fn set_segment_distribution(&self, distribution: SegmentDistribution) = "setSegmentDistribution:";
 }}
 
@@ -748,7 +732,7 @@ objc_methods! { impl NSProgressIndicator {
     pub fn set_max_value(&self, value: f64) = "setMaxValue:";
     pub fn start_animation(&self, sender: Option<&NSObject>) = "startAnimation:";
     pub fn stop_animation(&self, sender: Option<&NSObject>) = "stopAnimation:";
-    pub fn set_uses_threaded_animation(&self, flag: bool) = "setUsesThreadedAnimation:";
+    // pub fn set_uses_threaded_animation(&self, flag: bool) = "setUsesThreadedAnimation:";
     pub fn set_displayed_when_stopped(&self, flag: bool) = "setDisplayedWhenStopped:";
     pub fn set_control_size(&self, size: ControlSize) = "setControlSize:";
 }}
@@ -757,13 +741,13 @@ objc_class!(pub struct NSImage: NSObject = "NSImage");
 objc_methods! { impl NSImage {
     pub fn system_symbol(name: &NSString, accessibility_description: Option<&NSString>) -> Option<NSImage>
         = "imageWithSystemSymbolName:accessibilityDescription:";
-    pub fn named(name: &NSString) -> Option<NSImage> = "imageNamed:";
+    // pub fn named(name: &NSString) -> Option<NSImage> = "imageNamed:";
     pub fn init_with_contents_of_file(this: Allocated<Self>, path: &NSString) -> Retained<Option<NSImage>> = "initWithContentsOfFile:";
     pub fn init_with_data(this: Allocated<Self>, data: &NSData) -> Retained<Option<NSImage>> = "initWithData:";
-    pub fn with_symbol_configuration(&self, configuration: &NSImageSymbolConfiguration) -> Option<NSImage> = "imageWithSymbolConfiguration:";
-    pub fn set_size(&self, size: Size) = "setSize:";
-    pub fn size(&self) -> Size = "size";
-    pub fn set_template(&self, flag: bool) = "setTemplate:";
+    // pub fn with_symbol_configuration(&self, configuration: &NSImageSymbolConfiguration) -> Option<NSImage> = "imageWithSymbolConfiguration:";
+    // pub fn set_size(&self, size: Size) = "setSize:";
+    // pub fn size(&self) -> Size = "size";
+    // pub fn set_template(&self, flag: bool) = "setTemplate:";
 }}
 
 objc_class!(pub struct NSImageSymbolConfiguration: NSObject = "NSImageSymbolConfiguration");
@@ -775,7 +759,7 @@ objc_class!(pub struct NSImageView: NSControl = "NSImageView");
 objc_methods! { impl NSImageView {
     pub fn init_with_frame(this: Allocated<Self>, frame: Rect) -> Retained<NSImageView> = "initWithFrame:";
     pub fn set_image(&self, image: Option<&NSImage>) = "setImage:";
-    pub fn image(&self) -> Option<NSImage> = "image";
+    // pub fn image(&self) -> Option<NSImage> = "image";
     pub fn set_image_scaling(&self, scaling: ImageScaling) = "setImageScaling:";
     pub fn set_content_tint_color(&self, color: Option<&NSColor>) = "setContentTintColor:";
     pub fn set_symbol_configuration(&self, configuration: Option<&NSImageSymbolConfiguration>) = "setSymbolConfiguration:";
@@ -791,7 +775,7 @@ objc_methods! { impl NSTextView {
     pub fn set_string(&self, string: &NSString) = "setString:";
     pub fn string(&self) -> NSString = "string";
     pub fn set_editable(&self, flag: bool) = "setEditable:";
-    pub fn set_selectable(&self, flag: bool) = "setSelectable:";
+    // pub fn set_selectable(&self, flag: bool) = "setSelectable:";
     pub fn set_rich_text(&self, flag: bool) = "setRichText:";
     pub fn set_font(&self, font: Option<&NSFont>) = "setFont:";
     pub fn set_text_color(&self, color: Option<&NSColor>) = "setTextColor:";
@@ -802,8 +786,8 @@ objc_methods! { impl NSTextView {
     pub fn set_allows_undo(&self, flag: bool) = "setAllowsUndo:";
     pub fn break_undo_coalescing(&self) = "breakUndoCoalescing";
     pub fn undo_manager(&self) -> Option<NSUndoManager> = "undoManager";
-    pub fn set_text_container_inset(&self, inset: Size) = "setTextContainerInset:";
-    pub fn set_draws_background(&self, flag: bool) = "setDrawsBackground:";
+    // pub fn set_text_container_inset(&self, inset: Size) = "setTextContainerInset:";
+    // pub fn set_draws_background(&self, flag: bool) = "setDrawsBackground:";
     pub fn set_uses_adaptive_color_mapping_for_dark_appearance(&self, flag: bool) = "setUsesAdaptiveColorMappingForDarkAppearance:";
 }}
 
@@ -820,14 +804,14 @@ objc_methods! { impl NSTableView {
     pub fn init_with_frame(this: Allocated<Self>, frame: Rect) -> Retained<NSTableView> = "initWithFrame:";
     pub fn add_table_column(&self, column: &NSTableColumn) = "addTableColumn:";
     pub fn remove_table_column(&self, column: &NSTableColumn) = "removeTableColumn:";
-    pub fn table_columns(&self) -> NSArray = "tableColumns";
+    // pub fn table_columns(&self) -> NSArray = "tableColumns";
     pub fn set_header_view(&self, header: Option<&NSView>) = "setHeaderView:";
     pub fn header_view(&self) -> Option<NSView> = "headerView";
     pub fn set_data_source(&self, source: Option<&NSObject>) = "setDataSource:";
     pub fn set_delegate(&self, delegate: Option<&NSObject>) = "setDelegate:";
     pub fn reload_data(&self) = "reloadData";
-    pub fn note_number_of_rows_changed(&self) = "noteNumberOfRowsChanged";
-    pub fn number_of_rows(&self) -> isize = "numberOfRows";
+    // pub fn note_number_of_rows_changed(&self) = "noteNumberOfRowsChanged";
+    // pub fn number_of_rows(&self) -> isize = "numberOfRows";
     pub fn row_height(&self) -> f64 = "rowHeight";
     pub fn set_row_height(&self, height: f64) = "setRowHeight:";
     pub fn set_uses_alternating_row_background_colors(&self, flag: bool) = "setUsesAlternatingRowBackgroundColors:";
@@ -841,20 +825,20 @@ objc_methods! { impl NSTableView {
     pub fn clicked_row(&self) -> isize = "clickedRow";
     pub fn make_view_with_identifier(&self, identifier: &NSString, owner: Option<&NSObject>) -> Option<NSView> = "makeViewWithIdentifier:owner:";
     pub fn set_column_autoresizing_style(&self, style: ColumnAutoresizingStyle) = "setColumnAutoresizingStyle:";
-    pub fn set_grid_style_mask(&self, mask: usize) = "setGridStyleMask:";
-    pub fn set_intercell_spacing(&self, size: Size) = "setIntercellSpacing:";
-    pub fn scroll_row_to_visible(&self, row: isize) = "scrollRowToVisible:";
-    pub fn size_last_column_to_fit(&self) = "sizeLastColumnToFit";
+    // pub fn set_grid_style_mask(&self, mask: usize) = "setGridStyleMask:";
+    // pub fn set_intercell_spacing(&self, size: Size) = "setIntercellSpacing:";
+    // pub fn scroll_row_to_visible(&self, row: isize) = "scrollRowToVisible:";
+    // pub fn size_last_column_to_fit(&self) = "sizeLastColumnToFit";
 }}
 
 objc_class!(pub struct NSTableColumn: NSObject = "NSTableColumn");
 objc_methods! { impl NSTableColumn {
     pub fn init_with_identifier(this: Allocated<Self>, identifier: &NSString) -> Retained<NSTableColumn> = "initWithIdentifier:";
-    pub fn identifier(&self) -> NSString = "identifier";
+    // pub fn identifier(&self) -> NSString = "identifier";
     pub fn set_title(&self, title: &NSString) = "setTitle:";
     pub fn set_width(&self, width: f64) = "setWidth:";
-    pub fn width(&self) -> f64 = "width";
-    pub fn set_min_width(&self, width: f64) = "setMinWidth:";
+    // pub fn width(&self) -> f64 = "width";
+    // pub fn set_min_width(&self, width: f64) = "setMinWidth:";
     pub fn set_resizing_mask(&self, mask: usize) = "setResizingMask:";
     pub fn set_editable(&self, flag: bool) = "setEditable:";
 }}
@@ -921,15 +905,15 @@ objc_methods! { impl NSColorSpace {
 
 objc_class!(pub struct NSFont: NSObject = "NSFont");
 objc_methods! { impl NSFont {
-    pub fn system(size: f64) -> NSFont = "systemFontOfSize:";
+    // pub fn system(size: f64) -> NSFont = "systemFontOfSize:";
     pub fn system_weighted(size: f64, weight: f64) -> NSFont = "systemFontOfSize:weight:";
-    pub fn bold_system(size: f64) -> NSFont = "boldSystemFontOfSize:";
+    // pub fn bold_system(size: f64) -> NSFont = "boldSystemFontOfSize:";
     pub fn monospaced_system(size: f64, weight: f64) -> NSFont = "monospacedSystemFontOfSize:weight:";
-    pub fn monospaced_digit_system(size: f64, weight: f64) -> NSFont = "monospacedDigitSystemFontOfSize:weight:";
-    pub fn with_name(name: &NSString, size: f64) -> Option<NSFont> = "fontWithName:size:";
+    // pub fn monospaced_digit_system(size: f64, weight: f64) -> NSFont = "monospacedDigitSystemFontOfSize:weight:";
+    // pub fn with_name(name: &NSString, size: f64) -> Option<NSFont> = "fontWithName:size:";
     pub fn with_descriptor(descriptor: &NSFontDescriptor, size: f64) -> Option<NSFont> = "fontWithDescriptor:size:";
     pub fn font_descriptor(&self) -> NSFontDescriptor = "fontDescriptor";
-    pub fn point_size(&self) -> f64 = "pointSize";
+    // pub fn point_size(&self) -> f64 = "pointSize";
     pub fn system_font_size() -> f64 = "systemFontSize";
 }}
 
@@ -947,31 +931,29 @@ impl NSFontDescriptor {
 
 // ───────────────────────────── panels (async) ──────────────────────────────
 
-objc_class!(pub struct NSAlert: NSObject = "NSAlert");
-objc_methods! { impl NSAlert {
-    pub fn new() -> Retained<NSAlert> = "new";
-    pub fn set_message_text(&self, text: &NSString) = "setMessageText:";
-    pub fn set_informative_text(&self, text: &NSString) = "setInformativeText:";
-    pub fn add_button_with_title(&self, title: &NSString) -> NSButton = "addButtonWithTitle:";
-    pub fn window(&self) -> NSWindow = "window";
-}}
-
-objc_class!(pub struct NSSavePanel: NSWindow = "NSSavePanel");
-objc_methods! { impl NSSavePanel {
-    pub fn save_panel() -> NSSavePanel = "savePanel";
-    pub fn set_message(&self, text: &NSString) = "setMessage:";
-    pub fn set_prompt(&self, text: &NSString) = "setPrompt:";
-    pub fn set_name_field_string_value(&self, text: &NSString) = "setNameFieldStringValue:";
-    pub fn set_directory_url(&self, url: Option<&NSURL>) = "setDirectoryURL:";
-    pub fn set_can_create_directories(&self, flag: bool) = "setCanCreateDirectories:";
-    pub fn url(&self) -> Option<NSURL> = "URL";
-}}
-
-objc_class!(pub struct NSOpenPanel: NSSavePanel = "NSOpenPanel");
-objc_methods! { impl NSOpenPanel {
-    pub fn open_panel() -> NSOpenPanel = "openPanel";
-    pub fn set_can_choose_files(&self, flag: bool) = "setCanChooseFiles:";
-    pub fn set_can_choose_directories(&self, flag: bool) = "setCanChooseDirectories:";
-    pub fn set_allows_multiple_selection(&self, flag: bool) = "setAllowsMultipleSelection:";
-    pub fn urls(&self) -> NSArray = "URLs";
-}}
+// objc_class!(pub struct NSAlert: NSObject = "NSAlert");
+// objc_methods! { impl NSAlert {
+// pub fn new() -> Retained<NSAlert> = "new";
+// pub fn set_message_text(&self, text: &NSString) = "setMessageText:";
+// pub fn set_informative_text(&self, text: &NSString) = "setInformativeText:";
+// pub fn add_button_with_title(&self, title: &NSString) -> NSButton = "addButtonWithTitle:";
+// pub fn window(&self) -> NSWindow = "window";
+// }}
+// objc_class!(pub struct NSSavePanel: NSWindow = "NSSavePanel");
+// objc_methods! { impl NSSavePanel {
+// pub fn save_panel() -> NSSavePanel = "savePanel";
+// pub fn set_message(&self, text: &NSString) = "setMessage:";
+// pub fn set_prompt(&self, text: &NSString) = "setPrompt:";
+// pub fn set_name_field_string_value(&self, text: &NSString) = "setNameFieldStringValue:";
+// pub fn set_directory_url(&self, url: Option<&NSURL>) = "setDirectoryURL:";
+// pub fn set_can_create_directories(&self, flag: bool) = "setCanCreateDirectories:";
+// pub fn url(&self) -> Option<NSURL> = "URL";
+// }}
+// objc_class!(pub struct NSOpenPanel: NSSavePanel = "NSOpenPanel");
+// objc_methods! { impl NSOpenPanel {
+// pub fn open_panel() -> NSOpenPanel = "openPanel";
+// pub fn set_can_choose_files(&self, flag: bool) = "setCanChooseFiles:";
+// pub fn set_can_choose_directories(&self, flag: bool) = "setCanChooseDirectories:";
+// pub fn set_allows_multiple_selection(&self, flag: bool) = "setAllowsMultipleSelection:";
+// pub fn urls(&self) -> NSArray = "URLs";
+// }}

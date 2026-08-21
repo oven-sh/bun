@@ -10,9 +10,9 @@
 //! matching Apple's header, which is what review of `foundation.rs` /
 //! `appkit.rs` checks line by line.
 //!
-//! A binding line is a transcription of Apple's header, not a claim that the
-//! crate calls it, so both macros exempt what they generate from `dead_code`;
-//! the hand-written helpers beside them are not exempt.
+//! Only bindings that something calls are compiled; lines already transcribed
+//! from the headers but not needed yet are kept as `//` comments in place, so
+//! using one is a matter of uncommenting it.
 //!
 //! Nothing here is linked into `bun`: `otool -L` stays as it was.
 
@@ -308,7 +308,6 @@ enum_abi!(
         metal::StorageMode,
         metal::CullMode,
         metal::Winding,
-        metal::TriangleFillMode,
         metal::CompareFunction,
         metal::BlendFactor,
         metal::BlendOperation,
@@ -317,7 +316,6 @@ enum_abi!(
         metal::SamplerAddressMode,
         metal::VertexFormat,
         metal::VertexStepFunction,
-        metal::TextureType,
     ],
 );
 
@@ -1041,7 +1039,7 @@ macro_rules! objc_class {
         $(#[$meta])*
         #[repr(transparent)]
         #[derive(Clone, PartialEq, Eq)]
-        #[allow(dead_code, unreachable_pub)]
+        #[allow(unreachable_pub)]
         $vis struct $name($crate::objc::Id);
 
         // SAFETY: repr(transparent) over Id, as the trait requires.
@@ -1132,7 +1130,7 @@ macro_rules! objc_methods {
     (@emit [$ty:ty] [$(#[$meta:meta])*] $vis:vis $name:ident (&self $(, $arg:ident : $argty:ty)* $(,)?) [$out:ty] [$ret:ty] $sel:literal) => {
         $(#[$meta])*
         #[inline]
-        #[allow(dead_code, unreachable_pub, clippy::too_many_arguments)]
+        #[allow(unreachable_pub, clippy::too_many_arguments)]
         $vis fn $name(&self $(, $arg: $argty)*) -> $out {
             // SAFETY: the binding declares this selector's signature; see the
             // module docs for what that promise rests on.
@@ -1147,7 +1145,7 @@ macro_rules! objc_methods {
     (@emit [$ty:ty] [$(#[$meta:meta])*] $vis:vis $name:ident (this: Allocated<Self> $(, $arg:ident : $argty:ty)* $(,)?) [$out:ty] [$ret:ty] $sel:literal) => {
         $(#[$meta])*
         #[inline]
-        #[allow(dead_code, unreachable_pub, clippy::too_many_arguments)]
+        #[allow(unreachable_pub, clippy::too_many_arguments)]
         $vis fn $name(this: $crate::objc::Allocated<Self> $(, $arg: $argty)*) -> $out {
             // SAFETY: as above; `this` is a +1 uninitialised instance whose
             // ownership passes to init (which may return a different object).
@@ -1163,7 +1161,7 @@ macro_rules! objc_methods {
     (@emit [$ty:ty] [$(#[$meta:meta])*] $vis:vis $name:ident ($($arg:ident : $argty:ty),* $(,)?) [$out:ty] [$ret:ty] $sel:literal) => {
         $(#[$meta])*
         #[inline]
-        #[allow(dead_code, unreachable_pub, clippy::too_many_arguments)]
+        #[allow(unreachable_pub, clippy::too_many_arguments)]
         $vis fn $name($($arg: $argty),*) -> $out {
             // SAFETY: as above, sent to the class object.
             unsafe {

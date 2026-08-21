@@ -3840,9 +3840,7 @@ pub mod formatter {
             Ok(())
         }
 
-        /// The hook formats its value as if it were at the top level, so every
-        /// line after the first is indented to the nesting level of the value,
-        /// like util.inspect's `ret.replaceAll("\n", "\n" + indentation)`.
+        /// Re-indents the hook's result to the value's nesting level, like util.inspect.
         #[inline(never)]
         fn print_custom_inspect_string(
             &mut self,
@@ -5515,8 +5513,6 @@ pub mod formatter {
                     let _ = writer_.write_all(b"{}");
                 }
             } else {
-                // `handle_first_property` incremented both, in single-line
-                // mode too.
                 self.depth -= 1;
                 self.indent = self.indent.saturating_sub(1);
 

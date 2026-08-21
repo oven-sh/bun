@@ -2337,8 +2337,10 @@ mod draft {
 
     /// Each platform is encoded as a single character. It is placed right after the
     /// slash after the version, so someone just reading the trace string can tell
-    /// what platform it came from. L, M, and W are for Linux, macOS, and Windows,
-    /// with capital letters indicating aarch64, lowercase indicating x86_64.
+    /// what platform it came from. L, M, W and F are Linux (glibc), macOS, Windows
+    /// and FreeBSD, U is Linux (musl) and A is Android, with capital letters
+    /// indicating aarch64, lowercase indicating x86_64. bun.report picks the debug
+    /// file by this character, so each separately linked binary needs its own.
     ///
     /// eg: 'https://bun.report/1.1.3/we04c...
     ///                               ^ this tells you it is windows x86_64
@@ -2350,21 +2352,29 @@ mod draft {
     impl Platform {
         // Rust cannot concat ident names at const time without a proc-macro; spell out the cfg matrix.
         const CURRENT: u8 = {
-            // Android folds into the Linux variants. bun.report decodes the same
-            // single-char codes; introducing new ones would break older decoders.
-            #[cfg(all(
-                any(target_os = "linux", target_os = "android"),
-                target_arch = "x86_64"
-            ))]
+            #[cfg(all(target_os = "linux", not(target_env = "musl"), target_arch = "x86_64"))]
             {
                 b'l'
             }
-            #[cfg(all(
-                any(target_os = "linux", target_os = "android"),
-                target_arch = "aarch64"
-            ))]
+            #[cfg(all(target_os = "linux", not(target_env = "musl"), target_arch = "aarch64"))]
             {
                 b'L'
+            }
+            #[cfg(all(target_os = "linux", target_env = "musl", target_arch = "x86_64"))]
+            {
+                b'u'
+            }
+            #[cfg(all(target_os = "linux", target_env = "musl", target_arch = "aarch64"))]
+            {
+                b'U'
+            }
+            #[cfg(all(target_os = "android", target_arch = "x86_64"))]
+            {
+                b'a'
+            }
+            #[cfg(all(target_os = "android", target_arch = "aarch64"))]
+            {
+                b'A'
             }
             #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
             {

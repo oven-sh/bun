@@ -1087,13 +1087,9 @@ static napi_status throwErrorWithCStrings(napi_env env, const char* code_utf8, c
 // panic. See #30286 and #22259.
 //
 // We use a TopExceptionScope (not a throw scope) so a pre-existing exception
-// does not force an early return. But we must NOT leave a *new* exception
-// pending either: getString() resolves rope strings and can throw
-// OutOfMemoryError, and returning napi_ok with an unchecked exception on the
-// VM crashes later. So we clear only what our own string resolution / error
-// construction raised, leaving any pre-existing exception untouched (matching
-// Node.js, which never disturbs the caller's pending exception) and never
-// clearing a termination exception (which must keep unwinding).
+// does not force an early return. A *new* exception (getString() resolving a
+// rope can throw OutOfMemoryError) is left pending and reported as
+// napi_pending_exception, like any other napi call that threw.
 static napi_status createErrorWithNapiValues(napi_env env, napi_value code, napi_value message, JSC::ErrorType type, napi_value* result)
 {
     auto* globalObject = toJS(env);
@@ -1110,14 +1106,18 @@ static napi_status createErrorWithNapiValues(napi_env env, napi_value code, napi
 
     JSC::Exception* preExisting = scope.exception();
     auto wtf_code = js_code.isEmpty() ? WTF::String() : js_code.getString(globalObject);
+    if (scope.exception() != preExisting) [[unlikely]]
+        return napi_set_last_error(env, napi_pending_exception);
     auto wtf_message = js_message.getString(globalObject);
+    if (scope.exception() != preExisting) [[unlikely]]
+        return napi_set_last_error(env, napi_pending_exception);
 
     *result = toNapi(
         createErrorWithCode(vm, globalObject, wtf_code, wtf_message, type),
         globalObject);
 
-    if (scope.exception() && scope.exception() != preExisting)
-        scope.clearExceptionExceptTermination();
+    if (scope.exception() != preExisting) [[unlikely]]
+        return napi_set_last_error(env, napi_pending_exception);
     return napi_set_last_error(env, napi_ok);
 }
 

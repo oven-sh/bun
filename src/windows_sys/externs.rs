@@ -834,6 +834,8 @@ pub mod kernel32 {
         pub Type: u32,
     }
     pub const MEM_COMMIT: u32 = 0x1000;
+    pub const MEM_RESERVE: u32 = 0x2000;
+    pub const MEM_RELEASE: u32 = 0x8000;
     pub const MEM_FREE: u32 = 0x10000;
 
     pub const PAGE_NOACCESS: u32 = 0x01;

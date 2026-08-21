@@ -740,6 +740,8 @@ mod draft {
         Print(&'static [u8]),
         Resolver,
         Dlopen(&'static [u8]),
+        /// Inside `JSC::initialize()`. See `exit_if_jsc_initialization_ran_out_of_memory`.
+        InitializeJsc,
     }
 
     impl fmt::Display for Action {
@@ -752,6 +754,7 @@ mod draft {
                 Action::Dlopen(path) => {
                     write!(writer, "loading native module: {}", bstr::BStr::new(path))
                 }
+                Action::InitializeJsc => writer.write_str("initializing JavaScriptCore"),
             }
         }
     }
@@ -826,6 +829,10 @@ mod draft {
 
         match PANIC_STAGE.with(|s| s.get()) {
             0 => {
+                if matches!(current_action(), Some(Action::InitializeJsc)) {
+                    exit_if_jsc_initialization_ran_out_of_memory();
+                }
+
                 bun_core::maybe_handle_panic_during_process_reload();
 
                 PANIC_STAGE.with(|s| s.set(1));
@@ -1272,6 +1279,71 @@ mod draft {
         }
 
         crash(reason);
+    }
+
+    #[cfg(windows)]
+    const MIB: u64 = 1024 * 1024;
+
+    /// The largest single commit in `JSC::initialize()` is the metadata of the
+    /// Structure heap's mimalloc arena: 10.5 MiB for the 4 GiB heap
+    /// (`StructureAlignedMemoryAllocator.cpp`, `mi_manage_os_memory_ex`).
+    /// JSC cannot start in a process that has less than this left to commit.
+    #[cfg(windows)]
+    const JSC_MINIMUM_COMMIT_MIB: u64 = 16;
+
+    /// A crash inside `JSC::initialize()` while the process cannot commit
+    /// [`JSC_MINIMUM_COMMIT_MIB`] anymore is the machine's doing (its commit
+    /// limit or a job object's memory limit is used up), not a bug: print that
+    /// and exit instead of reporting it. JSC reacts to the failed commit with a
+    /// `RELEASE_ASSERT`, which is `abort()` on Windows, so this is reached from
+    /// `handle_abort_windows`.
+    fn exit_if_jsc_initialization_ran_out_of_memory() {
+        #[cfg(windows)]
+        {
+            use bun_core::pretty_error;
+            use bun_sys::windows;
+
+            if windows::can_commit((JSC_MINIMUM_COMMIT_MIB * MIB) as usize) {
+                return;
+            }
+
+            pretty_error!(
+                "\n<r><red>error<r>: Bun ran out of memory while initializing JavaScriptCore.\n\nJavaScriptCore commits memory for its heaps at startup. This process could not commit another {} MB.\n\n",
+                JSC_MINIMUM_COMMIT_MIB,
+            );
+            if let Ok(process) =
+                windows::GetProcessMemoryInfo(windows::kernel32::GetCurrentProcess())
+            {
+                pretty_error!(
+                    "<d>Committed by this process: {} MB<r>\n",
+                    process.PagefileUsage as u64 / MIB,
+                );
+            }
+            if let Some(machine) = windows::commit_charge() {
+                pretty_error!(
+                    "<d>Committed on this machine: {} MB of {} MB (physical memory plus page file)<r>\n",
+                    machine.limit.saturating_sub(machine.available) / MIB,
+                    machine.limit / MIB,
+                );
+            }
+            let job = windows::job_memory_limits();
+            if let Some(limit) = job.per_process {
+                pretty_error!(
+                    "<d>Job object limit: {} MB per process<r>\n",
+                    limit as u64 / MIB
+                );
+            }
+            if let Some(limit) = job.whole_job {
+                pretty_error!(
+                    "<d>Job object limit: {} MB for the whole job<r>\n",
+                    limit as u64 / MIB
+                );
+            }
+            pretty_error!(
+                "\nTo fix this, close other programs or enlarge the page file. If Bun runs in a container or a CI job, raise its memory limit.\n",
+            );
+            Global::exit(1);
+        }
     }
 
     /// This is called when `main` returns an error.

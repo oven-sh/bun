@@ -4165,9 +4165,7 @@ bitflags::bitflags! {
         /// even though its `Handlers` mode is `Client` (no listener), so the
         /// client-only server-identity check must not run against its peer.
         const TLS_SERVER_ROLE      = 1 << 14;
-        /// node:net's `pauseOnConnect`: paused before JS sees the socket, in `on_open`
-        /// (a plain usockets socket was created without read interest already, see
-        /// `LIBUS_SOCKET_OPEN_PAUSED`) or after the handshake for TLS, which reads until then.
+        /// node:net's `pauseOnConnect`: paused in `on_open` (plain, see `LIBUS_SOCKET_OPEN_PAUSED`) or after the handshake (TLS).
         const PAUSE_ON_CONNECT     = 1 << 15;
     }
 }

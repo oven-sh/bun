@@ -1,7 +1,8 @@
 //! Starting the threads bun creates on first use (the HTTP client thread, the
-//! bundle thread, the POSIX IO thread). A refused thread (`EAGAIN` at a thread
-//! limit, `ERROR_COMMITMENT_LIMIT` at the commit limit of the machine) is an
-//! error for the caller to report, not a crash.
+//! bundle thread, the IO and process waiter threads, the file watcher). A
+//! refused thread (`EAGAIN` at a thread limit, `ERROR_COMMITMENT_LIMIT` at the
+//! commit limit of the machine) is an error for the caller to report, not a
+//! crash.
 
 use core::fmt;
 use std::time::Duration;
@@ -50,12 +51,7 @@ impl SpawnError {
         #[cfg(not(windows))]
         const FALLBACK: SystemErrno = SystemErrno::EAGAIN;
 
-        let Some(code) = self.error.raw_os_error() else {
-            return FALLBACK;
-        };
-        #[cfg(not(windows))]
-        let code = i64::from(code);
-        SystemErrno::init(code).unwrap_or(FALLBACK)
+        SystemErrno::from_io_error(&self.error).unwrap_or(FALLBACK)
     }
 
     /// The name of [`errno`](Self::errno), for the `code` of a JS error.
@@ -99,3 +95,11 @@ impl fmt::Display for SpawnError {
 }
 
 impl core::error::Error for SpawnError {}
+
+/// For the callers whose own result type is `bun_sys::Result`. The thread name
+/// and the text of the OS are not part of a `bun_sys::Error`.
+impl From<SpawnError> for bun_sys::Error {
+    fn from(err: SpawnError) -> Self {
+        bun_sys::Error::new(err.errno(), bun_sys::Tag::pthread_create)
+    }
+}

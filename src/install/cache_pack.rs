@@ -44,8 +44,58 @@ pub struct UnpackSummary {
 }
 
 fn s(p: &[u8]) -> &str {
-    // cache folder names and package-relative paths are ASCII/UTF-8 by construction
+    // SAFETY: only used to build `Path`s / error text from cache folder names and
+    // package-relative paths, which are ASCII/UTF-8 by construction; the bytes are never
+    // inspected as `str` beyond that.
     unsafe { std::str::from_utf8_unchecked(p) }
+}
+
+fn zpath(p: &Path) -> bun_core::ZBox {
+    bun_core::ZBox::from_vec_with_nul({
+        let mut v = p.as_os_str().as_encoded_bytes().to_vec();
+        v.push(0);
+        v
+    })
+}
+
+fn is_dir(p: &Path) -> bool {
+    matches!(bun_sys::stat(&zpath(p)), Ok(st) if bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode) == bun_sys::FileKind::Directory)
+}
+
+fn path_exists(p: &Path) -> bool {
+    bun_sys::lstat(&zpath(p)).is_ok()
+}
+
+fn mkdir_p(p: &Path) -> std::io::Result<()> {
+    bun_sys::mkdir_recursive(p.as_os_str().as_encoded_bytes()).map_err(sys_err)
+}
+
+fn rm_rf(p: &Path) {
+    let _ = bun_sys::delete_tree_absolute(p.as_os_str().as_encoded_bytes());
+}
+
+#[allow(clippy::needless_pass_by_value)] // used as `.map_err(sys_err)`
+fn sys_err(e: bun_sys::Error) -> std::io::Error {
+    std::io::Error::from_raw_os_error(i32::from(e.errno))
+}
+
+/// `std::io::Read` over a `bun_sys::File`.
+struct FileReader(bun_sys::File);
+impl Read for FileReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.0.read(buf).map_err(sys_err)
+    }
+}
+/// `std::io::Write` over a `bun_sys::File`.
+struct FileWriter(bun_sys::File);
+impl Write for FileWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.write_all(buf).map_err(sys_err)?;
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 /// The cache folder name for every fetchable package in the lockfile, and whether
@@ -143,7 +193,11 @@ fn pack_dir(
             let target = std::fs::read_link(root.join(&child_rel))?;
             write_record(w, 3, relb, 0o777, target.as_os_str().as_encoded_bytes())?;
         } else if ft.is_file() {
-            let data = std::fs::read(root.join(&child_rel))?;
+            let data = bun_sys::File::read_from(
+                bun_sys::Fd::cwd(),
+                root.join(&child_rel).as_os_str().as_encoded_bytes(),
+            )
+            .map_err(sys_err)?;
             #[cfg(unix)]
             let mode = {
                 use std::os::unix::fs::PermissionsExt;
@@ -168,8 +222,8 @@ pub fn pack(
     let folders = cache_folder_names(pm);
     let cache = PathBuf::from(s(cache_dir));
     let tmp = format!("{}.tmp", s(out_path));
-    let file = std::fs::File::create(&tmp)?;
-    let mut w = BufWriter::with_capacity(1 << 20, file);
+    let file = bun_sys::File::create(bun_sys::Fd::cwd(), tmp.as_bytes(), true).map_err(sys_err)?;
+    let mut w = BufWriter::with_capacity(1 << 20, FileWriter(file));
     w.write_all(MAGIC)?;
     let mut summary = PackSummary {
         packages: 0,
@@ -179,7 +233,7 @@ pub fn pack(
     };
     for (f, expected_here) in &folders {
         let dir = cache.join(s(f));
-        if !dir.is_dir() {
+        if !is_dir(&dir) {
             // optional binaries for other platforms are legitimately absent
             if *expected_here {
                 summary.skipped_missing += 1;
@@ -248,7 +302,7 @@ pub fn unpack(cache_dir: &[u8], pack_path: &[u8]) -> std::io::Result<UnpackSumma
                     .as_encoded_bytes()
                     .starts_with(mine.as_bytes())
                 {
-                    let _ = std::fs::remove_dir_all(e.path());
+                    rm_rf(&e.path());
                 }
             }
         }
@@ -258,9 +312,10 @@ pub fn unpack(cache_dir: &[u8], pack_path: &[u8]) -> std::io::Result<UnpackSumma
 
 fn unpack_impl(cache_dir: &[u8], pack_path: &[u8]) -> std::io::Result<UnpackSummary> {
     let cache = PathBuf::from(s(cache_dir));
-    std::fs::create_dir_all(&cache)?;
-    let file = std::fs::File::open(s(pack_path))?;
-    let mut r = BufReader::with_capacity(1 << 20, file);
+    mkdir_p(&cache)?;
+    let file = bun_sys::File::openat(bun_sys::Fd::cwd(), pack_path, bun_sys::O::RDONLY, 0)
+        .map_err(sys_err)?;
+    let mut r = BufReader::with_capacity(1 << 20, FileReader(file));
     let magic = read_exact_vec(&mut r, MAGIC.len())?;
     if magic != MAGIC {
         return Err(bad("not a bun cache pack (bad magic)"));
@@ -275,7 +330,7 @@ fn unpack_impl(cache_dir: &[u8], pack_path: &[u8]) -> std::io::Result<UnpackSumm
     if let Ok(rd) = std::fs::read_dir(&cache) {
         for e in rd.flatten() {
             if e.file_name().as_encoded_bytes().starts_with(b".unpack-") {
-                let _ = std::fs::remove_dir_all(e.path());
+                rm_rf(&e.path());
             }
         }
     }
@@ -290,10 +345,10 @@ fn unpack_impl(cache_dir: &[u8], pack_path: &[u8]) -> std::io::Result<UnpackSumm
         if let Some((final_path, staging)) = cur.take() {
             match std::fs::rename(&staging, &final_path) {
                 Ok(()) => summary.created += 1,
-                Err(e) if final_path.is_dir() => {
+                Err(e) if is_dir(&final_path) => {
                     // lost a race with a concurrent unpack/install: theirs is as good as ours
                     let _ = e;
-                    let _ = std::fs::remove_dir_all(&staging);
+                    rm_rf(&staging);
                     summary.already_present += 1;
                 }
                 Err(e) => return Err(e),
@@ -329,7 +384,7 @@ fn unpack_impl(cache_dir: &[u8], pack_path: &[u8]) -> std::io::Result<UnpackSumm
                 }
                 summary.packages += 1;
                 let final_path = cache.join(s(&path));
-                if final_path.exists() {
+                if path_exists(&final_path) {
                     skipping = true;
                     summary.already_present += 1;
                     current = None;
@@ -337,18 +392,18 @@ fn unpack_impl(cache_dir: &[u8], pack_path: &[u8]) -> std::io::Result<UnpackSumm
                     skipping = false;
                     if let Some(parent) = final_path.parent() {
                         // `@scope/` directory for scoped packages
-                        std::fs::create_dir_all(parent)?;
+                        mkdir_p(parent)?;
                     }
                     let staging = cache.join(format!(".unpack-{}-{}", pid, summary.packages));
-                    let _ = std::fs::remove_dir_all(&staging);
-                    std::fs::create_dir_all(&staging)?;
+                    rm_rf(&staging);
+                    mkdir_p(&staging)?;
                     current = Some((final_path, staging));
                 }
                 if size != 0 {
                     return Err(bad("folder record with payload"));
                 }
             }
-            2 | 3 | 4 => {
+            2..=4 => {
                 if size > (1u64 << 34) {
                     return Err(bad("entry too large"));
                 }
@@ -378,7 +433,7 @@ fn unpack_impl(cache_dir: &[u8], pack_path: &[u8]) -> std::io::Result<UnpackSumm
                 }
                 match kind[0] {
                     4 => {
-                        std::fs::create_dir_all(&dest)?;
+                        mkdir_p(&dest)?;
                         std::io::copy(&mut (&mut r).take(size), &mut std::io::sink())?;
                     }
                     3 => {
@@ -392,7 +447,7 @@ fn unpack_impl(cache_dir: &[u8], pack_path: &[u8]) -> std::io::Result<UnpackSumm
                             return Err(bad("unsafe symlink target in pack"));
                         }
                         if let Some(parent) = dest.parent() {
-                            std::fs::create_dir_all(parent)?;
+                            mkdir_p(parent)?;
                         }
                         #[cfg(unix)]
                         std::os::unix::fs::symlink(s(&target), &dest)?;
@@ -404,23 +459,28 @@ fn unpack_impl(cache_dir: &[u8], pack_path: &[u8]) -> std::io::Result<UnpackSumm
                     }
                     _ => {
                         if let Some(parent) = dest.parent() {
-                            std::fs::create_dir_all(parent)?;
+                            mkdir_p(parent)?;
                         }
-                        let mut f = std::fs::File::create(&dest)?;
-                        let copied = std::io::copy(&mut (&mut r).take(size), &mut f)?;
+                        let f = bun_sys::File::create(
+                            bun_sys::Fd::cwd(),
+                            dest.as_os_str().as_encoded_bytes(),
+                            true,
+                        )
+                        .map_err(sys_err)?;
+                        #[cfg(unix)]
+                        {
+                            // keep the executable bit, never setuid/setgid/sticky or world-write
+                            let m = (mode & 0o755) | 0o600;
+                            bun_sys::fchmod(f.handle(), m as bun_sys::Mode).map_err(sys_err)?;
+                        }
+                        #[cfg(not(unix))]
+                        let _ = mode;
+                        let mut w = FileWriter(f);
+                        let copied = std::io::copy(&mut (&mut r).take(size), &mut w)?;
                         if copied != size {
                             return Err(bad("truncated pack"));
                         }
                         summary.bytes += size;
-                        #[cfg(unix)]
-                        {
-                            use std::os::unix::fs::PermissionsExt;
-                            // keep the executable bit, never setuid/setgid/sticky or world-write
-                            let m = (mode & 0o755) | 0o600;
-                            std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(m))?;
-                        }
-                        #[cfg(not(unix))]
-                        let _ = mode;
                     }
                 }
             }

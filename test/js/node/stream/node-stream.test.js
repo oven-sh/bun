@@ -501,8 +501,8 @@ it("Readable.fromWeb(Bun.file().stream()) survives pause/unpause during chunk de
     cwd: String(dir),
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(stdout).toBe("OK\n");
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "OK\n", stderr: "" });
   expect(exitCode).toBe(0);
 });
 

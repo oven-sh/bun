@@ -1163,25 +1163,17 @@ impl WindowsBufferedReader {
             self.flags.insert(WindowsFlags::RECEIVED_EOF);
         }
 
+        // The read that produced this chunk is complete; if the flag is set again
+        // below, a `start_reading` issued from the dispatch set it.
+        self.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);
+
         if !self.vtable.is_streaming_enabled() {
-            self.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);
             return true;
         }
         // `on_read_chunk` re-enters JS, which can reach this reader through its parent; go raw across the dispatch so nothing of `self` is cached over it.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
         // SAFETY: `this` aliases the live `&mut self`; the reader is an inline field of its parent (never freed mid-call). Borrows end at each `;`.
-        let (vtable, mut buffer, had_inflight_read) = unsafe {
-            (
-                (*this).vtable,
-                mem::take(&mut (*this)._buffer),
-                (*this).flags.contains(WindowsFlags::HAS_INFLIGHT_READ),
-            )
-        };
-        // The flag turning on across the dispatch means JS paused and unpaused the
-        // reader, and `start_reading` issued a new `uv_fs_read` whose iov points
-        // into a freshly reserved `_buffer` (#39890). That buffer and the flag
-        // belong to the nested read: putting the old buffer back would free the
-        // allocation libuv is writing into.
+        let (vtable, mut buffer) = unsafe { ((*this).vtable, mem::take(&mut (*this)._buffer)) };
         let result = if buffer.is_empty() {
             true
         } else if has_more == ReadState::Eof {
@@ -1191,21 +1183,16 @@ impl WindowsBufferedReader {
             buffer.clear();
             // SAFETY: `this` is still live (see above).
             unsafe {
-                let nested_read =
-                    !had_inflight_read && (*this).flags.contains(WindowsFlags::HAS_INFLIGHT_READ);
-                if !nested_read && (*this)._buffer.is_empty() {
+                // An in-flight read owns `_buffer`: libuv holds a pointer into it (#39890).
+                if !(*this).flags.contains(WindowsFlags::HAS_INFLIGHT_READ)
+                    && (*this)._buffer.is_empty()
+                {
                     (*this)._buffer = buffer;
                 }
             }
             result
         };
         core::hint::black_box(this);
-        // SAFETY: `this` is still live (see above).
-        unsafe {
-            if had_inflight_read {
-                (*this).flags.remove(WindowsFlags::HAS_INFLIGHT_READ);
-            }
-        }
         result
     }
 

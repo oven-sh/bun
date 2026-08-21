@@ -61,34 +61,34 @@ pub fn begin(
             return;
         }
         let l = &st.limits;
-        s.push_attribute(b"http.request.method", &Value::Str(method_name.as_bytes()), l);
+        s.push_str("http.request.method", method_name.as_bytes(), l);
         let url = req.url();
         // uWS gives us the path here; the query string (if any) follows '?'.
         let (path, query) = match bun_core::strings::index_of_char_usize(url, b'?') {
             Some(i) => (&url[..i], &url[i + 1..]),
             None => (url, &b""[..]),
         };
-        s.push_attribute(b"url.path", &Value::Str(path), l);
+        s.push_str("url.path", path, l);
         if !query.is_empty() {
-            s.push_attribute(b"url.query", &Value::Str(query), l);
+            s.push_str("url.query", query, l);
         }
-        s.push_attribute(b"url.scheme", &Value::Str(if is_https { b"https" } else { b"http" }), l);
+        s.push_str("url.scheme", if is_https { b"https" } else { b"http" }, l);
         if let Some(host) = req.header(b"host") {
             let (h, port) = http::split_host_port(host);
-            s.push_attribute(b"server.address", &Value::Str(h), l);
+            s.push_str("server.address", h, l);
             if let Some(p) = port {
-                s.push_attribute(b"server.port", &Value::Int(p as i64), l);
+                s.push_uint("server.port", p as u64, l);
             }
         }
         if let Some(ua) = req.header(b"user-agent") {
-            s.push_attribute(b"user_agent.original", &Value::Str(ua), l);
+            s.push_str("user_agent.original", ua, l);
         }
         if !bun_telemetry::exp(4) {
             if let Some((ip, port)) = resp.get_remote_address_raw() {
                 let mut buf = [0u8; 46];
-                s.push_attribute(b"client.address", &Value::Str(ip.format(&mut buf)), l);
+                s.push_str("client.address", ip.format(&mut buf), l);
                 if port > 0 {
-                    s.push_attribute(b"client.port", &Value::Int(port as i64), l);
+                    s.push_uint("client.port", port as u64, l);
                 }
             }
         }
@@ -123,7 +123,7 @@ pub fn set_route(span: NativeSpan, method: Method, route: &[u8]) {
         s.name.extend_from_slice(m.as_bytes());
         s.name.push(b' ');
         s.name.extend_from_slice(route);
-        s.push_attribute(b"http.route", &Value::Str(route), &state().limits);
+        s.push_str("http.route", route, &state().limits);
     });
 }
 

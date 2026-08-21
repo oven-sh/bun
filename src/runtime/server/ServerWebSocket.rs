@@ -552,7 +552,7 @@ impl ServerWebSocket {
             .unwrap_or_else(|e| global_object.take_exception(e));
         if let Some((span, entered)) = otel {
             drop(entered);
-            crate::telemetry::websocket::end_message(span, global_object, result);
+            crate::telemetry::websocket::end_message(span, global_object, result)?;
         }
 
         if result.is_empty_or_undefined_or_null() {

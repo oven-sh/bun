@@ -321,9 +321,9 @@ impl Promise {
             let mut code = None;
             if let Ok(v) = &jsvalue {
                 if v.is_object() {
-                    if let Ok(Some(c)) = v.get(global_object, "code") {
+                    if let Some(c) = v.get(global_object, "code")? {
                         if c.is_string() {
-                            code = c.to_slice(global_object).ok();
+                            code = Some(c.to_slice(global_object)?);
                         }
                     }
                 }

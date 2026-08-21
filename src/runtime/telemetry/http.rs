@@ -60,10 +60,16 @@ pub fn split_host_port(host: &[u8]) -> (&[u8], Option<u16>) {
         }
         return (host, None);
     }
-    match bun_core::strings::last_index_of_char(host, b':') {
-        Some(i) => (&host[..i], parse_port(&host[i + 1..])),
-        None => (host, None),
+    // A port is at most 5 digits, so only the last 6 bytes can hold the ':'.
+    let mut i = host.len();
+    let stop = host.len().saturating_sub(6);
+    while i > stop {
+        i -= 1;
+        if host[i] == b':' {
+            return (&host[..i], parse_port(&host[i + 1..]));
+        }
     }
+    (host, None)
 }
 
 fn parse_port(s: &[u8]) -> Option<u16> {

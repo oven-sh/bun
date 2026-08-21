@@ -137,7 +137,7 @@ fn crate_index_of(hay: &[u8], needle: &[u8]) -> Option<usize> {
 
 #[inline]
 fn op_len(op: &[u8; 16]) -> usize {
-    op.iter().position(|&c| c == 0).unwrap_or(16)
+    bun_core::strings::index_of_char_usize(op, 0).unwrap_or(16)
 }
 
 /// Finish a query span. `statement` is recorded as `db.query.text` when

@@ -130,6 +130,41 @@ impl Slot {
         }
     }
 
+    /// `push_attribute` for a string value with a short literal key: the
+    /// header and key become inline stores, leaving one copy for the value.
+    #[inline(always)]
+    pub fn push_str(&mut self, key: &'static str, v: &[u8], limits: &Limits) {
+        let v = if v.len() > limits.attribute_value_length as usize { &v[..limits.attribute_value_length as usize] } else { v };
+        let key = key.as_bytes();
+        let kv = 2 + key.len() + 2 + 2 + v.len();
+        if self.n_attrs >= limits.attributes || kv >= 128 {
+            return self.push_attribute(key, &Value::Str(v), limits);
+        }
+        self.n_attrs += 1;
+        let out = &mut self.attrs;
+        out.reserve(kv + 2);
+        out.extend_from_slice(&[(field::ATTRIBUTES << 3 | 2) as u8, kv as u8, (1 << 3 | 2) as u8, key.len() as u8]);
+        out.extend_from_slice(key);
+        out.extend_from_slice(&[(2 << 3 | 2) as u8, (2 + v.len()) as u8, (1 << 3 | 2) as u8, v.len() as u8]);
+        out.extend_from_slice(v);
+    }
+
+    /// `push_attribute` for a small non-negative integer with a literal key.
+    #[inline(always)]
+    pub fn push_uint(&mut self, key: &'static str, v: u64, limits: &Limits) {
+        let key = key.as_bytes();
+        if self.n_attrs >= limits.attributes || v >= 128 || key.len() > 100 {
+            return self.push_attribute(key, &Value::Int(v as i64), limits);
+        }
+        self.n_attrs += 1;
+        let kv = 2 + key.len() + 2 + 2;
+        let out = &mut self.attrs;
+        out.reserve(kv + 2);
+        out.extend_from_slice(&[(field::ATTRIBUTES << 3 | 2) as u8, kv as u8, (1 << 3 | 2) as u8, key.len() as u8]);
+        out.extend_from_slice(key);
+        out.extend_from_slice(&[(2 << 3 | 2) as u8, 2, (3 << 3) as u8, v as u8]);
+    }
+
     /// Last-write-wins variant for keys that may repeat (user code).
     pub fn set_attribute(&mut self, key: &[u8], v: &Value<'_>, limits: &Limits) {
         if let Some((off, len)) = otlp::find_attribute(&self.attrs, key) {

@@ -82,26 +82,49 @@ impl RawIp {
     /// Text form: dotted quad, RFC 5952 IPv6, or dotted quad for
     /// IPv4-mapped IPv6 (matching what `requestIP()` reports).
     pub fn format<'a>(&self, buf: &'a mut [u8; 46]) -> &'a [u8] {
-        use std::io::Write as _;
-        let mut cur = std::io::Cursor::new(&mut buf[..]);
+        fn v4(b: [u8; 4], out: &mut [u8]) -> usize {
+            let mut n = 0;
+            for (i, oct) in b.iter().enumerate() {
+                if i != 0 {
+                    out[n] = b'.';
+                    n += 1;
+                }
+                let o = *oct;
+                if o >= 100 {
+                    out[n] = b'0' + o / 100;
+                    out[n + 1] = b'0' + (o / 10) % 10;
+                    out[n + 2] = b'0' + o % 10;
+                    n += 3;
+                } else if o >= 10 {
+                    out[n] = b'0' + o / 10;
+                    out[n + 1] = b'0' + o % 10;
+                    n += 2;
+                } else {
+                    out[n] = b'0' + o;
+                    n += 1;
+                }
+            }
+            n
+        }
         match *self {
             RawIp::V4(b) => {
-                let _ = write!(cur, "{}", std::net::Ipv4Addr::from(b));
+                let n = v4(b, &mut buf[..]);
+                &buf[..n]
             }
             RawIp::V6(b) => {
                 let a = std::net::Ipv6Addr::from(b);
-                match a.to_ipv4_mapped() {
-                    Some(v4) => {
-                        let _ = write!(cur, "::ffff:{v4}");
-                    }
-                    None => {
-                        let _ = write!(cur, "{a}");
-                    }
+                if let Some(m) = a.to_ipv4_mapped() {
+                    buf[..7].copy_from_slice(b"::ffff:");
+                    let n = 7 + v4(m.octets(), &mut buf[7..]);
+                    return &buf[..n];
                 }
+                use std::io::Write as _;
+                let mut cur = std::io::Cursor::new(&mut buf[..]);
+                let _ = write!(cur, "{a}");
+                let n = cur.position() as usize;
+                &buf[..n]
             }
         }
-        let n = cur.position() as usize;
-        &buf[..n]
     }
 }
 

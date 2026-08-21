@@ -43,6 +43,7 @@ CONFIGS=(
   "main|$BASE|MODE=none"
   "branch-off|$BUN|MODE=none"
   "branch-on|$BUN|MODE=native BUN_OTEL=1 BUN_OTEL_INSTRUMENTATIONS=http,fetch"
+  "on-noexport|$BUN|MODE=native BUN_OTEL=1 BUN_OTEL_INSTRUMENTATIONS=http OTEL_TRACES_EXPORTER=none"
   "main+sdk|$BASE|MODE=sdk"
 )
 for ((r = 0; r < REPS; r++)); do

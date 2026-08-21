@@ -48,14 +48,16 @@ const manifests: Manifest[] = [
 for (const manifest of manifests) {
   const { name, version } = manifest;
   const tmpDir = join(packagesDir, `${name}-tmp`);
-  const tarDir = join(tmpDir, "package");
-  await mkdir(tarDir, { recursive: true });
-  await writeFile(join(tarDir, "package.json"), JSON.stringify(manifest, null, 2));
-
   const tarballName = `${name}-${version}.tgz`;
-  await mkdir(join(packagesDir, name), { recursive: true });
-  await $`cd ${tmpDir} && tar -czf ${join(packagesDir, name, tarballName)} package`;
-  await rm(tmpDir, { recursive: true, force: true });
+  try {
+    const tarDir = join(tmpDir, "package");
+    await mkdir(tarDir, { recursive: true });
+    await writeFile(join(tarDir, "package.json"), JSON.stringify(manifest, null, 2));
+    await mkdir(join(packagesDir, name), { recursive: true });
+    await $`cd ${tmpDir} && tar -czf ${join(packagesDir, name, tarballName)} package`;
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true });
+  }
 
   const tarballBytes = await Bun.file(join(packagesDir, name, tarballName)).arrayBuffer();
   const sha512 = new Bun.CryptoHasher("sha512");

@@ -645,18 +645,19 @@ describe("resolved peer bins", () => {
   // `node_modules/.bin` (pnpm links bins of resolved peers the same way).
   const whatBin = process.platform === "win32" ? "what-bin.bunx" : "what-bin";
 
-  async function runWhatBin(packageDir: string) {
+  async function runWhatBin(runDir: string) {
     const { exited, stderr } = spawn({
       cmd: [bunExe(), "run", "what-bin"],
-      cwd: packageDir,
+      cwd: runDir,
       env: bunEnv,
       stdout: "ignore",
       stderr: "pipe",
     });
     const [err, exitCode] = await Promise.all([stderr.text(), exited]);
     expect(err).not.toContain("error:");
+    const marker = await file(join(runDir, "what-bin.txt")).text();
     expect(exitCode).toBe(0);
-    return await file(join(packageDir, "what-bin.txt")).text();
+    return marker;
   }
 
   test.concurrent("auto-installed peer of a direct dependency", async () => {
@@ -772,6 +773,7 @@ describe("resolved peer bins", () => {
     // bin dir, not the root's
     expect(existsSync(join(packageDir, "packages", "ws-a", "node_modules", ".bin", whatBin))).toBe(true);
     expect(existsSync(join(packageDir, "node_modules", ".bin", whatBin))).toBe(false);
+    expect(await runWhatBin(join(packageDir, "packages", "ws-a"))).toBe("what-bin@1.0.0");
   });
 });
 

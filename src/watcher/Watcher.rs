@@ -263,23 +263,32 @@ impl Watcher {
             std::thread::sleep(std::time::Duration::from_millis(10));
             spawn().map_err(|_| first)
         });
-        self.thread = Some(handle.map_err(|e| {
-            self.watchloop_handle.store(false);
-            // Windows: raw_os_error() is a Win32 GetLastError() code, so
-            // route it through the u32 (Win32Error) mapper rather than
-            // from_errno's i64 discriminant-cast path.
-            #[cfg(windows)]
-            let errno = e
-                .raw_os_error()
-                .and_then(|c| bun_errno::SystemErrno::init(c as u32))
-                .unwrap_or(bun_errno::SystemErrno::EAGAIN);
-            #[cfg(not(windows))]
-            let errno = e
-                .raw_os_error()
-                .map(bun_errno::from_errno)
-                .unwrap_or(bun_errno::SystemErrno::EAGAIN);
-            crate::Error::Sys(errno)
-        })?);
+        let handle = match handle {
+            Ok(handle) => handle,
+            Err(e) => {
+                self.watchloop_handle.store(false);
+                // No thread will ever take the read armed above. Retire it
+                // now: the caller frees `self` through `shutdown`'s no-thread
+                // path, and the read points into `self`.
+                #[cfg(windows)]
+                self.platform.stop();
+                // Windows: raw_os_error() is a Win32 GetLastError() code, so
+                // route it through the u32 (Win32Error) mapper rather than
+                // from_errno's i64 discriminant-cast path.
+                #[cfg(windows)]
+                let errno = e
+                    .raw_os_error()
+                    .and_then(|c| bun_errno::SystemErrno::init(c as u32))
+                    .unwrap_or(bun_errno::SystemErrno::EAGAIN);
+                #[cfg(not(windows))]
+                let errno = e
+                    .raw_os_error()
+                    .map(bun_errno::from_errno)
+                    .unwrap_or(bun_errno::SystemErrno::EAGAIN);
+                return Err(crate::Error::Sys(errno));
+            }
+        };
+        self.thread = Some(handle);
         Ok(())
     }
 
@@ -372,7 +381,14 @@ impl Watcher {
                 }
                 running
             }
-            Ok(()) => false,
+            Ok(()) => {
+                // `shutdown` handed the allocation to this thread and
+                // `thread_main` frees it next. The last cycle re-armed a read
+                // into it, so retire that read first.
+                #[cfg(windows)]
+                self.platform.stop();
+                false
+            }
         };
 
         // deinit and close descriptors if needed

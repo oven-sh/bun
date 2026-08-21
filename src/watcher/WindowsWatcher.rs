@@ -315,7 +315,8 @@ impl WindowsWatcher {
     /// thread is still being scheduled (for example right after the entry
     /// point's first evaluation under `--hot`) is not lost. Must only be
     /// called once `self` is at its final address: the outstanding read writes
-    /// into `watcher.buf` and `watcher.overlapped`.
+    /// into `watcher.buf` and `watcher.overlapped` until it completes or
+    /// [`Self::stop`] retires it, so `stop` has to run before `self` is freed.
     pub(crate) fn arm(&mut self) -> bun_sys::Result<()> {
         if self.read_pending {
             return Ok(());
@@ -409,14 +410,59 @@ impl WindowsWatcher {
         }
     }
 
+    /// Close the directory and the port. After this returns the kernel holds
+    /// no pointer into `self`, so the owner may free it.
     pub(crate) fn stop(&mut self) {
         // SAFETY: handles were opened in init() and are valid until stop() is called once.
         unsafe {
             w::CloseHandle(self.watcher.dir_handle);
+        }
+        if self.read_pending {
+            // Closing the directory retires the outstanding read, and its
+            // completion packet still arrives on the port. Take it, so that
+            // `buf` and `overlapped` are not written after the owner frees them.
+            let mut nbytes: w::DWORD = 0;
+            let mut key: w::ULONG_PTR = 0;
+            let mut overlapped: *mut w::OVERLAPPED = ptr::null_mut();
+            loop {
+                // SAFETY: iocp is a valid IOCP handle; out-params are valid stack locals.
+                let rc = unsafe {
+                    w::kernel32::GetQueuedCompletionStatus(
+                        self.iocp,
+                        &raw mut nbytes,
+                        &raw mut key,
+                        &raw mut overlapped,
+                        RETIRE_READ_TIMEOUT_MS,
+                    )
+                };
+                if overlapped == &raw mut self.watcher.overlapped {
+                    self.read_pending = false;
+                    break;
+                }
+                if rc == 0 && overlapped.is_null() {
+                    // Timed out, or the port itself is unusable.
+                    bun_core::scoped_log!(
+                        watcher,
+                        "stop(): no completion for the outstanding ReadDirectoryChangesW: {}",
+                        w::Win32Error::get().0
+                    );
+                    break;
+                }
+                // A packet for something else (spurious); keep waiting for ours.
+            }
+        }
+        // SAFETY: see above.
+        unsafe {
             w::CloseHandle(self.iocp);
         }
     }
 }
+
+/// How long `stop` waits for the read retired by closing the directory to
+/// report back. The file system completes it inside the close, so the packet
+/// is normally already queued; the bound only keeps a broken port from
+/// hanging shutdown.
+const RETIRE_READ_TIMEOUT_MS: w::DWORD = 1000;
 
 #[repr(u32)]
 #[derive(Copy, Clone, Eq, PartialEq)]

@@ -179,18 +179,18 @@ pub struct Summary {
 }
 
 fn parse(text: &[u8]) -> Option<Recorded> {
-    let mut lines = text.split(|c| *c == b'\n');
+    let mut lines = bun_core::strings::split(text, b"\n");
     if lines.next()? != VERSION_LINE.as_bytes() {
         return None;
     }
     let mut out = Vec::new();
-    for l in lines {
+    while let Some(l) = lines.next() {
         if l.is_empty() {
             continue;
         }
         let kind = l[0];
         let rest = l.get(2..)?;
-        let sp = rest.iter().position(|c| *c == b' ').unwrap_or(rest.len());
+        let sp = bun_core::strings::index_of_char_usize(rest, b' ').unwrap_or(rest.len());
         let val = u64::from_str_radix(core::str::from_utf8(&rest[..sp]).ok()?, 16).ok()?;
         let path = if sp < rest.len() {
             rest[sp + 1..].to_vec()
@@ -381,12 +381,9 @@ pub fn save(manager: &mut PackageManager, root_dir: &[u8], entries: u64, package
         if let Some(globs) = workspace_globs(&root_json) {
             for g in globs {
                 let g: &[u8] = g.strip_prefix(b"./").unwrap_or(&g);
-                let literal_end = g
-                    .iter()
-                    .position(|c| matches!(*c, b'*' | b'?' | b'[' | b'{' | b'!'))
-                    .unwrap_or(g.len());
+                let literal_end = bun_core::strings::index_of_any(g, b"*?[{!").unwrap_or(g.len());
                 let lit = &g[..literal_end];
-                let dir_end = lit.iter().rposition(|c| *c == b'/').unwrap_or(0);
+                let dir_end = bun_core::strings::last_index_of_char(lit, b'/').unwrap_or(0);
                 let prefix = &lit[..dir_end];
                 let abs = if prefix.is_empty() {
                     root_dir.to_vec()
@@ -399,7 +396,7 @@ pub fn save(manager: &mut PackageManager, root_dir: &[u8], entries: u64, package
                 let extra_depth = if strings_contains(rest, b"**") {
                     2
                 } else {
-                    rest.iter().filter(|c| **c == b'/').count()
+                    bun_core::strings::count_char(rest, b'/')
                 };
                 if extra_depth > 0 {
                     collect_dirs(&abs, extra_depth, &mut parents, &mut 2000);

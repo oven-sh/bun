@@ -12,18 +12,21 @@ use std::rc::{Rc, Weak};
 use crate::color::Color;
 use crate::error::{Error, Result};
 use crate::font::Font;
-use crate::geometry::{Insets, Positive, Rect};
+use crate::geometry::{Insets, Positive, Rect, Size};
 use crate::named_enum;
 use crate::objc::appkit::{
     BitmapImageFileType, NSColor, NSControl, NSLayoutConstraint, NSTableColumn, NSTableView,
     NSUndoManager, NSView, StackDistribution, TextAlignment,
 };
 use crate::objc::foundation::{NSObject, NSString};
-use crate::objc::{self, AutoreleasePool, CGColorRef, ControlEvents, Delegate, NsStr, Object, sel};
+use crate::objc::{
+    self, AutoreleasePool, CGColorRef, ControlEvents, Delegate, MetalViewEvents, NsStr, Object, sel,
+};
 
 mod button;
 mod containers;
 mod image;
+mod metal;
 mod misc;
 mod picker;
 mod progress;
@@ -32,6 +35,8 @@ mod table;
 mod text;
 mod text_editor;
 mod text_field;
+
+pub use metal::{MetalSurface, PIXEL_FORMAT as METAL_VIEW_PIXEL_FORMAT};
 
 named_enum! {
     /// What sort of view this is. The name is what JavaScript calls it.
@@ -60,6 +65,8 @@ named_enum! {
         Table = "Table",
         /// A bare NSView that pins every child to its edges.
         View = "View",
+        /// An `MTKView` JavaScript renders into with Metal.
+        MetalView = "MetalView",
     }
 }
 
@@ -276,6 +283,11 @@ pub enum Prop<'a> {
     AlternatingRows(bool),
     /// `None` restores the system row height.
     RowHeight(Option<Positive>),
+    // metal view
+    /// What the drawable is cleared to before each frame; `None` is opaque black.
+    ClearColor(Option<Color>),
+    /// Frames per second the display timer aims for; `None` is 60.
+    PreferredFps(Option<usize>),
 }
 
 /// What a view reports. Text payloads are not carried: the receiver reads the
@@ -296,6 +308,11 @@ pub enum Event {
     RowActivated(usize),
     EditingBegan,
     EditingEnded,
+    /// A Metal view wants a frame rendered now: [`View::render_target`] and
+    /// [`View::frame_timing`] describe it until the receiver returns.
+    Frame,
+    /// A Metal view's drawable changed size (pixels).
+    DrawableResized(Size),
 }
 
 /// Receives a view's events. Called on the main thread from inside AppKit
@@ -377,6 +394,16 @@ pub(crate) trait Widget {
     /// borrow, and re-applies whatever depended on that answer.
     fn reload(&self) {}
 
+    /// `MTKViewDelegate` hooks: the view is drawing a frame / its drawable
+    /// is about to change size.
+    fn on_frame(&mut self, _emit: &mut dyn FnMut(Event)) {}
+    fn on_drawable_resized(&mut self, _size: Size, _emit: &mut dyn FnMut(Event)) {}
+
+    /// The Metal view behind this widget, if it is one.
+    fn metal(&self) -> Option<&metal::MetalView> {
+        None
+    }
+
     /// Programmatic activation for tests (`performClick:` on controls).
     fn click(&self) {
         if let Ok(control) = self.view().clone().downcast::<NSControl>() {
@@ -452,6 +479,8 @@ enum Callback {
     DoubleAction,
     Text(TextEvent),
     Selection,
+    Frame,
+    DrawableResized(Size),
 }
 
 /// AppKit calls back into a view synchronously from inside the very calls a
@@ -620,6 +649,13 @@ impl View {
                 Kind::Divider => Box::new(misc::Divider::new(&cx)),
                 Kind::Spacer => Box::new(misc::Spacer::new(&cx)),
                 Kind::Table => Box::new(table::Table::new(&cx)),
+                Kind::MetalView => {
+                    let frames = Box::new(Handler {
+                        inner: Weak::clone(weak),
+                        undo: OnceCell::new(),
+                    });
+                    Box::new(metal::MetalView::new(&cx, frames))
+                }
             };
             widget.view().set_translates_autoresizing_mask(false);
             Inner {
@@ -852,6 +888,8 @@ impl Inner {
                 Callback::DoubleAction => widget.on_double_action(emit),
                 Callback::Text(which) => widget.on_text(which, emit),
                 Callback::Selection => widget.on_selection(emit),
+                Callback::Frame => widget.on_frame(emit),
+                Callback::DrawableResized(size) => widget.on_drawable_resized(size, emit),
             }
         }
         for event in events {
@@ -883,7 +921,8 @@ impl Inner {
     }
 }
 
-/// The [`ControlEvents`] receiver behind each view's target object.
+/// The [`ControlEvents`] receiver behind each view's target object, and the
+/// [`MetalViewEvents`] receiver behind a Metal view's `MTKView` delegate.
 struct Handler {
     inner: Weak<Inner>,
     /// An NSTextView's own undo stack. The default is the window's shared
@@ -954,6 +993,15 @@ impl ControlEvents for Handler {
     }
     fn selection_did_change(&self) {
         self.forward(Callback::Selection);
+    }
+}
+
+impl MetalViewEvents for Handler {
+    fn draw(&self) {
+        self.forward(Callback::Frame);
+    }
+    fn drawable_size_will_change(&self, size: Size) {
+        self.forward(Callback::DrawableResized(size));
     }
 }
 

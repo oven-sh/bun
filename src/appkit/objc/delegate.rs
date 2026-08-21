@@ -1,10 +1,10 @@
 //! Objective-C classes defined at run time so AppKit has something to call:
 //! the application delegate, a window delegate, a control target that is also
 //! a text-field / text-view / table delegate and data source, a flipped
-//! `NSClipView`, and an `NSWindow` whose frame is never constrained to a
-//! screen (headless). Delegate instances carry one `owner` ivar pointing at a
-//! reference-counted Rust trait object; the `extern "C"` IMPs below do nothing
-//! but forward.
+//! `NSClipView`, an `NSWindow` whose frame is never constrained to a screen
+//! (headless), and an `MTKViewDelegate`. Delegate instances carry one `owner`
+//! ivar pointing at a reference-counted Rust trait object; the `extern "C"`
+//! IMPs below do nothing but forward.
 
 use core::ptr;
 use std::sync::OnceLock;
@@ -15,7 +15,7 @@ use super::appkit::{
 use super::{
     Bool, ClassBuilder, Delegate, DelegateClass, Obj, Sel, Subclass, This, sel, with_borrowed,
 };
-use crate::geometry::Rect;
+use crate::geometry::{Rect, Size};
 use crate::objc::foundation::NSObject;
 
 /// What the application delegate reports. All methods run on the main thread
@@ -60,6 +60,15 @@ pub(crate) trait ControlEvents {
         row: usize,
     ) -> Option<NSView>;
     fn selection_did_change(&self);
+}
+
+/// `MTKViewDelegate`. Both run on the main thread: from the view's display
+/// timer inside AppKit event dispatch, or synchronously from `-[MTKView draw]`.
+pub(crate) trait MetalViewEvents {
+    /// `drawInMTKView:`.
+    fn draw(&self);
+    /// `mtkView:drawableSizeWillChange:`, in pixels.
+    fn drawable_size_will_change(&self, size: Size);
 }
 
 fn app_class() -> &'static DelegateClass<dyn AppEvents> {
@@ -177,6 +186,23 @@ fn control_class() -> &'static DelegateClass<dyn ControlEvents> {
     })
 }
 
+fn metal_view_class() -> &'static DelegateClass<dyn MetalViewEvents> {
+    static CLASS: OnceLock<DelegateClass<dyn MetalViewEvents>> = OnceLock::new();
+    CLASS.get_or_init(|| {
+        ClassBuilder::<NSObject>::new(c"BunAppKitMetalDelegate")
+            .owned::<dyn MetalViewEvents>()
+            .method(
+                sel!("drawInMTKView:"),
+                mtk_draw as extern "C" fn(Mtk, Sel, Obj),
+            )
+            .method(
+                sel!("mtkView:drawableSizeWillChange:"),
+                mtk_drawable_size_will_change as extern "C" fn(Mtk, Sel, Obj, Size),
+            )
+            .register()
+    })
+}
+
 /// The `NSClipView` subclass whose `isFlipped` is YES, so a scroll view's
 /// document starts at the top.
 pub(crate) fn flipped_clip_view_class() -> Subclass<NSClipView> {
@@ -222,11 +248,18 @@ impl Delegate<dyn ControlEvents> {
     }
 }
 
+impl Delegate<dyn MetalViewEvents> {
+    pub(crate) fn metal_view(handler: Box<dyn MetalViewEvents>) -> Self {
+        Delegate::new(metal_view_class(), handler)
+    }
+}
+
 type App = This<dyn AppEvents>;
 type Win = This<dyn WindowEvents>;
 type Ctl = This<dyn ControlEvents>;
+type Mtk = This<dyn MetalViewEvents>;
 
-// SAFETY (app/win/ctl): each `*_class()` above is the only
+// SAFETY (app/win/ctl/mtk): each `*_class()` above is the only
 // `DelegateClass` for its handler, so a `This<H>` can only have come from an
 // IMP registered on it. AppKit calls on the main thread; `dispatch` handles a
 // cleared owner.
@@ -242,6 +275,10 @@ fn win<R>(this: Win, f: impl FnOnce(&(dyn WindowEvents + 'static)) -> R) -> Opti
 fn ctl<R>(this: Ctl, f: impl FnOnce(&(dyn ControlEvents + 'static)) -> R) -> Option<R> {
     // SAFETY: see above.
     unsafe { control_class().dispatch(this, f) }
+}
+fn mtk<R>(this: Mtk, f: impl FnOnce(&(dyn MetalViewEvents + 'static)) -> R) -> Option<R> {
+    // SAFETY: see above.
+    unsafe { metal_view_class().dispatch(this, f) }
 }
 
 extern "C" fn app_should_terminate(this: App, _: Sel, _sender: Obj) -> usize {
@@ -341,4 +378,11 @@ extern "C" fn ctl_view_for_row(this: Ctl, _: Sel, table: Obj, column: Obj, row: 
 }
 extern "C" fn ctl_selection_did_change(this: Ctl, _: Sel, _note: Obj) {
     let _ = ctl(this, |h| h.selection_did_change());
+}
+
+extern "C" fn mtk_draw(this: Mtk, _: Sel, _view: Obj) {
+    let _ = mtk(this, |h| h.draw());
+}
+extern "C" fn mtk_drawable_size_will_change(this: Mtk, _: Sel, _view: Obj, size: Size) {
+    let _ = mtk(this, |h| h.drawable_size_will_change(size));
 }

@@ -16,6 +16,7 @@
 //!
 //! Nothing here is linked into `bun`: `otool -L` stays as it was.
 
+use core::cell::Cell;
 use core::ffi::{CStr, c_char, c_void};
 use core::marker::PhantomData;
 use core::ptr::{self, NonNull};
@@ -27,9 +28,10 @@ pub(crate) mod appkit;
 mod define;
 pub(crate) mod delegate;
 pub(crate) mod foundation;
+pub(crate) mod metal;
 
 pub(crate) use define::{ClassBuilder, Delegate, DelegateClass, This};
-pub(crate) use delegate::{AppEvents, ControlEvents, WindowEvents};
+pub(crate) use delegate::{AppEvents, ControlEvents, MetalViewEvents, WindowEvents};
 pub use foundation::NsStr;
 
 // ─────────────────────────────── raw types ─────────────────────────────────
@@ -253,7 +255,14 @@ plain_abi!(
     crate::geometry::Point,
     crate::geometry::Size,
     crate::geometry::Rect,
-    crate::geometry::Insets
+    crate::geometry::Insets,
+    crate::geometry::Range,
+    crate::geometry::ClearColor,
+    crate::geometry::Origin3,
+    crate::geometry::Size3,
+    crate::geometry::Region,
+    crate::geometry::Viewport,
+    crate::geometry::ScissorRect
 );
 
 /// Passes a fieldless `#[repr($raw)]` enum as its discriminant.
@@ -291,8 +300,76 @@ enum_abi!(
         appkit::SegmentSwitchTracking,
         appkit::BackingStoreType,
         appkit::BitmapImageFileType,
+        metal::PixelFormat,
+        metal::PrimitiveType,
+        metal::LoadAction,
+        metal::StoreAction,
+        metal::IndexType,
+        metal::StorageMode,
+        metal::CullMode,
+        metal::Winding,
+        metal::TriangleFillMode,
+        metal::CompareFunction,
+        metal::BlendFactor,
+        metal::BlendOperation,
+        metal::SamplerMinMagFilter,
+        metal::SamplerMipFilter,
+        metal::SamplerAddressMode,
+        metal::VertexFormat,
+        metal::VertexStepFunction,
+        metal::TextureType,
     ],
 );
+
+/// Passes an `NS_OPTIONS` newtype over `usize` as its bits, and reads one back.
+macro_rules! options_abi {
+    ($($t:ty),* $(,)?) => {$(
+        // SAFETY: repr(transparent) over NSUInteger.
+        unsafe impl Arg for $t { type Raw = usize; #[inline] fn into_raw(self) -> usize { self.bits() } }
+        // SAFETY: as above; every bit pattern is a valid value.
+        unsafe impl Ret for $t { type Raw = usize; type Out = $t; #[inline] unsafe fn from_raw(raw: usize, _: &'static str) -> $t { <$t>::from_bits(raw) } }
+    )*};
+}
+options_abi!(
+    metal::ResourceOptions,
+    metal::TextureUsage,
+    metal::ColorWriteMask
+);
+
+/// An `NSError **` (or any `T **`) out-parameter. Pass `&out` to the binding,
+/// then [`take`](Out::take) the object the callee stored, if any.
+pub(crate) struct Out<T: Object> {
+    slot: Cell<Obj>,
+    _t: PhantomData<T>,
+}
+
+impl<T: Object> Out<T> {
+    #[inline]
+    pub(crate) fn new() -> Out<T> {
+        Out {
+            slot: Cell::new(ptr::null_mut()),
+            _t: PhantomData,
+        }
+    }
+
+    /// The object the callee wrote, retained. Call before the enclosing
+    /// autorelease pool drains: the callee hands it back autoreleased.
+    #[inline]
+    pub(crate) fn take(self) -> Option<T> {
+        // SAFETY: the slot is nil or the +0 object a binding declared as
+        // `&Out<T>` just stored there on this thread.
+        unsafe { Id::retain(self.slot.get()) }.map(T::from_id)
+    }
+}
+
+// SAFETY: `T **`; the slot lives as long as the borrow, which spans the call.
+unsafe impl<T: Object> Arg for &Out<T> {
+    type Raw = *mut Obj;
+    #[inline]
+    fn into_raw(self) -> *mut Obj {
+        self.slot.as_ptr()
+    }
+}
 
 // SAFETY: BOOL.
 unsafe impl Arg for bool {
@@ -614,6 +691,73 @@ pub(crate) fn rt() -> &'static Runtime {
         Some(Ok(rt)) => rt,
         _ => unreachable!("Objective-C runtime used before objc::load()"),
     }
+}
+
+/// Metal and MetalKit, loaded on first use on top of [`Runtime`].
+pub(crate) struct MetalRuntime {
+    /// Never closed; kept so the intent (frameworks stay loaded) is explicit.
+    _metal: *mut c_void,
+    _metalkit: *mut c_void,
+    create_system_default_device: unsafe extern "C" fn() -> Obj,
+}
+
+// SAFETY: a function pointer and never-closed dlopen handles, used on the
+// main thread only (`metal()` goes through `load()`, which enforces it).
+unsafe impl Send for MetalRuntime {}
+// SAFETY: as above.
+unsafe impl Sync for MetalRuntime {}
+
+static METAL: OnceLock<core::result::Result<MetalRuntime, String>> = OnceLock::new();
+
+/// Loads Metal.framework and MetalKit.framework on first call (after AppKit).
+/// Classes such as `MTKView` only resolve once this has succeeded.
+pub(crate) fn metal() -> Result<&'static MetalRuntime> {
+    load()?;
+    match METAL.get_or_init(MetalRuntime::open) {
+        Ok(m) => Ok(m),
+        Err(cause) => Err(Error::Load(cause.clone())),
+    }
+}
+
+impl MetalRuntime {
+    fn open() -> core::result::Result<MetalRuntime, String> {
+        // SAFETY: dlopen/dlsym with constant NUL-terminated names; the one
+        // symbol is assigned to a field typed as its C signature
+        // (`id MTLCreateSystemDefaultDevice(void)`).
+        unsafe {
+            let open = |path: &CStr| -> core::result::Result<*mut c_void, String> {
+                let h = libc::dlopen(path.as_ptr(), libc::RTLD_LAZY | libc::RTLD_LOCAL);
+                if h.is_null() {
+                    let err = libc::dlerror();
+                    return Err(if err.is_null() {
+                        path.to_string_lossy().into_owned()
+                    } else {
+                        CStr::from_ptr(err).to_string_lossy().into_owned()
+                    });
+                }
+                Ok(h)
+            };
+            let metal = open(c"/System/Library/Frameworks/Metal.framework/Metal")?;
+            let metalkit = open(c"/System/Library/Frameworks/MetalKit.framework/MetalKit")?;
+            let sym = libc::dlsym(metal, c"MTLCreateSystemDefaultDevice".as_ptr());
+            if sym.is_null() {
+                return Err("symbol MTLCreateSystemDefaultDevice".into());
+            }
+            Ok(MetalRuntime {
+                _metal: metal,
+                _metalkit: metalkit,
+                create_system_default_device: fn_from_symbol(sym),
+            })
+        }
+    }
+}
+
+/// `MTLCreateSystemDefaultDevice()`. `None` when Metal cannot be loaded or
+/// there is no device (a VM, a sandbox without GPU access).
+pub(crate) fn system_default_device() -> Option<metal::MTLDevice> {
+    let m = metal().ok()?;
+    // SAFETY: no preconditions; the result is +1 (`NS_RETURNS_RETAINED`) or nil.
+    unsafe { Id::from_retained((m.create_system_default_device)()) }.map(Object::from_id)
 }
 
 /// Reinterprets a `dlsym` result as the function pointer type `F`.

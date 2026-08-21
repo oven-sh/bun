@@ -54,7 +54,7 @@ test.skipIf(isMacOS)("bun:appkit is macOS-only elsewhere", async () => {
       bunExe(),
       "-e",
       `try { await import("bun:appkit"); console.log("imported"); } catch (e) { console.log("threw: " + e.message); }
-       try { Bun.AppKit; console.log("got Bun.AppKit"); } catch (e) { console.log("threw: " + e.message); }`,
+       console.log("AppKit=" + typeof Bun.AppKit + " builtin=" + require("node:module").isBuiltin("bun:appkit"));`,
     ],
     env: bunEnv,
     stdout: "pipe",
@@ -62,8 +62,8 @@ test.skipIf(isMacOS)("bun:appkit is macOS-only elsewhere", async () => {
   });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   const lines = stdout.trim().split("\n");
-  expect(lines[0]).toMatch(/threw: .*only available on macOS/);
-  expect(lines[1]).toMatch(/threw: .*only available on macOS/);
+  expect(lines[0]).toMatch(/threw: /);
+  expect(lines[1]).toBe("AppKit=undefined builtin=false");
   expect(exitCode).toBe(0);
 });
 
@@ -74,7 +74,7 @@ describe.skipIf(!isMacOS)("Bun.AppKit", () => {
         bunExe(),
         "-e",
         `const ns = await import("bun:appkit");
-         console.log(JSON.stringify({ same: Bun.AppKit.Window === ns.Window && Bun.AppKit.app === ns.app, keys: ["app","Window","VStack","Text","Button","TextField","Table"].map(k => typeof ns[k]) }));`,
+         console.log(JSON.stringify({ same: Bun.AppKit.Window === ns.Window && Bun.AppKit.app === ns.app, keys: ["app","Window","VStack","Text","Button","TextField","Table","MetalView","gpu"].map(k => typeof ns[k]) }));`,
       ],
       env: bunEnv,
       stdout: "pipe",
@@ -84,7 +84,7 @@ describe.skipIf(!isMacOS)("Bun.AppKit", () => {
     expect(stdout.trim(), stderr).toStartWith("{");
     expect(JSON.parse(stdout.trim())).toEqual({
       same: true,
-      keys: ["object", "function", "function", "function", "function", "function", "function"],
+      keys: ["object", "function", "function", "function", "function", "function", "function", "function", "object"],
     });
     expect(exitCode).toBe(0);
   });
@@ -355,6 +355,167 @@ describe.skipIf(!isMacOS)("Bun.AppKit", () => {
     expect(step(r, "menu action without colon")).toMatchObject({ threw: true, isTypeError: true });
     expect(step(r, "menu action without colon").message).toMatch(/selector/);
     expect(r.exitCode).toBe(0);
+  });
+
+  describe("metal", () => {
+    // These need a Metal device. On machines without one (VMs, sandboxes) each fixture prints
+    // {step:"skip-no-gpu"} and its GPU assertions are skipped; metal-struct.ts is pure layout
+    // arithmetic and always asserts.
+    const noGpu = (r: FixtureResult, name: string) => {
+      if (!step(r, "skip-no-gpu")) return false;
+      console.warn(`${name}: no Metal device here, GPU assertions skipped`);
+      expect(r.exitCode).toBe(0);
+      return true;
+    };
+
+    test.concurrent("gpu.struct lays fields out by MSL rules and packs values", async () => {
+      const r = await runFixture("metal-struct.ts");
+      if (r.skipped) return;
+      expect(step(r, "layout"), r.stderr).toEqual({
+        step: "layout",
+        offsets: { a: 0, b: 16, c: 32 },
+        sizes: { a: 4, b: 16, c: 64 },
+        size: 96,
+        align: 16,
+        msl: "struct Uniforms {\n  float a;\n  float3 b;\n  float4x4 c;\n};",
+        name: "Uniforms",
+      });
+      expect(step(r, "mixed")).toEqual({
+        step: "mixed",
+        fields: {
+          m2: [0, 16, 8],
+          h: [16, 2, 2],
+          h3: [24, 8, 8],
+          u: [32, 4, 4],
+          flag: [36, 1, 1],
+          m3: [48, 48, 16],
+          s: [96, 2, 2],
+          i2: [104, 8, 8],
+        },
+        size: 112,
+        align: 16,
+        firstLine: "struct Mixed {",
+      });
+      expect(step(r, "pack")).toEqual({
+        step: "pack",
+        isArrayBuffer: true,
+        byteLength: 96,
+        a: 1.5,
+        b: [1, 2, 3, 0],
+        diagonal: [1, 1, 1, 1],
+      });
+      expect(step(r, "pack into")).toEqual({ step: "pack into", same: true, before: [7, 7], a: 7, b: [9, 8, 7, 7] });
+      expect(step(r, "pack mixed")).toEqual({
+        step: "pack mixed",
+        h: 0.5,
+        h3: [1, 2, 3],
+        u: [1, 2, 3, 255],
+        flag: 1,
+        s: -2,
+        i2: [-1, 1],
+        m3: [1, 4, 7],
+      });
+      for (const [name, pattern] of [
+        ["unknown type", /"a".*float5/],
+        ["no fields", /at least one field/],
+        ["bad name", /identifier/],
+        ["wrong length", /Uniforms\.b .*3.*float3.*got 2/],
+        ["unknown field", /nope/],
+        ["scalar as string", /Uniforms\.a must be a number/],
+      ] as const) {
+        expect(step(r, name)).toMatchObject({ step: name, threw: true, isTypeError: true });
+        expect(step(r, name).message).toMatch(pattern);
+      }
+      expect(step(r, "too small")).toMatchObject({ threw: true, isTypeError: false });
+      expect(step(r, "too small").message).toMatch(/do not fit/);
+      expect(r.exitCode).toBe(0);
+    });
+
+    test.concurrent("offscreen render pass draws a triangle that readPixels sees; errors are typed", async () => {
+      const r = await runFixture("metal-triangle.ts");
+      if (r.skipped || noGpu(r, "metal-triangle.ts")) return;
+      expect(step(r, "device"), r.stderr).toEqual({ step: "device", name: "string", unifiedMemory: "boolean" });
+      expect(step(r, "library")).toEqual({ step: "library", names: ["red", "vs"] });
+      expect(step(r, "objects")).toEqual({
+        step: "objects",
+        texture: { width: 64, height: 64, format: "bgra8unorm" },
+        pipeline: { colorFormats: ["bgra8unorm"], depthFormat: null },
+      });
+      // BGRA bytes: the triangle is red, the untouched corner is the blue clear colour.
+      expect(step(r, "pixels")).toEqual({
+        step: "pixels",
+        byteLength: 64 * 64 * 4,
+        center: [0, 0, 255, 255],
+        corner: [255, 0, 0, 255],
+        committed: true,
+      });
+      expect(step(r, "use after commit")).toMatchObject({ threw: true });
+      expect(step(r, "use after commit").message).toMatch(/committed/);
+      expect(step(r, "buffer")).toEqual({
+        step: "buffer",
+        byteLength: 8,
+        roundTrip: [1, 2, 3, 4, 5, 6, 7, 8],
+        tail: [7, 8],
+      });
+      expect(step(r, "buffer write out of bounds")).toMatchObject({ threw: true });
+      expect(step(r, "compile error")).toMatchObject({
+        threw: true,
+        name: "GpuCompileError",
+        isCompileError: true,
+        message: expect.stringMatching(/error/i),
+      });
+      const missing = step(r, "no such function");
+      expect(missing).toMatchObject({ threw: true });
+      expect(missing.message).toContain("missing");
+      expect(missing.message).toContain("vs");
+      expect(step(r, "draw without pipeline")).toMatchObject({ threw: true });
+      expect(step(r, "draw without pipeline").message).toMatch(/pipeline/i);
+      expect(r.exitCode).toBe(0);
+    });
+
+    test.concurrent("compute pass doubles a Float32Array in shared and private buffers", async () => {
+      const r = await runFixture("metal-compute.ts");
+      if (r.skipped || noGpu(r, "metal-compute.ts")) return;
+      expect(step(r, "pipeline"), r.stderr).toEqual({ step: "pipeline", widthPositive: true, maxAtLeastWidth: true });
+      expect(step(r, "doubled")).toEqual({ step: "doubled", values: [2, 4, 6, 8, 10, 12, 14, 16, 18, 20] });
+      expect(step(r, "private")).toEqual({
+        step: "private",
+        storage: "private",
+        values: [20, 40, 60, 80, 100, 120, 140, 160, 180, 200],
+      });
+      expect(r.exitCode).toBe(0);
+    });
+
+    test.concurrent("MetalView.draw() runs onFrame with a frame and timing info", async () => {
+      const r = await runFixture("metal-view.ts");
+      if (r.skipped) return;
+      const constructed = step(r, "constructed");
+      expect(constructed, r.stderr).toMatchObject({ step: "constructed", sameGpu: true, running: false });
+      if (!constructed.available) {
+        // Without a device the view is a placeholder: it lays out but never produces frames.
+        expect(step(r, "no-gpu")).toEqual({ step: "no-gpu", frames: 0, drawableSize: { width: 0, height: 0 } });
+        noGpu(r, "metal-view.ts");
+        return;
+      }
+      const frames = step(r, "frames");
+      expect(frames).toMatchObject({
+        step: "frames",
+        count: 2,
+        increasing: true,
+        firstDt: 0,
+        types: [
+          ["number", "number", "number", "number"],
+          ["number", "number", "number", "number"],
+        ],
+      });
+      // Headless, MTKView may or may not vend a drawable; either the pass encodes or it says why not.
+      for (const pass of frames.passes) {
+        if (pass !== "ok") expect(pass).toMatch(/drawable/i);
+      }
+      expect(frames.drawableSize).toEqual({ width: expect.any(Number), height: expect.any(Number) });
+      expect(step(r, "cleared")).toEqual({ step: "cleared", count: 2 });
+      expect(r.exitCode).toBe(0);
+    });
   });
 
   describe("react", () => {

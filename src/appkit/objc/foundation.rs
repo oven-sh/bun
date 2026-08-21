@@ -265,6 +265,13 @@ objc_methods! { impl NSProcessInfo {
     pub fn process_name(&self) -> NSString = "processName";
 }}
 
+objc_class!(pub struct NSError: NSObject = "NSError");
+objc_methods! { impl NSError {
+    pub fn localized_description(&self) -> NSString = "localizedDescription";
+    pub fn code(&self) -> isize = "code";
+    pub fn domain(&self) -> NSString = "domain";
+}}
+
 objc_class!(pub struct NSURL: NSObject = "NSURL");
 objc_methods! { impl NSURL {
     pub fn file_url(path: &NSString) -> NSURL = "fileURLWithPath:";

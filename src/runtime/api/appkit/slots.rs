@@ -52,6 +52,11 @@ impl JsSlots {
         &self.global
     }
 
+    /// The wrapper, while it is alive.
+    pub(super) fn this(&self) -> Option<JSValue> {
+        self.this_value.borrow().try_get()
+    }
+
     /// The singleton's wrapper now exists.
     pub(super) fn bind(&self, this: JSValue, global: &JSGlobalObject) {
         self.this_value.borrow_mut().set_strong(this, global);

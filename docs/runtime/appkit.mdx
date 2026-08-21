@@ -188,6 +188,7 @@ Every view is a class you construct with an optional props object and then mutat
 | `Image`                                 | `NSImageView`                  | `image` (`{ symbol }`, `{ file }` or bytes), `scaling` (`fit` `fill` `down` `none`), `tint`, `size`                                    |                                                            |                   |
 | `Divider`                               | `NSBox` separator              | `vertical`                                                                                                                             |                                                            |                   |
 | `Spacer`                                | `NSView`                       | `minLength`; grows to fill a stack                                                                                                     |                                                            |                   |
+| `MetalView`                             | `MTKView`                      | `clearColor`, `preferredFPS` (60), `running`; see [Metal](#metal)                                                                      | `onFrame(frame, info)` `onResize(size)`                    | `drawableSize`    |
 | `Table`                                 | `NSTableView` in a scroll view | `columns: { id, title, width? }[]`, `rows: string[][]`, `selectedIndexes`, `multiple`, `headerVisible`, `alternatingRows`, `rowHeight` | `onSelect(indexes)` `onActivate(row)`                      | `selectedIndexes` |
 
 "Readable state" props read the live value back from the control, so `field.value` reflects what the user typed. All other getters return the last value you set. Setting a value from code (`field.value = "x"`, `slider.value = 3`, `checkbox.checked = true`) does not fire that view's `onChange`.
@@ -201,6 +202,145 @@ In a `VStack`, children stretch to the stack's width by default (`align: "fill"`
 Colors are strings: `"#rgb"`, `"#rgba"`, `"#rrggbb"`, `"#rrggbbaa"`, `"rgb(r, g, b)"` / `"rgba(r, g, b, a)"`, or a system color name that follows the user's appearance and accent settings: `label secondaryLabel tertiaryLabel quaternaryLabel text placeholder link separator accent control controlText controlBackground windowBackground underPageBackground textBackground selectedContentBackground clear black white gray red orange yellow green mint teal cyan blue indigo purple pink brown`.
 
 `font` is a point size or `{ size?, weight?, design?, italic? }`. `weight` is CSS-style `100`-`900` or one of `ultralight thin light regular medium semibold bold heavy black`; `design` is `default`, `monospaced`, `rounded` or `serif`; `size: 0` or omitted means the standard control size.
+
+---
+
+## Metal
+
+`MetalView` is an `MTKView` in the view tree, and `gpu` is a small typed API over the system's default Metal device: compile Metal Shading Language from a string, create buffers and textures from typed arrays, build render and compute pipelines, encode a frame, and read results back. It is enough to draw custom content in a window, render offscreen, or run a compute kernel, without any native add-on. There is no scene graph; you write the shaders.
+
+```ts triangle.ts icon="/icons/typescript.svg"
+import { Window, MetalView, gpu } from "bun:appkit";
+
+const lib = gpu.library(/* metal */ `
+  #include <metal_stdlib>
+  using namespace metal;
+  struct Out { float4 position [[position]]; float4 color; };
+
+  vertex Out vs(uint id [[vertex_id]], constant float& angle [[buffer(0)]]) {
+    const float2 corners[] = { float2(0, 0.8), float2(-0.7, -0.6), float2(0.7, -0.6) };
+    const float3 colors[] = { float3(1, 0, 0), float3(0, 1, 0), float3(0, 0, 1) };
+    float2 p = corners[id];
+    float2x2 rotate = float2x2(cos(angle), sin(angle), -sin(angle), cos(angle));
+    return { float4(rotate * p, 0, 1), float4(colors[id], 1) };
+  }
+  fragment float4 fs(Out in [[stage_in]]) { return in.color; }
+`);
+const pipeline = gpu.renderPipeline({ vertex: lib.function("vs"), fragment: lib.function("fs") });
+
+const view = new MetalView({
+  grow: 1,
+  clearColor: "#1e1e1e",
+  onFrame(frame, { time }) {
+    frame.renderPass(view).pipeline(pipeline).vertexBytes(0, Float32Array.of(time)).draw(3);
+  },
+});
+new Window({ title: "Triangle", width: 400, height: 400, content: view });
+```
+
+The same view in React; `onFrame` is an ordinary prop:
+
+```tsx triangle.tsx icon="/icons/typescript.svg"
+import { render, Window, MetalView } from "bun:appkit/react";
+import type { GpuFrame, FrameInfo, MetalView as MetalViewHandle } from "bun:appkit";
+import { useRef } from "react";
+
+function Triangle() {
+  const view = useRef<MetalViewHandle>(null);
+  const onFrame = (frame: GpuFrame, { time }: FrameInfo) =>
+    frame.renderPass(view.current!).pipeline(pipeline).vertexBytes(0, Float32Array.of(time)).draw(3);
+  return (
+    <Window title="Triangle" width={400} height={400}>
+      <MetalView ref={view} grow={1} clearColor="#1e1e1e" onFrame={onFrame} />
+    </Window>
+  );
+}
+render(<Triangle />);
+```
+
+### Frames
+
+Every frame, `onFrame(frame, { time, dt, width, height })` receives a `GpuFrame`, which is one Metal command buffer with a chained encoding API. `frame.renderPass(view)` starts a render pass into the view's drawable, cleared to `clearColor`; `renderPass({ color: texture, clear, depth })` renders offscreen instead. `computePass()` and `blit()` start the other two kinds of pass, and starting a pass ends the previous one. Bindings follow Metal's argument tables: `vertexBuffer(0, buf)` is `[[buffer(0)]]` in the vertex function, `fragmentTexture(1, tex)` is `[[texture(1)]]` in the fragment function, and `vertexBytes` / `fragmentBytes` / `bytes` copy up to 4 KB of uniforms inline without a buffer.
+
+When `onFrame` returns, the frame is committed and the drawable presented for you unless you already called `frame.commit()`. If `onFrame` throws, the frame is dropped and the error is reported like any other uncaught exception in a callback. All encoding happens synchronously on the main thread inside `onFrame`; the GPU then executes the frame asynchronously. Pipelines, buffers and textures are meant to be created once and reused across frames.
+
+With a display attached and `running: true` (the default) the view drives `onFrame` from the screen's refresh at `preferredFPS`. With `running: false`, or in a headless process, nothing happens until you call `view.draw()`, which runs one frame synchronously; that is also how tests drive it. `onResize({ width, height })` reports the drawable size in pixels whenever it changes.
+
+### Offscreen rendering
+
+`gpu.frame()` makes a frame that is not tied to a view. Render into a texture, wait for the GPU, and read the pixels back:
+
+```ts
+const target = gpu.texture({ width: 256, height: 256, format: "rgba8unorm", usage: ["render", "read"] });
+
+gpu
+  .frame()
+  .renderPass({ color: target, clear: [0, 0, 0, 0] })
+  .pipeline(
+    gpu.renderPipeline({ vertex: lib.function("vs"), fragment: lib.function("fs"), colorFormats: ["rgba8unorm"] }),
+  )
+  .vertexBytes(0, Float32Array.of(0))
+  .draw(3)
+  .end()
+  .commitAndWait(); // blocks until the GPU is done
+
+const rgba = target.readPixels(); // Uint8Array, 256 * 256 * 4 bytes, rows top to bottom
+await Bun.write("triangle.rgba", rgba);
+```
+
+`commit()` returns immediately; `commitAndWait()` blocks until the work has finished and throws a `GpuExecutionError` if the GPU reported one. A pipeline's `colorFormats` must match the textures it renders into (`"bgra8unorm"`, the `MetalView` format, is the default).
+
+### Compute
+
+```ts
+import { gpu } from "bun:appkit";
+
+const lib = gpu.library(`
+  #include <metal_stdlib>
+  using namespace metal;
+  kernel void twice(device float* values [[buffer(0)]], uint i [[thread_position_in_grid]]) {
+    values[i] *= 2.0;
+  }
+`);
+const twice = gpu.computePipeline(lib.function("twice"));
+
+const input = new Float32Array([1, 2, 3, 4, 5, 6, 7, 8]);
+const buffer = gpu.buffer(input); // "shared" storage: one allocation seen by CPU and GPU
+
+gpu.frame().computePass().pipeline(twice).buffer(0, buffer).dispatch(input.length).end().commitAndWait();
+
+const output = new Float32Array(buffer.read().buffer); // 2, 4, 6, 8, ...
+```
+
+`dispatch(threads, threadsPerGroup?)` takes a total grid size in one, two or three dimensions (`1024`, `[width, height]`); the threadgroup size defaults to the pipeline's `threadExecutionWidth`.
+
+### Shaders and errors
+
+`gpu.library(source)` compiles MSL at run time. A compile error throws a `GpuCompileError` whose `message` is the compiler log with line and column numbers; asking a library for a function it does not have throws a `TypeError` that lists the ones it does have. Creating a render or compute pipeline can also throw `GpuCompileError` when the functions do not link (for example a fragment input the vertex function does not produce).
+
+### Packing uniforms with `gpu.struct`
+
+Metal lays structs out with its own alignment rules (a `float3` takes 16 bytes, a `float4x4` is 16-byte aligned), so hand-packing a `Float32Array` is error-prone. `gpu.struct` computes the layout, prints the matching MSL declaration, and packs JavaScript values into bytes you can pass to `vertexBytes` or write into a buffer:
+
+```ts
+const Uniforms = gpu.struct({ mvp: "float4x4", tint: "float3", time: "float" }, "Uniforms");
+
+Uniforms.size; // 96
+Uniforms.fields.tint; // { offset: 64, size: 16, align: 16, ... }
+Uniforms.msl; // "struct Uniforms {\n  float4x4 mvp;\n  float3 tint;\n  float time;\n};"  (paste into the shader)
+
+frame.vertexBytes(1, Uniforms.pack({ mvp: modelViewProjection, tint: [1, 0.5, 0], time }));
+
+// Reuse one allocation across frames:
+const scratch = new ArrayBuffer(Uniforms.size);
+Uniforms.pack({ time }, scratch); // fields you leave out stay as they were
+```
+
+Supported types are `bool`, `uchar4`, `short`, `ushort`, `half`, `half2`, `half3`, `half4`, `int` to `int4`, `uint` to `uint4`, `float` to `float4`, `float2x2`, `float3x3` and `float4x4`. Vectors and matrices take arrays or typed arrays; matrices are column-major. This part is pure arithmetic and works without a GPU.
+
+### Availability
+
+`gpu.available` is `false` on Macs without a Metal device, which in practice means virtual machines and some sandboxes. Every other `gpu` member then throws `TypeError: Metal is not available`, and a `MetalView` still takes part in layout but never calls `onFrame`. Check it once at startup if your program can do something useful without the GPU. Buffers and textures default to `"shared"` storage, which JavaScript can read and write directly; `"private"` storage is GPU-only and is filled with `frame.blit().copyBuffer(...)`.
 
 ---
 
@@ -244,7 +384,7 @@ test("counter increments", () => {
 
 ## Limitations
 
-- macOS only (arm64 and x64). On other platforms `Bun.AppKit` and `import "bun:appkit"` throw `AppKit is only available on macOS`.
+- macOS only (arm64 and x64). On other platforms `Bun.AppKit` is `undefined` and `bun:appkit` is not a builtin module, so importing it fails to resolve.
 - Everything runs on the main thread; there is no separate UI thread. Do not touch these objects from a `Worker`.
 - Timers and I/O pause during AppKit tracking loops (open menus, live window resize).
-- No modal APIs (`NSAlert`, open/save panels, sheets) yet, no drag and drop, no custom drawing, and no `.app` bundling: the program is a normal `bun` process, so it has the generic executable icon in the Dock unless `activationPolicy` is `"accessory"`.
+- No modal APIs (`NSAlert`, open/save panels, sheets) yet, no drag and drop, no custom drawing other than through `MetalView`, and no `.app` bundling: the program is a normal `bun` process, so it has the generic executable icon in the Dock unless `activationPolicy` is `"accessory"`.

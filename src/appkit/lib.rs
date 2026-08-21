@@ -29,6 +29,8 @@ pub mod font;
 #[forbid(unsafe_code)]
 pub mod geometry;
 #[forbid(unsafe_code)]
+pub mod gpu;
+#[forbid(unsafe_code)]
 pub mod menu;
 #[allow(unsafe_code)]
 pub(crate) mod objc;
@@ -44,6 +46,7 @@ pub use color::{Color, SystemColor};
 pub use error::{Error, Result};
 pub use font::{Design, Font, Weight};
 pub use geometry::{Insets, Point, Positive, Rect, Size};
+pub use gpu::{Gpu, Storage};
 pub use menu::ActionSelector;
 pub use objc::NsStr;
 pub use view::{Event, Kind, Prop, View, ViewSink};

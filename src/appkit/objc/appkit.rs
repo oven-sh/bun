@@ -873,6 +873,13 @@ objc_methods! { impl NSColor {
     pub fn srgb(red: f64, green: f64, blue: f64, alpha: f64) -> NSColor = "colorWithSRGBRed:green:blue:alpha:";
     /// Borrowed; valid while self is.
     pub fn cg_color(&self) -> CGColorRef<'_> = "CGColor";
+    /// nil when the colour has no component form in `space` (patterns). Dynamic colours resolve for the current appearance.
+    pub fn color_using_color_space(&self, space: &NSColorSpace) -> Option<NSColor> = "colorUsingColorSpace:";
+    /// These three raise unless the colour's space has an RGB model; convert with `color_using_color_space` first.
+    pub fn red_component(&self) -> f64 = "redComponent";
+    pub fn green_component(&self) -> f64 = "greenComponent";
+    pub fn blue_component(&self) -> f64 = "blueComponent";
+    pub fn alpha_component(&self) -> f64 = "alphaComponent";
     pub fn label_color() -> NSColor = "labelColor";
     pub fn secondary_label_color() -> NSColor = "secondaryLabelColor";
     pub fn tertiary_label_color() -> NSColor = "tertiaryLabelColor";
@@ -905,6 +912,11 @@ objc_methods! { impl NSColor {
     pub fn system_purple_color() -> NSColor = "systemPurpleColor";
     pub fn system_pink_color() -> NSColor = "systemPinkColor";
     pub fn system_brown_color() -> NSColor = "systemBrownColor";
+}}
+
+objc_class!(pub struct NSColorSpace: NSObject = "NSColorSpace");
+objc_methods! { impl NSColorSpace {
+    pub fn srgb() -> NSColorSpace = "sRGBColorSpace";
 }}
 
 objc_class!(pub struct NSFont: NSObject = "NSFont");

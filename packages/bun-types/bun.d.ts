@@ -8840,7 +8840,9 @@ declare module "bun" {
    * new Window({ title: "Hi", content: new Text({ text: "Hello" }) }).show();
    * ```
    *
-   * @throws on platforms other than macOS.
+   * `undefined` on platforms other than macOS.
+   *
+   * @platform macOS
    * @experimental
    */
   const AppKit: typeof import("bun:appkit");

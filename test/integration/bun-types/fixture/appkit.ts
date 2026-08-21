@@ -2,8 +2,11 @@ import {
   app,
   Button,
   Checkbox,
+  gpu,
+  GpuCompileError,
   HStack,
   Image,
+  MetalView,
   Picker,
   Progress,
   ScrollView,
@@ -17,6 +20,8 @@ import {
   Window,
   type Color,
   type Container,
+  type GpuBuffer,
+  type GpuFrame,
   type MenuSpec,
   type View,
 } from "bun:appkit";
@@ -145,6 +150,77 @@ expectType(label.window).is<Window | null>();
 win.close();
 expectType(win.closed).is<boolean>();
 
+// Metal
+expectType(gpu.available).is<boolean>();
+expectType(gpu.name).is<string | null>();
+const Uniforms = gpu.struct({ mvp: "float4x4", tint: "float3", time: "float", on: "bool" });
+expectType(Uniforms.size).is<number>();
+expectType(Uniforms.fields.tint.offset).is<number>();
+expectType(Uniforms.msl).is<string>();
+expectType(Uniforms.pack({ mvp: new Float32Array(16), tint: [1, 0, 0], time: 1, on: true })).is<ArrayBuffer>();
+expectType(Uniforms.pack({ time: 1 }, new Float32Array(24), 0)).is<Float32Array<ArrayBuffer>>();
+// @ts-expect-error a float is a number
+Uniforms.pack({ time: [1] });
+// @ts-expect-error unknown field
+Uniforms.pack({ nope: 1 });
+if (gpu.available) {
+  const lib = gpu.library("kernel void twice(device float* v [[buffer(0)]], uint i [[thread_position_in_grid]]) {}");
+  expectType(lib.functionNames).is<readonly string[]>();
+  const data = gpu.buffer(new Float32Array([1, 2, 3]));
+  const zeroed: GpuBuffer = gpu.buffer(64, { storage: "private", label: "scratch" });
+  expectType(data.byteLength).is<number>();
+  expectType(data.read()).is<Uint8Array>();
+  zeroed.write(new Uint8Array(4), 0);
+  const twice = gpu.computePipeline(lib.function("twice"));
+  expectType(twice.threadExecutionWidth).is<number>();
+  gpu.frame().computePass().pipeline(twice).buffer(0, data).dispatch(3).end().commitAndWait();
+  gpu.frame().blit().copyBuffer(data, zeroed, { size: 12 }).commit();
+  const target = gpu.texture({ width: 64, height: 64, format: "rgba8unorm", usage: ["render", "read"] });
+  expectType(target.readPixels()).is<Uint8Array>();
+  const pipeline = gpu.renderPipeline({
+    vertex: lib.function("vs"),
+    fragment: lib.function("fs"),
+    colorFormats: [target.format],
+    blend: "alpha",
+    vertexLayout: { stride: 8, attributes: [{ format: "float2", offset: 0 }] },
+  });
+  expectType(pipeline.depthFormat).is<import("bun:appkit").PixelFormat | null>();
+  gpu
+    .frame()
+    .renderPass({ color: target, clear: [0, 0, 1, 1] })
+    .pipeline(pipeline)
+    .vertexBuffer(0, data)
+    .vertexBytes(1, Uniforms.pack({ time: 0 }))
+    .fragmentSampler(0, gpu.sampler({ magFilter: "linear" }))
+    .depthStencil(gpu.depthStencil({ compare: "lessEqual" }))
+    .cull("back")
+    .draw(3, { instances: 2, primitive: "triangleStrip" })
+    .drawIndexed(6, data, { indexType: "uint32" })
+    .end()
+    .commitAndWait();
+  try {
+    gpu.library("garbage");
+  } catch (e) {
+    if (e instanceof GpuCompileError) expectType(e.name).is<"GpuCompileError">();
+  }
+}
+const metal = new MetalView({
+  grow: 1,
+  clearColor: "#000",
+  preferredFPS: 30,
+  onFrame(frame, info) {
+    expectType(frame).is<GpuFrame>();
+    expectType(info.dt).is<number>();
+    frame.renderPass(metal).draw(3);
+  },
+  onResize: ({ width, height }) => width * height,
+});
+metal.clearColor = "rgba(0, 0, 0, 1)";
+metal.running = false;
+metal.draw();
+expectType(metal.drawableSize).is<import("bun:appkit").Size>();
+expectType(metal.gpu).is<typeof gpu>();
+
 // bun:appkit/react without JSX or @types/react: host components are plain callables.
 React.Window({ title: "Counter", width: 300, children: null, onClose() {} });
 React.VStack({ padding: { top: 8 }, spacing: 12, children: [] });
@@ -152,6 +228,7 @@ React.Text({ font: { size: 24 }, children: "Count: 0" });
 React.Button({ kind: "primary", onClick: () => {}, children: "Increment" });
 React.TextField({ value: "", onChange: (value: string) => value });
 React.Table({ columns: ["A"], rows: [], onSelect: (indexes: number[]) => indexes });
+React.MetalView({ grow: 1, onFrame: (frame: GpuFrame) => frame.commit() });
 const root = React.render(null);
 root.render(null);
 root.unmount();

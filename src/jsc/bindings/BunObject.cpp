@@ -334,11 +334,17 @@ static JSValue constructBunSQLObject(VM& vm, JSObject* bunObject)
 
 static JSValue constructBunAppKitObject(VM& vm, JSObject* bunObject)
 {
+#if OS(DARWIN)
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(bunObject->globalObject());
     JSValue appkit = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::BunAppkit);
     RETURN_IF_EXCEPTION(scope, {});
     return appkit;
+#else
+    UNUSED_PARAM(vm);
+    UNUSED_PARAM(bunObject);
+    return jsUndefined();
+#endif
 }
 
 extern "C" JSC::EncodedJSValue JSPasswordObject__create(JSGlobalObject*);

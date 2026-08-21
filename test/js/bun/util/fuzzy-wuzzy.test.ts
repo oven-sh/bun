@@ -93,6 +93,8 @@ WebAssembly.instantiate = () => {};
 // ** Uncatchable errors in tests **
 
 const banned = [
+  // Creating native windows / starting NSApplication inside the test runner.
+  "AppKit",
   "alert",
   "prompt",
   "confirm",

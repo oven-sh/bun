@@ -382,7 +382,7 @@ fn insets(
 }
 
 /// A string naming one of `T`'s variants; the TypeError lists them all.
-fn one_of<T: Named>(
+pub(crate) fn one_of<T: Named>(
     global: &JSGlobalObject,
     value: JSValue,
     what: core::fmt::Arguments<'_>,
@@ -406,7 +406,7 @@ fn one_of<T: Named>(
 }
 
 /// `null` (JavaScript's "reset") reads as `None`.
-fn optional_one_of<T: Named>(
+pub(crate) fn optional_one_of<T: Named>(
     global: &JSGlobalObject,
     value: JSValue,
     what: core::fmt::Arguments<'_>,
@@ -660,6 +660,10 @@ pub(crate) fn with_prop<R>(
             Prop::AlternatingRows(optional_boolean(global, value, what)?.unwrap_or(false))
         }
         b"rowHeight" => Prop::RowHeight(positive_points(global, value, what)?),
+        b"clearColor" => Prop::ClearColor(color(global, value, what)?),
+        b"preferredFPS" => Prop::PreferredFps(
+            optional_number(global, value, what)?.map(|fps| fps.clamp(1.0, 240.0) as usize),
+        ),
         _ => {
             return Err(global.throw_invalid_arguments(format_args!(
                 "{kind_name} has no property \"{key_name}\""
@@ -802,6 +806,17 @@ fn string_array_from_one(global: &JSGlobalObject, value: JSValue) -> JsResult<Ve
     Ok(vec![JsStr::coerce(global, value)?])
 }
 
+/// An `Error` whose `name` is `name`, for failures scripts want to tell apart
+/// with `instanceof`-free checks (`e.name === "GpuCompileError"`).
+fn named_error(global: &JSGlobalObject, name: &'static str, err: &bun_appkit::Error) -> JsError {
+    let instance = global.create_error_instance(format_args!("{err}"));
+    match bun_core::String::static_(name).to_js(global) {
+        Ok(name) => instance.put(global, b"name", name),
+        Err(err) => return err,
+    }
+    global.throw_value(instance)
+}
+
 /// The JavaScript exception for a `bun_appkit` error.
 pub(crate) fn throw(global: &JSGlobalObject, err: &bun_appkit::Error) -> JsError {
     use bun_appkit::Error as E;
@@ -830,6 +845,22 @@ pub(crate) fn throw(global: &JSGlobalObject, err: &bun_appkit::Error) -> JsError
         E::WrongThread | E::WindowClosed | E::ActivationPolicyRefused(_) => {
             global.throw(format_args!("{err}"))
         }
+        E::NoGpu => global.throw_type_error(format_args!("Metal is not available on this machine")),
+        E::ShaderCompile { .. } | E::Pipeline { .. } => named_error(global, "GpuCompileError", err),
+        E::GpuExecution { .. } => named_error(global, "GpuExecutionError", err),
+        E::OutOfBounds { .. }
+        | E::IndexOutOfRange { .. }
+        | E::InlineBytesTooLarge(_)
+        | E::ZeroSize(_) => {
+            global.throw_value(global.create_range_error_instance(format_args!("{err}")))
+        }
+        E::NoSuchFunction { .. }
+        | E::FrameState { .. }
+        | E::NoPipeline
+        | E::NoDrawable
+        | E::TextureNotReadable
+        | E::BufferNotAccessible
+        | E::Unsupported(_) => global.throw_type_error(format_args!("{err}")),
     }
 }
 

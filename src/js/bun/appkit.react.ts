@@ -32,6 +32,7 @@ const hostClasses = {
   Divider: appkit.Divider,
   Spacer: appkit.Spacer,
   Table: appkit.Table,
+  MetalView: appkit.MetalView,
 } as const;
 type HostName = keyof typeof hostClasses;
 
@@ -108,8 +109,9 @@ function loadReact() {
   if (typeof Reconciler !== "function") {
     throw new Error('bun:appkit/react: the installed "react-reconciler" package does not export a reconciler factory');
   }
-  if (parseInt(String(React.version), 10) < 19) {
-    throw new Error(`bun:appkit/react needs React 19 or newer; found react@${React.version}`);
+  const reactVersion = String(React.version);
+  if (parseInt(reactVersion, 10) < 19) {
+    throw new Error(`bun:appkit/react needs React 19 or newer; found react@${reactVersion}`);
   }
   for (const name of ["NoEventPriority", "DefaultEventPriority", "DiscreteEventPriority", "ConcurrentRoot"]) {
     if (constants?.[name] === undefined) {
@@ -268,7 +270,8 @@ function closeWindow(root: Root, window: HostWindow) {
 function removeWindow(root: Root, child: unknown) {
   if (!(child instanceof WindowSlot)) return;
   child.pendingShow = false;
-  if (child.window) closeWindow(root, child.window);
+  const { window } = child;
+  if (window) closeWindow(root, window);
 }
 
 function initialProps(name: string, props: Props): Props {
@@ -279,7 +282,8 @@ function initialProps(name: string, props: Props): Props {
     init[key] = props[key];
   }
   const textProp = textPropOfName(name);
-  if (textProp && isPrimitiveChild(props.children)) init[textProp] = String(props.children);
+  const { children } = props;
+  if (textProp && isPrimitiveChild(children)) init[textProp] = String(children);
   return init;
 }
 
@@ -402,7 +406,7 @@ function createHostConfig() {
     removeChild,
     removeChildFromContainer: removeWindow,
     clearContainer(root: Root) {
-      for (const window of [...root.windows]) closeWindow(root, window);
+      for (const window of Array.from(root.windows)) closeWindow(root, window);
     },
 
     commitUpdate(instance: HostInstance, type: string, prevProps: Props, nextProps: Props, _handle: unknown) {
@@ -443,7 +447,8 @@ function createHostConfig() {
 
     commitTextUpdate(piece: TextInstance, _oldText: string, newText: string) {
       piece.text = newText;
-      if (piece.parent) recomputeText(piece.parent);
+      const { parent } = piece;
+      if (parent) recomputeText(parent);
     },
 
     resetTextContent(instance: HostInstance) {
@@ -464,12 +469,14 @@ function createHostConfig() {
     },
     hideTextInstance(piece: TextInstance) {
       piece.hidden = true;
-      if (piece.parent) recomputeText(piece.parent);
+      const { parent } = piece;
+      if (parent) recomputeText(parent);
     },
     unhideTextInstance(piece: TextInstance, text: string) {
       piece.hidden = false;
       piece.text = text;
-      if (piece.parent) recomputeText(piece.parent);
+      const { parent } = piece;
+      if (parent) recomputeText(parent);
     },
 
     // Update priority (React 19).

@@ -34,6 +34,7 @@ encode! {
     isize => "q",
     () => "v",
     crate::geometry::Rect => "{CGRect={CGPoint=dd}{CGSize=dd}}",
+    crate::geometry::Size => "{CGSize=dd}",
 }
 
 /// The receiver of an IMP registered on an [`OwnedClassBuilder<H>`]: an

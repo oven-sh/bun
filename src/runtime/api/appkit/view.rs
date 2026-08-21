@@ -6,6 +6,7 @@ use bun_appkit::{Event, Kind, Named, View, ViewSink};
 use bun_jsc::{CallFrame, JSGlobalObject, JSUint8Array, JSValue, JsResult};
 
 use super::conv::{self, JsStr};
+use super::gpu;
 use super::slots::JsSlots;
 
 use crate::generated_classes::js_AppKitView as js;
@@ -53,6 +54,22 @@ impl ViewSink for Events {
             ),
             Event::EditingBegan => (js::on_focus_get_cached, None),
             Event::EditingEnded => (js::on_blur_get_cached, None),
+            Event::Frame => {
+                if let Some(view) = self
+                    .slots
+                    .this()
+                    .and_then(|this| this.as_class_ref::<AppKitView>())
+                {
+                    gpu::deliver_frame(&self.slots, &view.view);
+                }
+                return;
+            }
+            Event::DrawableResized(size) => {
+                let payload = JSValue::create_empty_object(global, 2);
+                payload.put(global, b"width", JSValue::js_number(size.width));
+                payload.put(global, b"height", JSValue::js_number(size.height));
+                (js::on_resize_get_cached, Some(payload))
+            }
         };
         self.slots.call(slot, payload.as_slice());
     }
@@ -173,6 +190,29 @@ impl AppKitView {
         })
     }
 
+    /// MetalView: encode and present one frame now (fires `onFrame`).
+    pub fn draw(&self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+        if self.view.kind() != Kind::MetalView {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "{}.draw(): only a MetalView draws frames",
+                self.view.kind().name()
+            )));
+        }
+        self.view.draw();
+        Ok(JSValue::UNDEFINED)
+    }
+
+    /// MetalView: the drawable's size in pixels, `null` for other kinds or without a GPU.
+    pub fn get_drawable_size(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        let Some(size) = self.view.drawable_size() else {
+            return Ok(JSValue::NULL);
+        };
+        let object = JSValue::create_empty_object(global, 2);
+        object.put(global, b"width", JSValue::js_number(size.width));
+        object.put(global, b"height", JSValue::js_number(size.height));
+        Ok(object)
+    }
+
     pub fn get_frame(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         let frame = self.view.frame();
         let object = JSValue::create_empty_object(global, 4);
@@ -210,6 +250,14 @@ impl AppKitView {
     }
 
     pub fn get_on_activate(&self, _global: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(JSValue::UNDEFINED)
+    }
+
+    pub fn get_on_frame(&self, _global: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(JSValue::UNDEFINED)
+    }
+
+    pub fn get_on_resize(&self, _global: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(JSValue::UNDEFINED)
     }
 }

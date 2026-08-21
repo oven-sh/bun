@@ -20,6 +20,10 @@ type NativeView = {
   onBlur: Function | undefined;
   onSelect: Function | undefined;
   onActivate: Function | undefined;
+  onFrame: Function | undefined;
+  onResize: Function | undefined;
+  readonly drawableSize: { width: number; height: number } | null | undefined;
+  draw(): void;
 };
 
 type NativeWindow = {
@@ -57,10 +61,41 @@ type NativeApp = {
   onMenu: Function | undefined;
 };
 
+type NativeGpu = {
+  readonly available: boolean;
+  readonly name: string | null;
+  readonly unifiedMemory: boolean;
+  buffer(data: unknown, opts?: unknown): unknown;
+  texture(opts: unknown): unknown;
+  library(source: unknown, opts?: unknown): unknown;
+  renderPipeline(opts: unknown): unknown;
+  computePipeline(fn: unknown, opts?: unknown): unknown;
+  sampler(opts?: unknown): unknown;
+  depthStencil(opts?: unknown): unknown;
+  frame(opts?: unknown): NativeFrame;
+};
+
+type NativeFrame = {
+  renderPass(target: unknown): NativeFrame;
+  commitAndWait(): void;
+  readonly committed: boolean;
+};
+
+// The Gpu* classes are the native wrappers themselves; their constructors throw.
 type Binding = {
   AppKitView: new (kind: string) => NativeView;
   AppKitWindow: new (options: object) => NativeWindow;
   app: NativeApp;
+  gpu: NativeGpu;
+  GpuBuffer: Function;
+  GpuTexture: Function;
+  GpuLibrary: Function;
+  GpuFunction: Function;
+  GpuRenderPipeline: Function;
+  GpuComputePipeline: Function;
+  GpuSampler: Function;
+  GpuDepthStencil: Function;
+  GpuFrame: { prototype: NativeFrame };
 };
 
 function unavailable(): never {
@@ -74,6 +109,7 @@ const binding = $rust("appkit.rs", "createBinding") as Binding;
 const AppKitView = binding.AppKitView;
 const AppKitWindow = binding.AppKitWindow;
 const nativeApp = binding.app;
+const nativeGpu = binding.gpu;
 
 const ArrayIsArray = Array.isArray;
 const ObjectKeys = Object.keys;
@@ -115,7 +151,7 @@ function emit(event: string, args: unknown[]): unknown[] {
   const set = listeners.get(event);
   const results: unknown[] = [];
   if (!set) return results;
-  for (const fn of [...set]) {
+  for (const fn of Array.from(set)) {
     results.push(dispatch(fn, args));
   }
   return results;
@@ -146,7 +182,8 @@ function ensureStarted() {
   nativeApp.onMenu = function (id: number) {
     const item = menuItems.get(id);
     if (!item) return;
-    if (typeof item.onClick === "function") dispatch(item.onClick, []);
+    const { onClick } = item;
+    if (typeof onClick === "function") dispatch(onClick, []);
     emit("menu", [item]);
   };
   nativeApp.start(activationPolicy);
@@ -460,17 +497,26 @@ function defineProps(Class: { prototype: object }, keys: string[], live: string[
   }
 }
 
-type Slot = "onAction" | "onChange" | "onSubmit" | "onFocus" | "onBlur" | "onSelect" | "onActivate";
+type Slot =
+  | "onAction"
+  | "onChange"
+  | "onSubmit"
+  | "onFocus"
+  | "onBlur"
+  | "onSelect"
+  | "onActivate"
+  | "onFrame"
+  | "onResize";
 
 /**
  * Defines an `on*` handler property backed by a native event slot. `read`
- * turns the native payload into the arguments the user's handler receives.
+ * turns the native payload arguments into the ones the user's handler receives.
  */
 function defineEvent(
   Class: { prototype: object },
   prop: string,
   slot: Slot,
-  read: (native: NativeView, payload: unknown, view: View) => unknown[],
+  read: (native: NativeView, payload: unknown[], view: View) => unknown[],
 ) {
   registerProp(Class.prototype, prop);
   ObjectDefineProperty(Class.prototype, prop, {
@@ -490,7 +536,7 @@ function defineEvent(
       }
       props[prop] = handler;
       const view = this;
-      native[slot] = function (payload: unknown) {
+      native[slot] = function (...payload: unknown[]) {
         const current = propsOf(view)[prop] as Function | undefined;
         if (!current) return;
         return dispatch(current, read(native, payload, view));
@@ -502,9 +548,9 @@ function defineEvent(
 }
 
 const noArgs = () => [];
-const liveOr = (key: string) => (native: NativeView, payload: unknown) => [
-  payload !== undefined ? payload : native.get(key),
-];
+const liveOr =
+  (key: string) =>
+  (native: NativeView, [payload]: unknown[]) => [payload !== undefined ? payload : native.get(key)];
 
 defineProps(View, commonProps);
 
@@ -518,9 +564,9 @@ class Container extends View {
   // exist until super() returns.
   constructor(kind: string, props?: Record<string, unknown>) {
     let children: unknown;
-    if (props != null && typeof props === "object" && props.children !== undefined) {
+    if (props != null && typeof props === "object") {
       children = props.children;
-      props = { ...props, children: undefined };
+      if (children !== undefined) props = { ...props, children: undefined };
     }
     super(kind, props);
     if (children !== undefined) this.children = children as View[];
@@ -768,7 +814,341 @@ defineProps(
   ["selectedIndexes"],
 );
 defineEvent(Table, "onSelect", "onSelect", liveOr("selectedIndexes"));
-defineEvent(Table, "onActivate", "onActivate", (_native, payload) => [payload]);
+defineEvent(Table, "onActivate", "onActivate", (_native, [row]) => [row]);
+
+// ---------------------------------------------------------------------------
+// Metal
+
+class GpuCompileError extends Error {}
+ObjectDefineProperty(GpuCompileError.prototype, "name", {
+  value: "GpuCompileError",
+  configurable: true,
+  writable: true,
+});
+class GpuExecutionError extends Error {}
+ObjectDefineProperty(GpuExecutionError.prototype, "name", {
+  value: "GpuExecutionError",
+  configurable: true,
+  writable: true,
+});
+
+/** Natives report these two by `name`; give callers a class to `instanceof` against. */
+function asGpuError(error: unknown): unknown {
+  const name = (error as Error | null)?.name;
+  let Class: typeof GpuCompileError | undefined;
+  if (name === "GpuCompileError") Class = GpuCompileError;
+  else if (name === "GpuExecutionError") Class = GpuExecutionError;
+  if (!Class || error instanceof Class) return error;
+  const converted = new Class((error as Error).message, { cause: (error as Error).cause });
+  if (typeof (error as Error).stack === "string") converted.stack = (error as Error).stack;
+  return converted;
+}
+
+const GpuBuffer = binding.GpuBuffer;
+const GpuTexture = binding.GpuTexture;
+const GpuLibrary = binding.GpuLibrary;
+const GpuFunction = binding.GpuFunction;
+const GpuRenderPipeline = binding.GpuRenderPipeline;
+const GpuComputePipeline = binding.GpuComputePipeline;
+const GpuSampler = binding.GpuSampler;
+const GpuDepthStencil = binding.GpuDepthStencil;
+const GpuFrame = binding.GpuFrame;
+
+/** Re-throws the native's named errors as the exported classes. */
+function rethrowTyped(Class: { prototype: any }, method: string) {
+  const original = Class.prototype[method];
+  Class.prototype[method] = function (this: unknown, ...args: unknown[]) {
+    try {
+      return original.$apply(this, args);
+    } catch (e) {
+      throw asGpuError(e);
+    }
+  };
+}
+
+// The only JavaScript between a caller and the natives: `renderPass` unwraps
+// a MetalView, and the methods that can fail with a Gpu*Error name its class.
+{
+  const proto = GpuFrame.prototype;
+  const renderPass = proto.renderPass;
+  proto.renderPass = function (this: NativeFrame, target: unknown) {
+    if (target instanceof MetalView) target = nativeOf(target);
+    return renderPass.$call(this, target);
+  };
+  rethrowTyped(GpuFrame, "pipeline");
+  rethrowTyped(GpuFrame, "commitAndWait");
+}
+
+// MSL size/alignment (Metal Shading Language spec §2): 3-wide vectors take the
+// room of 4-wide ones, and a matrix is `columns` column vectors.
+type Scalar = "f32" | "f16" | "i32" | "u32" | "i16" | "u16" | "u8" | "bool";
+type TypeInfo = { size: number; align: number; scalar: Scalar; count: number; columns: number; rows: number };
+const scalarBytes: Record<Scalar, number> = { f32: 4, f16: 2, i32: 4, u32: 4, i16: 2, u16: 2, u8: 1, bool: 1 };
+function vec(scalar: Scalar, n: number): TypeInfo {
+  const width = scalarBytes[scalar] * (n === 3 ? 4 : n);
+  return { size: width, align: width, scalar, count: n, columns: 1, rows: n };
+}
+function mat(scalar: Scalar, columns: number, rows: number): TypeInfo {
+  const column = vec(scalar, rows);
+  return { size: column.size * columns, align: column.align, scalar, count: columns * rows, columns, rows };
+}
+const mslTypes: Record<string, TypeInfo> = {
+  bool: vec("bool", 1),
+  uchar4: vec("u8", 4),
+  short: vec("i16", 1),
+  ushort: vec("u16", 1),
+  half: vec("f16", 1),
+  half2: vec("f16", 2),
+  half3: vec("f16", 3),
+  half4: vec("f16", 4),
+  int: vec("i32", 1),
+  int2: vec("i32", 2),
+  int3: vec("i32", 3),
+  int4: vec("i32", 4),
+  uint: vec("u32", 1),
+  uint2: vec("u32", 2),
+  uint3: vec("u32", 3),
+  uint4: vec("u32", 4),
+  float: vec("f32", 1),
+  float2: vec("f32", 2),
+  float3: vec("f32", 3),
+  float4: vec("f32", 4),
+  float2x2: mat("f32", 2, 2),
+  float3x3: mat("f32", 3, 3),
+  float4x4: mat("f32", 4, 4),
+};
+
+type StructField = { name: string; type: string; offset: number; size: number; align: number; info: TypeInfo };
+
+const alignUp = (n: number, align: number) => Math.ceil(n / align) * align;
+
+function writeScalar(view: DataView, at: number, scalar: Scalar, value: unknown, path: string) {
+  if (scalar === "bool") {
+    if (typeof value !== "boolean" && typeof value !== "number") throw typeError(`${path} must be a boolean`);
+    view.setUint8(at, value ? 1 : 0);
+    return;
+  }
+  if (typeof value !== "number") throw typeError(`${path} must be a number`);
+  switch (scalar) {
+    case "f32":
+      return view.setFloat32(at, value, true);
+    case "f16":
+      return view.setFloat16(at, value, true);
+    case "i32":
+      return view.setInt32(at, value, true);
+    case "u32":
+      return view.setUint32(at, value, true);
+    case "i16":
+      return view.setInt16(at, value, true);
+    case "u16":
+      return view.setUint16(at, value, true);
+    case "u8":
+      return view.setUint8(at, value);
+  }
+}
+
+class StructLayout {
+  readonly name: string;
+  readonly size: number;
+  readonly align: number;
+  readonly fields: Readonly<Record<string, Readonly<StructField>>>;
+  #order: StructField[];
+
+  constructor(spec: Record<string, string>, name: string) {
+    if (!spec || typeof spec !== "object" || ArrayIsArray(spec)) {
+      throw typeError("gpu.struct(fields) expects an object mapping field names to MSL type names");
+    }
+    if (typeof name !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+      throw typeError("gpu.struct(fields, name): name must be an identifier");
+    }
+    const order: StructField[] = [];
+    const fields: Record<string, StructField> = {};
+    let offset = 0;
+    let align = 1;
+    for (const key of ObjectKeys(spec)) {
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key))
+        throw typeError(`gpu.struct: field name "${key}" is not an identifier`);
+      const type = spec[key];
+      const info = typeof type === "string" && Object.hasOwn(mslTypes, type) ? mslTypes[type] : undefined;
+      if (!info) {
+        throw typeError(
+          `gpu.struct: field "${key}" has unknown type ${JSON.stringify(type)}; expected one of ${ObjectKeys(mslTypes).join(", ")}`,
+        );
+      }
+      offset = alignUp(offset, info.align);
+      const field = ObjectFreeze({ name: key, type, offset, size: info.size, align: info.align, info });
+      order.push(field);
+      fields[key] = field;
+      offset += info.size;
+      const fieldAlign = info.align;
+      if (fieldAlign > align) align = fieldAlign;
+    }
+    if (order.length === 0) throw typeError("gpu.struct(fields) needs at least one field");
+    this.name = name;
+    this.align = align;
+    this.size = alignUp(offset, align);
+    this.fields = ObjectFreeze(fields);
+    this.#order = order;
+  }
+
+  /** The matching MSL declaration, ready to paste into shader source. */
+  get msl(): string {
+    let out = `struct ${this.name} {\n`;
+    for (const f of this.#order) out += `  ${f.type} ${f.name};\n`;
+    return out + "};";
+  }
+
+  pack(values: Record<string, unknown>, target?: ArrayBufferLike | ArrayBufferView | null, byteOffset: number = 0) {
+    if (!values || typeof values !== "object") throw typeError(`${this.name}.pack(values) expects an object`);
+    let buffer: ArrayBufferLike;
+    let base: number;
+    let room: number;
+    if (target === undefined || target === null) {
+      buffer = new ArrayBuffer(this.size);
+      base = 0;
+      room = this.size;
+      target = buffer;
+    } else if (target instanceof ArrayBuffer || target instanceof SharedArrayBuffer) {
+      buffer = target;
+      base = 0;
+      room = target.byteLength;
+    } else if (ArrayBuffer.isView(target)) {
+      buffer = target.buffer;
+      base = target.byteOffset;
+      room = target.byteLength;
+    } else {
+      throw typeError(`${this.name}.pack: target must be an ArrayBuffer or a typed array`);
+    }
+    if (typeof byteOffset !== "number" || !(byteOffset >= 0) || byteOffset % 1 !== 0) {
+      throw new RangeError(`${this.name}.pack: byteOffset must be a non-negative integer`);
+    }
+    const { size } = this;
+    if (byteOffset + size > room) {
+      throw new RangeError(
+        `${this.name}.pack: ${size} bytes at offset ${byteOffset} do not fit in a target of ${room} bytes`,
+      );
+    }
+    for (const key of ObjectKeys(values)) {
+      if (!Object.hasOwn(this.fields, key)) throw typeError(`${this.name}.pack: unknown field "${key}"`);
+    }
+    const view = new DataView(buffer, base + byteOffset, this.size);
+    for (const field of this.#order) {
+      const value = values[field.name];
+      if (value === undefined) continue;
+      const { scalar, count, columns, rows } = field.info;
+      const path = `${this.name}.${field.name}`;
+      const step = scalarBytes[scalar];
+      if (count === 1) {
+        // A one-element array is fine for a scalar too.
+        const v =
+          typeof value === "object" && value !== null && (value as ArrayLike<unknown>).length === 1
+            ? (value as ArrayLike<unknown>)[0]
+            : value;
+        writeScalar(view, field.offset, scalar, v, path);
+        continue;
+      }
+      const list = value as ArrayLike<unknown>;
+      if (typeof list !== "object" || list === null || typeof list.length !== "number") {
+        throw typeError(`${path} must be an array or typed array of ${count} numbers (${field.type})`);
+      }
+      // Matrices are column-major; each column is padded like a vector, so a
+      // 3-row column takes 4 slots. Accept both the tight and the padded form.
+      const paddedRows = rows === 3 ? 4 : rows;
+      let stride: number;
+      if (list.length === count) stride = rows;
+      else if (list.length === columns * paddedRows) stride = paddedRows;
+      else {
+        const shape = paddedRows === rows ? String(count) : `${count} (or ${columns * paddedRows} padded)`;
+        throw typeError(`${path} must have ${shape} elements for ${field.type}, got ${list.length}`);
+      }
+      for (let c = 0; c < columns; c++) {
+        const columnAt = field.offset + c * paddedRows * step;
+        for (let r = 0; r < rows; r++) {
+          writeScalar(view, columnAt + r * step, scalar, list[c * stride + r], `${path}[${c * stride + r}]`);
+        }
+      }
+    }
+    return target;
+  }
+}
+
+// Every native member throws `TypeError: Metal is not available` without a
+// device, except the three getters.
+const gpu = {
+  get available(): boolean {
+    return nativeGpu.available;
+  },
+  get name(): string | null {
+    return nativeGpu.name;
+  },
+  get unifiedMemory(): boolean {
+    return nativeGpu.unifiedMemory;
+  },
+  buffer(data: unknown, opts?: unknown) {
+    return nativeGpu.buffer(data, opts);
+  },
+  texture(opts: unknown) {
+    return nativeGpu.texture(opts);
+  },
+  library(source: unknown, opts?: unknown) {
+    try {
+      return nativeGpu.library(source, opts);
+    } catch (e) {
+      throw asGpuError(e);
+    }
+  },
+  renderPipeline(opts: unknown) {
+    try {
+      return nativeGpu.renderPipeline(opts);
+    } catch (e) {
+      throw asGpuError(e);
+    }
+  },
+  computePipeline(fn: unknown, opts?: unknown) {
+    try {
+      return nativeGpu.computePipeline(fn, opts);
+    } catch (e) {
+      throw asGpuError(e);
+    }
+  },
+  sampler(opts?: unknown) {
+    return nativeGpu.sampler(opts);
+  },
+  depthStencil(opts?: unknown) {
+    return nativeGpu.depthStencil(opts);
+  },
+  frame(opts?: unknown) {
+    return nativeGpu.frame(opts);
+  },
+  /** Pure layout math; works without a GPU. */
+  struct(fields: Record<string, string>, name: string = "Uniforms") {
+    return new StructLayout(fields, name);
+  },
+};
+
+class MetalView extends View {
+  constructor(props?: Record<string, unknown>) {
+    super("MetalView", props);
+  }
+
+  /** Drawable size in pixels (points × backing scale). */
+  get drawableSize(): { width: number; height: number } {
+    return nativeOf(this).drawableSize ?? { width: 0, height: 0 };
+  }
+
+  get gpu() {
+    return gpu;
+  }
+
+  /** Render one frame now: runs `onFrame` synchronously. How headless code and tests drive the view. */
+  draw(): void {
+    nativeOf(this).draw();
+  }
+}
+defineProps(MetalView, ["clearColor", "preferredFPS", "running"]);
+// Native payloads: onFrame(frame, { time, dt, width, height }), onResize({ width, height }).
+defineEvent(MetalView, "onFrame", "onFrame", (_native, payload) => payload);
+defineEvent(MetalView, "onResize", "onResize", (_native, payload) => payload);
 
 // ---------------------------------------------------------------------------
 // Window
@@ -852,8 +1232,9 @@ class Window {
       if (options[key] != null && typeof options[key] !== "function")
         throw typeError(`Window.${key} must be a function`);
     }
-    if (options.content != null) {
-      const error = contentError(options.content);
+    const initialContent = options.content;
+    if (initialContent != null) {
+      const error = contentError(initialContent);
       if (error) throw error;
     }
     ensureStarted();
@@ -905,7 +1286,7 @@ class Window {
     for (const key of windowEvents) {
       if (options[key] !== undefined) (this as any)[key] = options[key];
     }
-    if (options.content !== undefined) this.content = options.content as View | null;
+    if (initialContent !== undefined) this.content = initialContent as View | null;
     if (options.visible !== false) this.show();
   }
 
@@ -1032,6 +1413,19 @@ export default {
   Divider,
   Spacer,
   Table,
+  MetalView,
+  gpu,
+  GpuBuffer,
+  GpuTexture,
+  GpuLibrary,
+  GpuFunction,
+  GpuRenderPipeline,
+  GpuComputePipeline,
+  GpuSampler,
+  GpuDepthStencil,
+  GpuFrame,
+  GpuCompileError,
+  GpuExecutionError,
   __setEventDispatcher,
   __applyProp: applyProp,
 };

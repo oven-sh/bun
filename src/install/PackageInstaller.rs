@@ -680,21 +680,23 @@ impl<'a> PackageInstaller<'a> {
                 path: t.node_modules_path.to_vec(),
             };
 
+            let resolution = self.resolutions[t.package_id as usize];
+            // Replay counts as pending: it enqueues no tasks and leaves the drain to the caller.
+            let is_pending_package_install = true;
             if t.missing_from_cache {
                 had_missing = true;
-                let resolution = self.resolutions[t.package_id as usize];
-                // needs_verify = false (the worker already verified), is_pending_package_install = true.
+                // The worker already verified the entry.
+                let needs_verify = false;
                 self.install_package_with_name_and_resolution(
                     t.dependency_id,
                     t.package_id,
                     log_level,
                     t.package_name,
                     &resolution,
-                    false,
-                    true,
+                    needs_verify,
+                    is_pending_package_install,
                 );
             } else {
-                let resolution = self.resolutions[t.package_id as usize];
                 // Root fd suffices for the EACCES fstat: on a fresh tree every nested dir has its mode.
                 self.handle_install_result(
                     t.dependency_id,
@@ -704,7 +706,7 @@ impl<'a> PackageInstaller<'a> {
                     &resolution,
                     t.result,
                     self.root_node_modules_folder.fd(),
-                    true,
+                    is_pending_package_install,
                 );
             }
         }
@@ -2150,7 +2152,7 @@ impl<'a> PackageInstaller<'a> {
             || !installer.verify(resolution, &self.root_node_modules_folder);
 
         if needs_install {
-            // No cache-presence check here: the worker sees ENOENT and the result is rerouted.
+            // The worker checks the cache; a miss comes back as ENOENT and is rerouted on replay.
             #[cfg(unix)]
             if needs_verify
                 && !is_pending_package_install

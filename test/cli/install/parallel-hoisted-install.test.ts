@@ -267,9 +267,10 @@ async function until(cond: () => Promise<boolean>): Promise<void> {
  *   root: lib, app, scripted@2            -> tree 0
  *   app -> scripted@1 (conflicts with @2) -> nested under app (tree 1)
  * scripted@1 is trusted; its postinstall touches `marker`. Individual tarball
- * responses can be gated (held until released) or merely observed.
+ * responses can be gated (held until released) or merely observed. With
+ * `patched`, scripted@1 has a patch, which keeps it on the serial path.
  */
-async function scriptsFixture() {
+async function scriptsFixture({ patched = false } = {}) {
   const root = tempDir("parallel-hoisted-scripts", {});
   const dir = String(root);
   const cacheDir = join(dir, ".bun-cache");
@@ -325,6 +326,20 @@ async function scriptsFixture() {
     },
   });
 
+  if (patched) {
+    await write(
+      join(dir, "patches", "scripted@1.0.0.patch"),
+      [
+        "diff --git a/index.js b/index.js",
+        "--- a/index.js",
+        "+++ b/index.js",
+        "@@ -1 +1 @@",
+        '-module.exports = "scripted@1.0.0";',
+        '+module.exports = "scripted@1.0.0 (patched)";',
+        "",
+      ].join("\n"),
+    );
+  }
   await write(
     join(dir, "package.json"),
     JSON.stringify({
@@ -332,6 +347,7 @@ async function scriptsFixture() {
       version: "1.0.0",
       dependencies: { lib: "1.0.0", app: "1.0.0", scripted: "2.0.0" },
       trustedDependencies: ["scripted"],
+      ...(patched ? { patchedDependencies: { "scripted@1.0.0": "patches/scripted@1.0.0.patch" } } : {}),
     }),
   );
   await write(join(dir, "bunfig.toml"), `[install]\ncache = "${cacheDir}"\nregistry = "${server.url}"\n`);
@@ -482,5 +498,28 @@ describe.concurrent.skipIf(!isPosix)("parallel hoisted install: rerouted downloa
     expect(await file(fx.nested).exists()).toBe(true);
     expect(installedCount(out.stdout)).toBe(expected);
     expect(await file(fx.marker).exists(), "scripted@1 was installed but its result was never handled").toBe(true);
+  });
+
+  /**
+   * A package can also park in pending_installs during the tree walk itself: the patched
+   * scripted@1 takes the serial path while root is still waiting on its parallel tasks. Root then
+   * completes during replay, which (as a pending install) does not drain, so the forced drain that
+   * follows replay has to install, count and run the scripts of the parked package.
+   */
+  test("a package parked during the tree walk is installed after replay", async () => {
+    using fx = await scriptsFixture({ patched: true });
+    const expected = await fx.warmThenEvict();
+
+    await using proc = spawnInstall(fx.dir, fx.env, ["--frozen-lockfile"]);
+    const out = await finish(proc);
+    expect(out.stderr).not.toContain("error:");
+    expect(out.exitCode).toBe(0);
+    // lib, app and scripted@2; the patched scripted@1 is linked serially.
+    expect(parallelTaskCount(out.stderr)).toBe(3);
+    expect(await file(join(fx.dir, "node_modules", "app", "node_modules", "scripted", "index.js")).text()).toContain(
+      "(patched)",
+    );
+    expect(installedCount(out.stdout)).toBe(expected);
+    expect(await file(fx.marker).exists(), "scripted@1 was parked in pending_installs and never drained").toBe(true);
   });
 });

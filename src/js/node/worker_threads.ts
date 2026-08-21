@@ -333,6 +333,40 @@ const BUN_WORKER_MESSAGING_KEY = "@@bunWorkerThreadsMessaging";
 // Worker's public port (node's kPublicPort). Rides inside workerData like the
 // stdio and control ports.
 const BUN_WORKER_PARENT_PORT_KEY = "@@bunWorkerThreadsParentPort";
+const BUN_WORKER_CWD_COUNTER_KEY = "@@bunWorkerThreadsCwdCounter";
+
+// Shared cwd-invalidation counter: main thread bumps it on chdir(), workers
+// re-read the real cwd when it changes (AtomicsLoad is source-observable).
+// https://github.com/nodejs/node/blob/main/lib/internal/worker.js
+// The SharedArrayBuffer is allocated lazily on the first `new Worker()` so that
+// merely `require('worker_threads')` leaves process.memoryUsage().arrayBuffers
+// at 0 (test-memory-usage.js gates its strict-delta assertion on that).
+const AtomicsAdd = Atomics.add;
+const AtomicsLoad = Atomics.load;
+let cwdCounter: Uint32Array | undefined;
+if (isMainThread) {
+  const originalChdir = process.chdir;
+  process.chdir = function (path: string) {
+    originalChdir(path);
+    const counter = cwdCounter;
+    if (counter) AtomicsAdd(counter, 0, 1);
+  };
+}
+function installWorkerCwd(counter: Uint32Array) {
+  // Keep the counter for workers spawned by this worker (node's
+  // workerIo.sharedCwdCounter pass-along).
+  cwdCounter = counter;
+  let cachedCwd = "";
+  let lastCounter = -1;
+  const originalCwd = process.cwd;
+  process.cwd = function () {
+    const currentCounter = AtomicsLoad(counter, 0);
+    if (currentCounter === lastCounter) return cachedCwd;
+    lastCounter = currentCounter;
+    cachedCwd = originalCwd.$call(process);
+    return cachedCwd;
+  };
+}
 
 const { makePortReadable, makePortWritable } = require("internal/worker/stdio");
 
@@ -616,6 +650,7 @@ if (
   const stdioPorts = workerData[BUN_WORKER_STDIO_KEY];
   const controlPort = workerData[BUN_WORKER_MESSAGING_KEY];
   const transferredParentPort = workerData[BUN_WORKER_PARENT_PORT_KEY];
+  const sharedCwdCounter = workerData[BUN_WORKER_CWD_COUNTER_KEY];
   workerData = workerData.data;
   if (stdioPorts) setupWorkerStdio(stdioPorts);
   if (controlPort) messaging.setupMainThreadPort(controlPort, _setEntryEvaluatedHook);
@@ -633,6 +668,7 @@ if (
     _setParentPort(parentPort);
     parentPort.start();
   }
+  if (sharedCwdCounter) installWorkerCwd(sharedCwdCounter);
 }
 if (!isMainThread && parentPort === null) parentPort = fakeParentPort();
 function receiveMessageOnPort(port: MessagePort) {
@@ -856,6 +892,11 @@ class Worker extends EventEmitter {
       filename = validateWorkerFilename(filename);
     }
 
+    // node's WORKER handle is constructed (emitting its async_hooks init) before
+    // the stdio/public MessageChannels below, whose ports each emit MESSAGEPORT
+    // natively; why-is-node-running-style scans list resources in init order.
+    this.#emitAsyncHooksInit();
+
     let portToMain;
     try {
       // Neuter transferred FileHandles only AFTER name/filename validation so a
@@ -908,6 +949,8 @@ class Worker extends EventEmitter {
         [BUN_WORKER_PARENT_PORT_KEY]: parentPortForWorker,
         data: options.workerData,
       };
+      if (isMainThread) cwdCounter ??= new Uint32Array(new SharedArrayBuffer(4));
+      if (cwdCounter) workerDataWrapper[BUN_WORKER_CWD_COUNTER_KEY] = cwdCounter;
       // stdout/stderr always create channels (stdin only when requested), so the
       // worker always receives a stdio control object.
       workerDataWrapper[BUN_WORKER_STDIO_KEY] = stdioForWorker;
@@ -993,7 +1036,6 @@ class Worker extends EventEmitter {
       }
       urlRevokeRegistry.register(this.#worker, this.#urlToRevoke);
     }
-    this.#emitAsyncHooksInit();
     if (workerThreadsChannel.hasSubscribers) {
       workerThreadsChannel.publish({ worker: this });
     }
@@ -1003,8 +1045,9 @@ class Worker extends EventEmitter {
     const count = tickInitHooks.length;
     if (count === 0) return;
     const worker = this;
-    // node's WORKER handle: answers while the parent still holds the thread
-    // (through 'exit'), undefined once it has been released.
+    // node's WORKER handle: answers while the parent holds the thread (through
+    // 'exit'); undefined once it has been released, or if it was never spawned
+    // (#worker is still unset here and stays so when the constructor throws).
     const resource = {
       hasRef() {
         return _workerHasRef(worker.#worker);

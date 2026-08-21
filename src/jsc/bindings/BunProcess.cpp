@@ -31,6 +31,7 @@
 #include "headers-handwritten.h"
 #include "ZigGlobalObject.h"
 #include "FormatStackTraceForJS.h"
+#include <atomic>
 #include "headers.h"
 #include "JSEnvironmentVariableMap.h"
 #include "ImportMetaObject.h"
@@ -982,6 +983,15 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionHRTimeBigInt, (JSC::JSGlobalObject * gl
     return JSC::JSValue::encode(JSValue(JSC::JSBigInt::createFrom(globalObject, Bun__readOriginTimer(globalObject->bunVM()))));
 }
 
+// Process-wide chdir generation. The cwd is per-process state shared by every
+// worker thread, but each thread's Process object caches its own cwd string;
+// bumping this on chdir is what lets the other threads notice.
+static std::atomic<uint64_t>& processCwdGeneration()
+{
+    static std::atomic<uint64_t> generation { 0 };
+    return generation;
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionChdir, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -995,6 +1005,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionChdir, (JSC::JSGlobalObject * globalObj
     JSC::JSValue result = JSC::JSValue::decode(Bun__Process__setCwd(globalObject, &str));
     RETURN_IF_EXCEPTION(scope, {});
 
+    processCwdGeneration().fetch_add(1, std::memory_order_acq_rel);
     auto* processObject = defaultGlobalObject(globalObject)->processObject();
     // Node clears its cwd cache on chdir (does_own_process_state.js) and lets
     // the next process.cwd() re-query the OS - do not re-populate it here.
@@ -4625,7 +4636,8 @@ static inline JSValue getCachedCwd(JSC::JSGlobalObject* globalObject)
 
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/bootstrap/switches/does_own_process_state.js#L142-L146
     auto* processObject = defaultGlobalObject(globalObject)->processObject();
-    if (auto* cached = processObject->cachedCwd()) {
+    uint64_t generation = processCwdGeneration().load(std::memory_order_acquire);
+    if (auto* cached = processObject->cachedCwd(); cached && processObject->m_cachedCwdGeneration == generation) {
         return cached;
     }
 
@@ -4633,6 +4645,7 @@ static inline JSValue getCachedCwd(JSC::JSGlobalObject* globalObject)
     RETURN_IF_EXCEPTION(scope, {});
     JSString* cwdStr = uncheckedDowncast<JSString>(JSValue::decode(cwd));
     processObject->setCachedCwd(vm, cwdStr);
+    processObject->m_cachedCwdGeneration = generation;
     RELEASE_AND_RETURN(scope, cwdStr);
 }
 

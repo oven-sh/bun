@@ -89,6 +89,11 @@ public:
     void setCachedCwd(JSC::VM& vm, JSString* cwd) { m_cachedCwd.set(vm, this, cwd); }
     void clearCachedCwd() { m_cachedCwd.clear(); }
 
+    // Generation of the process-wide chdir counter m_cachedCwd was captured
+    // at. Worker threads share one OS cwd, so a chdir on any thread must
+    // invalidate every thread's cached cwd string.
+    uint64_t m_cachedCwdGeneration { 0 };
+
     JSValue getArgv(JSGlobalObject* globalObject);
     void setArgv(JSGlobalObject* globalObject, JSValue argv);
 

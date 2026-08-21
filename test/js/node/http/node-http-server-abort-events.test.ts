@@ -221,34 +221,37 @@ describe("res.destroy() defers 'close'", () => {
 
   // server.emit("connection", duplex) serves the connection with the JS
   // HTTP/1 parser: here 'close' comes from the assigned socket's own 'close'.
-  test.concurrent.each([false, true])("on a response served over server.emit('connection') (ended first: %p)", async endFirst => {
-    const events: string[] = [];
-    const resClosed = Promise.withResolvers<void>();
-    const server = createServer((req, res) => {
-      recordResponse(res, events, resClosed.resolve);
-      if (endFirst) res.end("hello");
-      destroyRecording(res, events);
-      events.push("listener returned");
-    });
-    const [clientSide, serverSide] = duplexPair();
-    try {
-      serverSide.on("close", () => events.push("socket.close"));
-      server.emit("connection", serverSide);
-      clientSide.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
-      await resClosed.promise;
-      expect(events).toEqual([
-        "destroy()",
-        "destroy() returned (closed: false)",
-        "listener returned",
-        ...(endFirst ? ["res.finish"] : []),
-        "socket.close",
-        "res.close (closed: true)",
-      ]);
-    } finally {
-      clientSide.destroy();
-      serverSide.destroy();
-    }
-  });
+  test.concurrent.each([false, true])(
+    "on a response served over server.emit('connection') (ended first: %p)",
+    async endFirst => {
+      const events: string[] = [];
+      const resClosed = Promise.withResolvers<void>();
+      const server = createServer((req, res) => {
+        recordResponse(res, events, resClosed.resolve);
+        if (endFirst) res.end("hello");
+        destroyRecording(res, events);
+        events.push("listener returned");
+      });
+      const [clientSide, serverSide] = duplexPair();
+      try {
+        serverSide.on("close", () => events.push("socket.close"));
+        server.emit("connection", serverSide);
+        clientSide.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+        await resClosed.promise;
+        expect(events).toEqual([
+          "destroy()",
+          "destroy() returned (closed: false)",
+          "listener returned",
+          ...(endFirst ? ["res.finish"] : []),
+          "socket.close",
+          "res.close (closed: true)",
+        ]);
+      } finally {
+        clientSide.destroy();
+        serverSide.destroy();
+      }
+    },
+  );
 
   // A response queued behind an unfinished pipelined response has no socket
   // yet (res.socket === null), so this takes the same deferred path as a

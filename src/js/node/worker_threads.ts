@@ -892,6 +892,11 @@ class Worker extends EventEmitter {
       filename = validateWorkerFilename(filename);
     }
 
+    // node's WORKER handle is constructed (emitting its async_hooks init) before
+    // the stdio/public MessageChannels below, whose ports each emit MESSAGEPORT
+    // natively; why-is-node-running-style scans list resources in init order.
+    this.#emitAsyncHooksInit();
+
     let portToMain;
     try {
       // Neuter transferred FileHandles only AFTER name/filename validation so a
@@ -1031,7 +1036,6 @@ class Worker extends EventEmitter {
       }
       urlRevokeRegistry.register(this.#worker, this.#urlToRevoke);
     }
-    this.#emitAsyncHooksInit();
     if (workerThreadsChannel.hasSubscribers) {
       workerThreadsChannel.publish({ worker: this });
     }
@@ -1041,8 +1045,9 @@ class Worker extends EventEmitter {
     const count = tickInitHooks.length;
     if (count === 0) return;
     const worker = this;
-    // node's WORKER handle: answers while the parent still holds the thread
-    // (through 'exit'), undefined once it has been released.
+    // node's WORKER handle: answers while the parent holds the thread (through
+    // 'exit'); undefined once it has been released, or if it was never spawned
+    // (#worker is still unset here and stays so when the constructor throws).
     const resource = {
       hasRef() {
         return _workerHasRef(worker.#worker);

@@ -1,6 +1,7 @@
 // Bun starts some threads on first use: the HTTP client thread (fetch, S3,
 // bun install, auto-install), the bundle thread (Bun.build) and, on POSIX, the
-// IO thread that waits on pipes. The OS can refuse a thread: pthread_create
+// IO thread that waits on pipes and the thread that waits for child processes
+// on a kernel without pidfd. The OS can refuse a thread: pthread_create
 // fails with EAGAIN at a thread or pid limit, CreateThread fails with
 // ERROR_COMMITMENT_LIMIT when Windows cannot commit the stack. That is a limit
 // of the machine, so it has to come back as an error, not as a crash report.
@@ -32,7 +33,7 @@ async function whileRefused(call) {
   try {
     return { resolved: await call() };
   } catch (e) {
-    return { rejected: { name: e.name, code: e.code, message: e.message, path: e.path } };
+    return { rejected: { name: e.name, code: e.code, syscall: e.syscall, message: e.message, path: e.path } };
   } finally {
     unlinkSync(marker);
   }
@@ -116,6 +117,25 @@ ${WHILE_REFUSED}
 await Bun.file(import.meta.path).text();
 console.log("reading stdin");
 print(await whileRefused(() => Bun.stdin.text()));
+`;
+
+// Without pidfd (BUN_FEATURE_FLAG_FORCE_WAITER_THREAD stands in for a kernel or
+// a seccomp filter without it), the first Bun.spawn() starts the thread that
+// waits for the children. The child is left running so that the refusal, not
+// its exit, decides the outcome. It is killed afterwards.
+const SPAWN_FIXTURE = /* js */ `
+${WHILE_REFUSED}
+const stdio = ["ignore", "ignore", "ignore"];
+let refusedChild;
+print(
+  await whileRefused(() => {
+    refusedChild = Bun.spawn({ cmd: ["sleep", "30"], stdio });
+    return refusedChild.exited;
+  }),
+);
+print({ exitCode: refusedChild.exitCode, signalCode: refusedChild.signalCode });
+process.kill(refusedChild.pid, "SIGKILL");
+print({ afterwards: await Bun.spawn({ cmd: ["sleep", "0"], stdio }).exited });
 `;
 
 // The schedule of bun_threading::spawn_with_retry.
@@ -319,6 +339,36 @@ test.concurrent.skipIf(!canRun)(
         "Failed to start the bundler thread: Resource temporarily unavailable (os error 11)",
       ),
       refused: ATTEMPTS_PER_START,
+      exitCode: 0,
+    });
+  },
+);
+
+test.concurrent.skipIf(!canRun)(
+  "Bun.spawn() reports a refused process waiter thread through exited; the next spawn starts it",
+  async () => {
+    using dir = tempDir("refuse-threads-spawn", { "fixture.js": SPAWN_FIXTURE });
+    const { stdout, stderr, refused, exitCode } = await runFixture(String(dir), {
+      env: { BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" },
+    });
+
+    expect({ stdout: jsonLines(stdout), stderr, refused, exitCode }).toEqual({
+      stdout: [
+        {
+          rejected: {
+            name: "Error",
+            code: "EAGAIN",
+            syscall: "pthread_create",
+            message: "EAGAIN: resource temporarily unavailable, pthread_create",
+          },
+        },
+        { exitCode: null, signalCode: null },
+        { afterwards: 0 },
+      ],
+      stderr: "",
+      // Bun.spawn() tries to watch the child, then once more when it finds the
+      // child still running.
+      refused: 2 * ATTEMPTS_PER_START,
       exitCode: 0,
     });
   },

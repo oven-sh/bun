@@ -937,26 +937,44 @@ describe("html route whose file is not named .html", () => {
 });
 
 // A plugin can resolve the route's html file to a different file. The bundle
-// then finishes without an html page and without an error for the file. Both
-// the dev server and the production build used to crash on that: the dev
-// server when it rendered the page, the production build when it registered
-// the outputs. Now the route reports a build failure.
+// then finishes without an html page for the route's file. Both the dev server
+// and the production build used to crash on that: the dev server when it
+// rendered the page, or when it stored the page of the other html file, the
+// production build when it registered the outputs without an html page.
+//
+// The dev server now reports a build failure for the route. The production
+// build does too when the other file is not html. When it is, the production
+// build serves that file, as it does for any entry point a plugin resolves.
 describe("html route whose file a plugin resolves to a different file", () => {
+  const otherPage = { status: 200, title: "other page" };
+  const failurePage = { status: 500, title: "Bun - Build Failed" };
+  const emptyFailure = { status: 500, title: null };
+  const builtWithout: Record<string, object> = {
+    "app.ts": { devWithoutHmr: [emptyFailure, emptyFailure], production: [emptyFailure] },
+    "other.html": { devWithoutHmr: [otherPage, otherPage], production: [otherPage] },
+  };
+
   // With BUN_ASSUME_PERFECT_INCREMENTAL=0, the default of release builds, the
   // dev server bundles a failed route again for the next request, and that
   // bundle has to report the failure again. With 1, the default of debug
   // builds, the next request is answered from the recorded failure.
-  test.concurrent.each(["0", "1"])("BUN_ASSUME_PERFECT_INCREMENTAL=%s", async assumePerfectIncremental => {
+  test.concurrent.each([
+    ["app.ts", "0"],
+    ["app.ts", "1"],
+    ["other.html", "0"],
+    ["other.html", "1"],
+  ])("resolved to %s, BUN_ASSUME_PERFECT_INCREMENTAL=%s", async (target, assumePerfectIncremental) => {
     using dir = tempDir("bun-serve-html-route-resolved-elsewhere", {
       "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
       "index.html": `<!DOCTYPE html><html><head><title>never served</title></head><body></body></html>`,
+      "other.html": `<!DOCTYPE html><html><head><title>other page</title></head><body></body></html>`,
       "app.ts": `console.log("app");`,
       "plugin.ts": /*ts*/ `
         import { join } from "node:path";
         export default {
           name: "resolve-html-elsewhere",
           setup(build) {
-            build.onResolve({ filter: /index\\.html$/ }, () => ({ path: join(import.meta.dir, "app.ts") }));
+            build.onResolve({ filter: /index\\.html$/ }, () => ({ path: join(import.meta.dir, ${JSON.stringify(target)}) }));
           },
         };
       `,
@@ -980,7 +998,7 @@ describe("html route whose file a plugin resolves to a different file", () => {
             devServer: await serve(true, 2),
             // Every request builds the route again.
             devWithoutHmr: await serve({ hmr: false }, 2),
-            // Requests after the failed build are the subject of #37916.
+            // Requests after a failed build are the subject of #37916.
             production: await serve(false, 1),
           }),
         );
@@ -989,19 +1007,13 @@ describe("html route whose file a plugin resolves to a different file", () => {
     const { stdout, stderr, exitCode } = await runServeFixture(dir, {
       BUN_ASSUME_PERFECT_INCREMENTAL: assumePerfectIncremental,
     });
-    const failurePage = { status: 500, title: "Bun - Build Failed" };
-    const emptyFailure = { status: 500, title: null };
     expect({ stdout, exitCode }, stderr).toEqual({
-      stdout: JSON.stringify({
-        devServer: [failurePage, failurePage],
-        devWithoutHmr: [emptyFailure, emptyFailure],
-        production: [emptyFailure],
-      }),
+      stdout: JSON.stringify({ devServer: [failurePage, failurePage], ...builtWithout[target] }),
       exitCode: 0,
     });
-    // Printed by the dev server and by the development build. Production says nothing.
+    // Printed by the dev server (and by the development build when it fails too). Production says nothing.
     expect(stderr).toMatch(
-      /error: Bundling "[^"]*index\.html" did not produce an html page\. A plugin may have resolved or loaded the file as something other than html\./,
+      /error: Bundling "[^"]*index\.html" did not produce an html page for it\. A plugin may have resolved it to another file or loaded it as something other than html\./,
     );
   });
 });

@@ -4159,7 +4159,11 @@ pub(super) fn finalize_bundle(
             .get_cached_index(bake::Side::Client, index)
             .unwrap::<{ bake::Side::Client }>()
             .expect("unresolved index");
-        let route_bundle_index = dev.client_graph.html_route_bundle_index(client_index);
+        // Not the file of a route: a plugin resolved a route's file to it, or loaded it as html.
+        let Some(route_bundle_index) = dev.client_graph.html_route_bundle_index(client_index)
+        else {
+            continue;
+        };
         let route_bundle = dev.route_bundle_ptr(route_bundle_index);
         debug_assert!(route_bundle.data.html().bundled_file == client_index);
         // Note: split borrow — `invalidate_client_bundle` needs `&mut RouteBundle`

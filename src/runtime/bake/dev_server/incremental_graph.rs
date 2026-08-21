@@ -364,11 +364,12 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             .map(|i| FileIndex::init(i as u32))
     }
 
-    /// `IncrementalGraph(.client).htmlRouteBundleIndex`.
-    pub(crate) fn html_route_bundle_index(&self, index: FileIndex<SIDE>) -> route_bundle::Index {
-        self.bundled_files.values()[index.get() as usize]
-            .html_route_bundle_index
-            .expect("html_route_bundle_index on non-HTML file")
+    /// `None` for an html file that is not the file of a route.
+    pub(crate) fn html_route_bundle_index(
+        &self,
+        index: FileIndex<SIDE>,
+    ) -> Option<route_bundle::Index> {
+        self.bundled_files.values()[index.get() as usize].html_route_bundle_index
     }
 
     // ── per-bundle scratch accessors (kept for existing call sites) ────────

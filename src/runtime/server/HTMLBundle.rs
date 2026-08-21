@@ -138,7 +138,7 @@ impl HTMLBundle {
             None,
             bun_ast::Loc::EMPTY,
             format_args!(
-                "Bundling {} did not produce an html page. A plugin may have resolved or loaded the file as something other than html.",
+                "Bundling {} did not produce an html page for it. A plugin may have resolved it to another file or loaded it as something other than html.",
                 bun_core::fmt::quote(&self.path)
             ),
         );

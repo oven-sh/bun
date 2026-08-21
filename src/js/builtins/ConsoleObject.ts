@@ -63,7 +63,7 @@ export function asyncIterator(this: Console) {
         }
 
         if (done) {
-          if (pendingChunk) {
+          if (pendingChunk && pendingChunk.byteLength > 0) {
             yield decoder.decode(pendingChunk);
           }
           return;

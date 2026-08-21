@@ -567,24 +567,18 @@ const SocketHandlers: SocketHandler = {
   binaryType: "buffer",
 } as const;
 
-// Stops kernel reads; read()/_read()/resume() start them again. Called where node
-// calls readStop: push() or an onread callback returned false, pause() in onread
-// mode, pauseOnConnect. Like node's readStop, a socket that is not reading does
-// not hold the loop; a write awaiting drain still does, and unrefAfterDrain drops
-// the hold once it completes.
+// Node's readStop. A handle that is not reading holds the loop only for a pending
+// write (unrefAfterDrain lets go later); read()/_read()/resume() undo both.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L191-L198
 function readStop(self, handle) {
   handle?.pause?.();
-  // A TLS socket over a generic duplex has no fd and never held the loop, so
-  // there is no hold to drop, and restoring one later would pin the process.
+  // A socket over a generic duplex has no fd and never held the loop.
   if (self[kupgraded] && !(self[kupgraded] instanceof Socket)) return;
   self[kPausedUnref] = true;
   if (!self[kwriteCallback]) handle?.unref?.();
 }
 
-// pauseOnConnect: the handle stops before any byte leaves the kernel (a cluster
-// primary hands the fd to a worker) and the stream starts out paused.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L494-L498
+// pauseOnConnect: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L494-L498
 function pauseOnCreate(self, handle) {
   readStop(self, handle);
   Duplex.prototype.pause.$call(self);
@@ -1936,8 +1930,7 @@ Socket.prototype.connect = function connect(...args) {
       });
     }
     if (pauseOnConnect) {
-      // doConnect opened an fd synchronously (SocketHandlers.open ran); a dial
-      // has no handle yet, afterConnect stops it.
+      // An fd is open already (doConnect ran SocketHandlers.open); afterConnect stops a dial.
       if (fd != null) pauseOnCreate(this, this._handle);
       else Duplex.prototype.pause.$call(this);
     } else {
@@ -2359,11 +2352,8 @@ Socket.prototype.resume = function resume() {
   return ret;
 };
 
-// Like node, only onread mode stops the handle here, and only once connected
-// (afterConnect handles a stream paused before that). Otherwise the handle keeps
-// reading into the stream's buffer until push() says stop (the data handlers), so
-// a paused socket still observes the peer's FIN and emits 'end'/'close' - an
-// unpipe()d socket is paused and never resumed.
+// Node stops the handle here only for a connected onread socket. Every other paused
+// socket keeps reading into its buffer (so it still sees the peer's FIN) until push() says stop.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L817-L827
 Socket.prototype.pause = function pause() {
   const handle = this._handle;
@@ -3393,12 +3383,8 @@ function afterConnect(status, handle, req, readable, writable) {
       self._handle.setKeepAlive(true, self[kSetKeepAliveInitialDelay]);
     }
 
-    // Node's handle does not read until the read(0) below, which a stream paused
-    // while connecting (pause(), pauseOnConnect) skips. Ours came up reading, so
-    // stop it here; a read() requested while connecting starts it again from the
-    // 'connect' listener _read() left behind. Not a TLS socket: the engine needs
-    // the reads for the handshake (node's TLSWrap reads while paused too) and the
-    // paused stream buffers what it decrypts.
+    // Node starts reading at the read(0) below, which a paused stream skips; ours is
+    // reading already, so stop it. Not TLS: the engine needs the reads for the handshake.
     if (self.isPaused() && !self.encrypted) readStop(self, self._handle);
 
     self.emit("connect");

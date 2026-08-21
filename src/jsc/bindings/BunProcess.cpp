@@ -880,6 +880,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_setUncaughtExceptionCaptureCallback, (JSC::JSGl
     if (arg0.isNull()) {
         process->setUncaughtExceptionCaptureCallback(arg0);
         process->m_reportOnUncaughtException = false;
+        process->m_uncaughtExceptionCaptureCallbackIsInternal = false;
         return JSC::JSValue::encode(jsUndefined());
     }
     if (!arg0.isCallable()) {
@@ -892,6 +893,19 @@ JSC_DEFINE_HOST_FUNCTION(Process_setUncaughtExceptionCaptureCallback, (JSC::JSGl
     process->setUncaughtExceptionCaptureCallback(arg0);
     process->m_reportOnUncaughtException = true;
     return JSC::JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionSetInternalUncaughtExceptionCaptureCallback, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto* process = defaultGlobalObject(globalObject)->processObject();
+    if (process->m_reportOnUncaughtException) {
+        return JSValue::encode(jsBoolean(false));
+    }
+
+    process->setUncaughtExceptionCaptureCallback(callFrame->argument(0));
+    process->m_reportOnUncaughtException = true;
+    process->m_uncaughtExceptionCaptureCallbackIsInternal = true;
+    return JSValue::encode(jsBoolean(true));
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_hasUncaughtExceptionCaptureCallback, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -1271,7 +1285,17 @@ void signalHandler(uv_signal_t* signal, int signalNumber)
 
 extern "C" void Bun__logUnhandledException(JSC::EncodedJSValue exception);
 
-extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue exception, int isRejection)
+extern "C" bool Bun__hasUncaughtExceptionCaptureCallback(JSC::JSGlobalObject* lexicalGlobalObject)
+{
+    if (!lexicalGlobalObject->inherits(Zig::GlobalObject::info()))
+        return false;
+    JSValue cb = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject)->processObject()->getUncaughtExceptionCaptureCallback();
+    return !cb.isEmpty() && cb.isCell();
+}
+
+// `unhandledIsFatal`: the caller ends the process when this returns false, as opposed to
+// process._fatalException() (which only reports back) and `bun test` (which records a failure).
+static int handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue exception, int isRejection, bool unhandledIsFatal)
 {
     if (!lexicalGlobalObject->inherits(Zig::GlobalObject::info()))
         return false;
@@ -1300,13 +1324,10 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
         }
     }
 
+    JSValue origin = jsString(vm, isRejection ? String("unhandledRejection"_s) : String("uncaughtException"_s));
     MarkedArgumentBuffer args;
     args.append(exception);
-    if (isRejection) {
-        args.append(jsString(vm, String("unhandledRejection"_s)));
-    } else {
-        args.append(jsString(vm, String("uncaughtException"_s)));
-    }
+    args.append(origin);
 
     auto uncaughtExceptionMonitor = Identifier::fromString(JSC::getVM(globalObject), "uncaughtExceptionMonitor"_s);
     if (wrapped.listenerCount(uncaughtExceptionMonitor) > 0) {
@@ -1317,11 +1338,20 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
 
     auto uncaughtExceptionIdent = Identifier::fromString(JSC::getVM(globalObject), "uncaughtException"_s);
 
-    // if there is an uncaughtExceptionCaptureCallback, call it and consider the exception handled
     auto capture = process->getUncaughtExceptionCaptureCallback();
     if (!capture.isEmpty() && !capture.isUndefinedOrNull()) {
+        bool isInternalDispatcher = process->m_uncaughtExceptionCaptureCallbackIsInternal;
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        (void)call(lexicalGlobalObject, capture, args, "uncaughtExceptionCaptureCallback"_s);
+        JSValue handled;
+        if (isInternalDispatcher) {
+            MarkedArgumentBuffer dispatcherArgs;
+            dispatcherArgs.append(exception);
+            dispatcherArgs.append(origin);
+            dispatcherArgs.append(jsBoolean(unhandledIsFatal));
+            handled = call(lexicalGlobalObject, capture, dispatcherArgs, "uncaughtExceptionCaptureCallback"_s);
+        } else {
+            handled = call(lexicalGlobalObject, capture, args, "uncaughtExceptionCaptureCallback"_s);
+        }
         if (auto ex = scope.exception()) {
             (void)scope.tryClearException();
             if (vm.hasPendingTerminationException()) [[unlikely]]
@@ -1329,14 +1359,25 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
             // if an exception is thrown in the uncaughtException handler, we abort
             Bun__logUnhandledException(JSValue::encode(JSValue(ex)));
             Bun__Process__exit(lexicalGlobalObject, 1);
+            return true;
         }
-    } else if (wrapped.listenerCount(uncaughtExceptionIdent) > 0) {
-        wrapped.emit(uncaughtExceptionIdent, args);
-    } else {
-        return false;
+        // Node ignores a user callback's return value; the dispatcher's says whether a domain/REPL
+        // claimed the exception.
+        if (!isInternalDispatcher || handled.toBoolean(lexicalGlobalObject))
+            return true;
     }
 
-    return true;
+    if (wrapped.listenerCount(uncaughtExceptionIdent) > 0) {
+        wrapped.emit(uncaughtExceptionIdent, args);
+        return true;
+    }
+
+    return false;
+}
+
+extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* globalObject, JSC::JSValue exception, int isRejection)
+{
+    return handleUncaughtException(globalObject, exception, isRejection, !isBunTest);
 }
 extern "C" bool Bun__promises__isErrorLike(JSC::JSGlobalObject* globalObject, JSC::JSValue obj)
 {
@@ -4306,7 +4347,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionFatalException, (JSC::JSGlobalObject * 
     // machinery and returns whether a handler claimed the error. fromPromise selects
     // origin 'unhandledRejection' vs 'uncaughtException'.
     int isRejection = callFrame->argument(1).toBoolean(globalObject) ? 1 : 0;
-    return JSValue::encode(jsBoolean(Bun__handleUncaughtException(globalObject, callFrame->argument(0), isRejection) > 0));
+    return JSValue::encode(jsBoolean(handleUncaughtException(globalObject, callFrame->argument(0), isRejection, false) > 0));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionDrainMicrotaskQueue, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

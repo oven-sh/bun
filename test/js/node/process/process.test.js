@@ -1654,6 +1654,96 @@ describe.concurrent(() => {
     expect(await proc.exited).toBe(1);
     expect(await proc.stderr.text()).toContain("bar");
   });
+
+  // node:domain occupies the capture slot with an internal dispatcher. Once a domain
+  // has been used, an exception thrown while none is active is nobody's to claim.
+  describe("uncaught exception that no domain claims", () => {
+    async function run(script) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    it("takes the process down like node's fatal handler", async () => {
+      const { stdout, stderr, exitCode } = await run(`
+        require("domain").create().run(() => {});
+        setTimeout(() => { throw new Error("boom outside domain"); }, 0);
+      `);
+      expect(stdout).toBe("");
+      expect(stderr).toContain("Uncaught Error: boom outside domain");
+      expect(exitCode).toBe(1);
+    });
+
+    it("is only reported back by process._fatalException()", async () => {
+      const result = await run(`
+        require("domain").create().run(() => {});
+        console.log("handled:", process._fatalException(new Error("boom outside domain")));
+      `);
+      expect(result).toEqual({ stdout: "handled: false\n", stderr: "", exitCode: 0 });
+    });
+
+    it("fails the running test under bun test instead of exiting the runner", async () => {
+      using dir = tempDir("domain-unclaimed", {
+        "unclaimed.test.js": `
+          import { test } from "bun:test";
+          test("throws outside any domain", async () => {
+            require("domain").create().run(() => {});
+            await new Promise(resolve => {
+              setTimeout(() => {
+                setTimeout(resolve, 0);
+                throw new Error("boom outside domain");
+              }, 0);
+            });
+          });
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "unclaimed.test.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const output = stdout + stderr;
+      expect(output).toContain("boom outside domain");
+      expect(output).toContain(" 1 fail");
+      expect(exitCode).toBe(1);
+    });
+
+    it("reaches process.on('uncaughtException')", async () => {
+      const result = await run(`
+        const d = require("domain").create();
+        d.on("error", () => console.log("domain handled it"));
+        d.run(() => {});
+        process.on("uncaughtException", (err, origin) => {
+          console.log("uncaughtException", err.message, origin);
+          process.exitCode = 42;
+        });
+        setTimeout(() => { throw new Error("boom outside domain"); }, 0);
+      `);
+      expect(result).toEqual({
+        stdout: "uncaughtException boom outside domain uncaughtException\n",
+        stderr: "",
+        exitCode: 42,
+      });
+    });
+
+    it("a user callback set after clearing the dispatcher handles it regardless of its return value", async () => {
+      const result = await run(`
+        require("domain").create().run(() => {});
+        process.setUncaughtExceptionCaptureCallback(null);
+        process.setUncaughtExceptionCaptureCallback(err => { console.log("captured", err.message); return false; });
+        setTimeout(() => { throw new Error("boom outside domain"); }, 0);
+      `);
+      expect(result).toEqual({ stdout: "captured boom outside domain\n", stderr: "", exitCode: 0 });
+    });
+  });
 });
 
 it("process.hasUncaughtExceptionCaptureCallback", () => {

@@ -51,6 +51,10 @@ public:
     WEBCORE_EXPORT void removeListenerForBindings(const Identifier& eventType, RefPtr<EventListener>&&);
     WEBCORE_EXPORT void removeAllListenersForBindings(const Identifier& eventType);
     WEBCORE_EXPORT bool emitForBindings(const Identifier&, const MarkedArgumentBuffer&);
+    // Leaves a listener's exception pending on the VM instead of routing it to
+    // the 'error' listener / unhandled-error reporter. Callers must check for a
+    // pending exception on return.
+    WEBCORE_EXPORT bool emitPropagatingExceptions(const Identifier&, const MarkedArgumentBuffer&);
 
     WEBCORE_EXPORT bool addListener(const Identifier& eventType, Ref<EventListener>&&, bool, bool);
     WEBCORE_EXPORT bool removeListener(const Identifier& eventType, EventListener&);
@@ -73,7 +77,7 @@ public:
 
     void setMaxListeners(unsigned count);
 
-    bool fireEventListeners(const Identifier& eventName, const MarkedArgumentBuffer& arguments);
+    bool fireEventListeners(const Identifier& eventName, const MarkedArgumentBuffer& arguments, bool propagateExceptions = false);
     bool isFiringEventListeners() const;
 
     const EventEmitterData* eventTargetData() const;
@@ -102,7 +106,7 @@ private:
     {
     }
 
-    bool innerInvokeEventListeners(const Identifier&, SimpleEventListenerVector, const MarkedArgumentBuffer& arguments);
+    bool innerInvokeEventListeners(const Identifier&, SimpleEventListenerVector, const MarkedArgumentBuffer& arguments, bool propagateExceptions);
 
     EventEmitterData m_eventTargetData;
     unsigned m_maxListeners { 10 };

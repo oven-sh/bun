@@ -178,6 +178,10 @@ Bun does not enable `--frozen-lockfile` automatically in CI; pass the flag or us
 
 To validate the lockfile without installing, use `bun install --frozen-lockfile --dry-run`.
 
+### Repeat installs
+
+When nothing that affects `node_modules` has changed since the last successful install (lockfile, workspace manifests, config, flags, and the installed folders themselves), `bun install` detects this from a fingerprint kept in the cache directory and returns without re-verifying every package. On large workspaces this turns a repeat install into a few milliseconds. As with other package managers' equivalent optimisation, root lifecycle scripts do not re-run on such a no-op install; use `--force` (or set [`install.stateFile = false`](/runtime/bunfig#install-statefile)) to always do the full pass.
+
 See [lockfile](/pm/lockfile) for more on `bun.lock`.
 
 ---

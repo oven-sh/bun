@@ -81,6 +81,10 @@ pub struct Options {
     /// fallback (pnpm's `hoist=false`); takes precedence over `hoist_pattern`.
     pub(crate) hoist: bool,
 
+    /// Record/consult the whole-install fingerprint (`install_state.rs`) so a repeat
+    /// `bun install` with nothing to do returns immediately. `install.stateFile`.
+    pub install_state: bool,
+
     // Security scanner module path
     pub security_scanner: Option<&'static [u8]>,
 
@@ -156,6 +160,7 @@ impl Default for Options {
             public_hoist_pattern: None,
             hoist_pattern: None,
             hoist: true,
+            install_state: true,
             security_scanner: None,
             minimum_release_age_ms: None,
             minimum_release_age_excludes: None,
@@ -473,6 +478,10 @@ impl Options {
 
             if let Some(hoist) = config.hoist {
                 self.hoist = hoist;
+            }
+
+            if let Some(v) = config.install_state {
+                self.install_state = v;
             }
 
             if let Some(security_scanner) = config.security_scanner.as_deref() {

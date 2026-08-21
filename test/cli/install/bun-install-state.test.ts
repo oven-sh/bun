@@ -1,0 +1,153 @@
+import { file, spawn } from "bun";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
+import { existsSync } from "fs";
+import { mkdir, rm, writeFile } from "fs/promises";
+import { bunExe, bunEnv as env, tmpdirSync } from "harness";
+import { join } from "path";
+import {
+  dummyAfterAll,
+  dummyAfterEach,
+  dummyBeforeAll,
+  dummyBeforeEach,
+  dummyRegistry,
+  package_dir,
+  root_url,
+  setHandler,
+} from "./dummy.registry";
+
+// The install-state fast path: after a successful install bun records a fingerprint of
+// everything that determines node_modules; a repeat `bun install` with nothing changed
+// verifies it and returns without re-walking node_modules. These tests check that it
+// engages, and — more importantly — every kind of change that must invalidate it does.
+
+beforeAll(dummyBeforeAll);
+afterAll(dummyAfterAll);
+setDefaultTimeout(1000 * 60 * 5);
+
+let urls: string[];
+
+async function install(cwd: string, args: string[] = []) {
+  await using proc = spawn({ cmd: [bunExe(), "install", ...args], cwd, env, stdout: "pipe", stderr: "pipe" });
+  const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { out, err, code };
+}
+
+const noChanges = /\(no changes\)/;
+
+describe.each(["hoisted", "isolated"] as const)("install state (%s)", linker => {
+  beforeEach(async () => {
+    await dummyBeforeEach({ linker });
+    urls = [];
+    setHandler(dummyRegistry(urls, { "0.0.2": {}, "0.0.3": {}, "0.0.5": {} }));
+    await writeFile(
+      join(package_dir, "bunfig.toml"),
+      Bun.TOML.stringify({ install: { cache: { dir: join(package_dir, ".cache") }, registry: root_url + "/", saveTextLockfile: true, linker } }),
+    );
+    await mkdir(join(package_dir, "packages", "a"), { recursive: true });
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({ name: "root", workspaces: ["packages/*"], dependencies: { bar: "0.0.2" }, devDependencies: { qux: "0.0.2" } }),
+    );
+    await writeFile(join(package_dir, "packages", "a", "package.json"), JSON.stringify({ name: "a", version: "1.0.0", dependencies: { baz: "0.0.3" } }));
+  });
+  afterEach(dummyAfterEach);
+
+  it("a repeat install is a no-op, and every relevant change invalidates it", async () => {
+    let r = await install(package_dir);
+    expect(r.err).not.toContain("error:");
+    expect(r.err).toContain("Saved lockfile");
+    expect(r.code).toBe(0);
+
+    // 1. nothing changed → no requests, same summary wording as the classic no-op
+    const before = urls.length;
+    r = await install(package_dir);
+    expect(r.code).toBe(0);
+    expect(r.out).toMatch(noChanges);
+    expect(urls.length).toBe(before);
+
+    // 2. a workspace manifest edit is noticed
+    await writeFile(join(package_dir, "packages", "a", "package.json"), JSON.stringify({ name: "a", version: "1.0.0", dependencies: { baz: "0.0.5" } }));
+    r = await install(package_dir);
+    expect(r.code).toBe(0);
+    expect(r.err).toContain("Saved lockfile");
+    expect(await file(join(package_dir, "bun.lock")).text()).toContain("baz@0.0.5");
+
+    // 3. a new workspace appearing under the glob is noticed
+    await mkdir(join(package_dir, "packages", "b"), { recursive: true });
+    await writeFile(join(package_dir, "packages", "b", "package.json"), JSON.stringify({ name: "b", version: "1.0.0" }));
+    r = await install(package_dir);
+    expect(r.code).toBe(0);
+    expect(r.err).toContain("Saved lockfile");
+    expect(await file(join(package_dir, "bun.lock")).text()).toContain('"packages/b"');
+
+    // 4. removing something from node_modules is noticed and repaired
+    await rm(join(package_dir, "node_modules", "bar"), { recursive: true, force: true });
+    r = await install(package_dir);
+    expect(r.code).toBe(0);
+    expect(existsSync(join(package_dir, "node_modules", "bar", "package.json"))).toBeTrue();
+    // (and after the repair we are clean again)
+    expect((await install(package_dir)).out).toMatch(noChanges);
+
+    // 5. deleting a file *inside* an installed package is noticed and repaired
+    await rm(join(package_dir, "node_modules", "bar", "package.json"));
+    r = await install(package_dir);
+    expect(r.code).toBe(0);
+    expect(existsSync(join(package_dir, "node_modules", "bar", "package.json"))).toBeTrue();
+
+    // 6. flags are part of the fingerprint: state recorded by an `--omit=dev` run is not
+    //    valid for a plain run (and vice versa)
+    const stateDir = join(package_dir, ".cache", ".install-state");
+    const stateFile = join(stateDir, (await Array.fromAsync(new Bun.Glob("*").scan(stateDir)))[0]);
+    const envLine = async () => (await file(stateFile).text()).split("\n").find(l => l.startsWith("e "));
+    const plainState = await envLine();
+    r = await install(package_dir, ["--omit=dev"]);
+    expect(r.code).toBe(0);
+    expect(await envLine()).not.toBe(plainState);
+    r = await install(package_dir);
+    expect(r.code).toBe(0);
+    expect(await envLine()).toBe(plainState);
+    expect((await install(package_dir)).out).toMatch(noChanges);
+
+    // 7. --force always does the work
+    r = await install(package_dir, ["--force"]);
+    expect(r.code).toBe(0);
+    expect(r.out).not.toMatch(noChanges);
+
+    // 8. install.stateFile = false disables the fast path (the classic per-package check
+    //    still reports "no changes", but only after verifying every package — observable
+    //    here as node_modules damage being repaired without any recorded state)
+    await writeFile(
+      join(package_dir, "bunfig.toml"),
+      Bun.TOML.stringify({ install: { cache: { dir: join(package_dir, ".cache") }, registry: root_url + "/", saveTextLockfile: true, linker, stateFile: false } }),
+    );
+    expect((await install(package_dir)).code).toBe(0);
+    await rm(join(package_dir, ".cache", ".install-state"), { recursive: true, force: true });
+    expect((await install(package_dir)).code).toBe(0);
+    expect(existsSync(join(package_dir, ".cache", ".install-state"))).toBeFalse();
+  });
+
+  it("local file: dependencies: untouched is a no-op, an edited source re-installs", async () => {
+    await mkdir(join(package_dir, "local"), { recursive: true });
+    await writeFile(join(package_dir, "local", "package.json"), JSON.stringify({ name: "local", version: "1.0.0" }));
+    await writeFile(join(package_dir, "local", "index.js"), "module.exports = 1;");
+    await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "root", dependencies: { local: "file:./local", bar: "0.0.2" } }));
+
+    let r = await install(package_dir);
+    expect(r.err).not.toContain("error:");
+    expect(r.code).toBe(0);
+    r = await install(package_dir);
+    expect(r.code).toBe(0);
+    expect(r.out).toMatch(noChanges);
+
+    await Bun.sleep(10);
+    await writeFile(join(package_dir, "local", "index.js"), "module.exports = 2;");
+    r = await install(package_dir);
+    expect(r.code).toBe(0);
+    expect(r.out).not.toMatch(noChanges);
+    const installed =
+      linker === "hoisted"
+        ? join(package_dir, "node_modules", "local", "index.js")
+        : join(package_dir, "node_modules", ".bun", "local@file+local", "node_modules", "local", "index.js");
+    expect(await file(installed).text()).toBe("module.exports = 2;");
+  });
+});

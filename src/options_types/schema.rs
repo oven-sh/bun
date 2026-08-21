@@ -258,6 +258,8 @@ pub mod api {
         pub public_hoist_pattern: Option<PnpmMatcher>,
         pub hoist_pattern: Option<PnpmMatcher>,
         pub hoist: Option<bool>,
+        /// `stateFile = false` disables the whole-install fingerprint fast path.
+        pub install_state: Option<bool>,
     }
 
     #[repr(u8)]

@@ -113,6 +113,7 @@ pub mod audit_fix;
 pub mod bin_real;
 pub mod dedupe;
 pub mod hoisted_install;
+pub mod install_state;
 pub mod isolated_install;
 pub mod lifecycle_script_runner;
 pub mod migration;

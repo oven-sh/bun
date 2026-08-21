@@ -514,6 +514,15 @@ Valid values are:
 | `"offline"` | Skip staleness checks and resolve packages from the local cache. Equivalent to `--prefer-offline`. |
 | `"latest"`  | Always check npm for the latest matching versions. Equivalent to `--prefer-latest`.                |
 
+### `install.stateFile`
+
+After a successful install, `bun install` records a fingerprint of everything that determines `node_modules` — the lockfile, every workspace `package.json`, `bunfig.toml` / `.npmrc`, patch files, install-relevant environment variables and flags, and the modification times of `node_modules` entries and of local `file:` / `link:` sources — under the cache directory. When nothing changed, the next plain `bun install` verifies the fingerprint and returns immediately instead of re-checking every installed package. `--force`, `bun add`/`remove`/`update`, or any change to those inputs takes the normal path. Default `true`; set to `false` to always do the full check.
+
+```toml title="bunfig.toml" icon="settings"
+[install]
+stateFile = false
+```
+
 ### `install.frozenLockfile`
 
 When `true`, `bun install` does not update `bun.lock`. Default `false`. If `package.json` and the existing `bun.lock` disagree, the install errors.

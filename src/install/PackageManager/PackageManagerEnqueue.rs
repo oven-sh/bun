@@ -687,15 +687,17 @@ pub fn enqueue_network_task(this: &mut PackageManager, task: *mut NetworkTask) {
     this.network_task_fifo.write_item_assume_capacity(task);
 }
 
-/// Backoff before retry `attempt` (1-based): 250ms, 500ms, 1s, 2s, 4s… capped at 10s,
+/// Backoff before retry `attempt` (1-based): base, 2·base, 4·base … capped at 40·base
+/// (250ms → 500ms → 1s … 10s by default; `BUN_CONFIG_HTTP_RETRY_BACKOFF` sets the base),
 /// with ±20% jitter so a fleet of installs doesn't retry in lockstep. A `Retry-After`
 /// hint (seconds) from the server wins when larger.
-pub fn retry_backoff_ms(attempt: u16, retry_after_secs: Option<u32>) -> u64 {
-    let base: u64 = 250u64.saturating_mul(1u64 << (attempt.saturating_sub(1).min(6) as u64));
-    let base = base.min(10_000);
+pub fn retry_backoff_ms(base_ms: u32, attempt: u16, retry_after_secs: Option<u32>) -> u64 {
+    let unit = u64::from(base_ms);
+    let base: u64 = unit.saturating_mul(1u64 << (attempt.saturating_sub(1).min(6) as u64));
+    let base = base.min(unit.saturating_mul(40));
     // uniform in [-base/5, +base/5]
     let jitter = (bun_core::fast_random() % (2 * (base / 5) + 1)) as i64 - (base / 5) as i64;
-    let ms = (base as i64 + jitter).max(50) as u64;
+    let ms = (base as i64 + jitter).max(1) as u64;
     match retry_after_secs {
         Some(s) => ms.max(u64::from(s).saturating_mul(1000).min(60_000)),
         None => ms,
@@ -710,16 +712,23 @@ pub fn enqueue_network_task_for_retry(
     attempt: u16,
     retry_after_secs: Option<u32>,
 ) {
-    let delay = retry_backoff_ms(attempt, retry_after_secs);
+    let delay = retry_backoff_ms(
+        this.options.retry_backoff_base_ms,
+        attempt,
+        retry_after_secs,
+    );
     let not_before = (bun_core::time::milli_timestamp().max(0) as u64).saturating_add(delay);
     this.retry_queue.push((not_before, task));
+    // make sure the install loop wakes up for it even if no other I/O completes
+    crate::package_manager_real::retry_timer::arm(this, not_before);
 }
 
-/// Move retries whose backoff elapsed into the network fifo. Returns how many are
-/// still waiting (callers use it to keep the loop alive).
-pub fn flush_due_retries(this: &mut PackageManager) -> usize {
+/// Move retries whose backoff elapsed into the network fifo. Entries still backing
+/// off stay queued (they count towards `pending_task_count`, and `retry_timer` wakes
+/// the loop when the earliest one becomes due).
+pub fn flush_due_retries(this: &mut PackageManager) {
     if this.retry_queue.is_empty() {
-        return 0;
+        return;
     }
     let now = bun_core::time::milli_timestamp().max(0) as u64;
     let mut i = 0;
@@ -736,7 +745,16 @@ pub fn flush_due_retries(this: &mut PackageManager) -> usize {
             i += 1;
         }
     }
-    this.retry_queue.len()
+    // re-arm for whatever is still waiting (the timer only remembers one deadline)
+    if let Some(next) = this
+        .retry_queue
+        .iter()
+        .map(|(t, _)| *t)
+        .filter(|t| *t > now)
+        .min()
+    {
+        crate::package_manager_real::retry_timer::arm(this, next);
+    }
 }
 
 /// Hands the task to the patch-task fifo as a raw pointer; it is reclaimed once

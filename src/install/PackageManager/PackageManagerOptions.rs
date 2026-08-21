@@ -60,6 +60,9 @@ pub struct Options {
     pub json_output: bool,
 
     pub(crate) max_retry_count: u16,
+    /// Base of the exponential backoff between retries, in ms (doubles per attempt,
+    /// capped at 40x this value). `BUN_CONFIG_HTTP_RETRY_BACKOFF`.
+    pub(crate) retry_backoff_base_ms: u32,
     pub(crate) min_simultaneous_requests: usize,
 
     pub max_concurrent_lifecycle_scripts: usize,
@@ -153,6 +156,7 @@ impl Default for Options {
             pack_gzip_level: None,
             json_output: false,
             max_retry_count: 5,
+            retry_backoff_base_ms: 250,
             min_simultaneous_requests: 4,
             // Placeholder only — every constructor supplies the real value
             // (`cli.concurrent_scripts` or `cpu_count * 2`).
@@ -695,6 +699,11 @@ impl Options {
         if let Some(retry_count) = env.get(b"BUN_CONFIG_HTTP_RETRY_COUNT") {
             if let Ok(int) = bun_core::parse_int::<u16>(retry_count, 10) {
                 self.max_retry_count = int;
+            }
+        }
+        if let Some(ms) = env.get(b"BUN_CONFIG_HTTP_RETRY_BACKOFF") {
+            if let Ok(int) = bun_core::parse_int::<u32>(ms, 10) {
+                self.retry_backoff_base_ms = int;
             }
         }
 

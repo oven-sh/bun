@@ -152,9 +152,8 @@ pub struct TarballStream {
     bytes_received: usize,
     entry_count: u32,
     fail: Option<crate::Error>,
-    /// libarchive's error string at the moment `fail` was set to
-    /// `Error::Fail`; surfaced in the user-facing message so an
-    /// intermittent extraction failure is diagnosable from a bug report.
+    /// libarchive's error string captured when `fail` was set; appended to
+    /// the user-facing message.
     fail_detail: Vec<u8>,
     invalid_name: bool,
 
@@ -734,12 +733,9 @@ impl TarballStream {
             .extend_from_slice(&msg[..msg.len().min(MAX)]);
     }
 
-    /// Whether a failed streaming extraction should be downloaded again
-    /// through the buffered path. `InstallFailed` covers the deterministic
-    /// failures (invalid package name, cache-dir move, package.json read),
-    /// everything else is transport- or timing-dependent. The same predicate
-    /// runs in `populate_result` (to keep a retried failure out of the error
-    /// log) and in `run_tasks` (to enqueue the retry).
+    /// Whether a failed streaming extraction retries through the buffered
+    /// path. `InstallFailed` covers the deterministic failures. Shared by
+    /// `populate_result` (log suppression) and `run_tasks` (the retry).
     pub(crate) fn should_retry_streaming_failure(err: crate::Error) -> bool {
         err != crate::Error::InstallFailed
     }

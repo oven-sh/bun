@@ -960,14 +960,10 @@ impl NetworkTask {
         }
     }
 
-    /// Prepare this task for another HTTP attempt after a streaming
-    /// extraction failed mid-download. The stream was already torn down by
-    /// `TarballStream::finish()` (`tarball_stream` is `None`), so the retry
-    /// downloads the whole body and takes the buffered extraction path,
-    /// which verifies integrity before touching libarchive. Clearing the
-    /// streaming signal makes the HTTP client deliver one final callback
-    /// instead of per-chunk callbacks (the client re-reads the atomic on
-    /// every packet, and the request is not in flight here).
+    /// Prepare this task to download again after its streaming extraction
+    /// failed. `TarballStream::finish()` already dropped the stream.
+    /// Clearing the streaming signal makes the retry buffer the whole body,
+    /// so the next attempt verifies integrity and extracts from memory.
     pub(crate) fn prepare_buffered_retry(&mut self) {
         debug_assert!(self.streaming_committed);
         debug_assert!(self.tarball_stream.is_none());

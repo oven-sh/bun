@@ -1151,9 +1151,8 @@ fn run_tasks_erased(
                 } else {
                     core::ptr::null_mut()
                 };
-                // `Cell` so the streaming-retry path below can cancel the
-                // release: a retried network task is back in flight and must
-                // not return to the pool (nor lose its AsyncHTTP).
+                // `Cell` so the streaming-retry path below can keep the
+                // re-enqueued network task out of the pool.
                 let net_release = Cell::new(net_ptr);
                 scopeguard::defer! {
                     let net_ptr = net_release.get();
@@ -1189,13 +1188,9 @@ fn run_tasks_erased(
                 if task.status == Task::Status::Fail {
                     let err = task.err.unwrap_or(crate::Error::TarballFailedToExtract);
 
-                    // A failed streaming extraction is downloaded again through
-                    // the buffered path, which verifies integrity before it
-                    // extracts — mirroring how a failed download retries.
-                    // `populate_result` kept this failure out of the error log
-                    // under the same predicate. `streaming_committed` is still
-                    // set here: it is only cleared when the task completes the
-                    // buffered path or retries below.
+                    // Retry a failed streaming extraction through the buffered
+                    // path. `populate_result` kept this failure out of the
+                    // error log under the same predicate.
                     // SAFETY: `net_ptr` (when non-null) is the network task
                     // owned by this resolve task; this loop iteration is its
                     // exclusive owner until it is re-enqueued below.

@@ -94,11 +94,6 @@ pub struct EventLoop {
     pub uws_loop: (),
 
     pub entered_event_loop_count: isize,
-    /// How many frames that drive the loop (`tick()`, `auto_tick()`) are on the stack: 1 under the
-    /// top-level loop, one more for every nested wait (`wait_for_promise` and friends) currently
-    /// spinning inside a callback. Lets a callback's caller tell code running synchronously inside
-    /// that callback from code running in an event loop nested inside it.
-    pub loop_depth: u32,
     pub concurrent_ref: AtomicI32,
     /// Atomic nullable pointer to the next-due `WTFTimer`.
     ///
@@ -142,7 +137,6 @@ impl Default for EventLoop {
             #[cfg(not(windows))]
             uws_loop: (),
             entered_event_loop_count: 0,
-            loop_depth: 0,
             concurrent_ref: AtomicI32::new(0),
             imminent_gc_timer: AtomicPtr::new(core::ptr::null_mut()),
             #[cfg(unix)]
@@ -728,12 +722,10 @@ impl EventLoop {
     pub fn tick(&mut self) {
         jsc::mark_binding();
         crate::top_scope!(scope, self.global_ref());
-        self.loop_depth += 1;
         self.entered_event_loop_count += 1;
         // `Err(Stopped)`: a fold or checkpoint met the VM's termination; the turn is over.
         let _ = self.tick_turn(&mut scope);
         self.entered_event_loop_count -= 1;
-        self.loop_depth -= 1;
     }
 
     fn tick_turn(&mut self, scope: &mut crate::TopExceptionScope) -> Result<(), Stopped> {

@@ -77,7 +77,6 @@ pub mod task_tag {
         FetchTaskletPromiseSettle,
         FSWatchTask,
         GetAddrInfoLibuvComplete,
-        H2FrameParserResume,      // bun_runtime H2FrameParser (stranded inbound batch)
         HotReloadTask,
         WatchReloadTask,
         JSBundleCompletionTask,

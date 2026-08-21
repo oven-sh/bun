@@ -923,14 +923,6 @@ impl Drop for Keepalive<'_> {
     }
 }
 
-impl bun_event_loop::Taskable for H2FrameParser {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::H2FrameParserResume;
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — the parser `schedule_resume` queued, still holding that ref.
-        unsafe { (*this).deref() };
-    }
-}
-
 /// Work an inbound frame produced while `engine.receive()` was on the stack, delivered by
 /// `rewrite_read` after `receive()` returns so that the JS it runs (and the microtask checkpoint
 /// after each callback) never executes under the engine borrow. See `H2FrameParser::defer`.
@@ -1139,12 +1131,9 @@ pub struct H2FrameParser {
     /// once it returns (see `rewrite_read`).
     receiving: Cell<bool>,
     deferred: JsCell<std::collections::VecDeque<Deferred>>,
-    /// `rewrite_read` batches on the stack, and the `EventLoop::loop_depth` the innermost one runs
-    /// at (see `in_batch_sync`).
+    /// `rewrite_read` batches on the stack; per-batch work (window replenishment) waits for the
+    /// outermost one to finish.
     batch_depth: Cell<u32>,
-    batch_loop_depth: Cell<u32>,
-    /// The `schedule_resume` task is queued.
-    resume_scheduled: Cell<bool>,
     /// Promised stream id whose PUSH_PROMISE header block is being delivered by the engine (its
     /// on_headers_complete dispatches onStreamPush instead of onStreamHeaders).
     rewrite_pending_push: Cell<u32>,
@@ -2416,56 +2405,6 @@ impl H2FrameParser {
         self.deferred.with_mut(|q| q.push_back(entry));
     }
 
-    fn loop_depth(&self) -> u32 {
-        self.global_this.bun_vm().event_loop_shared().loop_depth
-    }
-
-    /// True while JS runs synchronously inside an inbound batch: from a callback `run_deferred` is
-    /// delivering, at the event-loop depth the batch runs at. Not true for JS running in an event
-    /// loop nested inside such a callback (`wait_for_promise`: bun:test's expect().resolves, a
-    /// require() of a module with TLA). That is what tells a transport pushing bytes back
-    /// synchronously (park them, the batch resumes when the callback returns) from a nested-loop
-    /// read (parse now, the batch cannot resume until that loop returns).
-    fn in_batch_sync(&self) -> bool {
-        self.batch_depth.get() > 0 && self.loop_depth() == self.batch_loop_depth.get()
-    }
-
-    /// Scheduled when a batch parks input behind a callback it is delivering. If that callback spins
-    /// a nested event loop and the peer sends nothing more, no read would ever pick the parked
-    /// frames up; this task runs on that loop's next turn and does. On the batch's own loop it can
-    /// only run once the batch has returned, and then finds nothing to do.
-    fn schedule_resume(&self) {
-        if self.resume_scheduled.replace(true) {
-            return;
-        }
-        // Released by `run_resume_task` (or `Taskable::release_unrun`).
-        self.ref_();
-        self.global_this
-            .bun_vm()
-            .as_mut()
-            .enqueue_task(bun_event_loop::Task::init(self.as_ctx_ptr()));
-    }
-
-    /// `task_tag::H2FrameParserResume`.
-    ///
-    /// # Safety
-    /// `this` is the pointer `schedule_resume` queued, with the ref it took still held.
-    pub(crate) unsafe fn run_resume_task(this: *mut Self) -> JsResult<()> {
-        // SAFETY: per fn contract.
-        let this = unsafe { &*this };
-        this.resume_scheduled.set(false);
-        let mut result = Ok(());
-        if this.batch_depth.get() > 0 && !this.receiving.get() && !this.in_batch_sync() {
-            this.rewrite_read(&[]);
-            if this.left_exception.replace(false) {
-                result = Err(bun_jsc::JsError::Thrown);
-            }
-        }
-        // Last: this can free the parser.
-        this.deref();
-        result
-    }
-
     /// Every event dispatch: delivered now, or queued while `receive()` is on the stack.
     fn dispatch_event(&self, event: JSH2FrameParser::Gc, target: Target, extra: &[JSValue]) {
         for value in extra {
@@ -3673,12 +3612,12 @@ impl H2FrameParser {
     /// Feed inbound bytes through the rewrite engine, buffering the unconsumed tail (design B).
     fn rewrite_read(&self, bytes: &[u8]) {
         bun_output::scoped_log!(H2FrameParser, "rewriteRead {}", bytes.len());
-        // Re-entrancy: user code can feed bytes back into this parser from inside a batch (a custom
-        // Duplex whose write path synchronously pushes into the socket, from within receive() or
-        // from a callback being delivered). Those are parked for the batch to pick up when the
-        // current frame is done, so a callback never sees a later frame's events re-entrantly. A
-        // read from a nested event loop is not parked (see `in_batch_sync`).
-        if self.receiving.get() || self.in_batch_sync() || self.engine.try_borrow_mut().is_err() {
+        // Re-entrancy: bytes fed back in while receive() is on the stack (a JS transport whose
+        // write path synchronously pushes into the socket) are parked; the batch picks them up once
+        // the current frame is parsed. Any other read — including one made from inside a frame
+        // callback, or from an event loop nested in it — finds the engine free and is parsed now,
+        // continuing from whatever an outer batch has parked so wire order is kept.
+        if self.receiving.get() || self.engine.try_borrow_mut().is_err() {
             self.rewrite_tail.with_mut(|t| t.extend_from_slice(bytes));
             return;
         }
@@ -3769,7 +3708,6 @@ impl H2FrameParser {
             owned.extend_from_slice(bytes);
         }
         self.batch_depth.set(self.batch_depth.get() + 1);
-        let outer_batch_loop_depth = self.batch_loop_depth.replace(self.loop_depth());
         loop {
             let feed = {
                 let input: &[u8] = if direct { &bytes[pos..] } else { &owned[pos..] };
@@ -3836,7 +3774,6 @@ impl H2FrameParser {
             }
             self.rewrite_tail.set(owned);
             self.rewrite_tail_pos.set(pos);
-            self.schedule_resume();
             self.run_deferred();
             // Resume from wherever the parked input now stands (a nested read may have consumed
             // it, or added to it). Even when nothing is left the engine is entered once more: the
@@ -3845,7 +3782,6 @@ impl H2FrameParser {
             owned = self.rewrite_tail.with_mut(std::mem::take);
             pos = self.rewrite_tail_pos.replace(0).min(owned.len());
         }
-        self.batch_loop_depth.set(outer_batch_loop_depth);
         self.batch_depth.set(self.batch_depth.get() - 1);
         // Uncork: flush the engine's queued control/response frames to the socket.
         let _ = self.flush();
@@ -5722,10 +5658,10 @@ impl H2FrameParser {
         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
         unsafe { (*stream).reading_paused = !reading };
         if reading {
-            // Resumed: send the deferred WINDOW_UPDATE now. A resume issued synchronously from a
-            // frame callback is covered by the batch-end replenish instead: replenishing per frame
-            // would hide a peer overrunning the window within one burst.
-            if !this.in_batch_sync()
+            // Resumed: send the deferred WINDOW_UPDATE now. A resume issued from inside an inbound
+            // batch (a frame callback) is covered by the batch-end replenish instead: replenishing
+            // per frame would hide a peer overrunning the window within one burst.
+            if this.batch_depth.get() == 0
                 && let Ok(mut guard) = this.engine.try_borrow_mut()
                 && let Some(engine) = guard.as_mut()
             {
@@ -7831,8 +7767,6 @@ impl H2FrameParser {
             receiving: Cell::new(false),
             deferred: JsCell::new(std::collections::VecDeque::new()),
             batch_depth: Cell::new(0),
-            batch_loop_depth: Cell::new(0),
-            resume_scheduled: Cell::new(false),
             rewrite_pending_push: Cell::new(0),
             sctx: JsCell::new(BunHashMap::default()),
             hdr_block: JsCell::new(Vec::new()),

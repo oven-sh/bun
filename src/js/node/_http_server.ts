@@ -3580,11 +3580,17 @@ ServerResponse.prototype.destroy = function (err?: Error) {
   if (handle && this[kPipelinedQueuedState] === undefined) {
     handle.abort();
   }
-  this?.socket?.destroy(err);
-  if (!this._closed) {
-    // res.closed must already be true inside the 'close' listeners.
-    this._closed = true;
-    this.emit("close");
+  // Like Node.js's OutgoingMessage#destroy, 'close' is never emitted from
+  // inside destroy(): the assigned socket's close path emits it (#onClose, or
+  // onServerResponseClose for an assignSocket()ed one), after the 'finish' an
+  // end()ed response has already scheduled. Without a socket (standalone,
+  // queued behind a pipelined response, or already detached) it is deferred
+  // a tick, exactly like Node.js.
+  const socket = this[kSocket];
+  if (socket) {
+    socket.destroy(err);
+  } else {
+    process.nextTick(emitCloseNT, this);
   }
   return this;
 };

@@ -63,10 +63,7 @@ private:
     virtual String code() const { return String(); }
 
 protected:
-    enum class CreatedFromMarkup : bool { No,
-        Yes };
-
-    JSEventListener(JSC::JSObject* function, JSC::JSObject* wrapper, bool isAttribute, CreatedFromMarkup, DOMWrapperWorld&);
+    JSEventListener(JSC::JSObject* function, JSC::JSObject* wrapper, bool isAttribute, DOMWrapperWorld&);
     void handleEvent(ScriptExecutionContext&, Event&) override;
 
     // JSVMClientDataClient
@@ -76,7 +73,6 @@ private:
     void invalidate();
 
     bool m_isAttribute : 1;
-    bool m_wasCreatedFromMarkup : 1;
 
     mutable bool m_isInitialized : 1;
     mutable JSC::Weak<JSC::JSObject> m_jsFunction;

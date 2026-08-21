@@ -261,3 +261,89 @@ export const result = handle.val;
     expect(exitCode).toBe(0);
   });
 });
+
+describe("using initialized to null or undefined", () => {
+  // minify_syntax turns `using x = null` into a plain declaration, since there
+  // is nothing to dispose. The binding is still immutable, so the plain
+  // declaration has to be `const`, like esbuild emits.
+  test.each(["bun", "browser", "node"] as const)("becomes const, not let, for target=%s", target => {
+    const t = new Bun.Transpiler({ target, minify: { syntax: true } });
+    const out = t.transformSync(
+      `function f() {
+  using a = null;
+  using b = undefined;
+  console.log(a, b);
+  return [a, b];
+}
+`,
+      "js",
+    );
+    expect(out).toBe(`function f() {
+  const a = null, b = void 0;
+  console.log(a, b);
+  return [a, b];
+}
+`);
+  });
+
+  test("only the statements initialized to null or undefined are folded", () => {
+    const t = new Bun.Transpiler({ target: "bun", minify: { syntax: true } });
+    const out = t.transformSync(
+      `function f() {
+  using a = null;
+  using b = open();
+  console.log(a, b);
+  return [a, b];
+}
+`,
+      "js",
+    );
+    expect(out).toBe(`function f() {
+  const a = null;
+  using b = open();
+  console.log(a, b);
+  return [a, b];
+}
+`);
+  });
+
+  test("assigning to the binding at runtime throws like it does for const", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `function tryAssign(fn) {
+  try {
+    return "assigned " + fn();
+  } catch (e) {
+    return e.constructor.name;
+  }
+}
+using top = null;
+console.log(JSON.stringify({
+  constNull: tryAssign(() => { const x = null; eval("x = 1"); return x; }),
+  usingNull: tryAssign(() => { using x = null; eval("x = 1"); return x; }),
+  usingUndefined: tryAssign(() => { using x = undefined; eval("x = 1"); return x; }),
+  usingNullInBlock: tryAssign(() => { { using x = null; eval("x = 1"); return x; } }),
+  usingNullTopLevel: tryAssign(() => { eval("top = 1"); return top; }),
+  usingObject: tryAssign(() => { using x = { [Symbol.dispose]() {} }; eval("x = 1"); return typeof x; }),
+}));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      constNull: "TypeError",
+      usingNull: "TypeError",
+      usingUndefined: "TypeError",
+      usingNullInBlock: "TypeError",
+      usingNullTopLevel: "TypeError",
+      usingObject: "TypeError",
+    });
+    expect(exitCode).toBe(0);
+  });
+});

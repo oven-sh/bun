@@ -1106,7 +1106,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     ) -> crate::Result<()> {
         use bun_standalone_graph::StandaloneModuleGraph::Flags as GraphFlags;
 
-        bun_jsc::initialize(false);
+        bun_jsc::initialize_standalone();
         bun_analytics::features::standalone_executable.fetch_add(1, Ordering::Relaxed);
         bun_ast::initialize_store();
 

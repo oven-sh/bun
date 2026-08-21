@@ -483,21 +483,37 @@ pub mod jsc_scheduler;
 #[path = "ProcessAutoKiller.rs"]
 pub mod process_auto_killer;
 
-/// Binding for JSCInitialize in ZigGlobalObject.cpp
+/// JSC startup for the `bun` CLI itself, whose argv says whether this is a
+/// one-shot eval (`bun -e` / `bun -p`).
 pub fn initialize(eval_mode: bool) {
     initialize_with(eval_mode, false);
 }
 
 /// `short_lived_globals`: `bun test --isolate`/`--parallel`, where each file gets a fresh global and per-global JIT code is discarded with it.
 pub fn initialize_with(eval_mode: bool, short_lived_globals: bool) {
+    // One-shot eval invocations (`bun -e ...` / `bun --print ...`) exit before
+    // any long-running event loop; tell JSC to skip the worker threads it
+    // otherwise spawns eagerly at VM creation (see `JSCInitialize`).
+    jsc_initialize(
+        eval_mode,
+        is_one_shot_eval_invocation(),
+        short_lived_globals,
+    );
+}
+
+/// JSC startup for a `bun build --compile` executable. Its argv belongs to the
+/// compiled program, so a `-e` / `-p` in there is the program's own flag and
+/// must not select one-shot startup.
+pub fn initialize_standalone() {
+    jsc_initialize(false, false, false);
+}
+
+/// Binding for JSCInitialize in ZigGlobalObject.cpp
+fn jsc_initialize(eval_mode: bool, one_shot: bool, short_lived_globals: bool) {
     // The counter lives in `bun_core` so this crate doesn't depend on
     // `bun_analytics`.
     bun_core::analytics::Features::jsc_inc();
     let env = bun_sys::environ();
-    // One-shot eval invocations (`bun -e ...` / `bun --print ...`) exit before
-    // any long-running event loop; tell JSC to skip the worker threads it
-    // otherwise spawns eagerly at VM creation (see `JSCInitialize`).
-    let one_shot = is_one_shot_eval_invocation();
     // SAFETY: `env` borrows the libc `environ` global for the duration of the
     // call; `on_jsc_invalid_env_var` is `extern "C"` and only reads the (ptr,len)
     // it is handed. JSCInitialize is called exactly once at startup.

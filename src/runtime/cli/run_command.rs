@@ -1517,7 +1517,10 @@ impl Run<'_> {
                                 }
                                 break 'brk result;
                             }
-                            _ => break 'brk promise.result(vm.jsc_vm()),
+                            PromiseStatus::Fulfilled => break 'brk promise.result(vm.jsc_vm()),
+                            // Print the promise itself (like Node); unwrapping
+                            // the reason re-emits the unhandled-rejection block.
+                            PromiseStatus::Rejected => break 'brk result,
                         }
                     }
                     result

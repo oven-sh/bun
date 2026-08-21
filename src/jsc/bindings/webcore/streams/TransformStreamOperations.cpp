@@ -277,6 +277,9 @@ JSPromise* transformStreamDefaultSourceCancelAlgorithm(JSGlobalObject* globalObj
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* controller = stream->m_controller.get();
+    // The readable is closed: a codec chunk (or, with a close in flight, flush) still being
+    // drained into it can no longer finish.
+    nativeCodecAbandon(globalObject, stream);
     if (auto* finishPromise = controller->m_finishPromise.get())
         return finishPromise;
     auto* finishPromise = JSPromise::create(vm, globalObject->promiseStructure());
@@ -294,9 +297,21 @@ JSPromise* transformStreamDefaultSourceCancelAlgorithm(JSGlobalObject* globalObj
 
 JSPromise* transformStreamDefaultSourcePullAlgorithm(JSGlobalObject* globalObject, JSTransformStream* stream)
 {
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     ASSERT(stream->m_backpressure);
     ASSERT(stream->m_backpressureChangePromise);
     transformStreamSetBackpressure(globalObject, stream, false);
+    scope.assertNoException();
+    if (stream->m_codecPromise) [[unlikely]] {
+        // The readable is asking for the next piece of a native codec chunk. Its enqueues may
+        // set [[backpressure]] again right here; a null result (pull done) keeps the next pull
+        // valid in that case, and otherwise the usual promise does.
+        nativeCodecContinue(globalObject, stream);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (stream->m_backpressure)
+            return nullptr;
+    }
     return stream->m_backpressureChangePromise.get();
 }
 

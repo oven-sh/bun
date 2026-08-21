@@ -33,7 +33,11 @@ unsafe extern "Rust" {
     /// derefs `t`/`now`, recovers the tier-6 container via `container_of`
     /// keyed on `(*t).tag`, and may free that container. Caller must pass a
     /// live timer just popped from `All.timers` and must not touch `t` after.
-    fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const timespec, vm: *mut ());
+    fn __bun_fire_timer(
+        t: *mut EventLoopTimer,
+        now: *const timespec,
+        vm: *mut (),
+    ) -> crate::JsResult<()>;
     /// Returns the JS-timer epoch (TimerObjectInternals.flags.epoch) for
     /// TimeoutObject/ImmediateObject/AbortSignalTimeout, else `None`.
     /// Defined in `bun_runtime::dispatch`.
@@ -161,6 +165,9 @@ impl EventLoopTimer {
     /// write. Both callers (`drain_timers`, `get_timeout`) already hold a raw
     /// `*mut EventLoopTimer` popped from the heap — pass it directly.
     ///
+    /// The owner returns the exception its handler left pending as `Err` and
+    /// never reports it itself; the drain loop that called `fire` folds it.
+    ///
     /// # Safety
     /// `this` is a live timer just popped from `All.timers`; `now` is the
     /// snapshot taken by `All::next`; `vm` is the per-thread VM. The handler
@@ -169,9 +176,9 @@ impl EventLoopTimer {
         this: *mut Self,
         now: &timespec,
         vm: *mut (), /* SAFETY: erased *mut VirtualMachine */
-    ) {
+    ) -> crate::JsResult<()> {
         // SAFETY: per fn contract.
-        unsafe { __bun_fire_timer(this, now, vm) };
+        unsafe { __bun_fire_timer(this, now, vm) }
     }
 }
 
@@ -205,18 +212,17 @@ pub enum Tag {
 }
 
 impl Tag {
+    /// Whether `jest.useFakeTimers()` captures this timer. Only timers a
+    /// program schedules itself are faked; runtime-internal timeouts stay on
+    /// the real clock, as in Jest. A fakeable owner arms with
+    /// `AllowMockedTime` and has a release arm in `FakeTimers::clear`; every
+    /// other owner arms with `ForceRealTime`, the clock the real heap is
+    /// drained against.
     pub fn allow_fake_timers(self) -> bool {
-        match self {
-            Tag::WTFTimer // internal
-            | Tag::BunTest // for test timeouts
-            | Tag::EventLoopDelayMonitor // probably important
-            | Tag::StatWatcherScheduler
-            | Tag::GcRepeating // internal GC pacing
-            | Tag::QuicEndpoint
-            | Tag::DnsSdConnection // internal lookup pacing
-            => false,
-            _ => true,
-        }
+        matches!(
+            self,
+            Tag::TimeoutObject | Tag::AbortSignalTimeout | Tag::CronJob
+        )
     }
 }
 

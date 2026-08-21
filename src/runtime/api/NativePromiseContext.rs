@@ -57,9 +57,8 @@ pub enum Tag {
     HTTPSServerH3RequestContext,
     DebugHTTPSServerH3RequestContext,
     HTMLRewriterSuspension,
-    /// Task-only tag (never a context cell): frees a `RewriterPipe` whose
-    /// last claim was released from a GC destructor; see
-    /// `RewriterPipe::release_pump_claim`.
+    /// Task-only tag (never a context cell): drops the last ref of a
+    /// `RewriterPipe` on behalf of `RewriterPipe::deref_outside_caller`.
     HTMLRewriterPipeFree,
 }
 
@@ -158,7 +157,41 @@ pub(crate) fn take<T>(cell: JSValue) -> Option<NonNull<T>> {
 /// defer that work to the event loop.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__NativePromiseContext__destroy(ctx: *mut c_void, tag: u8) {
-    DeferredDerefTask::schedule(ctx, Tag::from_raw(tag));
+    let tag = Tag::from_raw(tag);
+    clear_remembered_cell(ctx, tag);
+    DeferredDerefTask::schedule(ctx, tag);
+}
+
+/// The cell dies with its claim intact, so the context's `promise_cell` field
+/// still points at it and is about to dangle. Clear it before `on_abort` can
+/// read it again. A plain field write, safe during sweep; the unreleased
+/// claim keeps `ctx` alive through this call.
+fn clear_remembered_cell(ctx: *mut c_void, tag: Tag) {
+    // SAFETY: `tag` names the concrete type `ctx` was created with, and the
+    // claim being released is a live ref on it.
+    unsafe {
+        match tag {
+            Tag::HTTPServerRequestContext => {
+                (*ctx.cast::<HTTPServerRequestContext>()).promise_cell_collected()
+            }
+            Tag::HTTPSServerRequestContext => {
+                (*ctx.cast::<HTTPSServerRequestContext>()).promise_cell_collected()
+            }
+            Tag::DebugHTTPServerRequestContext => {
+                (*ctx.cast::<DebugHTTPServerRequestContext>()).promise_cell_collected()
+            }
+            Tag::DebugHTTPSServerRequestContext => {
+                (*ctx.cast::<DebugHTTPSServerRequestContext>()).promise_cell_collected()
+            }
+            Tag::HTTPSServerH3RequestContext => {
+                (*ctx.cast::<HTTPSServerH3RequestContext>()).promise_cell_collected()
+            }
+            Tag::DebugHTTPSServerH3RequestContext => {
+                (*ctx.cast::<DebugHTTPSServerH3RequestContext>()).promise_cell_collected()
+            }
+            Tag::HTMLRewriterSuspension | Tag::HTMLRewriterPipeFree => {}
+        }
+    }
 }
 
 /// Defers the GC-triggered deref to the next event-loop tick so it runs
@@ -198,9 +231,27 @@ impl DeferredDerefTask {
         // SAFETY: called from the JS thread (GC sweep → C++ destructor); the
         // thread-local VM is alive for the duration of this call.
         let vm = VirtualMachine::get();
-        // Process is dying; the leak no longer matters and the task
-        // queue won't drain.
-        if vm.is_shutting_down() {
+        if vm.event_loop_ref().is_closed_for_tasks() {
+            // Teardown has forbidden script and released the queue; from here on only GC destructors
+            // (possibly mid-sweep in `~VM`) reach this, and theirs is the last use of `ctx` in that
+            // frame. A worker's HTMLRewriter pipe would outlive it, so those refs are released now,
+            // sweep-safe; a RequestContext's deref is not sweep-safe and dies with the VM instead.
+            match tag {
+                // SAFETY: the destroyed context held the suspension's ref on this live pipe.
+                Tag::HTMLRewriterSuspension => unsafe {
+                    html_rewriter::RewriterPipe::abandon_suspension(bun_ptr::BackRef::from(
+                        NonNull::new_unchecked(ctx.cast::<html_rewriter::RewriterPipe>()),
+                    ))
+                },
+                // SAFETY: the detached controller handed over the pipe's last ref (its destructor's
+                // trailing `finalize` is a no-op for this sink).
+                Tag::HTMLRewriterPipeFree => unsafe {
+                    <html_rewriter::RewriterPipe as bun_ptr::CellRefCounted>::deref_nn(
+                        NonNull::new_unchecked(ctx.cast::<html_rewriter::RewriterPipe>()),
+                    )
+                },
+                _ => {}
+            }
             return;
         }
 
@@ -221,13 +272,11 @@ impl DeferredDerefTask {
     pub(crate) fn run_from_js_thread(packed_ptr: usize) {
         let tag = Tag::from_raw((packed_ptr & Self::TAG_MASK) as u8);
         let ctx = (packed_ptr & !Self::TAG_MASK) as *mut c_void;
-        // SAFETY: ctx was packed in `schedule` from a live pointer of the
-        // type indicated by `tag`. The request-context tags hold an intrusive
-        // refcount released here. The HTMLRewriter tags point at a
-        // claim-counted `RewriterPipe`: the suspension task owns the claim
-        // taken in `begin_suspension`, and `HTMLRewriterPipeFree` is
-        // scheduled only by the release of the last claim, so this task is
-        // the sole owner of the allocation it frees. We are on the JS thread.
+        // SAFETY: ctx was packed in `schedule` from a live, non-null pointer
+        // of the type indicated by `tag`, and this task owns one ref on it,
+        // released below (for the HTMLRewriter tags: the ref taken in
+        // `begin_suspension`, or the last ref handed over by
+        // `deref_outside_caller`). We are on the JS thread.
         unsafe {
             match tag {
                 Tag::HTTPServerRequestContext => (*ctx.cast::<HTTPServerRequestContext>()).deref(),
@@ -253,7 +302,9 @@ impl DeferredDerefTask {
                     html_rewriter::RewriterPipe::abandon_suspension(back);
                 }
                 Tag::HTMLRewriterPipeFree => {
-                    bun_core::heap::destroy(ctx.cast::<html_rewriter::RewriterPipe>());
+                    <html_rewriter::RewriterPipe as bun_ptr::CellRefCounted>::deref_nn(
+                        NonNull::new_unchecked(ctx.cast::<html_rewriter::RewriterPipe>()),
+                    );
                 }
             }
         }

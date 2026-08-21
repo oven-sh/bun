@@ -297,14 +297,6 @@ void AbortSignal::eventListenersDidChange()
         else
             m_timeoutObserverCount.fetch_sub(1, std::memory_order_relaxed);
     }
-
-    // When a timeout signal loses all observers there is nothing left to
-    // notify when the timer fires, so cancel it eagerly.
-    // JSAbortSignalOwner::isReachableFromOpaqueRoots then no longer keeps the
-    // wrapper alive and ~AbortSignal() runs on collection; this just frees the
-    // native timer sooner.
-    if (m_timeout && !aborted() && !hasTimeoutObserver())
-        cancelTimer();
 }
 
 uint32_t AbortSignal::addAbortAlgorithmToSignal(AbortSignal& signal, Ref<AbortAlgorithm>&& algorithm)

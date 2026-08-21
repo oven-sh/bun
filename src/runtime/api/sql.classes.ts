@@ -56,8 +56,20 @@ for (const type of types) {
           setter: "setOnClose",
           this: true,
         },
+        ...(type === "PostgresSQL"
+          ? {
+              onnotification: {
+                getter: "getOnNotification",
+                setter: "setOnNotification",
+                this: true,
+              },
+            }
+          : {}),
       },
-      values: ["onconnect", "onclose", "queries"],
+      values:
+        type === "PostgresSQL"
+          ? ["onconnect", "onclose", "queries", "onnotification"]
+          : ["onconnect", "onclose", "queries"],
     }),
   );
 

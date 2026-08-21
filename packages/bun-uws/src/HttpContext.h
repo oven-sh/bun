@@ -231,8 +231,13 @@ private:
          * for both transports. */
         s->flags.allow_half_open = 1;
 
+        /* Call filter: accepted (both transports)... */
+        ((AsyncSocketData<SSL> *) us_socket_ext(s))->filteredAccept = true;
+        for (auto &f : httpContextData->filterHandlers) {
+            f((HttpResponse<SSL> *) s, 2);
+        }
+        /* ...and open (TLS: once the handshake completes, in onHandshake) */
         if(!SSL) {
-            /* Call filter */
             ((AsyncSocketData<SSL> *) us_socket_ext(s))->filteredOpen = true;
             for (auto &f : httpContextData->filterHandlers) {
                 f((HttpResponse<SSL> *) s, 1);
@@ -269,6 +274,11 @@ private:
         if (httpResponseData->filteredOpen) {
             for (auto &f : httpContextData->filterHandlers) {
                 f((HttpResponse<SSL> *) s, -1);
+            }
+        }
+        if (httpResponseData->filteredAccept) {
+            for (auto &f : httpContextData->filterHandlers) {
+                f((HttpResponse<SSL> *) s, -2);
             }
         }
 

@@ -1,3 +1,4 @@
+import { jscDescribe } from "bun:jsc";
 import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe } from "harness";
 import { createTest } from "node-harness";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -708,7 +709,12 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             await promise;
             expect("unreachable").toBe(true);
           } catch (err) {
-            expect(err.code).toBe("ABORT_ERR");
+            expect({ name: err.name, code: err.code, message: err.message, cause: err.cause }).toEqual({
+              name: "AbortError",
+              code: "ABORT_ERR",
+              message: "The operation was aborted",
+              cause: abortController.signal.reason,
+            });
           }
         });
         it("aborted event should work with abortController", async () => {
@@ -2156,6 +2162,136 @@ it("http2 client receives 'goaway' when the server rejects a stream", async () =
   }
 });
 
+// node's Http2Session#goawayCode / #goawayLastStreamID report the GOAWAY frame this side
+// received (0 / 0 until one arrives). Expected values below were checked against node v26.3.0.
+describe.concurrent("http2 session goawayCode / goawayLastStreamID", () => {
+  const goawayState = session => ({ goawayCode: session.goawayCode, goawayLastStreamID: session.goawayLastStreamID });
+  const noGoaway = { goawayCode: 0, goawayLastStreamID: 0 };
+
+  // One connected session, seen from both ends. The server answers every request immediately.
+  async function connectedPair() {
+    const server = http2.createServer();
+    server.on("stream", stream => stream.respond({ ":status": 200 }, { endStream: true }));
+    const { promise: serverSessionPromise, resolve: onServerSession } = Promise.withResolvers();
+    server.once("session", onServerSession);
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const { promise: connected, resolve: onConnect } = Promise.withResolvers();
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`, onConnect);
+    client.on("error", () => {});
+    const serverSession = await serverSessionPromise;
+    serverSession.on("error", () => {});
+    await connected;
+    return { server, client, serverSession };
+  }
+
+  async function requestOnce(client) {
+    const req = client.request({ ":path": "/" });
+    req.on("error", () => {});
+    req.resume();
+    await new Promise(resolve => req.once("close", resolve));
+  }
+
+  // Resolves with the 'goaway' event arguments and what the getters reported while it was emitted.
+  function goawayReceived(session) {
+    return new Promise(resolve =>
+      session.once("goaway", (code, lastStreamID) =>
+        resolve({ args: [code, lastStreamID], getters: goawayState(session) }),
+      ),
+    );
+  }
+
+  function closed(session) {
+    return new Promise(resolve => session.once("close", resolve));
+  }
+
+  it("are getters that report 0 / 0 on client and server sessions before any GOAWAY is received", async () => {
+    const { server, client, serverSession } = await connectedPair();
+    try {
+      expect(goawayState(client)).toEqual(noGoaway);
+      expect(goawayState(serverSession)).toEqual(noGoaway);
+      for (const session of [client, serverSession]) {
+        for (const name of ["goawayCode", "goawayLastStreamID"]) {
+          let proto = Object.getPrototypeOf(session);
+          while (proto !== null && !Object.hasOwn(proto, name)) proto = Object.getPrototypeOf(proto);
+          const descriptor = proto === null ? undefined : Object.getOwnPropertyDescriptor(proto, name);
+          expect(typeof descriptor?.get).toBe("function");
+          expect(descriptor.set).toBeUndefined();
+        }
+      }
+    } finally {
+      client.destroy();
+      serverSession.destroy();
+      server.close();
+    }
+  });
+
+  it("client session reports the code and last stream id of the GOAWAY the server sent", async () => {
+    const { server, client, serverSession } = await connectedPair();
+    try {
+      await requestOnce(client); // stream 1, so a Last-Stream-ID of 1 names a real stream
+      const received = goawayReceived(client);
+      const clientClosed = closed(client);
+      serverSession.goaway(http2.constants.NGHTTP2_ENHANCE_YOUR_CALM, 1);
+      // Sending a GOAWAY does not count as receiving one.
+      expect(goawayState(serverSession)).toEqual(noGoaway);
+
+      const expected = { goawayCode: http2.constants.NGHTTP2_ENHANCE_YOUR_CALM, goawayLastStreamID: 1 };
+      expect(await received).toEqual({ args: [expected.goawayCode, expected.goawayLastStreamID], getters: expected });
+      // A GOAWAY with an error code destroys the receiving session; the values survive that.
+      await clientClosed;
+      expect(client.destroyed).toBe(true);
+      expect(goawayState(client)).toEqual(expected);
+    } finally {
+      client.destroy();
+      serverSession.destroy();
+      server.close();
+    }
+  });
+
+  it("server session reports the code and last stream id of the GOAWAY the client sent", async () => {
+    const { server, client, serverSession } = await connectedPair();
+    try {
+      const received = goawayReceived(serverSession);
+      const serverSessionClosed = closed(serverSession);
+      // From a client, Last-Stream-ID names a server-initiated (even) stream.
+      client.goaway(http2.constants.NGHTTP2_CANCEL, 2);
+      expect(goawayState(client)).toEqual(noGoaway);
+
+      const expected = { goawayCode: http2.constants.NGHTTP2_CANCEL, goawayLastStreamID: 2 };
+      expect(await received).toEqual({ args: [expected.goawayCode, expected.goawayLastStreamID], getters: expected });
+      await serverSessionClosed;
+      expect(serverSession.destroyed).toBe(true);
+      expect(goawayState(serverSession)).toEqual(expected);
+    } finally {
+      client.destroy();
+      serverSession.destroy();
+      server.close();
+    }
+  });
+
+  it("a graceful GOAWAY leaves goawayCode at 0 but still records the last stream id", async () => {
+    const { server, client, serverSession } = await connectedPair();
+    try {
+      await requestOnce(client);
+      const received = goawayReceived(client);
+      const clientClosed = closed(client);
+      // No explicit Last-Stream-ID: like node, the last stream the server processed (1) goes out.
+      serverSession.goaway();
+      expect(goawayState(serverSession)).toEqual(noGoaway);
+
+      const expected = { goawayCode: http2.constants.NGHTTP2_NO_ERROR, goawayLastStreamID: 1 };
+      expect(await received).toEqual({ args: [0, 1], getters: expected });
+      // NO_ERROR starts a graceful close; with no streams left the session closes on its own.
+      await clientClosed;
+      expect(goawayState(client)).toEqual(expected);
+    } finally {
+      client.destroy();
+      serverSession.destroy();
+      server.close();
+    }
+  });
+});
+
 it(
   "http2 server with minimal maxSessionMemory handles multiple requests",
   async () => {
@@ -2539,6 +2675,67 @@ it("http2 client.setNextStreamID validates input", async () => {
   });
 });
 
+it("http2 setNextStreamID at the edges of the id space does not overflow", async () => {
+  // 0.5 passes the JS range check (> 0) and reaches the native setter as 0, which used to
+  // underflow (node ends up on stream 1 too). A server parked at 2 ** 32 - 1 used to overflow
+  // when the next id was computed; it has to read back as an unusable id, not wrap to a low one.
+  const fixture = `
+    const http2 = require("node:http2");
+    const result = { client: {}, server: {} };
+    const fail = what => err => {
+      console.error(what, err);
+      process.exit(1);
+    };
+    const server = http2.createServer();
+    server.on("sessionError", fail("server session error"));
+    server.on("stream", stream => {
+      // ServerHttp2Session does not expose setNextStreamID; call the native setter it would wrap.
+      const parser = stream.session[Symbol.for("::bunhttp2native::")];
+      for (const id of [0, 2, 2 ** 32 - 1]) {
+        parser.setNextStreamID(id);
+        result.server[id] = stream.session.state.nextStreamID;
+      }
+      stream.respond({ ":status": 200 });
+      stream.end();
+    });
+    server.listen(0, "127.0.0.1", () => {
+      const client = http2.connect("http://127.0.0.1:" + server.address().port);
+      client.on("error", fail("client session error"));
+      client.on("connect", () => {
+        for (const id of [0.5, 1]) {
+          client.setNextStreamID(id);
+          result.client[id] = client.state.nextStreamID;
+        }
+        const req = client.request({ ":path": "/" });
+        req.on("error", fail("request error"));
+        req.on("response", headers => {
+          result.response = { streamId: req.id, status: headers[":status"] };
+        });
+        req.resume();
+        req.on("close", () => {
+          console.log(JSON.stringify(result));
+          process.exit(0);
+        });
+        req.end();
+      });
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({
+    client: { 0.5: 1, 1: 1 },
+    server: { 0: 2, 2: 2, 4294967295: 4294967295 },
+    response: { streamId: 1, status: 200 },
+  });
+  expect(exitCode).toBe(0);
+});
+
 it("http2 request.destroy() with error", async () => {
   const server = http2.createServer();
 
@@ -2660,6 +2857,75 @@ it("http2 client.request() rejects header names longer than 4096 bytes with a ca
   expect(stdout).toContain("NAME:TypeError");
   expect(stdout).not.toContain("NO_ERROR");
   expect(stdout).toContain("STATUS:200");
+  expect(exitCode).toBe(0);
+});
+
+it("http2 session.origin() with several origins rejects one longer than 65535 bytes with a catchable error", async () => {
+  // Each entry of a multi-origin ORIGIN frame carries a 16-bit length prefix.
+  // An entry that does not fit in it must surface as ERR_HTTP2_ORIGIN_LENGTH
+  // like any other oversized origin, not terminate the process. Run in a
+  // subprocess so a crash shows up as a failed assertion instead of taking down
+  // the test runner.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const http2 = require("node:http2");
+      const server = http2.createServer();
+      server.on("session", session => {
+        const huge = "https://" + Buffer.alloc(70000, "a").toString();
+        for (const origins of [
+          [huge, "https://b.example"],
+          ["https://b.example", huge],
+          [{ origin: huge }, "https://b.example"],
+        ]) {
+          try {
+            session.origin(...origins);
+            console.log("NO_ERROR");
+          } catch (err) {
+            console.log("CODE:" + err.code + " NAME:" + err.name);
+          }
+        }
+        // The session is still usable afterwards.
+        session.origin("https://c.example", "https://d.example");
+        console.log("ORIGIN_SENT");
+      });
+      server.on("stream", stream => {
+        stream.respond({ ":status": 200 });
+        stream.end("ok");
+      });
+      server.listen(0, "127.0.0.1", () => {
+        const client = http2.connect("http://127.0.0.1:" + server.address().port);
+        client.on("error", () => {});
+        const req = client.request({ ":path": "/" });
+        req.on("response", headers => {
+          console.log("STATUS:" + headers[":status"]);
+        });
+        req.resume();
+        req.on("close", () => {
+          client.close();
+          server.close();
+        });
+        req.end();
+      });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.split("\n").filter(Boolean)).toEqual([
+    "CODE:ERR_HTTP2_ORIGIN_LENGTH NAME:TypeError",
+    "CODE:ERR_HTTP2_ORIGIN_LENGTH NAME:TypeError",
+    "CODE:ERR_HTTP2_ORIGIN_LENGTH NAME:TypeError",
+    "ORIGIN_SENT",
+    "STATUS:200",
+  ]);
   expect(exitCode).toBe(0);
 });
 
@@ -3584,6 +3850,378 @@ it("http2 pushStream failure reports only via callback, never via stream 'error'
   }
 });
 
+// Serves a single request with `onStream` (which must push synchronously and then respond) and
+// resolves with the PUSH_PROMISE header blocks the client received, in wire order: `fields` is the
+// flat [name, value, ...] list as decoded from the wire, `headers` the object form, both without
+// pseudo-headers. Every PUSH_PROMISE precedes the parent's response on the wire, so once the parent
+// response has ended every push has been observed.
+async function pushedHeaderBlocks(onStream, serverOptions) {
+  // Every failure on either side, from listen() onwards, rejects this one promise.
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const server = http2.createServer(serverOptions);
+  server.on("error", reject);
+  server.on("sessionError", reject);
+  server.on("stream", onStream);
+  let client;
+  try {
+    await Promise.race([promise, new Promise(listening => server.listen(0, "127.0.0.1", listening))]);
+    client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    client.on("error", reject);
+    const blocks = [];
+    client.on("stream", (pushed, headers, _flags, rawHeaders) => {
+      pushed.on("error", reject);
+      pushed.resume();
+      const fields = [];
+      for (let i = 0; i < rawHeaders.length; i += 2) {
+        if (!rawHeaders[i].startsWith(":")) fields.push(rawHeaders[i], rawHeaders[i + 1]);
+      }
+      blocks.push({
+        id: pushed.id,
+        path: headers[":path"],
+        sensitive: headers[http2.sensitiveHeaders],
+        headers: Object.fromEntries(Object.entries(headers).filter(([name]) => !name.startsWith(":"))),
+        fields,
+      });
+    });
+    const req = client.request({ ":path": "/" });
+    req.on("error", reject);
+    req.on("end", resolve);
+    req.resume();
+    await promise;
+    return blocks;
+  } finally {
+    client?.close();
+    server.close();
+  }
+}
+
+it("http2 pushStream sends an array-valued header as one field per element", async () => {
+  const blocks = await pushedHeaderBlocks(stream => {
+    stream.pushStream(
+      {
+        ":path": ["/pushed"],
+        "set-cookie": ["c1=1", "c2=2"],
+        "x-multi": ["a", "b"],
+        "x-number": [1, 2],
+        "x-one": ["only"],
+        "x-none": [],
+        "content-type": [],
+        "x-plain": "p",
+      },
+      (err, push) => {
+        if (err) {
+          stream.destroy(err);
+          return;
+        }
+        push.respond({ ":status": 200 });
+        push.end();
+      },
+    );
+    stream.respond({ ":status": 200 });
+    stream.end();
+  });
+
+  expect(blocks.length).toBe(1);
+  const [block] = blocks;
+  expect(block.path).toBe("/pushed");
+  expect(block.fields).toEqual([
+    ...["set-cookie", "c1=1", "set-cookie", "c2=2"],
+    ...["x-multi", "a", "x-multi", "b"],
+    ...["x-number", "1", "x-number", "2"],
+    ...["x-one", "only"],
+    ...["x-plain", "p"],
+  ]);
+  // The object form a receiver builds from those fields: set-cookie stays a list, other repeated
+  // fields are joined with ", ", and an empty array (single-value field or not) sends nothing.
+  expect(block.headers).toEqual({
+    "set-cookie": ["c1=1", "c2=2"],
+    "x-multi": "a, b",
+    "x-number": "1, 2",
+    "x-one": "only",
+    "x-plain": "p",
+  });
+});
+
+it("http2 pushStream never-indexes every element of a sensitive array-valued header", async () => {
+  const blocks = await pushedHeaderBlocks(stream => {
+    stream.pushStream(
+      { ":path": "/pushed", "x-secret": ["s1", "s2"], [http2.sensitiveHeaders]: ["x-secret"] },
+      (err, push) => {
+        if (err) {
+          stream.destroy(err);
+          return;
+        }
+        push.respond({ ":status": 200 });
+        push.end();
+      },
+    );
+    stream.respond({ ":status": 200 });
+    stream.end();
+  });
+
+  // The receiver lists a name once per field that arrived with the never-index flag.
+  expect(blocks.map(({ headers, sensitive }) => ({ secret: headers["x-secret"], sensitive }))).toEqual([
+    { secret: "s1, s2", sensitive: ["x-secret", "x-secret"] },
+  ]);
+});
+
+it("http2 pushStream throws ERR_HTTP2_HEADER_SINGLE_VALUE synchronously without reserving a stream", async () => {
+  const attempts = [
+    { ":path": "/pushed", "content-type": ["text/plain", "text/html"] },
+    { ":path": ["/a", "/b"] },
+    { ":path": "/pushed", "content-type": "text/plain", "Content-Type": "text/html" },
+  ];
+  const thrown = [];
+  let rejectedCallbackCalls = 0;
+  const blocks = await pushedHeaderBlocks(stream => {
+    for (const headers of attempts) {
+      try {
+        stream.pushStream(headers, () => rejectedCallbackCalls++);
+        thrown.push(null);
+      } catch (err) {
+        thrown.push({ name: err.constructor.name, code: err.code, message: err.message });
+      }
+    }
+    stream.pushStream({ ":path": "/after" }, (err, push) => {
+      if (err) {
+        stream.destroy(err);
+        return;
+      }
+      push.respond({ ":status": 200 });
+      push.end();
+    });
+    stream.respond({ ":status": 200 });
+    stream.end();
+  });
+
+  const singleValue = name => ({
+    name: "TypeError",
+    code: "ERR_HTTP2_HEADER_SINGLE_VALUE",
+    message: `Header field "${name}" must only have a single value`,
+  });
+  expect(thrown).toEqual([singleValue("content-type"), singleValue(":path"), singleValue("content-type")]);
+  expect(rejectedCallbackCalls).toBe(0);
+  // The rejected attempts reserved nothing: the push that followed them got the first even id.
+  expect(blocks.map(({ id, path }) => ({ id, path }))).toEqual([{ id: 2, path: "/after" }]);
+});
+
+it("http2 pushStream sends each element of a single-value header when strictSingleValueFields is off", async () => {
+  const blocks = await pushedHeaderBlocks(
+    stream => {
+      stream.pushStream({ ":path": "/pushed", "content-type": ["text/plain", "text/html"] }, (err, push) => {
+        if (err) {
+          stream.destroy(err);
+          return;
+        }
+        push.respond({ ":status": 200 });
+        push.end();
+      });
+      stream.respond({ ":status": 200 });
+      stream.end();
+    },
+    { strictSingleValueFields: false },
+  );
+
+  expect(blocks.map(({ path, fields }) => ({ path, fields }))).toEqual([
+    { path: "/pushed", fields: ["content-type", "text/plain", "content-type", "text/html"] },
+  ]);
+});
+
+it("http2 pushStream reports an unsendable array element through the callback", async () => {
+  const results = [];
+  const blocks = await pushedHeaderBlocks(stream => {
+    const values = [
+      ["ok", "a\nb"],
+      ["ok", null],
+    ];
+    let pending = values.length;
+    for (const value of values) {
+      stream.pushStream({ ":path": "/pushed", "x-custom": value }, (err, push) => {
+        results.push(err ? { name: err.constructor.name, code: err.code, message: err.message } : "pushed");
+        if (push) {
+          push.respond({ ":status": 200 });
+          push.end();
+        }
+        if (--pending === 0) {
+          stream.respond({ ":status": 200 });
+          stream.end();
+        }
+      });
+    }
+  });
+
+  const invalidValue = {
+    name: "TypeError",
+    code: "ERR_HTTP2_INVALID_HEADER_VALUE",
+    message: 'Invalid value for header "x-custom"',
+  };
+  expect(results).toEqual([invalidValue, invalidValue]);
+  expect(blocks).toEqual([]);
+});
+
+// Every kind of field name the native header-block materializer distinguishes, in one request and
+// one response: pseudo-headers, names WebCore knows (with the cookie and set-cookie special cases),
+// names it has never seen, and all-digit names. The second round trip on the same session is served
+// from the per-VM name cache the first one populated, so both must materialize identically.
+it("http2 materializes pseudo, known, unknown and all-digit header names the same way on every request", async () => {
+  const server = http2.createServer();
+  server.on("stream", (stream, headers, _flags, rawHeaders) => {
+    // Raw-array form so the wire order and the duplicate fields are exactly these; an explicit
+    // date keeps respond() from adding the current one.
+    stream.respond([
+      ...[":status", "201"],
+      ...["date", "Thu, 01 Jan 2026 00:00:00 GMT"],
+      ...["content-type", "text/plain"],
+      ...["set-cookie", "a=1", "set-cookie", "b=2"],
+      ...["x-unknown", "u1", "x-unknown", "u2"],
+      ...["123", "first", "123", "second"],
+    ]);
+    stream.end(JSON.stringify({ headers, rawHeaders, sensitive: headers[http2.sensitiveHeaders] }));
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const authority = `127.0.0.1:${server.address().port}`;
+  const client = http2.connect(`http://${authority}`);
+  try {
+    const roundTrip = () =>
+      new Promise((resolve, reject) => {
+        // authorization is never-indexed automatically (nghttp2 behavior), so the receiver lists
+        // it under sensitiveHeaders without the request having to mark anything.
+        const req = client.request({
+          ":method": "POST",
+          ":path": "/materialize",
+          "content-type": "text/plain",
+          "authorization": "Bearer t",
+          "cookie": ["c=1", "d=2"],
+          "x-unknown": ["u1", "u2"],
+          "123": "digits",
+        });
+        req.on("error", reject);
+        let response;
+        req.on("response", (headers, _flags, rawHeaders) => {
+          response = {
+            headers: Object.fromEntries(Object.entries(headers)),
+            rawHeaders,
+            sensitive: headers[http2.sensitiveHeaders],
+          };
+        });
+        let body = "";
+        req.setEncoding("utf8");
+        req.on("data", chunk => (body += chunk));
+        req.on("end", () => resolve({ request: JSON.parse(body), response }));
+        req.end();
+      });
+
+    const first = await roundTrip();
+    const second = await roundTrip();
+    expect(second).toEqual(first);
+
+    expect(first.request).toEqual({
+      headers: {
+        ":method": "POST",
+        ":path": "/materialize",
+        ":authority": authority,
+        ":scheme": "http",
+        "123": "digits",
+        "content-type": "text/plain",
+        "authorization": "Bearer t",
+        "cookie": "c=1; d=2",
+        "x-unknown": "u1, u2",
+      },
+      // Wire order: the pseudo-headers, then the remaining fields in property enumeration order,
+      // which puts the all-digit name first.
+      rawHeaders: [
+        ...[":method", "POST", ":path", "/materialize", ":authority", authority, ":scheme", "http"],
+        ...["123", "digits"],
+        ...["content-type", "text/plain"],
+        ...["authorization", "Bearer t"],
+        ...["cookie", "c=1", "cookie", "d=2"],
+        ...["x-unknown", "u1", "x-unknown", "u2"],
+      ],
+      sensitive: ["authorization"],
+    });
+    expect(first.response).toEqual({
+      headers: {
+        ":status": 201,
+        "date": "Thu, 01 Jan 2026 00:00:00 GMT",
+        "content-type": "text/plain",
+        "set-cookie": ["a=1", "b=2"],
+        "x-unknown": "u1, u2",
+        "123": "first",
+      },
+      rawHeaders: [
+        ...[":status", "201"],
+        ...["date", "Thu, 01 Jan 2026 00:00:00 GMT"],
+        ...["content-type", "text/plain"],
+        ...["set-cookie", "a=1", "set-cookie", "b=2"],
+        ...["x-unknown", "u1", "x-unknown", "u2"],
+        ...["123", "first", "123", "second"],
+      ],
+      sensitive: [],
+    });
+  } finally {
+    client.close();
+    server.close();
+  }
+});
+
+// The name strings in rawHeaders wrap the atoms the headers object is keyed by: the per-VM
+// HTTPHeaderIdentifiers entry for pseudo-headers and known names, the atom the block was keyed
+// with for anything else. jscDescribe reports such strings as atomic; a name string built per block
+// instead (a JSString over WebCore's static name string, or a copy of the wire bytes) is not.
+// Checked before the names are used as keys anywhere, since that can atomize a string in place.
+it("http2 hands out the cached name strings for pseudo-headers and known header names", async () => {
+  const atomicByName = rawHeaders => {
+    const entries = [];
+    for (let i = 0; i < rawHeaders.length; i += 2) {
+      entries.push([rawHeaders[i], jscDescribe(rawHeaders[i]).includes("(atomic)")]);
+    }
+    return Object.fromEntries(entries);
+  };
+
+  let request;
+  const server = http2.createServer();
+  server.on("stream", (stream, _headers, _flags, rawHeaders) => {
+    request = atomicByName(rawHeaders);
+    stream.respond([
+      ...[":status", "200"],
+      ...["date", "Thu, 01 Jan 2026 00:00:00 GMT"],
+      ...["content-type", "text/plain"],
+      ...["x-unknown", "u"],
+    ]);
+    stream.end();
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  try {
+    const response = await new Promise((resolve, reject) => {
+      const req = client.request({ ":method": "POST", ":path": "/", "content-type": "text/plain", "x-unknown": "u" });
+      req.on("error", reject);
+      req.on("response", (_headers, _flags, rawHeaders) => resolve(atomicByName(rawHeaders)));
+      req.end();
+    });
+
+    expect({ request, response }).toEqual({
+      request: {
+        ":method": true,
+        ":path": true,
+        ":scheme": true,
+        ":authority": true,
+        "content-type": true,
+        "x-unknown": true,
+      },
+      response: {
+        ":status": true,
+        "date": true,
+        "content-type": true,
+        "x-unknown": true,
+      },
+    });
+  } finally {
+    client.close();
+    server.close();
+  }
+});
+
 it("http2 option range error messages use the options. prefix", () => {
   for (const opt of ["maxSessionInvalidFrames", "maxSessionRejectedStreams", "unknownProtocolTimeout"]) {
     let error;
@@ -4316,6 +4954,82 @@ it("end(chunk) on a HALF_CLOSED_REMOTE stream still emits 'finish'", async () =>
     expect(await serverFinish.promise).toBe(true);
     client.close();
   } finally {
+    server.close();
+  }
+});
+
+it("write() completes its callback on a later turn, not inside write()", async () => {
+  // _write hands the chunk to the native session with the write callback deferred, so the
+  // chunk is still counted in writableLength when write() returns and the Writable settles it
+  // later, like node, where a write only completes once the session has flushed it. Were the
+  // callback invoked inside the native call, writableLength would already be 0 here.
+  const server = http2.createServer();
+  let client;
+  try {
+    const lengths = Promise.withResolvers();
+    server.on("stream", async stream => {
+      try {
+        stream.respond({ ":status": 200 });
+        const chunk = Buffer.from("hello");
+        const written = new Promise((resolve, reject) => stream.write(chunk, err => (err ? reject(err) : resolve())));
+        const afterWrite = stream.writableLength;
+        await written;
+        lengths.resolve({ afterWrite, afterCallback: stream.writableLength });
+        stream.end();
+      } catch (err) {
+        lengths.reject(err);
+      }
+    });
+    const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+    client = http2.connect(`http://127.0.0.1:${port}`);
+    client.on("error", lengths.reject);
+    const req = client.request({ ":path": "/" });
+    const body = new Promise((resolve, reject) => {
+      const chunks = [];
+      req.on("error", reject);
+      req.on("data", chunk => chunks.push(chunk));
+      req.on("end", () => resolve(Buffer.concat(chunks).toString()));
+    });
+    req.end();
+    expect(await Promise.all([lengths.promise, body])).toEqual([{ afterWrite: 5, afterCallback: 0 }, "hello"]);
+  } finally {
+    client?.close();
+    server.close();
+  }
+});
+
+it("sendTrailers({}) ends the stream without a trailer block", async () => {
+  // An empty trailer object ends the stream with an empty END_STREAM DATA frame rather than a
+  // HEADERS frame: the peer sees the body end and no 'trailers' event, and the stream closes
+  // cleanly on both sides.
+  const server = http2.createServer();
+  let client;
+  try {
+    const serverClose = Promise.withResolvers();
+    server.on("stream", stream => {
+      stream.on("error", serverClose.reject);
+      stream.on("wantTrailers", () => stream.sendTrailers({}));
+      stream.on("close", () => serverClose.resolve(stream.rstCode));
+      stream.respond({ ":status": 200 }, { waitForTrailers: true });
+      stream.end("OK");
+    });
+    const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+    client = http2.connect(`http://127.0.0.1:${port}`);
+    client.on("error", serverClose.reject);
+    const req = client.request({ ":path": "/" });
+    const trailerEvents = [];
+    req.on("trailers", headers => trailerEvents.push(headers));
+    const body = new Promise((resolve, reject) => {
+      const chunks = [];
+      req.on("error", reject);
+      req.on("data", chunk => chunks.push(chunk));
+      req.on("end", () => resolve(Buffer.concat(chunks).toString()));
+    });
+    req.end();
+    expect(await Promise.all([body, serverClose.promise])).toEqual(["OK", 0]);
+    expect(trailerEvents).toEqual([]);
+  } finally {
+    client?.close();
     server.close();
   }
 });

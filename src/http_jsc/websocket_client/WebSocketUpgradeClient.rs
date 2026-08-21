@@ -93,8 +93,6 @@ enum State {
     Failed,
     /// Sent CONNECT, waiting for 200
     ProxyHandshake,
-    /// TLS inside tunnel (for wss:// through proxy)
-    ProxyTlsHandshake,
     /// WebSocket upgrade complete, forwarding data through tunnel
     Done,
 }
@@ -109,7 +107,7 @@ enum HeadParse {
     NeedMore,
 }
 
-/// Owned +1 reference to a `us_ssl_ctx_t` (`SSL_CTX*`); releases the ref via
+/// Owned +1 reference to an `SslCtx` (`SSL_CTX*`); releases the ref via
 /// `SSL_CTX_free` on drop (BoringSSL decrements its internal refcount).
 /// Either dropped here, or transferred to the connected `WebSocket` via
 /// `into_raw()` after the upgrade completes.
@@ -160,7 +158,7 @@ pub struct HTTPClient<const SSL: bool> {
     /// TLS options (full SSLConfig for complete TLS customization)
     ssl_config: Option<Box<SSLConfig>>,
 
-    /// `us_ssl_ctx_t` built from `ssl_config` when it carries a custom CA.
+    /// `SslCtx` built from `ssl_config` when it carries a custom CA.
     /// Heap-allocated because ownership transfers to the connected
     /// `WebSocket` after the upgrade completes (so the `SSL_CTX` outlives
     /// this struct). RAII: dropping the wrapper releases the retained ref.
@@ -651,12 +649,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             // `connect_group`; single-threaded (JS thread), no other `&mut`
             // to it is live.
             .is_some_and(|ext| unsafe { (*ext).take().is_some() });
-        // no need to be .failure we still wanna to send pending SSL buffer + close_notify
-        if SSL {
-            tcp.close(uws::CloseCode::Normal);
-        } else {
-            tcp.close(uws::CloseCode::Failure);
-        }
+        tcp.close(uws::CloseCode::Failure);
         if had_socket_ref {
             // SAFETY: short-lived `&mut` for the field detach.
             unsafe { (*this.as_ptr()).tcp.detach() };
@@ -875,7 +868,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         match picohttp::Response::parse(body, &mut self.headers_buf) {
             Ok(response) => HeadParse::Done {
                 status_code: response.status_code,
-                head_len: usize::try_from(response.bytes_read).expect("int cast"),
+                head_len: response.bytes_read,
                 full: body.to_vec(),
             },
             Err(picohttp::ParseResponseError::MalformedHttpResponse) => HeadParse::Invalid,
@@ -998,7 +991,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             // SAFETY: forwards to the existing teardown path.
             return unsafe { Self::terminate(this.as_ptr(), ErrorCode::InvalidResponse) };
         };
-        let head_len = usize::try_from(response.bytes_read).expect("int cast");
+        let head_len = response.bytes_read;
         let is_101 = response.status_code == 101;
 
         // 101: one scope across 'upgrade'+'open' so microtasks drain after open.
@@ -1192,7 +1185,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         };
         p.set_tunnel(Some(tunnel));
         // SAFETY: scoped write; `p` is dead.
-        unsafe { (*this).state = State::ProxyTlsHandshake };
+        unsafe { (*this).state = State::Reading };
     }
 
     /// Called by WebSocketProxyTunnel when TLS handshake completes successfully
@@ -1575,13 +1568,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         let overflow_len = remain_buf.len();
         let overflow_ptr: *mut u8 = if overflow_len > 0 {
             let mut v: Vec<u8> = Vec::new();
-            if v.try_reserve_exact(overflow_len).is_err() {
-                // OOM here terminates with `invalid_response` rather than
-                // aborting the process.
-                // SAFETY: no `&mut Self` is live across this call.
-                unsafe { Self::terminate(this, ErrorCode::InvalidResponse) };
-                return;
-            }
+            bun_core::handle_oom(v.try_reserve_exact(overflow_len));
             v.extend_from_slice(remain_buf);
             // Leak across the FFI boundary; `InitialDataHandler` reconstructs
             // the `Box<[u8]>` and drops it after delivery.
@@ -1615,6 +1602,20 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     // SAFETY: short-lived `&mut` for the field take.
                     let ws = unsafe { (*this).outgoing_websocket.take().unwrap() };
 
+                    // Switch to forwarding before entering C++. did_connect_with_tunnel
+                    // dispatches `open`, and an open handler that spins the event loop
+                    // (expect().resolves, a debugger pause) delivers socket data to
+                    // handle_data while this frame is on the stack; with the state
+                    // still `Reading` and `outgoing_websocket` taken, handle_data
+                    // would fail the client and close the socket. In `Done` it hands
+                    // the bytes to the tunnel, whose SSL engine is still inside the
+                    // pass that decrypted the 101 and so queues them until that pass
+                    // resumes, by which point C++ has attached the connected WebSocket.
+                    // Same order as the non-tunnel arm below, which detaches the socket
+                    // before did_connect.
+                    // SAFETY: short-lived write.
+                    unsafe { (*this).state = State::Done };
+
                     // Create the WebSocket client with the tunnel
                     // SAFETY: live C++ back-reference.
                     unsafe {
@@ -1630,9 +1631,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
                         )
                     };
 
-                    // Switch state to connected - handle_data will forward to tunnel
-                    // SAFETY: short-lived write.
-                    unsafe { (*this).state = State::Done };
                     // SAFETY: drops the outgoing_websocket ref; no `&mut Self` is live.
                     unsafe { Self::deref(this) };
                 } else if tcp.is_closed() {
@@ -1647,7 +1645,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         }
 
         // Normal (non-tunnel) mode — original code path. Transfer the
-        // custom `us_ssl_ctx_t` to the connected WebSocket (it must outlive
+        // custom `SslCtxOwned` to the connected WebSocket (it must outlive
         // the upgrade client because the socket's SSL* still references the
         // SSL_CTX inside it).
         // SAFETY: short-lived `&mut` for the field take.

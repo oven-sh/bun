@@ -25,7 +25,6 @@ pub enum CondExprState {
     },
     WaitingStat,
     WaitingWriteErr,
-    Done,
 }
 
 impl CondExpr {
@@ -72,10 +71,6 @@ impl CondExpr {
                 }
                 CondExprState::WaitingStat => return Yield::suspended(),
                 CondExprState::WaitingWriteErr => return Yield::suspended(),
-                CondExprState::Done => {
-                    let parent = interp.as_condexpr(this).base.parent;
-                    return interp.child_done(parent, this, 0);
-                }
             }
         }
     }

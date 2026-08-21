@@ -25,16 +25,6 @@ pub struct ResolveMessage {
     pub(crate) logged: Cell<bool>,
 }
 
-impl Default for ResolveMessage {
-    fn default() -> Self {
-        Self {
-            msg: bun_ast::Msg::default(),
-            referrer: None,
-            logged: Cell::new(false),
-        }
-    }
-}
-
 /// `ImportKind.label()` — the canonical table lives in
 /// `bun_ast::ImportKind::label`, but
 /// `bun_ast::MetadataResolve.import_kind` is the type-only `bun_ast::ImportKind`.
@@ -170,12 +160,11 @@ impl ResolveMessage {
         let mut out = Vec::new();
         if import_kind != ImportKind::RequireResolve && specifier.starts_with(b"node:") {
             // This matches Node.js exactly.
-            write!(
+            let _ = write!(
                 &mut out,
                 "No such built-in module: {}",
                 BStr::new(specifier)
-            )
-            .ok();
+            );
             return out;
         }
         // The same logical error can arrive nested (e.g. via
@@ -184,71 +173,65 @@ impl ResolveMessage {
         match err.name() {
             "ModuleNotFound" => {
                 if referrer == b"bun:main" {
-                    write!(&mut out, "Module not found '{}'", BStr::new(specifier)).ok();
+                    let _ = write!(&mut out, "Module not found '{}'", BStr::new(specifier));
                     return out;
                 }
                 if bun_resolver::is_package_path(specifier)
                     && !strings::contains_char(specifier, b'/')
                 {
-                    write!(
+                    let _ = write!(
                         &mut out,
                         "Cannot find package '{}' from '{}'",
                         BStr::new(specifier),
                         BStr::new(referrer),
-                    )
-                    .ok();
+                    );
                 } else {
-                    write!(
+                    let _ = write!(
                         &mut out,
                         "Cannot find module '{}' from '{}'",
                         BStr::new(specifier),
                         BStr::new(referrer),
-                    )
-                    .ok();
+                    );
                 }
                 return out;
             }
             "InvalidDataURL" => {
-                write!(
+                let _ = write!(
                     &mut out,
                     "Cannot resolve invalid data URL '{}' from '{}'",
                     BStr::new(specifier),
                     BStr::new(referrer),
-                )
-                .ok();
+                );
                 return out;
             }
             "InvalidURL" => {
-                write!(
+                let _ = write!(
                     &mut out,
                     "Cannot resolve invalid URL '{}' from '{}'",
                     BStr::new(specifier),
                     BStr::new(referrer),
-                )
-                .ok();
+                );
                 return out;
             }
             _ => {}
         }
         // else
         if bun_resolver::is_package_path(specifier) {
-            write!(
+            let _ = write!(
                 &mut out,
                 "{} while resolving package '{}' from '{}'",
                 err.name(),
                 BStr::new(specifier),
                 BStr::new(referrer),
-            )
-            .ok();
+            );
         } else {
-            write!(
+            let _ = write!(
                 &mut out,
                 "{} while resolving '{}' from '{}'",
                 err.name(),
                 BStr::new(specifier),
                 BStr::new(referrer),
-            )
-            .ok();
+            );
         }
         out
     }
@@ -397,29 +380,27 @@ impl ResolveMessage {
         let mut out = Vec::new();
         match kind {
             ImportKind::Require | ImportKind::RequireResolve => {
-                write!(&mut out, "Cannot find module '{}'", BStr::new(specifier)).ok();
+                let _ = write!(&mut out, "Cannot find module '{}'", BStr::new(specifier));
                 if let Some(referrer) = referrer {
-                    write!(&mut out, "\nRequire stack:\n- {}", BStr::new(referrer)).ok();
+                    let _ = write!(&mut out, "\nRequire stack:\n- {}", BStr::new(referrer));
                 }
             }
             ImportKind::Stmt | ImportKind::Dynamic => {
                 let referrer = referrer?;
                 if is_bare_esm_specifier(specifier) {
-                    write!(
+                    let _ = write!(
                         &mut out,
                         "Cannot find package '{}' imported from {}",
                         BStr::new(esm_package_name(specifier)),
                         BStr::new(referrer),
-                    )
-                    .ok();
+                    );
                 } else {
-                    write!(
+                    let _ = write!(
                         &mut out,
                         "Cannot find module '{}' imported from {}",
                         BStr::new(specifier),
                         BStr::new(referrer),
-                    )
-                    .ok();
+                    );
                 }
             }
             _ => return None,

@@ -5,9 +5,8 @@ use bun_jsc::strong::Optional as StrongOptional;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsCell};
 use bun_sys::Error as SysError;
 
-use crate::webcore::SinkHandle;
 use crate::webcore::streams::{self, BufferAction, IntoArray};
-use crate::webcore::{blob, readable_stream};
+use crate::webcore::{DrainResult, SinkHandle, blob, readable_stream};
 
 bun_output::declare_scope!(ByteStream, visible);
 
@@ -87,6 +86,9 @@ impl readable_stream::SourceContext for ByteStream {
     fn deinit_fn(&mut self) {
         Self::finalize(self)
     }
+    fn wrapper_finalized(&mut self) {
+        self.parent_const().producer.get().consumer_collected();
+    }
     fn drain_internal_buffer(&mut self) -> Vec<u8> {
         Self::drain(self)
     }
@@ -103,10 +105,9 @@ impl readable_stream::SourceContext for ByteStream {
 }
 
 // SAFETY: `ByteStream` is always the `context` field of a `Source`
-// (ReadableStream.NewSource); never constructed standalone. `parent` returns
-// `*mut Source` (not `&mut`) — retained for the `finalize` (GC-teardown) path
-// only; all host-fn-reachable callers use `parent_const`.
-bun_core::impl_field_parent! { ByteStream => Source.context; pub fn parent_const; pub fn parent; }
+// (ReadableStream.NewSource); never constructed standalone. Everything it
+// touches on the `Source` is a `Cell`, so the `&Source` arm suffices.
+bun_core::impl_field_parent! { ByteStream => Source.context; pub fn shared parent_const; }
 
 impl ByteStream {
     #[inline]
@@ -121,6 +122,25 @@ impl ByteStream {
         // the old value owns nothing the new one
         // reuses, so dropping it is the intended reset.
         drop(core::mem::take(self));
+    }
+
+    /// Seeds the stream with what the producer's `on_start_streaming` handed
+    /// over: the bytes it had already buffered, or its estimate of the total.
+    /// Init-time like [`Self::setup`] (no JS wrapper yet, so `&mut self` is
+    /// sound). Callers drop the body to `Null` on `Empty` / `Aborted` instead
+    /// of realising a stream, so those arms have nothing to seed.
+    pub(crate) fn apply_drain_result(&mut self, drain_result: DrainResult) {
+        match drain_result {
+            DrainResult::EstimatedSize(estimated_size) => {
+                self.high_water_mark = estimated_size as blob::SizeType;
+                self.size_hint.set(estimated_size as blob::SizeType);
+            }
+            DrainResult::Owned { list, size_hint } => {
+                self.buffer.set(list);
+                self.size_hint.set(size_hint as blob::SizeType);
+            }
+            DrainResult::Empty | DrainResult::Aborted => {}
+        }
     }
 
     fn on_start(&self) -> streams::Start {
@@ -159,6 +179,22 @@ impl ByteStream {
     pub(crate) fn unpipe_without_deref(&self) {
         self.sink.set(SinkHandle::None);
         self.sink_paused.set(false);
+    }
+
+    /// The sink is gone before the stream ended (its peer went away). The stream stays
+    /// locked to it, so nobody else can read the rest: close the producer too.
+    pub(crate) fn detach_finished_sink(&self) {
+        if self.has_received_last_chunk.get() {
+            self.unpipe_without_deref();
+        } else {
+            self.cancel_from_sink(None);
+        }
+    }
+
+    /// Bytes delivered that no consumer has taken yet.
+    #[inline]
+    pub fn buffered_len(&self) -> usize {
+        self.buffer.get().len() - self.offset.get()
     }
 
     /// Sink's drain ack: unpause, push buffered bytes, end if last chunk already arrived.
@@ -202,6 +238,15 @@ impl ByteStream {
 
         self.signal_drained();
 
+        // A synchronous producer (RewriterPipe) may have pushed its remaining
+        // output through `on_data` just now. If one of those writes hit
+        // backpressure, the chunks after it (and the end) were buffered; the
+        // sink's next drain ack comes back here and delivers them. Ending now
+        // would drop them.
+        if self.sink_paused.get() {
+            return;
+        }
+
         if self.has_received_last_chunk.get() && self.sink.get().is_some() {
             self.sink.set(SinkHandle::None);
             sink.end(None);
@@ -227,20 +272,25 @@ impl ByteStream {
         self.parent_const().producer.get().ready(None, None);
     }
 
-    /// Take the buffered bytes without signalling the producer; the caller
-    /// writes them to the sink before [`Self::signal_drained`].
+    /// Take the unread buffered bytes (`buffer[offset..]`) without signalling
+    /// the producer; the caller writes them to the sink before
+    /// [`Self::signal_drained`].
     pub(crate) fn take_buffer(&self) -> Vec<u8> {
-        self.offset.set(0);
-        Vec::<u8>::move_from_list(self.buffer.replace(Vec::new()))
+        let consumed = self.offset.replace(0);
+        let mut list = self.buffer.replace(Vec::new());
+        if consumed > 0 {
+            list.drain(..consumed);
+        }
+        Vec::<u8>::move_from_list(list)
     }
 
-    /// Called by native fast-paths after wiring `self.sink`. Restores
-    /// producer-side backpressure if it was already dropped (BufferAll).
+    /// Called by native fast-paths after wiring `self.sink`: a consumer now
+    /// waits for bytes, so a parked producer resumes.
     pub fn signal_consumer_attached(&self) {
         self.parent_const().producer.get().start();
     }
 
-    pub(crate) fn on_data(&self, mut stream: streams::Result) -> Result<(), bun_jsc::JsTerminated> {
+    pub(crate) fn on_data(&self, mut stream: streams::Result) {
         bun_jsc::mark_binding!();
         if self.done.get() {
             // The owned `Vec<u8>`/`Vec`
@@ -249,7 +299,7 @@ impl ByteStream {
 
             bun_output::scoped_log!(ByteStream, "ByteStream.onData already done... do nothing");
 
-            return Ok(());
+            return;
         }
 
         debug_assert!(
@@ -265,14 +315,14 @@ impl ByteStream {
                 self.sink.set(SinkHandle::None);
                 self.sink_paused.set(false);
                 sink.end(Some(err));
-                return Ok(());
+                return;
             }
 
             if self.sink_paused.get() {
                 bun_output::scoped_log!(ByteStream, "ByteStream.onData sink paused → buffer");
                 self.append(stream, 0)
                     .unwrap_or_else(|_| panic!("Out of memory while copying request body"));
-                return Ok(());
+                return;
             }
 
             let is_done = stream.is_done();
@@ -284,13 +334,13 @@ impl ByteStream {
                     self.sink.set(SinkHandle::None);
                     self.sink_paused.set(false);
                     sink.end(Some(streams::StreamError::Error(e)));
-                    return Ok(());
+                    return;
                 }
                 streams::Writable::Done => {
                     self.sink.set(SinkHandle::None);
                     self.sink_paused.set(false);
                     sink.end(None);
-                    return Ok(());
+                    return;
                 }
                 _ => {
                     self.signal_drained();
@@ -301,7 +351,7 @@ impl ByteStream {
                 self.sink.set(SinkHandle::None);
                 sink.end(None);
             }
-            return Ok(());
+            return;
         }
 
         if self.buffer_action.get().is_some() {
@@ -315,7 +365,7 @@ impl ByteStream {
                 // and `reject`; both can re-enter and consume the slot.
                 let mut action = self.buffer_action.replace(None).unwrap();
                 self.signal_drained();
-                let res = action.reject(global, err);
+                action.reject(global, err);
 
                 self.buffer.with_mut(|b| {
                     b.clear();
@@ -327,7 +377,7 @@ impl ByteStream {
                 });
                 self.buffer_action.set(None);
 
-                return res;
+                return;
             }
 
             // R-2: the drain signal can re-enter and consume `buffer_action`,
@@ -338,7 +388,7 @@ impl ByteStream {
                 // `defer { this.buffer_action = null; }` — handled by `replace(None)` below.
                 let Some(mut action) = self.buffer_action.replace(None) else {
                     // Consumed re-entrantly during `signal_drained`.
-                    return Ok(());
+                    return;
                 };
 
                 if self.buffer.get().capacity() == 0 && matches!(stream, streams::Result::Done) {
@@ -348,7 +398,8 @@ impl ByteStream {
                     );
 
                     let mut blob = self.to_any_blob().unwrap();
-                    return action.fulfill(self.parent_const().global_this(), &mut blob);
+                    action.fulfill(self.parent_const().global_this(), &mut blob);
+                    return;
                 }
                 if self.buffer.get().capacity() == 0 {
                     if let streams::Result::OwnedAndDone(mut owned) = stream {
@@ -362,7 +413,8 @@ impl ByteStream {
                         // `stream`).
                         self.buffer.set(owned.move_to_list_managed());
                         let mut blob = self.to_any_blob().unwrap();
-                        return action.fulfill(self.parent_const().global_this(), &mut blob);
+                        action.fulfill(self.parent_const().global_this(), &mut blob);
+                        return;
                     }
                 }
 
@@ -378,7 +430,8 @@ impl ByteStream {
                 // (Temporary* variants are non-owning `RawSlice` and so are left alone).
                 drop(stream);
                 let mut blob = self.to_any_blob().unwrap();
-                return action.fulfill(self.parent_const().global_this(), &mut blob);
+                action.fulfill(self.parent_const().global_this(), &mut blob);
+                return;
             } else {
                 self.buffer
                     .with_mut(|b| b.extend_from_slice(stream.slice()));
@@ -387,7 +440,7 @@ impl ByteStream {
                 drop(stream);
             }
 
-            return Ok(());
+            return;
         }
 
         let chunk = stream.slice();
@@ -466,14 +519,13 @@ impl ByteStream {
             // `&mut self` form.
             self.pending.with_mut(|p| p.run());
 
-            return Ok(());
+            return;
         }
 
         bun_output::scoped_log!(ByteStream, "ByteStream.onData no action just append");
 
         self.append(stream, 0)
             .unwrap_or_else(|_| panic!("Out of memory while copying request body"));
-        Ok(())
     }
 
     fn append(&self, stream: streams::Result, offset: usize) -> Result<(), bun_alloc::AllocError> {
@@ -627,8 +679,7 @@ impl ByteStream {
 
         if let Some(mut action) = self.buffer_action.replace(None) {
             let global = self.parent_const().global_this();
-            // TODO: properly propagate exception upwards
-            let _ = action.reject(
+            action.reject(
                 global,
                 &streams::StreamError::AbortReason(jsc::CommonAbortReason::UserAbort),
             );
@@ -673,6 +724,8 @@ impl ByteStream {
                 // We must never run JavaScript inside of a GC finalizer.
                 self.pending.with_mut(|p| p.run_on_next_tick());
             } else {
+                // A `Handler` future is a native continuation, not script:
+                // nothing to settle, so nothing can be left pending.
                 self.pending.with_mut(|p| p.run());
             }
         }
@@ -687,11 +740,14 @@ impl ByteStream {
     }
 
     pub(crate) fn drain(&self) -> Vec<u8> {
-        if !self.buffer.get().is_empty() {
+        let drained = self.take_buffer();
+        if !drained.is_empty() {
+            // After taking, as in `on_pull`: the producer decides whether to
+            // resume from `buffer.len()`, and anything it emits inline queues
+            // behind these bytes for the next pull.
             self.signal_drained();
-            return Vec::<u8>::move_from_list(self.buffer.replace(Vec::new()));
         }
-        Vec::<u8>::default()
+        drained
     }
 
     /// Take a pre-attach `StreamResult::Err` stashed by [`Self::append`].
@@ -754,7 +810,7 @@ impl ByteStream {
 
         if let Some(blob_) = self.to_any_blob() {
             let mut blob = blob_;
-            return Ok(blob.to_promise(global_this, action)?);
+            return blob.to_promise(global_this, action);
         }
 
         self.buffer_action

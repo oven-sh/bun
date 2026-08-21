@@ -418,6 +418,40 @@ struct us_listen_socket_t *us_socket_group_listen(struct us_socket_group_t *grou
     return ls;
 }
 
+struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *group,
+        unsigned char kind, struct ssl_ctx_st *ssl_ctx,
+        LIBUS_SOCKET_DESCRIPTOR fd, int backlog, int options, int socket_ext_size, int *error) {
+    /* Validate with listen(2) before touching the descriptor's flags: on failure the caller keeps
+     * the fd (it may be its stdio), and a non-socket must come back untouched. */
+    if (listen(fd, backlog > 0 ? backlog : 512)) {
+        int listen_err = LIBUS_ERR;
+        if (!bsd_socket_listen_error_is_benign(fd)) {
+            *error = listen_err;
+            return 0;
+        }
+    }
+    apple_no_sigpipe(fd);
+    bsd_set_nonblocking(fd);
+
+    struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_listen_socket_t));
+    us_poll_init(p, fd, POLL_TYPE_SEMI_SOCKET);
+    if (us_poll_start_rc(p, group->loop, LIBUS_SOCKET_READABLE) != 0) {
+        int saved_errno = LIBUS_ERR;
+        us_poll_free(p, group->loop);
+        *error = saved_errno;
+        return 0;
+    }
+
+    struct us_listen_socket_t *ls = (struct us_listen_socket_t *) p;
+    us_internal_init_listen_socket(ls, group, kind, ssl_ctx, options, socket_ext_size);
+
+    if (options & LIBUS_LISTEN_DEFER_ACCEPT) {
+        ls->deferred_accept = bsd_set_defer_accept(fd);
+    }
+
+    return ls;
+}
+
 struct us_listen_socket_t *us_socket_group_listen_unix(struct us_socket_group_t *group,
         unsigned char kind, struct ssl_ctx_st *ssl_ctx,
         const char *path, size_t pathlen, int options, int socket_ext_size, int *error) {

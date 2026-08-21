@@ -1022,6 +1022,153 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
     });
   });
 
+  // pipeTo / tee / for-await / textStream() read a direct stream through read requests, not
+  // reader.read() promises. A flush() inside a synchronous pull() satisfies that request on
+  // the spot; whatever the pull writes afterwards must still reach the consumer's next read.
+  describe("a sync direct pull() that flush()es mid-pull delivers the bytes written after the flush", () => {
+    const decoder = new TextDecoder();
+    const readerText = async rs => {
+      const reader = rs.getReader();
+      const parts = [];
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) return parts.join("");
+        parts.push(decoder.decode(value));
+      }
+    };
+    const pipeToText = async rs => {
+      const parts = [];
+      await rs.pipeTo(
+        new WritableStream({
+          write(chunk) {
+            parts.push(decoder.decode(chunk));
+          },
+        }),
+      );
+      return parts.join("");
+    };
+    const forAwaitText = async rs => {
+      const parts = [];
+      for await (const chunk of rs) parts.push(decoder.decode(chunk));
+      return parts.join("");
+    };
+    const textStreamText = async rs => {
+      const parts = [];
+      for await (const chunk of new Response(rs).textStream()) parts.push(chunk);
+      return parts.join("");
+    };
+
+    describe.each(["end", "close"])("finishing with %s()", finish => {
+      const mk = () =>
+        new ReadableStream({
+          type: "direct",
+          pull(c) {
+            c.write("hello");
+            c.flush();
+            c.write("world");
+            c[finish]();
+          },
+        });
+
+      it("getReader()", async () => {
+        expect(await readerText(mk())).toBe("helloworld");
+      });
+
+      it("pipeTo()", async () => {
+        expect(await pipeToText(mk())).toBe("helloworld");
+      });
+
+      it("pipeThrough()", async () => {
+        expect(await readableStreamToText(mk().pipeThrough(new TransformStream()))).toBe("helloworld");
+      });
+
+      it("tee()", async () => {
+        const [a, b] = mk().tee();
+        expect(await Promise.all([readableStreamToText(a), readableStreamToText(b)])).toEqual([
+          "helloworld",
+          "helloworld",
+        ]);
+      });
+
+      it("for await", async () => {
+        expect(await forAwaitText(mk())).toBe("helloworld");
+      });
+
+      it("Response.textStream()", async () => {
+        expect(await textStreamText(mk())).toBe("helloworld");
+      });
+    });
+
+    it("a second flush() in the same pull() is delivered to the consumer's next read", async () => {
+      const mk = () => {
+        let pulls = 0;
+        return new ReadableStream({
+          type: "direct",
+          pull(c) {
+            if (pulls++ > 0) return c.end();
+            c.write("a");
+            c.flush();
+            c.write("b");
+            c.flush();
+          },
+        });
+      };
+      const [a, b] = mk().tee();
+      expect({
+        reader: await readerText(mk()),
+        pipeTo: await pipeToText(mk()),
+        tee: await Promise.all([readableStreamToText(a), readableStreamToText(b)]),
+        forAwait: await forAwaitText(mk()),
+      }).toEqual({ reader: "ab", pipeTo: "ab", tee: ["ab", "ab"], forAwait: "ab" });
+    });
+
+    it("a pull() that throws rejects only the consumer, with no stray unhandled rejection", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          let unhandled = 0;
+          process.on("unhandledRejection", () => unhandled++);
+          const settle = promise => promise.then(() => "fulfilled", e => e.message);
+          const mk = () => new ReadableStream({ type: "direct", pull() { throw new Error("boom"); } });
+          const out = {};
+          out.pipeTo = await settle(mk().pipeTo(new WritableStream()));
+          out.tee = await settle(Bun.readableStreamToText(mk().tee()[0]));
+          out.forAwait = await settle((async () => { for await (const _ of mk()); })());
+          // Two reads during an async pull() make its fulfillment re-pull; the re-pull throws.
+          let pulls = 0;
+          const reader = new ReadableStream({
+            type: "direct",
+            pull() {
+              if (pulls++ === 0) return Promise.resolve();
+              throw new Error("boom");
+            },
+          }).getReader();
+          out.rePull = await Promise.all([settle(reader.read()), settle(reader.read())]);
+          // Unhandled rejections are reported once the current turn's microtasks drain.
+          await new Promise(resolve => setTimeout(resolve, 0));
+          out.unhandled = unhandled;
+          console.log(JSON.stringify(out));
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(JSON.parse(stdout)).toEqual({
+        pipeTo: "boom",
+        tee: "boom",
+        forAwait: "boom",
+        rePull: ["boom", "boom"],
+        unhandled: 0,
+      });
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   it("a patched Object.prototype.then that releases the reader mid-resolution does not crash", async () => {
     let releaseNow = null;
     Object.defineProperty(Object.prototype, "then", {

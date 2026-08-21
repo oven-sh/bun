@@ -435,19 +435,7 @@ pub struct Response<'a> {
     pub status_code: u32,
     pub status: &'a [u8],
     pub headers: HeaderList<'a>,
-    pub bytes_read: c_int,
-}
-
-impl<'a> Default for Response<'a> {
-    fn default() -> Self {
-        Response {
-            minor_version: 0,
-            status_code: 0,
-            status: b"",
-            headers: HeaderList::default(),
-            bytes_read: 0,
-        }
-    }
+    pub bytes_read: usize,
 }
 
 impl<'a> Response<'a> {
@@ -539,7 +527,9 @@ impl<'a> Response<'a> {
                     headers: HeaderList {
                         list: &src[0..num_headers.min(src.len())],
                     },
-                    bytes_read: rc,
+                    // > 0 here: -1/-2 were handled above and 0 is not a
+                    // return value of phr_parse_response.
+                    bytes_read: rc as usize,
                 })
             }
         }

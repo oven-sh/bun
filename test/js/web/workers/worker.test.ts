@@ -168,6 +168,41 @@ describe("web worker", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("worker-env: process.env reads inside a worker reflect the worker's own environment at runtime", async () => {
+    using dir = tempDir("worker-env-runtime-reads", {
+      "worker.js": `
+        const inherited = process.env.BUN_TEST_WORKER_ENV_KEY;
+        process.env["BUN_TEST_WORKER_ENV_KEY"] = "assigned-in-worker";
+        const assigned = process.env.BUN_TEST_WORKER_ENV_KEY;
+        postMessage({ inherited, assigned, nodeEnv: process.env.NODE_ENV });
+      `,
+      "main.js": `
+        const worker = new Worker(new URL("./worker.js", import.meta.url).href, {
+          env: { BUN_TEST_WORKER_ENV_KEY: "from-worker-option", NODE_ENV: "production" },
+        });
+        worker.onerror = e => { console.error(e.message); process.exit(1); };
+        worker.onmessage = e => {
+          console.log(JSON.stringify(e.data));
+          worker.terminate();
+        };
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      env: { ...bunEnv, BUN_TEST_WORKER_ENV_KEY: "from-parent-process", NODE_ENV: "development" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual({
+      inherited: "from-worker-option",
+      assigned: "assigned-in-worker",
+      nodeEnv: "production",
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test("worker-env with a lot of properties", done => {
     const obj: any = {};
 
@@ -333,6 +368,15 @@ describe("web worker", () => {
       expect(err.type).toBe("error");
       expect(err.message).toBe("5");
       expect(err.error).toBe(null);
+    });
+
+    test("names the entry point when its path is too long for a path buffer", async () => {
+      // Resolving it failed without logging anything, so the event carried
+      // "BuildMessage: undefined". Longer than the buffer on every platform.
+      const specifier = "./" + Buffer.alloc(100_000, "w").toString();
+      const worker = new Worker(specifier);
+      const [err] = await once(worker, "error");
+      expect(err.message).toBe(`BuildMessage: ModuleNotFound resolving "${specifier}" (entry point)`);
     });
   });
 

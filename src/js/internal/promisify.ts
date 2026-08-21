@@ -71,28 +71,6 @@ var promisify = function promisify(original) {
 };
 promisify.custom = kCustomPromisifiedSymbol;
 
-// Load node:timers/promises promisified functions onto the global timers.
-{
-  const { setTimeout: timeout, setImmediate: immediate, setInterval: interval } = globalThis;
-  const {
-    setTimeout: timeoutPromise,
-    setImmediate: immediatePromise,
-    setInterval: intervalPromise,
-  } = require("node:timers/promises");
-
-  if (timeout && $isCallable(timeout)) {
-    defineCustomPromisify(timeout, timeoutPromise);
-  }
-
-  if (immediate && $isCallable(immediate)) {
-    defineCustomPromisify(immediate, immediatePromise);
-  }
-
-  if (interval && $isCallable(interval)) {
-    defineCustomPromisify(interval, intervalPromise);
-  }
-}
-
 export default {
   defineCustomPromisifyArgs,
   promisify,

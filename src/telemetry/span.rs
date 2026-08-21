@@ -10,6 +10,51 @@ pub struct TraceId(pub [u8; 16]);
 #[repr(C)]
 pub struct SpanId(pub [u8; 8]);
 
+/// Per-thread xoshiro256++ for span/trace ids, seeded from the process PRNG.
+/// Fills `out` with non-zero values in one thread-local access.
+#[inline(always)]
+fn next_ids(out: &mut [u64]) {
+    use core::cell::Cell;
+    thread_local! {
+        static S: Cell<[u64; 4]> = const { Cell::new([0; 4]) };
+    }
+    S.with(|c| {
+        let mut s = c.get();
+        if s[0] | s[1] | s[2] | s[3] == 0 {
+            s = [
+                bun_core::fast_random() | 1,
+                bun_core::fast_random(),
+                bun_core::fast_random(),
+                bun_core::fast_random(),
+            ];
+        }
+        for o in out.iter_mut() {
+            loop {
+                let result = (s[0].wrapping_add(s[3])).rotate_left(23).wrapping_add(s[0]);
+                let t = s[1] << 17;
+                s[2] ^= s[0];
+                s[3] ^= s[1];
+                s[1] ^= s[2];
+                s[0] ^= s[3];
+                s[2] ^= t;
+                s[3] = s[3].rotate_left(45);
+                if result != 0 {
+                    *o = result;
+                    break;
+                }
+            }
+        }
+        c.set(s);
+    })
+}
+
+#[inline(always)]
+fn next_id_u64() -> u64 {
+    let mut v = [0u64; 1];
+    next_ids(&mut v);
+    v[0]
+}
+
 impl TraceId {
     pub const INVALID: TraceId = TraceId([0; 16]);
     #[inline]
@@ -22,8 +67,8 @@ impl TraceId {
     #[inline]
     pub fn generate() -> TraceId {
         loop {
-            let a = bun_core::fast_random();
-            let b = bun_core::fast_random();
+            let a = next_id_u64();
+            let b = next_id_u64();
             let mut id = [0u8; 16];
             id[..8].copy_from_slice(&a.to_be_bytes());
             id[8..].copy_from_slice(&b.to_be_bytes());
@@ -57,7 +102,7 @@ impl SpanId {
     #[inline]
     pub fn generate() -> SpanId {
         loop {
-            let a = bun_core::fast_random();
+            let a = next_id_u64();
             if a != 0 {
                 return SpanId(a.to_be_bytes());
             }
@@ -244,15 +289,25 @@ impl SpanStub {
     /// Start a child of `parent` (or a new root when `parent` is None/invalid).
     #[inline]
     pub fn start(parent: Option<&SpanContext>, sampler: &crate::Sampler, now_ns: u64) -> SpanStub {
+        let mut ids = [0u64; 3];
         let (trace_id, parent_id, parent_remote) = match parent {
-            Some(p) if p.trace_id.is_valid() => (p.trace_id, p.span_id, p.flags.remote()),
-            _ => (TraceId::generate(), SpanId::INVALID, false),
+            Some(p) if p.trace_id.is_valid() => {
+                next_ids(&mut ids[..1]);
+                (p.trace_id, p.span_id, p.flags.remote())
+            }
+            _ => {
+                next_ids(&mut ids);
+                let mut t = [0u8; 16];
+                t[..8].copy_from_slice(&ids[1].to_be_bytes());
+                t[8..].copy_from_slice(&ids[2].to_be_bytes());
+                (TraceId(t), SpanId::INVALID, false)
+            }
         };
         let sampled = sampler.should_sample(parent, &trace_id);
         SpanStub {
             ctx: SpanContext {
                 trace_id,
-                span_id: SpanId::generate(),
+                span_id: SpanId(ids[0].to_be_bytes()),
                 flags: Flags(
                     (sampled as u8)
                         | if parent_remote {

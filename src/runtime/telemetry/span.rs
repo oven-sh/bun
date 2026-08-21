@@ -339,10 +339,22 @@ pub struct EndDesc {
     attrs: *const AttrRef,
     n_attrs: u32,
     dropped_attrs: u32,
+    /// Pre-encoded `Span.attributes` entries (JSTelemetrySpan.cpp fast path).
+    encoded_attrs: *const u8,
+    encoded_attrs_len: u32,
+    n_encoded_attrs: u32,
     events: *const EventRef,
     n_events: u32,
     links: *const LinkRef,
     n_links: u32,
+}
+
+/// `(count limit, value length limit)` for the C++ fast path.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__Telemetry__attributeLimits(value_length_limit: &mut u32) -> u32 {
+    let l = limits();
+    *value_length_limit = l.attribute_value_length;
+    l.attributes as u32
 }
 
 impl StrRef {
@@ -487,7 +499,7 @@ pub extern "C" fn Bun__Telemetry__encodeSpan(desc: &EndDesc) {
     }
     let scope = ScopeId(desc.scope);
     let l = limits();
-    let n_attrs = desc.n_attrs.min(l.attributes as u32);
+    let n_attrs = desc.n_attrs.min((l.attributes as u32).saturating_sub(desc.n_encoded_attrs));
     let n_events = desc.n_events.min(l.events as u32);
     let n_links = desc.n_links.min(l.links as u32);
     SCRATCH.with(|sc| {
@@ -499,6 +511,9 @@ pub extern "C" fn Bun__Telemetry__encodeSpan(desc: &EndDesc) {
             let mut w = SpanWriter::begin(buf, stub, name, kind_from_u8(desc.kind), desc.end_ns);
             if desc.trace_state.len != 0 {
                 w.trace_state(&desc.trace_state.to_vec());
+            }
+            if desc.encoded_attrs_len != 0 {
+                w.raw(unsafe { core::slice::from_raw_parts(desc.encoded_attrs, desc.encoded_attrs_len as usize) });
             }
             with_attrs(desc.attrs, n_attrs, sc, |k, v| match *v {
                 Value::Str(s) if s.len() > l.attribute_value_length as usize => {

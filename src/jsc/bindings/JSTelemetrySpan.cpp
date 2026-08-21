@@ -5,6 +5,7 @@
 #include "ZigGlobalObject.h"
 #include "BunClientData.h"
 #include "WebCoreJSBuiltins.h"
+#include "InternalModuleRegistry.h"
 #include <JavaScriptCore/DateInstance.h>
 #include <JavaScriptCore/DOMJITSignature.h>
 #include <JavaScriptCore/DFGAbstractHeap.h>
@@ -23,6 +24,8 @@ struct BunStrRef {
     uint8_t is16;
 };
 struct BunAttrRef {
+    // Not `= default`: keeps Vector::grow from zero-filling new slots.
+    BunAttrRef() { }
     const void* keyPtr;
     uint32_t keyLen;
     uint8_t keyIs16;
@@ -73,6 +76,10 @@ struct BunEndDesc {
     const BunAttrRef* attrs;
     uint32_t nAttrs;
     uint32_t droppedAttrs;
+    // `Span.attributes` entries already encoded (ASCII fast path), spliced before `attrs`.
+    const uint8_t* encodedAttrs;
+    uint32_t encodedAttrsLen;
+    uint32_t nEncodedAttrs;
     const BunEventRef* events;
     uint32_t nEvents;
     const BunLinkRef* links;
@@ -83,6 +90,7 @@ extern "C" void Bun__Telemetry__stubStart(Bun::SpanStub* out, const Bun::SpanStu
 extern "C" void Bun__Telemetry__stubWrap(Bun::SpanStub* out, const uint8_t* traceId, const uint8_t* spanId, uint8_t w3cFlags, bool remote);
 extern "C" uint64_t Bun__Telemetry__nowNs();
 extern "C" uint16_t Bun__Telemetry__userScope();
+extern "C" uint32_t Bun__Telemetry__attributeLimits(uint32_t* valueLengthLimit);
 extern "C" void Bun__Telemetry__encodeSpan(const BunEndDesc*);
 extern "C" bool Bun__Telemetry__nativeIsLive(uint64_t);
 extern "C" bool Bun__Telemetry__nativeEnd(uint64_t, uint64_t endNs);
@@ -302,7 +310,7 @@ static bool fillValue(JSGlobalObject* globalObject, AttrScratch& sc, BunAttrRef&
             unsigned w = 0;
             for (unsigned i = 0; i < n; ++i) {
                 JSValue item = arr->getIndex(globalObject, i);
-                BunAttrRef ref {};
+                BunAttrRef ref;
                 if (item && fillValue(globalObject, sc, ref, item, false))
                     sc.arrayItems[start + w++] = ref;
             }
@@ -316,6 +324,20 @@ static bool fillValue(JSGlobalObject* globalObject, AttrScratch& sc, BunAttrRef&
         }
     }
     return false;
+}
+
+static ALWAYS_INLINE bool equalSmall(const void* a, const void* b, size_t n)
+{
+    if (n <= 16) {
+        auto* x = static_cast<const uint8_t*>(a);
+        auto* y = static_cast<const uint8_t*>(b);
+        for (size_t i = 0; i < n; ++i) {
+            if (x[i] != y[i])
+                return false;
+        }
+        return true;
+    }
+    return !memcmp(a, b, n);
 }
 
 // Gather [k0, v0, k1, v1, ...] with last-write-wins on duplicate keys.
@@ -343,12 +365,9 @@ static void gatherAttrs(JSGlobalObject* globalObject, AttrScratch& sc, JSArray* 
         // attribute-count limit drops the right ones).
         BunAttrRef* slot = nullptr;
         for (auto& e : out) {
-            if (e.keyLen != keyRef.len)
+            if (e.keyLen != keyRef.len || e.keyIs16 != keyRef.is16)
                 continue;
-            StringView existing = e.keyIs16
-                ? StringView(std::span(static_cast<const char16_t*>(e.keyPtr), e.keyLen))
-                : StringView(std::span(static_cast<const Latin1Character*>(e.keyPtr), e.keyLen));
-            if (existing == StringView(*key)) {
+            if (e.keyPtr == keyRef.ptr || equalSmall(e.keyPtr, keyRef.ptr, keyRef.is16 ? keyRef.len * 2 : keyRef.len)) {
                 slot = &e;
                 break;
             }
@@ -365,6 +384,198 @@ static void gatherAttrs(JSGlobalObject* globalObject, AttrScratch& sc, JSArray* 
         }
         slot->setKey(keyRef);
     }
+}
+
+// Small copies without a libc call: keys/values here are a handful of bytes.
+static ALWAYS_INLINE void copySmall(uint8_t* dst, const uint8_t* src, size_t n)
+{
+    if (n <= 16) {
+        if (n >= 8) {
+            uint64_t a, b;
+            memcpy(&a, src, 8);
+            memcpy(&b, src + n - 8, 8);
+            memcpy(dst, &a, 8);
+            memcpy(dst + n - 8, &b, 8);
+        } else if (n >= 4) {
+            uint32_t a, b;
+            memcpy(&a, src, 4);
+            memcpy(&b, src + n - 4, 4);
+            memcpy(dst, &a, 4);
+            memcpy(dst + n - 4, &b, 4);
+        } else if (n) {
+            dst[0] = src[0];
+            dst[n / 2] = src[n / 2];
+            dst[n - 1] = src[n - 1];
+        }
+        return;
+    }
+    memcpy(dst, src, n);
+}
+
+static ALWAYS_INLINE bool isShortASCII(const StringImpl* s, unsigned max)
+{
+    if (!s->is8Bit() || s->length() > max)
+        return false;
+    // Keys/values are short; a byte loop beats dispatching to SIMD.
+    Latin1Character bits = 0;
+    for (auto c : s->span8())
+        bits |= c;
+    return !(bits & 0x80);
+}
+
+// OTLP protobuf field tags (opentelemetry/proto/trace/v1/trace.proto).
+static constexpr uint8_t kTagSpanAttributes = (9 << 3) | 2;
+static constexpr uint8_t kTagKvKey = (1 << 3) | 2;
+static constexpr uint8_t kTagKvValue = (2 << 3) | 2;
+static constexpr uint8_t kTagAvString = (1 << 3) | 2;
+static constexpr uint8_t kTagAvBool = (2 << 3) | 0;
+static constexpr uint8_t kTagAvInt = (3 << 3) | 0;
+static constexpr uint8_t kTagAvDouble = (4 << 3) | 1;
+
+// Encodes `key: value` as a `Span.attributes` KeyValue if everything fits in
+// one-byte varints and needs no transcoding; returns false to take the
+// general path. `out` must have 4 + 100 + 2 + 2 + 100 bytes of headroom.
+static ALWAYS_INLINE bool encodeAttrFast(uint8_t*& out, const StringImpl* key, JSValue v)
+{
+    if (!isShortASCII(key, 96) || !key->length())
+        return false;
+    unsigned klen = key->length();
+    uint8_t body[12];
+    unsigned bodyLen;
+    const StringImpl* sv = nullptr;
+    if (v.isString()) {
+        sv = asString(v)->tryGetValueImpl();
+        if (!sv || !isShortASCII(sv, 96))
+            return false;
+        body[0] = kTagAvString;
+        body[1] = static_cast<uint8_t>(sv->length());
+        bodyLen = 2;
+    } else if (v.isInt32() && v.asInt32() >= 0) {
+        // varint of a non-negative int32: up to 5 bytes
+        uint32_t x = static_cast<uint32_t>(v.asInt32());
+        body[0] = kTagAvInt;
+        bodyLen = 1;
+        while (x > 0x7f) {
+            body[bodyLen++] = static_cast<uint8_t>(x) | 0x80;
+            x >>= 7;
+        }
+        body[bodyLen++] = static_cast<uint8_t>(x);
+    } else if (v.isBoolean()) {
+        body[0] = kTagAvBool;
+        body[1] = v.asBoolean();
+        bodyLen = 2;
+    } else if (v.isDouble()) {
+        double d = v.asDouble();
+        if (std::isfinite(d) && std::trunc(d) == d && std::abs(d) < 9007199254740992.0)
+            return false; // integral doubles are ints on the wire; general path
+        body[0] = kTagAvDouble;
+        memcpy(body + 1, &d, 8);
+        bodyLen = 9;
+    } else
+        return false;
+    unsigned avLen = bodyLen + (sv ? sv->length() : 0);
+    unsigned kvLen = 2 + klen + 2 + avLen;
+    if (kvLen > 0x7f)
+        return false;
+    uint8_t* p = out;
+    p[0] = kTagSpanAttributes;
+    p[1] = static_cast<uint8_t>(kvLen);
+    p[2] = kTagKvKey;
+    p[3] = static_cast<uint8_t>(klen);
+    p += 4;
+    copySmall(p, key->span8().data(), klen);
+    p += klen;
+    p[0] = kTagKvValue;
+    p[1] = static_cast<uint8_t>(avLen);
+    p += 2;
+    memcpy(p, body, 12);
+    p += bodyLen;
+    if (sv) {
+        copySmall(p, sv->span8().data(), sv->length());
+        p += sv->length();
+    }
+    out = p;
+    return true;
+}
+
+struct EncodedAttrs {
+    Vector<uint8_t, 1024> bytes;
+    unsigned count { 0 };
+    // (key impl, offset, length) of each encoded entry, for last-write-wins.
+    struct Entry {
+        const StringImpl* key;
+        uint32_t offset;
+        uint32_t length;
+    };
+    Vector<Entry, 16> entries;
+};
+
+// Gather [k0, v0, k1, v1, ...]: ASCII/small entries are encoded directly into
+// `enc`; anything else lands in `out` for the Rust encoder. `limit` is the
+// attribute-count limit; returns the number dropped by it.
+static unsigned gatherAttrsFast(JSGlobalObject* globalObject, AttrScratch& sc, JSArray* flat, EncodedAttrs& enc, Vector<BunAttrRef, 16>& out, unsigned limit)
+{
+    unsigned n = flat->length() & ~1u;
+    if (!n)
+        return 0;
+    unsigned dropped = 0;
+    IndexingType type = flat->indexingType() & IndexingShapeMask;
+    bool contiguous = type == ContiguousShape || type == Int32Shape;
+    enc.bytes.grow(std::min<size_t>(n / 2, limit) * 208 + 16);
+    uint8_t* w = enc.bytes.begin();
+    for (unsigned i = 0; i < n; i += 2) {
+        JSValue k, v;
+        if (contiguous) [[likely]] {
+            k = flat->butterfly()->contiguous().at(flat, i).get();
+            v = flat->butterfly()->contiguous().at(flat, i + 1).get();
+        } else {
+            k = flat->getIndex(globalObject, i);
+            v = flat->getIndex(globalObject, i + 1);
+        }
+        if (!k || !k.isString() || !v || v.isUndefinedOrNull())
+            continue;
+        const StringImpl* key = implOf(globalObject, asString(k));
+        // Duplicate key: drop the earlier encoding / ref (rare).
+        for (unsigned j = 0; j < enc.entries.size(); ++j) {
+            auto& e = enc.entries[j];
+            if (e.key == key || (e.key->length() == key->length() && WTF::equal(e.key, key))) {
+                size_t tail = (w - enc.bytes.begin()) - (e.offset + e.length);
+                memmove(enc.bytes.begin() + e.offset, enc.bytes.begin() + e.offset + e.length, tail);
+                w -= e.length;
+                for (unsigned m = j + 1; m < enc.entries.size(); ++m)
+                    enc.entries[m].offset -= e.length;
+                enc.entries.removeAt(j);
+                enc.count--;
+                break;
+            }
+        }
+        for (unsigned j = 0; j < out.size(); ++j) {
+            auto& e = out[j];
+            if (e.keyLen == key->length() && equalSmall(e.keyPtr, key->is8Bit() ? static_cast<const void*>(key->span8().data()) : static_cast<const void*>(key->span16().data()), key->is8Bit() ? key->length() : key->length() * 2)) {
+                out.removeAt(j);
+                break;
+            }
+        }
+        if (enc.count + out.size() >= limit) {
+            dropped++;
+            continue;
+        }
+        uint8_t* before = w;
+        if (encodeAttrFast(w, key, v)) [[likely]] {
+            enc.entries.append({ key, static_cast<uint32_t>(before - enc.bytes.begin()), static_cast<uint32_t>(w - before) });
+            enc.count++;
+            continue;
+        }
+        out.grow(out.size() + 1);
+        BunAttrRef* slot = &out.last();
+        if (!fillValue(globalObject, sc, *slot, v, true)) {
+            out.shrink(out.size() - 1);
+            continue;
+        }
+        slot->setKey(strRef(key));
+    }
+    enc.bytes.shrink(w - enc.bytes.begin());
+    return dropped;
 }
 
 static void patchArrays(AttrScratch& sc, Vector<BunAttrRef, 16>& attrs)
@@ -557,6 +768,238 @@ JSTelemetryBinding* JSTelemetryBinding::create(VM& vm, Zig::GlobalObject* global
     return binding;
 }
 
+// ─── JSTelemetryTracer ───
+
+static JSValue internalTelemetryHelper(Zig::GlobalObject* globalObject, ASCIILiteral name)
+{
+    auto& vm = globalObject->vm();
+    JSValue moduleValue = globalObject->internalModuleRegistry()->requireId(globalObject, vm, Bun::InternalModuleRegistry::InternalTelemetry);
+    if (!moduleValue.isObject())
+        return jsUndefined();
+    return moduleValue.getObject()->get(globalObject, Identifier::fromString(vm, name));
+}
+
+// api Context → [span | undefined, extras | undefined] via internal/telemetry.ts unpackContext.
+static std::pair<JSValue, JSValue> unpackContext(Zig::GlobalObject* globalObject, JSValue context)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue fn = internalTelemetryHelper(globalObject, "unpackContext"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!fn.isCallable())
+        return {};
+    MarkedArgumentBuffer args;
+    args.append(context);
+    JSValue pair = call(globalObject, fn, jsUndefined(), args, "unpackContext"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue spanV = pair.get(globalObject, 0u);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue extrasV = pair.get(globalObject, 1u);
+    RETURN_IF_EXCEPTION(scope, {});
+    return { spanV, extrasV };
+}
+
+// A user-supplied span-like (ours, api Span with spanContext(), or a bare
+// SpanContext) → a value resolveParent understands.
+static JSValue toParentValue(Zig::GlobalObject* globalObject, JSValue v)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (v.isUndefinedOrNull() || toTelemetrySpan(v))
+        return v;
+    if (!v.isObject())
+        return jsNull();
+    JSValue sc = v.getObject()->get(globalObject, Identifier::fromString(vm, "spanContext"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    if (sc.isCallable()) {
+        MarkedArgumentBuffer noArgs;
+        JSValue ctx = call(globalObject, sc, v, noArgs, "spanContext"_s);
+        RETURN_IF_EXCEPTION(scope, {});
+        return ctx;
+    }
+    return v;
+}
+
+static JSTelemetrySpan* tracerStartSpan(Zig::GlobalObject* globalObject, JSTelemetryTracer* tracer, JSValue nameV, JSValue options, JSValue context, JSValue* extrasOut)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSString* name = nameV.isString() ? asString(nameV) : nameV.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (options.isUndefinedOrNull() && context.isUndefined())
+        return createSpanFast(globalObject, tracer->m_scope << 3, name);
+
+    JSObject* opts = options.isObject() ? options.getObject() : nullptr;
+    auto opt = [&](ASCIILiteral n) -> JSValue {
+        if (!opts)
+            return jsUndefined();
+        JSValue v = opts->get(globalObject, Identifier::fromString(vm, n));
+        return scope.exception() ? jsUndefined() : v;
+    };
+    // parent: undefined → active, null → root
+    JSValue parent = jsUndefined();
+    JSValue root = opt("root"_s);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (root.toBoolean(globalObject)) {
+        parent = jsNull();
+    } else if (!context.isUndefined()) {
+        auto [spanV, extrasV] = unpackContext(globalObject, context);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        parent = spanV.isUndefinedOrNull() ? jsNull() : spanV;
+        if (extrasOut)
+            *extrasOut = extrasV;
+    } else {
+        JSValue p = opt("parent"_s);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (!p.isUndefined()) {
+            parent = toParentValue(globalObject, p);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        }
+    }
+    JSValue kindV = opt("kind"_s);
+    uint8_t kind = kindV.isInt32() && kindV.asInt32() >= 0 && kindV.asInt32() <= 4 ? static_cast<uint8_t>(kindV.asInt32()) : 0;
+    uint64_t startNs = timeInputToNs(globalObject, opt("startTime"_s));
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    SpanStub storage;
+    JSTelemetrySpan* parentCell;
+    const SpanStub* parentStub = resolveParent(globalObject, parent, storage, parentCell);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    SpanStub stub;
+    Bun__Telemetry__stubStart(&stub, parentStub, startNs);
+    auto* span = JSTelemetrySpan::create(vm, globalObject, stub, tracer->m_scope, kind, name, 0);
+    inheritPropagation(vm, globalObject, span, parentCell);
+
+    JSValue attributes = opt("attributes"_s);
+    if (attributes.isObject()) {
+        JSValue fn = span->JSObject::get(globalObject, Identifier::fromString(vm, "setAttributes"_s));
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        MarkedArgumentBuffer args;
+        args.append(attributes);
+        call(globalObject, fn, span, args, "setAttributes"_s);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    JSValue links = opt("links"_s);
+    if (links.isObject()) {
+        JSValue fn = span->JSObject::get(globalObject, Identifier::fromString(vm, "addLinks"_s));
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        MarkedArgumentBuffer args;
+        args.append(links);
+        call(globalObject, fn, span, args, "addLinks"_s);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    return span;
+}
+
+JSC_DECLARE_HOST_FUNCTION(jsTelemetryTracerStartSpan);
+JSC_DECLARE_HOST_FUNCTION(jsTelemetryTracerStartActiveSpan);
+JSC_DECLARE_JIT_OPERATION(telemetryTracerStartSpanWithoutTypeCheck, JSC::EncodedJSValue, (JSGlobalObject*, JSTelemetryTracer*, JSString*));
+
+// startSpan(name, options?, context?)
+JSC_DEFINE_HOST_FUNCTION(jsTelemetryTracerStartSpan, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* tracer = dynamicDowncast<JSTelemetryTracer>(callFrame->thisValue());
+    if (!tracer) [[unlikely]]
+        return throwVMTypeError(globalObject, scope, "not a Tracer"_s);
+    auto* span = tracerStartSpan(globalObject, tracer, callFrame->argument(0), callFrame->argument(1), callFrame->argument(2), nullptr);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(span);
+}
+
+JSC_DEFINE_JIT_OPERATION(telemetryTracerStartSpanWithoutTypeCheck, JSC::EncodedJSValue, (JSGlobalObject * lexicalGlobalObject, JSTelemetryTracer* tracer, JSString* name))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    IGNORE_WARNINGS_BEGIN("frame-address")
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    IGNORE_WARNINGS_END
+    JSC::JITOperationPrologueCallFrameTracer tracerFrame(vm, callFrame);
+    return { JSValue::encode(createSpanFast(defaultGlobalObject(lexicalGlobalObject), tracer->m_scope << 3, name)) };
+}
+
+static const JSC::DOMJIT::Signature signatureTelemetryTracerStartSpan(
+    telemetryTracerStartSpanWithoutTypeCheck,
+    JSTelemetryTracer::info(),
+    JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
+    SpecObjectOther,
+    SpecString);
+
+// startActiveSpan(name, [options], [context], fn) — or without fn: activated
+// span for `using`.
+JSC_DEFINE_HOST_FUNCTION(jsTelemetryTracerStartActiveSpan, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* tracer = dynamicDowncast<JSTelemetryTracer>(callFrame->thisValue());
+    if (!tracer) [[unlikely]]
+        return throwVMTypeError(globalObject, scope, "not a Tracer"_s);
+    JSValue a = callFrame->argument(1), b = callFrame->argument(2), c = callFrame->argument(3);
+    JSValue options = jsUndefined(), context = jsUndefined(), fn = jsUndefined();
+    if (a.isCallable())
+        fn = a;
+    else if (b.isCallable()) {
+        options = a;
+        fn = b;
+    } else if (c.isCallable()) {
+        options = a;
+        context = b;
+        fn = c;
+    } else {
+        options = a;
+        context = b;
+    }
+    JSValue extras = jsUndefined();
+    auto* span = tracerStartSpan(globalObject, tracer, callFrame->argument(0), options, context, &extras);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (fn.isUndefined()) {
+        // `using span = tracer.startActiveSpan(...)`
+        JSValue prev = JSValue::decode(Bun__Telemetry__enter(globalObject, JSValue::encode(span)));
+        span->field(JSTelemetrySpan::Field::Restore).set(vm, span, prev ? prev : jsUndefined());
+        return JSValue::encode(span);
+    }
+    JSValue prev = JSValue::decode(Bun__Telemetry__enterWithExtras(globalObject, JSValue::encode(span), JSValue::encode(extras.isCell() ? extras : JSValue())));
+    MarkedArgumentBuffer args;
+    args.append(span);
+    JSValue result = call(globalObject, fn, jsUndefined(), args, "startActiveSpan"_s);
+    Bun__Telemetry__exit(globalObject, JSValue::encode(prev));
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(result);
+}
+
+const ClassInfo JSTelemetryTracer::s_info = { "Tracer"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTelemetryTracer) };
+
+template<typename, SubspaceAccess mode>
+GCClient::IsoSubspace* JSTelemetryTracer::subspaceFor(VM& vm)
+{
+    return WebCore::subspaceForImpl<JSTelemetryTracer, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSTelemetryTracer, m_subspaceForJSTelemetryTracer));
+}
+
+JSTelemetryTracer* JSTelemetryTracer::create(VM& vm, Zig::GlobalObject* globalObject, uint16_t scopeId, JSValue name, JSValue version)
+{
+    // One structure per tracer is fine: tracers are long-lived singletons per library.
+    Structure* structure = Structure::create(vm, globalObject, globalObject->objectPrototype(), TypeInfo(ObjectType, StructureFlags), info());
+    auto* tracer = new (NotNull, allocateCell<JSTelemetryTracer>(vm)) JSTelemetryTracer(vm, structure);
+    tracer->finishCreation(vm);
+    tracer->m_scope = scopeId;
+    tracer->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "startSpan"_s), 1, jsTelemetryTracerStartSpan, ImplementationVisibility::Public, NoIntrinsic, &signatureTelemetryTracerStartSpan, static_cast<unsigned>(PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
+    tracer->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "startActiveSpan"_s), 2, jsTelemetryTracerStartActiveSpan, ImplementationVisibility::Public, NoIntrinsic, static_cast<unsigned>(PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
+    tracer->putDirect(vm, vm.propertyNames->name, name, static_cast<unsigned>(PropertyAttribute::ReadOnly));
+    tracer->putDirect(vm, Identifier::fromString(vm, "version"_s), version, static_cast<unsigned>(PropertyAttribute::ReadOnly));
+    return tracer;
+}
+
+// createTracer(scopeId, name, version)
+JSC_DEFINE_HOST_FUNCTION(jsTelemetryCreateTracer, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    JSValue idV = callFrame->argument(0);
+    uint16_t scopeId = idV.isInt32() ? static_cast<uint16_t>(idV.asInt32()) : Bun__Telemetry__userScope();
+    return JSValue::encode(JSTelemetryTracer::create(globalObject->vm(), globalObject, scopeId, callFrame->argument(1), callFrame->argument(2)));
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsTelemetryCreateBinding, (JSGlobalObject * lexicalGlobalObject, CallFrame*))
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -661,7 +1104,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryNativeSpanOp, (JSGlobalObject * lexicalGloba
     case 0: { // setAttribute(key, value)
         if (!a.isString())
             break;
-        BunAttrRef ref {};
+        BunAttrRef ref;
         if (!fillValue(globalObject, sc, ref, b, true))
             break;
         RETURN_IF_EXCEPTION(scope, {});
@@ -747,9 +1190,17 @@ static void endSpan(Zig::GlobalObject* globalObject, JSTelemetrySpan* span, uint
 
     AttrScratch sc;
     Vector<BunAttrRef, 16> attrs;
+    EncodedAttrs enc;
+    unsigned dropped = static_cast<uint32_t>(state) >> 8;
     JSValue attrsV = span->get(JSTelemetrySpan::Field::Attributes);
-    if (attrsV.isCell())
-        gatherAttrs(globalObject, sc, uncheckedDowncast<JSArray>(attrsV.asCell()), attrs);
+    if (attrsV.isCell()) {
+        uint32_t valueLengthLimit;
+        unsigned limit = Bun__Telemetry__attributeLimits(&valueLengthLimit);
+        if (valueLengthLimit < 96) [[unlikely]]
+            gatherAttrs(globalObject, sc, uncheckedDowncast<JSArray>(attrsV.asCell()), attrs);
+        else
+            dropped += gatherAttrsFast(globalObject, sc, uncheckedDowncast<JSArray>(attrsV.asCell()), enc, attrs, limit);
+    }
 
     JSValue nameV = span->get(JSTelemetrySpan::Field::Name);
     const StringImpl* name = nameV.isString() ? implOf(globalObject, asString(nameV)) : nullptr;
@@ -765,7 +1216,10 @@ static void endSpan(Zig::GlobalObject* globalObject, JSTelemetrySpan* span, uint
         { nullptr, 0, 0 },
         nullptr,
         0,
-        static_cast<uint32_t>(static_cast<uint32_t>(state) >> 8),
+        dropped,
+        enc.bytes.begin(),
+        static_cast<uint32_t>(enc.bytes.size()),
+        enc.count,
         nullptr,
         0,
         nullptr,

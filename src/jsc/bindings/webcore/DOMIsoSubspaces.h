@@ -57,6 +57,7 @@ public:
     IsoSubspace* m_subspaceForBunInspectorConnection { nullptr };
     IsoSubspace* m_subspaceForJSNextTickQueue { nullptr };
     IsoSubspace* m_subspaceForJSTelemetrySpan { nullptr };
+    IsoSubspace* m_subspaceForJSTelemetryTracer { nullptr };
     IsoSubspace* m_subspaceForJSSocketHandlers { nullptr };
     IsoSubspace* m_subspaceForTTYWrapObject { nullptr };
     IsoSubspace* m_subspaceForNapiHandleScopeImpl { nullptr };

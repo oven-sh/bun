@@ -29,6 +29,35 @@ describe.concurrent("node-module-module", () => {
     expect(Array.isArray(require("module").globalPaths)).toBe(true);
   });
 
+  test("Module._initPaths() rebuilds globalPaths from HOME/USERPROFILE, NODE_PATH and execPath", async () => {
+    const delimiter = isWindows ? ";" : ":";
+    const home = isWindows ? "C:\\Users\\someone" : "/home/someone";
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const M = require("module");
+         const path = require("path");
+         M._initPaths();
+         const first = M.globalPaths;
+         process.env.NODE_PATH = ["", "/a", "", "rel", ""].join(${JSON.stringify(delimiter)});
+         process.env.HOME = process.env.USERPROFILE = "";
+         M._initPaths();
+         const prefix = ${isWindows} ? path.resolve(process.execPath, "..") : path.resolve(process.execPath, "..", "..");
+         console.log(JSON.stringify({ first, second: M.globalPaths, sameObject: first === M.globalPaths, expectedLib: path.resolve(prefix, "lib", "node") }));`,
+      ],
+      env: { ...bunEnv, HOME: home, USERPROFILE: home, NODE_PATH: "" },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const { first, second, sameObject, expectedLib } = JSON.parse(stdout);
+    expect(first).toEqual([path.resolve(home, ".node_modules"), path.resolve(home, ".node_libraries"), expectedLib]);
+    expect(second).toEqual(["/a", "rel", expectedLib]);
+    expect(sameObject).toBe(false);
+    expect(exitCode).toBe(0);
+  });
+
   test("Module._findPath propagates an error thrown by an onResolve plugin", async () => {
     // Plugins are process-global; run in a child so the throwing resolver can't affect other tests.
     await using proc = Bun.spawn({

@@ -18,6 +18,7 @@
 
 #include "PathInlines.h"
 #include "ZigGlobalObject.h"
+#include "BunProcess.h"
 #include "headers.h"
 #include "ErrorCode.h"
 
@@ -32,6 +33,7 @@ BUN_DECLARE_HOST_FUNCTION(Bun__JSSourceMap__find);
 
 BUN_DECLARE_HOST_FUNCTION(Resolver__nodeModulePathsForJS);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionFindPath);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionInitPaths);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIsBuiltinModule);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor);
@@ -473,6 +475,94 @@ PathResolveModule getParent(VM& vm, JSGlobalObject* global, JSValue maybe_parent
         value.filename = filename.toString(global);
     }
     RELEASE_AND_RETURN(scope, value);
+}
+
+static JSValue pathResolve(JSGlobalObject* globalObject, std::initializer_list<JSValue> parts)
+{
+    MarkedArgumentBuffer args;
+    for (JSValue part : parts)
+        args.append(part);
+    constexpr bool isWindows =
+#if OS(WINDOWS)
+        true;
+#else
+        false;
+#endif
+    return JSValue::decode(Bun__Path__resolve(globalObject, isWindows, args.data(), args.size()));
+}
+
+// `Module._initPaths()`: compatibility stub that recomputes `Module.globalPaths`
+// from HOME/USERPROFILE, NODE_PATH and process.execPath the way Node does. It
+// does not affect Bun's resolver.
+// https://github.com/nodejs/node/blob/v24.0.0/lib/internal/modules/cjs/loader.js#L1867
+JSC_DEFINE_HOST_FUNCTION(jsFunctionInitPaths, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame*))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSObject* env = globalObject->processEnvObject();
+    RETURN_IF_EXCEPTION(scope, {});
+#if OS(WINDOWS)
+    JSValue homeDir = env->get(globalObject, Identifier::fromString(vm, "USERPROFILE"_s));
+#else
+    JSValue homeDir = env->get(globalObject, Identifier::fromString(vm, "HOME"_s));
+#endif
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue nodePath = env->get(globalObject, Identifier::fromString(vm, "NODE_PATH"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue execPath = globalObject->processObject()->get(globalObject, Identifier::fromString(vm, "execPath"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+
+    JSValue dotdot = jsNontrivialString(vm, ".."_s);
+    // process.execPath is $PREFIX/bin/node except on Windows where it is $PREFIX\node.exe.
+#if OS(WINDOWS)
+    JSValue prefixDir = pathResolve(globalObject, { execPath, dotdot });
+#else
+    JSValue prefixDir = pathResolve(globalObject, { execPath, dotdot, dotdot });
+#endif
+    RETURN_IF_EXCEPTION(scope, {});
+
+    JSArray* paths = JSC::constructEmptyArray(globalObject, nullptr, 0);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    bool hasNodePath = nodePath.toBoolean(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (hasNodePath) {
+        String nodePathString = nodePath.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+#if OS(WINDOWS)
+        constexpr char16_t delimiter = ';';
+#else
+        constexpr char16_t delimiter = ':';
+#endif
+        for (auto entry : StringView(nodePathString).split(delimiter)) {
+            paths->push(globalObject, jsString(vm, entry.toString()));
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+    }
+
+    bool hasHomeDir = homeDir.toBoolean(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (hasHomeDir) {
+        JSValue nodeModules = pathResolve(globalObject, { homeDir, jsNontrivialString(vm, ".node_modules"_s) });
+        RETURN_IF_EXCEPTION(scope, {});
+        paths->push(globalObject, nodeModules);
+        RETURN_IF_EXCEPTION(scope, {});
+        JSValue nodeLibraries = pathResolve(globalObject, { homeDir, jsNontrivialString(vm, ".node_libraries"_s) });
+        RETURN_IF_EXCEPTION(scope, {});
+        paths->push(globalObject, nodeLibraries);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    JSValue libNode = pathResolve(globalObject, { prefixDir, jsNontrivialString(vm, "lib"_s), jsNontrivialString(vm, "node"_s) });
+    RETURN_IF_EXCEPTION(scope, {});
+    paths->push(globalObject, libNode);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    JSObject* moduleObject = globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject);
+    moduleObject->putDirect(vm, Identifier::fromString(vm, "globalPaths"_s), paths, 0);
+    return JSValue::encode(jsUndefined());
 }
 
 // https://github.com/nodejs/node/blob/40ef9d541ed79470977f90eb445c291b95ab75a0/lib/internal/modules/cjs/loader.js#L895
@@ -953,7 +1043,7 @@ _cache                  getModuleCacheObject              PropertyCallback
 _debug                  getModuleDebugObject              PropertyCallback
 _extensions             getModuleExtensionsObject         PropertyCallback
 _findPath                jsFunctionFindPath               Function 3
-_initPaths              JSBuiltin                         Function|Builtin 0
+_initPaths              jsFunctionInitPaths               Function 0
 _load                   jsFunctionLoad                    Function 1
 _nodeModulePaths        Resolver__nodeModulePathsForJS    Function 1
 _pathCache              getPathCacheObject                PropertyCallback

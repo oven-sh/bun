@@ -233,6 +233,8 @@ public:
         m_sql = sql;
         m_sqlLen = len;
     }
+    /// The sqlite result code that made this query fail, when the caller has it.
+    void setError(int rc) { m_rc = rc; }
 
 private:
     NEVER_INLINE void begin(JSC::JSGlobalObject* globalObject)
@@ -249,8 +251,16 @@ private:
             sql = sqlite3_sql(m_stmt);
             len = sql ? strlen(sql) : 0;
         }
-        bool failed = !!m_scope.exception();
-        Bun__Telemetry__sqliteEnd(m_span, sql, len, failed ? (m_db ? sqlite3_extended_errcode(m_db) : SQLITE_ERROR) : 0, failed && m_db ? sqlite3_errmsg(m_db) : nullptr);
+        bool failed = m_rc != SQLITE_OK || !!m_scope.exception();
+        int rc = m_rc;
+        if (failed && rc == SQLITE_OK) {
+            rc = m_db ? sqlite3_extended_errcode(m_db) : SQLITE_ERROR;
+            // The error code reflects the most recent sqlite3_* call, which an
+            // error path may have followed with a successful finalize/reset.
+            if (rc == SQLITE_OK || rc == SQLITE_ROW || rc == SQLITE_DONE)
+                rc = SQLITE_ERROR;
+        }
+        Bun__Telemetry__sqliteEnd(m_span, sql, len, rc, failed && m_db ? sqlite3_errmsg(m_db) : nullptr);
         m_span = 0;
     }
 
@@ -259,6 +269,7 @@ private:
     sqlite3_stmt* m_stmt { nullptr };
     const char* m_sql { nullptr };
     size_t m_sqlLen { 0 };
+    int m_rc { SQLITE_OK };
     uint64_t m_span { 0 };
 };
 
@@ -1637,6 +1648,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
     }
 
     if (rc != SQLITE_OK && rc != SQLITE_DONE) [[unlikely]] {
+        telemetry.setError(rc);
         throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, db));
         return {};
     }
@@ -1770,6 +1782,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
         // a span here so failed queries show up in traces.
         Bun::SQLiteQuerySpan telemetry(lexicalGlobalObject, scope, db);
         telemetry.setSQL(reinterpret_cast<const char*>(utf8.span().data()), utf8.span().size());
+        telemetry.setError(sqlite3_extended_errcode(db));
         throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, db));
         return {};
     }
@@ -2318,6 +2331,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
     int statusCode = sqlite3_reset(stmt);
 
     if (statusCode != SQLITE_OK) [[unlikely]] {
+        telemetry.setError(statusCode);
         throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, sqlite3_db_handle(stmt)));
         return {};
     }
@@ -2386,6 +2400,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
     }
 
     if (status != SQLITE_DONE && status != SQLITE_OK) [[unlikely]] {
+        telemetry.setError(status);
         throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, sqlite3_db_handle(stmt)));
         sqlite3_reset(stmt);
         return {};
@@ -2415,6 +2430,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionGet, (JSC::JSGlob
 
     int statusCode = sqlite3_reset(stmt);
     if (statusCode != SQLITE_OK) [[unlikely]] {
+        telemetry.setError(statusCode);
         throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, sqlite3_db_handle(stmt)));
         return {};
     }
@@ -2449,6 +2465,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionGet, (JSC::JSGlob
     if (status == SQLITE_DONE || status == SQLITE_OK) {
         RELEASE_AND_RETURN(scope, JSValue::encode(result));
     } else {
+        telemetry.setError(status);
         throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, sqlite3_db_handle(stmt)));
         sqlite3_reset(stmt);
         return {};
@@ -2471,6 +2488,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows, (JSC::JSGlo
 
     int statusCode = sqlite3_reset(stmt);
     if (statusCode != SQLITE_OK) [[unlikely]] {
+        telemetry.setError(statusCode);
         throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, sqlite3_db_handle(stmt)));
         sqlite3_reset(stmt);
         return {};
@@ -2538,6 +2556,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows, (JSC::JSGlo
     }
 
     if (status != SQLITE_DONE && status != SQLITE_OK) [[unlikely]] {
+        telemetry.setError(status);
         throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, sqlite3_db_handle(stmt)));
         sqlite3_reset(stmt);
         return {};
@@ -2562,6 +2581,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRawRows, (JSC::JS
 
     int statusCode = sqlite3_reset(stmt);
     if (statusCode != SQLITE_OK) [[unlikely]] {
+        telemetry.setError(statusCode);
         throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, sqlite3_db_handle(stmt)));
         sqlite3_reset(stmt);
         return {};
@@ -2630,6 +2650,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRawRows, (JSC::JS
     }
 
     if (status != SQLITE_DONE && status != SQLITE_OK) [[unlikely]] {
+        telemetry.setError(status);
         throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, sqlite3_db_handle(stmt)));
         sqlite3_reset(stmt);
         return {};
@@ -2655,6 +2676,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun, (JSC::JSGlob
 
     int statusCode = sqlite3_reset(stmt);
     if (statusCode != SQLITE_OK) [[unlikely]] {
+        telemetry.setError(statusCode);
         throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, sqlite3_db_handle(stmt)));
         return {};
     }
@@ -2687,6 +2709,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun, (JSC::JSGlob
     }
 
     if (status != SQLITE_DONE && status != SQLITE_OK) [[unlikely]] {
+        telemetry.setError(status);
         throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, sqlite3_db_handle(stmt)));
         sqlite3_reset(stmt);
         return {};

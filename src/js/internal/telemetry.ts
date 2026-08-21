@@ -243,7 +243,8 @@ function serializeBaggage(bag: any): string {
   const parts: string[] = [];
   for (const [k, e] of bag.getAllEntries()) {
     let s = encodeURIComponent(k) + "=" + encodeURIComponent(e.value);
-    if (e.metadata !== undefined) s += ";" + String(e.metadata);
+    const metadata = e.metadata;
+    if (metadata !== undefined) s += ";" + String(metadata);
     parts.push(s);
   }
   return parts.join(",");
@@ -278,11 +279,12 @@ const propagator = {
     const [span, extras] = unpackContext(context ?? activeContext());
     if (span && flags & 1) {
       const ctx = span.spanContext();
-      if (ctx.traceId && ctx.traceId !== "00000000000000000000000000000000") {
+      const traceId = ctx.traceId;
+      if (traceId && traceId !== "00000000000000000000000000000000") {
         setter.set(
           carrier,
           "traceparent",
-          "00-" + ctx.traceId + "-" + ctx.spanId + "-" + (ctx.traceFlags & 0xff).toString(16).padStart(2, "0"),
+          "00-" + traceId + "-" + ctx.spanId + "-" + (ctx.traceFlags & 0xff).toString(16).padStart(2, "0"),
         );
         const ts = ctx.traceState;
         if (ts) setter.set(carrier, "tracestate", typeof ts === "string" ? ts : ts.serialize());

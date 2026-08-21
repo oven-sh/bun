@@ -20,6 +20,7 @@ Use `bun:test` with files that end in `*.test.{ts,js,jsx,tsx,mjs,cjs}`. If it's 
 
 - **Do not write flaky tests**. Unless explicitly asked, **never wait for time to pass in tests**. Always wait for the condition to be met instead of waiting for an arbitrary amount of time. **Never use hardcoded port numbers**. Always use `port: 0` to get a random port.
 - **Prefer concurrent tests over sequential tests**: When multiple tests in the same file spawn processes or write files, make them concurrent with `test.concurrent` or `describe.concurrent` unless it's very difficult to make them concurrent.
+- **In a test that expects an object to be collected, the callbacks that run last must not share a scope with that object.** JSC scans the native stack conservatively, and a pointer to the JS function that native code called most recently (an event handler, a timer callback, a promise reaction) can stay in a live native frame for many event loop turns. A function keeps its whole scope alive, so a callback declared next to the object keeps the object alive too. Declare such callbacks in a scope that does not contain the object (see "server stays alive while a websocket is connected" in `test/js/bun/http/bun-server.test.ts`).
 
 ### Spawning processes
 

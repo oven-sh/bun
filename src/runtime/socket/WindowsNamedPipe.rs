@@ -590,15 +590,16 @@ impl WindowsNamedPipe {
         }
 
         if let Some(err) = status.to_error(bun_sys::Tag::connect) {
-            // On async connect failure the
-            // leaked `Box<uv::Pipe>` was never adopted by `writer.source`
-            // (`start_with_pipe` only runs on the success branch below), so
-            // `on_error → close → writer.end()` is a no-op for it. Reclaim it
-            // here via `discard_unadopted_pipe` (which schedules `uv_close` and
-            // `Box::from_raw`s in the callback), mirroring the synchronous
-            // early-error paths in `connect`/`open`/`get_accepted_by`.
+            // The writer never adopted the pipe (`start_with_pipe` only runs on
+            // the success branch below), so `on_error → close → writer.end()`
+            // has no source to close: it neither frees the pipe nor reports
+            // `on_close`. Do both here. `discard_unadopted_pipe` schedules the
+            // `uv_close` that frees the `Box`, like the synchronous early-error
+            // paths in `connect`/`open`/`get_accepted_by`, and `on_close` is
+            // what makes the owner (`handlers.on_close`) release its ref.
             self.discard_unadopted_pipe();
             self.on_error(err);
+            self.on_close();
             self.deref();
             return;
         }

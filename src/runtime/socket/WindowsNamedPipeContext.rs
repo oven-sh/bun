@@ -31,8 +31,10 @@ pub struct WindowsNamedPipeContext {
     // Intrusive refcount; on zero → `schedule_deinit` (deferred free), not
     // immediate `Box::from_raw`.
     ref_count: Cell<u32>,
-    // `socket` is deref'd manually in `Drop` before the `named_pipe` field
-    // drops — teardown order must stay socket.deref() then named_pipe deinit.
+    // Holds `create()`'s +1 on the wrapped socket while not `None`. `on_close`
+    // and `fail_connect` release it and clear this; anything still here is
+    // deref'd in `Drop` before the `named_pipe` field drops — teardown order
+    // must stay socket.deref() then named_pipe deinit.
     socket: SocketType,
     /// `pub(super)` so `WindowsNamedPipeListeningContext::on_client_connect`
     /// (sibling module) can call `get_accepted_by` on the freshly-created
@@ -261,12 +263,30 @@ impl WindowsNamedPipeContext {
                 s.handle_error(js_err)
             });
         } else {
-            match_socket!(socket, |s: NewSocket<SSL>| NewSocket::handle_connect_error(
-                s,
-                err.errno as i32,
-                0
-            ));
+            Self::fail_connect(this, err.errno as i32);
         }
+    }
+
+    /// `connectError` is the last event a socket whose connect failed receives:
+    /// `handle_connect_error` releases its connecting ref, and no `on_close`
+    /// follows for it. So this context is done with the socket too: release
+    /// `create()`'s +1 now and forget the socket, so that neither the pipe's
+    /// `on_close` (which still fires on the async failure path) nor `Drop`
+    /// touches it again.
+    fn fail_connect(this: *mut Self, errno: i32) {
+        // SAFETY: see `on_open`. Cleared before `connectError` runs JS, which may
+        // connect the same socket again through a new context.
+        let socket = unsafe {
+            let socket = (*this).socket;
+            (*this).socket = SocketType::None;
+            socket
+        };
+        match_socket!(socket, |s: NewSocket<SSL>| {
+            let failed = NewSocket::handle_connect_error(s, errno, 0);
+            // Release the +1 ref taken in `create()`.
+            s.get().deref();
+            failed
+        });
     }
 
     fn on_timeout(this: *mut Self) {
@@ -327,11 +347,7 @@ impl WindowsNamedPipeContext {
     /// errdefer shared by `open`/`connect`: fail the wrapped JS socket, then
     /// release the only ref `create()` handed us.
     fn fail_and_release(this: *mut Self) {
-        // SAFETY: `this` is live; `create()` returned it and no deref has fired yet.
-        // +1 ref held on the inner socket; live until `Self::deref` below.
-        match_socket!(unsafe { (*this).socket }, |s: NewSocket<SSL>| {
-            NewSocket::handle_connect_error(s, SystemErrno::ENOENT as i32, 0)
-        });
+        Self::fail_connect(this, SystemErrno::ENOENT as i32);
         // SAFETY: `this` was just returned from `create()` (refcount==1);
         // release the only ref on the errdefer path.
         unsafe { Self::deref(this) };

@@ -307,14 +307,16 @@ describe.concurrent("BunFile does not cache a failed stat", () => {
     const path = join(dir, "f.txt");
     const fd = openSync(path, "r");
     const file = Bun.file(fd);
-
-    expect(await file.exists()).toBe(true);
-    expect(file.lastModified).toBe(Bun.file(path).lastModified);
-
-    closeSync(fd);
+    let whileOpen: { exists: boolean; lastModified: number };
+    try {
+      whileOpen = { exists: await file.exists(), lastModified: file.lastModified };
+    } finally {
+      closeSync(fd);
+    }
     const existsAfterClose = file.exists();
     const sizeAfterClose = file.size;
 
+    expect(whileOpen).toEqual({ exists: true, lastModified: Bun.file(path).lastModified });
     expect({ exists: await existsAfterClose, size: sizeAfterClose }).toEqual({ exists: false, size: 0 });
   });
 });

@@ -463,9 +463,12 @@ mod errno_name_tests {
 
     #[test]
     fn io_error_to_errno() {
+        // On POSIX the discriminant is the errno value.
         #[cfg(not(windows))]
         assert_eq!(
-            SystemErrno::from_io_error(&std::io::Error::from_raw_os_error(libc::ENOMEM)),
+            SystemErrno::from_io_error(&std::io::Error::from_raw_os_error(
+                SystemErrno::ENOMEM as i32
+            )),
             Some(SystemErrno::ENOMEM)
         );
         #[cfg(windows)]

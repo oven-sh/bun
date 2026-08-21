@@ -940,6 +940,7 @@ describe.concurrent("--isolate experimental global reuse", () => {
         import { test, expect } from "bun:test";
         test("a", () => {
           expect(process.listenerCount("warning")).toBe(1);
+          process.setMaxListeners(0);
         });
       `,
       "b.test.ts": `
@@ -948,8 +949,10 @@ describe.concurrent("--isolate experimental global reuse", () => {
         test("b", () => {
           console.log("RESET_STATS=" + JSON.stringify(testIsolationResetStats()));
           // The Process object survives the reuse; the scrub must reinstall the
-          // bootstrap 'warning' printer that removeAllListeners() stripped.
+          // bootstrap 'warning' printer that removeAllListeners() stripped and
+          // reset the max-listeners threshold file a raised.
           expect(process.listenerCount("warning")).toBe(1);
+          expect(process.getMaxListeners()).toBe(10);
           process.emitWarning("reuse-warning-check");
         });
       `,

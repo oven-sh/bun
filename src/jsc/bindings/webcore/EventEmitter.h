@@ -74,7 +74,7 @@ public:
 
     void setMaxListeners(unsigned count);
 
-    bool fireEventListeners(const Identifier& eventName, const MarkedArgumentBuffer& arguments);
+    bool fireEventListeners(const Identifier& eventName, const MarkedArgumentBuffer& arguments, WTF::NakedPtr<JSC::Exception>* returnedException = nullptr);
     bool isFiringEventListeners() const;
 
     const EventEmitterData* eventTargetData() const;

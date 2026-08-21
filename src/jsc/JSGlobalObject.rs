@@ -1612,11 +1612,7 @@ unsafe extern "C" {
     ) -> *mut JSGlobalObject;
 }
 
-/// Clears the current async context for the guard's lifetime, restoring it on drop.
-///
-/// Top-level microtask drains and GC must not observe an installed context: the
-/// propagation machinery assumes the ambient context is undefined there, which is
-/// why `JSNextTickQueue` resets the slot after draining.
+/// Clears the async context for the guard's lifetime (top-level drains and GC assume it is undefined), restoring it on drop; `previous` stays GC-visible because this guard only ever lives on the stack, which JSC scans conservatively.
 pub struct ClearedAsyncContextScope<'a> {
     global: &'a JSGlobalObject,
     previous: JSValue,

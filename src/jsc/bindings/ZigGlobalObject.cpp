@@ -1041,9 +1041,6 @@ void GlobalObject::reportUncaughtExceptionAtEventLoop(JSGlobalObject* globalObje
 
 extern "C" void Bun__handleHandledPromise(Zig::GlobalObject* JSGlobalObject, JSC::JSPromise* promise);
 
-// Entries in m_aboutToBeNotifiedRejectedPromises are either the rejected
-// JSPromise itself, or an AsyncContextFrame pairing it (as `callback`) with
-// the async context that was active when it was rejected.
 static JSC::JSPromise* rejectedPromiseFromEntry(JSC::JSCell* entry, JSC::JSValue* asyncContext = nullptr)
 {
     if (auto* frame = dynamicDowncast<AsyncContextFrame>(entry)) {
@@ -1061,12 +1058,7 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* 
 
     switch (operation) {
     case JSPromiseRejectionOperation::Reject: {
-        // Snapshot the async context at rejection time, so that
-        // "unhandledRejection" listeners observe the rejected promise's
-        // AsyncLocalStorage context, like Node.js. The event itself is only
-        // emitted later (at the end of the tick, from handleRejectedPromises),
-        // by which point the context that was live here has been unwound.
-        // Wraps the promise in an AsyncContextFrame only when a context is active.
+        // Snapshot the rejection-time async context; the event is only emitted at the end of the tick.
         JSC::JSCell* entry = AsyncContextFrame::withAsyncContextIfNeeded(obj, promise).asCell();
         globalObj->m_aboutToBeNotifiedRejectedPromises.append(obj->vm(), globalObj, entry);
         break;
@@ -3369,10 +3361,7 @@ void GlobalObject::handleRejectedPromises()
                 continue;
             inflight.index = i + 1;
 
-            // Emit the event in the context the promise was rejected in, the way
-            // Node exchanges the context frame around this dispatch. Entries
-            // rejected with no context replay `undefined` rather than inherit the
-            // drain's: it can be re-entered synchronously from user code.
+            // Contextless entries replay undefined rather than inherit a (possibly re-entrant) drain's context.
             InternalFieldTuple* asyncContextData = nullptr;
             JSC::JSValue restoreAsyncContext;
             if (asyncContext || isAsyncContextTrackingEnabled()) {
@@ -3385,9 +3374,7 @@ void GlobalObject::handleRejectedPromises()
 
             Bun__handleRejectedPromise(this, promise);
 
-            // Any uncaught exception that leaks out of the dispatch is reported
-            // after restoring, like Node's processPromiseRejections does in its
-            // finally before the throw reaches triggerUncaughtException.
+            // Restore before reporting anything that escaped the dispatch, as Node does.
             if (asyncContextData)
                 asyncContextData->putInternalField(virtual_machine, 0, restoreAsyncContext);
 

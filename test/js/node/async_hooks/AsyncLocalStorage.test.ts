@@ -1251,6 +1251,14 @@ describe("async generators", () => {
 });
 
 describe.concurrent("unhandledRejection async context", () => {
+  const node = nodeExe();
+  const runtimes: [string, string][] = node
+    ? [
+        ["bun", bunExe()],
+        ["node", node],
+      ]
+    : [["bun", bunExe()]];
+
   // Bun replays the context the promise was *rejected* in. Node >= 24 (and Node 22
   // with --experimental-async-context-frame) does the same; Node 22's default
   // async_hooks-based AsyncLocalStorage replays the *creation* context instead.
@@ -1358,16 +1366,15 @@ describe.concurrent("unhandledRejection async context", () => {
   // (lib/internal/process/promises.js), so the uncaughtException handler sees it too —
   // but it drains microtasks outside that window, so a continuation registered with no
   // context must not pick the store up.
-  test.each([
-    ["bun", bunExe()],
-    ["node", nodeExe()],
-  ])("--unhandled-rejections=strict keeps the context for uncaughtException only (%s)", async (_name, exe) => {
-    await using proc = Bun.spawn({
-      cmd: [
-        exe,
-        "--unhandled-rejections=strict",
-        "-e",
-        `const { AsyncLocalStorage } = require("node:async_hooks");
+  test.each(runtimes)(
+    "--unhandled-rejections=strict keeps the context for uncaughtException only (%s)",
+    async (_name, exe) => {
+      await using proc = Bun.spawn({
+        cmd: [
+          exe,
+          "--unhandled-rejections=strict",
+          "-e",
+          `const { AsyncLocalStorage } = require("node:async_hooks");
         const als = new AsyncLocalStorage();
 
         let resumeDrainedMicrotask;
@@ -1382,25 +1389,23 @@ describe.concurrent("unhandledRejection async context", () => {
           resumeDrainedMicrotask();
         });
         als.run(7, () => { Promise.reject(new Error("strict")); });`,
-      ],
-      env: bunEnv,
-      stderr: "pipe",
-    });
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
 
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout).toBe("uncaughtException store: 7\ndrained microtask store: undefined\n");
-    expect(exitCode).toBe(0);
-  });
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("uncaughtException store: 7\ndrained microtask store: undefined\n");
+      expect(exitCode).toBe(0);
+    },
+  );
 
   // A throwing unhandledRejection listener halts iteration (subsequent listeners are
   // skipped) and reaches uncaughtException with the slot cleared — in Node too, even
   // with a persistent top-level enterWith("Y"), so the observable semantic is
   // "undefined", not "whatever the drain's ambient was". The strict-mode direct
   // dispatch above is the only path where uncaughtException sees the promise's context.
-  test.each([
-    ["bun", bunExe()],
-    ["node", nodeExe()],
-  ])(
+  test.each(runtimes)(
     "a throwing unhandledRejection listener halts later listeners and reaches uncaughtException with the slot cleared (%s)",
     async (_name, exe) => {
       await using proc = Bun.spawn({

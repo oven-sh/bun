@@ -1,4 +1,6 @@
 process.exitCode = 1;
+// Runs under node as well as bun (see AsyncLocalStorage-tracking.test.ts), so
+// this stays a plain CommonJS script.
 const { AsyncLocalStorage } = require("async_hooks");
 
 const asyncLocalStorage = new AsyncLocalStorage();
@@ -20,7 +22,12 @@ const observed = {};
 let remaining = Object.keys(expected).length;
 
 process.on("unhandledRejection", reason => {
-  observed[reason.message] = asyncLocalStorage.getStore()?.test ?? null;
+  const key = reason.message;
+  if (!(key in expected) || key in observed) {
+    console.error(`FAIL: unexpected or duplicate unhandledRejection for ${JSON.stringify(key)}`);
+    process.exit(1);
+  }
+  observed[key] = asyncLocalStorage.getStore()?.test ?? null;
   remaining--;
 });
 

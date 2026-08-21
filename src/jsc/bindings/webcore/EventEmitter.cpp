@@ -137,19 +137,7 @@ bool EventEmitter::emit(const Identifier& eventType, const MarkedArgumentBuffer&
 
 bool EventEmitter::emit(const Identifier& eventType, const MarkedArgumentBuffer& arguments, WTF::NakedPtr<JSC::Exception>& returnedException)
 {
-    auto* data = eventTargetData();
-    if (!data)
-        return false;
-
-    auto* listenersVector = data->eventListenerMap.find(eventType);
-    if (!listenersVector) [[unlikely]]
-        return false;
-
-    bool prevFiringEventListeners = data->isFiringEventListeners;
-    data->isFiringEventListeners = true;
-    auto fired = innerInvokeEventListeners(eventType, *listenersVector, arguments, &returnedException);
-    data->isFiringEventListeners = prevFiringEventListeners;
-    return fired;
+    return fireEventListeners(eventType, arguments, &returnedException);
 }
 
 Vector<Identifier> EventEmitter::getEventNames()
@@ -199,7 +187,7 @@ Vector<JSObject*> EventEmitter::getListeners(const Identifier& eventType)
 }
 
 // https://dom.spec.whatwg.org/#concept-event-listener-invoke
-bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedArgumentBuffer& arguments)
+bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedArgumentBuffer& arguments, WTF::NakedPtr<JSC::Exception>* returnedException)
 {
 
     auto* data = eventTargetData();
@@ -222,7 +210,7 @@ bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedA
 
     bool prevFiringEventListeners = data->isFiringEventListeners;
     data->isFiringEventListeners = true;
-    auto fired = innerInvokeEventListeners(eventType, *listenersVector, arguments);
+    auto fired = innerInvokeEventListeners(eventType, *listenersVector, arguments, returnedException);
     data->isFiringEventListeners = prevFiringEventListeners;
     return fired;
 }

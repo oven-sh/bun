@@ -2345,10 +2345,14 @@ it(
   15_000 * ASAN_MULTIPLIER,
 );
 
-// Closed streams must be evicted from maxSessionMemory accounting; a leaking
-// session refuses new streams (ENHANCE_YOUR_CALM) once retained streams exceed
-// the budget. 20k at maxSessionMemory:1 clears the 2 MiB / ~13.8k threshold.
-const STREAM_EVICTION_REQUESTS = 20_000;
+// Closed streams must be evicted from maxSessionMemory accounting, or the session
+// refuses new streams (ENHANCE_YOUR_CALM). maxSessionMemory: 1 is the floor (1 MiB)
+// and each leaked stream retains size_of::<Stream>() (112 bytes today), so a leaking
+// session trips after ~9.4k requests; the total must stay above that on every build.
+// Pipelining makes the cost total / batch round trips, and a healthy session retains
+// at most a batch or two between reads, far below the budget.
+const STREAM_EVICTION_REQUESTS = 12_000;
+const STREAM_EVICTION_BATCH = 50;
 
 it(
   "http2 sessions evict closed streams from maxSessionMemory accounting",
@@ -2387,8 +2391,9 @@ it(
     }
 
     try {
-      for (let i = 0; i < STREAM_EVICTION_REQUESTS; i++) {
-        await Promise.race([request(), sessionFailed.promise]);
+      for (let sent = 0; sent < STREAM_EVICTION_REQUESTS; sent += STREAM_EVICTION_BATCH) {
+        const size = Math.min(STREAM_EVICTION_BATCH, STREAM_EVICTION_REQUESTS - sent);
+        await Promise.race([Promise.all(Array.from({ length: size }, request)), sessionFailed.promise]);
       }
     } finally {
       client.removeAllListeners("goaway");
@@ -2400,7 +2405,7 @@ it(
 
     expect(completed).toBe(STREAM_EVICTION_REQUESTS);
   },
-  30_000 * ASAN_MULTIPLIER,
+  15_000 * ASAN_MULTIPLIER,
 );
 
 it("http2.createServer validates input options", () => {

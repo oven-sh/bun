@@ -269,12 +269,49 @@ export async function extractTarGz(tarball: string, dest: string, stripComponent
       cause: result.error,
     });
   }
-  if (result.status !== 0) {
-    throw new BuildError(`tar extraction failed (exit ${result.status}): ${result.stderr}`, { file: tarball });
+  if (result.status === 0) {
+    const entries = await readdir(dest);
+    assert(entries.length > 0, `tar extracted nothing from ${tarball}`, { hint: "Tarball may be corrupt" });
+    return;
   }
 
-  const entries = await readdir(dest);
-  assert(entries.length > 0, `tar extracted nothing from ${tarball}`, { hint: "Tarball may be corrupt" });
+  // On Windows, the build fails if Developer Mode is off because bsdtar
+  // cannot create symlinks. The only archive that currently hits this is
+  // zstd's two cli-tests/bin symlinks (unzstd, zstdcat), which the build
+  // never reads. Retry without symlinks rather than failing the build.
+  if (process.platform === "win32") {
+    const listResult = spawnSync(tarExe, ["-tzf", tarball], {
+      stdio: ["ignore", "pipe", "pipe"],
+      encoding: "utf8",
+    });
+    const hasSymlinks = (listResult.stdout ?? "").split("\n").some((l) => l.trim().startsWith("l"));
+    // Fallback: listing via libarchive verbose format also uses leading "l" for symlink entries.
+    // If the listing itself failed or had no symlinks, surface the original error.
+    if (listResult.status === 0 && hasSymlinks) {
+      const symlinkPaths = (listResult.stdout ?? "")
+        .split("\n")
+        .filter((l) => l.trim().startsWith("l"))
+        .map((l) => l.trim().split(/\s+/).pop()!)
+        .filter(Boolean);
+
+      const retryArgs = [...args];
+      for (const p of symlinkPaths) retryArgs.push(`--exclude=${p}`);
+      const retryResult = spawnSync(tarExe, retryArgs, {
+        stdio: ["ignore", "ignore", "pipe"],
+        encoding: "utf8",
+      });
+      if (retryResult.status === 0) {
+        if (symlinkPaths.length > 0) {
+          console.warn(`extractTarGz: skipped ${symlinkPaths.length} symlink(s) on Windows: ${symlinkPaths.join(", ")}`);
+        }
+        const entries = await readdir(dest);
+        assert(entries.length > 0, `tar extracted nothing from ${tarball}`, { hint: "Tarball may be corrupt" });
+        return;
+      }
+    }
+  }
+
+  throw new BuildError(`tar extraction failed (exit ${result.status}): ${result.stderr}`, { file: tarball });
 }
 
 /**

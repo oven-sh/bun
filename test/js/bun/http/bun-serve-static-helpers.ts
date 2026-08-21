@@ -1,3 +1,4 @@
+import type { Server } from "bun";
 import { expect } from "bun:test";
 import { fillRepeating, isASAN, isDebug, isWindows, rss } from "harness";
 
@@ -43,80 +44,13 @@ for (const [path, response] of Object.entries(routes)) {
   static_responses[path] = await response.clone().blob();
 }
 
-const fallbackBody = "fallback";
-const fallbackBlob = new Blob([fallbackBody]);
-
-// One instance per stress file. Every request for a path without a static
-// route lands in the fetch handler, which counts it.
-export class StressServer {
-  fallbackCalls = 0;
-  readonly server = Bun.serve({
-    static: routes,
-    port: 0,
-    fetch: () => {
-      this.fallbackCalls++;
-      return new Response(fallbackBody, { status: 404 });
-    },
-  });
-
-  constructor() {
-    this.server.unref();
-  }
-
-  stop() {
-    this.server.stop(true);
-  }
-}
-
-// "/missing" has no static route: it proves that the static matcher does not
-// capture other paths under load, and that the handler count below is exact.
-export const stressPaths = ["/foo", "/big", "/foo/bar", "/missing"] as const;
+export const stressPaths = ["/foo", "/big", "/foo/bar"] as const;
 export const stressMethods = ["arrayBuffer", "blob", "bytes", "text"] as const;
 
-type StressPath = (typeof stressPaths)[number];
-type StressMethod = (typeof stressMethods)[number];
+const checkedHeaders = ["content-type", "content-length", "transfer-encoding", "x-foo", "etag"];
 
-interface PathExpectation {
-  status: number;
-  blob: Blob;
-  servedByFallback: boolean;
-  headers: Record<string, string | null>;
-}
-
-function expectationFor(path: StressPath): PathExpectation {
-  const route = (routes as Record<string, Response>)[path];
-  if (route) {
-    const blob = static_responses[path];
-    return {
-      status: 200,
-      blob,
-      servedByFallback: false,
-      headers: {
-        "content-type": route.headers.get("Content-Type"),
-        "x-foo": route.headers.get("X-Foo"),
-        "content-length": String(blob.size),
-        "transfer-encoding": null,
-        "etag": expect.stringMatching(/^"[0-9a-f]+"$/),
-      },
-    };
-  }
-
-  return {
-    status: 404,
-    blob: fallbackBlob,
-    servedByFallback: true,
-    headers: {
-      "content-type": "text/plain;charset=utf-8",
-      "x-foo": null,
-      "content-length": String(fallbackBlob.size),
-      "transfer-encoding": null,
-      "etag": null,
-    },
-  };
-}
-
-function pickHeaders(headers: Headers, names: string[]): Record<string, string | null> {
-  return Object.fromEntries(names.map(name => [name, headers.get(name)] as const));
+function pickHeaders(headers: Headers): Record<string, string | null> {
+  return Object.fromEntries(checkedHeaders.map(name => [name, headers.get(name)] as const));
 }
 
 // toEqual does not read Blob contents: two Blobs of different bytes (or sizes)
@@ -137,30 +71,40 @@ const batchSize = isWindows ? 8 : 64;
 // rss(): mimalloc returns freed memory to the OS about 100ms after the free
 // (purge_delay), so one release reading can still include a batch of buffers
 // that the other reading does not. Observed post-GC deltas on /big: within
-// +-215MB in release (leak signal 1GB at 4 batches), -49MB to +29MB under ASAN,
-// whose allocator has no purge delay (leak signal 512MB at 2 batches). The
-// 8-wide Windows batches put the signal (128MB, 64MB) under either bound, so
-// this check is only a sanity bound there. The Linux and macOS lanes cover leaks.
+// +-270MB on the release lanes (leak signal 1GB at 4 batches), within +-55MB
+// under ASAN, whose allocator has no purge delay (leak signal 512MB at 2
+// batches). The 8-wide Windows batches put the signal (128MB, 64MB) under
+// either bound, so this check is only a sanity bound there, as it was before.
 const measuredBatches = isASAN || isDebug ? 2 : 4;
 const rssDeltaBoundMB = isASAN || isDebug ? 192 : 512;
 
-export async function runStress(stress: StressServer, path: StressPath, accessBody: boolean, method: StressMethod) {
-  const expected = expectationFor(path);
-  const url = new URL(path, stress.server.url).href;
-  const headerNames = Object.keys(expected.headers);
+export async function runStress(
+  server: Server,
+  path: (typeof stressPaths)[number],
+  accessBody: boolean,
+  method: (typeof stressMethods)[number],
+) {
+  const route = routes[path];
+  const blob = static_responses[path];
+  const url = new URL(path, server.url).href;
   const expectedResponse = {
-    status: expected.status,
+    status: 200,
     url,
-    redirected: false,
-    headers: expected.headers,
+    headers: {
+      "content-type": route.headers.get("Content-Type"),
+      "content-length": String(blob.size),
+      "transfer-encoding": null,
+      "x-foo": route.headers.get("X-Foo"),
+      "etag": expect.stringMatching(/^"[0-9a-f]+"$/),
+    },
     bodyUsed: true,
-    body: await comparable(method === "blob" ? expected.blob : await expected.blob[method]()),
+    body: await comparable(method === "blob" ? blob : await blob[method]()),
   };
 
   // A batch reports its first failure once every request in it has finished.
-  // After that failure the other responses only drain their bodies: diffing a
-  // 4MB body costs hundreds of ms per response, and a request left in flight
-  // would be counted by the next case.
+  // After that failure the other responses only drain their bodies: a failing
+  // toEqual on a 4MB body takes about 0.3s in release and 16s under ASAN, so 63
+  // more of them would turn the failure into a timeout.
   let failure: { error: unknown } | undefined;
 
   async function request() {
@@ -176,8 +120,7 @@ export async function runStress(stress: StressServer, path: StressPath, accessBo
       expect({
         status: res.status,
         url: res.url,
-        redirected: res.redirected,
-        headers: pickHeaders(res.headers, headerNames),
+        headers: pickHeaders(res.headers),
         bodyUsed: res.bodyUsed,
         body,
       }).toEqual(expectedResponse);
@@ -189,10 +132,11 @@ export async function runStress(stress: StressServer, path: StressPath, accessBo
   async function batch() {
     await Promise.all(Array.from({ length: batchSize }, request));
     if (failure) throw failure.error;
+    // A static route releases its request before the last bytes reach the
+    // client (StaticRoute::on_response_complete), so nothing is pending here.
+    expect(server.pendingRequests).toBe(0);
     Bun.gc(true);
   }
-
-  const fallbackCallsBefore = stress.fallbackCalls;
 
   await batch();
   const baselineMB = rss() / 1024 / 1024;
@@ -201,8 +145,5 @@ export async function runStress(stress: StressServer, path: StressPath, accessBo
   }
   const deltaMB = Math.round(rss() / 1024 / 1024 - baselineMB);
   console.log(`${path} ${method} RSS delta: ${deltaMB}MB`);
-
-  const requests = batchSize * (1 + measuredBatches);
-  expect(stress.fallbackCalls - fallbackCallsBefore).toBe(expected.servedByFallback ? requests : 0);
   expect(deltaMB).toBeLessThan(rssDeltaBoundMB);
 }

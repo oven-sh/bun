@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
-import { existsSync } from "fs";
+import { existsSync, lstatSync, readFileSync } from "fs";
 import { rm, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, isWindows, readdirSorted, tempDir } from "harness";
 import { basename, join } from "path";
@@ -115,6 +115,9 @@ it("bun pm cache pack / unpack round-trips exactly the cache entries a lockfile 
   r = await run(["pm", "cache", "unpack", pack, "extra"], package_dir, cache2);
   expect(r.err).toContain("expected exactly one <file>");
   expect(r.code).toBe(1);
+  r = await run(["pm", "cache", "pack", ""], package_dir, cache2);
+  expect(r.err).toContain("expected exactly one <file>");
+  expect(r.code).toBe(1);
 });
 
 it("bun pm cache unpack refuses hostile packs", async () => {
@@ -197,6 +200,9 @@ it("bun pm cache unpack refuses hostile packs", async () => {
   r = await run(["pm", "cache", "unpack", join(dir, "links.pack")], dir, cache);
   expect(r.err).not.toContain("error:");
   expect(r.code).toBe(0);
+  const linkEntry = (await readdirSorted(cache)).find(n => n.startsWith("links@1.0.0"))!;
+  expect(lstatSync(join(cache, linkEntry, "bin", "cli")).isSymbolicLink()).toBeTrue();
+  expect(readFileSync(join(cache, linkEntry, "bin", "cli"), "utf8")).toBe("x");
   await writeFile(
     join(dir, "climb.pack"),
     Buffer.concat([MAGIC, rec(1, "climb@1.0.0", 0, ""), rec(3, "bin/cli", 0o777, "../../victim"), rec(0, "", 0, "")]),

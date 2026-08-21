@@ -336,7 +336,10 @@ pub(crate) fn create_job(global_this: &JSGlobalObject, data: PBKDF2, callback: J
             err: false,
         },
         Pbkdf2Js {
-            callback: Strong::create(callback.with_async_context_if_needed(global_this), global_this),
+            callback: Strong::create(
+                callback.with_async_context_if_needed(global_this),
+                global_this,
+            ),
         },
     );
 }

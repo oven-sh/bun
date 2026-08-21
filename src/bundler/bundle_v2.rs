@@ -3862,10 +3862,13 @@ pub mod bv2_impl {
                 // SAFETY: `transpiler.options.entry_points` is borrowed only for the duration
                 // of `enqueue_entry_points_normal`, which never frees/reallocates it; raw-ptr
                 // sidestep for the `&mut self` overlap.
-                this.enqueue_entry_points_normal(unsafe { &*entry_points })?;
+                let enqueued = this.enqueue_entry_points_normal(unsafe { &*entry_points });
 
-                // Like `run_from_js_in_new_thread`: drain the pool, then report entry point errors.
+                // The runtime and every entry point enqueued so far are already on the
+                // pool, including when enqueueing failed: drain it before any error
+                // returns into the teardown below.
                 this.wait_for_parse();
+                enqueued?;
                 this.dump_pool_stats("parse");
 
                 *minify_duration = (((bun_core::time::nano_timestamp() as i64)
@@ -3996,15 +3999,11 @@ pub mod bv2_impl {
             // enqueueEntryPoints schedules the runtime task before any fallible
             // allocation. If a later allocation fails we must still drain the
             // pool so workers aren't left holding pointers into the caller's
-            // stack-allocated Transpiler.
-            if let Err(err) = this.enqueue_entry_points_normal(entry_points) {
-                this.wait_for_parse();
-                return Err(err);
-            }
-
-            // Even if entry point resolution produced errors we still wait for
-            // all enqueued parse tasks to finish so the graph is consistent.
+            // stack-allocated Transpiler. Entry point resolution errors are
+            // drained the same way so the graph is consistent.
+            let enqueued = this.enqueue_entry_points_normal(entry_points);
             this.wait_for_parse();
+            enqueued?;
 
             Ok(this)
         }
@@ -4034,10 +4033,12 @@ pub mod bv2_impl {
                     return Err(crate::Error::BuildFailed);
                 }
 
-                this.enqueue_entry_points_bake_production(entry_points)?;
+                let enqueued = this.enqueue_entry_points_bake_production(entry_points);
 
-                // Drain the pool, then report entry point errors (as `generate_from_cli` does).
+                // Drain the pool before anything returns into the teardown below (as
+                // `generate_from_cli` does), then report entry point errors.
                 this.wait_for_parse();
+                enqueued?;
 
                 if this.transpiler.log().has_errors() {
                     return Err(crate::Error::BuildFailed);
@@ -4882,6 +4883,22 @@ pub mod bv2_impl {
         }
 
         pub fn deinit_without_freeing_arena(&mut self) {
+            // Parse tasks are the driver's to drain (`wait_for_parse`) on every
+            // exit path: their results need the event loop. Everything else the
+            // bundle put on the pools is joined here, before the graph and the
+            // workers it runs on are freed. `link` schedules the source map
+            // tasks and only `generate_chunks_in_parallel` waits for them, so an
+            // error in between gets here with them still running.
+            debug_assert_eq!(
+                self.graph.pending_items, 0,
+                "BundleV2 torn down with parse tasks in flight"
+            );
+            self.linker.source_maps.line_offset_wait_group.wait();
+            self.linker.source_maps.quoted_contents_wait_group.wait();
+            // A parse task whose IO step finished last is still inside
+            // `schedule` on the worker pool that `pool.deinit()` below frees.
+            self.graph.pool().wait_for_io_tasks();
+
             {
                 // We do this first to make it harder for any dangling pointers to data to be used in there.
                 let on_parse_finalizers = core::mem::take(&mut self.finalizers);
@@ -5006,10 +5023,11 @@ pub mod bv2_impl {
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
-            self.enqueue_entry_points_normal(entry_points)?;
+            let enqueued = self.enqueue_entry_points_normal(entry_points);
 
             // We must wait for all the parse tasks to complete, even if there are errors.
             self.wait_for_parse();
+            enqueued?;
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 

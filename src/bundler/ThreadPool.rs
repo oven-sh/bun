@@ -15,7 +15,7 @@ use bun_alloc::Arena as ThreadLocalArena;
 use bun_collections::{ArrayHashMap, MapEntry};
 use bun_core::{self, env_var, output as Output};
 use bun_sys::Fd;
-use bun_threading::{Mutex, thread_pool as ThreadPoolLib};
+use bun_threading::{Mutex, WaitGroup, thread_pool as ThreadPoolLib};
 
 use crate::cache::{Contents, Entry as CacheEntry};
 use crate::linker_context_mod::StmtList;
@@ -49,6 +49,14 @@ pub struct ThreadPool {
     // `wake_for_idle_events`) take `&self` — so the safe `Deref` projection is
     // sufficient and the per-read `unsafe { p.as_ref() }` disappears.
     pub(crate) io_pool: Option<bun_ptr::ParentRef<ThreadPoolLib::ThreadPool>>,
+    /// One count per parse task handed to `io_pool`, finished when its IO
+    /// callback returns. The IO pool outlives this `ThreadPool`, and the
+    /// callback's last step is to re-schedule the task onto `worker_pool`, so
+    /// teardown joins this ([`Self::wait_for_io_tasks`]) before [`Self::deinit`]
+    /// frees `worker_pool`. `graph.pending_items` cannot stand in for it: it
+    /// reaches zero as soon as the re-scheduled parse completes, which can be
+    /// while the IO callback is still inside `schedule`.
+    io_tasks_in_flight: WaitGroup,
     // Conditionally owned via `worker_pool_is_owned`; kept raw so callers
     // (bundle_v2.rs) can dereference for `wake_for_idle_events()` without a
     // borrow on `ThreadPool`.
@@ -208,6 +216,7 @@ impl ThreadPool {
             } else {
                 None
             },
+            io_tasks_in_flight: WaitGroup::init(),
             // BACKREF: lifetime erased behind the raw pointer.
             v2: std::ptr::from_ref(v2).cast::<BundleV2<'static>>(),
             worker_pool_is_owned: false,
@@ -216,9 +225,30 @@ impl ThreadPool {
         }
     }
 
+    /// Blocks until every IO callback of this pool has returned. Call it
+    /// (through `&self`, while IO threads may still read the pool) before
+    /// taking the `&mut self` that [`Self::deinit`] needs.
+    pub(crate) fn wait_for_io_tasks(&self) {
+        self.io_tasks_in_flight.wait();
+    }
+
+    /// The IO callback's last step (`io_task_callback`), after the task has been
+    /// handed to the worker pool.
+    ///
+    /// # Safety
+    /// `this` is the pool the task was scheduled on. The bundle keeps it alive
+    /// until [`Self::wait_for_io_tasks`] returns, which this call permits, so
+    /// nothing may touch the pool after it.
+    pub(crate) unsafe fn finish_io_task(this: *const Self) {
+        // SAFETY: caller contract; `finish_raw` is the matching last access.
+        unsafe { WaitGroup::finish_raw(&raw const (*this).io_tasks_in_flight) };
+    }
+
     /// Explicit teardown (no Drop on
     /// `ThreadPool` because `Graph.pool` is `NonNull<ThreadPool>` and the arena
-    /// owns the storage).
+    /// owns the storage). The caller drains the parse tasks and calls
+    /// [`Self::wait_for_io_tasks`] first: a task still running would use the
+    /// pool this frees.
     pub(crate) fn deinit(&mut self) {
         if self.worker_pool_is_owned {
             // SAFETY: worker_pool was heap-allocated in `init()` when owned.
@@ -231,13 +261,18 @@ impl ThreadPool {
     }
 
     /// Safe accessor for the underlying `bun_threading::ThreadPool`. The
-    /// pointer is set in `init`/`init_with_pool` and never null while `self`
-    /// is observable; encapsulating the deref keeps callers out of `unsafe`.
+    /// pointer is set in `init`/`init_with_pool` and nulled by `deinit`. The
+    /// arena keeps `self` readable after `deinit`, so a task that is still
+    /// running at teardown gets here: fail with a message instead of a
+    /// null dereference inside the pool.
     #[inline]
     pub(crate) fn worker_pool(&self) -> &ThreadPoolLib::ThreadPool {
-        debug_assert!(!self.worker_pool.is_null());
-        // SAFETY: `worker_pool` is initialized before any caller can observe
-        // `self` and lives until `deinit`; all driver methods take `&self`.
+        assert!(
+            !self.worker_pool.is_null(),
+            "bundler worker pool used after ThreadPool::deinit"
+        );
+        // SAFETY: non-null means `deinit` has not run, so the pool is live;
+        // all driver methods take `&self`.
         unsafe { &*self.worker_pool }
     }
 
@@ -343,6 +378,8 @@ impl ThreadPool {
                     ParseTaskStage::NeedsSourceCode => {
                         // io_pool is Some when uses_io_pool().
                         let io = self.io_pool_ref().unwrap();
+                        // Finished by `finish_io_task` at the end of `io_task_callback`.
+                        self.io_tasks_in_flight.add_one();
                         schedule_fn(
                             io,
                             ThreadPoolLib::Batch::from(&raw mut (*parse_task).io_task),
@@ -401,56 +438,52 @@ impl ThreadPool {
 
     #[cold]
     fn get_worker_slow(&self, id: ThreadId) -> &'static mut Worker {
-        let worker: *mut Worker;
-        {
-            let mut map = self.workers_assignments.lock();
-            match map.entry(id) {
-                MapEntry::Occupied(o) => {
-                    let w = *o.into_mut();
-                    drop(map);
-                    TLS_WORKER.set((self.generation, w));
-                    // SAFETY: map only stores live heap-allocated Workers (inserted below).
-                    return unsafe { &mut *w };
+        let mut map = self.workers_assignments.lock();
+        let worker: *mut Worker = match map.entry(id) {
+            MapEntry::Occupied(o) => *o.into_mut(),
+            MapEntry::Vacant(v) => {
+                // Allocate raw uninitialized storage; fully written via
+                // `worker.write(...)` below before any read. Keep it as
+                // `*mut MaybeUninit<Worker>` → `.cast()` instead of
+                // `assume_init()` so we never materialize a `Box<Worker>`
+                // whose payload violates `Worker`'s validity invariants
+                // (niche-optimized `Option<_>` discriminants, the non-null
+                // fn-pointer in `deinit_task.callback`, `bool` fields).
+                let worker = bun_core::heap::into_raw(Box::<Worker>::new_uninit()).cast::<Worker>();
+                // SAFETY: `worker` is freshly heap-allocated and reachable from
+                // nothing until `v.insert` below. It has to be complete by then:
+                // `deinit_without_freeing_arena` takes this lock and tears down
+                // every Worker the map holds.
+                unsafe {
+                    worker.write(Worker {
+                        // Placeholder — overwritten by `init()` immediately below.
+                        ctx: bun_ptr::BackRef::from(NonNull::<BundleV2<'static>>::dangling()),
+                        heap: None,
+                        arena: bun_ptr::BackRef::from(NonNull::<ThreadLocalArena>::dangling()),
+                        thread: NonNull::new(ThreadPoolLib::Thread::current())
+                            .map(bun_ptr::ParentRef::from),
+                        data: None,
+                        ast_memory_store: ManuallyDrop::new(bun_ast::ASTMemoryAllocator::default()),
+                        has_created: false,
+                        deinit_task: ThreadPoolLib::Task {
+                            node: ThreadPoolLib::Node::default(),
+                            callback: Worker::deinit_callback,
+                        },
+                        temporary_arena: None,
+                        stmt_list: None,
+                    });
+                    (*worker).init(&*self.v2);
                 }
-                MapEntry::Vacant(v) => {
-                    // Allocate raw uninitialized storage; fully written via
-                    // `worker.write(...)` below before any read. Keep it as
-                    // `*mut MaybeUninit<Worker>` → `.cast()` instead of
-                    // `assume_init()` so we never materialize a `Box<Worker>`
-                    // whose payload violates `Worker`'s validity invariants
-                    // (niche-optimized `Option<_>` discriminants, the non-null
-                    // fn-pointer in `deinit_task.callback`, `bool` fields).
-                    worker = bun_core::heap::into_raw(Box::<Worker>::new_uninit()).cast::<Worker>();
-                    v.insert(worker);
-                }
+                v.insert(worker);
+                worker
             }
-        }
-
-        // SAFETY: `worker` is freshly heap-allocated and exclusive on this
-        // thread until published via the map (already inserted above, but no
-        // other thread looks it up under a different `id`).
-        unsafe {
-            worker.write(Worker {
-                // Placeholder — overwritten by `init()` immediately below.
-                ctx: bun_ptr::BackRef::from(NonNull::<BundleV2<'static>>::dangling()),
-                heap: None,
-                arena: bun_ptr::BackRef::from(NonNull::<ThreadLocalArena>::dangling()),
-                thread: NonNull::new(ThreadPoolLib::Thread::current())
-                    .map(bun_ptr::ParentRef::from),
-                data: None,
-                ast_memory_store: ManuallyDrop::new(bun_ast::ASTMemoryAllocator::default()),
-                has_created: false,
-                deinit_task: ThreadPoolLib::Task {
-                    node: ThreadPoolLib::Node::default(),
-                    callback: Worker::deinit_callback,
-                },
-                temporary_arena: None,
-                stmt_list: None,
-            });
-            (*worker).init(&*self.v2);
-            TLS_WORKER.set((self.generation, worker));
-            &mut *worker
-        }
+        };
+        drop(map);
+        TLS_WORKER.set((self.generation, worker));
+        // SAFETY: the map only holds Workers that were written before they were
+        // inserted (above); each lives until its `deinit_soon`, and this thread
+        // is the only one that uses the Worker keyed by its own id.
+        unsafe { &mut *worker }
     }
 }
 

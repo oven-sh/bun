@@ -1370,8 +1370,9 @@ class Session extends EventEmitter {
           postNodeInspectorControl(JSON.stringify({ type: "session-connect" }));
         }
         postNodeInspectorControl(JSON.stringify({ type: "command", method, params }));
-        // The pause/scriptParsed events still reach this Session through its in-process
-        // adapter, which gates them on the domain being enabled; record the enable there.
+        // Forwarding alone delivers no events (the in-process channel only connects on a
+        // kInProcess post, e.g. Runtime.evaluate). Once it has, JSC broadcasts the pauses
+        // here too, and the adapter gates them on this flag, so record the enable for that case.
         if (method === "Debugger.enable" || method === "Debugger.disable") {
           this.#inProcessAdapter().noteDebuggerEnabled(method === "Debugger.enable");
         }

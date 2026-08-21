@@ -78,7 +78,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSTextEncoderPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSTextEncoderPrototype* ptr = new (NotNull, JSC::allocateCell<JSTextEncoderPrototype>(vm)) JSTextEncoderPrototype(vm, globalObject, structure);
+        JSTextEncoderPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSTextEncoderPrototype))) JSTextEncoderPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -92,7 +92,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -136,11 +136,7 @@ template<> JSValue JSTextEncoderDOMConstructor::prototypeForStructure(JSC::VM& v
 
 template<> void JSTextEncoderDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(0), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "TextEncoder"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSTextEncoder::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 0, "TextEncoder"_s, JSTextEncoder::prototype(vm, globalObject));
 }
 
 /* Hash table for prototype */
@@ -157,8 +153,8 @@ const ClassInfo JSTextEncoderPrototype::s_info = { "TextEncoder"_s, &Base::s_inf
 void JSTextEncoderPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSTextEncoder::info(), JSTextEncoderPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSTextEncoder::info(), JSTextEncoderPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSTextEncoder::s_info = { "TextEncoder"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTextEncoder) };
@@ -313,12 +309,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTextEncoderPrototypeFunction_encodeInto, (JSGlobalObj
 
 JSC::GCClient::IsoSubspace* JSTextEncoder::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSTextEncoder, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForTextEncoder.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTextEncoder = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForTextEncoder.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForTextEncoder = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSTextEncoder, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForTextEncoder, m_subspaceForTextEncoder));
 }
 
 void JSTextEncoder::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

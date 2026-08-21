@@ -88,6 +88,15 @@ pub(crate) fn compute_chunks(
     for (entry_id_, &source_index) in entry_source_indices.iter().enumerate() {
         let entry_bit = entry_id_ as chunk::EntryPointId;
 
+        // An `import()` target that no live code references gets no chunk.
+        if !this.graph.files_live.is_set(source_index as usize) {
+            debug_assert!(
+                this.graph.files.items_entry_point_kind()[source_index as usize]
+                    == crate::EntryPoint::Kind::DynamicImport
+            );
+            continue;
+        }
+
         // reshaped for borrowck — set the bit through a scoped &mut, then keep an
         // owned clone so the `this.graph.files` borrow does not span the helper calls below
         // that need `&LinkerContext` / `&mut LinkerContext`.

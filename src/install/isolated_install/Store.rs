@@ -320,22 +320,6 @@ pub mod entry {
         }
     }
 
-    impl Default for Entry {
-        fn default() -> Self {
-            Self {
-                node_id: super::node::Id::INVALID,
-                dependencies: Dependencies::EMPTY,
-                parents: Vec::new(),
-                // `Step::LinkPackage as u32 == 0`.
-                step: core::sync::atomic::AtomicU32::new(0),
-                hoisted: false,
-                peer_hash: PeerHash::NONE,
-                entry_hash: 0,
-                scripts: core::cell::Cell::new(None),
-            }
-        }
-    }
-
     #[repr(transparent)]
     #[derive(Copy, Clone, PartialEq, Eq, Hash)]
     pub struct PeerHash(u64);

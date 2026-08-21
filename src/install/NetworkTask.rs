@@ -452,11 +452,6 @@ impl From<ForManifestError> for crate::Error {
         }
     }
 }
-impl PartialEq<crate::Error> for ForManifestError {
-    fn eq(&self, other: &crate::Error) -> bool {
-        <&'static str>::from(self) == other.name()
-    }
-}
 impl bun_core::output::ErrName for ForManifestError {
     fn name(&self) -> &[u8] {
         <&'static str>::from(self).as_bytes()

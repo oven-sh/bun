@@ -302,20 +302,6 @@ pub struct FilePoll {
 }
 
 #[cfg(not(windows))]
-impl Default for FilePoll {
-    fn default() -> Self {
-        Self {
-            fd: INVALID_FD,
-            flags: FlagsSet::empty(),
-            owner: Owner::NULL,
-            generation_number: 0,
-            next_to_free: ptr::null_mut(),
-            allocator_type: AllocatorType::Js,
-        }
-    }
-}
-
-#[cfg(not(windows))]
 impl FilePoll {
     fn update_flags(&mut self, updated: FlagsSet) {
         let mut flags = self.flags;

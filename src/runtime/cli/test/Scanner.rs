@@ -46,7 +46,7 @@ pub struct ScanEntry {
     pub name: StringOrTinyString,
 }
 
-#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
+#[derive(thiserror::Error, Debug)]
 pub enum ScanError {
     /// The entrypoint does not exist or does not fit a `PathBuffer`; never returned for subdirectories.
     #[error("DoesNotExist")]
@@ -55,11 +55,6 @@ pub enum ScanError {
     OutOfMemory,
 }
 bun_core::oom_from_alloc!(ScanError);
-impl PartialEq<crate::Error> for ScanError {
-    fn eq(&self, other: &crate::Error) -> bool {
-        <&'static str>::from(self) == other.name()
-    }
-}
 
 /// Newtype around `*mut Scanner` so it can satisfy [`DirEntryIterator`]
 /// (whose `next` takes `&self`) while still allowing mutable calls.

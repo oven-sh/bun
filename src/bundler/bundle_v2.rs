@@ -514,6 +514,19 @@ pub mod bv2_impl {
         /// Alias used at the crate root (`crate::HmrRuntimeSide`); identical to `Side`.
         pub(crate) type HmrRuntimeSide = Side;
 
+        /// `bake.client.js`, the dev-server client runtime. It is shipped to the
+        /// browser rather than run by Bun, so release builds embed it compressed;
+        /// this is the one place it is inflated (`bake` reads it through here too).
+        pub fn bake_client_js() -> &'static [u8] {
+            let with_nul = bake_client_js_with_nul();
+            &with_nul[..with_nul.len() - 1]
+        }
+
+        /// [`bake_client_js`] followed by a NUL byte.
+        pub fn bake_client_js_with_nul() -> &'static [u8] {
+            bun_zstd::embed_compressed!(codegen_nul "bake.client.js")
+        }
+
         /// MOVE_DOWN bake→bundler:
         /// the codegen'd `bake.client.js` / `bake.server.js` are loaded via
         /// `bun_core::runtime_embed_file!` (same per-site `OnceLock<String>` cache
@@ -528,11 +541,7 @@ pub mod bv2_impl {
             static CLIENT: std::sync::OnceLock<HmrRuntime> = std::sync::OnceLock::new();
             static SERVER: std::sync::OnceLock<HmrRuntime> = std::sync::OnceLock::new();
             match side {
-                Side::Client => *CLIENT.get_or_init(|| {
-                    HmrRuntime::init(
-                        bun_core::runtime_embed_file!(CodegenEager, "bake.client.js").as_bytes(),
-                    )
-                }),
+                Side::Client => *CLIENT.get_or_init(|| HmrRuntime::init(bake_client_js())),
                 // Server runtime is loaded once; non-eager.
                 Side::Server => *SERVER.get_or_init(|| {
                     HmrRuntime::init(
@@ -2099,6 +2108,19 @@ pub mod bv2_impl {
             );
         }
 
+        /// Callers require an entry point, so none after parsing means one was dropped without an error.
+        fn fail_if_no_entry_points(&self) -> Result<(), Error> {
+            if !self.graph.entry_points.is_empty() {
+                return Ok(());
+            }
+            self.transpiler.log_mut().add_error(
+                None,
+                None,
+                "None of the entry points could be bundled",
+            );
+            Err(crate::Error::BuildFailed)
+        }
+
         /// `BUN_THREADPOOL_STATS=1` instrumentation hook — dump aggregate worker
         /// idle/busy time since the previous call. No-op when env var unset.
         #[inline]
@@ -2629,10 +2651,9 @@ pub mod bv2_impl {
             let result = &mut *resolve;
             // borrowck: clone the active path out so we don't hold a `&mut`
             // into `result` across the `&mut self` calls below.
-            let mut path: Fs::Path<'static> = match result.path() {
-                Some(p) => *p,
-                None => return Ok(None),
-            };
+            let mut path: Fs::Path<'static> = *result.path().expect(
+                "resolve_entry_point rejects disabled results and FileMap results have a path",
+            );
 
             path.assert_file_path_is_absolute();
             // borrowck: get-then-put instead of a single get-or-put.
@@ -3843,10 +3864,7 @@ pub mod bv2_impl {
                 // sidestep for the `&mut self` overlap.
                 this.enqueue_entry_points_normal(unsafe { &*entry_points })?;
 
-                if this.transpiler.log().has_errors() {
-                    return Err(crate::Error::BuildFailed);
-                }
-
+                // Like `run_from_js_in_new_thread`: drain the pool, then report entry point errors.
                 this.wait_for_parse();
                 this.dump_pool_stats("parse");
 
@@ -3858,6 +3876,7 @@ pub mod bv2_impl {
                 if this.transpiler.log().has_errors() {
                     return Err(crate::Error::BuildFailed);
                 }
+                this.fail_if_no_entry_points()?;
 
                 this.scan_for_secondary_paths();
 
@@ -4017,10 +4036,7 @@ pub mod bv2_impl {
 
                 this.enqueue_entry_points_bake_production(entry_points)?;
 
-                if this.transpiler.log().has_errors() {
-                    return Err(crate::Error::BuildFailed);
-                }
-
+                // Drain the pool, then report entry point errors (as `generate_from_cli` does).
                 this.wait_for_parse();
 
                 if this.transpiler.log().has_errors() {
@@ -4792,6 +4808,20 @@ pub mod bv2_impl {
                             drop(result.path);
                         }
                     } else {
+                        if resolve.import_record.kind == ImportKind::EntryPointBuild {
+                            let log = this.log_for_resolution_failures(
+                                &resolve.import_record.source_file,
+                                resolve.import_record.original_target.bake_graph(),
+                            );
+                            log.add_error_fmt(
+                                None,
+                                None,
+                                format_args!(
+                                    "The entry point {} cannot be marked as external",
+                                    bun_core::fmt::quote(&resolve.import_record.specifier),
+                                ),
+                            );
+                        }
                         drop(result.namespace);
                         drop(result.path);
                     }
@@ -4986,6 +5016,7 @@ pub mod bv2_impl {
             if self.transpiler.log().errors > 0 {
                 return Err(crate::Error::BuildFailed);
             }
+            self.fail_if_no_entry_points()?;
 
             self.scan_for_secondary_paths();
 

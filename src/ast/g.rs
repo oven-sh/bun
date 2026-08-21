@@ -130,15 +130,6 @@ pub struct ClassStaticBlock {
     pub loc: Option<crate::Loc>,
 }
 
-impl Default for ClassStaticBlock {
-    fn default() -> Self {
-        Self {
-            stmts: bun_alloc::AstAlloc::vec(),
-            loc: None,
-        }
-    }
-}
-
 pub struct Property {
     /// This is used when parsing a pattern that uses default values:
     ///

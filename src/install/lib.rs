@@ -286,7 +286,7 @@ pub use external::VersionSlice;
 pub use external_slice as external;
 
 pub use dependency::Behavior;
-pub use dependency::{Dependency, DependencyExt, TagExt, ValueExt, VersionExt};
+pub use dependency::{Dependency, DependencyExt, TagExt, VersionExt};
 pub use integrity::Integrity;
 
 pub use bin::Bin;

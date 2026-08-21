@@ -1762,7 +1762,7 @@ impl<'a> BundleOptions<'a> {
         }
 
         if let Some(jsx_opts) = &transform.jsx {
-            opts.jsx = jsx::Pragma::from_api(jsx_opts.clone())?;
+            opts.jsx = jsx::Pragma::from_api(jsx_opts.clone());
         }
 
         if !transform.extension_order.is_empty() {

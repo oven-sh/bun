@@ -1259,16 +1259,6 @@ pub struct MetadataResolve {
     pub err: crate::Error,
 }
 
-impl Default for MetadataResolve {
-    fn default() -> Self {
-        MetadataResolve {
-            specifier: BabyString::new(0, 0),
-            import_kind: ImportKind::default(),
-            err: crate::Error::ModuleNotFound,
-        }
-    }
-}
-
 // ───────────────────────────────────────────────────────────────────────────
 // Range
 // ───────────────────────────────────────────────────────────────────────────
@@ -2073,7 +2063,7 @@ impl Log {
         })
     }
 
-    #[cold]
+    #[inline]
     pub fn add_range_error_with_notes(
         &mut self,
         source: Option<&Source>,
@@ -2081,8 +2071,19 @@ impl Log {
         text: impl IntoText,
         notes: Box<[Data]>,
     ) {
+        self.add_range_error_with_notes_text(source, r.into(), text.into_text(), notes)
+    }
+
+    #[cold]
+    fn add_range_error_with_notes_text(
+        &mut self,
+        source: Option<&Source>,
+        r: Option<Range>,
+        text: Cow<'static, [u8]>,
+        notes: Box<[Data]>,
+    ) {
         self.errors += 1;
-        let data = self.tracked_range_data(source, r.into(), text);
+        let data = self.tracked_range_data(source, r, text);
         self.add_msg(Msg {
             kind: Kind::Err,
             data,
@@ -2095,15 +2096,27 @@ impl Log {
         self.msgs.push(msg);
     }
 
-    #[cold]
+    /// Generic only over the argument conversions; the body is shared so each
+    /// `&[u8; N]` literal length does not get its own copy.
+    #[inline]
     pub fn add_error(
         &mut self,
-        _source: Option<&Source>,
+        source: Option<&Source>,
         loc: impl Into<Option<Loc>>,
         text: impl IntoText,
     ) {
+        self.add_error_text(source, loc.into(), text.into_text());
+    }
+
+    #[cold]
+    fn add_error_text(
+        &mut self,
+        _source: Option<&Source>,
+        loc: Option<Loc>,
+        text: Cow<'static, [u8]>,
+    ) {
         self.errors += 1;
-        let data = self.tracked_range_data(_source, loc.into().map(Range::at), text);
+        let data = self.tracked_range_data(_source, loc.map(Range::at), text);
         self.add_msg(Msg {
             kind: Kind::Err,
             data,
@@ -2794,14 +2807,19 @@ impl Source {
     }
 }
 
+#[inline]
 pub fn range_data(
     source: Option<&Source>,
     r: impl Into<Option<Range>>,
     text: impl IntoText,
 ) -> Data {
+    range_data_text(source, r.into(), text.into_text())
+}
+
+fn range_data_text(source: Option<&Source>, r: Option<Range>, text: Cow<'static, [u8]>) -> Data {
     Data {
-        text: text.into_text(),
-        location: Location::init_or_null(source, r.into()),
+        text,
+        location: Location::init_or_null(source, r),
     }
 }
 

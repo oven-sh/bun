@@ -59,7 +59,7 @@ bun bd --local-deps=mimalloc=~/code/mimalloc test foo.test.ts
 ```
 
 Any `github-archive` dep the graph compiles or includes can be redirected
-(so not lolhtml, which cargo reads from `vendor/lolhtml` via the workspace
+(so not lolhtml or rust-argon2, which cargo reads from `vendor/` via the workspace
 `Cargo.toml` — point that path at your checkout instead); several at once
 with `name=path,name=path`. Cross-dep references (`depSourceDir()`, e.g.
 lsquic's `-I` into boringssl) follow the redirect. The checkout is compiled
@@ -138,7 +138,7 @@ export const mydep: Dependency = {
   across the dep boundary into bun's call sites.
 - **`nested-cmake`**: Runs `cmake --fresh -B ...` then `cmake --build`.
   See `NestedCmakeBuild` in `../source.ts` for all fields.
-- **`cargo`**: Rust deps (currently just lolhtml). See `CargoBuild` in `../source.ts`.
+- **`cargo`**: Rust deps (currently lolhtml and rust-argon2). See `CargoBuild` in `../source.ts`.
 - **`none`**: Header-only or prebuilt. No build step; `.ref` stamp is the output.
 
 ## Worked examples

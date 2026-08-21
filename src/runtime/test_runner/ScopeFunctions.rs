@@ -541,11 +541,6 @@ pub struct ParseArgumentsCfg {
     pub callback: CallbackMode,
     pub(crate) kind: FunctionKind,
 }
-impl Default for ParseArgumentsCfg {
-    fn default() -> Self {
-        Self { callback: CallbackMode::Require, kind: FunctionKind::TestOrDescribe }
-    }
-}
 
 fn get_description(
     global: &JSGlobalObject,

@@ -63,7 +63,9 @@ describe.skipIf(!isASAN)("VM teardown with commands owed to a RedisClient leaks 
   const CRLF = "\\r\\n";
   // Answers HELLO, never replies to a command, and resolves `ready` once the
   // first INCR has arrived, so the commands it owes are in flight from then on.
-  const server = `
+  // With `endAtIncr` it ends the connection at that INCR instead, which leaves
+  // the client in its retry delay.
+  const server = (endAtIncr: boolean) => `
     const HELLO = "%1${CRLF}$5${CRLF}proto${CRLF}:3${CRLF}";
     const { promise: ready, resolve: onReady } = Promise.withResolvers();
     const server = Bun.listen({
@@ -77,7 +79,10 @@ describe.skipIf(!isASAN)("VM teardown with commands owed to a RedisClient leaks 
             s.data.hello = true;
             s.write(HELLO);
           }
-          if (s.data.buf.includes("INCR")) onReady();
+          if (s.data.buf.includes("INCR")) {
+            onReady();
+            if (${endAtIncr}) s.end();
+          }
         },
         close() {},
         error() {},
@@ -114,19 +119,23 @@ describe.skipIf(!isASAN)("VM teardown with commands owed to a RedisClient leaks 
   `;
 
   // Terminates the worker once the server reports `ready`, with whatever the
-  // client still owes.
-  function terminateWorker(options: object, worker: string) {
+  // client still owes. With `closedDuringRetryDelay` the server ends the
+  // connection instead, and the worker is terminated once it has posted that
+  // it called close() during the retry delay.
+  function terminateWorker(options: object, worker: string, closedDuringRetryDelay = false) {
     return expectCleanExit(
       `
       const { Worker } = require("node:worker_threads");
-      ${server}
+      ${server(closedDuringRetryDelay)}
       const worker = new Worker(${JSON.stringify(workerSrc(worker))}, {
         eval: true,
         workerData: { url: "redis://127.0.0.1:" + server.port, options: ${JSON.stringify(options)} },
       });
+      const { promise: closed, resolve: onClosed } = Promise.withResolvers();
+      worker.on("message", onClosed);
       worker.on("error", (err) => { console.error(err); process.exit(2); });
       worker.on("exit", (code) => { console.error("worker exited on its own with " + code); process.exit(3); });
-      await ready;
+      await ${closedDuringRetryDelay ? "closed" : "ready"};
       worker.removeAllListeners("exit");
       console.log("terminated", await worker.terminate());
       server.stop(true);
@@ -146,6 +155,29 @@ describe.skipIf(!isASAN)("VM teardown with commands owed to a RedisClient leaks 
     timeout,
   );
   test.concurrent("worker.terminate(): retries exhausted", () => terminateWorker({ maxRetries: 0 }, inFlight), timeout);
+
+  // close() during the retry delay has no socket close event to run through:
+  // it disarms the retry timer and runs the close path by hand, so it must
+  // take no ref of its own for that path to release. After close() nothing
+  // else keeps the worker alive, and terminate() on a worker that has already
+  // exited reports that exit instead; the timer keeps it running until
+  // terminate() ends it like the other cases.
+  test.concurrent(
+    "worker.terminate(): after close() during the retry delay",
+    () =>
+      terminateWorker(
+        {},
+        `client.connect().then(async () => {
+          client.incr("k").catch(() => {});
+          while (client.connected) await Bun.sleep(1);
+          client.close();
+          setTimeout(() => {}, 1 << 30);
+          parentPort.postMessage("closed");
+        });`,
+        true,
+      ),
+    timeout,
+  );
 
   // WATCH is not auto-pipelined, so it waits in the offline queue while the
   // INCRs are in flight, and the INCRs sent after it queue up behind it. The

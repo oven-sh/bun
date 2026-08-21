@@ -382,16 +382,10 @@ impl Route {
         let development = server.config().development;
         let vm = global.bun_vm().as_mut();
 
-        // Fails the route like a build error in `on_complete` does.
         if let Err(err) = bun_bundler::bundle_v2::singleton::start::<JSBundleCompletionTask>() {
             let mut log = Log::init();
             log.add_error_fmt(None, bun_ast::Loc::EMPTY, format_args!("{err}"));
-            if development.is_development() {
-                let writer: *mut bun_core::io::Writer = bun_output::error_writer_buffered();
-                let _ = log.print(writer);
-                bun_output::flush();
-            }
-            self.state.set(State::Err(log));
+            self.set_build_error(server, log);
             self.finish_building();
             return Ok(());
         }

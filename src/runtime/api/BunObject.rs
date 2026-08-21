@@ -1155,12 +1155,30 @@ impl Drop for ResolveDerefOnDrop {
     }
 }
 
+enum Resolved {
+    Found(JSValue),
+    /// The resolver's error object (e.g. "Cannot find module"); not thrown yet.
+    NotFound(JSValue),
+}
+
 fn do_resolve_with_args<const IS_FILE_PATH: bool>(
     ctx: &JSGlobalObject,
     specifier: BunString,
     from: BunString,
     mode: ResolveMode,
 ) -> JsResult<JSValue> {
+    match resolve_with_args::<IS_FILE_PATH>(ctx, specifier, from, mode)? {
+        Resolved::Found(value) => Ok(value),
+        Resolved::NotFound(err) => Err(ctx.throw_value(err)),
+    }
+}
+
+fn resolve_with_args<const IS_FILE_PATH: bool>(
+    ctx: &JSGlobalObject,
+    specifier: BunString,
+    from: BunString,
+    mode: ResolveMode,
+) -> JsResult<Resolved> {
     let mut errorable: ErrorableString = ErrorableString::ok(BunString::empty());
     let mut owned = ResolveDerefOnDrop {
         query_string: BunString::empty(),
@@ -1189,7 +1207,7 @@ fn do_resolve_with_args<const IS_FILE_PATH: bool>(
 
     if !errorable.success {
         // SAFETY: !success → `err` arm of the #[repr(C)] union is active.
-        return Err(ctx.throw_value(unsafe { errorable.result.err }.value));
+        return Ok(Resolved::NotFound(unsafe { errorable.result.err }.value));
     }
     // SAFETY: success → `value` arm of the #[repr(C)] union is active.
     owned.result_value = unsafe { errorable.result.value };
@@ -1203,10 +1221,10 @@ fn do_resolve_with_args<const IS_FILE_PATH: bool>(
             owned.result_value, owned.query_string
         );
 
-        return Ok(ZigString::init_utf8(&arraylist).to_js(ctx));
+        return Ok(Resolved::Found(ZigString::init_utf8(&arraylist).to_js(ctx)));
     }
 
-    owned.result_value.to_js(ctx)
+    Ok(Resolved::Found(owned.result_value.to_js(ctx)?))
 }
 
 #[bun_jsc::host_fn]
@@ -1358,6 +1376,34 @@ pub fn bun_resolve_sync_with_strings(
             *source,
             ResolveMode::from_ffi_bools(is_esm, false),
         )
+    })
+}
+
+/// Like `Bun__resolveSyncWithSource`, but a specifier that does not resolve yields `undefined`
+/// instead of a thrown "Cannot find module"; anything else that goes wrong (a plugin's `onResolve`
+/// throwing, an invalid specifier) is still thrown.
+// HOST_EXPORT(Bun__resolveSyncWithSourceIfExists, c)
+pub fn bun_resolve_sync_with_source_if_exists(
+    global: &JSGlobalObject,
+    specifier: JSValue,
+    source: &BunString,
+    is_esm: bool,
+) -> JSValue {
+    let Ok(specifier_str) = specifier.to_bun_string(global) else {
+        return JSValue::ZERO;
+    };
+    let specifier_str = scopeguard::guard(specifier_str, |s| s.deref());
+    jsc::to_js_host_call(global, || {
+        resolve_with_args::<true>(
+            global,
+            *specifier_str,
+            *source,
+            ResolveMode::from_ffi_bools(is_esm, false),
+        )
+        .map(|r| match r {
+            Resolved::Found(value) => value,
+            Resolved::NotFound(_) => JSValue::UNDEFINED,
+        })
     })
 }
 

@@ -191,3 +191,18 @@ test("a factory export getter that throws while patching an already-imported mod
   expect(fn).toBe(before.fn);
   expect(variable).toBe(before.variable);
 });
+
+test("an onResolve plugin that throws while mock.module resolves the specifier propagates", () => {
+  Bun.plugin({
+    name: "mock-module-onresolve-throws",
+    setup(build) {
+      build.onResolve({ filter: /\.mock-onresolve-probe$/ }, () => {
+        throw new Error("onResolve threw");
+      });
+    },
+  });
+  expect(() => mock.module("./thing.mock-onresolve-probe", () => ({ default: 1 }))).toThrow("onResolve threw");
+  // A specifier that simply doesn't resolve is still fine to mock.
+  mock.module("./does-not-exist-mock-probe", () => ({ default: 7 }));
+  expect(require("./does-not-exist-mock-probe").default).toBe(7);
+});

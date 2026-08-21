@@ -52,3 +52,29 @@ test("Response.arrayBuffer() with async iterable body does not crash with null d
   expect(stdout).not.toContain("null is not an object");
   expect(exitCode).toBe(0);
 });
+
+test("an error from an async-iterable body whose `code` getter throws surfaces that getter's error", async () => {
+  // The source inspects `error.code` (ERR_INVALID_THIS / ERR_INVALID_STATE handling); if that
+  // lookup throws, its exception is what the read rejects with rather than being ignored.
+  const original = {
+    get code() {
+      throw new Error("code getter threw");
+    },
+  };
+  const response = new Response({
+    async *[Symbol.asyncIterator]() {
+      yield "x";
+      throw original;
+    },
+  });
+  await expect(response.text()).rejects.toThrow("code getter threw");
+
+  const plain = new Error("plain");
+  await expect(
+    new Response({
+      async *[Symbol.asyncIterator]() {
+        throw plain;
+      },
+    }).text(),
+  ).rejects.toBe(plain);
+});

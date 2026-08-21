@@ -108,10 +108,8 @@ impl HotReloaderCtx for VirtualMachine {
         }
     }
 
-    fn reload(&mut self, _task: &mut dyn HotReloadTaskView) {
-        // The inherent `reload` ignores its task argument, so pass `None`
-        // rather than threading the dyn view through.
-        VirtualMachine::reload(self, None);
+    fn reload(&mut self) {
+        VirtualMachine::reload(self);
     }
 
     fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
@@ -203,10 +201,8 @@ pub trait HotReloaderCtx {
     /// Implementor returns the live `Watcher` regardless of how it's stored.
     fn bun_watcher_mut(&mut self) -> &mut Watcher;
 
-    /// Called from `Task::run` to perform the actual reload. The const-generic
-    /// task is erased via the `HotReloadTaskView` so this trait isn't
-    /// recursively generic.
-    fn reload(&mut self, task: &mut dyn HotReloadTaskView);
+    /// Called from `Task::run` to perform the actual reload.
+    fn reload(&mut self);
 
     /// Returns whether anything was busted.
     fn bust_dir_cache(&mut self, path: &[u8]) -> bool;
@@ -235,28 +231,6 @@ pub trait HotReloaderCtx {
     ) -> *mut Watcher;
 
     fn compute_clear_screen(&self) -> bool;
-}
-
-/// Type-erased view of a `Task<Ctx, EventLoopType, RELOAD_IMMEDIATELY>` so
-/// `HotReloaderCtx::reload` doesn't need to name the const generics.
-pub trait HotReloadTaskView {
-    fn count(&self) -> u8;
-    fn hashes(&self) -> &[u32];
-    fn paths(&self) -> &[&'static [u8]];
-}
-
-impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> HotReloadTaskView
-    for Task<Ctx, EventLoopType, RELOAD_IMMEDIATELY>
-{
-    fn count(&self) -> u8 {
-        self.count
-    }
-    fn hashes(&self) -> &[u32] {
-        &self.hashes[..self.count as usize]
-    }
-    fn paths(&self) -> &[&'static [u8]] {
-        &self.paths[..self.count as usize]
-    }
 }
 
 /// When non-null, `on_file_update` records the absolute path of every file
@@ -459,11 +433,6 @@ impl MainFile {
 
 pub struct Task<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
     pub(crate) count: u8,
-    pub(crate) hashes: [u32; 8],
-    // Only meaningful for the DevServer Ctx, but Rust can't branch a field
-    // type on a generic parameter without specialization, so it is stored
-    // unconditionally (8 fat pointers of overhead for non-DevServer Ctx).
-    pub(crate) paths: [&'static [u8]; 8],
     /// Left `None` until [`Self::enqueue`] populates it on the heap copy.
     pub(crate) concurrent_task: Option<ConcurrentTask>,
     pub(crate) reloader: *mut NewHotReloader<Ctx, EventLoopType, RELOAD_IMMEDIATELY>,
@@ -479,9 +448,6 @@ where
     ) -> Self {
         Self {
             reloader,
-            hashes: [0u32; 8],
-            // See the `paths` field comment for why this is unconditional.
-            paths: [b"".as_slice(); 8],
             count: 0,
             concurrent_task: None,
         }
@@ -522,13 +488,12 @@ where
         unsafe { (*core::ptr::addr_of!((*self.reloader).ctx)).as_ptr() }
     }
 
-    pub(crate) fn append(&mut self, id: u32) {
+    pub(crate) fn append(&mut self) {
         if self.count == 8 {
             self.enqueue();
             self.count = 0;
         }
 
-        self.hashes[self.count as usize] = id;
         self.count += 1;
     }
 
@@ -579,7 +544,7 @@ where
         while self.pending_count().swap(0, Ordering::Relaxed) > 0 {
             let ctx = self.ctx_ptr();
             // SAFETY: ctx outlives reloader (BACKREF).
-            unsafe { (*ctx).reload(self) };
+            unsafe { (*ctx).reload() };
         }
     }
 
@@ -609,8 +574,6 @@ where
         let that = bun_core::heap::into_raw(Box::new(Self {
             reloader: self.reloader,
             count: self.count,
-            paths: self.paths,
-            hashes: self.hashes,
             concurrent_task: None,
         }));
         // SAFETY: `that` was just allocated above and is exclusively owned here.
@@ -938,7 +901,7 @@ where
                             }
                         }
 
-                        current_task.append(current_hash);
+                        current_task.append();
                     }
                 }
                 bun_watcher::Kind::Directory => {
@@ -1006,7 +969,7 @@ where
                                         if exists {
                                             self.main.is_waiting_for_dir_change = false;
                                             record_changed_path(self.main.file);
-                                            current_task.append(self.main.hash);
+                                            current_task.append();
                                         }
                                     }
                                 }
@@ -1113,7 +1076,7 @@ where
                                 };
                                 if main_exists {
                                     record_changed_path(self.main.file);
-                                    current_task.append(self.main.hash);
+                                    current_task.append();
                                 }
                                 break;
                             }
@@ -1188,7 +1151,7 @@ where
                                                             record_changed_path(
                                                                 path_string.as_bytes(),
                                                             );
-                                                            current_task.append(hashes[entry_id]);
+                                                            current_task.append();
                                                             if self.verbose {
                                                                 Self::debug(format_args!(
                                                                     "Removing file: {}",
@@ -1333,7 +1296,7 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
         unsafe { &mut *handle.as_ptr() }
     }
 
-    fn reload(&mut self, _task: &mut dyn HotReloadTaskView) {
+    fn reload(&mut self) {
         // RELOAD_IMMEDIATELY=true never enqueues `Task::run` for BundleV2
         // (diverges or kill-signal branch; no listeners registered there).
         unreachable!()

@@ -63,7 +63,6 @@ pub mod task_tag {
     }
     tags! {
         AnyTaskJob,               // bun_jsc::Job<C> (typed pool job, one erased tag)
-        AsyncModule,
         BakeHotReloadEvent,       // bun.bake.DevServer.HotReloadEvent
         BundleV2DeferredBatchTask, // bun.bundle_v2.DeferredBatchTask
         BundleV2PluginResolve,    // bun.bundle_v2.Resolve (JS-thread hop)

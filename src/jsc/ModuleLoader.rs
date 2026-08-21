@@ -13,8 +13,7 @@ use bun_options_types::LoaderExt as _;
 
 use crate::virtual_machine::VirtualMachine;
 use crate::{
-    self as jsc, ErrorCode, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSValue,
-    ResolvedSource,
+    self as jsc, ErrorCode, ErrorableResolvedSource, JSGlobalObject, JSValue, ResolvedSource,
 };
 
 // Re-exports.
@@ -154,9 +153,6 @@ pub struct TranspileExtra {
     /// `*js_printer.BufferPrinter` — the per-VM shared printer. Never null
     /// when `extra` itself is non-null.
     pub source_code_printer: *mut bun_js_printer::BufferPrinter,
-    /// `?*?*jsc.JSInternalPromise` — out-param for the async-module path.
-    /// Null forbids async resolution.
-    pub promise_ptr: *mut *mut JSInternalPromise,
 }
 
 /// Result of `LoaderHooks::fetch_builtin_module` — tri-state because

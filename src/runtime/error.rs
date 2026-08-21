@@ -320,10 +320,6 @@ pub enum Error {
     CompilationFailed,
     #[error("MissingTranspileExtra")]
     MissingTranspileExtra,
-    #[error("UnexpectedPendingResolution")]
-    UnexpectedPendingResolution,
-    #[error("AsyncModule")]
-    AsyncModule,
     #[error("NotSupported")]
     NotSupported,
     #[error("BlobNotFound")]
@@ -730,8 +726,6 @@ impl Error {
             Self::OpenError => "OpenError",
             Self::CompilationFailed => "CompilationFailed",
             Self::MissingTranspileExtra => "MissingTranspileExtra",
-            Self::UnexpectedPendingResolution => "UnexpectedPendingResolution",
-            Self::AsyncModule => "AsyncModule",
             Self::NotSupported => "NotSupported",
             Self::BlobNotFound => "BlobNotFound",
             Self::JSErrorObject => "JSErrorObject",

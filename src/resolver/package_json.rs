@@ -1329,35 +1329,7 @@ pub struct Package<'a> {
     pub(crate) subpath: &'a [u8],
 }
 
-#[derive(Clone, Copy, Default)]
-pub struct PackageExternal {
-    pub name: Semver::String,
-}
-
 impl<'a> Package<'a> {
-    pub(crate) fn count(self, builder: &mut Semver::semver_string::Builder) {
-        builder.count(self.name);
-    }
-
-    pub(crate) fn clone(self, builder: &mut Semver::semver_string::Builder) -> PackageExternal {
-        PackageExternal {
-            name: builder.append_utf8_without_pool::<Semver::String>(self.name, 0),
-        }
-    }
-
-    /// Allocate a fresh string buffer and clone `name`/`version`/`subpath`
-    /// into it as offset-encoded `Semver::String`s. Mirrors the inline
-    /// `count` → `allocate` → `clone` Builder dance the resolver does at the
-    /// auto-install pending sites, exposed as the `esm.copy` helper.
-    pub(crate) fn copy(self) -> crate::CrateResult<(PackageExternal, Vec<u8>)> {
-        let mut builder = Semver::semver_string::Builder::default();
-        self.count(&mut builder);
-        builder.allocate()?;
-        let cloned = self.clone(&mut builder);
-        let string_buf = builder.ptr.take().map(|b| b.into_vec()).unwrap_or_default();
-        Ok((cloned, string_buf))
-    }
-
     pub(crate) fn with_auto_version(self) -> Package<'a> {
         if self.version.is_empty() {
             return Package {

@@ -31,7 +31,6 @@ use bun_threading::unbounded_queue::{self, UnboundedQueue};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 use bun_watcher::Watcher;
 
-use crate::async_module::AsyncModule;
 use crate::event_loop::{ConcurrentTask, EventLoop};
 use crate::hot_reloader::ImportWatcher;
 use crate::resolved_source::OwnedResolvedSource;
@@ -366,7 +365,6 @@ impl RuntimeTranspilerStore {
                 loader,
                 promise: StrongOptional::create(JSValue::from_cell(promise), global_object),
                 poll_ref: KeepAlive::default(),
-                fetcher: Fetcher::File,
                 resolved_source,
                 generation_number: self.generation_number.load(Ordering::SeqCst),
                 parse_error: None,
@@ -423,7 +421,6 @@ pub struct TranspilerJob {
     /// pushes to are all VM-owned, and the VM's teardown waits for the ticket.
     pub(crate) ticket: Option<crate::Ticket>,
     pub global_this: BackRef<JSGlobalObject>,
-    pub(crate) fetcher: Fetcher,
     pub(crate) poll_ref: KeepAlive,
     pub(crate) generation_number: u32,
     pub(crate) log: bun_ast::Log,
@@ -444,21 +441,6 @@ unsafe impl unbounded_queue::Linked for TranspilerJob {
     unsafe fn link(item: *mut Self) -> *const unbounded_queue::Link<Self> {
         // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
         unsafe { core::ptr::addr_of!((*item).next) }
-    }
-}
-
-pub enum Fetcher {
-    VirtualModule(String),
-    File,
-}
-
-// Note: `bun_core::String` is `Copy` with manual `.deref()`;
-// decrement explicitly when replacing the enum value.
-impl Fetcher {
-    fn deinit(&mut self) {
-        if let Fetcher::VirtualModule(s) = self {
-            s.deref();
-        }
     }
 }
 
@@ -506,9 +488,8 @@ impl TranspilerJob {
     /// hive_array.rs note), so the Drop-carrying fields — `OwnedString` ×2,
     /// `OwnedResolvedSource`, `Log`, `StrongOptional` — are torn down *there*,
     /// not here. This function handles only the teardown that field drop glue
-    /// does **not** cover: the leaked `path.text` Box, `poll_ref.disable()`,
-    /// and `fetcher.deinit()` (whose payload `bun_core::String` is `Copy` with
-    /// manual `.deref()`). Doing both — explicit `take()` here *and*
+    /// does **not** cover: the leaked `path.text` Box and `poll_ref.disable()`.
+    /// Doing both — explicit `take()` here *and*
     /// `drop_in_place` in `put()` — would double-drop should any future field's
     /// `Default` not be trivially droppable.
     fn reset_for_pool(&mut self) {
@@ -523,7 +504,6 @@ impl TranspilerJob {
         }
 
         self.poll_ref.disable();
-        self.fetcher.deinit();
         // Remaining fields with Drop glue are handled by `store.put()` →
         // `drop_in_place`; do NOT `take()` them here (would drop the empty
         // replacement a second time).
@@ -556,7 +536,7 @@ impl TranspilerJob {
         let referrer = core::mem::take(&mut self.non_threadsafe_referrer).into_inner();
         let mut log = core::mem::replace(&mut self.log, bun_ast::Log::init());
         // Take RAII ownership out of the job; `into_ffi()` below transfers the
-        // +1 strings to `AsyncModule::fulfill` → C++ `Zig::ResolvedSource`.
+        // +1 strings to `async_module::fulfill` → C++ `Zig::ResolvedSource`.
         let mut owned_resolved_source = core::mem::take(&mut self.resolved_source);
         let resolved_source = owned_resolved_source.as_mut();
         let specifier = 'brk: {
@@ -587,7 +567,7 @@ impl TranspilerJob {
         };
 
         let mut resolved_source = owned_resolved_source.into_ffi();
-        AsyncModule::fulfill(
+        crate::async_module::fulfill(
             &global_this,
             promise,
             &mut resolved_source,

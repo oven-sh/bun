@@ -395,7 +395,6 @@ pub fn enqueue_package_for_download(
 }
 
 pub enum DependencyToEnqueue {
-    Pending(DependencyID),
     Resolution {
         package_id: PackageID,
         resolution: Resolution,

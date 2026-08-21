@@ -2892,33 +2892,13 @@ pub(crate) fn process_fetch_log(
 
     match log.msgs.len() {
         0 => {
-            let msg = if err == crate::CrateError::UnexpectedPendingResolution {
-                bun_ast::Msg {
-                    data: bun_ast::range_data(
-                        None,
-                        bun_ast::Range::NONE,
-                        format!(
-                            "Unexpected pending import in \"{specifier}\". To automatically \
-                             install npm packages with Bun, please use an import statement \
-                             instead of require() or dynamic import().\nThis error can also \
-                             happen if dependencies import packages which are not referenced \
-                             anywhere. Worst case, run `bun install` and opt-out of the \
-                             node_modules folder until we come up with a better way to handle \
-                             this error."
-                        )
-                        .into_bytes(),
-                    ),
-                    ..Default::default()
-                }
-            } else {
-                bun_ast::Msg {
-                    data: bun_ast::range_data(
-                        None,
-                        bun_ast::Range::NONE,
-                        format!("{} while building {specifier}", err.name()).into_bytes(),
-                    ),
-                    ..Default::default()
-                }
+            let msg = bun_ast::Msg {
+                data: bun_ast::range_data(
+                    None,
+                    bun_ast::Range::NONE,
+                    format!("{} while building {specifier}", err.name()).into_bytes(),
+                ),
+                ..Default::default()
             };
             *ret = ErrorableResolvedSource::err(
                 ErrorCode(ErrorCode::JS_ERROR_OBJECT),
@@ -3769,7 +3749,7 @@ impl VirtualMachine {
         }
 
         if self.hot_reload_deferred {
-            self.reload(None);
+            self.reload();
         }
         self.add_main_to_watcher_if_needed();
     }
@@ -3831,7 +3811,7 @@ impl VirtualMachine {
     }
 
     /// Performs a hot reload: re-evaluates the entry point once any pending entry-point load settles.
-    pub(crate) fn reload(&mut self, _: Option<&mut crate::hot_reloader::HotReloadTask>) {
+    pub(crate) fn reload(&mut self) {
         if self.hot_reload == HotReload::Watch {
             // Watch reload replaces the process: never defer on a pending
             // entry promise (node restarts regardless of child state), and
@@ -4277,9 +4257,9 @@ impl VirtualMachine {
             .get()
             .expect("source_code_printer not initialized");
 
-        // Note: the §Dispatch shim takes path/loader/module_type/printer/
-        // promise_ptr bundled as `TranspileExtra` behind `args.extra` (see
-        // ModuleLoader.rs `TranspileArgs`).
+        // Note: the §Dispatch shim takes path/loader/module_type/printer
+        // bundled as `TranspileExtra` behind `args.extra` (see ModuleLoader.rs
+        // `TranspileArgs`).
         let mut extra = ModuleLoader::TranspileExtra {
             // SAFETY: `lr.path` borrows from `specifier_clone` (and the VM's
             // resolver caches), both of which outlive the synchronous
@@ -4294,8 +4274,6 @@ impl VirtualMachine {
             }),
             module_type,
             source_code_printer: printer.as_ptr(),
-            // `fetchWithoutOnLoadPlugins` forbids the async path.
-            promise_ptr: core::ptr::null_mut(),
         };
         let args = ModuleLoader::TranspileArgs {
             specifier: lr.specifier,
@@ -4440,7 +4418,7 @@ impl VirtualMachine {
             ) {
                 ResultUnion::Success(r) => break r,
                 ResultUnion::Failure(e) => return Err(e.into()),
-                ResultUnion::Pending(_) | ResultUnion::NotFound => {
+                ResultUnion::NotFound => {
                     if !retry_on_not_found {
                         return Err(crate::CrateError::ModuleNotFound);
                     }

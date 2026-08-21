@@ -915,36 +915,6 @@ pub mod semver_string {
             self.append_with_hash::<T>(slice_, Self::string_hash(slice_))
         }
 
-        pub fn append_utf8_without_pool<T: BuilderStringType>(
-            &mut self,
-            slice_: &[u8],
-            hash: u64,
-        ) -> T {
-            if slice_.len() <= String::MAX_INLINE_LEN {
-                if strings::is_all_ascii(slice_) {
-                    return T::from_init(self.allocated_slice(), slice_, hash);
-                }
-            }
-
-            debug_assert!(self.len <= self.cap); // didn't count everything
-            debug_assert!(self.ptr.is_some()); // must call allocate first
-
-            // reshaped for borrowck — compute final slice range, then borrow once.
-            let start = self.len;
-            let end = self.cap;
-            {
-                let dst = &mut self.ptr.as_mut().unwrap()[start..end];
-                dst[..slice_.len()].copy_from_slice(slice_);
-            }
-            self.len += slice_.len();
-
-            debug_assert!(self.len <= self.cap);
-
-            let allocated = &self.ptr.as_ref().unwrap()[0..self.cap];
-            let final_slice = &allocated[start..start + slice_.len()];
-            T::from_init(allocated, final_slice, hash)
-        }
-
         // SlicedString is not supported due to inline strings.
         pub(crate) fn append_without_pool<T: BuilderStringType>(
             &mut self,

@@ -388,7 +388,6 @@ impl hooks::AutoInstaller for PackageManager {
                 package_id,
                 resolution: resolution_to_hooks(&resolution),
             },
-            enqueue::DependencyToEnqueue::Pending(id) => hooks::EnqueueResult::Pending(id),
             enqueue::DependencyToEnqueue::NotFound => hooks::EnqueueResult::NotFound,
             enqueue::DependencyToEnqueue::Failure(e) => hooks::EnqueueResult::Failure(e.into()),
         }

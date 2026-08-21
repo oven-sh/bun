@@ -213,12 +213,6 @@ pub(crate) fn run_task(
             // the task owns a ref for its duration; `run_deferred` releases it.
             unsafe { crate::ipc::SendQueue::run_deferred(cast_ptr!(crate::ipc::SendQueue)) };
         }
-        task_tag::AsyncModule => {
-            // SAFETY: `AsyncModule::done` boxed it; the arm consumes the box.
-            bun_jsc::async_module::AsyncModule::on_done(unsafe {
-                bun_core::heap::take(cast_ptr!(bun_jsc::async_module::AsyncModule))
-            })?;
-        }
         task_tag::BundleV2PluginResolve => {
             // `bun_bundler` is JSC-free; the C++ hop it calls answers the request
             // itself when the plugin throws, but can return early with an
@@ -591,7 +585,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 61,
+    task_tag::COUNT == 60,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1226,7 +1220,6 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             // SAFETY: as `release!`.
             unsafe { bun_jsc::job::release_unrun_erased(task.ptr) }
         }
-        task_tag::AsyncModule => release!(bun_jsc::async_module::AsyncModule),
         task_tag::BakeHotReloadEvent => release!(BakeHotReloadEvent),
         task_tag::BundleV2DeferredBatchTask => release!(BundleV2DeferredBatchTask),
         task_tag::BundleV2PluginResolve => {

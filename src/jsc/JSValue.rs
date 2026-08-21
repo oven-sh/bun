@@ -1003,16 +1003,6 @@ impl JSValue {
         let p = JSC__JSValue__asPromise(self);
         if p.is_null() { None } else { Some(p) }
     }
-    /// `JSValue.asInternalPromise()` — downcast to `JSInternalPromise`.
-    /// Returns a raw pointer; see
-    /// [`as_promise`] for the aliasing rationale.
-    pub(crate) fn as_internal_promise(self) -> Option<*mut JSInternalPromise> {
-        if !self.is_cell() {
-            return None;
-        }
-        let p = JSC__JSValue__asInternalPromise(self);
-        if p.is_null() { None } else { Some(p) }
-    }
     pub fn as_any_promise(self) -> Option<AnyPromise> {
         if !self.is_cell() {
             return None;

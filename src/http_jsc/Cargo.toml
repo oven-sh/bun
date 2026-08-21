@@ -29,6 +29,7 @@ bun_libdeflate_sys.workspace = true
 bun_picohttp.workspace = true
 bun_ptr.workspace = true
 bun_sha_hmac.workspace = true
+bun_telemetry.workspace = true
 bun_uws.workspace = true
 bun_uws_sys.workspace = true
 bun_zlib.workspace = true

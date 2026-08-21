@@ -76,6 +76,9 @@ pub struct MySQLConnection {
 
     auth_data: Vec<u8>,
     database: Box<[u8]>,
+    /// For telemetry `server.address` / `server.port`.
+    pub(crate) host: Box<[u8]>,
+    pub(crate) port: u16,
     user: Box<[u8]>,
     password: Box<[u8]>,
     secure: Option<*mut SslCtx>,
@@ -108,6 +111,8 @@ impl Default for MySQLConnection {
             full_auth_requested: false,
             auth_data: Vec::new(),
             database: Box::default(),
+            host: Box::default(),
+            port: 0,
             user: Box::default(),
             password: Box::default(),
             secure: None,
@@ -125,8 +130,15 @@ impl Default for MySQLConnection {
 bun_core::impl_field_parent! { MySQLConnection => JSMySQLConnection.connection; fn js_connection_ref; fn mut get_js_connection; }
 
 impl MySQLConnection {
+    #[inline]
+    pub(crate) fn database_name(&self) -> &[u8] {
+        &self.database
+    }
+
     pub(crate) fn init(
         database: Box<[u8]>,
+        host: Box<[u8]>,
+        port: u16,
         username: Box<[u8]>,
         password: Box<[u8]>,
         tls_config: SSLConfig,
@@ -136,6 +148,8 @@ impl MySQLConnection {
     ) -> Self {
         Self {
             database,
+            host,
+            port,
             user: username,
             password,
             socket: Socket::SocketTcp(uws::SocketTCP::detached()),

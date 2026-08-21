@@ -52,6 +52,9 @@ pub struct PostgresSQLQuery {
     ref_count: Cell<u32>,
 
     pub(crate) flags: Cell<Flags>,
+
+    /// Native OpenTelemetry client span for this query; `None` when off.
+    pub(crate) otel: Cell<Option<bun_telemetry::Span>>,
 }
 
 // On drop: deref the statement (if any), then deref query/cursor_name.
@@ -60,6 +63,7 @@ pub struct PostgresSQLQuery {
 // `destroy` is `heap::take` in `deref_`.
 impl Drop for PostgresSQLQuery {
     fn drop(&mut self) {
+        self.otel_end(None);
         self.release_statement();
         self.query.deref();
         self.cursor_name.deref();
@@ -76,6 +80,7 @@ impl Default for PostgresSQLQuery {
             status: Cell::new(Status::Pending),
             ref_count: Cell::new(1),
             flags: Cell::new(Flags::default()),
+            otel: Cell::new(None),
         }
     }
 }
@@ -198,12 +203,49 @@ impl PostgresSQLQuery {
         bun_ptr::finalize_js_box(self, |this| this.this_value.with_mut(|r| r.finalize()));
     }
 
+    fn otel_end_js_error(&self, err: JSValue, global_object: &JSGlobalObject) {
+        let Some(span) = self.otel.take() else { return };
+        let mut code = None;
+        let mut message = None;
+        if err.is_object() {
+            if let Ok(Some(c)) = err.get(global_object, "code") {
+                if c.is_string() {
+                    code = c.to_slice(global_object).ok();
+                }
+            }
+            if let Ok(Some(m)) = err.get(global_object, "message") {
+                if m.is_string() {
+                    message = m.to_slice(global_object).ok();
+                }
+            }
+        }
+        let q = self.query.to_utf8();
+        bun_telemetry::db::end(
+            span,
+            q.slice(),
+            None,
+            Some((
+                code.as_ref().map(|c| c.slice()).unwrap_or(b"_OTHER"),
+                message.as_ref().map(|m| m.slice()).unwrap_or(b""),
+            )),
+        );
+    }
+
+    /// Finish the telemetry span (first call wins).
+    pub(crate) fn otel_end(&self, error: Option<(&[u8], &[u8])>) {
+        if let Some(span) = self.otel.take() {
+            let q = self.query.to_utf8();
+            bun_telemetry::db::end(span, q.slice(), None, error);
+        }
+    }
+
     pub(crate) fn on_write_fail(
         &self,
         err: AnyPostgresError,
         global_object: &JSGlobalObject,
         queries_array: JSValue,
     ) {
+        self.otel_end(Some((<&'static str>::from(err).as_bytes(), b"")));
         // R-2: every field touched below is `Cell`/`JsCell`-backed, so `&self`
         // is sufficient and `noalias` is suppressed. `ScopedRef` brackets the
         // JS-re-entrant `run_callback` so a re-entrant `deref()` cannot free
@@ -241,6 +283,7 @@ impl PostgresSQLQuery {
     }
 
     pub(crate) fn on_js_error(&self, err: JSValue, global_object: &JSGlobalObject) {
+        self.otel_end_js_error(err, global_object);
         // R-2: see `on_write_fail` — `&self` + Cell/JsCell, ScopedRef brackets re-entry.
         let _deref = self.ref_guard();
         self.status.set(Status::Fail);
@@ -298,6 +341,9 @@ impl PostgresSQLQuery {
         connection: JSValue,
         is_last: bool,
     ) {
+        if is_last {
+            self.otel_end(None);
+        }
         // R-2: see `on_write_fail` — `&self` + Cell/JsCell, ScopedRef brackets re-entry.
         let _deref = self.ref_guard();
         self.status.set(if is_last {
@@ -499,6 +545,17 @@ impl PostgresSQLQuery {
         let this_value = callframe.this();
         let binding_value = js::binding_get_cached(this_value).unwrap_or_default();
         let query_str = this.query.to_utf8();
+        if bun_telemetry::enabled(bun_telemetry::Instrument::Sql) {
+            this.otel.set(bun_telemetry::db::begin(
+                global_object.as_ptr().cast(),
+                bun_telemetry::db::System::Postgres,
+                &bun_telemetry::db::ConnectionInfo {
+                    host: &connection.host,
+                    port: connection.port,
+                    namespace: connection.database_name(),
+                },
+            ));
+        }
         // query_str: Utf8Slice<'_> — Drop frees.
         let writer = connection.writer();
         // We need a strong reference to the query so that it doesn't get GC'd

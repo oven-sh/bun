@@ -1201,11 +1201,18 @@ fn spawn_maybe_sync(
         ..Default::default()
     };
 
+    let otel_stub =
+        crate::telemetry::start_leaf(global_this, bun_telemetry::Instrument::ChildProcess);
     // SAFETY: `argv`/`env_array` are local null-terminated C-string arrays
     // with argv[0] non-null; valid for this call.
-    let mut spawned = match unsafe {
-        spawn::spawn_process(&spawn_options, argv.as_ptr(), env_array.as_ptr())
-    } {
+    let spawn_result =
+        unsafe { spawn::spawn_process(&spawn_options, argv.as_ptr(), env_array.as_ptr()) };
+    if otel_stub.is_some() {
+        if let Err(err) = &spawn_result {
+            crate::telemetry::spawn::failed(&otel_stub, &argv, err.name());
+        }
+    }
+    let mut spawned = match spawn_result {
         Err(err)
             if err == bun_spawn::Error::Sys(bun_errno::SystemErrno::EMFILE)
                 || err == bun_spawn::Error::Sys(bun_errno::SystemErrno::ENFILE) =>
@@ -1366,6 +1373,12 @@ fn spawn_maybe_sync(
             crate::timer::EventLoopTimerTag::SubprocessTimeout,
         )),
         exited_due_to_maxbuf: Cell::new(None),
+        // SAFETY: `process` is the live Box from `to_process` above.
+        otel: Cell::new(crate::telemetry::spawn::begin(
+            otel_stub,
+            &argv,
+            i64::from(unsafe { (*process).pid }),
+        )),
     }));
     // SAFETY: subprocess_ptr is a freshly-boxed Subprocess; we hold the only reference.
     let subprocess = unsafe { &mut *subprocess_ptr };

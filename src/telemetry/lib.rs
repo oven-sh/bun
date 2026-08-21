@@ -9,12 +9,14 @@ pub mod batch;
 pub mod clock;
 pub mod config;
 pub mod data;
+pub mod db;
 pub mod otlp;
 pub mod otlp_json;
 pub mod processor;
 pub mod propagation;
 pub mod proto;
 pub mod resource;
+pub mod rt;
 pub mod sampler;
 pub mod span;
 
@@ -158,8 +160,10 @@ impl From<Instrument> for ScopeId {
 }
 
 /// Bit i set ⇔ `Instrument` i records spans. Zero when telemetry is off, so
-/// every integration's fast path is `load; test; branch`.
-static ENABLED: AtomicU32 = AtomicU32::new(0);
+/// every integration's fast path is `load; test; branch`. Exported so C++
+/// integrations (bun:sqlite) can do the same load.
+#[unsafe(export_name = "Bun__Telemetry__enabled")]
+pub static ENABLED: AtomicU32 = AtomicU32::new(0);
 /// Bit i set ⇔ `Instrument` i records even without an active parent.
 static ROOTS: AtomicU32 = AtomicU32::new(0);
 

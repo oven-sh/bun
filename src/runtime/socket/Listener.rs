@@ -635,6 +635,7 @@ impl Listener {
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
             twin: JsCell::new(None),
             verify_error: JsCell::new(None),
+            otel_connect: Cell::new(bun_telemetry::SpanStub::NONE),
         });
         let s = this_socket;
         s.ref_();
@@ -681,6 +682,7 @@ impl Listener {
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
             twin: JsCell::new(None),
             verify_error: JsCell::new(None),
+            otel_connect: Cell::new(bun_telemetry::SpanStub::NONE),
         });
         let s = this_socket;
         s.ref_();
@@ -1262,6 +1264,7 @@ impl Listener {
                             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
                             twin: JsCell::new(None),
                             verify_error: JsCell::new(None),
+                            otel_connect: Cell::new(bun_telemetry::SpanStub::NONE),
                         })
                     };
                     let tls_ref = tls;
@@ -1348,6 +1351,7 @@ impl Listener {
                             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
                             twin: JsCell::new(None),
                             verify_error: JsCell::new(None),
+                            otel_connect: Cell::new(bun_telemetry::SpanStub::NONE),
                         })
                     };
                     let tcp_ref = tcp;
@@ -1590,6 +1594,7 @@ fn connect_finish<const IS_SSL: bool>(
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
             twin: JsCell::new(None),
             verify_error: JsCell::new(None),
+            otel_connect: Cell::new(bun_telemetry::SpanStub::NONE),
         })
     };
     // Either the caller's JS-owned socket (reconnect) or the fresh one above.

@@ -29,6 +29,12 @@ unsafe extern "C" {
     safe fn Bun__Telemetry__swapContext(global: &JSGlobalObject, value: JSValue) -> JSValue;
 }
 
+/// `rt::Hooks::active_span` — `global` is a `JSGlobalObject*`.
+pub(crate) fn active_ptr(global: *mut core::ffi::c_void) -> *const SpanData {
+    // SAFETY: only ever called with a live JSGlobalObject pointer.
+    Bun__Telemetry__activeSpanPtr(unsafe { &*global.cast::<JSGlobalObject>() }).cast::<SpanData>()
+}
+
 /// The active span's native record, if any. Borrow is valid for as long as
 /// the caller doesn't run JS (the wrapper roots it).
 #[inline]

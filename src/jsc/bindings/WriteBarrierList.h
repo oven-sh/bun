@@ -63,6 +63,12 @@ public:
         return m_list.isEmpty();
     }
 
+    void clear(JSC::JSCell* owner)
+    {
+        WTF::Locker locker { owner->cellLock() };
+        m_list.clear();
+    }
+
     template<typename MatchFunction>
     bool removeFirstMatching(JSC::JSCell* owner, const MatchFunction& matches)
     {

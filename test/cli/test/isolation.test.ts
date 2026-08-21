@@ -930,6 +930,132 @@ describe.concurrent("--isolate experimental global reuse", () => {
     expect(m && JSON.parse(m[1])).toEqual({ reuse: 2, swap: 0 });
     expect(exitCode).toBe(0);
   });
+
+  test("a reused global keeps the default process 'warning' listener", async () => {
+    using dir = tempDir("isolate-reuse-warning", {
+      "a.test.ts": `
+        import { test, expect } from "bun:test";
+        test("a", () => {
+          expect(process.listenerCount("warning")).toBe(1);
+        });
+      `,
+      "b.test.ts": `
+        import { test, expect } from "bun:test";
+        import { testIsolationResetStats } from "bun:internal-for-testing";
+        test("b", () => {
+          console.log("RESET_STATS=" + JSON.stringify(testIsolationResetStats()));
+          // The Process object survives the reuse; the scrub must reinstall the
+          // bootstrap 'warning' printer that removeAllListeners() stripped.
+          expect(process.listenerCount("warning")).toBe(1);
+          process.emitWarning("reuse-warning-check");
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "./a.test.ts", "./b.test.ts"],
+      env: { ...bunEnv, ...REUSE_ENV, NODE_NO_WARNINGS: undefined },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const m = stdout.match(/RESET_STATS=(\{.*?\})/);
+    expect(m && JSON.parse(m[1])).toEqual({ reuse: 1, swap: 0 });
+    expect(stderr).toContain("reuse-warning-check");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a rejection fired by the finished file's cleanup is not reported in the next file", async () => {
+    using dir = tempDir("isolate-reuse-cleanup-rejection", {
+      "a.test.ts": `
+        import { test, expect } from "bun:test";
+        test("a", async () => {
+          const server = Bun.listen({
+            hostname: "127.0.0.1",
+            port: 0,
+            socket: { data() {}, close() {} },
+          });
+          const { promise, resolve } = Promise.withResolvers<void>();
+          // The socket is left open on purpose: the isolation cleanup's socket
+          // sweep fires this close callback after the file's own rejections
+          // were already drained.
+          await Bun.connect({
+            hostname: "127.0.0.1",
+            port: server.port,
+            socket: {
+              data() {},
+              open() { resolve(); },
+              close() {
+                Promise.reject(new Error("rejected-during-cleanup"));
+              },
+            },
+          });
+          await promise;
+          expect(1).toBe(1);
+        });
+      `,
+      "b.test.ts": `
+        import { test, expect } from "bun:test";
+        import { testIsolationResetStats } from "bun:internal-for-testing";
+        test("b", async () => {
+          console.log("RESET_STATS=" + JSON.stringify(testIsolationResetStats()));
+          await 0;
+          expect(1).toBe(1);
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "./a.test.ts", "./b.test.ts"],
+      env: { ...bunEnv, ...REUSE_ENV },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("rejected-during-cleanup");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+    const m = stdout.match(/RESET_STATS=(\{.*?\})/);
+    expect(m && JSON.parse(m[1])).toEqual({ reuse: 1, swap: 0 });
+    expect(exitCode).toBe(0);
+  });
+
+  test("a --preload spyOn(globalThis, ...) does not prevent reuse", async () => {
+    const testFile = (name: string, extra = "") => `
+      import { test, expect } from "bun:test";
+      test(${JSON.stringify(name)}, () => {
+        expect((globalThis.fetch as any).mock).toBeDefined();
+        ${extra}
+      });
+    `;
+    using dir = tempDir("isolate-reuse-preload-spy", {
+      "preload.ts": `
+        import { spyOn } from "bun:test";
+        spyOn(globalThis, "fetch");
+      `,
+      "a.test.ts": testFile("a"),
+      "b.test.ts": testFile("b"),
+      "c.test.ts": testFile(
+        "c",
+        `const { testIsolationResetStats } = require("bun:internal-for-testing");
+         console.log("RESET_STATS=" + JSON.stringify(testIsolationResetStats()));`,
+      ),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "--preload", "./preload.ts", "./a.test.ts", "./b.test.ts", "./c.test.ts"],
+      env: { ...bunEnv, ...REUSE_ENV },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("3 pass");
+    const m = stdout.match(/RESET_STATS=(\{.*?\})/);
+    // The baseline records the slot as the spy's original, so restoring the
+    // original at the boundary still matches and the re-run preload re-spies.
+    expect(m && JSON.parse(m[1])).toEqual({ reuse: 2, swap: 0 });
+    expect(exitCode).toBe(0);
+  });
 });
 
 // The eviction test below proves the SourceProvider cache is active (control:

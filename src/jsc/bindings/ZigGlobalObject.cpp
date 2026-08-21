@@ -722,6 +722,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
 }
 
 extern "C" void JSMock__resetSpies(Zig::GlobalObject*);
+extern "C" JSC::EncodedJSValue JSMock__originalIfGlobalThisSpy(Zig::GlobalObject*, JSC::EncodedJSValue, WTF::UniquedStringImpl*, unsigned*);
 
 namespace Bun {
 
@@ -811,10 +812,18 @@ extern "C" void Zig__GlobalObject__captureTestIsolationBaseline(Zig::GlobalObjec
     baseline.prepareStackTraceValue.set(vm, globalObject->m_errorConstructorPrepareStackTraceValue.get());
 
     globalObject->structure()->forEachProperty(vm, [&](const auto& entry) -> bool {
+        JSC::JSValue value = globalObject->getDirect(entry.offset());
+        uint8_t attributes = entry.attributes();
+        // A slot holding a live spyOn(globalThis, key) mock (a --preload spy) is recorded as its original value: the reset restores the original before the compare, and the re-run preload re-installs a fresh spy.
+        unsigned spyAttributes = 0;
+        if (JSC::JSValue original = JSC::JSValue::decode(JSMock__originalIfGlobalThisSpy(globalObject, JSC::JSValue::encode(value), entry.key(), &spyAttributes))) {
+            value = original;
+            attributes = static_cast<uint8_t>(spyAttributes);
+        }
         baseline.ownProperties.add(entry.key(),
             Bun::TestIsolationBaseline::Entry {
-                JSC::Strong<JSC::Unknown>(vm, globalObject->getDirect(entry.offset())),
-                entry.attributes() });
+                JSC::Strong<JSC::Unknown>(vm, value),
+                attributes });
         return true;
     });
 
@@ -976,12 +985,16 @@ extern "C" bool Zig__GlobalObject__tryResetForTestIsolation(Zig::GlobalObject* g
     globalObject->mockModule.activeMocks.clear();
     // The listener half of the swap path's prepareForDestruction(); the context itself stays live.
     globalObject->scriptExecutionContext()->removeAllEventListeners();
+    // A rejection queued by cleanup-phase JS (a socket close callback) belongs to the finished file; the swap path drops it with the old global.
+    globalObject->clearAboutToBeNotifiedRejectedPromises();
     globalObject->overridenDateNow = JSC::PNaN;
     globalObject->onLoadPlugins.clear();
     globalObject->onResolvePlugins.clear();
     if (globalObject->hasProcessObject()) {
         auto* process = globalObject->processObject();
         process->wrapped().removeAllListeners();
+        // removeAllListeners() also stripped the bootstrap 'warning' printer that finishCreation installs; a reused Process never re-runs finishCreation.
+        process->installDefaultWarningListener(vm);
         process->clearCachedCwd();
         process->setUncaughtExceptionCaptureCallback(JSC::jsNull());
         process->m_reportOnUncaughtException = false;
@@ -3542,6 +3555,11 @@ RefPtr<Performance> GlobalObject::performance()
 }
 
 extern "C" void Bun__handleRejectedPromise(Zig::GlobalObject* JSGlobalObject, JSC::JSPromise* promise);
+
+void GlobalObject::clearAboutToBeNotifiedRejectedPromises()
+{
+    m_aboutToBeNotifiedRejectedPromises.clear(this);
+}
 
 void GlobalObject::handleRejectedPromises()
 {

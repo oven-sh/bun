@@ -632,6 +632,20 @@ extern "C" void JSMock__resetSpies(Zig::GlobalObject* globalObject)
     globalObject->mockModule.activeSpies.clear();
 }
 
+// If `encodedValue` is an active spyOn(globalObject, key) mock, returns the value the spy replaced (with its attributes); otherwise returns the empty JSValue.
+extern "C" JSC::EncodedJSValue JSMock__originalIfGlobalThisSpy(Zig::GlobalObject* globalObject, JSC::EncodedJSValue encodedValue, WTF::UniquedStringImpl* key, unsigned* outAttributes)
+{
+    auto* mock = tryJSDynamicCast<JSMockFunction*>(JSValue::decode(encodedValue));
+    if (!mock)
+        return JSValue::encode(JSValue());
+    JSObject* target = mock->spyTarget.get();
+    if (!target || (target != globalObject && target != globalObject->globalThis()) || mock->spyIdentifier.impl() != key)
+        return JSValue::encode(JSValue());
+    *outAttributes = mock->spyAttributes;
+    JSValue original = mock->spyOriginal.get();
+    return JSValue::encode(original ? original : jsUndefined());
+}
+
 extern "C" void JSMock__clearAllMocks(Zig::GlobalObject* globalObject)
 {
     // mockClear() on every mock: only clears calls, contexts, instances and results.

@@ -115,6 +115,9 @@ public:
     void workerGlobalScopeStarted(Zig::GlobalObject&);
     void postMessageToWorkerObject(MessageWithMessagePorts&&);
     void postErrorToWorkerObject(Zig::GlobalObject&, const String& message, JSC::JSValue error);
+    // Message-only report (no value to clone): postErrorToWorkerObject's fallback, and the whole
+    // report when the thread failed before it had a VM (WebWorker__dispatchInitFailed).
+    void postMessageErrorToWorkerObject(String&& message, String&& code);
     // The thread's global scope, VM and per-thread state are gone; only the OS thread remains.
     // stoppedByParent: it stopped because it was asked to and never called process.exit() itself.
     void workerGlobalScopeDestroyed(int32_t exitCode, bool stoppedByParent);
@@ -137,7 +140,6 @@ private:
     void releaseWorkerThread();
     void drainMessagesToWorkerObject(ScriptExecutionContext&, DrainBudget);
     void rejectAllCrossVMRequests();
-    void postMessageErrorToWorkerObject(String&& message, String&& code);
     bool postSerializedErrorToWorkerObject(Zig::GlobalObject&, JSC::JSValue error);
 
     // Parent thread only.

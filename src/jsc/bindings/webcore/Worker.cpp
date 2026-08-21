@@ -222,6 +222,14 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
     proxy->postErrorToWorkerObject(*globalObject, messageStr, error);
 }
 
+// The worker thread failed before a JSC VM / global scope existed (us_create_loop EMFILE/ENFILE), so
+// there is nothing to dispatch the worker-side ErrorEvent on and no value to serialise: the parent
+// builds a plain Error carrying ERR_WORKER_INIT_FAILED, matching node's node_worker.cc.
+extern "C" void WebWorker__dispatchInitFailed(WorkerMessagingProxy* proxy, BunString* message)
+{
+    proxy->postMessageErrorToWorkerObject(message->transferToWTFString(), "ERR_WORKER_INIT_FAILED"_s);
+}
+
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSetParentPort);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSetNodeWorkerStdioPorts);
 

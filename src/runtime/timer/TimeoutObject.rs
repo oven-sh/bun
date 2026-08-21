@@ -1,28 +1,7 @@
+use bun_jsc::generated::JSTimeout as js;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::Kind;
-
-/// `jsc.Codegen.JSTimeout` — the `.classes.ts` codegen module for this type.
-///
-/// `toJS` / `fromJS` / `fromJSDirect` and the `Timeout__create` /
-/// `Timeout__fromJS` / `Timeout__fromJSDirect` externs are emitted by
-/// `#[bun_jsc::JsClass(name = "Timeout")]` on the struct below (see
-/// `jsc_macros::js_class_hooks`); only the cached-property accessors —
-/// `${name}GetCached` / `${name}SetCached` per `cache: true` prop — are
-/// declared here.
-pub mod js {
-    // One `${snake}_get_cached` / `${snake}_set_cached` pair per cached prop,
-    // each wrapping `TimeoutPrototype__${prop}{Get,Set}CachedValue` and mapping
-    // `.zero` → `None` on the get side.
-    bun_jsc::codegen_cached_accessors!(
-        "Timeout";
-        arguments,
-        callback,
-        idleTimeout,
-        repeat,
-        idleStart,
-    );
-}
 
 // Struct + `RefCounted`/`Default` impls + the forwarder host-fns
 // (`to_primitive`/`do_ref`/`do_unref`/`has_ref`/`get_destroyed`/`dispose`/

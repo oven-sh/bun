@@ -14,14 +14,14 @@ use bun_jsc::JSValue;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct struct_unnamed_1 {
+struct struct_unnamed_1 {
     pub payload: i32,
     pub tag: i32,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub union union_EncodedJSValue {
+union union_EncodedJSValue {
     pub(crate) as_int64: i64,
     pub ptr: *mut c_void,
     pub as_bits: struct_unnamed_1,

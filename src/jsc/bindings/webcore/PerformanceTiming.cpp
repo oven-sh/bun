@@ -30,6 +30,7 @@
 
 #include "config.h"
 #include "PerformanceTiming.h"
+#include <wtf/TZoneMallocInlines.h>
 
 // #include "Document.h"
 // #include "DocumentEventTiming.h"
@@ -42,6 +43,8 @@
 // #include "ResourceResponse.h"
 
 namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(PerformanceTiming);
 
 PerformanceTiming::PerformanceTiming() {}
 
@@ -148,11 +151,6 @@ unsigned long long PerformanceTiming::loadEventStart() const
 unsigned long long PerformanceTiming::loadEventEnd() const
 {
     return 0;
-}
-
-unsigned long long PerformanceTiming::monotonicTimeToIntegerMilliseconds(MonotonicTime timeStamp) const
-{
-    return timeStamp.secondsSinceEpoch().milliseconds();
 }
 
 } // namespace WebCore

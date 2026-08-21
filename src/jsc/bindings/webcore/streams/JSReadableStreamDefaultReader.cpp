@@ -128,7 +128,7 @@ void readableStreamDefaultReaderRead(JSGlobalObject* globalObject, JSReadableStr
         // promise-backed read adopts it instead of waiting in [[readRequests]].
         if (readRequest->kind() == ReadRequestKind::Promise) {
             auto* readPromise = uncheckedDowncast<JSPromise>(readRequest->m_context.get());
-            JSValue pulled = controller->onPull(globalObject);
+            JSValue pulled = controller->onPull(globalObject, /* readRequestQueued */ false);
             RETURN_IF_EXCEPTION(scope, void());
             if (!pulled.isObject()) {
                 // The pump refused (already closed / re-entrant pull): report done.
@@ -138,14 +138,11 @@ void readableStreamDefaultReaderRead(JSGlobalObject* globalObject, JSReadableStr
             }
             RELEASE_AND_RETURN(scope, resolvePromise(globalObject, readPromise, pulled));
         }
-        // Other read-request kinds wait in [[readRequests]]; the pump's unobserved
-        // head-of-line promise for this read is dropped so delivery reaches the request.
+        // Other read-request kinds wait in [[readRequests]] and are delivered through their
+        // own chunk/close/error steps.
         readableStreamAddReadRequest(vm, stream, readRequest);
-        bool hadPendingRead = !!controller->m_pendingRead;
-        JSValue pulled = controller->onPull(globalObject);
-        RETURN_IF_EXCEPTION(scope, void());
-        if (!hadPendingRead && controller->m_pendingRead && pulled == JSValue(controller->m_pendingRead.get()))
-            controller->m_pendingRead.clear();
+        scope.release();
+        controller->onPull(globalObject, /* readRequestQueued */ true);
         return;
     }
     case ControllerKind::NativeSink: {
@@ -393,7 +390,7 @@ JSValue readableStreamDefaultReaderReadMany(JSGlobalObject* globalObject, JSRead
         if (state == ReadableStreamState::Closed)
             break;
         auto* controller = uncheckedDowncast<WebCore::JSDirectStreamController>(stream->m_controller.get());
-        JSValue pulled = controller->onPull(globalObject);
+        JSValue pulled = controller->onPull(globalObject, /* readRequestQueued */ false);
         RETURN_IF_EXCEPTION(scope, {});
         auto* pulledPromise = dynamicDowncast<JSPromise>(pulled);
         if (!pulledPromise)

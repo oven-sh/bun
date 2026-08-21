@@ -268,27 +268,6 @@ impl Pipeline {
         interp.start_node(child)
     }
 
-    /// IOWriter completion callback for the error message written in
-    /// `WaitingWriteErr`: throw on write failure, otherwise finish the
-    /// pipeline with exit code 1.
-    pub(crate) fn on_io_writer_chunk(
-        interp: &Interpreter,
-        this: NodeId,
-        _written: usize,
-        err: Option<bun_sys::SystemError>,
-    ) -> Yield {
-        debug_assert!(matches!(
-            interp.as_pipeline(this).state,
-            PipelineState::WaitingWriteErr
-        ));
-        if let Some(e) = err {
-            interp.throw(ShellErr::from_system(e));
-            return Yield::failed();
-        }
-        let parent = interp.as_pipeline(this).base.parent;
-        interp.child_done(parent, this, 1)
-    }
-
     pub(crate) fn child_done(
         interp: &Interpreter,
         this: NodeId,

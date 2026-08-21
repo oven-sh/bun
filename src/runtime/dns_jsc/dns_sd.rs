@@ -1,6 +1,7 @@
 //! macOS DNSServiceGetAddrInfo backend: all lookups share one mDNSResponder connection (see dns.rs banner).
 
 use super::*;
+use bun_collections::index_sort;
 
 pub(crate) type DNSServiceRef = *mut c_void;
 type DNSServiceFlags = u32;
@@ -269,7 +270,9 @@ impl QueryState {
     pub(crate) fn take_results(&mut self) -> bun_dns::ResultList {
         let mut results = core::mem::take(&mut self.results);
         // Family arrival order races upstream; match getaddrinfo's RFC 6724 default (IPv6 first).
-        results.sort_by_key(|r| r.address.family() != netc::AF_INET6);
+        index_sort::sort_slice_by(&mut results, |a, b| {
+            (a.address.family() != netc::AF_INET6).cmp(&(b.address.family() != netc::AF_INET6))
+        });
         results
     }
 }
@@ -659,9 +662,21 @@ impl SharedConnection {
         let Some(conn) = (unsafe { this.as_mut() }) else {
             return;
         };
-        // Subordinates are failed (deallocating them) before the parent.
+        // Subordinates are dealt with (deallocating them) before the parent.
         while let Some(inf) = conn.inflight.pop() {
-            Self::finish(inf, Some(ERR_DEFUNCT_CONNECTION));
+            match inf {
+                // A connect-path lookup lives in the process-wide cache and may
+                // have waiters on other threads (and its outcome is cached): this
+                // thread going away is not an answer. Finish it on the work pool.
+                Inflight::Internal(req) => {
+                    // SAFETY: `inf` is a live heap request just removed from `inflight`;
+                    // FFI releases this thread's subordinate for it.
+                    unsafe { DNSServiceRefDeallocate(inf.query().sd_ref) };
+                    internal::run_on_work_pool(req);
+                }
+                // A dns.lookup() from this thread's script: only this VM waits on it.
+                Inflight::Jsc(_) => Self::finish(inf, Some(ERR_DEFUNCT_CONNECTION)),
+            }
         }
         // SAFETY: `this` is detached and drained.
         unsafe { Self::destroy(this) };
@@ -713,7 +728,6 @@ pub(crate) fn lookup(
         cache,
         get_addr_info_request::Backend::DnsSd(get_addr_info_request::BackendDnsSd::new(protocol)),
         Some(this.as_ctx_ptr()),
-        query,
         global_this,
         PendingCacheField::PendingHostCacheNative,
     );
@@ -730,8 +744,7 @@ pub(crate) fn lookup(
     ) else {
         // SAFETY: request is exclusively owned; dns_sd never accepted it.
         unsafe {
-            if (*request).cache.pending_cache() {
-                let pos = (*request).cache.pos_in_pending();
+            if let Some(pos) = (*request).pending_slot {
                 this.pending_host_cache_native.with_mut(|c| {
                     let slot = c.ptr_at(pos as usize);
                     // SAFETY: `pos` was alloc'd; no other token outstanding.

@@ -50,8 +50,6 @@ public:
     ByteSource m_digest;
     bool m_finalized { false };
 
-    Vector<uint8_t, EVP_MAX_MD_SIZE> m_digestBuffer;
-
     ExternZigHash::Hasher* m_zigHasher { nullptr };
     size_t m_sizeForGC { 0 };
 };

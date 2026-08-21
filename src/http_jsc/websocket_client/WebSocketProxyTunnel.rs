@@ -56,42 +56,48 @@ bun_core::declare_scope!(WebSocketProxyTunnel, visible);
 /// holding a borrow of the tunnel across the re-entrant call.
 #[derive(Clone, Copy)]
 pub(crate) enum UpgradeClientUnion {
-    Http(ThisPtr<HttpUpgradeClient>),
-    Https(ThisPtr<HttpsUpgradeClient>),
+    Http(*mut HttpUpgradeClient),
+    Https(*mut HttpsUpgradeClient),
     None,
 }
 
 impl UpgradeClientUnion {
-    fn handle_decrypted_data(&self, data: &[u8]) {
+    fn dispatch(
+        self,
+        http: impl FnOnce(ThisPtr<HttpUpgradeClient>),
+        https: impl FnOnce(ThisPtr<HttpsUpgradeClient>),
+    ) {
+        // The upgrade client resets this to `None` (`detach_upgrade_client`,
+        // from `clear_data`) before it can be freed, so a non-`None` variant
+        // points at a live client for the duration of this call.
         match self {
-            UpgradeClientUnion::Http(client) => {
-                HttpUpgradeClient::handle_decrypted_data(*client, data)
-            }
-            UpgradeClientUnion::Https(client) => {
-                HttpsUpgradeClient::handle_decrypted_data(*client, data)
-            }
+            // SAFETY: see above.
+            UpgradeClientUnion::Http(client) => http(unsafe { ThisPtr::new(client) }),
+            // SAFETY: see above.
+            UpgradeClientUnion::Https(client) => https(unsafe { ThisPtr::new(client) }),
             UpgradeClientUnion::None => {}
         }
     }
 
-    fn terminate(&self, code: ErrorCode) {
-        match self {
-            UpgradeClientUnion::Http(client) => HttpUpgradeClient::terminate(*client, code),
-            UpgradeClientUnion::Https(client) => HttpsUpgradeClient::terminate(*client, code),
-            UpgradeClientUnion::None => {}
-        }
+    fn handle_decrypted_data(self, data: &[u8]) {
+        self.dispatch(
+            |c| HttpUpgradeClient::handle_decrypted_data(c, data),
+            |c| HttpsUpgradeClient::handle_decrypted_data(c, data),
+        );
     }
 
-    fn on_proxy_tls_handshake_complete(&self) {
-        match self {
-            UpgradeClientUnion::Http(client) => {
-                HttpUpgradeClient::on_proxy_tls_handshake_complete(*client)
-            }
-            UpgradeClientUnion::Https(client) => {
-                HttpsUpgradeClient::on_proxy_tls_handshake_complete(*client)
-            }
-            UpgradeClientUnion::None => {}
-        }
+    fn terminate(self, code: ErrorCode) {
+        self.dispatch(
+            |c| HttpUpgradeClient::terminate(c, code),
+            |c| HttpsUpgradeClient::terminate(c, code),
+        );
+    }
+
+    fn on_proxy_tls_handshake_complete(self) {
+        self.dispatch(
+            HttpUpgradeClient::on_proxy_tls_handshake_complete,
+            HttpsUpgradeClient::on_proxy_tls_handshake_complete,
+        );
     }
 
     fn is_none(&self) -> bool {
@@ -143,19 +149,15 @@ impl WebSocketProxyTunnel {
         // const-generic bool → variant selection. The pointer cast is
         // identity when SSL matches the alias (HttpUpgradeClient = NewHttpUpgradeClient<false>,
         // etc); `assume_ssl`/`assume_tcp` rebuild the handler around the same
-        // `InternalSocket`. The upgrade client detaches itself
-        // (`detach_upgrade_client`) before it can be freed, so the stored
-        // `ThisPtr` is live whenever a callback dispatches through it.
+        // `InternalSocket` so no `unsafe` is needed.
         let (upgrade_client, socket) = if SSL {
             (
-                // SAFETY: identity cast (SSL == true); liveness per the comment above.
-                UpgradeClientUnion::Https(unsafe { ThisPtr::new(upgrade_client.as_ptr().cast()) }),
+                UpgradeClientUnion::Https(upgrade_client.as_ptr().cast::<HttpsUpgradeClient>()),
                 SocketUnion::Ssl(socket.assume_ssl()),
             )
         } else {
             (
-                // SAFETY: identity cast (SSL == false); liveness per the comment above.
-                UpgradeClientUnion::Http(unsafe { ThisPtr::new(upgrade_client.as_ptr().cast()) }),
+                UpgradeClientUnion::Http(upgrade_client.as_ptr().cast::<HttpUpgradeClient>()),
                 SocketUnion::Tcp(socket.assume_tcp()),
             )
         };

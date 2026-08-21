@@ -555,16 +555,25 @@ impl<const SSL: bool> HTTPClient<SSL> {
         self.to_send_len.set(0);
     }
 
-    /// Lend `input_body_buf` to `write` without a cell borrow spanning the
-    /// (possibly re-entrant) socket write; a buffer installed by a re-entrant
-    /// call wins over the one lent out.
-    fn with_input_body<R>(&self, write: impl FnOnce(&[u8]) -> R) -> R {
-        let buf = self.input_body_buf.replace(Vec::new());
-        let result = write(&buf);
-        if self.input_body_buf.get().is_empty() {
-            self.input_body_buf.set(buf);
-        }
-        result
+    /// Write the unsent suffix of `input_body_buf` via `write` (which returns
+    /// bytes written, or `None` on failure) without a cell borrow spanning the
+    /// possibly re-entrant write. On failure the client is terminated — which
+    /// clears the buffer anyway — and `false` is returned.
+    fn write_pending(this: ThisPtr<Self>, write: impl FnOnce(&[u8]) -> Option<usize>) -> bool {
+        let buf = this.input_body_buf.replace(Vec::new());
+        let pending = this.to_send_len.get().min(buf.len());
+        let Some(wrote) = write(&buf[buf.len() - pending..]) else {
+            drop(buf);
+            Self::terminate(this, ErrorCode::FailedToWrite);
+            return false;
+        };
+        this.to_send_len.set(pending - wrote.min(pending));
+        this.input_body_buf.set(buf);
+        true
+    }
+
+    fn socket_write(socket: Socket<SSL>, buf: &[u8]) -> Option<usize> {
+        usize::try_from(socket.write(buf)).ok()
     }
 
     pub(crate) fn clear_data(&self) {
@@ -809,14 +818,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
             this.state.set(State::ProxyHandshake);
         }
 
-        let (wrote, len) = this.with_input_body(|buf| (socket.write(buf), buf.len()));
-        if wrote < 0 {
-            Self::terminate(this, ErrorCode::FailedToWrite);
-            return;
-        }
-
-        let pending = len - usize::try_from(wrote).expect("int cast");
-        this.to_send_len.set(pending);
+        this.to_send_len.set(this.input_body_buf.get().len());
+        Self::write_pending(this, |buf| Self::socket_write(socket, buf));
     }
 
     pub(crate) fn is_same_socket(&self, socket: Socket<SSL>) -> bool {
@@ -1038,18 +1041,13 @@ impl<const SSL: bool> HTTPClient<SSL> {
             })
             .unwrap_or_default();
         this.state.set(State::Reading);
+        this.to_send_len.set(request_buf.len());
         this.input_body_buf.set(request_buf);
-        this.to_send_len.set(0);
 
         // Send the WebSocket upgrade request
-        let (wrote, len) = this.with_input_body(|buf| (socket.write(buf), buf.len()));
-        if wrote < 0 {
-            Self::terminate(this, ErrorCode::FailedToWrite);
+        if !Self::write_pending(this, |buf| Self::socket_write(socket, buf)) {
             return;
         }
-
-        let pending = len - usize::try_from(wrote).expect("int cast");
-        this.to_send_len.set(pending);
 
         // If there's remaining data after the proxy response, process it
         if !remain_buf.is_empty() {
@@ -1080,16 +1078,9 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 reject_unauthorized,
             )
         });
-        let tunnel = match init_result {
-            Some(Ok(t)) => t,
-            Some(Err(_)) => {
-                Self::terminate(this, ErrorCode::ProxyTunnelFailed);
-                return;
-            }
-            None => {
-                Self::terminate(this, ErrorCode::ProxyTunnelFailed);
-                return;
-            }
+        let Some(Ok(tunnel)) = init_result else {
+            Self::terminate(this, ErrorCode::ProxyTunnelFailed);
+            return;
         };
 
         // Use ssl_config if available, otherwise use defaults
@@ -1124,6 +1115,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
             None => false,
         });
         if !attached {
+            // SAFETY: release the ref taken by `init`; nothing else holds the tunnel.
+            unsafe { WebSocketProxyTunnel::deref(tunnel.as_ptr()) };
             Self::terminate(this, ErrorCode::ProxyTunnelFailed);
             return;
         }
@@ -1136,11 +1129,10 @@ impl<const SSL: bool> HTTPClient<SSL> {
     pub(crate) fn on_proxy_tls_handshake_complete(this: ThisPtr<Self>) {
         log!("onProxyTLSHandshakeComplete");
 
-        // TLS handshake done - send WebSocket upgrade request through tunnel.
-        // The Vec::new() assignment frees the CONNECT request buffer.
+        // TLS handshake done - free the CONNECT request buffer and send the
+        // WebSocket upgrade request through the tunnel.
         this.state.set(State::Reading);
-        this.input_body_buf.set(Vec::new());
-        this.to_send_len.set(0);
+        this.clear_input();
 
         // Take the WebSocket upgrade request from proxy state (transfers
         // ownership) along with the tunnel to send it through.
@@ -1158,6 +1150,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             return;
         }
         // Store it in input_body_buf so handle_writable can retry on drain.
+        this.to_send_len.set(request_buf.len());
         this.input_body_buf.set(request_buf);
 
         // Send through the tunnel (will be encrypted). Buffer any unwritten
@@ -1166,18 +1159,10 @@ impl<const SSL: bool> HTTPClient<SSL> {
             Self::terminate(this, ErrorCode::ProxyTunnelFailed);
             return;
         };
-        let (result, len) = this.with_input_body(|buf| {
+        Self::write_pending(this, |buf| {
             // SAFETY: `proxy` holds a live ref on `tunnel`.
-            (
-                unsafe { WebSocketProxyTunnel::write(tunnel.as_ptr(), buf) },
-                buf.len(),
-            )
+            unsafe { WebSocketProxyTunnel::write(tunnel.as_ptr(), buf) }.ok()
         });
-        let Ok(wrote) = result else {
-            Self::terminate(this, ErrorCode::FailedToWrite);
-            return;
-        };
-        this.to_send_len.set(len - wrote);
     }
 
     /// Called by WebSocketProxyTunnel with decrypted data from the TLS tunnel
@@ -1634,17 +1619,10 @@ impl<const SSL: bool> HTTPClient<SSL> {
             if this.to_send_len.get() == 0 {
                 return;
             }
-            let result = this.with_input_body(|buf| {
-                let to_send = &buf[buf.len() - this.to_send_len.get()..];
+            Self::write_pending(this, |buf| {
                 // SAFETY: `proxy` holds a live ref on `tunnel`.
-                unsafe { WebSocketProxyTunnel::write(tunnel.as_ptr(), to_send) }
+                unsafe { WebSocketProxyTunnel::write(tunnel.as_ptr(), buf) }.ok()
             });
-            let Ok(wrote) = result else {
-                Self::terminate(this, ErrorCode::FailedToWrite);
-                return;
-            };
-            let to_send_len = this.to_send_len.get();
-            this.to_send_len.set(to_send_len - wrote.min(to_send_len));
             return;
         }
 
@@ -1652,15 +1630,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             return;
         }
 
-        let wrote =
-            this.with_input_body(|buf| socket.write(&buf[buf.len() - this.to_send_len.get()..]));
-        if wrote < 0 {
-            Self::terminate(this, ErrorCode::FailedToWrite);
-            return;
-        }
-        let wrote = usize::try_from(wrote).expect("int cast");
-        let to_send_len = this.to_send_len.get();
-        this.to_send_len.set(to_send_len - wrote.min(to_send_len));
+        Self::write_pending(this, |buf| Self::socket_write(socket, buf));
     }
 
     /// Takes `ThisPtr<Self>` because `terminate` may free `this`; see `fail`.

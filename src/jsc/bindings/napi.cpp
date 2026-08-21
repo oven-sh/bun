@@ -2421,6 +2421,18 @@ private:
     bool m_finalized { false };
 };
 
+// JSC creates a view's ArrayBuffer wrapper lazily on the first `.buffer` access; create it now
+// (the getter returns this same object for as long as the view or the wrapper is alive) so it
+// can carry the mark. See NapiExternalBufferDestructor. The caller checks for an exception.
+static void markExternalBufferUntransferable(Zig::GlobalObject* globalObject, JSC::JSUint8Array* buffer)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* jsArrayBuffer = buffer->possiblySharedJSBuffer(globalObject);
+    RETURN_IF_EXCEPTION(scope, );
+    WebCore::markAsUntransferable(vm, *jsArrayBuffer);
+}
+
 extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
     void* data,
     napi_finalize finalize_cb,
@@ -2439,6 +2451,10 @@ extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
         // TODO: is there a way to create a detached uint8 array?
         auto arrayBuffer = JSC::ArrayBuffer::createUninitialized(0, 1);
         auto* buffer = JSC::JSUint8Array::create(globalObject, subclassStructure, WTF::move(arrayBuffer), 0, 0);
+        NAPI_RETURN_STATUS_IF_EXCEPTION(env, napi_generic_failure);
+        // Nothing here can cross a thread (the finalizer below hangs off the cell, and the buffer is
+        // detached), but Node marks this buffer too, and isMarkedAsUntransferable() reports it.
+        markExternalBufferUntransferable(globalObject, buffer);
         NAPI_RETURN_STATUS_IF_EXCEPTION(env, napi_generic_failure);
         buffer->existingBuffer()->detach(vm);
 
@@ -2461,12 +2477,8 @@ extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
     auto* buffer = JSC::JSUint8Array::create(globalObject, subclassStructure, WTF::move(arrayBuffer), 0, length);
     NAPI_RETURN_STATUS_IF_EXCEPTION(env, napi_generic_failure);
 
-    // JSC creates the ArrayBuffer wrapper lazily on the first `.buffer` access; create it now
-    // (the getter returns this same object for as long as the view or the wrapper is alive)
-    // so it can carry the mark. See NapiExternalBufferDestructor.
-    auto* jsArrayBuffer = buffer->possiblySharedJSBuffer(globalObject);
+    markExternalBufferUntransferable(globalObject, buffer);
     NAPI_RETURN_STATUS_IF_EXCEPTION(env, napi_generic_failure);
-    WebCore::markAsUntransferable(vm, *jsArrayBuffer);
 
     // Arm only after successful creation: if anything above threw, the destructor
     // runs disarmed and skips finalize_cb (caller retains ownership).

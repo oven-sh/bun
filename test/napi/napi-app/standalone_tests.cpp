@@ -2818,8 +2818,10 @@ static void external_for_transfer_finalize(napi_env, void *data, void *hint) {
 }
 
 // The bytes are 1, 2, 3, ... so a copy made on another thread can be checked.
+// Never NULL, even for length 0: both runtimes treat a NULL pointer as its own
+// case (node runs the finalizer on the next loop turn).
 static uint8_t *external_for_transfer_bytes(size_t length) {
-  auto *bytes = static_cast<uint8_t *>(malloc(length));
+  auto *bytes = static_cast<uint8_t *>(malloc(length == 0 ? 1 : length));
   for (size_t i = 0; i < length; i++) {
     bytes[i] = static_cast<uint8_t>(i + 1);
   }

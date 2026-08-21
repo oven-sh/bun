@@ -447,8 +447,19 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
           `${kind}: byteLength=8 plain.byteLength=2`,
           `${kind}: copy=[1,2,3,4,5,6,7,8] byteLength=8`,
         ].join("\n");
+      const expectedEmpty = (kind: string) =>
+        [
+          `empty ${kind}: isMarkedAsUntransferable(arrayBuffer)=true`,
+          `empty ${kind}: structuredClone: DataCloneError code=25`,
+        ].join("\n");
       expect(result).toBe(
-        [expected("arraybuffer"), expected("buffer"), 'stats: {"finalized":0,"finalizedOffThread":0}'].join("\n"),
+        [
+          expected("arraybuffer"),
+          expected("buffer"),
+          expectedEmpty("arraybuffer"),
+          expectedEmpty("buffer"),
+          'stats: {"finalized":0,"finalizedOffThread":0}',
+        ].join("\n"),
       );
     });
 

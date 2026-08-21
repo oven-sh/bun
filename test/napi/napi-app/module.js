@@ -1648,6 +1648,18 @@ nativeTests.test_external_buffer_untransferable = () => {
     const copy = structuredClone(arrayBuffer);
     console.log(`${kind}: copy=[${new Uint8Array(copy).join(",")}] byteLength=${arrayBuffer.byteLength}`);
   }
+  // Length 0 is a separate path inside napi_create_external_buffer; it is marked all the same.
+  // (Only the mark and the transfer are compared: bun detaches this buffer, node does not.)
+  for (const kind of ["arraybuffer", "buffer"]) {
+    const created =
+      kind === "arraybuffer"
+        ? nativeTests.create_external_arraybuffer_for_transfer(0)
+        : nativeTests.create_external_buffer_for_transfer(0);
+    keepAlive.push(created);
+    const arrayBuffer = kind === "arraybuffer" ? created : created.buffer;
+    console.log(`empty ${kind}: isMarkedAsUntransferable(arrayBuffer)=${isMarkedAsUntransferable(arrayBuffer)}`);
+    attempt(`empty ${kind}: structuredClone`, () => structuredClone(arrayBuffer, { transfer: [arrayBuffer] }));
+  }
   console.log("stats:", JSON.stringify(nativeTests.external_for_transfer_stats()));
 };
 

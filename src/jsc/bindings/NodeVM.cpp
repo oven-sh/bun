@@ -939,8 +939,7 @@ template<typename, JSC::SubspaceAccess mode> JSC::GCClient::IsoSubspace* NodeVMG
 
 NodeVMGlobalObject* NodeVMGlobalObject::create(JSC::VM& vm, NodeVMContextOptions options, JSValue importer)
 {
-    // JSGlobalObject::finishCreation stores the global in its structure's realm, so a
-    // structure shared between contexts would keep the last context created alive.
+    // One structure per context: JSGlobalObject::finishCreation makes the global the realm of its structure.
     auto* structure = createStructure(vm);
     auto* cell = new (NotNull, JSC::allocateCell<NodeVMGlobalObject>(vm)) NodeVMGlobalObject(vm, structure, options, importer);
     cell->finishCreation(vm);

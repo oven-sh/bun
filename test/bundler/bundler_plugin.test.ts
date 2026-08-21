@@ -485,18 +485,21 @@ describe("bundler", () => {
       expect(api.readFile("/out.js")).toContain(`from "react"`);
     },
   });
-  // A barrel's records are resolved again each time a consumer un-defers one of
-  // them. The rewritten external must be skipped by those passes, not resolved
-  // as the vendored specifier. late.js is loaded only after the react answer is
-  // queued, so its un-defer of `a` runs after the rewrite landed.
+  // A barrel's records are resolved and patched again each time a consumer
+  // un-defers one of them. The rewritten external must survive both: it must
+  // not be resolved as the vendored specifier, and its path must not be matched
+  // against the bundled "virt" module that shares the same path text. late.js is
+  // loaded only after both answers are queued, so its un-defer of `a` runs after
+  // the rewrite landed.
   itBundled("plugin/ResolveExternalRewriteSurvivesBarrelRevisit", () => {
     const reactAnswered = Promise.withResolvers<void>();
+    const virtAnswered = Promise.withResolvers<void>();
     return {
       files: {
         "/entry.js": /* js */ `
-          import { React } from "barrel";
+          import { React, x } from "barrel";
           import "./late.js";
-          console.log(React);
+          console.log(React, x);
         `,
         "/late.js": ``,
         "/node_modules/barrel/package.json": JSON.stringify({
@@ -506,6 +509,7 @@ describe("bundler", () => {
         }),
         "/node_modules/barrel/index.js": /* js */ `
           export { default as React } from "react";
+          export { x } from "virt";
           export { a } from "./a.js";
           export { b } from "./b.js";
         `,
@@ -517,14 +521,22 @@ describe("bundler", () => {
           reactAnswered.resolve();
           return { path: "react-vendored", external: true };
         });
+        builder.onResolve({ filter: /^virt$/ }, () => {
+          virtAnswered.resolve();
+          return { path: "react-vendored", namespace: "virt" };
+        });
+        builder.onLoad({ filter: /.*/, namespace: "virt" }, () => {
+          return { contents: `export const x = "x";`, loader: "js" };
+        });
         builder.onLoad({ filter: /late\.js$/ }, async () => {
-          await reactAnswered.promise;
+          await Promise.all([reactAnswered.promise, virtAnswered.promise]);
           return { contents: `import { a } from "barrel"; console.log(a);`, loader: "js" };
         });
       },
       onAfterBundle(api) {
         const contents = api.readFile("/out.js");
         expect(contents).toContain(`from "react-vendored"`);
+        expect(contents).toContain(`"x"`);
         expect(contents).not.toContain(`"react"`);
       },
     };

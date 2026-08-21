@@ -8807,9 +8807,7 @@ impl LowerUsingDeclarationsContext {
                     ));
                 }
             }
-            // The binding stays immutable. select_local_kind() turns it into
-            // "var" at the top level of a module that is wrapped in try/catch,
-            // where the declaration must be visible outside the try block.
+            // "var" at the top level of a wrapped module, "const" everywhere else.
             local.kind = p.select_local_kind(js_ast::s::Kind::KConst);
         }
     }

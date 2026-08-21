@@ -5,6 +5,8 @@
 // Buffer.alloc / writeInt32BE sequences.
 
 import net from "node:net";
+import { Duplex } from "node:stream";
+import tls from "node:tls";
 
 // ---------------------------------------------------------------------------
 // Server helpers shared by every fault-injection test.
@@ -41,6 +43,46 @@ export async function neverAnsweringServer(): Promise<{ port: number; server: ne
   });
   server.unref();
   return { port, server, accepted: first.promise };
+}
+
+/**
+ * Server side of a STARTTLS-style upgrade (Postgres once the SSLRequest has been
+ * answered with 'S', MySQL once the client's SSLRequest packet has arrived) for
+ * a mock that is going to stop responding later on. The TLS engine runs over a
+ * Duplex that this helper feeds with the bytes read from `raw`, so after
+ * `stopReading()` everything the client sends is dropped unread while the TCP
+ * connection stays open: in particular the client's close_notify is never
+ * answered, which is what a peer that has hung looks like. (A TLS socket
+ * wrapping the connection itself would answer it natively, and pause() does
+ * not prevent that.) `leftover` is whatever arrived behind the plaintext
+ * prelude, i.e. the start of the client's ClientHello.
+ */
+export function startTlsServerSide(
+  raw: net.Socket,
+  leftover: Buffer,
+  credentials: { key: string; cert: string },
+): { secure: tls.TLSSocket; stopReading(): void } {
+  let reading = true;
+  const bridge = new Duplex({
+    read() {},
+    // Errors on `raw` are the caller's to observe; the bridge itself never fails.
+    write(chunk, _encoding, callback) {
+      raw.write(chunk);
+      callback();
+    },
+  });
+  raw.on("data", chunk => {
+    if (reading) bridge.push(chunk);
+  });
+  if (leftover.length) bridge.push(leftover);
+  const secure = new tls.TLSSocket(bridge, { isServer: true, ...credentials });
+  secure.on("error", () => {});
+  return {
+    secure,
+    stopReading() {
+      reading = false;
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------

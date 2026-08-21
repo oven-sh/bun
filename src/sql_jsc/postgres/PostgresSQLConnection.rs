@@ -731,7 +731,7 @@ impl PostgresSQLConnection {
                 &[js_error, queries],
             );
         }
-        self.ref_and_close(Some(value));
+        self.ref_and_close(Some(value), uws::CloseCode::Failure);
         // SAFETY: `self` is a live Box-allocated connection; this releases one ref.
         unsafe { Self::deref(self.as_ctx_ptr()) };
         self.update_has_pending_activity();
@@ -1510,14 +1510,15 @@ impl PostgresSQLConnection {
         }
     }
 
-    fn ref_and_close(&self, js_reason: Option<JSValue>) {
+    /// `fail_with_js_value` passes `Failure`, the one code a TLS socket never defers (see `CloseCode`).
+    fn ref_and_close(&self, js_reason: Option<JSValue>, code: uws::CloseCode) {
         // refAndClose is always called when we wanna to disconnect or when we are closed
 
         if !self.socket.get().is_closed() {
             // event loop need to be alive to close the socket
             self.poll_ref.with_mut(|r| r.ref_(self.vm_ctx()));
             // will unref on socket close
-            self.socket.get().close(uws::CloseKind::Normal);
+            self.socket.get().close(code);
         }
 
         // cleanup requests
@@ -1529,7 +1530,7 @@ impl PostgresSQLConnection {
         self.unregister_auto_flusher();
         if self.status.get() == Status::Connected {
             self.status.set(Status::Disconnected);
-            self.ref_and_close(None);
+            self.ref_and_close(None, uws::CloseCode::Normal);
         }
     }
 

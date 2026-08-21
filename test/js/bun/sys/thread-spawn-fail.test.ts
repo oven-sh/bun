@@ -129,17 +129,24 @@ console.log("unreachable");
 // The schedule of bun_threading::spawn_with_retry.
 const ATTEMPTS_PER_START = 20;
 
-async function runFixture(dir: string, options: { stdin?: "pipe" } = {}) {
+async function runFixture(dir: string, options: { stdin?: "pipe"; exitsMidway?: boolean } = {}) {
+  const env: Record<string, string | undefined> = {
+    ...bunEnv,
+    LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shimPath}:${bunEnv.LD_PRELOAD}` : shimPath,
+    REFUSE_THREADS_WHILE_EXISTS: join(dir, "refuse-threads"),
+    // Without the fix the child crashes. Never upload that.
+    BUN_ENABLE_CRASH_REPORTING: "0",
+  };
+  if (options.exitsMidway) {
+    // The child exits from inside a read, so the natives that its JS objects
+    // and the read still own are never freed. LeakSanitizer cannot see
+    // through JSC cells to them and would report them (last option wins).
+    env.ASAN_OPTIONS = [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":");
+  }
   await using proc = Bun.spawn({
     cmd: [bunExe(), "fixture.js"],
     cwd: dir,
-    env: {
-      ...bunEnv,
-      LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shimPath}:${bunEnv.LD_PRELOAD}` : shimPath,
-      REFUSE_THREADS_WHILE_EXISTS: join(dir, "refuse-threads"),
-      // Without the fix the child crashes. Never upload that.
-      BUN_ENABLE_CRASH_REPORTING: "0",
-    },
+    env,
     stdin: options.stdin,
     stdout: "pipe",
     stderr: "pipe",
@@ -259,7 +266,10 @@ test.concurrent.skipIf(!canRun)(
   "a read that needs the IO thread exits with an error when it cannot be started",
   async () => {
     using dir = tempDir("refuse-threads-stdin", { "fixture.js": STDIN_FIXTURE });
-    const { stdout, stderr, refused, exitCode, signalCode } = await runFixture(String(dir), { stdin: "pipe" });
+    const { stdout, stderr, refused, exitCode, signalCode } = await runFixture(String(dir), {
+      stdin: "pipe",
+      exitsMidway: true,
+    });
 
     expect({ stdout, stderr, refused, exitCode, signalCode }).toEqual({
       stdout: "reading stdin\n",

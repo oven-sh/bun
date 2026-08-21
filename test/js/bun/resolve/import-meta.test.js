@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { isModuleResolveFilenameSlowPathEnabled } from "bun:internal-for-testing";
 import { expect, it, mock } from "bun:test";
-import { bunEnv, bunExe, ospath } from "harness";
+import { bunEnv, bunExe, ospath, tempDir } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import Module from "node:module";
 import { tmpdir } from "node:os";
@@ -29,6 +29,40 @@ it("import.meta.main", () => {
     stdout: "inherit",
     stdin: null,
   });
+  expect(exitCode).toBe(0);
+});
+
+it("import.meta.main follows a Bun.main override and is false in workers", async () => {
+  using dir = tempDir("import-meta-main", {
+    "entry.mjs": `
+      import { Worker, isMainThread, parentPort } from "node:worker_threads";
+      if (isMainThread) {
+        const worker = new Worker(new URL(import.meta.url));
+        const fromWorker = new Promise(resolve => worker.once("message", resolve));
+        const other = await import("./other.mjs");
+        const before = [import.meta.main, other.main()];
+        Bun.main = other.path;
+        const after = [import.meta.main, other.main()];
+        console.log(JSON.stringify({ before, after, worker: await fromWorker }));
+        await worker.terminate();
+      } else {
+        parentPort.postMessage(import.meta.main);
+      }
+    `,
+    "other.mjs": `
+      export const path = import.meta.path;
+      export const main = () => import.meta.main;
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(JSON.parse(stdout)).toEqual({ before: [true, false], after: [false, true], worker: false });
   expect(exitCode).toBe(0);
 });
 

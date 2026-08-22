@@ -57,6 +57,200 @@ export class Y {
   );
 });
 
+const uncalledAddFixture = {
+  "mod.ts": `export function add(a: number, b: number): number {
+  // this is a comment line that is never executed
+
+  return a + b;
+}
+`,
+  "load-only.test.ts": `
+import { test, expect } from "bun:test";
+import * as mod from "./mod.ts";
+test("imports the module but never calls add", () => {
+  expect(typeof mod.add).toBe("function");
+});
+`,
+};
+
+// https://github.com/oven-sh/bun/issues/33957
+test("lcov does not emit DA records for comment-only or blank lines in uncovered functions", () => {
+  using dir = tempDir("cov", uncalledAddFixture);
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage", "--coverage-reporter", "lcov", "./load-only.test.ts"], {
+    cwd: dir,
+    env: {
+      ...bunEnv,
+    },
+    stdio: ["inherit", "inherit", "inherit"],
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.signalCode).toBeUndefined();
+
+  const lcov = readFileSync(path.join(dir, "coverage", "lcov.info"), "utf-8");
+  const modRecord = lcov.split("TN:").find(record => record.includes("SF:mod.ts"));
+  // Line 2 (comment) and line 3 (blank) must not appear; line 1 (declaration)
+  // and line 4 (return) are the executable lines, both unexecuted.
+  expect(modRecord).toBe(
+    `
+SF:mod.ts
+FNF:1
+FNH:0
+DA:1,0
+DA:4,0
+LF:2
+LH:0
+end_of_record
+`,
+  );
+});
+
+test("text reporter prints sparse uncovered lines, including a trailing single line", () => {
+  using dir = tempDir("cov", uncalledAddFixture);
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage", "./load-only.test.ts"], {
+    cwd: dir,
+    env: {
+      ...bunEnv,
+    },
+    stdio: [null, null, "pipe"],
+  });
+  // Uncovered lines 1 and 4 are two single-line runs; the old run tracker
+  // dropped line 1 (index 0) and never flushed the trailing single line.
+  expect(result.stderr.toString("utf-8")).toMatch(/ mod\.ts\s+\|\s+0\.00\s+\|\s+0\.00\s+\| 1,4\n/);
+  expect(result.exitCode).toBe(0);
+});
+
+// https://github.com/oven-sh/bun/issues/31484
+// The reset pass for uncalled functions used an exclusive line range, so the
+// last line of each body kept a phantom hit or dropped out of the DA: set.
+test("lcov reports every line of an uncalled function as uncovered", () => {
+  using dir = tempDir("cov", {
+    "bunfig.toml": `
+[test]
+coverageSkipTestFiles = true
+`,
+    "lib.ts": `export function greet(name) {
+  if (!name) return "Hello, friend!";
+  return \`Hello, \${name}!\`;
+}
+
+export function farewellSingle(name, formal) {
+  return name ? (formal ? "Goodbye, " : "Bye, ") + name : "Bye!";
+}
+
+export function farewellTwo(name, formal) {
+  const prefix = formal ? "Goodbye" : "Bye";
+  return name ? \`\${prefix}, \${name}\` : \`\${prefix}!\`;
+}
+
+export function farewellThree(name, formal) {
+  const prefix = formal ? "Goodbye" : "Bye";
+  const sep = name ? ", " : "!";
+  return name ? \`\${prefix}\${sep}\${name}\` : \`\${prefix}\${sep}\`;
+}
+`,
+    "lib.test.ts": `import { test, expect } from "bun:test";
+import { greet, farewellSingle, farewellTwo, farewellThree } from "./lib";
+
+void farewellSingle;
+void farewellTwo;
+void farewellThree;
+
+test("only greet runs", () => {
+  expect(greet("Gabe")).toBe("Hello, Gabe!");
+});
+`,
+  });
+
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage", "--coverage-reporter", "lcov", "./lib.test.ts"], {
+    cwd: dir,
+    env: { ...bunEnv },
+    stdio: [null, null, "pipe"],
+  });
+
+  const lcovContent = normalizeBunSnapshot(readFileSync(path.join(dir, "coverage", "lcov.info"), "utf-8"), dir);
+
+  // greet (lines 1-3) runs; every body line of the three farewell* functions,
+  // including the last one, is reported with zero hits.
+  expect(lcovContent).toMatchInlineSnapshot(`
+"TN:
+SF:lib.ts
+FNF:4
+FNH:1
+DA:1,15
+DA:2,15
+DA:3,25
+DA:6,0
+DA:7,0
+DA:10,0
+DA:11,0
+DA:12,0
+DA:15,0
+DA:16,0
+DA:17,0
+DA:18,0
+LF:12
+LH:3
+end_of_record"
+`);
+  expect(result.exitCode).toBe(0);
+});
+
+// https://github.com/oven-sh/bun/issues/31484
+test("text reporter groups uncovered lines and keeps a trailing single line", () => {
+  using dir = tempDir("cov", {
+    "bunfig.toml": `
+[test]
+coverageSkipTestFiles = true
+`,
+    "lib.ts": `export function called() {
+  return 1;
+}
+export function uncalledRun(x) {
+  const y = x + 1;
+  return y;
+}
+export class Uncalled {
+#field;
+}
+`,
+    "lib.test.ts": `import { test, expect } from "bun:test";
+import { called, uncalledRun, Uncalled } from "./lib";
+void uncalledRun;
+void Uncalled;
+test("only called runs", () => {
+  expect(called()).toBe(1);
+});
+`,
+  });
+
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage", "./lib.test.ts"], {
+    cwd: dir,
+    env: { ...bunEnv },
+    stdio: [null, null, "pipe"],
+  });
+
+  const stderr = normalizeBunSnapshot(result.stderr.toString("utf-8"), dir);
+
+  // uncalledRun spans lines 4-6 (a run) and the uncalled class is a single
+  // uncovered line 8 at the end of the file: "4-6,8".
+  expect(stderr).toMatchInlineSnapshot(`
+"lib.test.ts:
+(pass) only called runs
+-----------|---------|---------|-------------------
+File       | % Funcs | % Lines | Uncovered Line #s
+-----------|---------|---------|-------------------
+All files  |   33.33 |   50.00 |
+ lib.ts    |   33.33 |   50.00 | 4-6,8
+-----------|---------|---------|-------------------
+
+ 1 pass
+ 0 fail
+ 1 expect() calls
+Ran 1 test across 1 file."
+`);
+  expect(result.exitCode).toBe(0);
+});
+
 test("coverage excludes node_modules directory", () => {
   using dir = tempDir("cov", {
     "node_modules/pi/index.js": `
@@ -192,8 +386,8 @@ test("should call only some functions", () => {
 ---------------|---------|---------|-------------------
 File           | % Funcs | % Lines | Uncovered Line #s
 ---------------|---------|---------|-------------------
-All files      |   75.00 |   83.33 |
- include-me.ts |   50.00 |   66.67 | 
+All files      |   75.00 |   75.00 |
+ include-me.ts |   50.00 |   50.00 | 6-7
  test.test.ts  |  100.00 |  100.00 | 
 ---------------|---------|---------|-------------------
 

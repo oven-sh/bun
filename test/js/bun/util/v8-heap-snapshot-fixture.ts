@@ -19,6 +19,14 @@ function describeSnapshot(json: any) {
   };
 }
 
+// The `yyyymmdd` a default snapshot filename is supposed to carry: local time,
+// 1-based calendar month, the way node writes it.
+function calendarDate(date: Date) {
+  const mm = (date.getMonth() + 1).toString().padStart(2, "0");
+  const dd = date.getDate().toString().padStart(2, "0");
+  return `${date.getFullYear()}${mm}${dd}`;
+}
+
 // Runs the snapshot through a third-party parser, then walks every node and edge.
 async function parseAndWalk(json: unknown) {
   const v8HeapSnapshot: typeof import("v8-heapsnapshot") = require("v8-heapsnapshot");
@@ -90,10 +98,14 @@ switch (mode) {
   }
 
   case "write-default": {
+    // Bracket the call so the caller still knows which date to expect if this
+    // process happens to cross midnight while the snapshot is being written.
+    const dateBefore = calendarDate(new Date());
     const path = require("node:v8").writeHeapSnapshot();
+    const dateAfter = calendarDate(new Date());
     const json = await Bun.file(path).json();
     require("node:fs").rmSync(path);
-    result = { filename: require("node:path").basename(path), ...describeSnapshot(json) };
+    result = { filename: require("node:path").basename(path), dateBefore, dateAfter, ...describeSnapshot(json) };
     break;
   }
 

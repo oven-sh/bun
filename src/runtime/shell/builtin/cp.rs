@@ -19,8 +19,6 @@ pub struct Cp {
     /// `ExecState`) because `print_shell_cp_task` is also driven from
     /// `State::Ebusy` on Windows; both states must be able to stash/pop.
     pub(crate) output_queue: std::collections::VecDeque<*mut OutputTask<Cp>>,
-    /// First failed output write; reported once the remaining tasks are done.
-    pub(crate) write_err: Option<bun_sys::E>,
 }
 
 #[derive(Default)]
@@ -149,7 +147,10 @@ impl Cp {
             State::Done => return Builtin::done(interp, cmd, 0),
         };
         match action {
-            Action::Done(code) => Self::finish(interp, cmd, code),
+            Action::Done(code) => {
+                Self::state_mut(interp, cmd).state = State::Done;
+                Builtin::done(interp, cmd, code)
+            }
             #[cfg(windows)]
             Action::Ebusy(exit_code) => {
                 let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
@@ -188,17 +189,6 @@ impl Cp {
         }
     }
 
-    /// Called once every task and every output chunk has completed.
-    fn finish(interp: &Interpreter, cmd: NodeId, exit_code: ExitCode) -> Yield {
-        if let Some(errno) = Self::state_mut(interp, cmd).write_err {
-            return Builtin::fail_write(interp, cmd, errno, || {
-                Self::state_mut(interp, cmd).state = State::WaitingWriteErr
-            });
-        }
-        Self::state_mut(interp, cmd).state = State::Done;
-        Builtin::done(interp, cmd, exit_code)
-    }
-
     pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         cmd: NodeId,
@@ -207,10 +197,6 @@ impl Cp {
     ) -> Yield {
         if matches!(Self::state_mut(interp, cmd).state, State::WaitingWriteErr) {
             return Builtin::done(interp, cmd, 1);
-        }
-        let me = Self::state_mut(interp, cmd);
-        if let (Some(e), None) = (&e, me.write_err) {
-            me.write_err = Some(e.get_errno());
         }
         if let Some(task) = Self::state_mut(interp, cmd).output_queue.pop_front() {
             // SAFETY: `task` was heap-allocated in `OutputTask::new` and
@@ -271,8 +257,9 @@ impl Cp {
             unreachable!()
         };
         let exit_code = eb.main_exit_code;
-        // `Drop` frees the ebusy sets/vec when `finish` replaces the state.
-        Self::finish(interp, cmd, exit_code)
+        // `Drop` frees the ebusy sets/vec here.
+        Self::state_mut(interp, cmd).state = State::Done;
+        Builtin::done(interp, cmd, exit_code)
     }
 
     fn on_shell_cp_task_done(interp: &Interpreter, cmd: NodeId, task: *mut ShellCpTask) {

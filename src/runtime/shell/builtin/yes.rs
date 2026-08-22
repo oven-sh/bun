@@ -13,6 +13,7 @@ pub enum State {
     Idle,
     WaitingWriteErr,
     WaitingIo,
+    Err,
 }
 
 #[derive(Default)]
@@ -160,13 +161,12 @@ impl Yes {
         _: usize,
         e: Option<bun_sys::SystemError>,
     ) -> Yield {
-        if Self::state_mut(interp, cmd).state == State::WaitingWriteErr {
+        if let Some(_err) = e {
+            Self::state_mut(interp, cmd).state = State::Err;
             return Builtin::done(interp, cmd, 1);
         }
-        if let Some(err) = e {
-            return Builtin::fail_write(interp, cmd, err.get_errno(), || {
-                Self::state_mut(interp, cmd).state = State::WaitingWriteErr
-            });
+        if Self::state_mut(interp, cmd).state == State::WaitingWriteErr {
+            return Builtin::done(interp, cmd, 1);
         }
         debug_assert!(Builtin::of(interp, cmd).stdout.needs_io().is_some());
         Self::enqueue_chunk(interp, cmd, OutputNeedsIOSafeGuard::OutputNeedsIo)

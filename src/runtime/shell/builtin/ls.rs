@@ -31,8 +31,6 @@ pub enum State {
 
 pub struct ExecState {
     pub(crate) err: Option<bun_sys::Error>,
-    /// First failed output write; reported once the remaining tasks are done.
-    pub(crate) write_err: Option<E>,
     pub(crate) task_count: AtomicUsize,
     pub(crate) tasks_done: usize,
     pub(crate) output_waiting: usize,
@@ -94,7 +92,6 @@ impl Ls {
                 };
                 Self::state_mut(interp, cmd).state = State::Exec(ExecState {
                     err: None,
-                    write_err: None,
                     task_count: AtomicUsize::new(task_count),
                     tasks_done: 0,
                     output_waiting: 0,
@@ -158,19 +155,14 @@ impl Ls {
                         && exec.output_done >= exec.output_waiting
                 };
                 if done {
-                    let (exit_code, write_err): (ExitCode, Option<E>) = {
+                    let exit_code: ExitCode = {
                         let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
                             unreachable!()
                         };
                         let code = if exec.err.is_some() { 1 } else { 0 };
                         exec.err = None;
-                        (code, exec.write_err)
+                        code
                     };
-                    if let Some(errno) = write_err {
-                        return Builtin::fail_write(interp, cmd, errno, || {
-                            Self::state_mut(interp, cmd).state = State::WaitingWriteErr
-                        });
-                    }
                     Self::state_mut(interp, cmd).state = State::Done;
                     return Builtin::done(interp, cmd, exit_code);
                 }
@@ -191,9 +183,6 @@ impl Ls {
             return Builtin::done(interp, cmd, 1);
         }
         let pending = if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            if let (Some(e), None) = (&e, exec.write_err) {
-                exec.write_err = Some(e.get_errno());
-            }
             exec.output_queue.pop_front()
         } else {
             None

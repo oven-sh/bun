@@ -67,25 +67,15 @@ impl Pwd {
         _: usize,
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
-        let kind = match &Self::state_mut(interp, cmd).state {
-            State::WaitingIo { kind } => Some(*kind),
-            State::Err => None,
-            State::Idle | State::Done => {
-                crate::shell::interpreter::unreachable_state("Pwd.onIOWriterChunk", "idle/done")
-            }
-        };
-        match kind {
-            // The chunk was an error message; it failed the command already.
-            None | Some(WaitKind::Stderr) => Builtin::done(interp, cmd, 1),
-            Some(WaitKind::Stdout) => match err {
-                Some(err) => Builtin::fail_write(interp, cmd, err.get_errno(), || {
-                    Self::state_mut(interp, cmd).state = State::Err
-                }),
-                None => {
-                    Self::state_mut(interp, cmd).state = State::Done;
-                    Builtin::done(interp, cmd, 0)
-                }
-            },
+        if let Some(_err) = err {
+            Self::state_mut(interp, cmd).state = State::Err;
+            return Builtin::done(interp, cmd, 1);
         }
+        let kind = match &Self::state_mut(interp, cmd).state {
+            State::WaitingIo { kind } => *kind,
+            _ => return Builtin::done(interp, cmd, 0),
+        };
+        Self::state_mut(interp, cmd).state = State::Done;
+        Builtin::done(interp, cmd, if kind == WaitKind::Stderr { 1 } else { 0 })
     }
 }

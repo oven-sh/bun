@@ -59,17 +59,15 @@ impl Dirname {
         _: usize,
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
-        if matches!(Self::state_mut(interp, cmd).state, State::Err) {
+        if let Some(_err) = err {
+            Self::state_mut(interp, cmd).state = State::Err;
             return Builtin::done(interp, cmd, 1);
         }
-        if let Some(err) = err {
-            return Builtin::fail_write(interp, cmd, err.get_errno(), || {
-                Self::state_mut(interp, cmd).state = State::Err
-            });
-        }
-        if matches!(Self::state_mut(interp, cmd).state, State::Idle) {
-            unreachable!("Dirname.onIOWriterChunk: idle");
-        }
-        Builtin::done(interp, cmd, 0)
+        let exit = match Self::state_mut(interp, cmd).state {
+            State::Done => 0,
+            State::Err => 1,
+            State::Idle => unreachable!("Dirname.onIOWriterChunk: idle"),
+        };
+        Builtin::done(interp, cmd, exit)
     }
 }

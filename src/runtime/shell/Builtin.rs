@@ -24,6 +24,8 @@ pub struct Builtin {
     pub(crate) stdin: BuiltinInput,
     pub(crate) stdout: BuiltinIO,
     pub(crate) stderr: BuiltinIO,
+    /// The first output write that failed; [`Builtin::done`] reports it.
+    pub(crate) write_err: Option<bun_sys::E>,
     /// Scratch for `fmt_error_arena`. One outstanding error string at a time.
     pub(crate) err_buf: Vec<u8>,
     pub(crate) impl_: Impl,
@@ -150,13 +152,21 @@ macro_rules! shell_builtins {
                 }
             }
 
-            /// Hoisted dispatch for the `onIOWriterChunk` callback.
+            /// Hoisted dispatch for the `onIOWriterChunk` callback. A failed
+            /// write is latched here, so every builtin gets the same exit
+            /// status and report from `Builtin::done`.
             pub fn on_io_writer_chunk(
                 interp: &Interpreter,
                 cmd: NodeId,
                 written: usize,
                 err: Option<bun_sys::SystemError>,
             ) -> Yield {
+                if let Some(e) = &err {
+                    let me = Self::of_mut(interp, cmd);
+                    if me.write_err.is_none() {
+                        me.write_err = Some(e.get_errno());
+                    }
+                }
                 match Self::kind_of(interp, cmd) {
                     $( Kind::$UV => crate::shell::builtins::$u_mod::$UT::on_io_writer_chunk(interp, cmd, written, err), )*
                     $( Kind::$IV => crate::shell::builtins::$i_mod::$IT::on_io_writer_chunk(interp, cmd, written, err), )*
@@ -538,6 +548,7 @@ impl Builtin {
             stdin,
             stdout,
             stderr,
+            write_err: None,
             err_buf: Vec::new(),
             impl_: Self::make_impl(kind),
         }));
@@ -859,11 +870,39 @@ impl Builtin {
         interp.child_done(parent, cmd, 1)
     }
 
-    /// Finish the builtin with `exit_code` and signal the owning Cmd.
+    /// Finish the builtin with `exit_code` and signal the owning Cmd. A
+    /// builtin whose output write failed exits 1 instead, after
+    /// `"{kind}: write error: {strerror}"` on stderr; EPIPE is as silent as
+    /// SIGPIPE. The report's completion finishes the Cmd through
+    /// `WriterTag::BuiltinReport`, also when stderr rejects it.
     pub(crate) fn done(interp: &Interpreter, cmd: NodeId, exit_code: ExitCode) -> Yield {
-        // Output is written through immediately in `write_no_io`, so there
-        // is nothing to flush here.
-        Cmd::on_exec_done(interp, cmd, exit_code)
+        let Some(errno) = Self::of_mut(interp, cmd).write_err.take() else {
+            // Output is written through immediately in `write_no_io`, so
+            // there is nothing to flush here.
+            return Cmd::on_exec_done(interp, cmd, exit_code);
+        };
+        if errno == bun_sys::E::EPIPE {
+            return Cmd::on_exec_done(interp, cmd, 1);
+        }
+        let kind = Self::kind_of(interp, cmd);
+        let message = bun_sys::Error::from_code(errno, bun_sys::Tag::write)
+            .msg()
+            .unwrap_or(b"unknown error");
+        let buf: Vec<u8> = Self::fmt_error_arena(
+            interp,
+            cmd,
+            Some(kind),
+            format_args!("write error: {}\n", bstr::BStr::new(message)),
+        )
+        .to_vec();
+        if let Some(safeguard) = Self::of(interp, cmd).stderr.needs_io() {
+            let child = io_writer::ChildPtr::new(cmd, io_writer::WriterTag::BuiltinReport);
+            return Self::of_mut(interp, cmd)
+                .stderr
+                .enqueue(child, &buf, safeguard);
+        }
+        let _ = Self::write_no_io(interp, cmd, IoKind::Stderr, &buf);
+        Cmd::on_exec_done(interp, cmd, 1)
     }
 
     /// Look up the Builtin inside a Cmd's `exec` slot.
@@ -1096,33 +1135,6 @@ impl Builtin {
             .to_vec(),
         };
         set_wait_err();
-        Self::write_failing_error(interp, cmd, &buf, 1)
-    }
-
-    /// Exit 1 after reporting `"{kind}: write error: {strerror}"`, except for
-    /// `EPIPE`, which is as silent as SIGPIPE. `set_wait_err` selects the
-    /// state that exits 1 on any completion of the report, even a rejection.
-    pub(crate) fn fail_write(
-        interp: &Interpreter,
-        cmd: NodeId,
-        errno: bun_sys::E,
-        set_wait_err: impl FnOnce(),
-    ) -> Yield {
-        set_wait_err();
-        if errno == bun_sys::E::EPIPE {
-            return Self::done(interp, cmd, 1);
-        }
-        let kind = Self::kind_of(interp, cmd);
-        let message = bun_sys::Error::from_code(errno, bun_sys::Tag::write)
-            .msg()
-            .unwrap_or(b"unknown error");
-        let buf: Vec<u8> = Self::fmt_error_arena(
-            interp,
-            cmd,
-            Some(kind),
-            format_args!("write error: {}\n", bstr::BStr::new(message)),
-        )
-        .to_vec();
         Self::write_failing_error(interp, cmd, &buf, 1)
     }
 

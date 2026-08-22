@@ -204,18 +204,17 @@ impl Seq {
         _: usize,
         e: Option<bun_sys::SystemError>,
     ) -> Yield {
-        if matches!(Self::state_mut(interp, cmd).state, State::Err) {
+        if let Some(_err) = e {
+            Self::state_mut(interp, cmd).state = State::Err;
             return Builtin::done(interp, cmd, 1);
         }
-        if let Some(err) = e {
-            return Builtin::fail_write(interp, cmd, err.get_errno(), || {
-                Self::state_mut(interp, cmd).state = State::Err
-            });
+        match Self::state_mut(interp, cmd).state {
+            State::Done => Builtin::done(interp, cmd, 0),
+            State::Err => Builtin::done(interp, cmd, 1),
+            State::Idle => {
+                crate::shell::interpreter::unreachable_state("Seq.onIOWriterChunk", "idle")
+            }
         }
-        if matches!(Self::state_mut(interp, cmd).state, State::Idle) {
-            crate::shell::interpreter::unreachable_state("Seq.onIOWriterChunk", "idle");
-        }
-        Builtin::done(interp, cmd, 0)
     }
 }
 

@@ -287,18 +287,14 @@ impl Cmd {
     }
 
     /// IOWriter completion callback for the error message written in
-    /// `WaitingWriteErr`: throw on write failure, otherwise finish the Cmd
-    /// with exit code 1.
+    /// `WaitingWriteErr`: the command failed, so finish with exit code 1
+    /// whether or not the message could be written.
     pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         this: NodeId,
         _written: usize,
-        e: Option<bun_sys::SystemError>,
+        _err: Option<bun_sys::SystemError>,
     ) -> Yield {
-        if let Some(err) = e {
-            interp.throw(crate::shell::ShellErr::from_system(err));
-            return Yield::failed();
-        }
         debug_assert!(matches!(
             interp.as_cmd(this).state,
             CmdState::WaitingWriteErr
@@ -951,7 +947,7 @@ impl Cmd {
     /// finished, transition to `Done` and yield back to the trampoline.
     ///
     /// `err`: part of the output was lost while relaying it, which fails the
-    /// command with 1 (as `Builtin::fail_write` does) unless it exited non-zero
+    /// command with 1 (as `Builtin::done` does) unless it exited non-zero
     /// itself. A status set here makes `on_process_exit` skip `on_exit`.
     pub(crate) fn buffered_output_close(
         &mut self,

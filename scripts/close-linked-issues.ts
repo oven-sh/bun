@@ -196,6 +196,11 @@ function isClosingStatement(tokens: Token[], index: number, keyword: string): bo
   // ends that reading: "Fixes #1\nFixes #2" is two statements.
   if (before?.kind === "ref") return false;
   if (before === undefined || before.kind !== "word") return true;
+  // "Reverts #100, which fixed #1": the same, through a relative pronoun.
+  if (before.text === "which" || before.text === "that") {
+    const antecedent = tokens[isPunct(tokens[k - 1], ",") ? k - 2 : k - 1];
+    if (antecedent?.kind === "ref") return false;
+  }
   if (DISQUALIFIERS.has(before.text)) return false;
   return !BASE_FORMS.has(keyword) || VERB_MARKERS.has(before.text);
 }

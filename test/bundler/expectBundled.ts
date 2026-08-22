@@ -378,6 +378,9 @@ export type MappingSnapshot = [
   // If column is quoted text, find the token and use the column of it
   //    "index.ts:5:'abc'"
   source_code: string,
+  // The generated position the source map maps that to, plus the text the
+  // generated file must contain there. Line is 1-based, column is 0-based:
+  //    "3:2:return"
   generated_mapping: string,
 ];
 
@@ -463,7 +466,7 @@ function testRef(id: string, options: BundlerTestInput): BundlerTestRef {
   return { id, options };
 }
 
-function expectBundled(
+export function expectBundled(
   id: string,
   opts: BundlerTestInput,
   dryRun = false,
@@ -1651,8 +1654,8 @@ for (const [key, blob] of build.outputs) {
 
               const loc_key = `${m.generatedLine}:${m.generatedColumn}`;
               if (mappedLocations.has(loc_key)) {
-                const fmtLoc = (loc: any) =>
-                  `${loc.generatedLine}:${m.generatedColumn} -> ${m.originalLine}:${m.originalColumn} [${m.source.replaceAll(/^(\.\.\/)+/g, "/").replace(root, "")}]`;
+                const fmtLoc = (loc: typeof m) =>
+                  `${loc.generatedLine}:${loc.generatedColumn} -> ${loc.originalLine}:${loc.originalColumn} [${loc.source.replaceAll(/^(\.\.\/)+/g, "/").replace(root, "")}]`;
 
                 const a = fmtLoc(mappedLocations.get(loc_key));
                 const b = fmtLoc(m);
@@ -1666,30 +1669,31 @@ for (const [key, blob] of build.outputs) {
             const map_tests = snapshotSourceMap?.[path.basename(file)];
             if (map_tests) {
               expect(parsed.sources.map((a: string) => a.replaceAll("\\", "/"))).toEqual(map_tests.files);
-              for (let i = 0; i < parsed.sources; i++) {
+              const map_dir = path.dirname(path.join(outdir!, file));
+              for (let i = 0; i < parsed.sources.length; i++) {
                 const source = parsed.sources[i];
-                const sourcemap_content = parsed.sourceContent[i];
-                const actual_content = readFileSync(path.resolve(path.join(outdir!, file), source), "utf-8");
-                expect(sourcemap_content).toBe(actual_content);
+                const actual_content = readFileSync(path.resolve(map_dir, source), "utf-8");
+                expect(parsed.sourcesContent[i], `${file}: sourcesContent of ${source}`).toBe(actual_content);
               }
 
-              const generated_code = await Bun.file(path.join(outdir!, file.replace(".map", ""))).text();
+              const generated_lines = (await Bun.file(path.join(outdir!, file.replace(".map", ""))).text()).split("\n");
 
               if (map_tests.mappings)
-                for (const mapping of map_tests.mappings) {
-                  const src = parseSourceMapStrSource(outdir!, parsed, mapping[0]);
-                  const dest = parseSourceMapStrGenerated(generated_code, mapping[1]);
+                for (const [source_str, generated_str] of map_tests.mappings) {
+                  const src = parseSourceMapStrSource(outdir!, parsed, source_str);
+                  const expected_text = parseSourceMapStrGenerated(generated_str);
                   const pos = map.generatedPositionFor(src);
-                  if (!dest.matched) {
-                    const real_generated = generated_code
-                      .split("\n")
-                      [pos.line! - 1].slice(pos.column!)
-                      .slice(0, dest.expected!.length);
-                    expect(`${pos.line}:${pos.column}:${real_generated}`).toBe(mapping[1]);
-                    throw new Error("Not matched");
+                  // Format what the map says in the same "line:col:text" shape as the
+                  // snapshot so a failure can be pasted back into the test.
+                  let actual = "unmapped";
+                  if (pos.line !== null && pos.column !== null) {
+                    const text = (generated_lines[pos.line - 1] ?? "").slice(
+                      pos.column,
+                      pos.column + expected_text.length,
+                    );
+                    actual = `${pos.line}:${pos.column}:${text}`;
                   }
-                  expect(pos.line === dest.line);
-                  expect(pos.column === dest.column);
+                  expect(actual, `${file}: generated position of ${source_str}`).toBe(generated_str);
                 }
               if (map_tests.mappingsExactMatch) {
                 expect(parsed.mappings).toBe(map_tests.mappingsExactMatch);
@@ -1998,21 +2002,20 @@ function parseSourceMapStrSource(root: string, source_map: SourceMap, string: st
   return { line, column: col, source: source_map.sources[source_id] };
 }
 
-function parseSourceMapStrGenerated(source_code: string, string: string) {
+/** Validates a "line:col:text" generated location and returns its `text` part. */
+function parseSourceMapStrGenerated(string: string) {
   const split = string.split(":");
   if (split.length != 3)
     throw new Error("Test is invalid; Invalid generated location. See MappingSnapshot typedef for more info.");
-  const [line_raw, col_raw, ...match] = split;
-  const line = Number(line_raw);
-  if (!Number.isInteger(line))
+  const [line_raw, col_raw, text] = split;
+  if (!Number.isInteger(Number(line_raw)))
     throw new Error(
       "Test is invalid; Invalid generated line " +
         JSON.stringify(line_raw) +
         ". See MappingSnapshot typedef for more info.",
     );
 
-  let column = Number(col_raw);
-  if (!Number.isInteger(column)) {
+  if (!Number.isInteger(Number(col_raw))) {
     throw new Error(
       "Test is invalid; Invalid generated column " +
         JSON.stringify(col_raw) +
@@ -2020,14 +2023,5 @@ function parseSourceMapStrGenerated(source_code: string, string: string) {
     );
   }
 
-  if (match.length > 0) {
-    let str = match.join(":");
-    const text = source_code.split("\n")[line - 1];
-    const actual = text.slice(column, column + str.length);
-    if (actual !== str) {
-      return { matched: false, line, column, actual, expected: str };
-    }
-  }
-
-  return { matched: true, line, column };
+  return text;
 }

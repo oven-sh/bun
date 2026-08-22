@@ -138,24 +138,9 @@ pub fn parse_date(this: &mut String, global_object: &JSGlobalObject) -> JsResult
 }
 
 // ── SliceWithUnderlyingString methods ───────────────────────────────────────
-pub(crate) fn slice_with_underlying_string_to_js(
-    this: &mut SliceWithUnderlyingString,
-    global_object: &JSGlobalObject,
-) -> JsResult<JSValue> {
-    slice_with_underlying_string_to_js_with_options(this, global_object, false)
-}
-
 pub(crate) fn slice_with_underlying_string_transfer_to_js(
     this: &mut SliceWithUnderlyingString,
     global_object: &JSGlobalObject,
-) -> JsResult<JSValue> {
-    slice_with_underlying_string_to_js_with_options(this, global_object, true)
-}
-
-fn slice_with_underlying_string_to_js_with_options(
-    this: &mut SliceWithUnderlyingString,
-    global_object: &JSGlobalObject,
-    transfer: bool,
 ) -> JsResult<JSValue> {
     if (this.underlying.tag() == Tag::Dead || this.underlying.tag() == Tag::Empty)
         && this.utf8.length() > 0
@@ -200,18 +185,12 @@ fn slice_with_underlying_string_to_js_with_options(
         }
 
         let result = create_utf8_for_js(global_object, this.utf8.slice());
-        if transfer {
-            this.utf8 = ZigStringSlice::default();
-        }
+        this.utf8 = ZigStringSlice::default();
         return result;
     }
 
-    if transfer {
-        this.utf8 = ZigStringSlice::default();
-        transfer_to_js(&mut this.underlying, global_object)
-    } else {
-        to_js(&this.underlying, global_object)
-    }
+    this.utf8 = ZigStringSlice::default();
+    transfer_to_js(&mut this.underlying, global_object)
 }
 
 // ── escapeRegExp host fns ───────────────────────────────────────────────────

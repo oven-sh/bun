@@ -183,6 +183,8 @@ impl FakeTimers {
     pub(crate) fn reset_for_isolation(&mut self, global: &JSGlobalObject) {
         CURRENT_TIME.clear(global);
         self.active = false;
+        // On a reused global the surviving setTimeout keeps the marker; a stale one misroutes testing-library to jest.advanceTimersByTime.
+        set_fake_timer_marker(global, false);
     }
 
     /// Pop every fake timer. Popping only unlinks the nodes; the owners that
@@ -334,7 +336,10 @@ fn set_fake_timer_marker(global: &JSGlobalObject, enabled: bool) {
     if enabled {
         set_timeout_fn.put(global, "clock", JSValue::TRUE);
     } else {
-        let _ = set_timeout_fn.delete_property(global, "clock");
+        // Scoped so the native isolation-boundary caller satisfies exception-check validation.
+        let _ = bun_jsc::from_js_host_call_generic(global, || {
+            set_timeout_fn.delete_property(global, "clock")
+        });
     }
 }
 

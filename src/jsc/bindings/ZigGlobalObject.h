@@ -354,6 +354,8 @@ public:
     uint8_t drainMicrotasks();
 
     void handleRejectedPromises();
+    // Drops queued unhandled rejections without reporting them, the same way a full global swap drops them with the old global.
+    void clearAboutToBeNotifiedRejectedPromises();
     ALWAYS_INLINE void initGeneratedLazyClasses();
 
     template<typename Visitor>
@@ -817,6 +819,8 @@ public:
     bool hasOverriddenModuleWrapper = false;
     // De-optimization once `require("module").runMain` is written to
     bool hasOverriddenModuleRunMain = false;
+    // mock.module() patches loaded module records in place, which the `--isolate` reuse scrub cannot undo; cleared at baseline capture so only the test file's own calls count.
+    bool moduleMockCalledSinceTestIsolationBaseline = false;
 
     // node:crypto deprecation warnings are emitted at most once per realm, like Node, whose
     // flags live in per-realm module state (lib/internal/crypto/keys.js). They must not be

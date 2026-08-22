@@ -366,6 +366,9 @@ pub struct VirtualMachine {
 #[derive(Default)]
 pub struct TestIsolationState {
     pub saved_cwd: Option<Box<[u8]>>,
+    /// Cleared on every full swap so the next file re-captures its baseline.
+    pub baseline_captured: bool,
+    pub global_reuse: bool,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -4890,6 +4893,11 @@ impl VirtualMachine {
             }
         }
 
+        if self.test_isolation_state.global_reuse && !self.test_isolation_state.baseline_captured {
+            JSGlobalObject::capture_test_isolation_baseline(self.global());
+            self.test_isolation_state.baseline_captured = true;
+        }
+
         // Note: reshaped for borrowck.
         let global = self.global;
         let main_str = bun_core::String::from_bytes(self.main());
@@ -5020,6 +5028,7 @@ impl VirtualMachine {
     }
 
     /// Replaces the global object between test files so each file runs in a fresh realm.
+    /// With `TestIsolationState::global_reuse`, a pristine global is scrubbed and kept instead.
     ///
     /// Callers must run `bun_runtime::jsc_hooks::stop_active_handles_for_test_isolation(vm)`
     /// first so leaked watchers/servers are stopped (dropping their JS-side
@@ -5029,10 +5038,16 @@ impl VirtualMachine {
     pub fn swap_global_for_test_isolation(&mut self) {
         debug_assert!(self.test_isolation_enabled);
 
+        // A reuse candidate has no ActiveDOMObject with pending activity, so skipping the (permanent) context stop dispatches nothing into it.
+        let reuse_candidate = self.test_isolation_state.global_reuse
+            && JSGlobalObject::is_test_isolation_reuse_candidate(self.global());
+
         // The finished file's workers, ports, channels and sockets are stopped
         // first (no events dispatched), before its socket groups and timers are
         // swept and before the new global exists.
-        Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(self.global());
+        if !reuse_candidate {
+            Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(self.global());
+        }
 
         if let Some(cwd) = self.test_isolation_state.saved_cwd.take() {
             let mut buf = bun_paths::PathBuffer::uninit();
@@ -5078,11 +5093,6 @@ impl VirtualMachine {
         }
         if let Some(rare) = self.rare_data.as_deref_mut() {
             rare.listening_sockets_for_watch_mode.lock().clear();
-            // `setCallbacks` is once-only (node/src/quic/bindingdata.cc
-            // `BindingData::SetCallbacks`), so a holder left by the outgoing
-            // global makes the next file's call a no-op and dispatches
-            // node:quic events into the dead realm.
-            rare.node_quic_callbacks.deinit();
         }
         let _ = self.event_loop_mut().drain_microtasks();
 
@@ -5136,13 +5146,28 @@ impl VirtualMachine {
         self.plugin_runner = None;
 
         let old_global = self.global;
+        let old_global_ref = JSGlobalObject::opaque_ref(old_global);
+
+        // Reuse keeps node_modules CodeBlocks and JIT'd code; preload re-evaluates, so the baseline is re-captured.
+        if reuse_candidate {
+            if JSGlobalObject::try_reset_for_test_isolation(old_global_ref) {
+                self.test_isolation_state.baseline_captured = false;
+                return;
+            }
+            Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(old_global_ref);
+        }
+
+        if let Some(rare) = self.rare_data.as_deref_mut() {
+            // node:quic's once-only setCallbacks must re-register against the new realm (a reused global keeps its registering module instance).
+            rare.node_quic_callbacks.deinit();
+        }
+
         // `old_global` valid for VM lifetime (safe ZST-handle deref);
         // `console` is the live per-VM ConsoleObject.
-        let new_global: *mut JSGlobalObject = JSGlobalObject::create_for_test_isolation(
-            JSGlobalObject::opaque_ref(old_global),
-            self.console.cast(),
-        );
+        let new_global: *mut JSGlobalObject =
+            JSGlobalObject::create_for_test_isolation(old_global_ref, self.console.cast());
         self.global = new_global;
+        self.test_isolation_state.baseline_captured = false;
         VMHolder::set_cached_global_object(Some(new_global));
         self.regular_event_loop.global = NonNull::new(new_global);
         self.macro_event_loop.global = NonNull::new(new_global);

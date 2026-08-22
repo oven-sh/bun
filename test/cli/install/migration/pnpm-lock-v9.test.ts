@@ -1643,9 +1643,11 @@ ${variants}`;
       expect(migrated).toContain(
         `"has-peer": ["has-peer@file:vendor/has-peer", { "peerDependencies": { "peer": "*" } }]`,
       );
+      // the root does not provide `peer`, so the root's has-peer gets its own copy;
+      // inside `with`, the peer is satisfied by with's own `peer` dependency.
       expect(migrated).toContain(`"has-peer/peer": ["peer@file:vendor/peer", {}]`);
       expect(migrated).toContain(`"with/peer": ["peer@file:vendor/peer", {}]`);
-      expect(migrated).toContain(`"with/has-peer/peer": ["peer@file:vendor/peer", {}]`);
+      expect(migrated).not.toContain(`"with/has-peer/peer"`);
       expect(migrated).not.toContain(`"optionalPeers"`);
 
       const install = await run(packageDir, "install", "--frozen-lockfile");

@@ -157,7 +157,15 @@ function isSrcSubdir(src, dest) {
   return ArrayPrototypeEvery.$call(srcArr, (cur, i) => destArr[i] === cur);
 }
 
-function checkPathsSync(src, dest, opts) {
+// `followSymlinks` is cpSync's pre-flight, which node implements in C++
+// (`cpSyncCheckPaths` in src/node_file.cc): it classifies src with stat(2) and
+// decides src/dest identity with `std::filesystem::equivalent`, i.e. on both
+// resolved paths. So a dangling src reports ENOENT, a symlink cycle reports
+// ELOOP, a symlink to a directory still requires `recursive`, and a dest
+// symlink that resolves to src is a self-copy rather than an overwrite. The
+// walk over directory entries leaves it off, like node's, so symlinks inside a
+// tree are recreated as symlinks.
+function checkPathsSync(src, dest, opts, followSymlinks = false) {
   if (opts.filter) {
     const shouldCopy = opts.filter(src, dest);
     if ($isPromise(shouldCopy)) {
@@ -165,10 +173,16 @@ function checkPathsSync(src, dest, opts) {
     }
     if (!shouldCopy) return { __proto__: null, skipped: true };
   }
+  // `dereference` already makes getStatsSync follow both paths. Stat src
+  // second, so a src that does not exist at all still reports `lstat`, and only
+  // when the lstat found a link to follow.
   const { srcStat, destStat } = getStatsSync(src, dest, opts);
+  const resolving = followSymlinks && !opts.dereference;
+  const srcCheckStat = resolving && srcStat.isSymbolicLink() ? statSync(src, { bigint: true }) : srcStat;
 
   if (destStat) {
-    if (areIdentical(srcStat, destStat)) {
+    const destCheckStat = resolving && destStat.isSymbolicLink() ? (resolveStatSync(dest) ?? destStat) : destStat;
+    if (areIdentical(srcCheckStat, destCheckStat)) {
       throw fsCpEinvalError({
         message: "src and dest cannot be the same",
         path: dest,
@@ -177,7 +191,7 @@ function checkPathsSync(src, dest, opts) {
         code: "EINVAL",
       });
     }
-    if (srcStat.isDirectory() && !destStat.isDirectory()) {
+    if (srcCheckStat.isDirectory() && !destStat.isDirectory()) {
       throw fsCpDirToNonDirError({
         message: `cannot overwrite non-directory ${dest} with directory ${src}`,
         path: dest,
@@ -186,7 +200,7 @@ function checkPathsSync(src, dest, opts) {
         code: "EISDIR",
       });
     }
-    if (!srcStat.isDirectory() && destStat.isDirectory()) {
+    if (!srcCheckStat.isDirectory() && destStat.isDirectory()) {
       throw fsCpNonDirToDirError({
         message: `cannot overwrite directory ${dest} with non-directory ${src}`,
         path: dest,
@@ -197,7 +211,7 @@ function checkPathsSync(src, dest, opts) {
     }
   }
 
-  if (srcStat.isDirectory() && isSrcSubdir(src, dest)) {
+  if (srcCheckStat.isDirectory() && isSrcSubdir(src, dest)) {
     throw fsCpEinvalError({
       message: `cannot copy ${src} to a subdirectory of self ${dest}`,
       path: dest,
@@ -206,7 +220,35 @@ function checkPathsSync(src, dest, opts) {
       code: "EINVAL",
     });
   }
-  return { __proto__: null, srcStat, destStat, skipped: false };
+  return { __proto__: null, srcStat, srcCheckStat, destStat, skipped: false };
+}
+
+function cpSyncCheckPaths(src, dest, opts) {
+  return checkPathsSync(src, dest, opts, true);
+}
+
+// A dest that does not resolve (dangling or looping symlink) is not src.
+// node calls `std::filesystem::equivalent` here, which throws instead.
+function resolveStatSync(dest) {
+  try {
+    return statSync(dest, { bigint: true });
+  } catch {
+    return undefined;
+  }
+}
+
+// The tail of node's cpSyncCheckPaths: `recursive` is enforced against the
+// resolved src, so a symlink to a directory is rejected too.
+function checkRecursiveSync(srcCheckStat, src, opts) {
+  if (srcCheckStat.isDirectory() && !opts.recursive) {
+    throw fsEisdirError({
+      message: `${src} is a directory (not copied)`,
+      path: src,
+      syscall: "cp",
+      errno: EISDIR,
+      code: "EISDIR",
+    });
+  }
 }
 
 function getStatsSync(src, dest, opts) {
@@ -279,18 +321,12 @@ function treeContainsOnlyFilesAndDirsSync(root) {
 // node-correct validation before handing off to the native fast path
 // (which performs the copy but does not implement node's cp error codes).
 function tryNativeFastPathSync(src, dest, opts) {
-  const checked = checkPathsSync(src, dest, opts);
-  const { srcStat, destStat } = checked;
-  checkParentPathsSync(src, srcStat, dest);
-  if (srcStat.isDirectory() && !opts.recursive) {
-    throw fsEisdirError({
-      message: `${src} is a directory (not copied)`,
-      path: src,
-      syscall: "cp",
-      errno: EISDIR,
-      code: "EISDIR",
-    });
-  }
+  const checked = cpSyncCheckPaths(src, dest, opts);
+  const { srcStat, srcCheckStat, destStat } = checked;
+  checkParentPathsSync(src, srcCheckStat, dest);
+  checkRecursiveSync(srcCheckStat, src, opts);
+  // `srcStat` is the unresolved stat: a symlink to a directory is copied as a
+  // symlink, so it must not take either native path.
   if (srcStat.isDirectory()) {
     // On macOS the native path clones the whole tree with a single
     // clonefile(). Only take it when the result is indistinguishable from
@@ -311,9 +347,12 @@ function tryNativeFastPathSync(src, dest, opts) {
 function cpSyncFn(src, dest, opts, checked?) {
   // `checked` carries the stats from a preceding tryNativeFastPathSync so the
   // fallback doesn't re-run the same checkPaths/checkParentPaths syscalls.
-  const { srcStat, destStat, skipped } = checked ?? checkPathsSync(src, dest, opts);
+  const { srcCheckStat, destStat, skipped } = checked ?? cpSyncCheckPaths(src, dest, opts);
   if (skipped) return;
-  if (checked === undefined) checkParentPathsSync(src, srcStat, dest);
+  if (checked === undefined) {
+    checkParentPathsSync(src, srcCheckStat, dest);
+    checkRecursiveSync(srcCheckStat, src, opts);
+  }
   return checkParentDir(destStat, src, dest, opts);
 }
 

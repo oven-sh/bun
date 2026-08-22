@@ -34,39 +34,41 @@ public:
     WTF_MAKE_TZONE_ALLOCATED(JSCDeferredWorkTask);
 };
 
-using Pending = JSCTaskScheduler::Pending;
-
-// Drop `ticket` from the pending map. Caller holds m_lock; a keep-alive the entry
-// held is released (releaseKeepAlive) after the caller lets go of the lock.
-static std::optional<Pending> dropPendingTicketLocked(Bun::JSCTaskScheduler& scheduler, Ticket* ticket) WTF_REQUIRES_LOCK(scheduler.m_lock)
+// Drop `ticket` from whichever pending map holds it. Caller holds m_lock; the
+// event-loop ref (on the returned loop, if it held one) is balanced after the
+// caller releases the lock.
+static std::optional<BunLoopKind> dropPendingTicketLocked(Bun::JSCTaskScheduler& scheduler, Ticket* ticket) WTF_REQUIRES_LOCK(scheduler.m_lock)
 {
-    auto it = scheduler.m_pending.find(ticket);
-    if (it == scheduler.m_pending.end())
-        return std::nullopt;
-    Pending pending = it->value;
-    scheduler.m_pending.remove(it);
+    std::optional<BunLoopKind> keepAliveLoopKind;
+    scheduler.m_pendingTicketsKeepingEventLoopAlive.removeIf([&](auto& pendingTicket) {
+        if (pendingTicket.key.ptr() != ticket)
+            return false;
+        keepAliveLoopKind = pendingTicket.value;
+        return true;
+    });
     // -- At this point, ticket may be an invalid pointer.
-    return pending;
-}
-
-static void releaseKeepAlive(const ::BunVmHandleRef* vmHandle, const std::optional<Pending>& pending)
-{
-    if (pending && pending->keepsEventLoopAlive)
-        Bun__VmHandle__refKeepAlive(vmHandle, pending->loopKind, -1);
+    if (!keepAliveLoopKind) {
+        scheduler.m_pendingTicketsOther.removeIf([ticket](auto& pendingTicket) {
+            return pendingTicket.key.ptr() == ticket;
+        });
+    }
+    return keepAliveLoopKind;
 }
 
 void JSCTaskScheduler::onAddPendingWork(WebCore::JSVMClientData* clientData, Ref<Ticket>&& ticket, JSC::DeferredWorkTimer::WorkType kind)
 {
-    // JS thread (DeferredWorkTimer::addPendingWork holds the API lock): the work is being started
-    // now, so its keep-alive and its completion belong to the loop this thread is running.
-    Pending pending { kind == DeferredWorkTimer::WorkType::ImminentlyScheduled, Bun__VM__currentLoopKind(clientData->bunVM) };
+    // JS thread: the work is being started now, on the loop this thread is running.
+    BunLoopKind loopKind = Bun__VM__currentLoopKind(clientData->bunVM);
     auto& scheduler = clientData->deferredWorkTimer;
     Locker<Lock> holder { scheduler.m_lock };
     if (scheduler.m_isShuttingDown) [[unlikely]]
         return;
-    if (pending.keepsEventLoopAlive)
-        Bun__VmHandle__refKeepAlive(clientData->vmHandle, pending.loopKind, 1);
-    scheduler.m_pending.add(WTF::move(ticket), pending);
+    if (kind == DeferredWorkTimer::WorkType::ImminentlyScheduled) {
+        Bun__VmHandle__refKeepAlive(clientData->vmHandle, loopKind, 1);
+        scheduler.m_pendingTicketsKeepingEventLoopAlive.add(WTF::move(ticket), loopKind);
+    } else {
+        scheduler.m_pendingTicketsOther.add(WTF::move(ticket), loopKind);
+    }
 }
 void JSCTaskScheduler::onScheduleWorkSoon(WebCore::JSVMClientData* clientData, Ref<Ticket>&& ticket, Task&& task)
 {
@@ -78,16 +80,18 @@ void JSCTaskScheduler::onScheduleWorkSoon(WebCore::JSVMClientData* clientData, R
         // ~VM -> WaiterListManager::unregister -> Waiter::cancelAndClear for every
         // outstanding Atomics.waitAsync on a terminating worker, and from
         // collectNow -> JSFinalizationRegistry::finalizeUnconditionally. Balance
-        // onAddPendingWork so the pending entry and event-loop ref are released.
+        // onAddPendingWork so the ticket-map entry and event-loop ref are released.
         if (scheduler.m_isShuttingDown) [[unlikely]] {
-            auto dropped = dropPendingTicketLocked(scheduler, ticket.ptr());
+            auto keepAliveLoopKind = dropPendingTicketLocked(scheduler, ticket.ptr());
             holder.unlockEarly();
-            releaseKeepAlive(clientData->vmHandle, dropped);
+            if (keepAliveLoopKind)
+                Bun__VmHandle__refKeepAlive(clientData->vmHandle, *keepAliveLoopKind, -1);
             return;
         }
-        auto it = scheduler.m_pending.find(ticket.ptr());
-        if (it != scheduler.m_pending.end())
-            loopKind = it->value.loopKind;
+        if (auto it = scheduler.m_pendingTicketsKeepingEventLoopAlive.find(ticket.ptr()); it != scheduler.m_pendingTicketsKeepingEventLoopAlive.end())
+            loopKind = it->value;
+        else if (auto it = scheduler.m_pendingTicketsOther.find(ticket.ptr()); it != scheduler.m_pendingTicketsOther.end())
+            loopKind = it->value;
     }
     // Outside m_lock (markShuttingDown, on the VM's thread, needs it): a post that
     // still races the shutdown lands on the VM handle, which either queues it for
@@ -102,23 +106,31 @@ void JSCTaskScheduler::onCancelPendingWork(WebCore::JSVMClientData* clientData, 
     auto& scheduler = clientData->deferredWorkTimer;
 
     Locker<Lock> holder { scheduler.m_lock };
-    auto dropped = dropPendingTicketLocked(scheduler, &ticket);
+    auto keepAliveLoopKind = dropPendingTicketLocked(scheduler, &ticket);
     holder.unlockEarly();
-    releaseKeepAlive(vmHandle, dropped);
+    if (keepAliveLoopKind)
+        Bun__VmHandle__refKeepAlive(vmHandle, *keepAliveLoopKind, -1);
 }
 
 static void runPendingWork(const ::BunVmHandleRef* vmHandle, Bun::JSCTaskScheduler& scheduler, JSCDeferredWorkTask* job)
 {
     Locker<Lock> holder { scheduler.m_lock };
-    auto pending = dropPendingTicketLocked(scheduler, job->ticket.ptr());
+    bool wasPending = false;
+    if (auto it = scheduler.m_pendingTicketsKeepingEventLoopAlive.find(job->ticket.ptr()); it != scheduler.m_pendingTicketsKeepingEventLoopAlive.end()) {
+        wasPending = true;
+        Bun__VmHandle__refKeepAlive(vmHandle, it->value, -1);
+        scheduler.m_pendingTicketsKeepingEventLoopAlive.remove(it);
+    } else if (auto it = scheduler.m_pendingTicketsOther.find(job->ticket.ptr()); it != scheduler.m_pendingTicketsOther.end()) {
+        wasPending = true;
+        scheduler.m_pendingTicketsOther.remove(it);
+    }
     holder.unlockEarly();
-    releaseKeepAlive(vmHandle, pending);
 
     // Deferred work runs script (FinalizationRegistry callbacks, wasm
     // completions); not once the VM's stop was requested. Like any other
     // event-loop callback boundary, an exception a task lets escape is
     // reported as uncaught here rather than left on the VM for the next entry.
-    if (pending && !job->ticket->isCancelled() && Bun__VmHandle__scriptAllowed(vmHandle)) {
+    if (wasPending && !job->ticket->isCancelled() && Bun__VmHandle__scriptAllowed(vmHandle)) {
         auto& vm = job->vm();
         auto* globalObject = job->ticket->target()->globalObject();
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -143,15 +155,16 @@ extern "C" void Bun__runDeferredWork(Bun::JSCDeferredWorkTask* job)
 // Reclaim a queued-but-never-dispatched job during shutdown. Called while the
 // JSC VM is still alive, so ~Ref<Ticket> and the captured Task lambda may
 // safely touch TZone-allocated / JSC-owned state. Mirrors runPendingWork's
-// drop so the pending map and event-loop ref stay balanced.
+// ticket take() so the pending set and event-loop ref stay balanced.
 extern "C" void Bun__deleteDeferredWorkTask(Bun::JSCDeferredWorkTask* job)
 {
     if (auto* clientData = WebCore::clientData(job->vm())) {
         auto& scheduler = clientData->deferredWorkTimer;
         Locker<Lock> holder { scheduler.m_lock };
-        auto dropped = dropPendingTicketLocked(scheduler, job->ticket.ptr());
+        auto keepAliveLoopKind = dropPendingTicketLocked(scheduler, job->ticket.ptr());
         holder.unlockEarly();
-        releaseKeepAlive(clientData->vmHandle, dropped);
+        if (keepAliveLoopKind)
+            Bun__VmHandle__refKeepAlive(clientData->vmHandle, *keepAliveLoopKind, -1);
     }
     delete job;
 }

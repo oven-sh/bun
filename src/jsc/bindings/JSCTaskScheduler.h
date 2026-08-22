@@ -11,14 +11,11 @@ namespace Bun {
 
 class JSCTaskScheduler {
 public:
-    JSCTaskScheduler() = default;
-
-    // Recorded on the JS thread when JSC registers the work (onAddPendingWork): whether it holds a
-    // keep-alive, and the loop that keep-alive and the eventual completion belong to.
-    struct Pending {
-        bool keepsEventLoopAlive { false };
-        BunLoopKind loopKind { BunLoopKind::Regular };
-    };
+    JSCTaskScheduler()
+        : m_pendingTicketsKeepingEventLoopAlive()
+        , m_pendingTicketsOther()
+    {
+    }
 
     static void onAddPendingWork(WebCore::JSVMClientData* clientData, Ref<JSC::DeferredWorkTimer::Ticket>&& ticket, JSC::DeferredWorkTimer::WorkType kind);
     static void onScheduleWorkSoon(WebCore::JSVMClientData* clientData, Ref<JSC::DeferredWorkTimer::Ticket>&& ticket, JSC::DeferredWorkTimer::Task&& task);
@@ -38,7 +35,10 @@ public:
 public:
     Lock m_lock;
     bool m_isShuttingDown WTF_GUARDED_BY_LOCK(m_lock) { false };
-    UncheckedKeyHashMap<Ref<JSC::DeferredWorkTimer::Ticket>, Pending> m_pending WTF_GUARDED_BY_LOCK(m_lock);
+    // Value: the loop that was current when JSC registered the work (onAddPendingWork, JS thread);
+    // its keep-alive and its completion are delivered there.
+    UncheckedKeyHashMap<Ref<JSC::DeferredWorkTimer::Ticket>, BunLoopKind> m_pendingTicketsKeepingEventLoopAlive;
+    UncheckedKeyHashMap<Ref<JSC::DeferredWorkTimer::Ticket>, BunLoopKind> m_pendingTicketsOther;
 };
 
 }

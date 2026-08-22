@@ -287,6 +287,12 @@ fn pack_dir(
                         format!("symlink target of {} is too long", bstr::BStr::new(&abs)),
                     ));
                 }
+                #[cfg(windows)]
+                for b in buf[..n].iter_mut() {
+                    if *b == b'\\' {
+                        *b = b'/';
+                    }
+                }
                 let target = &buf[..n];
                 // only links that stay inside the package can be restored; refuse to
                 // produce a pack that unpack would reject
@@ -422,10 +428,12 @@ fn bad(msg: &str) -> std::io::Error {
 fn safe_rel(path: &[u8]) -> bool {
     !path.is_empty()
         && path[0] != b'/'
-        && path[0] != b'\\'
+        // records always use `/`; a `\` would be a separator on Windows and a plain
+        // byte elsewhere, so lexical checks and the filesystem could disagree
+        && !strings::contains_char(path, b'\\')
         && !strings::contains_char(path, 0)
         && !strings::contains_char(path, b':')
-        && !strings::split_any(path, b"/\\").any(|seg| seg == b"..")
+        && !strings::split(path, b"/").any(|seg| seg == b"..")
 }
 
 /// May a symlink at package-relative `link_path` point at `target`? Relative targets
@@ -435,7 +443,7 @@ fn safe_rel(path: &[u8]) -> bool {
 fn symlink_target_stays_inside(link_path: &[u8], target: &[u8]) -> bool {
     if target.is_empty()
         || target[0] == b'/'
-        || target[0] == b'\\'
+        || strings::contains_char(target, b'\\')
         || strings::contains_char(target, 0)
         || strings::contains_char(target, b':')
     {
@@ -527,26 +535,69 @@ fn create_links(staging: &[u8], links: &mut Vec<(Vec<u8>, Vec<u8>)>) -> std::io:
                 ),
             ));
         }
-        // and nothing already on disk along the link's parent chain may be a symlink
+    }
+    // Create the links one at a time. Parents are created one level at a time and every
+    // existing component is lstat'ed, so nothing is ever created *through* a link made
+    // earlier (whatever the filesystem's own name matching — case-insensitive, Unicode
+    // normalising — considers "the same" component).
+    let traverses = |rel: &[u8]| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "pack entry {} passes through another symlink; delete the pack file and re-create it with `bun pm cache pack`",
+                bstr::BStr::new(rel)
+            ),
+        )
+    };
+    let created: Vec<(Vec<u8>, Vec<u8>)> = std::mem::take(links);
+    for (rel, target) in &created {
+        let comps: Vec<&[u8]> = components(rel).collect();
         let mut p = staging.to_vec();
-        for comp in components(rel) {
+        for (i, comp) in comps.iter().enumerate() {
             p = join(&p, comp);
-            if p.len() < join(staging, rel).len()
-                && lstat_kind(&p)? == Some(bun_sys::FileKind::SymLink)
-            {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("pack entry {} traverses a symlink", bstr::BStr::new(rel)),
-                ));
+            if i + 1 == comps.len() {
+                break;
+            }
+            match lstat_kind(&p)? {
+                Some(bun_sys::FileKind::Directory) => {}
+                Some(_) => return Err(traverses(rel)),
+                None => bun_sys::mkdirat(bun_sys::Fd::cwd(), &z(&p), 0o755).map_err(sys_err)?,
             }
         }
+        // native separators for the link contents on Windows
+        let target_native: Vec<u8> = if cfg!(windows) {
+            target
+                .iter()
+                .map(|&b| if b == b'/' { b'\\' } else { b })
+                .collect()
+        } else {
+            target.clone()
+        };
+        bun_sys::symlinkat(&z(&target_native), bun_sys::Fd::cwd(), &z(&p)).map_err(sys_err)?;
     }
-    for (rel, target) in links.drain(..) {
-        let dest = join(staging, &rel);
-        if let Some(dir) = parent(&dest) {
-            mkdir_p(dir)?;
+    // Now that every link exists, resolve each target physically, one component at a
+    // time from the link's directory: an intermediate component that is a symlink on
+    // disk means the target routes through another link — refuse the package (staging is
+    // discarded by the caller, nothing was written outside it: symlink creation does not
+    // follow targets and parents were never created through links).
+    for (rel, target) in &created {
+        let mut p = parent(&join(staging, rel)).unwrap_or(staging).to_vec();
+        let comps: Vec<&[u8]> = strings::split(target, b"/")
+            .filter(|c| !c.is_empty() && *c != b".")
+            .collect();
+        for (i, comp) in comps.iter().enumerate() {
+            if *comp == b".." {
+                p = parent(&p).unwrap_or(staging).to_vec();
+                continue;
+            }
+            p = join(&p, comp);
+            if i + 1 == comps.len() {
+                break;
+            }
+            if lstat_kind(&p)? == Some(bun_sys::FileKind::SymLink) {
+                return Err(traverses(rel));
+            }
         }
-        bun_sys::symlinkat(&z(&target), bun_sys::Fd::cwd(), &z(&dest)).map_err(sys_err)?;
     }
     Ok(())
 }

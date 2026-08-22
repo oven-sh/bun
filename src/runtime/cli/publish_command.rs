@@ -1228,14 +1228,13 @@ impl PublishCommand {
                 } else {
                     Output::enable_ansi_colors_stdout()
                 };
-                let mut prompt: Vec<u8> = Vec::new();
-                if auth_url_is_web {
-                    prompt.extend_from_slice(
-                        b"\nAuthenticate your account at (press <b>ENTER<r> to open in browser):\n\n",
-                    );
+                // The heading is static text with markup. The box holds the URL the
+                // registry sent, so it is written as is, with plain ANSI codes.
+                let heading: &str = if auth_url_is_web {
+                    "\nAuthenticate your account at (press <b>ENTER<r> to open in browser):\n"
                 } else {
-                    prompt.extend_from_slice(b"\nAuthenticate your account at:\n\n");
-                }
+                    "\nAuthenticate your account at:\n"
+                };
 
                 const PADDING: usize = 1;
                 let (horizontal, vertical, top_left, top_right, bottom_left, bottom_right) =
@@ -1244,8 +1243,14 @@ impl PublishCommand {
                     } else {
                         ("-", "|", "|", "|", "|", "|")
                     };
+                let (bold, reset) = if colors {
+                    (Output::BOLD, Output::RESET)
+                } else {
+                    ("", "")
+                };
                 let width: usize = (PADDING * 2) + auth_url_str.len();
 
+                let mut prompt: Vec<u8> = Vec::new();
                 prompt.extend_from_slice(top_left.as_bytes());
                 for _ in 0..width {
                     prompt.extend_from_slice(horizontal.as_bytes());
@@ -1255,9 +1260,9 @@ impl PublishCommand {
 
                 prompt.extend_from_slice(vertical.as_bytes());
                 prompt.extend_from_slice(&[b' '; PADDING]);
-                prompt.extend_from_slice(b"<b>");
+                prompt.extend_from_slice(bold.as_bytes());
                 prompt.extend_from_slice(auth_url_str.as_bytes());
-                prompt.extend_from_slice(b"<r>");
+                prompt.extend_from_slice(reset.as_bytes());
                 prompt.extend_from_slice(&[b' '; PADDING]);
                 prompt.extend_from_slice(vertical.as_bytes());
                 prompt.push(b'\n');
@@ -1270,11 +1275,13 @@ impl PublishCommand {
                 prompt.push(b'\n');
 
                 #[allow(clippy::disallowed_methods)]
-                // the prompt carries <b>/<r> markup that must be tag-walked
+                // the heading is a literal with <b>/<r> markup that must be tag-walked
                 if to_stderr {
-                    Output::pretty_errorln(format_args!("{}", bstr::BStr::new(&prompt)));
+                    Output::pretty_errorln(format_args!("{heading}"));
+                    Output::print_error(bstr::BStr::new(&prompt));
                 } else {
-                    Output::pretty(format_args!("{}", bstr::BStr::new(&prompt)));
+                    Output::prettyln(format_args!("{heading}"));
+                    Output::print(format_args!("{}", bstr::BStr::new(&prompt)));
                 }
                 Output::flush();
 

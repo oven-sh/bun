@@ -1,7 +1,9 @@
 import { $ } from "bun";
 import { shellInternals } from "bun:internal-for-testing";
-import { describe, expect } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { bunExe, createTestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
 const { builtinDisabled } = shellInternals;
@@ -170,6 +172,112 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
       .fileEquals(TEST_COPY_TO_FOLDER_NEW_FILE, "Hello, World!")
       .testMini({ cwd: mini_tmpdir })
       .runAsTest("cp_recurse");
+  });
+});
+
+// The builtin is the default only on Windows; on POSIX it is enabled by an env
+// var read once per process, so each of these runs its `cp` in a child bun.
+describe.concurrent("bunshell cp operands the native copy has to convert", () => {
+  // Runs `cp <argv>` in its own directory and prints cp's exit code followed by
+  // whatever cp wrote to stderr.
+  const fixture = /* ts */ `
+    import { $ } from "bun";
+    const result = await $\`cp \${process.argv.slice(2)}\`.nothrow().quiet();
+    process.stdout.write(result.exitCode + "\\n" + result.stderr.toString());
+  `;
+
+  async function cp(dir: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run-cp-fixture.ts", ...args],
+      cwd: dir,
+      env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+  const copied = { stdout: "0\n", stderr: "", exitCode: 0 };
+
+  // 30 components of 10 characters: longer than Windows' MAX_PATH (260) before
+  // the temp directory is even prepended, and well under macOS' PATH_MAX (1024)
+  // after it. On Windows the copy used to create the destination directories
+  // and copy the files through calls limited to MAX_PATH, so `cp -R` of a tree
+  // like this stopped with "File name too long" and a lone file this far down
+  // was not copied at all.
+  const deep = Array(30).fill("0123456789").join("/");
+
+  test("cp -R copies a tree whose destination paths are longer than MAX_PATH", async () => {
+    using dir = tempDir("shell-cp-long-tree", {
+      "run-cp-fixture.ts": fixture,
+      [`tree/${deep}/leaf`]: "leaf\n",
+    });
+    const leafCopy = join(String(dir), "out", deep, "leaf");
+    expect(leafCopy.length).toBeGreaterThan(260);
+
+    expect(await cp(String(dir), "-R", "tree", "out")).toEqual(copied);
+    expect(readFileSync(leafCopy, "utf8")).toBe("leaf\n");
+  });
+
+  test("cp copies a file whose paths are longer than MAX_PATH", async () => {
+    using dir = tempDir("shell-cp-long-file", {
+      "run-cp-fixture.ts": fixture,
+      [`${deep}/a.txt`]: "a\n",
+    });
+    const copy = join(String(dir), deep, "b.txt");
+    expect(copy.length).toBeGreaterThan(260);
+
+    expect(await cp(String(dir), `${deep}/a.txt`, `${deep}/b.txt`)).toEqual(copied);
+    expect(readFileSync(copy, "utf8")).toBe("a\n");
+  });
+
+  // A rooted operand (`\dir`, no drive letter) is the one shape the copy's
+  // conversion changes: it is resolved against the current drive, keeping its
+  // trailing separator, like a volume root (`D:\`) always has one.
+  describe.if(isWindows)("rooted operands", () => {
+    const tree = { "tree/a.txt": "a\n", "tree/sub/b.txt": "b\n" };
+    /** `C:\x\y` -> `\x\y\` */
+    function rooted(dir: string, name: string) {
+      const absolute = join(dir, name);
+      expect(absolute).toMatch(/^[A-Za-z]:\\/);
+      return absolute.slice(2) + "\\";
+    }
+    function expectTreeCopiedTo(out: string) {
+      expect(readFileSync(join(out, "a.txt"), "utf8")).toBe("a\n");
+      expect(readFileSync(join(out, "sub", "b.txt"), "utf8")).toBe("b\n");
+    }
+
+    // The copy must append entry names to such a path without doubling the
+    // separator: the `\\?\` paths it works with are not normalized by Windows,
+    // so `\\?\C:\out\\a.txt` does not exist. The destination case also worked
+    // before the copy used those paths; a rooted source used to fail with
+    // "Invalid argument" because it was opened without being resolved.
+    test("cp -R into a rooted destination with a trailing separator", async () => {
+      using dir = tempDir("shell-cp-rooted-dest", { "run-cp-fixture.ts": fixture, ...tree });
+      expect(await cp(String(dir), "-R", "tree", rooted(String(dir), "out"))).toEqual(copied);
+      expectTreeCopiedTo(join(String(dir), "out"));
+    });
+
+    test("cp -R from a rooted source with a trailing separator", async () => {
+      using dir = tempDir("shell-cp-rooted-src", { "run-cp-fixture.ts": fixture, ...tree });
+      expect(await cp(String(dir), "-R", rooted(String(dir), "tree"), "out")).toEqual(copied);
+      expectTreeCopiedTo(join(String(dir), "out"));
+    });
+
+    // cp suppresses the EBUSY of copies that lose the race for a destination
+    // another copy of the same command already wrote ("EBUSY windows" above)
+    // by comparing the path in the error with the operand it resolved, so the
+    // operand has to be kept in the drive-qualified form the copy reports.
+    // With 50 copies racing, some of them lose on nearly every run.
+    test("copies of one file racing into a rooted directory stay quiet", async () => {
+      using dir = tempDir("shell-cp-rooted-ebusy", {
+        "run-cp-fixture.ts": fixture,
+        "hello.txt": "hi!\n",
+        "somedir": {},
+      });
+      const sources = Array(50).fill("hello.txt");
+      expect(await cp(String(dir), ...sources, rooted(String(dir), "somedir"))).toEqual(copied);
+      expect(readFileSync(join(String(dir), "somedir", "hello.txt"), "utf8")).toBe("hi!\n");
+    });
   });
 });
 

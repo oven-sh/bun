@@ -4479,11 +4479,8 @@ describe.concurrent("close() error after the peer resets the connection", () => 
   describe.each(["tcp", "tls"] as const)("%s", transport => {
     // The peer resets in-process with terminate(): it closes with SO_LINGER{1,0}, so the
     // kernel sends a bare RST with nothing queued ahead of it (a TLS terminate() writes
-    // no close_notify, #39632). That is the same segment a process killed with unread
-    // data in its receive buffer produces, without the race such a kill has: over
-    // loopback the delivery of the last write is asynchronous, and a teardown that beat
-    // it found an empty receive buffer and sent a FIN, which the accepted side read as
-    // a clean end.
+    // no close_notify, #39632). A peer process killed with unread data produces the same
+    // RST, but over macOS loopback that kill raced the delivery of the last write (#40108).
     it("the accepted socket reports the reset as read ECONNRESET", async () => {
       const closedWith = Promise.withResolvers<CloseError>();
       const greet = (socket: Socket) => socket.write("greeting");

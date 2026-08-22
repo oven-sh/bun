@@ -6597,11 +6597,7 @@ impl Any {
                 // Ownership transfers to JSC via the default-allocator path.
                 let bytes: &mut [u8] = ib.to_owned_slice().leak();
                 *self = Any::Blob(Blob::default());
-                Ok(jsc::ArrayBuffer::from_default_allocator(
-                    global,
-                    TYPED_ARRAY_VIEW,
-                    bytes,
-                ))
+                jsc::ArrayBuffer::from_default_allocator(global, TYPED_ARRAY_VIEW, bytes)
             }
             Any::WTFStringImpl(impl_) => {
                 // Adopts a +1 WTF ref; `OwnedString` releases it on scope exit,
@@ -6615,11 +6611,11 @@ impl Any {
                 let out_bytes = str.to_utf8_without_ref();
                 if matches!(out_bytes, bun_core::ZigStringSlice::Owned(_)) {
                     let owned: &mut [u8] = out_bytes.into_vec().leak();
-                    return Ok(jsc::ArrayBuffer::from_default_allocator(
+                    return jsc::ArrayBuffer::from_default_allocator(
                         global,
                         TYPED_ARRAY_VIEW,
                         owned,
-                    ));
+                    );
                 }
                 jsc::ArrayBuffer::create::<TYPED_ARRAY_VIEW>(global, out_bytes.slice())
             }

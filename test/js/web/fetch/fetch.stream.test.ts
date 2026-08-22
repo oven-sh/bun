@@ -1,4 +1,4 @@
-import { Socket } from "bun";
+import type { Socket } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { randomFillSync } from "crypto";
 import { createReadStream, readFileSync } from "fs";
@@ -94,11 +94,12 @@ class StreamedBody {
       type: "direct",
       pull: async controller => {
         let sent = 0;
-        for (const piece of this.pieces) {
+        for (const [i, piece] of this.pieces.entries()) {
           controller.write(piece);
           await controller.flush();
           sent += piece.byteLength;
-          await (this.readerPaced ? this.#acknowledged(sent) : Bun.sleep(1));
+          // No wait after the last piece, so it and the terminating chunk go out together.
+          if (i < this.pieces.length - 1) await (this.readerPaced ? this.#acknowledged(sent) : Bun.sleep(1));
         }
         controller.close();
       },
@@ -588,7 +589,7 @@ describe.concurrent("fetch() with streaming", () => {
     });
 
     it(`Content-Length response works (single part) with ${compression} compression`, async () => {
-      const content = "a".repeat(1024);
+      const content = Buffer.alloc(1024, "a").toString();
       const data = compress(compression, Buffer.from(content));
       using server = Bun.serve({
         port: 0,
@@ -718,7 +719,7 @@ describe.concurrent("fetch() with streaming", () => {
       expect(error).toBeInstanceOf(DOMException);
       expect(error.name).toBe("TimeoutError");
       // Whatever was decoded before the timeout is a prefix of the content.
-      expect(content.startsWith(Buffer.concat(received).toString("utf8"))).toBe(true);
+      expect(content).toStartWith(Buffer.concat(received).toString("utf8"));
     });
 
     if (corruptError !== null) {
@@ -772,7 +773,7 @@ describe.concurrent("fetch() with streaming", () => {
       );
       expect(error).toBeInstanceOf(TypeError);
       expect(error.code).toBe("ECONNRESET");
-      expect(content.startsWith(Buffer.concat(received).toString("utf8"))).toBe(true);
+      expect(content).toStartWith(Buffer.concat(received).toString("utf8"));
     });
   }
 

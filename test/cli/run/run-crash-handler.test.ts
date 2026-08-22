@@ -783,7 +783,7 @@ describe("crash inside a native module", () => {
       "--debug-crash-handler-use-trace-string",
     ];
     await using proc = Bun.spawn({
-      cmd: realFault && isPosix ? ["/bin/sh", "-c", `ulimit -c 0 && exec "$@"`, "--", ...bun] : bun,
+      cmd: realFault && isPosix ? noCoreCmd(bun) : bun,
       env: noReportEnv,
       stdio: ["ignore", "pipe", "pipe"],
     });

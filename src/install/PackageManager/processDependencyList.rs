@@ -167,7 +167,7 @@ impl PackageManager {
                                     format_args!("{}", resolution.fmt_url(string_buf)),
                                 );
                             }
-                            Global::crash();
+                            self.crash();
                         }
 
                         let has_scripts = pkg.scripts.has_any() || {
@@ -264,7 +264,7 @@ impl PackageManager {
                             err.name(),
                         );
                     }
-                    Global::crash();
+                    self.crash();
                 }
 
                 let has_scripts = package.scripts.has_any() || {

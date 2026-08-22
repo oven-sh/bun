@@ -84,7 +84,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"one-dep@npm:^1.0.0":
+"one-dep@npm:1.0.0":
   version: 1.0.0
   resolution: "one-dep@npm:1.0.0"
   dependencies:
@@ -137,5 +137,14 @@ __metadata:
       optional: true
     native-libc-musl:
       optional: true
+  languageName: node
+  linkType: hard
+
+"one-dep@patch:one-dep@npm%3A1.0.0#~/.yarn/patches/one-dep-a.patch&~/.yarn/patches/one-dep-b.patch":
+  version: 1.0.0
+  resolution: "one-dep@patch:one-dep@npm%3A1.0.0#~/.yarn/patches/one-dep-a.patch&~/.yarn/patches/one-dep-b.patch::version=1.0.0&hash=7a6b5c"
+  dependencies:
+    no-deps: "npm:1.0.1"
+  checksum: 10c0/0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f9
   languageName: node
   linkType: hard

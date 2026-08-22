@@ -622,7 +622,7 @@ For Yarn Berry lockfiles the migration handles:
 
 - npm packages, including `npm:` aliases, dist-tags, and per-package tarball URLs (`__archiveUrl`); integrity hashes are taken from the registry, because Berry's `checksum` is a hash of Yarn's own cache archive
 - workspaces (from the root `package.json` `workspaces` globs) and `workspace:` ranges
-- `patch:` dependencies: patches in your project (for example `.yarn/patches`) are added to `patchedDependencies` in `package.json`, and `patch:` ranges in `package.json` are rewritten to the plain range they patch; Yarn's builtin compatibility patches are dropped
+- `patch:` dependencies: patches in your project (for example `.yarn/patches`) are added to `patchedDependencies` in `package.json` (for npm, git, tarball and folder packages alike), and `patch:` ranges in `package.json` are rewritten to the plain range they patch; Yarn's builtin compatibility patches are dropped, and a package with several `&`-joined patch files is left unpatched with a warning, since `patchedDependencies` takes one patch per package
 - `file:` folders and tarballs, tarball URLs, and git / `github:` dependencies (pinned to the locked commit)
 - `portal:` and `link:` dependencies, which are installed like `file:` dependencies; Bun does not support these protocols in `package.json`, so the ranges are rewritten to `file:` and a warning reports that the folder is now copied instead of linked
 - optional dependencies and peer dependencies (`dependenciesMeta` / `peerDependenciesMeta`), and `conditions` (`os` / `cpu`)

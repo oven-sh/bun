@@ -219,14 +219,19 @@ fn parse_conditions(cond: &[u8]) -> (npm::OperatingSystem, npm::Architecture) {
     )
 }
 
-/// `name@version` key used by `patchedDependencies`.
-fn name_at_version(
+/// The `patchedDependencies` key bun looks a package's patch up by:
+/// `name@<resolution>` (`no-deps@1.0.0`, `x@github:o/r#sha`, `y@file:dir`).
+/// `None` for the root and workspaces, which bun does not patch.
+fn patched_dependency_key(
     lockfile: &Lockfile,
     name: &[u8],
     package_id: PackageID,
 ) -> Result<Option<Vec<u8>>, AllocError> {
     let res = lockfile.packages.items_resolution()[package_id as usize];
-    if res.tag != crate::resolution::Tag::Npm {
+    if matches!(
+        res.tag,
+        crate::resolution::Tag::Root | crate::resolution::Tag::Workspace
+    ) {
         return Ok(None);
     }
     let mut out = Vec::new();
@@ -234,7 +239,7 @@ fn name_at_version(
         &mut out,
         "{}@{}",
         bstr::BStr::new(name),
-        res.npm().version.fmt(string_bytes!(lockfile))
+        res.fmt(string_bytes!(lockfile), bun_core::fmt::PathSep::Posix)
     )
     .map_err(|_| AllocError)?;
     Ok(Some(out))
@@ -309,38 +314,35 @@ fn read_yarnrc(log: &mut bun_ast::Log, dir: Fd) -> Result<YarnRc, AllocError> {
     Ok(out)
 }
 
-/// Where the `.patch` file of a `patch:` locator lives, relative to the
-/// project root, or `None` for yarn's builtin compat patches.
+/// Where the project's `.patch` files of a `patch:` locator live, relative to
+/// the project root; yarn's builtin compat patches are left out.
 ///
-/// `source` is the decoded text after `#`: `~/.yarn/patches/x.patch` (project
-/// root), `./patches/x.patch` (relative to the `locator` param's workspace),
-/// or `optional!builtin<compat/fsevents>`.
-fn project_patch_path(
+/// `source` is the decoded text after `#`, one or more `&`-separated patches:
+/// `~/.yarn/patches/x.patch` (project root), `./patches/x.patch` (relative to
+/// the `locator` param's package), or `optional!builtin<compat/fsevents>`.
+fn project_patch_paths(
     source: &[u8],
     params: &[(&[u8], Vec<u8>)],
     workspace_path_of_locator: &dyn Fn(&[u8]) -> Option<Vec<u8>>,
-) -> Option<Vec<u8>> {
-    let source = source.strip_prefix(b"optional!").unwrap_or(source);
-    if source.is_empty() || strings::contains(source, b"builtin<") {
-        return None;
+) -> Vec<Vec<u8>> {
+    let mut paths = Vec::new();
+    for one in strings::split(source, b"&") {
+        let one = one.strip_prefix(b"optional!").unwrap_or(one);
+        if one.is_empty() || strings::contains(one, b"builtin<") {
+            continue;
+        }
+        if let Some(rest) = one.strip_prefix(b"~/") {
+            paths.push(rest.to_vec());
+        } else if bun_paths::is_absolute(one) {
+            paths.push(one.to_vec());
+        } else {
+            let base = param(params, b"locator")
+                .and_then(workspace_path_of_locator)
+                .unwrap_or_default();
+            paths.push(join_folder(&base, one));
+        }
     }
-    if let Some(rest) = source.strip_prefix(b"~/") {
-        return Some(rest.to_vec());
-    }
-    if bun_paths::is_absolute(source) {
-        return Some(source.to_vec());
-    }
-    let rel = source.strip_prefix(b"./").unwrap_or(source);
-    let base = param(params, b"locator")
-        .and_then(workspace_path_of_locator)
-        .unwrap_or_default();
-    if base.is_empty() || base == b"." {
-        return Some(rel.to_vec());
-    }
-    let mut joined = base;
-    joined.push(b'/');
-    joined.extend_from_slice(rel);
-    Some(joined)
+    paths
 }
 
 /// `patch:<percent-encoded locator>#<source>::params`
@@ -991,15 +993,34 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
                 continue;
             }
             entries[i].package_id = pid;
-            if let Some(path) =
-                project_patch_path(&spec.source, &params, &workspace_path_of_locator)
-            {
-                if let Some(key) = name_at_version(this, entries[inner_idx].name, pid)? {
-                    // several descriptors / `resolutions` selectors can point at one patch
-                    if !patched.iter().any(|(k, _)| *k == key) {
-                        patched.push((key, path));
-                    }
+            let mut paths = project_patch_paths(&spec.source, &params, &workspace_path_of_locator);
+            if paths.is_empty() {
+                continue;
+            }
+            let Some(key) = patched_dependency_key(this, entries[inner_idx].name, pid)? else {
+                if !silent {
+                    bun_core::warn!(
+                        "skipped patch \"{}\" from yarn.lock: bun does not patch workspace packages",
+                        bstr::BStr::new(&paths[0]),
+                    );
                 }
+                continue;
+            };
+            if paths.len() > 1 {
+                // bun applies one patch file per package
+                if !silent {
+                    bun_core::warn!(
+                        "\"{}\" has {} patch files in yarn.lock (\"{}\", ...); bun applies one patch per package, so it is left unpatched — merge them into one file and add it to \"patchedDependencies\"",
+                        bstr::BStr::new(&key),
+                        paths.len(),
+                        bstr::BStr::new(&paths[0]),
+                    );
+                }
+                continue;
+            }
+            // several descriptors / `resolutions` selectors can point at one patch
+            if !patched.iter().any(|(k, _)| *k == key) {
+                patched.push((key, paths.swap_remove(0)));
             }
         }
         if still_pending.is_empty() || still_pending.len() == before {

@@ -194,8 +194,13 @@ describe("yarn berry migration", () => {
 
     const { stderr, exitCode } = await run(dir, "install");
     expect(stderr).toContain("migrated lockfile from yarn.lock");
+    expect(stderr).not.toContain("bun will resolve");
     // the builtin compat patch that wraps the user patch (listed first in the fixture) folds too
     expect(stderr).not.toContain("skipped patch");
+    // two `&`-joined patch files for one package cannot become one patchedDependencies entry
+    expect(stderr).toContain(
+      `warn: "one-dep@1.0.0" has 2 patch files in yarn.lock (".yarn/patches/one-dep-a.patch", ...); bun applies one patch per package, so it is left unpatched`,
+    );
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
@@ -209,6 +214,7 @@ describe("yarn berry migration", () => {
       },
       resolutions: {
         "one-dep/no-deps": "1.0.1",
+        "one-dep@npm:^1.0.0": "1.0.0",
       },
       // the fixture already lists the first patch for bun; the second is merged in
       patchedDependencies: {
@@ -242,6 +248,7 @@ describe("yarn berry migration", () => {
     expect(
       await Bun.file(join(dir, "node_modules", "one-dep", "node_modules", "no-deps", "patched-too.txt")).text(),
     ).toBe("hello world\n");
+    expect(existsSync(join(dir, "node_modules", "one-dep", "one-dep-a.patch.txt"))).toBeFalse();
     expect((await readdir(join(dir, "node_modules"))).filter(e => e.startsWith("native-")).sort()).toEqual([
       "native-libc-glibc",
       "native-libc-musl",
@@ -486,13 +493,15 @@ describe("yarn berry migration", () => {
         "package.json": JSON.stringify({
           name: "berry-urls",
           dependencies: {
-            "no-deps": `${registry}no-deps/-/no-deps-2.0.0.tgz`,
+            // a patch on a non-npm package is keyed by its resolution
+            "no-deps": `patch:no-deps@${encodeURIComponent(`${registry}no-deps/-/no-deps-2.0.0.tgz`)}#./patches/no-deps.patch`,
             "pkg-a": "git+ssh://git@example.com/org/pkg-a.git#v1",
             hue: "github:org/hue#main",
           },
           // pkg-a asks for pkg-b@^2.0.0; the resolution redirects it to a git commit
           resolutions: { "pkg-b": "git+ssh://git@example.com/org/pkg-b.git#v2" },
         }),
+        "patches/no-deps.patch": "",
         "yarn.lock": `__metadata:
   version: 8
   cacheKey: 10c0
@@ -502,10 +511,16 @@ describe("yarn berry migration", () => {
   resolution: "berry-urls@workspace:."
   dependencies:
     hue: "github:org/hue#main"
-    no-deps: "${registry}no-deps/-/no-deps-2.0.0.tgz"
+    no-deps: "patch:no-deps@${encodeURIComponent(`${registry}no-deps/-/no-deps-2.0.0.tgz`)}#./patches/no-deps.patch::locator=berry-urls%40workspace%3A."
     pkg-a: "git+ssh://git@example.com/org/pkg-a.git#v1"
   languageName: unknown
   linkType: soft
+
+"no-deps@patch:no-deps@${encodeURIComponent(`${registry}no-deps/-/no-deps-2.0.0.tgz`)}#./patches/no-deps.patch::locator=berry-urls%40workspace%3A.":
+  version: 2.0.0
+  resolution: "no-deps@patch:no-deps@${encodeURIComponent(`${registry}no-deps/-/no-deps-2.0.0.tgz`)}#./patches/no-deps.patch::version=2.0.0&hash=5e4d3c&locator=berry-urls%40workspace%3A."
+  languageName: node
+  linkType: hard
 
 "hue@github:org/hue#main":
   version: 0.2.3
@@ -544,8 +559,14 @@ describe("yarn berry migration", () => {
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
+    const manifest = await Bun.file(join(dir, "package.json")).json();
+    expect(manifest.dependencies["no-deps"]).toBe(`${registry}no-deps/-/no-deps-2.0.0.tgz`);
+    expect(manifest.patchedDependencies).toEqual({
+      [`no-deps@${registry}no-deps/-/no-deps-2.0.0.tgz`]: "patches/no-deps.patch",
+    });
     const bunLock = await bunLockOf(dir);
     expect(bunLock).toContain(`"no-deps": ["no-deps@http://localhost:1234/no-deps/-/no-deps-2.0.0.tgz", {}]`);
+    expect(bunLock).toContain(`"no-deps@http://localhost:1234/no-deps/-/no-deps-2.0.0.tgz": "patches/no-deps.patch",`);
     expect(bunLock).toContain(
       `"pkg-a": ["pkg-a@git+ssh://git@example.com/org/pkg-a.git#0123456789abcdef0123456789abcdef01234567", { "dependencies": { "no-deps": "http://localhost:1234/no-deps/-/no-deps-2.0.0.tgz", "pkg-b": "^2.0.0" } }, "0123456789abcdef0123456789abcdef01234567"]`,
     );

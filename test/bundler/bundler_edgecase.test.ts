@@ -1397,6 +1397,128 @@ describe("bundler", () => {
       stdout: "false",
     },
   });
+  // `{ __proto__: v }` sets the prototype; the shorthand `{ __proto__ }` and the
+  // computed `{ ["__proto__"]: v }` forms define an own property instead. The
+  // printer must never convert between the shorthand and colon forms for this key.
+  for (const [label, opts] of [
+    ["", {}],
+    ["MinifySyntax", { minifySyntax: true }],
+    ["MinifyAll", { minifySyntax: true, minifyWhitespace: true, minifyIdentifiers: true }],
+  ] as const) {
+    itBundled(`edgecase/ProtoKeyFormIsNotShorthand${label}`, {
+      files: {
+        "/entry.ts": /* js */ `
+          const __proto__ = { marker: "P" };
+          const viaKey = { __proto__: __proto__ };
+          const viaStringKey = { "__proto__": __proto__ };
+          console.log(JSON.stringify([
+            Object.hasOwn(viaKey, "__proto__"),
+            Object.getPrototypeOf(viaKey).marker,
+            Object.hasOwn(viaStringKey, "__proto__"),
+            Object.getPrototypeOf(viaStringKey).marker,
+          ]));
+        `,
+      },
+      ...opts,
+      run: { stdout: '[false,"P",false,"P"]' },
+    });
+    itBundled(`edgecase/ProtoShorthandIsOwnProperty${label}`, {
+      files: {
+        "/entry.ts": /* js */ `
+          const __proto__ = { marker: "P" };
+          const viaShort = { __proto__ };
+          const viaComputed = { ["__proto__"]: __proto__ };
+          console.log(JSON.stringify([
+            Object.hasOwn(viaShort, "__proto__"),
+            Object.getPrototypeOf(viaShort) === Object.prototype,
+            Object.hasOwn(viaComputed, "__proto__"),
+            Object.getPrototypeOf(viaComputed) === Object.prototype,
+          ]));
+        `,
+      },
+      ...opts,
+      run: { stdout: "[true,true,true,true]" },
+    });
+  }
+  itBundled(`edgecase/ProtoShorthandRenamedEmitsComputedKey`, {
+    files: {
+      "/entry.ts": /* js */ `
+        const __proto__ = { marker: "P" };
+        console.log(JSON.stringify({ __proto__ }));
+      `,
+    },
+    minifyIdentifiers: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toMatch(/\[['"]__proto__['"]\]\s*:/);
+    },
+    run: { stdout: '{"__proto__":{"marker":"P"}}' },
+  });
+  itBundled(`edgecase/ProtoShorthandAcrossModulesMinified`, {
+    files: {
+      "/entry.ts": /* js */ `
+        import { __proto__ } from "./other.ts";
+        const viaShort = { __proto__ };
+        console.log(JSON.stringify([
+          Object.hasOwn(viaShort, "__proto__"),
+          Object.getPrototypeOf(viaShort) === Object.prototype,
+          viaShort.__proto__.marker,
+        ]));
+      `,
+      "/other.ts": /* js */ `
+        export const __proto__ = { marker: "P" };
+      `,
+    },
+    minifyIdentifiers: true,
+    run: { stdout: '[true,true,"P"]' },
+  });
+  // In a destructuring target both `{ __proto__ }` and `{ __proto__: __proto__ }`
+  // just read the property; the shorthand gate must not apply there and must not
+  // double-print the default-value initializer.
+  for (const [label, opts] of [
+    ["", {}],
+    ["Minify", { minifySyntax: true, minifyWhitespace: true, minifyIdentifiers: true }],
+  ] as const) {
+    itBundled(`edgecase/ProtoLonghandDestructuringWithDefault${label}`, {
+      files: {
+        "/entry.ts": /* js */ `
+          let __proto__;
+          ({ __proto__: __proto__ = { m: 1 } } = Object.create(null));
+          console.log(JSON.stringify(__proto__));
+          ({ __proto__: __proto__ = { m: 2 } } = {});
+          console.log(__proto__ === Object.prototype);
+          ({ __proto__: __proto__ } = { a: 1 });
+          console.log(__proto__ === Object.prototype);
+        `,
+      },
+      ...opts,
+      run: { stdout: '{"m":1}\ntrue\ntrue' },
+    });
+  }
+  test.concurrent("edgecase/ProtoKeyVsShorthandAtRuntime", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const __proto__ = { marker: "P" };
+         const viaKey = { __proto__: __proto__ };
+         const viaShort = { __proto__ };
+         console.log(JSON.stringify([
+           Object.hasOwn(viaKey, "__proto__"),
+           Object.getPrototypeOf(viaKey).marker,
+           Object.hasOwn(viaShort, "__proto__"),
+           Object.getPrototypeOf(viaShort) === Object.prototype,
+         ]));`,
+      ],
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: '[false,"P",true,true]',
+      stderr: "",
+      exitCode: 0,
+    });
+  });
   itBundled("edgecase/ImportOptionsArgument", {
     files: {
       "/entry.js": `

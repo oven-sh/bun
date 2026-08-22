@@ -78,6 +78,68 @@ describe.concurrent("node-module-module", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("Module._initPaths() reads the environment and assigns globalPaths the way Node does", async () => {
+    const home = isWindows ? "C:\\Users\\someone" : "/home/someone";
+    const replacedHome = isWindows ? "C:\\Users\\replaced" : "/home/replaced";
+    const fakePrefix = isWindows ? "C:\\fake-prefix" : "/fake-prefix";
+    const fakeExecPath = isWindows ? path.join(fakePrefix, "node.exe") : path.join(fakePrefix, "bin", "node");
+    const lib = path.join(fakePrefix, "lib", "node");
+    const homePaths = h => [path.join(h, ".node_modules"), path.join(h, ".node_libraries"), lib];
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const M = require("module");
+         process.execPath = ${JSON.stringify(fakeExecPath)};
+         const out = {};
+
+         // Node assigns Module.globalPaths with a plain strict mode assignment.
+         let received;
+         Object.defineProperty(M, "globalPaths", { configurable: true, get: () => "getter", set: v => { received = v; } });
+         M._initPaths();
+         out.setter = { received, visible: M.globalPaths };
+         delete M.globalPaths;
+
+         Object.defineProperty(M, "globalPaths", { configurable: true, writable: false, value: "frozen" });
+         try {
+           M._initPaths();
+           out.readOnly = "no throw";
+         } catch (e) {
+           out.readOnly = { name: e.constructor.name, value: M.globalPaths };
+         }
+         delete M.globalPaths;
+
+         Object.defineProperty(M, "globalPaths", { configurable: true, writable: true, enumerable: false, value: [] });
+         M._initPaths();
+         const { enumerable, value } = Object.getOwnPropertyDescriptor(M, "globalPaths");
+         out.keepsAttributes = { enumerable, value };
+         delete M.globalPaths;
+
+         // Node reads process.env.USERPROFILE on Windows and safeGetenv("HOME") elsewhere, so a
+         // replaced process.env object only counts on Windows.
+         const realEnv = process.env;
+         process.env = { HOME: ${JSON.stringify(replacedHome)}, USERPROFILE: ${JSON.stringify(replacedHome)}, NODE_PATH: "/from-replaced" };
+         M._initPaths();
+         out.replacedEnv = M.globalPaths;
+         process.env = realEnv;
+
+         console.log(JSON.stringify(out));`,
+      ],
+      env: { ...bunEnv, HOME: home, USERPROFILE: home, NODE_PATH: "" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      setter: { received: homePaths(home), visible: "getter" },
+      readOnly: { name: "TypeError", value: "frozen" },
+      keepsAttributes: { enumerable: false, value: homePaths(home) },
+      replacedEnv: isWindows ? ["/from-replaced", ...homePaths(replacedHome)] : homePaths(home),
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test("Module._findPath propagates an error thrown by an onResolve plugin", async () => {
     // Plugins are process-global; run in a child so the throwing resolver can't affect other tests.
     await using proc = Bun.spawn({

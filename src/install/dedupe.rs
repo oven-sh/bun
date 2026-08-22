@@ -332,6 +332,8 @@ struct Row {
     version: Box<[u8]>,
     /// The surviving version(s) its dependents now resolve to, lowest first; empty when no live edge pointed at it.
     resolved_to: Vec<Box<[u8]>>,
+    /// Every survivor is a lower major than `version`.
+    downgrade: bool,
 }
 
 struct Kept {
@@ -569,6 +571,7 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
         .iter()
         .zip(&targets)
         .map(|(&id, moved_to)| {
+            let from_version = pkg_res[id as usize].npm().version;
             let mut survivors: Vec<PackageID> = moved_to.clone();
             index_sort::sort_vec_by(&mut survivors, |&a, &b| {
                 pkg_res[a as usize]
@@ -576,6 +579,9 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
                     .version
                     .order(pkg_res[b as usize].npm().version, buf, buf)
             });
+            let downgrade = survivors
+                .last()
+                .is_some_and(|&c| pkg_res[c as usize].npm().version.major < from_version.major);
             Row {
                 name: Box::from(names[id as usize].slice(buf)),
                 version: version_text(lockfile, id),
@@ -583,6 +589,7 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
                     .iter()
                     .map(|&c| version_text(lockfile, c))
                     .collect(),
+                downgrade,
             }
         })
         .collect();
@@ -756,7 +763,7 @@ fn report_already_deduplicated(manager: &PackageManager, report: &Report) -> ! {
                 bun_core::pretty!("\n");
             }
             bun_core::pretty!(
-                "🎉 <green>No duplicates<r> <d>— checked {} package{}, every one already resolves to a single version<r> ",
+                "🎉 <green>No duplicates<r> <d>— checked {} package{} in bun.lock, every one already resolves to a single version<r> ",
                 report.checked,
                 plural(report.checked)
             );
@@ -806,7 +813,7 @@ fn print_json(report: &Report, install: Option<&PackageInstallSummary>) {
             }
             let _ = write!(out, "{}", json_str(version));
         }
-        out.extend_from_slice(b"]\n    }");
+        let _ = write!(out, "],\n      \"downgrade\": {}\n    }}", row.downgrade);
     }
     if !report.rows.is_empty() {
         out.extend_from_slice(b"\n  ");
@@ -858,7 +865,7 @@ fn print_would_remove(manager: &PackageManager, report: &Report) {
     }
     let n = report.rows.len();
     bun_core::pretty!(
-        "\n<b>{}<r> duplicate version{} can be removed <d>(checked {} package{})<r> ",
+        "\n<b>{}<r> duplicate version{} can be removed <d>(checked {} package{} in bun.lock)<r> ",
         n,
         plural(n),
         report.checked,
@@ -877,10 +884,20 @@ fn print_rows(report: &Report) {
     for row in &report.rows {
         if row.resolved_to.is_empty() {
             bun_core::prettyln!(
-                "<cyan>{}<r> <b>{}<r> <d>{}<r>",
+                "<cyan>{}<r> <b>{}<r> <d>{} {} (removed)<r>",
                 glyph,
                 BStr::new(&row.name),
-                BStr::new(&row.version)
+                BStr::new(&row.version),
+                arrow
+            );
+        } else if row.downgrade {
+            bun_core::prettyln!(
+                "<cyan>{}<r> <b>{}<r> <d>{} {}<r> <b>{}<r> <yellow>(downgrade)<r>",
+                glyph,
+                BStr::new(&row.name),
+                BStr::new(&row.version),
+                arrow,
+                BStr::new(&bstr::join(", ", &row.resolved_to))
             );
         } else {
             bun_core::prettyln!(
@@ -927,7 +944,7 @@ pub(crate) fn print_dedupe_summary(
         );
     }
     bun_core::pretty!(
-        " <d>(checked {} package{})<r> ",
+        " <d>(checked {} package{} in bun.lock)<r> ",
         report.checked,
         plural(report.checked)
     );

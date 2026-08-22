@@ -667,7 +667,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 let string_bytes = lockfile.buffers.string_bytes.as_slice();
 
                 Output::println(format_args!(
-                    "{} node_modules ({})",
+                    "{} node_modules ({} installed)",
                     bstr::BStr::new(path),
                     lockfile.buffers.hoisted_dependencies.len(),
                 ));

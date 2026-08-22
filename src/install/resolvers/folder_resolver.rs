@@ -265,7 +265,6 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
     resolver: &mut R,
 ) -> crate::Result<LockfilePackage> {
     let mut body = npm::Registry::BodyPool::get();
-    // defer Npm.Registry.BodyPool.release(body) — handled by PoolGuard Drop
 
     let mut package: LockfilePackage = Default::default();
 
@@ -321,7 +320,6 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
 
         let source = {
             let file = File::openat(Fd::cwd(), abs.as_bytes(), O::RDONLY, 0)?;
-            // defer file.close()
             body.reset();
             let read_result = file
                 .read_to_end_with_array_list(&mut body.list, bun_sys::SizeHint::ProbablySmall)

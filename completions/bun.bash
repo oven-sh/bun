@@ -104,7 +104,7 @@ _bun_completions() {
     PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]="--config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --global --cwd --backend --link-native-bins --help";
     PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]="-c -y -p -f -g";
 
-    PACKAGE_OPTIONS[DEDUPE_OPTIONS_LONG]="--check";
+    PACKAGE_OPTIONS[DEDUPE_OPTIONS_LONG]="--check --why";
     PACKAGE_OPTIONS[PRUNE_OPTIONS_LONG]="--production --prod --omit --filter --dry-run --os --cpu --linker --silent --cwd --help";
     PACKAGE_OPTIONS[PRUNE_OPTIONS_SHORT]="-p -P -F -h";
     PACKAGE_OPTIONS[AUDIT_OPTIONS_LONG]="--json --audit-level --ignore --prod --production --omit --dry-run --latest --cwd --help";

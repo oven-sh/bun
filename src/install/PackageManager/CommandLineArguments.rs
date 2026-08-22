@@ -427,6 +427,9 @@ static DEDUPE_PARAMS: &[ParamType] = concat_params![
         clap::param!(
             "--check                                Exit with code 1 if the lockfile has duplicate versions that can be removed, without changing anything"
         ),
+        clap::param!(
+            "--why                                  Also list each version's dependents and the ranges they asked for"
+        ),
         clap::param!("<POS> ...                              "),
     ]
 ];
@@ -437,6 +440,9 @@ const DEDUPE_HELP_PARAMS: &[ParamType] = &[
     ),
     clap::param!(
         "--dry-run                              Print the duplicate versions that would be removed without changing anything"
+    ),
+    clap::param!(
+        "--why                                  Also list each version's dependents and the ranges they asked for"
     ),
     clap::param!("--lockfile-only                        Rewrite bun.lock without installing"),
     clap::param!(
@@ -515,6 +521,7 @@ pub struct CommandLineArguments {
     pub(crate) no_save: bool,
     pub(crate) dry_run: bool,
     pub(crate) check: bool,
+    pub(crate) why: bool,
     pub(crate) force: bool,
     pub(crate) no_cache: bool,
     pub log_level: Options::LogLevel,
@@ -617,6 +624,7 @@ impl Default for CommandLineArguments {
             no_save: false,
             dry_run: false,
             check: false,
+            why: false,
             force: false,
             no_cache: false,
             log_level: Options::LogLevel::default(),
@@ -1173,6 +1181,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>.
   <d>Show what would be removed without changing anything<r>
   <b><green>bun dedupe<r> <cyan>--dry-run<r>
 
+  <d>Show which dependents wanted each version<r>
+  <b><green>bun dedupe<r> <cyan>--dry-run<r> <cyan>--why<r>
+
   <d>Rewrite bun.lock without installing<r>
   <b><green>bun dedupe<r> <cyan>--lockfile-only<r>
 
@@ -1405,9 +1416,12 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             // cli.json_output = args.flag(b"--json");
         }
 
-        if subcommand == Subcommand::Dedupe && args.flag(b"--check") {
-            cli.check = true;
-            cli.dry_run = true;
+        if subcommand == Subcommand::Dedupe {
+            if args.flag(b"--check") {
+                cli.check = true;
+                cli.dry_run = true;
+            }
+            cli.why = args.flag(b"--why");
         }
 
         if matches!(

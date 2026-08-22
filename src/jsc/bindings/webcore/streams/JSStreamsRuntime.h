@@ -385,9 +385,8 @@ public:
     static constexpr JSC::PropertyOffset readManyResultSizeOffset = 1;
     static constexpr JSC::PropertyOffset readManyResultDoneOffset = 2;
 
-    // `{ done, value }` of a readMany() result. While `result` still has readManyResultStructure
-    // (three plain data properties) both slots are read directly; a mutated result or a foreign
-    // object takes `get(done)` then `get(value)`, and both are empty if either throws.
+    // `{ done, value }` of a readMany() result: the slots while `result` still has
+    // readManyResultStructure, else `get(done)` then `get(value)` (both empty if either throws).
     std::pair<JSC::JSValue, JSC::JSValue> readManyResult(JSC::JSGlobalObject*, JSC::JSObject* result) const;
 
 private:

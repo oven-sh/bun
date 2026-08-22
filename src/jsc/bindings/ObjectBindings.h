@@ -33,19 +33,9 @@ ALWAYS_INLINE JSC::JSValue getIfPropertyExistsPrototypePollutionMitigation(JSC::
  */
 JSC::JSValue getOwnPropertyIfExists(JSC::JSGlobalObject* globalObject, JSC::JSObject* object, const JSC::PropertyName& name);
 
-/**
- * `{ done, value }` of an iterator result object.
- *
- * When `result` has the realm's iteratorResultObjectStructure, both are plain data properties
- * at iteratorResultObjectDonePropertyOffset / iteratorResultObjectValuePropertyOffset and the
- * two slots are read directly. createIteratorResultObject, the `{ value, done }` literals of the
- * generator and Array/Map/Set/String iterator builtins, and the DFG-inlined next() all produce
- * that structure. Any mutation (a getter, a delete, a prototype change, a freeze) transitions the
- * object to another structure, so on a match no user code can observe the read.
- *
- * Otherwise this is `get(done)` then `get(value)`. If either throws, both values are empty and
- * the exception is pending on the VM.
- */
+// `{ done, value }` of an iterator result. An object with the realm's iteratorResultObjectStructure
+// holds both as data properties at fixed inline offsets (any mutation transitions it away), so the
+// slots are read directly. Otherwise `get(done)` then `get(value)`; both empty if either throws.
 ALWAYS_INLINE std::pair<JSC::JSValue, JSC::JSValue> getIteratorResult(JSC::JSGlobalObject* globalObject, JSC::JSObject* result)
 {
     if (result->structureID() == globalObject->iteratorResultObjectStructure()->id()) [[likely]]

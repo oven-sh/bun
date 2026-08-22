@@ -970,10 +970,12 @@ impl Linux {
 
                 // Kernel retired this wd: `remove_watch` issued an explicit
                 // `inotify_rm_watch` (it deletes the `wd_map` entry first, so no
-                // owners remain to notify) or the watched inode is gone. libuv
-                // turns the latter into one more "rename" after IN_DELETE_SELF,
-                // so a deleted watch root reports two. Recursive sub-wds stay
-                // silent; their parent directory's IN_DELETE already reported it.
+                // owners remain to notify) or the watched inode is gone. A dead
+                // root also leaves the dedup map: a watch() of the path must start
+                // a new watch. libuv turns the retirement into one more "rename"
+                // after IN_DELETE_SELF, so a deleted watch root reports two.
+                // Recursive sub-wds stay silent; their parent directory's
+                // IN_DELETE already reported it.
                 if ev.mask & IN::IGNORED != 0 {
                     // SAFETY: holding manager.mutex; exclusive access to `wd_map`.
                     let wd_map = unsafe { &mut (*plat).wd_map };
@@ -982,13 +984,16 @@ impl Linux {
                             // SAFETY: o.watcher live under manager.mutex; shared
                             // access only — `emit_unsuppressed` takes `&self`.
                             let w = unsafe { &*o.watcher };
-                            if o.subpath.as_bytes().is_empty() && (w.is_file || !w.recursive) {
-                                w.emit_unsuppressed(
-                                    WatchEventKind::Rename,
-                                    path::basename(w.path.as_bytes()),
-                                    w.is_file,
-                                );
-                                let _ = handle_oom(touched.get_or_put(o.watcher));
+                            if o.subpath.as_bytes().is_empty() {
+                                manager.unlink_watcher_locked(o.watcher);
+                                if w.is_file || !w.recursive {
+                                    w.emit_unsuppressed(
+                                        WatchEventKind::Rename,
+                                        path::basename(w.path.as_bytes()),
+                                        w.is_file,
+                                    );
+                                    let _ = handle_oom(touched.get_or_put(o.watcher));
+                                }
                             }
                             // SAFETY: exclusive scoped access to this watcher's wd
                             // list under manager.mutex; the shared borrow above is
@@ -1101,6 +1106,14 @@ impl Linux {
                         )
                         .as_bytes()
                     };
+
+                    // The path no longer leads to this watch: leave the dedup map before
+                    // the listener can re-watch the path (a removal's IN_IGNORED, above,
+                    // may land a read() later, and a move has none).
+                    if owner_subpath.is_empty() && ev.mask & (IN::DELETE_SELF | IN::MOVE_SELF) != 0
+                    {
+                        manager.unlink_watcher_locked(owner_watcher);
+                    }
 
                     // SAFETY: owner_watcher live under manager.mutex; `emit` takes `&self`.
                     unsafe {
@@ -1617,6 +1630,13 @@ impl Kqueue {
                 } else {
                     entry.subpath.as_bytes()
                 };
+
+                // A removed or moved root leaves the dedup map, as in the inotify backend.
+                if entry.subpath.is_empty()
+                    && kev.fflags & (NOTE::DELETE | NOTE::RENAME | NOTE::REVOKE) != 0
+                {
+                    manager.unlink_watcher_locked(entry.watcher);
+                }
 
                 watcher.emit(event_type, rel, entry.is_file);
                 let _ = handle_oom(touched.get_or_put(entry.watcher));

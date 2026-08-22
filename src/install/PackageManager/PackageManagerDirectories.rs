@@ -1023,6 +1023,12 @@ pub fn compute_cache_dir_and_subpath<'a>(
             if folder.is_empty() || (folder.len() == 1 && folder[0] == b'.') {
                 cache_dir_subpath = z_static(b".\0");
                 cache_dir = Fd::cwd();
+            } else if crate::resolution::is_path_link(&folder) {
+                // `link:./dir`: the value is project-relative (see `is_path_link`)
+                folder_path_buf.0[..folder.len()].copy_from_slice(&folder);
+                folder_path_buf.0[folder.len()] = 0;
+                cache_dir_subpath = ZStr::from_buf(folder_path_buf, folder.len());
+                cache_dir = Fd::cwd();
             } else {
                 let global_link_dir = global_link_dir_path(manager);
                 let ptr = &mut folder_path_buf.0[..];

@@ -1,5 +1,6 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { realpathSync } from "fs";
 import { chmod, exists, mkdir, rm } from "fs/promises";
 import { VerdaccioRegistry, bunEnv, bunExe, isWindows, normalizeBunSnapshot } from "harness";
 import { join } from "path";
@@ -1978,18 +1979,23 @@ test.concurrent.each([
   expect(reinstall.exitCode).toBe(0);
 });
 
-// `link:` resolves against the global link dir (same failure without --filter); the error shows the per-target spelling.
-test.concurrent("a link: path is re-spelled relative to the target before it is resolved", async () => {
+// A `link:` *path* is re-spelled relative to the target workspace and installed as a
+// symlink to the directory (yarn/pnpm semantics), like the file: cases below.
+test.concurrent("a link: path is re-spelled relative to the target and linked", async () => {
   const dir = await makeMonorepo();
   await addVendorFoo(dir);
   const before = await allPackageJsonTexts(dir);
 
-  const { stderr, exitCode } = await run(["add", "link:./vendor/foo", "--filter", "api"], dir);
-  expect(stderr).toContain('error: Package "link:../../vendor/foo" is not linked');
+  const { stderr, exitCode } = await run(["add", "link:./vendor/foo", "--filter", "api"], dir, { linker: "hoisted" });
+  expect(stderr).not.toContain("error:");
   expect(stderr).not.toContain('"link:./vendor/foo"');
-  expect(exitCode).toBe(1);
+  expect(exitCode).toBe(0);
 
-  expect(await allPackageJsonTexts(dir)).toStrictEqual(before);
+  await expectAddedOnlyTo(dir, before, ["api"], "foo", "link:../../vendor/foo");
+  expect((await lockfileJson(dir)).workspaces["packages/api"].dependencies).toStrictEqual({
+    foo: "link:../../vendor/foo",
+  });
+  expect(realpathSync(join(dir, "node_modules", "foo"))).toBe(realpathSync(join(dir, "vendor", "foo")));
 });
 
 test.concurrent.each([

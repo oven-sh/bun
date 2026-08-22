@@ -344,15 +344,21 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
                         bun_sys::stat(&bun_core::ZBox::from_bytes(dir)),
                         Ok(st) if bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode) == bun_sys::FileKind::Directory
                     );
-                    if err.get_errno() == bun_sys::E::ENOENT
-                        && literal.starts_with(b"link:")
-                        && is_dir
-                    {
+                    let is_path_link = literal
+                        .strip_prefix(b"link:")
+                        .is_some_and(crate::resolution::is_path_link);
+                    if err.get_errno() == bun_sys::E::ENOENT && is_path_link && is_dir {
                         body.list.extend_from_slice(b"{\"name\":\"");
+                        let start = body.list.len();
                         for &c in bun_paths::basename(dir) {
                             if c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_' | b'.') {
                                 body.list.push(c);
                             }
+                        }
+                        if body.list.len() == start {
+                            // nothing usable in the directory name: a stable synthetic one
+                            use std::io::Write as _;
+                            let _ = write!(&mut body.list, "link-{:016x}", bun_wyhash::hash(dir));
                         }
                         body.list.extend_from_slice(b"\",\"version\":\"0.0.0\"}");
                     } else {
@@ -506,7 +512,7 @@ pub(crate) fn get_or_put(
             // `resolution::is_path_link`), installed as a symlink to it.
             dependency::version::Tag::Symlink => 'link: {
                 let mut dotted = Vec::with_capacity(rel.len() + 2);
-                if !(rel.starts_with(b".") || rel.starts_with(b"/")) {
+                if !crate::resolution::is_path_link(rel) {
                     dotted.extend_from_slice(b"./");
                 }
                 dotted.extend_from_slice(rel);

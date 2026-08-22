@@ -23,13 +23,19 @@ describe.each(["hoisted", "isolated"])("link:./path dependencies (%s linker)", l
         name: "root",
         private: true,
         workspaces: ["packages/*"],
-        dependencies: { "with-manifest": "link:./vendor/with-manifest", "no-manifest": "link:./vendor/no-manifest" },
+        dependencies: {
+          "with-manifest": "link:./vendor/with-manifest",
+          "no-manifest": "link:./vendor/no-manifest",
+          odd: "link:./vendor/~",
+        },
       }),
       // a target with its own package.json (name comes from there)
       "vendor/with-manifest/package.json": JSON.stringify({ name: "with-manifest", version: "1.2.3" }),
       "vendor/with-manifest/index.js": "module.exports = 'with';",
       // a plain directory without a package.json (yarn's link: allows this)
       "vendor/no-manifest/index.js": "module.exports = 'without';",
+      // …whose directory name has nothing usable for a package name
+      "vendor/~/index.js": "module.exports = 'tilde';",
       // a workspace declaring a link: relative to *its* directory
       "packages/app/package.json": JSON.stringify({
         name: "app",
@@ -48,6 +54,7 @@ describe.each(["hoisted", "isolated"])("link:./path dependencies (%s linker)", l
     expect(realpathSync(join(nm, "with-manifest"))).toBe(realpathSync(join(root, "vendor", "with-manifest")));
     expect(readFileSync(join(nm, "no-manifest", "index.js"), "utf8")).toContain("without");
     expect(realpathSync(join(nm, "no-manifest"))).toBe(realpathSync(join(root, "vendor", "no-manifest")));
+    expect(readFileSync(join(nm, "odd", "index.js"), "utf8")).toContain("tilde");
     // the workspace's link resolves relative to packages/app (not the root); with the
     // hoisted linker it is hoisted to the root node_modules like any other dependency
     const localLink = linker === "hoisted" ? join(nm, "local") : join(root, "packages", "app", "node_modules", "local");

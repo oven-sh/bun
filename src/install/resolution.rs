@@ -58,7 +58,10 @@ impl Resolution {
 /// `Symlink` resolution stores that project-relative path instead of a name.
 #[inline]
 pub fn is_path_link(target: &[u8]) -> bool {
-    target.starts_with(b".") || target.starts_with(b"/")
+    target.starts_with(b".")
+        || target.starts_with(b"/")
+        // `link:C:\dir` / `link:\\server\share` on Windows
+        || (cfg!(windows) && bun_paths::is_absolute(target))
 }
 
 #[repr(C)]

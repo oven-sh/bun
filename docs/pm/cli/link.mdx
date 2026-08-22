@@ -45,7 +45,7 @@ The `--save` flag also adds `cool-pkg` to the `dependencies` field of your app's
 
 ## Linking a directory by path
 
-`link:` also accepts a path, as written by Yarn and pnpm. A target that starts with `.` or `/` is not looked up among the packages registered with `bun link`; it is resolved relative to the `package.json` that declares it and installed as a symlink to that directory:
+`link:` also accepts a path, as written by Yarn and pnpm. A target that starts with `.` or is an absolute path is not looked up among the packages registered with `bun link`; it is resolved relative to the `package.json` that declares it and installed as a symlink to that directory:
 
 ```json package.json icon="file-json"
 {

@@ -578,4 +578,10 @@ declare function $telemetrySetName(span: unknown, name: string): void;
 declare function $telemetrySetStatus(span: unknown, code: number, message: string): void;
 /** JS-owned spans too: buffers the event (timestamped now if `time` is absent) until end(). */
 declare function $telemetryAddEvent(span: unknown, name: string, flatAttributes: unknown[] | null, time: unknown): void;
-declare function $telemetryAddLink(span: unknown, traceId: string, spanId: string, traceFlags: number, flatAttributes: unknown[] | null): void;
+declare function $telemetryAddLink(
+  span: unknown,
+  traceId: string,
+  spanId: string,
+  traceFlags: number,
+  flatAttributes: unknown[] | null,
+): void;

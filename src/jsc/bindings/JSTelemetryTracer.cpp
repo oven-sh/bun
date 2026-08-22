@@ -64,7 +64,8 @@ static ALWAYS_INLINE JSTelemetrySpan* telemetryCreateSpan(Zig::GlobalObject* glo
     auto active = TelemetryContextSlot::current(globalObject);
     JSTelemetrySpan* parentCell = toTelemetrySpan(active.header);
     uint64_t parentHandle = active.poolHandle();
-    const TelemetrySpanStub* parent = parentCell ? &parentCell->m_stub : parentHandle ? Bun__Telemetry__poolStub(globalObject, parentHandle) : nullptr;
+    const TelemetrySpanStub* parent = parentCell ? &parentCell->m_stub : parentHandle ? Bun__Telemetry__poolStub(globalObject, parentHandle)
+                                                                                      : nullptr;
     TelemetrySpanStub stub;
     Bun__Telemetry__stubStart(globalObject, &stub, parent, 0);
     auto* span = JSTelemetrySpan::create(vm, globalObject, stub, scopeId, kind, name, 0);

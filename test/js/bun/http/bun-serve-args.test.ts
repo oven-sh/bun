@@ -1,6 +1,6 @@
 import { serve } from "bun";
 import { describe, expect, test } from "bun:test";
-import { isWindows, tmpdirSync } from "../../../harness";
+import { bunEnv, bunExe, isWindows, tmpdirSync } from "../../../harness";
 
 const defaultHostname = "localhost";
 
@@ -260,6 +260,98 @@ describe("Bun.serve development options", () => {
     expect(server.port).toBeGreaterThan(0);
     expect(server.development).toBe(false);
     server.stop();
+  });
+
+  // `bun test` runs with NODE_ENV=test, which is neither "development" nor
+  // "production": development mode must be requested explicitly.
+  test("defaults to production mode", () => {
+    using server = serve({
+      port: 0,
+      fetch() {
+        return new Response("ok");
+      },
+    });
+    expect(server.development).toBe(false);
+    server.stop();
+  });
+
+  // One process per NODE_ENV value: Bun.serve() reads the environment the
+  // process started with. Each process reports the mode every form of the
+  // `development` option resolves to, plus how the option-less server answers
+  // a handler that returns nothing (200 welcome page in development, 204 in
+  // production).
+  const modeMatrixScript = /* js */ `
+    const options = {
+      omitted: {},
+      undefined: { development: undefined },
+      true: { development: true },
+      false: { development: false },
+      object: { development: {} },
+      "object with hmr: false": { development: { hmr: false } },
+    };
+    const modes = {};
+    for (const [name, extra] of Object.entries(options)) {
+      using server = Bun.serve({ port: 0, fetch: () => new Response("ok"), ...extra });
+      modes[name] = server.development;
+    }
+    using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch() {} });
+    const status = (await fetch(server.url)).status;
+    console.log(JSON.stringify({ modes, status }));
+  `;
+
+  async function resolveModes(NODE_ENV: string | undefined) {
+    const env = { ...bunEnv };
+    if (NODE_ENV !== undefined) env.NODE_ENV = NODE_ENV;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", modeMatrixScript],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The option-less server's empty handler also logs an "Expected a Response
+    // object" diagnostic in both modes, so only the warning is counted here.
+    if (exitCode !== 0) throw new Error(`exit code ${exitCode}\n${stdout}\n${stderr}`);
+    const warnings = stderr.split("[Bun.serve]: ignoring the `development` option because NODE_ENV").length - 1;
+    return { ...JSON.parse(stdout.trim()), warnings };
+  }
+
+  const productionOnly = {
+    omitted: false,
+    undefined: false,
+    true: false,
+    false: false,
+    object: false,
+    "object with hmr: false": false,
+  };
+
+  const explicitOptIn = {
+    omitted: false,
+    undefined: false,
+    true: true,
+    false: false,
+    object: true,
+    "object with hmr: false": true,
+  };
+
+  test.concurrent("without NODE_ENV, only the development option enables development mode", async () => {
+    expect(await resolveModes(undefined)).toEqual({ modes: explicitOptIn, status: 204, warnings: 0 });
+  });
+
+  test.concurrent("NODE_ENV=test behaves like an unset NODE_ENV", async () => {
+    expect(await resolveModes("test")).toEqual({ modes: explicitOptIn, status: 204, warnings: 0 });
+  });
+
+  test.concurrent("NODE_ENV=development enables development mode unless development: false", async () => {
+    expect(await resolveModes("development")).toEqual({
+      modes: { ...explicitOptIn, omitted: true, undefined: true },
+      status: 200,
+      warnings: 0,
+    });
+  });
+
+  test.concurrent("NODE_ENV=production forces production mode and warns once about development: true", async () => {
+    expect(await resolveModes("production")).toEqual({ modes: productionOnly, status: 204, warnings: 1 });
   });
 });
 

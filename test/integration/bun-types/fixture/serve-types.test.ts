@@ -744,7 +744,7 @@ test("development: false", {
   },
 });
 
-test("development: defaults to process.env.NODE_ENV !== 'production'", {
+test("development: computed from process.env.NODE_ENV", {
   development: process.env.NODE_ENV !== "production",
   port: 0,
   fetch() {

@@ -1,4 +1,5 @@
 use std::io::Write as _;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use bun_core::ZBox;
 
@@ -83,7 +84,7 @@ impl Default for ServerConfig {
             ssl_config: None,
             sni: None,
             max_request_body_size: 1024 * 1024 * 128,
-            development: DevelopmentOption::Development,
+            development: DevelopmentOption::Production,
             broadcast_console_log_from_browser_to_server_for_bake: false,
             enable_chrome_devtools_automatic_workspace_folders: true,
             on_error: JSValue::ZERO,
@@ -141,6 +142,19 @@ impl DevelopmentOption {
     pub(crate) fn is_development(self) -> bool {
         self == DevelopmentOption::Development || self == DevelopmentOption::DevelopmentWithoutHmr
     }
+}
+
+/// Printed at most once per process, like the idle-timeout warning in
+/// `server_body`.
+fn warn_development_ignored_in_production() {
+    static DID_WARN: AtomicBool = AtomicBool::new(false);
+    if DID_WARN.swap(true, Ordering::Relaxed) || crate::cli::Command::get().debug.silent {
+        return;
+    }
+    bun_core::pretty_errorln!(
+        "<r><yellow>[Bun.serve]<r><d>:<r> ignoring the <d><cyan>`development`<r> option because <d><cyan>NODE_ENV<r> is <d><cyan>\"production\"<r>. The server is running in production mode."
+    );
+    bun_core::Output::flush();
 }
 
 impl ServerConfig {
@@ -734,19 +748,30 @@ impl ServerConfig {
         let vm = arguments.vm;
         let env = vm.env_loader();
 
+        // Development mode is opt-in. Without a `development` option only
+        // NODE_ENV=development enables it, and NODE_ENV=production wins even
+        // over an explicit `development: true` so a flag hardcoded for local
+        // development cannot ship the error page, HMR, or sourcemaps.
+        let node_env = env.get(b"NODE_ENV").unwrap_or(b"");
+        let is_production_env = node_env == b"production" || vm.transpiler.options.production;
+        // `[serve.static] hmr = false` in bunfig.toml applies whenever the
+        // option itself does not say whether HMR is wanted.
+        let default_development =
+            if vm.transpiler.options.transform_options.serve_hmr == Some(false) {
+                DevelopmentOption::DevelopmentWithoutHmr
+            } else {
+                DevelopmentOption::Development
+            };
+
         let mut args = ServerConfig {
             address: Address::Tcp {
                 port: 3000,
                 hostname: None,
             },
-            development: if let Some(hmr) = vm.transpiler.options.transform_options.serve_hmr {
-                if !hmr {
-                    DevelopmentOption::DevelopmentWithoutHmr
-                } else {
-                    DevelopmentOption::Development
-                }
+            development: if !is_production_env && node_env == b"development" {
+                default_development
             } else {
-                DevelopmentOption::Development
+                DevelopmentOption::Production
             },
 
             // If this is a node:cluster child, let's default to SO_REUSEPORT.
@@ -755,14 +780,6 @@ impl ServerConfig {
             ..ServerConfig::default()
         };
         let mut has_hostname = false;
-
-        if env.get(b"NODE_ENV").unwrap_or(b"") == b"production" {
-            args.development = DevelopmentOption::Production;
-        }
-
-        if arguments.vm.transpiler.options.production {
-            args.development = DevelopmentOption::Production;
-        }
 
         // Set tcp port from env / options
         {
@@ -811,16 +828,12 @@ impl ServerConfig {
 
         // "development" impacts other settings like bake.
         if let Some(dev) = arg.get(global, "development")? {
-            if dev.is_object() {
-                if let Some(hmr) = dev.get_boolean_strict(global, "hmr")? {
-                    args.development = if !hmr {
-                        DevelopmentOption::DevelopmentWithoutHmr
-                    } else {
-                        DevelopmentOption::Development
-                    };
-                } else {
-                    args.development = DevelopmentOption::Development;
-                }
+            let requested = if dev.is_object() {
+                let requested = match dev.get_boolean_strict(global, "hmr")? {
+                    Some(true) => DevelopmentOption::Development,
+                    Some(false) => DevelopmentOption::DevelopmentWithoutHmr,
+                    None => default_development,
+                };
 
                 if let Some(console) = dev.get_boolean_strict(global, "console")? {
                     args.broadcast_console_log_from_browser_to_server_for_bake = console;
@@ -831,14 +844,20 @@ impl ServerConfig {
                 {
                     args.enable_chrome_devtools_automatic_workspace_folders = v;
                 }
+
+                requested
+            } else if dev.to_boolean() {
+                default_development
             } else {
-                args.development = if dev.to_boolean() {
-                    DevelopmentOption::Development
-                } else {
-                    DevelopmentOption::Production
-                };
+                DevelopmentOption::Production
+            };
+
+            if is_production_env && requested.is_development() {
+                warn_development_ignored_in_production();
+            } else {
+                args.development = requested;
             }
-            args.reuse_port = args.development == DevelopmentOption::Production;
+            args.reuse_port = requested == DevelopmentOption::Production;
         }
         if global.has_exception() {
             return Err(JsError::Thrown);

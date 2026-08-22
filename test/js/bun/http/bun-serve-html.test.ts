@@ -1331,8 +1331,13 @@ for (let development of [true, false, { hmr: false }]) {
 }
 
 describe("production headers and import.meta.env", () => {
-  async function collect(development: string) {
+  /**
+   * @param development source text for the `development` option; `undefined` omits the option
+   */
+  async function collect(development: string | undefined, bunfig?: string) {
+    const developmentOption = development === undefined ? "" : `development: ${development},`;
     const dir = tempDirWithFiles("html-prod-headers", {
+      ...(bunfig === undefined ? {} : { "bunfig.toml": bunfig }),
       "index.html": /*html*/ `<!DOCTYPE html>
 <html><head><link rel="stylesheet" href="./app.css">
 <script type="module" src="./app.ts"></script></head>
@@ -1349,7 +1354,7 @@ describe("production headers and import.meta.env", () => {
       `,
       "serve.ts": /*js*/ `
         import index from "./index.html";
-        const server = Bun.serve({ port: 0, development: ${development}, routes: { "/": index } });
+        const server = Bun.serve({ port: 0, ${developmentOption} routes: { "/": index } });
         const base = server.url.href;
         const htmlRes = await fetch(base);
         const html = await htmlRes.text();
@@ -1484,6 +1489,38 @@ describe("production headers and import.meta.env", () => {
     // Dev mode should not set aggressive Cache-Control.
     expect(out.htmlCacheControl).toBeNull();
     expect(out.jsCacheControl).toBeNull();
+  });
+
+  const modeSummary = (out: Awaited<ReturnType<typeof collect>>) => ({
+    result: out.result,
+    jsHasSourceMapURL: out.jsHasSourceMapURL,
+    mapStatus: out.mapStatus,
+    htmlCacheControl: out.htmlCacheControl,
+    jsCacheControl: out.jsCacheControl,
+  });
+
+  // The child runs without NODE_ENV, so omitting `development` must serve the
+  // same bundle as `development: false`: no sourcemaps, cacheable assets.
+  test("omitting development serves the production bundle", async () => {
+    expect(modeSummary(await collect(undefined))).toEqual({
+      result: { MODE: "production", DEV: false, PROD: true, SSR: false },
+      jsHasSourceMapURL: false,
+      mapStatus: 404,
+      htmlCacheControl: "no-cache",
+      jsCacheControl: "public, max-age=31536000, immutable",
+    });
+  });
+
+  // Same result as `development: { hmr: false }` above: development bundle,
+  // served by the plain HTML bundler instead of the HMR dev server.
+  test("bunfig [serve.static] hmr = false applies to development: true", async () => {
+    expect(modeSummary(await collect("true", "[serve.static]\nhmr = false"))).toEqual({
+      result: { MODE: "development", DEV: true, PROD: false, SSR: false },
+      jsHasSourceMapURL: true,
+      mapStatus: 200,
+      htmlCacheControl: null,
+      jsCacheControl: null,
+    });
   });
 
   test("distinct source maps get distinct ETags", async () => {

@@ -47,7 +47,9 @@ async function runTest({ port, ...serverOptions }: Serve<any>, test: (server: Se
   } else {
     while (!server) {
       try {
-        server = serve({ ...serverOptions, port: 0 });
+        // The mode is fixed when the server is created; reload() keeps it. The
+        // welcome-page test below needs the shared server to be a development server.
+        server = serve({ development: true, ...serverOptions, port: 0 });
         break;
       } catch (e: any) {
         console.log("catch:", e);

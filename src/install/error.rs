@@ -451,6 +451,16 @@ impl From<Error> for bun_core::Error {
             Error::Alloc(a) => bun_core::Error::Alloc(a),
             Error::WriteFailed => bun_core::Error::WriteFailed,
             Error::InvalidCharacter => bun_core::Error::InvalidCharacter,
+            Error::FileNotFound | Error::Sys(bun_errno::SystemErrno::ENOENT) => {
+                bun_core::Error::FileNotFound
+            }
+            Error::AccessDenied | Error::Sys(bun_errno::SystemErrno::EACCES) => {
+                bun_core::Error::AccessDenied
+            }
+            Error::NameTooLong | Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG) => {
+                bun_core::Error::NameTooLong
+            }
+            Error::Sys(bun_errno::SystemErrno::ENOSPC) => bun_core::Error::NoSpaceLeft,
             _ => bun_core::Error::Unexpected,
         }
     }

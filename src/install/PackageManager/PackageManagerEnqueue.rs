@@ -587,10 +587,12 @@ pub fn enqueue_dependency_to_root(
         }
     }
 
-    let resolution_id = match this.lockfile.buffers.resolutions[dep_id as usize] {
-        id if id == invalid_package_id => 'brk: {
-            this.drain_dependency_list();
+    // A disk-cached manifest can resolve `resolutions[dep_id]` above while
+    // only queuing (not scheduling) the tarball; drain before deciding to wait.
+    this.drain_dependency_list();
 
+    let resolution_id = match this.lockfile.buffers.resolutions[dep_id as usize] {
+        id if id == invalid_package_id || this.pending_task_count() > 0 => 'brk: {
             struct Closure {
                 err: Option<crate::Error>,
                 // raw `*mut` — `sleep_until`

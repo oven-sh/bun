@@ -44,6 +44,7 @@ interface Options {
   /** Every number is an open issue (for parser cases). Otherwise: #1 open issue, #2 open PR, #3 closed, #4 missing, #5 deleted. */
   everyIssueOpen?: boolean;
   failUpdate?: boolean;
+  failComment?: boolean;
   /** `issues.get` fails with a 500 for this number. */
   failGet?: number;
 }
@@ -66,6 +67,7 @@ async function run(options: Options) {
   const write = (method: string) => async (params: Record<string, unknown>) => {
     calls.push({ method, params });
     if (options.failUpdate && method.endsWith("update")) throw new Error("boom");
+    if (options.failComment && method === "issues.createComment") throw new Error("locked");
     return { data: {} };
   };
   const github = {
@@ -343,6 +345,24 @@ test("a failed lookup fails the run after the other references were tried", asyn
   expect(logs).toEqual(["#10: #1, #2", "error: #1: boom", "#2: closed pull request (fixes in #10)"]);
   expect(calls.map(call => call.method)).toEqual(["pulls.update", "issues.createComment"]);
   expect(failed).toBe("1 of 2 references could not be closed");
+});
+
+test("a failed comment is a warning, the close stands and the run succeeds", async () => {
+  const { calls, logs, failed } = await run({ body: "Fixes #1 and #2", failComment: true });
+  expect(logs).toEqual([
+    "#10: #1, #2",
+    "#1: closed issue (fixes in #10)",
+    "warning: #1: closed, but the comment failed: locked",
+    "#2: closed pull request (fixes in #10)",
+    "warning: #2: closed, but the comment failed: locked",
+  ]);
+  expect(calls.map(call => call.method)).toEqual([
+    "issues.update",
+    "issues.createComment",
+    "pulls.update",
+    "issues.createComment",
+  ]);
+  expect(failed).toBeNull();
 });
 
 test("a failed close fails the run after the other references were tried", async () => {

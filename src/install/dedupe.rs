@@ -8,6 +8,7 @@ use bun_core::{Global, Output, UnwrapOrOom as _, strings};
 
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{LoadResult, Lockfile, Package, PackageIndexEntry};
+use crate::package_install::Summary as PackageInstallSummary;
 use crate::package_manager::Options::{Enable, LogLevel};
 use crate::package_manager::ROOT_PACKAGE_JSON_PATH;
 use crate::{
@@ -744,11 +745,11 @@ fn refuse_out_of_date(manager: &PackageManager) -> ! {
 }
 
 fn report_already_deduplicated(manager: &PackageManager, report: &Report) -> ! {
+    if manager.options.json_output {
+        print_json(report, None);
+        Global::exit(0);
+    }
     if manager.options.log_level != LogLevel::Silent {
-        if manager.options.json_output {
-            print_json(report, None);
-            Global::exit(0);
-        }
         print_kept(&report.kept);
         if manager.options.do_.summary() {
             if !report.kept.is_empty() {
@@ -781,8 +782,8 @@ fn print_kept(kept: &[Kept]) {
     }
 }
 
-/// `--json`: the report as one object; `installed` is `null` when no install phase ran.
-fn print_json(report: &Report, installed: Option<u32>) {
+/// `--json`: the report as one object; `installed` and `failed` are `null` when no install phase ran.
+fn print_json(report: &Report, install: Option<&PackageInstallSummary>) {
     fn json_str(s: &[u8]) -> bun_core::fmt::JSONFormatterUTF8<'_> {
         bun_core::fmt::format_json_string_utf8(s, Default::default())
     }
@@ -831,17 +832,23 @@ fn print_json(report: &Report, installed: Option<u32>) {
         "],\n  \"checked\": {},\n  \"installed\": ",
         report.checked
     );
-    match installed {
-        Some(n) => {
-            let _ = write!(out, "{n}");
-        }
-        None => out.extend_from_slice(b"null"),
-    }
+    write_json_count(&mut out, install.map(|s| s.success));
+    out.extend_from_slice(b",\n  \"failed\": ");
+    write_json_count(&mut out, install.map(|s| s.fail));
     out.extend_from_slice(b"\n}\n");
 
     Output::flush();
     let _ = Output::writer().write_all(&out);
     Output::flush();
+}
+
+fn write_json_count(out: &mut Vec<u8>, count: Option<u32>) {
+    match count {
+        Some(n) => {
+            let _ = write!(out, "{n}");
+        }
+        None => out.extend_from_slice(b"null"),
+    }
 }
 
 fn print_would_remove(manager: &PackageManager, report: &Report) {
@@ -889,20 +896,20 @@ fn print_rows(report: &Report) {
     print_kept(&report.kept);
 }
 
-/// `installed` is `None` when the lockfile was saved without installing (`--lockfile-only`).
+/// `install` is `None` when the lockfile was saved without installing (`--lockfile-only`).
 pub(crate) fn print_dedupe_summary(
     manager: &PackageManager,
-    installed: Option<u32>,
+    install: Option<&PackageInstallSummary>,
     start_time: i128,
 ) {
     let Some(report) = &manager.dedupe_report else {
         return;
     };
-    if manager.options.log_level == LogLevel::Silent {
+    if manager.options.json_output {
+        print_json(report, install);
         return;
     }
-    if manager.options.json_output {
-        print_json(report, installed);
+    if manager.options.log_level == LogLevel::Silent {
         return;
     }
     print_rows(report);
@@ -912,7 +919,7 @@ pub(crate) fn print_dedupe_summary(
     }
     let n = report.rows.len();
     bun_core::pretty!("\n<b>{}<r> duplicate version{} removed", n, plural(n));
-    if let Some(installed) = installed.filter(|&n| n > 0) {
+    if let Some(installed) = install.map(|s| s.success).filter(|&n| n > 0) {
         bun_core::pretty!(
             ", <b>{}<r> package{} installed",
             installed,
@@ -942,19 +949,20 @@ pub fn dedupe_after_differ(manager: &mut PackageManager) {
     }
 
     if manager.options.dry_run {
-        if !quiet {
-            if manager.options.json_output {
-                print_json(&report, None);
-            } else {
-                print_would_remove(manager, &report);
-                bun_core::prettyln!("  <cyan>bun dedupe<r>");
-                Output::flush();
-            }
+        if manager.options.json_output {
+            print_json(&report, None);
+        } else if !quiet {
+            print_would_remove(manager, &report);
+            bun_core::prettyln!("  <cyan>bun dedupe<r>");
+            Output::flush();
         }
         Global::exit(manager.options.check as u32);
     }
 
     if !manager.options.do_.save_lockfile() {
+        if manager.options.json_output {
+            print_json(&report, None);
+        }
         if !quiet {
             let why = if !manager.options.enable.frozen_lockfile() {
                 "--no-save was passed"
@@ -963,9 +971,7 @@ pub fn dedupe_after_differ(manager: &mut PackageManager) {
             } else {
                 "--production implies --frozen-lockfile"
             };
-            if manager.options.json_output {
-                print_json(&report, None);
-            } else {
+            if !manager.options.json_output {
                 print_would_remove(manager, &report);
                 Output::flush();
             }

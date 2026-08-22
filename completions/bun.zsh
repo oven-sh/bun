@@ -270,6 +270,7 @@ _bun_pm_completion() {
             'cache\:"print the path to the cache folder" '
             'scan\:"scan all packages in lockfile for security vulnerabilities" '
             'untrusted\:"print current untrusted dependencies with scripts" '
+            'trust\:"run scripts for untrusted dependencies and add to trustedDependencies" '
             'default-trusted\:"print the default trusted dependencies list" '
             'version\:"bump the version in package.json and create a git tag" '
         )

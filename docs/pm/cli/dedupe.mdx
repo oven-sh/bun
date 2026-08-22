@@ -74,16 +74,17 @@ bun dedupe --check --json
     }
   ],
   "checked": 5,
-  "installed": null
+  "installed": null,
+  "failed": null
 }
 ```
 
 - `removed`: one object per row of the text output, in the same order. `name` and `version` identify the version Bun removes (or would remove); `resolvedTo` lists the locked version(s) its dependents now use. It is empty (`[]`) when nothing depended on the removed version anymore.
 - `kept`: one object per `kept …` line: a version Bun had to keep, with the `reason` (the text the `kept` line shows in parentheses). Empty when there is none.
 - `checked`: the number of packages in the lockfile that were checked.
-- `installed`: the number of packages the run installed. `null` with `--check`, `--dry-run` and `--lockfile-only`, and whenever no install ran.
+- `installed`, `failed`: the number of packages the run installed, and the number it failed to install. Both are `null` with `--check`, `--dry-run` and `--lockfile-only`, and whenever no install ran.
 
-When there is nothing to remove, `removed` is `[]`. The exit codes are the same as without `--json`: `--check` exits `1` when `removed` is not empty, `--dry-run` and a real run exit `0`. Errors are still reported on stderr. For example, to list the duplicate versions one per line:
+When there is nothing to remove, `removed` is `[]`. The exit codes are the same as without `--json`: `--check` exits `1` when `removed` is not empty, `--dry-run` and a real run exit `0`. Errors are still reported on stderr. `--json` takes precedence over `--silent`: the document is still printed. For example, to list the duplicate versions one per line:
 
 ```bash terminal icon="terminal"
 bun dedupe --dry-run --json | jq -r '.removed[] | "\(.name)@\(.version)"'

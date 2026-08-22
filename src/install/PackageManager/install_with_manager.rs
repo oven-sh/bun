@@ -972,7 +972,9 @@ pub fn install_with_manager(
         run_root_lifecycle_scripts(manager, ctx, log_level)?;
     }
 
-    if log_level != Options::LogLevel::Silent {
+    if manager.subcommand == Subcommand::Dedupe && manager.options.json_output {
+        crate::dedupe::print_dedupe_summary(manager, Some(&install_summary), ctx.start_time);
+    } else if log_level != Options::LogLevel::Silent {
         print_install_summary(
             manager,
             ctx,
@@ -1128,12 +1130,8 @@ fn print_install_summary(
     let mut printed_timestamp = false;
     if this.options.do_.summary() {
         if this.subcommand == Subcommand::Dedupe {
-            crate::dedupe::print_dedupe_summary(
-                this,
-                Some(install_summary.success),
-                ctx.start_time,
-            );
-            if install_summary.fail > 0 && !this.options.json_output {
+            crate::dedupe::print_dedupe_summary(this, Some(install_summary), ctx.start_time);
+            if install_summary.fail > 0 {
                 print_summary_failed(install_summary);
             }
             return Ok(());
@@ -2201,7 +2199,7 @@ fn save_lockfile_only(
     )?;
 
     if manager.subcommand == Subcommand::Dedupe {
-        if manager.options.do_.summary() {
+        if manager.options.do_.summary() || manager.options.json_output {
             crate::dedupe::print_dedupe_summary(manager, None, ctx.start_time);
         }
     } else if manager.options.do_.summary() {

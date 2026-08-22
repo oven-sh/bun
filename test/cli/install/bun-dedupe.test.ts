@@ -2241,11 +2241,13 @@ describe("--json", () => {
     return JSON.parse(stdout);
   }
 
+  // `installed` and `failed` are null together: they come from the install phase, which dry runs skip.
   const rangeDuplicate = (installed: number | null = null) => ({
     removed: [{ name: "no-deps", version: "1.1.0", resolvedTo: ["1.0.0"] }],
     kept: [],
     checked: 4,
     installed,
+    failed: installed === null ? null : 0,
   });
 
   test.concurrent("--check prints the document and exits 1 without writing", async () => {
@@ -2265,7 +2267,8 @@ describe("--json", () => {
         ],
         "kept": [],
         "checked": 4,
-        "installed": null
+        "installed": null,
+        "failed": null
       }
       "
     `);
@@ -2298,11 +2301,32 @@ describe("--json", () => {
 
     for (const args of [[], ["--check"], ["--dry-run"], ["--lockfile-only"], ["--frozen-lockfile"]]) {
       const { stdout, stderr, exitCode } = await dedupe(packageDir, ...args, "--json");
-      expect(parseDocument(stdout)).toEqual({ removed: [], kept: [], checked: 3, installed: null });
+      expect(parseDocument(stdout)).toEqual({ removed: [], kept: [], checked: 3, installed: null, failed: null });
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
       expect(await lock(packageDir)).toBe(lockBefore);
     }
+  });
+
+  test.concurrent("--silent still prints the document", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    await setupRangeDuplicate(packageDir, packageJson);
+
+    const check = await dedupe(packageDir, "--check", "--silent", "--json");
+    expect(parseDocument(check.stdout)).toEqual(rangeDuplicate());
+    expect(check.stderr).toBe("");
+    expect(check.exitCode).toBe(1);
+
+    const apply = await dedupe(packageDir, "--silent", "--json");
+    expect(parseDocument(apply.stdout)).toEqual(rangeDuplicate(expect.any(Number)));
+    expect(apply.stderr).toBe("");
+    expect(apply.exitCode).toBe(0);
+    expect(await lock(packageDir)).not.toContain('"no-deps@1.1.0"');
+
+    const again = await dedupe(packageDir, "--lockfile-only", "--silent", "--json");
+    expect(parseDocument(again.stdout)).toEqual({ removed: [], kept: [], checked: 3, installed: null, failed: null });
+    expect(again.stderr).toBe("");
+    expect(again.exitCode).toBe(0);
   });
 
   test.concurrent("the real run reports how many packages it installed", async () => {
@@ -2380,6 +2404,7 @@ describe("--json", () => {
       kept: [],
       checked: 5,
       installed: null,
+      failed: null,
     });
     expect(stderr).toBe("");
     expect(exitCode).toBe(1);
@@ -2420,6 +2445,7 @@ describe("--json", () => {
       kept,
       checked: 7,
       installed: null,
+      failed: null,
     });
     expect(check.stderr).toBe("");
     expect(check.exitCode).toBe(1);
@@ -2431,6 +2457,7 @@ describe("--json", () => {
       kept,
       checked: 7,
       installed: expect.any(Number),
+      failed: 0,
     });
     expect(apply.stderr).not.toContain("error:");
     expect(apply.exitCode).toBe(0);
@@ -2438,7 +2465,7 @@ describe("--json", () => {
 
     // Nothing left to remove; the kept version is still reported.
     const recheck = await dedupe(packageDir, "--check", "--json");
-    expect(parseDocument(recheck.stdout)).toEqual({ removed: [], kept, checked: 6, installed: null });
+    expect(parseDocument(recheck.stdout)).toEqual({ removed: [], kept, checked: 6, installed: null, failed: null });
     expect(recheck.stderr).toBe("");
     expect(recheck.exitCode).toBe(0);
   });

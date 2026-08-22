@@ -30,16 +30,7 @@ pub(crate) fn to_throw_error_matching_snapshot(
         );
     }
 
-    let Some(bun_test_strong) = this.bun_test() else {
-        let signature = get_signature("toThrowErrorMatchingSnapshot", "", true);
-        return throw!(
-            this,
-            global,
-            signature,
-            "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n",
-        );
-    };
-    let _ = &bun_test_strong;
+    this.check_snapshot_context(global, "toThrowErrorMatchingSnapshot")?;
 
     let mut hint_string: ZigString = ZigString::EMPTY;
     match arguments.len() {

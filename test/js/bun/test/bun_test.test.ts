@@ -232,7 +232,9 @@ test("cross-file safety", async () => {
   const exitCode = await result.exited;
   const stdout = await result.stdout.text();
   const stderr = await result.stderr.text();
-  expect(stderr).toInclude("Snapshot matchers cannot be used outside of a test");
+  expect(normalizeBunSnapshot(stderr)).toInclude(
+    "error: expect(received).toMatchSnapshot()\n\nMatcher error: Snapshot matchers are not supported after the test has finished executing",
+  );
   expect(exitCode).toBe(1);
 });
 

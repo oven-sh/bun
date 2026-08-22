@@ -13,9 +13,10 @@ use super::{Entered, local, state};
 /// Returns the span (stored on the request context and finished with
 /// [`end`]) and the activation guard the dispatching frame must hold across
 /// the JS handler call.
+/// `method`: `None` when bun's `Method` cannot name the request's method.
 pub fn begin(
     global: &JSGlobalObject,
-    method: Method,
+    method: Option<Method>,
     req: &bun_uws::AnyRequest,
     resp: bun_uws::AnyResponse,
     is_https: bool,
@@ -63,13 +64,23 @@ pub fn begin(
             if let Some(b) = baggage {
                 s.baggage.extend_from_slice(b);
             }
+            let mut flags = if is_https { R::FLAG_HTTPS } else { 0 };
+            // A method `Method` cannot name (custom extension): `_OTHER` plus the original.
+            if method.is_none() && stub.ctx.flags.sampled() {
+                flags |= R::FLAG_METHOD_OTHER;
+                s.push_attribute(
+                    b"http.request.method_original",
+                    &Value::Str(req.method()),
+                    &st.limits,
+                );
+            }
             let f = &mut s.http;
             f.active = true;
-            f.method = method;
+            f.method = method.unwrap_or(Method::GET);
             if !stub.ctx.flags.sampled() {
                 return;
             }
-            f.flags = if is_https { R::FLAG_HTTPS } else { 0 };
+            f.flags = flags;
             // network.peer.* are per connection: encoded once and cached on the
             // connection (H1); each request copies the bytes into its facts.
             let mut fresh = Vec::new();

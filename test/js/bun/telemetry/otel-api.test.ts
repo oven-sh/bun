@@ -323,7 +323,6 @@ describe("context propagation", () => {
   });
 
   test("Bun.otel.with(undefined, fn) clears the active span but keeps AsyncLocalStorage stores", () => {
-    const { AsyncLocalStorage } = require("node:async_hooks");
     const als = new AsyncLocalStorage();
     const span = tracer.startSpan("outer");
     const seen = als.run("store", () =>

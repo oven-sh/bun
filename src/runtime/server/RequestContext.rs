@@ -1396,10 +1396,12 @@ where
         let (Some(req), Some(resp)) = (self.req.get(), self.resp.get()) else {
             return None;
         };
+        let any_req = Self::any_request(req);
         let (span, entered) = crate::telemetry::server::begin(
             global,
-            self.method,
-            &Self::any_request(req),
+            // `self.method` fell back to GET when the text was not a known method.
+            Method::find(any_req.method()),
+            &any_req,
             resp,
             SSL_ENABLED,
         )?;

@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { AsyncLocalStorage } from "node:async_hooks";
 import http from "node:http";
 
 const spans: any[] = [];
@@ -539,6 +540,60 @@ describe("node:http", () => {
     });
     const [client] = byName(await collect(), "bun.http.client");
     expect(client.attributes["url.full"]).toBe(`http://localhost:${server.port}/hr`);
+  });
+});
+
+describe("http.request.method", () => {
+  test("methods outside the semconv known set are _OTHER with method_original and span name HTTP", async () => {
+    // (methods uWS cannot parse at all never reach a handler: 400 before any span)
+    const { promise: listening, resolve } = Promise.withResolvers<void>();
+    const server = http.createServer((req: any, res: any) => res.end(req.method)).listen(0, resolve);
+    await listening;
+    try {
+      const statusLine = await new Promise<string>(resolve => {
+        let buf = "";
+        Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.address().port,
+          socket: {
+            open(s) {
+              s.write("PROPFIND /x HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n");
+            },
+            data(_s, d) {
+              buf += d.toString();
+            },
+            close() {
+              resolve(buf.split("\r\n")[0]);
+            },
+          },
+        });
+      });
+      expect(statusLine).toBe("HTTP/1.1 200 OK");
+      const [srv] = byName(await collect(), "bun.http.server");
+      expect([srv.name, srv.attributes["http.request.method"], srv.attributes["http.request.method_original"]]).toEqual(
+        ["HTTP", "_OTHER", "PROPFIND"],
+      );
+    } finally {
+      server.close();
+    }
+  });
+
+  test("a handler that throws after entering an AsyncLocalStorage store still serves the error response", async () => {
+    const als = new AsyncLocalStorage();
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        als.enterWith("x");
+        throw new Error("boom");
+      },
+      error() {
+        return new Response("handled", { status: 555 });
+      },
+    });
+    const res = await fetch(`http://127.0.0.1:${server.port}/`);
+    expect([res.status, await res.text()]).toEqual([555, "handled"]);
+    const [srv] = byName(await collect(), "bun.http.server");
+    expect(srv.attributes["http.response.status_code"]).toBe(555);
   });
 });
 

@@ -268,12 +268,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryTracerStartActiveSpan, (JSGlobalObject * lex
     MarkedArgumentBuffer args;
     args.append(span);
     JSValue result = call(globalObject, fn, jsUndefined(), args, "startActiveSpan"_s);
-    {
-        // Restoring the slot may allocate (ALS stores changed inside `fn`);
-        // do it with any exception from `fn` set aside.
-        SuspendExceptionScope suspend(vm);
-        Bun__Telemetry__exit(globalObject, JSValue::encode(prev));
-    }
+    Bun__Telemetry__exit(globalObject, JSValue::encode(prev));
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(result);
 }

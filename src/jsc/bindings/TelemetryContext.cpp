@@ -5,6 +5,7 @@
 #include "TelemetryContext.h"
 #include "TelemetryInternal.h"
 #include "BunClientData.h"
+#include <JavaScriptCore/FrameTracers.h>
 
 namespace Bun {
 using namespace JSC;
@@ -130,6 +131,9 @@ extern "C" void Bun__Telemetry__exit(Zig::GlobalObject* globalObject, JSC::Encod
     for (unsigned i = 0; same && i < n; ++i)
         same = now.array->tryGetIndexQuickly(now.storesStart + i) == before.array->tryGetIndexQuickly(before.storesStart + i);
     if (!same) {
+        // Callers restore on their unwind path too (Entered::drop, a throwing
+        // startActiveSpan callback): allocate with any pending exception set aside.
+        JSC::SuspendExceptionScope suspend(globalObject->vm());
         prev = TelemetryContextSlot::build(globalObject, before.header, before.extras, now);
     }
     data->putInternalField(globalObject->vm(), 0, prev);

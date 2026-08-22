@@ -217,7 +217,8 @@ pub struct VirtualMachine {
     pub(crate) hide_bun_stackframes: bool,
 
     pub is_shutting_down: bool,
-    /// Set once `on_exit()` has finished draining `RareData::cleanup_hooks`.
+    /// Set once `on_exit()` has finished draining `RareData::cleanup_hooks`, or
+    /// decided not to run them (`exit_tears_down_napi_envs`).
     /// After this point the cleanup-hook list is never iterated again, so
     /// pushing to it (e.g. from a deferred N-API finalizer scheduled during
     /// the final `collectNow()` in `Zig__GlobalObject__destructOnExit`) would
@@ -553,6 +554,11 @@ pub struct ExitHandler {
     pub exit_code: u8,
     /// `bun test` sets this at the end of a run unless `node:test` APIs were used: jest and vitest never fire a test file's `process.on('exit')` listeners.
     pub skip_exit_listeners: bool,
+    /// The exit was asked for (`process.exit()`, or an uncaught error that ended
+    /// the run) rather than the event loop running dry. Decides whether
+    /// `on_exit()` tears the Node-API envs down
+    /// (`VirtualMachine::exit_tears_down_napi_envs`).
+    pub requested: bool,
 }
 
 impl ExitHandler {
@@ -1707,12 +1713,42 @@ impl VirtualMachine {
 
         self.is_shutting_down = true;
 
-        // Make sure we run new cleanup hooks introduced by running cleanup
-        // hooks.
-        // Note: each iteration re-fetches `rare_data` so the FFI hook
-        // bodies (which may re-enter `VirtualMachine` and push more hooks) do
-        // not run while a `&mut RareData` is live — the borrow ends after
-        // `mem::take` returns the owned `Vec`.
+        if self.exit_tears_down_napi_envs() {
+            self.run_cleanup_hooks();
+        }
+        // Drained, or left unrun for good: either way the list is never walked again.
+        self.has_run_cleanup_hooks = true;
+
+        // Persist the Node compile cache (NODE_COMPILE_CACHE /
+        // module.enableCompileCache()) after user exit handlers ran.
+        if self.is_main_thread() {
+            crate::node_compile_cache::persist_at_exit();
+        }
+    }
+
+    /// Whether `on_exit()` runs `RareData::cleanup_hooks`, which tear down the
+    /// Node-API envs loaded into this VM (`NapiEnv::cleanup`: the addon's cleanup
+    /// hooks, then the finalizers of everything it still has alive).
+    ///
+    /// Node tears the envs down when it frees the environment. A worker's is freed
+    /// however the worker stopped. The main thread's is freed only once its event
+    /// loop ran dry: `process.exit()` and a fatal error call `exit()` instead, so on
+    /// those paths Node never calls back into an addon, and neither do we. Under
+    /// `BUN_DESTRUCT_VM_ON_EXIT` the main thread's VM is destroyed like a worker's,
+    /// and that teardown only ever runs after the envs are gone, so they go first
+    /// there too.
+    fn exit_tears_down_napi_envs(&self) -> bool {
+        !self.is_main_thread()
+            || !self.exit_handler.requested
+            || self.should_destruct_main_thread_on_exit()
+    }
+
+    /// Runs `RareData::cleanup_hooks` until the hooks stop pushing more (an env
+    /// cleanup defers finalizers onto this same list once shutdown has begun).
+    /// Each iteration re-fetches `rare_data` so the FFI hook bodies, which may
+    /// re-enter `VirtualMachine` and push more hooks, do not run while a
+    /// `&mut RareData` is live: the borrow ends once `mem::take` returns the `Vec`.
+    fn run_cleanup_hooks(&mut self) {
         loop {
             let hooks = match self.rare_data.as_deref_mut() {
                 Some(rare) if !rare.cleanup_hooks.is_empty() => {
@@ -1730,14 +1766,6 @@ impl VirtualMachine {
                     let _ = crate::task::report_error_or_terminate(global, crate::JsError::Thrown);
                 }
             }
-        }
-        // `mem::take` above leaves an empty `Vec` (capacity already freed by drop).
-        self.has_run_cleanup_hooks = true;
-
-        // Persist the Node compile cache (NODE_COMPILE_CACHE /
-        // module.enableCompileCache()) after user exit handlers ran.
-        if self.is_main_thread() {
-            crate::node_compile_cache::persist_at_exit();
         }
     }
 

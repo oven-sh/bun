@@ -1732,6 +1732,86 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
     });
   });
 
+  // Node frees the main thread's environment, which is what runs an addon's
+  // cleanup hooks and the finalizers of everything it still has alive, only
+  // after the event loop runs dry. process.exit() and a fatal error call exit()
+  // instead, so an addon's teardown code never runs on those paths (Node
+  // v26.3.0). Bun used to run it on every exit, calling into addons where Node
+  // does not. Under BUN_DESTRUCT_VM_ON_EXIT (the sanitizer lanes set it for
+  // every child) the main thread's VM is destroyed like a worker's, and the envs
+  // are still torn down first, so these children opt out of it and of the leak
+  // check that goes with it.
+  describe.concurrent("env teardown on the main thread", () => {
+    const noDestruct = {
+      BUN_DESTRUCT_VM_ON_EXIT: "0",
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+    };
+    const hooksAddon = join(__dirname, "napi-app/build/Debug/test_cleanup_hook_order.node");
+    const wrapsAddon = join(__dirname, "napi-app/build/Debug/test_wrap_cleanup_order.node");
+    // test() prints these two lines when called; each hook prints a line when it
+    // runs. createParentAndChildren() prints "finalize order: ..." from the
+    // parent's napi_wrap finalizer.
+    const setupOutput = "Added hooks in order: 1, 2, 3\nThey should execute in reverse order: 3, 2, 1\n";
+    const setup = `
+      const hooks = require(${JSON.stringify(hooksAddon)});
+      const wraps = require(${JSON.stringify(wrapsAddon)});
+      hooks.test();
+      globalThis.keep = wraps.createParentAndChildren(1);
+    `;
+
+    async function run(code: string, env: Record<string, string>) {
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", code],
+        env: { ...bunEnv, ...env },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    it("process.exit() skips it, like Node", async () => {
+      await checkSameOutput("test_env_teardown_skipped_by_process_exit", [], noDestruct);
+    });
+
+    it("an uncaught exception while the entry point runs skips it", async () => {
+      const { stdout, stderr, exitCode } = await run(`${setup}; throw new Error("fatal");`, noDestruct);
+      expect(stderr).toContain("fatal");
+      expect(stdout).toBe(setupOutput);
+      expect(exitCode).toBe(1);
+    });
+
+    it("an uncaught exception from the event loop skips it", async () => {
+      const { stdout, stderr, exitCode } = await run(
+        `${setup}; setTimeout(() => { throw new Error("fatal"); }, 1);`,
+        noDestruct,
+      );
+      expect(stderr).toContain("fatal");
+      expect(stdout).toBe(setupOutput);
+      expect(exitCode).toBe(1);
+    });
+
+    it("an event loop that runs dry tears it down", async () => {
+      const { stdout, stderr, exitCode } = await run(setup, noDestruct);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(
+        setupOutput +
+          "hook3 executed at position 0\nhook2 executed at position 1\nhook1 executed at position 2\nfinalize order: 1 0\n",
+      );
+      expect(exitCode).toBe(0);
+    });
+
+    it("process.exit() still tears it down when the VM is destroyed on exit", async () => {
+      const { stdout, stderr, exitCode } = await run(`${setup}; process.exit(0);`, { BUN_DESTRUCT_VM_ON_EXIT: "1" });
+      expect(stderr).toBe("");
+      expect(stdout).toBe(
+        setupOutput +
+          "hook3 executed at position 0\nhook2 executed at position 1\nhook1 executed at position 2\nfinalize order: 1 0\n",
+      );
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("napi_strict_equals", () => {
     it("should match JavaScript === operator behavior", async () => {
       const output = await checkSameOutput("test_napi_strict_equals", []);

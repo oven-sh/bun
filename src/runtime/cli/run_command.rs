@@ -1546,6 +1546,11 @@ impl Run<'_> {
 
         vm.on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
         let _ = vm.global().handle_rejected_promises();
+        // An uncaught error stops the loop (`is_event_loop_alive`) and brings us
+        // here: Node's fatal-exception exit, not a drain.
+        if vm.unhandled_error_counter > 0 {
+            vm.exit_handler.requested = true;
+        }
         vm.on_exit();
 
         if ANY_UNHANDLED.load(Ordering::Relaxed) {
@@ -1615,6 +1620,7 @@ fn dump_build_error(vm: &mut VirtualMachine) {
 )]
 fn exit_with_unhandled_note(vm: &mut VirtualMachine) -> ! {
     vm.exit_handler.exit_code = 1;
+    vm.exit_handler.requested = true;
     vm.on_exit();
     if ANY_UNHANDLED.load(Ordering::Relaxed) {
         bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::print();

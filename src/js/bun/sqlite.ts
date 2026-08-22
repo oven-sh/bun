@@ -486,14 +486,12 @@ class Database implements SqliteTypes.Database {
     return SQL.setCustomSQLite(path);
   }
 
-  fileControl(_cmd, _arg) {
+  fileControl(cmdOrDbName, argOrCmd?, arg?) {
     const handle = this.#handle;
-
-    if (arguments.length <= 2) {
-      return SQL.fcntl(handle, null, arguments[0], arguments[1]);
+    if (typeof cmdOrDbName === "string") {
+      return SQL.fcntl(handle, cmdOrDbName, argOrCmd, arg);
     }
-
-    return SQL.fcntl(handle, ...arguments);
+    return SQL.fcntl(handle, null, cmdOrDbName, argOrCmd);
   }
 
   close(throwOnError = false) {

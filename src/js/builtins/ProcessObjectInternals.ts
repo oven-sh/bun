@@ -110,6 +110,11 @@ export function getStdioWriteStream(
   stream._isStdio = true;
   stream.fd = fd;
 
+  // Called from GlobalObject::reload(); the stream outlives each `--hot` load.
+  stream.$resetStdioForHotReload = function () {
+    stream.removeAllListeners();
+  };
+
   const underlyingSink = stream[require("internal/fs/streams").kWriteStreamFastPath];
   $assert(underlyingSink);
   return [stream, underlyingSink];
@@ -297,17 +302,15 @@ export function getStdinStream(
   }
   stream._read = triggerRead;
 
-  stream.on("resume", () => {
+  function onStreamResume() {
     if (stream.isPaused()) return; // fake resume
     $debug('on("resume");');
     own();
     stream._undestroy();
     stream_destroyed = false;
-  });
+  }
 
-  stream._readableState.reading = false;
-
-  stream.on("pause", () => {
+  function onStreamPause() {
     process.nextTick(() => {
       // Only disown if the stream is still paused (not resumed in the meantime)
       if (!stream.readableFlowing) {
@@ -315,20 +318,20 @@ export function getStdinStream(
         disown();
       }
     });
-  });
+  }
 
   // The stream is created with autoClose: false so autoDestroy is off; match
   // Node by destroying stdin once 'end' has emitted ('close' follows 'end').
-  stream.on("end", () => {
+  function onStreamEnd() {
     if (!stream_destroyed) {
       stream_destroyed = true;
       process.nextTick(() => {
         stream.destroy();
       });
     }
-  });
+  }
 
-  stream.on("close", () => {
+  function onStreamClose() {
     if (!stream_destroyed) {
       stream_destroyed = true;
       process.nextTick(() => {
@@ -336,7 +339,40 @@ export function getStdinStream(
         disown();
       });
     }
-  });
+  }
+
+  stream.on("resume", onStreamResume);
+  stream.on("pause", onStreamPause);
+  stream.on("end", onStreamEnd);
+  stream.on("close", onStreamClose);
+
+  stream._readableState.reading = false;
+
+  // Called from GlobalObject::reload(); the stream outlives each `--hot` load.
+  stream.$resetStdioForHotReload = function () {
+    disown();
+    forceUnref = false;
+    if (stream.isRaw) stream.setRawMode?.(false);
+    // node:readline is not re-evaluated on reload, and emitKeypressEvents() is a
+    // no-op while the marker from the previous load is still on the stream. Its
+    // escape-decoder stays: a pending escape timeout from the old load still uses it.
+    for (const sym of Object.getOwnPropertySymbols(stream)) {
+      if (sym.description === "keypress-decoder") {
+        delete stream[sym];
+      }
+    }
+    stream.unpipe();
+    // Readable clears kDataListening only in removeListener(); after a bare
+    // removeAllListeners() its next-tick updateReadableListening() would resume() (re-own stdin).
+    for (const fn of stream.listeners("data")) stream.removeListener("data", fn);
+    originalPause.$call(stream);
+    stream.removeAllListeners();
+    stream.on("resume", onStreamResume);
+    stream.on("pause", onStreamPause);
+    stream.on("end", onStreamEnd);
+    stream.on("close", onStreamClose);
+    stream._readableState.reading = false;
+  };
 
   return stream;
 }

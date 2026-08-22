@@ -162,6 +162,7 @@ using namespace JSC;
     macro(requireESM) \
     macro(requireMap) \
     macro(requireNativeModule) \
+    macro(resetStdioForHotReload) \
     macro(resolveSync) \
     macro(sameSite) \
     macro(secure) \

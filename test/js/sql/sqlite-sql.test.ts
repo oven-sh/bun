@@ -366,6 +366,7 @@ describe("Connection & Initialization", () => {
       const sql = new SQL(`sqlite://${dbPath}?mode=rw`);
       expect(sql.options.adapter).toBe("sqlite");
       expect(sql.options.readonly).toBe(false);
+      expect(sql.options.create).toBe(false);
 
       await sql`INSERT INTO test VALUES (1)`;
       const result = await sql`SELECT * FROM test`;
@@ -373,6 +374,56 @@ describe("Connection & Initialization", () => {
 
       await sql.close();
       await rm(dir, { recursive: true });
+    });
+
+    test("mode=rw should not create a missing database file", async () => {
+      await using dir = tempDir("rw-missing-test", {});
+      const dbPath = path.join(dir, "missing.db");
+
+      const sql = new SQL(`sqlite://${dbPath}?mode=rw`);
+
+      await expect(sql`CREATE TABLE test (id INTEGER)`.execute()).rejects.toMatchObject({
+        name: "SQLiteError",
+        code: "SQLITE_CANTOPEN",
+      });
+      expect(existsSync(dbPath)).toBe(false);
+      expect(sql.options.readonly).toBe(false);
+      expect(sql.options.create).toBe(false);
+
+      await sql.close();
+    });
+
+    test("explicit create option should override mode=rw", async () => {
+      await using dir = tempDir("rw-create-override-test", {});
+      const dbPath = path.join(dir, "created.db");
+
+      const sql = new SQL(`sqlite://${dbPath}?mode=rw`, { create: true });
+      expect(sql.options.create).toBe(true);
+
+      await sql`CREATE TABLE test (id INTEGER)`;
+      expect(existsSync(dbPath)).toBe(true);
+
+      await sql.close();
+    });
+
+    test("repeated mode= should use the last value, like SQLite URIs", async () => {
+      await using dir = tempDir("repeated-mode-test", {});
+      const dbPath = path.join(dir, "repeated.db");
+
+      const roLast = new SQL(`sqlite://${dbPath}?mode=rw&mode=ro`);
+      expect(roLast.options.readonly).toBe(true);
+      await expect(roLast`CREATE TABLE test (id INTEGER)`.execute()).rejects.toMatchObject({
+        code: "SQLITE_CANTOPEN",
+      });
+      expect(existsSync(dbPath)).toBe(false);
+      await roLast.close();
+
+      const rwcLast = new SQL(`sqlite://${dbPath}?mode=ro&mode=rwc`);
+      expect(rwcLast.options.readonly).toBe(false);
+      expect(rwcLast.options.create).toBe(true);
+      await rwcLast`CREATE TABLE test (id INTEGER)`;
+      expect(existsSync(dbPath)).toBe(true);
+      await rwcLast.close();
     });
 
     test("should handle mode=rwc (read-write-create)", async () => {

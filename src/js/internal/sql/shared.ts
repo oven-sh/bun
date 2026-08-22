@@ -1553,13 +1553,15 @@ function parseSQLiteOptions(
 
   // Parse query parameters if present
   if (queryString) {
-    const params = new URLSearchParams(queryString);
-    const mode = params.get("mode");
+    // SQLite URI semantics: when mode= is repeated, the last one wins.
+    const modes = new URLSearchParams(queryString).getAll("mode");
+    const mode = modes[modes.length - 1];
 
     if (mode === "ro") {
       sqliteOptions.readonly = true;
     } else if (mode === "rw") {
       sqliteOptions.readonly = false;
+      sqliteOptions.create = false;
     } else if (mode === "rwc") {
       sqliteOptions.readonly = false;
       sqliteOptions.create = true;

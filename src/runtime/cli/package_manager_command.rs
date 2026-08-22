@@ -1083,8 +1083,7 @@ fn print_trusted_dependencies_flat(
     }
 }
 
-/// The `bun pm ls --json` groups, in output order: the four package.json sections and the
-/// workspace members.
+/// The `bun pm ls --json` groups, in output order.
 const LS_JSON_GROUPS: [DependencyGroup; 5] = [
     DependencyGroup::DEPENDENCIES,
     DependencyGroup::DEV,
@@ -1093,8 +1092,7 @@ const LS_JSON_GROUPS: [DependencyGroup; 5] = [
     DependencyGroup::WORKSPACES,
 ];
 
-/// The group a root dependency is listed under: the package.json section it is declared in,
-/// or `workspaces` for the entry a workspace member gets from the `workspaces` field.
+/// The package.json section a root dependency is declared in, or `workspaces` for a member.
 fn ls_json_group(behavior: Behavior) -> &'static [u8] {
     if behavior.is_workspace() {
         DependencyGroup::WORKSPACES.prop
@@ -1103,8 +1101,7 @@ fn ls_json_group(behavior: Behavior) -> &'static [u8] {
     }
 }
 
-/// `bun pm ls --json`: the `pnpm ls --json` document, an array whose only element is the root
-/// package with its dependencies grouped by package.json section.
+/// `bun pm ls --json`: the `pnpm ls --json` document, an array with the root package.
 fn print_ls_json(pm: &PackageManager, trusted_only: bool) {
     let lockfile: &Lockfile = &pm.lockfile;
     let mut cwd_buf = PathBuffer::uninit();
@@ -1123,8 +1120,7 @@ fn print_ls_json(pm: &PackageManager, trusted_only: bool) {
     let pkg_resolutions = slice.items_resolution();
     let root_deps = slice.items_dependencies()[0];
 
-    // Unlike the text output, a name the root declares in two sections is kept
-    // once per declaration: each declaration goes to its own group.
+    // Unlike the text output, each declaration of a name goes to its own group.
     let mut sorted_dependencies: Vec<DependencyID> =
         (root_deps.off..root_deps.off + root_deps.len).collect();
     let by_name = ByName {
@@ -1191,8 +1187,7 @@ fn print_ls_json(pm: &PackageManager, trusted_only: bool) {
             let alias = dep.name.slice(string_bytes);
             let mut version: Vec<u8> = Vec::new();
             let _ = write!(version, "{}", resolution.fmt(string_bytes, PathSep::Posix));
-            // A workspace package lives in its own folder; the root node_modules
-            // only links it, and the isolated linker does not always do that.
+            // A workspace package's path is its own folder, not the link in node_modules.
             let path = if resolution.tag == ResolutionTag::Workspace {
                 Path::resolve_path::join_string_buf::<Path::resolve_path::platform::Auto>(
                     &mut path_buf[..],

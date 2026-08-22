@@ -675,6 +675,7 @@ _bun_update_completion() {
 
 _bun_outdated_completion() {
     _arguments -s -C \
+        '--json[Output in JSON format]' \
         '--cwd[Set a specific cwd]:cwd' \
         '--verbose[Excessively verbose logging]' \
         '--no-progress[Disable the progress bar]' \

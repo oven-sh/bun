@@ -532,7 +532,7 @@ impl Subcommand {
     }
 
     pub(crate) fn supports_json_output(self) -> bool {
-        matches!(self, Self::Audit | Self::Pm | Self::Info)
+        matches!(self, Self::Audit | Self::Pm | Self::Info | Self::Outdated)
     }
 
     // TODO: make all subcommands find root and chdir

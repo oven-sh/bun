@@ -2175,6 +2175,12 @@ where
                             response_stream.sink.ctx = None;
                             this.render_metadata();
                         }
+                        // Terminate the header section now so clients observe the
+                        // response before the stream's first chunk (SSE streams may
+                        // be idle indefinitely). Idempotent if assign_to_stream
+                        // already wrote a chunk; `false` leaves uncork to the
+                        // enclosing cork scope.
+                        resp.flush_headers(false);
 
                         // TODO: should this timeout?
                         let body_value = this.response_mut().unwrap().get_body_value();

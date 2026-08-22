@@ -1470,13 +1470,30 @@ impl Run<'_> {
         // ── core run-loop ──────────────────────────────────────────────────
         if vm.is_watcher_enabled() {
             vm.report_exception_in_hot_reloaded_module_if_needed();
+            // 'beforeExit' is dispatched when a generation's work drains: once
+            // for the initial evaluation, again whenever the loop had work and
+            // ran out of it, and again for a reload (which, for an entry with
+            // nothing to transpile off-thread, is evaluated entirely inside the
+            // wakeup that delivered it, without the loop ever being alive).
+            // `tick_possibly_forever()` also returns for its bounded wait, a
+            // signal, or an unref'd poll; none of those is a drain.
+            let mut dispatch_before_exit = true;
+            let mut generation = vm.hot_reload_counter;
             loop {
                 while vm.is_event_loop_alive() {
                     vm.tick();
                     vm.report_exception_in_hot_reloaded_module_if_needed();
                     vm.auto_tick_active();
+                    dispatch_before_exit = true;
                 }
-                vm.on_before_exit();
+                if generation != vm.hot_reload_counter {
+                    generation = vm.hot_reload_counter;
+                    dispatch_before_exit = true;
+                }
+                if dispatch_before_exit {
+                    dispatch_before_exit = false;
+                    vm.on_before_exit();
+                }
                 vm.report_exception_in_hot_reloaded_module_if_needed();
                 // SAFETY: `event_loop` is a self-pointer into this VM; uniquely
                 // accessed here. Watcher arm keeps the process alive across

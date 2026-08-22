@@ -350,6 +350,8 @@ const errors: ErrorCodeMapping = [
   // distinct from a malformed chunk-size line (HPE_INVALID_CHUNK_SIZE).
   ["HPE_STRICT", Error],
   ["ERR_NOT_BUILDING_SNAPSHOT", Error],
+  ["ERR_HEAP_PROFILE_HAVE_BEEN_STARTED", Error],
+  ["ERR_CPU_PROFILE_TOO_MANY", Error],
   ["ERR_CANNOT_WATCH_SIGINT", Error],
   ["ERR_INSPECTOR_NOT_AVAILABLE", Error],
   ["ERR_INVALID_REPL_EVAL_CONFIG", TypeError],

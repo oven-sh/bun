@@ -7,6 +7,7 @@ const {
   validateEncoding,
   getValidatedPath,
   throwIfNullBytesInFileName,
+  warnOnNonPortableTemplate,
 } = require("internal/validators");
 
 const kEmptyObject = Object.freeze(Object.create(null));
@@ -24,11 +25,49 @@ function lazyGlob() {
 
 const { guardCallback, kCustomPromisifyArgsSymbol } = require("internal/shared");
 
+const asyncHooks = require("internal/async_hooks");
+const asyncHooksState = asyncHooks.state;
+
+// node models every callback-style fs request as an FSREQCALLBACK AsyncWrap.
+function trackFsRequest(guarded) {
+  const asyncId = asyncHooks.newAsyncId();
+  const triggerAsyncId = asyncHooks.getDefaultTriggerAsyncId();
+  const resource = {};
+  asyncHooks.emitInit(asyncId, "FSREQCALLBACK", triggerAsyncId, resource);
+  return function fsReqCallback(a, b, c) {
+    asyncHooks.emitBefore(asyncId, triggerAsyncId, resource);
+    try {
+      switch (arguments.length) {
+        case 0:
+          return guarded();
+        case 1:
+          return guarded(a);
+        case 2:
+          return guarded(a, b);
+        case 3:
+          return guarded(a, b, c);
+        default:
+          return guarded.$apply(undefined, arguments);
+      }
+    } finally {
+      // emitDestroy only queues; the delivered order stays init/before/after/
+      // destroy, matching node's own tick dispatcher.
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/process/task_queues.js#L96-L100
+      asyncHooks.emitDestroy(asyncId);
+      asyncHooks.emitAfter(asyncId);
+    }
+  };
+}
+
 // guardCallback reroutes a throw inside the user callback to the
 // uncaughtException path instead of rejecting the internal promise chain.
 function wrapFsCallback(callback) {
-  return guardCallback(callback);
+  const guarded = guardCallback(callback);
+  return asyncHooksState.active ? trackFsRequest(guarded) : guarded;
 }
+
+// One-shot latch for the DEP0187 warning node:fs emits at most once per process.
+var showExistsDeprecation = true;
 
 // Validates and returns the wrapped callback.
 // Callers must use the return value, not the argument.
@@ -215,6 +254,7 @@ var access = function access(path, mode, callback) {
     }
 
     callback = ensureCallback(callback);
+    warnOnNonPortableTemplate(prefix);
 
     fs.mkdtemp(prefix, options).then(function (folder) {
       callback(null, folder);
@@ -464,8 +504,22 @@ var access = function access(path, mode, callback) {
   closeSync = fs.closeSync.bind(fs),
   copyFileSync = fs.copyFileSync.bind(fs),
   // This behavior - never throwing -- matches Node.js behavior.
-  // https://github.com/nodejs/node/blob/c82f3c9e80f0eeec4ae5b7aedd1183127abda4ad/lib/fs.js#L275C1-L295C1
-  existsSync = function existsSync(_path: string) {
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L273-L287
+  existsSync = function existsSync(path: string) {
+    // Node's getValidatedPath accepts only a string, a Uint8Array, or a URL;
+    // anything else is the ERR_INVALID_ARG_TYPE that DEP0187 warns about once
+    // before existsSync swallows it and answers false.
+    if (typeof path !== "string" && !$isTypedArrayView(path) && !(path instanceof URL)) {
+      if (showExistsDeprecation) {
+        showExistsDeprecation = false;
+        process.emitWarning(
+          "Passing invalid argument types to fs.existsSync is deprecated",
+          "DeprecationWarning",
+          "DEP0187",
+        );
+      }
+      return false;
+    }
     try {
       return fs.existsSync.$apply(fs, arguments);
     } catch {
@@ -485,7 +539,10 @@ var access = function access(path, mode, callback) {
   linkSync = fs.linkSync.bind(fs) as unknown as typeof import("node:fs").linkSync,
   lstatSync = fs.lstatSync.bind(fs) as unknown as typeof import("node:fs").lstatSync,
   mkdirSync = fs.mkdirSync.bind(fs) as unknown as typeof import("node:fs").mkdirSync,
-  mkdtempSync = fs.mkdtempSync.bind(fs) as unknown as typeof import("node:fs").mkdtempSync,
+  mkdtempSync = function mkdtempSync(prefix, options) {
+    warnOnNonPortableTemplate(prefix);
+    return fs.mkdtempSync(prefix, options);
+  } as unknown as typeof import("node:fs").mkdtempSync,
   mkdtempDisposableSync = function mkdtempDisposableSync(prefix, options) {
     const path = mkdtempSync(prefix, options);
     // Stash the full path in case of process.chdir()

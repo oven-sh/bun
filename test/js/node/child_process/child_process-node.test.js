@@ -391,7 +391,8 @@ describe("child_process default options", () => {
     // because the process can exit before the stream is closed and the data is read
     child.stdout.on("close", () => {
       try {
-        expect(response).toContain(`TMPDIR: "${platformTmpDir.replace(/\\/g, "\\\\")}"`);
+        // --print renders through node's util.inspect: single-quoted strings.
+        expect(response).toContain(`TMPDIR: '${platformTmpDir.replace(/\\/g, "\\\\")}'`);
         done();
       } catch (e) {
         done(e);

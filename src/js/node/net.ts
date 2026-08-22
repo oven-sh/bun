@@ -39,7 +39,7 @@ const {
 import type { Socket, SocketHandler, SocketListener } from "bun";
 import type { Server as NetServer, Socket as NetSocket, ServerOpts } from "node:net";
 import type { TLSSocket } from "node:tls";
-const { kTimeout, getTimerDuration } = require("internal/timers");
+const { kTimeout, getTimerDuration, setUnrefTimeout } = require("internal/timers");
 const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32, validateString } = require("internal/validators"); // prettier-ignore
 const { isIPv4, isIPv6, isIP } = require("internal/net/isIP");
 const { kArmHandshakeTimeout, kSecureConnectDone, kVerifyError } = require("internal/net/symbols");
@@ -1710,7 +1710,7 @@ function Socket(options?) {
         if (dest === true) {
           let ret;
           try {
-            ret = onreadCallback(total - offset, true);
+            ret = onreadCallback.$call(self, total - offset, true);
             if (onreadBufferIsFn) {
               const next = onreadBuffer();
               if (isUint8Array(next)) self[kOnreadBuffer] = next;
@@ -1741,7 +1741,7 @@ function Socket(options?) {
         offset += n;
         let ret;
         try {
-          ret = onreadCallback(n, dest);
+          ret = onreadCallback.$call(self, n, dest);
           if (onreadBufferIsFn) {
             const next = onreadBuffer();
             if (isUint8Array(next)) self[kOnreadBuffer] = next;
@@ -2692,7 +2692,7 @@ Socket.prototype.setTimeout = {
         this.removeListener("timeout", callback);
       }
     } else {
-      this[kTimeout] = setTimeout(this._onTimeout.bind(this), msecs).unref();
+      this[kTimeout] = setUnrefTimeout(this._onTimeout.bind(this), msecs);
 
       if (callback !== undefined) {
         validateFunction(callback, "callback");
@@ -3319,7 +3319,7 @@ function internalConnectMultiple(context, canceled?) {
     $debug("connect/multiple: setting the attempt timeout to %d ms", context.timeout);
 
     // If the attempt has not returned an error, start the connection timer
-    context[kTimeout] = setTimeout(internalConnectMultipleTimeout, context.timeout, context, req, self._handle).unref();
+    context[kTimeout] = setUnrefTimeout(internalConnectMultipleTimeout, context.timeout, context, req, self._handle);
   }
 }
 
@@ -3713,8 +3713,6 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
         port = 0;
       }
 
-      const isLinux = process.platform === "linux" || process.platform === "android";
-
       // Match Node's listen() option normalization + validation.
       // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/net.js#L2145
       if ((port === undefined && "port" in options) || port === null) {
@@ -3730,12 +3728,14 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
         path = undefined;
       } else if (isPipeName(path)) {
         const isAbstractPath = path.startsWith("\0");
-        if (isLinux && isAbstractPath && (options.writableAll || options.readableAll)) {
-          const message = `The argument 'options' can not set readableAll or writableAll to true when path is abstract unix socket. Received ${JSON.stringify(options)}`;
-
-          const error = new TypeError(message);
-          error.code = "ERR_INVALID_ARG_VALUE";
-          throw error;
+        if (isAbstractPath && (options.writableAll || options.readableAll)) {
+          // The "writableAllt" typo is node's, and the test matches it verbatim.
+          // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2182
+          throw $ERR_INVALID_ARG_VALUE(
+            "options",
+            options,
+            "can not set readableAll or writableAllt to true when path is abstract unix socket",
+          );
         }
 
         hostname = path;
@@ -4044,48 +4044,6 @@ function listenInCluster(
   exclusive = !!exclusive;
 
   if (cluster === undefined) cluster = require("node:cluster");
-
-  if (
-    !cluster.isPrimary &&
-    !exclusive &&
-    typeof address === "string" &&
-    address.length > 0 &&
-    typeof port === "number" &&
-    port >= 0 &&
-    isIP(address) === 0
-  ) {
-    const lookupListeningId = (server[kClusterListeningId] = (server[kClusterListeningId] || 0) + 1);
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2259-L2278
-    require("node:dns").lookup(address, (err, ip, family) => {
-      if (lookupListeningId !== server[kClusterListeningId]) return;
-      if (err) {
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2268-L2269
-        server.emit("error", err);
-        return;
-      }
-      listenInCluster(
-        server,
-        ip,
-        port,
-        family === 6 ? 6 : 4,
-        backlog,
-        fd,
-        exclusive,
-        ipv6Only,
-        reusePort,
-        readableAll,
-        writableAll,
-        flags,
-        options,
-        path,
-        hostname,
-        tls,
-        contexts,
-        onListen,
-      );
-    });
-    return;
-  }
 
   if (cluster.isPrimary || exclusive) {
     server[kRealListen](

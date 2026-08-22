@@ -2643,17 +2643,17 @@ pub mod args {
     impl Rename {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Rename> {
             let old_path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| {
-                ctx.throw_invalid_argument_type_value(
+                ctx.throw_invalid_argument_type_list(
                     b"oldPath",
-                    b"string or an instance of Buffer or URL",
+                    &[b"string", b"Buffer", b"URL"],
                     arguments.next().unwrap_or(JSValue::UNDEFINED),
                 )
             })?;
             // `Drop for PathLike` runs on early return.
             let new_path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| {
-                ctx.throw_invalid_argument_type_value(
+                ctx.throw_invalid_argument_type_list(
                     b"newPath",
-                    b"string or an instance of Buffer or URL",
+                    &[b"string", b"Buffer", b"URL"],
                     arguments.next().unwrap_or(JSValue::UNDEFINED),
                 )
             })?;
@@ -2671,9 +2671,7 @@ pub mod args {
     fs_args_path_forwarders!(Truncate; path);
     impl Truncate {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Truncate> {
-            let path = PathOrFileDescriptor::from_js(ctx, arguments)?.ok_or_else(|| {
-                ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray"))
-            })?;
+            let path = PathOrFileDescriptor::from_js_required(ctx, arguments, "path")?;
             let len: u64 = 'brk: {
                 let Some(len_value) = arguments.next() else {
                     break 'brk 0;
@@ -2965,7 +2963,9 @@ pub mod args {
                             break 'brk false;
                         }
                         arguments.eat();
-                        if let Some(b) = next_val.get_boolean_strict(ctx, "bigint")? {
+                        if let Some(b) =
+                            next_val.get_boolean_strict_named(ctx, "bigint", "options.bigint")?
+                        {
                             break 'brk b;
                         }
                     }
@@ -2994,10 +2994,16 @@ pub mod args {
                             break 'brk false;
                         }
                         arguments.eat();
-                        if let Some(v) = next_val.get_boolean_strict(ctx, "throwIfNoEntry")? {
+                        if let Some(v) = next_val.get_boolean_strict_named(
+                            ctx,
+                            "throwIfNoEntry",
+                            "options.throwIfNoEntry",
+                        )? {
                             throw_if_no_entry = v;
                         }
-                        if let Some(b) = next_val.get_boolean_strict(ctx, "bigint")? {
+                        if let Some(b) =
+                            next_val.get_boolean_strict_named(ctx, "bigint", "options.bigint")?
+                        {
                             break 'brk b;
                         }
                     }
@@ -3027,7 +3033,9 @@ pub mod args {
                             break 'brk false;
                         }
                         arguments.eat();
-                        if let Some(b) = next_val.get_boolean_strict(ctx, "bigint")? {
+                        if let Some(b) =
+                            next_val.get_boolean_strict_named(ctx, "bigint", "options.bigint")?
+                        {
                             break 'brk b;
                         }
                     }
@@ -3355,7 +3363,9 @@ pub mod args {
             if let Some(val) = arguments.next() {
                 arguments.eat();
                 if val.is_object() {
-                    if let Some(b) = val.get_boolean_strict(ctx, "recursive")? {
+                    if let Some(b) =
+                        val.get_boolean_strict_named(ctx, "recursive", "options.recursive")?
+                    {
                         recursive = b;
                     }
                     if let Some(mode_) = val.get(ctx, "mode")? {
@@ -3389,9 +3399,9 @@ pub mod args {
             arguments: &mut ArgumentsSlice,
         ) -> JsResult<MkdirTemp> {
             let prefix = PathLike::from_js(ctx, arguments)?.ok_or_else(|| {
-                ctx.throw_invalid_argument_type_value(
+                ctx.throw_invalid_argument_type_list(
                     b"prefix",
-                    b"string, Buffer, or URL",
+                    &[b"string", b"Buffer", b"URL"],
                     arguments.next().unwrap_or(JSValue::UNDEFINED),
                 )
             })?;
@@ -3436,10 +3446,16 @@ pub mod args {
                     _ => {
                         if val.is_object() {
                             encoding = get_encoding(val, ctx, encoding)?;
-                            if let Some(r) = val.get_boolean_strict(ctx, "recursive")? {
+                            if let Some(r) =
+                                val.get_boolean_strict_named(ctx, "recursive", "options.recursive")?
+                            {
                                 recursive = r;
                             }
-                            if let Some(w) = val.get_boolean_strict(ctx, "withFileTypes")? {
+                            if let Some(w) = val.get_boolean_strict_named(
+                                ctx,
+                                "withFileTypes",
+                                "options.withFileTypes",
+                            )? {
                                 with_file_types = w;
                             }
                         }
@@ -3596,12 +3612,16 @@ pub mod args {
             let bv = buffer_value
                 .ok_or_else(|| ctx.throw_invalid_arguments(format_args!("data is required")))?;
             let buffer = StringOrBuffer::from_js(ctx, bv)?.ok_or_else(|| {
-                ctx.throw_invalid_argument_type_value(b"buffer", b"string or TypedArray", bv)
+                ctx.throw_invalid_argument_type_list(
+                    b"buffer",
+                    &[b"string", b"Buffer", b"TypedArray", b"DataView"],
+                    bv,
+                )
             })?;
             if bv.is_string() && !bv.is_string_literal() {
-                return Err(ctx.throw_invalid_argument_type_value(
+                return Err(ctx.throw_invalid_argument_type_list(
                     b"buffer",
-                    b"string or TypedArray",
+                    &[b"string", b"Buffer", b"TypedArray", b"DataView"],
                     bv,
                 ));
             }
@@ -3660,14 +3680,35 @@ pub mod args {
                             break 'parse;
                         }
                         let length = current.to_int64();
-                        let max_len = ((buf_len as u64 - args.offset) as i64).min(i32::MAX as i64);
-                        if length > max_len || length < 0 {
+                        // validateOffsetLengthWrite then validateInt32(length, 'length', 0),
+                        // in that order — each stage words its range differently.
+                        let remaining = (buf_len as u64 - args.offset) as i64;
+                        if length > remaining {
+                            return Err(ctx.throw_range_error(
+                                length as f64,
+                                bun_jsc::RangeErrorOptions {
+                                    field_name: b"length",
+                                    max: remaining,
+                                    ..Default::default()
+                                },
+                            ));
+                        }
+                        if length < 0 {
                             return Err(ctx.throw_range_error(
                                 length as f64,
                                 bun_jsc::RangeErrorOptions {
                                     field_name: b"length",
                                     min: 0,
-                                    max: max_len,
+                                    ..Default::default()
+                                },
+                            ));
+                        }
+                        if length > i32::MAX as i64 {
+                            return Err(ctx.throw_range_error(
+                                length as f64,
+                                bun_jsc::RangeErrorOptions {
+                                    field_name: b"length",
+                                    msg: b">= 0 && <= 2147483647",
                                     ..Default::default()
                                 },
                             ));
@@ -3792,7 +3833,11 @@ pub mod args {
                 0.0
             };
             let buffer = Buffer::from_js(ctx, buffer_value).ok_or_else(|| {
-                ctx.throw_invalid_argument_type_value(b"buffer", b"TypedArray", buffer_value)
+                ctx.throw_invalid_argument_type_list(
+                    b"buffer",
+                    &[b"Buffer", b"TypedArray", b"DataView"],
+                    buffer_value,
+                )
             })?;
 
             //   if (length === 0) {
@@ -3813,9 +3858,12 @@ pub mod args {
 
             let buf_len = buffer.slice().len();
             if buf_len == 0 {
+                let received = JSGlobalObject::inspect_for_error_message(ctx, buffer_value)?;
                 return Err(validators::throw_err_invalid_arg_value(
                     ctx,
-                    format_args!("The argument 'buffer' is empty and cannot be written."),
+                    format_args!(
+                        "The argument 'buffer' is empty and cannot be written. Received {received}"
+                    ),
                 ));
             }
             // validateOffsetLengthRead(offset, length, buffer.byteLength);
@@ -3995,11 +4043,7 @@ pub mod args {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<ReadFile> {
             // `Drop` on `path` covers every
             // `?`-propagated JsError below.
-            let path = PathOrFileDescriptor::from_js(ctx, arguments)?.ok_or_else(|| {
-                ctx.throw_invalid_arguments(format_args!(
-                    "path must be a string or a file descriptor"
-                ))
-            })?;
+            let path = PathOrFileDescriptor::from_js_required(ctx, arguments, "path")?;
             let mut encoding = Encoding::Buffer;
             let mut flag = FileSystemFlags::R;
             let mut abort_signal = scopeguard::guard(None::<AbortSignalRef>, |s| {
@@ -4021,9 +4065,9 @@ pub mod args {
                             signal.pending_activity_ref();
                             *abort_signal = Some(signal);
                         } else {
-                            return Err(ctx.throw_invalid_argument_type_value(
+                            return Err(ctx.throw_invalid_argument_type_list(
                                 b"signal",
-                                b"AbortSignal",
+                                &[b"AbortSignal"],
                                 value,
                             ));
                         }
@@ -4093,11 +4137,7 @@ pub mod args {
         ) -> JsResult<WriteFile> {
             // `Drop` on `path` covers every
             // `?`-propagated JsError below.
-            let path = PathOrFileDescriptor::from_js(ctx, arguments)?.ok_or_else(|| {
-                ctx.throw_invalid_arguments(format_args!(
-                    "path must be a string or a file descriptor"
-                ))
-            })?;
+            let path = PathOrFileDescriptor::from_js_required(ctx, arguments, "path")?;
             let data_value = arguments
                 .next_eat()
                 .ok_or_else(|| ctx.throw_invalid_arguments(format_args!("data is required")))?;
@@ -4130,9 +4170,9 @@ pub mod args {
                             signal.pending_activity_ref();
                             *abort_signal = Some(signal);
                         } else {
-                            return Err(ctx.throw_invalid_argument_type_value(
+                            return Err(ctx.throw_invalid_argument_type_list(
                                 b"signal",
-                                b"AbortSignal",
+                                &[b"AbortSignal"],
                                 value,
                             ));
                         }

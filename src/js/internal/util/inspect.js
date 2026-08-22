@@ -2835,5 +2835,6 @@ export default {
   format,
   formatWithOptions,
   getStringWidth,
+  previewEntries,
   stripVTControlCharacters,
 };

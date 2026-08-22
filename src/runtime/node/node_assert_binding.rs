@@ -9,11 +9,12 @@ use super::node_assert;
 ///     Delete = 1,
 ///     Equal  = 2,
 /// }
-/// // `value` is a line, or a char code when `lines` is false.
+/// // `value` is a line, or a char code when `lines` is false. Arrays (one
+/// // string per line, for `util.diff()`) always diff by line.
 /// type Diff = { kind: DiffType, value: string | number };
 /// declare function myersDiff(
-///     actual: string,
-///     expected: string,
+///     actual: string | string[],
+///     expected: string | string[],
 ///     checkCommaDisparity?: boolean,
 ///     lines?: boolean,
 /// ): Diff[];
@@ -88,6 +89,34 @@ fn run(
 
     let actual_arg: JSValue = frame.argument(0);
     let expected_arg: JSValue = frame.argument(1);
+
+    // `util.diff()` also diffs arrays of strings, one element per line. Only
+    // the raw list takes them; the renderers want strings and fall through to
+    // the type error below.
+    if let node_assert::Output::List {
+        check_comma_disparity,
+        ..
+    } = *output
+    {
+        if actual_arg.is_array() || expected_arg.is_array() {
+            if !actual_arg.is_array() {
+                return Err(global.throw_invalid_argument_type_value("actual", "array", actual_arg));
+            }
+            if !expected_arg.is_array() {
+                return Err(global.throw_invalid_argument_type_value(
+                    "expected",
+                    "array",
+                    expected_arg,
+                ));
+            }
+            return node_assert::myers_diff_arrays(
+                global,
+                actual_arg,
+                expected_arg,
+                check_comma_disparity,
+            );
+        }
+    }
 
     if !actual_arg.is_string() {
         return Err(global.throw_invalid_argument_type_value("actual", "string", actual_arg));

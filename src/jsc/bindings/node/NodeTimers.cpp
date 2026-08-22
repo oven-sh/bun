@@ -1,6 +1,7 @@
 #include "NodeTimers.h"
 
 #include "ErrorCode.h"
+#include "NodeAsyncHooks.h"
 #include "headers.h"
 #include "ZigGlobalObject.h"
 #include "InternalModuleRegistry.h"
@@ -166,7 +167,11 @@ JSC_DEFINE_HOST_FUNCTION(functionSetImmediate,
     }
     }
 
-    return Bun__Timer__setImmediate(globalObject, JSC::JSValue::encode(job), JSValue::encode(arguments));
+    JSC::EncodedJSValue immediate = Bun__Timer__setImmediate(globalObject, JSC::JSValue::encode(job), JSValue::encode(arguments));
+    RETURN_IF_EXCEPTION(scope, {});
+    emitImmediateAsyncHook(globalObject, JSValue::decode(immediate), ImmediateAsyncHook::Init);
+    RETURN_IF_EXCEPTION(scope, {});
+    return immediate;
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionClearImmediate,
@@ -188,7 +193,12 @@ JSC_DEFINE_HOST_FUNCTION(functionClearImmediate,
     }
 #endif
 
-    return Bun__Timer__clearImmediate(globalObject, JSC::JSValue::encode(timer_or_num));
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::EncodedJSValue result = Bun__Timer__clearImmediate(globalObject, JSC::JSValue::encode(timer_or_num));
+    RETURN_IF_EXCEPTION(scope, {});
+    emitImmediateAsyncHook(globalObject, timer_or_num, ImmediateAsyncHook::Destroy);
+    RETURN_IF_EXCEPTION(scope, {});
+    return result;
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionClearInterval,

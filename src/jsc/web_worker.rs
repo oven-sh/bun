@@ -85,6 +85,10 @@ pub struct WebWorker {
     unresolved_specifier: Box<[u8]>,
     preloads: Vec<Box<[u8]>>,
     name: bun_core::ZBox,
+    /// `--heap-prof` settings for this worker, decided on the parent thread in
+    /// `create()` (from `execArgv`, or the parent VM's config when execArgv is
+    /// inherited). Read once on the worker thread in `start_vm()`.
+    heap_profiler_config: Option<crate::bun_heap_profiler::HeapProfilerConfig>,
 
     // ---- Cross-thread ----------------------------------------------------------
     ref_count: bun_ptr::ThreadSafeRefCount<WebWorker>,
@@ -416,6 +420,21 @@ impl WebWorker {
             } else {
                 name_str.to_owned_slice_z()
             },
+            heap_profiler_config: if inherit_exec_argv {
+                // Inherited execArgv means inherited profiling flags; snapshot
+                // the parent's config here on the parent thread (the only
+                // thread that mutates it, in `on_exit`/self-kill).
+                parent_ref.heap_profiler_config.clone()
+            } else {
+                // SAFETY: caller passed valid (ptr,len) (or `(null,0)`);
+                // strings live as long as the C++ `WorkerOptions`.
+                unsafe {
+                    crate::bun_heap_profiler::parse_worker_exec_argv(bun_core::ffi::slice(
+                        exec_argv_ptr,
+                        exec_argv_len,
+                    ))
+                }
+            },
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             requested_terminate: AtomicBool::new(false),
             vm_handle: bun_threading::Guarded::new(None),
@@ -727,6 +746,17 @@ impl WebWorker {
             vm_ref.is_main_thread = false;
             VirtualMachine::set_is_main_thread_vm(false);
             vm_ref.on_unhandled_rejection = on_unhandled_rejection;
+
+            // `--heap-prof` via execArgv: `vm.on_exit()` (worker thread,
+            // `shutdown()`) writes the profile from this config.
+            if let Some(config) = &self.heap_profiler_config {
+                vm_ref.heap_profiler_config = Some(config.clone());
+                if !config.text_format {
+                    // Safe pre-publish: the JSC VM exists (init_worker) and no
+                    // JS/GC runs on it until spin().
+                    crate::bun_heap_profiler::start_heap_profiler(vm_ref.jsc_vm_mut());
+                }
+            }
         }
 
         // Publish now (rather than at the end of startVM) so that:

@@ -1444,10 +1444,17 @@ extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalO
     auto eventType = Identifier::fromString(vm, "unhandledRejection"_s);
     auto& wrapped = process->wrapped();
     if (wrapped.listenerCount(eventType) > 0) {
+        auto& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        // Dispatch through a JS trampoline so listeners run with JS caller frames (as in
+        // node); Error.captureStackTrace(err, listener) must leave a non-empty stack.
+        JSC::JSFunction* emitter = JSC::JSFunction::create(vm, globalObject, processObjectInternalsEmitUnhandledRejectionFromNativeCodeGenerator(vm), globalObject);
         MarkedArgumentBuffer args;
         args.append(reason);
         args.append(promise);
-        wrapped.emit(eventType, args);
+        auto callData = JSC::getCallData(emitter);
+        JSC::profiledCall(globalObject, JSC::ProfilingReason::API, emitter, callData, process, args);
+        CLEAR_IF_EXCEPTION(scope);
         return true;
     }
 
@@ -1469,18 +1476,19 @@ extern "C" bool Bun__emitHandledPromiseEvent(JSC::JSGlobalObject* lexicalGlobalO
 
     auto eventType = Identifier::fromString(vm, "rejectionHandled"_s);
 
-    if (Bun__VM__allowRejectionHandledWarning(globalObject->bunVM())) {
-        Process::emitWarning(globalObject, jsString(vm, String("Promise rejection was handled asynchronously"_s)), jsString(vm, String("PromiseRejectionHandledWarning"_s)), jsUndefined(), jsUndefined());
-        CLEAR_IF_EXCEPTION(scope);
-        if (vm.hasPendingTerminationException()) [[unlikely]]
-            return true;
-    }
     auto& wrapped = process->wrapped();
     if (wrapped.listenerCount(eventType) > 0) {
         MarkedArgumentBuffer args;
         args.append(promise);
         wrapped.emit(eventType, args);
         return true;
+    }
+
+    // Node only warns when nothing handled the 'rejectionHandled' event
+    // (processPromiseRejections: `if (!process.emit('rejectionHandled', ...))`).
+    if (Bun__VM__allowRejectionHandledWarning(globalObject->bunVM())) {
+        Process::emitWarning(globalObject, jsString(globalObject->vm(), String("Promise rejection was handled asynchronously"_s)), jsString(globalObject->vm(), String("PromiseRejectionHandledWarning"_s)), jsUndefined(), jsUndefined());
+        CLEAR_IF_EXCEPTION(scope);
     }
 
     return false;
@@ -2205,6 +2213,24 @@ __attribute__((minsize)) JSValue Process::emitWarning(JSC::JSGlobalObject* lexic
         auto s = warning.getString(globalObject);
         errorInstance = createError(globalObject, !s.isEmpty() ? s : "Warning"_s);
         errorInstance->putDirect(vm, vm.propertyNames->name, type, JSC::PropertyAttribute::DontEnum | 0);
+        // With no JS frames on the stack (native emission) the created error
+        // has no `stack` at all; node always produces at least the
+        // "<name>: <message>" header line and warning handlers read it.
+        JSValue existingStack = errorInstance->get(globalObject, vm.propertyNames->stack);
+        RETURN_IF_EXCEPTION(scope, {});
+        bool stackMissing = existingStack.isUndefinedOrNull();
+        if (!stackMissing && existingStack.isString()) {
+            auto stackString = existingStack.getString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            stackMissing = stackString.isEmpty();
+        }
+        if (stackMissing) {
+            auto typeString = type.isString() ? type.getString(globalObject) : String("Warning"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+            errorInstance->putDirect(vm, vm.propertyNames->stack,
+                jsString(vm, makeString(typeString, ": "_s, !s.isEmpty() ? s : String("Warning"_s))),
+                static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
+        }
     } else if (warning.isCell() && warning.asCell()->type() == ErrorInstanceType) {
         errorInstance = warning.getObject();
     } else {
@@ -2908,6 +2934,21 @@ static JSValue constructNodeWorkerStdioStream(JSC::JSGlobalObject* globalObject,
     return result;
 }
 
+// Resolves `name` via getDirect() along the prototype chain (never runs user code).
+// An exotic chain yields no slot and compares unequal to the recorded pristine value.
+static JSValue directPropertyValue(JSC::VM& vm, JSObject* object, const JSC::Identifier& name)
+{
+    for (JSObject* current = object; current;) {
+        if (JSValue value = current->getDirect(vm, name))
+            return value;
+        JSValue proto = current->getPrototypeDirect();
+        if (!proto.isObject())
+            return {};
+        current = asObject(proto);
+    }
+    return {};
+}
+
 static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC::JSObject* processObject, int fd)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -2956,7 +2997,49 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
         Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(globalObject, JSValue::encode(resultObject->getIndex(globalObject, 1)));
     }
 
-    return resultObject->getIndex(globalObject, 0);
+    JSValue stream = resultObject->getIndex(globalObject, 0);
+    RETURN_IF_EXCEPTION(scope, jsUndefined());
+    if (JSObject* streamObject = stream.getObject()) {
+        JSValue write = streamObject->get(globalObject, WebCore::builtinNames(vm).writePublicName());
+        RETURN_IF_EXCEPTION(scope, jsUndefined());
+        uncheckedDowncast<Process>(processObject)->setStdioWriteStream(vm, fd, streamObject, write);
+    }
+    return stream;
+}
+
+extern "C" void Bun__Console__onStdioWriteStreamCreated();
+
+void Process::setStdioWriteStream(JSC::VM& vm, int fd, JSObject* stream, JSValue pristineWrite)
+{
+    ASSERT(fd == 1 || fd == 2);
+    Bun__Console__onStdioWriteStreamCreated();
+    unsigned slot = static_cast<unsigned>(fd) - 1;
+    m_stdioWriteStream[slot].set(vm, this, stream);
+    m_pristineStdioWrite[slot].set(vm, this, pristineWrite);
+    // The console's getDirect() check only agrees with get() above while `write` is a
+    // plain data property on the chain, which is how Bun's stream classes declare it.
+    ASSERT(directPropertyValue(vm, stream, WebCore::builtinNames(vm).writePublicName()) == pristineWrite);
+}
+
+// Console write path (ConsoleObject.rs). Null when the stream was never created or
+// still has Bun's own `write`. No throw scope: nothing here can run user code.
+extern "C" JSC::EncodedJSValue Bun__Process__stdioStreamWithReplacedWrite(Zig::GlobalObject* globalObject, int32_t fd)
+{
+    if (!globalObject->hasProcessObject())
+        return JSValue::encode({});
+    auto& vm = JSC::getVM(globalObject);
+    return JSValue::encode(globalObject->processObject()->stdioStreamWithReplacedWrite(vm, fd));
+}
+
+JSObject* Process::stdioStreamWithReplacedWrite(JSC::VM& vm, int fd)
+{
+    ASSERT(fd == 1 || fd == 2);
+    unsigned slot = static_cast<unsigned>(fd) - 1;
+    JSObject* stream = m_stdioWriteStream[slot].get();
+    if (!stream)
+        return nullptr;
+    JSValue current = directPropertyValue(vm, stream, WebCore::builtinNames(vm).writePublicName());
+    return current == m_pristineStdioWrite[slot].get() ? nullptr : stream;
 }
 
 static JSValue constructStdout(VM& vm, JSObject* processObject)
@@ -3692,6 +3775,10 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_argv);
     visitor.append(thisObject->m_execArgv);
     visitor.append(thisObject->m_onWarning);
+    for (unsigned i = 0; i < 2; ++i) {
+        visitor.append(thisObject->m_stdioWriteStream[i]);
+        visitor.append(thisObject->m_pristineStdioWrite[i]);
+    }
 
     thisObject->m_cpuUsageStructure.visit(visitor);
     thisObject->m_resourceUsageStructure.visit(visitor);

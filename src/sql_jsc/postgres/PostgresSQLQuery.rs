@@ -63,12 +63,9 @@ pub struct PostgresSQLQuery {
 // `destroy` is `heap::take` in `deref_`.
 impl Drop for PostgresSQLQuery {
     fn drop(&mut self) {
-        if self.otel.is_active() {
-            self.otel_end(
-                bun_jsc::virtual_machine::VirtualMachine::get().global(),
-                None,
-            );
-        }
+        // Dropped without resolve/reject: the query never got a reply, so no span.
+        self.otel
+            .discard(bun_jsc::virtual_machine::VirtualMachine::get().global());
         self.release_statement();
         self.query.deref();
         self.cursor_name.deref();

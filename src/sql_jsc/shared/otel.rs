@@ -60,6 +60,14 @@ impl QuerySpan {
         span.is_some().then_some(span)
     }
 
+    /// The query is going away without having settled (cancelled / connection
+    /// torn down): it never got a reply, so no span for it.
+    pub fn discard(&self, global: &JSGlobalObject) {
+        if let Some(span) = self.take() {
+            bun_telemetry::db::discard(global.as_ptr().cast(), span);
+        }
+    }
+
     pub fn end(
         &self,
         global: &JSGlobalObject,

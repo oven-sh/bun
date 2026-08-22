@@ -96,7 +96,8 @@ impl JSMySQLQuery {
         // SAFETY: routed only through `CellRefCounted::destroy` (refcount==0);
         // `this` is the sole live owner of its `heap::alloc` allocation.
         unsafe {
-            (*this).otel_end(None);
+            // Destroyed without resolve/reject: the query never got a reply, so no span.
+            (*this).otel.discard((*this).global_object());
             (*this).query.with_mut(|q| q.cleanup());
             drop(bun_core::heap::take(this));
         }

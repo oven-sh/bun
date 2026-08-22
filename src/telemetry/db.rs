@@ -209,6 +209,19 @@ pub fn sql_operation(sql: &[u8]) -> Option<&'static str> {
     SQL_VERBS.get_ascii_case_insensitive(word).copied()
 }
 
+/// Drop a query span without recording it (the query never got a reply).
+pub fn discard(global: *mut c_void, span: NativeSpan) {
+    if !span.is_some() {
+        return;
+    }
+    let cell = rt::with_local(global, |local| pool::discard(&mut local.pool, span));
+    if let (Some(h), Some(cell)) = (rt::hooks(), cell) {
+        if cell.is_some() {
+            (h.release_cell)(cell);
+        }
+    }
+}
+
 /// Finish a query span. `statement` is recorded as `db.query.text` when
 /// statement capture is on.
 pub fn end(

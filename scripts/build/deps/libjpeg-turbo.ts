@@ -95,7 +95,14 @@ export const libjpegTurbo: Dependency = {
     commit: LIBJPEG_TURBO_COMMIT,
   }),
 
-  patches: ["patches/libjpeg-turbo/8bit-only.patch", "patches/libjpeg-turbo/jbun_stubs.c"],
+  patches: [
+    "patches/libjpeg-turbo/8bit-only.patch",
+    // Makes the fast entropy decoder emit JWRN_HUFF_BAD_CODE for an invalid
+    // Huffman code, matching the slow path, so tj3Decompress8's
+    // warnings-are-fatal check rejects corrupt entropy streams (#40118).
+    "patches/libjpeg-turbo/fast-huffman-bad-code.patch",
+    "patches/libjpeg-turbo/jbun_stubs.c",
+  ],
 
   build: cfg => {
     const withSimd: [string, string] = ["#cmakedefine WITH_SIMD 1", "#define WITH_SIMD 1"];

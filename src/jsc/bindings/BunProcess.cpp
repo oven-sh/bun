@@ -84,6 +84,7 @@
 #include <uv.h>
 #include <io.h>
 #include <fcntl.h>
+#include "NodeExeImportsWindows.h"
 // Using the same typedef and define for `mode_t` and `umask` as node on windows.
 // https://github.com/nodejs/node/blob/ad5e2dab4c8306183685973387829c2f69e793da/src/node_process_methods.cc#L29
 #define umask _umask
@@ -405,86 +406,6 @@ extern "C" void CrashHandler__setDlOpenAction(const char* action);
 extern "C" bool Bun__VM__allowAddons(void* vm);
 extern "C" int32_t Bun__addonNeedsGlibcOnMusl(const char* path, size_t len, char* soname_out, size_t soname_cap);
 
-#if OS(WINDOWS)
-// Addons link against node.lib, so their N-API imports name "node.exe"; inside node that name
-// is the running executable, inside bun the loader would go looking for a real node.exe.
-// Point those imports at this process instead: https://github.com/oven-sh/bun/issues/10690
-static void rebindThunks(BYTE* base, HMODULE host, PIMAGE_THUNK_DATA iat, PIMAGE_THUNK_DATA names)
-{
-    size_t count = 0;
-    for (auto* n = names; n->u1.AddressOfData != 0; ++n)
-        ++count;
-    if (count == 0) return;
-
-    DWORD oldProtect = 0;
-    if (!VirtualProtect(iat, count * sizeof(*iat), PAGE_READWRITE, &oldProtect)) return;
-
-    for (size_t i = 0; i < count; ++i) {
-        FARPROC proc;
-        if (IMAGE_SNAP_BY_ORDINAL(names[i].u1.Ordinal)) {
-            proc = GetProcAddress(host, reinterpret_cast<LPCSTR>(static_cast<uintptr_t>(IMAGE_ORDINAL(names[i].u1.Ordinal))));
-        } else {
-            auto* byName = reinterpret_cast<PIMAGE_IMPORT_BY_NAME>(base + names[i].u1.AddressOfData);
-            proc = GetProcAddress(host, reinterpret_cast<LPCSTR>(byName->Name));
-        }
-        if (proc) iat[i].u1.Function = reinterpret_cast<ULONGLONG>(proc);
-    }
-
-    DWORD ignore;
-    VirtualProtect(iat, count * sizeof(*iat), oldProtect, &ignore);
-}
-
-static void rebindNodeExeImports(HMODULE addon)
-{
-    // Serialize across workers so VirtualProtect windows on the shared IAT can't interleave.
-    static WTF::Lock rebindLock;
-    WTF::Locker locker { rebindLock };
-
-    auto* base = reinterpret_cast<BYTE*>(addon);
-    auto* dos = reinterpret_cast<PIMAGE_DOS_HEADER>(base);
-    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return;
-
-    auto* nt = reinterpret_cast<PIMAGE_NT_HEADERS>(base + dos->e_lfanew);
-    if (nt->Signature != IMAGE_NT_SIGNATURE) return;
-
-    HMODULE host = GetModuleHandleW(nullptr);
-    auto isNodeExe = [](const char* name) {
-        return _stricmp(name, "node.exe") == 0;
-    };
-
-    if (nt->OptionalHeader.NumberOfRvaAndSizes > IMAGE_DIRECTORY_ENTRY_IMPORT) {
-        auto& dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
-        if (dir.VirtualAddress && dir.Size) {
-            auto* desc = reinterpret_cast<PIMAGE_IMPORT_DESCRIPTOR>(base + dir.VirtualAddress);
-            for (; desc->Name != 0; ++desc) {
-                if (!isNodeExe(reinterpret_cast<const char*>(base + desc->Name))) continue;
-                if (!desc->OriginalFirstThunk || !desc->FirstThunk) continue;
-                rebindThunks(base, host,
-                    reinterpret_cast<PIMAGE_THUNK_DATA>(base + desc->FirstThunk),
-                    reinterpret_cast<PIMAGE_THUNK_DATA>(base + desc->OriginalFirstThunk));
-            }
-        }
-    }
-
-    if (nt->OptionalHeader.NumberOfRvaAndSizes > IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT) {
-        auto& dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT];
-        if (dir.VirtualAddress && dir.Size) {
-            auto* desc = reinterpret_cast<PIMAGE_DELAYLOAD_DESCRIPTOR>(base + dir.VirtualAddress);
-            for (; desc->DllNameRVA != 0; ++desc) {
-                // Old VC6 delayimp used VAs here; MSVC has emitted RVAs since 2002.
-                if (!desc->Attributes.RvaBased) continue;
-                if (!isNodeExe(reinterpret_cast<const char*>(base + desc->DllNameRVA))) continue;
-                rebindThunks(base, host,
-                    reinterpret_cast<PIMAGE_THUNK_DATA>(base + desc->ImportAddressTableRVA),
-                    reinterpret_cast<PIMAGE_THUNK_DATA>(base + desc->ImportNameTableRVA));
-                if (desc->ModuleHandleRVA)
-                    *reinterpret_cast<HMODULE*>(base + desc->ModuleHandleRVA) = host;
-            }
-        }
-    }
-}
-#endif
-
 JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((minsize)), (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(globalObject_);
@@ -589,8 +510,20 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
 
     Bun__process_dlopen_count++;
 
+    // A module whose DllMain/constructors already called napi_module_register can still fail to
+    // load; drop what it queued so a later dlopen does not call into an unloaded image.
+    auto forgetModulesRegisteredByThisLoad = [globalObject, callCountAtStart,
+                                                 pendingNapiModulesAtStart = globalObject->m_pendingNapiModules.size(),
+                                                 pendingV8ModulesAtStart = globalObject->m_pendingV8Modules.size()] {
+        globalObject->m_pendingNapiModules.shrink(pendingNapiModulesAtStart);
+        globalObject->m_pendingV8Modules.shrink(pendingV8ModulesAtStart);
+        globalObject->napiModuleRegisterCallCount = callCountAtStart;
+        globalObject->m_pendingNapiModuleDlopenHandle = nullptr;
+    };
+
 #if OS(WINDOWS)
     BunString filename_str = Bun::toString(filename);
+    Bun::NodeExeImports::Scope nodeExeImports;
     HMODULE handle = Bun__LoadLibraryBunString(&filename_str);
 #else
 #if OS(LINUX)
@@ -644,6 +577,12 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
             errorBuilder.append("error code "_s);
             errorBuilder.append(WTF::String::number(errorId));
         }
+        if (WTF::String unresolved = nodeExeImports.unresolvedImportError(nullptr); !unresolved.isNull()) {
+            errorBuilder.append(" "_s, unresolved, "."_s);
+        } else if (errorId == ERROR_MOD_NOT_FOUND && Bun::NodeExeImports::fileHasLoadTimeNodeExeImport(filename.wideCharacters().span().data())) {
+            errorBuilder.append(" "_s, filename,
+                " has a load-time (not delay-loaded) import of node.exe, so Windows can only load it while a node.exe is on the DLL search path, for example with Node.js on PATH."_s);
+        }
 
         WTF::String msg = errorBuilder.toString();
         if (messageBuffer)
@@ -651,11 +590,16 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
 #else
         WTF::String msg = WTF::String::fromUTF8(dlerror());
 #endif
+        forgetModulesRegisteredByThisLoad();
         return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, msg);
     }
 
 #if OS(WINDOWS)
-    rebindNodeExeImports(handle);
+    if (WTF::String unresolved = nodeExeImports.unresolvedImportError(handle); !unresolved.isNull()) {
+        forgetModulesRegisteredByThisLoad();
+        FreeLibrary(handle);
+        return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, makeString("Cannot load native addon "_s, filename, ": "_s, unresolved));
+    }
 #endif
 
     if (callCountAtStart != globalObject->napiModuleRegisterCallCount) {

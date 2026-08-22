@@ -1076,6 +1076,10 @@ impl JSValue {
         self.to_zig_string(&mut out, global)?;
         Ok(out)
     }
+    /// `JSValue::toThis` in strict mode (scope objects become `undefined`).
+    pub fn to_this_strict(self, global: &JSGlobalObject) -> JSValue {
+        crate::cpp::Bun__JSValue__toThisStrict(self, global)
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

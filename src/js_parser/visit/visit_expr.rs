@@ -1235,107 +1235,101 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         ..Default::default()
                     },
                 );
+                Self::fold_unary(p, e);
+            }
+        }
+    }
 
-                // Post-process the unary expression
-                match e_.op {
-                    Op::UnNot => {
-                        if p.options.features.minify_syntax {
-                            e_.value = SideEffects::simplify_boolean(p, e_.value);
-                        }
+    /// Post-processes a unary expression whose operand has already been visited.
+    fn fold_unary(p: &mut Self, e: &mut Expr) {
+        let expr = *e;
+        let mut e_ = expr.data.e_unary().expect("infallible: variant checked");
+        match e_.op {
+            Op::UnNot => {
+                if p.options.features.minify_syntax {
+                    e_.value = SideEffects::simplify_boolean(p, e_.value);
+                }
 
-                        if let Some(side_effects) = SideEffects::to_boolean(p, &e_.value.data) {
-                            if side_effects.side_effects == SideEffects::NoSideEffects
-                                || p.expr_can_be_removed_if_unused(&e_.value)
-                            {
-                                *e = p.new_expr(
-                                    E::Boolean {
-                                        value: !side_effects.value,
-                                    },
-                                    expr.loc,
-                                );
-                                return;
-                            }
-                        }
-
-                        if p.options.features.minify_syntax {
-                            if let Some(exp) = Expr::maybe_simplify_not(&e_.value, p.arena) {
-                                *e = exp;
-                                return;
-                            }
-                            if let Data::EImportMetaMain(m) = &mut e_.value.data {
-                                m.inverted = !m.inverted;
-                                *e = e_.value;
-                                return;
-                            }
-                        }
+                if let Some(side_effects) = SideEffects::to_boolean(p, &e_.value.data) {
+                    if side_effects.side_effects == SideEffects::NoSideEffects
+                        || p.expr_can_be_removed_if_unused(&e_.value)
+                    {
+                        *e = p.new_expr(
+                            E::Boolean {
+                                value: !side_effects.value,
+                            },
+                            expr.loc,
+                        );
+                        return;
                     }
-                    Op::UnCpl => {
-                        if p.should_fold_typescript_constant_expressions {
-                            if let Some(value) = SideEffects::to_number(&e_.value.data) {
-                                *e = p.new_expr(
-                                    E::Number::new(f64::from(!float_to_int32(value))),
-                                    expr.loc,
-                                );
-                                return;
-                            }
-                        }
-                    }
-                    Op::UnVoid => {
-                        if p.expr_can_be_removed_if_unused(&e_.value) {
-                            *e = p.new_expr(E::Undefined {}, e_.value.loc);
-                            return;
-                        }
-                    }
-                    Op::UnPos => {
-                        if let Some(num) = SideEffects::to_number(&e_.value.data) {
-                            *e = p.new_expr(E::Number::new(num), expr.loc);
-                            return;
-                        }
-                    }
-                    Op::UnNeg => {
-                        if let Some(num) = SideEffects::to_number(&e_.value.data) {
-                            *e = p.new_expr(E::Number::new(-num), expr.loc);
-                            return;
-                        }
-                    }
-
-                    ////////////////////////////////////////////////////////////////////////////////
-                    Op::UnPreDec => {
-                        // TODO: private fields
-                    }
-                    Op::UnPreInc => {
-                        // TODO: private fields
-                    }
-                    Op::UnPostDec => {
-                        // TODO: private fields
-                    }
-                    Op::UnPostInc => {
-                        // TODO: private fields
-                    }
-                    _ => {}
                 }
 
                 if p.options.features.minify_syntax {
-                    // "-(a, b)" => "a, -b"
-                    if !matches!(e_.op, Op::UnDelete | Op::UnTypeof) {
-                        if let Data::EBinary(comma) = &e_.value.data {
-                            if comma.op == Op::BinComma {
-                                *e = comma.left.join_with_comma(p.new_expr(
-                                    E::Unary {
-                                        op: e_.op,
-                                        value: comma.right,
-                                        flags: e_.flags,
-                                    },
-                                    comma.right.loc,
-                                ));
-                                return;
-                            }
+                    if let Some(exp) = Expr::maybe_simplify_not(&e_.value) {
+                        *e = exp;
+                        return;
+                    }
+                    if let Data::EImportMetaMain(m) = &mut e_.value.data {
+                        m.inverted = !m.inverted;
+                        *e = e_.value;
+                        return;
+                    }
+                }
+            }
+            Op::UnCpl => {
+                if p.should_fold_typescript_constant_expressions {
+                    if let Some(value) = SideEffects::to_number(&e_.value.data) {
+                        *e =
+                            p.new_expr(E::Number::new(f64::from(!float_to_int32(value))), expr.loc);
+                        return;
+                    }
+                }
+            }
+            Op::UnVoid => {
+                if p.expr_can_be_removed_if_unused(&e_.value) {
+                    *e = p.new_expr(E::Undefined {}, e_.value.loc);
+                    return;
+                }
+            }
+            Op::UnPos => {
+                if let Some(num) = SideEffects::to_number(&e_.value.data) {
+                    *e = p.new_expr(E::Number::new(num), expr.loc);
+                    return;
+                }
+            }
+            Op::UnNeg => {
+                if let Some(num) = SideEffects::to_number(&e_.value.data) {
+                    *e = p.new_expr(E::Number::new(-num), expr.loc);
+                    return;
+                }
+            }
+            _ => {}
+        }
+
+        if p.options.features.minify_syntax {
+            // "-(a, b)" => "a, -b"
+            if !matches!(e_.op, Op::UnDelete | Op::UnTypeof) {
+                if let Data::EBinary(comma) = e_.value.data {
+                    if comma.op == Op::BinComma {
+                        if !p.stack_check.is_safe_to_recurse() || p.reported_stack_overflow.get() {
+                            p.report_stack_overflow(expr.loc);
+                            return;
                         }
+                        // This node becomes the "-b", and is folded like any other
+                        // unary so that e.g. "!(a, 'b')" ends up as "a, !1".
+                        e_.value = comma.right;
+                        *e = Expr {
+                            loc: comma.right.loc,
+                            data: expr.data,
+                        };
+                        Self::fold_unary(p, e);
+                        *e = comma.left.join_with_comma(*e);
                     }
                 }
             }
         }
     }
+
     fn e_dot(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let expr = *e;
         let mut e_ = expr.data.e_dot().expect("infallible: variant checked");

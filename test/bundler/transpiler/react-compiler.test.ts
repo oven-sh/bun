@@ -1065,6 +1065,57 @@ describe("bundler", () => {
       expect(out).toMatch(/__MEMO_CACHE_SENTINEL\)\s*\{[^}]*globalFn\(\)/);
     },
   });
+
+  // `{ __proto__: v }` sets the prototype, while `{ ["__proto__"]: v }` and the
+  // shorthand `{ __proto__ }` define an own property. Lowering used to turn the
+  // latter two into a static key, which codegen prints in the setter form.
+  itBundled("react-compiler/OwnProtoKeyStaysOwnProperty", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        function Comp({ id, proto }: { id: string; proto: object }) {
+          const __proto__ = "own";
+          const objects = {
+            computed: { ["__proto__"]: id },
+            template: { [\`__proto__\`]: id },
+            shorthand: { __proto__ },
+            method: { ["__proto__"]() {} },
+            setter: { __proto__: proto },
+            quotedSetter: { "__proto__": proto },
+          };
+          const shapes: Record<string, [string[], boolean]> = {};
+          for (const [name, o] of Object.entries(objects)) {
+            shapes[name] = [Object.keys(o), Object.getPrototypeOf(o) === proto];
+          }
+          return <div>{JSON.stringify(shapes)}</div>;
+        }
+        const proto = {};
+        console.log(Comp({ id: "v", proto }).p.children);
+      `,
+      ...stubReact,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "api",
+    run: {
+      stdout: JSON.stringify({
+        computed: [["__proto__"], false],
+        template: [["__proto__"], false],
+        shorthand: [["__proto__"], false],
+        method: [["__proto__"], false],
+        setter: [[], true],
+        quotedSetter: [[], true],
+      }),
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // Comp must actually be compiled for the codegen path to be on trial.
+      expect(out).toContain("react.memo_cache_sentinel");
+      // computed, template and shorthand are emitted with a computed key; the
+      // two setters keep the bare key. (The method prints as `__proto__() {`.)
+      expect(out.match(/\[(["'`])__proto__\1\]/g) ?? []).toHaveLength(3);
+      expect(out.match(/(?<!\[)(["']?)__proto__\1\s*:/g) ?? []).toHaveLength(2);
+    },
+  });
 });
 
 // validate_locals_not_reassigned_after_render (src/react_compiler/validation)

@@ -105,10 +105,8 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
     }
     RETURN_IF_EXCEPTION(warnScope, {});
 
-    // create() already detached the listed ArrayBuffers, so the listed ports are detached too
-    // before either reason to drop the message below (this port is closed, possibly by a getter
-    // that ran during serialization, or it is being posted its own peer) is checked. Node does
-    // the same; a dropped message must not leave the buffers gone but the ports still usable.
+    // create() detached the buffers, so the listed ports are consumed too even when the message
+    // is dropped below (closed sender, or a port posted to its own peer), as in node.
     Vector<TransferredMessagePort> transferredPorts;
     bool targetsEntangledPeer = false;
     if (!ports.isEmpty()) {
@@ -130,9 +128,8 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
         return {};
 
     if (targetsEntangledPeer) {
-        // Posting the port's own entangled peer: node warns and loses the channel
-        // rather than throwing. Drop the message and close so the dead channel stops
-        // reffing the loop.
+        // Node warns and loses the channel instead of throwing; close() so the dead
+        // channel stops reffing the loop.
         Bun__Process__emitWarning(defaultGlobalObject(&state),
             JSC::JSValue::encode(JSC::jsString(vm, String("The target port was posted to itself, and the communication channel was lost"_s))),
             JSC::JSValue::encode(JSC::jsString(vm, String("Warning"_s))),

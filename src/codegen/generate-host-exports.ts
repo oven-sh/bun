@@ -56,6 +56,7 @@ const repoRoot = path.resolve(import.meta.dir, "..", "..");
 const scanRoots = [
   { dir: path.join(repoRoot, "src", "runtime"), crate: "bun_runtime" },
   { dir: path.join(repoRoot, "src", "jsc"), crate: "bun_jsc" },
+  { dir: path.join(repoRoot, "src", "http_jsc"), crate: "bun_http_jsc" },
 ];
 
 // ───────────────────────── module-path resolver ─────────────────────────────
@@ -107,6 +108,8 @@ interface Param {
   cTy: string;
   /** expression to pass into the impl from the thunk param `name` */
   callExpr: string;
+  /** `&[T]` param: the C signature carries a trailing `name_len: usize` */
+  extraLen?: boolean;
 }
 
 interface Export {
@@ -127,17 +130,39 @@ const markerRe = /^\s*\/\/\s*HOST_EXPORT\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:,\s*(
 // a small balanced-paren scanner because params routinely span lines.
 const fnHeadRe = /^\s*pub\s+(unsafe\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/;
 
-function ptrify(ty: string): { cTy: string; deref: (n: string) => string } {
+function ptrify(ty: string): { cTy: string; deref: (n: string) => string; extraLen?: boolean } {
   ty = ty.trim();
-  // `&[T]` / `&str` are NOT FFI-safe; reject (caller should use ptr+len).
-  if (/^&\s*(?:\[|str\b)/.test(ty)) {
-    throw new Error(`slice/str param \`${ty}\` is not FFI-safe; pass (ptr, len)`);
+  // `&[T]` — C passes `(const T* name, size_t name_len)`; the thunk rebuilds
+  // the slice (null/0 → empty).
+  const slice = /^&\s*\[\s*(.+)\s*\]$/.exec(ty);
+  if (slice) {
+    const elem = slice[1].trim();
+    return {
+      cTy: `*const ${elem}`,
+      extraLen: true,
+      deref: n =>
+        `{\n        // SAFETY: C++ caller passes \`${n}_len\` live elements at \`${n}\` (or 0).\n        unsafe { ::bun_core::ffi::slice(${n}, ${n}_len) }\n    }`,
+    };
+  }
+  // Other slice shapes (`&mut [T]`, `&'a [T]`) and `&str` are NOT FFI-safe; reject.
+  if (/^&[^\[]*\[/.test(ty) || /^&\s*str\b/.test(ty)) {
+    throw new Error(`slice/str param \`${ty}\` is not FFI-safe; use \`&[T]\` (const) or (ptr, len)`);
   }
   // `&mut T` / `&T` — keep as a reference in the thunk signature. `&T` and
   // `*const T` (resp. `&mut T`/`*mut T`) are ABI-identical for `extern "C"`
   // when the C++ caller guarantees non-null (it does), so the thunk param can
   // be the safe reference type directly and the body needs no `unsafe` deref.
   if (/^&/.test(ty)) return { cTy: ty, deref: n => n };
+  // `ThisPtr<T>` — C++ hands us the intrusively-refcounted `T*` it holds a
+  // ref on; wrap it once here so the impl never sees a raw pointer.
+  const thisPtr = /^(?:(?:::)?bun_ptr::)?ThisPtr\s*<\s*(.+)\s*>$/.exec(ty);
+  if (thisPtr) {
+    return {
+      cTy: `*mut ${thisPtr[1].trim()}`,
+      deref: n =>
+        `{\n        // SAFETY: C++ caller holds a ref on \`${n}\` for the duration of the call.\n        unsafe { ::bun_ptr::ThisPtr::new(${n}) }\n    }`,
+    };
+  }
   // Already a raw pointer / scalar / `Option<…>` / `JSValue` — pass through.
   return { cTy: ty, deref: n => n };
 }
@@ -172,8 +197,8 @@ function parseParams(list: string, where: string): Param[] {
       // and intentionally documentary — keep it.
       if (name === "_") name = `_a${i}`;
       const ty = raw.slice(colon + 1).trim();
-      const { cTy, deref } = ptrify(ty);
-      return { raw, name, ty, cTy, callExpr: deref(name) };
+      const { cTy, deref, extraLen } = ptrify(ty);
+      return { raw, name, ty, cTy, callExpr: deref(name), extraLen };
     });
 }
 
@@ -280,11 +305,11 @@ for (const { dir, crate } of scanRoots) {
       // compile error pointing at the thunk, which is the desired behaviour.
       let modPath: string;
       if (fm) {
-        modPath = fm.crate === "bun_jsc" ? fm.modPath.replace(/^crate/, "bun_jsc") : fm.modPath;
+        modPath = fm.crate === "bun_runtime" ? fm.modPath : fm.modPath.replace(/^crate/, fm.crate);
       } else {
-        const rel = path.relative(path.join(repoRoot, "src", "runtime"), file);
+        const rel = path.relative(dir, file);
         modPath =
-          "crate::" +
+          (crate === "bun_runtime" ? "crate::" : `${crate}::`) +
           rel
             .replace(/\.rs$/, "")
             .split(path.sep)
@@ -303,7 +328,8 @@ for (const { dir, crate } of scanRoots) {
       // bun_jsc-sourced impl would resolve as `bun_runtime::` in the
       // generated module. Rewrite to the source crate's name so
       // `*mut crate::cpp_task::CppTask` etc. round-trip.
-      const cratePrefix = fm?.crate === "bun_jsc" ? "bun_jsc::" : "crate::";
+      const srcCrate = fm ? fm.crate : crate;
+      const cratePrefix = srcCrate !== "bun_runtime" ? `${srcCrate}::` : "crate::";
       const rewriteTy = (t: string) => t.replace(/\bcrate::/g, cratePrefix);
       for (const p of params) {
         p.cTy = rewriteTy(p.cTy);
@@ -437,7 +463,9 @@ pub extern "Rust" fn ${e.symbol}(${sig}) -> ${e.ret} {
 }`;
     }
     case "generic": {
-      const sig = e.params.map(p => `${p.name}: ${p.cTy}`).join(", ");
+      const sig = e.params
+        .map(p => (p.extraLen ? `${p.name}: ${p.cTy}, ${p.name}_len: usize` : `${p.name}: ${p.cTy}`))
+        .join(", ");
       // Bind each ref-deref once so the call site is clean (and so a
       // `JsResult` body doesn't deref `global` twice).
       const binds = e.params

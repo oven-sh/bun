@@ -181,7 +181,6 @@ impl ReplCommand {
     fn dump_build_error(vm: &VirtualMachine) {
         Output::flush();
         let writer = Output::error_writer_buffered();
-        // defer Output.flush()
         let _flush = Output::flush_guard();
         if let Some(log) = vm.log {
             // SAFETY: log is a valid NonNull<Log> for the VM lifetime.

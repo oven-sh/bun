@@ -23,7 +23,6 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SubspaceInlines.h>
-#include <JavaScriptCore/TopExceptionScope.h>
 
 // TextDecoder.rs
 extern "C" void* TextDecoder__createForStream(JSC::JSGlobalObject*, JSC::EncodedJSValue label, bool fatal, bool ignoreBOM, bool* outUtf8FastPath, BunString* outEncodingLabel);
@@ -348,55 +347,44 @@ static std::optional<std::span<const uint8_t>> textDecoderStreamBytes(JSGlobalOb
     return std::nullopt;
 }
 
-// Abrupt completions from decode OR enqueue become a rejected promise — a transform
-// algorithm must never throw synchronously into ProcessWrite/ProcessClose.
-static JSPromise* decodeAndEnqueue(JSGlobalObject* globalObject, JSTextDecoderStream* stream, JSTransformStreamDefaultController* controller, const uint8_t* input, size_t inputLen, bool streaming)
+// The transform/flush algorithms return a promise, so a throw from decode or enqueue is that
+// promise's rejection (promiseFromSteps), never a synchronous throw into ProcessWrite/ProcessClose.
+static void decodeAndEnqueue(JSGlobalObject* globalObject, JSTextDecoderStream* stream, JSTransformStreamDefaultController* controller, const uint8_t* input, size_t inputLen, bool streaming)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-
-    JSValue thrown;
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        JSValue decoded;
-        if (stream->m_decoder) {
-            decoded = JSValue::decode(TextDecoder__decodeForStream(stream->m_decoder, globalObject, input, inputLen, streaming));
-        } else {
-            auto* s = streamingUTF8Decode(globalObject, std::span<const uint8_t> { input, inputLen }, stream->m_utf8State, /* flush */ !streaming);
-            decoded = s ? JSValue(s) : jsUndefined();
-        }
-        if (!catchScope.exception() && decoded.isString() && asString(decoded)->length())
-            transformStreamDefaultControllerEnqueue(globalObject, controller, decoded);
-        if (catchScope.exception()) [[unlikely]]
-            thrown = takeAbruptCompletion(globalObject, catchScope);
+    JSValue decoded;
+    if (stream->m_decoder) {
+        decoded = JSValue::decode(TextDecoder__decodeForStream(stream->m_decoder, globalObject, input, inputLen, streaming));
+    } else {
+        auto* s = streamingUTF8Decode(globalObject, std::span<const uint8_t> { input, inputLen }, stream->m_utf8State, /* flush */ !streaming);
+        decoded = s ? JSValue(s) : jsUndefined();
     }
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    if (!thrown.isEmpty())
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
-    RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+    RETURN_IF_EXCEPTION(scope, );
+    if (decoded.isString() && asString(decoded)->length())
+        RELEASE_AND_RETURN(scope, transformStreamDefaultControllerEnqueue(globalObject, controller, decoded));
 }
 
 JSPromise* textDecoderStreamTransform(JSGlobalObject* globalObject, JSTextDecoderStream* stream, JSTransformStreamDefaultController* controller, JSValue chunk)
 {
-    auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue thrown;
-    std::optional<std::span<const uint8_t>> bytes;
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        bytes = textDecoderStreamBytes(globalObject, chunk);
-        if (catchScope.exception()) [[unlikely]]
-            thrown = takeAbruptCompletion(globalObject, catchScope);
-    }
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    if (!thrown.isEmpty())
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
-    RELEASE_AND_RETURN(scope, decodeAndEnqueue(globalObject, stream, controller, bytes->data(), bytes->size(), true));
+    return promiseFromSteps(globalObject, [&] -> JSPromise* {
+        auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+        std::optional<std::span<const uint8_t>> bytes = textDecoderStreamBytes(globalObject, chunk);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        decodeAndEnqueue(globalObject, stream, controller, bytes->data(), bytes->size(), true);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+    });
 }
 
 JSPromise* textDecoderStreamFlush(JSGlobalObject* globalObject, JSTextDecoderStream* stream, JSTransformStreamDefaultController* controller)
 {
-    return decodeAndEnqueue(globalObject, stream, controller, nullptr, 0, false);
+    return promiseFromSteps(globalObject, [&] -> JSPromise* {
+        auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+        decodeAndEnqueue(globalObject, stream, controller, nullptr, 0, false);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+    });
 }
 
 } // namespace WebStreams

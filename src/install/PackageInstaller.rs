@@ -394,6 +394,8 @@ pub(crate) struct ParallelHoistedTask {
     pub(crate) tree_id: lockfile::tree::Id,
     /// Snapshot: `fix_cached_lockfile_package_slices()` may reallocate `names` under workers.
     pub(crate) package_name: String,
+    /// `tree_id` is in `copy_trees`: a self-contained workspace gets real files, not links.
+    copy_tree: bool,
 
     pub(crate) result: package_install::InstallResult,
     /// Entry absent or missing its marker; `complete_parallel_installs()` re-downloads it.
@@ -505,12 +507,12 @@ impl ParallelHoistedTask {
             lockfile: None,
         };
 
-        let result = pi.install(
-            true,
-            destination_dir,
-            pi.get_install_method(),
-            self.resolution_tag,
-        );
+        let method = if self.copy_tree {
+            package_install::Method::Copyfile
+        } else {
+            pi.get_install_method()
+        };
+        let result = pi.install(true, destination_dir, method, self.resolution_tag);
         if let package_install::InstallResult::Failure(f) = &result {
             if f.is_package_missing_from_cache() {
                 self.missing_from_cache = true;
@@ -1287,6 +1289,12 @@ impl<'a> PackageInstaller<'a> {
         }
 
         true
+    }
+
+    /// Packages in this tree are copied rather than linked from the cache.
+    fn is_copy_tree(&self, tree_id: lockfile::tree::Id) -> bool {
+        (tree_id as usize) < self.copy_trees.bit_length()
+            && self.copy_trees.is_set(tree_id as usize)
     }
 
     // `pub fn deinit` dropped. All owned fields (`pending_lifecycle_scripts: Vec`,
@@ -2196,6 +2204,7 @@ impl<'a> PackageInstaller<'a> {
                     package_id,
                     tree_id: self.current_tree_id,
                     package_name: pkg_name,
+                    copy_tree: self.is_copy_tree(self.current_tree_id),
                     result: package_install::InstallResult::Success,
                     missing_from_cache: false,
                 }));
@@ -2513,9 +2522,7 @@ impl<'a> PackageInstaller<'a> {
                         break 'result result;
                     }
 
-                    let method = if (self.current_tree_id as usize) < self.copy_trees.bit_length()
-                        && self.copy_trees.is_set(self.current_tree_id as usize)
-                    {
+                    let method = if self.is_copy_tree(self.current_tree_id) {
                         package_install::Method::Copyfile
                     } else {
                         installer.get_install_method()

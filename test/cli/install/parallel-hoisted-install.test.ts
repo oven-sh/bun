@@ -1,6 +1,6 @@
 import { $, Glob, file, serve, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { lstat, mkdir, readlink, rm } from "fs/promises";
+import { lstat, mkdir, readlink, rm, stat } from "fs/promises";
 import { bunEnv, bunExe, isPosix, tempDir } from "harness";
 import { join } from "path";
 
@@ -268,9 +268,10 @@ async function until(cond: () => Promise<boolean>): Promise<void> {
  *   app -> scripted@1 (conflicts with @2) -> nested under app (tree 1)
  * scripted@1 is trusted; its postinstall touches `marker`. Individual tarball
  * responses can be gated (held until released) or merely observed. With
- * `patched`, scripted@1 has a patch, which keeps it on the serial path.
+ * `patched`, scripted@1 has a patch, which keeps it on the serial path. With
+ * `selfContained`, the workspace apps/desktop (-> lib, tree 2) is self-contained.
  */
-async function scriptsFixture({ patched = false } = {}) {
+async function scriptsFixture({ patched = false, selfContained = false } = {}) {
   const root = tempDir("parallel-hoisted-scripts", {});
   const dir = String(root);
   const cacheDir = join(dir, ".bun-cache");
@@ -340,6 +341,12 @@ async function scriptsFixture({ patched = false } = {}) {
       ].join("\n"),
     );
   }
+  if (selfContained) {
+    await write(
+      join(dir, "apps", "desktop", "package.json"),
+      JSON.stringify({ name: "desktop", version: "1.0.0", dependencies: { lib: "1.0.0" } }),
+    );
+  }
   await write(
     join(dir, "package.json"),
     JSON.stringify({
@@ -348,9 +355,14 @@ async function scriptsFixture({ patched = false } = {}) {
       dependencies: { lib: "1.0.0", app: "1.0.0", scripted: "2.0.0" },
       trustedDependencies: ["scripted"],
       ...(patched ? { patchedDependencies: { "scripted@1.0.0": "patches/scripted@1.0.0.patch" } } : {}),
+      ...(selfContained ? { workspaces: { packages: ["apps/*"], selfContained: ["apps/desktop"] } } : {}),
     }),
   );
-  await write(join(dir, "bunfig.toml"), `[install]\ncache = "${cacheDir}"\nregistry = "${server.url}"\n`);
+  // Workspaces default to the isolated linker; this file is about the hoisted one.
+  await write(
+    join(dir, "bunfig.toml"),
+    `[install]\ncache = "${cacheDir}"\nregistry = "${server.url}"\nlinker = "hoisted"\n`,
+  );
   const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: cacheDir, BUN_INTERNAL_PARALLEL_HOISTED_MARKER: "1" };
 
   return {
@@ -359,6 +371,7 @@ async function scriptsFixture({ patched = false } = {}) {
     marker,
     env,
     nested: join(dir, "node_modules", "app", "node_modules", "scripted", "package.json"),
+    workspaceNodeModules: join(dir, "apps", "desktop", "node_modules"),
     async cacheHas(pattern: string): Promise<boolean> {
       for await (const _ of new Glob(pattern).scan({ cwd: cacheDir, onlyFiles: false })) return true;
       return false;
@@ -385,6 +398,7 @@ async function scriptsFixture({ patched = false } = {}) {
       expect(await file(marker).exists()).toBe(true);
       await rm(marker);
       await rm(join(dir, "node_modules"), { recursive: true, force: true });
+      await rm(this.workspaceNodeModules, { recursive: true, force: true });
       for (const pattern of globs) {
         let hits = 0;
         for await (const entry of new Glob(pattern).scan({ cwd: cacheDir, onlyFiles: false })) {
@@ -521,5 +535,27 @@ describe.concurrent.skipIf(!isPosix)("parallel hoisted install: rerouted downloa
     );
     expect(installedCount(out.stdout)).toBe(expected);
     expect(await file(fx.marker).exists(), "scripted@1 was parked in pending_installs and never drained").toBe(true);
+  });
+
+  /**
+   * A self-contained workspace's trees are in `copy_trees`: the serial linker copies their packages
+   * instead of linking them from the cache, so that tools which rewrite that node_modules in place
+   * cannot reach the cache. A worker has to make the same choice for the tree it was enqueued for.
+   * --backend=hardlink makes the link counts meaningful on macOS too, where clonefile also gives 1.
+   */
+  test("a self-contained workspace gets copies, not links, from the parallel path", async () => {
+    using fx = await scriptsFixture({ selfContained: true });
+    const expected = await fx.warmThenEvict();
+
+    await using proc = spawnInstall(fx.dir, fx.env, ["--frozen-lockfile", "--backend=hardlink"]);
+    const out = await finish(proc);
+    expect(out.stderr).not.toContain("error:");
+    expect(out.exitCode).toBe(0);
+    // root: lib, app, scripted@2; app: scripted@1; desktop: lib. The workspace link itself is serial.
+    expect(parallelTaskCount(out.stderr)).toBe(5);
+    expect(installedCount(out.stdout)).toBe(expected);
+    // The root's copy is a hardlink from the cache; the workspace's is a real file.
+    expect((await stat(join(fx.dir, "node_modules", "lib", "package.json"))).nlink).toBeGreaterThan(1);
+    expect((await stat(join(fx.workspaceNodeModules, "lib", "package.json"))).nlink).toBe(1);
   });
 });

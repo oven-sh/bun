@@ -225,7 +225,9 @@ impl MacroContext {
         // SAFETY: the `Transpiler` outlives `self`; read once to seed the host.
         let host = MacroHost::get_or_start(|| unsafe { MacroHostSeed::new(&*self.transpiler) });
 
+        static NEXT_ID: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(1);
         let mut request = MacroRequest {
+            id: NEXT_ID.fetch_add(1, core::sync::atomic::Ordering::Relaxed),
             specifier,
             function_name,
             args: call.args.slice(),
@@ -398,6 +400,10 @@ pub enum MacroOutcome {
 /// `done` is set, so the host has exclusive use of it in between and may read
 /// `args` (which point into the caller's AST) in place.
 pub struct MacroRequest<'a> {
+    /// Unique for the process. What the host's promise reactions and a
+    /// [`MacroCancel`] carry instead of the request's address, which a later
+    /// request from the same thread may reuse.
+    id: u64,
     /// Absolute path of the macro module (or a builtin module name).
     specifier: &'a [u8],
     function_name: &'a [u8],
@@ -442,8 +448,8 @@ impl MacroRequest<'_> {
 /// [`task_tag::MacroCancel`]: "give up on this request" — posted to the host
 /// by the VM a caller is waiting for when that VM is stopped
 /// (`worker.terminate()`); see [`VmHandle::park`]. Its `ptr` is the
-/// request's address, used only to look the request up: by the time it runs
-/// the request may have been answered and be gone.
+/// request's [`id`](MacroRequest::id), not an address: by the time it runs the
+/// request may have been answered and be gone.
 pub struct MacroCancel;
 
 impl Taskable for MacroCancel {
@@ -454,8 +460,8 @@ impl Taskable for MacroCancel {
 
 impl MacroCancel {
     /// `bun_runtime::dispatch` arm for [`task_tag::MacroCancel`].
-    pub fn run_on_macro_host(request: *mut ()) {
-        HostState::with(|state| state.cancel(request.cast()));
+    pub fn run_on_macro_host(id: *mut ()) {
+        HostState::with(|state| state.cancel(id as u64));
     }
 }
 
@@ -758,7 +764,7 @@ impl MacroHost {
         if posted {
             // The VM this parse is for (a Worker's, say) can be stopped while
             // we wait; that posts a `MacroCancel` to the host so the wait ends.
-            let cancel = bun_event_loop::Task::new(task_tag::MacroCancel, request_ptr.cast());
+            let cancel = bun_event_loop::Task::new(task_tag::MacroCancel, request.id as *mut ());
             let own;
             let waiting_vm = match waiting_vm {
                 Some(h) => Some(h),
@@ -879,7 +885,7 @@ fn host_thread_main(seed: MacroHostSeed, ready: HostStartup) {
     // script is forbidden, so answer them here. Requests still queued are
     // released (and so answered) now too, before teardown joins this VM's
     // workers: a worker parked on one of them would never finish otherwise.
-    for request in state.in_flight.take() {
+    for (_, request) in state.in_flight.take() {
         // SAFETY: an in-flight request's caller is parked until `done` is set.
         unsafe {
             (*request).outcome = MacroOutcome::Failed(MacroFailure::text(
@@ -916,8 +922,8 @@ struct HostState {
     /// Loaded macro functions by `specifier NUL export`.
     functions: RefCell<HashMap<Box<[u8]>, Strong>>,
     /// Requests that have been started and not yet answered (waiting on an
-    /// import or on the macro's promise).
-    in_flight: RefCell<Vec<*mut MacroRequest<'static>>>,
+    /// import or on the macro's promise), by id.
+    in_flight: RefCell<Vec<(u64, *mut MacroRequest<'static>)>>,
 }
 
 #[thread_local]
@@ -942,9 +948,9 @@ impl HostState {
     }
 
     fn start(&self, request: *mut MacroRequest<'static>, global: &JSGlobalObject) {
-        self.in_flight.borrow_mut().push(request);
         // SAFETY: the caller is parked until we answer; exclusive access.
         let req = unsafe { &*request };
+        self.in_flight.borrow_mut().push((req.id, request));
         if let Some(err) = &self.startup_error {
             return self.fail(request, MacroFailure::text(err.clone()));
         }
@@ -969,7 +975,12 @@ impl HostState {
         };
         // SAFETY: `import_ptr` returns a live promise cell.
         let promise = unsafe { promise.as_ref() }.as_value(global);
-        promise.then(global, request, on_import_resolve, on_import_reject);
+        promise.then(
+            global,
+            req.id as *mut (),
+            on_import_resolve,
+            on_import_reject,
+        );
     }
 
     fn imported(
@@ -1066,7 +1077,9 @@ impl HostState {
         if let Some(promise) = value.as_any_promise() {
             match promise.status() {
                 PromiseStatus::Pending => {
-                    value.then(global, request, on_result_resolve, on_result_reject);
+                    // SAFETY: in flight ⇒ caller parked.
+                    let id = unsafe { (*request).id };
+                    value.then(global, id as *mut (), on_result_resolve, on_result_reject);
                     return;
                 }
                 PromiseStatus::Fulfilled => {
@@ -1116,17 +1129,19 @@ impl HostState {
         self.answer(request, MacroOutcome::Failed(failure));
     }
 
-    fn is_in_flight(&self, request: *mut MacroRequest<'static>) -> bool {
+    /// The in-flight request with this id, if it has not been answered.
+    fn in_flight(&self, id: u64) -> Option<*mut MacroRequest<'static>> {
         self.in_flight
             .borrow()
             .iter()
-            .any(|r| core::ptr::eq(*r, request))
+            .find(|(i, _)| *i == id)
+            .map(|(_, r)| *r)
     }
 
     /// The caller is being terminated: answer now if not answered yet. Its
     /// pending reactions find the request gone and do nothing.
-    fn cancel(&self, request: *mut MacroRequest<'static>) {
-        if self.is_in_flight(request) {
+    fn cancel(&self, id: u64) {
+        if let Some(request) = self.in_flight(id) {
             self.fail(
                 request,
                 MacroFailure::text("interrupted: the thread waiting for this macro is terminating"),
@@ -1137,7 +1152,10 @@ impl HostState {
     fn answer(&self, request: *mut MacroRequest<'static>, outcome: MacroOutcome) {
         {
             let mut in_flight = self.in_flight.borrow_mut();
-            if let Some(i) = in_flight.iter().position(|r| core::ptr::eq(*r, request)) {
+            if let Some(i) = in_flight
+                .iter()
+                .position(|(_, r)| core::ptr::eq(*r, request))
+            {
                 in_flight.swap_remove(i);
             }
         }
@@ -1290,31 +1308,31 @@ impl HostState {
     }
 }
 
-fn request_from_callframe(callframe: &CallFrame) -> (*mut MacroRequest<'static>, JSValue) {
+/// The request a reaction is for (if it is still in flight — it may have been
+/// cancelled since the reaction was attached) and the reaction's value.
+fn request_from_callframe(callframe: &CallFrame) -> (Option<*mut MacroRequest<'static>>, JSValue) {
     let args = callframe.arguments();
-    let request = args[args.len() - 1].as_promise_ptr::<MacroRequest<'static>>();
+    let id = args[args.len() - 1].as_promise_ptr::<()>() as u64;
     let value = if args.len() > 1 {
         args[0]
     } else {
         JSValue::UNDEFINED
     };
-    (request, value)
+    (HostState::with(|state| state.in_flight(id)), value)
 }
 
 fn import_resolved(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let (request, namespace) = request_from_callframe(callframe);
-    if !HostState::with(|state| state.is_in_flight(request)) {
+    let (Some(request), namespace) = request_from_callframe(callframe) else {
         return Ok(JSValue::UNDEFINED);
-    }
+    };
     HostState::with(|state| state.imported(request, global, namespace));
     Ok(JSValue::UNDEFINED)
 }
 
 fn import_rejected(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let (request, reason) = request_from_callframe(callframe);
-    if !HostState::with(|state| state.is_in_flight(request)) {
+    let (Some(request), reason) = request_from_callframe(callframe) else {
         return Ok(JSValue::UNDEFINED);
-    }
+    };
     HostState::with(|state| {
         let failure = state.failure_from_value(global, reason);
         state.fail(request, failure);
@@ -1323,19 +1341,17 @@ fn import_rejected(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
 }
 
 fn result_resolved(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let (request, value) = request_from_callframe(callframe);
-    if !HostState::with(|state| state.is_in_flight(request)) {
+    let (Some(request), value) = request_from_callframe(callframe) else {
         return Ok(JSValue::UNDEFINED);
-    }
+    };
     HostState::with(|state| state.settle(request, global, value));
     Ok(JSValue::UNDEFINED)
 }
 
 fn result_rejected(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let (request, reason) = request_from_callframe(callframe);
-    if !HostState::with(|state| state.is_in_flight(request)) {
+    let (Some(request), reason) = request_from_callframe(callframe) else {
         return Ok(JSValue::UNDEFINED);
-    }
+    };
     HostState::with(|state| {
         let failure = state.failure_from_value(global, reason);
         state.fail(request, failure);

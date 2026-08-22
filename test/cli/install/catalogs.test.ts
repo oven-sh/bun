@@ -475,6 +475,56 @@ describe("update", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("--latest keeps the npm: alias prefix and pin style of aliased catalog entries", async () => {
+    const { packageDir } = await registry.createTestDir();
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "catalog-update-alias",
+          workspaces: {
+            packages: ["packages/*"],
+            catalog: {
+              "aliased": "npm:no-deps@^1.0.0",
+            },
+            catalogs: {
+              pinned: {
+                "aliased": "npm:no-deps@1.0.1",
+              },
+            },
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg1", "package.json"),
+        JSON.stringify({
+          name: "pkg1",
+          dependencies: {
+            "aliased": "catalog:",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg2", "package.json"),
+        JSON.stringify({
+          name: "pkg2",
+          dependencies: {
+            "aliased": "catalog:pinned",
+          },
+        }),
+      ),
+    ]);
+    await runBunInstall(bunEnv, packageDir);
+
+    const { err, exitCode } = await runUpdate(packageDir, "--latest");
+    expect(err).not.toContain("error:");
+
+    const root = await file(join(packageDir, "package.json")).json();
+    expect(root.workspaces.catalog).toEqual({ "aliased": "npm:no-deps@^2.0.0" });
+    expect(root.workspaces.catalogs.pinned).toEqual({ "aliased": "npm:no-deps@2.0.0" });
+    expect(exitCode).toBe(0);
+  });
+
   for (const fromWorkspace of [false, true]) {
     test(`--latest --dry-run does not modify any package.json (from ${fromWorkspace ? "workspace" : "root"})`, async () => {
       const { packageDir } = await registry.createTestDir();

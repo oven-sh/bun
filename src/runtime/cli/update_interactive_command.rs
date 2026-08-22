@@ -10,7 +10,6 @@ use bun_collections::{StringHashMap, index_sort};
 use bun_core::{Global, Output};
 use bun_install::dependency::{self, Behavior};
 use bun_install::lockfile::package::PackageColumns as _;
-use bun_install::lockfile::{LoadResult, LoadStep};
 use bun_install::package_manager::options::Do;
 use bun_install::package_manager::{
     LogLevel, Subcommand, WorkspaceFilter, populate_manifest_cache,
@@ -38,6 +37,7 @@ use bun_paths::{self as path, PathBuffer};
 use bun_semver::{self as semver, SlicedString};
 
 use crate::Command;
+use crate::cli::workspace_helpers;
 
 pub(crate) struct TerminalHyperlink<'a> {
     link: &'a [u8],
@@ -510,57 +510,12 @@ impl UpdateInteractiveCommand {
         manager: &mut PackageManager,
         groups: UpdateGroups,
     ) -> crate::Result<()> {
-        // Reshaped for borrowck — capture `log_level` / `ctx.log`
-        // before borrowing `&mut manager.lockfile`.
         let not_silent = manager.options.log_level != LogLevel::Silent;
-        let ctx_log_ptr: *mut bun_ast::Log = ctx.log;
-
-        match manager.load_lockfile_from_cwd::<true>() {
-            LoadResult::NotFound => {
-                if not_silent {
-                    Output::err_generic("missing lockfile, nothing to update", ());
-                    bun_core::note!("run 'bun install' first");
-                }
-                Global::crash();
-            }
-            LoadResult::Err(cause) => {
-                if not_silent
-                    && !bun_install::migration::reported_unsupported_lockfile_version(&cause)
-                {
-                    match cause.step {
-                        LoadStep::OpenFile => Output::err_generic(
-                            "failed to open lockfile: {s}",
-                            (cause.value.name(),),
-                        ),
-                        LoadStep::ParseFile => Output::err_generic(
-                            "failed to parse lockfile: {s}",
-                            (cause.value.name(),),
-                        ),
-                        LoadStep::ReadFile => Output::err_generic(
-                            "failed to read lockfile: {s}",
-                            (cause.value.name(),),
-                        ),
-                        LoadStep::Migrating => Output::err_generic(
-                            "failed to migrate lockfile: {s}",
-                            (cause.value.name(),),
-                        ),
-                    }
-                    // SAFETY: `ctx.log` is set by `Command::create_context_data`
-                    // for every subcommand and is non-null for the command's
-                    // lifetime.
-                    if unsafe { (*ctx_log_ptr).has_errors() } {
-                        manager
-                            .log_mut()
-                            .print(std::ptr::from_mut(Output::error_writer()))?;
-                    }
-                }
-                Global::crash();
-            }
-            LoadResult::Ok(_) => {
-                // `load_lockfile_from_cwd` populates `manager.lockfile` (Box)
-                // in place, so no reassignment is needed.
-            }
-        }
+        workspace_helpers::load_lockfile_or_crash(
+            ctx,
+            manager,
+            "missing lockfile, nothing to update",
+        );
 
         let workspace_pkg_ids: Vec<PackageID> =
             if !manager.options.filter_patterns.is_empty() || manager.options.do_.recursive() {

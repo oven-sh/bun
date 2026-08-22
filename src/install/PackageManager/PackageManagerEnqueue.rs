@@ -752,6 +752,36 @@ fn resolve_from_appended_task(
     Some(pkg_id)
 }
 
+/// Returns the task-callback list for `task_id`, creating and initializing it
+/// if this is the first callback registered for the task.
+fn task_callback_list<'a>(
+    this: &'a mut PackageManager,
+    task_id: Task::Id,
+) -> crate::Result<&'a mut TaskCallbackList> {
+    let entry = this.task_queue.get_or_put_context(task_id, ())?;
+    if !entry.found_existing {
+        *entry.value_ptr = TaskCallbackList::default();
+    }
+    Ok(entry.value_ptr)
+}
+
+/// Registers dependency `id` as a callback for `task_id`, tagging it as a
+/// root or transitive dependency.
+fn push_dependency_task_callback(
+    this: &mut PackageManager,
+    task_id: Task::Id,
+    id: DependencyID,
+    is_root: bool,
+) -> crate::Result<()> {
+    let ctx = if is_root {
+        TaskCallbackContext::RootDependency(id)
+    } else {
+        TaskCallbackContext::Dependency(id)
+    };
+    task_callback_list(this, task_id)?.push(ctx);
+    Ok(())
+}
+
 /// Q: "What do we do with a dependency in a package.json?"
 /// A: "We enqueue it!"
 pub fn enqueue_dependency_with_main_and_success_fn(
@@ -1322,18 +1352,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                             return Ok(());
                         }
 
-                        let manifest_entry_parse =
-                            this.task_queue.get_or_put_context(task_id, ())?;
-                        if !manifest_entry_parse.found_existing {
-                            *manifest_entry_parse.value_ptr = TaskCallbackList::default();
-                        }
-
-                        let ctx = if is_root {
-                            TaskCallbackContext::RootDependency(id)
-                        } else {
-                            TaskCallbackContext::Dependency(id)
-                        };
-                        manifest_entry_parse.value_ptr.push(ctx);
+                        push_dependency_task_callback(this, task_id, id, is_root)?;
                     }
                     return Ok(());
                 }
@@ -1358,11 +1377,6 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             let alias = this.lockfile.str_detached(&dependency.name);
             let url = this.lockfile.str_detached(&dep.repo);
             let clone_id = Task::Id::for_git_clone(url);
-            let ctx = if is_root {
-                TaskCallbackContext::RootDependency(id)
-            } else {
-                TaskCallbackContext::Dependency(id)
-            };
 
             if cfg!(debug_assertions) {
                 bun_output::scoped_log!(
@@ -1411,17 +1425,10 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                         success_fn(this, id, pkg_id);
                         return Ok(());
                     }
-                }
-
-                let entry = this
-                    .task_queue
-                    .get_or_put_context(checkout_id, ())
-                    .expect("unreachable");
-                if !entry.found_existing {
-                    *entry.value_ptr = TaskCallbackList::default();
-                }
-                if needs_ctx {
-                    entry.value_ptr.push(ctx);
+                    push_dependency_task_callback(this, checkout_id, id, is_root)
+                        .expect("unreachable");
+                } else {
+                    task_callback_list(this, checkout_id).expect("unreachable");
                 }
 
                 if dependency.behavior.is_peer() {
@@ -1447,14 +1454,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 );
                 this.task_batch.push(ThreadPool::Batch::from(task));
             } else {
-                let entry = this
-                    .task_queue
-                    .get_or_put_context(clone_id, ())
-                    .expect("unreachable");
-                if !entry.found_existing {
-                    *entry.value_ptr = TaskCallbackList::default();
-                }
-                entry.value_ptr.push(ctx);
+                push_dependency_task_callback(this, clone_id, id, is_root).expect("unreachable");
 
                 if dependency.behavior.is_peer() {
                     if !install_peer {
@@ -1508,24 +1508,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 }
             }
 
-            let ctx = if is_root {
-                TaskCallbackContext::RootDependency(id)
-            } else {
-                TaskCallbackContext::Dependency(id)
-            };
-            // reshaped for borrowck — `entry` mutably borrows
-            // `this.task_queue`; scope it tightly so the calls below can
-            // reborrow `*this`.
-            {
-                let entry = this
-                    .task_queue
-                    .get_or_put_context(task_id, ())
-                    .expect("unreachable");
-                if !entry.found_existing {
-                    *entry.value_ptr = TaskCallbackList::default();
-                }
-                entry.value_ptr.push(ctx);
-            }
+            push_dependency_task_callback(this, task_id, id, is_root).expect("unreachable");
 
             if dependency.behavior.is_peer() {
                 if !install_peer {
@@ -1719,22 +1702,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 }
             }
 
-            let ctx = if is_root {
-                TaskCallbackContext::RootDependency(id)
-            } else {
-                TaskCallbackContext::Dependency(id)
-            };
-            // reshaped for borrowck — scope `entry` tightly.
-            {
-                let entry = this
-                    .task_queue
-                    .get_or_put_context(task_id, ())
-                    .expect("unreachable");
-                if !entry.found_existing {
-                    *entry.value_ptr = TaskCallbackList::default();
-                }
-                entry.value_ptr.push(ctx);
-            }
+            push_dependency_task_callback(this, task_id, id, is_root).expect("unreachable");
 
             if dependency.behavior.is_peer() {
                 if !install_peer {

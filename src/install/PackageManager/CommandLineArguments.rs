@@ -1731,21 +1731,19 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
         }
 
         if cli.global
-            && (!cli.filters.is_empty() || cli.recursive)
             && matches!(
                 subcommand,
                 Subcommand::Install | Subcommand::Add | Subcommand::Remove | Subcommand::Update
             )
         {
-            Output::err_generic(
-                if cli.filters.is_empty() {
-                    "--recursive cannot be used with --global\n"
-                } else {
-                    "--filter cannot be used with --global\n"
-                },
-                (),
-            );
-            Global::crash();
+            if !cli.filters.is_empty() {
+                Output::err_generic("--filter cannot be used with --global\n", ());
+                Global::crash();
+            }
+            // The global dir has no workspaces, so --recursive selects nothing
+            // extra. Pre-1.4 accepted the combination, so treat it as a no-op
+            // instead of an error.
+            cli.recursive = false;
         }
 
         if cli.global && subcommand == Subcommand::Prune {

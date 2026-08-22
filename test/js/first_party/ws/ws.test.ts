@@ -47,16 +47,36 @@ const buffers = [
 
 const messages = [...strings, ...buffers] as const;
 
+// One rule for the client and the server socket of the shim. `type` is the shape of a binary
+// message. npm ws emits ping and pong payloads as a Buffer in every mode. The shim keeps that
+// where it can wrap the payload synchronously. A Blob cannot be wrapped, so "blob" applies to
+// ping and pong payloads too, as it does on the native sockets.
 const binaryTypes = [
   {
     label: "nodebuffer",
     type: Buffer,
+    controlType: Buffer,
   },
   {
     label: "arraybuffer",
     type: ArrayBuffer,
+    controlType: Buffer,
+  },
+  {
+    label: "blob",
+    type: Blob,
+    controlType: Blob,
   },
 ] as const;
+
+// Names match `type.name` and `controlType.name` above. A plain Uint8Array, which is what
+// the server socket used to emit in "arraybuffer" mode, shows up as "[object Uint8Array]".
+function shapeOf(data: unknown): string {
+  if (Buffer.isBuffer(data)) return "Buffer";
+  if (data instanceof ArrayBuffer) return "ArrayBuffer";
+  if (data instanceof Blob) return "Blob";
+  return Object.prototype.toString.call(data);
+}
 
 let servers: Subprocess[] = [];
 let clients: WebSocket[] = [];
@@ -103,26 +123,41 @@ describe("WebSocket", () => {
         done();
       }
     });
-    for (const { label, type } of binaryTypes) {
+    for (const { label, type, controlType } of binaryTypes) {
       test(label, (ws, done) => {
-        ws.binaryType = label;
+        // @types/ws 8.5 does not list "blob", ws 8.18 accepts it
+        ws.binaryType = label as WebSocket["binaryType"];
+        const seen: Record<string, string> = {};
+        // The echo server answers the message, pings back when pinged and pongs back when
+        // ponged. The native client also pongs the echoed ping by itself, so the first pong
+        // is the one that gets recorded. Every one of them has the shape binaryType selects.
+        function record(event: string, data: unknown) {
+          seen[event] ??= shapeOf(data);
+          if (!(seen.message && seen.ping && seen.pong)) return;
+          try {
+            expect(seen).toEqual({
+              binaryType: label,
+              message: type.name,
+              ping: controlType.name,
+              pong: controlType.name,
+            });
+            done();
+          } catch (err) {
+            done(err);
+          }
+        }
         ws.on("open", () => {
-          expect(ws.binaryType).toBe(label);
+          seen.binaryType = ws.binaryType;
           ws.send(new Uint8Array(1));
-        });
-        ws.on("message", (data, isBinary) => {
-          expect(data).toBeInstanceOf(type);
-          expect(isBinary).toBeTrue();
           ws.ping();
-        });
-        ws.on("ping", data => {
-          expect(data).toBeInstanceOf(type);
           ws.pong();
         });
-        ws.on("pong", data => {
-          expect(data).toBeInstanceOf(type);
-          done();
+        ws.on("message", (data, isBinary) => {
+          if (isBinary) record("message", data);
+          else done(new Error(`expected a binary echo, got ${shapeOf(data)}`));
         });
+        ws.on("ping", data => record("ping", data));
+        ws.on("pong", data => record("pong", data));
       });
     }
   });
@@ -298,6 +333,134 @@ describe("WebSocketServer", () => {
 
     new WebSocket("ws://localhost:" + wss.address().port);
     await promise;
+  });
+
+  describe("binaryType", () => {
+    type Received = { event: string; shape: string; bytes: number[]; isBinary?: boolean };
+
+    async function describeReceived(event: string, data: unknown, isBinary?: boolean): Promise<Received> {
+      const bytes = Array.from(new Uint8Array(data instanceof Blob ? await data.bytes() : (data as Uint8Array)));
+      const received: Received = { event, shape: shapeOf(data), bytes };
+      if (isBinary !== undefined) received.isBinary = isBinary;
+      return received;
+    }
+
+    // Collects what the server socket emits for the frames `sendFrames` puts on the wire.
+    // Resolves once `messageCount` 'message' events arrived. The frames arrive in order,
+    // so every ping/pong sent before the last message has been emitted by then.
+    async function receiveOnServer(
+      onConnection: (ws: WebSocket) => void,
+      sendFrames: (client: WebSocket) => void,
+      messageCount: number,
+    ): Promise<Received[]> {
+      const wss = new WebSocketServer({ port: 0 });
+      const { promise, resolve, reject } = Promise.withResolvers<Promise<Received>[]>();
+      const received: Promise<Received>[] = [];
+      let messages = 0;
+
+      wss.on("connection", ws => {
+        ws.on("error", reject);
+        onConnection(ws);
+        ws.on("ping", data => received.push(describeReceived("ping", data)));
+        ws.on("pong", data => received.push(describeReceived("pong", data)));
+        ws.on("message", (data, isBinary) => {
+          received.push(describeReceived("message", data, isBinary));
+          if (++messages === messageCount) resolve(received);
+        });
+      });
+
+      const client = new WebSocket("ws://localhost:" + (wss.address() as AddressInfo).port);
+      client.on("error", reject);
+      client.on("open", () => sendFrames(client));
+      try {
+        return await Promise.all(await promise);
+      } finally {
+        client.terminate();
+        wss.close();
+      }
+    }
+
+    it.each(binaryTypes)(
+      "$label: binary frames arrive as $type.name, ping and pong payloads as $controlType.name",
+      async ({ label, type, controlType }) => {
+        const received = await receiveOnServer(
+          ws => {
+            // @types/ws 8.5 does not list "blob", ws 8.18 accepts it
+            ws.binaryType = label as WebSocket["binaryType"];
+          },
+          client => {
+            client.ping(Buffer.from([4]));
+            client.pong(Buffer.from([5]));
+            client.send(Buffer.from([1, 2, 3]));
+            client.send(Buffer.alloc(0));
+          },
+          2,
+        );
+
+        expect(received).toEqual([
+          { event: "ping", shape: controlType.name, bytes: [4] },
+          { event: "pong", shape: controlType.name, bytes: [5] },
+          { event: "message", shape: type.name, bytes: [1, 2, 3], isBinary: true },
+          { event: "message", shape: type.name, bytes: [], isBinary: true },
+        ]);
+      },
+    );
+
+    it("defaults to nodebuffer and applies a new value to the next frame", async () => {
+      const binaryTypesSeen: string[] = [];
+      const received = await receiveOnServer(
+        ws => {
+          binaryTypesSeen.push(ws.binaryType);
+          ws.binaryType = "arraybuffer";
+          binaryTypesSeen.push(ws.binaryType);
+          const next = ["blob", "nodebuffer"];
+          ws.on("message", () => {
+            if (next.length) ws.binaryType = next.shift() as WebSocket["binaryType"];
+          });
+        },
+        client => {
+          client.send(Buffer.from([1]));
+          client.ping(Buffer.from([2]));
+          client.send(Buffer.from([3]));
+          client.send(Buffer.from([4]));
+        },
+        3,
+      );
+
+      expect(binaryTypesSeen).toEqual(["nodebuffer", "arraybuffer"]);
+      expect(received).toEqual([
+        { event: "message", shape: "ArrayBuffer", bytes: [1], isBinary: true },
+        // the ping arrives after the change to "blob"
+        { event: "ping", shape: "Blob", bytes: [2] },
+        { event: "message", shape: "Blob", bytes: [3], isBinary: true },
+        { event: "message", shape: "Buffer", bytes: [4], isBinary: true },
+      ]);
+    });
+
+    it("can be set after the socket closed", async () => {
+      const wss = new WebSocketServer({ port: 0 });
+      const { promise, resolve, reject } = Promise.withResolvers<string>();
+      wss.on("connection", ws => {
+        ws.on("error", reject);
+        ws.on("close", () => {
+          try {
+            ws.binaryType = "arraybuffer";
+            resolve(ws.binaryType);
+          } catch (err) {
+            reject(err);
+          }
+        });
+      });
+
+      const client = new WebSocket("ws://localhost:" + (wss.address() as AddressInfo).port);
+      client.on("error", reject);
+      client.on("open", () => client.close());
+      try {
+        expect(await promise).toBe("arraybuffer");
+      } finally {
+        wss.close();
+      }
+    });
   });
 });
 

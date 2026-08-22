@@ -138,6 +138,11 @@ function normalizeData(data, opts) {
   return data;
 }
 
+// npm ws emits ping and pong payloads as a Buffer. Only an ArrayBuffer can be wrapped synchronously.
+function controlPayload(binaryType, data) {
+  return binaryType === "arraybuffer" ? Buffer.from(data) : data;
+}
+
 // https://github.com/oven-sh/bun/issues/11866
 let WebSocket;
 
@@ -441,7 +446,7 @@ class BunWebSocket extends EventEmitter {
         this.#ws.addEventListener(
           "ping",
           ({ data }) => {
-            this.emit("ping", data);
+            this.emit("ping", controlPayload(this.#binaryType, data));
           },
           once,
         );
@@ -449,7 +454,7 @@ class BunWebSocket extends EventEmitter {
         this.#ws.addEventListener(
           "pong",
           ({ data }) => {
-            this.emit("pong", data);
+            this.emit("pong", controlPayload(this.#binaryType, data));
           },
           once,
         );
@@ -538,7 +543,7 @@ class BunWebSocket extends EventEmitter {
   }
 
   set binaryType(value) {
-    if (value === "nodebuffer" || value === "arraybuffer") {
+    if (value === "nodebuffer" || value === "arraybuffer" || value === "blob") {
       this.#ws.binaryType = this.#binaryType = value;
       this.#fragments = false;
     } else if (value === "fragments") {
@@ -993,24 +998,20 @@ class BunWebSocketMocked extends EventEmitter {
   #protocol;
   #extensions;
   #bufferedAmount = 0;
-  #binaryType = "arraybuffer";
+  // The default of the ServerWebSocket. The setter keeps both sides in sync.
+  #binaryType = "nodebuffer";
 
   #onclose;
   #onerror;
   #onmessage;
   #onopen;
 
-  constructor(url, protocol, extensions, binaryType) {
+  constructor(url, protocol, extensions) {
     super();
     this.#ws = null;
     this.#state = ReadyState_CONNECTING;
     this.#url = url;
     this.#bufferedAmount = 0;
-    binaryType = binaryType || "arraybuffer";
-    if (binaryType !== "nodebuffer" && binaryType !== "blob" && binaryType !== "arraybuffer") {
-      throw new TypeError("binaryType must be either 'blob', 'arraybuffer' or 'nodebuffer'");
-    }
-    this.#binaryType = binaryType;
     this.#protocol = protocol;
     this.#extensions = extensions;
 
@@ -1033,12 +1034,12 @@ class BunWebSocketMocked extends EventEmitter {
 
   #ping(ws, data) {
     this.#ws = ws;
-    this.emit("ping", data);
+    this.emit("ping", controlPayload(this.#binaryType, data));
   }
 
   #pong(ws, data) {
     this.#ws = ws;
-    this.emit("pong", data);
+    this.emit("pong", controlPayload(this.#binaryType, data));
   }
 
   #message(ws, message) {
@@ -1055,15 +1056,8 @@ class BunWebSocketMocked extends EventEmitter {
         message = Buffer.from(message);
       }
     } else {
-      //Buffer
+      // The ServerWebSocket already built the Buffer, ArrayBuffer or Blob that binaryType selects.
       isBinary = true;
-      if (this.#binaryType !== "nodebuffer") {
-        if (this.#binaryType === "arraybuffer") {
-          message = new Uint8Array(message);
-        } else if (this.#binaryType === "blob") {
-          message = new Blob([message]);
-        }
-      }
     }
 
     this.emit("message", message, isBinary);
@@ -1219,6 +1213,9 @@ class BunWebSocketMocked extends EventEmitter {
       throw new TypeError("binaryType must be either 'blob', 'arraybuffer' or 'nodebuffer'");
     }
     this.#binaryType = type;
+    // #ws is null before open and after close. The ServerWebSocket builds the selected type itself.
+    const ws = this.#ws;
+    if (ws) ws.binaryType = type;
   }
 
   get readyState() {
@@ -1564,7 +1561,7 @@ class WebSocketServer extends EventEmitter {
         ? this.options.handleProtocols(protocols, request)
         : protocols.values().next().value;
     }
-    const ws = new BunWebSocketMocked(request.url, protocol, extensions, "nodebuffer");
+    const ws = new BunWebSocketMocked(request.url, protocol, extensions);
 
     const headers = ["HTTP/1.1 101 Switching Protocols", "Upgrade: websocket", "Connection: Upgrade"];
     this.emit("headers", headers, request);

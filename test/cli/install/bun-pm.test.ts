@@ -679,12 +679,23 @@ it("should list a root optional peer that a dependency provides", async () => {
   expect(urls).toEqual([]);
 });
 
-// The JSON document carries what the text output prints: the root package name,
-// the project path, and one entry per listed line in the same order, with the
-// real package name, the resolution printed after `@`, and the folder the
-// package is installed in. `--all` nests each folder's own node_modules under
-// `dependencies`; a leaf has no `dependencies` key.
+// The JSON document has the shape of `pnpm ls --json`: the root package, then its
+// dependencies grouped by the package.json section they are declared in, each
+// group keyed by the name the package is installed under. An entry carries the
+// real package name (`from`), the resolution the text output prints after `@`,
+// and the absolute folder the package is installed in. `--all` adds
+// `transitiveDependencies`, an array because the same name can be installed in
+// more than one node_modules folder.
 describe("pm ls --json", () => {
+  const nodeModules = (...parts: string[]) => join(package_dir, "node_modules", ...parts);
+  const emptyGroups = {
+    dependencies: {},
+    devDependencies: {},
+    optionalDependencies: {},
+    peerDependencies: {},
+    workspaces: {},
+  };
+
   // The default bunfig saves bun.lockb, which only stores the hashes of
   // trustedDependencies. --trusted needs bun.lock.
   async function useTextLockfile() {
@@ -723,17 +734,46 @@ describe("pm ls --json", () => {
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({
       name: "foo",
+      version: "0.0.1",
       path: package_dir,
-      dependencies: [
-        { name: "bar", version: "0.0.2", path: "node_modules/bar" },
-        { name: "moo", version: "moo", path: "node_modules/moo" },
-      ],
+      ...emptyGroups,
+      dependencies: {
+        bar: { from: "bar", version: "0.0.2", path: nodeModules("bar") },
+        moo: { from: "moo", version: "moo", path: nodeModules("moo") },
+      },
     });
     expect(stdout).toEndWith("\n");
     expect(exitCode).toBe(0);
   });
 
-  it("names the package an alias resolves to and keeps the alias in path", async () => {
+  it("groups the root dependencies by the package.json section they are declared in", async () => {
+    setHandler(dummyRegistry([], { "0.0.2": {}, "0.0.3": {} }));
+    await installWithMoo(
+      {
+        dependencies: { bar: "0.0.2" },
+        devDependencies: { moo: "./moo" },
+        optionalDependencies: { baz: "0.0.3" },
+        peerDependencies: { boba: "0.0.2" },
+      },
+      {},
+    );
+
+    const [stdout, stderr, exitCode] = await spawnAndCollect("pm", "ls", "--json");
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      name: "foo",
+      version: "0.0.1",
+      path: package_dir,
+      dependencies: { bar: { from: "bar", version: "0.0.2", path: nodeModules("bar") } },
+      devDependencies: { moo: { from: "moo", version: "moo", path: nodeModules("moo") } },
+      optionalDependencies: { baz: { from: "baz", version: "0.0.3", path: nodeModules("baz") } },
+      peerDependencies: { boba: { from: "boba", version: "0.0.2", path: nodeModules("boba") } },
+      workspaces: {},
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("keys an alias by the alias and names the package it resolves to in from", async () => {
     setHandler(dummyRegistry([]));
     await installWithMoo({ dependencies: { "moo-1": "./moo", "bar-1": "npm:bar" } }, {});
 
@@ -741,41 +781,47 @@ describe("pm ls --json", () => {
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({
       name: "foo",
+      version: "0.0.1",
       path: package_dir,
-      dependencies: [
-        { name: "bar", version: "0.0.2", path: "node_modules/bar-1" },
-        { name: "moo", version: "moo", path: "node_modules/moo-1" },
-      ],
+      ...emptyGroups,
+      dependencies: {
+        "bar-1": { from: "bar", version: "0.0.2", path: nodeModules("bar-1") },
+        "moo-1": { from: "moo", version: "moo", path: nodeModules("moo-1") },
+      },
     });
     expect(exitCode).toBe(0);
   });
 
-  it("--all nests the dependencies of a nested node_modules folder", async () => {
-    setHandler(dummyRegistry([], { "0.0.3": {}, "0.0.5": {} }));
+  it("--all lists every other installed package once per folder in transitiveDependencies", async () => {
+    setHandler(dummyRegistry([], { "0.0.2": {}, "0.0.3": {}, "0.0.5": {} }));
     // moo needs baz@0.0.5 while the root pins baz@0.0.3, so moo gets its own
-    // node_modules/baz.
-    await installWithMoo({ dependencies: { baz: "0.0.3", moo: "./moo" } }, { dependencies: { baz: "0.0.5" } });
+    // node_modules/baz. bar is hoisted to the root node_modules.
+    await installWithMoo(
+      { dependencies: { baz: "0.0.3", moo: "./moo" } },
+      { dependencies: { baz: "0.0.5", bar: "0.0.2" } },
+    );
 
     const [stdout, stderr, exitCode] = await spawnAndCollect("pm", "ls", "--all", "--json");
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({
       name: "foo",
+      version: "0.0.1",
       path: package_dir,
-      dependencies: [
-        { name: "baz", version: "0.0.3", path: "node_modules/baz" },
-        {
-          name: "moo",
-          version: "moo",
-          path: "node_modules/moo",
-          dependencies: [{ name: "baz", version: "0.0.5", path: "node_modules/moo/node_modules/baz" }],
-        },
+      ...emptyGroups,
+      dependencies: {
+        baz: { from: "baz", version: "0.0.3", path: nodeModules("baz") },
+        moo: { from: "moo", version: "moo", path: nodeModules("moo") },
+      },
+      transitiveDependencies: [
+        { from: "bar", version: "0.0.2", path: nodeModules("bar") },
+        { from: "baz", version: "0.0.5", path: nodeModules("moo", "node_modules", "baz") },
       ],
     });
     expect(stdout).toEndWith("\n");
     expect(exitCode).toBe(0);
   });
 
-  it("--all lists a hoisted aliased dependency once, without a dependencies key", async () => {
+  it("--all keeps the alias of a hoisted aliased dependency in path", async () => {
     setHandler(dummyRegistry([]));
     await installWithMoo({ dependencies: { "moo-1": "./moo" } }, { dependencies: { "bar-1": "npm:bar" } });
 
@@ -783,11 +829,11 @@ describe("pm ls --json", () => {
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({
       name: "foo",
+      version: "0.0.1",
       path: package_dir,
-      dependencies: [
-        { name: "bar", version: "0.0.2", path: "node_modules/bar-1" },
-        { name: "moo", version: "moo", path: "node_modules/moo-1" },
-      ],
+      ...emptyGroups,
+      dependencies: { "moo-1": { from: "moo", version: "moo", path: nodeModules("moo-1") } },
+      transitiveDependencies: [{ from: "bar", version: "0.0.2", path: nodeModules("bar-1") }],
     });
     expect(exitCode).toBe(0);
   });
@@ -801,13 +847,15 @@ describe("pm ls --json", () => {
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({
       name: "foo",
+      version: "0.0.1",
       path: package_dir,
-      dependencies: [{ name: "bar", version: "0.0.2", path: "node_modules/bar" }],
+      ...emptyGroups,
+      dependencies: { bar: { from: "bar", version: "0.0.2", path: nodeModules("bar") } },
     });
     expect(exitCode).toBe(0);
   });
 
-  it("--trusted prints an empty list when nothing is trusted", async () => {
+  it("--trusted prints empty groups when nothing is trusted", async () => {
     setHandler(dummyRegistry([]));
     await useTextLockfile();
     await writeFile(
@@ -820,57 +868,78 @@ describe("pm ls --json", () => {
 
     const [stdout, stderr, exitCode] = await spawnAndCollect("pm", "ls", "--trusted", "--json");
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({
-      name: "foo",
-      path: package_dir,
-      dependencies: [],
-    });
+    expect(JSON.parse(stdout)).toEqual({ name: "foo", version: "0.0.1", path: package_dir, ...emptyGroups });
     expect(stdout).toEndWith("\n");
     expect(exitCode).toBe(0);
   });
 
-  it("--all --trusted lists the trusted dependencies of every node_modules folder as a flat list", async () => {
-    setHandler(dummyRegistry([]));
+  it("--all --trusted lists every installed copy of a trusted package", async () => {
+    setHandler(dummyRegistry([], { "0.0.2": {}, "0.0.3": {}, "0.0.5": {} }));
     await useTextLockfile();
+    // baz is trusted by name: the root's baz@0.0.3 and moo's nested baz@0.0.5
+    // are both listed, the untrusted moo and bar are not.
     await installWithMoo(
-      { dependencies: { moo: "./moo" }, trustedDependencies: ["bar"] },
-      { dependencies: { bar: "latest" } },
+      { dependencies: { baz: "0.0.3", moo: "./moo" }, trustedDependencies: ["baz"] },
+      { dependencies: { baz: "0.0.5", bar: "0.0.2" } },
     );
 
     const [stdout, stderr, exitCode] = await spawnAndCollect("pm", "ls", "--all", "--trusted", "--json");
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({
       name: "foo",
+      version: "0.0.1",
       path: package_dir,
-      dependencies: [{ name: "bar", version: "0.0.2", path: "node_modules/bar" }],
+      ...emptyGroups,
+      dependencies: { baz: { from: "baz", version: "0.0.3", path: nodeModules("baz") } },
+      transitiveDependencies: [{ from: "baz", version: "0.0.5", path: nodeModules("moo", "node_modules", "baz") }],
     });
     expect(exitCode).toBe(0);
   });
 
-  it("lists a workspace the root also depends on once", async () => {
-    setHandler(dummyRegistry([]));
-    await installWorkspacesTheRootDependsOn(true);
+  it.each([
+    { lockfile: "bun.lock", saveTextLockfile: true },
+    { lockfile: "bun.lockb", saveTextLockfile: false },
+  ])(
+    "lists a workspace the root also declares in every group it appears in ($lockfile)",
+    async ({ saveTextLockfile }) => {
+      setHandler(dummyRegistry([]));
+      await installWorkspacesTheRootDependsOn(saveTextLockfile);
 
-    const [stdout, stderr, exitCode] = await spawnAndCollect("pm", "ls", "--json");
-    expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({
-      name: "foo",
-      path: package_dir,
-      dependencies: [
-        { name: "bar", version: "0.0.2", path: "node_modules/bar" },
-        { name: "bar", version: "0.0.2", path: "node_modules/bar-alias" },
-        { name: "ws-once", version: "workspace:packages/ws-once", path: "node_modules/ws-once" },
-        { name: "ws-twice", version: "workspace:packages/ws-twice", path: "node_modules/ws-twice" },
-        { name: "ws-undeclared", version: "workspace:packages/ws-undeclared", path: "node_modules/ws-undeclared" },
-      ],
-    });
-    expect(exitCode).toBe(0);
-  });
+      const bar = { from: "bar", version: "0.0.2", path: nodeModules("bar") };
+      const wsOnce = { from: "ws-once", version: "workspace:packages/ws-once", path: nodeModules("ws-once") };
+      const wsTwice = { from: "ws-twice", version: "workspace:packages/ws-twice", path: nodeModules("ws-twice") };
+      const [stdout, stderr, exitCode] = await spawnAndCollect("pm", "ls", "--json");
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        name: "foo",
+        version: "0.0.1",
+        path: package_dir,
+        dependencies: {
+          bar,
+          "bar-alias": { from: "bar", version: "0.0.2", path: nodeModules("bar-alias") },
+          "ws-twice": wsTwice,
+        },
+        devDependencies: { bar, "ws-once": wsOnce, "ws-twice": wsTwice },
+        optionalDependencies: {},
+        peerDependencies: {},
+        workspaces: {
+          "ws-once": wsOnce,
+          "ws-twice": wsTwice,
+          "ws-undeclared": {
+            from: "ws-undeclared",
+            version: "workspace:packages/ws-undeclared",
+            path: nodeModules("ws-undeclared"),
+          },
+        },
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
 
-  it("prints an empty list when the lockfile has no packages", async () => {
+  it("prints empty groups when the lockfile has no packages, and null for a missing version", async () => {
     // `bun install` without dependencies writes no lockfile; one is left behind
     // after the last dependency is removed.
-    await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1" }));
+    await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo" }));
     await writeFile(
       join(package_dir, "bun.lock"),
       JSON.stringify({ lockfileVersion: 1, workspaces: { "": { name: "foo" } }, packages: {} }),
@@ -883,9 +952,20 @@ describe("pm ls --json", () => {
 
     const [stdout, stderr, exitCode] = await spawnAndCollect("pm", "ls", "--json");
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({ name: "foo", path: package_dir, dependencies: [] });
+    expect(JSON.parse(stdout)).toEqual({ name: "foo", version: null, path: package_dir, ...emptyGroups });
     expect(stdout).toEndWith("\n");
     expect(exitCode).toBe(0);
+
+    const [allStdout, allStderr, allExitCode] = await spawnAndCollect("pm", "ls", "--all", "--json");
+    expect(allStderr).toBe("");
+    expect(JSON.parse(allStdout)).toEqual({
+      name: "foo",
+      version: null,
+      path: package_dir,
+      ...emptyGroups,
+      transitiveDependencies: [],
+    });
+    expect(allExitCode).toBe(0);
   });
 
   it("keeps the missing lockfile error on stderr", async () => {

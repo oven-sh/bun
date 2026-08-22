@@ -291,7 +291,7 @@ bun list --trusted
 
 ### JSON output
 
-Pass `--json` to get the same list as a JSON object, for scripts and CI checks. Nothing else is written to stdout, so the output can be piped into `jq` or `JSON.parse`. `--json` combines with `--all` and `--trusted`:
+Pass `--json` to get the list as a JSON object, for scripts and CI checks. The shape is the one of `pnpm ls --json`: the root package, then its dependencies grouped by the `package.json` section they are declared in. Nothing else is written to stdout, so the output can be piped into `jq` or `JSON.parse`. `--json` combines with `--all` and `--trusted`:
 
 ```bash terminal icon="terminal"
 bun pm ls --json
@@ -302,24 +302,32 @@ bun list --json
 ```json
 {
   "name": "my-app",
+  "version": "1.0.0",
   "path": "/path/to/project",
-  "dependencies": [
-    { "name": "react", "version": "18.2.0", "path": "node_modules/react" },
-    { "name": "react", "version": "17.0.2", "path": "node_modules/react-17" },
-    { "name": "typescript", "version": "5.0.4", "path": "node_modules/typescript" },
-    { "name": "ui", "version": "workspace:packages/ui", "path": "node_modules/ui" }
-  ]
+  "dependencies": {
+    "react": { "from": "react", "version": "18.2.0", "path": "/path/to/project/node_modules/react" },
+    "react-17": { "from": "react", "version": "17.0.2", "path": "/path/to/project/node_modules/react-17" }
+  },
+  "devDependencies": {
+    "typescript": { "from": "typescript", "version": "5.0.4", "path": "/path/to/project/node_modules/typescript" }
+  },
+  "optionalDependencies": {},
+  "peerDependencies": {},
+  "workspaces": {
+    "ui": { "from": "ui", "version": "workspace:packages/ui", "path": "/path/to/project/node_modules/ui" }
+  }
 }
 ```
 
 - `name`: the name of the root package, or `null` when `package.json` has none
+- `version`: the `version` field of the root `package.json`, or `null` when it has none
 - `path`: the absolute path of the project, as printed at the start of the text output
-- `dependencies`: one object per listed package, in the order of the text output:
-  - `name`: the name of the installed package. For an `npm:` alias such as `"react-17": "npm:react@17"` this is the real package name (`react`), not the alias.
+- `dependencies`, `devDependencies`, `optionalDependencies`, `peerDependencies`: the root's dependencies from that `package.json` section, keyed by the name they are installed under. `workspaces` lists the workspace packages. All five groups are always present, `{}` when empty. A package the root declares in two sections is listed in both. Each entry has:
+  - `from`: the name of the installed package. For an `npm:` alias such as `"react-17": "npm:react@17"` the key is the alias and `from` is the real package name (`react`).
   - `version`: the resolved version as the text output prints it after the `@`: a version for a registry package, `workspace:<path>` for a workspace, the folder path for a `file:` dependency
-  - `path`: the folder the package is installed in, relative to `path`, always with forward slashes. An aliased package keeps its alias here (`node_modules/react-17`).
+  - `path`: the absolute path of the folder the package is installed in
 
-With `--all`, a package that has its own nested `node_modules` folder also has a `dependencies` array with the same entry shape, recursively. A package without one has no `dependencies` key. With `--all --trusted`, `dependencies` is the flat list of trusted packages the text output prints, each with the folder it is installed in.
+With `--all`, the document also has `transitiveDependencies`: every other installed package, one entry per `node_modules` folder it is installed in, sorted by name. It is an array because the same name can be installed in more than one folder, for example a nested `node_modules` that holds a second version. With `--trusted`, every group lists only the trusted packages.
 
 ```bash terminal icon="terminal"
 bun pm ls --all --json
@@ -328,23 +336,24 @@ bun pm ls --all --json
 ```json
 {
   "name": "my-app",
+  "version": "1.0.0",
   "path": "/path/to/project",
-  "dependencies": [
-    { "name": "loose-envify", "version": "1.4.0", "path": "node_modules/loose-envify" },
-    {
-      "name": "react",
-      "version": "18.2.0",
-      "path": "node_modules/react",
-      "dependencies": [
-        { "name": "scheduler", "version": "0.23.0", "path": "node_modules/react/node_modules/scheduler" }
-      ]
-    },
-    { "name": "typescript", "version": "5.0.4", "path": "node_modules/typescript" }
+  "dependencies": {
+    "react": { "from": "react", "version": "18.2.0", "path": "/path/to/project/node_modules/react" }
+  },
+  "devDependencies": {},
+  "optionalDependencies": {},
+  "peerDependencies": {},
+  "workspaces": {},
+  "transitiveDependencies": [
+    { "from": "loose-envify", "version": "1.4.0", "path": "/path/to/project/node_modules/loose-envify" },
+    { "from": "scheduler", "version": "0.23.0", "path": "/path/to/project/node_modules/react/node_modules/scheduler" },
+    { "from": "scheduler", "version": "0.24.0", "path": "/path/to/project/node_modules/scheduler" }
   ]
 }
 ```
 
-`dependencies` is `[]` when nothing is installed, or when `--trusted` matches nothing. A missing lockfile is still reported on stderr with exit code `1`, and nothing is written to stdout.
+A missing lockfile is still reported on stderr with exit code `1`, and nothing is written to stdout.
 
 ## licenses
 

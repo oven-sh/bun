@@ -41,7 +41,9 @@ describe.each([
     expect(Object.prototype.toString.call(h)).toBe("[object Object]");
     const protoKeys = Object.keys(Ctor.prototype).sort();
     expect(protoKeys).toEqual(
-      name === "Hash" ? ["_flush", "_transform", "copy", "digest", "update"] : ["_flush", "_transform", "digest", "update"],
+      name === "Hash"
+        ? ["_flush", "_transform", "copy", "digest", "update"]
+        : ["_flush", "_transform", "digest", "update"],
     );
   });
 

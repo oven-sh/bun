@@ -411,6 +411,10 @@ impl WebTransportSession {
         Ok(true)
     }
 
+    #[allow(
+        clippy::boxed_local,
+        reason = "codegen finalize entry point; dropping the box is the reclaim"
+    )]
     pub(crate) fn finalize(self: Box<Self>) {
         // Not refcounted: the wrapper is the only owner, so releasing the
         // self-reference's handle and dropping the box is the whole of it.
@@ -465,6 +469,7 @@ pub(crate) extern "C" fn on_close(
 /// # Safety
 /// `wt` must be a live session whose user data was set by `accept`.
 unsafe fn session_from<'a>(wt: *mut WebTransport) -> Option<&'a WebTransportSession> {
+    // SAFETY: the caller upholds this function's contract that `wt` is live.
     let wt = unsafe { wt.as_mut()? };
     let ud = wt.user_data();
     if ud.is_null() {

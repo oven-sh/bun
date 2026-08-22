@@ -113,11 +113,6 @@ JSObject* JSReadableStreamAsyncIterator::createPrototype(VM& vm, JSDOMGlobalObje
     return JSReadableStreamAsyncIteratorPrototype::create(vm, &globalObject, structure);
 }
 
-JSObject* JSReadableStreamAsyncIterator::prototype(VM& vm, JSDOMGlobalObject& globalObject)
-{
-    return getDOMPrototype<JSReadableStreamAsyncIterator>(vm, globalObject);
-}
-
 GCClient::IsoSubspace* JSReadableStreamAsyncIterator::subspaceForImpl(VM& vm)
 {
     return WebCore::subspaceForImpl<JSReadableStreamAsyncIterator, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForReadableStreamAsyncIterator, m_subspaceForReadableStreamAsyncIterator));

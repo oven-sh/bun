@@ -40,7 +40,6 @@ public:
 
     static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
-    static WebSocket* toWrapped(JSC::VM&, JSC::JSValue);
 
     DECLARE_INFO;
 

@@ -57,9 +57,6 @@ public:
     static ExceptionOr<Ref<URLPattern>> create(ScriptExecutionContext&, URLPatternInput&&, String&& baseURL, URLPatternOptions&&);
     static ExceptionOr<Ref<URLPattern>> create(ScriptExecutionContext&, std::optional<URLPatternInput>&&, URLPatternOptions&&);
 
-    using Compatible = Variant<String, URLPatternInit, RefPtr<URLPattern>>;
-    static ExceptionOr<Ref<URLPattern>> create(ScriptExecutionContext&, Compatible&&, const String&);
-
     ~URLPattern();
 
     ExceptionOr<bool> test(ScriptExecutionContext&, std::optional<URLPatternInput>&&, String&& baseURL) const;

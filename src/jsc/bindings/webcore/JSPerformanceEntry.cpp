@@ -366,11 +366,4 @@ void JSPerformanceEntryOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* c
     uncacheWrapper(world, &jsPerformanceEntry->wrapped(), jsPerformanceEntry);
 }
 
-PerformanceEntry* JSPerformanceEntry::toWrapped(JSC::VM&, JSC::JSValue value)
-{
-    if (auto* wrapper = dynamicDowncast<JSPerformanceEntry>(value))
-        return &wrapper->wrapped();
-    return nullptr;
-}
-
 }

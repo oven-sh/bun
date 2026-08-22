@@ -58,7 +58,6 @@ private:
 JSC::EncodedJSValue throwError(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, ErrorCode code, const WTF::String& message);
 JSC::JSObject* createError(Zig::GlobalObject* globalObject, ErrorCode code, const WTF::String& message);
 JSC::JSObject* createError(JSC::JSGlobalObject* globalObject, ErrorCode code, const WTF::String& message);
-JSC::JSObject* createError(Zig::GlobalObject* globalObject, ErrorCode code, JSC::JSValue message);
 JSC::JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options);
 JSObject* createInvalidThisError(JSGlobalObject* globalObject, JSValue thisValue, const ASCIILiteral typeName);
 // Throws createInvalidThisError(callFrame->thisValue()) and returns the empty value; one call at each generated host-function's invalid-this branch.

@@ -1,7 +1,9 @@
 use core::fmt;
 
 use bun_core::ZigString;
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult};
+use bun_jsc::{
+    self as jsc, AbortSignal, AbortSignalRef, JSGlobalObject, JSValue, JsError, JsResult,
+};
 
 fn get_type_name(global_object: &JSGlobalObject, value: JSValue) -> ZigString {
     let js_type = value.js_type();
@@ -468,6 +470,19 @@ pub(crate) fn validate_function(
         return Err(global.throw_invalid_argument_type_value(name, "function", value));
     }
     Ok(value)
+}
+
+/// Node's `validateAbortSignal`, except that an `aborted`-shaped object is rejected
+/// too: the native abort paths need a real `AbortSignal`.
+/// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/validators.js#L444-L451
+pub(crate) fn validate_abort_signal(
+    global_this: &JSGlobalObject,
+    value: JSValue,
+    name: &str,
+) -> JsResult<AbortSignalRef> {
+    AbortSignal::ref_from_js(value).ok_or_else(|| {
+        global_this.throw_invalid_argument_type_value2(name, "an instance of AbortSignal", value)
+    })
 }
 
 /// Rust has no field reflection; enums opt in via this trait.

@@ -4016,17 +4016,11 @@ pub mod args {
                     if let Some(flag_) = arg.get_truthy(ctx, "flag")? {
                         flag = FileSystemFlags::from_js(ctx, flag_)?.unwrap_or(flag);
                     }
-                    if let Some(value) = arg.get_truthy(ctx, "signal")? {
-                        if let Some(signal) = AbortSignal::ref_from_js(value) {
-                            signal.pending_activity_ref();
-                            *abort_signal = Some(signal);
-                        } else {
-                            return Err(ctx.throw_invalid_argument_type_value(
-                                b"signal",
-                                b"AbortSignal",
-                                value,
-                            ));
-                        }
+                    if let Some(value) = arg.get(ctx, "signal")? {
+                        let signal =
+                            validators::validate_abort_signal(ctx, value, "options.signal")?;
+                        signal.pending_activity_ref();
+                        *abort_signal = Some(signal);
                     }
                 }
             }
@@ -4125,17 +4119,11 @@ pub mod args {
                     if let Some(mode_) = arg.get_truthy(ctx, "mode")? {
                         mode = node::mode_from_js(ctx, mode_)?.unwrap_or(mode);
                     }
-                    if let Some(value) = arg.get_truthy(ctx, "signal")? {
-                        if let Some(signal) = AbortSignal::ref_from_js(value) {
-                            signal.pending_activity_ref();
-                            *abort_signal = Some(signal);
-                        } else {
-                            return Err(ctx.throw_invalid_argument_type_value(
-                                b"signal",
-                                b"AbortSignal",
-                                value,
-                            ));
-                        }
+                    if let Some(value) = arg.get(ctx, "signal")? {
+                        let signal =
+                            validators::validate_abort_signal(ctx, value, "options.signal")?;
+                        signal.pending_activity_ref();
+                        *abort_signal = Some(signal);
                     }
                     if let Some(flush_) = arg.get(ctx, "flush")? {
                         if flush_.is_boolean() || flush_.is_undefined_or_null() {

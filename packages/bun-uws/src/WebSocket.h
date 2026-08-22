@@ -211,11 +211,12 @@ public:
 
         }
 
-        /* Every successful send resets the timeout */
-        if (webSocketContextData->resetIdleTimeoutOnSend) {
+        /* Every successful send resets the timeout, except while onTimeout's ping is waiting for an
+         * answer (hasTimedOut): our own sends prove nothing about the peer, so the ping deadline stands
+         * until the peer sends something (onData) or drains our backpressure (onWritable). Upstream also
+         * clears hasTimedOut here, which lets a server that keeps pushing data hold a dead peer open forever. */
+        if (webSocketContextData->resetIdleTimeoutOnSend && !webSocketData->hasTimedOut) {
             Super::timeout(webSocketContextData->idleTimeoutComponents.first);
-            WebSocketData *webSocketData = (WebSocketData *) Super::getAsyncSocketData();
-            webSocketData->hasTimedOut = false;
         }
 
         /* Return success */

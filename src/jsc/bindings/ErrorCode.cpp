@@ -840,7 +840,7 @@ JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalO
     return {};
 }
 
-JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral arg_name, std::span<const WTF::ASCIILiteral> expected_types, JSC::JSValue val_actual_value)
+JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& arg_name, std::span<const WTF::ASCIILiteral> expected_types, JSC::JSValue val_actual_value)
 {
     auto& vm = JSC::getVM(globalObject);
     JSC::MarkedArgumentBuffer types;

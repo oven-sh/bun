@@ -2488,6 +2488,43 @@ it.skipIf(isWindows)("process.initgroups pre-resolves a numeric uid through pass
   expect(err?.message).toContain("User identifier does not exist: 2147483646");
 });
 
+// Node validates all of these ids with validateId(), which passes ['number', 'string'] to
+// ERR_INVALID_ARG_TYPE; a list of primitives renders as "one of type ...". Every call below
+// fails validation before any syscall, so this runs fine as an unprivileged user.
+describe.skipIf(isWindows)("credential setters report invalid ids with Node's message", () => {
+  const idMessage = (name, received) =>
+    `The "${name}" argument must be one of type number or string. Received ${received}`;
+
+  it.each([
+    ["setuid", () => process.setuid({}), idMessage("id", "an instance of Object")],
+    ["seteuid", () => process.seteuid(true), idMessage("id", "type boolean (true)")],
+    ["setgid", () => process.setgid([]), idMessage("id", "an instance of Array")],
+    ["setegid", () => process.setegid(null), idMessage("id", "null")],
+    ["setgroups", () => process.setgroups([1, true]), idMessage("groups[1]", "type boolean (true)")],
+    ["initgroups user", () => process.initgroups({}, 1), idMessage("user", "an instance of Object")],
+    ["initgroups extraGroup", () => process.initgroups("root", {}), idMessage("extraGroup", "an instance of Object")],
+  ])("process.%s", (_name, fn, message) => {
+    expect(fn).toThrow(expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message }));
+  });
+});
+
+it("process.emitWarning reports a non-string, non-Error warning with Node's message", () => {
+  // Node passes ['Error', 'string'], which renders as "of type string or an instance of Error".
+  for (const [warning, received] of [
+    [123, "type number (123)"],
+    [{}, "an instance of Object"],
+    [undefined, "undefined"],
+  ]) {
+    expect(() => process.emitWarning(warning)).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `The "warning" argument must be of type string or an instance of Error. Received ${received}`,
+      }),
+    );
+  }
+});
+
 it("process.finalization.register does not validate that fn is a function", async () => {
   // Node only validates the ref (obj); a non-callable fn is stored and only
   // fails at exit time. Run in a subprocess so registration doesn't leak into

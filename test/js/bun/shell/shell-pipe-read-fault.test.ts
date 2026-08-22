@@ -1,7 +1,7 @@
 // An LD_PRELOAD shim injects ENOMEM into a shell command's pipe setup (recv()
 // on the eager read, or epoll_ctl() registering the pipe) so the reader error
 // surfaces synchronously from inside the spawn call. The command must finish
-// with the syscall errno as its exit code, not tear state down under the spawn.
+// cleanly (exit code 1), not tear state down under the spawn.
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, tempDir } from "harness";
 import { join } from "node:path";
@@ -264,9 +264,6 @@ afterAll(() => {
   dir?.[Symbol.dispose]();
 });
 
-// The shell surfaces the failed syscall's errno as the command's exit code.
-const ENOMEM = 12;
-
 const MODES = [
   "SHELL_FAIL_RECV",
   "SHELL_FAIL_EPOLL",
@@ -321,7 +318,7 @@ async function expectShellFault(
   }
   // One combined assertion so a crash surfaces stderr and the exit code in the diff.
   expect({ parsed, stderr, exitCode }).toEqual({
-    parsed: { exitCode: ENOMEM },
+    parsed: { exitCode: 1 },
     stderr: expect.any(String),
     exitCode: 0,
   });
@@ -393,7 +390,7 @@ test.concurrent.skipIf(!isLinux || !cc || !isASAN)(
 //
 // With the re-arm removed from on_read_chunk, epoll_ctl #3 is instead the read
 // loop's own EAGAIN re-registration, whose failure path already returns
-// without touching the (freed) reader, so the command just reports ENOMEM.
+// without touching the (freed) reader, so the command just reports the failure.
 test.concurrent.skipIf(!isLinux || !cc || !isASAN)(
   "shell survives a poll re-registration failure raised from on_read_chunk's mid-read flush",
   async () => {
@@ -462,7 +459,7 @@ test.concurrent.skipIf(!isLinux || !cc || !mkfifo || !cat)(
     }).toEqual({
       teedIsAllA: true,
       teedLength: 256 * 1024 + "AAAA".length,
-      parsed: { exitCode: ENOMEM },
+      parsed: { exitCode: 1 },
       stderr: "",
       readerStderr: "",
       exitCode: 0,

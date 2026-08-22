@@ -77,6 +77,12 @@ impl BuildCommand {
             return crate::bake::production::build_command(ctx);
         }
 
+        if ctx.args.target.is_none()
+            && options::any_entry_point_has_bun_hashbang(&ctx.args.entry_points, None)
+        {
+            ctx.args.target = Some(api::Target::Bun);
+        }
+
         if fetcher.is_some() {
             ctx.args.packages = Some(api::PackagesMode::External);
             ctx.bundler_options.compile = false;

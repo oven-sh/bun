@@ -1,5 +1,7 @@
 import { Database } from "bun:sqlite";
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, bunRun, tempDir } from "harness";
+import { join } from "path";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -183,4 +185,149 @@ error: Hello World`,
       });
     }
   }
+});
+
+// docs/bundler/index.mdx ("target"): a build with no explicit target defaults to
+// target "bun" when an entry point starts with `#!/usr/bin/env bun`.
+describe.concurrent("bundler hashbang target default", () => {
+  const hashbang = "#!/usr/bin/env bun";
+  const backends = ["api", "cli"] as const;
+
+  // Imports node:fs so the selected target is observable at runtime: the bun
+  // target keeps the import, the browser target replaces it with an empty stub.
+  const usesNodeFs = (firstLine: string) =>
+    `${firstLine}import { readFileSync } from "node:fs";\nconsole.log(typeof readFileSync);\n`;
+
+  /** Builds `entries` (relative to `dir`) into `dir/out` and returns each entry's output text. */
+  async function build(
+    backend: (typeof backends)[number],
+    dir: string,
+    entries: string[],
+    { target, format }: { target?: "node" | "browser"; format?: "cjs" } = {},
+  ): Promise<string[]> {
+    if (backend === "api") {
+      const result = await Bun.build({
+        entrypoints: entries.map(entry => join(dir, entry)),
+        outdir: join(dir, "out"),
+        ...(target ? { target } : {}),
+        ...(format ? { format } : {}),
+      });
+      expect(result.success).toBe(true);
+    } else {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "build",
+          ...entries,
+          "--outdir",
+          "out",
+          ...(target ? [`--target=${target}`] : []),
+          ...(format ? [`--format=${format}`] : []),
+        ],
+        cwd: dir,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    }
+    return Promise.all(entries.map(entry => Bun.file(join(dir, "out", entry)).text()));
+  }
+
+  const firstLines = [
+    { name: "LF", source: `${hashbang}\n`, bun: true },
+    { name: "CRLF", source: `${hashbang}\r\n`, bun: true },
+    { name: "flags", source: `${hashbang} --smol\n`, bun: true },
+    { name: "node", source: `#!/usr/bin/env node\n`, bun: false },
+    { name: "bunx", source: `${hashbang}x\n`, bun: false },
+  ];
+
+  for (const backend of backends) {
+    test.each(firstLines)(`${backend}: $name hashbang`, async ({ source, bun }) => {
+      using dir = tempDir("hashbang-target", { "cli.js": usesNodeFs(source) });
+      const [output] = await build(backend, String(dir), ["cli.js"]);
+      const hashbangLine = source.split(/\r?\n/)[0];
+      if (bun) {
+        expect(output).toStartWith(`${hashbangLine}\n// @bun\n`);
+      } else {
+        expect(output).toStartWith(`${hashbangLine}\n`);
+        expect(output).not.toContain("// @bun");
+      }
+      expect(await bunRun(join(String(dir), "out", "cli.js"))).toSpawn(bun ? "function" : "undefined");
+    });
+
+    test(`${backend}: a file containing only the hashbang`, async () => {
+      using dir = tempDir("hashbang-target", { "cli.js": hashbang });
+      const [output] = await build(backend, String(dir), ["cli.js"]);
+      expect(output).toStartWith(`${hashbang}\n// @bun\n`);
+    });
+
+    test(`${backend}: dependencies of the hashbang entry are built for bun too`, async () => {
+      using dir = tempDir("hashbang-target", {
+        "cli.js": `${hashbang}\nimport { depHasFs } from "./dep.js";\nconsole.log(depHasFs);\n`,
+        "dep.js": `import { readFileSync } from "node:fs";\nexport const depHasFs = typeof readFileSync;\n`,
+      });
+      const [output] = await build(backend, String(dir), ["cli.js"]);
+      expect(output).toStartWith(`${hashbang}\n// @bun\n`);
+      expect(await bunRun(join(String(dir), "out", "cli.js"))).toSpawn("function");
+    });
+
+    test(`${backend}: a hashbang on a later entry point applies to the whole build`, async () => {
+      using dir = tempDir("hashbang-target", {
+        "lib.js": usesNodeFs(""),
+        "cli.js": usesNodeFs(`${hashbang}\n`),
+      });
+      const [lib, cli] = await build(backend, String(dir), ["lib.js", "cli.js"]);
+      expect(lib).toStartWith("// @bun\n");
+      expect(cli).toStartWith(`${hashbang}\n// @bun\n`);
+      expect(await bunRun(join(String(dir), "out", "lib.js"))).toSpawn("function");
+    });
+
+    test.each(["node", "browser"] as const)(
+      `${backend}: an explicit --target=%s wins over the hashbang`,
+      async target => {
+        using dir = tempDir("hashbang-target", {
+          "cli.js": `${hashbang}\nimport { Shared } from "./shared.js";\nimport { ReExported } from "./reexport.js";\nconsole.log(Shared === ReExported);\n`,
+          "shared.js": `export class Shared {}\n`,
+          "reexport.js": `import { Shared } from "./shared.js";\nexport const ReExported = Shared;\n`,
+        });
+        const [output] = await build(backend, String(dir), ["cli.js"], { target });
+        expect(output).toStartWith(`${hashbang}\n`);
+        expect(output).not.toContain("// @bun");
+        // The whole build shares one target, so shared.js is bundled exactly once.
+        expect(output.split("class Shared").length - 1).toBe(1);
+        expect(await bunRun(join(String(dir), "out", "cli.js"))).toSpawn("true");
+      },
+    );
+
+    // Only an explicit target disables the default; format: "cjs" alone does not.
+    test(`${backend}: the hashbang still selects bun with format cjs`, async () => {
+      using dir = tempDir("hashbang-target", { "cli.js": `${hashbang}\nconsole.log("cjs");\n` });
+      const [output] = await build(backend, String(dir), ["cli.js"], { format: "cjs" });
+      expect(output).toStartWith(`${hashbang}\n// @bun @bun-cjs\n`);
+      expect(await bunRun(join(String(dir), "out", "cli.js"))).toSpawn("cjs");
+    });
+  }
+
+  test("api: an in-memory `files` entry is checked instead of the file on disk", async () => {
+    using dir = tempDir("hashbang-target", {
+      "plain.js": usesNodeFs(""),
+      "cli.js": usesNodeFs(`${hashbang}\n`),
+    });
+    const plain = join(String(dir), "plain.js");
+    const cli = join(String(dir), "cli.js");
+
+    const inMemoryHashbang = await Bun.build({
+      entrypoints: [plain],
+      files: { [plain]: usesNodeFs(`${hashbang}\n`) },
+    });
+    expect(await inMemoryHashbang.outputs[0].text()).toStartWith(`${hashbang}\n// @bun\n`);
+
+    const inMemoryPlain = await Bun.build({
+      entrypoints: [cli],
+      files: { [cli]: usesNodeFs("") },
+    });
+    expect(await inMemoryPlain.outputs[0].text()).not.toContain("// @bun");
+  });
 });

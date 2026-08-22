@@ -35,7 +35,7 @@ use crate::cache::{Entry as CacheEntry, ExternalFreeFunction};
 use crate::html_scanner::HTMLScanner;
 use crate::options::{self, Loader};
 use crate::transpiler::Transpiler;
-use crate::{ContentHasher, UseDirective, perf, target_from_hashbang};
+use crate::{ContentHasher, UseDirective, perf};
 use bun_resolver::fs::PathResolverExt as _;
 use bun_resolver::{self as _resolver, Resolver};
 
@@ -2395,27 +2395,20 @@ pub mod parse_worker {
             ..Default::default()
         });
 
-        let target = (if task.source_index.get() == 1 {
-            target_from_hashbang(entry_contents)
+        let target = if task.known_target == options::Target::ServerComponentsSsr
+            && topts
+                .framework
+                .as_ref()
+                .unwrap()
+                .server_components
+                .as_ref()
+                .unwrap()
+                .separate_ssr_graph
+        {
+            options::Target::ServerComponentsSsr
         } else {
-            None
-        })
-        .unwrap_or_else(|| {
-            if task.known_target == options::Target::ServerComponentsSsr
-                && topts
-                    .framework
-                    .as_ref()
-                    .unwrap()
-                    .server_components
-                    .as_ref()
-                    .unwrap()
-                    .separate_ssr_graph
-            {
-                options::Target::ServerComponentsSsr
-            } else {
-                topts.target
-            }
-        });
+            topts.target
+        };
 
         let output_format = topts.output_format;
 

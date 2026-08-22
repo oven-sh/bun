@@ -366,7 +366,7 @@ For bundles that run in the Bun runtime. In many cases, it isn't necessary to bu
 
 All bundles generated with `target: "bun"` are marked with a `// @bun` pragma, which tells the Bun runtime that there's no need to re-transpile the file before execution.
 
-If any entrypoint contains a Bun shebang (`#!/usr/bin/env bun`), the bundler defaults to `target: "bun"` instead of `"browser"`.
+If `target` is not set and any entrypoint starts with a Bun shebang (`#!/usr/bin/env bun`), the bundler defaults to `target: "bun"` instead of `"browser"`. An explicit `target` is always used as given.
 
 When you use `target: "bun"` and `format: "cjs"` together, the bundler adds the `// @bun @bun-cjs` pragma, and the CommonJS wrapper function is not compatible with Node.js.
 

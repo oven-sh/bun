@@ -2908,6 +2908,11 @@ declare module "bun" {
     entrypoints: string[];
 
     /**
+     * The environment the bundle will run in.
+     *
+     * When not set, defaults to `"bun"` if any entrypoint starts with a
+     * `#!/usr/bin/env bun` shebang, and to `"browser"` otherwise.
+     *
      * @default "browser"
      */
     target?: Target; // default: "browser"

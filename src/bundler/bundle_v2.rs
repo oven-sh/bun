@@ -18,7 +18,6 @@ pub use bv2_impl::dispatch;
 pub use bv2_impl::{
     CompileResult, CompileResultForSourceMap, CompileResultForSourceMapColumns, ContentHasher,
     EventLoop, ImportTracker, PartRange, StableRef, WrapKind, generic_path_with_pretty_initialized,
-    target_from_hashbang,
 };
 pub use bv2_impl::{DevServerInput, DevServerOutput, ImportTrackerIterator, ImportTrackerStatus};
 // Flatten the impl-body module into this file's namespace so external callers
@@ -928,9 +927,7 @@ pub mod bv2_impl {
                     }
                 }
                 /// Returns a `resolver::Result` for a file in the map, or `None` if
-                /// not found. Handles direct key matches and relative specifiers
-                /// joined against `dirname(source_file)` (with Windows
-                /// drive-letter / separator normalization).
+                /// not found (see [`Self::lookup`] for what matches).
                 ///
                 /// `arena` is the build's bump arena (`BundleV2::arena()`);
                 /// the matched key is copied into it so the returned
@@ -943,33 +940,45 @@ pub mod bv2_impl {
                     source_file: &[u8],
                     specifier: &[u8],
                 ) -> Option<bun_resolver::Result> {
-                    if self.map.is_empty() {
-                        return None;
-                    }
-
+                    let (key, _) = self.lookup(source_file, specifier)?;
                     // SAFETY: ARENA — `arena` is the build-pass bump arena
                     // (never freed before the `Result` is consumed); detaching the
                     // borrow lifetime matches the established `Path<'static>`
                     // convention used throughout `bun_resolver` (PORTING.md
                     // §Lifetimes: ARENA → `&'bump T`).
-                    let dupe = |key: &[u8]| -> &'static [u8] {
-                        // SAFETY: see ARENA note above — bytes live in the build-pass arena.
-                        unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(key)) }
-                    };
+                    let key: &'static [u8] =
+                        unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(key)) };
+                    Some(bun_resolver::Result {
+                        path_pair: bun_resolver::PathPair {
+                            primary: crate::bun_fs::Path::init_with_namespace(key, b"file"),
+                            ..Default::default()
+                        },
+                        module_type: crate::options::ModuleType::Unknown,
+                        ..Default::default()
+                    })
+                }
 
-                    // Direct key match (must use `getKey` to return the map-owned
-                    // key, not the parameter).
+                /// Map-owned key and contents; `source_file` is `b""` for an entry point.
+                pub(crate) fn lookup(
+                    &self,
+                    source_file: &[u8],
+                    specifier: &[u8],
+                ) -> Option<(&[u8], &[u8])> {
+                    if self.map.is_empty() {
+                        return None;
+                    }
+
                     #[cfg(not(windows))]
-                    if let Some((key, _)) = self.map.get_key_value(specifier) {
-                        return Some(Self::result_for_key(dupe(key.as_ref())));
+                    if let Some(found) = self.entry(specifier) {
+                        return Some(found);
                     }
                     #[cfg(windows)]
                     {
                         let mut buf = bun_paths::path_buffer_pool::get();
                         let normalized =
                             bun_paths::resolve_path::path_to_posix_buf(specifier, &mut **buf);
-                        if let Some((key, _)) = self.map.get_key_value(normalized) {
-                            return Some(Self::result_for_key(dupe(key.as_ref())));
+                        if let Some(found) = self.entry(normalized) {
+                            return Some(found);
                         }
                     }
 
@@ -1030,30 +1039,16 @@ pub mod bv2_impl {
                                 &mut buf[0..joined_len],
                             );
                         }
-                        let joined = &buf[0..joined_len];
-                        if let Some((key, _)) = self.map.get_key_value(joined) {
-                            return Some(Self::result_for_key(dupe(key.as_ref())));
-                        }
+                        return self.entry(&buf[0..joined_len]);
                     }
 
                     None
                 }
 
-                /// Build a `bun_resolver::Result` for a matched key. `key` must
-                /// already satisfy `'static` — see [`resolve`], which copies the
-                /// map-owned key into the build's bump arena before calling here so
-                /// the resulting `Path<'static>` borrows arena memory rather than
-                /// forging a `'static` from a map borrow.
-                #[inline]
-                fn result_for_key(key: &'static [u8]) -> bun_resolver::Result {
-                    bun_resolver::Result {
-                        path_pair: bun_resolver::PathPair {
-                            primary: crate::bun_fs::Path::init_with_namespace(key, b"file"),
-                            ..Default::default()
-                        },
-                        module_type: crate::options::ModuleType::Unknown,
-                        ..Default::default()
-                    }
+                fn entry(&self, key: &[u8]) -> Option<(&[u8], &[u8])> {
+                    self.map
+                        .get_key_value(key)
+                        .map(|(key, contents)| (key.as_ref(), &contents[..]))
                 }
             }
 
@@ -7582,17 +7577,6 @@ pub mod bv2_impl {
         None = 0,
         Cjs,
         Esm,
-    }
-
-    pub fn target_from_hashbang(buffer: &[u8]) -> Option<options::Target> {
-        const HB: &[u8] = b"#!/usr/bin/env bun";
-        if buffer.len() > HB.len() && buffer.starts_with(HB) {
-            match buffer[HB.len()] {
-                b'\n' | b' ' => return Some(options::Target::Bun),
-                _ => {}
-            }
-        }
-        None
     }
 
     pub fn generic_path_with_pretty_initialized(

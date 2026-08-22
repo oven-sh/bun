@@ -168,6 +168,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor,
 
         if (index != WTF::notFound) {
             dirname = JSC::jsSubstring(globalObject, idString, 0, index);
+            RETURN_IF_EXCEPTION(scope, {});
         }
     }
 

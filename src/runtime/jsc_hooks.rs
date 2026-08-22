@@ -2962,6 +2962,11 @@ fn transpile_source_code_inner(
                         }
                         _ => (core::ptr::null_mut(), 0),
                     };
+                    // Mirrors the `is_main` handling on the print path below.
+                    if is_main {
+                        // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                        unsafe { (*jsc_vm).has_loaded = true };
+                    }
                     return Ok(OwnedResolvedSource::from(ResolvedSource {
                         source_code: bun_core::String::clone_latin1(&source.contents),
                         specifier: input_specifier.dupe_ref(),
@@ -3106,6 +3111,11 @@ fn transpile_source_code_inner(
                     };
                     let (bytecode_cache, bytecode_cache_size) =
                         node_compile_cache_blob.unwrap_or((core::ptr::null_mut(), 0));
+                    // Mirrors the `is_main` handling on the print path below.
+                    if is_main {
+                        // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                        unsafe { (*jsc_vm).has_loaded = true };
+                    }
                     return Ok(OwnedResolvedSource::from(ResolvedSource {
                         source_code,
                         specifier: input_specifier.dupe_ref(),

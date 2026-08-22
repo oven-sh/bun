@@ -24,6 +24,12 @@ pub struct Scanner<'a> {
     /// Glob patterns for paths to ignore. Matched against the path relative to the
     /// project root (top_level_dir). When a file matches any pattern, it is excluded.
     pub(crate) path_ignore_patterns: &'a [&'a [u8]],
+    /// True when `path_ignore_patterns` is `DEFAULT_PATH_IGNORE_PATTERNS`
+    /// rather than user-configured; `scan_explicit` only bypasses defaults.
+    pub(crate) path_ignore_patterns_are_defaults: bool,
+    /// Bit `i` set disables `DEFAULT_PATH_IGNORE_PATTERNS[i]` for the current
+    /// scan; recomputed at the start of every scan.
+    disabled_defaults_mask: u8,
     pub(crate) dirs_to_scan: Fifo,
     /// Paths to test files found while scanning.
     pub(crate) test_files: Vec<Interned>,
@@ -81,6 +87,8 @@ impl<'a> Scanner<'a> {
             exclusion_names: &[],
             filter_names: &[],
             path_ignore_patterns: &[],
+            path_ignore_patterns_are_defaults: false,
+            disabled_defaults_mask: 0,
             dirs_to_scan: Fifo::new(),
             options: &transpiler.options,
             fs: transpiler.fs,
@@ -126,6 +134,33 @@ impl<'a> Scanner<'a> {
     }
 
     pub(crate) fn scan(&mut self, path_literal: &[u8]) -> Result<(), ScanError> {
+        self.scan_internal(path_literal, ScanMode::AutoDiscover)
+    }
+
+    /// Like `scan`, but for an explicit CLI path (`bun test ./build/foo.test.ts`):
+    /// default ignore patterns matching the path itself are dropped for this
+    /// invocation so the named file/directory runs. User-configured patterns
+    /// still apply.
+    pub(crate) fn scan_explicit(&mut self, path_literal: &[u8]) -> Result<(), ScanError> {
+        self.scan_internal(path_literal, ScanMode::ExplicitPath)
+    }
+
+    fn scan_internal(&mut self, path_literal: &[u8], mode: ScanMode) -> Result<(), ScanError> {
+        // Recomputed per scan, so no restore is needed on early return.
+        self.disabled_defaults_mask = 0;
+        if matches!(mode, ScanMode::ExplicitPath) && self.path_ignore_patterns_are_defaults {
+            // Match against the project-relative path: an empty `rel_path` means
+            // the arg is the project root itself, which no default matches, so
+            // all stay active (a `build`/`dist` ancestor outside the project
+            // must not drop a default).
+            let rel_path = bun_paths::resolve_path::relative(self.top_level_dir(), path_literal);
+            for (i, &pattern) in DEFAULT_PATH_IGNORE_PATTERNS.iter().enumerate() {
+                if pattern_matches_path(pattern, rel_path) {
+                    self.disabled_defaults_mask |= 1 << i;
+                }
+            }
+        }
+
         let mut scan_dir_buf = PathBuffer::uninit();
         let parts: [&[u8]; 2] = [self.top_level_dir(), path_literal];
         let Some(path) = Self::abs_buf_projected(self.top_level_dir(), &parts, &mut scan_dir_buf)
@@ -289,34 +324,13 @@ impl<'a> Scanner<'a> {
             return false;
         }
         let rel_path = bun_paths::resolve_path::relative(self.top_level_dir(), abs_path);
-
-        // Build rel_path + '/' once. rel_path is a relative path from the project
-        // root; 4096 bytes covers any sane test directory depth (POSIX PATH_MAX).
-        let mut buf = [0u8; 4096];
-        let rel_with_slash: Option<&[u8]> = if !rel_path.is_empty()
-            && rel_path.len() < buf.len()
-            && rel_path[rel_path.len() - 1] != b'/'
-        {
-            buf[..rel_path.len()].copy_from_slice(rel_path);
-            buf[rel_path.len()] = b'/';
-            Some(&buf[..rel_path.len() + 1])
-        } else {
-            None
-        };
-
-        for pattern in self.path_ignore_patterns {
-            if bun_glob::r#match(pattern, rel_path).matches() {
-                return true;
+        for (i, pattern) in self.path_ignore_patterns.iter().enumerate() {
+            if self.path_ignore_patterns_are_defaults && (self.disabled_defaults_mask >> i) & 1 != 0
+            {
+                continue;
             }
-            // Only try trailing separator for ** patterns (e.g. "vendor/**").
-            // Single-star patterns like "vendor/*" must not prune entire
-            // directories because * doesn't cross directory boundaries.
-            if let Some(p) = rel_with_slash {
-                if strings::index_of(pattern, b"**").is_some() {
-                    if bun_glob::r#match(pattern, p).matches() {
-                        return true;
-                    }
-                }
+            if pattern_matches_path(pattern, rel_path) {
+                return true;
             }
         }
         false
@@ -424,3 +438,36 @@ impl<'a> Scanner<'a> {
 }
 
 pub(crate) const TEST_NAME_SUFFIXES: [&[u8]; 4] = [b".test", b"_test", b".spec", b"_spec"];
+
+/// Ignore patterns used when `pathIgnorePatterns` is not configured. Any
+/// explicit user configuration (even an empty array) replaces this list.
+pub(crate) const DEFAULT_PATH_IGNORE_PATTERNS: [&[u8]; 2] = [b"**/dist/**", b"**/build/**"];
+
+/// Whether `pattern` matches `rel_path`, retrying with a trailing `/` for
+/// `**` patterns so `**/build/**` also matches the bare directory name.
+fn pattern_matches_path(pattern: &[u8], rel_path: &[u8]) -> bool {
+    if bun_glob::r#match(pattern, rel_path).matches() {
+        return true;
+    }
+    // Trailing-separator retry is only valid for ** patterns; a single `*`
+    // doesn't cross directory boundaries and must not prune whole trees.
+    if rel_path.is_empty()
+        || rel_path[rel_path.len() - 1] == b'/'
+        || strings::index_of(pattern, b"**").is_none()
+    {
+        return false;
+    }
+    let mut buf = [0u8; 4096];
+    if rel_path.len() >= buf.len() {
+        return false;
+    }
+    buf[..rel_path.len()].copy_from_slice(rel_path);
+    buf[rel_path.len()] = b'/';
+    bun_glob::r#match(pattern, &buf[..rel_path.len() + 1]).matches()
+}
+
+#[derive(Copy, Clone)]
+enum ScanMode {
+    AutoDiscover,
+    ExplicitPath,
+}

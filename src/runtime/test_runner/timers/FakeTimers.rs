@@ -72,6 +72,9 @@ impl CurrentTime {
         bun_core::mock_time::set_wall_ms(date_now);
 
         vm.overridden_performance_now = Some(offset.ns());
+        // `Date.now() == date_now_offset + performance.now()`, so the offset is
+        // the fake clock's `performance.timeOrigin`.
+        vm.overridden_time_origin = Some(date_now_offset);
     }
 
     pub(crate) fn clear(&self, global: &JSGlobalObject) {
@@ -86,16 +89,18 @@ impl CurrentTime {
         // SAFETY: FFI call into C++ JSMock; global is a valid &JSGlobalObject
         JSMock__setOverridenDateNow(global, f64::NAN);
         vm.overridden_performance_now = None;
+        vm.overridden_time_origin = None;
     }
 }
 
 /// `jest.setSystemTime` (C++ `JSMock__jsSetSystemTime`) writes
 /// `globalObject->overridenDateNow` directly; rebase `date_now_offset` here so
 /// the next `advanceTimersByTime` recomputes `Date.now` from the set time
-/// instead of the stale activation-time offset. No-op when fake timers are
-/// inactive or `ms` is NaN (the "clear override" sentinel).
+/// instead of the stale activation-time offset. `performance.now()` does not
+/// move, so `performance.timeOrigin` follows the rebased offset. No-op when
+/// fake timers are inactive or `ms` is NaN (the "clear override" sentinel).
 #[unsafe(no_mangle)]
-extern "C" fn Bun__FakeTimers__setSystemTime(ms: f64) {
+extern "C" fn Bun__FakeTimers__setSystemTime(global: &JSGlobalObject, ms: f64) {
     if ms.is_nan() {
         return;
     }
@@ -107,6 +112,7 @@ extern "C" fn Bun__FakeTimers__setSystemTime(ms: f64) {
         .date_now_offset
         .store(date_now_offset.to_bits(), Ordering::Relaxed);
     bun_core::mock_time::set_wall_ms(ms);
+    global.bun_vm().as_mut().overridden_time_origin = Some(date_now_offset);
 }
 
 use crate::jsc_hooks::timer_all;

@@ -309,6 +309,64 @@ cache = false
     }
   });
 
+  it("an npmrc entry used over plain http keeps covering a redirect under its path", async () => {
+    // The credential's scope follows the scheme it was honoured on: a hop that
+    // stays under //host/npm/ keeps the token, one that leaves it does not.
+    const received: Received[] = [];
+    await using registry = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        const url = new URL(req.url);
+        received.push({ path: url.pathname, authorization: req.headers.get("authorization") });
+        const origin = `http://127.0.0.1:${registry.port}`;
+        if (url.pathname === "/npm/team-a/no-deps") {
+          return Response.json({
+            name: "no-deps",
+            "dist-tags": { latest: "1.0.0" },
+            versions: {
+              "1.0.0": {
+                name: "no-deps",
+                version: "1.0.0",
+                dist: { integrity, tarball: `${origin}/npm/team-a/no-deps/-/no-deps-1.0.0.tgz` },
+              },
+            },
+          });
+        }
+        if (url.pathname === "/npm/team-a/no-deps/-/no-deps-1.0.0.tgz") {
+          return Response.redirect(`${origin}/npm/blobs/no-deps-1.0.0.tgz`, 307);
+        }
+        if (url.pathname === "/npm/blobs/no-deps-1.0.0.tgz") {
+          return Response.redirect(`${origin}/cdn/no-deps-1.0.0.tgz`, 307);
+        }
+        if (url.pathname === "/cdn/no-deps-1.0.0.tgz") {
+          return new Response(Bun.file(tgz));
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+    using dir = tempDir("registry-path-scoped-auth", {
+      "package.json": packageJson,
+      "bunfig.toml": `
+[install]
+cache = false
+registry = "http://127.0.0.1:${registry.port}/npm/team-a/"
+`,
+      ".npmrc": `//127.0.0.1:${registry.port}/npm/:_authToken=npm-wide\n`,
+    });
+
+    const { stdout, stderr, exitCode } = await install(String(dir));
+    expect(stderr).toContain("Saved lockfile");
+    expect(stdout).toContain("1 package installed");
+    expect(exitCode).toBe(0);
+    expect(received).toEqual([
+      { path: "/npm/team-a/no-deps", authorization: "Bearer npm-wide" },
+      { path: "/npm/team-a/no-deps/-/no-deps-1.0.0.tgz", authorization: "Bearer npm-wide" },
+      { path: "/npm/blobs/no-deps-1.0.0.tgz", authorization: "Bearer npm-wide" },
+      { path: "/cdn/no-deps-1.0.0.tgz", authorization: null },
+    ]);
+  });
+
   it("an npmrc entry for a parent path covers a registry configured below it", async () => {
     const received: Received[] = [];
     await using registry = serveRegistry(received, origin => `${origin}/npm/team-a/no-deps/-/no-deps-1.0.0.tgz`);
@@ -647,6 +705,31 @@ allowedHosts = []
       `error: Refusing to download "${tarballUrl}" for package "no-deps": host is not in install.allowedHosts`,
     );
     expect(stderr).not.toContain("internal error");
+    expect(exitCode).toBe(1);
+    expect(elsewhereReceived).toEqual([]);
+  });
+
+  it("an optional dependency whose manifest host is not listed also fails the install", async () => {
+    // Only reachable through a rewrite (registries are implicitly allowed);
+    // must fail closed like the tarball case.
+    const elsewhereReceived: Received[] = [];
+    await using elsewhere = serveElsewhere(elsewhereReceived);
+    await using registry = serveRegistry([], origin => `${origin}/no-deps/-/no-deps-1.0.0.tgz`);
+    using dir = tempDir("allowed-hosts", {
+      "package.json": JSON.stringify({ name: "app", version: "1.0.0", optionalDependencies: { "no-deps": "1.0.0" } }),
+      "bunfig.toml": `
+[install]
+cache = false
+registry = "http://127.0.0.1:${registry.port}/"
+allowedHosts = []
+rewrite = [{ from = "http://127.0.0.1:${registry.port}/", to = "http://127.0.0.1:${elsewhere.port}/" }]
+`,
+    });
+
+    const { stderr, exitCode } = await install(String(dir));
+    expect(stderr).toContain(
+      `error: Refusing to fetch manifest "http://127.0.0.1:${elsewhere.port}/no-deps" for package "no-deps": host is not in install.allowedHosts`,
+    );
     expect(exitCode).toBe(1);
     expect(elsewhereReceived).toEqual([]);
   });

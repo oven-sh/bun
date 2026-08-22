@@ -368,6 +368,14 @@ impl NetworkTask {
     }
 }
 
+/// Did this response fail because a redirect hop was refused by
+/// `install.allowedHosts` (`RedirectPolicy`)? That is policy, not
+/// availability: never retried, and an error even for an optional edge.
+#[inline]
+pub(crate) fn refused_by_policy(response: &bun_http::HTTPClientResult<'_>) -> bool {
+    response.fail == Some(bun_http::Error::RedirectHostNotAllowed)
+}
+
 #[derive(Clone, Copy)]
 pub enum Authorization {
     NoAuthorization,
@@ -598,28 +606,19 @@ impl NetworkTask {
             self.url_buf = rewritten.into_boxed_slice();
         }
 
+        // Fails closed like `for_tarball`: an error even for an optional edge,
+        // so the (terminal) reservation the caller records always comes with
+        // a failing install rather than a warning a required edge could inherit.
         if !pm.options.is_host_allowed(&self.url_buf) {
-            if !is_optional {
-                log.add_error_fmt(
-                    None,
-                    bun_ast::Loc::EMPTY,
-                    format_args!(
-                        "Refusing to fetch manifest {} for package {}: host is not in install.allowedHosts",
-                        quote(&self.url_buf),
-                        quote(name),
-                    ),
-                );
-            } else {
-                log.add_warning_fmt(
-                    None,
-                    bun_ast::Loc::EMPTY,
-                    format_args!(
-                        "Refusing to fetch manifest {} for package {}: host is not in install.allowedHosts",
-                        quote(&self.url_buf),
-                        quote(name),
-                    ),
-                );
-            }
+            log.add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "Refusing to fetch manifest {} for package {}: host is not in install.allowedHosts",
+                    quote(&self.url_buf),
+                    quote(name),
+                ),
+            );
             return Err(ForManifestError::InvalidURL);
         }
 

@@ -320,11 +320,15 @@ impl Options {
                 scope: scope.url.href(),
             };
         }
-        if let Some(found) = self.npmrc_credential_for(url) {
+        if let Some((found, is_http)) = self.npmrc_credential_for(url) {
             return Credentials {
                 token: found.token,
                 auth: found.auth,
-                scope: found.scope,
+                scope: if is_http {
+                    found.scope_http
+                } else {
+                    found.scope_https
+                },
             };
         }
         Credentials::NONE
@@ -335,7 +339,7 @@ impl Options {
     /// plaintext and still collecting the token, they cover `https://` URLs,
     /// and `http://` URLs only on an origin the configuration itself declares
     /// as a plain-http registry (default or scoped).
-    fn npmrc_credential_for(&self, url: &[u8]) -> Option<&PathCredential> {
+    fn npmrc_credential_for(&self, url: &[u8]) -> Option<(&PathCredential, bool)> {
         if self.npmrc_credentials.is_empty() {
             return None;
         }
@@ -351,7 +355,10 @@ impl Options {
         if !scheme_ok {
             return None;
         }
-        self.npmrc_credentials.iter().find(|c| c.covers(&url))
+        self.npmrc_credentials
+            .iter()
+            .find(|c| c.covers(&url))
+            .map(|c| (c, url.is_http()))
     }
 
     /// `install.allowedHosts`: may bun connect to the host of `url` at all?
@@ -479,9 +486,11 @@ pub struct PathCredential {
     /// Only set when the `.npmrc` key spelled out a port.
     pub port: Option<u16>,
     pub pathname: &'static [u8],
-    /// `https://host[:port]/path/` — what a redirect target must stay under to
-    /// keep these credentials (see `Credentials::scope`).
-    pub scope: &'static [u8],
+    /// `https://host[:port]/path/` and `http://host[:port]/path/` — what a
+    /// redirect target must stay under to keep these credentials (see
+    /// `Credentials::scope`); the one matching the request's scheme is used.
+    pub scope_https: &'static [u8],
+    pub scope_http: &'static [u8],
     pub token: &'static [u8],
     pub auth: &'static [u8],
 }
@@ -893,14 +902,18 @@ impl Options {
                     let Some(host) = AllowedHost::parse(&url[..slash]) else {
                         continue;
                     };
-                    let mut scope_url = Vec::with_capacity(b"https://".len() + url.len());
-                    scope_url.extend_from_slice(b"https://");
-                    scope_url.extend_from_slice(url);
+                    let with_scheme = |scheme: &[u8]| -> &'static [u8] {
+                        let mut v = Vec::with_capacity(scheme.len() + url.len());
+                        v.extend_from_slice(scheme);
+                        v.extend_from_slice(url);
+                        bun_core::heap::release(v.into_boxed_slice())
+                    };
                     creds.push(PathCredential {
                         hostname: host.hostname,
                         port: host.port,
                         pathname: &url[slash..],
-                        scope: bun_core::heap::release(scope_url.into_boxed_slice()),
+                        scope_https: with_scheme(b"https://"),
+                        scope_http: with_scheme(b"http://"),
                         token: leak_static(&scope.token),
                         auth: leak_static(&scope.auth),
                     });

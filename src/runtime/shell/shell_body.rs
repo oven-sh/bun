@@ -343,9 +343,7 @@ pub(crate) fn shell_cmd_from_js(
     let mut i: u32 = 0;
     let last = string_iter.len.saturating_sub(1);
     while let Some(js_value) = string_iter.next()? {
-        if !builder.append_js_value_str::<false>(js_value)? {
-            return Err(global.throw(format_args!("Shell script string contains invalid UTF-16")));
-        }
+        builder.append_js_value_str::<false>(js_value)?;
         if i < last {
             let template_value = match template_args.next()? {
                 Some(v) => v,
@@ -486,11 +484,7 @@ pub(crate) fn handle_template_value(
         }
 
         if template_value.is_string() {
-            if !builder.append_js_value_str::<true>(template_value)? {
-                return Err(
-                    global.throw(format_args!("Shell script string contains invalid UTF-16"))
-                );
-            }
+            builder.append_js_value_str::<true>(template_value)?;
             return Ok(());
         }
 
@@ -553,20 +547,12 @@ pub(crate) fn handle_template_value(
 
         // Spec `JSValue.isPrimitive()` — `!isObject()` (covers number/bool/null/undef/symbol).
         if !template_value.is_object() {
-            if !builder.append_js_value_str::<true>(template_value)? {
-                return Err(
-                    global.throw(format_args!("Shell script string contains invalid UTF-16"))
-                );
-            }
+            builder.append_js_value_str::<true>(template_value)?;
             return Ok(());
         }
 
         if template_value.implements_to_string(global)? {
-            if !builder.append_js_value_str::<true>(template_value)? {
-                return Err(
-                    global.throw(format_args!("Shell script string contains invalid UTF-16"))
-                );
-            }
+            builder.append_js_value_str::<true>(template_value)?;
             return Ok(());
         }
 
@@ -576,6 +562,30 @@ pub(crate) fn handle_template_value(
         )));
     }
 
+    Ok(())
+}
+
+/// Shared NUL / invalid-encoding rejection for template interpolation and `$.escape()`.
+pub(crate) fn validate_shell_arg_bunstr(
+    global: &JSGlobalObject,
+    bunstr: BunString,
+) -> JsResult<()> {
+    if bunstr.index_of_ascii_char(0).is_some() {
+        return Err(global
+            .err(
+                jsc::ErrorCode::INVALID_ARG_VALUE,
+                format_args!(
+                    "The shell argument must be a string without null bytes. Received \"{}\"",
+                    bunstr.to_zig_string()
+                ),
+            )
+            .throw());
+    }
+    let invalid = (bunstr.is_utf16() && !simdutf::validate::utf16le(bunstr.utf16()))
+        || (bunstr.is_utf8() && !simdutf::validate::utf8(bunstr.byte_slice()));
+    if invalid {
+        return Err(global.throw(format_args!("Shell script string contains invalid UTF-16")));
+    }
     Ok(())
 }
 
@@ -605,24 +615,13 @@ impl<'a> ShellSrcBuilder<'a> {
     pub(crate) fn append_js_value_str<const ALLOW_ESCAPE: bool>(
         &mut self,
         jsval: JSValue,
-    ) -> JsResult<bool> {
+    ) -> JsResult<()> {
         let bunstr = OwnedString::new(jsval.to_bun_string(self.global_this)?);
-
-        // Check for null bytes in shell argument (security: prevent null byte injection)
-        if bunstr.index_of_ascii_char(0).is_some() {
-            return Err(self
-                .global_this
-                .err(
-                    jsc::ErrorCode::INVALID_ARG_VALUE,
-                    format_args!(
-                        "The shell argument must be a string without null bytes. Received \"{}\"",
-                        bunstr.to_zig_string()
-                    ),
-                )
-                .throw());
-        }
-
-        Ok(self.append_bun_str::<ALLOW_ESCAPE>(bunstr.get())?)
+        validate_shell_arg_bunstr(self.global_this, bunstr.get())?;
+        // Encoding was just validated, so append_bun_str's only Ok(false) path is unreachable.
+        let ok = self.append_bun_str::<ALLOW_ESCAPE>(bunstr.get())?;
+        debug_assert!(ok);
+        Ok(())
     }
 
     pub(crate) fn append_bun_str<const ALLOW_ESCAPE: bool>(

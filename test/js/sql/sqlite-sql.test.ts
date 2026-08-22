@@ -2053,6 +2053,14 @@ describe("Connection management", () => {
     }
   });
 
+  // https://github.com/oven-sh/bun/pull/33740
+  test("close() drains a query awaited in the same tick", async () => {
+    const sql = new SQL("sqlite://:memory:");
+    await sql`SELECT 1 AS x`;
+    const [rows] = await Promise.all([sql`SELECT 42 AS x`.then(r => r), sql.close()]);
+    expect(rows).toEqual([{ x: 42 }]);
+  });
+
   test("reserve throws for SQLite", async () => {
     const sql = new SQL("sqlite://:memory:");
 

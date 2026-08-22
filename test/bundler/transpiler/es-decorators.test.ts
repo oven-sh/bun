@@ -242,6 +242,73 @@ describe("ES Decorators", () => {
       expect(stdout).toBe("field x true\n10\n");
       expect(exitCode).toBe(0);
     });
+
+    test("decorated instance field keeps [[Define]] semantics over an inherited accessor", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const seen = [];
+        function tag(_v, ctx) { seen.push("tag:" + ctx.kind + ":" + ctx.name); }
+        class Base {
+          set p(v) { seen.push("SETTER-INVOKED:" + v); }
+          get p() { return "getter"; }
+        }
+        class C extends Base {
+          @tag p = "field-init";
+          q = "plain-field";
+        }
+        const c = new C();
+        console.log(JSON.stringify({
+          seen,
+          p: c.p,
+          ownP: Object.prototype.hasOwnProperty.call(c, "p"),
+          ownQ: Object.prototype.hasOwnProperty.call(c, "q"),
+        }));
+      `);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        seen: ["tag:field:p"],
+        p: "field-init",
+        ownP: true,
+        ownQ: true,
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    test("decorated instance field does not throw on an inherited getter-only accessor", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function tag(_v, ctx) {}
+        class Base { get p() { return "getter"; } }
+        class C extends Base { @tag p = "field-init"; }
+        const c = new C();
+        console.log(c.p, Object.prototype.hasOwnProperty.call(c, "p"));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("field-init true\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("decorated static field keeps [[Define]] semantics over an inherited static accessor", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const seen = [];
+        function tag(_v, ctx) { seen.push("tag:" + ctx.kind + ":" + ctx.name); }
+        class Base {
+          static set s(v) { seen.push("STATIC-SETTER:" + v); }
+          static get s() { return "static-getter"; }
+        }
+        class C extends Base { @tag static s = "static-init"; }
+        console.log(JSON.stringify({
+          seen,
+          s: C.s,
+          ownS: Object.prototype.hasOwnProperty.call(C, "s"),
+        }));
+      `);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        seen: ["tag:field:s"],
+        s: "static-init",
+        ownS: true,
+      });
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("non-ASCII string-literal keys", () => {
@@ -252,7 +319,7 @@ describe("ES Decorators", () => {
     test("Bun.Transpiler output preserves the key", () => {
       const t = new Bun.Transpiler({ loader: "js", target: "node", minifyWhitespace: true });
       const out = t.transformSync(`class A{@(() => {})\n"\\u{20BB7}\\u{91BB6}"\n}`);
-      // The key appears twice in the lowered output (constructor assignment and
+      // The key appears twice in the lowered output (__publicField call and
       // __decorateElement call) and must be the same string both times, either
       // as literal UTF-8 or as \uXXXX escapes of the correct surrogate pair.
       const normalized = out.replace(/\\uD842\\uDFB7\\uDA06\\uDFB6/gi, key);

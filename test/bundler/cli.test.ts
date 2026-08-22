@@ -942,3 +942,29 @@ test.skipIf(isWindows)("bun build still writes every output file when stdout can
     closeSync(stdoutFd);
   }
 });
+
+test.skipIf(isWindows)(
+  "bun build to stdout reports a failed write, also for a bundle smaller than the output buffer",
+  async () => {
+    using dir = tempDir("build-stdout-ebadf", {
+      "a.js": `console.log("a");`,
+    });
+    // A read-only descriptor as stdout makes the bundle's write(2) fail with EBADF.
+    const stdoutFd = openSync("/dev/null", "r");
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "./a.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdin: "ignore",
+        stdout: stdoutFd,
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("WriteFailed");
+      expect(exitCode).toBe(1);
+    } finally {
+      closeSync(stdoutFd);
+    }
+  },
+);

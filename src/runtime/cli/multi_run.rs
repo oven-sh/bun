@@ -434,39 +434,37 @@ impl<'a> State<'a> {
     }
 
     fn print_exit_status(&self, handle: &ProcessHandle<'a>) -> Result<(), Error> {
-        {
-            let writer = Output::error_writer();
-            self.write_prefix(handle, writer)?;
+        let writer = Output::error_writer();
+        self.write_prefix(handle, writer)?;
 
-            let slot = handle.process.as_ref().unwrap();
-            match &slot.status {
-                Status::Exited(exited) => {
-                    if exited.code != 0 {
-                        writeln!(writer, "Exited with code {}", exited.code)?;
-                    } else {
-                        if let Some(end) = slot.end_time {
-                            let duration = end.duration_since(slot.start_time);
-                            let ms = duration.as_nanos() as f64 / 1_000_000.0;
-                            if ms > 1000.0 {
-                                writeln!(writer, "Done in {:.2}s", ms / 1000.0)?;
-                            } else {
-                                writeln!(writer, "Done in {:.0}ms", ms)?;
-                            }
+        let slot = handle.process.as_ref().unwrap();
+        match &slot.status {
+            Status::Exited(exited) => {
+                if exited.code != 0 {
+                    writeln!(writer, "Exited with code {}", exited.code)?;
+                } else {
+                    if let Some(end) = slot.end_time {
+                        let duration = end.duration_since(slot.start_time);
+                        let ms = duration.as_nanos() as f64 / 1_000_000.0;
+                        if ms > 1000.0 {
+                            writeln!(writer, "Done in {:.2}s", ms / 1000.0)?;
                         } else {
-                            writer.write_all(b"Done\n")?;
+                            writeln!(writer, "Done in {:.0}ms", ms)?;
                         }
+                    } else {
+                        writer.write_all(b"Done\n")?;
                     }
                 }
-                Status::Signaled(signal) => {
-                    let name = bun_sys::SignalCode(*signal).name().unwrap_or("unknown");
-                    writeln!(writer, "Signaled: {}", name)?;
-                }
-                _ => {
-                    writer.write_all(b"Error\n")?;
-                }
             }
-            Ok(())
+            Status::Signaled(signal) => {
+                let name = bun_sys::SignalCode(*signal).name().unwrap_or("unknown");
+                writeln!(writer, "Signaled: {}", name)?;
+            }
+            _ => {
+                writer.write_all(b"Error\n")?;
+            }
         }
+        Ok(())
     }
 
     /// A script is finished once its process has exited *and* both pipes have

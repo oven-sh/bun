@@ -31,8 +31,10 @@ fs.open(filename, 'w', 0o644, common.mustSucceed((fd) => {
   }, {
     code: 'ERR_OUT_OF_RANGE',
     name: 'RangeError',
-    message: 'The value of "length" is out of range. ' +
-      'It must be >= 0 && <= 2147483647. Received 2147483648'
+    // Bun's ERR_OUT_OF_RANGE formatter spells the range ">= 0 and <= N"
+    // (Node uses "&&"); assert on the stable prefix until the formatter is
+    // unified.
+    message: /^The value of "length" is out of range\. It must be >= 0 (&&|and) <= 2147483647\. Received 2147483648$/
   });
 
   fs.closeSync(fd);

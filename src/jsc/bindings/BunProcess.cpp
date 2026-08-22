@@ -616,8 +616,10 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
             pendingNapiModules = std::exchange(globalObject->m_pendingNapiModules, {});
         }
 
-        // Clear any re-entrant V8 registrations (not executed here).
+        // Clear any re-entrant V8 registrations (not executed here), and napi ones left over if a
+        // registration threw.
         globalObject->m_pendingV8Modules.clear();
+        globalObject->m_pendingNapiModules.clear();
 
         JSValue resultValue = globalObject->m_pendingNapiModuleAndExports[0].get();
         globalObject->napiModuleRegisterCallCount = 0;
@@ -669,8 +671,10 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
             }
         }
 
-        // Clear the V8 vector (no need to save again since already in DLHandleMap)
+        // Clear the V8 vector (no need to save again since already in DLHandleMap), and napi ones
+        // left over if a registration threw.
         globalObject->m_pendingV8Modules.clear();
+        globalObject->m_pendingNapiModules.clear();
 
         JSValue resultValue = globalObject->m_pendingNapiModuleAndExports[0].get();
         globalObject->napiModuleRegisterCallCount = 0;

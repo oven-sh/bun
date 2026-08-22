@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
@@ -213,6 +213,42 @@ describe("WebSocket", () => {
     // linked, not parented, to the upgrade request
     expect(message.parentSpanId).toBeUndefined();
     expect(message.links).toEqual([expect.objectContaining({ traceId: upgrade.traceId, spanId: upgrade.spanId })]);
+  });
+
+  test("a message handler that throws is still reported, even if describing the error throws", async () => {
+    // Runs out of process: the thrown error surfaces as an uncaught exception.
+    using dir = tempDir("otel-ws-throw", {
+      "index.js": `
+        const { promise, resolve } = Promise.withResolvers();
+        process.on("uncaughtException", e => resolve("uncaught:" + e.message));
+        const spans = [];
+        Bun.otel.start({ exporters: [{ export(b) { spans.push(...b); } }], instrumentations: ["websocket", "http"] });
+        const server = Bun.serve({
+          port: 0,
+          fetch(req, srv) { if (srv.upgrade(req)) return; return new Response("no"); },
+          websocket: {
+            message() {
+              const e = new Error("boom");
+              Object.defineProperty(e, "stack", { get() { throw new Error("stack getter throws"); } });
+              throw e;
+            },
+          },
+        });
+        const ws = new WebSocket("ws://127.0.0.1:" + server.port + "/");
+        ws.onopen = () => ws.send("x");
+        const how = await promise;
+        ws.close();
+        await Bun.otel.forceFlush();
+        const m = spans.find(s => s.name === "websocket.message");
+        console.log(JSON.stringify([how, m.status.code, m.events[0]?.name, m.events[0]?.attributes["exception.message"]]));
+        server.stop(true);
+        process.exit(0);
+      `,
+    });
+    await using proc = Bun.spawn({ cmd: [bunExe(), "index.js"], cwd: String(dir), env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe(JSON.stringify(["uncaught:boom", 2, "exception", "boom"]));
+    expect(exitCode).toBe(0);
   });
 
   test("failed connect", async () => {

@@ -71,8 +71,9 @@ pub fn end_message(
     global: &JSGlobalObject,
     result: JSValue,
 ) -> bun_jsc::JsResult<()> {
-    let r = if result.to_error().is_some() {
-        record_exception_value(span, global, result)
+    // `to_error` unwraps a JSC::Exception to the thrown value.
+    let r = if let Some(err) = result.to_error() {
+        record_exception_value(span, global, err)
     } else {
         if let Some(p) = result.as_any_promise() {
             if p.status() == bun_jsc::js_promise::Status::Rejected {
@@ -96,20 +97,23 @@ pub fn record_exception_value(
     let mut ty_s = None;
     let mut msg_s = None;
     let mut stack_s = None;
-    if err.is_object() {
-        for (key, out) in [
-            ("name", &mut ty_s),
-            ("message", &mut msg_s),
-            ("stack", &mut stack_s),
-        ] {
-            if let Some(v) = err.get(global, key)? {
-                if v.is_string() {
-                    *out = Some(v.to_slice(global)?);
-                }
-            }
+    // Describing the thrown value must not change what the application sees:
+    // a throwing getter on it is ignored here (the error is still delivered
+    // by the caller); only a pending termination is propagated.
+    let read = |v: bun_jsc::JsResult<Option<JSValue>>| -> bun_jsc::JsResult<Option<bun_core::ZigStringSlice>> {
+        match v {
+            Ok(Some(v)) if v.is_string() => v.to_slice(global).map(Some),
+            Ok(_) => Ok(None),
+            Err(_) if global.clear_exception_except_termination() => Ok(None),
+            Err(e) => Err(e),
         }
+    };
+    if err.is_object() {
+        ty_s = read(err.get(global, "name"))?;
+        msg_s = read(err.get(global, "message"))?;
+        stack_s = read(err.get(global, "stack"))?;
     } else if err.is_string() {
-        msg_s = Some(err.to_slice(global)?);
+        msg_s = read(Ok(Some(err)))?;
     }
     let ty = ty_s.as_ref().map(|s| s.slice()).unwrap_or(b"Error");
     let msg = msg_s.as_ref().map(|s| s.slice()).unwrap_or(b"");

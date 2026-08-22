@@ -56,12 +56,9 @@ impl ShellCondExprStatTask {
     }
 }
 
-/// Opens a file redirect target (`> path`, `< path`, ...) on the work pool.
-///
-/// `open(2)` on a FIFO blocks until the other end is opened. Done on the
-/// event-loop thread that stalls the whole process, including the timer or
-/// stream in the same script that would have opened the other end. Regular
-/// files keep the inline open in `Cmd`; only a FIFO comes here.
+/// Opens a FIFO redirect target on the work pool, where its `open(2)` can
+/// wait for the other end without stalling the event loop
+/// (`Cmd::open_redirect_on_pool`).
 #[repr(C)]
 pub(crate) struct ShellRedirectOpenTask {
     pub task: ShellTask,

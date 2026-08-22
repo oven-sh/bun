@@ -25,8 +25,8 @@ pub struct Cmd {
     pub args: Vec<Vec<u8>>,
     pub(crate) redirection_file: Vec<u8>,
     pub(crate) redirection_fd: Option<*mut CowFd>,
-    /// Result of the work-pool `open` of `redirection_file`
-    /// (`CmdState::OpeningRedirect`); consumed by `open_redirect_target`.
+    /// Result of the work-pool open of `redirection_file`, taken by
+    /// `open_redirect_target`.
     pub(crate) opened_redirect: Option<bun_sys::Result<bun_sys::Fd>>,
     pub(crate) exec: Exec,
     pub(crate) exit_code: Option<ExitCode>,
@@ -418,10 +418,9 @@ impl Cmd {
         Yield::Next(this)
     }
 
-    /// `open(2)` on a FIFO blocks until the other end is opened, so a
-    /// `> fifo` / `< fifo` redirect is opened on the work pool instead of the
-    /// event-loop thread. Returns `Some(suspended)` once the task is out, or
-    /// `None` when the target opens inline (`transition_to_exec`).
+    /// `open(2)` on a FIFO blocks until the other end is opened, so a FIFO
+    /// redirect target is opened on the work pool. `None`: the target opens
+    /// inline in `transition_to_exec`.
     fn open_redirect_on_pool(interp: &Interpreter, this: NodeId) -> Option<Yield> {
         // Windows has no FIFO that `open` waits on.
         if cfg!(windows) {

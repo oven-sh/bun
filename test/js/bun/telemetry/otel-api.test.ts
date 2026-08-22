@@ -285,6 +285,25 @@ describe("context propagation", () => {
     span.end();
   });
 
+  test("AsyncLocalStorage.enterWith inside a span scope survives the scope (Node semantics)", () => {
+    const als = new AsyncLocalStorage();
+    const other = new AsyncLocalStorage();
+    const seen = other.run("kept", () => {
+      tracer.startActiveSpan("scope", span => {
+        als.enterWith("entered-inside");
+        span.end();
+      });
+      {
+        using _s = tracer.startActiveSpan("using-scope");
+        expect(als.getStore()).toBe("entered-inside");
+      }
+      return [Bun.otel.activeSpan(), als.getStore(), other.getStore()];
+    });
+    expect(seen).toEqual([undefined, "entered-inside", "kept"]);
+    expect(Bun.otel.tracer("a@1").version).toBeUndefined();
+    expect(Bun.otel.tracer("a", "1").version).toBe("1");
+  });
+
   test("Bun.otel.with(undefined, fn) clears the active span but keeps AsyncLocalStorage stores", () => {
     const { AsyncLocalStorage } = require("node:async_hooks");
     const als = new AsyncLocalStorage();

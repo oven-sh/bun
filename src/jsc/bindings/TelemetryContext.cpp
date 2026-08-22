@@ -112,9 +112,28 @@ extern "C" JSC::EncodedJSValue Bun__Telemetry__enter(Zig::GlobalObject* globalOb
     return Bun__Telemetry__enterWithExtras(globalObject, header, JSValue::encode(JSValue()));
 }
 
-extern "C" void Bun__Telemetry__exit(Zig::GlobalObject* globalObject, JSC::EncodedJSValue prev)
+/// Leave a scope entered with `enter*`: the span header/extras go back to
+/// `prev`'s, but AsyncLocalStorage stores keep whatever the scope left there
+/// (Node's `enterWith` semantics, as `ALS.run` and telemetryLeaveAsyncFrame do).
+extern "C" void Bun__Telemetry__exit(Zig::GlobalObject* globalObject, JSC::EncodedJSValue prevValue)
 {
-    globalObject->m_asyncContextData.get()->putInternalField(globalObject->vm(), 0, JSValue::decode(prev));
+    auto* data = globalObject->m_asyncContextData.get();
+    JSValue prev = JSValue::decode(prevValue);
+    JSValue cur = data->getInternalField(0);
+    // Fast path: no ALS store was touched inside the scope unless the slot is
+    // an array whose store pairs differ from prev's.
+    auto now = TelemetryContextSlot::read(cur);
+    if (now.array) {
+        auto before = TelemetryContextSlot::read(prev);
+        unsigned n = now.storeValueCount();
+        bool same = before.storeValueCount() == n;
+        for (unsigned i = 0; same && i < n; ++i)
+            same = now.array->tryGetIndexQuickly(now.storesStart + i) == before.array->tryGetIndexQuickly(before.storesStart + i);
+        if (!same) {
+            prev = TelemetryContextSlot::build(globalObject, before.header, before.extras, now);
+        }
+    }
+    data->putInternalField(globalObject->vm(), 0, prev);
 }
 
 extern "C" JSC::EncodedJSValue Bun__Telemetry__activeSpanCell(Zig::GlobalObject* globalObject)

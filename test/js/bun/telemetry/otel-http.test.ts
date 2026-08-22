@@ -528,6 +528,24 @@ describe("node:http", () => {
   });
 });
 
+describe("limits", () => {
+  test("a reconfigured attributeValueLengthLimit applies to requests of an already-seen shape", async () => {
+    using server = Bun.serve({ port: 0, fetch: () => new Response("x") });
+    const ua = "x".repeat(40);
+    await (await fetch(`http://localhost:${server.port}/`, { headers: { "user-agent": ua } })).text();
+    const [before] = byName(await collect(), "bun.http.server");
+    Bun.otel.start({
+      exporters: [{ export: (b: any[]) => spans.push(...b) }],
+      instrumentations: { http: true, fetch: true },
+      limits: { attributeValueLengthLimit: 8 },
+    });
+    await (await fetch(`http://localhost:${server.port}/`, { headers: { "user-agent": ua } })).text();
+    const [after] = byName(await collect(), "bun.http.server");
+    expect(before.attributes["user_agent.original"]).toBe(ua);
+    expect(after.attributes["user_agent.original"]).toBe("x".repeat(8));
+  });
+});
+
 describe("disable", () => {
   test("instrumentations: { http: false } stops server spans but keeps fetch", async () => {
     Bun.otel.start({

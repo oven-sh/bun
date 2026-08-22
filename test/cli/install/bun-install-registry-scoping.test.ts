@@ -92,6 +92,17 @@ describe.concurrent("registry credentials are path-scoped", () => {
     ["the host root", (origin: string) => `${origin}/no-deps-1.0.0.tgz`, null],
     ["a dot-segment escape", (origin: string) => `${origin}/prefix-a/../prefix-b/no-deps-1.0.0.tgz`, null],
     ["an encoded dot-segment escape", (origin: string) => `${origin}/prefix-a/%2e%2e/prefix-b/no-deps-1.0.0.tgz`, null],
+    ["an encoded-backslash escape", (origin: string) => `${origin}/prefix-a/..%5Cprefix-b/no-deps-1.0.0.tgz`, null],
+    [
+      "an encoded-slash escape",
+      (origin: string) => `${origin}/prefix-a/x%2F..%2f..%2Fprefix-b/no-deps-1.0.0.tgz`,
+      null,
+    ],
+    [
+      "an encoded slash that is just part of a name",
+      (origin: string) => `${origin}/prefix-a/@scope%2fno-deps/-/no-deps-1.0.0.tgz`,
+      "Bearer tok-a",
+    ],
   ])("tarball at %s", (_, tarballUrl, expectedAuthorization) => {
     it(`is fetched with authorization ${expectedAuthorization}`, async () => {
       const received: Received[] = [];

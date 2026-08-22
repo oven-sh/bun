@@ -541,19 +541,61 @@ pub fn url_under(url: &[u8], base: &[u8]) -> bool {
 }
 
 /// The path half of [`url_under`]: `path` starts with `base` segment-wise and
-/// carries no `.` / `..` (plain or percent-encoded) segment or backslash.
+/// carries nothing a server could resolve somewhere else: no `.` / `..`
+/// segment (plain or `%2e`-encoded), no backslash (plain or `%5c`, which
+/// http(s) URL parsers and some servers treat as a separator), and no
+/// `%2f`-encoded slash that would split a segment into pieces containing a
+/// dot segment (`..%2f..%2fother`). A plain `%2f` inside a name — the
+/// `@scope%2fpkg` form manifests are requested with — is fine.
 pub fn path_under(path: &[u8], base: &[u8]) -> bool {
-    if strings::contains_char(path, b'\\') {
+    if strings::contains_char(path, b'\\') || contains_percent_encoded(path, b'5', b'c') {
         return false;
     }
     let mut segments = strings::tokenize(path, b"/");
     for expected in strings::tokenize(base, b"/") {
         match segments.next() {
-            Some(segment) if segment == expected && !is_dot_segment(segment) => {}
+            Some(segment) if segment == expected && !is_unsafe_segment(segment) => {}
             _ => return false,
         }
     }
-    segments.all(|segment| !is_dot_segment(segment))
+    segments.all(|segment| !is_unsafe_segment(segment))
+}
+
+/// `%XY` (hex digit `y` matched case-insensitively) anywhere in `bytes`.
+fn contains_percent_encoded(bytes: &[u8], x: u8, y_lower: u8) -> bool {
+    let mut i = 0;
+    while i + 2 < bytes.len() {
+        if bytes[i] == b'%' && bytes[i + 1] == x && bytes[i + 2].eq_ignore_ascii_case(&y_lower) {
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
+
+/// A dot segment, or a segment that an encoded `/` (`%2f`) splits into pieces
+/// one of which is a dot segment.
+fn is_unsafe_segment(segment: &[u8]) -> bool {
+    if !contains_percent_encoded(segment, b'2', b'f') {
+        return is_dot_segment(segment);
+    }
+    let mut start = 0;
+    let mut i = 0;
+    while i + 2 < segment.len() {
+        if segment[i] == b'%'
+            && segment[i + 1] == b'2'
+            && segment[i + 2].eq_ignore_ascii_case(&b'f')
+        {
+            if is_dot_segment(&segment[start..i]) {
+                return true;
+            }
+            i += 3;
+            start = i;
+        } else {
+            i += 1;
+        }
+    }
+    is_dot_segment(&segment[start..])
 }
 
 /// WHATWG "single-dot" / "double-dot" path segments, including the

@@ -562,12 +562,9 @@ impl NewBuilder<'_, VLQSourceMap> {
                 }
                 // '\r', '\n', U+2028, U+2029
                 0x0D | 0x0A | 0x2028 | 0x2029 => {
-                    // windows newline
-                    if c == 0x0D {
-                        let newline_check = self.last_generated_update as usize + i + 1;
-                        if newline_check < output.len() && output[newline_check] == b'\n' {
-                            continue;
-                        }
+                    // windows newline: `i` already points at the byte after the '\r'
+                    if c == 0x0D && i < n && slice[i] == b'\n' {
+                        continue;
                     }
 
                     // If we're about to move to the next line and the previous line didn't have

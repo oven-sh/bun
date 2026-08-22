@@ -578,6 +578,7 @@ EXPORTS
   node_api_create_external_sharedarraybuffer
   node_api_is_sharedarraybuffer
   dumpBtjsTrace
+  Bun__linkedAddonExceptionHandler
   ?TryGetCurrent@Isolate@v8@@SAPEAV12@XZ
   ?GetCurrent@Isolate@v8@@SAPEAV12@XZ
   ?GetCurrentContext@Isolate@v8@@QEAA?AV?$Local@VContext@v8@@@2@XZ

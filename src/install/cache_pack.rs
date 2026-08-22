@@ -30,6 +30,8 @@ use crate::package_manager_real::directories;
 use crate::resolution_real::Tag as ResolutionTag;
 
 const MAGIC: &[u8] = b"BUNCACHEPACK\0v1\n";
+/// Longest path (entry path, folder name, symlink target) a pack record may carry.
+const MAX_PACK_PATH_LEN: usize = 4096;
 
 pub struct PackSummary {
     pub packages: u32,
@@ -279,7 +281,7 @@ fn pack_dir(
             bun_sys::FileKind::SymLink => {
                 let mut buf = bun_paths::path_buffer_pool::get();
                 let n = bun_sys::readlink(&z(&abs), &mut buf[..]).map_err(sys_err)?;
-                if n >= buf.len().min(4096) {
+                if n >= buf.len().min(MAX_PACK_PATH_LEN) {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
                         format!("symlink target of {} is too long", bstr::BStr::new(&abs)),
@@ -476,11 +478,17 @@ fn create_links(staging: &[u8], links: &mut Vec<(Vec<u8>, Vec<u8>)>) -> std::io:
     fn components(p: &[u8]) -> impl Iterator<Item = &[u8]> {
         strings::split_any(p, b"/\\").filter(|c| !c.is_empty() && *c != b".")
     }
+    // compared ASCII-case-insensitively: on case-insensitive filesystems `A/UP` and
+    // `a/up` are the same directory entry, and a legitimate package has no reason to
+    // contain entries that differ only in case along a symlink's path
+    fn norm(c: &[u8]) -> Vec<u8> {
+        c.to_ascii_lowercase()
+    }
     let link_paths: Vec<Vec<Vec<u8>>> = links
         .iter()
-        .map(|(rel, _)| components(rel).map(|c| c.to_vec()).collect())
+        .map(|(rel, _)| components(rel).map(norm).collect())
         .collect();
-    let passes_through_link = |start: &[Vec<u8>], rel_path: &[u8], own: Option<usize>| {
+    let passes_through_link = |start: &[Vec<u8>], rel_path: &[u8]| {
         // walk `rel_path` from `start` (package-relative components), checking every
         // proper prefix reached against the pending link paths
         let mut cur: Vec<Vec<u8>> = start.to_vec();
@@ -490,27 +498,26 @@ fn create_links(staging: &[u8], links: &mut Vec<(Vec<u8>, Vec<u8>)>) -> std::io:
                 cur.pop();
                 continue;
             }
-            cur.push(comp.to_vec());
-            let is_last = idx + 1 == comps.len();
-            for (k, lp) in link_paths.iter().enumerate() {
-                // the link's own final component is itself, not a traversal
-                if is_last && Some(k) == own {
-                    continue;
-                }
-                if *lp == cur {
-                    return true;
-                }
+            cur.push(norm(comp));
+            // The final component may *be* a link (the link itself when checking its own
+            // path; another link when a target points at one — that link's own target is
+            // validated in its turn). Only passing *through* a link is refused.
+            if idx + 1 == comps.len() {
+                break;
+            }
+            if link_paths.contains(&cur) {
+                return true;
             }
         }
         false
     };
-    for (k, (rel, target)) in links.iter().enumerate() {
+    for (rel, target) in links.iter() {
         let link_dir: Vec<Vec<u8>> = {
-            let mut c: Vec<Vec<u8>> = components(rel).map(|c| c.to_vec()).collect();
+            let mut c: Vec<Vec<u8>> = components(rel).map(norm).collect();
             c.pop();
             c
         };
-        if passes_through_link(&[], rel, Some(k)) || passes_through_link(&link_dir, target, None) {
+        if passes_through_link(&[], rel) || passes_through_link(&link_dir, target) {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!(
@@ -633,7 +640,7 @@ fn unpack_impl(cache_dir: &[u8], pack_path: &[u8]) -> std::io::Result<UnpackSumm
         let mut u32b = [0u8; 4];
         r.read_exact(&mut u32b)?;
         let path_len = u32::from_le_bytes(u32b) as usize;
-        if path_len > 4096 {
+        if path_len > MAX_PACK_PATH_LEN {
             return Err(bad("path too long", record_no));
         }
         let path = read_exact_vec(&mut r, path_len)?;
@@ -721,7 +728,7 @@ fn unpack_impl(cache_dir: &[u8], pack_path: &[u8]) -> std::io::Result<UnpackSumm
                         std::io::copy(&mut (&mut r).take(size), &mut std::io::sink())?;
                     }
                     3 => {
-                        if size > 4096 {
+                        if size > MAX_PACK_PATH_LEN as u64 {
                             return Err(bad("symlink target too long", record_no));
                         }
                         let target = read_exact_vec(&mut r, size as usize)?;

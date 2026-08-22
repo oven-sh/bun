@@ -5960,7 +5960,7 @@ long syscall(long nr, ...) {
     "root/keep-a.txt": "x",
     "root/keep-sub/nested.txt": "x",
     "child.js": `
-const fs = require("node:fs");
+import fs from "node:fs";
 // Probe: the shim swallows unlinkat for this name. If rmSync reports success
 // but the file is still there, the shim interposed the symbol the recursive
 // walk uses. If not, fail loudly instead of passing vacuously.

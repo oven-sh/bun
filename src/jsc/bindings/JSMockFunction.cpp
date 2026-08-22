@@ -636,7 +636,6 @@ static void restoreAllMocks(Zig::GlobalObject* globalObject)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSValue spies = globalObject->mockModule.activeSpies.get();
-    globalObject->mockModule.activeSpies.clear();
     if (!spies)
         return;
     MarkedArgumentBuffer active;
@@ -647,6 +646,7 @@ static void restoreAllMocks(Zig::GlobalObject* globalObject)
             RETURN_IF_EXCEPTION(scope, );
         }
     }
+    globalObject->mockModule.activeSpies.clear();
 }
 
 extern "C" void JSMock__clearAllMocks(Zig::GlobalObject* globalObject)

@@ -1698,6 +1698,73 @@ describe.concurrent("paused socket whose peer ends", () => {
   it("still emits 'end' and 'close' after it end()ed first", () => pauseThenPeerEnds(true));
 });
 
+describe.concurrent("pauseOnConnect", () => {
+  // The peer's bytes are queued on `socket` once the write callback ran; the poll
+  // between the two immediates is when a handle that reads would consume them.
+  async function expectNothingRead(socket: Socket, peer: Socket, bytes: string) {
+    await new Promise(resolve => peer.write(bytes, resolve));
+    await new Promise(resolve => setImmediate(() => setImmediate(resolve)));
+    expect({ paused: socket.isPaused(), bytesRead: socket.bytesRead }).toEqual({ paused: true, bytesRead: 0 });
+    const data = once(socket, "data");
+    socket.resume();
+    expect(String((await data)[0])).toBe(bytes);
+  }
+
+  it("reads server.pauseOnConnect per connection, like node", async () => {
+    const server = createServer();
+    server.pauseOnConnect = true;
+    const accepted = Promise.withResolvers<Socket>();
+    server.on("connection", accepted.resolve);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const client = connect((server.address() as import("node:net").AddressInfo).port, "127.0.0.1");
+      const [socket] = await Promise.all([accepted.promise, once(client, "connect")]);
+      await expectNothingRead(socket, client, "early");
+      client.destroy();
+      await once(socket, "close");
+    } finally {
+      server.close();
+    }
+  });
+
+  it("applies to a dialed socket", async () => {
+    const accepted = Promise.withResolvers<Socket>();
+    const server = createServer(accepted.resolve);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const port = (server.address() as import("node:net").AddressInfo).port;
+      const client = connect({ port, host: "127.0.0.1", pauseOnConnect: true } as import("node:net").NetConnectOpts);
+      const [socket] = await Promise.all([accepted.promise, once(client, "connect")]);
+      await expectNothingRead(client, socket, "reply");
+      socket.destroy();
+      await once(client, "close");
+    } finally {
+      server.close();
+    }
+  });
+
+  // A socket that opened paused must notice its peer going away like a socket that
+  // pause()d later does, on every backend (kqueue keeps a read knote for that).
+  it("still reports a peer reset before resume()", async () => {
+    const server = createServer({ pauseOnConnect: true });
+    const accepted = Promise.withResolvers<Socket>();
+    server.on("connection", accepted.resolve);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const client = connect((server.address() as import("node:net").AddressInfo).port, "127.0.0.1");
+      const [socket] = await Promise.all([accepted.promise, once(client, "connect")]);
+      const errors: NodeJS.ErrnoException[] = [];
+      socket.on("error", e => errors.push(e));
+      const closed = new Promise(resolve => socket.on("close", resolve));
+      client.resetAndDestroy();
+      await closed;
+      expect(errors.map(e => e.code).filter(code => code !== "ECONNRESET")).toEqual([]);
+    } finally {
+      server.close();
+    }
+  });
+});
+
 describe("net.Server accepted-socket buffering", () => {
   it("delivers bytes buffered before a 'readable' listener attaches, past peer FIN", async () => {
     // read(0) instead of resume(): bytes that arrive before the connection

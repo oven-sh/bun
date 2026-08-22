@@ -57,6 +57,128 @@ export class Y {
   );
 });
 
+// https://github.com/oven-sh/bun/issues/9008
+// Two bugs made the text table report < 100% with an empty "Uncovered Line #s" column:
+//  - the run-collapsing loop used 0 as "no run yet" and only flushed the trailing run
+//    when it spanned more than one line, so a lone trailing uncovered line was dropped
+//  - JSC's default class constructor was registered against the enclosing source with
+//    offsets from its synthetic source string, so any class without an explicit
+//    `constructor()` contributed one permanently-unexecuted function
+test("coverage reports 100% for fully-exercised classes and prints every uncovered line", () => {
+  using dir = tempDir("cov", {
+    "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\n`,
+    "classes.ts": `export class Base {
+  #x = 0;
+  get x(): number {
+    return this.#x;
+  }
+  set x(v: number) {
+    this.#x = v;
+  }
+}
+export class Derived extends Base {
+  y = 1;
+}
+`,
+    // three non-adjacent uncovered lines (3, 6, 9): previously the trailing one was dropped.
+    "many.ts": `export function check(n: number): string {
+  if (n === 1) {
+    throw new Error("one");
+  }
+  if (n === 2) {
+    throw new Error("two");
+  }
+  if (n === 3) {
+    throw new Error("three");
+  }
+  return "ok";
+}
+`,
+    // exactly one uncovered line (3): previously the column was blank.
+    "one.ts": `export function only(n: number): string {
+  if (n < 0) {
+    throw new Error("negative");
+  }
+  return "ok";
+}
+`,
+    // a range followed by an isolated line (3-4, then 8).
+    "mix.ts": `export function mix(n: number): string {
+  if (n === 1) {
+    n += 1;
+    throw new Error("a");
+  }
+  const x = n * 2;
+  if (x === -1) {
+    throw new Error("b");
+  }
+  return "ok";
+}
+`,
+    // uncovered lines 1 and 4: the old sentinel couldn't tell line index 0 apart from "no run yet".
+    "line1.ts": `export function miss(): never {
+  throw new Error("a");
+}
+export function also(): never {
+  throw new Error("b");
+}
+export function ok2() { return "ok"; }
+`,
+    "demo.test.ts": `import { test, expect } from "bun:test";
+import { Base, Derived } from "./classes";
+import { check } from "./many";
+import { only } from "./one";
+import { mix } from "./mix";
+import { ok2 } from "./line1";
+test("paths", () => {
+  const d = new Derived();
+  d.x = 5;
+  expect(d.x).toBe(5);
+  expect(d.y).toBe(1);
+  expect(new Base().x).toBe(0);
+  expect(check(0)).toBe("ok");
+  expect(only(1)).toBe("ok");
+  expect(mix(2)).toBe("ok");
+  expect(ok2()).toBe("ok");
+});
+`,
+  });
+
+  const result = Bun.spawnSync(
+    [bunExe(), "test", "--coverage", "--coverage-reporter", "text", "--coverage-reporter", "lcov"],
+    {
+      cwd: String(dir),
+      env: bunEnv,
+      stdio: [null, null, "pipe"],
+    },
+  );
+
+  const stderr = result.stderr.toString("utf-8");
+  const table = stderr
+    .split("\n")
+    .filter(l => l.includes(" | "))
+    .join("\n");
+  expect(normalizeBunSnapshot(table, dir)).toMatchInlineSnapshot(`
+"File        | % Funcs | % Lines | Uncovered Line #s
+All files   |   86.67 |   76.55 |
+ classes.ts |  100.00 |  100.00 | 
+ line1.ts   |   33.33 |   60.00 | 1,4
+ many.ts    |  100.00 |   72.73 | 3,6,9
+ mix.ts     |  100.00 |   70.00 | 3-4,8
+ one.ts     |  100.00 |   80.00 | 3"
+`);
+
+  const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
+  const fn = Object.fromEntries(
+    [...lcov.matchAll(/^SF:(.+)\nFNF:(\d+)\nFNH:(\d+)/gm)].map(m => [m[1], { found: +m[2], hit: +m[3] }]),
+  );
+  expect(fn["classes.ts"]).toEqual({ found: 2, hit: 2 });
+  expect(fn["line1.ts"]).toEqual({ found: 3, hit: 1 });
+  expect(fn["many.ts"]).toEqual({ found: 1, hit: 1 });
+
+  expect(result.exitCode).toBe(0);
+});
+
 test("coverage excludes node_modules directory", () => {
   using dir = tempDir("cov", {
     "node_modules/pi/index.js": `
@@ -193,7 +315,7 @@ test("should call only some functions", () => {
 File           | % Funcs | % Lines | Uncovered Line #s
 ---------------|---------|---------|-------------------
 All files      |   75.00 |   83.33 |
- include-me.ts |   50.00 |   66.67 | 
+ include-me.ts |   50.00 |   66.67 | 6
  test.test.ts  |  100.00 |  100.00 | 
 ---------------|---------|---------|-------------------
 

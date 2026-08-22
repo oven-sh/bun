@@ -664,6 +664,56 @@ console.log(JSON.stringify({ count: fn?.ranges[0].count }));
       expect(entryCoveringOffset(entry.functions, offsets.neverCalledBody).ranges[0].count).toBe(0);
     });
 
+    // https://github.com/oven-sh/bun/issues/9008 / #7025: the FunctionHasExecutedCache entry
+    // for a synthesized default class constructor is recorded against the owner SourceID at
+    // offsets that belong to the synthetic "(function () { })" provider and is never cleared,
+    // so every class without an explicit `constructor()` showed up as one permanently-uncovered
+    // function in takePreciseCoverage.
+    test.concurrent("does not report default class constructors as uncovered functions", async () => {
+      using dir = tempDir("inspector-coverage-class", {
+        "fixture.mjs": `
+import { Session } from "node:inspector/promises";
+
+const session = new Session();
+session.connect();
+await session.post("Profiler.enable");
+await session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
+
+const { Derived } = await import("./classes.mjs");
+new Derived().x;
+
+const coverage = await session.post("Profiler.takePreciseCoverage");
+await session.post("Profiler.stopPreciseCoverage");
+session.disconnect();
+
+const entry = coverage.result.find(s => s.url.endsWith("classes.mjs"));
+const uncovered = entry.functions.filter(f => f.ranges[0].count === 0);
+console.log(JSON.stringify({ uncovered }));
+`,
+        "classes.mjs": `
+export class Base {
+  get x() { return 1; }
+}
+export class Derived extends Base {}
+`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+      const { uncovered } = JSON.parse(stdout);
+      // Both classes lack an explicit constructor; previously each contributed a phantom
+      // count-0 entry at (1, 15) or (1, 38). Every actual function (module body, getter)
+      // runs, so the correct answer is empty.
+      expect(uncovered).toEqual([]);
+    });
+
     test.concurrent("collects coverage for modules imported after start", async () => {
       using dir = tempDir("inspector-coverage-import", {
         "fixture.mjs": coverageImportFixture,

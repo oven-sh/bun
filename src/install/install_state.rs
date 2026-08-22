@@ -357,14 +357,20 @@ pub fn save(manager: &mut PackageManager, root_dir: &[u8], entries: u64, package
             .enumerate()
         {
             match r.tag {
-                Tag::Folder | Tag::Symlink => {
-                    let rel = if r.tag == Tag::Folder {
-                        r.folder().slice(buf)
-                    } else {
-                        r.symlink().slice(buf)
-                    };
-                    if rel.is_empty() || bun_paths::is_absolute(rel) && r.tag == Tag::Symlink {
-                        // global `bun link` targets: outside the project, not tracked
+                // `bun link` packages live in the global link directory, outside the
+                // project: not tracked (no fast path for projects using them)
+                Tag::Symlink => {
+                    ok = false;
+                    break;
+                }
+                Tag::Folder => {
+                    let rel = r.folder().slice(buf);
+                    if rel.is_empty() {
+                        ok = false;
+                        break;
+                    }
+                    // stored relative to the declaring package (see LocalTarball below)
+                    if !bun_paths::is_absolute(rel) && !declared_by_root(&manager.lockfile, i) {
                         ok = false;
                         break;
                     }
@@ -503,7 +509,7 @@ pub fn save(manager: &mut PackageManager, root_dir: &[u8], entries: u64, package
                     join(root_dir, prefix)
                 };
                 // `a/*/*` or `a/**`: directories below the literal prefix can gain
-                // workspaces too — stamp existing dirs down to the glob's depth (2 for **)
+                // workspaces too — stamp existing dirs down to the glob's depth (all levels for **)
                 let rest = &g[literal_end..];
                 let extra_depth = if strings_contains(rest, b"**") {
                     usize::MAX
@@ -581,17 +587,18 @@ pub fn save(manager: &mut PackageManager, root_dir: &[u8], entries: u64, package
             }
             let dir = join(root_dir, nm.relative_path.as_bytes());
             for d in [dir.clone(), join(&dir, b".bin")] {
-                match lstat_stamp(&d) {
-                    Some(stamp) => {
+                match lstat_stamp_strict(&d) {
+                    Stamp::At(stamp) => {
                         let _ = write!(out, "l {stamp:016x} ");
                         out.extend_from_slice(&d);
                         out.push(b'\n');
                     }
-                    None => {
+                    Stamp::Absent => {
                         let _ = write!(out, "n {:016x} ", 0);
                         out.extend_from_slice(&d);
                         out.push(b'\n');
                     }
+                    Stamp::Unreadable => unreadable = true,
                 }
             }
         }
@@ -733,8 +740,6 @@ fn workspace_globs(json_bytes: &[u8]) -> Option<Vec<Vec<u8>>> {
     Some(out)
 }
 
-/// Collect existing subdirectories of `dir` up to `depth` levels (bounded), skipping
-/// node_modules / dot dirs, into `out`.
 /// Collect the directories up to `depth` levels below `dir` (skipping node_modules and
 /// dot dirs). Returns false if the walk could not be completed within `budget` or a
 /// directory could not be read — the caller must then not record state, since a

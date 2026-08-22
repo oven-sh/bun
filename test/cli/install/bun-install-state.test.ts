@@ -97,8 +97,11 @@ describe.each(["hoisted", "isolated"] as const)("install state (%s)", linker => 
     expect(r.code).toBe(0);
     expect(await file(join(package_dir, "bun.lock")).text()).toContain("baz@0.0.5");
 
-    // 3. a new workspace appearing under the glob is noticed
+    // 3. a new workspace appearing under the glob is noticed (bump the parent's mtime
+    //    explicitly so this does not depend on timestamp granularity)
     await mkdir(join(package_dir, "packages", "b"), { recursive: true });
+    const pk = join(package_dir, "packages");
+    utimesSync(pk, new Date(statSync(pk).mtimeMs + 2000), new Date(statSync(pk).mtimeMs + 2000));
     await writeFile(
       join(package_dir, "packages", "b", "package.json"),
       JSON.stringify({ name: "b", version: "1.0.0" }),

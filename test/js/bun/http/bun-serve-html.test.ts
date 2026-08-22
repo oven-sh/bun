@@ -1580,3 +1580,39 @@ describe("production headers and import.meta.env", () => {
     expect(results).toEqual(cases.map(([, , expected]) => expected));
   });
 });
+
+test("dev server HTML route works after process.chdir() before Bun.serve", async () => {
+  // process.chdir() rewrites the cached top_level_dir with a trailing path
+  // separator; the bake dev server root sourced from it must be normalized
+  // so DevServer::relative_path's no-trailing-'/' invariant holds. Spawn a
+  // subprocess so the chdir is isolated from the test runner.
+  using dir = tempDir("bake-chdir-html", {
+    "index.html": `<!DOCTYPE html><html><body><script type="module" src="./app.ts"></script></body></html>`,
+    "app.ts": `console.log("hi");\n`,
+    "serve.ts": /*js*/ `
+      process.chdir(import.meta.dir);
+      const html = (await import("./index.html")).default;
+      const server = Bun.serve({ port: 0, development: true, routes: { "/": html } });
+      const res = await fetch(server.url);
+      const body = await res.text();
+      console.log(JSON.stringify({ status: res.status, hasScript: body.includes("<script") }));
+      await server.stop(true);
+      console.log("DONE");
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "serve.ts"],
+    env: { ...bunEnv, NODE_ENV: undefined },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  if (exitCode !== 0) console.error({ stdout, stderr });
+  const json = stdout.split("\n").find(l => l.startsWith("{"));
+  expect(json).toBe(JSON.stringify({ status: 200, hasScript: true }));
+  expect(stdout).toContain("DONE");
+  expect(exitCode).toBe(0);
+});

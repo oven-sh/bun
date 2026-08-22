@@ -513,7 +513,11 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     // exactly once before `assume_init()` below.
     unsafe {
         w!(magic, Magic::Valid);
-        w!(root, Box::from(options.root.as_bytes()));
+        w!(
+            root,
+            paths::string_paths::without_trailing_slash_windows_path(options.root.as_bytes())
+                .into()
+        );
         w!(vm, bun_ptr::BackRef::new(options.vm));
         w!(vm_handle, options.vm.handle());
         w!(server, None);

@@ -3662,10 +3662,7 @@ export_path_host_fn! {
     "Bun__Path__toNamespacedPath" => to_namespaced_path,
 }
 
-// Fixed-arity `Bun__Path__resolve` for C++ callers that hold the segments as
-// values (`Module._initPaths` in NodeModuleModule.cpp), so they need neither a
-// `MarkedArgumentBuffer` nor the SYSV thunk above. Plain `extern "C"` on both
-// sides: headers.h declares these without `SYSV_ABI`.
+// Fixed-arity `Bun__Path__resolve` for C++ callers. Plain `extern "C"`: headers.h declares them without `SYSV_ABI`.
 
 // HOST_EXPORT(Bun__Path__resolve2, c)
 pub fn resolve2(

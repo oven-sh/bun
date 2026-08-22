@@ -483,8 +483,6 @@ static constexpr bool hostIsWindows = true;
 static constexpr bool hostIsWindows = false;
 #endif
 
-// path.resolve() for the host platform. The segments are passed by value, so the caller's
-// stack keeps them alive for the duration of the call.
 static JSValue pathResolve(JSGlobalObject* globalObject, JSValue arg0, JSValue arg1)
 {
     return JSValue::decode(Bun__Path__resolve2(globalObject, hostIsWindows, JSValue::encode(arg0), JSValue::encode(arg1)));
@@ -495,9 +493,7 @@ static JSValue pathResolve(JSGlobalObject* globalObject, JSValue arg0, JSValue a
     return JSValue::decode(Bun__Path__resolve3(globalObject, hostIsWindows, JSValue::encode(arg0), JSValue::encode(arg1), JSValue::encode(arg2)));
 }
 
-// `Module._initPaths()`: compatibility stub that recomputes `Module.globalPaths`
-// from HOME/USERPROFILE, NODE_PATH and process.execPath the way Node does. It
-// does not affect Bun's resolver.
+// Recomputes `Module.globalPaths` the way Node does. Bun's resolver does not read it.
 // https://github.com/nodejs/node/blob/v24.0.0/lib/internal/modules/cjs/loader.js#L1867
 JSC_DEFINE_HOST_FUNCTION(jsFunctionInitPaths, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame*))
 {
@@ -506,9 +502,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionInitPaths, (JSC::JSGlobalObject * lexicalGlob
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSObject* processObject = globalObject->processObject();
+    // Same sources as Node: the process.env property on Windows, safeGetenv() (the environment itself) elsewhere.
 #if OS(WINDOWS)
-    // Node reads process.env.USERPROFILE and process.env.NODE_PATH here, so a
-    // reassigned process.env is honored.
     JSValue env = processObject->get(globalObject, Identifier::fromString(vm, "env"_s));
     RETURN_IF_EXCEPTION(scope, {});
     JSValue homeDir = env.get(globalObject, Identifier::fromString(vm, "USERPROFILE"_s));
@@ -516,8 +511,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionInitPaths, (JSC::JSGlobalObject * lexicalGlob
     JSValue nodePath = env.get(globalObject, Identifier::fromString(vm, "NODE_PATH"_s));
     RETURN_IF_EXCEPTION(scope, {});
 #else
-    // Node uses safeGetenv() here, which reads the environment itself and not
-    // the process.env property, so a reassigned process.env is ignored.
     JSObject* env = globalObject->processEnvObject();
     RETURN_IF_EXCEPTION(scope, {});
     JSValue homeDir = env->get(globalObject, Identifier::fromString(vm, "HOME"_s));
@@ -528,9 +521,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionInitPaths, (JSC::JSGlobalObject * lexicalGlob
     JSValue execPath = processObject->get(globalObject, Identifier::fromString(vm, "execPath"_s));
     RETURN_IF_EXCEPTION(scope, {});
 
-    // The values are computed in the same order as Node (prefix, home, NODE_PATH),
-    // so the same input is the one that throws. Node builds the array with
-    // unshift; pushing in the reverse order below gives the same result.
+    // Resolved in Node's order (prefix, home, NODE_PATH) so the same input throws first. Node unshifts, so the pushes below are reversed.
     JSValue dotdot = jsNontrivialString(vm, ".."_s);
     // process.execPath is $PREFIX/bin/node except on Windows where it is $PREFIX\node.exe.
 #if OS(WINDOWS)
@@ -580,11 +571,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionInitPaths, (JSC::JSGlobalObject * lexicalGlob
     paths->push(globalObject, libNode);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // Node assigns Module.globalPaths from strict mode code. An ordinary [[Set]]
-    // keeps that behavior when user code has redefined the property: a setter is
-    // called, a read-only property throws, and the attributes of an existing
-    // data property are kept. On the untouched lazy table entry it creates the
-    // plain data property.
+    // A strict mode [[Set]], like the assignment in Node: a user-installed setter runs, a read-only property throws, attributes are kept.
     JSObject* moduleObject = globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject);
     PutPropertySlot slot(moduleObject, /* isStrictMode */ true);
     moduleObject->putInline(globalObject, Identifier::fromString(vm, "globalPaths"_s), paths, slot);

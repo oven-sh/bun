@@ -67,12 +67,10 @@ Vector<JSC::Strong<JSC::JSObject>> convertTransferList(JSGlobalObject& lexicalGl
         RETURN_IF_EXCEPTION(throwScope, {});
         if (!step.isObject())
             return notIterable();
-        JSValue done = Bun::getIteratorResultDone(&lexicalGlobalObject, asObject(step));
+        auto [done, element] = Bun::getIteratorResult(&lexicalGlobalObject, asObject(step));
         RETURN_IF_EXCEPTION(throwScope, {});
         if (done.toBoolean(&lexicalGlobalObject))
             break;
-        JSValue element = Bun::getIteratorResultValue(&lexicalGlobalObject, asObject(step));
-        RETURN_IF_EXCEPTION(throwScope, {});
         // The arg IS iterable, so a bad *element* is not a "must be an iterable" error.
         // node: DataCloneError from port.postMessage(), TypeError from structuredClone().
         if (!element.isObject()) {

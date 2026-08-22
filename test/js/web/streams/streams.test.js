@@ -2836,7 +2836,7 @@ describe("ReadableStream async iterator reentrancy", () => {
 // Every native consumer of an iterator result ({value, done} from read()/next()) or of a
 // readMany() result ({value, size, done}). Results Bun itself produced, and the ones from
 // generators and the built-in iterators, are plain data objects; a custom next() can hand back
-// accessors instead, and those must run exactly as often and in the same order as before.
+// accessors instead, and those must still run, done before value, on every result.
 describe("iterator result consumers", () => {
   const decode = chunks => chunks.map(c => (typeof c === "string" ? c : new TextDecoder().decode(c)));
 
@@ -3017,8 +3017,7 @@ describe("iterator result consumers", () => {
     const chunks = await readableStreamToArray(ReadableStream.from(iterable));
     expect({ chunks, reads }).toEqual({
       chunks: [0, 10, 20],
-      // value is not read once done is true
-      reads: ["done0", "value0", "done1", "value1", "done2", "value2", "done3"],
+      reads: ["done0", "value0", "done1", "value1", "done2", "value2", "done3", "value3"],
     });
   });
 

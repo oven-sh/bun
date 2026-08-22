@@ -1,6 +1,7 @@
 #pragma once
 #include "root.h"
 #include <JavaScriptCore/IteratorOperations.h>
+#include <utility>
 
 namespace Bun {
 
@@ -33,54 +34,21 @@ ALWAYS_INLINE JSC::JSValue getIfPropertyExistsPrototypePollutionMitigation(JSC::
 JSC::JSValue getOwnPropertyIfExists(JSC::JSGlobalObject* globalObject, JSC::JSObject* object, const JSC::PropertyName& name);
 
 /**
- * True when `object` has the realm's iteratorResultObjectStructure: `{ value, done }` as two
- * plain data properties at iteratorResultObjectValuePropertyOffset and
- * iteratorResultObjectDonePropertyOffset. createIteratorResultObject, the `{ value, done }`
- * literals of the generator and Array/Map/Set/String iterator builtins, and the DFG/FTL
- * inlined next() all produce it. Any mutation of such an object (a getter, a deleted
- * property, a prototype change, freezing) transitions it to another structure, so a match
- * means no user code can observe the read.
+ * `{ done, value }` of an iterator result object.
+ *
+ * When `result` has the realm's iteratorResultObjectStructure, both are plain data properties
+ * at iteratorResultObjectDonePropertyOffset / iteratorResultObjectValuePropertyOffset and the
+ * two slots are read directly. createIteratorResultObject, the `{ value, done }` literals of the
+ * generator and Array/Map/Set/String iterator builtins, and the DFG-inlined next() all produce
+ * that structure. Any mutation (a getter, a delete, a prototype change, a freeze) transitions the
+ * object to another structure, so on a match no user code can observe the read.
+ *
+ * Otherwise this is `get(done)` then `get(value)`. If either throws, both values are empty and
+ * the exception is pending on the VM.
  */
-ALWAYS_INLINE bool isIteratorResultObject(JSC::JSGlobalObject* globalObject, JSC::JSObject* object)
+ALWAYS_INLINE std::pair<JSC::JSValue, JSC::JSValue> getIteratorResult(JSC::JSGlobalObject* globalObject, JSC::JSObject* result)
 {
-    return object->structureID() == globalObject->iteratorResultObjectStructure()->id();
-}
-
-/**
- * `result.value` with the iteratorResultObjectStructure slot read as the fast path.
- * Equivalent to `result->get(globalObject, vm.propertyNames->value)`.
- */
-ALWAYS_INLINE JSC::JSValue getIteratorResultValue(JSC::JSGlobalObject* globalObject, JSC::JSObject* result)
-{
-    if (isIteratorResultObject(globalObject, result)) [[likely]]
-        return result->getDirect(JSC::iteratorResultObjectValuePropertyOffset);
-    return result->get(globalObject, JSC::getVM(globalObject).propertyNames->value);
-}
-
-/**
- * `result.done` with the iteratorResultObjectStructure slot read as the fast path.
- * Equivalent to `result->get(globalObject, vm.propertyNames->done)`.
- */
-ALWAYS_INLINE JSC::JSValue getIteratorResultDone(JSC::JSGlobalObject* globalObject, JSC::JSObject* result)
-{
-    if (isIteratorResultObject(globalObject, result)) [[likely]]
-        return result->getDirect(JSC::iteratorResultObjectDonePropertyOffset);
-    return result->get(globalObject, JSC::getVM(globalObject).propertyNames->done);
-}
-
-struct IteratorResult {
-    JSC::JSValue done;
-    JSC::JSValue value;
-};
-
-/**
- * Both fields of an iterator result with one structure check. Off the fast path this is
- * `get(done)` then `get(value)` (the IteratorComplete, IteratorValue order); if either
- * throws, the returned fields are empty and the exception is pending on the VM.
- */
-ALWAYS_INLINE IteratorResult getIteratorResult(JSC::JSGlobalObject* globalObject, JSC::JSObject* result)
-{
-    if (isIteratorResultObject(globalObject, result)) [[likely]]
+    if (result->structureID() == globalObject->iteratorResultObjectStructure()->id()) [[likely]]
         return { result->getDirect(JSC::iteratorResultObjectDonePropertyOffset), result->getDirect(JSC::iteratorResultObjectValuePropertyOffset) };
 
     auto& vm = JSC::getVM(globalObject);

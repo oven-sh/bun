@@ -792,9 +792,7 @@ static JSValue intoArrayLoop(JSC::VM& vm, JSGlobalObject* globalObject, WebCore:
             throwTypeError(globalObject, scope, "readMany() did not return an object"_s);
             return {};
         }
-        JSValue doneValue = runtime->readManyResultDone(globalObject, result);
-        RETURN_IF_EXCEPTION(scope, {});
-        JSValue value = runtime->readManyResultValue(globalObject, result);
+        auto [doneValue, value] = runtime->readManyResult(globalObject, result);
         RETURN_IF_EXCEPTION(scope, {});
         if (auto* valueArray = dynamicDowncast<JSArray>(value)) {
             unsigned valueLength = valueArray->length();
@@ -1621,7 +1619,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectConsumeLoopReadFulfilled, (
     auto* context = uncheckedDowncast<InternalFieldTuple>(callFrame->uncheckedArgument(1));
     bool done = false;
     if (JSObject* result = callFrame->argument(0).getObject()) {
-        JSValue doneValue = Bun::getIteratorResultDone(globalObject, result);
+        JSValue doneValue = Bun::getIteratorResult(globalObject, result).first;
         RETURN_IF_EXCEPTION(scope, {});
         done = doneValue.toBoolean(globalObject);
     }

@@ -965,7 +965,7 @@ describe("options.transfer iterator error propagation", () => {
 
 // The transfer list is read through the iterator protocol. A Set iterator hands back plain
 // {value, done} objects; a custom next() can return anything, including accessors, and those
-// must still run in IteratorComplete, IteratorValue order.
+// must still run, done before value, on every result.
 describe("options.transfer iterator results", () => {
   test("a Set of buffers is transferred", () => {
     const a = new ArrayBuffer(4);
@@ -1008,8 +1008,7 @@ describe("options.transfer iterator results", () => {
     }).toEqual({
       clonedLengths: [4, 8],
       originalLengths: [0, 0],
-      // value is not read once done is true
-      reads: ["done0", "value0", "done1", "value1", "done2"],
+      reads: ["done0", "value0", "done1", "value1", "done2", "value2"],
     });
   });
 

@@ -37,6 +37,7 @@
 #include <JavaScriptCore/JSFunction.h>
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/Structure.h>
+#include <utility>
 
 namespace WebCore {
 
@@ -384,18 +385,12 @@ public:
     static constexpr JSC::PropertyOffset readManyResultSizeOffset = 1;
     static constexpr JSC::PropertyOffset readManyResultDoneOffset = 2;
 
-    // `result.done` / `result.value` of a readMany() result. While `result` still has
-    // readManyResultStructure (three plain data properties) the slot is read directly; a
-    // mutated result or a foreign object takes the ordinary [[Get]].
-    JSC::JSValue readManyResultDone(JSC::JSGlobalObject*, JSC::JSObject* result) const;
-    JSC::JSValue readManyResultValue(JSC::JSGlobalObject*, JSC::JSObject* result) const;
+    // `{ done, value }` of a readMany() result. While `result` still has readManyResultStructure
+    // (three plain data properties) both slots are read directly; a mutated result or a foreign
+    // object takes `get(done)` then `get(value)`, and both are empty if either throws.
+    std::pair<JSC::JSValue, JSC::JSValue> readManyResult(JSC::JSGlobalObject*, JSC::JSObject* result) const;
 
 private:
-    bool isReadManyResult(JSC::JSObject* object) const
-    {
-        return object->structureID() == m_readManyResultStructure.getInitializedOnMainThread(m_globalObject)->id();
-    }
-
     JSC::JSGlobalObject* m_globalObject { nullptr };
 
     JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSFunction> m_handlers[static_cast<size_t>(Handler::Count)];
@@ -407,18 +402,18 @@ private:
     JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure> m_readManyResultStructure;
 };
 
-inline JSC::JSValue JSStreamsRuntime::readManyResultDone(JSC::JSGlobalObject* globalObject, JSC::JSObject* result) const
+inline std::pair<JSC::JSValue, JSC::JSValue> JSStreamsRuntime::readManyResult(JSC::JSGlobalObject* globalObject, JSC::JSObject* result) const
 {
-    if (isReadManyResult(result)) [[likely]]
-        return result->getDirect(readManyResultDoneOffset);
-    return result->get(globalObject, JSC::getVM(globalObject).propertyNames->done);
-}
+    if (result->structureID() == m_readManyResultStructure.getInitializedOnMainThread(m_globalObject)->id()) [[likely]]
+        return { result->getDirect(readManyResultDoneOffset), result->getDirect(readManyResultValueOffset) };
 
-inline JSC::JSValue JSStreamsRuntime::readManyResultValue(JSC::JSGlobalObject* globalObject, JSC::JSObject* result) const
-{
-    if (isReadManyResult(result)) [[likely]]
-        return result->getDirect(readManyResultValueOffset);
-    return result->get(globalObject, JSC::getVM(globalObject).propertyNames->value);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSValue done = result->get(globalObject, vm.propertyNames->done);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSC::JSValue value = result->get(globalObject, vm.propertyNames->value);
+    RETURN_IF_EXCEPTION(scope, {});
+    return { done, value };
 }
 
 } // namespace WebCore

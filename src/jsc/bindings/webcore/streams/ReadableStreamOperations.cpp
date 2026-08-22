@@ -941,17 +941,13 @@ static EncodedJSValue fromIterablePullFulfilled(JSGlobalObject* globalObject, JS
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!iterResult.isObject())
         return throwVMTypeError(globalObject, scope, "The promise returned by the async iterator's next() method must fulfill with an object"_s);
-    JSValue doneValue = Bun::getIteratorResultDone(globalObject, asObject(iterResult));
+    auto [doneValue, value] = Bun::getIteratorResult(globalObject, asObject(iterResult));
     RETURN_IF_EXCEPTION(scope, {});
-    bool done = doneValue.toBoolean(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (done) {
+    if (doneValue.toBoolean(globalObject)) {
         readableStreamDefaultControllerClose(globalObject, controller);
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsUndefined());
     }
-    JSValue value = Bun::getIteratorResultValue(globalObject, asObject(iterResult));
-    RETURN_IF_EXCEPTION(scope, {});
     readableStreamDefaultControllerEnqueue(globalObject, controller, value);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());

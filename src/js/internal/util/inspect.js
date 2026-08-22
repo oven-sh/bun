@@ -97,7 +97,6 @@ const ReflectOwnKeys = Reflect.ownKeys;
 const RegExpPrototypeExec = uncurryThis(RegExp.prototype.exec);
 const RegExpPrototypeSymbolReplace = uncurryThis(RegExp.prototype[Symbol.replace]);
 const RegExpPrototypeSymbolSplit = uncurryThis(RegExp.prototype[Symbol.split]);
-const RegExpPrototypeTest = uncurryThis(RegExp.prototype.test);
 const RegExpPrototypeToString = uncurryThis(RegExp.prototype.toString);
 const SetPrototypeEntries = uncurryThis(Set.prototype.entries);
 const SetPrototypeValues = uncurryThis(Set.prototype.values);

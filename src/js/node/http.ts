@@ -5,7 +5,7 @@ const { ClientRequest } = require("node:_http_client");
 const { validateHeaderName, validateHeaderValue, parsers } = require("node:_http_common");
 const { IncomingMessage } = require("node:_http_incoming");
 const { OutgoingMessage } = require("node:_http_outgoing");
-const { Server, ServerResponse } = require("node:_http_server");
+const { Server, ServerResponse, _connectionListener } = require("node:_http_server");
 
 const { METHODS, STATUS_CODES, setMaxHTTPHeaderSize, getMaxHTTPHeaderSize } = require("internal/http");
 
@@ -42,6 +42,7 @@ function get(url, options, cb) {
 }
 
 const http_exports = {
+  _connectionListener,
   Agent,
   Server,
   METHODS,

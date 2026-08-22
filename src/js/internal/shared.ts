@@ -1,5 +1,3 @@
-const { SafeArrayIterator } = require("internal/primordials");
-
 const ObjectFreeze = Object.freeze;
 
 class NotImplementedError extends Error {
@@ -52,34 +50,26 @@ function warnNotImplementedOnce(feature: string, issue?: number) {
 
 let util: typeof import("node:util");
 class ExceptionWithHostPort extends Error {
-  errno: number | Error;
+  errno: number;
   syscall: string;
   port?: number;
   address: string;
 
-  constructor(err: number | Error, syscall: string, address: string, port?: number, additional?: string) {
+  constructor(err: number, syscall: string, address: string, port?: number, additional?: string) {
     // TODO(joyeecheung): We have to use the type-checked
     // getSystemErrorName(err) to guard against invalid arguments from users.
     // This can be replaced with [ code ] = errmap.get(err) when this method
     // is no longer exposed to user land.
     util ??= require("node:util");
-    let code;
+    const code = util.getSystemErrorName(err);
     let details = "";
-    // True when the permission model is enabled: `err` is the ERR_ACCESS_DENIED
-    // object the native connect returned instead of an errno.
-    if (typeof err !== "number" && (err as any)?.code === "ERR_ACCESS_DENIED") {
-      code = (err as any).code;
-      details = ` ${err.message}`;
-    } else {
-      code = util.getSystemErrorName(err);
-      if (port && port > 0) {
-        details = ` ${address}:${port}`;
-      } else if (address) {
-        details = ` ${address}`;
-      }
-      if (additional) {
-        details += ` - Local (${additional})`;
-      }
+    if (port && port > 0) {
+      details = ` ${address}:${port}`;
+    } else if (address) {
+      details = ` ${address}`;
+    }
+    if (additional) {
+      details += ` - Local (${additional})`;
     }
 
     super(`${syscall} ${code}${details}`);
@@ -99,7 +89,7 @@ class ExceptionWithHostPort extends Error {
 
 class NodeAggregateError extends AggregateError {
   constructor(errors, message) {
-    super(new SafeArrayIterator(errors), message);
+    super(new (require("internal/primordials").SafeArrayIterator)(errors), message);
     this.code = errors[0]?.code;
   }
   get ["constructor"]() {
@@ -498,6 +488,7 @@ export default {
   kAutoDestroyed: Symbol("kAutoDestroyed"),
   kWeakHandler: Symbol("kWeak"),
   kGetNativeReadableProto: Symbol("kGetNativeReadableProto"),
+  kCustomPromisifyArgsSymbol: Symbol("customPromisifyArgs"),
   kEmptyObject,
   kInternalSendOptions,
   getSourceMapsSupport,

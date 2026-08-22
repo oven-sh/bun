@@ -7,9 +7,8 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsResult, S
 
 use crate::node::fs::{
     self, AsyncCpTask, AsyncReaddirRecursiveTask, Flavor, FsArgument, FsReturn, NodeFS,
-    NodeFSDispatch, NodeFSFunctionEnum, Op, args, async_, fs_perm, ret,
+    NodeFSDispatch, NodeFSFunctionEnum, Op, args, async_, ret,
 };
-use crate::permission;
 
 /// Signature of every generated NodeFS host function.
 pub(crate) type NodeFSFunction =
@@ -47,12 +46,6 @@ where
         return Ok(JSValue::ZERO);
     }
 
-    if permission::is_enabled() {
-        if let Some(denied) = args.permission_denied() {
-            return Err(global.throw_value(denied.to_error(global, Some(F))));
-        }
-    }
-
     // R-2: `JsCell::with_mut` scopes the `&mut NodeFS` to the blocking
     // syscall; `dispatch` never re-enters JS, and `Maybe<R>` is fully owned
     // (`sys::Error.path` is `Box<[u8]>`, not a borrow into `sync_error_buf`).
@@ -72,7 +65,7 @@ where
 /// Windows path picks `UVFSRequest` for a handful of fds-only ops while
 /// everything else uses `AsyncFSTask`, and that choice is encoded in the
 /// `async_::*` type aliases rather than derivable from `F` alone.
-fn run_async<A: FsArgument, const F: NodeFSFunctionEnum>(
+fn run_async<A: FsArgument>(
     this: &Binding,
     global: &JSGlobalObject,
     frame: &CallFrame,
@@ -121,27 +114,6 @@ fn run_async<A: FsArgument, const F: NodeFSFunctionEnum>(
                 unsafe { ManuallyDrop::drop(&mut slice) };
                 return Ok(promise);
             }
-        }
-    }
-
-    if permission::is_enabled() {
-        if let Some(denied) = args.permission_denied() {
-            let error = denied.to_error(global, Some(F));
-            args.unprotect();
-            drop(args);
-            // SAFETY: not yet dropped; only drop site for this path.
-            unsafe { ManuallyDrop::drop(&mut slice) };
-            // Ops checked before the sync/async split in node_file.cc throw
-            // synchronously; the rest deliver the denial through the
-            // callback/promise.
-            if F.permission_check_throws_sync() {
-                return Err(global.throw_value(error));
-            }
-            return Ok(
-                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                    global, error,
-                ),
-            );
         }
     }
 
@@ -233,22 +205,6 @@ impl Binding {
             return Ok(JSValue::ZERO);
         }
 
-        if permission::is_enabled() {
-            if let Some(denied) =
-                fs_perm::read(&cp_args.src).or_else(|| fs_perm::write(&cp_args.dest))
-            {
-                let error = denied.to_error(global, None);
-                drop(cp_args);
-                // SAFETY: not yet dropped; only drop site for this path.
-                unsafe { ManuallyDrop::drop(&mut slice) };
-                return Ok(
-                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                        global, error,
-                    ),
-                );
-            }
-        }
-
         // SAFETY: re-borrow `vm` mutably; the `slice` borrow is no longer used.
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
         Ok(AsyncCpTask::create(global, this, cp_args, vm))
@@ -269,14 +225,6 @@ impl Binding {
 
         if global.has_exception() {
             return Ok(JSValue::ZERO);
-        }
-
-        if permission::is_enabled() {
-            if let Some(denied) =
-                fs_perm::read(&cp_args.src).or_else(|| fs_perm::write(&cp_args.dest))
-            {
-                return Err(global.throw_value(denied.to_error(global, None)));
-            }
         }
 
         // R-2: blocking syscall — `&mut NodeFS` scoped to the call, no JS re-entry.
@@ -314,20 +262,6 @@ impl Binding {
             return Ok(JSValue::ZERO);
         }
 
-        if permission::is_enabled() {
-            if let Some(denied) = fs_perm::read(&rd_args.path) {
-                let error = denied.to_error(global, Some(NodeFSFunctionEnum::Readdir));
-                drop(rd_args);
-                // SAFETY: not yet dropped; only drop site for this path.
-                unsafe { ManuallyDrop::drop(&mut slice) };
-                return Ok(
-                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                        global, error,
-                    ),
-                );
-            }
-        }
-
         // SAFETY: re-borrow `vm` mutably; the `slice` borrow is no longer used.
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
         // /$bunfs/ is in-memory; readdir_inner handles it (recursive included).
@@ -354,12 +288,6 @@ impl Binding {
 
         if global.has_exception() {
             return Ok(JSValue::ZERO);
-        }
-
-        if permission::is_enabled() {
-            if let Some(denied) = fs_perm::read(&watch_args.path) {
-                return Err(global.throw_value(denied.to_error(global, None)));
-            }
         }
 
         // R-2: `NodeFS::watch` only reads `self.vm` (no scratch-buffer write);
@@ -389,12 +317,6 @@ impl Binding {
             return Ok(JSValue::ZERO);
         }
 
-        if permission::is_enabled() {
-            if let Some(denied) = fs_perm::read(&wf_args.path) {
-                return Err(global.throw_value(denied.to_error(global, None)));
-            }
-        }
-
         match this
             .node_fs
             .with_mut(|nfs| nfs.watch_file(wf_args, Flavor::Sync))
@@ -418,12 +340,7 @@ macro_rules! node_fs_bindings {
                     global: &JSGlobalObject,
                     frame: &CallFrame,
                 ) -> JsResult<JSValue> {
-                    run_async::<$Args, { NodeFSFunctionEnum::$F }>(
-                        this,
-                        global,
-                        frame,
-                        async_::$F::create,
-                    )
+                    run_async::<$Args>(this, global, frame, async_::$F::create)
                 }
             )*
         }

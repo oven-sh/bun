@@ -758,10 +758,8 @@ describe("compiled binary in a deleted cwd", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      // The entry never runs (VM init aborts first), the ENOENT surfaces, and the
-      // process exits 1 — a crash would terminate via a signal, never exit 1.
       expect(stdout).toBe("");
-      expect(stderr).toContain("ENOENT");
+      expect(stderr).toContain("The current working directory was deleted");
       expect(exitCode).toBe(1);
     },
     60_000,

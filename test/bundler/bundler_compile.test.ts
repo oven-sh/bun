@@ -353,6 +353,40 @@ describe("bundler", () => {
       setCwd: true,
     },
   });
+  // A second CommonJS entry point that is only reached through a runtime
+  // require() must load from the embedded module graph (with its bytecode,
+  // when built with --bytecode) rather than the filesystem.
+  for (const bytecode of [false, true]) {
+    itBundled("compile/RuntimeRequireEmbeddedCJS" + (bytecode ? "+bytecode" : ""), {
+      backend: "cli",
+      compile: true,
+      bytecode,
+      format: "cjs",
+      files: {
+        "/entry.js": /* js */ `
+          const { rmSync } = require("fs");
+          rmSync("./second.js", { force: true });
+          const specifier = "./second" + ".js";
+          const second = require(specifier);
+          console.log(second.greeting, require(specifier) === second);
+        `,
+        "/second.js": /* js */ `
+          module.exports = { greeting: "hello from second" };
+        `,
+      },
+      entryPointsRaw: ["./entry.js", "./second.js"],
+      outfile: "dist/out",
+      run: {
+        stdout: "hello from second true",
+        stderr: bytecode
+          ? "[Disk Cache] Cache hit for sourceCode\n[Disk Cache] Cache hit for sourceCode\n[Disk Cache] Cache miss for sourceCode\n"
+          : undefined,
+        env: bytecode ? { BUN_JSC_verboseDiskCache: "1" } : undefined,
+        file: "dist/out",
+        setCwd: true,
+      },
+    });
+  }
   // https://github.com/oven-sh/bun/issues/8697
   itBundled("compile/EmbeddedFileOutfile", {
     compile: true,

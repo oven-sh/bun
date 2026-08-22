@@ -1,3 +1,4 @@
+import { jscDescribe } from "bun:jsc";
 import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe } from "harness";
 import { createTest } from "node-harness";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -708,7 +709,12 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             await promise;
             expect("unreachable").toBe(true);
           } catch (err) {
-            expect(err.code).toBe("ABORT_ERR");
+            expect({ name: err.name, code: err.code, message: err.message, cause: err.cause }).toEqual({
+              name: "AbortError",
+              code: "ABORT_ERR",
+              message: "The operation was aborted",
+              cause: abortController.signal.reason,
+            });
           }
         });
         it("aborted event should work with abortController", async () => {
@@ -2854,6 +2860,75 @@ it("http2 client.request() rejects header names longer than 4096 bytes with a ca
   expect(exitCode).toBe(0);
 });
 
+it("http2 session.origin() with several origins rejects one longer than 65535 bytes with a catchable error", async () => {
+  // Each entry of a multi-origin ORIGIN frame carries a 16-bit length prefix.
+  // An entry that does not fit in it must surface as ERR_HTTP2_ORIGIN_LENGTH
+  // like any other oversized origin, not terminate the process. Run in a
+  // subprocess so a crash shows up as a failed assertion instead of taking down
+  // the test runner.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const http2 = require("node:http2");
+      const server = http2.createServer();
+      server.on("session", session => {
+        const huge = "https://" + Buffer.alloc(70000, "a").toString();
+        for (const origins of [
+          [huge, "https://b.example"],
+          ["https://b.example", huge],
+          [{ origin: huge }, "https://b.example"],
+        ]) {
+          try {
+            session.origin(...origins);
+            console.log("NO_ERROR");
+          } catch (err) {
+            console.log("CODE:" + err.code + " NAME:" + err.name);
+          }
+        }
+        // The session is still usable afterwards.
+        session.origin("https://c.example", "https://d.example");
+        console.log("ORIGIN_SENT");
+      });
+      server.on("stream", stream => {
+        stream.respond({ ":status": 200 });
+        stream.end("ok");
+      });
+      server.listen(0, "127.0.0.1", () => {
+        const client = http2.connect("http://127.0.0.1:" + server.address().port);
+        client.on("error", () => {});
+        const req = client.request({ ":path": "/" });
+        req.on("response", headers => {
+          console.log("STATUS:" + headers[":status"]);
+        });
+        req.resume();
+        req.on("close", () => {
+          client.close();
+          server.close();
+        });
+        req.end();
+      });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.split("\n").filter(Boolean)).toEqual([
+    "CODE:ERR_HTTP2_ORIGIN_LENGTH NAME:TypeError",
+    "CODE:ERR_HTTP2_ORIGIN_LENGTH NAME:TypeError",
+    "CODE:ERR_HTTP2_ORIGIN_LENGTH NAME:TypeError",
+    "ORIGIN_SENT",
+    "STATUS:200",
+  ]);
+  expect(exitCode).toBe(0);
+});
+
 it("http2 client.request() propagates a throwing header-value toString() instead of masking it", async () => {
   // Node calls `${value}` and lets the user's exception escape; it must not be
   // replaced with ERR_HTTP2_INVALID_HEADER_VALUE.
@@ -3984,6 +4059,169 @@ it("http2 pushStream reports an unsendable array element through the callback", 
   expect(blocks).toEqual([]);
 });
 
+// Every kind of field name the native header-block materializer distinguishes, in one request and
+// one response: pseudo-headers, names WebCore knows (with the cookie and set-cookie special cases),
+// names it has never seen, and all-digit names. The second round trip on the same session is served
+// from the per-VM name cache the first one populated, so both must materialize identically.
+it("http2 materializes pseudo, known, unknown and all-digit header names the same way on every request", async () => {
+  const server = http2.createServer();
+  server.on("stream", (stream, headers, _flags, rawHeaders) => {
+    // Raw-array form so the wire order and the duplicate fields are exactly these; an explicit
+    // date keeps respond() from adding the current one.
+    stream.respond([
+      ...[":status", "201"],
+      ...["date", "Thu, 01 Jan 2026 00:00:00 GMT"],
+      ...["content-type", "text/plain"],
+      ...["set-cookie", "a=1", "set-cookie", "b=2"],
+      ...["x-unknown", "u1", "x-unknown", "u2"],
+      ...["123", "first", "123", "second"],
+    ]);
+    stream.end(JSON.stringify({ headers, rawHeaders, sensitive: headers[http2.sensitiveHeaders] }));
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const authority = `127.0.0.1:${server.address().port}`;
+  const client = http2.connect(`http://${authority}`);
+  try {
+    const roundTrip = () =>
+      new Promise((resolve, reject) => {
+        // authorization is never-indexed automatically (nghttp2 behavior), so the receiver lists
+        // it under sensitiveHeaders without the request having to mark anything.
+        const req = client.request({
+          ":method": "POST",
+          ":path": "/materialize",
+          "content-type": "text/plain",
+          "authorization": "Bearer t",
+          "cookie": ["c=1", "d=2"],
+          "x-unknown": ["u1", "u2"],
+          "123": "digits",
+        });
+        req.on("error", reject);
+        let response;
+        req.on("response", (headers, _flags, rawHeaders) => {
+          response = {
+            headers: Object.fromEntries(Object.entries(headers)),
+            rawHeaders,
+            sensitive: headers[http2.sensitiveHeaders],
+          };
+        });
+        let body = "";
+        req.setEncoding("utf8");
+        req.on("data", chunk => (body += chunk));
+        req.on("end", () => resolve({ request: JSON.parse(body), response }));
+        req.end();
+      });
+
+    const first = await roundTrip();
+    const second = await roundTrip();
+    expect(second).toEqual(first);
+
+    expect(first.request).toEqual({
+      headers: {
+        ":method": "POST",
+        ":path": "/materialize",
+        ":authority": authority,
+        ":scheme": "http",
+        "123": "digits",
+        "content-type": "text/plain",
+        "authorization": "Bearer t",
+        "cookie": "c=1; d=2",
+        "x-unknown": "u1, u2",
+      },
+      // Wire order: the pseudo-headers, then the remaining fields in property enumeration order,
+      // which puts the all-digit name first.
+      rawHeaders: [
+        ...[":method", "POST", ":path", "/materialize", ":authority", authority, ":scheme", "http"],
+        ...["123", "digits"],
+        ...["content-type", "text/plain"],
+        ...["authorization", "Bearer t"],
+        ...["cookie", "c=1", "cookie", "d=2"],
+        ...["x-unknown", "u1", "x-unknown", "u2"],
+      ],
+      sensitive: ["authorization"],
+    });
+    expect(first.response).toEqual({
+      headers: {
+        ":status": 201,
+        "date": "Thu, 01 Jan 2026 00:00:00 GMT",
+        "content-type": "text/plain",
+        "set-cookie": ["a=1", "b=2"],
+        "x-unknown": "u1, u2",
+        "123": "first",
+      },
+      rawHeaders: [
+        ...[":status", "201"],
+        ...["date", "Thu, 01 Jan 2026 00:00:00 GMT"],
+        ...["content-type", "text/plain"],
+        ...["set-cookie", "a=1", "set-cookie", "b=2"],
+        ...["x-unknown", "u1", "x-unknown", "u2"],
+        ...["123", "first", "123", "second"],
+      ],
+      sensitive: [],
+    });
+  } finally {
+    client.close();
+    server.close();
+  }
+});
+
+// The name strings in rawHeaders wrap the atoms the headers object is keyed by: the per-VM
+// HTTPHeaderIdentifiers entry for pseudo-headers and known names, the atom the block was keyed
+// with for anything else. jscDescribe reports such strings as atomic; a name string built per block
+// instead (a JSString over WebCore's static name string, or a copy of the wire bytes) is not.
+// Checked before the names are used as keys anywhere, since that can atomize a string in place.
+it("http2 hands out the cached name strings for pseudo-headers and known header names", async () => {
+  const atomicByName = rawHeaders => {
+    const entries = [];
+    for (let i = 0; i < rawHeaders.length; i += 2) {
+      entries.push([rawHeaders[i], jscDescribe(rawHeaders[i]).includes("(atomic)")]);
+    }
+    return Object.fromEntries(entries);
+  };
+
+  let request;
+  const server = http2.createServer();
+  server.on("stream", (stream, _headers, _flags, rawHeaders) => {
+    request = atomicByName(rawHeaders);
+    stream.respond([
+      ...[":status", "200"],
+      ...["date", "Thu, 01 Jan 2026 00:00:00 GMT"],
+      ...["content-type", "text/plain"],
+      ...["x-unknown", "u"],
+    ]);
+    stream.end();
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  try {
+    const response = await new Promise((resolve, reject) => {
+      const req = client.request({ ":method": "POST", ":path": "/", "content-type": "text/plain", "x-unknown": "u" });
+      req.on("error", reject);
+      req.on("response", (_headers, _flags, rawHeaders) => resolve(atomicByName(rawHeaders)));
+      req.end();
+    });
+
+    expect({ request, response }).toEqual({
+      request: {
+        ":method": true,
+        ":path": true,
+        ":scheme": true,
+        ":authority": true,
+        "content-type": true,
+        "x-unknown": true,
+      },
+      response: {
+        ":status": true,
+        "date": true,
+        "content-type": true,
+        "x-unknown": true,
+      },
+    });
+  } finally {
+    client.close();
+    server.close();
+  }
+});
+
 it("http2 option range error messages use the options. prefix", () => {
   for (const opt of ["maxSessionInvalidFrames", "maxSessionRejectedStreams", "unknownProtocolTimeout"]) {
     let error;
@@ -4716,6 +4954,82 @@ it("end(chunk) on a HALF_CLOSED_REMOTE stream still emits 'finish'", async () =>
     expect(await serverFinish.promise).toBe(true);
     client.close();
   } finally {
+    server.close();
+  }
+});
+
+it("write() completes its callback on a later turn, not inside write()", async () => {
+  // _write hands the chunk to the native session with the write callback deferred, so the
+  // chunk is still counted in writableLength when write() returns and the Writable settles it
+  // later, like node, where a write only completes once the session has flushed it. Were the
+  // callback invoked inside the native call, writableLength would already be 0 here.
+  const server = http2.createServer();
+  let client;
+  try {
+    const lengths = Promise.withResolvers();
+    server.on("stream", async stream => {
+      try {
+        stream.respond({ ":status": 200 });
+        const chunk = Buffer.from("hello");
+        const written = new Promise((resolve, reject) => stream.write(chunk, err => (err ? reject(err) : resolve())));
+        const afterWrite = stream.writableLength;
+        await written;
+        lengths.resolve({ afterWrite, afterCallback: stream.writableLength });
+        stream.end();
+      } catch (err) {
+        lengths.reject(err);
+      }
+    });
+    const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+    client = http2.connect(`http://127.0.0.1:${port}`);
+    client.on("error", lengths.reject);
+    const req = client.request({ ":path": "/" });
+    const body = new Promise((resolve, reject) => {
+      const chunks = [];
+      req.on("error", reject);
+      req.on("data", chunk => chunks.push(chunk));
+      req.on("end", () => resolve(Buffer.concat(chunks).toString()));
+    });
+    req.end();
+    expect(await Promise.all([lengths.promise, body])).toEqual([{ afterWrite: 5, afterCallback: 0 }, "hello"]);
+  } finally {
+    client?.close();
+    server.close();
+  }
+});
+
+it("sendTrailers({}) ends the stream without a trailer block", async () => {
+  // An empty trailer object ends the stream with an empty END_STREAM DATA frame rather than a
+  // HEADERS frame: the peer sees the body end and no 'trailers' event, and the stream closes
+  // cleanly on both sides.
+  const server = http2.createServer();
+  let client;
+  try {
+    const serverClose = Promise.withResolvers();
+    server.on("stream", stream => {
+      stream.on("error", serverClose.reject);
+      stream.on("wantTrailers", () => stream.sendTrailers({}));
+      stream.on("close", () => serverClose.resolve(stream.rstCode));
+      stream.respond({ ":status": 200 }, { waitForTrailers: true });
+      stream.end("OK");
+    });
+    const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+    client = http2.connect(`http://127.0.0.1:${port}`);
+    client.on("error", serverClose.reject);
+    const req = client.request({ ":path": "/" });
+    const trailerEvents = [];
+    req.on("trailers", headers => trailerEvents.push(headers));
+    const body = new Promise((resolve, reject) => {
+      const chunks = [];
+      req.on("error", reject);
+      req.on("data", chunk => chunks.push(chunk));
+      req.on("end", () => resolve(Buffer.concat(chunks).toString()));
+    });
+    req.end();
+    expect(await Promise.all([body, serverClose.promise])).toEqual(["OK", 0]);
+    expect(trailerEvents).toEqual([]);
+  } finally {
+    client?.close();
     server.close();
   }
 });

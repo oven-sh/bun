@@ -189,3 +189,19 @@ test("net entries are instanceof PerformanceEntry", async () => {
   expect(entry.constructor.name).toBe("PerformanceNodeEntry");
   expect(entry.entryType).toBe("net");
 });
+
+test("re-wrapped native entries, timing and observer keep JS identity", async () => {
+  const name = "identity-" + Math.random();
+  performance.mark(name);
+  expect(performance.getEntriesByName(name)[0]).toBe(performance.getEntriesByName(name)[0]);
+  expect(performance.timing).toBe(performance.timing);
+
+  const { promise, resolve } = Promise.withResolvers<boolean>();
+  const observer = new PerformanceObserver((list, obs) => {
+    obs.disconnect();
+    resolve(obs === observer && list.getEntries()[0] === list.getEntries()[0]);
+  });
+  observer.observe({ entryTypes: ["mark"] });
+  performance.mark(name + "-2");
+  expect(await promise).toBe(true);
+});

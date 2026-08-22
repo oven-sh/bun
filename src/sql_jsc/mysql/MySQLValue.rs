@@ -361,15 +361,15 @@ impl Value {
                         // collect it (and free the backing store despite
                         // the pin) if user JS drops the last reference from
                         // a later parameter.
-                        2 => {
+                        kind @ (2 | 3) => {
                             roots.append(value);
                             Ok(Value::Bytes(Bytes {
-                                // SAFETY: backing ArrayBuffer is pinned (non-detachable) and
+                                // SAFETY: backing storage is pinned or held (bufferless view) and
                                 // rooted via `roots`; slice stays valid until Bytes::drop unpins.
                                 slice: ZigStringSlice::from_utf8_never_free(unsafe {
                                     core::slice::from_raw_parts(ptr, len)
                                 }),
-                                pinned: value,
+                                pinned: if kind == 2 { value } else { JSValue::ZERO },
                             }))
                         }
                         _ => unreachable!(),
@@ -823,7 +823,8 @@ unsafe extern "C" {
     /// No caller-side preconditions → `safe fn`.
     safe fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
     /// 0 = detached/null, 1 = FastTypedArray (GC-movable — caller should dupe;
-    /// no unpin needed), 2 = pinned ArrayBuffer (caller must `unpinArrayBuffer`).
+    /// no unpin needed), 2 = pinned an existing ArrayBuffer (caller must
+    /// `unpinArrayBuffer`), 3 = held a bufferless OversizeTypedArray (nothing to unpin; root it as for 2).
     /// Out-params are `&mut` (same ABI as `*mut`), so the only obligation left
     /// is on the *returned* slice, not the call itself → `safe fn`.
     safe fn JSC__JSValue__borrowBytesForOffThread(

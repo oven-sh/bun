@@ -2,6 +2,7 @@
 
 #include "BunClientData.h"
 #include "ErrorCode.h"
+#include "helpers.h"
 #include "JSBufferEncodingType.h"
 #include "JSDOMExceptionHandling.h"
 #include "wtf/SIMDUTF.h"
@@ -42,7 +43,8 @@ static TranscodeEncoding parseTranscodeEncoding(const WTF::String& encoding)
 }
 
 // Decode the source bytes into well-formed UTF-16 for the pivot paths.
-static void transcodeDecodeToUtf16(std::span<const uint8_t> input, TranscodeEncoding fromEncoding, bool replaceTrailingOddByte, WTF::Vector<char16_t>& units)
+// Returns false when the decoded string cannot be allocated.
+static bool transcodeDecodeToUtf16(std::span<const uint8_t> input, TranscodeEncoding fromEncoding, bool replaceTrailingOddByte, WTF::Vector<char16_t>& units)
 {
     const auto* data = reinterpret_cast<const char*>(input.data());
     switch (fromEncoding) {
@@ -66,7 +68,9 @@ static void transcodeDecodeToUtf16(std::span<const uint8_t> input, TranscodeEnco
     case TranscodeEncoding::Utf8: {
         // WHATWG-style replacement decode (each maximal ill-formed
         // subsequence becomes one U+FFFD), via WTF's implementation.
-        auto decoded = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const char8_t*>(input.data()), input.size() });
+        auto decoded = Zig::convertUTF8ToString(std::span { reinterpret_cast<const unsigned char*>(input.data()), input.size() });
+        if (decoded.isNull() && !input.empty()) [[unlikely]]
+            return false;
         units.grow(decoded.length());
         if (decoded.is8Bit())
             (void)simdutf::convert_latin1_to_utf16le(reinterpret_cast<const char*>(decoded.span8().data()), decoded.length(), units.begin());
@@ -89,6 +93,7 @@ static void transcodeDecodeToUtf16(std::span<const uint8_t> input, TranscodeEnco
     default:
         RELEASE_ASSERT_NOT_REACHED();
     }
+    return true;
 }
 
 // Encode well-formed UTF-16 into a single-byte encoding: code points above
@@ -210,7 +215,10 @@ BUN_DEFINE_HOST_FUNCTION(jsBufferTranscode,
     } else {
         // Decode to well-formed UTF-16, then encode to the target.
         WTF::Vector<char16_t> units;
-        transcodeDecodeToUtf16(input, fromEncoding, /* replaceTrailingOddByte */ toEncoding == TranscodeEncoding::Ucs2, units);
+        if (!transcodeDecodeToUtf16(input, fromEncoding, /* replaceTrailingOddByte */ toEncoding == TranscodeEncoding::Ucs2, units)) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return {};
+        }
 
         switch (toEncoding) {
         case TranscodeEncoding::Latin1:

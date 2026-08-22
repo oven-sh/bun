@@ -202,7 +202,7 @@ impl TarballStream {
         // Wrapped once as `ParentRef` so
         // the union read goes through the centralised tag-checked
         // `request_extract()` accessor; `extract` is the active `Request`
-        // variant for streaming tarballs (set by `enqueueExtractNPMPackage`,
+        // variant for streaming tarballs (set by `enqueue_extract_npm_package`,
         // `tag == Tag::Extract`).
         let extract_task =
             core::ptr::NonNull::new(extract_task).expect("extract_task non-null (Zig *Task)");
@@ -616,19 +616,20 @@ impl TarballStream {
         let archive = lib::ReadArchive::new();
         // Bypass bidding entirely: the stream is always gzip → tar, and
         // bidding would try to read-ahead before any bytes have arrived.
+        // With patches/libarchive/select-registered-only.patch,
+        // archive_read_append_filter / archive_read_set_format only select a
+        // filter/format that was already registered, so register gzip and tar
+        // first. Tar must also be registered before read_set_options (so the
+        // option has a slot) and set_format must come after it: libarchive's
+        // archive_set_format_option() clobbers `a->format` while dispatching,
+        // and losing the selected format means archive_read_open1() falls
+        // back to bidding, which fails when the first HTTP chunk is short.
         // ARCHIVE_FILTER_GZIP = 1, ARCHIVE_FORMAT_TAR = 0x30000.
+        let _ = archive.read_support_filter_gzip();
         // SAFETY: archive is a valid non-null handle from read_new(); FFI call has no other preconditions.
         if unsafe { lib::archive_read_append_filter(archive.as_mut_ptr(), 1) } != 0 {
             return Err(crate::Error::Fail);
         }
-        // Register tar before read_set_options so the option has a format slot
-        // to apply to. archive_read_set_format would register it too, but
-        // libarchive's archive_set_format_option() overwrites `a->format` with
-        // each slot while dispatching and then writes NULL, so calling
-        // read_set_options after archive_read_set_format throws the selected
-        // format away and archive_read_open1() falls back to bidding. Bidding
-        // reads ahead 512 decompressed bytes and fails with "Unrecognized
-        // archive format" when the first HTTP chunk is too small for that.
         let _ = archive.read_support_format_tar();
         let _ = archive.read_set_options(c"read_concatenated_archives");
         // SAFETY: archive is a valid non-null handle from read_new(); FFI call has no other preconditions.
@@ -1047,7 +1048,7 @@ impl TarballStream {
             drop((*network).tarball_stream.take());
 
             // `task.apply_patch_task` is intentionally not touched: the
-            // buffered `.extract` path (`enqueueExtractNPMPackage` →
+            // buffered `.extract` path (`enqueue_extract_npm_package` →
             // `Task.callback`) never populates it for npm tarballs either —
             // patching is handled later by the install phase.
             //
@@ -1075,7 +1076,7 @@ impl TarballStream {
     unsafe fn populate_result(&mut self, task: *mut Task) {
         // SAFETY: see fn-level # Safety — `task` is live and exclusively
         // owned by this drain; union field `extract` is the active variant
-        // for streaming tarballs (set by `enqueueExtractNPMPackage`).
+        // for streaming tarballs (set by `enqueue_extract_npm_package`).
         unsafe {
             let tarball = &(&(*task).request.extract).tarball;
             (*task).data = TaskData {

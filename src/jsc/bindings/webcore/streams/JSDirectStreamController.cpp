@@ -85,17 +85,12 @@ void JSDirectStreamController::armEndOfTickFlush(JSGlobalObject* globalObject)
 
 Structure* JSDirectStreamController::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 GCClient::IsoSubspace* JSDirectStreamController::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSDirectStreamController, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForDirectStreamController.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForDirectStreamController = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForDirectStreamController.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForDirectStreamController = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSDirectStreamController, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForDirectStreamController, m_subspaceForDirectStreamController));
 }
 
 DEFINE_VISIT_CHILDREN(JSDirectStreamController);
@@ -271,35 +266,57 @@ static String finishTextSink(JSC::VM& vm, JSGlobalObject* globalObject, JSDirect
         return rope;
     }
 
+    // Sizes are recorded at write() time; rejecting even if buffers were detached later is intended.
+    const double estimatedLength = accumulator.estimatedLength;
+    if (estimatedLength > static_cast<double>(WTF::StringImpl::MaxLength)
+        || Bun::WebStreams::exceedsStringLimit(static_cast<size_t>(estimatedLength))) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return String();
+    }
     Vector<uint8_t> bytes;
+    if (estimatedLength > 0 && !bytes.tryReserveInitialCapacity(static_cast<size_t>(estimatedLength))) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return String();
+    }
     for (auto& piece : accumulator.pieces) {
         JSValue value = piece.get();
+        bool appended = true;
         if (value.isString()) {
             String string = asString(value)->value(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            auto utf8 = string.utf8();
-            bytes.append(std::span { reinterpret_cast<const uint8_t*>(utf8.data()), utf8.length() });
+            appended = Bun::WebStreams::appendUTF8WithinStringLimit(string, bytes);
         } else if (auto* view = dynamicDowncast<JSArrayBufferView>(value)) {
             if (!view->isDetached())
-                bytes.append(view->span());
+                appended = bytes.tryAppend(view->span());
         } else if (auto* buffer = dynamicDowncast<JSArrayBuffer>(value)) {
             auto* impl = buffer->impl();
             if (impl && !impl->isDetached())
-                bytes.append(impl->span());
+                appended = bytes.tryAppend(impl->span());
+        }
+        if (!appended) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return String();
         }
     }
     if (!accumulator.rope.isEmpty()) {
         String rope = accumulator.rope.toString();
         if (rope[0] == 0xFEFF)
             rope = rope.substring(1);
-        auto utf8 = rope.utf8();
-        bytes.append(std::span { reinterpret_cast<const uint8_t*>(utf8.data()), utf8.length() });
+        if (!Bun::WebStreams::appendUTF8WithinStringLimit(rope, bytes)) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return String();
+        }
     }
     if (Bun::WebStreams::exceedsStringLimit(bytes.size())) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return String();
     }
-    return String::fromUTF8ReplacingInvalidSequences(bytes.span());
+    String text = Zig::convertUTF8ToString(bytes.span());
+    if (text.isNull() && !bytes.isEmpty()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return String();
+    }
+    return text;
 }
 
 static JSValue endTextSink(JSC::VM& vm, JSGlobalObject* globalObject, JSDirectStreamController* controller)
@@ -847,15 +864,15 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectEndOfTickFlush, (JSGlobalOb
         return JSValue::encode(jsUndefined());
     // onFlush may throw (e.g. a read request's chunkSteps threw). This is a boundary:
     // convert the abrupt completion into the direct controller's error action so the
-    // stream errors instead of surfacing as an uncaught nextTick exception.
+    // stream errors instead of surfacing as an uncaught nextTick exception. If erroring
+    // the stream itself throws, that is left for the tick runner to report.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     controller->onFlush(globalObject);
     if (scope.exception()) [[unlikely]] {
         JSC::JSValue error = takeAbruptCompletion(globalObject, scope);
-        if (!error)
-            return JSValue::encode(jsUndefined());
+        RETURN_IF_EXCEPTION(scope, {}); // termination is left pending
         controller->handleError(globalObject, error);
-        scope.clearExceptionExceptTermination();
+        RETURN_IF_EXCEPTION(scope, {});
     }
     return JSValue::encode(jsUndefined());
 }

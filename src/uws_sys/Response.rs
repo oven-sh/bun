@@ -747,6 +747,19 @@ impl AnyResponse {
         }
     }
 
+    /// The handle with its variant erased, for the C++ shims that take the
+    /// response as `void*` next to a `ResponseKind`, and for stores that keep
+    /// the kind elsewhere (`HTTPServerWritable::res` recovers the variant from
+    /// its const generics).
+    #[inline]
+    pub fn as_ptr(self) -> *mut c_void {
+        match self {
+            AnyResponse::SSL(ptr) => ptr.cast::<c_void>(),
+            AnyResponse::TCP(ptr) => ptr.cast::<c_void>(),
+            AnyResponse::H3(ptr) => ptr.cast::<c_void>(),
+        }
+    }
+
     pub fn get_remote_socket_info(self) -> Option<SocketAddress> {
         any_dispatch!(self, |r| r.get_remote_socket_info())
     }
@@ -777,15 +790,6 @@ impl AnyResponse {
 
     pub fn state(self) -> State {
         any_dispatch!(self, |r| r.state())
-    }
-
-    // Thin alias for the `From` impls below.
-    #[inline]
-    pub fn init<T>(response: T) -> AnyResponse
-    where
-        AnyResponse: From<T>,
-    {
-        AnyResponse::from(response)
     }
 
     pub fn timeout(self, seconds: u8) {

@@ -168,6 +168,12 @@ pub trait Sink {
     /// After a WINDOW_UPDATE has been applied (for resuming sends).
     fn on_window_update(&self, stream_id: u32, increment: u32);
 
+    /// The embedder cannot take further callbacks in this batch (its VM has an exception pending
+    /// from an earlier one): stop before the next frame; the unconsumed bytes stay queued.
+    fn should_stop(&self) -> bool {
+        false
+    }
+
     // ---- Stream-level (default no-op so simple sinks can ignore them) ----
 
     /// A new stream was created by an inbound HEADERS (the embedder allocates its JS wrapper).
@@ -494,7 +500,7 @@ impl Connection {
 
         loop {
             let remaining = &bytes[offset..];
-            if remaining.len() < wire::FRAME_HEADER_SIZE {
+            if remaining.len() < wire::FRAME_HEADER_SIZE || sink.should_stop() {
                 break;
             }
             let hdr = FrameHeader::parse(remaining);

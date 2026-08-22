@@ -123,8 +123,9 @@ static JSC::SyntheticSourceProvider::LazySyntheticSourceGenerator generateIntern
             PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty);
             bool hasOwn = object->methodTable()->getOwnPropertySlot(object, globalObject, entry, slot);
             RETURN_IF_EXCEPTION(throwScope, nullptr);
-            if (hasOwn && !slot.isValue()) {
-                // Accessors are how builtins defer loading (fs.ReadStream pulls in node:stream); JSC reads them off `object` on first binding.
+            // Accessors are how builtins defer loading (fs.ReadStream pulls in node:stream); JSC reads them off `object` on
+            // first binding. An accessor user code defined on the exports object is read now instead (see isBunDefinedGetter).
+            if (hasOwn && (slot.isCustom() || (slot.isAccessor() && Zig::isBunDefinedGetter(slot.getterSetter()->getter())))) {
                 exportValues.append(JSValue());
                 hasLazyExports = true;
                 continue;
@@ -186,7 +187,7 @@ PendingVirtualModuleResult* PendingVirtualModuleResult::create(VM& vm, Structure
 }
 Structure* PendingVirtualModuleResult::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 PendingVirtualModuleResult::PendingVirtualModuleResult(VM& vm, Structure* structure)
@@ -726,6 +727,16 @@ JSValue fetchCommonJSModule(
     RETURN_IF_EXCEPTION(scope, {});
     if (builtin) {
         if (!res->success) {
+            // A file embedded in a standalone executable is served by the builtin probe.
+            // A CommonJS one is evaluated right here like any require()d CJS file (the
+            // module loader path would find `target` already in the require map and
+            // never give it its source); only ES modules go through the loader.
+            if (res->result.value.isCommonJSModule) {
+                res->success = true;
+                target->evaluate(globalObject, specifierWtfString, res->result.value);
+                RETURN_IF_EXCEPTION(scope, {});
+                RELEASE_AND_RETURN(scope, target);
+            }
             RELEASE_AND_RETURN(scope, builtin);
         }
         target->setExportsObject(builtin);

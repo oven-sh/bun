@@ -1,7 +1,7 @@
 {
   "src/jsc/VirtualMachine.rs": {
     "JsResult collapsed on the spot": 1,
-    "discarded result of a call that enters script": 2
+    "discarded result of a call that enters script": 1
   },
   "src/jsc/web_worker.rs": {
     "taken exception discarded": 1

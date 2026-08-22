@@ -80,16 +80,6 @@ pub struct ExecCfg {
     pub(crate) allow_fast_run_for_extensions: bool,
 }
 
-impl Default for ExecCfg {
-    fn default() -> Self {
-        Self {
-            bin_dirs_only: false,
-            log_errors: true,
-            allow_fast_run_for_extensions: true,
-        }
-    }
-}
-
 /// Per-caller knobs for [`RunCommand::configure_env_for_run`] and
 /// [`RunCommand::configure_env_for_run_without_linker`].
 #[derive(Clone, Copy)]
@@ -948,7 +938,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // dispatch hooks (`jsc_hooks::install_jsc_hooks`) are installed by
         // `main.rs` before `Cli::start`, so `VirtualMachine::init` already sees
         // a populated `RuntimeHooks` table.
-        bun_jsc::initialize(ctx.runtime_options.eval.eval_and_print);
+        bun_jsc::initialize(bun_jsc::InitializeOptions {
+            eval_mode: ctx.runtime_options.eval.eval_and_print,
+            one_shot: bun_jsc::is_one_shot_eval_invocation(),
+            ..Default::default()
+        });
         bun_ast::initialize_store();
 
         let vm_ptr = VirtualMachine::init(VmInitOptions {
@@ -1116,7 +1110,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     ) -> crate::Result<()> {
         use bun_standalone_graph::StandaloneModuleGraph::Flags as GraphFlags;
 
-        bun_jsc::initialize(false);
+        // argv belongs to the compiled program, so a `-e` or `-p` in it is not ours.
+        bun_jsc::initialize(bun_jsc::InitializeOptions::default());
         bun_analytics::features::standalone_executable.fetch_add(1, Ordering::Relaxed);
         bun_ast::initialize_store();
 
@@ -3332,9 +3327,7 @@ impl RunCommand {
         // hyperlinks when colors are on. Light/dark detected from env.
         let colors = Output::enable_ansi_colors_stdout();
         let columns: u16 = 'brk: {
-            // Output.terminal_size is never populated; query stdout
-            // directly. Honor COLUMNS so piped output and tests can
-            // pin a width.
+            // Honor COLUMNS so piped output and tests can pin a width.
             if let Some(env) = bun_core::getenv_z(bun_core::zstr!("COLUMNS")) {
                 if let Ok(n) = bun_core::fmt::parse_int::<u16>(env, 10) {
                     if n > 0 {

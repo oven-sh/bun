@@ -147,7 +147,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSPerformancePrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSPerformancePrototype* ptr = new (NotNull, JSC::allocateCell<JSPerformancePrototype>(vm)) JSPerformancePrototype(vm, globalObject, structure);
+        JSPerformancePrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSPerformancePrototype))) JSPerformancePrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -161,7 +161,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -185,11 +185,7 @@ template<> JSValue JSPerformanceDOMConstructor::prototypeForStructure(JSC::VM& v
 
 template<> void JSPerformanceDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(0), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "Performance"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSPerformance::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 0, "Performance"_s, JSPerformance::prototype(vm, globalObject));
 }
 
 /* Hash table for prototype */
@@ -220,8 +216,8 @@ const ClassInfo JSPerformancePrototype::s_info = { "Performance"_s, &Base::s_inf
 void JSPerformancePrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSPerformance::info(), JSPerformancePrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSPerformance::info(), JSPerformancePrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSPerformance::s_info = { "Performance"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformance) };
@@ -255,7 +251,7 @@ void JSPerformance::finishCreation(VM& vm)
         String("now"_s),
         functionPerformanceNow, ImplementationVisibility::Public, NoIntrinsic, callHostFunctionAsConstructor,
         &DOMJITSignatureForPerformanceNow);
-    this->putDirect(vm, JSC::Identifier::fromString(vm, "now"_s), now, 0);
+    Bun::putDirectNamed(vm, this, "now"_s, now);
 
     this->putDirect(
         vm,
@@ -340,10 +336,10 @@ static inline EncodedJSValue jsPerformancePrototypeFunction_toJSONBody(JSGlobalO
     auto* result = constructEmptyObject(lexicalGlobalObject);
     auto timeOriginValue = toJS<IDLDouble>(*lexicalGlobalObject, throwScope, impl.timeOrigin());
     RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, Identifier::fromString(vm, "timeOrigin"_s), timeOriginValue);
+    Bun::putDirectNamed(vm, result, "timeOrigin"_s, timeOriginValue);
     auto timingValue = toJS<IDLInterface<PerformanceTiming>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.timing());
     RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, Identifier::fromString(vm, "timing"_s), timingValue);
+    Bun::putDirectNamed(vm, result, "timing"_s, timingValue);
     return JSValue::encode(result);
 }
 
@@ -539,12 +535,7 @@ JSC_DEFINE_HOST_FUNCTION(jsPerformancePrototypeFunction_clearMeasures, (JSGlobal
 
 JSC::GCClient::IsoSubspace* JSPerformance::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSPerformance, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForPerformance.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForPerformance = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForPerformance.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForPerformance = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSPerformance, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForPerformance, m_subspaceForPerformance));
 }
 
 void JSPerformance::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
@@ -574,38 +565,8 @@ void JSPerformanceOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* contex
     uncacheWrapper(world, &jsPerformance->wrapped(), jsPerformance);
 }
 
-#if ENABLE(BINDING_INTEGRITY)
-#if PLATFORM(WIN)
-#pragma warning(disable : 4483)
-extern "C" {
-extern void (*const __identifier("??_7Performance@WebCore@@6B@")[])();
-}
-#else
-extern "C" {
-extern void* _ZTVN7WebCore11PerformanceE[];
-}
-#endif
-#endif
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<Performance>&& impl)
 {
-
-    if constexpr (std::is_polymorphic_v<Performance>) {
-#if ENABLE(BINDING_INTEGRITY)
-        // const void* actualVTablePointer = getVTablePointer(impl.ptr());
-#if PLATFORM(WIN)
-        void* expectedVTablePointer = __identifier("??_7Performance@WebCore@@6B@");
-#else
-        // void* expectedVTablePointer = &_ZTVN7WebCore11PerformanceE[2];
-#endif
-
-        // If you hit this assertion you either have a use after free bug, or
-        // Performance has subclasses. If Performance has subclasses that get passed
-        // to toJS() we currently require Performance you to opt out of binding hardening
-        // by adding the SkipVTableValidation attribute to the interface IDL definition
-        // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
-#endif
-    }
     return createWrapper<Performance>(globalObject, WTF::move(impl));
 }
 

@@ -48,7 +48,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSTextEncoderStreamPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSTextEncoderStreamPrototype* ptr = new (NotNull, JSC::allocateCell<JSTextEncoderStreamPrototype>(vm)) JSTextEncoderStreamPrototype(vm, structure);
+        JSTextEncoderStreamPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSTextEncoderStreamPrototype))) JSTextEncoderStreamPrototype(vm, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -62,7 +62,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -107,23 +107,14 @@ DEFINE_VISIT_CHILDREN_WITH_MODIFIER(template<>, JSTextEncoderStreamConstructor);
 
 template<> GCClient::IsoSubspace* JSTextEncoderStreamConstructor::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSTextEncoderStreamConstructor, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForTextEncoderStreamConstructor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTextEncoderStreamConstructor = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForTextEncoderStreamConstructor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForTextEncoderStreamConstructor = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSTextEncoderStreamConstructor, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForTextEncoderStreamConstructor, m_subspaceForTextEncoderStreamConstructor));
 }
 
 template<> void JSTextEncoderStreamConstructor::finishCreation(VM& vm, JSDOMGlobalObject& globalObject)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-    putDirect(vm, vm.propertyNames->length, jsNumber(0), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "TextEncoderStream"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSTextEncoderStream::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 0, "TextEncoderStream"_s, JSTextEncoderStream::prototype(vm, globalObject));
     m_instanceStructure.set(vm, this, getDOMStructure<JSTextEncoderStream>(vm, globalObject));
 }
 
@@ -170,18 +161,18 @@ JSC_DEFINE_HOST_FUNCTION(jsTextEncoderStreamPrototype_inspectCustom, (JSGlobalOb
     if (!thisObject) [[unlikely]]
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "TextEncoderStream"_s);
     JSObject* data = constructEmptyObject(lexicalGlobalObject);
-    data->putDirect(vm, Identifier::fromString(vm, "encoding"_s), jsNontrivialString(vm, "utf-8"_s), 0);
-    data->putDirect(vm, Identifier::fromString(vm, "readable"_s), thisObject->m_readable.get() ? JSValue(thisObject->m_readable.get()) : jsUndefined(), 0);
-    data->putDirect(vm, Identifier::fromString(vm, "writable"_s), thisObject->m_writable.get() ? JSValue(thisObject->m_writable.get()) : jsUndefined(), 0);
+    Bun::putDirectNamed(vm, data, "encoding"_s, jsNontrivialString(vm, "utf-8"_s));
+    Bun::putDirectNamed(vm, data, "readable"_s, thisObject->m_readable.get() ? JSValue(thisObject->m_readable.get()) : jsUndefined());
+    Bun::putDirectNamed(vm, data, "writable"_s, thisObject->m_writable.get() ? JSValue(thisObject->m_writable.get()) : jsUndefined());
     RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "TextEncoderStream"_s, data));
 }
 
 void JSTextEncoderStreamPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSTextEncoderStream::info(), JSTextEncoderStreamPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSTextEncoderStream::info(), JSTextEncoderStreamPrototypeTableValues, *this);
     Bun::WebStreams::installInspectCustom(vm, this, jsTextEncoderStreamPrototype_inspectCustom);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 // JSTextEncoderStream
@@ -202,7 +193,7 @@ JSTextEncoderStream* JSTextEncoderStream::create(VM& vm, Structure* structure)
 
 Structure* JSTextEncoderStream::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 JSObject* JSTextEncoderStream::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -224,12 +215,7 @@ JSValue JSTextEncoderStream::getConstructor(VM& vm, const JSGlobalObject* global
 
 GCClient::IsoSubspace* JSTextEncoderStream::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSTextEncoderStream, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForTextEncoderStream.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTextEncoderStream = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForTextEncoderStream.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForTextEncoderStream = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSTextEncoderStream, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForTextEncoderStream, m_subspaceForTextEncoderStream));
 }
 
 // Prototype accessors

@@ -555,7 +555,8 @@ impl HTMLRewriter {
 // ─────────────────────────── RewriterPipe ────────────────────────────────
 
 /// The concrete lol-html rewriter type backing one `transform()`.
-pub(crate) type LolRewriter = lol_html::HtmlRewriter<'static, PipeOutput>;
+pub(crate) type LolRewriter =
+    lol_html::HtmlRewriter<'static, bun_bundler::HTMLScanner::OutputSink<'static>>;
 
 /// Which lol-html call the pipe still has to run (or finish). Advanced by
 /// [`RewriterPipe::feed`] / [`RewriterPipe::end_rewrite`] /
@@ -712,7 +713,7 @@ pub struct RewriterPipe {
     /// pending promise, and handler error.
     cell: Cell<JSValue>,
     /// Boxed (never held by value): lol-html's `write/end/resume` re-enter
-    /// `PipeOutput::handle_chunk` which reads fields off `*self`. `JsCell`
+    /// the output sink which reads fields off `*self`. `JsCell`
     /// because those calls (and `suspended_*`) need `&mut LolRewriter` from
     /// `&self`.
     rewriter: JsCell<Option<Box<LolRewriter>>>,
@@ -1059,12 +1060,16 @@ impl RewriterPipe {
                 enable_esi_tags: false,
                 adjust_charset_on_meta_tag: false,
             },
-            PipeOutput(this),
+            // The pipe owns the `Box<LolRewriter>` that owns this sink, so the
+            // back-reference to `output_buffer` cannot outlive its pointee.
+            bun_bundler::HTMLScanner::OutputSink::Buffer(bun_ptr::BackRef::new(
+                &this.output_buffer,
+            )),
         ))));
 
         // ── output Response: body starts Locked(PendingValue{...}) ──────────
         // A consumer reading `.body` creates the ByteStream lazily; until then
-        // `PipeOutput` buffers into `output_buffer`, and `on_start_streaming`
+        // the sink buffers into `output_buffer`, and `on_start_streaming`
         // hands that over as `DrainResult::Owned`.
         let result = bun_core::heap::alloc_nn(Response::init(
             webcore::response::Init {
@@ -1370,7 +1375,7 @@ impl RewriterPipe {
     }
 
     /// `PendingValue::on_readable_stream_available` — the output ByteStream
-    /// now exists: stash its backref so `PipeOutput::handle_chunk` pushes
+    /// now exists: stash its backref so the output sink pushes
     /// there instead of buffering.
     fn on_readable_stream_available(
         ctx: NonNull<c_void>,
@@ -1823,23 +1828,6 @@ enum PullPacing {
     YieldIfUnobserved,
     /// Entered from that deferred task: this is the next turn, pull now.
     AlreadyYielded,
-}
-
-/// `lol_html::OutputSink` for the rewriter built in [`RewriterPipe::init`].
-/// The pipe owns the `Box<LolRewriter>` that owns this `PipeOutput`, so the
-/// back-reference invariant (pointee outlives holder) is structurally upheld.
-/// Output is staged in `output_buffer`; `drive_rewriter` forwards it.
-pub struct PipeOutput(BackRef<RewriterPipe>);
-
-impl lol_html::OutputSink for PipeOutput {
-    fn handle_chunk(&mut self, chunk: &[u8]) {
-        if chunk.is_empty() {
-            return;
-        }
-        self.0
-            .output_buffer
-            .with_mut(|v| v.extend_from_slice(chunk));
-    }
 }
 
 impl Drop for RewriterPipe {
@@ -2806,7 +2794,6 @@ impl EndTag {
     lol_content_ops! { RawEndTag, end_tag, JSValue::NULL;
         before / before_,
         after / after_,
-        replace / replace_,
     }
 
     #[bun_jsc::host_fn(method)]

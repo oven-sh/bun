@@ -4,7 +4,6 @@ type WebWorker = InstanceType<typeof globalThis.Worker>;
 const EventEmitter = require("node:events");
 let workerThreadsChannel;
 const { SafeMap } = require("internal/primordials");
-const Readable = require("internal/streams/readable");
 const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
 const {
   validateString,
@@ -1090,7 +1089,7 @@ class Worker extends EventEmitter {
 
   getHeapSnapshot(options: unknown) {
     const stringPromise = this.#worker.getHeapSnapshot(options);
-    return stringPromise.then(s => new HeapSnapshotStream(s));
+    return stringPromise.then(makeHeapSnapshotStream);
   }
 
   getHeapStatistics() {
@@ -1251,21 +1250,25 @@ class Worker extends EventEmitter {
   }
 }
 
-class HeapSnapshotStream extends Readable {
-  #json: string | undefined;
+let _HeapSnapshotStream;
+function makeHeapSnapshotStream(json: string) {
+  _HeapSnapshotStream ??= class HeapSnapshotStream extends require("internal/streams/readable") {
+    #json: string | undefined;
 
-  constructor(json: string) {
-    super();
-    this.#json = json;
-  }
-
-  _read() {
-    if (this.#json !== undefined) {
-      this.push(this.#json);
-      this.push(null);
-      this.#json = undefined;
+    constructor(json: string) {
+      super();
+      this.#json = json;
     }
-  }
+
+    _read() {
+      if (this.#json !== undefined) {
+        this.push(this.#json);
+        this.push(null);
+        this.#json = undefined;
+      }
+    }
+  };
+  return new _HeapSnapshotStream(json);
 }
 
 export default {

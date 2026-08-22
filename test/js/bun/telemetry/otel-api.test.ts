@@ -289,9 +289,7 @@ describe("context propagation", () => {
     const als = new AsyncLocalStorage();
     const span = tracer.startSpan("outer");
     const seen = als.run("store", () =>
-      Bun.otel.with(span, () =>
-        Bun.otel.with(undefined, () => [Bun.otel.activeSpan(), als.getStore()] as const),
-      ),
+      Bun.otel.with(span, () => Bun.otel.with(undefined, () => [Bun.otel.activeSpan(), als.getStore()] as const)),
     );
     expect(seen).toEqual([undefined, "store"]);
     span.end();

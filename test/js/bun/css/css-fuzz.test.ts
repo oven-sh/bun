@@ -10,6 +10,10 @@ interface InvalidFuzzOptions {
 const shutup = process.env.CSS_FUZZ_SHUTUP === "1";
 const log = shutup ? () => {} : console.log;
 
+// Virtual path of the fuzzed stylesheet, handed to Bun.build through `files` instead of being
+// written to disk. It has to be absolute: the bundler asserts that entry points are absolute paths.
+const entrypoint = "/css-fuzz/invalid.css";
+
 // Collection of invalid CSS generation strategies
 const invalidGenerators = {
   // Syntax errors
@@ -177,11 +181,11 @@ if (!isCI) {
         log("--- CSS Fuzz ---");
         invalidCSS = invalidCSS + "";
         log(JSON.stringify(invalidCSS, null, 2));
-        await Bun.write("invalid.css", invalidCSS);
 
         try {
           const result = await Bun.build({
-            entrypoints: ["invalid.css"],
+            entrypoints: [entrypoint],
+            files: { [entrypoint]: invalidCSS },
           });
 
           // We expect the parser to either throw an error or return a valid result
@@ -239,11 +243,11 @@ if (!isCI) {
 
       console.log("--- Mixed CSS ---");
       console.log(JSON.stringify(mixedCSS, null, 2));
-      await Bun.write("invalid.css", mixedCSS);
 
       try {
         await Bun.build({
-          entrypoints: ["invalid.css"],
+          entrypoints: [entrypoint],
+          files: { [entrypoint]: mixedCSS },
         });
       } catch (error) {
         // Expected to throw, but shouldn't crash

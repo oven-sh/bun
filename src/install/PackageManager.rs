@@ -337,7 +337,8 @@ pub struct PackageManager {
     /// Only set in `bun pm`
     pub root_package_json_name_at_time_of_init: Box<[u8]>,
 
-    pub root_package_json_file: bun_sys::File,
+    /// Held from `lock_project` until the process exits.
+    pub(crate) project_lock: Option<bun_sys::File>,
 
     /// The package id corresponding to the workspace the install is happening in. Could be root, or
     /// could be any of the workspaces.
@@ -538,6 +539,22 @@ impl Subcommand {
     // TODO: make all subcommands find root and chdir
     pub(crate) fn should_chdir_to_root(self) -> bool {
         !matches!(self, Self::Link)
+    }
+
+    /// `init` takes the project lock for these. `Pm` and `Audit` take it themselves when they edit.
+    pub(crate) fn always_edits_project(self) -> bool {
+        matches!(
+            self,
+            Self::Install
+                | Self::Update
+                | Self::Add
+                | Self::Remove
+                | Self::Link
+                | Self::Patch
+                | Self::PatchCommit
+                | Self::Dedupe
+                | Self::Prune
+        )
     }
 }
 
@@ -1811,10 +1828,6 @@ pub fn init(
                                 // process-lifetime (`set_top_level_dir` requires `'static`).
                                 fs.set_top_level_dir(fs.dirname_store().append(parent)?);
                                 let _ = child_json.close();
-                                #[cfg(windows)]
-                                {
-                                    json_file.seek_to(0)?;
-                                }
                                 workspace_name_hash =
                                     Some(Semver::string::Builder::string_hash(&entry.name));
                                 break 'root_package_json_file json_file;
@@ -1833,6 +1846,8 @@ pub fn init(
         fs.set_top_level_dir(fs.dirname_store().append(child_cwd)?);
         break 'root_package_json_file child_json;
     };
+    // Opened to report a package.json that cannot be written to. The commands read it by path.
+    drop(root_package_json_file);
 
     let top_level_dir_z = ZBox::from_bytes(fs.top_level_dir());
     bun_sys::chdir(&top_level_dir_z)?;
@@ -1855,17 +1870,12 @@ pub fn init(
         // until now). The slice excludes the NUL — `top_level_dir` is `[]u8`.
         // PathBuffer is repr(transparent) over [u8; N], so the raw cast is sound.
         fs.set_top_level_dir(bun_core::ffi::slice(CWD_BUF.get().cast::<u8>(), tld.len()));
-        // bun_sys exposes the non-Z `get_fd_path`;
-        // append the NUL ourselves so the static `&ZStr` invariant holds.
+        // By name, not through the file opened above: another process may replace that file.
         let root_buf = &mut *ROOT_PACKAGE_JSON_PATH_BUF.get();
-        let plen = if no_project {
-            // Where the file would be; nothing reads it in this mode.
-            let p = original_package_json_path.as_bytes();
-            root_buf[..p.len()].copy_from_slice(p);
-            p.len()
-        } else {
-            bun_sys::get_fd_path(root_package_json_file.handle, root_buf)?.len()
-        };
+        let tld_no_slash = strings::without_trailing_slash(tld);
+        let plen = tld_no_slash.len() + SEP_PACKAGE_JSON.len();
+        root_buf[..tld_no_slash.len()].copy_from_slice(tld_no_slash);
+        root_buf[tld_no_slash.len()..plen].copy_from_slice(SEP_PACKAGE_JSON);
         root_buf[plen] = 0;
         ROOT_PACKAGE_JSON_PATH.write(ZStr::from_raw(root_buf.as_ptr(), plen));
     }
@@ -2061,7 +2071,7 @@ pub fn init(
         // zero-bit pattern is UB; allocate the real (empty) lockfile here directly.
         // `Lockfile::default()` ≡ `Lockfile::init_empty()`.
         wr!(lockfile, Box::new(Lockfile::default()));
-        wr!(root_package_json_file, root_package_json_file);
+        wr!(project_lock, None);
         // .progress
         wr!(event_loop, AnyEventLoop::init());
         wr!(
@@ -2262,6 +2272,10 @@ pub fn init(
             if let Some(p) = config.hoist_pattern.take() {
                 manager.options.hoist_pattern = Some(p);
             }
+        }
+
+        if subcommand.always_edits_project() && !manager.options.dry_run {
+            manager.lock_project();
         }
     }
 
@@ -2516,13 +2530,7 @@ fn init_with_runtime_once(
         // `Lockfile` holds `HashMap`/`Vec`/`NonNull` (zero-bit pattern is
         // UB), so allocate the real empty lockfile here directly instead of a zeroed placeholder.
         wr!(lockfile, Box::new(Lockfile::default()));
-        // `.root_package_json_file` is never read in the runtime
-        // path. Use the explicit invalid-fd sentinel rather than `mem::zeroed()` —
-        // on posix `Fd(0)` is stdin, not the invalid marker.
-        wr!(
-            root_package_json_file,
-            bun_sys::File::from_fd(Fd::invalid())
-        );
+        wr!(project_lock, None);
         // erased *mut () set by tier-6; `js_current()` resolves the per-thread JS
         // event loop via `bun_io::__bun_get_vm_ctx` (link-time, definer in bun_runtime).
         wr!(event_loop, AnyEventLoop::js_current());

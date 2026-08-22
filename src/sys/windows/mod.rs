@@ -78,6 +78,16 @@ pub mod kernel32 {
             dwFlags: DWORD,
         ) -> BOOL;
 
+        /// `LockFileEx` (`fileapi.h`). `lpOverlapped` holds the range offset; required.
+        pub fn LockFileEx(
+            hFile: HANDLE,
+            dwFlags: DWORD,
+            dwReserved: DWORD,
+            nNumberOfBytesToLockLow: DWORD,
+            nNumberOfBytesToLockHigh: DWORD,
+            lpOverlapped: LPOVERLAPPED,
+        ) -> BOOL;
+
         // ── SRW locks / condition variables (`bun_threading` windows arm) ──
         pub fn ReleaseSRWLockExclusive(SRWLock: *mut SRWLOCK);
         pub fn SleepConditionVariableSRW(
@@ -131,6 +141,9 @@ pub const ENABLE_VIRTUAL_TERMINAL_PROCESSING: DWORD = 0x0004;
 pub const MOVEFILE_COPY_ALLOWED: DWORD = 0x2;
 pub const MOVEFILE_REPLACE_EXISTING: DWORD = 0x1;
 pub const MOVEFILE_WRITE_THROUGH: DWORD = 0x8;
+/// `LockFileEx` flags (`minwinbase.h`).
+pub const LOCKFILE_FAIL_IMMEDIATELY: DWORD = 0x1;
+pub const LOCKFILE_EXCLUSIVE_LOCK: DWORD = 0x2;
 pub use bun_windows_sys::FILETIME;
 
 pub use bun_windows_sys::DUPLICATE_SAME_ACCESS;

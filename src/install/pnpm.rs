@@ -478,7 +478,6 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
     data: &[u8],
-    dir: Fd,
 ) -> Result<LoadResult<'a>, MigratePnpmLockfileError> {
     lockfile.init_empty();
     crate::initialize_store();
@@ -1626,7 +1625,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
 
     lockfile.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration::<false>(manager)?;
 
-    update_package_json_after_migration(manager, log, dir, &found_patches)?;
+    update_package_json_after_migration(manager, log, &found_patches)?;
 
     Ok(LoadResult::Ok(LoadResultOk {
         lockfile,
@@ -2335,7 +2334,6 @@ fn rewrite_bare_patch_keys(
 fn update_package_json_after_migration(
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
-    dir: Fd,
     patches: &StringArrayHashMap<Box<[u8]>>,
 ) -> Result<(), AllocError> {
     let mut pkg_json_path = bun_paths::AutoAbsPath::init_top_level_dir();
@@ -2743,10 +2741,10 @@ fn update_package_json_after_migration(
         }
 
         // Write the updated package.json
-        if sys::File::write_file(
-            dir,
-            bun_core::zstr!("package.json"),
+        if sys::File::write_file_atomically(
+            pkg_json_path.slice_z(),
             root_pkg_json.source.contents(),
+            0o644,
         )
         .is_ok()
             && !moved.is_empty()

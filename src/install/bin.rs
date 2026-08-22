@@ -1266,7 +1266,7 @@ impl<'a> Linker<'a> {
 
         debug_assert!(strings::has_prefix(rel_target.as_bytes(), b".."));
 
-        match sys::symlink_running_executable(rel_target, abs_dest) {
+        match Self::symlink_or_keep(rel_target, abs_dest) {
             sys::Result::Err(err) => {
                 if err.get_errno() != sys::Errno::EEXIST && err.get_errno() != sys::Errno::ENOENT {
                     self.err = Some(err.into());
@@ -1289,7 +1289,7 @@ impl<'a> Linker<'a> {
                     let _ = sys::Dir::cwd().make_path(self.node_modules_path.slice());
                     self.node_modules_path.set_length(node_modules_path_save);
 
-                    match sys::symlink_running_executable(rel_target, abs_dest) {
+                    match Self::symlink_or_keep(rel_target, abs_dest) {
                         sys::Result::Err(real_error) => {
                             // It was just created, no need to delete destination and symlink again
                             self.err = Some(real_error.into());
@@ -1314,10 +1314,33 @@ impl<'a> Linker<'a> {
 
         // delete and try again
         let _ = sys::delete_tree_absolute(abs_dest.as_bytes());
-        if let Err(err) = sys::symlink_running_executable(rel_target, abs_dest) {
+        if let Err(err) = Self::symlink_or_keep(rel_target, abs_dest) {
             self.err = Some(err.into());
         }
         Self::chmod_on_ok(self.err, abs_target);
+    }
+
+    /// A link that already points at `rel_target` (a repeat or a concurrent install) is kept.
+    #[cfg(not(windows))]
+    fn symlink_or_keep(rel_target: &ZStr, abs_dest: &ZStr) -> sys::Result<()> {
+        match sys::symlink_running_executable(rel_target, abs_dest) {
+            Err(err)
+                if err.get_errno() == sys::Errno::EEXIST
+                    && Self::already_links_to(abs_dest, rel_target) =>
+            {
+                Ok(())
+            }
+            result => result,
+        }
+    }
+
+    #[cfg(not(windows))]
+    fn already_links_to(abs_dest: &ZStr, rel_target: &ZStr) -> bool {
+        let mut existing_target_buf = path::path_buffer_pool::get();
+        match sys::readlink(abs_dest, &mut existing_target_buf) {
+            Ok(len) => strings::eql(&existing_target_buf[..len], rel_target.as_bytes()),
+            Err(_) => false,
+        }
     }
 
     #[cfg(not(windows))]

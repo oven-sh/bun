@@ -133,12 +133,21 @@ jobs:
                 for (;;) {
                   found.push({ repository: ref.token.repository ?? self, number: ref.token.number, keyword: token.text });
                   j = ref.end;
-                  // "#1, #2", "#1 and #2", "#1, and #2", "#1 & #2"; a list continues past
-                  // a line break only after a separator.
+                  // "#1, #2", "#1 and #2", "#1, and #2", "#1 & #2". A line break may sit
+                  // next to a separator ("#1,\n#2", "#1\nand #2"), but a break alone does
+                  // not continue the list: "Fixes #1\n#2" is one reference.
                   let k = j;
-                  if (isPunct(tokens[k], ",")) k++;
-                  if (isWord(tokens[k], "and") || isPunct(tokens[k], "&")) k++;
-                  if (k === j) break;
+                  let separator = false;
+                  if (isPunct(tokens[k], ",")) {
+                    k++;
+                    separator = true;
+                  }
+                  if (tokens[k]?.kind === "newline") k++;
+                  if (isWord(tokens[k], "and") || isPunct(tokens[k], "&")) {
+                    k++;
+                    separator = true;
+                  }
+                  if (!separator) break;
                   if (tokens[k]?.kind === "newline") k++;
                   ref = readReference(tokens, k);
                   if (ref === null) break;
@@ -266,6 +275,7 @@ jobs:
                 if (comment) {
                   const end = rest.indexOf("-->");
                   if (end === -1) {
+                    paragraph = false;
                     kept.push("");
                     continue;
                   }
@@ -274,7 +284,9 @@ jobs:
                 }
                 const trimmed = rest.trim();
                 if (fence !== null) {
-                  if (trimmed.startsWith(fence) && isRunOf(trimmed.slice(fence.length), fence[0])) fence = null;
+                  // A closing fence has at most three spaces of indentation.
+                  const closes = !isIndentedCode(rest) && trimmed.startsWith(fence) && isRunOf(trimmed.slice(fence.length), fence[0]);
+                  if (closes) fence = null;
                   paragraph = false;
                   kept.push("");
                   continue;
@@ -306,7 +318,7 @@ jobs:
                   continue;
                 }
                 quote = false;
-                paragraph = !isHeading(trimmed);
+                paragraph = !isHeading(trimmed) && !isThematicBreak(trimmed);
                 if (!rest.includes("<!--")) {
                   kept.push(rest);
                   continue;
@@ -331,6 +343,8 @@ jobs:
                   }
                   i = end + 3;
                 }
+                // A line that was only a comment is not a paragraph.
+                if (out.trim() === "") paragraph = false;
                 kept.push(out);
               }
               return kept.join("\n");
@@ -357,6 +371,18 @@ jobs:
             function isHeading(trimmed) {
               const run = leadingRun(trimmed, "#");
               return run.length >= 1 && run.length <= 6 && isGap(trimmed[run.length]);
+            }
+
+            // "---", "* * *", "___": three or more of one marker, spaces allowed between.
+            function isThematicBreak(trimmed) {
+              const marker = trimmed[0];
+              if (marker !== "-" && marker !== "*" && marker !== "_") return false;
+              let count = 0;
+              for (const c of trimmed) {
+                if (c === marker) count++;
+                else if (c !== " " && c !== "\t") return false;
+              }
+              return count >= 3;
             }
 
             function isGap(c) {

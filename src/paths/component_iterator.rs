@@ -207,15 +207,30 @@ pub fn make_path_with<'a, T: PathChar, E>(
     let Some(mut comp) = it.last() else {
         return Ok(());
     };
+    // A component that reports `NotFound` twice with no `Created` in between
+    // can never succeed (dangling symlink, or Windows OBJECT_NAME_INVALID
+    // surfacing as ENOENT); abort instead of ping-ponging forever (#39357).
+    let mut last_not_found: Option<usize> = None;
     loop {
         match mkdir(comp.path)? {
-            MakePathStep::Created | MakePathStep::Exists => {
+            MakePathStep::Created => {
+                last_not_found = None;
+                comp = match it.next() {
+                    Some(c) => c,
+                    None => return Ok(()),
+                };
+            }
+            MakePathStep::Exists => {
                 comp = match it.next() {
                     Some(c) => c,
                     None => return Ok(()),
                 };
             }
             MakePathStep::NotFound(e) => {
+                if last_not_found == Some(comp.path.len()) {
+                    return Err(e);
+                }
+                last_not_found = Some(comp.path.len());
                 comp = match it.previous() {
                     Some(c) => c,
                     None => return Err(e),
@@ -362,6 +377,45 @@ mod tests {
         assert!(ComponentIterator::<u8>::init(b"\\\\?\\C:\\", PathFormat::Windows).is_err());
         assert!(ComponentIterator::<u8>::init(b"\\??\\C:\\", PathFormat::Windows).is_err());
         assert!(ComponentIterator::<u8>::init(b"\\\\\\x", PathFormat::Windows).is_err());
+    }
+
+    #[test]
+    fn make_path_terminates_on_uncreatable_component() {
+        // `x` always reports NotFound while its parent EEXISTs; the walk must
+        // return the error instead of ping-ponging Exists<->NotFound forever.
+        let it = ComponentIterator::init(&b"/t/dangling/x"[..], PathFormat::Posix).unwrap();
+        let mut calls = 0usize;
+        let result = make_path_with(it, |p| {
+            calls += 1;
+            assert!(calls < 100, "make_path_with did not terminate");
+            match p {
+                b"/t" | b"/t/dangling" => Ok(MakePathStep::Exists),
+                b"/t/dangling/x" => Ok(MakePathStep::NotFound("enoent")),
+                _ => panic!("unexpected prefix"),
+            }
+        });
+        assert_eq!(result, Err("enoent"));
+
+        // A NotFound that resolves after the parent is created still succeeds.
+        let it = ComponentIterator::init(&b"/t/a/b"[..], PathFormat::Posix).unwrap();
+        let mut created = std::collections::HashSet::new();
+        let result: Result<(), &str> = make_path_with(it, |p| {
+            if p == b"/t" {
+                return Ok(MakePathStep::Exists);
+            }
+            if created.contains(p) {
+                return Ok(MakePathStep::Exists);
+            }
+            let parent_ok = p == b"/t/a" || created.contains(b"/t/a".as_slice());
+            if parent_ok {
+                created.insert(p);
+                Ok(MakePathStep::Created)
+            } else {
+                Ok(MakePathStep::NotFound("enoent"))
+            }
+        });
+        assert_eq!(result, Ok(()));
+        assert!(created.contains(b"/t/a/b".as_slice()));
     }
 
     #[test]

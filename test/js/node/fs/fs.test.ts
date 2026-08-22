@@ -2728,6 +2728,21 @@ describe("open/mkdir mode string validation matches node", () => {
     expect(() => fs.chmodSync(d, new String("755") as any)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
   });
 
+  it("chmodSync/fchmodSync without a mode report it the way node does", () => {
+    using dir = tempDir("fs-mode-missing", { "f.txt": "" });
+    const file = join(String(dir), "f.txt");
+    const fd = openSync(file, "r");
+    try {
+      const message = 'The "mode" argument must be of type number. Received undefined';
+      // @ts-expect-error -- mode is required
+      expect(() => fs.chmodSync(file)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", message }));
+      // @ts-expect-error -- mode is required
+      expect(() => fs.fchmodSync(fd)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", message }));
+    } finally {
+      closeSync(fd);
+    }
+  });
+
   it("mkdirSync treats a String wrapper as an options bag, like node", () => {
     // `typeof new String` is "object", so Node treats the wrapper as an options
     // bag and applies the default mode rather than parsing it as "700". Compare
@@ -3167,6 +3182,24 @@ describe("rm", () => {
     expect(existsSync(path)).toBe(true);
     rmSync(join(path, "../../"), { recursive: true });
     expect(existsSync(path)).toBe(false);
+  });
+
+  it("reports a mistyped retry option as a property, like node", () => {
+    using dir = tempDir("fs-rm-options", { "f.txt": "" });
+    const file = join(String(dir), "f.txt");
+    expect(() => rmSync(file, { maxRetries: "a" as any })).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `The "options.maxRetries" property must be of type number. Received type string ('a')`,
+      }),
+    );
+    expect(() => rmSync(file, { retryDelay: {} as any })).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: 'The "options.retryDelay" property must be of type number. Received an instance of Object',
+      }),
+    );
+    expect(existsSync(file)).toBe(true);
   });
 
   // On Windows a leading-separator, drive-less path like "/foo/bar" is

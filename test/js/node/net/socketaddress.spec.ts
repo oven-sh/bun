@@ -91,6 +91,19 @@ describe("SocketAddress constructor", () => {
     },
   );
 
+  // Node calls a dotted option name a "property" in ERR_INVALID_ARG_TYPE.
+  it.each([
+    [{ address: 1 }, `The "options.address" property must be of type string. Received type number (1)`],
+    [
+      { family: "ipv6", flowlabel: "x" },
+      `The "options.flowlabel" property must be of type number. Received type string ('x')`,
+    ],
+  ] as [any, string][])("new SocketAddress(%o) throws node's ERR_INVALID_ARG_TYPE message", (options, message) => {
+    expect(() => new SocketAddress(options)).toThrow(
+      expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message }),
+    );
+  });
+
   // ===========================================================================
   // ============================= LEAK DETECTION ==============================
   // ===========================================================================

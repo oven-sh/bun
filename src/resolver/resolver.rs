@@ -4163,6 +4163,18 @@ impl<'a> Resolver<'a> {
         self.dir_info_cached_maybe_log(false, path).ok().flatten()
     }
 
+    /// The cwd's own tsconfig, or the `--tsconfig-override` file (inherited from the root `DirInfo`).
+    pub fn tsconfig_for_top_level_dir(
+        &self,
+        dir_info: &DirInfo::DirInfo,
+    ) -> Option<&'static TSConfigJSON> {
+        if self.opts.tsconfig_override.is_some() {
+            dir_info.enclosing_tsconfig_json
+        } else {
+            dir_info.tsconfig_json()
+        }
+    }
+
     // NOTE: `follow_symlinks` is `true` at every call
     // site, so it's dropped here; `enable_logging` is a plain runtime parameter
     // (it gates one cold error-formatting branch) so this large dir-walk function

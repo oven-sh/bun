@@ -5,6 +5,7 @@
 #![deny(improper_ctypes, improper_ctypes_definitions)]
 #![feature(thread_local)]
 #![feature(adt_const_params)]
+#![feature(thread_sleep_until)]
 
 pub mod error;
 pub use error::{Error, Result};

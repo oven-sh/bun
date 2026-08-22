@@ -460,7 +460,14 @@ describe("@types/bun integration test", () => {
       });
       expect(rejected).toEqual([]);
 
-      for (const label of ["csiso2022kr", "hz-gb-2312", "iso-2022-cn", "iso-2022-cn-ext", "iso-2022-kr", "replacement"]) {
+      for (const label of [
+        "csiso2022kr",
+        "hz-gb-2312",
+        "iso-2022-cn",
+        "iso-2022-cn-ext",
+        "iso-2022-kr",
+        "replacement",
+      ]) {
         expect(() => new TextDecoder(label as Bun.Encoding)).toThrow(RangeError);
       }
     });

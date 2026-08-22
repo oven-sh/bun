@@ -1801,10 +1801,11 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResu
                 // SAFETY: live until it unregisters in `on_close`.
                 crate::socket::udp_socket::UDPSocket::stop_for_vm_teardown(unsafe { u.as_ref() })
             }
-            // SAFETY: live until it unregisters in `deinit`.
-            ActiveHandle::DuplexUpgrade(c) => unsafe {
-                crate::socket::DuplexUpgradeContext::stop_for_vm_teardown(c.as_ptr())
-            },
+            ActiveHandle::DuplexUpgrade(c) => {
+                // SAFETY: live until it unregisters in `deinit`.
+                let c = unsafe { bun_ptr::ThisPtr::new(c.as_ptr()) };
+                crate::socket::DuplexUpgradeContext::stop_for_vm_teardown(c)
+            }
             // SAFETY: live until it unregisters when its deinit task runs.
             #[cfg(windows)]
             ActiveHandle::WindowsNamedPipe(c) => unsafe {

@@ -15,7 +15,9 @@
 #include <JavaScriptCore/JSArrayBufferView.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/TopExceptionScope.h>
+#include <cmath>
 #include <limits>
+#include <wtf/text/MakeString.h>
 
 namespace Bun {
 namespace WebStreams {
@@ -62,6 +64,53 @@ size_t parseCodecHighWaterMark(JSGlobalObject* globalObject, JSValue strategy)
     if (highWaterMark >= static_cast<double>(std::numeric_limits<size_t>::max()))
         return std::numeric_limits<size_t>::max();
     return static_cast<size_t>(highWaterMark);
+}
+
+std::optional<int32_t> parseCompressionLevel(JSGlobalObject* globalObject, JSValue strategy, CompressionFormat format)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // parseCodecHighWaterMark already rejected a non-object, non-undefined argument.
+    if (!strategy.isObject())
+        return std::nullopt;
+    JSValue levelValue = asObject(strategy)->get(globalObject, Identifier::fromString(vm, "level"_s));
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    if (levelValue.isUndefined())
+        return std::nullopt;
+    double level = levelValue.toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+
+    int32_t min = 0;
+    int32_t max = 0;
+    ASCIILiteral name;
+    switch (format) {
+    case CompressionFormat::Deflate:
+    case CompressionFormat::DeflateRaw:
+    case CompressionFormat::Gzip:
+        // zlib compression levels.
+        min = 0;
+        max = 9;
+        name = format == CompressionFormat::Gzip ? "gzip"_s : (format == CompressionFormat::DeflateRaw ? "deflate-raw"_s : "deflate"_s);
+        break;
+    case CompressionFormat::Brotli:
+        // BROTLI_MIN_QUALITY .. BROTLI_MAX_QUALITY.
+        min = 0;
+        max = 11;
+        name = "brotli"_s;
+        break;
+    case CompressionFormat::Zstd:
+        // The range Bun.zstdCompressSync accepts.
+        min = 1;
+        max = 22;
+        name = "zstd"_s;
+        break;
+    }
+    // !(>= && <=) also rejects NaN.
+    if (!(level >= min && level <= max) || level != std::trunc(level)) {
+        throwRangeError(globalObject, scope, makeString("The compression level must be an integer between "_s, min, " and "_s, max, " for "_s, name));
+        return std::nullopt;
+    }
+    return static_cast<int32_t>(level);
 }
 
 // BufferSource → (ptr, len). `scratch` owns the bytes when `chunk` is a string

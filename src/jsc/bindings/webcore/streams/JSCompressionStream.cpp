@@ -151,8 +151,10 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCompressionStreamConst
     ASSERT(format.has_value());
     size_t highWaterMark = parseCodecHighWaterMark(lexicalGlobalObject, callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
+    std::optional<int32_t> level = parseCompressionLevel(lexicalGlobalObject, callFrame->argument(1), *format);
+    RETURN_IF_EXCEPTION(scope, {});
 
-    void* coder = CompressionStreamCoder__create(static_cast<uint8_t>(*format), false, highWaterMark);
+    void* coder = CompressionStreamCoder__create(static_cast<uint8_t>(*format), false, highWaterMark, level.has_value(), level.value_or(0));
     if (!coder) [[unlikely]] {
         throwTypeError(lexicalGlobalObject, scope, "failed to initialize compressor"_s);
         return {};

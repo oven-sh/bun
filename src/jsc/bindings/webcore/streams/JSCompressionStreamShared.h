@@ -7,7 +7,7 @@
 
 // CompressionStreamCoder.rs. Each transform call runs one bounded step; `more` means the coder
 // must be stepped again (with no input, it kept the tail) before the next chunk is fed.
-extern "C" void* CompressionStreamCoder__create(uint8_t format, bool decompress, size_t highWaterMark);
+extern "C" void* CompressionStreamCoder__create(uint8_t format, bool decompress, size_t highWaterMark, bool hasLevel, int32_t level);
 // Releases the cell's reference (in-flight off-thread steps hold their own).
 extern "C" void CompressionStreamCoder__destroy(void* coder);
 extern "C" JSC::EncodedJSValue CompressionStreamCoder__transform(void* coder, JSC::JSGlobalObject* global, const uint8_t* input, size_t input_len, bool finish, bool* more);
@@ -24,6 +24,10 @@ std::optional<CompressionFormat> parseCompressionFormat(JSC::JSGlobalObject*, JS
 // read() and how far the coder runs ahead of a slow consumer. Throws RangeError / TypeError as
 // ExtractHighWaterMark does; `size` is ignored.
 size_t parseCodecHighWaterMark(JSC::JSGlobalObject*, JSC::JSValue strategy);
+// CompressionStream only: the `level` member of the same second argument selects the
+// compression level (zlib formats 0-9, brotli quality 0-11, zstd 1-22; absent = the
+// format's default). Throws RangeError on a non-integer or out-of-range value.
+std::optional<int32_t> parseCompressionLevel(JSC::JSGlobalObject*, JSC::JSValue strategy, CompressionFormat);
 
 } // namespace WebStreams
 } // namespace Bun

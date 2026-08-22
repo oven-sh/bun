@@ -1557,7 +1557,13 @@ describe.concurrent("--json", () => {
     using dir = tempDir("publish-json-tarball", {
       "package.json": packageJson,
       "index.js": indexSrc,
-      node_modules: { dep1: { "package.json": JSON.stringify({ name: "dep1", version: "1.0.0" }) } },
+      // dep2 is a dependency of dep1: it travels in the tarball but is not a bundled dependency of the package.
+      node_modules: {
+        dep1: {
+          "package.json": JSON.stringify({ name: "dep1", version: "1.0.0", dependencies: { dep2: "1.0.0" } }),
+          node_modules: { dep2: { "package.json": JSON.stringify({ name: "dep2", version: "1.0.0" }) } },
+        },
+      },
     });
     await pack(String(dir), env);
     const tarballPath = join(String(dir), "publish-json-3-3.0.0.tgz");
@@ -1573,7 +1579,15 @@ describe.concurrent("--json", () => {
     );
 
     expect(mock.bodies).toHaveLength(1);
-    const [packageJsonEntry, indexEntry, depEntry] = tarball.entries;
+    const entry = (path: string) =>
+      tarball.entries.find((e: { pathname: string }) => e.pathname === `package/${path}`)!;
+    const [packageJsonEntry, indexEntry, depEntry, nestedDepEntry] = [
+      "package.json",
+      "index.js",
+      "node_modules/dep1/package.json",
+      "node_modules/dep1/node_modules/dep2/package.json",
+    ].map(entry);
+    expect(tarball.entries).toHaveLength(4);
     expect(JSON.parse(out)).toEqual({
       id: "publish-json-3@3.0.0",
       name: "publish-json-3",
@@ -1581,16 +1595,21 @@ describe.concurrent("--json", () => {
       filename: "publish-json-3-3.0.0.tgz",
       path: tarballPath,
       size: tarball.size,
-      unpackedSize: Buffer.byteLength(packageJson) + Buffer.byteLength(indexSrc) + Buffer.byteLength(depEntry.contents),
+      unpackedSize:
+        Buffer.byteLength(packageJson) +
+        Buffer.byteLength(indexSrc) +
+        Buffer.byteLength(depEntry.contents) +
+        Buffer.byteLength(nestedDepEntry.contents),
       shasum: tarball.shasum,
       integrity: `sha512-${tarball.integrity}`,
-      entryCount: 3,
-      // Every file in the archive is listed, bundled dependencies included.
-      files: [
-        { path: "package.json", size: Buffer.byteLength(packageJson), mode: packageJsonEntry.perm },
-        { path: "index.js", size: Buffer.byteLength(indexSrc), mode: indexEntry.perm },
-        { path: "node_modules/dep1/package.json", size: Buffer.byteLength(depEntry.contents), mode: depEntry.perm },
-      ],
+      entryCount: 4,
+      // Every file in the archive is listed in archive order, bundled dependencies included.
+      files: tarball.entries.map((e: { pathname: string; contents: string; perm: number }) => ({
+        path: e.pathname.slice("package/".length),
+        size: Buffer.byteLength(e.contents),
+        mode: e.perm,
+      })),
+      // Only the top-level node_modules entries are bundled dependencies.
       bundled: ["dep1"],
       tag: "latest",
       access: null,

@@ -1221,70 +1221,61 @@ impl PublishCommand {
                     }
                 }
 
+                // `--json` reserves stdout for the document, so the prompt goes to stderr.
+                let to_stderr = ctx.manager.options.json_output;
+                let colors = if to_stderr {
+                    Output::enable_ansi_colors_stderr()
+                } else {
+                    Output::enable_ansi_colors_stdout()
+                };
+                let mut prompt: Vec<u8> = Vec::new();
                 if auth_url_is_web {
-                    bun_core::prettyln!(
-                        "\nAuthenticate your account at (press <b>ENTER<r> to open in browser):\n",
+                    prompt.extend_from_slice(
+                        b"\nAuthenticate your account at (press <b>ENTER<r> to open in browser):\n\n",
                     );
                 } else {
-                    bun_core::prettyln!("\nAuthenticate your account at:\n");
+                    prompt.extend_from_slice(b"\nAuthenticate your account at:\n\n");
                 }
 
                 const PADDING: usize = 1;
-
-                let horizontal = if Output::enable_ansi_colors_stdout() {
-                    "─"
-                } else {
-                    "-"
-                };
-                let vertical = if Output::enable_ansi_colors_stdout() {
-                    "│"
-                } else {
-                    "|"
-                };
-                let top_left = if Output::enable_ansi_colors_stdout() {
-                    "┌"
-                } else {
-                    "|"
-                };
-                let top_right = if Output::enable_ansi_colors_stdout() {
-                    "┐"
-                } else {
-                    "|"
-                };
-                let bottom_left = if Output::enable_ansi_colors_stdout() {
-                    "└"
-                } else {
-                    "|"
-                };
-                let bottom_right = if Output::enable_ansi_colors_stdout() {
-                    "┘"
-                } else {
-                    "|"
-                };
-
+                let (horizontal, vertical, top_left, top_right, bottom_left, bottom_right) =
+                    if colors {
+                        ("─", "│", "┌", "┐", "└", "┘")
+                    } else {
+                        ("-", "|", "|", "|", "|", "|")
+                    };
                 let width: usize = (PADDING * 2) + auth_url_str.len();
 
-                Output::print(format_args!("{}", top_left));
+                prompt.extend_from_slice(top_left.as_bytes());
                 for _ in 0..width {
-                    Output::print(format_args!("{}", horizontal));
+                    prompt.extend_from_slice(horizontal.as_bytes());
                 }
-                Output::print(format_args!("{}\n", top_right));
+                prompt.extend_from_slice(top_right.as_bytes());
+                prompt.push(b'\n');
 
-                Output::print(format_args!("{}", vertical));
-                for _ in 0..PADDING {
-                    Output::print(format_args!(" "));
-                }
-                bun_core::pretty!("<b>{}<r>", bstr::BStr::new(auth_url_str.as_bytes()));
-                for _ in 0..PADDING {
-                    Output::print(format_args!(" "));
-                }
-                Output::print(format_args!("{}\n", vertical));
+                prompt.extend_from_slice(vertical.as_bytes());
+                prompt.extend_from_slice(&[b' '; PADDING]);
+                prompt.extend_from_slice(b"<b>");
+                prompt.extend_from_slice(auth_url_str.as_bytes());
+                prompt.extend_from_slice(b"<r>");
+                prompt.extend_from_slice(&[b' '; PADDING]);
+                prompt.extend_from_slice(vertical.as_bytes());
+                prompt.push(b'\n');
 
-                Output::print(format_args!("{}", bottom_left));
+                prompt.extend_from_slice(bottom_left.as_bytes());
                 for _ in 0..width {
-                    Output::print(format_args!("{}", horizontal));
+                    prompt.extend_from_slice(horizontal.as_bytes());
                 }
-                Output::print(format_args!("{}\n", bottom_right));
+                prompt.extend_from_slice(bottom_right.as_bytes());
+                prompt.push(b'\n');
+
+                #[allow(clippy::disallowed_methods)]
+                // the prompt carries <b>/<r> markup that must be tag-walked
+                if to_stderr {
+                    Output::pretty_errorln(format_args!("{}", bstr::BStr::new(&prompt)));
+                } else {
+                    Output::pretty(format_args!("{}", bstr::BStr::new(&prompt)));
+                }
                 Output::flush();
 
                 if auth_url_is_web {
@@ -1422,8 +1413,17 @@ impl PublishCommand {
         }
 
         // classic
+        if ctx.manager.options.json_output {
+            // `--json` reserves stdout for the document, so the prompt goes to stderr.
+            bun_core::pretty_error!("\nThis operation requires a one-time password.\nEnter OTP: ");
+            Output::flush();
+        }
         match InitCommand::prompt(
-            "\nThis operation requires a one-time password.\nEnter OTP: ",
+            if ctx.manager.options.json_output {
+                ""
+            } else {
+                "\nThis operation requires a one-time password.\nEnter OTP: "
+            },
             b"",
         ) {
             Ok(v) => Ok(v.into()),

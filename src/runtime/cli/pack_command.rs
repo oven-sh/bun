@@ -4086,29 +4086,27 @@ pub(crate) fn write_json_fields(
     out.push(b']');
 }
 
-/// Names of the `node_modules/<name>` directories the paths pass through, in first-seen order.
+/// Names of the top-level `node_modules/<name>` directories the paths start with, in first-seen order.
 pub(crate) fn bundled_dep_names(files: &PackList) -> Vec<Box<[u8]>> {
     let mut names: Vec<Box<[u8]>> = Vec::new();
     for file in files {
-        let mut components = strings::split(&file.subpath, b"/");
-        while let Some(component) = components.next() {
-            if component != b"node_modules" {
+        let Some(rest) = file.subpath.strip_prefix(b"node_modules/") else {
+            continue;
+        };
+        let mut components = strings::split(rest, b"/");
+        let Some(first) = components.next() else {
+            continue;
+        };
+        let mut name: Vec<u8> = first.to_vec();
+        if first.starts_with(b"@") {
+            let Some(second) = components.next() else {
                 continue;
-            }
-            let Some(first) = components.next() else {
-                break;
             };
-            let mut name: Vec<u8> = first.to_vec();
-            if first.starts_with(b"@") {
-                let Some(second) = components.next() else {
-                    break;
-                };
-                name.push(b'/');
-                name.extend_from_slice(second);
-            }
-            if !names.iter().any(|known| **known == *name) {
-                names.push(name.into_boxed_slice());
-            }
+            name.push(b'/');
+            name.extend_from_slice(second);
+        }
+        if !names.iter().any(|known| **known == *name) {
+            names.push(name.into_boxed_slice());
         }
     }
     names

@@ -17,6 +17,10 @@ import * as dockerCompose from "../../docker/index.ts";
 import { UnixDomainSocketProxy } from "../../unix-domain-socket-proxy.ts";
 import { neverAnsweringServer } from "./wire-frames";
 
+// Load-bearing gate, do not delete: the describe body below runs a top-level
+// `await dockerCompose.ensure()`, which throws where docker is unavailable. To
+// support BUN_TEST_SERVICE overrides here, widen this to the
+// override || coordinator || docker condition from harness.ts instead.
 if (isDockerEnabled()) {
   describe("PostgreSQL tests", async () => {
     let container: { port: number; host: string };

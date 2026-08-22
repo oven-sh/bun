@@ -810,8 +810,15 @@ describe.each(["hoisted", "isolated"])("transitive path-form link: (%s)", linker
     expect(await file(join(project, "bun.lock")).text()).toContain('"nested@link:./vendor/nested"');
   });
 
-  for (const field of ["overrides", "resolutions"]) {
-    it(`may escape the project when the target comes from root "${field}"`, async () => {
+  // A root overrides/resolutions entry is root-authored, whether it is plain or
+  // scoped to the one edge it rewrites (pnpm `parent>name` / yarn `parent/name`).
+  for (const [field, key] of [
+    ["overrides", "shared"],
+    ["resolutions", "shared"],
+    ["overrides", "pkg-a>shared"],
+    ["resolutions", "pkg-a/shared"],
+  ]) {
+    it(`may escape the project when the target comes from root "${field}" ("${key}")`, async () => {
       using dir = tempDir("transitive-link-override", {
         "shared/package.json": JSON.stringify({ name: "shared", version: "1.0.0", main: "index.js" }),
         "shared/index.js": `module.exports = "shared";`,
@@ -819,7 +826,7 @@ describe.each(["hoisted", "isolated"])("transitive path-form link: (%s)", linker
         "project/package.json": JSON.stringify({
           name: "my-app",
           dependencies: { "pkg-a": "file:./pkg-a" },
-          [field]: { shared: "link:../shared" },
+          [field]: { [key]: "link:../shared" },
         }),
         "project/pkg-a/package.json": JSON.stringify({
           name: "pkg-a",

@@ -1588,6 +1588,15 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                             bstr::BStr::new(this.lockfile.str(&name)),
                             bstr::BStr::new(this.lockfile.str(version.symlink())),
                         );
+                    } else if this.options.log_level.is_verbose() {
+                        bun_ast::add_warning_pretty!(
+                            this.log_mut(),
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            "Refusing to link dependency \"{}\" to \"{}\": only the root package.json, a workspace, or an override may link to a path outside the project\n\n",
+                            bstr::BStr::new(this.lockfile.str(&name)),
+                            bstr::BStr::new(this.lockfile.str(version.symlink())),
+                        );
                     }
                     return Ok(());
                 }

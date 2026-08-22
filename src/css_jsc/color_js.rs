@@ -292,17 +292,6 @@ pub fn js_color_input_to_css_color(
     Ok(CssColor::parse(&mut parser).ok())
 }
 
-/// [`js_color_input_to_css_color`] flattened to sRGB, for callers that only
-/// need channel bytes (`Bun.QR`'s `light` / `dark`).
-pub fn js_color_input_to_rgba(
-    global: &JSGlobalObject,
-    input: JSValue,
-) -> JsResult<Option<bun_css::values::color::RGBA>> {
-    use bun_css::values::color::RGBA;
-    Ok(js_color_input_to_css_color(global, input)?
-        .and_then(|color| RGBA::try_from_css_color(&color)))
-}
-
 pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_ast::symbol::Map as SymbolMap;
     use bun_css as css;

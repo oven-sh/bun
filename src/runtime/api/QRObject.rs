@@ -1,7 +1,7 @@
 //! `Bun.QR` — QR code generation and matrix decoding.
 
 use bun_css::values::color::RGBA;
-use bun_css_jsc::js_color_input_to_rgba;
+use bun_css_jsc::js_color_input_to_css_color;
 use bun_jsc::{CallFrame, JSGlobalObject, JSUint8Array, JSValue, JsResult};
 use bun_qr::{DecodeError, Ecc, EncodeError, QrCode, Segment, VERSION_MAX, VERSION_MIN};
 
@@ -196,14 +196,18 @@ fn color_option(
     let Some(v) = value.get(global, name)? else {
         return Ok(None);
     };
-    if v.is_undefined_or_null() {
+    if v.is_null() {
         return Ok(None);
     }
-    match js_color_input_to_rgba(global, v)? {
-        Some(c) => Ok(Some(c)),
+    let Some(color) = js_color_input_to_css_color(global, v)? else {
+        return Err(global.throw_type_error(format_args!(
+            "options.{name} must be a color accepted by Bun.color"
+        )));
+    };
+    match RGBA::try_from_css_color(&color) {
+        Some(rgba) => Ok(Some(rgba)),
         None => Err(global.throw_type_error(format_args!(
-            "options.{} must be a color accepted by Bun.color",
-            name
+            "options.{name} must be a concrete color; currentColor, light-dark() and system colors have no fixed value"
         ))),
     }
 }

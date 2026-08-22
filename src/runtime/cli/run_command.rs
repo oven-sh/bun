@@ -2860,8 +2860,9 @@ impl RunCommand {
     /// Synthetic `cwd/[eval]`
     /// entry point + boot. `Arguments::parse` has already stashed the script
     /// in `ctx.runtime_options.eval.script`. Public so `Command::start` can
-    /// route the `-e`/`-p` AutoCommand path here without re-implementing the
-    /// path-buffer dance.
+    /// route `bun -e`/`-p` and `bun run -e`/`-p` here without re-implementing
+    /// the path-buffer dance. `ctx.positionals` must hold only the script's
+    /// arguments: they become `process.argv[1..]`.
     pub(crate) fn exec_eval(ctx: &mut ContextData) -> crate::Result<()> {
         // prepend positionals into the existing passthrough vec
         // (cold path, single allocation).

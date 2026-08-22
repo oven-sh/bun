@@ -276,6 +276,17 @@ fn pack_dir(
             child_rel.push(b'/');
         }
         child_rel.extend_from_slice(&name);
+        // never emit a record this platform's unpack would refuse
+        if !safe_rel(&child_rel) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "cache entry {} contains a path that cannot be packed: {}",
+                    bstr::BStr::new(root),
+                    bstr::BStr::new(&child_rel)
+                ),
+            ));
+        }
         let abs = join(root, &child_rel);
         match kind {
             bun_sys::FileKind::Directory => pack_dir(w, root, &child_rel, files, bytes, links)?,
@@ -455,7 +466,9 @@ fn safe_rel(path: &[u8]) -> bool {
         // byte elsewhere, so lexical checks and the filesystem could disagree
         && !strings::contains_char(path, b'\\')
         && !strings::contains_char(path, 0)
-        && !strings::contains_char(path, b':')
+        // `:` is a drive/stream separator on Windows; elsewhere it is an ordinary byte that
+        // real package files (and IPv6-literal registry folder names) may contain
+        && !(cfg!(windows) && strings::contains_char(path, b':'))
         // no `..`, and no `.` / empty components: the walks in `create_links` treat every
         // component as a real name (pack_dir never emits others)
         && !strings::split(path, b"/").any(|seg| seg == b".." || seg == b"." || seg.is_empty())
@@ -470,7 +483,7 @@ fn symlink_target_stays_inside(link_path: &[u8], target: &[u8]) -> bool {
         || target[0] == b'/'
         || strings::contains_char(target, b'\\')
         || strings::contains_char(target, 0)
-        || strings::contains_char(target, b':')
+        || (cfg!(windows) && strings::contains_char(target, b':'))
     {
         return false;
     }
@@ -656,7 +669,7 @@ fn unpack_impl(cache_dir: &[u8], pack_path: &[u8]) -> std::io::Result<UnpackSumm
         std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             format!(
-                "{msg} (record #{record_no}); delete the pack file and re-create it with `bun pm cache pack`"
+                "{msg} (record #{record_no}); the pack is corrupt or was produced on an incompatible platform"
             ),
         )
     };

@@ -35,8 +35,7 @@ public:
 public:
     Lock m_lock;
     bool m_isShuttingDown WTF_GUARDED_BY_LOCK(m_lock) { false };
-    // Value: the loop that was current when JSC registered the work (onAddPendingWork, JS thread);
-    // its keep-alive and its completion are delivered there.
+    // Value: the loop that was current when JSC registered the work; its completion is posted there.
     UncheckedKeyHashMap<Ref<JSC::DeferredWorkTimer::Ticket>, BunLoopKind> m_pendingTicketsKeepingEventLoopAlive;
     UncheckedKeyHashMap<Ref<JSC::DeferredWorkTimer::Ticket>, BunLoopKind> m_pendingTicketsOther;
 };

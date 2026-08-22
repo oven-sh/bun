@@ -1289,7 +1289,9 @@ impl Flags {
             }
             // `fifo_select` reports a named pipe's readiness (data or EOF) this way.
             #[cfg(target_os = "macos")]
-            if kqueue_event.filter == EVFILT::USER {
+            if kqueue_event.filter == EVFILT::USER
+                && kqueue_event.fflags & crate::fifo_select::NOTE_FIFO_READABLE != 0
+            {
                 flags.insert(Flags::Readable);
             }
         }

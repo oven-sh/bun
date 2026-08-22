@@ -1,0 +1,521 @@
+import { spawn } from "bun";
+import { describe, expect, it } from "bun:test";
+import { rm } from "fs/promises";
+import { bunExe, bunEnv as env, tempDir } from "harness";
+import { join } from "path";
+
+// Covers three related `bun install` behaviours:
+//  1. registry credentials are scoped to the registry URL's origin *and path*
+//  2. `install.allowedHosts` refuses hosts the project did not list
+//  3. `install.rewrite` redirects requests at fetch time without touching bun.lock
+
+const tgz = join(import.meta.dir, "registry", "packages", "no-deps", "no-deps-1.0.0.tgz");
+const integrity = "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw==";
+
+type Received = { path: string; authorization: string | null };
+
+/**
+ * A registry that serves the `no-deps@1.0.0` manifest under any path prefix
+ * (`<prefix>/no-deps`) and the tarball at any path ending in `.tgz`, records
+ * every request, and lets each test decide where the manifest's `dist.tarball`
+ * points.
+ */
+function serveRegistry(received: Received[], tarballUrl: (registryOrigin: string, manifestPath: string) => string) {
+  const server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch(req) {
+      const url = new URL(req.url);
+      received.push({ path: url.pathname, authorization: req.headers.get("authorization") });
+      if (url.pathname.endsWith(".tgz")) {
+        return new Response(Bun.file(tgz));
+      }
+      if (url.pathname.endsWith("/no-deps")) {
+        return Response.json({
+          name: "no-deps",
+          "dist-tags": { latest: "1.0.0" },
+          versions: {
+            "1.0.0": {
+              name: "no-deps",
+              version: "1.0.0",
+              dist: { integrity, tarball: tarballUrl(`http://127.0.0.1:${server.port}`, url.pathname) },
+            },
+          },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    },
+  });
+  return server;
+}
+
+/** A second host: serves the tarball to anyone, records what it was sent. */
+function serveElsewhere(received: Received[], status = 200) {
+  return Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch(req) {
+      received.push({ path: new URL(req.url).pathname, authorization: req.headers.get("authorization") });
+      return status === 200 ? new Response(Bun.file(tgz)) : new Response("nope", { status });
+    },
+  });
+}
+
+async function install(cwd: string, ...args: string[]) {
+  await using proc = spawn({
+    cmd: [bunExe(), "install", ...args],
+    cwd,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+const packageJson = JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } });
+
+describe.concurrent("registry credentials are path-scoped", () => {
+  // The registry (with a token) lives at http://127.0.0.1:<port>/prefix-a/.
+  // Its manifest points the tarball at various places; only URLs under
+  // /prefix-a/ on that origin may carry the token.
+  it.each([
+    ["the registry path itself", (origin: string) => `${origin}/prefix-a/no-deps/-/no-deps-1.0.0.tgz`, "Bearer tok-a"],
+    [
+      "a deeper path under the registry",
+      (origin: string) => `${origin}/prefix-a/deep/er/no-deps-1.0.0.tgz`,
+      "Bearer tok-a",
+    ],
+    ["a sibling path on the same host", (origin: string) => `${origin}/prefix-b/no-deps/-/no-deps-1.0.0.tgz`, null],
+    ["a path that merely shares a string prefix", (origin: string) => `${origin}/prefix-ab/no-deps-1.0.0.tgz`, null],
+    ["the host root", (origin: string) => `${origin}/no-deps-1.0.0.tgz`, null],
+    ["a dot-segment escape", (origin: string) => `${origin}/prefix-a/../prefix-b/no-deps-1.0.0.tgz`, null],
+    ["an encoded dot-segment escape", (origin: string) => `${origin}/prefix-a/%2e%2e/prefix-b/no-deps-1.0.0.tgz`, null],
+  ])("tarball at %s", async (_, tarballUrl, expectedAuthorization) => {
+    const received: Received[] = [];
+    await using registry = serveRegistry(received, tarballUrl);
+    using dir = tempDir("registry-path-scoped-auth", {
+      "package.json": packageJson,
+      "bunfig.toml": `
+[install]
+cache = false
+registry = { url = "http://127.0.0.1:${registry.port}/prefix-a/", token = "tok-a" }
+`,
+    });
+
+    const { stdout, stderr, exitCode } = await install(String(dir));
+    expect(stderr).toContain("Saved lockfile");
+    expect(stdout).toContain("1 package installed");
+    expect(exitCode).toBe(0);
+
+    const manifest = received.find(r => r.path === "/prefix-a/no-deps");
+    const tarball = received.find(r => r.path.endsWith(".tgz"));
+    expect(manifest?.authorization).toBe("Bearer tok-a");
+    expect(tarball).toBeDefined();
+    expect(tarball!.authorization).toBe(expectedAuthorization);
+  });
+
+  it("tarball on another host never receives the token", async () => {
+    const received: Received[] = [];
+    const elsewhereReceived: Received[] = [];
+    await using elsewhere = serveElsewhere(elsewhereReceived);
+    await using registry = serveRegistry(
+      received,
+      () => `http://127.0.0.1:${elsewhere.port}/prefix-a/no-deps/-/no-deps-1.0.0.tgz`,
+    );
+    using dir = tempDir("registry-path-scoped-auth", {
+      "package.json": packageJson,
+      "bunfig.toml": `
+[install]
+cache = false
+registry = { url = "http://127.0.0.1:${registry.port}/prefix-a/", token = "tok-a" }
+`,
+    });
+
+    const { stdout, stderr, exitCode } = await install(String(dir));
+    expect(stderr).toContain("Saved lockfile");
+    expect(stdout).toContain("1 package installed");
+    expect(exitCode).toBe(0);
+    expect(received.find(r => r.path === "/prefix-a/no-deps")?.authorization).toBe("Bearer tok-a");
+    expect(elsewhereReceived).toEqual([{ path: "/prefix-a/no-deps/-/no-deps-1.0.0.tgz", authorization: null }]);
+  });
+
+  it("npmrc credentials for a path-based registry follow the same rule", async () => {
+    const received: Received[] = [];
+    await using registry = serveRegistry(received, origin => `${origin}/prefix-b/no-deps/-/no-deps-1.0.0.tgz`);
+    using dir = tempDir("registry-path-scoped-auth", {
+      "package.json": packageJson,
+      "bunfig.toml": `
+[install]
+cache = false
+`,
+      ".npmrc": [
+        `registry=http://127.0.0.1:${registry.port}/prefix-a/`,
+        `//127.0.0.1:${registry.port}/prefix-a/:_authToken=tok-a`,
+        ``,
+      ].join("\n"),
+    });
+
+    const { stdout, stderr, exitCode } = await install(String(dir));
+    expect(stderr).toContain("Saved lockfile");
+    expect(stdout).toContain("1 package installed");
+    expect(exitCode).toBe(0);
+    expect(received.find(r => r.path === "/prefix-a/no-deps")?.authorization).toBe("Bearer tok-a");
+    expect(received.find(r => r.path === "/prefix-b/no-deps/-/no-deps-1.0.0.tgz")?.authorization).toBeNull();
+  });
+
+  // npm's "nerf dart" lookup: a `//host/path/:_authToken` line that no
+  // configured registry claims still supplies credentials for requests under
+  // that host and path. This is how a registry whose tarballs live under a
+  // sibling path is given a token for both.
+  it("an extra npmrc //host/path/ entry covers requests under that path", async () => {
+    const received: Received[] = [];
+    const elsewhereReceived: Received[] = [];
+    await using elsewhere = serveElsewhere(elsewhereReceived);
+    let tarballOnElsewhere = false;
+    await using registry = serveRegistry(received, origin =>
+      tarballOnElsewhere
+        ? `http://127.0.0.1:${elsewhere.port}/downloads/no-deps-1.0.0.tgz`
+        : `${origin}/prefix-b/no-deps/-/no-deps-1.0.0.tgz`,
+    );
+    const npmrc = [
+      `registry=http://127.0.0.1:${registry.port}/prefix-a/`,
+      `//127.0.0.1:${registry.port}/prefix-a/:_authToken=tok-a`,
+      `//127.0.0.1:${registry.port}/prefix-b/:_authToken=tok-b`,
+      `//127.0.0.1:${registry.port}/prefix-b/no-deps/:username=deep`,
+      `//127.0.0.1:${registry.port}/prefix-b/no-deps/:_password=${Buffer.from("secret").toString("base64")}`,
+      `//127.0.0.1:${elsewhere.port}/downloads/:_authToken=tok-elsewhere`,
+      ``,
+    ].join("\n");
+
+    {
+      using dir = tempDir("registry-path-scoped-auth", {
+        "package.json": packageJson,
+        "bunfig.toml": `[install]\ncache = false\n`,
+        ".npmrc": npmrc,
+      });
+      const { stdout, stderr, exitCode } = await install(String(dir));
+      expect(stderr).toContain("Saved lockfile");
+      expect(stdout).toContain("1 package installed");
+      expect(exitCode).toBe(0);
+      expect(received).toEqual([
+        { path: "/prefix-a/no-deps", authorization: "Bearer tok-a" },
+        // the longest matching `//host/path/` wins: username + _password under /prefix-b/no-deps/
+        {
+          path: "/prefix-b/no-deps/-/no-deps-1.0.0.tgz",
+          authorization: `Basic ${Buffer.from("deep:secret").toString("base64")}`,
+        },
+      ]);
+    }
+
+    tarballOnElsewhere = true;
+    received.length = 0;
+    {
+      using dir = tempDir("registry-path-scoped-auth", {
+        "package.json": packageJson,
+        "bunfig.toml": `[install]\ncache = false\n`,
+        ".npmrc": npmrc,
+      });
+      const { stdout, stderr, exitCode } = await install(String(dir));
+      expect(stderr).toContain("Saved lockfile");
+      expect(stdout).toContain("1 package installed");
+      expect(exitCode).toBe(0);
+      expect(received).toEqual([{ path: "/prefix-a/no-deps", authorization: "Bearer tok-a" }]);
+      expect(elsewhereReceived).toEqual([
+        { path: "/downloads/no-deps-1.0.0.tgz", authorization: "Bearer tok-elsewhere" },
+      ]);
+    }
+  });
+
+  it("an npmrc entry for a parent path covers a registry configured below it", async () => {
+    const received: Received[] = [];
+    await using registry = serveRegistry(received, origin => `${origin}/npm/team-a/no-deps/-/no-deps-1.0.0.tgz`);
+    using dir = tempDir("registry-path-scoped-auth", {
+      "package.json": packageJson,
+      "bunfig.toml": `
+[install]
+cache = false
+registry = "http://127.0.0.1:${registry.port}/npm/team-a/"
+`,
+      ".npmrc": `//127.0.0.1:${registry.port}/npm/:_authToken=npm-wide\n`,
+    });
+
+    const { stdout, stderr, exitCode } = await install(String(dir));
+    expect(stderr).toContain("Saved lockfile");
+    expect(stdout).toContain("1 package installed");
+    expect(exitCode).toBe(0);
+    expect(received).toEqual([
+      { path: "/npm/team-a/no-deps", authorization: "Bearer npm-wide" },
+      { path: "/npm/team-a/no-deps/-/no-deps-1.0.0.tgz", authorization: "Bearer npm-wide" },
+    ]);
+  });
+
+  it("an npmrc entry written without a port does not cover a non-default port", async () => {
+    const received: Received[] = [];
+    await using registry = serveRegistry(received, origin => `${origin}/prefix-b/no-deps-1.0.0.tgz`);
+    using dir = tempDir("registry-path-scoped-auth", {
+      "package.json": packageJson,
+      "bunfig.toml": `
+[install]
+cache = false
+registry = "http://127.0.0.1:${registry.port}/prefix-a/"
+`,
+      ".npmrc": `//127.0.0.1/prefix-b/:_authToken=portless\n`,
+    });
+
+    const { stdout, stderr, exitCode } = await install(String(dir));
+    expect(stderr).toContain("Saved lockfile");
+    expect(stdout).toContain("1 package installed");
+    expect(exitCode).toBe(0);
+    expect(received.map(r => r.authorization)).toEqual([null, null]);
+  });
+
+  it("a registry configured at the host root still authenticates every path on it", async () => {
+    const received: Received[] = [];
+    await using registry = serveRegistry(received, origin => `${origin}/some/where/else/no-deps-1.0.0.tgz`);
+    using dir = tempDir("registry-path-scoped-auth", {
+      "package.json": packageJson,
+      "bunfig.toml": `
+[install]
+cache = false
+registry = { url = "http://127.0.0.1:${registry.port}", token = "root-token" }
+`,
+    });
+
+    const { stdout, stderr, exitCode } = await install(String(dir));
+    expect(stderr).toContain("Saved lockfile");
+    expect(stdout).toContain("1 package installed");
+    expect(exitCode).toBe(0);
+    expect(received.map(r => r.authorization)).toEqual(["Bearer root-token", "Bearer root-token"]);
+  });
+});
+
+describe.concurrent("install.allowedHosts", () => {
+  it("refuses a tarball on a host that is not listed, without contacting it", async () => {
+    const received: Received[] = [];
+    const elsewhereReceived: Received[] = [];
+    await using elsewhere = serveElsewhere(elsewhereReceived);
+    const tarballUrl = `http://127.0.0.1:${elsewhere.port}/no-deps/-/no-deps-1.0.0.tgz`;
+    await using registry = serveRegistry(received, () => tarballUrl);
+    using dir = tempDir("allowed-hosts", {
+      "package.json": packageJson,
+      "bunfig.toml": `
+[install]
+cache = false
+registry = "http://127.0.0.1:${registry.port}/"
+allowedHosts = []
+`,
+    });
+
+    const { stderr, exitCode } = await install(String(dir));
+    expect(stderr).toContain(
+      `error: Refusing to download "${tarballUrl}" for package "no-deps": host is not in install.allowedHosts`,
+    );
+    expect(stderr).not.toContain("Saved lockfile");
+    expect(stderr).not.toContain("internal error");
+    expect(exitCode).toBe(1);
+    // the manifest came from the (implicitly allowed) registry host ...
+    expect(received.map(r => r.path)).toEqual(["/no-deps"]);
+    // ... and the foreign host was never contacted
+    expect(elsewhereReceived).toEqual([]);
+  });
+
+  it.each([
+    ["host:port", (port: number) => `["127.0.0.1:${port}"]`],
+    ["a bare hostname (any port)", () => `["127.0.0.1"]`],
+    ["one of several entries", (port: number) => `["registry.example.com", "127.0.0.1:${port}", "[::1]:1"]`],
+  ])("allows a tarball host listed as %s", async (_, entry) => {
+    const received: Received[] = [];
+    const elsewhereReceived: Received[] = [];
+    await using elsewhere = serveElsewhere(elsewhereReceived);
+    await using registry = serveRegistry(
+      received,
+      () => `http://127.0.0.1:${elsewhere.port}/no-deps/-/no-deps-1.0.0.tgz`,
+    );
+    using dir = tempDir("allowed-hosts", {
+      "package.json": packageJson,
+      "bunfig.toml": `
+[install]
+cache = false
+registry = { url = "http://localhost:${registry.port}/", token = "registry-token" }
+allowedHosts = ${entry(elsewhere.port)}
+`,
+    });
+
+    const { stdout, stderr, exitCode } = await install(String(dir));
+    expect(stderr).toContain("Saved lockfile");
+    expect(stdout).toContain("1 package installed");
+    expect(exitCode).toBe(0);
+    // allowed to fetch, but being on the list does not earn the registry's token
+    expect(elsewhereReceived).toEqual([{ path: "/no-deps/-/no-deps-1.0.0.tgz", authorization: null }]);
+  });
+
+  it("does not match a listed host on a different port", async () => {
+    const elsewhereReceived: Received[] = [];
+    await using elsewhere = serveElsewhere(elsewhereReceived);
+    await using registry = serveRegistry([], () => `http://127.0.0.1:${elsewhere.port}/no-deps-1.0.0.tgz`);
+    using dir = tempDir("allowed-hosts", {
+      "package.json": packageJson,
+      "bunfig.toml": `
+[install]
+cache = false
+registry = "http://localhost:${registry.port}/"
+allowedHosts = ["127.0.0.1:${registry.port}"]
+`,
+    });
+
+    const { stderr, exitCode } = await install(String(dir));
+    expect(stderr).toContain("host is not in install.allowedHosts");
+    expect(exitCode).toBe(1);
+    expect(elsewhereReceived).toEqual([]);
+  });
+
+  it("is off when unset: tarballs may come from any host", async () => {
+    const elsewhereReceived: Received[] = [];
+    await using elsewhere = serveElsewhere(elsewhereReceived);
+    await using registry = serveRegistry([], () => `http://127.0.0.1:${elsewhere.port}/no-deps-1.0.0.tgz`);
+    using dir = tempDir("allowed-hosts", {
+      "package.json": packageJson,
+      "bunfig.toml": `
+[install]
+cache = false
+registry = "http://localhost:${registry.port}/"
+`,
+    });
+
+    const { stdout, stderr, exitCode } = await install(String(dir));
+    expect(stderr).toContain("Saved lockfile");
+    expect(stdout).toContain("1 package installed");
+    expect(exitCode).toBe(0);
+    expect(elsewhereReceived.map(r => r.path)).toEqual(["/no-deps-1.0.0.tgz"]);
+  });
+
+  it("refuses git dependencies on hosts that are not listed", async () => {
+    const elsewhereReceived: Received[] = [];
+    await using elsewhere = serveElsewhere(elsewhereReceived, 404);
+    using dir = tempDir("allowed-hosts", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { repo: `git+http://127.0.0.1:${elsewhere.port}/someone/repo.git` },
+      }),
+      "bunfig.toml": `
+[install]
+cache = false
+registry = "http://localhost:1/"
+allowedHosts = []
+`,
+    });
+
+    const { stderr, exitCode } = await install(String(dir));
+    expect(stderr).toContain(
+      `error: Refusing to clone git dependency "repo" from "127.0.0.1:${elsewhere.port}": host is not in install.allowedHosts`,
+    );
+    expect(exitCode).toBe(1);
+    expect(elsewhereReceived).toEqual([]);
+  });
+
+  it("rejects entries that are not host[:port]", async () => {
+    using dir = tempDir("allowed-hosts", {
+      "package.json": packageJson,
+      "bunfig.toml": `
+[install]
+allowedHosts = ["https://registry.example.com/npm/"]
+`,
+    });
+
+    const { stderr, exitCode } = await install(String(dir));
+    expect(stderr).toContain(`Expected a hostname or "hostname:port" (not a URL) in allowedHosts`);
+    expect(exitCode).toBe(1);
+  });
+});
+
+describe.concurrent("install.rewrite", () => {
+  it("fetches tarballs from the rewritten URL but records the canonical URL in bun.lock", async () => {
+    // "canonical" is where the manifest (and therefore bun.lock) says the
+    // tarball lives; it must never be contacted. The mirror is a path on the
+    // registry server.
+    const canonicalReceived: Received[] = [];
+    await using canonical = serveElsewhere(canonicalReceived, 500);
+    const received: Received[] = [];
+    await using registry = serveRegistry(
+      received,
+      () => `http://127.0.0.1:${canonical.port}/no-deps/-/no-deps-1.0.0.tgz`,
+    );
+    using dir = tempDir("install-rewrite", {
+      "package.json": packageJson,
+      "bunfig.toml": `
+[install]
+cache = false
+registry = { url = "http://127.0.0.1:${registry.port}/", token = "mirror-token" }
+
+[[install.rewrite]]
+from = "http://127.0.0.1:${canonical.port}/"
+to = "http://127.0.0.1:${registry.port}/not-specific-enough/"
+
+[[install.rewrite]]
+from = "http://127.0.0.1:${canonical.port}/no-deps/"
+to = "http://127.0.0.1:${registry.port}/mirror/no-deps/"
+`,
+    });
+
+    {
+      const { stdout, stderr, exitCode } = await install(String(dir));
+      expect(stderr).toContain("Saved lockfile");
+      expect(stdout).toContain("1 package installed");
+      expect(exitCode).toBe(0);
+    }
+    // longest matching `from` wins; the rewritten URL is under the registry, so
+    // it carries the registry's credentials
+    expect(received.filter(r => r.path.endsWith(".tgz"))).toEqual([
+      { path: "/mirror/no-deps/-/no-deps-1.0.0.tgz", authorization: "Bearer mirror-token" },
+    ]);
+    expect(canonicalReceived).toEqual([]);
+
+    const lockfile = await Bun.file(join(String(dir), "bun.lock")).text();
+    expect(lockfile).toContain(`http://127.0.0.1:${canonical.port}/no-deps/-/no-deps-1.0.0.tgz`);
+    expect(lockfile).not.toContain("/mirror/");
+
+    // a frozen install from that lockfile goes through the rewrite again
+    await rm(join(String(dir), "node_modules"), { recursive: true, force: true });
+    received.length = 0;
+    {
+      const { stdout, stderr, exitCode } = await install(String(dir), "--frozen-lockfile");
+      expect(stderr).not.toContain("error:");
+      expect(stdout).toContain("1 package installed");
+      expect(exitCode).toBe(0);
+    }
+    expect(received).toEqual([{ path: "/mirror/no-deps/-/no-deps-1.0.0.tgz", authorization: "Bearer mirror-token" }]);
+    expect(canonicalReceived).toEqual([]);
+    expect(await Bun.file(join(String(dir), "bun.lock")).text()).toBe(lockfile);
+  });
+
+  it("credentials and allowedHosts are judged against the rewritten URL", async () => {
+    // The registry (with a token) points tarballs at itself; the rewrite sends
+    // them to another host. That host is on the allow-list, so the download
+    // proceeds — but it is not under the registry URL, so no token.
+    const elsewhereReceived: Received[] = [];
+    await using elsewhere = serveElsewhere(elsewhereReceived);
+    const received: Received[] = [];
+    await using registry = serveRegistry(received, origin => `${origin}/no-deps/-/no-deps-1.0.0.tgz`);
+    using dir = tempDir("install-rewrite", {
+      "package.json": packageJson,
+      "bunfig.toml": `
+[install]
+cache = false
+registry = { url = "http://127.0.0.1:${registry.port}/", token = "registry-token" }
+allowedHosts = ["127.0.0.1:${elsewhere.port}"]
+rewrite = [
+  { from = "http://127.0.0.1:${registry.port}/no-deps/-/", to = "http://127.0.0.1:${elsewhere.port}/tarballs/" },
+]
+`,
+    });
+
+    const { stdout, stderr, exitCode } = await install(String(dir));
+    expect(stderr).toContain("Saved lockfile");
+    expect(stdout).toContain("1 package installed");
+    expect(exitCode).toBe(0);
+    expect(received).toEqual([{ path: "/no-deps", authorization: "Bearer registry-token" }]);
+    expect(elsewhereReceived).toEqual([{ path: "/tarballs/no-deps-1.0.0.tgz", authorization: null }]);
+  });
+});

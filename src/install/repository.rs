@@ -361,6 +361,41 @@ pub trait RepositoryExt: Sized {
     ) -> Result<ExtractData, Error>;
 }
 
+/// `install.allowedHosts` check for a git remote. `url` is what we are about to
+/// hand to `git clone`: an `https://` / `ssh://` / `git://` URL, or an scp-like
+/// `[user@]host:path`. Returns the offending host when it is not allowed;
+/// local paths (no host) are always allowed.
+fn git_host_refused<'a>(
+    options: &crate::package_manager::Options::Options,
+    url: &'a [u8],
+) -> Option<&'a [u8]> {
+    // No allow-list configured: nothing is refused.
+    options.allowed_hosts?;
+    if strings::contains(url, b"://") {
+        if strings::has_prefix_comptime(url, b"file://") {
+            return None;
+        }
+        let host = bun_url::URL::parse(url).host;
+        return (!options.is_host_allowed(url)).then_some(host);
+    }
+    if Dependency::is_scp_like_path(url) {
+        // `[user@]host:path` — rebuild as a URL so the same matcher applies.
+        let colon = strings::index_of_char(url, b':')? as usize;
+        let authority = &url[..colon];
+        let host = match strings::last_index_of_char(authority, b'@') {
+            Some(at) => &authority[at + 1..],
+            None => authority,
+        };
+        let mut as_url = Vec::with_capacity(b"ssh://".len() + host.len() + 1);
+        as_url.extend_from_slice(b"ssh://");
+        as_url.extend_from_slice(host);
+        as_url.push(b'/');
+        return (!options.is_host_allowed(&as_url)).then_some(host);
+    }
+    // A filesystem path.
+    None
+}
+
 /// A module-level free fn because trait methods cannot be private; called only
 /// from this file's `download`/`find_commit`/`checkout`.
 fn exec(env: &bun_dotenv::Map, argv: &[&[u8]]) -> Result<Vec<u8>, Error> {
@@ -767,6 +802,23 @@ impl RepositoryExt for Repository {
         // we never own/close it — only the freshly-opened repo `Dir` is owned.
         bun_analytics::features::git_dependencies
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+        // `install.allowedHosts`: a git dependency is fetched from wherever its
+        // specifier points; when the project restricts hosts, refuse anything
+        // not on the list before `git` is spawned (no clone, no fetch). Only
+        // the host is echoed — the URL may carry credentials.
+        if let Some(host) = git_host_refused(&PackageManager::get().options, url) {
+            log.add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "Refusing to clone git dependency \"{}\" from \"{}\": host is not in install.allowedHosts",
+                    BStr::new(name),
+                    BStr::new(host),
+                ),
+            );
+            return Err(crate::Error::HostNotAllowed);
+        }
         // Per-field accessor — retags only `folder_name_buf`, leaving any live
         // shared borrow of `final_path_buf`/`ssh_path_buf` (the `url` argument
         // handed over by `try_https`/`try_ssh` callers) valid under Stacked

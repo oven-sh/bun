@@ -13,7 +13,7 @@ Configuration is loaded in this order, with later sources overriding earlier one
 4. `BUN_CONFIG_REGISTRY` / `NPM_CONFIG_REGISTRY` and `BUN_CONFIG_TOKEN` / `NPM_CONFIG_TOKEN` environment variables
 5. Command-line flags such as `--registry`
 
-Bun matches credentials in `.npmrc` (`//<registry>/:_authToken`, etc.) to registries by host and path, even if you set the registry URL itself in `bunfig.toml`.
+Bun matches credentials in `.npmrc` (`//<registry>/:_authToken`, etc.) to registries by host and path, even if you set the registry URL itself in `bunfig.toml`. At request time those credentials are only sent to URLs under that registry's host _and path_ — see [credential scoping](/pm/scopes-registries#credential-scoping).
 
 Values may reference environment variables. Bun replaces `${NAME}` with the variable's value, or leaves it as-is if the variable is unset. `${NAME?}` becomes an empty string if unset.
 
@@ -85,6 +85,14 @@ Bun supports the following options:
 - `_password` (base64 encoded password)
 - `_auth` (base64 encoded username:password, for example `btoa(username + ":" + password)`)
 - `email`
+
+Credentials apply to requests under the `//host/path/` they are written for. An entry whose `//host/path/` is a configured registry's URL becomes that registry's credentials; any other entry is still used for requests under its host and path — for example when a registry serves tarballs from a different path than its API, give each path its own line:
+
+```ini .npmrc icon="npm"
+@myorg:registry=https://registry.example.com/api/packages/npm/
+//registry.example.com/api/packages/npm/:_authToken=${REGISTRY_TOKEN}
+//registry.example.com/api/projects/42/packages/npm/:_authToken=${REGISTRY_TOKEN}
+```
 
 The equivalent `bunfig.toml` option is to add a key in [`install.scopes`](/runtime/bunfig#install-scopes):
 

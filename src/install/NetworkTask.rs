@@ -15,6 +15,7 @@ use bun_url::URL;
 
 use crate::extract_tarball;
 use crate::npm::{self as npm, PackageManifest};
+use crate::package_manager::Options::Credentials;
 use crate::{ExtractTarball, PackageManager, PatchTask, TarballStream, Task};
 
 // Adapter so `StringOrTinyString::init_append_if_needed` can intern overflow
@@ -386,27 +387,27 @@ const DEFAULT_HEADERS_BUF: &str = concat!(
 );
 const EXTENDED_HEADERS_BUF: &str = concat!("Accept", "application/json, */*");
 
-fn append_auth(header_builder: &mut HeaderBuilder, scope: &npm::registry::Scope) {
+fn append_auth(header_builder: &mut HeaderBuilder, credentials: Credentials<'_>) {
     // Routing through `format_args!`/`BStr` Display would be
     // lossy for non-UTF-8 tokens (U+FFFD expands 1→3 bytes) and overrun the
     // exact byte count reserved by `count_auth`. Use raw-byte append.
-    if !scope.token.is_empty() {
-        header_builder.append_bytes_value("Authorization", b"Bearer ", &scope.token);
-    } else if !scope.auth.is_empty() {
-        header_builder.append_bytes_value("Authorization", b"Basic ", &scope.auth);
+    if !credentials.token.is_empty() {
+        header_builder.append_bytes_value("Authorization", b"Bearer ", credentials.token);
+    } else if !credentials.auth.is_empty() {
+        header_builder.append_bytes_value("Authorization", b"Basic ", credentials.auth);
     } else {
         return;
     }
     header_builder.append("npm-auth-type", "legacy");
 }
 
-fn count_auth(header_builder: &mut HeaderBuilder, scope: &npm::registry::Scope) {
-    if !scope.token.is_empty() {
+fn count_auth(header_builder: &mut HeaderBuilder, credentials: Credentials<'_>) {
+    if !credentials.token.is_empty() {
         header_builder.count("Authorization", "");
-        header_builder.content.cap += "Bearer ".len() + scope.token.len();
-    } else if !scope.auth.is_empty() {
+        header_builder.content.cap += "Bearer ".len() + credentials.token.len();
+    } else if !credentials.auth.is_empty() {
         header_builder.count("Authorization", "");
-        header_builder.content.cap += "Basic ".len() + scope.auth.len();
+        header_builder.content.cap += "Basic ".len() + credentials.auth.len();
     } else {
         return;
     }
@@ -590,6 +591,42 @@ impl NetworkTask {
             break 'blk url_bytes;
         };
 
+        // `install.rewrite` (mirror) rules apply to the request only; the auth
+        // and allow-list decisions below are made against the URL we actually
+        // connect to.
+        if let std::borrow::Cow::Owned(rewritten) = pm.options.rewrite_url(&self.url_buf) {
+            self.url_buf = rewritten.into_boxed_slice();
+        }
+
+        if !pm.options.is_host_allowed(&self.url_buf) {
+            if !is_optional {
+                log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "Refusing to fetch manifest {} for package {}: host is not in install.allowedHosts",
+                        quote(&self.url_buf),
+                        quote(name),
+                    ),
+                );
+            } else {
+                log.add_warning_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "Refusing to fetch manifest {} for package {}: host is not in install.allowedHosts",
+                        quote(&self.url_buf),
+                        quote(name),
+                    ),
+                );
+            }
+            return Err(ForManifestError::InvalidURL);
+        }
+
+        // Registry credentials are scoped to the registry URL's origin *and
+        // path*: see `Options::credentials_for`.
+        let credentials = pm.options.credentials_for(scope, &self.url_buf);
+
         let mut last_modified: &[u8] = b"";
         let mut etag: &[u8] = b"";
         if let Some(manifest) = loaded_manifest {
@@ -601,7 +638,7 @@ impl NetworkTask {
 
         let mut header_builder = HeaderBuilder::default();
 
-        count_auth(&mut header_builder, scope);
+        count_auth(&mut header_builder, credentials);
 
         if !etag.is_empty() {
             header_builder.count("If-None-Match", etag);
@@ -622,7 +659,7 @@ impl NetworkTask {
             }
             header_builder.allocate()?;
 
-            append_auth(&mut header_builder, scope);
+            append_auth(&mut header_builder, credentials);
 
             if !etag.is_empty() {
                 header_builder.append("If-None-Match", etag);
@@ -818,6 +855,13 @@ impl NetworkTask {
             return Err(ForTarballError::InvalidURL);
         }
 
+        // `install.rewrite` (mirror) rules: the lockfile/manifest keep the
+        // canonical URL, the request goes to the rewritten one, and the
+        // allow-list and credential checks below judge the rewritten URL.
+        if let std::borrow::Cow::Owned(rewritten) = pm.options.rewrite_url(&self.url_buf) {
+            self.url_buf = rewritten.into_boxed_slice();
+        }
+
         // Userinfo becomes a header and leaves the URL: `bun_url` keeps it in `origin`, which the redirect same-origin check compares.
         let url_authorization: Option<Vec<u8>> = match split_url_userinfo(&self.url_buf) {
             Some((userinfo, url_without_userinfo)) => {
@@ -829,36 +873,46 @@ impl NetworkTask {
             None => None,
         };
 
+        // `dist.tarball` is registry-controlled input as far as *where we
+        // connect* is concerned; with `install.allowedHosts` set, refuse hosts
+        // the project did not opt into before any request is made. (Checked
+        // after the userinfo split so the message never echoes credentials.)
+        if !pm.options.is_host_allowed(&self.url_buf) {
+            pm.log_mut().add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "Refusing to download {} for package {}: host is not in install.allowedHosts",
+                    quote(&self.url_buf),
+                    quote(tarball.name.slice()),
+                ),
+            );
+            return Err(ForTarballError::InvalidURL);
+        }
+
         // Only attach the registry `Authorization` header when the tarball URL
-        // origin matches the configured registry scope origin. The npm manifest
-        // is registry-controlled, so a malicious registry could otherwise point
-        // the tarball at an attacker-controlled host and receive the scope
-        // credentials. The empty-`tarball_url` branch builds the URL from
-        // `scope.url.href()`, so its origin matches and authorized downloads
-        // keep working.
-        // Compare (protocol, hostname, effective port) rather than the raw
-        // `URL.origin` slice — `origin` is a borrowed prefix of the input
-        // string and is not normalized for default ports, so a tarball URL of
-        // `https://host:443/...` would not byte-match a `.npmrc` registry of
-        // `https://host/...` even though they are the same origin. Some
-        // registries emit `dist.tarball` URLs with the default port spelled
-        // out; without normalization those installs lose the `Authorization`
-        // header and fail with 401.
-        let send_auth = matches!(authorization, Authorization::AllowAuthorization) && {
-            let tarball = URL::parse(&self.url_buf);
-            let registry = scope.url.url();
-            tarball.protocol == registry.protocol
-                && tarball.hostname == registry.hostname
-                && tarball.get_port_auto() == registry.get_port_auto()
+        // is under the configured registry scope URL: same origin *and* path
+        // prefix (`Options::credentials_for`). The npm manifest is
+        // registry-controlled, so a malicious registry — or another tenant on
+        // a path-based multi-tenant registry host — could otherwise point the
+        // tarball somewhere that receives the scope credentials. The
+        // empty-`tarball_url` branch builds the URL from `scope.url.href()`, so
+        // it is always under the registry and authorized downloads keep
+        // working. Origins are compared as (protocol, hostname, effective
+        // port), so a `dist.tarball` that spells out the default port
+        // (`https://host:443/...`) still matches a registry of `https://host/`.
+        // A URL outside the registry can still be covered by an `.npmrc`
+        // `//host/path/:_authToken` entry written for it.
+        let credentials = match authorization {
+            Authorization::AllowAuthorization => pm.options.credentials_for(scope, &self.url_buf),
+            Authorization::NoAuthorization => Credentials::NONE,
         };
 
         self.response_buffer = MutableString::init_empty();
 
         let mut header_builder = HeaderBuilder::default();
 
-        if send_auth {
-            count_auth(&mut header_builder, scope);
-        }
+        count_auth(&mut header_builder, credentials);
 
         // Registry credentials win over URL userinfo, as in npm.
         let url_authorization = match url_authorization {
@@ -873,7 +927,7 @@ impl NetworkTask {
             header_builder.allocate()?;
             match &url_authorization {
                 Some(value) => header_builder.append("Authorization", value),
-                None => append_auth(&mut header_builder, scope),
+                None => append_auth(&mut header_builder, credentials),
             }
             debug_assert_eq!(header_builder.content.len, header_builder.content.cap);
             self.header_buf = header_builder.content.move_to_slice();

@@ -122,7 +122,7 @@ bun_core::comptime_string_map! {
 
 pub use draft::{
     ConfigIterator, Parser, RegistryAuth, ScopeItem, ScopeIterator, ToStringFormatter,
-    apply_registry_auth, load_npmrc, load_npmrc_config,
+    apply_registry_auth, collect_registry_auth, load_npmrc, load_npmrc_config,
 };
 
 mod draft {
@@ -1301,6 +1301,44 @@ mod draft {
             ));
         }
         configs
+    }
+
+    /// Group every `//host/path/:key=value` entry by its `//host/path/` into an
+    /// `NpmRegistry` record (`url` = `host/path`, no scheme) carrying the merged
+    /// credentials. These back npm-style path-scoped ("nerf dart") credential
+    /// lookup for request URLs that a configured registry's own credentials do
+    /// not cover.
+    pub fn collect_registry_auth(auth: &[RegistryAuth]) -> Option<Vec<NpmRegistry>> {
+        if auth.is_empty() {
+            return None;
+        }
+        let mut out: Vec<NpmRegistry> = Vec::new();
+        for item in auth {
+            if matches!(item.credential, RegistryCredential::Email(_)) {
+                continue;
+            }
+            let existing = out.iter_mut().find(|r| {
+                let url = URL::parse(&r.url);
+                bun_core::without_trailing_slash(url.host) == &*item.host
+                    && bun_core::without_trailing_slash(url.pathname) == &*item.pathname
+            });
+            let registry = match existing {
+                Some(r) => r,
+                None => {
+                    let mut url = Vec::with_capacity(item.host.len() + item.pathname.len() + 1);
+                    url.extend_from_slice(&item.host);
+                    url.extend_from_slice(&item.pathname);
+                    url.push(b'/');
+                    out.push(NpmRegistry {
+                        url: url.into_boxed_slice(),
+                        ..Default::default()
+                    });
+                    out.last_mut().expect("just pushed")
+                }
+            };
+            item.apply_to(registry);
+        }
+        Some(out)
     }
 
     pub fn apply_registry_auth(install: &mut BunInstall, auth: &[RegistryAuth]) {

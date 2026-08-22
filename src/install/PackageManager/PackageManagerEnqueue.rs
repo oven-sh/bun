@@ -912,7 +912,18 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     let resolve_result = match resolve_result_ {
                         Ok(v) => v,
                         Err(err) => {
-                            if err == crate::Error::DistTagNotFound {
+                            if err == crate::Error::InvalidURL {
+                                // The package resolved but its tarball request
+                                // was refused (`NetworkTask::for_tarball` has
+                                // already logged why: unsupported scheme, or a
+                                // host outside `install.allowedHosts`). The
+                                // logged error fails the install; don't turn it
+                                // into an "internal error" on top.
+                                if let Some(fail) = fail_fn {
+                                    fail(this, dependency, id, err);
+                                }
+                                return Ok(());
+                            } else if err == crate::Error::DistTagNotFound {
                                 if dependency.behavior.is_required() {
                                     if let Some(fail) = fail_fn {
                                         fail(this, dependency, id, err);

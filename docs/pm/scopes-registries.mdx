@@ -30,6 +30,22 @@ To configure a private registry scoped to a particular organization:
 "@myorg3" = { token = "$npm_token", url = "https://registry.myorg.com/" }
 ```
 
+### Credential scoping
+
+Bun attaches a registry's credentials (token, or username and password) to a request only when the request URL is under the registry URL they were configured for: the same protocol, host and port, _and_ a path that starts with the registry URL's path, compared one path segment at a time. For a registry at the root of its host (such as `https://registry.npmjs.org/`) that is every URL on the host. For path-based multi-tenant registry hosts (e.g. Nexus, GitLab, Azure Artifacts, AWS CodeArtifact and similar products that serve many registries or feeds from one hostname) it means a token for one registry path is not sent to its siblings:
+
+| Registry URL                           | Request URL                                               | Credentials sent |
+| -------------------------------------- | --------------------------------------------------------- | ---------------- |
+| `https://registry.example.com/`        | `https://registry.example.com/any/path/pkg.tgz`           | yes              |
+| `https://host.example.com/npm/team-a/` | `https://host.example.com/npm/team-a/pkg/-/pkg-1.0.0.tgz` | yes              |
+| `https://host.example.com/npm/team-a/` | `https://host.example.com/npm/team-b/pkg/-/pkg-1.0.0.tgz` | no               |
+| `https://host.example.com/npm/team-a/` | `https://host.example.com/npm/team-ab/pkg.tgz`            | no               |
+| `https://host.example.com/npm/team-a/` | `https://cdn.example.com/npm/team-a/pkg.tgz`              | no               |
+
+This applies to package manifests and tarballs alike. A package's tarball URL comes from the registry's metadata, so this rule is what keeps a registry (or another tenant on a shared registry host) from directing your credentials somewhere else. It matches how npm scopes `//host/path/:_authToken` entries in `.npmrc`, and such [`.npmrc`](/pm/npmrc) entries are honoured the same way: a request not covered by its registry's credentials uses the `.npmrc` entry with the longest `//host/path/` that covers it, if any.
+
+To further restrict where `bun install` connects, see [`install.allowedHosts`](/runtime/bunfig#install-allowedhosts); to route requests through a mirror without changing `bun.lock`, see [`install.rewrite`](/runtime/bunfig#install-rewrite).
+
 ### `.npmrc`
 
 Bun also reads [`.npmrc`](/pm/npmrc) files.

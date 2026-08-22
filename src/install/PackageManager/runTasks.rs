@@ -2008,7 +2008,16 @@ pub fn generate_network_task_for_tarball<'a>(
         .expect("unreachable"),
     };
 
-    network_task.for_tarball(extract_tarball, scope, authorization)?;
+    if let Err(err) = network_task.for_tarball(extract_tarball, scope, authorization) {
+        if matches!(err, ForTarballError::InvalidURL) {
+            // The URL was refused before any request was made; record that on
+            // the dedupe entry so a later enqueue for the same tarball (e.g.
+            // from the install phase) fails fast with `AlreadyFailed` instead
+            // of waiting on a task that was never scheduled.
+            mark_network_task_failed(this, task_id);
+        }
+        return Err(err);
+    }
 
     if extract_tarball::uses_streaming_extraction() {
         // Pre-create the extract Task and streaming state here on the

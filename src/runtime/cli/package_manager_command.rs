@@ -822,7 +822,6 @@ fn print_node_modules_folder_structure(
             }
         }
 
-        let mut resolution_buf = [0u8; 512];
         if let Some(id) = directory_package_id {
             let mut path: &[u8] = directory.relative_path.as_bytes();
 
@@ -834,25 +833,15 @@ fn print_node_modules_folder_structure(
                     }
                 }
             }
-            let directory_version = buf_print(
-                &mut resolution_buf,
-                format_args!(
-                    "{}",
-                    resolutions[id as usize].fmt(string_bytes, PathSep::Auto)
-                ),
-            );
+            let directory_version = resolutions[id as usize].fmt(string_bytes, PathSep::Auto);
             if let Some(j) = strings::index_of(path, b"node_modules") {
                 bun_core::prettyln!(
                     "{}<d>@{}<r>",
                     bstr::BStr::new(&path[0..j - 1]),
-                    bstr::BStr::new(directory_version),
+                    directory_version,
                 );
             } else {
-                bun_core::prettyln!(
-                    "{}<d>@{}<r>",
-                    bstr::BStr::new(path),
-                    bstr::BStr::new(directory_version),
-                );
+                bun_core::prettyln!("{}<d>@{}<r>", bstr::BStr::new(path), directory_version);
             }
         } else {
             let mut cwd_buf = PathBuffer::uninit();
@@ -959,18 +948,10 @@ fn print_node_modules_folder_structure(
             bun_core::pretty!("<d>└──<r> ");
         }
 
-        let mut resolution_buf = [0u8; 512];
-        let package_version = buf_print(
-            &mut resolution_buf,
-            format_args!(
-                "{}",
-                resolutions[package_id as usize].fmt(string_bytes, PathSep::Auto)
-            ),
-        );
         bun_core::prettyln!(
             "{}<d>@{}<r>",
             bstr::BStr::new(package_name),
-            bstr::BStr::new(package_version),
+            resolutions[package_id as usize].fmt(string_bytes, PathSep::Auto),
         );
     }
 
@@ -1052,5 +1033,3 @@ fn print_trusted_dependencies_flat(
         }
     }
 }
-
-use bun_core::fmt::buf_print_infallible as buf_print;

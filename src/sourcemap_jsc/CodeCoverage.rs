@@ -229,9 +229,6 @@ pub mod text {
         executable_lines_that_havent_been_executed.set_intersection(&report.executable_lines);
 
         let mut iter = executable_lines_that_havent_been_executed.iterator::<true, true>();
-        let mut start_of_line_range: usize = 0;
-        let mut prev_line: usize = 0;
-        let mut is_first = true;
 
         // `concat!(pretty_fmt!(..), "{}")` requires a literal; split into a
         // prefix `write_all` + plain `write!` so the const-generic `ENABLE_COLORS` can
@@ -239,49 +236,48 @@ pub mod text {
         let red = pretty_fmt::<ENABLE_COLORS>("<red>");
         let comma = pretty_fmt::<ENABLE_COLORS>("<r><d>,<r>");
 
-        while let Some(next_line) = iter.next() {
-            if next_line == (prev_line + 1) {
-                prev_line = next_line;
-                continue;
-            } else if is_first && start_of_line_range == 0 && prev_line == 0 {
-                start_of_line_range = next_line;
-                prev_line = next_line;
-                continue;
+        // Collapse the ascending uncovered line indices into runs and print each as
+        // `start` or `start-end` (1-based), comma-separated. Track the pending run
+        // with an explicit `Option` because line index 0 is a valid bit index; the
+        // previous `start == 0 && prev == 0` sentinel dropped a trailing single-line
+        // run (reporting "% Lines" < 100 with an empty "Uncovered Line #s" column).
+        let mut pending: Option<(usize, usize)> = None;
+        let mut is_first = true;
+        while let Some(line) = iter.next() {
+            match pending {
+                Some((start, end)) if line == end + 1 => pending = Some((start, line)),
+                Some((start, end)) => {
+                    write_line_range(writer, &mut is_first, &red, &comma, start, end)?;
+                    pending = Some((line, line));
+                }
+                None => pending = Some((line, line)),
             }
-
-            if is_first {
-                is_first = false;
-            } else {
-                writer.write_all(&comma)?;
-            }
-
-            if start_of_line_range == prev_line {
-                writer.write_all(&red)?;
-                write!(writer, "{}", start_of_line_range + 1)?;
-            } else {
-                writer.write_all(&red)?;
-                write!(writer, "{}-{}", start_of_line_range + 1, prev_line + 1)?;
-            }
-
-            prev_line = next_line;
-            start_of_line_range = next_line;
         }
-
-        if prev_line != start_of_line_range {
-            if is_first {
-            } else {
-                writer.write_all(&comma)?;
-            }
-
-            if start_of_line_range == prev_line {
-                writer.write_all(&red)?;
-                write!(writer, "{}", start_of_line_range + 1)?;
-            } else {
-                writer.write_all(&red)?;
-                write!(writer, "{}-{}", start_of_line_range + 1, prev_line + 1)?;
-            }
+        if let Some((start, end)) = pending {
+            write_line_range(writer, &mut is_first, &red, &comma, start, end)?;
         }
         Ok(())
+    }
+
+    fn write_line_range(
+        writer: &mut impl bun_io::Write,
+        is_first: &mut bool,
+        red: &[u8],
+        comma: &[u8],
+        start: usize,
+        end: usize,
+    ) -> bun_io::Result<()> {
+        if *is_first {
+            *is_first = false;
+        } else {
+            writer.write_all(comma)?;
+        }
+        writer.write_all(red)?;
+        if start == end {
+            write!(writer, "{}", start + 1)
+        } else {
+            write!(writer, "{}-{}", start + 1, end + 1)
+        }
     }
 }
 
@@ -599,7 +595,7 @@ impl ByteRangeMapping {
                 // only mark the lines as executable if the function has not executed
                 // functions that have executed have non-executable lines in them and thats fine.
                 if !did_fn_execute {
-                    let end = max_line.min(line_count);
+                    let end = max_line.saturating_add(1).min(line_count);
                     line_hits_slice[min_line as usize..end as usize].fill(0);
                     for line in min_line..end {
                         executable_lines.set(line as usize);
@@ -651,27 +647,40 @@ impl ByteRangeMapping {
                     let column_position =
                         byte_offset.saturating_sub(line_start_byte_offset as usize);
 
+                    let gen_line =
+                        Ordinal::from_zero_based(i32::try_from(new_line_index).expect("int cast"));
+                    let gen_col =
+                        Ordinal::from_zero_based(i32::try_from(column_position).expect("int cast"));
                     let found: Option<bun_sourcemap::Mapping> = if let Some(c) = cur_.as_mut() {
-                        c.move_to(
-                            Ordinal::from_zero_based(
-                                i32::try_from(new_line_index).expect("int cast"),
-                            ),
-                            Ordinal::from_zero_based(
-                                i32::try_from(column_position).expect("int cast"),
-                            ),
-                        )
+                        c.move_to(gen_line, gen_col)
                     } else {
-                        parsed_mapping.find_mapping(
-                            Ordinal::from_zero_based(
-                                i32::try_from(new_line_index).expect("int cast"),
-                            ),
-                            Ordinal::from_zero_based(
-                                i32::try_from(column_position).expect("int cast"),
-                            ),
-                        )
+                        parsed_mapping.find_mapping(gen_line, gen_col)
                     };
                     if let Some(point) = found.as_ref() {
                         if point.original.lines.zero_based() < 0 {
+                            continue;
+                        }
+
+                        // The printer (`cover_lines_without_mappings`) inserts a
+                        // synthetic mapping at column 0 of every generated line that
+                        // doesn't start with a real token mapping, copying the previous
+                        // mapping's original position. That's correct for remapping
+                        // stack-trace positions, but for coverage it causes bytes in
+                        // whitespace/`}` past a nested function's body to resolve to the
+                        // last statement *inside* that body, so an enclosing executed
+                        // block marks the nested function's unreached tail as covered.
+                        // Detect the synthetic mapping by its signature (generated
+                        // column 0 and original position identical to the last mapping
+                        // on the previous generated line) and ignore it.
+                        if point.generated.columns.zero_based() == 0
+                            && gen_line.zero_based() > 0
+                            && let Some(prev) = parsed_mapping.find_mapping(
+                                Ordinal::from_zero_based(gen_line.zero_based() - 1),
+                                Ordinal::from_zero_based(i32::MAX),
+                            )
+                            && prev.original.lines == point.original.lines
+                            && prev.original.columns == point.original.columns
+                        {
                             continue;
                         }
 
@@ -730,27 +739,29 @@ impl ByteRangeMapping {
                     let column_position =
                         byte_offset.saturating_sub(line_start_byte_offset as usize);
 
+                    let gen_line =
+                        Ordinal::from_zero_based(i32::try_from(new_line_index).expect("int cast"));
+                    let gen_col =
+                        Ordinal::from_zero_based(i32::try_from(column_position).expect("int cast"));
                     let found: Option<bun_sourcemap::Mapping> = if let Some(c) = cur_.as_mut() {
-                        c.move_to(
-                            Ordinal::from_zero_based(
-                                i32::try_from(new_line_index).expect("int cast"),
-                            ),
-                            Ordinal::from_zero_based(
-                                i32::try_from(column_position).expect("int cast"),
-                            ),
-                        )
+                        c.move_to(gen_line, gen_col)
                     } else {
-                        parsed_mapping.find_mapping(
-                            Ordinal::from_zero_based(
-                                i32::try_from(new_line_index).expect("int cast"),
-                            ),
-                            Ordinal::from_zero_based(
-                                i32::try_from(column_position).expect("int cast"),
-                            ),
-                        )
+                        parsed_mapping.find_mapping(gen_line, gen_col)
                     };
                     if let Some(point) = found {
                         if point.original.lines.zero_based() < 0 {
+                            continue;
+                        }
+
+                        if point.generated.columns.zero_based() == 0
+                            && gen_line.zero_based() > 0
+                            && let Some(prev) = parsed_mapping.find_mapping(
+                                Ordinal::from_zero_based(gen_line.zero_based() - 1),
+                                Ordinal::from_zero_based(i32::MAX),
+                            )
+                            && prev.original.lines == point.original.lines
+                            && prev.original.columns == point.original.columns
+                        {
                             continue;
                         }
 
@@ -774,7 +785,7 @@ impl ByteRangeMapping {
                 // only mark the lines as executable if the function has not executed
                 // functions that have executed have non-executable lines in them and thats fine.
                 if !did_fn_execute {
-                    let end = max_line.min(line_count);
+                    let end = max_line.saturating_add(1).min(line_count);
                     for line in min_line..end {
                         executable_lines.set(line as usize);
                         lines_which_have_executed.unset(line as usize);

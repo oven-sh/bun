@@ -1896,4 +1896,20 @@ impl PathOrBlob {
             arg,
         ))
     }
+
+    /// Panics on a non-file `Blob` (a `write_file_internal` precondition; that is the only caller).
+    #[cfg(not(windows))]
+    pub(crate) fn pathlike(&self) -> &PathOrFileDescriptor {
+        match self {
+            PathOrBlob::Path(path) => path,
+            PathOrBlob::Blob(blob) => {
+                &blob
+                    .store()
+                    .expect("infallible: store present")
+                    .data
+                    .as_file()
+                    .pathlike
+            }
+        }
+    }
 }

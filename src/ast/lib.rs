@@ -1944,6 +1944,9 @@ impl Log {
         notes: Box<[Data]>,
         args: fmt::Arguments<'_>,
     ) {
+        if !Kind::Warn.should_print(self.level) {
+            return;
+        }
         let text = alloc_print(args);
         self.add_formatted_msg(Kind::Warn, source, r, text, notes, false)
     }

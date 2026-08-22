@@ -1,0 +1,40 @@
+{
+  "_id": "hoist-optional-peer-cycle-y",
+  "name": "hoist-optional-peer-cycle-y",
+  "dist-tags": {
+    "latest": "2.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "hoist-optional-peer-cycle-y",
+      "version": "1.0.0",
+      "peerDependencies": {
+        "hoist-optional-peer-cycle-x": "2.0.0"
+      },
+      "_id": "hoist-optional-peer-cycle-y@1.0.0",
+      "dist": {
+        "integrity": "sha512-K6r6RYiWvhsjN0UMpVoBXWRvE7tUUXGIiS1ZxMf+HW4dsgMNXB+hfWMoQ8DlwNHZuM1kTdSIkc5u4rDIrf1x0A==",
+        "shasum": "c450c4030181e5c778268eab31bffa98d595cfbf",
+        "tarball": "http://localhost:4873/hoist-optional-peer-cycle-y/-/hoist-optional-peer-cycle-y-1.0.0.tgz"
+      }
+    },
+    "2.0.0": {
+      "name": "hoist-optional-peer-cycle-y",
+      "version": "2.0.0",
+      "peerDependencies": {
+        "hoist-optional-peer-cycle-x": "1.0.0"
+      },
+      "peerDependenciesMeta": {
+        "hoist-optional-peer-cycle-x": {
+          "optional": true
+        }
+      },
+      "_id": "hoist-optional-peer-cycle-y@2.0.0",
+      "dist": {
+        "integrity": "sha512-ycp0N508WdyGz/ECodwmYUWevdQrSeCSKvjjUFL+oEkJyz0l8lKn7cHcD7Png+oQ5heJbJUkje91bIZKhyeLaA==",
+        "shasum": "d2befacfc7eb260db2369e59d2d3ce0755af5d23",
+        "tarball": "http://localhost:4873/hoist-optional-peer-cycle-y/-/hoist-optional-peer-cycle-y-2.0.0.tgz"
+      }
+    }
+  }
+}

@@ -541,6 +541,7 @@ impl Subcommand {
                 | Self::Why
                 | Self::Dedupe
                 | Self::Prune
+                | Self::Publish
         )
     }
 

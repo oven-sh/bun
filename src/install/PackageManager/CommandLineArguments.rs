@@ -379,6 +379,7 @@ static PACK_PARAMS: &[ParamType] = concat_params![
         clap::param!(
             "--gzip-level <STR>                     Specify a custom compression level for gzip. Default is 9."
         ),
+        clap::param!("--json                                 Output in JSON format"),
         clap::param!("<POS> ...                              "),
     ]
 ];
@@ -387,6 +388,7 @@ static PUBLISH_PARAMS: &[ParamType] = concat_params![
     SHARED_PARAMS,
     &[
         clap::param!("<POS> ...                              Package tarball to publish"),
+        clap::param!("--json                                 Output in JSON format"),
         clap::param!("--access <STR>                         Set access level for scoped packages"),
         clap::param!(
             "--tag <STR>                            Tag the release. Default is \"latest\""

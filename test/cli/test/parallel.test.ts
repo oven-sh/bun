@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
+import { readFileSync } from "fs";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
 
 test("--parallel: each worker has a unique JEST_WORKER_ID and BUN_TEST_WORKER_ID", async () => {
   // Sleep so worker 0 is busy when workers 1/2 come online and pick up the
@@ -1226,6 +1227,86 @@ test("--parallel: SIGTERM on coordinator kills workers and their grandchildren",
     } catch {}
   expect(outstanding).toEqual([]);
 }, 15000);
+
+// With every worker mid-file, the only thing that wakes the coordinator's poll is
+// its own housekeeping (a burst of timers about once a second). A signal handler
+// that does not wake the poll is therefore acted on at the next burst, 0 to ~1s
+// later, depending on when the signal lands. On Linux, wait for a burst (the main
+// thread's voluntary context switch count moves) and for it to settle, so the
+// signal is sent at the start of the ~1s quiet period and such a coordinator
+// reliably takes ~900ms; one that wakes its poll reacts at once either way.
+async function waitForCoordinatorToPark(pid: number) {
+  const switches = () =>
+    Number(/voluntary_ctxt_switches:\s+(\d+)/.exec(readFileSync(`/proc/${pid}/status`, "utf8"))![1]);
+  const deadline = Date.now() + 3000;
+  const before = switches();
+  while (switches() === before && Date.now() < deadline) await Bun.sleep(1);
+  let last = switches();
+  let quietSince = Date.now();
+  while (Date.now() - quietSince < 100 && Date.now() < deadline) {
+    await Bun.sleep(1);
+    const now = switches();
+    if (now !== last) {
+      last = now;
+      quietSince = Date.now();
+    }
+  }
+}
+
+test.skipIf(isWindows).concurrent.each(["SIGTERM", "SIGINT"] as const)(
+  "--parallel: coordinator acts on %s immediately while every worker is mid-file",
+  async signal => {
+    const fixture = `
+      import { test } from "bun:test";
+      import { appendFileSync } from "fs";
+      test("slow", async () => {
+        appendFileSync(process.env.PIDS, process.pid + "\\n");
+        await Bun.sleep(60000);
+      });
+    `;
+    using dir = tempDir("parallel-abort-latency", { "a.test.ts": fixture, "b.test.ts": fixture });
+    const pids = String(dir) + "/pids.txt";
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2", "--parallel-delay=0"],
+      env: { ...bunEnv, PIDS: pids },
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+
+    const workersRunning = () => {
+      try {
+        return readFileSync(pids, "utf8").split("\n").filter(Boolean).length;
+      } catch {
+        return 0;
+      }
+    };
+    while (workersRunning() < 2 && proc.exitCode === null) await Bun.sleep(10);
+    expect(workersRunning()).toBe(2);
+    if (isLinux) await waitForCoordinatorToPark(proc.pid);
+
+    // The "Interrupted" report is the first thing the coordinator does once it
+    // has seen the signal; measure up to that rather than up to exit so process
+    // teardown (slow under ASAN) stays out of the number.
+    const stderr = proc.stderr.getReader();
+    const decoder = new TextDecoder();
+    let seen = "";
+    const start = performance.now();
+    proc.kill(signal);
+    while (!seen.includes("Interrupted")) {
+      const { value, done } = await stderr.read();
+      if (done) break;
+      seen += decoder.decode(value, { stream: true });
+    }
+    const reactedAfterMs = performance.now() - start;
+
+    expect(seen).toContain("Interrupted");
+    expect(reactedAfterMs).toBeLessThan(500);
+    expect(await proc.exited).toBe(130);
+  },
+  15000,
+);
 
 test("--parallel --no-isolate: a worker keeps one global and module registry across its files", async () => {
   const files: Record<string, string> = {

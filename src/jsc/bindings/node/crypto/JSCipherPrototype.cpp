@@ -426,7 +426,7 @@ static EncodedJSValue encodeCipherOutput(JSC::JSGlobalObject* lexicalGlobalObjec
     RETURN_IF_EXCEPTION(scope, {});
     auto callData = JSC::getCallData(method);
     if (callData.type == CallData::Type::None)
-        return throwVMTypeError(lexicalGlobalObject, scope, "this._decoder.write is not a function"_s);
+        return throwVMTypeError(lexicalGlobalObject, scope, end ? "this._decoder.end is not a function"_s : "this._decoder.write is not a function"_s);
     MarkedArgumentBuffer args;
     args.append(output);
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, method, callData, decoderValue, args)));

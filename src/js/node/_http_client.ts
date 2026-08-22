@@ -469,7 +469,12 @@ function ClientRequest(input, options, cb) {
       }
 
       rewriteForProxiedHttp(this, optsWithoutSignal);
-      this._storeHeader(this.method + " " + this.path + " HTTP/1.1\r\n", this[kOutHeaders]);
+      try {
+        this._storeHeader(this.method + " " + this.path + " HTTP/1.1\r\n", this[kOutHeaders]);
+      } catch (e) {
+        otelClientRequestEnd(this, undefined, e);
+        throw e;
+      }
     } else {
       rewriteForProxiedHttp(this, optsWithoutSignal);
     }
@@ -477,7 +482,13 @@ function ClientRequest(input, options, cb) {
     let arrayHeaders = optionsHeaders;
     if (otelHttpClientEnabled()) arrayHeaders = otelClientRequestStart(this, protocol, host, port, arrayHeaders);
     rewriteForProxiedHttp(this, optsWithoutSignal);
-    this._storeHeader(this.method + " " + this.path + " HTTP/1.1\r\n", arrayHeaders);
+    try {
+      this._storeHeader(this.method + " " + this.path + " HTTP/1.1\r\n", arrayHeaders);
+    } catch (e) {
+      // (invalid header name/value) the span was already started; finish it
+      otelClientRequestEnd(this, undefined, e);
+      throw e;
+    }
   }
 
   this[kUniqueHeaders] = parseUniqueHeadersOption(options.uniqueHeaders);

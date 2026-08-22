@@ -247,6 +247,12 @@ pub struct ShellSubprocess {
     pub(crate) stderr: Readable,
 
     pub closed: EnumSet<StdioKind>,
+
+    /// Set by `Cmd::deinit_from_finalizer`: the VM, and with it the event
+    /// loop the exit watch is registered on, is being destroyed, so
+    /// [`Self::close_process`] must tear the watch down rather than leave it
+    /// to reap a still-running child (nothing would ever run it).
+    pub(crate) event_loop_is_shutting_down: bool,
 }
 
 pub(crate) type SignalCode = bun_core::SignalCode;
@@ -352,10 +358,19 @@ impl ShellSubprocess {
             return;
         }
         // SAFETY: `process` was produced by `to_process` (heap::alloc) and is
-        // live until the deref below drops the last strong ref.
+        // live until the deref below drops our strong ref.
         unsafe {
-            (*process).set_exit_handler_default();
-            (*process).close();
+            // The child may still be alive here: a stdio `start()` failure in
+            // `spawn_maybe_sync_impl` or a pipe read error finishing the `Cmd`
+            // both kill it and tear this subprocess down without waiting for
+            // it to exit. `disown` keeps the exit watch armed in that case so
+            // the child is still reaped; the watch drops the `Process` once it
+            // has. After a normal exit both calls are the same `detach()`.
+            if self.event_loop_is_shutting_down {
+                (*process).detach();
+            } else {
+                (*process).disown();
+            }
             // Release the intrusive ref taken by `to_process`. `*mut Process`
             // has no Drop, so this must be explicit.
             bun_ptr::ThreadSafeRefCount::<Process>::deref(process);
@@ -843,6 +858,7 @@ impl ShellSubprocess {
                 stderr,
                 cmd_parent,
                 closed: EnumSet::empty(),
+                event_loop_is_shutting_down: false,
             });
         }
         // Ownership of the now-initialised Box is released as a raw pointer

@@ -626,6 +626,30 @@ impl Process {
         self.exit_handler = ProcessExitHandler::default();
     }
 
+    /// [`Self::detach`] for an owner that is letting go of a child which may
+    /// still be running (typically right after `kill()`). Once the process has
+    /// exited, or nothing is watching it, this is exactly `detach()`. While
+    /// it is alive and watched, `close()` would unregister the watch and leave
+    /// the child as a zombie for the rest of this process's life, because the
+    /// watch is what `wait4`s it. So instead only the exit handler is dropped
+    /// and the watch stops keeping the event loop alive; it stays armed, and
+    /// the exit delivery reaps the child, `close()`s (via `on_exit`) and
+    /// releases the ref it holds on this `Process`. The caller may therefore
+    /// `deref()` its own ref immediately after this returns.
+    ///
+    /// Windows: libuv owns the wait and the `uv_process_t` lives inside this
+    /// struct, so the handle has to be closed before the owner's ref goes
+    /// away; this is plain `detach()` there.
+    pub fn disown(&mut self) {
+        #[cfg(unix)]
+        if !self.has_exited() && self.poller.is_armed() {
+            self.exit_handler = ProcessExitHandler::default();
+            self.disable_keeping_event_loop_alive();
+            return;
+        }
+        self.detach();
+    }
+
     pub fn kill(&mut self, signal: u8) -> Maybe<()> {
         #[cfg(unix)]
         {
@@ -860,6 +884,17 @@ impl PollerPosix {
             PollerPosix::Fd(poll) => Some(unsafe { poll.as_mut() }),
             _ => None,
         }
+    }
+
+    /// Whether an exit delivery is still pending: the pidfd / kqueue poll is
+    /// registered, or the waiter thread has the pid. Either one holds the
+    /// `Process` ref taken in `watch()` / `rewatch_posix()` and `wait4`s the
+    /// child when it exits.
+    fn is_armed(&mut self) -> bool {
+        if let Some(poll) = self.fd_poll_mut() {
+            return poll.is_registered();
+        }
+        matches!(self, PollerPosix::WaiterThread(_))
     }
 
     pub(crate) fn enable_keeping_event_loop_alive(&mut self, ctx: bun_io::EventLoopCtx) {

@@ -70,7 +70,11 @@ struct Syms {
     const uint8_t* (*CFDataGetBytePtr)(CFRef);
     CFRef (*CFStringCreateWithCString)(CFRef, const char*, uint32_t);
     CFRef (*CFNumberCreate)(CFRef, int, const void*);
+    // Returns Apple's `Boolean` (unsigned char); `bool` is ABI-compatible.
+    bool (*CFNumberGetValue)(CFRef, int, void*);
     CFRef (*CFDictionaryCreate)(CFRef, const void**, const void**, long, const void*, const void*);
+    // Returns a borrowed reference; do not release.
+    const void* (*CFDictionaryGetValue)(CFRef, const void*);
     // CoreGraphics
     CFRef (*CGColorSpaceCreateDeviceRGB)();
     void (*CGColorSpaceRelease)(CFRef);
@@ -83,6 +87,8 @@ struct Syms {
     // ImageIO
     CFRef (*CGImageSourceCreateWithData)(CFRef, CFRef);
     CFRef (*CGImageSourceCreateImageAtIndex)(CFRef, size_t, CFRef);
+    // Returned dict is +1-retained; CFRelease it.
+    CFRef (*CGImageSourceCopyPropertiesAtIndex)(CFRef, size_t, CFRef);
     CFRef (*CGImageDestinationCreateWithData)(CFRef, CFRef, size_t, CFRef);
     void (*CGImageDestinationAddImage)(CFRef, CFRef, CFRef);
     bool (*CGImageDestinationFinalize)(CFRef);
@@ -96,6 +102,9 @@ struct Syms {
     // address and dereference at use-site).
     CFRef* kCFAllocatorNull;
     CFRef* kCGImageDestinationLossyCompressionQuality;
+    // CFNumber(SInt32): the container's native bits-per-sample (8/10/12/16),
+    // not the CGImage's render depth.
+    CFRef* kCGImagePropertyDepth;
     const void* kCFTypeDictionaryKeyCallBacks;
     const void* kCFTypeDictionaryValueCallBacks;
 };
@@ -117,7 +126,9 @@ constexpr struct {
     SYM(CFDataGetBytePtr),
     SYM(CFStringCreateWithCString),
     SYM(CFNumberCreate),
+    SYM(CFNumberGetValue),
     SYM(CFDictionaryCreate),
+    SYM(CFDictionaryGetValue),
     SYM(CGColorSpaceCreateDeviceRGB),
     SYM(CGColorSpaceRelease),
     SYM(CGImageCreate),
@@ -128,6 +139,7 @@ constexpr struct {
     SYM(CGDataProviderRelease),
     SYM(CGImageSourceCreateWithData),
     SYM(CGImageSourceCreateImageAtIndex),
+    SYM(CGImageSourceCopyPropertiesAtIndex),
     SYM(CGImageDestinationCreateWithData),
     SYM(CGImageDestinationAddImage),
     SYM(CGImageDestinationFinalize),
@@ -138,6 +150,7 @@ constexpr struct {
     SYM(vImageVerticalReflect_ARGB8888),
     SYM(kCFAllocatorNull),
     SYM(kCGImageDestinationLossyCompressionQuality),
+    SYM(kCGImagePropertyDepth),
     SYM(kCFTypeDictionaryKeyCallBacks),
     SYM(kCFTypeDictionaryValueCallBacks),
 };
@@ -178,6 +191,11 @@ const Syms* load()
 constexpr uint32_t kBunCGImageAlphaLast = 3; // straight RGBA, A in byte 3
 constexpr uint32_t kBunCFStringEncodingUTF8 = 0x08000100;
 constexpr int kBunCFNumberDoubleType = 13;
+constexpr int kBunCFNumberSInt32Type = 3;
+// CGBitmapInfo byte-order flag: 16-bit samples in host order, matching the
+// layout libspng's SPNG_FMT_RGBA16 writes (see Decoded::bit_depth in
+// src/runtime/image/codecs.rs).
+constexpr uint32_t kBunCGBitmapByteOrder16Host = 1u << 12; // 0x1000
 // vImage_Flags — values copied verbatim from <Accelerate/vImage_Types.h>;
 // keep them in sync, the kvImageNoAllocate one used to be wrong (4 vs 512)
 // and silently turned every CG decode into 0xAA garbage in debug builds.
@@ -256,12 +274,13 @@ enum : int32_t { CG_OK = 0,
     CG_ENCODE_FAILED = 3,
     CG_TOO_MANY_PIXELS = 4 };
 
-// Decode `bytes[0..len)` into a caller-allocated RGBA8 buffer.
-// Two-phase: pass `out=nullptr` to get dimensions; then call again with a
-// buffer of `w*h*4` to fill it. Avoids allocating in C++ so the caller owns
-// the buffer like every other decode path.
+// Decode `bytes[0..len)` into a caller-allocated RGBA buffer. Two-phase:
+// pass `out=nullptr` to get dimensions and `*out_bit_depth` (8, or 16 for
+// sources whose ImageIO-reported depth is >= 9); then call again with a
+// buffer of `w*h*bit_depth/2` bytes. Avoids allocating in C++ so the caller
+// owns the buffer like every other decode path.
 int32_t bun_coregraphics_decode(const uint8_t* bytes, size_t len, uint64_t max_pixels,
-    uint32_t* out_w, uint32_t* out_h, uint8_t* out)
+    uint32_t* out_w, uint32_t* out_h, uint8_t* out_bit_depth, uint8_t* out)
 {
     auto s = load();
     if (!s) return CG_UNAVAILABLE;
@@ -289,26 +308,48 @@ int32_t bun_coregraphics_decode(const uint8_t* bytes, size_t len, uint64_t max_p
     size_t w = s->CGImageGetWidth(r.img);
     size_t h = s->CGImageGetHeight(r.img);
     if (w == 0 || h == 0) return CG_DECODE_FAILED;
-    if (static_cast<uint64_t>(w) * h > max_pixels) return CG_TOO_MANY_PIXELS;
+    uint32_t bit_depth = 8;
+    {
+        CFRef props = s->CGImageSourceCopyPropertiesAtIndex(r.src, 0, nullptr);
+        if (props) {
+            const void* v = s->CFDictionaryGetValue(props, *s->kCGImagePropertyDepth);
+            if (v) {
+                int32_t raw = 0;
+                if (s->CFNumberGetValue(reinterpret_cast<CFRef>(const_cast<void*>(v)), kBunCFNumberSInt32Type, &raw)) {
+                    // vImage widens 10/12-bit samples to u16, so > 8 bpc maps to 16.
+                    if (raw >= 9) bit_depth = 16;
+                }
+            }
+            s->CFRelease(props);
+        }
+    }
+    // 16-bpc doubles bytes/pixel; halve the pixel budget so the byte cap
+    // stays constant (same as src/runtime/image/codec_png.rs).
+    const uint64_t effective_max_pixels = (bit_depth == 16) ? (max_pixels / 2) : max_pixels;
+    if (static_cast<uint64_t>(w) * h > effective_max_pixels) return CG_TOO_MANY_PIXELS;
     if (!out) {
         *out_w = static_cast<uint32_t>(w);
         *out_h = static_cast<uint32_t>(h);
+        *out_bit_depth = static_cast<uint8_t>(bit_depth);
         return CG_OK; // dimensions-only probe
     }
     // TOCTOU guard: the input is a borrowed-but-mutable JS slice and this runs
-    // on a WorkPool thread, so JS could rewrite it with a *larger* image
-    // between the size probe and this render. The caller's `out` is sized for
-    // *out_w × *out_h from phase 1; refuse to draw past it.
-    if (w != *out_w || h != *out_h) return CG_DECODE_FAILED;
+    // on a WorkPool thread, so JS could rewrite it between the size probe and
+    // this render. The caller's `out` is sized from phase 1's dims/bit_depth;
+    // refuse to draw past it.
+    if (w != *out_w || h != *out_h || bit_depth != *out_bit_depth) return CG_DECODE_FAILED;
 
     r.cs = s->CGColorSpaceCreateDeviceRGB();
     if (!r.cs) return CG_UNAVAILABLE;
     // vImage converts directly to the requested format — including
     // non-premultiplied alpha, which CGBitmapContext refuses — so the result
     // is straight RGBA with no premul→unpremul quantisation. kvImageNoAllocate
-    // makes it write into the caller's bun.default_allocator buffer.
-    VBuf buf { out, h, w, w * 4 };
-    VFmt fmt { 8, 32, r.cs, kBunCGImageAlphaLast, 0, nullptr, 0 };
+    // makes it write into the caller's bun.default_allocator buffer. 16-bpc
+    // uses host byte order to match libspng's RGBA16 layout.
+    const uint32_t bpp = bit_depth == 16 ? 64 : 32;
+    const uint32_t bitmap_info = kBunCGImageAlphaLast | (bit_depth == 16 ? kBunCGBitmapByteOrder16Host : 0u);
+    VBuf buf { out, h, w, w * (bpp / 8) };
+    VFmt fmt { bit_depth, bpp, r.cs, bitmap_info, 0, nullptr, 0 };
     auto rc = s->vImageBuffer_InitWithCGImage(&buf, &fmt, nullptr, r.img, kBunVImageNoAllocate);
     // The contract is that kvImageNoAllocate honours buf.data exactly, but be
     // defensive: an OS that ignored the flag would set buf.data to its own
@@ -555,7 +596,7 @@ int64_t bun_coregraphics_clipboard_change_count()
 #else
 // Non-Apple: stubs so the link succeeds; callers only reference these on
 // macOS so they're dead code, but LTO needs the definitions.
-extern "C" int bun_coregraphics_decode(const void*, unsigned long, unsigned long long, void*, void*, void*) { return 1; }
+extern "C" int bun_coregraphics_decode(const void*, unsigned long, unsigned long long, void*, void*, void*, void*) { return 1; }
 extern "C" int bun_coregraphics_encode(const void*, unsigned, unsigned, int, int, void*, void*) { return 1; }
 extern "C" int bun_coregraphics_scale(const void*, unsigned, unsigned, void*, unsigned, unsigned) { return 1; }
 extern "C" int bun_coregraphics_rotate90(const void*, unsigned, unsigned, void*, unsigned) { return 1; }

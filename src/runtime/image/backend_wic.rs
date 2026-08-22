@@ -115,19 +115,33 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, B
     if frame.get_size(&mut w, &mut h) < 0 || w == 0 || h == 0 {
         return Err(DecodeFailed);
     }
-    if (w as u64) * (h as u64) > max_pixels {
+
+    // Sources carrying > 8 bpc convert to 64bppRGBA so the precision
+    // survives to PNG 16-bpc encode (#30462); everything else stays 32bppRGBA.
+    let mut src_pf = GUID_WICPixelFormat32bppRGBA;
+    if frame.get_pixel_format(&mut src_pf) < 0 {
+        return Err(DecodeFailed);
+    }
+    let want_16 = is_high_bit_depth_source(&src_pf);
+    // 16-bpc doubles bytes/pixel; halve the pixel budget so the byte cap
+    // stays constant (same as codec_png::decode).
+    let effective_max_pixels: u64 = if want_16 { max_pixels / 2 } else { max_pixels };
+    if (w as u64) * (h as u64) > effective_max_pixels {
         return Err(TooManyPixels);
     }
 
-    // WIC frames come in whatever pixel format the codec emits; normalise to
-    // straight-alpha RGBA8 in one hop.
     let convert_fn = wicConvertBitmapSource
         .get()
         .copied()
         .ok_or(BackendUnavailable)?;
+    let dst_pf: &GUID = if want_16 {
+        &GUID_WICPixelFormat64bppRGBA
+    } else {
+        &GUID_WICPixelFormat32bppRGBA
+    };
     let mut conv: *mut IWICBitmapSource = ptr::null_mut();
     // SAFETY: convert_fn resolved from windowscodecs.dll; frame is non-null.
-    if unsafe { convert_fn(&GUID_WICPixelFormat32bppRGBA, frame.as_ptr(), &mut conv) } < 0 {
+    if unsafe { convert_fn(dst_pf, frame.as_ptr(), &mut conv) } < 0 {
         return Err(DecodeFailed);
     }
     let conv = ComPtr::new(conv).ok_or(DecodeFailed)?;
@@ -136,7 +150,8 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, B
     // Compute stride/size in u64 first: with `maxPixels` raised past ~1.07B,
     // `w * 4` can wrap u32 (0x4000_0001×4 → 4); the checked cast below is a
     // process abort, not silent truncation.
-    let stride: u64 = (w as u64) * 4;
+    let bytes_per_pixel: u64 = if want_16 { 8 } else { 4 };
+    let stride: u64 = (w as u64) * bytes_per_pixel;
     let out_len: u64 = stride * (h as u64);
     // CopyPixels takes UINT byte-count + UINT stride — same DWORD ceiling.
     if out_len > u32::MAX as u64 {
@@ -154,11 +169,12 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, B
     }
 
     // System backends colour-manage into sRGB during decode (WICConvertBitmapSource
-    // → 32bppRGBA), so the source ICC profile is consumed, not forwarded.
+    // → 32/64bppRGBA), so the source ICC profile is consumed, not forwarded.
     Ok(codecs::Decoded {
         rgba: out,
         width: w,
         height: h,
+        bit_depth: if want_16 { 16 } else { 8 },
         icc_profile: None,
     })
 }
@@ -542,6 +558,10 @@ impl ComPtr<IWICBitmapSource> {
         unsafe { ((*(*self.as_ptr()).vt).GetSize)(self.as_ptr(), w, h) }
     }
     #[inline]
+    fn get_pixel_format(self, out: &mut GUID) -> HRESULT {
+        unsafe { ((*(*self.as_ptr()).vt).GetPixelFormat)(self.as_ptr(), out) }
+    }
+    #[inline]
     fn copy_pixels(self, rc: *const c_void, stride: u32, size: u32, out: *mut u8) -> HRESULT {
         unsafe { ((*(*self.as_ptr()).vt).CopyPixels)(self.as_ptr(), rc, stride, size, out) }
     }
@@ -703,7 +723,8 @@ struct IWICBitmapSource {
 struct IWICBitmapSourceVTable {
     unk: IUnknownVTable,
     GetSize: unsafe extern "system" fn(*mut IWICBitmapSource, *mut u32, *mut u32) -> HRESULT,
-    GetPixelFormat: *const c_void,
+    // Native pixel-format GUID; drives the 32 vs 64 bppRGBA convert target.
+    GetPixelFormat: unsafe extern "system" fn(*mut IWICBitmapSource, *mut GUID) -> HRESULT,
     GetResolution: *const c_void,
     CopyPalette: *const c_void,
     CopyPixels: unsafe extern "system" fn(
@@ -783,6 +804,91 @@ const GUID_WICPixelFormat32bppRGBA: GUID = GUID {
     d3: 0x43dd,
     d4: [0xa7, 0xa8, 0xa2, 0x99, 0x35, 0x26, 0x1a, 0xe9],
 };
+/// Straight-alpha 16-bpc RGBA, host-endian u16, same layout as libspng's
+/// SPNG_FMT_RGBA16. (The 0x17-suffix variant is premultiplied; don't use it.)
+const GUID_WICPixelFormat64bppRGBA: GUID = GUID {
+    d1: 0x6fddc324,
+    d2: 0x4e03,
+    d3: 0x4bfe,
+    d4: [0xb1, 0x85, 0x3d, 0x77, 0x76, 0x8d, 0xc9, 0x16],
+};
+
+/// Most WIC pixel formats share the `{6fddc324-4e03-4bfe-b185-3d77768dc9XX}`
+/// family and differ only in the final byte.
+const fn wic_pf(suffix: u8) -> GUID {
+    GUID {
+        d1: 0x6fddc324,
+        d2: 0x4e03,
+        d3: 0x4bfe,
+        d4: [0xb1, 0x85, 0x3d, 0x77, 0x76, 0x8d, 0xc9, suffix],
+    }
+}
+
+/// Source pixel formats carrying > 8 bpc; a format not listed decodes at 8.
+/// Half/Float/FixedPoint families are included because
+/// WICConvertBitmapSource widens them to clamped u16.
+const HIGH_BPC_SOURCES: [GUID; 20] = [
+    // 16bppGray (the common 16-bit grayscale TIFF: microscopy, scans) +
+    // 32bppGrayFloat / 16bppGrayFixedPoint / 16bppGrayHalf /
+    // 32bppGrayFixedPoint. Gray widens to neutral RGB (R=G=B).
+    wic_pf(0x0b),
+    wic_pf(0x11),
+    wic_pf(0x13),
+    wic_pf(0x3e),
+    wic_pf(0x3f),
+    // 48bppRGB / 48bppBGR (common TIFF-16 variants).
+    wic_pf(0x15),
+    GUID {
+        d1: 0xe605a384,
+        d2: 0xb468,
+        d3: 0x46ce,
+        d4: [0xbb, 0x2e, 0x36, 0xf1, 0x80, 0xe6, 0x43, 0x13],
+    },
+    // 64bppRGBA (straight & premultiplied) + 64bppBGRA.
+    wic_pf(0x16),
+    wic_pf(0x17),
+    GUID {
+        d1: 0x1562ff7c,
+        d2: 0xd352,
+        d3: 0x46f9,
+        d4: [0x97, 0x9e, 0x42, 0x97, 0x6b, 0x79, 0x22, 0x46],
+    },
+    // 64bppRGB — 16-bpc no-alpha.
+    GUID {
+        d1: 0xa1182111,
+        d2: 0x186d,
+        d3: 0x4d42,
+        d4: [0xbc, 0x6a, 0x9c, 0x83, 0x03, 0xa8, 0xdf, 0xf9],
+    },
+    // 48bppRGBHalf / 48bppRGBFixedPoint — emitted by HDR TIFF encoders.
+    wic_pf(0x3b),
+    wic_pf(0x12),
+    // 64bppRGBHalf / 64bppRGBAHalf / 64bppRGBAFixedPoint /
+    // 64bppRGBFixedPoint / 128bppRGBFixedPoint.
+    wic_pf(0x42),
+    wic_pf(0x3a),
+    wic_pf(0x1d),
+    wic_pf(0x40),
+    wic_pf(0x41),
+    // 32bppR10G10B10A2 / 32bppR10G10B10A2HDR10: packed 10-bit, scaled
+    // losslessly to u16 by WICConvertBitmapSource.
+    GUID {
+        d1: 0x604e1bb5,
+        d2: 0x8a3c,
+        d3: 0x4b65,
+        d4: [0xb1, 0x1c, 0xbc, 0x0b, 0x8d, 0xd7, 0x5b, 0x7f],
+    },
+    GUID {
+        d1: 0x9c215c5d,
+        d2: 0x1acc,
+        d3: 0x4f0e,
+        d4: [0xa4, 0xbc, 0x70, 0xfb, 0x3a, 0xe8, 0xfd, 0x28],
+    },
+];
+
+fn is_high_bit_depth_source(g: &GUID) -> bool {
+    HIGH_BPC_SOURCES.iter().any(|h| h == g)
+}
 const GUID_ContainerFormatJpeg: GUID = GUID {
     d1: 0x19e4a5aa,
     d2: 0x5662,

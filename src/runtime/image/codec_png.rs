@@ -72,6 +72,9 @@ struct Ihdr {
 
 const SPNG_CTX_ENCODER: c_int = 2;
 const SPNG_FMT_RGBA8: c_int = 1;
+/// 16-bpc RGBA, host-endian u16; libspng does the big-endian conversion
+/// both ways.
+const SPNG_FMT_RGBA16: c_int = 2;
 const SPNG_FMT_PNG: c_int = 256;
 const SPNG_DECODE_TRNS: c_int = 1; // apply tRNS chunk so paletted/grey get real alpha
 const SPNG_ENCODE_FINALIZE: c_int = 2;
@@ -117,24 +120,30 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
     if unsafe { spng_get_ihdr(ctx, &raw mut ihdr) } != 0 {
         return Err(codecs::Error::DecodeFailed);
     }
-    codecs::guard(ihdr.width, ihdr.height, max_pixels)?;
+    // Only a 16-bpc IHDR needs the wider internal format; libspng expands
+    // every other colour type / depth to RGBA8 itself.
+    let fmt: c_int = if ihdr.bit_depth == 16 {
+        SPNG_FMT_RGBA16
+    } else {
+        SPNG_FMT_RGBA8
+    };
+    let bit_depth: u8 = if ihdr.bit_depth == 16 { 16 } else { 8 };
+    // 16-bpc doubles bytes-per-pixel; halve the pixel budget so the byte
+    // cap (`DEFAULT_MAX_PIXELS` targets ~1 GiB) stays constant.
+    let effective_max_pixels: u64 = if ihdr.bit_depth == 16 {
+        max_pixels / 2
+    } else {
+        max_pixels
+    };
+    codecs::guard(ihdr.width, ihdr.height, effective_max_pixels)?;
     let mut size: usize = 0;
     // SAFETY: ctx is valid; size is a valid out-ptr.
-    if unsafe { spng_decoded_image_size(ctx, SPNG_FMT_RGBA8, &raw mut size) } != 0 {
+    if unsafe { spng_decoded_image_size(ctx, fmt, &raw mut size) } != 0 {
         return Err(codecs::Error::DecodeFailed);
     }
     let mut out: Vec<u8> = Vec::with_capacity(size);
     // SAFETY: ctx is valid; out has `size` bytes of capacity, which libspng only writes.
-    if unsafe {
-        spng_decode_image(
-            ctx,
-            out.as_mut_ptr(),
-            size,
-            SPNG_FMT_RGBA8,
-            SPNG_DECODE_TRNS,
-        )
-    } != 0
-    {
+    if unsafe { spng_decode_image(ctx, out.as_mut_ptr(), size, fmt, SPNG_DECODE_TRNS) } != 0 {
         return Err(codecs::Error::DecodeFailed);
     }
     // SAFETY: libspng returns 0 only once it reached end-of-image, i.e. wrote all `size` bytes.
@@ -164,6 +173,7 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
         rgba: out,
         width: ihdr.width,
         height: ihdr.height,
+        bit_depth,
         icc_profile: icc,
     })
 }
@@ -198,13 +208,19 @@ fn embed_iccp(ctx: *mut spng_ctx, icc_profile: Option<&[u8]>) {
     let _ = unsafe { spng_set_iccp(ctx, &raw const iccp) };
 }
 
+/// `bit_depth` is 8 or 16; 16-bpc input is host-endian u16 RGBA (libspng
+/// converts to PNG's big-endian wire format itself via `SPNG_FMT_PNG`).
 pub(crate) fn encode(
     rgba: &[u8],
     w: u32,
     h: u32,
+    bit_depth: u8,
     level: i8,
     icc_profile: Option<&[u8]>,
 ) -> Result<codecs::Encoded, codecs::Error> {
+    if bit_depth != 8 && bit_depth != 16 {
+        return Err(codecs::Error::EncodeFailed);
+    }
     // SAFETY: spng_ctx_new is safe to call; null return = OOM.
     let ctx = unsafe { spng_ctx_new(SPNG_CTX_ENCODER) };
     if ctx.is_null() {
@@ -225,7 +241,7 @@ pub(crate) fn encode(
     let ihdr = Ihdr {
         width: w,
         height: h,
-        bit_depth: 8,
+        bit_depth,
         color_type: SPNG_COLOR_TYPE_TRUECOLOR_ALPHA,
         ..Default::default()
     };

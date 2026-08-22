@@ -5945,7 +5945,10 @@ long syscall(long nr, ...) {
       target[n] = 0;
       const char *base = strrchr(target, '/');
       base = base ? base + 1 : target;
-      if (strcmp(base, "bun-race-doomed-iter-dir") == 0) {
+      // "probe-getdents" doubles as the interposition probe for this hook:
+      // child.js checks that reading it really removed it.
+      if (strcmp(base, "bun-race-doomed-iter-dir") == 0 ||
+          strcmp(base, "bun-shim-probe-getdents-dir") == 0) {
         // The concurrent deleter rmdirs the dir mid-iteration; the real
         // getdents64 on the dead dir then reports ENOENT.
         rmdir(target);
@@ -5969,6 +5972,15 @@ if (!fs.existsSync("bun-shim-probe-keep.txt")) {
   console.error("shim did not interpose unlinkat");
   process.exit(3);
 }
+// Probe for the getdents64 hook: reading this dir makes the shim remove it.
+// The read itself reports the dead-dir ENOENT, which is not the point here.
+try {
+  fs.readdirSync("bun-shim-probe-getdents-dir");
+} catch {}
+if (fs.existsSync("bun-shim-probe-getdents-dir")) {
+  console.error("shim did not interpose syscall(getdents64)");
+  process.exit(3);
+}
 fs.rmSync("root", { recursive: true, force: true });
 if (fs.existsSync("root")) {
   console.error("leftover tree: " + JSON.stringify(fs.readdirSync("root", { recursive: true })));
@@ -5982,6 +5994,7 @@ if (fs.existsSync("root")) {
   fs.mkdirSync(path.join(String(dir), "root", deepChain, "bun-race-doomed-ne-dir"), { recursive: true });
   // Empty dir whose getdents64 the shim turns into the dead-dir ENOENT.
   fs.mkdirSync(path.join(String(dir), "root", "bun-race-doomed-iter-dir"));
+  fs.mkdirSync(path.join(String(dir), "bun-shim-probe-getdents-dir"));
 
   const soPath = path.join(String(dir), "shim.so");
   const compile = Bun.spawnSync({

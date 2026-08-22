@@ -103,27 +103,26 @@ fn list_dir(dir: &[u8]) -> std::io::Result<Vec<(Vec<u8>, bun_sys::FileKind)>> {
     let fd = bun_sys::open_dir_for_iteration(bun_sys::Fd::cwd(), dir).map_err(sys_err)?;
     let mut out = Vec::new();
     let mut iter = bun_sys::iterate_dir(fd);
-    loop {
+    let result: std::io::Result<()> = loop {
         match iter.next() {
             Ok(Some(entry)) => {
                 let name = entry.name.slice_u8().to_vec();
                 let kind = match entry.kind {
-                    bun_sys::FileKind::Unknown => {
-                        lstat_kind(&join(dir, &name))?.unwrap_or(bun_sys::FileKind::Unknown)
-                    }
+                    bun_sys::FileKind::Unknown => match lstat_kind(&join(dir, &name)) {
+                        Ok(k) => k.unwrap_or(bun_sys::FileKind::Unknown),
+                        Err(e) => break Err(e),
+                    },
                     k => k,
                 };
                 out.push((name, kind));
             }
-            Ok(None) => break,
-            Err(e) => {
-                let _ = bun_sys::close(fd);
-                return Err(sys_err(e));
-            }
+            Ok(None) => break Ok(()),
+            Err(e) => break Err(sys_err(e)),
         }
-    }
+    };
     drop(iter);
     let _ = bun_sys::close(fd);
+    result?;
     out.sort_by(|a, b| a.0.cmp(&b.0));
     Ok(out)
 }
@@ -142,7 +141,9 @@ fn rm_rf(p: &[u8]) {
 
 #[allow(clippy::needless_pass_by_value)] // used as `.map_err(sys_err)`
 fn sys_err(e: bun_sys::Error) -> std::io::Error {
-    std::io::Error::from_raw_os_error(i32::from(e.errno))
+    // keep the syscall + path in the message, and the errno as the kind
+    let kind = std::io::Error::from_raw_os_error(i32::from(e.errno)).kind();
+    std::io::Error::new(kind, format!("{e}"))
 }
 
 /// `std::io::Read` over a `bun_sys::File`.
@@ -158,19 +159,6 @@ impl Write for FileWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         self.0.write_all(buf).map_err(sys_err)?;
         Ok(buf.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-/// `std::io::Write` over a borrowed fd (the `Tmpfile` keeps ownership).
-struct FdWriter(bun_sys::Fd);
-impl Write for FdWriter {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        bun_sys::File { handle: self.0 }
-            .write_all(buf)
-            .map_err(sys_err)
-            .map(|()| buf.len())
     }
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
@@ -307,7 +295,12 @@ fn pack_dir(
                 let mode = st.st_mode as u32;
                 #[cfg(not(unix))]
                 let mode = 0o644u32;
-                let size = u64::try_from(st.st_size).unwrap_or(0);
+                let size = u64::try_from(st.st_size).map_err(|_| {
+                    std::io::Error::other(format!(
+                        "{} reports a negative size",
+                        bstr::BStr::new(&abs)
+                    ))
+                })?;
                 // header first (size from fstat), then stream the contents in chunks —
                 // peak memory is one buffer, not the largest file
                 write_header(w, 2, &child_rel, mode, size)?;
@@ -346,7 +339,8 @@ pub fn pack(
         bun_paths::fs::FileSystem::tmpname(b"pack", &mut tmpname_buf, bun_wyhash::hash(out_path))
             .map_err(|_| std::io::Error::other("could not build a temporary file name"))?;
     let mut tmpfile = bun_sys::Tmpfile::create(out_dir_fd, tmpname).map_err(sys_err)?;
-    let result = pack_impl(&folders, cache_dir, FdWriter(tmpfile.fd)).and_then(|s| {
+    // `bun_sys::FileWriter` borrows the fd; the Tmpfile keeps ownership.
+    let result = pack_impl(&folders, cache_dir, bun_sys::FileWriter(tmpfile.fd)).and_then(|s| {
         let dest = z(bun_paths::basename(out_path));
         tmpfile.finish(&dest).map_err(sys_err)?;
         Ok(s)
@@ -363,7 +357,7 @@ pub fn pack(
 fn pack_impl(
     folders: &[(Vec<u8>, bool)],
     cache_dir: &[u8],
-    file: FdWriter,
+    file: bun_sys::FileWriter,
 ) -> std::io::Result<PackSummary> {
     let mut w = BufWriter::with_capacity(1 << 20, file);
     w.write_all(MAGIC)?;
@@ -448,6 +442,54 @@ fn symlink_target_stays_inside(link_path: &[u8], target: &[u8]) -> bool {
     true
 }
 
+/// Create a package's symlinks after all of its files and directories exist. Each
+/// link is re-checked against the tree as it now stands: no component of the link's
+/// own path, and no component of its target (resolved from the link's directory), may
+/// be a symlink — so one link can never be used to smuggle another link's target (or a
+/// later file) out of the package, whatever order the records arrived in. Links whose
+/// target passes through another link are refused rather than resolved.
+fn create_links(staging: &[u8], links: &mut Vec<(Vec<u8>, Vec<u8>)>) -> std::io::Result<()> {
+    for (rel, target) in links.drain(..) {
+        let no_link_components = |base: &[u8], rel_path: &[u8]| -> std::io::Result<bool> {
+            let mut p = base.to_vec();
+            for comp in strings::split_any(rel_path, b"/\\").filter(|c| !c.is_empty()) {
+                match comp {
+                    b"." => continue,
+                    b".." => {
+                        // stays inside by construction (checked lexically); pop a component
+                        if let Some(parent) = parent(&p) {
+                            p = parent.to_vec();
+                        }
+                        continue;
+                    }
+                    _ => p = join(&p, comp),
+                }
+                if lstat_kind(&p)? == Some(bun_sys::FileKind::SymLink) {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        };
+        let dest = join(staging, &rel);
+        let link_dir = parent(&dest).unwrap_or(staging).to_vec();
+        if !no_link_components(staging, &rel)? || !no_link_components(&link_dir, &target)? {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "pack entry {} -> {} passes through another symlink; delete the pack file and re-create it with `bun pm cache pack`",
+                    bstr::BStr::new(&rel),
+                    bstr::BStr::new(&target)
+                ),
+            ));
+        }
+        if let Some(dir) = parent(&dest) {
+            mkdir_p(dir)?;
+        }
+        bun_sys::symlinkat(&z(&target), bun_sys::Fd::cwd(), &z(&dest)).map_err(sys_err)?;
+    }
+    Ok(())
+}
+
 /// A cache folder name is either `name@ver…` or `@scope/name@ver…` (one slash).
 fn safe_folder_name(name: &[u8]) -> bool {
     if !safe_rel(name) || strings::contains_char(name, b'\\') || name == b"." || name == b".." {
@@ -504,13 +546,18 @@ fn unpack_impl(cache_dir: &[u8], pack_path: &[u8]) -> std::io::Result<UnpackSumm
     // ever removed (on failure, by `unpack`), so a concurrent unpack is never disturbed.
     // current folder: (final path, staging path) — None while skipping an existing one
     let mut current: Option<(Vec<u8>, Vec<u8>)> = None;
+    // symlink records of the current package, created only once every other entry of
+    // the package exists (see `create_links`)
+    let mut pending_links: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
     let mut skipping = false;
     let pid = std::process::id();
 
     let finish = |cur: &mut Option<(Vec<u8>, Vec<u8>)>,
+                  pending_links: &mut Vec<(Vec<u8>, Vec<u8>)>,
                   summary: &mut UnpackSummary|
      -> std::io::Result<()> {
         if let Some((final_path, staging)) = cur.take() {
+            create_links(&staging, pending_links)?;
             match rename(&staging, &final_path) {
                 Ok(()) => summary.created += 1,
                 Err(e) if is_dir(&final_path) => {
@@ -543,11 +590,11 @@ fn unpack_impl(cache_dir: &[u8], pack_path: &[u8]) -> std::io::Result<UnpackSumm
         let size = u64::from_le_bytes(u64b);
         match kind[0] {
             0 => {
-                finish(&mut current, &mut summary)?;
+                finish(&mut current, &mut pending_links, &mut summary)?;
                 break;
             }
             1 => {
-                finish(&mut current, &mut summary)?;
+                finish(&mut current, &mut pending_links, &mut summary)?;
                 if !safe_folder_name(&path) {
                     return Err(bad("unsafe cache folder name in pack", record_no));
                 }
@@ -605,7 +652,15 @@ fn unpack_impl(cache_dir: &[u8], pack_path: &[u8]) -> std::io::Result<UnpackSumm
                 }
                 let (_, staging) = current.as_ref().unwrap();
                 let dest = join(staging, &path);
-                // refuse to traverse a symlink materialized earlier in this package
+                // refuse an entry placed under one of this package's (pending) symlinks …
+                if pending_links.iter().any(|(link, _)| {
+                    path.len() > link.len()
+                        && path.starts_with(link.as_slice())
+                        && matches!(path[link.len()], b'/' | b'\\')
+                }) {
+                    return Err(bad("pack entry traverses a symlink", record_no));
+                }
+                // … or under a symlink that already exists on disk
                 {
                     let mut p = staging.clone();
                     let comps: Vec<&[u8]> = strings::split_any(&path, b"/\\")
@@ -634,11 +689,7 @@ fn unpack_impl(cache_dir: &[u8], pack_path: &[u8]) -> std::io::Result<UnpackSumm
                         if !symlink_target_stays_inside(&path, &target) {
                             return Err(bad("unsafe symlink target in pack", record_no));
                         }
-                        if let Some(parent) = parent(&dest) {
-                            mkdir_p(parent)?;
-                        }
-                        bun_sys::symlinkat(&z(&target), bun_sys::Fd::cwd(), &z(&dest))
-                            .map_err(sys_err)?;
+                        pending_links.push((path.clone(), target));
                     }
                     _ => {
                         if let Some(parent) = parent(&dest) {

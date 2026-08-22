@@ -116,7 +116,7 @@ it("bun pm cache pack / unpack round-trips exactly the cache entries a lockfile 
   expect(r.err).toContain("expected exactly one <file>");
   expect(r.code).toBe(1);
   r = await run(["pm", "cache", "pack", ""], package_dir, cache2);
-  expect(r.err).toContain("expected exactly one <file>");
+  expect(r.err).toContain("must not be empty");
   expect(r.code).toBe(1);
 });
 
@@ -210,6 +210,23 @@ it("bun pm cache unpack refuses hostile packs", async () => {
   r = await run(["pm", "cache", "unpack", join(dir, "climb.pack")], dir, cache);
   expect(r.err).toContain("unsafe symlink target");
   expect(r.code).not.toBe(0);
+
+  // a target that only escapes by passing *through* another (self-referential) link:
+  // lexically inside, physically outside — must be refused
+  await writeFile(
+    join(dir, "chain.pack"),
+    Buffer.concat([
+      MAGIC,
+      rec(1, "chain@1.0.0", 0, ""),
+      rec(3, "same", 0o777, "."),
+      rec(3, "x", 0o777, "same/same/../../" + basename(victim)),
+      rec(0, "", 0, ""),
+    ]),
+  );
+  r = await run(["pm", "cache", "unpack", join(dir, "chain.pack")], dir, join(victim, "..", basename(cache)));
+  expect(r.err).toContain("passes through another symlink");
+  expect(r.code).not.toBe(0);
+  expect((await readdirSorted(join(victim, "..", basename(cache)))).filter(n => n.startsWith("chain"))).toEqual([]);
 
   // an absurd symlink target length
   await writeFile(

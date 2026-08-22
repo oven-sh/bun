@@ -584,6 +584,12 @@ Server.prototype.listen = function () {
     this.once("listening", lastArg);
   }
 
+  // Each listen() creates a new native listener, so a second call on a server
+  // that already has one would leak the first (still accepting, never closed).
+  if (this[serverSymbol]) {
+    throw $ERR_SERVER_ALREADY_LISTEN();
+  }
+
   try {
     // listenInCluster
 

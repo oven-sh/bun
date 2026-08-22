@@ -390,6 +390,47 @@ test("expect.extend with numeric index keys does not crash", () => {
   expect(typeof expect[1073741820]).toBe("function");
 });
 
+if (isBun) {
+  // Like Jest, Bun ignores a `toAsymmetricMatcher` property on the matcher function
+  // and prints the asymmetric matcher in the default `<name> [args]` form.
+  it("ignores a toAsymmetricMatcher property on the matcher function", () => {
+    let hookCalls = 0;
+    /** @param {unknown} actual @param {number} divisor */
+    function _toBeDivisibleByHooked(actual, divisor) {
+      return { pass: typeof actual === "number" && actual % divisor === 0, message: () => "" };
+    }
+    _toBeDivisibleByHooked.toAsymmetricMatcher = () => {
+      hookCalls++;
+      return "DivisibleBy<3>";
+    };
+    /** @type {string | undefined} */
+    let stringified;
+    expect.extend({
+      _toBeDivisibleByHooked,
+      _stringifyActual(actual) {
+        stringified = this.utils.stringify(actual);
+        return { pass: true, message: () => "" };
+      },
+    });
+    const anyExpect = /** @type {any} */ (expect);
+
+    let message = "";
+    try {
+      expect({ n: 7 }).toEqual({ n: anyExpect._toBeDivisibleByHooked(3) });
+    } catch (err) {
+      message = Bun.stripANSI(/** @type {Error} */ (err).message);
+    }
+    expect(message).toContain('"n": _toBeDivisibleByHooked [');
+    expect(message).not.toContain("[object Object]");
+    expect(message).not.toContain("DivisibleBy<3>");
+
+    anyExpect(anyExpect.not._toBeDivisibleByHooked(3))._stringifyActual();
+    expect(stringified).toStartWith("not _toBeDivisibleByHooked [");
+    expect(stringified).not.toContain("[object Object]");
+    expect(hookCalls).toBe(0);
+  });
+}
+
 describe("MatcherContext", () => {
   describe("utils", () => {
     test("RECEIVED_COLOR is a function", () => {

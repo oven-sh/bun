@@ -256,6 +256,22 @@ describe.concurrent("OTLP/HTTP exporter", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("a start() that throws (bad URL) leaves the previously configured exporters in place", async () => {
+    using c = collector();
+    const script = `
+      Bun.otel.start({ exporters: [process.env.C] });
+      let threw = false;
+      try { Bun.otel.start({ exporters: [{ url: "not a url" }] }); } catch { threw = true; }
+      Bun.otel.tracer("t").startSpan("still-exported").end();
+      await Bun.otel.forceFlush();
+      console.log(threw);
+    `;
+    const { stdout, exitCode } = await run(script, { C: c.url });
+    expect(stdout.trim()).toBe("true");
+    expect(c.spans().map((s: any) => s.name)).toEqual(["still-exported"]);
+    expect(exitCode).toBe(0);
+  });
+
   test("vendor presets: endpoint path and auth headers", async () => {
     using c = collector();
     const script = `

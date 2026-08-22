@@ -102,7 +102,8 @@ pub struct Processor {
     idle: Condvar,
     idle_lock: Guarded<()>,
     pub stats: Stats,
-    idle_hooks: RwLock<Vec<Box<dyn Fn() + Send + Sync>>>,
+    /// `(owner key, hook)`; owners remove theirs with [`Processor::remove_idle_hooks`].
+    idle_hooks: RwLock<Vec<(usize, Box<dyn Fn() + Send + Sync>)>>,
 }
 
 #[derive(Default)]
@@ -231,8 +232,12 @@ impl Processor {
         }
     }
 
-    pub fn on_idle(&self, f: Box<dyn Fn() + Send + Sync>) {
-        self.idle_hooks.write().push(f);
+    pub fn on_idle(&self, owner: usize, f: Box<dyn Fn() + Send + Sync>) {
+        self.idle_hooks.write().push((owner, f));
+    }
+
+    pub fn remove_idle_hooks(&self, owner: usize) {
+        self.idle_hooks.write().retain(|(o, _)| *o != owner);
     }
 
     /// Instrumentation scope for a user tracer (`Bun.otel.tracer(name, version)`).
@@ -413,7 +418,7 @@ impl Processor {
                 let _g = self.idle_lock.lock();
                 self.idle.notify_all();
             }
-            for h in self.idle_hooks.read().iter() {
+            for (_, h) in self.idle_hooks.read().iter() {
                 h();
             }
             // A full batch accumulated while this export was running: chain.

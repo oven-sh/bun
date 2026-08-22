@@ -80,6 +80,12 @@ unsafe impl Send for OtlpHttpExporter {}
 unsafe impl Sync for OtlpHttpExporter {}
 
 impl OtlpHttpExporter {
+    pub fn from_configs(
+        cfgs: &[OtlpExporterConfig],
+    ) -> Result<Vec<Arc<OtlpHttpExporter>>, Vec<u8>> {
+        cfgs.iter().map(|c| Self::new(c).map(Arc::new)).collect()
+    }
+
     pub fn new(cfg: &OtlpExporterConfig) -> Result<OtlpHttpExporter, Vec<u8>> {
         let url = URL::parse(cfg.url.as_bytes());
         if url.hostname.is_empty() || !(url.is_http() || url.is_https()) {

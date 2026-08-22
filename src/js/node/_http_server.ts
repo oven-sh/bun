@@ -487,6 +487,7 @@ Server.prototype.close = function (optionalCallback?) {
   if (typeof optionalCallback === "function") setCloseCallback(this, optionalCallback);
   this.listening = false;
   server.closeIdleConnections();
+  // stop() queues the task that emits 'close', which holds the loop one more turn, as node's uv_close() does.
   server.stop();
   return this;
 };
@@ -534,7 +535,7 @@ Server.prototype.address = function () {
 
 Server.prototype.listen = function () {
   const server = this;
-  let port, host, onListen;
+  let port, host;
   let socketPath;
   let tls = this[tlsSymbol];
 
@@ -580,14 +581,15 @@ Server.prototype.listen = function () {
 
   const lastArg = arguments[argc - 1];
   if ($isCallable(lastArg)) {
-    onListen = lastArg;
+    // Before the bind, as in node, so a listen() retried from the 'error' handler still calls it.
+    this.once("listening", lastArg);
   }
 
   try {
     // listenInCluster
 
     if (isPrimary) {
-      server[kRealListen](tls, port, host, socketPath, false, onListen);
+      server[kRealListen](tls, port, host, socketPath, false);
       return this;
     }
 
@@ -611,7 +613,7 @@ Server.prototype.listen = function () {
       process.send(message, undefined, kInternalSendOptions);
     });
 
-    server[kRealListen](tls, port, host, socketPath, true, onListen);
+    server[kRealListen](tls, port, host, socketPath, true);
   } catch (err) {
     process.nextTick(emitListenErrorNextTick, server, err);
   }
@@ -619,7 +621,7 @@ Server.prototype.listen = function () {
   return this;
 };
 
-Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort, onListen) {
+Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort) {
   {
     const ResponseClass = this[optionsSymbol].ServerResponse || ServerResponse;
     const RequestClass = this[optionsSymbol].IncomingMessage || IncomingMessage;
@@ -1062,10 +1064,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
 
     if (this?._unref) {
       this[serverSymbol]?.unref?.();
-    }
-
-    if ($isCallable(onListen)) {
-      this.once("listening", onListen);
     }
 
     // A tick, not a timer, as in node: a timer never fires on its own under jest.useFakeTimers().

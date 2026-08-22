@@ -191,6 +191,74 @@ describe("node:http", () => {
       expect(order).toEqual(["error:EADDRINUSE", "nextTick"]);
     });
 
+    // vite's port auto-increment (#27406): the callback of the failed listen() belongs to the
+    // server, not to that attempt, so the retry from the 'error' handler calls it.
+    it("calls the listen() callback after a retry from the EADDRINUSE 'error' handler", async () => {
+      const occupant = createServer();
+      occupant.listen(0);
+      await once(occupant, "listening");
+      const { port } = occupant.address() as AddressInfo;
+
+      const server = createServer();
+      const events: string[] = [];
+      server.on("error", (err: NodeJS.ErrnoException) => {
+        events.push("error:" + err.code);
+        server.listen(0);
+      });
+      // Not events.once(): it would reject on the expected 'error'.
+      const { promise: listening, resolve: onListening } = Promise.withResolvers<void>();
+      server.listen(port, () => events.push("callback"));
+      server.on("listening", () => onListening());
+      await listening;
+      const address = server.address() as AddressInfo;
+      server.close();
+      occupant.close();
+      await Promise.all([once(server, "close"), once(occupant, "close")]);
+      expect({ events, retriedPort: address.port !== port }).toEqual({
+        events: ["error:EADDRINUSE", "callback"],
+        retriedPort: true,
+      });
+    });
+
+    // Node's server.close() completes the handle's uv_close() on the next loop turn, so a server
+    // listened and closed from a 'beforeExit' handler revives the loop once and 'beforeExit' fires
+    // again (upstream test-process-beforeexit, with net). 'listening' is a nextTick now, so the turn
+    // has to come from close() itself.
+    describe.each([
+      ["http", {}],
+      ["https", { key: tlsCert.key, cert: tlsCert.cert }],
+    ])("%s: closing a server listened from 'beforeExit'", (mod, options) => {
+      it("re-emits 'beforeExit'", async () => {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `
+              const { createServer } = require(${JSON.stringify(mod)});
+              process.once("beforeExit", () => {
+                createServer(${JSON.stringify(options)})
+                  .listen(0)
+                  .on("listening", function () {
+                    this.close();
+                    process.once("beforeExit", () => console.log("beforeExit again"));
+                  });
+              });
+            `,
+          ],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        // stderr only matters on failure: debug builds may print benign warnings.
+        expect({ stdout, failureDetail: exitCode === 0 ? "" : stderr }).toEqual({
+          stdout: "beforeExit again\n",
+          failureDetail: "",
+        });
+        expect(exitCode).toBe(0);
+      });
+    });
+
     it("should use the provided port", async () => {
       while (true) {
         try {

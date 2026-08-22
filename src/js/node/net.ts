@@ -3578,7 +3578,8 @@ Server.prototype.close = function close(callback) {
   if (this._handle) {
     if (typeof this._handle.stop === "function") {
       this._handle.stop(false);
-      // Node's uv_close() keeps the loop alive for one more turn (test-process-beforeexit); so does this.
+      // Node's uv_close() keeps the loop alive for one more turn (test-process-beforeexit). The native
+      // listener unrefs at once (Listener::do_stop), unlike sockets (KeepAlive::unref_on_next_tick), so hold it here.
       setImmediate(noop);
       // Released here, not on 'close': https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2434-L2437
       const clusterHandle = this[kClusterHandle];

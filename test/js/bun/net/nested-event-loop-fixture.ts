@@ -166,3 +166,41 @@ test.skipIf(process.platform !== "win32")(
     b.kill();
   },
 );
+
+test("closing a pipe server from its connection handler while more accepts are pending, then ticking", async () => {
+  // Several clients connect at once so one poll of the loop reports several
+  // pending accepts; the first connection handler closes the server and then
+  // waits in a nested tick. The remaining accepts are dispatched against a
+  // listener that is going away underneath them.
+  const name =
+    process.platform === "win32"
+      ? String.fromCharCode(92, 92, 46, 92) + "pipe" + String.fromCharCode(92) + "nested-close-" + process.pid
+      : require("path").join(require("os").tmpdir(), "nested-close-" + process.pid + ".sock");
+  const net = require("node:net");
+  let accepted = 0;
+  const closed = Promise.withResolvers<void>();
+  const server = net.createServer(c => {
+    accepted++;
+    c.on("error", () => {});
+    c.destroy();
+    if (accepted === 1) {
+      server.close(() => closed.resolve());
+      expect(new Promise<void>(resolve => setTimeout(resolve, 20))).resolves.toBeUndefined();
+    }
+  });
+  await new Promise<void>(resolve => server.listen(name, resolve));
+  const clients = Array.from(
+    { length: 8 },
+    () =>
+      new Promise<void>(resolve => {
+        const c = net.connect(name);
+        c.on("error", () => resolve());
+        c.on("close", () => resolve());
+      }),
+  );
+  // Let all eight connects land before the loop polls again.
+  Bun.sleepSync(100);
+  await Promise.all(clients);
+  await closed.promise;
+  expect(accepted).toBeGreaterThanOrEqual(1);
+});

@@ -652,8 +652,7 @@ impl Stringifier {
                 0x2028 => self.builder.append_latin1(b"\\L"), // line separator
                 0x2029 => self.builder.append_latin1(b"\\P"), // paragraph separator
 
-                // A pair is written as is; an unpaired surrogate as `\uHHHH`,
-                // like `JSON.stringify`.
+                // a pair as is; an unpaired surrogate as `\uHHHH` like JSON.stringify
                 0xd800..=0xdbff
                     if i < str.length() && bun_core::strings::u16_is_trail(str.char_at(i)) =>
                 {

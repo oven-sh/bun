@@ -5513,8 +5513,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             if !matches!(escape, Escape::LowerU) {
                 return Err(ParseError::UnexpectedCharacter);
             }
-            // Like `JSON.parse`: a `\uD8xx\uDCxx` pair is one code point and
-            // an unpaired surrogate stays a lone code unit.
+            // Like `JSON.parse`: combine a lead+trail pair, keep a lone surrogate.
             if bun_core::strings::u16_is_lead(cp as u16) {
                 if let Some(trail) = self.peek_trail_surrogate_escape() {
                     self.inc(2 + Escape::LowerU as usize);
@@ -5525,8 +5524,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         match Enc::KIND {
             EncodingKind::Utf8 => {
-                // WTF-8: a lone surrogate stays `ED xx xx` until
-                // `wtf8_to_utf16_alloc` turns it back into a code unit for JS.
+                // WTF-8; `wtf8_to_utf16_alloc` restores a lone surrogate for JS.
                 let mut buf = [0u8; 4];
                 let len = bun_core::strings::encode_wtf8_rune(&mut buf, cp);
                 for &b in &buf[..len] {

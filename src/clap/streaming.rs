@@ -154,31 +154,12 @@ where
                     }));
                 }
 
-                // unrecognized command
-                // if flag else arg
-                if arg_info.kind == ArgKind::Long || arg_info.kind == ArgKind::Short {
-                    if WARN_ON_UNRECOGNIZED_FLAG.load(Ordering::Relaxed) {
-                        bun_core::warn!(
-                            "unrecognized flag: {}{}\n",
-                            if arg_info.kind == ArgKind::Long {
-                                "--"
-                            } else {
-                                "-"
-                            },
-                            bstr::BStr::new(name),
-                        );
-                        Output::flush();
-                    }
-
-                    // continue parsing after unrecognized flag
-                    return self.next();
-                }
-
+                // Unrecognized long flag: optionally warn, then continue parsing.
                 if WARN_ON_UNRECOGNIZED_FLAG.load(Ordering::Relaxed) {
-                    bun_core::warn!("unrecognized argument: {}\n", bstr::BStr::new(name));
+                    bun_core::warn!("unrecognized flag: --{}\n", bstr::BStr::new(name));
                     Output::flush();
                 }
-                Ok(None)
+                self.next()
             }
             ArgKind::Short => self.chainging(Chaining { arg, index: 0 }),
             ArgKind::Positional => {
@@ -278,7 +259,19 @@ where
             }));
         }
 
-        Err(self.err(arg, Some(arg[index]), None, ArgError::InvalidArgument))
+        // Unrecognized short flag: match the long-flag behaviour (optionally warn, then
+        // continue) so `bun create pkg -t x` reaches the underlying create-* package
+        // instead of aborting. Dropping the rest of the chain is the conservative choice
+        // since the unknown flag may itself consume the remaining chars as a value.
+        if WARN_ON_UNRECOGNIZED_FLAG.load(Ordering::Relaxed) {
+            bun_core::warn!(
+                "unrecognized flag: -{}\n",
+                bstr::BStr::new(&arg[index..index + 1]),
+            );
+            Output::flush();
+        }
+        self.state = State::Normal;
+        self.next()
     }
 
     fn positional_param(&mut self) -> Option<&'p clap::Param<Id>> {
@@ -826,8 +819,22 @@ mod tests {
             },
         ];
         test_err(&params, &[b"q"], b"Invalid argument 'q'\n");
-        test_err(&params, &[b"-q"], b"Invalid argument '-q'\n");
-        // Unrecognized long flags are skipped (opt-in warning), not errors.
+        // Unrecognized short and long flags are skipped (opt-in warning), not errors.
+        test_no_err(&params, &[b"-q"], &[]);
+        test_no_err(
+            &params,
+            &[b"-aq", b"-a"],
+            &[
+                Arg {
+                    param: &params[0],
+                    value: None,
+                },
+                Arg {
+                    param: &params[0],
+                    value: None,
+                },
+            ],
+        );
         test_no_err(&params, &[b"--q"], &[]);
         test_no_err(&params, &[b"--q=1"], &[]);
         test_err(

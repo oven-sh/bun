@@ -1,5 +1,5 @@
 import { describe, expect, jest, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, normalizeBunSnapshot, tempDir } from "harness";
 
 test("error.cause", () => {
   const err = new Error("error 1");
@@ -10,7 +10,7 @@ test("error.cause", () => {
       .replaceAll(import.meta.dir.replaceAll("\\", "/"), "[dir]"),
   ).toMatchInlineSnapshot(`
 "1 | import { describe, expect, jest, test } from "bun:test";
-2 | import { bunEnv, bunExe, tempDir } from "harness";
+2 | import { bunEnv, bunExe, isASAN, isDebug, normalizeBunSnapshot, tempDir } from "harness";
 3 | 
 4 | test("error.cause", () => {
 5 |   const err = new Error("error 1");
@@ -19,8 +19,9 @@ test("error.cause", () => {
 error: error 2
       at <anonymous> ([dir]/inspect-error.test.js:6:20)
 
+[cause]:
 1 | import { describe, expect, jest, test } from "bun:test";
-2 | import { bunEnv, bunExe, tempDir } from "harness";
+2 | import { bunEnv, bunExe, isASAN, isDebug, normalizeBunSnapshot, tempDir } from "harness";
 3 | 
 4 | test("error.cause", () => {
 5 |   const err = new Error("error 1");
@@ -38,15 +39,15 @@ test("Error", () => {
       .replaceAll("\\", "/")
       .replaceAll(import.meta.dir.replaceAll("\\", "/"), "[dir]"),
   ).toMatchInlineSnapshot(`
-"30 | "
-31 | \`);
-32 | });
-33 | 
-34 | test("Error", () => {
-35 |   const err = new Error("my message");
+"31 | "
+32 | \`);
+33 | });
+34 | 
+35 | test("Error", () => {
+36 |   const err = new Error("my message");
                        ^
 error: my message
-      at <anonymous> ([dir]/inspect-error.test.js:35:19)
+      at <anonymous> ([dir]/inspect-error.test.js:36:19)
 "
 `);
 });
@@ -105,7 +106,7 @@ test("Error inside minified file (no color) ", () => {
       error: error inside long minified file!
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2850)
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2890)
-            at <anonymous> ([dir]/inspect-error.test.js:86:7)"
+            at <anonymous> ([dir]/inspect-error.test.js:87:7)"
     `);
   }
 });
@@ -134,7 +135,7 @@ test("Error inside minified file (color) ", () => {
       error: error inside long minified file!
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2850)
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2890)
-            at <anonymous> ([dir]/inspect-error.test.js:114:7)"
+            at <anonymous> ([dir]/inspect-error.test.js:115:7)"
     `);
   }
 });
@@ -148,7 +149,7 @@ test("Inserted originalLine and originalColumn do not appear in node:util.inspec
       .replaceAll(import.meta.path.replaceAll("\\", "/"), "[file]"),
   ).toMatchInlineSnapshot(`
 "Error: my message
-    at <anonymous> ([file]:143:19)"
+    at <anonymous> ([file]:144:19)"
 `);
 });
 
@@ -328,9 +329,11 @@ describe("source map remapping of the printed stack", () => {
   });
 });
 
-// The printer replaces an AggregateError with the members of its `errors`
-// property. When there is nothing to walk it has to print the AggregateError
-// itself. A deleted `errors` used to crash the process (the empty value was
+const count = (haystack, needle) => haystack.split(needle).length - 1;
+
+// The printer prints an AggregateError and then the members of its `errors`
+// property; whatever that property holds, the AggregateError itself has to be
+// printed. A deleted `errors` used to crash the process (the empty value was
 // passed to the iteration, which read it as a cell at address 0), an accessor
 // was passed to it as well, the other shapes printed nothing, and a
 // non-iterable `errors` made console.error throw.
@@ -395,20 +398,22 @@ describe.concurrent("AggregateError whose errors cannot be walked", () => {
        console.error(e);
        console.log("after");`,
     ]);
+    expect(stderr).toContain(header);
     expect(stderr).toContain("error: from the getter");
-    expect(stderr).not.toContain(header);
+    expect(stderr.indexOf("error: from the getter")).toBeGreaterThan(stderr.indexOf(header));
     expect(stdout).toBe("after\n");
     expect(exitCode).toBe(0);
   });
 
-  test("members are still printed in place of the AggregateError", async () => {
+  test("members are printed after the AggregateError", async () => {
     const { stderr, exitCode } = await run([
       "-e",
       'throw new AggregateError([new Error("first member"), new TypeError("second member")], "outer message");',
     ]);
+    expect(stderr).toContain(header);
     expect(stderr).toContain("error: first member");
     expect(stderr).toContain("TypeError: second member");
-    expect(stderr).not.toContain(header);
+    expect(stderr.indexOf("error: first member")).toBeGreaterThan(stderr.indexOf(header));
     expect(exitCode).toBe(1);
   });
 
@@ -452,7 +457,387 @@ describe.concurrent("AggregateError whose errors cannot be walked", () => {
     });
     expect(stderr).toContain("a.test.ts:");
     expect(stderr).toContain("b.test.ts:");
+    // The first load still has the members, the replayed one does not; both print the header.
+    expect(count(stderr, "AggregateError: 4 errors building ")).toBe(2);
+    expect(stderr).toContain('error: Expected identifier but found ")"');
     expect(stderr).toContain("across 2 files");
+    expect(exitCode).toBe(1);
+  });
+});
+
+async function run(code) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+// https://github.com/oven-sh/bun/issues/1352
+describe("#1352 native error printer", () => {
+  // The expected header/message strings are built at runtime so that the
+  // source-line preview the printer emits (which quotes the `-e` source)
+  // cannot accidentally satisfy the assertion.
+  const src = `
+const m1 = new Error(["err", "one"].join("-"));
+const m2 = new RangeError(["err", "two"].join("-"));
+const cause = new TypeError(["the", "cause"].join("-"));
+const agg = new AggregateError([m1, m2], ["agg", "msg"].join("-"), { cause });
+`;
+  const AGG = ["agg", "msg"].join("-");
+  const M1 = ["err", "one"].join("-");
+  const M2 = ["err", "two"].join("-");
+  const CAUSE = ["the", "cause"].join("-");
+
+  test.concurrent.each([
+    ["console.error", `${src}; console.error(agg);`, 0],
+    ["Bun.inspect", `${src}; process.stderr.write(Bun.inspect(agg));`, 0],
+    ["uncaught throw", `${src}; throw agg;`, 1],
+    ["unhandled rejection", `${src}; Promise.reject(agg);`, 1],
+  ])("AggregateError via %s prints header, [cause] and each [errors] member", async (_, code, exit) => {
+    const { stderr, exitCode } = await run(code);
+
+    expect(stderr).toContain("AggregateError: " + AGG);
+    expect(stderr).toContain("[cause]:");
+    expect(stderr).toContain("TypeError: " + CAUSE);
+    expect(stderr).toContain("[errors]:");
+    expect(stderr).toContain("error: " + M1);
+    expect(stderr).toContain("RangeError: " + M2);
+
+    // Header must precede the [cause] label which must precede [errors].
+    const hdr = stderr.indexOf("AggregateError: " + AGG);
+    const causeLabel = stderr.indexOf("[cause]:");
+    const errorsLabel = stderr.indexOf("[errors]:");
+    expect(hdr).toBeGreaterThan(-1);
+    expect(causeLabel).toBeGreaterThan(hdr);
+    expect(errorsLabel).toBeGreaterThan(causeLabel);
+    expect(exitCode).toBe(exit);
+  });
+
+  test.concurrent("AggregateError reached via a cause chain prints its members", async () => {
+    const { stderr, exitCode } = await run(`${src}; console.error(new Error("outer", { cause: agg }));`);
+
+    expect(stderr).toContain("[cause]:");
+    expect(stderr).toContain("AggregateError: " + AGG);
+    expect(stderr).toContain("[errors]:");
+    expect(stderr).toContain("error: " + M1);
+    expect(stderr).toContain("RangeError: " + M2);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("error.cause is labeled with [cause]:", async () => {
+    const { stderr, exitCode } = await run(
+      `const e = new Error(${JSON.stringify("outer-" + M1)}, { cause: new Error(${JSON.stringify("inner-" + M2)}) }); console.error(e);`,
+    );
+    const causeLabel = stderr.indexOf("[cause]:");
+    expect(causeLabel).toBeGreaterThan(-1);
+    expect(stderr.indexOf("error: inner-" + M2)).toBeGreaterThan(causeLabel);
+    expect(stderr.indexOf("error: outer-" + M1)).toBeLessThan(causeLabel);
+    expect(exitCode).toBe(0);
+  });
+
+  // After `.stack` materializes, overwrite it with another V8-format stack
+  // string that mixes paren-ful, paren-less and `at async /path:l:c` frames,
+  // followed by a malformed frame, at which parsing stops, and a well-formed
+  // one that must therefore not be printed.
+  test.concurrent.each([
+    ["an unbalanced parenthesis", "at broken (/fake-four.js:77:88"],
+    ["nothing after async", "at async "],
+  ])("reassigned Error.stack (V8 format) is honored up to a frame with %s", async (_, malformed) => {
+    const { stderr, exitCode } = await run(
+      `const e = new Error("X"); void e.stack;` +
+        `e.stack = "Error: X\\n    at fn (/fake-one.js:11:22)\\n    at /fake-two.js:33:44\\n    at async /fake-three.mjs:55:66` +
+        `\\n    ${malformed}\\n    at fine (/fake-five.js:99:11)";` +
+        `console.error(e);`,
+    );
+    expect(stderr).toContain("at fn (/fake-one.js:11:22)");
+    expect(stderr).toContain("at /fake-two.js:33:44");
+    expect(stderr).toContain("/fake-three.mjs:55:66");
+    expect(stderr).not.toContain("async /fake-three.mjs");
+    expect(stderr).not.toContain("fake-four");
+    expect(stderr).not.toContain("fake-five");
+    // Original creation site must not leak through.
+    expect(stderr).not.toContain("[eval]:1");
+    expect(exitCode).toBe(0);
+  });
+
+  // https://github.com/oven-sh/bun/issues/15859
+  test.concurrent("uncaught error printed after error.stack was read keeps all the frames of error.stack", async () => {
+    // Reading .stack makes the printer re-parse the formatted string; the
+    // top-level frame, which has no function name, used to be dropped by that
+    // parser. The imports push the TypeScript source lines away from the
+    // transpiled ones so a frame remapped twice would also show up.
+    using dir = tempDir("inspect-error-stack-reparse", {
+      "test.ts": `import * as i1 from "util";
+import * as i2 from "util";
+import * as i3 from "util";
+function err() {
+    throw new Error()
+};
+function f1(){
+    err()
+}
+function f2(){
+
+}
+try {
+    f1();
+} catch (error: any) {
+    console.log(error.stack)
+    throw error
+}
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const positions = s => [...s.matchAll(/test\.ts:(\d+:\d+)/g)].map(m => m[1]);
+    expect(positions(stdout)).toEqual(["5:15", "8:5", "14:5"]);
+    expect(positions(stderr)).toEqual(positions(stdout));
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("Promise.any rejection prints AggregateError header", async () => {
+    const { stderr, exitCode } = await run(
+      `Promise.any([Promise.reject(new Error(${JSON.stringify(M1)})), Promise.reject(new Error(${JSON.stringify(M2)}))]);`,
+    );
+    expect(stderr).toContain("AggregateError:");
+    expect(stderr).toContain("[errors]:");
+    expect(stderr).toContain("error: " + M1);
+    expect(stderr).toContain("error: " + M2);
+    expect(exitCode).toBe(1);
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/21528
+test.concurrent("uncaught AggregateError output layout", async () => {
+  using dir = tempDir("aggregate-error-layout", {
+    "index.js": `function foo() {
+  return new Error("foo!");
+}
+function bar() {
+  return new Error("bar!");
+}
+throw new AggregateError([foo(), bar()], "qux!");
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("");
+  expect(normalizeBunSnapshot(stderr.replace(/^Bun v.*$/m, ""), String(dir))).toMatchInlineSnapshot(`
+    "2 |   return new Error("foo!");
+    3 | }
+    4 | function bar() {
+    5 |   return new Error("bar!");
+    6 | }
+    7 | throw new AggregateError([foo(), bar()], "qux!");
+                  ^
+    AggregateError: qux!
+          at <dir>/index.js:7:11
+
+    [errors]:
+    2 |   return new Error("foo!");
+    3 | }
+    4 | function bar() {
+    5 |   return new Error("bar!");
+    6 | }
+    7 | throw new AggregateError([foo(), bar()], "qux!");
+                                  ^
+    error: foo!
+          at <dir>/index.js:7:27
+
+    [errors]:
+    2 |   return new Error("foo!");
+    3 | }
+    4 | function bar() {
+    5 |   return new Error("bar!");
+    6 | }
+    7 | throw new AggregateError([foo(), bar()], "qux!");
+                                         ^
+    error: bar!
+          at <dir>/index.js:7:34"
+  `);
+  expect(exitCode).toBe(1);
+});
+
+// The printer used to walk .errors with no cycle or depth guard and without
+// checking that the property still is an array, so every shape below crashed
+// (or lost the aggregate's own header) on every sink that reaches it.
+describe("AggregateError .errors printing is guarded", () => {
+  // Messages are assembled at runtime so the -e source preview the printer
+  // quotes cannot satisfy the assertions; counting a header therefore
+  // measures how many times the error itself was printed.
+  const SELF = ["self", "cycle"].join("-");
+  const A = ["agg", "a"].join("-");
+  const B = ["agg", "b"].join("-");
+  const C = ["plain", "c"].join("-");
+
+  const shapes = [
+    {
+      name: "errors containing the aggregate itself",
+      build: `const e = new AggregateError([], ["self", "cycle"].join("-")); e.errors.push(e);`,
+      check(stderr) {
+        expect(count(stderr, "AggregateError: " + SELF)).toBe(1);
+        expect(stderr).toContain("[errors]: [Circular]");
+      },
+    },
+    {
+      name: "two aggregates containing each other",
+      build:
+        `const e = new AggregateError([], ["agg", "a"].join("-"));` +
+        `const b = new AggregateError([e], ["agg", "b"].join("-"));` +
+        `e.errors = [b];`,
+      check(stderr) {
+        expect(count(stderr, "AggregateError: " + A)).toBe(1);
+        expect(count(stderr, "AggregateError: " + B)).toBe(1);
+        expect(stderr.indexOf("AggregateError: " + B)).toBeGreaterThan(stderr.indexOf("AggregateError: " + A));
+        expect(stderr).toContain("[errors]: [Circular]");
+      },
+    },
+    {
+      name: "a member whose cause is the aggregate",
+      build:
+        `const c = new Error(["plain", "c"].join("-"));` +
+        `const e = new AggregateError([c], ["agg", "a"].join("-"));` +
+        `c.cause = e;`,
+      check(stderr) {
+        expect(count(stderr, "AggregateError: " + A)).toBe(1);
+        expect(count(stderr, "error: " + C)).toBe(1);
+        expect(stderr).toContain("[cause]: [Circular]");
+      },
+    },
+    {
+      // Promise.any([Promise.reject({ code })]) produces this shape.
+      name: "a member that is a plain object",
+      build: `const e = new AggregateError([{ code: ["EN", "OENT"].join("") }], ["agg", "a"].join("-"));`,
+      check(stderr) {
+        expect(stderr).toContain("AggregateError: " + A);
+        expect(stderr).toContain("[errors]:");
+        expect(stderr).toContain('code: "ENOENT"');
+        expect(stderr).not.toContain("[Circular]");
+      },
+    },
+    {
+      name: "a plain-object member that refers back to the aggregate",
+      build:
+        `const o = { code: ["EN", "OENT"].join("") };` +
+        `const e = new AggregateError([o], ["agg", "a"].join("-"));` +
+        `o.parent = e;`,
+      check(stderr) {
+        expect(count(stderr, "AggregateError: " + A)).toBe(1);
+        expect(stderr).toContain('code: "ENOENT"');
+        expect(stderr).toContain("parent: [Circular]");
+      },
+    },
+    {
+      // The shapes in which `.errors` itself cannot be walked are covered by
+      // "AggregateError whose errors cannot be walked" above.
+      name: "an .errors element that throws when read",
+      build:
+        `const e = new AggregateError([new Error(["plain", "c"].join("-")), new Error("never"), new Error("never")], ["agg", "a"].join("-"));` +
+        `Object.defineProperty(e.errors, 1, { get() { throw new Error("boom"); } });`,
+      check(stderr) {
+        expect(stderr).toContain("AggregateError: " + A);
+        expect(stderr).toContain("error: " + C);
+        expect(stderr).not.toContain("error: never");
+        expect(stderr).toContain("... 2 more errors");
+      },
+    },
+  ];
+
+  describe.each([
+    ["console.error", e => `console.error(${e});`, 0],
+    ["uncaught throw", e => `throw ${e};`, 1],
+  ])("via %s", (_, sink, expectedExitCode) => {
+    test.concurrent.each(shapes)("$name", async ({ build, check }) => {
+      const { stdout, stderr, exitCode } = await run(`${build} ${sink("e")}`);
+      check(stderr, stdout);
+      expect(exitCode).toBe(expectedExitCode);
+    });
+  });
+
+  test.concurrent.each([
+    [101, "... 1 more error\n"],
+    [103, "... 3 more errors\n"],
+  ])("prints at most 100 of %i members and counts the rest", async (length, trailer) => {
+    const { stderr, exitCode } = await run(
+      `const members = Array.from({ length: ${length} }, (_, i) => new Error("member" + i));` +
+        `console.error(new AggregateError(members, ["agg", "a"].join("-")));`,
+    );
+    expect(stderr).toContain("AggregateError: " + A);
+    expect(count(stderr, "[errors]:")).toBe(100);
+    expect(stderr).toContain("error: member99\n");
+    expect(stderr).not.toContain("error: member100\n");
+    expect(stderr).toContain(trailer);
+    expect(exitCode).toBe(0);
+  });
+});
+
+// Nesting deeper than the native stack allows must stop printing instead of
+// overflowing it. console.* and Bun.inspect report that as a RangeError; the
+// uncaught-exception and unhandled-rejection reporters truncate the output.
+describe("deeply nested error chains do not overflow the stack", () => {
+  // A debug or ASAN build runs out of stack a few hundred levels down and
+  // takes tens of microseconds to construct each error; a release build prints
+  // thousands of levels (about 1500 on Linux, more on Windows, where the
+  // printer's frames are smaller) and constructs the chain in about a
+  // microsecond per error.
+  const DEPTH = isDebug || isASAN ? 3_000 : 50_000;
+  const TOP = "level" + (DEPTH - 1);
+  const deepAggregate =
+    `let e = new AggregateError([], "leaf");\n` +
+    `for (let i = 0; i < ${DEPTH}; i++)\n` +
+    `  e = new AggregateError([e], "level" + i);\n`;
+  const deepCause =
+    `let e = new Error("leaf");\n` +
+    `for (let i = 0; i < ${DEPTH}; i++)\n` +
+    `  e = new Error("level" + i, { cause: e });\n`;
+  // Each printed level has one `<name>: level<n>` header; the quoted source
+  // lines contain `"level"` and so do not match.
+  const printedLevels = stderr => count(stderr, ": level");
+
+  test.concurrent("AggregateError chain via console.error throws a RangeError", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      `${deepAggregate} try { console.error(e); } catch (err) { console.log("caught", err.name); }`,
+    );
+    expect(stderr).toContain("AggregateError: " + TOP);
+    expect(printedLevels(stderr)).toBeLessThan(DEPTH);
+    expect(stdout).toBe("caught RangeError\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent.each([
+    ["AggregateError chain", deepAggregate, "AggregateError: " + TOP],
+    ["cause chain", deepCause, "error: " + TOP],
+  ])("%s via uncaught throw", async (_, build, header) => {
+    const { stderr, exitCode } = await run(`${build} throw e;`);
+    expect(stderr).toContain(header);
+    expect(printedLevels(stderr)).toBeLessThan(DEPTH);
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent.each([
+    ["AggregateError chain", deepAggregate, "AggregateError: " + TOP],
+    ["cause chain", deepCause, "error: " + TOP],
+  ])("%s via unhandled rejection", async (_, build, header) => {
+    const { stderr, exitCode } = await run(`${build} Promise.reject(e);`);
+    expect(stderr).toContain(header);
+    expect(printedLevels(stderr)).toBeLessThan(DEPTH);
     expect(exitCode).toBe(1);
   });
 });

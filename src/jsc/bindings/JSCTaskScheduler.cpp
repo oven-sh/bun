@@ -52,7 +52,7 @@ static std::optional<Pending> dropPendingTicketLocked(Bun::JSCTaskScheduler& sch
 static void releaseKeepAlive(const ::BunVmHandleRef* vmHandle, const std::optional<Pending>& pending)
 {
     if (pending && pending->keepsEventLoopAlive)
-        Bun__VmHandle__refKeepAlive(vmHandle, pending->loop, -1);
+        Bun__VmHandle__refKeepAlive(vmHandle, pending->loopKind, -1);
 }
 
 void JSCTaskScheduler::onAddPendingWork(WebCore::JSVMClientData* clientData, Ref<Ticket>&& ticket, JSC::DeferredWorkTimer::WorkType kind)
@@ -65,13 +65,13 @@ void JSCTaskScheduler::onAddPendingWork(WebCore::JSVMClientData* clientData, Ref
     if (scheduler.m_isShuttingDown) [[unlikely]]
         return;
     if (pending.keepsEventLoopAlive)
-        Bun__VmHandle__refKeepAlive(clientData->vmHandle, pending.loop, 1);
+        Bun__VmHandle__refKeepAlive(clientData->vmHandle, pending.loopKind, 1);
     scheduler.m_pending.add(WTF::move(ticket), pending);
 }
 void JSCTaskScheduler::onScheduleWorkSoon(WebCore::JSVMClientData* clientData, Ref<Ticket>&& ticket, Task&& task)
 {
     auto& scheduler = clientData->deferredWorkTimer;
-    BunLoopKind loop = BunLoopKind::Regular;
+    BunLoopKind loopKind = BunLoopKind::Regular;
     {
         Locker<Lock> holder { scheduler.m_lock };
         // The event loop is past its last tick: don't bother posting. Reached from
@@ -87,13 +87,13 @@ void JSCTaskScheduler::onScheduleWorkSoon(WebCore::JSVMClientData* clientData, R
         }
         auto it = scheduler.m_pending.find(ticket.ptr());
         if (it != scheduler.m_pending.end())
-            loop = it->value.loop;
+            loopKind = it->value.loopKind;
     }
     // Outside m_lock (markShuttingDown, on the VM's thread, needs it): a post that
     // still races the shutdown lands on the VM handle, which either queues it for
     // the teardown to release unrun or refuses it and runs the job's release path.
     auto* job = new JSCDeferredWorkTask(WTF::move(ticket), WTF::move(task));
-    Bun__queueJSCDeferredWorkTaskConcurrently(clientData->vmHandle, job, loop);
+    Bun__queueJSCDeferredWorkTaskConcurrently(clientData->vmHandle, job, loopKind);
 }
 
 void JSCTaskScheduler::onCancelPendingWork(WebCore::JSVMClientData* clientData, Ticket& ticket)

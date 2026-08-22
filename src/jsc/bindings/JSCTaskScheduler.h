@@ -17,7 +17,7 @@ public:
     // keep-alive, and the loop that keep-alive and the eventual completion belong to.
     struct Pending {
         bool keepsEventLoopAlive { false };
-        BunLoopKind loop { BunLoopKind::Regular };
+        BunLoopKind loopKind { BunLoopKind::Regular };
     };
 
     static void onAddPendingWork(WebCore::JSVMClientData* clientData, Ref<JSC::DeferredWorkTimer::Ticket>&& ticket, JSC::DeferredWorkTimer::WorkType kind);

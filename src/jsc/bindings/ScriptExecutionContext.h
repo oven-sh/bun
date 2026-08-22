@@ -105,9 +105,9 @@ public:
     {
     }
     // From the target's own thread the task joins the loop that thread is running; from any other
-    // thread it joins `loop`, which the poster captured on the target's thread when the work whose
+    // thread it joins `loopKind`, which the poster captured on the target's thread when the work whose
     // completion this is was initiated (Regular for work no script there initiated).
-    WEBCORE_EXPORT static bool postTaskTo(ScriptExecutionContextIdentifier identifier, Function<void(ScriptExecutionContext&)>&& task, BunLoopKind loop = BunLoopKind::Regular);
+    WEBCORE_EXPORT static bool postTaskTo(ScriptExecutionContextIdentifier identifier, Function<void(ScriptExecutionContext&)>&& task, BunLoopKind loopKind = BunLoopKind::Regular);
     WEBCORE_EXPORT static bool ensureOnContextThread(ScriptExecutionContextIdentifier, Function<void(ScriptExecutionContext&)>&& task);
 
     WEBCORE_EXPORT JSC::JSGlobalObject* globalObject();
@@ -132,7 +132,7 @@ public:
     ScriptExecutionContextIdentifier identifier() const { return m_identifier; }
     // This thread only: the loop the VM is running now. What an object that will later be posted to
     // from another thread records alongside identifier() when script here sets it up.
-    BunLoopKind currentLoop()
+    BunLoopKind currentLoopKind()
     {
         ASSERT(isContextThread());
         return Bun__VM__currentLoopKind(m_bunVM);

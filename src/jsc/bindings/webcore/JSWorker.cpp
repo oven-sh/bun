@@ -747,8 +747,8 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(
     // the map (worker terminated mid-round-trip), so the promise always settles.
     uint64_t reqId = worker.contextProxy().registerCrossVMRequest(vm, promise);
     auto parentId = globalObject->scriptExecutionContext()->identifier();
-    auto parentLoop = Bun__VM__currentLoopKind(globalObject->bunVM());
-    bool accepted = worker.contextProxy().postTaskToWorkerGlobalScope([reqId, parentId, parentLoop, protectedProxy = Ref { worker.contextProxy() }](ScriptExecutionContext& workerCtx) mutable {
+    auto parentLoopKind = Bun__VM__currentLoopKind(globalObject->bunVM());
+    bool accepted = worker.contextProxy().postTaskToWorkerGlobalScope([reqId, parentId, parentLoopKind, protectedProxy = Ref { worker.contextProxy() }](ScriptExecutionContext& workerCtx) mutable {
         auto& vm = workerCtx.vm();
         vm.ensureHeapProfiler();
         auto& heapProfiler = *vm.heapProfiler();
@@ -756,7 +756,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(
         JSC::BunV8HeapSnapshotBuilder builder(heapProfiler);
         String snapshot = builder.json();
 
-        ScriptExecutionContext::postTaskTo(parentId, [reqId, protectedProxy = WTF::move(protectedProxy), snapshot = snapshot.isolatedCopy()](ScriptExecutionContext& parentCtx) { resolveCrossVMRequest(protectedProxy.get(), reqId, parentCtx, [&](VM& vm, JSGlobalObject*) -> JSValue { return jsString(vm, snapshot); }); }, parentLoop);
+        ScriptExecutionContext::postTaskTo(parentId, [reqId, protectedProxy = WTF::move(protectedProxy), snapshot = snapshot.isolatedCopy()](ScriptExecutionContext& parentCtx) { resolveCrossVMRequest(protectedProxy.get(), reqId, parentCtx, [&](VM& vm, JSGlobalObject*) -> JSValue { return jsString(vm, snapshot); }); }, parentLoopKind);
     });
     if (!accepted) {
         // postTaskToWorkerGlobalScope returns false only for Closing/Closed.
@@ -775,8 +775,8 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapStatisticsBod
     auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
     uint64_t reqId = worker.contextProxy().registerCrossVMRequest(vm, promise);
     auto parentId = globalObject->scriptExecutionContext()->identifier();
-    auto parentLoop = Bun__VM__currentLoopKind(globalObject->bunVM());
-    bool accepted = worker.contextProxy().postTaskToWorkerGlobalScope([reqId, parentId, parentLoop, protectedProxy = Ref { worker.contextProxy() }](ScriptExecutionContext& workerCtx) mutable {
+    auto parentLoopKind = Bun__VM__currentLoopKind(globalObject->bunVM());
+    bool accepted = worker.contextProxy().postTaskToWorkerGlobalScope([reqId, parentId, parentLoopKind, protectedProxy = Ref { worker.contextProxy() }](ScriptExecutionContext& workerCtx) mutable {
         auto& wvm = workerCtx.vm();
         double heapSize = static_cast<double>(wvm.heap.size());
         double capacity = static_cast<double>(wvm.heap.capacity());
@@ -801,7 +801,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapStatisticsBod
                                                                                                                                                                              set("external_memory"_s, extra);
                                                                                                                                                                              set("total_allocated_bytes"_s, heapSize);
                                                                                                                                                                              return o;
-                                                                                                                                                                         }); }, parentLoop);
+                                                                                                                                                                         }); }, parentLoopKind);
     });
     if (!accepted) {
         worker.contextProxy().takeCrossVMRequest(reqId);
@@ -818,11 +818,11 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_startCpuProfileInter
     auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
     uint64_t reqId = worker.contextProxy().registerCrossVMRequest(vm, promise);
     auto parentId = globalObject->scriptExecutionContext()->identifier();
-    auto parentLoop = Bun__VM__currentLoopKind(globalObject->bunVM());
-    bool accepted = worker.contextProxy().postTaskToWorkerGlobalScope([reqId, parentId, parentLoop, protectedProxy = Ref { worker.contextProxy() }](ScriptExecutionContext& workerCtx) mutable {
+    auto parentLoopKind = Bun__VM__currentLoopKind(globalObject->bunVM());
+    bool accepted = worker.contextProxy().postTaskToWorkerGlobalScope([reqId, parentId, parentLoopKind, protectedProxy = Ref { worker.contextProxy() }](ScriptExecutionContext& workerCtx) mutable {
         if (!Bun::isCPUProfilerRunning())
             Bun::startCPUProfiler(workerCtx.vm());
-        ScriptExecutionContext::postTaskTo(parentId, [reqId, protectedProxy = WTF::move(protectedProxy)](ScriptExecutionContext& parentCtx) { resolveCrossVMRequest(protectedProxy.get(), reqId, parentCtx, [](VM&, JSGlobalObject*) -> JSValue { return jsUndefined(); }); }, parentLoop);
+        ScriptExecutionContext::postTaskTo(parentId, [reqId, protectedProxy = WTF::move(protectedProxy)](ScriptExecutionContext& parentCtx) { resolveCrossVMRequest(protectedProxy.get(), reqId, parentCtx, [](VM&, JSGlobalObject*) -> JSValue { return jsUndefined(); }); }, parentLoopKind);
     });
     if (!accepted) {
         worker.contextProxy().takeCrossVMRequest(reqId);
@@ -841,14 +841,14 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_stopCpuProfileIntern
     auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
     uint64_t reqId = worker.contextProxy().registerCrossVMRequest(vm, promise);
     auto parentId = globalObject->scriptExecutionContext()->identifier();
-    auto parentLoop = Bun__VM__currentLoopKind(globalObject->bunVM());
-    bool accepted = worker.contextProxy().postTaskToWorkerGlobalScope([reqId, parentId, parentLoop, protectedProxy = Ref { worker.contextProxy() }](ScriptExecutionContext& workerCtx) mutable {
+    auto parentLoopKind = Bun__VM__currentLoopKind(globalObject->bunVM());
+    bool accepted = worker.contextProxy().postTaskToWorkerGlobalScope([reqId, parentId, parentLoopKind, protectedProxy = Ref { worker.contextProxy() }](ScriptExecutionContext& workerCtx) mutable {
         WTF::String result;
         if (Bun::isCPUProfilerRunning())
             Bun::stopCPUProfiler(workerCtx.vm(), &result, nullptr);
         if (result.isEmpty())
             result = kEmptyCpuProfileJSON;
-        ScriptExecutionContext::postTaskTo(parentId, [reqId, protectedProxy = WTF::move(protectedProxy), result = result.isolatedCopy()](ScriptExecutionContext& parentCtx) { resolveCrossVMRequest(protectedProxy.get(), reqId, parentCtx, [&](VM& vm, JSGlobalObject*) -> JSValue { return jsString(vm, result); }); }, parentLoop);
+        ScriptExecutionContext::postTaskTo(parentId, [reqId, protectedProxy = WTF::move(protectedProxy), result = result.isolatedCopy()](ScriptExecutionContext& parentCtx) { resolveCrossVMRequest(protectedProxy.get(), reqId, parentCtx, [&](VM& vm, JSGlobalObject*) -> JSValue { return jsString(vm, result); }); }, parentLoopKind);
     });
     if (!accepted) {
         // Worker already gone: resolve with an empty profile rather than reject,
@@ -867,8 +867,8 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_cpuUsageInternalBody
     auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
     uint64_t reqId = worker.contextProxy().registerCrossVMRequest(vm, promise);
     auto parentId = globalObject->scriptExecutionContext()->identifier();
-    auto parentLoop = Bun__VM__currentLoopKind(globalObject->bunVM());
-    bool accepted = worker.contextProxy().postTaskToWorkerGlobalScope([reqId, parentId, parentLoop, protectedProxy = Ref { worker.contextProxy() }](ScriptExecutionContext&) mutable {
+    auto parentLoopKind = Bun__VM__currentLoopKind(globalObject->bunVM());
+    bool accepted = worker.contextProxy().postTaskToWorkerGlobalScope([reqId, parentId, parentLoopKind, protectedProxy = Ref { worker.contextProxy() }](ScriptExecutionContext&) mutable {
         double user = 0;
         double sys = 0;
 #if OS(WINDOWS)
@@ -904,7 +904,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_cpuUsageInternalBody
                                                                                                                                                              o->putDirect(pvm, Identifier::fromString(pvm, "user"_s), jsNumber(user));
                                                                                                                                                              o->putDirect(pvm, Identifier::fromString(pvm, "system"_s), jsNumber(sys));
                                                                                                                                                              return o;
-                                                                                                                                                         }); }, parentLoop);
+                                                                                                                                                         }); }, parentLoopKind);
     });
     if (!accepted) {
         worker.contextProxy().takeCrossVMRequest(reqId);

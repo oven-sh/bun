@@ -104,7 +104,7 @@ private:
         ScriptExecutionContextIdentifier ctxId WTF_GUARDED_BY_LOCK(lock) { 0 };
         // The loop `ctxId` was running when this side attached there; drains and the peer-close
         // notification are posted to it.
-        BunLoopKind ctxLoop WTF_GUARDED_BY_LOCK(lock) { BunLoopKind::Regular };
+        BunLoopKind ctxLoopKind WTF_GUARDED_BY_LOCK(lock) { BunLoopKind::Regular };
         ThreadSafeWeakPtr<MessagePort> port WTF_GUARDED_BY_LOCK(lock);
         // Packed flags + count. Written only while holding `lock`; read locklessly.
         std::atomic<uint64_t> state { 0 };

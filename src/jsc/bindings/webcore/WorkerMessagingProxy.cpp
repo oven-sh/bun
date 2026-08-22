@@ -86,7 +86,7 @@ WorkerMessagingProxy::WorkerMessagingProxy(Worker& workerObject, ScriptExecution
     : m_scriptExecutionContext(&parentContext)
     , m_workerObject(&workerObject)
     , m_loaderContextIdentifier(parentContext.identifier())
-    , m_loaderLoop(parentContext.currentLoop())
+    , m_loaderLoopKind(parentContext.currentLoopKind())
     , m_workerContextIdentifier(ScriptExecutionContext::generateIdentifier())
     , m_options(WTF::move(options))
 {
@@ -220,7 +220,7 @@ void WorkerMessagingProxy::postMessageToWorkerGlobalScope(MessageWithMessagePort
 
 bool WorkerMessagingProxy::postTaskToWorkerObject(Function<void(ScriptExecutionContext&)>&& task)
 {
-    return ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, WTF::move(task), m_loaderLoop);
+    return ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, WTF::move(task), m_loaderLoopKind);
 }
 
 bool WorkerMessagingProxy::postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>&& task)

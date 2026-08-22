@@ -3533,7 +3533,7 @@ fn transpile_source_code_inner(
             let html_bundle = crate::api::HTMLBundle::init(global, path.text);
             use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
             Ok(OwnedResolvedSource::from(ResolvedSource {
-                jsvalue_for_export: crate::api::HTMLBundle::to_js(html_bundle.into_raw(), global),
+                jsvalue_for_export: crate::api::HTMLBundle::to_js(html_bundle, global),
                 specifier: input_specifier.dupe_ref(),
                 source_url: create_if_different(input_specifier, path.text),
                 tag: ResolvedSourceTag::ExportDefaultObject,

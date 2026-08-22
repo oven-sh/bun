@@ -1754,8 +1754,7 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
                 ..Default::default()
             },
         );
-        // SAFETY: `response` holds a ref for the duration of the call.
-        unsafe { StaticRoute::on_request(response.as_ptr(), bun_uws::AnyRequest::H1(req), resp) };
+        StaticRoute::on_request(response.this_ptr(), bun_uws::AnyRequest::H1(req), resp);
         return;
     }
 
@@ -1795,8 +1794,7 @@ fn on_asset_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
         return not_found(resp);
     };
     req.set_yield(false);
-    // SAFETY: `dev.assets` holds a ref on `asset` for as long as it is stored.
-    unsafe { StaticRoute::on(asset.as_ptr(), resp) };
+    StaticRoute::on(asset.this_ptr(), resp);
 }
 
 pub(super) use bun_core::fmt::parse_hex_to_int;
@@ -2681,10 +2679,10 @@ impl DevServer {
 
         // SAFETY: `route_bundle` points into `self.route_bundles`, not resized in
         // this fn; the shared reborrow ends with this statement.
-        let cached: Option<*mut StaticRoute> =
+        let cached: Option<bun_ptr::ThisPtr<StaticRoute>> =
             unsafe { (*route_bundle).data.html().cached_response.as_ref() }
-                .map(route_bundle::StaticRouteRef::as_ptr);
-        let blob: *mut StaticRoute = match cached {
+                .map(route_bundle::StaticRouteRef::this_ptr);
+        let blob: bun_ptr::ThisPtr<StaticRoute> = match cached {
             Some(blob) => blob,
             None => 'generate: {
                 // SAFETY: `generate_html_payload` reads `route_bundle.data` /
@@ -2705,14 +2703,13 @@ impl DevServer {
                         ..Default::default()
                     },
                 );
-                let blob = response.as_ptr();
+                let blob = response.this_ptr();
                 // SAFETY: per-access reborrow; no other `&` into `*route_bundle` live.
                 unsafe { (*route_bundle).data.html_mut().cached_response = Some(response) };
                 break 'generate blob;
             }
         };
-        // SAFETY: blob is a live boxed StaticRoute owned by html.cached_response
-        unsafe { StaticRoute::on_with_method(blob, method, resp) };
+        StaticRoute::on_with_method(blob, method, resp);
     }
 }
 
@@ -2894,9 +2891,10 @@ impl DevServer {
             unsafe { &mut *self_ptr }.route_bundle_ptr(bundle_index);
         // SAFETY: `route_bundle` points into `self.route_bundles`, not resized in
         // this fn; the shared reborrow ends with this statement.
-        let cached: Option<*mut StaticRoute> = unsafe { (*route_bundle).client_bundle.as_ref() }
-            .map(route_bundle::StaticRouteRef::as_ptr);
-        let client_bundle: *mut StaticRoute = match cached {
+        let cached: Option<bun_ptr::ThisPtr<StaticRoute>> =
+            unsafe { (*route_bundle).client_bundle.as_ref() }
+                .map(route_bundle::StaticRouteRef::this_ptr);
+        let client_bundle: bun_ptr::ThisPtr<StaticRoute> = match cached {
             Some(client_bundle) => client_bundle,
             None => 'generate: {
                 // SAFETY: `generate_client_bundle` reads `*route_bundle` and
@@ -2914,7 +2912,7 @@ impl DevServer {
                         ..Default::default()
                     },
                 );
-                let client_bundle = bundle.as_ptr();
+                let client_bundle = bundle.this_ptr();
                 // SAFETY: per-access reborrow; no other `&` into `*route_bundle` live.
                 unsafe { (*route_bundle).client_bundle = Some(bundle) };
                 break 'generate client_bundle;
@@ -2924,8 +2922,7 @@ impl DevServer {
         let source_map_id = unsafe { &*route_bundle }.source_map_id();
         // SAFETY: `source_maps` is disjoint from `route_bundles`.
         unsafe { &mut (*self_ptr).source_maps }.add_weak_ref(source_map_id);
-        // SAFETY: client_bundle is a live boxed StaticRoute owned by route_bundle.client_bundle
-        unsafe { StaticRoute::on_with_method(client_bundle, method, resp) };
+        StaticRoute::on_with_method(client_bundle, method, resp);
     }
 }
 
@@ -5216,7 +5213,7 @@ fn on_request(dev: &mut DevServer, req: &mut Request, mut resp: AnyResponse) -> 
 impl DevServer {
     pub(crate) fn respond_for_html_bundle(
         &mut self,
-        html: *mut HTMLBundleRoute,
+        html: bun_ptr::ThisPtr<HTMLBundleRoute>,
         req: &mut Request,
         resp: AnyResponse,
     ) -> Result<(), AllocError> {
@@ -5256,14 +5253,10 @@ impl DevServer {
             route_bundle::UnresolvedIndex::Framework(route_index) => {
                 &raw mut self.router.route_ptr_mut(route_index).bundle
             }
-            route_bundle::UnresolvedIndex::Html(html) => {
-                // SAFETY: caller guarantees `html` is a live IntrusiveRc-managed
-                // allocation; single-threaded (uws JS-thread callback).
-                // R-2: `dev_server_id` is `Cell<Option<Index>>`; `Cell::as_ptr`
-                // yields the inner `*mut Option<Index>` so the `*index_location`
-                // read/write below stays raw and matches the framework arm's type.
-                unsafe { (*html).dev_server_id.as_ptr() }
-            }
+            // R-2: `dev_server_id` is `Cell<Option<Index>>`; `Cell::as_ptr`
+            // yields the inner `*mut Option<Index>` so the `*index_location`
+            // read/write below stays raw and matches the framework arm's type.
+            route_bundle::UnresolvedIndex::Html(html) => html.dev_server_id.as_ptr(),
         };
         // SAFETY: index_location points into self/html which outlive this fn
         if let Some(bundle_index) = unsafe { *index_location } {
@@ -5274,9 +5267,7 @@ impl DevServer {
 
         // A file delivers its html to one route bundle only: a route `server.reload()` re-registers reuses it.
         if let route_bundle::UnresolvedIndex::Html(html) = route {
-            // SAFETY: caller guarantees `html` is a live IntrusiveRc-managed
-            // allocation; single-threaded (uws JS-thread callback).
-            let html_ref = unsafe { &*html };
+            let html_ref = &*html;
             if let Some(existing) = self
                 .client_graph
                 .bundled_files
@@ -5303,10 +5294,7 @@ impl DevServer {
                     })
                 }
                 route_bundle::UnresolvedIndex::Html(html) => 'brk: {
-                    // SAFETY: caller guarantees `html` is live; single-threaded.
-                    // R-2: shared deref — only `bundle.path` is read; mutation of
-                    // `dev_server_id` goes through the `Cell` `index_location` above.
-                    let html_ref = unsafe { &*html };
+                    let html_ref = &*html;
                     let incremental_graph_index = self.client_graph.insert_stale_extra(
                         &html_ref.bundle.path,
                         bake::Graph::Client,
@@ -5316,8 +5304,7 @@ impl DevServer {
                         [incremental_graph_index.get() as usize];
                     file.html_route_bundle_index = Some(bundle_index);
                     break 'brk route_bundle::Data::Html(route_bundle::Html {
-                        // SAFETY: `html` is a live IntrusiveRc-managed allocation.
-                        html_bundle: unsafe { bun_ptr::RefPtr::init_ref(html) },
+                        html_bundle: bun_ptr::RefPtr::from_this(html),
                         bundled_file: incremental_graph_index,
                         script_injection_offset: None,
                         cached_response: None,
@@ -6170,9 +6157,9 @@ impl EntryPointList {
 /// `<'a>` retained only for the owning `DevServer<'a>`'s `Transpiler` borrows.
 #[derive(Default)]
 pub struct HTMLRouter {
-    pub(crate) map: StringHashMap<*mut HTMLBundleRoute>,
+    pub(crate) map: StringHashMap<bun_ptr::BackRef<HTMLBundleRoute, bun_ptr::Mut>>,
     /// If a catch-all route exists, it is not stored in map, but here.
-    pub(crate) fallback: Option<*mut HTMLBundleRoute>,
+    pub(crate) fallback: Option<bun_ptr::BackRef<HTMLBundleRoute, bun_ptr::Mut>>,
 }
 
 impl HTMLRouter {
@@ -6183,11 +6170,19 @@ impl HTMLRouter {
         }
     }
 
-    pub fn get(&self, path: &[u8]) -> Option<*mut HTMLBundleRoute> {
-        self.map.get(path).copied().or(self.fallback)
+    pub fn get(&self, path: &[u8]) -> Option<bun_ptr::ThisPtr<HTMLBundleRoute>> {
+        self.map
+            .get(path)
+            .copied()
+            .or(self.fallback)
+            .map(|r| r.this_ptr())
     }
 
-    pub(crate) fn put(&mut self, path: &[u8], route: *mut HTMLBundleRoute) -> crate::Result<()> {
+    pub(crate) fn put(
+        &mut self,
+        path: &[u8],
+        route: bun_ptr::BackRef<HTMLBundleRoute, bun_ptr::Mut>,
+    ) -> crate::Result<()> {
         if path == b"/*" {
             self.fallback = Some(route);
         } else {

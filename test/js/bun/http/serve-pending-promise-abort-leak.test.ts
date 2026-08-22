@@ -1,6 +1,7 @@
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
-import { connect } from "node:net";
+import type { Server } from "bun";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows } from "harness";
+import { connect, type Socket } from "node:net";
 import { join } from "node:path";
 
 // The teardown condition, with no timers and no GC: server.stop() resolves
@@ -613,130 +614,255 @@ test("413 on a chunked upload frees the context while the handler promise stays 
 // inside the dispatch, and that nested run can dispatch the close itself, with
 // nobody subscribed. Before the fix the close was lost: request.signal never
 // fired, the context stayed pending, and a Promise<Response> settling later
-// rendered into the freed socket. bun:test's .resolves is such a wait, which
-// is how a test that does `await expect(fetch(...)).rejects.toThrow()` from
-// inside a handler's microtask checkpoint hit this.
-function waitSync(promise: Promise<void>) {
-  expect(promise).resolves.toBeUndefined();
-}
+// rendered into the freed socket.
+//
+// Windows: the libuv backend frees the closed socket inside the nested run, and
+// uWS's own request dispatch segfaults on it when the handler returns, with or
+// without this fix. #40021 keeps it allocated until the outermost tick ends.
+describe.todoIf(isWindows)("connection closed while the request is being dispatched", () => {
+  type CloseWindow = (run: () => void) => void;
+  const closeWindows: Array<[string, CloseWindow]> = [
+    ["inside the handler", run => run()],
+    ["in the handler's microtask checkpoint", run => queueMicrotask(run)],
+  ];
 
-// Ends the client side of an open request and returns only once the server
-// has closed its side: the client's 'close' needs the server's FIN, so when
-// the wait returns, the server socket's close has been dispatched.
-function endClientAndWaitForServerClose(client: import("node:net").Socket, clientClosed: Promise<void>) {
-  client.end();
-  waitSync(clientClosed);
-}
+  // The synchronous waits. bun:test's is how a test that does
+  // `await expect(fetch(...)).rejects.toThrow()` from inside a handler's
+  // microtask checkpoint hit this; Bun.build() waits on a plugin's async
+  // setup() before it returns, so a handler that bundles on request hits it
+  // outside of any test.
+  type SyncWait = (promise: Promise<void>) => void;
+  const expectResolves: SyncWait = promise => {
+    expect(promise).resolves.toBeUndefined();
+  };
+  const buildWithAsyncPluginSetup: SyncWait = promise => {
+    Bun.build({
+      entrypoints: [join(import.meta.dir, "serve-close-during-dispatch-late-resolve-fixture.ts")],
+      plugins: [{ name: "wait", setup: () => promise }],
+    }).catch(() => {});
+  };
 
-const closeWindows: Array<[string, (run: () => void) => void]> = [
-  ["inside the handler", run => run()],
-  ["in the handler's microtask checkpoint", run => queueMicrotask(run)],
-];
-const handlerResults: Array<[string, () => Response | Promise<Response>]> = [
-  ["a pending Promise<Response>", () => new Promise<Response>(() => {})],
-  ["a Response", () => new Response("nobody is listening")],
-];
-const closeDuringDispatchCases = closeWindows.flatMap(([where, closeWhen]) =>
-  handlerResults.map(([what, result]) => [where, what, closeWhen, result] as const),
-);
-
-test.each(closeDuringDispatchCases)(
-  "connection closed %s, handler returns %s: the request is aborted",
-  async (_where, _what, closeWhen, result) => {
-    const aborted: Array<{ url: string; host: string | null }> = [];
-    const { promise: closedDuringDispatch, resolve: signalClosed } = Promise.withResolvers<void>();
-    let client: import("node:net").Socket;
+  // One raw client whose connection the handler closes from inside the
+  // dispatch. The client's 'close' needs the server's FIN, so when the
+  // synchronous wait returns, the server side's close has been dispatched.
+  function closingClient(closeWhen: CloseWindow, waitSync: SyncWait = expectResolves) {
+    const { promise: closed, resolve: signalClosed } = Promise.withResolvers<void>();
+    let client: Socket;
     let clientClosed: Promise<void>;
+    return {
+      send(server: Server, head: string) {
+        client = connect(Number(server.port), "127.0.0.1", () => client.write(head));
+        client.on("error", () => {});
+        clientClosed = new Promise<void>(resolve => client.once("close", () => resolve()));
+      },
+      // Called from the handler (or error()).
+      closeFromTheDispatch() {
+        closeWhen(() => {
+          client.end();
+          waitSync(clientClosed);
+          signalClosed();
+        });
+      },
+      // `closed` settles from inside the dispatch. The abort is delivered as
+      // the dispatch finishes, so wait for an immediate queued after it.
+      async dispatchFinished() {
+        await closed;
+        await new Promise(resolve => setImmediate(resolve));
+      },
+    };
+  }
 
+  const GET = "GET /closed-during-dispatch HTTP/1.1\r\nHost: example.com\r\n\r\n";
+
+  const handlerResults: Array<[string, () => Response | Promise<Response>]> = [
+    ["a pending Promise<Response>", () => new Promise<Response>(() => {})],
+    ["a Response", () => new Response("nobody is listening")],
+  ];
+  const handlerCases = closeWindows.flatMap(([where, closeWhen]) =>
+    handlerResults.map(([what, result]) => [where, what, closeWhen, result] as const),
+  );
+
+  test.each(handlerCases)(
+    "closed %s, handler returns %s: the request is aborted",
+    async (_where, _what, closeWhen, result) => {
+      const aborted: Array<{ url: string; host: string | null }> = [];
+      const client = closingClient(closeWhen);
+      using server = Bun.serve({
+        port: 0,
+        idleTimeout: 0,
+        fetch(req) {
+          // Read lazily from inside the listener: an abort delivered this way
+          // must still see the request's url and headers, like any other abort.
+          req.signal.addEventListener("abort", () => aborted.push({ url: req.url, host: req.headers.get("host") }), {
+            once: true,
+          });
+          client.closeFromTheDispatch();
+          return result();
+        },
+      });
+
+      client.send(server, GET);
+      await client.dispatchFinished();
+      expect(aborted).toEqual([{ url: "http://example.com/closed-during-dispatch", host: "example.com" }]);
+      await stopAndAssertDrained(server);
+    },
+  );
+
+  test.each(closeWindows)(
+    "closed %s while Bun.build() waits on a plugin's async setup(): the request is aborted",
+    async (_where, closeWhen) => {
+      const aborted: string[] = [];
+      const client = closingClient(closeWhen, buildWithAsyncPluginSetup);
+      using server = Bun.serve({
+        port: 0,
+        idleTimeout: 0,
+        fetch(req) {
+          req.signal.addEventListener("abort", () => aborted.push(req.url), { once: true });
+          client.closeFromTheDispatch();
+          return new Promise<Response>(() => {});
+        },
+      });
+
+      client.send(server, GET);
+      await client.dispatchFinished();
+      expect(aborted).toEqual(["http://example.com/closed-during-dispatch"]);
+      await stopAndAssertDrained(server);
+    },
+  );
+
+  // The request body is still arriving and the handler has a read parked on
+  // it: the abort has to reject that read as well (the context is not dead at
+  // abort time, so this takes on_abort's other branch).
+  test.each(closeWindows)(
+    "closed %s while the body is in flight: the pending read rejects",
+    async (_where, closeWhen) => {
+      const events: string[] = [];
+      const { promise: bodyRead, resolve: signalBodyRead } = Promise.withResolvers<string>();
+      const client = closingClient(closeWhen);
+      using server = Bun.serve({
+        port: 0,
+        idleTimeout: 0,
+        fetch(req) {
+          req.signal.addEventListener("abort", () => events.push("abort"), { once: true });
+          req.text().then(
+            () => signalBodyRead("resolved"),
+            e => signalBodyRead(`rejected: ${(e as Error).name}`),
+          );
+          client.closeFromTheDispatch();
+          return new Promise<Response>(() => {});
+        },
+      });
+
+      // Declares 1000 bytes and sends 10, so the body stays in flight.
+      client.send(server, "POST / HTTP/1.1\r\nHost: example.com\r\nContent-Length: 1000\r\n\r\n0123456789");
+      await client.dispatchFinished();
+      expect(events).toEqual(["abort"]);
+      expect(await bodyRead).toBe("rejected: AbortError");
+      await stopAndAssertDrained(server);
+    },
+  );
+
+  // A stream body returned by the handler starts pulling in the checkpoint, so
+  // a close inside its pull() is met like one in the checkpoint.
+  test("closed inside the pull() of the handler's stream body: the request is aborted", async () => {
+    const aborted: string[] = [];
+    const client = closingClient(run => run());
     using server = Bun.serve({
       port: 0,
       idleTimeout: 0,
       fetch(req) {
-        // Read lazily from inside the listener: an abort delivered this way
-        // must still see the request's url and headers, like any other abort.
-        req.signal.addEventListener("abort", () => aborted.push({ url: req.url, host: req.headers.get("host") }), {
-          once: true,
-        });
-        closeWhen(() => {
-          endClientAndWaitForServerClose(client, clientClosed);
-          signalClosed();
-        });
+        req.signal.addEventListener("abort", () => aborted.push(req.url), { once: true });
+        return new Response(
+          new ReadableStream({
+            pull() {
+              client.closeFromTheDispatch();
+              return new Promise<void>(() => {});
+            },
+          }),
+        );
+      },
+    });
+
+    client.send(server, GET);
+    await client.dispatchFinished();
+    expect(aborted).toEqual(["http://example.com/closed-during-dispatch"]);
+    await stopAndAssertDrained(server);
+  });
+
+  // A stream body returned by error() starts pulling only while it is being
+  // attached to the connection, after every earlier check: the close is met
+  // by the attach itself.
+  test("closed inside the pull() of error()'s stream body: the request is aborted", async () => {
+    const aborted: string[] = [];
+    const client = closingClient(run => run());
+    using server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      fetch(req) {
+        req.signal.addEventListener("abort", () => aborted.push(req.url), { once: true });
+        throw new Error("handler failed");
+      },
+      error() {
+        return new Response(
+          new ReadableStream({
+            pull() {
+              client.closeFromTheDispatch();
+              return new Promise<void>(() => {});
+            },
+          }),
+        );
+      },
+    });
+
+    client.send(server, GET);
+    await client.dispatchFinished();
+    expect(aborted).toEqual(["http://example.com/closed-during-dispatch"]);
+    await stopAndAssertDrained(server);
+  });
+
+  // error() runs after the checkpoint, so a close dispatched inside it is met
+  // once error() returns, whatever it returns. Either of these results would
+  // otherwise hold the request open forever.
+  const errorResults: Array<[string, () => Response | Promise<Response>]> = [
+    ["a streaming Response", () => new Response(new ReadableStream({ pull: () => new Promise<void>(() => {}) }))],
+    ["a pending Promise<Response>", () => new Promise<Response>(() => {})],
+  ];
+  test.each(errorResults)("closed inside error(), which returns %s: the request is aborted", async (_what, result) => {
+    const aborted: string[] = [];
+    const client = closingClient(run => run());
+    using server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      fetch(req) {
+        req.signal.addEventListener("abort", () => aborted.push(req.url), { once: true });
+        throw new Error("handler failed");
+      },
+      error() {
+        client.closeFromTheDispatch();
         return result();
       },
     });
 
-    client = connect(Number(server.port), "127.0.0.1", () => {
-      client.write("GET /closed-during-dispatch HTTP/1.1\r\nHost: example.com\r\n\r\n");
-    });
-    client.on("error", () => {});
-    clientClosed = new Promise<void>(resolve => client.once("close", () => resolve()));
-
-    await closedDuringDispatch;
-    // That settled from inside the dispatch. The abort is delivered when the
-    // dispatch finishes, so look only once an immediate queued here has run.
-    await new Promise(resolve => setImmediate(resolve));
-    expect(aborted).toEqual([{ url: "http://example.com/closed-during-dispatch", host: "example.com" }]);
+    client.send(server, GET);
+    await client.dispatchFinished();
+    expect(aborted).toEqual(["http://example.com/closed-during-dispatch"]);
     await stopAndAssertDrained(server);
-  },
-);
-
-// Same window while the request body is still arriving and the handler has a
-// read parked on it: the abort has to reject that read as well (the context
-// is not dead at abort time, so this takes on_abort's other branch).
-test.each(closeWindows)(
-  "connection closed %s while the body is in flight: the request is aborted and the pending read rejects",
-  async (_where, closeWhen) => {
-    const events: string[] = [];
-    const { promise: closedDuringDispatch, resolve: signalClosed } = Promise.withResolvers<void>();
-    const { promise: bodyRead, resolve: signalBodyRead } = Promise.withResolvers<string>();
-    let client: import("node:net").Socket;
-    let clientClosed: Promise<void>;
-
-    using server = Bun.serve({
-      port: 0,
-      idleTimeout: 0,
-      fetch(req) {
-        req.signal.addEventListener("abort", () => events.push("abort"), { once: true });
-        req.text().then(
-          () => signalBodyRead("resolved"),
-          e => signalBodyRead(`rejected: ${(e as Error).name}`),
-        );
-        closeWhen(() => {
-          endClientAndWaitForServerClose(client, clientClosed);
-          signalClosed();
-        });
-        return new Promise<Response>(() => {});
-      },
-    });
-
-    client = connect(Number(server.port), "127.0.0.1", () => {
-      // Declares 1000 bytes and sends 10, so the body stays in flight.
-      client.write("POST / HTTP/1.1\r\nHost: example.com\r\nContent-Length: 1000\r\n\r\n0123456789");
-    });
-    client.on("error", () => {});
-    clientClosed = new Promise<void>(resolve => client.once("close", () => resolve()));
-
-    await closedDuringDispatch;
-    await new Promise(resolve => setImmediate(resolve));
-    expect(events).toEqual(["abort"]);
-    expect(await bodyRead).toBe("rejected: AbortError");
-    await stopAndAssertDrained(server);
-  },
-);
-
-test("a Promise<Response> that settles after its connection closed during dispatch is a no-op", async () => {
-  // In a subprocess: on an unfixed build the late resolve renders into the
-  // socket uSockets freed at the end of the tick (heap-use-after-free under
-  // ASAN), and the abort never fires.
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), join(import.meta.dir, "serve-close-during-dispatch-late-resolve-fixture.ts")],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  expect(JSON.parse(stdout.trim())).toEqual({ abortCount: 1, pendingAfterResolve: 0 });
-  expect(exitCode).toBe(0);
-}, 30_000);
+  test("a Promise<Response> that settles after the close is a no-op", async () => {
+    // In a subprocess: on an unfixed build the late resolve renders into the
+    // socket uSockets freed at the end of the tick (heap-use-after-free under
+    // ASAN), and the abort never fires.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "serve-close-during-dispatch-late-resolve-fixture.ts")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({ abortCount: 1, pendingAfterResolve: 0 });
+    expect(exitCode).toBe(0);
+  });
+});

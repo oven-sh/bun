@@ -660,6 +660,10 @@ where
         };
         self.flags.set_has_abort_handler(true);
         if resp.is_closed() {
+            // `req` is still set only while the dispatch is on the stack: snapshot as `to_async` would have.
+            if let (Some(req), Some(request)) = (self.req.get(), self.request_mut()) {
+                self.to_async_without_abort_handler(req, request);
+            }
             Self::on_abort(self.as_ctx_ptr(), resp);
             return;
         }
@@ -2034,6 +2038,8 @@ where
         debug_assert!(this.server.get().is_some());
         let global_this = this.server().global_this();
 
+        // Armed here, not in `to_async()`: `stop(true)` inside `pull()` must reach `on_abort`; see `end_already_responded_stream`.
+        this.set_abort_handler();
         if this.is_aborted_or_ended() {
             crate::dispatch::fold(stream.cancel(global_this));
             this.response_body_readable_stream_ref
@@ -2066,11 +2072,6 @@ where
             this.render_metadata();
         }
 
-        // Before `pull()` runs, not in `to_async()`: a `server.stop(true)` inside
-        // `pull()` has to reach `on_abort`, and once the stream has completed the
-        // response, uWS `markDone()` must have dropped these for good (the flag
-        // makes the later `to_async()` a no-op); see `end_already_responded_stream`.
-        this.set_abort_handler();
         resp.on_writable(
             |this, off, resp| Self::on_writable_response_stream(this, off, resp),
             this.as_ctx_ptr(),
@@ -2636,18 +2637,15 @@ where
         }
     }
 
-    /// Drops the handler's result as for any aborted request; `to_async` delivers the missed close.
+    /// Drops the callback's result as for any aborted request; `set_abort_handler` delivers the missed close.
     #[cold]
-    fn on_connection_closed_during_dispatch(&self, this: &ThisServer, response_value: JSValue) {
+    fn on_connection_closed_during_dispatch(&self, this: &ThisServer, result: JSValue) {
         ctx_log!("connection closed during dispatch");
-        if let Some(promise) = response_value.as_any_promise() {
+        if let Some(promise) = result.as_any_promise() {
             // Subscribing to it would have made a later rejection handled.
             promise.set_handled(this.global_this().vm());
         }
-        match (self.req.get(), self.request_mut()) {
-            (Some(req), Some(request)) => self.to_async(req, request),
-            _ => self.set_abort_handler(),
-        }
+        self.set_abort_handler();
     }
 
     // Each HTTP request or TCP socket connection is effectively a "task".
@@ -3627,6 +3625,10 @@ where
                 // error() may have ended the request or called server.upgrade(req),
                 // either of which already released this context's ref.
                 if self.is_aborted_or_ended() || self.did_upgrade_web_socket() {
+                    return;
+                }
+                if self.resp.get().is_some_and(|resp| resp.is_closed()) {
+                    self.on_connection_closed_during_dispatch(server, result);
                     return;
                 }
                 if !result.is_empty_or_undefined_or_null() {

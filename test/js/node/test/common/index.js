@@ -1494,7 +1494,23 @@ function installBunExposeInternalsShim() {
         const normalizedArgsSymbol = Object.getOwnPropertySymbols(probe).find(
           s => s.description === "normalizedArgs",
         );
-        return { loader: "object", exports: { normalizedArgsSymbol } };
+        // The per-socket option symbols are module-private in Bun's node:net,
+        // like normalizedArgsSymbol; recover the real ones from a probe
+        // socket (the constructor always sets them) and the prototype.
+        const socketProbe = new net.Socket();
+        const bySymbolName = name =>
+          Object.getOwnPropertySymbols(socketProbe).find(s => s.description === name) ??
+          Object.getOwnPropertySymbols(net.Socket.prototype).find(s => s.description === name);
+        return {
+          loader: "object",
+          exports: {
+            normalizedArgsSymbol,
+            kSetNoDelay: bySymbolName("kSetNoDelay"),
+            kSetKeepAlive: bySymbolName("kSetKeepAlive"),
+            kSetKeepAliveInitialDelay: bySymbolName("kSetKeepAliveInitialDelay"),
+            kReinitializeHandle: bySymbolName("kReinitializeHandle"),
+          },
+        };
       });
       // node's internal/options: map the few CLI options vendored http tests ask
       // about onto the equivalent runtime values. Unknown options return undefined.

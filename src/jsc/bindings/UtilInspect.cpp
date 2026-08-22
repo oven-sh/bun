@@ -9,6 +9,7 @@
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "JavaScriptCore/PropertyNameArray.h"
 #include "JavaScriptCore/JSArray.h"
+#include "JavaScriptCore/IdentifierInlines.h"
 
 namespace Bun {
 
@@ -106,10 +107,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionGetOwnNonIndexProperties, (JSGlobalObject * g
 
     MarkedArgumentBuffer keys;
     for (const auto& propertyName : propertyNames) {
-        if (propertyName.isSymbol())
-            keys.append(Symbol::create(vm, static_cast<SymbolImpl&>(*propertyName.impl())));
-        else if (!parseIndex(propertyName))
-            keys.append(jsOwnedString(vm, propertyName.string()));
+        if (!propertyName.isSymbol() && parseIndex(propertyName))
+            continue;
+        keys.append(identifierToJSValue(vm, propertyName));
     }
     if (keys.hasOverflowed()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);

@@ -3,7 +3,7 @@
 use bun_http::Method;
 use bun_http_types::ETag::Headers;
 use bun_jsc::JSGlobalObject;
-use bun_telemetry::{Instrument, SpanKind, SpanStub, StatusCode, propagation};
+use bun_telemetry::{Instrument, SpanKind, SpanStub, propagation};
 use bun_url::URL;
 
 use super::{http, local, state};
@@ -98,8 +98,7 @@ pub fn end(
             }
             http::status_attrs(w, status, false);
             if let Some(e) = error {
-                w.attr("error.type", e);
-                w.status(StatusCode::Error, e.as_bytes());
+                w.error(e.as_bytes(), e.as_bytes());
             }
         },
     );

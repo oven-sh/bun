@@ -9,6 +9,7 @@ use crate::jsc::{
 };
 use crate::shared::CachedStructure;
 use crate::shared::connection_ctor_args::{self, ConnectionCtorArgs};
+use crate::shared::otel::ServerAddress;
 use bun_core::strings;
 use bun_core::{TimespecMockMode, timespec};
 use bun_ptr::{AsCtxPtr, BackRef, ParentRef};
@@ -508,16 +509,7 @@ impl JSMySQLConnection {
             poll_ref: JsCell::new(KeepAlive::default()),
             connection: JsCell::new(my_sql_connection::MySQLConnection::init(
                 database,
-                if path.is_empty() {
-                    args.hostname_str.to_utf8().slice().into()
-                } else {
-                    path.clone()
-                },
-                if path.is_empty() {
-                    u16::try_from(args.port).unwrap_or(0)
-                } else {
-                    0
-                },
+                ServerAddress::new(args.hostname_str.to_utf8().slice(), args.port, &path),
                 username,
                 password,
                 tls_config,

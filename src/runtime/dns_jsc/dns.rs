@@ -1714,7 +1714,7 @@ pub(crate) struct DNSLookup {
     pub allocated: bool,
     pub next: Option<NonNull<DNSLookup>>, // INTRUSIVE
     pub poll_ref: KeepAlive,
-    /// Native OpenTelemetry `dns.lookup` span and the queried name.
+    /// The `dns.lookup` span and its `dns.question.name`.
     pub otel: bun_telemetry::SpanStub,
     pub otel_name: Option<Box<[u8]>>,
 }
@@ -1752,7 +1752,6 @@ impl DNSLookup {
         }))
     }
 
-    /// Start the `dns.lookup` span for this waiter.
     pub(crate) fn otel_begin(&mut self, global_this: &JSGlobalObject, name: &[u8]) {
         self.otel = crate::telemetry::start_leaf(global_this, bun_telemetry::Instrument::Dns);
         if self.otel.is_some() {
@@ -1777,8 +1776,7 @@ impl DNSLookup {
                     w.attr_opt("dns.question.name", n);
                 }
                 if let Some(e) = error {
-                    w.attr("error.type", e);
-                    w.status(bun_telemetry::StatusCode::Error, e.as_bytes());
+                    w.error(e.as_bytes(), e.as_bytes());
                 }
             },
         );

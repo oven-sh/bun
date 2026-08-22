@@ -207,21 +207,20 @@ impl Promise {
         }
     }
 
-    /// Start the command's span. `db.query.text` is the command plus its
-    /// first argument (the key, for most commands) — never values.
+    /// `db.query.text` is the command plus its first argument (the key, for
+    /// most commands) — never values.
     pub(crate) fn otel_begin(
         &mut self,
         global_object: &JSGlobalObject,
         command: &Command<'_>,
-        host: &[u8],
-        port: u16,
+        address: &super::valkey::Address,
         database: u32,
     ) {
+        use super::valkey::Address;
         let mut dbbuf = bun_core::fmt::ItoaBuf::new();
-        let ns: &[u8] = if database == 0 {
-            b""
-        } else {
-            bun_core::fmt::itoa(&mut dbbuf, database)
+        let (host, port): (&[u8], u16) = match address {
+            Address::Unix(path) => (path, 0),
+            Address::Host { host, port } => (host, *port),
         };
         let span = bun_telemetry::db::begin(
             global_object.as_ptr().cast(),
@@ -229,12 +228,17 @@ impl Promise {
             &bun_telemetry::db::ConnectionInfo {
                 host,
                 port,
-                namespace: ns,
+                namespace: if database == 0 {
+                    b""
+                } else {
+                    bun_core::fmt::itoa(&mut dbbuf, database)
+                },
             },
         );
         if !span.is_some() {
             return;
         }
+        self.otel = span;
         let Some(mut local) = crate::telemetry::local(global_object) else {
             return;
         };
@@ -242,66 +246,52 @@ impl Promise {
             if !s.is_recording() {
                 return;
             }
-            let mut name = [0u8; 24];
-            let n = command.command.len().min(24);
-            for (i, c) in command.command[..n].iter().enumerate() {
-                name[i] = c.to_ascii_uppercase();
+            let mut upper = [0u8; 24];
+            let n = command.command.len().min(upper.len());
+            for (dst, c) in upper.iter_mut().zip(&command.command[..n]) {
+                *dst = c.to_ascii_uppercase();
             }
-            s.set_name(&name[..n]);
-            let l = &bun_telemetry::DEFAULT_LIMITS;
+            let name = &upper[..n];
+            s.set_name(name);
+            let limits = crate::telemetry::span::limits();
             s.push_attribute(
                 b"db.operation.name",
-                &bun_telemetry::Value::Str(&name[..n]),
-                l,
+                &bun_telemetry::Value::Str(name),
+                limits,
             );
-            // Never record arguments of credential-bearing commands.
-            let sensitive = matches!(
-                &name[..n],
-                b"AUTH" | b"HELLO" | b"MIGRATE" | b"ACL" | b"CONFIG"
-            );
-            if bun_telemetry::rt::capture_db_statement() && !sensitive {
-                let first: &[u8] = match &command.args {
-                    Args::Slices(a) => a.first().map(|s| s.slice()).unwrap_or(b""),
-                    Args::Args(a) => a.first().map(|s| s.slice()).unwrap_or(b""),
-                    Args::Raw(a) => a.first().copied().unwrap_or(b""),
-                };
-                let first = bun_telemetry::otlp::truncate_utf8(first, 256);
-                let mut text = Vec::with_capacity(n + 1 + first.len() + 4);
-                text.extend_from_slice(&name[..n]);
-                if !first.is_empty() {
-                    text.push(b' ');
-                    text.extend_from_slice(first);
-                    if command.args.len() > 1 {
-                        text.extend_from_slice(b" ...");
-                    }
-                }
-                s.push_attribute(b"db.query.text", &bun_telemetry::Value::Str(&text), l);
+            let credential_bearing =
+                matches!(name, b"AUTH" | b"HELLO" | b"MIGRATE" | b"ACL" | b"CONFIG");
+            if credential_bearing || !bun_telemetry::rt::capture_db_statement() {
+                return;
             }
+            let first: &[u8] = match &command.args {
+                Args::Slices(a) => a.first().map_or(b"", |s| s.slice()),
+                Args::Args(a) => a.first().map_or(b"", |s| s.slice()),
+                Args::Raw(a) => a.first().copied().unwrap_or(b""),
+            };
+            let first = bun_telemetry::otlp::truncate_utf8(first, 256);
+            let mut text = Vec::with_capacity(n + 1 + first.len() + 4);
+            text.extend_from_slice(name);
+            if !first.is_empty() {
+                text.push(b' ');
+                text.extend_from_slice(first);
+                if command.args.len() > 1 {
+                    text.extend_from_slice(b" ...");
+                }
+            }
+            s.push_attribute(b"db.query.text", &bun_telemetry::Value::Str(&text), limits);
         });
-        self.otel = span;
     }
 
-    #[inline]
-    fn otel_end(&mut self, global_object: &JSGlobalObject, error: Option<(&[u8], &[u8])>) {
+    /// First call wins. Name and `db.operation.name` were set at begin.
+    fn otel_end(
+        &mut self,
+        global_object: &JSGlobalObject,
+        error: Option<bun_telemetry::db::DbError<'_>>,
+    ) {
         let span = core::mem::take(&mut self.otel);
         if span.is_some() {
-            let name = crate::telemetry::local(global_object)
-                .and_then(|l| {
-                    bun_telemetry::pool::with_ref(&l.pool, span, |s| {
-                        let mut b = [0u8; 24];
-                        let l = s.name.len().min(24);
-                        b[..l].copy_from_slice(&s.name[..l]);
-                        (b, l)
-                    })
-                })
-                .unwrap_or(([0u8; 24], 0));
-            bun_telemetry::db::end(
-                global_object.as_ptr().cast(),
-                span,
-                b"",
-                Some(&name.0[..name.1]),
-                error,
-            );
+            bun_telemetry::db::end(global_object.as_ptr().cast(), span, b"", None, error);
         }
     }
 
@@ -314,16 +304,16 @@ impl Promise {
             return_as_buffer: self.meta.contains(Meta::RETURN_AS_BUFFER),
         };
 
-        if self.otel.is_some() {
+        self.otel_end(
+            global_object,
             match value {
-                protocol::RESPValue::Error(e) => {
-                    let code_end =
-                        bun_core::strings::index_of_char_usize(e, b' ').unwrap_or(e.len());
-                    self.otel_end(global_object, Some((&e[..code_end], e)));
-                }
-                _ => self.otel_end(global_object, None),
-            }
-        }
+                protocol::RESPValue::Error(e) => Some(bun_telemetry::db::DbError {
+                    ty: &e[..bun_core::strings::index_of_char_usize(e, b' ').unwrap_or(e.len())],
+                    message: e,
+                }),
+                _ => None,
+            },
+        );
         let js_value = match resp_value_to_js_with_options(value, global_object, options) {
             Ok(v) => v,
             Err(err) => {
@@ -341,19 +331,19 @@ impl Promise {
         jsvalue: JsResult<JSValue>,
     ) -> JsResult<()> {
         if self.otel.is_some() {
-            let mut code = None;
-            if let Ok(v) = &jsvalue {
-                if v.is_object() {
-                    if let Some(c) = v.get(global_object, "code")? {
-                        if c.is_string() {
-                            code = Some(c.to_slice(global_object)?);
-                        }
-                    }
-                }
-            }
+            let code = match &jsvalue {
+                Ok(v) if v.is_object() => match v.get(global_object, "code")? {
+                    Some(c) if c.is_string() => Some(c.to_slice(global_object)?),
+                    _ => None,
+                },
+                _ => None,
+            };
             self.otel_end(
                 global_object,
-                Some((code.as_ref().map(|c| c.slice()).unwrap_or(b"_OTHER"), b"")),
+                Some(bun_telemetry::db::DbError {
+                    ty: code.as_ref().map_or(b"_OTHER", |c| c.slice()),
+                    message: b"",
+                }),
             );
         }
         self.promise.reject(global_object, jsvalue)?;

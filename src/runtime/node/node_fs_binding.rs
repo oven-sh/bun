@@ -58,7 +58,7 @@ where
             global,
             &otel,
             F.otel_name(true),
-            args.otel_path(),
+            args.path(),
             result.as_ref().err(),
         );
     }

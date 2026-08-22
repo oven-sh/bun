@@ -18,9 +18,8 @@ pub struct Hooks {
     pub local: fn(global: *mut c_void) -> *const RefCell<Local>,
     /// Called after a span is recorded on `global`'s VM (arms the flush timer).
     pub after_record: fn(global: *mut c_void),
-    /// A pooled span that had a JS cell materialized for it ended: release it
-    /// (`Slot::js_cell`).
-    pub release_cell: fn(js_cell: usize),
+    /// A pooled span that had a JS cell materialized for it ended: release it.
+    pub release_cell: fn(js_cell: crate::pool::JsCellRef),
     pub sampler: fn() -> crate::Sampler,
     pub limits: fn() -> crate::data::Limits,
     pub capture_db_statement: fn() -> bool,
@@ -69,6 +68,15 @@ pub fn active_context(global: *mut c_void) -> Option<SpanContext> {
     active_span(global)
         .map(|s| s.ctx)
         .filter(SpanContext::is_valid)
+}
+
+/// The configured span limits (defaults before the runtime is configured).
+#[inline]
+pub fn limits() -> crate::Limits {
+    HOOKS
+        .get()
+        .map(|h| (h.limits)())
+        .unwrap_or(crate::DEFAULT_LIMITS)
 }
 
 #[inline]

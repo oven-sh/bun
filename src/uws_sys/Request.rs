@@ -25,28 +25,15 @@ impl AnyRequest {
             Self::H1(r) => bun_opaque::opaque_deref_mut(*r).telemetry_headers(),
             Self::H3(r) => {
                 let r = bun_opaque::opaque_deref_mut(*r);
-                let mut out = TelemetryHeaders {
-                    ptr: [core::ptr::null(); 5],
-                    len: [0; 5],
+                TelemetryHeaders {
+                    host: RawSlice::of(r.header(b"host")),
+                    user_agent: RawSlice::of(r.header(b"user-agent")),
+                    traceparent: RawSlice::of(r.header(b"traceparent")),
+                    tracestate: RawSlice::of(r.header(b"tracestate")),
+                    baggage: RawSlice::of(r.header(b"baggage")),
                     path_len: u32::MAX,
                     _req: core::marker::PhantomData,
-                };
-                for (i, name) in [
-                    &b"host"[..],
-                    b"user-agent",
-                    b"traceparent",
-                    b"tracestate",
-                    b"baggage",
-                ]
-                .iter()
-                .enumerate()
-                {
-                    if let Some(v) = r.header(name) {
-                        out.ptr[i] = v.as_ptr();
-                        out.len[i] = v.len() as u32;
-                    }
                 }
-                out
             }
         }
     }
@@ -75,12 +62,40 @@ bun_opaque::opaque_ffi! {
     pub struct Request;
 }
 
+/// `(ptr, len)` of a header value inside the request; null = absent.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RawSlice {
+    ptr: *const u8,
+    len: usize,
+}
+
+impl RawSlice {
+    const NONE: RawSlice = RawSlice {
+        ptr: core::ptr::null(),
+        len: 0,
+    };
+    #[inline]
+    fn of(s: Option<&[u8]>) -> RawSlice {
+        match s {
+            Some(s) => RawSlice {
+                ptr: s.as_ptr(),
+                len: s.len(),
+            },
+            None => RawSlice::NONE,
+        }
+    }
+}
+
 /// Values of the headers telemetry reads, found in one pass over the header
-/// block: host, user-agent, traceparent, tracestate, baggage.
+/// block. Mirrors `uws_telemetry_headers_t`.
 #[repr(C)]
 pub struct TelemetryHeaders<'a> {
-    ptr: [*const u8; 5],
-    len: [u32; 5],
+    host: RawSlice,
+    user_agent: RawSlice,
+    traceparent: RawSlice,
+    tracestate: RawSlice,
+    baggage: RawSlice,
     /// Length of the path part of `url()` (up to `?`); `u32::MAX` if unknown.
     pub path_len: u32,
     _req: core::marker::PhantomData<&'a Request>,
@@ -88,27 +103,27 @@ pub struct TelemetryHeaders<'a> {
 
 impl<'a> TelemetryHeaders<'a> {
     #[inline]
-    fn get(&self, i: usize) -> Option<&'a [u8]> {
-        if self.ptr[i].is_null() {
+    fn get(&self, s: RawSlice) -> Option<&'a [u8]> {
+        if s.ptr.is_null() {
             return None;
         }
         // SAFETY: ptr/len describe a slice owned by the request for its lifetime.
-        Some(unsafe { bun_core::ffi::slice(self.ptr[i], self.len[i] as usize) })
+        Some(unsafe { bun_core::ffi::slice(s.ptr, s.len) })
     }
     pub fn host(&self) -> Option<&'a [u8]> {
-        self.get(0)
+        self.get(self.host)
     }
     pub fn user_agent(&self) -> Option<&'a [u8]> {
-        self.get(1)
+        self.get(self.user_agent)
     }
     pub fn traceparent(&self) -> Option<&'a [u8]> {
-        self.get(2)
+        self.get(self.traceparent)
     }
     pub fn tracestate(&self) -> Option<&'a [u8]> {
-        self.get(3)
+        self.get(self.tracestate)
     }
     pub fn baggage(&self) -> Option<&'a [u8]> {
-        self.get(4)
+        self.get(self.baggage)
     }
 }
 
@@ -132,8 +147,11 @@ impl Request {
     }
     pub fn telemetry_headers(&self) -> TelemetryHeaders<'_> {
         let mut out = TelemetryHeaders {
-            ptr: [core::ptr::null(); 5],
-            len: [0; 5],
+            host: RawSlice::NONE,
+            user_agent: RawSlice::NONE,
+            traceparent: RawSlice::NONE,
+            tracestate: RawSlice::NONE,
+            baggage: RawSlice::NONE,
             path_len: u32::MAX,
             _req: core::marker::PhantomData,
         };

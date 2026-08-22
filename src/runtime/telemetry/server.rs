@@ -5,8 +5,9 @@ use bun_jsc::JSGlobalObject;
 use bun_telemetry::http_record as R;
 use bun_telemetry::pool::{self, NativeSpan};
 use bun_telemetry::{Instrument, ScopeId, SpanKind, SpanStub, Value, clock, propagation};
+use bun_uws_sys::response::RawIp;
 
-use super::{Entered, http, local, state};
+use super::{Entered, local, state};
 
 /// Start a SERVER span for an incoming request and make it the active span.
 /// Returns the span (stored on the request context and finished with
@@ -41,7 +42,6 @@ pub fn begin(
     let now = clock::now_unix_nanos();
     let mut l = local(global)?;
     let stub = SpanStub::start(&mut l.rng, parent.as_ref(), &st.sampler, now);
-    let method_name = http::method_name(method).as_bytes();
     let baggage = if st.propagate_baggage {
         h.baggage()
             .filter(|b| propagation::baggage_is_reasonable(b))
@@ -65,16 +65,21 @@ pub fn begin(
             }
             let f = &mut s.http;
             f.active = true;
-            f.set_method(method_name);
+            f.method = method;
             if !stub.ctx.flags.sampled() {
                 return;
             }
             f.flags = if is_https { R::FLAG_HTTPS } else { 0 };
-            if let Some((ip, _port)) = resp.get_remote_address_raw() {
-                let raw = ip.bytes();
-                f.ip_len = raw.len() as u8;
-                f.ip[..raw.len()].copy_from_slice(raw);
-            }
+            f.peer = match resp {
+                bun_uws::AnyResponse::H3(_) => resp
+                    .get_remote_socket_info()
+                    .map_or(R::PeerIp::None, |a| R::PeerIp::from_text(a.ip())),
+                _ => match resp.get_remote_address_raw() {
+                    Some((RawIp::V4(b), _)) => R::PeerIp::V4(b),
+                    Some((RawIp::V6(b), _)) => R::PeerIp::V6(b),
+                    None => R::PeerIp::None,
+                },
+            };
             let url = req.url();
             let path_len = if h.path_len == u32::MAX {
                 bun_core::strings::index_of_char_usize(url, b'?').unwrap_or(url.len())

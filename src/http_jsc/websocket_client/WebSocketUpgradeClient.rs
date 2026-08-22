@@ -174,11 +174,52 @@ pub struct HTTPClient<const SSL: bool> {
     /// fails the handshake per RFC 6455 §9.1 — matching upstream `ws`.
     offered_permessage_deflate: bool,
 
-    /// Native OpenTelemetry `websocket.connect` span; ended on upgrade
-    /// success or failure. Host/port/path captured for its attributes.
-    otel: Cell<bun_telemetry::SpanStub>,
-    #[allow(clippy::type_complexity)]
-    otel_target: Cell<Option<Box<(Box<[u8]>, u16, Box<[u8]>, bool)>>>,
+    /// The `websocket.connect` span; ended on upgrade success or failure.
+    otel: Cell<Option<Box<ConnectSpan>>>,
+}
+
+struct ConnectSpan {
+    stub: bun_telemetry::SpanStub,
+    host: Box<[u8]>,
+    port: u16,
+    path: Box<[u8]>,
+    secure: bool,
+}
+
+impl ConnectSpan {
+    fn end(self, error: Option<&str>) {
+        bun_telemetry::rt::end_leaf(
+            bun_jsc::virtual_machine::VirtualMachine::get()
+                .global()
+                .as_ptr()
+                .cast(),
+            bun_telemetry::Instrument::WebSocket,
+            &self.stub,
+            b"websocket.connect",
+            bun_telemetry::SpanKind::Client,
+            |w| {
+                w.attr_opt("server.address", &self.host);
+                if self.port != 0 {
+                    w.attr("server.port", self.port);
+                }
+                let scheme: &[u8] = if self.secure { b"wss://" } else { b"ws://" };
+                let mut url =
+                    Vec::with_capacity(scheme.len() + self.host.len() + 6 + self.path.len());
+                url.extend_from_slice(scheme);
+                url.extend_from_slice(&self.host);
+                if self.port != 0 && self.port != if self.secure { 443 } else { 80 } {
+                    url.push(b':');
+                    let mut ib = bun_core::fmt::ItoaBuf::new();
+                    url.extend_from_slice(bun_core::fmt::itoa(&mut ib, self.port));
+                }
+                url.extend_from_slice(&self.path);
+                w.attr("url.full", &url[..]);
+                if let Some(e) = error {
+                    w.error(e.as_bytes(), e.as_bytes());
+                }
+            },
+        );
+    }
 }
 
 // Handler set referenced by the dispatch table (kind = `.ws_client_upgrade[_tls]`).
@@ -443,6 +484,19 @@ impl<const SSL: bool> HTTPClient<SSL> {
             None
         };
 
+        let otel = bun_telemetry::rt::start_leaf(
+            global.as_ptr().cast(),
+            bun_telemetry::Instrument::WebSocket,
+        );
+        let otel = otel.is_recording().then(|| {
+            Box::new(ConnectSpan {
+                stub: otel,
+                host: host_slice.slice().into(),
+                port,
+                path: pathname_slice.slice().into(),
+                secure: target_is_secure,
+            })
+        });
         let client: *mut Self = bun_core::heap::into_raw(Box::new(HTTPClient::<SSL> {
             ref_count: Cell::new(1),
             tcp: Cell::new(Socket::<SSL>::detached()),
@@ -460,23 +514,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
             expected_accept: request_result.expected_accept,
             offered_permessage_deflate: offer_permessage_deflate,
             subprotocols: JsCell::new(subprotocols),
-            otel: Cell::new(bun_telemetry::rt::start_leaf(
-                global.as_ptr().cast(),
-                bun_telemetry::Instrument::WebSocket,
-            )),
-            otel_target: Cell::new(None),
+            otel: Cell::new(otel),
         }));
-        // SAFETY: `client` is freshly boxed and solely owned here.
-        unsafe {
-            if (*client).otel.get().is_some() {
-                (*client).otel_target.set(Some(Box::new((
-                    host_slice.slice().into(),
-                    port,
-                    pathname_slice.slice().into(),
-                    target_is_secure,
-                ))));
-            }
-        }
         bun_core::scoped_log!(alloc, "new({}) = {:p}", Self::TYPE_NAME, client);
         // SAFETY: `client` was just allocated above (live, refcount == 1).
         let this = unsafe { ThisPtr::new(client) };
@@ -692,51 +731,16 @@ impl<const SSL: bool> HTTPClient<SSL> {
         tcp.close(uws::CloseCode::Normal);
     }
 
+    /// First call wins.
+    fn otel_end(&self, error: Option<&str>) {
+        if let Some(span) = self.otel.take() {
+            span.end(error);
+        }
+    }
+
     /// Takes `ThisPtr<Self>` because `did_abrupt_close` runs JS error
     /// handlers and may re-enter via C++ `cancel()`, and the trailing `deref`
     /// may free `this`.
-    /// Finish the `websocket.connect` span (first call wins).
-    fn otel_end(&self, error: Option<&str>) {
-        let stub = self.otel.replace(bun_telemetry::SpanStub::NONE);
-        let target = self.otel_target.take();
-        if !stub.is_recording() {
-            return;
-        }
-        bun_telemetry::rt::end_leaf(
-            bun_jsc::virtual_machine::VirtualMachine::get()
-                .global()
-                .as_ptr()
-                .cast(),
-            bun_telemetry::Instrument::WebSocket,
-            &stub,
-            b"websocket.connect",
-            bun_telemetry::SpanKind::Client,
-            |w| {
-                if let Some(t) = &target {
-                    let (host, port, path, secure) = &**t;
-                    w.attr_opt("server.address", host);
-                    if *port != 0 {
-                        w.attr("server.port", *port);
-                    }
-                    let mut url = Vec::with_capacity(8 + host.len() + path.len() + 6);
-                    url.extend_from_slice(if *secure { b"wss://" } else { b"ws://" });
-                    url.extend_from_slice(host);
-                    if *port != 0 && *port != if *secure { 443 } else { 80 } {
-                        url.push(b':');
-                        let mut ib = bun_core::fmt::ItoaBuf::new();
-                        url.extend_from_slice(bun_core::fmt::itoa(&mut ib, *port));
-                    }
-                    url.extend_from_slice(path);
-                    w.attr("url.full", &url[..]);
-                }
-                if let Some(e) = error {
-                    w.attr("error.type", e);
-                    w.status(bun_telemetry::StatusCode::Error, e.as_bytes());
-                }
-            },
-        );
-    }
-
     fn dispatch_abrupt_close(this: ThisPtr<Self>, code: ErrorCode) {
         this.otel_end(Some(<&'static str>::from(code)));
         let ws = this.outgoing_websocket.take();

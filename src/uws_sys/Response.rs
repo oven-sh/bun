@@ -67,69 +67,10 @@ bun_opaque::opaque_ffi! {
 }
 
 /// A peer address as raw network-order bytes.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum RawIp {
     V4([u8; 4]),
     V6([u8; 16]),
-}
-
-impl RawIp {
-    /// Network-order bytes (4 or 16).
-    #[inline]
-    pub fn bytes(&self) -> &[u8] {
-        match self {
-            RawIp::V4(b) => b,
-            RawIp::V6(b) => b,
-        }
-    }
-
-    /// Text form: dotted quad, RFC 5952 IPv6, or dotted quad for
-    /// IPv4-mapped IPv6 (matching what `requestIP()` reports).
-    pub fn format<'a>(&self, buf: &'a mut [u8; 46]) -> &'a [u8] {
-        fn v4(b: [u8; 4], out: &mut [u8]) -> usize {
-            let mut n = 0;
-            for (i, oct) in b.iter().enumerate() {
-                if i != 0 {
-                    out[n] = b'.';
-                    n += 1;
-                }
-                let o = *oct;
-                if o >= 100 {
-                    out[n] = b'0' + o / 100;
-                    out[n + 1] = b'0' + (o / 10) % 10;
-                    out[n + 2] = b'0' + o % 10;
-                    n += 3;
-                } else if o >= 10 {
-                    out[n] = b'0' + o / 10;
-                    out[n + 1] = b'0' + o % 10;
-                    n += 2;
-                } else {
-                    out[n] = b'0' + o;
-                    n += 1;
-                }
-            }
-            n
-        }
-        match *self {
-            RawIp::V4(b) => {
-                let n = v4(b, &mut buf[..]);
-                &buf[..n]
-            }
-            RawIp::V6(b) => {
-                let a = std::net::Ipv6Addr::from(b);
-                if let Some(m) = a.to_ipv4_mapped() {
-                    buf[..7].copy_from_slice(b"::ffff:");
-                    let n = 7 + v4(m.octets(), &mut buf[7..]);
-                    return &buf[..n];
-                }
-                use std::io::Write as _;
-                let mut cur = std::io::Cursor::new(&mut buf[..]);
-                let _ = write!(cur, "{a}");
-                let n = cur.position() as usize;
-                &buf[..n]
-            }
-        }
-    }
 }
 
 /// Opaque handle for `uws::Response<SSL>`.
@@ -852,22 +793,14 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.get_remote_socket_info())
     }
 
-    /// Peer IP/port; cached per connection for H1, uncached text parse for H3.
+    /// Peer IP/port for HTTP/1 responses, cached per connection. `None` for
+    /// HTTP/3, whose transport only reports the address as text
+    /// ([`Self::get_remote_socket_info`]).
     pub fn get_remote_address_raw(self) -> Option<(RawIp, u16)> {
         match self {
             AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).get_remote_address_raw(),
             AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).get_remote_address_raw(),
-            AnyResponse::H3(ptr) => {
-                let info = H3Response::as_handle(ptr).get_remote_socket_info()?;
-                let text = core::str::from_utf8(info.ip()).ok()?;
-                let port = info.port as u16;
-                if let Ok(v4) = text.parse::<std::net::Ipv4Addr>() {
-                    return Some((RawIp::V4(v4.octets()), port));
-                }
-                text.parse::<std::net::Ipv6Addr>()
-                    .ok()
-                    .map(|v6| (RawIp::V6(v6.octets()), port))
-            }
+            AnyResponse::H3(_) => None,
         }
     }
 

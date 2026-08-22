@@ -5,6 +5,7 @@ use crate::error::ThrowSqlError;
 use crate::jsc::{
     CallFrame, JSGlobalObject, JSValue, JsError, JsRef, JsResult, VirtualMachineSqlExt as _,
 };
+use crate::shared::otel::{DbError, QuerySpan};
 use crate::shared::query_ctor_args::QueryCtorArgs;
 use bun_core::String as BunString;
 use bun_jsc::JsCell;
@@ -53,8 +54,7 @@ pub struct PostgresSQLQuery {
 
     pub(crate) flags: Cell<Flags>,
 
-    /// Native OpenTelemetry client span for this query; `None` when off.
-    pub(crate) otel: Cell<bun_telemetry::NativeSpan>,
+    pub(crate) otel: QuerySpan,
 }
 
 // On drop: deref the statement (if any), then deref query/cursor_name.
@@ -63,7 +63,7 @@ pub struct PostgresSQLQuery {
 // `destroy` is `heap::take` in `deref_`.
 impl Drop for PostgresSQLQuery {
     fn drop(&mut self) {
-        if self.otel.get().is_some() {
+        if self.otel.is_active() {
             self.otel_end(
                 bun_jsc::virtual_machine::VirtualMachine::get().global(),
                 None,
@@ -85,7 +85,7 @@ impl Default for PostgresSQLQuery {
             status: Cell::new(Status::Pending),
             ref_count: Cell::new(1),
             flags: Cell::new(Flags::default()),
-            otel: Cell::new(bun_telemetry::NativeSpan::NONE),
+            otel: QuerySpan::default(),
         }
     }
 }
@@ -208,25 +208,8 @@ impl PostgresSQLQuery {
         bun_ptr::finalize_js_box(self, |this| this.this_value.with_mut(|r| r.finalize()));
     }
 
-    fn otel_end_js_error(&self, err: JSValue, global_object: &JSGlobalObject) {
-        let span = self.otel.replace(bun_telemetry::NativeSpan::NONE);
-        if !span.is_some() {
-            return;
-        }
-        let q = self.query.to_utf8();
-        if let Err(e) = crate::shared::otel::end_with_js_error(span, q.slice(), global_object, err)
-        {
-            let _ = bun_jsc::task::report_error_or_terminate(global_object, e);
-        }
-    }
-
-    /// Finish the telemetry span (first call wins).
-    pub(crate) fn otel_end(&self, global_object: &JSGlobalObject, error: Option<(&[u8], &[u8])>) {
-        let span = self.otel.replace(bun_telemetry::NativeSpan::NONE);
-        if span.is_some() {
-            let q = self.query.to_utf8();
-            bun_telemetry::db::end(global_object.as_ptr().cast(), span, q.slice(), None, error);
-        }
+    pub(crate) fn otel_end(&self, global_object: &JSGlobalObject, error: Option<DbError<'_>>) {
+        self.otel.end(global_object, &self.query, error);
     }
 
     pub(crate) fn on_write_fail(
@@ -237,7 +220,10 @@ impl PostgresSQLQuery {
     ) {
         self.otel_end(
             global_object,
-            Some((<&'static str>::from(err).as_bytes(), b"")),
+            Some(DbError {
+                ty: <&'static str>::from(err).as_bytes(),
+                message: b"",
+            }),
         );
         // R-2: every field touched below is `Cell`/`JsCell`-backed, so `&self`
         // is sufficient and `noalias` is suppressed. `ScopedRef` brackets the
@@ -276,7 +262,7 @@ impl PostgresSQLQuery {
     }
 
     pub(crate) fn on_js_error(&self, err: JSValue, global_object: &JSGlobalObject) {
-        self.otel_end_js_error(err, global_object);
+        self.otel.end_with_js_error(global_object, &self.query, err);
         // R-2: see `on_write_fail` — `&self` + Cell/JsCell, ScopedRef brackets re-entry.
         let _deref = self.ref_guard();
         self.status.set(Status::Fail);
@@ -511,7 +497,13 @@ impl PostgresSQLQuery {
     ) -> JsResult<JSValue> {
         let r = Self::do_run_inner(this, global_object, callframe);
         if r.is_err() {
-            this.otel_end(global_object, Some((b"_OTHER", b"failed to run query")));
+            this.otel_end(
+                global_object,
+                Some(DbError {
+                    ty: b"_OTHER",
+                    message: b"failed to run query",
+                }),
+            );
         }
         r
     }
@@ -550,17 +542,12 @@ impl PostgresSQLQuery {
         let this_value = callframe.this();
         let binding_value = js::binding_get_cached(this_value).unwrap_or_default();
         let query_str = this.query.to_utf8();
-        if bun_telemetry::enabled(bun_telemetry::Instrument::Sql) {
-            this.otel.set(bun_telemetry::db::begin(
-                global_object.as_ptr().cast(),
-                bun_telemetry::db::System::Postgres,
-                &bun_telemetry::db::ConnectionInfo {
-                    host: &connection.host,
-                    port: connection.port,
-                    namespace: connection.database_name(),
-                },
-            ));
-        }
+        this.otel.begin(
+            global_object,
+            bun_telemetry::db::System::Postgres,
+            &connection.address,
+            connection.database_name(),
+        );
         // query_str: Utf8Slice<'_> — Drop frees.
         let writer = connection.writer();
         // We need a strong reference to the query so that it doesn't get GC'd

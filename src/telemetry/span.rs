@@ -67,7 +67,7 @@ impl TraceId {
         TraceId(id)
     }
     pub fn to_hex(&self, out: &mut [u8; 32]) {
-        hex_encode(&self.0, out);
+        bun_core::fmt::bytes_to_hex_lower(&self.0, out);
     }
     pub fn from_hex(s: &[u8]) -> Option<TraceId> {
         let mut id = [0u8; 16];
@@ -93,7 +93,7 @@ impl SpanId {
         SpanId(next_id_u64(rng).to_be_bytes())
     }
     pub fn to_hex(self, out: &mut [u8; 16]) {
-        hex_encode(&self.0, out);
+        bun_core::fmt::bytes_to_hex_lower(&self.0, out);
     }
     pub fn from_hex(s: &[u8]) -> Option<SpanId> {
         let mut id = [0u8; 8];
@@ -111,34 +111,12 @@ impl SpanId {
     }
 }
 
-const HEX: &[u8; 16] = b"0123456789abcdef";
-
-fn hex_encode(src: &[u8], dst: &mut [u8]) {
-    debug_assert!(dst.len() >= src.len() * 2);
-    for (i, b) in src.iter().enumerate() {
-        dst[i * 2] = HEX[(b >> 4) as usize];
-        dst[i * 2 + 1] = HEX[(b & 0xf) as usize];
-    }
-}
-
-#[inline]
-fn hex_val(c: u8) -> Option<u8> {
-    match c {
-        b'0'..=b'9' => Some(c - b'0'),
-        b'a'..=b'f' => Some(c - b'a' + 10),
-        // W3C traceparent is lowercase-only; accept uppercase for user input.
-        b'A'..=b'F' => Some(c - b'A' + 10),
-        _ => None,
-    }
-}
-
 fn hex_decode(src: &[u8], dst: &mut [u8]) -> Option<()> {
+    // W3C traceparent is lowercase-only (checked by the caller); user input may be either.
     if src.len() != dst.len() * 2 {
         return None;
     }
-    for i in 0..dst.len() {
-        dst[i] = (hex_val(src[i * 2])? << 4) | hex_val(src[i * 2 + 1])?;
-    }
+    bun_core::strings::decode_hex_to_bytes(dst, src).ok()?;
     Some(())
 }
 
@@ -187,10 +165,16 @@ impl Flags {
     pub fn non_recording(self) -> bool {
         self.0 & Self::NON_RECORDING != 0
     }
-    /// OTLP `SpanFlags`: low byte = W3C flags, 0x100 = has-is-remote, 0x200 = is-remote.
+    /// OTLP `Span.flags`: low byte = W3C flags, 0x100 = is-remote known,
+    /// 0x200 = parent is remote.
     #[inline]
     pub fn otlp(self) -> u32 {
-        (self.w3c() as u32) | 0x100 | if self.parent_remote() { 0x200 } else { 0 }
+        self.otlp_with_remote(self.parent_remote())
+    }
+    /// OTLP `SpanFlags` with an explicit is-remote bit (links carry their own).
+    #[inline]
+    pub fn otlp_with_remote(self, remote: bool) -> u32 {
+        (self.w3c() as u32) | 0x100 | if remote { 0x200 } else { 0 }
     }
     /// The byte that goes on the wire in `traceparent` / OTLP `Span.flags`.
     #[inline]
@@ -218,6 +202,7 @@ impl SpanContext {
     }
 }
 
+/// Discriminants are the OTLP `Span.SpanKind` values.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 #[repr(u8)]
 pub enum SpanKind {
@@ -227,6 +212,29 @@ pub enum SpanKind {
     Client = 3,
     Producer = 4,
     Consumer = 5,
+}
+
+impl SpanKind {
+    /// From an `@opentelemetry/api` `SpanKind` (INTERNAL = 0 … CONSUMER = 4).
+    #[inline]
+    pub const fn from_api(k: u8) -> SpanKind {
+        match k {
+            1 => SpanKind::Server,
+            2 => SpanKind::Client,
+            3 => SpanKind::Producer,
+            4 => SpanKind::Consumer,
+            _ => SpanKind::Internal,
+        }
+    }
+    #[inline]
+    pub const fn to_api(self) -> u8 {
+        self as u8 - 1
+    }
+    /// From the OTLP wire value.
+    #[inline]
+    pub const fn from_otlp(k: u8) -> SpanKind {
+        SpanKind::from_api(k.wrapping_sub(1))
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]

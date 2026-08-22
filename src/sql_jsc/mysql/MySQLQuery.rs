@@ -494,8 +494,8 @@ impl MySQLQuery {
         q.deref();
     }
 
-    pub(crate) fn query_text(&self) -> bun_core::ZigStringSlice {
-        self.query.to_utf8()
+    pub(crate) fn query_text(&self) -> &BunString {
+        &self.query
     }
 
     #[inline]

@@ -1,7 +1,7 @@
 //! File-system spans for node:fs, Bun.file and Bun.write.
 
 use bun_jsc::JSGlobalObject;
-use bun_telemetry::{Instrument, SpanKind, SpanStub, StatusCode};
+use bun_telemetry::{Instrument, SpanKind, SpanStub};
 
 /// Finish an fs span. `name` is e.g. `fs.readFile`; `path` the primary path
 /// argument if the op has one.
@@ -23,9 +23,7 @@ pub fn end(
                 w.attr_opt("file.path", p);
             }
             if let Some(e) = err {
-                let errno = e.name();
-                w.attr("error.type", errno);
-                w.status(StatusCode::Error, errno);
+                w.error(e.name(), e.name());
             }
         },
     );

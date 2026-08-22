@@ -10,6 +10,7 @@ use crate::jsc::{
     self as jsc, CallFrame, HasAutoFlush, JSGlobalObject, JSValue, JsResult, Strong,
     VirtualMachine, VirtualMachineSqlExt as _, bun_string_jsc,
 };
+use crate::shared::otel::ServerAddress;
 use bun_boringssl as BoringSSL;
 use bun_collections::{OffsetByteList, StringHashMap, StringMap};
 use bun_core::strings;
@@ -144,9 +145,7 @@ pub struct PostgresSQLConnection {
     path: bun_ptr::RawSlice<u8>,
     options: bun_ptr::RawSlice<u8>,
     options_buf: Box<[u8]>,
-    /// For telemetry `server.address` / `server.port`.
-    pub(crate) host: Box<[u8]>,
-    pub(crate) port: u16,
+    pub(crate) address: ServerAddress,
 
     pub(crate) authentication_state: JsCell<AuthenticationState>,
 
@@ -1203,16 +1202,11 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
             path,
             options,
             options_buf,
-            host: if path_str.is_empty() {
-                args.hostname_str.to_utf8().slice().into()
-            } else {
-                path_str.to_utf8().slice().into()
-            },
-            port: if path_str.is_empty() {
-                u16::try_from(args.port).unwrap_or(0)
-            } else {
-                0
-            },
+            address: ServerAddress::new(
+                args.hostname_str.to_utf8().slice(),
+                args.port,
+                path_str.to_utf8().slice(),
+            ),
             authentication_state: JsCell::new(AuthenticationState::Pending),
             secure,
             tls_config,

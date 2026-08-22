@@ -353,10 +353,6 @@ impl Exporter for OtlpHttpExporter {
     fn pending_retries(&self) -> usize {
         self.retry.lock().len()
     }
-
-    fn name(&self) -> &str {
-        "otlp-http"
-    }
 }
 
 // `dyn Exporter` → `Arc<Self>`: exporters are only ever constructed inside an
@@ -386,9 +382,6 @@ impl Exporter for ConsoleExporter {
     fn export_blocking(&self, payload: Arc<ExportPayload>, _deadline_ns: u64) -> ExportResult {
         self.print(&payload);
         ExportResult::Success
-    }
-    fn name(&self) -> &str {
-        "console"
     }
 }
 
@@ -686,7 +679,10 @@ pub fn decode_to_js(global: &JSGlobalObject, request: &[u8]) -> JsResult<JSValue
             o.put(
                 global,
                 b"kind",
-                JSValue::js_number_from_int32(span.kind.saturating_sub(1) as i32),
+                JSValue::js_number_from_int32(
+                    bun_telemetry::SpanKind::from_otlp(u8::try_from(span.kind).unwrap_or(0))
+                        .to_api() as i32,
+                ),
             );
             o.put(
                 global,
@@ -977,10 +973,6 @@ impl Exporter for JsExporter {
             Some(s) if core::ptr::eq(s, self.owner) => self.call(s_global(s), &payload),
             _ => ExportResult::Failure,
         }
-    }
-
-    fn name(&self) -> &str {
-        "function"
     }
 }
 

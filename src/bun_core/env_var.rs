@@ -305,6 +305,12 @@ pub(crate) struct CacheConfiguration<O> {
     pub opts: O,
 }
 
+/// The truthiness rule for boolean environment variables: everything except
+/// `""`, `"0"`, `"false"`, `"no"` and `"off"` (case-insensitive) is true.
+pub fn string_is_truthy(s: &[u8]) -> bool {
+    !crate::strings::eql_any_case_insensitive_ascii(s, &[b"", b"0", b"false", b"no", b"off"])
+}
+
 /// Structure which encodes the different types of environment variables supported.
 ///
 /// This requires the following static members:
@@ -399,13 +405,7 @@ pub(crate) mod kind {
         pub(crate) type ValueType = bool;
         pub(crate) type Output = CacheOutput<ValueType>;
 
-        pub(crate) fn string_is_truthy(s: &[u8]) -> bool {
-            // Most values are considered truthy, except for "", "0", "false", "no", and "off".
-            !crate::strings::eql_any_case_insensitive_ascii(
-                s,
-                &[b"", b"0", b"false", b"no", b"off"],
-            )
-        }
+        pub(crate) use crate::env_var::string_is_truthy;
 
         // This is a template which ignores its parameter, but is necessary so that a separate
         // Cache type is emitted for every environment variable.

@@ -463,13 +463,7 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             replaces_exporters = true;
         }
         if let Some(url) = endpoint {
-            let mut x = OtlpExporterConfig {
-                url: normalize_traces_url(&url),
-                headers: Vec::new(),
-                protocol: config::Protocol::HttpProtobuf,
-                compression: Compression::None,
-                timeout_ms: 10000,
-            };
+            let mut x = OtlpExporterConfig::new(normalize_traces_url(&url));
             read_exporter_extras(global, opts, &mut x)?;
             cfg.otlp_exporters.push(x);
         }
@@ -486,13 +480,8 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                     if s == "console" {
                         cfg.console_exporter = true;
                     } else {
-                        cfg.otlp_exporters.push(OtlpExporterConfig {
-                            url: normalize_traces_url(&s),
-                            headers: Vec::new(),
-                            protocol: config::Protocol::HttpProtobuf,
-                            compression: Compression::None,
-                            timeout_ms: 10000,
-                        });
+                        cfg.otlp_exporters
+                            .push(OtlpExporterConfig::new(normalize_traces_url(&s)));
                     }
                     continue;
                 }
@@ -565,13 +554,7 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                         "exporter needs a url, a type, or an export() function"
                     )));
                 };
-                let mut x = OtlpExporterConfig {
-                    url: normalize_traces_url(&url),
-                    headers: Vec::new(),
-                    protocol: config::Protocol::HttpProtobuf,
-                    compression: Compression::None,
-                    timeout_ms: 10000,
-                };
+                let mut x = OtlpExporterConfig::new(normalize_traces_url(&url));
                 read_exporter_extras(global, item, &mut x)?;
                 cfg.otlp_exporters.push(x);
             }

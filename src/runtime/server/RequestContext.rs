@@ -1078,10 +1078,8 @@ where
         if let Some(resp) = ctx.resp.get() {
             if !DEBUG_MODE {
                 if !ctx.flags.has_written_status() {
-                    resp.write_status(b"204 No Content");
-                    ctx.otel_status.set(204);
+                    ctx.write_status(204);
                 }
-                ctx.flags.set_has_written_status(true);
                 ctx.end(b"", ctx.should_close_connection());
                 return;
             }
@@ -1092,10 +1090,7 @@ where
             }
 
             if ctx.flags.is_web_browser_navigation() {
-                resp.write_status(b"200 OK");
-                ctx.otel_status.set(200);
-                ctx.flags.set_has_written_status(true);
-
+                ctx.write_status(200);
                 resp.write_header(b"content-type", &bun_http_types::MimeType::HTML.value);
                 resp.write_header(b"content-encoding", b"gzip");
                 resp.write_header_int(b"content-length", WELCOME_PAGE_HTML_GZ.len() as u64);
@@ -1108,11 +1103,9 @@ where
             }
             const MISSING_CONTENT: &[u8] =
                 b"Welcome to Bun! To get started, return a Response object.";
-            resp.write_status(b"200 OK");
-            ctx.otel_status.set(200);
+            ctx.write_status(200);
             resp.write_header(b"content-type", &bun_http_types::MimeType::TEXT.value);
             resp.write_header_int(b"content-length", MISSING_CONTENT.len() as u64);
-            ctx.flags.set_has_written_status(true);
             if ctx.method == Method::HEAD {
                 ctx.end_without_body(ctx.should_close_connection());
             } else {
@@ -1128,10 +1121,8 @@ where
         message: &[u8],
     ) {
         if !self.flags.has_written_status() {
-            self.flags.set_has_written_status(true);
+            self.write_status(500);
             if let Some(resp) = self.resp.get() {
-                resp.write_status(b"500 Internal Server Error");
-                self.otel_status.set(500);
                 resp.write_header(b"content-type", &bun_http_types::MimeType::HTML.value);
             }
         }
@@ -3077,10 +3068,8 @@ where
                     if !ended_response && server.dev_server().is_some() {
                         // Render the error fallback HTML page like renderDefaultError does
                         if !self.flags.has_written_status() {
-                            self.flags.set_has_written_status(true);
+                            self.write_status(500);
                             if let Some(resp) = self.resp.get() {
-                                resp.write_status(b"500 Internal Server Error");
-                                self.otel_status.set(500);
                                 resp.write_header(
                                     b"content-type",
                                     &bun_http_types::MimeType::HTML.value,
@@ -3565,19 +3554,15 @@ where
             match status {
                 404 => {
                     if !self.flags.has_written_status() {
-                        resp.write_status(b"404 Not Found");
-                        self.otel_status.set(404);
-                        self.flags.set_has_written_status(true);
+                        self.write_status(404);
                     }
                     self.end_without_body(self.should_close_connection());
                 }
                 _ => {
                     const BODY: &[u8] = b"Something went wrong!";
                     if !self.flags.has_written_status() {
-                        resp.write_status(b"500 Internal Server Error");
-                        self.otel_status.set(500);
+                        self.write_status(500);
                         resp.write_header(b"content-type", b"text/plain");
-                        self.flags.set_has_written_status(true);
                     }
                     if self.method == Method::HEAD {
                         resp.write_header_int(b"content-length", BODY.len() as u64);
@@ -3947,19 +3932,15 @@ where
 
     fn do_write_status(&self, status: u16) {
         debug_assert!(!self.flags.has_written_status());
+        self.write_status(status);
+    }
+
+    pub(crate) fn write_status(&self, status: u16) {
         self.flags.set_has_written_status(true);
         self.otel_status.set(status);
-
-        // `AnyResponse` is a `Copy` handle; methods take `self` by value.
-        let Some(resp) = self.resp.get() else { return };
-        if let Some(text) = HTTPStatusText::get(status) {
-            resp.write_status(text);
-        } else {
-            let mut buf = [0u8; 48];
-            let mut w = &mut buf[..];
-            let _ = write!(w, "{} HM", status);
-            let written = 48 - w.len();
-            resp.write_status(&buf[..written]);
+        if let Some(resp) = self.resp.get() {
+            let mut buf = [0u8; 16];
+            resp.write_status(crate::server::status_line(status, &mut buf));
         }
     }
 
@@ -4145,10 +4126,7 @@ where
                 // SAFETY: FFI handle
                 if let Some(resp) = this.resp.get() {
                     if !resp.has_responded() {
-                        this.flags.set_has_written_status(true);
-                        // SAFETY: FFI handle
-                        resp.write_status(b"413 Payload Too Large");
-                        this.otel_status.set(413);
+                        this.write_status(413);
                     }
                 }
                 this.end_without_body(!HTTP3);
@@ -4252,10 +4230,7 @@ where
                 // SAFETY: FFI handle
                 if let Some(resp) = this.resp.get() {
                     if !resp.has_responded() {
-                        this.flags.set_has_written_status(true);
-                        // SAFETY: FFI handle
-                        resp.write_status(b"413 Payload Too Large");
-                        this.otel_status.set(413);
+                        this.write_status(413);
                     }
                 }
                 this.end_without_body(!HTTP3);

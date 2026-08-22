@@ -2,7 +2,7 @@
 //! static auth header. Anything else (AWS X-Ray, Google Cloud Trace: signed
 //! per-request credentials) goes through a Collector.
 
-use crate::config::{Compression, OtlpExporterConfig, Protocol};
+use crate::config::{Compression, OtlpExporterConfig, traces_endpoint};
 
 pub struct PresetInput<'a> {
     pub name: &'a str,
@@ -21,14 +21,6 @@ pub type EnvGet<'a> = &'a dyn Fn(&str) -> Option<String>;
 
 fn need(what: &str, preset: &str) -> String {
     format!("exporter preset {preset:?} needs {what}")
-}
-
-fn join(base: &str, path: &str) -> String {
-    let b = base.trim_end_matches('/');
-    if b.ends_with("/v1/traces") {
-        return b.to_string();
-    }
-    format!("{b}{path}")
 }
 
 /// Resolve a preset to a concrete OTLP/HTTP exporter. `env` reads the
@@ -56,21 +48,19 @@ pub fn resolve(p: &PresetInput<'_>, env: EnvGet<'_>) -> Result<OtlpExporterConfi
                 headers.push(("dd-api-key".into(), k));
                 headers.push(("dd-otlp-source".into(), "bun".into()));
                 let s = site(&["DD_SITE"], "datadoghq.com");
-                join(
+                traces_endpoint(
                     p.endpoint
                         .as_deref()
                         .unwrap_or(&format!("https://otlp.{s}")),
-                    "/v1/traces",
                 )
             }
             None => {
                 let dd_endpoint = env("DD_OTLP_ENDPOINT");
-                join(
+                traces_endpoint(
                     p.endpoint
                         .as_deref()
                         .or(dd_endpoint.as_deref())
                         .unwrap_or("http://localhost:4318"),
-                    "/v1/traces",
                 )
             }
         },
@@ -91,7 +81,7 @@ pub fn resolve(p: &PresetInput<'_>, env: EnvGet<'_>) -> Result<OtlpExporterConfi
             } else {
                 "https://api.honeycomb.io".into()
             };
-            join(&base, "/v1/traces")
+            traces_endpoint(&base)
         }
         "grafana" => {
             let token = key(&["GRAFANA_CLOUD_API_KEY", "GRAFANA_OTLP_TOKEN"])
@@ -100,8 +90,10 @@ pub fn resolve(p: &PresetInput<'_>, env: EnvGet<'_>) -> Result<OtlpExporterConfi
                 p.id.clone()
                     .or_else(|| env("GRAFANA_CLOUD_INSTANCE_ID"))
                     .ok_or_else(|| need("id (the stack's instance id)", p.name))?;
-            let mut auth = Vec::new();
-            crate::otlp_json::base64(&mut auth, format!("{instance}:{token}").as_bytes());
+            let cred = format!("{instance}:{token}");
+            let mut auth = vec![0u8; bun_core::base64::encode_len(cred.as_bytes())];
+            let n = bun_core::base64::encode(&mut auth, cred.as_bytes());
+            auth.truncate(n);
             headers.push((
                 "authorization".into(),
                 format!("Basic {}", bstr::ByteVec::into_string_lossy(auth)),
@@ -120,7 +112,7 @@ pub fn resolve(p: &PresetInput<'_>, env: EnvGet<'_>) -> Result<OtlpExporterConfi
                     ));
                 }
             };
-            join(&base, "/v1/traces")
+            traces_endpoint(&base)
         }
         "newrelic" => {
             let k = key(&["NEW_RELIC_LICENSE_KEY", "NEW_RELIC_API_KEY"])
@@ -135,7 +127,7 @@ pub fn resolve(p: &PresetInput<'_>, env: EnvGet<'_>) -> Result<OtlpExporterConfi
                 }
                 None => "https://otlp.nr-data.net".into(),
             };
-            join(&base, "/v1/traces")
+            traces_endpoint(&base)
         }
         "axiom" => {
             let k = key(&["AXIOM_TOKEN", "AXIOM_API_TOKEN"])
@@ -149,26 +141,17 @@ pub fn resolve(p: &PresetInput<'_>, env: EnvGet<'_>) -> Result<OtlpExporterConfi
             let base = p
                 .endpoint
                 .clone()
-                .or_else(|| {
-                    p.site.clone().map(|d| {
-                        if d.starts_with("http") {
-                            d
-                        } else {
-                            format!("https://{d}")
-                        }
-                    })
-                })
-                .or_else(|| {
-                    env("AXIOM_DOMAIN").map(|d| {
-                        if d.starts_with("http") {
-                            d
-                        } else {
-                            format!("https://{d}")
-                        }
-                    })
+                .or_else(|| p.site.clone())
+                .or_else(|| env("AXIOM_DOMAIN"))
+                .map(|d| {
+                    if d.starts_with("http") {
+                        d
+                    } else {
+                        format!("https://{d}")
+                    }
                 })
                 .unwrap_or_else(|| "https://api.axiom.co".into());
-            join(&base, "/v1/traces")
+            traces_endpoint(&base)
         }
         "dynatrace" => {
             let k = key(&["DT_API_TOKEN", "DYNATRACE_API_TOKEN"]).ok_or_else(|| {
@@ -191,7 +174,7 @@ pub fn resolve(p: &PresetInput<'_>, env: EnvGet<'_>) -> Result<OtlpExporterConfi
                     ));
                 }
             };
-            join(&base, "/v1/traces")
+            traces_endpoint(&base)
         }
         // Sentry's OTLP traces URL is per project; take it verbatim.
         "sentry" => {
@@ -206,10 +189,7 @@ pub fn resolve(p: &PresetInput<'_>, env: EnvGet<'_>) -> Result<OtlpExporterConfi
             e
         }
         // Local Collector / Jaeger / Tempo.
-        "otlp" => join(
-            p.endpoint.as_deref().unwrap_or("http://localhost:4318"),
-            "/v1/traces",
-        ),
+        "otlp" => traces_endpoint(p.endpoint.as_deref().unwrap_or("http://localhost:4318")),
         other => {
             return Err(format!(
                 "unknown exporter preset {other:?} (known: datadog, honeycomb, grafana, newrelic, axiom, dynatrace, sentry, otlp)"
@@ -217,10 +197,8 @@ pub fn resolve(p: &PresetInput<'_>, env: EnvGet<'_>) -> Result<OtlpExporterConfi
         }
     };
     Ok(OtlpExporterConfig {
-        url,
         headers,
-        protocol: Protocol::HttpProtobuf,
         compression: Compression::Gzip,
-        timeout_ms: 10000,
+        ..OtlpExporterConfig::new(url)
     })
 }

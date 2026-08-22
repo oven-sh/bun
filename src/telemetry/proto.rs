@@ -1,6 +1,5 @@
-//! Minimal protobuf wire-format writer/reader. Only what OTLP needs: varint,
-//! fixed64, fixed32 (unused), length-delimited. No reflection, no allocation
-//! beyond the caller's `Vec<u8>`.
+//! Minimal protobuf wire-format writer/reader: varint, fixed64, fixed32,
+//! length-delimited. No reflection, no allocation beyond the caller's `Vec<u8>`.
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
@@ -32,19 +31,6 @@ pub const fn len_field_len(field: u32, payload: usize) -> usize {
     tag_len(field) + varint_len(payload as u64) + payload
 }
 
-#[inline]
-/// Varint into a fixed buffer; returns bytes written.
-pub fn write_varint_into(out: &mut [u8], mut v: u64) -> usize {
-    let mut n = 0;
-    while v >= 0x80 {
-        out[n] = (v as u8) | 0x80;
-        v >>= 7;
-        n += 1;
-    }
-    out[n] = v as u8;
-    n + 1
-}
-
 pub fn write_varint(out: &mut Vec<u8>, mut v: u64) {
     while v >= 0x80 {
         out.push((v as u8) | 0x80);
@@ -67,24 +53,6 @@ pub fn write_uint(out: &mut Vec<u8>, field: u32, v: u64) {
     write_varint(out, v);
 }
 
-#[inline]
-pub fn write_int64(out: &mut Vec<u8>, field: u32, v: i64) {
-    // int64 (not sint64): negative values are 10-byte two's complement varints.
-    if v == 0 {
-        return;
-    }
-    write_tag(out, field, WireType::Varint);
-    write_varint(out, v as u64);
-}
-
-#[inline]
-pub fn write_bool(out: &mut Vec<u8>, field: u32, v: bool) {
-    if v {
-        write_tag(out, field, WireType::Varint);
-        out.push(1);
-    }
-}
-
 /// Always writes, even when false (needed inside AnyValue oneof).
 #[inline]
 pub fn write_bool_always(out: &mut Vec<u8>, field: u32, v: bool) {
@@ -95,22 +63,6 @@ pub fn write_bool_always(out: &mut Vec<u8>, field: u32, v: bool) {
 #[inline]
 pub fn write_fixed64(out: &mut Vec<u8>, field: u32, v: u64) {
     write_tag(out, field, WireType::Fixed64);
-    out.extend_from_slice(&v.to_le_bytes());
-}
-
-#[inline]
-pub fn write_fixed64_opt(out: &mut Vec<u8>, field: u32, v: u64) {
-    if v != 0 {
-        write_fixed64(out, field, v);
-    }
-}
-
-#[inline]
-pub fn write_fixed32(out: &mut Vec<u8>, field: u32, v: u32) {
-    if v == 0 {
-        return;
-    }
-    write_tag(out, field, WireType::Fixed32);
     out.extend_from_slice(&v.to_le_bytes());
 }
 
@@ -142,56 +94,67 @@ pub fn write_len_prefix(out: &mut Vec<u8>, field: u32, payload: usize) {
     write_varint(out, payload as u64);
 }
 
-/// A nested message whose size isn't known up front. Reserves a 4-byte
-/// varint for the length and patches it on `finish`; if the body ends up
-/// needing fewer bytes the tail is shifted down (bodies here are small).
-pub struct Nested {
+/// A length-delimited field whose body size isn't known up front. `RESERVE`
+/// length bytes are written as a padded (non-minimal but valid) varint so a
+/// body shorter than 2^(7*RESERVE) never has to move; longer bodies are
+/// shifted on `finish` (rare).
+pub struct Nested<const RESERVE: usize> {
     len_at: usize,
-    body_at: usize,
 }
 
-/// Two length bytes are reserved and, for bodies < 16 KiB, filled with a
-/// padded (non-minimal but valid) varint so the body never has to move.
-const RESERVED: usize = 2;
-
-impl Nested {
+impl<const RESERVE: usize> Nested<RESERVE> {
     #[inline]
-    pub fn begin(out: &mut Vec<u8>, field: u32) -> Nested {
+    pub fn begin(out: &mut Vec<u8>, field: u32) -> Self {
         write_tag(out, field, WireType::Len);
         let len_at = out.len();
-        out.extend_from_slice(&[0x80, 0x00]);
-        Nested {
-            len_at,
-            body_at: len_at + RESERVED,
-        }
+        let mut pad = [0x80u8; RESERVE];
+        pad[RESERVE - 1] = 0;
+        out.extend_from_slice(&pad);
+        Nested { len_at }
+    }
+
+    /// Re-open a field begun earlier (e.g. copied from a template) whose
+    /// length bytes start at `len_at`.
+    #[inline]
+    pub fn at(len_at: usize) -> Self {
+        Nested { len_at }
+    }
+
+    #[inline]
+    pub fn len_at(&self) -> usize {
+        self.len_at
     }
 
     #[inline]
     pub fn finish(self, out: &mut Vec<u8>) {
-        let body_len = out.len() - self.body_at;
-        if body_len < (1 << 14) {
-            out[self.len_at] = (body_len as u8 & 0x7f) | 0x80;
-            out[self.len_at + 1] = (body_len >> 7) as u8;
+        let body_at = self.len_at + RESERVE;
+        let body_len = out.len() - body_at;
+        if body_len < (1 << (7 * RESERVE)) {
+            let mut v = body_len;
+            for b in &mut out[self.len_at..body_at - 1] {
+                *b = (v as u8 & 0x7f) | 0x80;
+                v >>= 7;
+            }
+            out[body_at - 1] = v as u8;
             return;
         }
-        // Rare: make room for the full varint.
-        let need = varint_len(body_len as u64);
-        let extra = need - RESERVED;
+        self.finish_slow(out, body_len);
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn finish_slow(self, out: &mut Vec<u8>, body_len: usize) {
+        let body_at = self.len_at + RESERVE;
+        let extra = varint_len(body_len as u64) - RESERVE;
         let old_len = out.len();
         out.resize(old_len + extra, 0);
-        out.copy_within(self.body_at..old_len, self.body_at + extra);
-        let mut v = body_len as u64;
-        let mut i = self.len_at;
-        loop {
-            let byte = (v as u8) & 0x7f;
+        out.copy_within(body_at..old_len, body_at + extra);
+        let mut v = body_len;
+        for b in &mut out[self.len_at..body_at + extra - 1] {
+            *b = (v as u8 & 0x7f) | 0x80;
             v >>= 7;
-            if v == 0 {
-                out[i] = byte;
-                break;
-            }
-            out[i] = byte | 0x80;
-            i += 1;
         }
+        out[body_at + extra - 1] = v as u8;
     }
 }
 
@@ -323,19 +286,23 @@ mod tests {
         }
     }
 
+    fn nested_case<const R: usize>(body: usize) {
+        let mut out = vec![0xAA];
+        let n = Nested::<R>::begin(&mut out, 3);
+        out.extend(std::iter::repeat_n(7u8, body));
+        n.finish(&mut out);
+        let mut r = Reader::new(&out[1..]);
+        let (f, v) = r.next().unwrap().unwrap();
+        assert_eq!(f, 3);
+        assert_eq!(v.as_bytes().len(), body);
+        assert!(r.next().unwrap().is_none());
+    }
+
     #[test]
     fn nested_patch() {
-        for body in [0usize, 1, 127, 128, 20000] {
-            let mut out = Vec::new();
-            out.push(0xAA);
-            let n = Nested::begin(&mut out, 3);
-            out.extend(std::iter::repeat(7u8).take(body));
-            n.finish(&mut out);
-            let mut r = Reader::new(&out[1..]);
-            let (f, v) = r.next().unwrap().unwrap();
-            assert_eq!(f, 3);
-            assert_eq!(v.as_bytes().len(), body);
-            assert!(r.next().unwrap().is_none());
+        for body in [0usize, 1, 127, 128, 16383, 16384, 20000] {
+            nested_case::<2>(body);
+            nested_case::<5>(body);
         }
     }
 }

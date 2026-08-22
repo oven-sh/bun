@@ -12,31 +12,15 @@ struct W {
 impl W {
     fn str(&mut self, s: &[u8]) {
         let s = bstr::ByteSlice::to_str_lossy(s);
-        self.out.push(b'"');
-        for &c in s.as_bytes() {
-            match c {
-                b'"' => self.out.extend_from_slice(b"\\\""),
-                b'\\' => self.out.extend_from_slice(b"\\\\"),
-                b'\n' => self.out.extend_from_slice(b"\\n"),
-                b'\r' => self.out.extend_from_slice(b"\\r"),
-                b'\t' => self.out.extend_from_slice(b"\\t"),
-                0..=0x1f => {
-                    self.out.extend_from_slice(b"\\u00");
-                    self.out.push(b"0123456789abcdef"[(c >> 4) as usize]);
-                    self.out.push(b"0123456789abcdef"[(c & 0xf) as usize]);
-                }
-                _ => self.out.push(c),
-            }
-        }
-        self.out.push(b'"');
+        let _ = bun_core::fmt::encode_json_string(
+            &mut bun_core::fmt::VecWriter(&mut self.out),
+            s.as_bytes(),
+        );
     }
     fn hex(&mut self, b: &[u8]) {
-        self.out.push(b'"');
-        for &c in b {
-            self.out.push(b"0123456789abcdef"[(c >> 4) as usize]);
-            self.out.push(b"0123456789abcdef"[(c & 0xf) as usize]);
-        }
-        self.out.push(b'"');
+        let at = self.out.len() + 1;
+        self.out.resize(at + b.len() * 2 + 1, b'"');
+        bun_core::fmt::bytes_to_hex_lower(b, &mut self.out[at..at + b.len() * 2]);
     }
     fn u64s(&mut self, v: u64) {
         self.out.push(b'"');
@@ -143,29 +127,28 @@ fn any_value(w: &mut W, body: &[u8]) {
             f::AV_KVLIST => {
                 w.raw("\"kvlistValue\":{");
                 let mut first = true;
-                w.repeated(&mut first, v.as_bytes(), 1, "values", |w, item| {
-                    key_value(w, item.as_bytes())
-                });
+                w.repeated(
+                    &mut first,
+                    v.as_bytes(),
+                    f::KVLIST_VALUES,
+                    "values",
+                    |w, item| key_value(w, item.as_bytes()),
+                );
                 w.out.push(b'}');
             }
             f::AV_BYTES => {
-                w.raw("\"bytesValue\":");
-                // base64
-                w.out.push(b'"');
-                base64(&mut w.out, v.as_bytes());
+                w.raw("\"bytesValue\":\"");
+                let data = v.as_bytes();
+                let at = w.out.len();
+                w.out.resize(at + bun_core::base64::encode_len(data), 0);
+                let n = bun_core::base64::encode(&mut w.out[at..], data);
+                w.out.truncate(at + n);
                 w.out.push(b'"');
             }
             _ => {}
         }
     }
     w.out.push(b'}');
-}
-
-pub(crate) fn base64(out: &mut Vec<u8>, data: &[u8]) {
-    let start = out.len();
-    out.resize(start + bun_core::base64::encode_len(data), 0);
-    let n = bun_core::base64::encode(&mut out[start..], data);
-    out.truncate(start + n);
 }
 
 fn key_value(w: &mut W, body: &[u8]) {
@@ -220,7 +203,7 @@ fn event(w: &mut W, body: &[u8]) {
                 w.key(&mut first, "name");
                 w.str(v.as_bytes());
             }
-            4 => {
+            f::EV_DROPPED_ATTRIBUTES => {
                 w.key(&mut first, "droppedAttributesCount");
                 w.num(v.as_u64());
             }
@@ -251,7 +234,7 @@ fn link(w: &mut W, body: &[u8]) {
                 w.key(&mut first, "traceState");
                 w.str(v.as_bytes());
             }
-            5 => {
+            f::LINK_DROPPED_ATTRIBUTES => {
                 w.key(&mut first, "droppedAttributesCount");
                 w.num(v.as_u64());
             }
@@ -362,9 +345,13 @@ fn scope(w: &mut W, body: &[u8]) {
             _ => {}
         }
     }
-    w.repeated(&mut first, body, 3, "attributes", |w, v| {
-        key_value(w, v.as_bytes())
-    });
+    w.repeated(
+        &mut first,
+        body,
+        f::SCOPE_ATTRIBUTES,
+        "attributes",
+        |w, v| key_value(w, v.as_bytes()),
+    );
     w.out.push(b'}');
 }
 

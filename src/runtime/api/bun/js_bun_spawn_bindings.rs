@@ -1207,12 +1207,12 @@ fn spawn_maybe_sync(
     // with argv[0] non-null; valid for this call.
     let spawn_result =
         unsafe { spawn::spawn_process(&spawn_options, argv.as_ptr(), env_array.as_ptr()) };
-    if otel_stub.is_some() {
-        if let Err(err) = &spawn_result {
-            crate::telemetry::spawn::failed(global_this, &otel_stub, &argv, err.name().as_bytes());
-        } else if let Ok(sys::Result::Err(err)) = &spawn_result {
-            crate::telemetry::spawn::failed(global_this, &otel_stub, &argv, err.name());
+    match &spawn_result {
+        Err(err) => {
+            crate::telemetry::spawn::failed(global_this, &otel_stub, &argv, err.name().as_bytes())
         }
+        Ok(Err(err)) => crate::telemetry::spawn::failed(global_this, &otel_stub, &argv, err.name()),
+        Ok(Ok(_)) => {}
     }
     let mut spawned = match spawn_result {
         Err(err)

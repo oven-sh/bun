@@ -4,7 +4,7 @@
 use core::ffi::c_void;
 
 use crate::pool::{self, NativeSpan};
-use crate::{DEFAULT_LIMITS, Instrument, ScopeId, SpanKind, StatusCode, Value, rt};
+use crate::{Instrument, ScopeId, SpanKind, Value, rt};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum System {
@@ -47,12 +47,22 @@ pub struct ConnectionInfo<'a> {
     pub namespace: &'a [u8],
 }
 
+/// Why a query failed: `ty` becomes `error.type` (and
+/// `db.response.status_code` when it looks like one), `message` the span
+/// status description.
+#[derive(Clone, Copy)]
+pub struct DbError<'a> {
+    pub ty: &'a [u8],
+    pub message: &'a [u8],
+}
+
 /// Start a CLIENT span for one query/command. `NativeSpan::NONE` when disabled.
 pub fn begin(global: *mut c_void, system: System, conn: &ConnectionInfo<'_>) -> NativeSpan {
     let stub = rt::start_leaf(global, system.instrument());
     if !stub.is_some() {
         return NativeSpan::NONE;
     }
+    let limits = rt::limits();
     rt::with_local(global, |local| {
         pool::begin_with(
             &mut local.pool,
@@ -64,7 +74,7 @@ pub fn begin(global: *mut c_void, system: System, conn: &ConnectionInfo<'_>) -> 
                 if !stub.is_recording() {
                     return;
                 }
-                let l = &DEFAULT_LIMITS;
+                let l = &limits;
                 s.push_attribute(b"db.system.name", &Value::Str(system.name().as_bytes()), l);
                 if !conn.namespace.is_empty() {
                     s.push_attribute(b"db.namespace", &Value::Str(conn.namespace), l);
@@ -81,9 +91,79 @@ pub fn begin(global: *mut c_void, system: System, conn: &ConnectionInfo<'_>) -> 
     .unwrap_or(NativeSpan::NONE)
 }
 
+/// Verbs recognised as `db.operation.name` when they lead a statement.
+const SQL_VERBS: &[&str] = &[
+    "SELECT",
+    "INSERT",
+    "UPDATE",
+    "DELETE",
+    "WITH",
+    "CREATE",
+    "DROP",
+    "ALTER",
+    "BEGIN",
+    "COMMIT",
+    "ROLLBACK",
+    "SET",
+    "SHOW",
+    "EXPLAIN",
+    "PRAGMA",
+    "VACUUM",
+    "TRUNCATE",
+    "MERGE",
+    "REPLACE",
+    "UPSERT",
+    "CALL",
+    "EXEC",
+    "EXECUTE",
+    "PREPARE",
+    "DEALLOCATE",
+    "COPY",
+    "GRANT",
+    "REVOKE",
+    "ANALYZE",
+    "ATTACH",
+    "DETACH",
+    "LISTEN",
+    "NOTIFY",
+    "UNLISTEN",
+    "SAVEPOINT",
+    "RELEASE",
+    "LOCK",
+    "UNLOCK",
+    "USE",
+    "DESCRIBE",
+    "DESC",
+    "START",
+    "END",
+    "REINDEX",
+    "DECLARE",
+    "FETCH",
+    "CLOSE",
+    "MOVE",
+    "DO",
+    "VALUES",
+    "TABLE",
+    "REFRESH",
+    "CLUSTER",
+    "COMMENT",
+    "DISCARD",
+    "RESET",
+    "CHECKPOINT",
+    "OPTIMIZE",
+    "RENAME",
+    "KILL",
+    "FLUSH",
+    "LOAD",
+    "HANDLER",
+    "IMPORT",
+    "INSTALL",
+    "UNINSTALL",
+];
+
 /// The leading SQL verb (`SELECT`, `INSERT`, …) if the statement starts with
 /// one; used for the span name and `db.operation.name`.
-pub fn sql_operation(sql: &[u8]) -> Option<[u8; 16]> {
+pub fn sql_operation(sql: &[u8]) -> Option<&'static str> {
     let mut i = 0;
     // Skip whitespace and `(`; skip `--` line and `/* */` block comments.
     loop {
@@ -97,73 +177,42 @@ pub fn sql_operation(sql: &[u8]) -> Option<[u8; 16]> {
             continue;
         }
         if sql[i..].starts_with(b"/*") {
-            i += crate_index_of(&sql[i..], b"*/")? + 2;
+            i += bun_core::strings::index_of(&sql[i..], b"*/")? + 2;
             continue;
         }
         break;
     }
     let start = i;
-    while i < sql.len() && sql[i].is_ascii_alphabetic() && i - start < 16 {
+    while i < sql.len() && sql[i].is_ascii_alphabetic() && i - start <= 10 {
         i += 1;
     }
-    let len = i - start;
-    if !(2..=10).contains(&len) {
+    let word = &sql[start..i];
+    if !(2..=10).contains(&word.len()) {
         return None;
     }
     if i < sql.len() && !matches!(sql[i], b' ' | b'\t' | b'\n' | b'\r' | b';' | b'(') {
         return None;
     }
-    let mut out = [0u8; 16];
-    for (k, c) in sql[start..i].iter().enumerate() {
-        out[k] = c.to_ascii_uppercase();
-    }
-    match &out[..len] {
-        b"SELECT" | b"INSERT" | b"UPDATE" | b"DELETE" | b"WITH" | b"CREATE" | b"DROP"
-        | b"ALTER" | b"BEGIN" | b"COMMIT" | b"ROLLBACK" | b"SET" | b"SHOW" | b"EXPLAIN"
-        | b"PRAGMA" | b"VACUUM" | b"TRUNCATE" | b"MERGE" | b"REPLACE" | b"UPSERT" | b"CALL"
-        | b"EXEC" | b"EXECUTE" | b"PREPARE" | b"DEALLOCATE" | b"COPY" | b"GRANT" | b"REVOKE"
-        | b"ANALYZE" | b"ATTACH" | b"DETACH" | b"LISTEN" | b"NOTIFY" | b"UNLISTEN"
-        | b"SAVEPOINT" | b"RELEASE" | b"LOCK" | b"UNLOCK" | b"USE" | b"DESCRIBE" | b"DESC"
-        | b"START" | b"END" | b"REINDEX" | b"DECLARE" | b"FETCH" | b"CLOSE" | b"MOVE" | b"DO"
-        | b"VALUES" | b"TABLE" | b"REFRESH" | b"CLUSTER" | b"COMMENT" | b"DISCARD" | b"RESET"
-        | b"CHECKPOINT" | b"OPTIMIZE" | b"RENAME" | b"KILL" | b"FLUSH" | b"LOAD" | b"HANDLER"
-        | b"IMPORT" | b"INSTALL" | b"UNINSTALL" => Some(out),
-        _ => None,
-    }
-}
-
-fn crate_index_of(hay: &[u8], needle: &[u8]) -> Option<usize> {
-    bun_core::strings::index_of(hay, needle)
-}
-
-#[inline]
-fn op_len(op: &[u8; 16]) -> usize {
-    bun_core::strings::index_of_char_usize(op, 0).unwrap_or(16)
+    let first = word[0].to_ascii_uppercase();
+    SQL_VERBS
+        .iter()
+        .copied()
+        .find(|v| v.as_bytes()[0] == first && v.as_bytes().eq_ignore_ascii_case(word))
 }
 
 /// Finish a query span. `statement` is recorded as `db.query.text` when
-/// statement capture is on; `error` = (error.type, message).
+/// statement capture is on.
 pub fn end(
     global: *mut c_void,
     span: NativeSpan,
     statement: &[u8],
     operation: Option<&[u8]>,
-    error: Option<(&[u8], &[u8])>,
+    error: Option<DbError<'_>>,
 ) {
     if !span.is_some() {
         return;
     }
-    let op_buf;
-    let op: Option<&[u8]> = match operation {
-        Some(o) => Some(o),
-        None => match sql_operation(statement) {
-            Some(b) => {
-                op_buf = b;
-                Some(&op_buf[..op_len(&op_buf)])
-            }
-            None => None,
-        },
-    };
+    let op: Option<&[u8]> = operation.or_else(|| sql_operation(statement).map(str::as_bytes));
     let capture = rt::capture_db_statement();
     let ended = rt::with_local(global, |local| {
         if let Some(o) = op {
@@ -180,18 +229,18 @@ pub fn end(
                     crate::otlp::truncate_utf8(statement, 16 * 1024),
                 );
             }
-            if let Some((ty, msg)) = error {
+            if let Some(DbError { ty, message }) = error {
                 w.attr_opt("error.type", ty);
-                if !ty.is_empty() && ty.iter().all(|c| c.is_ascii_alphanumeric()) && ty.len() <= 8 {
+                if !ty.is_empty() && ty.len() <= 8 && ty.iter().all(|c| c.is_ascii_alphanumeric()) {
                     w.attr("db.response.status_code", ty);
                 }
-                w.status(StatusCode::Error, msg);
+                w.status(crate::StatusCode::Error, message);
             }
         })
     })
     .flatten();
     if let (Some(h), Some(e)) = (rt::hooks(), &ended) {
-        if e.js_cell != 0 {
+        if e.js_cell.is_some() {
             (h.release_cell)(e.js_cell);
         }
         if e.recorded {

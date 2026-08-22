@@ -126,16 +126,20 @@ pub(crate) fn write_status<const SSL: bool>(resp: *mut uws_sys::NewAppResponse<S
     // S008: `Response<SSL>` is a ZST opaque — safe `*mut → &mut` deref
     // (non-null checked above).
     let resp = bun_opaque::opaque_deref_mut(resp);
+    let mut buf = [0u8; 16];
+    resp.write_status(status_line(status, &mut buf));
+}
+
+pub(crate) fn status_line(status: u16, buf: &mut [u8; 16]) -> &[u8] {
     if let Some(text) = HTTPStatusText::get(status) {
-        resp.write_status(text);
-    } else {
-        use std::io::Write as _;
-        let mut buf = [0u8; 48];
-        let mut cursor = &mut buf[..];
-        write!(cursor, "{} HM", status).expect("unreachable");
-        let written = 48 - cursor.len();
-        resp.write_status(&buf[..written]);
+        return text;
     }
+    use std::io::Write as _;
+    let mut cursor = &mut buf[..];
+    write!(cursor, "{} HM", status).expect("unreachable");
+    let remaining = cursor.len();
+    let written = buf.len() - remaining;
+    &buf[..written]
 }
 
 // ─── AnyRoute ────────────────────────────────────────────────────────────────
@@ -1495,17 +1499,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             {
                                 nhr.otel_handler_error.set(true);
                                 if raw.state().is_http_status_called() {
-                                    raw.write_status(b"500 Internal Server Error");
+                                    nhr.write_status(raw, 500);
                                     raw.end_without_body(true);
-                                    if nhr.otel_status.get() == 0 {
-                                        nhr.otel_status.set(500);
-                                    }
                                 } else {
                                     // end_stream() without a status line sends 200.
+                                    nhr.otel_status.set(200);
                                     raw.end_stream(true);
-                                    if nhr.otel_status.get() == 0 {
-                                        nhr.otel_status.set(200);
-                                    }
                                 }
                             }
                         }

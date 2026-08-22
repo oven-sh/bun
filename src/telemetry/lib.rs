@@ -28,7 +28,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 pub use config::Config;
 pub use data::{DEFAULT_LIMITS, Limits};
 pub use otlp::{SpanWriter, Value};
-pub use pool::NativeSpan;
+pub use pool::{JsCellRef, NativeSpan};
 pub use processor::{ExportPayload, Exporter, Processor};
 pub use sampler::Sampler;
 pub use span::{Flags, SpanContext, SpanId, SpanKind, SpanStub, StatusCode, TraceId};
@@ -129,20 +129,7 @@ impl Instrument {
     }
 
     pub fn from_name(s: &[u8]) -> Option<Instrument> {
-        Some(match s {
-            b"http" | b"serve" | b"node:http" => Instrument::HttpServer,
-            b"fetch" | b"http-client" | b"undici" => Instrument::HttpClient,
-            b"sql" | b"postgres" | b"mysql" => Instrument::Sql,
-            b"sqlite" | b"bun:sqlite" => Instrument::Sqlite,
-            b"redis" | b"valkey" => Instrument::Redis,
-            b"net" | b"tcp" | b"tls" | b"node:net" => Instrument::Net,
-            b"websocket" | b"ws" => Instrument::WebSocket,
-            b"fs" | b"node:fs" | b"file" => Instrument::Fs,
-            b"spawn" | b"child_process" | b"node:child_process" => Instrument::ChildProcess,
-            b"dns" | b"node:dns" => Instrument::Dns,
-            b"user" | b"api" => Instrument::User,
-            _ => return None,
-        })
+        Self::ALL.into_iter().find(|i| i.name().as_bytes() == s)
     }
 
     /// OTel instrumentation scope name for spans from this integration.

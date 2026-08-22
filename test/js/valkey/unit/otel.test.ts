@@ -27,11 +27,12 @@ describe.skipIf(!isEnabled)("Valkey: OpenTelemetry", () => {
     await redis.set("otel:key", "secret-value");
     await redis.get("otel:key");
     await redis.send("AUTH", ["hunter2"]).catch(() => {});
-    const got = (await collect()).filter(s => ["SET", "GET", "AUTH"].includes(s.name));
+    const got = (await collect()).filter(s => ["SET", "GET", "AUTH"].includes(s.attributes["db.operation.name"]));
+    // semconv: `{operation} {db.namespace}` (the SELECT index, 0 by default).
     expect(got.map(s => [s.name, s.attributes["db.query.text"], s.status.code])).toEqual([
-      ["SET", "SET otel:key ...", 0],
-      ["GET", "GET otel:key", 0],
-      ["AUTH", undefined, 2],
+      ["SET 0", "SET otel:key ...", 0],
+      ["GET 0", "GET otel:key", 0],
+      ["AUTH 0", undefined, 2],
     ]);
     expect(JSON.stringify(got)).not.toContain("secret-value");
     expect(JSON.stringify(got)).not.toContain("hunter2");
@@ -40,6 +41,7 @@ describe.skipIf(!isEnabled)("Valkey: OpenTelemetry", () => {
       kind: 2,
       attributes: {
         "db.system.name": "redis",
+        "db.namespace": "0",
         "db.operation.name": "SET",
         "server.address": url.hostname,
         "server.port": Number(url.port),
@@ -54,7 +56,7 @@ describe.skipIf(!isEnabled)("Valkey: OpenTelemetry", () => {
       await redis.incr("otel:counter");
       parent.end();
     });
-    const [incr] = (await collect()).filter(s => s.name === "INCR");
+    const [incr] = (await collect()).filter(s => s.attributes["db.operation.name"] === "INCR");
     expect(incr.parentSpanId).toEqual(expect.any(String));
   });
 });

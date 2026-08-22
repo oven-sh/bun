@@ -249,7 +249,12 @@ impl Promise {
                 *dst = c.to_ascii_uppercase();
             }
             let name = &upper[..n];
-            s.set_name(name);
+            // semconv `{operation} {target}`: begin() named the span by its target.
+            let target = core::mem::take(&mut s.name);
+            s.name.reserve(name.len() + 1 + target.len());
+            s.name.extend_from_slice(name);
+            s.name.push(b' ');
+            s.name.extend_from_slice(&target);
             let limits = crate::telemetry::span::limits();
             s.push_attribute(
                 b"db.operation.name",

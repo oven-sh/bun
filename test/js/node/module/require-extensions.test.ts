@@ -1,6 +1,7 @@
 import assert from "assert";
-import { expect, mock, test } from "bun:test";
-import { tempDir } from "harness";
+import { describe, expect, mock, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
+import Module from "node:module";
 import path from "path";
 
 test("require.extensions shape makes sense", () => {
@@ -162,6 +163,197 @@ test("wrapping an existing extension but it's secretly sync esm", () => {
     require.extensions[".cjs"] = original;
   }
 });
+// Every assignment in these tests is executed more than once from the same
+// statement (a loop body or a helper function). The assignment used to reach
+// the loader only the first time a statement ran; afterwards a property inline
+// cache stored straight into the object. With a literal key (`[".js"] =`) the
+// interpreter caches the second execution already; with a variable key (the
+// `extensions[ext] =` loop in pirates, @babel/register and ts-node) the cache
+// appears once the helper is JIT compiled, which the last test forces.
+describe("assigning require.extensions repeatedly from one statement", () => {
+  test("a builtin extension can be overridden again after it was restored", () => {
+    using dir = tempDir("require-extensions-reoverride", {
+      "a.js": `module.exports = "a";`,
+      "b.js": `module.exports = "b";`,
+      "c.js": `module.exports = "c";`,
+    });
+    const original = require.extensions[".js"]!;
+    const rounds: { file: string; invoked: boolean; exports: unknown }[] = [];
+    try {
+      for (const file of ["a.js", "b.js", "c.js"]) {
+        let invoked = false;
+        require.extensions[".js"] = function (module, filename) {
+          invoked = true;
+          original(module, filename);
+        };
+        const exports = require(path.join(String(dir), file));
+        rounds.push({ file, invoked, exports });
+        require.extensions[".js"] = original;
+      }
+    } finally {
+      require.extensions[".js"] = original;
+    }
+    expect(rounds).toEqual([
+      { file: "a.js", invoked: true, exports: "a" },
+      { file: "b.js", invoked: true, exports: "b" },
+      { file: "c.js", invoked: true, exports: "c" },
+    ]);
+  });
+
+  test("an override that throws is invoked again by the next require of the same file", () => {
+    using dir = tempDir("require-extensions-throwing-override", {
+      "mod.js": `exports.foo = 1;`,
+    });
+    const file = path.join(String(dir), "mod.js");
+    const original = require.extensions[".js"]!;
+    const rounds: { invoked: boolean; outcome: string; cached: boolean }[] = [];
+    try {
+      for (let i = 0; i < 3; i++) {
+        let invoked = false;
+        require.extensions[".js"] = function () {
+          invoked = true;
+          throw new Error("rejected by override");
+        };
+        let outcome: string;
+        try {
+          require(file);
+          outcome = "loaded";
+        } catch (e) {
+          outcome = (e as Error).message;
+        }
+        rounds.push({ invoked, outcome, cached: file in require.cache });
+        require.extensions[".js"] = original;
+      }
+    } finally {
+      require.extensions[".js"] = original;
+      delete require.cache[file];
+    }
+    const expected = { invoked: true, outcome: "rejected by override", cached: false };
+    expect(rounds).toEqual([expected, expected, expected]);
+  });
+
+  test("restoring the builtin loader through a helper unregisters the current override", () => {
+    using dir = tempDir("require-extensions-restore-helper", {
+      "a.js": `module.exports = "a";`,
+    });
+    const original = require.extensions[".js"]!;
+    const calls: string[] = [];
+    function restore() {
+      require.extensions[".js"] = original;
+    }
+    try {
+      require.extensions[".js"] = function (module, filename) {
+        calls.push("first");
+        original(module, filename);
+      };
+      restore();
+      require.extensions[".js"] = function (module, filename) {
+        calls.push("second");
+        original(module, filename);
+      };
+      restore();
+
+      expect(require.extensions[".js"]).toBe(original);
+      expect(require(path.join(String(dir), "a.js"))).toBe("a");
+      expect(calls).toEqual([]);
+    } finally {
+      restore();
+    }
+  });
+
+  test("re-registering a custom extension through a helper dispatches to the latest handler", () => {
+    using dir = tempDir("require-extensions-reregister", {
+      "one.reregistered": "",
+      "two.reregistered": "",
+      "three.reregistered": "",
+    });
+    function register(tag: string) {
+      Module._extensions[".reregistered"] = function (module) {
+        module.exports = tag;
+      };
+    }
+    const loaded: string[] = [];
+    try {
+      for (const tag of ["one", "two", "three"]) {
+        register(tag);
+        loaded.push(require(path.join(String(dir), `${tag}.reregistered`)));
+      }
+    } finally {
+      delete Module._extensions[".reregistered"];
+    }
+    expect(loaded).toEqual(["one", "two", "three"]);
+  });
+
+  test("variable-key install/restore helpers keep working after they are JIT compiled", async () => {
+    const files: Record<string, string> = {
+      "index.js": `
+        const Module = require("node:module");
+        const path = require("node:path");
+        const originalJs = Module._extensions[".js"];
+        const dispatched = [];
+
+        function install(extension, tag) {
+          Module._extensions[extension] = function (module) {
+            dispatched.push(tag);
+            module.exports = tag;
+          };
+        }
+        function restore(extension, previous) {
+          Module._extensions[extension] = previous;
+        }
+
+        // No require() in here: this only gets both helpers compiled by every JIT tier.
+        for (let i = 0; i < 200; i++) {
+          install(".js", "warm-js-" + i);
+          restore(".js", originalJs);
+          install(".hooked", "warm-hooked-" + i);
+        }
+
+        const rounds = [];
+        for (let i = 0; i < 3; i++) {
+          install(".js", "js-" + i);
+          const jsExports = require(path.join(__dirname, "js-" + i + ".js"));
+          restore(".js", originalJs);
+          const afterRestore = require(path.join(__dirname, "restored-" + i + ".js"));
+          install(".hooked", "hooked-" + i);
+          const hookedExports = require(path.join(__dirname, "file-" + i + ".hooked"));
+          rounds.push({ jsExports, afterRestore, hookedExports });
+        }
+
+        console.log(JSON.stringify({ rounds, dispatched, restored: Module._extensions[".js"] === originalJs }));
+      `,
+    };
+    for (let i = 0; i < 3; i++) {
+      files[`js-${i}.js`] = `module.exports = "builtin js-${i}";`;
+      files[`restored-${i}.js`] = `module.exports = "builtin restored-${i}";`;
+      files[`file-${i}.hooked`] = "only loadable through the .hooked handler";
+    }
+    using dir = tempDir("require-extensions-jit", files);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      cwd: String(dir),
+      // Compile on the main thread, so after the warm-up loop the helpers are
+      // guaranteed to run as JIT code (baseline and DFG) when the rounds start.
+      env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      rounds: [
+        { jsExports: "js-0", afterRestore: "builtin restored-0", hookedExports: "hooked-0" },
+        { jsExports: "js-1", afterRestore: "builtin restored-1", hookedExports: "hooked-1" },
+        { jsExports: "js-2", afterRestore: "builtin restored-2", hookedExports: "hooked-2" },
+      ],
+      dispatched: ["js-0", "hooked-0", "js-1", "hooked-1", "js-2", "hooked-2"],
+      restored: true,
+    });
+    expect(exitCode).toBe(0);
+  });
+});
+
 test("mutating extensions is banned by some files", () => {
   // vercel is not allowed to mutate require.extensions
   const files = ["node_modules/next/dist/build/next-config-ts/index.js", "node_modules/@meteorjs/babel/index.js"];

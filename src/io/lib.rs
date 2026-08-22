@@ -40,6 +40,8 @@ pub mod windows_event_loop;
 mod keep_alive;
 pub mod posix_event_loop;
 pub use keep_alive::KeepAlive;
+#[cfg(target_os = "macos")]
+mod fifo_select;
 
 // ParentDeathWatchdog: POSIX uses `PR_SET_PDEATHSIG` / `EVFILT_PROC` plus an
 // exit-time descendant SIGKILL walk. Windows does both halves via Win32:

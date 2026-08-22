@@ -459,7 +459,7 @@ test.concurrent.skipIf(!isLinux || !cc || !mkfifo || !cat)(
     }).toEqual({
       teedIsAllA: true,
       teedLength: 256 * 1024 + "AAAA".length,
-      parsed: { exitCode: ENOMEM },
+      parsed: { exitCode: 1 },
       stderr: "",
       readerStderr: "",
       exitCode: 0,

@@ -29,6 +29,9 @@ pub struct Entry {
     /// `"installConfig": { "hoistingLimits": "workspaces" }` — this workspace's
     /// node_modules must be self-contained (see `Lockfile::self_contained_workspaces`).
     pub(crate) hoisting_limits: bool,
+    /// An `installConfig.hoistingLimits` value other than "workspaces", kept so the
+    /// caller can warn about it (outside `process_names_array`'s log window).
+    pub(crate) unsupported_hoisting_limits: Option<Box<[u8]>>,
 }
 
 impl WorkspaceMap {
@@ -95,6 +98,7 @@ impl WorkspaceMap {
             version: value.version,
             name_loc: value.name_loc,
             hoisting_limits: value.hoisting_limits,
+            unsupported_hoisting_limits: value.unsupported_hoisting_limits,
         };
         Ok(())
     }
@@ -180,33 +184,25 @@ fn process_workspace_name(
         .as_string_cloned(&scratch)?
         .ok_or(crate::Error::MissingPackageName)?;
 
+    let hoisting_limits: Option<Box<[u8]>> = match workspace_json
+        .root
+        .get(b"installConfig")
+        .and_then(|c| c.get(b"hoistingLimits"))
+    {
+        Some(h) => Some(match h.as_string_cloned(&scratch)? {
+            Some(v) => Box::<[u8]>::from(v),
+            // present but not a string
+            None => Box::<[u8]>::from(&b"<non-string>"[..]),
+        }),
+        None => None,
+    };
     let entry = Entry {
         name: Box::<[u8]>::from(name),
         name_loc: name_expr.loc,
-        hoisting_limits: match workspace_json
-            .root
-            .get(b"installConfig")
-            .and_then(|c| c.get(b"hoistingLimits"))
-        {
-            Some(h) => match h.as_string_cloned(&scratch)? {
-                Some(v) if v == b"workspaces" => true,
-                other => {
-                    log.add_warning_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "{}: installConfig.hoistingLimits {} is not supported (only \"workspaces\" is); ignoring",
-                            BStr::new(abs_package_json_path),
-                            match &other {
-                                Some(v) => format!("\"{}\"", BStr::new(v)),
-                                None => "value".into(),
-                            }
-                        ),
-                    );
-                    false
-                }
-            },
-            None => false,
+        hoisting_limits: hoisting_limits.as_deref() == Some(b"workspaces".as_slice()),
+        unsupported_hoisting_limits: match hoisting_limits {
+            Some(v) if &*v != b"workspaces" => Some(v),
+            _ => None,
         },
         version: 'brk: {
             if let Some(version_expr) = workspace_json.root.get(b"version") {
@@ -408,6 +404,7 @@ impl WorkspaceMap {
                     name_loc: workspace_entry.name_loc,
                     version: workspace_entry.version,
                     hoisting_limits: workspace_entry.hoisting_limits,
+                    unsupported_hoisting_limits: workspace_entry.unsupported_hoisting_limits,
                 },
             )?;
         }
@@ -603,6 +600,8 @@ impl WorkspaceMap {
                             version: workspace_entry.version,
                             name_loc: workspace_entry.name_loc,
                             hoisting_limits: workspace_entry.hoisting_limits,
+                            unsupported_hoisting_limits: workspace_entry
+                                .unsupported_hoisting_limits,
                         },
                     )?;
                 }

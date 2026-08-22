@@ -95,7 +95,14 @@ describe.each([
     { installConfig: { hoistingLimits: "workspaces" } },
     {},
   ],
-  ["workspaces.selfContained in the root package.json", {}, { selfContained: ["apps/desktop"] }],
+  ["workspaces.selfContained (by path) in the root package.json", {}, { selfContained: ["apps/desktop"] }],
+  ["workspaces.selfContained (by name) in the root package.json", {}, { selfContained: ["desktop"] }],
+  // an unsupported hoistingLimits value only warns; the root list still applies
+  [
+    "an unsupported hoistingLimits value plus the root list",
+    { installConfig: { hoistingLimits: "dependencies" } },
+    { selfContained: ["desktop"] },
+  ],
 ] as const)("self-contained workspace via %s", (_label, desktopExtra, workspacesExtra) => {
   it("gets a complete, physical node_modules while other workspaces still hoist", async () => {
     await writeProject(desktopExtra, workspacesExtra);

@@ -2905,6 +2905,17 @@ impl Package<u64> {
                             .self_contained_workspaces
                             .put(external_name.hash, ())?;
                     }
+                    if let Some(v) = &entry.unsupported_hoisting_limits {
+                        log.add_warning_fmt(
+                            Some(source),
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "workspace \"{}\": installConfig.hoistingLimits \"{}\" is not supported (only \"workspaces\" is); ignoring",
+                                bstr::BStr::new(&entry.name),
+                                bstr::BStr::new(v),
+                            ),
+                        );
+                    }
 
                     let workspace_version = 'brk: {
                         if let Some(version_string) = &entry.version {

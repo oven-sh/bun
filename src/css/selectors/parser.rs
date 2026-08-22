@@ -1311,9 +1311,9 @@ impl<'a> SelectorParser<'a> {
                 self.options.warn(&loc.new_custom_error(
                     SelectorParseErrorKind::UnsupportedPseudoClassOrElement(name),
                 ));
-            } else if (self.options.css_modules.is_some()
-                && strings::eql_case_insensitive_ascii_check_length(name, b"local"))
-                || strings::eql_case_insensitive_ascii_check_length(name, b"global")
+            } else if self.options.css_modules.is_some()
+                && (strings::eql_case_insensitive_ascii_check_length(name, b"local")
+                    || strings::eql_case_insensitive_ascii_check_length(name, b"global"))
             {
                 return Err(
                     loc.new_custom_error(SelectorParseErrorKind::AmbiguousCssModuleClass(name))

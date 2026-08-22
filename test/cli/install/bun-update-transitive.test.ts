@@ -1,8 +1,10 @@
 import { file, write } from "bun";
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { exists } from "fs/promises";
 import { VerdaccioRegistry, bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
+
+setDefaultTimeout(1000 * 60 * 5);
 
 // Registry: no-deps 1.0.0/1.0.1/1.1.0/2.0.0, a-dep 1.0.1..1.0.10, @types/no-deps 1.0.0/2.0.0, one-range-dep@1.0.0 -> no-deps ^1.0.0, one-fixed-dep@1.0.0 -> no-deps 1.0.0, dep-with-tags latest=3.0.0, pre-2=2.0.1, 3.0.1 published above latest.
 
@@ -507,24 +509,501 @@ test.concurrent("a transitive dependency pinned exactly by its dependent stays p
   expect(exitCode).toBe(0);
 });
 
-// The root's no-deps@1.0.0 dedupes both dependents onto 1.0.0 before it is dropped; the update forks only the `^1.0.0` edge.
-test.concurrent("dependents with different ranges are resolved independently", async () => {
+// The root's no-deps@1.0.0 dedupes both dependents onto 1.0.0 before it is dropped; the fixed edge keeps 1.0.0 alive, so the `^1.0.0` edge is held instead of forked into the duplicate `bun dedupe` would remove.
+test.concurrent("a range edge is not forked off an instance a fixed sibling keeps alive", async () => {
   const dependents = { "one-fixed-dep": "1.0.0", "one-range-dep": "1.0.0" };
   const dir = await setup({ "package.json": pkgJson({ "no-deps": "1.0.0", ...dependents }) });
   const packageJson = pkgJson(dependents);
   await reinstall(dir, packageJson);
   expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
+  const before = await lockText(dir);
   const { stdout, stderr, exitCode } = await run(dir, "update");
-  expectSummary(stdout, NO_DEPS_ROW_HINTED, "", installed(1));
+  expectSummary(stdout, noChanges(3, 4));
   expectCleanStderr(stderr);
+  expect(stderr).not.toContain("Saved lockfile");
   expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
-  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0", "1.1.0"]);
-  const { packages } = await lock(dir);
-  expect([packages["no-deps"][0], packages["one-range-dep/no-deps"][0]]).toStrictEqual([
-    "no-deps@1.0.0",
-    "no-deps@1.1.0",
-  ]);
+  expect(await lockText(dir)).toBe(before);
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
   await frozen(dir);
+  expect(exitCode).toBe(0);
+});
+
+// #38903: `bun update` and `bun dedupe` must reach a fixed point. After dedupe collapses the `^1.0.0`
+// edge onto the exact pin's 1.0.0, a bare update holds that edge instead of re-adding the duplicate.
+test.concurrent("a deduped lockfile is a fixed point of `bun update`", async () => {
+  const dir = await setup({ "package.json": pkgJson({ "one-range-dep": "1.0.0" }) });
+  const packageJson = pkgJson({ "one-range-dep": "1.0.0", "no-deps": "1.0.0" });
+  await reinstall(dir, packageJson);
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0", "1.1.0"]);
+
+  const deduped = await run(dir, "dedupe");
+  expect(deduped.stderr).not.toContain("error:");
+  expect(deduped.exitCode).toBe(0);
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
+  const before = await lockText(dir);
+
+  const { stdout, stderr, exitCode } = await run(dir, "update");
+  expectSummary(stdout, noChanges(2, 3));
+  expectCleanStderr(stderr);
+  expect(stderr).not.toContain("Saved lockfile");
+  expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
+  expect(await lockText(dir)).toBe(before);
+  expect(exitCode).toBe(0);
+
+  const check = await run(dir, "dedupe", "--check");
+  expect(check.stderr).not.toContain("error:");
+  expect(check.exitCode).toBe(0);
+  expect(await lockText(dir)).toBe(before);
+  await frozen(dir);
+});
+
+// Holds cascade: the peer's range rejects 2.0.0, holding bounded-dep's edge; that held edge in turn
+// rejects 4.0.0, so wide-dep's edge must be held too instead of forking leaf off the kept 1.0.0.
+test.concurrent("a held edge blocks its sibling from forking the instance", async () => {
+  using server = await serveRegistry({
+    "wide-dep": { "1.0.0": { dependencies: { leaf: ">=1.0.0" } } },
+    "bounded-dep": { "1.0.0": { dependencies: { leaf: ">=1.0.0 <3.0.0" } } },
+    "peer-host": { "1.0.0": { peerDependencies: { leaf: "1.0.0 || >=4.0.0" } } },
+    leaf: { "1.0.0": {}, "2.0.0": {}, "4.0.0": {} },
+  });
+  const packageJson = pkgJson({ "wide-dep": "1.0.0", "bounded-dep": "1.0.0", "peer-host": "1.0.0" });
+  const dir = await installServed(
+    server,
+    "update-hold-cascade-",
+    pkgJson({ ...packageJson.dependencies, leaf: "1.0.0" }),
+  );
+  const deduped = await run(dir, "dedupe");
+  expect(deduped.stderr).not.toContain("error:");
+  expect(deduped.exitCode).toBe(0);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+  await reinstall(dir, packageJson);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+  const before = await lockText(dir);
+
+  const { stdout, stderr, exitCode } = await run(dir, "update");
+  expectNoMoves(stdout);
+  expectCleanStderr(stderr);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+  expect(await lockText(dir)).toBe(before);
+  expect(exitCode).toBe(0);
+
+  const check = await run(dir, "dedupe", "--check");
+  expect(check.stderr).not.toContain("error:");
+  expect(check.exitCode).toBe(0);
+});
+
+// A direct range that will move is no reason to hold: root leaf `^1.0.0 || ^3.0.0` moves to 3.0.0,
+// so parent's `^1.0.0 || ^2.0.0` edge moves to 2.0.0 instead of being held at the 1.0.0 the root leaves.
+test.concurrent("a direct edge that moves away does not hold its transitive siblings", async () => {
+  using server = await serveRegistry({
+    parent: { "1.0.0": { dependencies: { leaf: "^1.0.0 || ^2.0.0" } } },
+    leaf: { "1.0.0": {}, "2.0.0": {}, "3.0.0": {} },
+  });
+  const dir = await installServed(server, "update-direct-moves-", pkgJson({ parent: "1.0.0", leaf: "1.0.0" }));
+  const deduped = await run(dir, "dedupe");
+  expect(deduped.stderr).not.toContain("error:");
+  expect(deduped.exitCode).toBe(0);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+
+  // Widen the root range in package.json and bun.lock, keeping the locked resolution at 1.0.0.
+  await write(join(dir, "package.json"), stringify(pkgJson({ parent: "1.0.0", leaf: "^1.0.0 || ^3.0.0" })));
+  const lockfile = await lockText(dir);
+  expect(lockfile.split(`"leaf": "1.0.0"`)).toHaveLength(2);
+  await write(join(dir, "bun.lock"), lockfile.replace(`"leaf": "1.0.0"`, `"leaf": "^1.0.0 || ^3.0.0"`));
+
+  const { stdout, stderr, exitCode } = await run(dir, "update");
+  // The summary prints one row per name; the direct move wins the slot.
+  expect(movedRows(stdout)).toStrictEqual([movedRow("leaf", "1.0.0", "3.0.0")]);
+  expectCleanStderr(stderr);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["2.0.0", "3.0.0"]);
+  expect(exitCode).toBe(0);
+  const before = await lockText(dir);
+
+  const again = await run(dir, "dedupe");
+  expect(again.stderr).not.toContain("error:");
+  expect(again.exitCode).toBe(0);
+  expect(await lockText(dir)).toBe(before);
+});
+
+// `--latest -r` resolves the targeted rows by the `latest` dist-tag, so the exact pin jumps to 2.0.0
+// and does not keep 1.0.0 alive; parent's `^1.0.0` edge must still move to its in-range best.
+test.concurrent("`bun update --latest -r`: a pin that jumps to latest does not hold its siblings", async () => {
+  using server = await serveRegistry({
+    parent: { "1.0.0": { dependencies: { leaf: "^1.0.0" } } },
+    leaf: { "1.0.0": {}, "1.5.0": {}, "2.0.0": {} },
+  });
+  const dir = await installServed(server, "update-latest-target-", pkgJson({ parent: "1.0.0", leaf: "1.0.0" }));
+  const deduped = await run(dir, "dedupe");
+  expect(deduped.stderr).not.toContain("error:");
+  expect(deduped.exitCode).toBe(0);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+
+  const { stderr, exitCode } = await run(dir, "update", "--latest", "-r");
+  expect(stderr).not.toContain("error:");
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.5.0", "2.0.0"]);
+  expect(exitCode).toBe(0);
+});
+
+// A workspace member's row is not re-resolved by a bare update from the root, so its parked 1.0.0
+// keeps the instance alive and parent's `*` edge is held: the deduped lockfile stays a fixed point.
+test.concurrent("a member's parked edge holds its transitive siblings under a root update", async () => {
+  using server = await serveRegistry({
+    parent: { "1.0.0": { dependencies: { leaf: "*" } } },
+    leaf: { "1.0.0": {}, "1.5.0": {}, "2.0.0": {} },
+  });
+  using tmp = tempDir("update-member-hold-", {
+    "package.json": stringify({ name: "root", workspaces: ["packages/*"], dependencies: { leaf: "1.0.0" } }),
+    "packages/pkg1/package.json": stringify({ name: "pkg1", dependencies: { leaf: "^1.0.0", parent: "1.0.0" } }),
+  });
+  const dir = String(tmp);
+  await servedBunfig(server, dir);
+  await install(dir);
+  const deduped = await run(dir, "dedupe");
+  expect(deduped.stderr).not.toContain("error:");
+  expect(deduped.exitCode).toBe(0);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+  await reinstall(dir, { name: "root", workspaces: ["packages/*"] });
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+  const before = await lockText(dir);
+
+  const { stdout, stderr, exitCode } = await run(dir, "update");
+  expectNoMoves(stdout);
+  expectCleanStderr(stderr);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+  expect(await lockText(dir)).toBe(before);
+  expect(exitCode).toBe(0);
+
+  const check = await run(dir, "dedupe", "--check");
+  expect(check.stderr).not.toContain("error:");
+  expect(check.exitCode).toBe(0);
+});
+
+// pkg1's `^1.0.0` sits on leaf@1.0.0 only; it must not hold parent-b's `>=2.0.0` edge on the
+// separate leaf@2.0.0 instance, which is free to move to 3.0.0.
+test.concurrent("a member's parked row does not hold wants on another instance of its package", async () => {
+  using server = await serveRegistry({
+    "parent-a": { "1.0.0": { dependencies: { leaf: "^1.0.0" } } },
+    "parent-b": { "1.0.0": { dependencies: { leaf: ">=2.0.0" } } },
+    leaf: { "1.0.0": {}, "2.0.0": {}, "3.0.0": {} },
+  });
+  const dependents = { "parent-a": "1.0.0", "parent-b": "1.0.0" };
+  using tmp = tempDir("update-member-other-instance-", {
+    "package.json": stringify({
+      name: "root",
+      workspaces: ["packages/*"],
+      dependencies: { ...dependents, leaf: "2.0.0" },
+    }),
+    "packages/pkg1/package.json": stringify({ name: "pkg1", dependencies: { leaf: "^1.0.0" } }),
+  });
+  const dir = String(tmp);
+  await servedBunfig(server, dir);
+  await install(dir);
+  const deduped = await run(dir, "dedupe");
+  expect(deduped.stderr).not.toContain("error:");
+  expect(deduped.exitCode).toBe(0);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0", "2.0.0"]);
+  await reinstall(dir, { name: "root", workspaces: ["packages/*"], dependencies: dependents });
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0", "2.0.0"]);
+
+  const { stderr, exitCode } = await run(dir, "update");
+  expectCleanStderr(stderr);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0", "3.0.0"]);
+  expect(exitCode).toBe(0);
+
+  const check = await run(dir, "dedupe", "--check");
+  expect(check.stderr).not.toContain("error:");
+  expect(check.exitCode).toBe(0);
+});
+
+// `--latest -r` bumps the catalog definition itself before resolving, so the catalog row is
+// modeled by its rewritten range (never the `latest` dist-tag) and every edge converges on 2.0.0.
+test.concurrent("`bun update --latest -r` with a catalog pin converges with dedupe", async () => {
+  using server = await serveRegistry({
+    parent: { "1.0.0": { dependencies: { leaf: "*" } } },
+    leaf: { "1.0.0": {}, "2.0.0": {} },
+  });
+  using tmp = tempDir("update-latest-catalog-", {
+    "package.json": stringify({ name: "root", workspaces: ["packages/*"], catalog: { leaf: "1.0.0" } }),
+    "packages/pkg1/package.json": stringify({ name: "pkg1", dependencies: { leaf: "catalog:", parent: "1.0.0" } }),
+  });
+  const dir = String(tmp);
+  await servedBunfig(server, dir);
+  await install(dir);
+  const deduped = await run(dir, "dedupe");
+  expect(deduped.stderr).not.toContain("error:");
+  expect(deduped.exitCode).toBe(0);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+
+  const { stderr, exitCode } = await run(dir, "update", "--latest", "-r");
+  expect(stderr).not.toContain("error:");
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["2.0.0"]);
+  expect(exitCode).toBe(0);
+
+  const check = await run(dir, "dedupe", "--check");
+  expect(check.stderr).not.toContain("error:");
+  expect(check.exitCode).toBe(0);
+});
+
+// `--latest` never moves a row below bun.lock: with `latest` behind the locked 2.0.0, the exact pin
+// stays, so parent's `>=2.0.0` edge is held instead of re-forking what dedupe removed.
+test.concurrent("`bun update --latest -r`: a pin ahead of `latest` keeps holding its siblings", async () => {
+  using server = await serveRegistry(
+    {
+      parent: { "1.0.0": { dependencies: { leaf: ">=2.0.0" } } },
+      leaf: { "1.9.0": {}, "2.0.0": {}, "2.1.0": {} },
+    },
+    { leaf: { latest: "1.9.0" } },
+  );
+  const dir = await installServed(server, "update-latest-behind-", pkgJson({ parent: "1.0.0", leaf: "2.0.0" }));
+  const deduped = await run(dir, "dedupe");
+  expect(deduped.stderr).not.toContain("error:");
+  expect(deduped.exitCode).toBe(0);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["2.0.0"]);
+
+  const { stderr, exitCode } = await run(dir, "update", "--latest", "-r");
+  expect(stderr).not.toContain("error:");
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["2.0.0"]);
+  expect(exitCode).toBe(0);
+
+  const check = await run(dir, "dedupe", "--check");
+  expect(check.stderr).not.toContain("error:");
+  expect(check.exitCode).toBe(0);
+});
+
+// Root rows are re-appended unresolved before the plan runs; the snapshot recovers where they sat,
+// so a root pin still holds a member-scoped update's wants even though root is out of scope.
+test.concurrent("a root pin holds transitive wants when updating from a member", async () => {
+  using server = await serveRegistry({
+    parent: { "1.0.0": { dependencies: { leaf: "*" } } },
+    leaf: { "1.0.0": {}, "2.0.0": {} },
+  });
+  using tmp = tempDir("update-member-cwd-", {
+    "package.json": stringify({ name: "root", workspaces: ["packages/*"], dependencies: { leaf: "1.0.0" } }),
+    "packages/pkg1/package.json": stringify({ name: "pkg1", dependencies: { parent: "1.0.0" } }),
+  });
+  const dir = String(tmp);
+  await servedBunfig(server, dir);
+  await install(dir);
+  const deduped = await run(dir, "dedupe");
+  expect(deduped.stderr).not.toContain("error:");
+  expect(deduped.exitCode).toBe(0);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+
+  const { stderr, exitCode } = await runIn(dir, "packages/pkg1", "update");
+  expect(stderr).not.toContain("error:");
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+  expect(exitCode).toBe(0);
+
+  const check = await run(dir, "dedupe", "--check");
+  expect(check.stderr).not.toContain("error:");
+  expect(check.exitCode).toBe(0);
+});
+
+// `bun update parent --latest` moves parent 1.0.0 -> 3.0.0; the superseded parent@1.0.0's `~1.0.0`
+// row must not hold the new parent's `^1.0.0` child edge, which moves in-range to 1.5.0.
+test.concurrent("`bun update <name> --latest`: a superseded version's rows do not hold the new children", async () => {
+  using server = await serveRegistry({
+    parent: {
+      "1.0.0": { dependencies: { leaf: "~1.0.0" } },
+      "3.0.0": { dependencies: { leaf: "^1.0.0" } },
+    },
+    leaf: { "1.0.0": {}, "1.5.0": {} },
+  });
+  const dir = await installServed(server, "update-superseded-", pkgJson({ parent: "1.0.0" }));
+  expect(await lockedVersions(dir, "parent")).toStrictEqual(["1.0.0"]);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+
+  const { stderr, exitCode } = await run(dir, "update", "parent", "--latest");
+  expect(stderr).not.toContain("error:");
+  expect(await lockedVersions(dir, "parent")).toStrictEqual(["3.0.0"]);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.5.0"]);
+  expect(exitCode).toBe(0);
+});
+
+// Same through an intermediate package: the superseded parent@1.0.0 -> mid -> leaf `~1.0.0` chain
+// is unreachable once parent moves, so mid's row does not hold the new parent's `^1.0.0` edge.
+test.concurrent("`bun update <name> --latest`: a superseded chain's rows do not hold the new children", async () => {
+  using server = await serveRegistry({
+    parent: {
+      "1.0.0": { dependencies: { mid: "1.0.0" } },
+      "3.0.0": { dependencies: { leaf: "^1.0.0" } },
+    },
+    mid: { "1.0.0": { dependencies: { leaf: "~1.0.0" } } },
+    leaf: { "1.0.0": {}, "1.5.0": {} },
+  });
+  const dir = await installServed(server, "update-superseded-chain-", pkgJson({ parent: "1.0.0" }));
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+
+  const { stderr, exitCode } = await run(dir, "update", "parent", "--latest");
+  expect(stderr).not.toContain("error:");
+  expect(await lockedVersions(dir, "parent")).toStrictEqual(["3.0.0"]);
+  expect(await lockedVersions(dir, "mid")).toStrictEqual([]);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.5.0"]);
+  expect(exitCode).toBe(0);
+});
+
+// Removing a root dependency and updating in one step: the removed subtree's rows are unreachable
+// and do not hold the remaining `^1.0.0` want at the 1.0.0 they used to share.
+test.concurrent("a removed root dependency's rows do not hold the remaining wants", async () => {
+  using server = await serveRegistry({
+    "parent-a": { "1.0.0": { dependencies: { leaf: "~1.0.0" } } },
+    "parent-b": { "1.0.0": { dependencies: { leaf: "^1.0.0" } } },
+    leaf: { "1.0.0": {}, "1.5.0": {} },
+  });
+  const dir = await installServed(
+    server,
+    "update-removed-root-",
+    pkgJson({ "parent-a": "1.0.0", "parent-b": "1.0.0" }),
+  );
+  const deduped = await run(dir, "dedupe");
+  expect(deduped.stderr).not.toContain("error:");
+  expect(deduped.exitCode).toBe(0);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+
+  await write(join(dir, "package.json"), stringify(pkgJson({ "parent-b": "1.0.0" })));
+  const { stderr, exitCode } = await run(dir, "update");
+  expect(stderr).not.toContain("error:");
+  expect(await lockedVersions(dir, "parent-a")).toStrictEqual([]);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.5.0"]);
+  expect(exitCode).toBe(0);
+});
+
+// The workspace analog: a member dropped from the glob keeps its Workspace tag until the clean,
+// but its rows are unreachable and do not hold the remaining `^1.0.0` want.
+test.concurrent("a removed workspace member's rows do not hold the remaining wants", async () => {
+  using server = await serveRegistry({
+    parent: { "1.0.0": { dependencies: { leaf: "^1.0.0" } } },
+    leaf: { "1.0.0": {}, "1.5.0": {} },
+  });
+  using tmp = tempDir("update-removed-member-", {
+    "package.json": stringify({ name: "root", workspaces: ["packages/*"], dependencies: { parent: "1.0.0" } }),
+    "packages/a/package.json": stringify({ name: "a", dependencies: { leaf: "~1.0.0" } }),
+  });
+  const dir = String(tmp);
+  await servedBunfig(server, dir);
+  await install(dir);
+  const deduped = await run(dir, "dedupe");
+  expect(deduped.stderr).not.toContain("error:");
+  expect(deduped.exitCode).toBe(0);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+
+  await write(
+    join(dir, "package.json"),
+    stringify({ name: "root", workspaces: [], dependencies: { parent: "1.0.0" } }),
+  );
+  const { stderr, exitCode } = await run(dir, "update");
+  expect(stderr).not.toContain("error:");
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.5.0"]);
+  expect(exitCode).toBe(0);
+});
+
+// An optional dependency the registry cannot resolve is skipped at install and its row stays
+// unresolved in bun.lock; a later `bun update` must tolerate that row.
+test.concurrent("`bun update` tolerates an unresolved optional dependency row", async () => {
+  using server = await serveRegistry({
+    parent: { "1.0.0": { dependencies: { leaf: "^1.0.0" } } },
+    leaf: { "1.0.0": {}, "1.5.0": {} },
+  });
+  using tmp = tempDir("update-optional-unresolved-", {
+    "package.json": stringify({ name: "root", workspaces: ["packages/*"], dependencies: { parent: "1.0.0" } }),
+    "packages/a/package.json": stringify({ name: "a", optionalDependencies: { gone: "^1.0.0" } }),
+  });
+  const dir = String(tmp);
+  await servedBunfig(server, dir);
+  const first = await run(dir, "install");
+  expect(first.exitCode).toBe(0);
+
+  const { stderr, exitCode } = await run(dir, "update");
+  expect(stderr).not.toContain("error:");
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.5.0"]);
+  expect(exitCode).toBe(0);
+});
+
+// The root's `^1.0.0` row sits on leaf@1.5.0; its lookup (1.5.0) is below leaf@2.0.0 but the row
+// never resolved there, so it must not hold parent's `^2.0.0` want from moving to 2.5.0.
+test.concurrent("a direct row on a lower instance does not hold wants on a higher instance", async () => {
+  const manifests: Manifests = {
+    parent: { "1.0.0": { dependencies: { leaf: "^2.0.0" } } },
+    leaf: { "1.5.0": {}, "2.0.0": {}, "2.5.0": {} },
+  };
+  using server = await serveRegistry(manifests);
+  // Tarballs are built eagerly, versions are read per request: hide 2.5.0 from the install only.
+  const hidden = manifests.leaf["2.5.0"];
+  delete manifests.leaf["2.5.0"];
+  const dir = await installServed(server, "update-two-instances-", pkgJson({ parent: "1.0.0", leaf: "^1.0.0" }));
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.5.0", "2.0.0"]);
+  manifests.leaf["2.5.0"] = hidden;
+
+  const { stderr, exitCode } = await run(dir, "update");
+  expect(stderr).not.toContain("error:");
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.5.0", "2.5.0"]);
+  expect(exitCode).toBe(0);
+});
+
+// The redirect is first-wins per instance: root's row lands on 3.0.0 first, so pkg1's 4.0.0 landing is
+// never offered to peer-host's edge; that edge stays on 1.0.0 and parent's `*` want must be held.
+test.concurrent("only the first moved direct row's landing carries an instance's followers", async () => {
+  const manifests: Manifests = {
+    parent: { "1.0.0": { dependencies: { leaf: "*" } } },
+    "peer-host": { "1.0.0": { peerDependencies: { leaf: "~1.0.0 || ~4.0.0" } } },
+    leaf: { "1.0.0": {}, "3.0.0": {}, "4.0.0": {}, "5.0.0": {} },
+  };
+  using server = await serveRegistry(manifests);
+  const { "1.0.0": kept, ...hidden } = manifests.leaf;
+  manifests.leaf = { "1.0.0": kept };
+  using tmp = tempDir("update-first-landing-", {
+    "package.json": stringify({
+      name: "root",
+      workspaces: ["packages/*"],
+      dependencies: { leaf: "~1.0.0 || 3.0.0", parent: "1.0.0", "peer-host": "1.0.0" },
+    }),
+    "packages/pkg1/package.json": stringify({ name: "pkg1", dependencies: { leaf: "~1.0.0 || 4.0.0" } }),
+  });
+  const dir = String(tmp);
+  await servedBunfig(server, dir);
+  await install(dir);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+  Object.assign(manifests.leaf, hidden);
+
+  const { stderr, exitCode } = await run(dir, "update", "-r");
+  expect(stderr).not.toContain("error:");
+  // parent's `*` want is held and its edge carried to 3.0.0 instead of forking off a removable 5.0.0.
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["3.0.0", "4.0.0"]);
+  expect(exitCode).toBe(0);
+
+  const check = await run(dir, "dedupe", "--check");
+  expect(check.stderr).not.toContain("error:");
+  expect(check.exitCode).toBe(0);
+});
+
+// pkg1's `1.0.0 || 2.0.0` row binds to the workspace member leaf@2.0.0, never the npm leaf@1.0.0 it
+// name-matches, so it must not hold parent-b's `~1.0.0` want from vacating that instance to 1.0.5.
+test.concurrent("a row a workspace member captures does not hold its package's npm instances", async () => {
+  const manifests: Manifests = {
+    "parent-b": { "1.0.0": { dependencies: { leaf: "~1.0.0" } } },
+    leaf: { "1.0.0": {}, "1.0.5": {} },
+  };
+  using server = await serveRegistry(manifests);
+  const revealed = manifests.leaf["1.0.5"];
+  delete manifests.leaf["1.0.5"];
+  using tmp = tempDir("update-workspace-capture-", {
+    "package.json": stringify({
+      name: "root",
+      workspaces: ["packages/*"],
+      dependencies: { "parent-b": "1.0.0" },
+    }),
+    "packages/leaf/package.json": stringify({ name: "leaf", version: "2.0.0" }),
+    "packages/pkg1/package.json": stringify({ name: "pkg1", dependencies: { leaf: "1.0.0 || 2.0.0" } }),
+  });
+  const dir = String(tmp);
+  await servedBunfig(server, dir);
+  await install(dir);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0", "workspace:packages/leaf"]);
+  manifests.leaf["1.0.5"] = revealed;
+
+  const { stderr, exitCode } = await run(dir, "update", "-r");
+  expect(stderr).not.toContain("error:");
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.5", "workspace:packages/leaf"]);
   expect(exitCode).toBe(0);
 });
 
@@ -1231,7 +1710,10 @@ test.concurrent("in a workspace, `bun update` from one member also re-points a s
   expect(exitCode).toBe(0);
 });
 
-type Manifests = Record<string, Record<string, { dependencies?: Record<string, string> }>>;
+type Manifests = Record<
+  string,
+  Record<string, { dependencies?: Record<string, string>; peerDependencies?: Record<string, string> }>
+>;
 type Tags = Record<string, Record<string, string>>;
 
 // Serves one manifest per name from memory; verdaccio has no parent whose newer version keeps a range on the same child, and its dist-tags cannot move mid-test. `tags` is read per request, so a test can move a tag after installing.

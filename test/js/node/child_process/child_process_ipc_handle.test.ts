@@ -610,7 +610,10 @@ process.on('disconnect', () => process.exit(sawQueued ? 0 : 3));
   // The child sends a server and disconnects at once. node: process.connected drops immediately, a
   // second disconnect() errors, and the parent still receives the server (its adoption completes a
   // loop turn later, which must not lose it) as well as the message queued behind it. Order is not
-  // pinned: bun currently emits the late-adopted handle after 'disconnect', node before it.
+  // pinned: bun currently emits the late-adopted handle after 'disconnect', node before it. The
+  // adopted server's 'message' fires from its 'listening' timer and can land after the child's
+  // 'exit' (so can the tail of the child's stderr), so the parent reports from its own 'exit': by
+  // then the adopted server is closed, the child has exited, and its stderr has ended.
   test.concurrent("a handle sent right before the child's disconnect() is still delivered", async () => {
     using dir = tempDir("ipc-handle-then-disconnect", {
       "parent.js": `
@@ -618,10 +621,12 @@ const { fork } = require('node:child_process');
 const child = fork('child.js', { stdio: ['ignore', 'inherit', 'pipe', 'ipc'] });
 const got = [];
 let childReport = '';
+let code = 'child did not exit';
 child.stderr.on('data', d => { childReport += d; });
 child.on('message', (m, h) => { got.push(h ? 'handle:' + m : m); if (h) h.close(); });
 child.on('disconnect', () => got.push('disconnect'));
-child.on('exit', code => console.log(JSON.stringify({ got: got.sort(), code, child: JSON.parse(childReport) })));
+child.on('exit', c => { code = c; });
+process.on('exit', () => console.log(JSON.stringify({ got: got.sort(), code, child: JSON.parse(childReport) })));
 `,
       "child.js": `
 const net = require('node:net');

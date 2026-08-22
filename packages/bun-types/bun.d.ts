@@ -1343,6 +1343,15 @@ declare module "bun" {
        */
       tagFilter?: boolean;
       /**
+       * Skip a front-matter block (`---` YAML fences or `+++` TOML fences)
+       * at the very start of the input. Detection is structural — the
+       * fences must be closed and the first inner line non-blank — and the
+       * metadata is never parsed. Set to `false` to render the block as
+       * plain CommonMark.
+       * Default: `true`.
+       */
+      frontmatter?: boolean;
+      /**
        * Enable autolinks. Pass `true` to enable all autolink types (URL, WWW, email),
        * or an object to enable individually.
        *
@@ -1637,6 +1646,12 @@ declare module "bun" {
        * @default false
        */
       kittyGraphics?: boolean;
+      /**
+       * Skip a front-matter block (`---` YAML fences or `+++` TOML fences)
+       * at the very start of the input.
+       * @default true
+       */
+      frontmatter?: boolean;
     }
 
     /**
@@ -1768,6 +1783,45 @@ declare module "bun" {
       components?: ComponentOverrides,
       options?: ReactOptions,
     ): import("./jsx.d.ts").JSX.Element;
+
+    /** Result of {@link frontmatter}. */
+    interface FrontmatterResult {
+      /**
+       * The parsed front-matter data: an object for a block with metadata,
+       * `{}` for an empty block, `null` when the input has no front-matter
+       * block.
+       */
+      data: Record<string, unknown> | null;
+      /** The input with the front-matter block removed. */
+      content: string;
+    }
+
+    /**
+     * Split a leading front-matter block from a document.
+     *
+     * Supports `---` fences (YAML) and `+++` fences (TOML) at the very
+     * start of the input; JSON between `---` fences also works, since JSON
+     * is valid YAML. Detection is structural (closed fences, non-blank
+     * first inner line); with no block present, `data` is `null` and the
+     * input comes back unchanged.
+     *
+     * Metadata that fails to parse throws a `SyntaxError`, as does metadata
+     * that is not a mapping — `---\ntitle Hello\n---` (a missing colon) is
+     * a valid YAML scalar, and the error beats silently dropping the block.
+     *
+     * @param input The text (or buffer) to split
+     * @returns `{ data, content }`
+     *
+     * @example
+     * ```ts
+     * const { data, content } = Bun.markdown.frontmatter("---\ntitle: Hello\n---\n# Heading");
+     * data; // { title: "Hello" }
+     * content; // "# Heading"
+     * ```
+     */
+    export function frontmatter(
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike,
+    ): FrontmatterResult;
   }
 
   /**

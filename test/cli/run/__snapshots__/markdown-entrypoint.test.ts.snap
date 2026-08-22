@@ -215,3 +215,11 @@ exports[`bun <file.md> shrinks table columns to fit COLUMNS and wraps cell conte
 \x1B[2m└───────────────────────┴────────────────────────┘\x1B[0m
 "
 `;
+
+exports[`bun <file.md> skips a leading front-matter block 1`] = `
+"\x1B[1m\x1B[35mHeading\x1B[0m
+\x1B[2m═══════\x1B[0m
+
+body\x1B[0m
+"
+`;

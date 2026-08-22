@@ -2786,6 +2786,9 @@ pub fn render_to_ansi<'a>(
     theme: Theme<'a>,
 ) -> Result<Option<Box<[u8]>>, crate::parser::ParserError> {
     use crate::parser::ParserError;
+    // Strip before `AnsiRenderer::init` captures the text: block offsets the
+    // parser reports must index the renderer's copy.
+    let text = options.strip_frontmatter(text);
     // `AnsiRenderer::init` reserves output space proportional to the input, so
     // an input the parser cannot address has to be rejected before it is
     // allocated for, not only when `Parser::init` sees it.

@@ -3377,15 +3377,21 @@ impl RunCommand {
         let is_tty = Output::is_stdout_tty();
         let kitty_graphics = colors && is_tty && md::detect_kitty_graphics();
 
-        let md_opts: md::Options = md::Options::TERMINAL;
+        let mut md_opts: md::Options = md::Options::TERMINAL;
+
+        // Strip the front matter once so the image prefetch pre-scan and
+        // the renderer see the same document; with the flag left on,
+        // render_to_ansi would strip a second block from the body.
+        let contents: &[u8] = md_opts.strip_frontmatter(&contents);
+        md_opts.frontmatter = false;
 
         // Pre-scan for http(s) image URLs so Kitty can display them
         // inline. Only runs when kitty_graphics is on and the document
         // actually contains an image marker — otherwise the whole block
         // is a no-op.
         let mut remote_map: StringHashMap<Box<[u8]>> = StringHashMap::default();
-        if kitty_graphics && strings::contains(&contents, b"![") {
-            Self::prefetch_remote_images(&contents, md_opts, &mut remote_map);
+        if kitty_graphics && strings::contains(contents, b"![") {
+            Self::prefetch_remote_images(contents, md_opts, &mut remote_map);
         }
 
         // Relative image paths in the markdown should resolve against
@@ -3429,7 +3435,7 @@ impl RunCommand {
             image_base_dir: Some(image_base_dir),
         };
 
-        let rendered = match md::render_to_ansi(&contents, md_opts, theme) {
+        let rendered = match md::render_to_ansi(contents, md_opts, theme) {
             Err(bun_md::parser::ParserError::OutOfMemory) => bun_core::out_of_memory(),
             Err(bun_md::parser::ParserError::StackOverflow) => {
                 pretty_errorln!(

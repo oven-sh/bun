@@ -1,5 +1,14 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { checkPrime, checkPrimeSync, randomBytes, randomFill, randomFillSync, randomInt } from "crypto";
+import {
+  checkPrime,
+  checkPrimeSync,
+  generatePrime,
+  generatePrimeSync,
+  randomBytes,
+  randomFill,
+  randomFillSync,
+  randomInt,
+} from "crypto";
 import { bunEnv, bunExe, isLinux, isMacOS, isMusl, tempDir } from "harness";
 import { join } from "path";
 
@@ -256,6 +265,121 @@ describe("checkPrime candidate handling", () => {
     const result = await promise;
     expect(checksReads).toBe(1);
     expect(result).toBe(true);
+  });
+});
+
+// Node accepts a bigint, an ArrayBuffer, a SharedArrayBuffer, or any ArrayBufferView for
+// options.add and options.rem. Bun used to reject the two buffer kinds with ERR_INVALID_ARG_TYPE.
+describe("generatePrime options.add / options.rem buffer kinds", () => {
+  // add = 256 and rem = 255, spelled as big-endian bytes. Two bytes each so a byte-order mistake
+  // would show up in the residue; a power-of-two add keeps generation fast.
+  const ADD = 256n;
+  const REM = 255n;
+  const ADD_BYTES = [0x01, 0x00];
+  const REM_BYTES = [0x00, 0xff];
+
+  function arrayBuffer(bytes: number[]): ArrayBuffer {
+    return new Uint8Array(bytes).buffer;
+  }
+  function sharedArrayBuffer(bytes: number[]): SharedArrayBuffer {
+    const sab = new SharedArrayBuffer(bytes.length);
+    new Uint8Array(sab).set(bytes);
+    return sab;
+  }
+
+  type PrimeOptions = { add?: unknown; rem?: unknown; bigint?: boolean };
+  function generatePrimeAsync(size: number, options: PrimeOptions): Promise<unknown> {
+    const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+    generatePrime(size, options as any, (err, prime) => (err ? reject(err) : resolve(prime)));
+    return promise;
+  }
+
+  function expectPrimeCongruent(prime: unknown) {
+    expect(typeof prime).toBe("bigint");
+    expect((prime as bigint) % ADD).toBe(REM);
+    expect(checkPrimeSync(prime as bigint)).toBe(true);
+  }
+
+  describe.each<[string, (bytes: number[]) => ArrayBuffer | SharedArrayBuffer]>([
+    ["ArrayBuffer", arrayBuffer],
+    ["SharedArrayBuffer", sharedArrayBuffer],
+  ])("%s", (_, make) => {
+    it("generatePrimeSync accepts it for add and rem", () => {
+      expectPrimeCongruent(generatePrimeSync(32, { add: make(ADD_BYTES), rem: make(REM_BYTES), bigint: true }));
+    });
+
+    it("generatePrime accepts it for add and rem", async () => {
+      expectPrimeCongruent(await generatePrimeAsync(32, { add: make(ADD_BYTES), rem: make(REM_BYTES), bigint: true }));
+    });
+
+    it("can be combined with a bigint or a view for the other option", async () => {
+      expectPrimeCongruent(generatePrimeSync(32, { add: make(ADD_BYTES), rem: REM, bigint: true }));
+      expectPrimeCongruent(generatePrimeSync(32, { add: Buffer.from(ADD_BYTES), rem: make(REM_BYTES), bigint: true }));
+      expectPrimeCongruent(await generatePrimeAsync(32, { add: ADD, rem: make(REM_BYTES), bigint: true }));
+      expectPrimeCongruent(
+        await generatePrimeAsync(32, { add: make(ADD_BYTES), rem: Buffer.from(REM_BYTES), bigint: true }),
+      );
+    });
+
+    it("is copied before the async job starts", async () => {
+      const add = make(ADD_BYTES);
+      const rem = make(REM_BYTES);
+      const pending = generatePrimeAsync(32, { add, rem, bigint: true });
+      new Uint8Array(add).fill(0);
+      new Uint8Array(rem).fill(0);
+      expectPrimeCongruent(await pending);
+    });
+  });
+
+  it("returns an ArrayBuffer when bigint is not requested", () => {
+    const prime = generatePrimeSync(32, { add: arrayBuffer(ADD_BYTES), rem: arrayBuffer(REM_BYTES) });
+    expect(prime).toBeInstanceOf(ArrayBuffer);
+    expectPrimeCongruent(BigInt("0x" + Buffer.from(prime).toString("hex")));
+  });
+
+  it("range-checks values given as ArrayBuffers", () => {
+    const invalidAdd = expect.objectContaining({ code: "ERR_OUT_OF_RANGE", message: "invalid options.add" });
+    const invalidRem = expect.objectContaining({ code: "ERR_OUT_OF_RANGE", message: "invalid options.rem" });
+
+    // add (9 bits) is wider than the requested prime.
+    expect(() => generatePrimeSync(8, { add: arrayBuffer(ADD_BYTES) })).toThrow(invalidAdd);
+    expect(() => generatePrime(8, { add: arrayBuffer(ADD_BYTES) }, () => {})).toThrow(invalidAdd);
+
+    // rem >= add.
+    expect(() => generatePrimeSync(32, { add: arrayBuffer(REM_BYTES), rem: arrayBuffer(ADD_BYTES) })).toThrow(
+      invalidRem,
+    );
+    expect(() => generatePrime(32, { add: arrayBuffer(REM_BYTES), rem: arrayBuffer(ADD_BYTES) }, () => {})).toThrow(
+      invalidRem,
+    );
+
+    // A detached ArrayBuffer has byteLength 0 and reads as 0, as in node, so it fails the rem >= add check.
+    const detached = new ArrayBuffer(2);
+    structuredClone(detached, { transfer: [detached] });
+    expect(detached.byteLength).toBe(0);
+    expect(() => generatePrimeSync(32, { add: detached, rem: 1n })).toThrow(invalidRem);
+    expect(() => generatePrime(32, { add: detached, rem: 1n }, () => {})).toThrow(invalidRem);
+  });
+
+  it.each([
+    ["a string", "256"],
+    ["a number", 256],
+    ["a plain object", {}],
+    ["an array of bytes", ADD_BYTES],
+    ["null", null],
+  ])("still rejects %s", (_, value) => {
+    const invalidAdd = expect.objectContaining({
+      code: "ERR_INVALID_ARG_TYPE",
+      message: expect.stringContaining('"options.add"'),
+    });
+    const invalidRem = expect.objectContaining({
+      code: "ERR_INVALID_ARG_TYPE",
+      message: expect.stringContaining('"options.rem"'),
+    });
+    expect(() => generatePrimeSync(32, { add: value as any })).toThrow(invalidAdd);
+    expect(() => generatePrimeSync(32, { add: ADD, rem: value as any })).toThrow(invalidRem);
+    expect(() => generatePrime(32, { add: value as any }, () => {})).toThrow(invalidAdd);
+    expect(() => generatePrime(32, { add: ADD, rem: value as any }, () => {})).toThrow(invalidRem);
   });
 });
 

@@ -579,6 +579,10 @@ Server.prototype.listen = function () {
     onListen = lastArg;
   }
 
+  if (this[serverSymbol]) {
+    throw $ERR_SERVER_ALREADY_LISTEN();
+  }
+
   try {
     // listenInCluster
 

@@ -151,7 +151,9 @@ describe("net", () => {
     });
     const sock = await Bun.connect({ hostname: "127.0.0.1", port: listener.port, socket: { data() {}, open() {} } });
     sock.end();
-    // A port nobody listens on.
+    // A port nobody listens on (a raw TCP connect to an accept-and-drop
+    // listener would succeed, so this one has to free the port; the file does
+    // not run tests concurrently).
     const dead = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
     const deadPort = dead.port;
     dead.stop(true);
@@ -265,10 +267,19 @@ describe("WebSocket", () => {
   });
 
   test("failed connect", async () => {
-    const dead = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
-    const port = dead.port;
-    dead.stop(true);
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/`);
+    // Accepts and drops the connection before any handshake (held so no
+    // concurrent test is handed the port).
+    using dead = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(s) {
+          s.end();
+        },
+        data() {},
+      },
+    });
+    const ws = new WebSocket(`ws://127.0.0.1:${dead.port}/`);
     const { promise, resolve } = Promise.withResolvers<void>();
     ws.onerror = () => resolve();
     ws.onclose = () => resolve();

@@ -210,10 +210,14 @@ impl Facts {
         } else {
             peer_encoded
         };
-        let url = &url[..url.len().min(u16::MAX as usize)];
-        let client = &client[..client.len().min(PeerIp::MAX_TEXT)];
-        let host = &host[..host.len().min(u16::MAX as usize)];
-        let ua = &ua[..ua.len().min(u16::MAX as usize)];
+        // Bounded so `lens` fits; cut on a UTF-8 boundary.
+        let cap = |s| otlp::truncate_utf8(s, u16::MAX as usize);
+        let (url, client, host, ua) = (
+            cap(url),
+            otlp::truncate_utf8(client, 256),
+            cap(host),
+            cap(ua),
+        );
         self.raw.clear();
         self.raw
             .reserve(peer_encoded.len() + url.len() + client.len() + host.len() + ua.len());
@@ -242,7 +246,7 @@ impl Facts {
 
     #[inline]
     pub fn set_route(&mut self, route: &[u8]) {
-        let route = &route[..route.len().min(u16::MAX as usize)];
+        let route = otlp::truncate_utf8(route, u16::MAX as usize);
         let end = self.peer_encoded_len as usize
             + (self.lens[0] + self.lens[1] + self.lens[2] + self.lens[3]) as usize;
         self.raw.truncate(end);

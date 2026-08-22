@@ -348,9 +348,13 @@ declare module "bun" {
     }
 
     interface Stats {
+      /** Spans delivered by at least one exporter. */
       spansExported: number;
+      /** Spans no exporter delivered (queue overflow, no exporters, or every exporter gave up). */
       spansDropped: number;
+      /** Export requests that succeeded, counted per exporter. */
       exportsSucceeded: number;
+      /** Export requests that were given up on, counted per exporter. */
       exportsFailed: number;
       spansPending: number;
       exportsInflight: number;

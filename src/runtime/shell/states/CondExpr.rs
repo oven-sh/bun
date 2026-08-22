@@ -156,8 +156,7 @@ impl CondExpr {
         }
     }
 
-    /// Completion of the error message written in `WaitingWriteErr`. The
-    /// expression failed either way: exit 1.
+    /// The error message written in `WaitingWriteErr` completed: exit 1.
     pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         this: NodeId,

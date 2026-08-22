@@ -31,8 +31,7 @@ pub enum State {
 
 pub struct ExecState {
     pub(crate) err: Option<bun_sys::Error>,
-    /// First failed output write, reported once the tasks that are still
-    /// writing are done.
+    /// First failed output write; reported once the remaining tasks are done.
     pub(crate) write_err: Option<E>,
     pub(crate) task_count: AtomicUsize,
     pub(crate) tasks_done: usize,

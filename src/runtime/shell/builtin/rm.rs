@@ -37,8 +37,7 @@ pub struct ExecState {
     pub(crate) args_start: usize,
     pub(crate) total_tasks: usize,
     pub(crate) err: Option<bun_sys::Error>,
-    /// First failed output write, reported by [`Rm::try_finish`] once the
-    /// tasks that are still writing are done.
+    /// First failed output write; reported once the remaining tasks are done.
     pub(crate) write_err: Option<E>,
     pub(crate) error_signal: AtomicBool,
     pub(crate) output_done: AtomicUsize,

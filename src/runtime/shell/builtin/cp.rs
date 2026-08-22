@@ -19,8 +19,7 @@ pub struct Cp {
     /// `ExecState`) because `print_shell_cp_task` is also driven from
     /// `State::Ebusy` on Windows; both states must be able to stash/pop.
     pub(crate) output_queue: std::collections::VecDeque<*mut OutputTask<Cp>>,
-    /// First failed output write, reported by [`Self::finish`] once the tasks
-    /// that are still writing are done. On `Cp` for the same reason as above.
+    /// First failed output write; reported once the remaining tasks are done.
     pub(crate) write_err: Option<bun_sys::E>,
 }
 

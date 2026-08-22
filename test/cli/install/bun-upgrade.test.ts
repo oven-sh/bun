@@ -256,6 +256,41 @@ describe.concurrent(() => {
     expect(err.split(/\r?\n/)).not.toContain("note: Use `bun update --stable --profile` instead.");
     await proc.exited;
   });
+
+  // A runtime flag ahead of the subcommand, typed (`bun --bun upgrade`) or
+  // spliced into argv by BUN_OPTIONS, moves "upgrade" out of argv[1]. The
+  // package-name check used to scan from a fixed offset and rejected the
+  // shifted "upgrade" keyword itself as a package name (#20347, #39377).
+  it.each([
+    ["BUN_OPTIONS", [], { BUN_OPTIONS: "--smol" }],
+    ["a flag typed before the subcommand", ["--smol"], {}],
+  ])("%s, should not display the package-names error", async (_, flagsBeforeSubcommand, extraEnv) => {
+    // `--stable` keeps canary builds on the GITHUB_API_DOMAIN release-server
+    // path, whose garbage archive makes the upgrade fail after validation so
+    // the binary is never actually replaced.
+    using server = startReleaseServer({ tagName: "bun-v9.9.9" });
+    const cwd = tmpdirSync();
+    const execPath = join(cwd, basename(bunExe()));
+    await copyFile(bunExe(), execPath);
+    await using proc = spawn({
+      cmd: [execPath, ...flagsBeforeSubcommand, "upgrade", "--stable"],
+      cwd,
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env: { ...server.env, ...extraEnv },
+    });
+
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(err.split(/\r?\n/)).not.toContain(
+      "error: This command updates Bun itself, and does not take package names.",
+    );
+    // Proves validation was passed: the run reached the release flow (it
+    // reports the mock server's v9.9.9 tag) and failed there on the garbage
+    // archive, not in argument parsing.
+    expect(err).toContain("v9.9.9");
+    expect(exitCode).not.toBe(0);
+  });
 });
 
 it("completes against a locally-served release with the system temp dir held open without FILE_SHARE_DELETE", async () => {

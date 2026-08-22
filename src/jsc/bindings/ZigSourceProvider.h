@@ -44,6 +44,16 @@ public:
 
     ResolvedSource m_resolvedSource;
 
+    bool ignoreESModuleAnnotation() const
+    {
+        return m_resolvedSource.tag == ResolvedSourceTagPackageJSONTypeModule;
+    }
+
+    WTF::String commonJSStaticExports() const
+    {
+        return m_resolvedSource.commonjs_static_exports.toWTFString(BunString::ZeroCopy);
+    }
+
 private:
     SourceProvider(void* bunVM, ResolvedSource resolvedSource, Ref<WTF::StringImpl>&& sourceImpl,
         JSC::SourceTaintedOrigin taintedness,

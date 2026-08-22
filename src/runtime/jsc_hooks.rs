@@ -3030,6 +3030,11 @@ fn transpile_source_code_inner(
                         core::ptr::null_mut()
                     };
                     let is_commonjs_module = entry.metadata.module_type == CacheModuleType::Cjs;
+                    let commonjs_static_exports = if is_commonjs_module {
+                        ResolvedSource::commonjs_static_exports_from_bytes(&entry.esm_record)
+                    } else {
+                        bun_core::String::empty()
+                    };
                     // Node compile cache hook (transpiler-cache-hit path); must
                     // read `output_code` before it is consumed below. UTF-16
                     // output would hash differently than the print path — skip.
@@ -3115,6 +3120,7 @@ fn transpile_source_code_inner(
                         tag,
                         bytecode_cache,
                         bytecode_cache_size,
+                        commonjs_static_exports,
                         ..Default::default()
                     }));
                 }
@@ -3176,6 +3182,7 @@ fn transpile_source_code_inner(
 
                 let is_commonjs_module = parse_result.ast.has_commonjs_export_names
                     || parse_result.ast.exports_kind == bun_ast::ExportsKind::Cjs;
+                let commonjs_static_exports = parse_result.ast.commonjs_static_exports;
                 // Collect the ESM record while printing, for the isolation
                 // source-provider cache (same shape as `RuntimeTranspilerStore`).
                 // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
@@ -3311,6 +3318,10 @@ fn transpile_source_code_inner(
                     };
                     resolved_source.is_commonjs_module = is_commonjs_module;
                     resolved_source.module_info = module_info;
+                    resolved_source.commonjs_static_exports =
+                        ResolvedSource::commonjs_static_exports_from_bytes(
+                            commonjs_static_exports.slice(),
+                        );
                     if let Some((ptr, size)) = node_compile_cache_blob {
                         resolved_source.bytecode_cache = ptr;
                         resolved_source.bytecode_cache_size = size;
@@ -3417,6 +3428,9 @@ fn transpile_source_code_inner(
                     tag,
                     bytecode_cache,
                     bytecode_cache_size,
+                    commonjs_static_exports: ResolvedSource::commonjs_static_exports_from_bytes(
+                        commonjs_static_exports.slice(),
+                    ),
                     ..Default::default()
                 }));
             }

@@ -134,6 +134,8 @@ typedef struct ResolvedSource {
     // File path used as source origin for bytecode cache validation.
     // Converted to file:// URL. If empty, origin is derived from source_url.
     BunString bytecode_origin_path;
+    // See ResolvedSource.rs. Whoever takes it leaves the field empty.
+    BunString commonjs_static_exports;
 } ResolvedSource;
 inline constexpr uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {

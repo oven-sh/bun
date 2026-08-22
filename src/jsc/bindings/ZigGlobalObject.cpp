@@ -300,6 +300,9 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         // allow_user_segv_handler=1, so we don't force it off here.
         JSC::initialize([&] {
             JSC::Options::useWasm() = true;
+            // Memory64 is implemented in every Wasm tier; 64-bit memories never
+            // take the fast-memory (Signaling) path, so tier-up is safe.
+            JSC::Options::useWasmMemory64() = true;
             JSC::Options::useJIT() = true;
             JSC::Options::useBBQJIT() = true;
             JSC::Options::useConcurrentJIT() = true;

@@ -1521,6 +1521,15 @@ pub mod command {
     #[cold]
     #[inline(never)]
     fn exec_run_as_node(log: &mut bun_ast::Log) -> CmdResult {
+        // Handle `node -v`/`--version` before init(): RUN_TABLE has no entry for them.
+        for a in bun::argv().iter().skip(1) {
+            match a {
+                b"-v" | b"--version" => print_node_version_and_exit(),
+                b"--" | b"-" => break,
+                _ if a.first() != Some(&b'-') => break,
+                _ => {}
+            }
+        }
         let ctx = init(Tag::RunAsNodeCommand, log)?;
         run_command::RunCommand::exec_as_if_node(ctx)
     }
@@ -2307,6 +2316,17 @@ pub(crate) fn print_revision_and_exit() -> ! {
     let w = Output::writer();
     let _ = w.write_all(Global::package_json_version_with_revision.as_bytes());
     let _ = w.write_all(b"\n");
+    Output::flush();
+    Global::exit(0);
+}
+
+#[cold]
+pub fn print_node_version_and_exit() -> ! {
+    let w = Output::writer();
+    let _ = w.write_all(
+        const_format::concatcp!("v", bun_core::Environment::REPORTED_NODEJS_VERSION, "\n")
+            .as_bytes(),
+    );
     Output::flush();
     Global::exit(0);
 }

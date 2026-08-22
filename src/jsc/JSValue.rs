@@ -671,6 +671,23 @@ impl JSValue {
         })?;
         Ok(Some(value))
     }
+    /// A BigInt from the text of a BigInt literal without its `n`: decimal
+    /// digits or a `0x`/`0o`/`0b`-prefixed integer (what `StringToBigInt`
+    /// accepts). Throws for anything else.
+    #[track_caller]
+    pub fn big_int_from_literal(global: &JSGlobalObject, text: &[u8]) -> JsResult<JSValue> {
+        let value = host_fn::from_js_host_call(global, || {
+            // SAFETY: `text` is a live slice for the duration of the call.
+            unsafe { JSC__JSValue__bigIntFromLatin1(global, text.as_ptr(), text.len()) }
+        })?;
+        if value.is_empty() {
+            return Err(global.throw(format_args!(
+                "invalid BigInt literal {}n",
+                bstr::BStr::new(text)
+            )));
+        }
+        Ok(value)
+    }
     /// `JSValue.fromTimevalNoTruncate` — encode a `struct timeval`
     /// as a BigInt (`sec * 1_000_000 + nsec`) without precision loss. May allocate
     /// a heap BigInt, so wrapped in `from_js_host_call` for exception checking.
@@ -686,6 +703,31 @@ impl JSValue {
     /// `JSValue.bigIntSum` — `a + b` where both are BigInt.
     pub fn big_int_sum(global: &JSGlobalObject, a: JSValue, b: JSValue) -> JSValue {
         JSC__JSValue__bigIntSum(global, a, b)
+    }
+    /// `-self`, where `self` is a BigInt.
+    pub fn big_int_unary_minus(self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        debug_assert!(self.is_big_int());
+        host_fn::from_js_host_call(global, || JSC__JSValue__bigIntUnaryMinus(global, self))
+    }
+    /// `new RegExp(pattern, flags)`. Throws `SyntaxError` for an invalid
+    /// pattern or flags.
+    pub fn create_reg_exp(
+        global: &JSGlobalObject,
+        pattern: &[u8],
+        flags: &[u8],
+    ) -> JsResult<JSValue> {
+        host_fn::from_js_host_call(global, || {
+            // SAFETY: both slices are live for the duration of the call.
+            unsafe {
+                JSC__JSValue__createRegExp(
+                    global,
+                    pattern.as_ptr(),
+                    pattern.len(),
+                    flags.as_ptr(),
+                    flags.len(),
+                )
+            }
+        })
     }
     /// `JSValue.fromEntries` — build a plain object from
     /// parallel `keys`/`values` `ZigString` arrays. When `clone` is true the
@@ -2000,6 +2042,14 @@ unsafe extern "C" {
         sec: i64,
     ) -> JSValue;
     safe fn JSC__JSValue__bigIntSum(global: &JSGlobalObject, a: JSValue, b: JSValue) -> JSValue;
+    safe fn JSC__JSValue__bigIntUnaryMinus(global: &JSGlobalObject, value: JSValue) -> JSValue;
+    fn JSC__JSValue__createRegExp(
+        global: &JSGlobalObject,
+        pattern: *const u8,
+        pattern_len: usize,
+        flags: *const u8,
+        flags_len: usize,
+    ) -> JSValue;
     fn JSC__JSValue__fromEntries(
         global: *const JSGlobalObject,
         keys: *mut bun_core::ZigString,

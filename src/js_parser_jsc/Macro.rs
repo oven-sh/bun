@@ -346,6 +346,16 @@ pub enum MacroValue {
     Null,
     Boolean(bool),
     Number(f64),
+    /// Decimal digits, no sign.
+    BigInt {
+        negative: bool,
+        digits: Box<[u8]>,
+    },
+    /// `/source/flags`, exactly as a literal would be written.
+    RegExp {
+        literal: Box<[u8]>,
+        flags_offset: Option<u16>,
+    },
     /// Always UTF-16 so the printer escapes it the same way regardless of the
     /// JS string's internal representation.
     String(Box<[u16]>),
@@ -452,6 +462,40 @@ fn materialize(value: &MacroValue, bump: &Arena, log: &mut Log, loc: Loc) -> cra
                     loc,
                 },
                 MacroValue::Number(n) => Expr::init(E::Number::new(*n), loc),
+                MacroValue::BigInt { negative, digits } => {
+                    let digits: &[u8] = self.bump.alloc_slice_copy(digits);
+                    let literal = Expr::init(
+                        E::BigInt {
+                            value: bun_ast::StoreStr::new(digits),
+                        },
+                        loc,
+                    );
+                    if *negative {
+                        Expr::init(
+                            E::Unary {
+                                op: bun_ast::OpCode::UnNeg,
+                                value: literal,
+                                flags: E::UnaryFlags::default(),
+                            },
+                            loc,
+                        )
+                    } else {
+                        literal
+                    }
+                }
+                MacroValue::RegExp {
+                    literal,
+                    flags_offset,
+                } => {
+                    let literal: &[u8] = self.bump.alloc_slice_copy(literal);
+                    Expr::init(
+                        E::RegExp {
+                            value: bun_ast::StoreStr::new(literal),
+                            flags_offset: *flags_offset,
+                        },
+                        loc,
+                    )
+                }
                 MacroValue::String(utf16) => {
                     let slice: &[u16] = self.bump.alloc_slice_copy(utf16);
                     Expr::init(E::EString::init_utf16(slice), loc)
@@ -1215,10 +1259,38 @@ impl Convert<'_> {
     fn value(&mut self, value: JSValue) -> Result<MacroValue, ConvertError> {
         use ConsoleObject::formatter::Tag as T;
         let global = self.global;
+        if value.js_type() == jsc::JSType::RegExpObject {
+            // `source` is already escaped so that `/source/flags` re-parses.
+            let source = value.get(global, "source")?.unwrap_or(JSValue::UNDEFINED);
+            let source = source.to_bun_string(global)?.to_owned_slice();
+            let flags = value.get(global, "flags")?.unwrap_or(JSValue::UNDEFINED);
+            let flags = flags.to_bun_string(global)?.to_owned_slice();
+            let literal = [b"/".as_slice(), &source, b"/", &flags].concat();
+            let flags_offset = u16::try_from(source.len() + 2).map_err(|_| {
+                ConvertError::Message("macro returned a RegExp too long to inline".into())
+            })?;
+            return Ok(MacroValue::RegExp {
+                flags_offset: (!flags.is_empty()).then_some(flags_offset),
+                literal: literal.into_boxed_slice(),
+            });
+        }
         Ok(match T::get(value, global)?.tag.tag() {
             T::Undefined => MacroValue::Undefined,
             T::Null => MacroValue::Null,
             T::Boolean => MacroValue::Boolean(value.to_boolean()),
+            T::BigInt => {
+                let text = value.to_bun_string(global)?.to_owned_slice();
+                match text.strip_prefix(b"-") {
+                    Some(digits) => MacroValue::BigInt {
+                        negative: true,
+                        digits: Box::from(digits),
+                    },
+                    None => MacroValue::BigInt {
+                        negative: false,
+                        digits: text.into_boxed_slice(),
+                    },
+                }
+            }
             T::Integer => MacroValue::Number(value.to_int32() as f64),
             T::Double => MacroValue::Number(value.as_number()),
             T::String => {

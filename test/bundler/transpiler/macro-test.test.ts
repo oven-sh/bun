@@ -10,8 +10,10 @@ import defaultMacro, {
   escape,
   identity,
   identity as identity1,
+  bigints,
   identity as identity2,
   ireturnapromise,
+  regexp,
 } from "./macro.ts" assert { type: "macro" };
 
 import * as macros from "./macro.ts" assert { type: "macro" };
@@ -36,6 +38,31 @@ test("type coercion", () => {
   expect(identity(1.5)).toBe(1.5);
   expect(identity(1)).toBe(1);
   expect(identity(true)).toBe(true);
+});
+
+test("RegExp return values become RegExp literals", () => {
+  const re = regexp("^a/b\\d+$", "gi");
+  expect(re).toBeInstanceOf(RegExp);
+  expect([re.source, re.flags]).toEqual(["^a\\/b\\d+$", "gi"]);
+  expect(re.test("A/B42")).toBe(true);
+  expect(regexp("", "").source).toBe("(?:)");
+  expect(identity({ inside: [regexp("x", "y")] }).inside[0].sticky).toBe(true);
+  // A literal is a fresh object per evaluation, unlike a shared constant.
+  const make = () => regexp("z", "g");
+  expect(make()).not.toBe(make());
+});
+
+test("BigInt return values become BigInt literals, and BigInt literals can be arguments", () => {
+  expect(bigints()).toEqual({
+    big: 18446744073709551617n,
+    negative: -1180591620717411303424n,
+    zero: 0n,
+    nested: [1n, { two: 2n }],
+  });
+  expect(identity(123n)).toBe(123n);
+  expect(identity(-0x10n)).toBe(-16n);
+  expect(identity(1_000_000n)).toBe(1000000n);
+  expect(identity([0o7n, 0b11n])).toEqual([7n, 3n]);
 });
 
 test("escaping", () => {

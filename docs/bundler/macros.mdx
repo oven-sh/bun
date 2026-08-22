@@ -138,7 +138,7 @@ if (returnFalse()) {
 
 ## Serializability
 
-Bun's transpiler must be able to serialize the result of the macro to inline it into the AST. All JSON-compatible data structures are supported:
+Bun's transpiler must be able to serialize the result of the macro to inline it into the AST. All JSON-compatible data structures are supported, plus `undefined`, `RegExp` (inlined as a regular expression literal) and `BigInt` (inlined as a BigInt literal):
 
 ```ts title="macro.ts" icon="/icons/typescript.svg"
 export function getObject() {
@@ -146,6 +146,8 @@ export function getObject() {
     foo: "bar",
     baz: 123,
     array: [1, 2, { nested: "value" }],
+    pattern: /^v\d+$/i,
+    limit: 2n ** 64n,
   };
 }
 ```

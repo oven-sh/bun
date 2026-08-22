@@ -200,13 +200,13 @@ jobs:
             }
 
             // "which" or "that" at `k` with a reference as its antecedent: "Reverts
-            // #100, which fixed #1", "Reverts #100 (which fixed #1)".
+            // #100, which fixed #1", "Reverts #100 (which fixed #1)", "Reverts #100 --
+            // which fixed #1", also across a line break.
             function isRelativeToReference(tokens, k) {
               const word = tokens[k];
               if (word.kind !== "word" || (word.text !== "which" && word.text !== "that")) return false;
               let p = k - 1;
-              if (tokens[p]?.kind === "newline") p--;
-              if (isPunct(tokens[p], ",") || isPunct(tokens[p], "(")) p--;
+              while (tokens[p]?.kind === "newline" || (tokens[p]?.kind === "punct" && ",(;:-\u2013\u2014".includes(tokens[p].text))) p--;
               return endsWithReference(tokens, p);
             }
 
@@ -291,42 +291,49 @@ jobs:
               let fence = null;
               let comment = false;
               let quote = false;
+              let quotedFence = null;
               let paragraph = false;
               for (const line of text.split("\n")) {
-                let rest = line;
                 if (comment) {
-                  const end = rest.indexOf("-->");
+                  const end = line.indexOf("-->");
                   if (end === -1) {
                     paragraph = false;
                     kept.push("");
                     continue;
                   }
-                  comment = false;
-                  rest = rest.slice(end + 3);
+                  // The line that closes the comment is the comment's last line: what
+                  // follows "-->" is text, not a fence, a quote or indented code, and
+                  // not a paragraph either.
+                  const tail = removeComments(line.slice(end + 3));
+                  comment = tail.open;
+                  paragraph = false;
+                  kept.push(tail.prose);
+                  continue;
                 }
-                const trimmed = rest.trim();
+                const trimmed = line.trim();
                 if (fence !== null) {
                   // A closing fence has at most three spaces of indentation.
-                  const closes = !isIndentedCode(rest) && trimmed.startsWith(fence) && isRunOf(trimmed.slice(fence.length), fence[0]);
-                  if (closes) fence = null;
+                  if (!isIndentedCode(line) && closesFence(trimmed, fence)) fence = null;
                   paragraph = false;
                   kept.push("");
                   continue;
                 }
                 if (trimmed === "") {
                   quote = false;
+                  quotedFence = null;
                   paragraph = false;
                   kept.push("");
                   continue;
                 }
-                if (!paragraph && isIndentedCode(rest)) {
+                if (!paragraph && isIndentedCode(line)) {
                   kept.push("");
                   continue;
                 }
                 // An opening fence has at most three spaces of indentation.
-                if (!isIndentedCode(rest) && isFenceOpening(trimmed)) {
-                  fence = leadingRun(trimmed, "`") || leadingRun(trimmed, "~");
+                if (!isIndentedCode(line) && isFenceOpening(trimmed)) {
+                  fence = fenceRun(trimmed);
                   quote = false;
+                  quotedFence = null;
                   paragraph = false;
                   kept.push("");
                   continue;
@@ -334,63 +341,91 @@ jobs:
                 if (trimmed.startsWith(">")) {
                   // Only a quoted paragraph continues onto the next unmarked line. After a
                   // quoted heading (ATX, or a setext underline under a quoted paragraph),
-                  // rule, fence or empty quote, the next line is outside.
+                  // rule or empty quote, or inside a quoted fence, the next line is outside.
                   const quoted = trimmed.slice(1).trim();
-                  const underline = quote && (isRunOf(quoted, "=") || isRunOf(quoted, "-"));
-                  quote =
-                    quoted !== "" && !underline && !isHeading(quoted) && !isThematicBreak(quoted) && !isFenceOpening(quoted);
+                  if (quotedFence !== null) {
+                    if (closesFence(quoted, quotedFence)) quotedFence = null;
+                    quote = false;
+                  } else if (isFenceOpening(quoted)) {
+                    quotedFence = fenceRun(quoted);
+                    quote = false;
+                  } else {
+                    const underline = quote && (isRunOf(quoted, "=") || isRunOf(quoted, "-"));
+                    quote = quoted !== "" && !underline && !isHeading(quoted) && !isThematicBreak(quoted);
+                  }
                   paragraph = false;
                   kept.push("");
                   continue;
                 }
-                if (quote && !startsBlock(trimmed)) {
+                // An indented line cannot start a block.
+                if (quote && (isIndentedCode(line) || !startsBlock(trimmed))) {
                   paragraph = false;
                   kept.push("");
                   continue;
                 }
                 quote = false;
+                quotedFence = null;
                 // A heading, a rule or a setext underline ("===" or "--" under a
-                // paragraph) is not a paragraph line.
-                const underline = paragraph && (isRunOf(trimmed, "=") || isRunOf(trimmed, "-"));
-                paragraph = !underline && !isHeading(trimmed) && !isThematicBreak(trimmed);
-                if (!rest.includes("<!--")) {
-                  kept.push(rest);
-                  continue;
+                // paragraph) is not a paragraph line. Indented four columns, each of
+                // them is paragraph text (only a paragraph line gets this far indented).
+                if (!isIndentedCode(line)) {
+                  const underline = paragraph && (isRunOf(trimmed, "=") || isRunOf(trimmed, "-"));
+                  paragraph = !underline && !isHeading(trimmed) && !isThematicBreak(trimmed);
                 }
-                // A "<!--" inside a code span on this line is code: "Handles `<!--`. Fixes #1".
-                // Only such a line loses its spans here: a span can cross a line break,
-                // and the pass over the whole text pairs those.
-                const prose = removeSpans(rest, "`");
-                let out = "";
-                let text = false;
-                let i = 0;
-                while (i < prose.length) {
-                  const start = prose.indexOf("<!--", i);
-                  const between = prose.slice(i, start === -1 ? prose.length : start);
-                  if (between.trim() !== "") text = true;
-                  out += between;
-                  if (start === -1) break;
-                  // "<!-->" and "<!--->" are complete comments.
-                  const end = prose.indexOf("-->", start + 2);
-                  out += placeholder(prose, start - 1, end === -1 ? prose.length : end + 3);
-                  if (end === -1) {
-                    comment = true;
-                    break;
-                  }
-                  i = end + 3;
-                }
-                // A line that was only a comment is blank, and not a paragraph.
-                if (!text) paragraph = false;
-                kept.push(text ? out : "");
+                const { prose, open } = removeComments(line);
+                comment = open;
+                // A line that starts with a comment is an HTML block, not a paragraph.
+                if (trimmed.startsWith("<!--")) paragraph = false;
+                kept.push(prose);
               }
               return kept.join("\n");
+            }
+
+            // Removes the HTML comments that start on `line`: { prose, open }, where
+            // `open` means the last comment does not end on the line. A "<!--" inside a
+            // code span is code ("Handles `<!--`. Fixes #1"), so a line with "<!--"
+            // loses its spans here, and only such a line: a span can cross a line
+            // break, and the pass over the whole text pairs those. A line that holds
+            // only comments becomes "".
+            function removeComments(line) {
+              if (!line.includes("<!--")) return { prose: line, open: false };
+              const spanless = removeSpans(line, "`");
+              let out = "";
+              let text = false;
+              let open = false;
+              let i = 0;
+              while (i < spanless.length) {
+                const start = spanless.indexOf("<!--", i);
+                const between = spanless.slice(i, start === -1 ? spanless.length : start);
+                if (between.trim() !== "") text = true;
+                out += between;
+                if (start === -1) break;
+                // "<!-->" and "<!--->" are complete comments.
+                const end = spanless.indexOf("-->", start + 2);
+                out += placeholder(spanless, start - 1, end === -1 ? spanless.length : end + 3);
+                if (end === -1) {
+                  open = true;
+                  break;
+                }
+                i = end + 3;
+              }
+              return { prose: text ? out : "", open };
             }
 
             // Three or more backticks or tildes. A backtick fence's info string cannot
             // hold a backtick: "```bun test```" is a code span.
             function isFenceOpening(trimmed) {
-              const opening = leadingRun(trimmed, "`") || leadingRun(trimmed, "~");
+              const opening = fenceRun(trimmed);
               return opening.length >= 3 && (opening[0] === "~" || !trimmed.slice(opening.length).includes("`"));
+            }
+
+            function fenceRun(trimmed) {
+              return leadingRun(trimmed, "`") || leadingRun(trimmed, "~");
+            }
+
+            // A run of the fence's character at least as long as the fence, and nothing else.
+            function closesFence(trimmed, fence) {
+              return trimmed.startsWith(fence) && isRunOf(trimmed.slice(fence.length), fence[0]);
             }
 
             // Four columns of indentation: four spaces, or a tab within the first four.
@@ -401,15 +436,15 @@ jobs:
             }
 
             // A heading, a list item, a thematic break or an HTML comment ends a
-            // blockquote's lazy continuation. The marker needs a space after it ("#100"
-            // and "**bold**" are text), and an ordered item interrupts only when it
-            // starts at 1, as in CommonMark.
+            // blockquote's lazy continuation. The list marker needs text after it
+            // ("#100" and "**bold**" are words, a bare "-" is an empty item), and an
+            // ordered item interrupts only when it starts at 1, as in CommonMark.
             function startsBlock(trimmed) {
               if (isThematicBreak(trimmed) || trimmed.startsWith("<!--")) return true;
               const c = trimmed[0];
-              if (c === "-" || c === "*" || c === "+") return isGap(trimmed[1]);
+              if (c === "-" || c === "*" || c === "+") return isSpaceOrTab(trimmed[1]);
               if (c === "#") return isHeading(trimmed);
-              return c === "1" && (trimmed[1] === "." || trimmed[1] === ")") && isGap(trimmed[2]);
+              return c === "1" && (trimmed[1] === "." || trimmed[1] === ")") && isSpaceOrTab(trimmed[2]);
             }
 
             function isHeading(trimmed) {
@@ -430,7 +465,11 @@ jobs:
             }
 
             function isGap(c) {
-              return c === undefined || c === " " || c === "\t";
+              return c === undefined || isSpaceOrTab(c);
+            }
+
+            function isSpaceOrTab(c) {
+              return c === " " || c === "\t";
             }
 
             function leadingRun(text, char) {

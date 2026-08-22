@@ -1173,6 +1173,11 @@ impl WebKitScrollbarPseudoElement {
 pub struct SelectorParser<'a> {
     pub(crate) is_nesting_allowed: bool,
     pub(crate) options: &'a ParserOptions<'a>,
+    /// CSS modules: set while parsing the argument of `:global(...)` and
+    /// cleared again inside a nested `:local(...)`. Classes and ids parsed in
+    /// this state keep their written name instead of becoming local symbols,
+    /// so they are neither renamed nor exported.
+    pub(crate) in_global_scope: bool,
     // PERF: re-thread `&'bump Bump` here to restore arena allocation.
 }
 
@@ -1188,7 +1193,7 @@ impl<'a> SelectorParser<'a> {
         raw: Str,
         loc: usize,
     ) -> <impl_::Selectors as SelectorImpl>::LocalIdentifier {
-        if input.flags.css_modules() {
+        if input.flags.css_modules() && !self.in_global_scope {
             return <impl_::Selectors as SelectorImpl>::LocalIdentifier::from_ref(
                 input.add_symbol_for_name(
                     raw,
@@ -1354,10 +1359,10 @@ impl<'a> SelectorParser<'a> {
                 direction: Direction::parse(parser)?,
             },
             b"local" if self.options.css_modules.is_some() => PseudoClass::Local {
-                selector: Box::new(Selector::parse(self, parser)?),
+                selector: self.parse_css_module_scoped_selector(parser, false)?,
             },
             b"global" if self.options.css_modules.is_some() => PseudoClass::Global {
-                selector: Box::new(Selector::parse(self, parser)?),
+                selector: self.parse_css_module_scoped_selector(parser, true)?,
             },
             _ => {
                 if !strings::starts_with_char(name, b'-') {
@@ -1378,6 +1383,21 @@ impl<'a> SelectorParser<'a> {
         }};
 
         Ok(pseudo_class)
+    }
+
+    /// Parses the argument of `:local(...)` / `:global(...)`. The scope covers
+    /// only the argument: it is restored even when the argument fails to parse,
+    /// because `:is()`-style error recovery keeps parsing the rest of the
+    /// selector list with this same parser.
+    fn parse_css_module_scoped_selector(
+        &mut self,
+        parser: &mut CssParser,
+        global: bool,
+    ) -> CResult<Box<Selector>> {
+        let enclosing_scope = core::mem::replace(&mut self.in_global_scope, global);
+        let selector = Selector::parse(self, parser);
+        self.in_global_scope = enclosing_scope;
+        Ok(Box::new(selector?))
     }
 
     pub(crate) fn is_nesting_allowed(&self) -> bool {

@@ -15,7 +15,26 @@ export function require(this: JSCommonJSModule, _: string) {
 // overridableRequire can be overridden by setting `Module.prototype.require`
 $overriddenName = "require";
 $visibility = "Private";
-export function overridableRequire(this: JSCommonJSModule, originalId: string, options: { paths?: string[] } = {}) {
+export function overridableRequire(this: JSCommonJSModule, originalId: string) {
+  // Dispatch through Module._load only once user code has replaced it.
+  const customLoad = $overriddenModuleLoad;
+  if (customLoad !== undefined) {
+    if ($argumentCount() > 1) {
+      // Bun-only `require(id, options)` rides as a 4th arg so `originalLoad.apply(this, arguments)` preserves it.
+      return customLoad.$call($nodeModuleConstructor, originalId, this, false, $argument(1));
+    }
+    return customLoad.$call($nodeModuleConstructor, originalId, this, false);
+  }
+  if ($argumentCount() > 1) {
+    return $requireCommonJSModule.$call(this, originalId, $argument(1));
+  }
+  return $requireCommonJSModule.$call(this, originalId);
+}
+
+// `this` anchors resolution; a 3rd argument (passed only by the native `Module._load`) is recorded as `module.parent`.
+$overriddenName = "require";
+$visibility = "Private";
+export function requireCommonJSModule(this: JSCommonJSModule, originalId: string, options: { paths?: string[] } = {}) {
   const id = $resolveSync(originalId, this.filename, false, false, options ? options.paths : undefined);
   if (id.startsWith("node:")) {
     if (id !== originalId) {
@@ -60,11 +79,13 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
     }
   }
 
+  const recordedParent = $argumentCount() > 2 ? $argument(2) : this;
+
   // A resolved id may carry a `?query` suffix (part of the module cache key);
   // match the native-addon extension against the path portion only.
   const queryIndex = id.indexOf("?");
   if (queryIndex === -1 ? id.endsWith(".node") : id.endsWith(".node", queryIndex)) {
-    return $internalRequire(id, this);
+    return $internalRequire(id, recordedParent);
   }
 
   if (id === "bun:test") {
@@ -73,13 +94,12 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
 
   // To handle import/export cycles, we need to create a module object and put
   // it into the map before we import it.
-  const mod = $createCommonJSModule(id, {}, false, this);
+  const mod = $createCommonJSModule(id, {}, false, recordedParent);
   $requireMap.$set(id, mod);
 
   var out: LoaderModule | -1;
 
-  // This is where we load the module. We will see if Module._load and
-  // Module._compile are actually important for compatibility.
+  // This is where we load the module.
   //
   // Note: we do not need to wrap this in a try/catch for release, if it throws
   // the C++ code will clear the module from the map.
@@ -156,7 +176,7 @@ export function requireResolve(
 }
 
 $visibility = "Private";
-export function internalRequire(id: string, parent: JSCommonJSModule) {
+export function internalRequire(id: string, parent: unknown) {
   $assert($requireMap.$get(id) === undefined, "Module " + JSON.stringify(id) + " should not be in the map");
   // `id` keys the module cache and may carry a `?query` suffix;
   // `process.dlopen` needs the on-disk path.

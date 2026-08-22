@@ -443,6 +443,12 @@ impl Processor {
                 self.stats.exports_failed.fetch_add(1, Ordering::Relaxed);
             }
         }
+        self.settle(payload);
+    }
+
+    /// One exporter is done with `payload` (verdict already noted); when the
+    /// last one is, count its spans once.
+    fn settle(&self, payload: &ExportPayload) {
         if payload.pending.fetch_sub(1, Ordering::AcqRel) == 1 {
             let counter = if payload.any_ok.load(Ordering::Relaxed) {
                 &self.stats.spans_exported
@@ -460,10 +466,11 @@ impl Processor {
     }
 
     /// An export handed to an exporter whose event loop is exiting can no
-    /// longer run; stop waiting for it. Not counted as a failure (the owner
-    /// is being torn down deliberately), and that payload's spans are then
-    /// counted in neither `spans_exported` nor `spans_dropped`.
-    pub fn export_abandoned(&self) {
+    /// longer run; stop waiting for it. Not an export failure (the owner is
+    /// being torn down deliberately); the payload's spans are counted by the
+    /// verdicts of the remaining exporters (dropped if there are none).
+    pub fn export_abandoned(&self, payload: &ExportPayload) {
+        self.settle(payload);
         self.finish_one();
     }
 

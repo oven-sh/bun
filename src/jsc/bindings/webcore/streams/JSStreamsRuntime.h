@@ -380,8 +380,22 @@ public:
     // The readMany `{value, size, done}` result shape, so results are built with
     // putDirectOffset instead of three transitioning putDirects.
     JSC::Structure* readManyResultStructure(const Zig::GlobalObject*);
+    static constexpr JSC::PropertyOffset readManyResultValueOffset = 0;
+    static constexpr JSC::PropertyOffset readManyResultSizeOffset = 1;
+    static constexpr JSC::PropertyOffset readManyResultDoneOffset = 2;
+
+    // `result.done` / `result.value` of a readMany() result. While `result` still has
+    // readManyResultStructure (three plain data properties) the slot is read directly; a
+    // mutated result or a foreign object takes the ordinary [[Get]].
+    JSC::JSValue readManyResultDone(JSC::JSGlobalObject*, JSC::JSObject* result) const;
+    JSC::JSValue readManyResultValue(JSC::JSGlobalObject*, JSC::JSObject* result) const;
 
 private:
+    bool isReadManyResult(JSC::JSObject* object) const
+    {
+        return object->structureID() == m_readManyResultStructure.getInitializedOnMainThread(m_globalObject)->id();
+    }
+
     JSC::JSGlobalObject* m_globalObject { nullptr };
 
     JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSFunction> m_handlers[static_cast<size_t>(Handler::Count)];
@@ -392,5 +406,19 @@ private:
     JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure> m_internalStructures[static_cast<size_t>(InternalStructure::Count)];
     JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure> m_readManyResultStructure;
 };
+
+inline JSC::JSValue JSStreamsRuntime::readManyResultDone(JSC::JSGlobalObject* globalObject, JSC::JSObject* result) const
+{
+    if (isReadManyResult(result)) [[likely]]
+        return result->getDirect(readManyResultDoneOffset);
+    return result->get(globalObject, JSC::getVM(globalObject).propertyNames->done);
+}
+
+inline JSC::JSValue JSStreamsRuntime::readManyResultValue(JSC::JSGlobalObject* globalObject, JSC::JSObject* result) const
+{
+    if (isReadManyResult(result)) [[likely]]
+        return result->getDirect(readManyResultValueOffset);
+    return result->get(globalObject, JSC::getVM(globalObject).propertyNames->value);
+}
 
 } // namespace WebCore

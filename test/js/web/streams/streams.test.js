@@ -2832,3 +2832,217 @@ describe("ReadableStream async iterator reentrancy", () => {
     expect(await it.next()).toEqual({ value: undefined, done: true });
   });
 });
+
+// Every native consumer of an iterator result ({value, done} from read()/next()) or of a
+// readMany() result ({value, size, done}). Results Bun itself produced, and the ones from
+// generators and the built-in iterators, are plain data objects; a custom next() can hand back
+// accessors instead, and those must run exactly as often and in the same order as before.
+describe("iterator result consumers", () => {
+  const decode = chunks => chunks.map(c => (typeof c === "string" ? c : new TextDecoder().decode(c)));
+
+  test("readMany() continuing a pending read", async () => {
+    let controller;
+    const stream = new ReadableStream({
+      start(c) {
+        controller = c;
+      },
+    });
+    const reader = stream.getReader();
+    const pending = reader.readMany();
+    controller.enqueue("a");
+    controller.enqueue("b");
+    const first = await pending;
+    controller.close();
+    const last = await reader.readMany();
+    expect({ first: { value: first.value, done: first.done }, last }).toEqual({
+      first: { value: ["a", "b"], done: false },
+      last: { value: [], size: 0, done: true },
+    });
+  });
+
+  test("readMany() on a direct stream", async () => {
+    const stream = new ReadableStream({
+      type: "direct",
+      async pull(c) {
+        c.write("x");
+        await Bun.sleep(1);
+        c.write("y");
+        c.close();
+      },
+    });
+    const reader = stream.getReader();
+    const first = await reader.readMany();
+    const second = await reader.readMany();
+    expect({ first: decode(first.value), firstDone: first.done, second: decode(second.value) }).toEqual({
+      first: ["x"],
+      firstDone: false,
+      second: ["y"],
+    });
+  });
+
+  test("readableStreamToArray over pending reads and over a direct stream", async () => {
+    let controller;
+    const queued = new ReadableStream({
+      start(c) {
+        controller = c;
+      },
+    });
+    const queuedPromise = readableStreamToArray(queued);
+    controller.enqueue(1);
+    await Bun.sleep(0);
+    controller.enqueue(2);
+    controller.close();
+
+    const direct = new ReadableStream({
+      type: "direct",
+      async pull(c) {
+        c.write("1");
+        await Bun.sleep(1);
+        c.write("2");
+        c.close();
+      },
+    });
+    expect({ queued: await queuedPromise, direct: decode(await readableStreamToArray(direct)) }).toEqual({
+      queued: [1, 2],
+      direct: ["1", "2"],
+    });
+  });
+
+  test("readableStreamToText over a direct stream", async () => {
+    const stream = new ReadableStream({
+      type: "direct",
+      async pull(c) {
+        c.write("he");
+        await Bun.sleep(1);
+        c.write("llo");
+        c.close();
+      },
+    });
+    expect(await readableStreamToText(stream)).toBe("hello");
+  });
+
+  test("Response body from an async generator", async () => {
+    async function* gen() {
+      yield "g1";
+      yield "g2";
+    }
+    expect(await new Response(gen()).text()).toBe("g1g2");
+  });
+
+  test("Response body from an async iterator whose results have accessors", async () => {
+    const reads = [];
+    let i = 0;
+    const iterable = {
+      [Symbol.asyncIterator]() {
+        return {
+          next() {
+            const n = i++;
+            return Promise.resolve({
+              get done() {
+                reads.push(`done${n}`);
+                return n >= 2;
+              },
+              get value() {
+                reads.push(`value${n}`);
+                return n >= 2 ? undefined : `chunk${n}`;
+              },
+            });
+          },
+        };
+      },
+    };
+    const text = await new Response(iterable).text();
+    expect({ text, reads }).toEqual({
+      text: "chunk0chunk1",
+      reads: ["done0", "value0", "done1", "value1", "done2", "value2"],
+    });
+  });
+
+  test("Response body from a {value, done} result given a done accessor afterwards", async () => {
+    let i = 0;
+    const iterable = {
+      [Symbol.asyncIterator]() {
+        return {
+          next() {
+            const n = i++;
+            const result = { value: `m${n}`, done: false };
+            Object.defineProperty(result, "done", { get: () => n >= 1 });
+            return Promise.resolve(result);
+          },
+        };
+      },
+    };
+    // A final result that is done still carries its value, like `return v` in a generator.
+    expect(await new Response(iterable).text()).toBe("m0m1");
+  });
+
+  test("ReadableStream.from over generators", async () => {
+    async function* asyncGen() {
+      yield 1;
+      yield 2;
+      yield 3;
+    }
+    function* syncGen() {
+      yield "s1";
+      yield "s2";
+    }
+    expect({
+      async: await readableStreamToArray(ReadableStream.from(asyncGen())),
+      sync: await readableStreamToArray(ReadableStream.from(syncGen())),
+    }).toEqual({ async: [1, 2, 3], sync: ["s1", "s2"] });
+  });
+
+  test("ReadableStream.from over an async iterator whose results have accessors", async () => {
+    const reads = [];
+    let i = 0;
+    const iterable = {
+      [Symbol.asyncIterator]() {
+        return {
+          next() {
+            const n = i++;
+            return Promise.resolve({
+              get done() {
+                reads.push(`done${n}`);
+                return n >= 3;
+              },
+              get value() {
+                reads.push(`value${n}`);
+                return n * 10;
+              },
+            });
+          },
+        };
+      },
+    };
+    const chunks = await readableStreamToArray(ReadableStream.from(iterable));
+    expect({ chunks, reads }).toEqual({
+      chunks: [0, 10, 20],
+      // value is not read once done is true
+      reads: ["done0", "value0", "done1", "value1", "done2", "value2", "done3"],
+    });
+  });
+
+  test("a ReadableStream response body is pumped into the HTTP sink", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        let controller;
+        const stream = new ReadableStream({
+          start(c) {
+            controller = c;
+          },
+        });
+        (async () => {
+          controller.enqueue("part1-");
+          await Bun.sleep(1);
+          controller.enqueue("part2-");
+          controller.enqueue("part3");
+          await Bun.sleep(1);
+          controller.close();
+        })();
+        return new Response(stream);
+      },
+    });
+    expect(await (await fetch(server.url)).text()).toBe("part1-part2-part3");
+  });
+});

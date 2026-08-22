@@ -22,6 +22,7 @@
 #include "JSStreamsRuntime.h"
 #include "JSWritableStream.h"
 #include "JSWritableStreamDefaultWriter.h"
+#include "ObjectBindings.h"
 #include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/InternalFieldTuple.h>
@@ -940,14 +941,16 @@ static EncodedJSValue fromIterablePullFulfilled(JSGlobalObject* globalObject, JS
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!iterResult.isObject())
         return throwVMTypeError(globalObject, scope, "The promise returned by the async iterator's next() method must fulfill with an object"_s);
-    bool done = iteratorCompleteExported(globalObject, iterResult);
+    JSValue doneValue = Bun::getIteratorResultDone(globalObject, asObject(iterResult));
+    RETURN_IF_EXCEPTION(scope, {});
+    bool done = doneValue.toBoolean(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     if (done) {
         readableStreamDefaultControllerClose(globalObject, controller);
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsUndefined());
     }
-    JSValue value = iteratorValue(globalObject, iterResult);
+    JSValue value = Bun::getIteratorResultValue(globalObject, asObject(iterResult));
     RETURN_IF_EXCEPTION(scope, {});
     readableStreamDefaultControllerEnqueue(globalObject, controller, value);
     RETURN_IF_EXCEPTION(scope, {});

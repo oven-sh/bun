@@ -441,11 +441,13 @@ void us_loop_run(struct us_loop_t *loop) {
 
         struct timespec sweep_ts;
         const struct timespec *timeout = us_internal_clamp_to_sweep(loop, NULL, &sweep_ts);
+        unsigned int kevent_flags = 0;
         if (us_internal_dispatch_enclosing_ready_polls(loop)) {
             timeout = &zero_timeout;
+            kevent_flags = KEVENT_FLAG_IMMEDIATE;
         }
 
-        us_internal_collect_ready_polls(loop, timeout, 0);
+        us_internal_collect_ready_polls(loop, timeout, kevent_flags);
         us_internal_dispatch_ready_polls(loop);
         us_internal_drain_ready_polls(loop);
         us_internal_sweep_if_due(loop);

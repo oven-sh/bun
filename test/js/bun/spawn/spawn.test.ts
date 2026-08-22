@@ -833,7 +833,7 @@ it("a stdout chunk the loop already collected is delivered while another stdout 
           plugins: [{
             name: "waits-for-" + other,
             async setup() {
-              const lost = await Promise.race([got[other].promise, new Promise(r => setTimeout(r, 3000, true))]);
+              const lost = await Promise.race([got[other].promise, new Promise(r => setTimeout(r, 3000, true).unref())]);
               if (lost) { console.log(order.join(" ") + " - " + other + " was never delivered"); process.exit(1); }
             },
           }],

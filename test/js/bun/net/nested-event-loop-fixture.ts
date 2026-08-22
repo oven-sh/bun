@@ -3,6 +3,9 @@
 // synchronously, which is what nests event-loop ticks inside a socket's data
 // callback while the dispatch for that socket is still on the stack.
 import { expect, test } from "bun:test";
+import net from "node:net";
+import os from "node:os";
+import path from "node:path";
 
 test("a socket closed inside its data callback survives nested event-loop ticks until the dispatch returns", async () => {
   using server = Bun.listen({

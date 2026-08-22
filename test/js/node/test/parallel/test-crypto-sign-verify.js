@@ -495,8 +495,8 @@ assert.throws(
   assert.throws(() => crypto.sign(null, data, input), errObj);
   assert.throws(() => crypto.verify(null, data, input, sig), errObj);
 
-  errObj.message = 'The "signature" argument must be an instance of ' +
-                   'Buffer, TypedArray, or DataView.' +
+  errObj.message = 'The "signature" argument must be of type string or an instance of ' +
+                   'ArrayBuffer, Buffer, TypedArray, or DataView.' +
                    common.invalidArgTypeHelper(input);
   assert.throws(() => crypto.verify(null, data, 'test', input), errObj);
 });

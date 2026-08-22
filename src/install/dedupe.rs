@@ -325,14 +325,40 @@ fn sort_by_name_then_version(lockfile: &Lockfile, ids: &mut [PackageID]) {
     index_sort::sort_indices(ids, &mut |a, b| order_by_name_then_version(lockfile, a, b));
 }
 
-// (name, removed version, surviving version(s) its dependents now resolve to)
-type Row = (Box<[u8]>, Box<[u8]>, Box<[u8]>);
+struct Row {
+    name: Box<[u8]>,
+    /// The removed version.
+    version: Box<[u8]>,
+    /// The surviving version(s) its dependents now resolve to, lowest first; empty when no live edge pointed at it.
+    resolved_to: Vec<Box<[u8]>>,
+}
+
+struct Kept {
+    name: Box<[u8]>,
+    version: Box<[u8]>,
+    /// `needed to reach patched a@1.0.0, b@2.0.0`
+    reason: Box<[u8]>,
+}
 
 #[derive(Default)]
 pub(crate) struct Report {
     rows: Vec<Row>,
-    kept: Vec<Box<[u8]>>,
+    kept: Vec<Kept>,
     checked: usize,
+}
+
+fn version_text(lockfile: &Lockfile, id: PackageID) -> Box<[u8]> {
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let mut text = Vec::new();
+    let _ = write!(
+        text,
+        "{}",
+        lockfile.packages.items_resolution()[id as usize]
+            .npm()
+            .version
+            .fmt(buf)
+    );
+    text.into_boxed_slice()
 }
 
 fn plural(n: usize) -> &'static str {
@@ -479,20 +505,23 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
     index_sort::sort_vec_by(&mut kept, |(a, _), (b, _)| {
         order_by_name_then_version(lockfile, *a, *b)
     });
-    let kept: Vec<Box<[u8]>> = kept
+    let names = lockfile.packages.items_name();
+    let kept: Vec<Kept> = kept
         .into_iter()
         .map(|(v, mut needed)| {
             sort_by_name_then_version(lockfile, &mut needed);
-            let mut line = label(lockfile, v);
-            line.extend_from_slice(b" (needed to reach patched ");
+            let mut reason: Vec<u8> = b"needed to reach patched ".to_vec();
             for (i, &p) in needed.iter().enumerate() {
                 if i > 0 {
-                    line.extend_from_slice(b", ");
+                    reason.extend_from_slice(b", ");
                 }
-                line.extend_from_slice(&label(lockfile, p));
+                reason.extend_from_slice(&label(lockfile, p));
             }
-            line.push(b')');
-            line.into_boxed_slice()
+            Kept {
+                name: Box::from(names[v as usize].slice(buf)),
+                version: version_text(lockfile, v),
+                reason: reason.into_boxed_slice(),
+            }
         })
         .collect();
 
@@ -535,13 +564,10 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
         }
     }
 
-    let names = lockfile.packages.items_name();
     let rows: Vec<Row> = removed
         .iter()
         .zip(&targets)
         .map(|(&id, moved_to)| {
-            let mut from: Vec<u8> = Vec::new();
-            let _ = write!(from, "{}", pkg_res[id as usize].npm().version.fmt(buf));
             let mut survivors: Vec<PackageID> = moved_to.clone();
             index_sort::sort_vec_by(&mut survivors, |&a, &b| {
                 pkg_res[a as usize]
@@ -549,18 +575,14 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
                     .version
                     .order(pkg_res[b as usize].npm().version, buf, buf)
             });
-            let mut to: Vec<u8> = Vec::new();
-            for &c in &survivors {
-                if !to.is_empty() {
-                    to.extend_from_slice(b", ");
-                }
-                let _ = write!(to, "{}", pkg_res[c as usize].npm().version.fmt(buf));
+            Row {
+                name: Box::from(names[id as usize].slice(buf)),
+                version: version_text(lockfile, id),
+                resolved_to: survivors
+                    .iter()
+                    .map(|&c| version_text(lockfile, c))
+                    .collect(),
             }
-            (
-                Box::from(names[id as usize].slice(buf)),
-                from.into_boxed_slice(),
-                to.into_boxed_slice(),
-            )
         })
         .collect();
 
@@ -723,6 +745,10 @@ fn refuse_out_of_date(manager: &PackageManager) -> ! {
 
 fn report_already_deduplicated(manager: &PackageManager, report: &Report) -> ! {
     if manager.options.log_level != LogLevel::Silent {
+        if manager.options.json_output {
+            print_json(report, None);
+            Global::exit(0);
+        }
         print_kept(&report.kept);
         if manager.options.do_.summary() {
             if !report.kept.is_empty() {
@@ -744,10 +770,78 @@ fn report_already_deduplicated(manager: &PackageManager, report: &Report) -> ! {
     Global::exit(0);
 }
 
-fn print_kept(kept: &[Box<[u8]>]) {
-    for line in kept {
-        bun_core::prettyln!("  <d>kept<r> {}", BStr::new(line));
+fn print_kept(kept: &[Kept]) {
+    for entry in kept {
+        bun_core::prettyln!(
+            "  <d>kept<r> {}@{} ({})",
+            BStr::new(&entry.name),
+            BStr::new(&entry.version),
+            BStr::new(&entry.reason)
+        );
     }
+}
+
+/// `--json`: the report as one object; `installed` is `null` when no install phase ran.
+fn print_json(report: &Report, installed: Option<u32>) {
+    fn json_str(s: &[u8]) -> bun_core::fmt::JSONFormatterUTF8<'_> {
+        bun_core::fmt::format_json_string_utf8(s, Default::default())
+    }
+
+    let mut out: Vec<u8> = Vec::new();
+    out.extend_from_slice(b"{\n  \"removed\": [");
+    for (i, row) in report.rows.iter().enumerate() {
+        if i > 0 {
+            out.push(b',');
+        }
+        let _ = write!(
+            out,
+            "\n    {{\n      \"name\": {},\n      \"version\": {},\n      \"resolvedTo\": [",
+            json_str(&row.name),
+            json_str(&row.version)
+        );
+        for (j, version) in row.resolved_to.iter().enumerate() {
+            if j > 0 {
+                out.extend_from_slice(b", ");
+            }
+            let _ = write!(out, "{}", json_str(version));
+        }
+        out.extend_from_slice(b"]\n    }");
+    }
+    if !report.rows.is_empty() {
+        out.extend_from_slice(b"\n  ");
+    }
+    out.extend_from_slice(b"],\n  \"kept\": [");
+    for (i, entry) in report.kept.iter().enumerate() {
+        if i > 0 {
+            out.push(b',');
+        }
+        let _ = write!(
+            out,
+            "\n    {{\n      \"name\": {},\n      \"version\": {},\n      \"reason\": {}\n    }}",
+            json_str(&entry.name),
+            json_str(&entry.version),
+            json_str(&entry.reason)
+        );
+    }
+    if !report.kept.is_empty() {
+        out.extend_from_slice(b"\n  ");
+    }
+    let _ = write!(
+        out,
+        "],\n  \"checked\": {},\n  \"installed\": ",
+        report.checked
+    );
+    match installed {
+        Some(n) => {
+            let _ = write!(out, "{n}");
+        }
+        None => out.extend_from_slice(b"null"),
+    }
+    out.extend_from_slice(b"\n}\n");
+
+    Output::flush();
+    let _ = Output::writer().write_all(&out);
+    Output::flush();
 }
 
 fn print_would_remove(manager: &PackageManager, report: &Report) {
@@ -773,33 +867,42 @@ fn print_rows(report: &Report) {
     } else {
         ("~", "->")
     };
-    for (name, from, to) in &report.rows {
-        if to.is_empty() {
+    for row in &report.rows {
+        if row.resolved_to.is_empty() {
             bun_core::prettyln!(
                 "<cyan>{}<r> <b>{}<r> <d>{}<r>",
                 glyph,
-                BStr::new(name),
-                BStr::new(from)
+                BStr::new(&row.name),
+                BStr::new(&row.version)
             );
         } else {
             bun_core::prettyln!(
                 "<cyan>{}<r> <b>{}<r> <d>{} {}<r> <b>{}<r>",
                 glyph,
-                BStr::new(name),
-                BStr::new(from),
+                BStr::new(&row.name),
+                BStr::new(&row.version),
                 arrow,
-                BStr::new(to)
+                BStr::new(&bstr::join(", ", &row.resolved_to))
             );
         }
     }
     print_kept(&report.kept);
 }
 
-pub(crate) fn print_dedupe_summary(manager: &PackageManager, installed: u32, start_time: i128) {
+/// `installed` is `None` when the lockfile was saved without installing (`--lockfile-only`).
+pub(crate) fn print_dedupe_summary(
+    manager: &PackageManager,
+    installed: Option<u32>,
+    start_time: i128,
+) {
     let Some(report) = &manager.dedupe_report else {
         return;
     };
     if manager.options.log_level == LogLevel::Silent {
+        return;
+    }
+    if manager.options.json_output {
+        print_json(report, installed);
         return;
     }
     print_rows(report);
@@ -809,7 +912,7 @@ pub(crate) fn print_dedupe_summary(manager: &PackageManager, installed: u32, sta
     }
     let n = report.rows.len();
     bun_core::pretty!("\n<b>{}<r> duplicate version{} removed", n, plural(n));
-    if installed > 0 {
+    if let Some(installed) = installed.filter(|&n| n > 0) {
         bun_core::pretty!(
             ", <b>{}<r> package{} installed",
             installed,
@@ -840,9 +943,13 @@ pub fn dedupe_after_differ(manager: &mut PackageManager) {
 
     if manager.options.dry_run {
         if !quiet {
-            print_would_remove(manager, &report);
-            bun_core::prettyln!("  <cyan>bun dedupe<r>");
-            Output::flush();
+            if manager.options.json_output {
+                print_json(&report, None);
+            } else {
+                print_would_remove(manager, &report);
+                bun_core::prettyln!("  <cyan>bun dedupe<r>");
+                Output::flush();
+            }
         }
         Global::exit(manager.options.check as u32);
     }
@@ -856,8 +963,12 @@ pub fn dedupe_after_differ(manager: &mut PackageManager) {
             } else {
                 "--production implies --frozen-lockfile"
             };
-            print_would_remove(manager, &report);
-            Output::flush();
+            if manager.options.json_output {
+                print_json(&report, None);
+            } else {
+                print_would_remove(manager, &report);
+                Output::flush();
+            }
             let n = report.rows.len();
             bun_core::pretty_errorln!(
                 "<r><red>error<r><d>:<r> {} duplicate version{} can be removed, but {}",

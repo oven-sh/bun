@@ -32,7 +32,7 @@ impl DedupeCommand {
             Err(err) => return Err(err.into()),
         };
 
-        if manager.options.should_print_command_name() {
+        if manager.options.should_print_command_name() && !manager.options.json_output {
             bun_core::prettyln!(
                 "<r><b>bun dedupe <r><d>v{}<r>\n",
                 Global::package_json_version_with_sha,

@@ -41,12 +41,16 @@ interface Options {
   base?: string;
   /** `workflow_dispatch` inputs. Without them the run comes from a `pull_request_target` event. */
   inputs?: Record<string, string>;
-  /** Every number is an open issue (for parser cases). Otherwise: #1 open issue, #2 open PR, #3 closed, #4 missing. */
+  /** Every number is an open issue (for parser cases). Otherwise: #1 open issue, #2 open PR, #3 closed, #4 missing, #5 deleted. */
   everyIssueOpen?: boolean;
   failUpdate?: boolean;
+  /** `issues.get` fails with a 500 for this number. */
+  failGet?: number;
 }
 
 const notFound = () => Object.assign(new Error("Not Found"), { status: 404 });
+const gone = () => Object.assign(new Error("Gone"), { status: 410 });
+const serverError = () => Object.assign(new Error("boom"), { status: 500 });
 
 /** Runs the script against a fake API for PR #10 and records what it does. */
 async function run(options: Options) {
@@ -82,7 +86,9 @@ async function run(options: Options) {
       },
       issues: {
         get: async ({ issue_number }: { issue_number: number }) => {
+          if (issue_number === options.failGet) throw serverError();
           if (options.everyIssueOpen) return { data: { number: issue_number, state: "open" } };
+          if (issue_number === 5) throw gone();
           if (!(issue_number in issues)) throw notFound();
           return { data: issues[issue_number] };
         },
@@ -160,6 +166,9 @@ test.each([
   ["Fixes #1\r\nFixes #2", [1, 2]],
   ["```bun test``` prints nothing.\nFixes #2", [2]],
   ["~~Fixes #1~~ Fixes #2", [2]],
+  ["The `--foo option is broken.\n\nFixes #1234.\n\nUses `Bun.serve()` now.", [1234]],
+  ["Reverts HEAD~~ which broke CI.\n\nFixes #1234.\n\nAlso see abc~~ for context.", [1234]],
+  ["Adds a retry to the loader\nFix #1", [1]],
 ] as [string, (number | string)[]][])("finds %j", async (body, expected) => {
   expect(await refs(body)).toEqual(expected);
 });
@@ -188,6 +197,9 @@ test.each([
   "This may fix #1",
   "May also fix #12318 / #10046 (same fd reverse-mapping), untested.",
   "This would fix #1 if the parser were stricter.",
+  "This does not\nfix #1",
+  "This may also\nfix #1",
+  "partially\nfixes #1",
   // the keyword as an adjective or a noun
   "Supersedes the closed #26040.",
   "Flagged by a review comment on closed #35351 (duplicate of merged #35344).",
@@ -268,13 +280,16 @@ test("names the keyword and the repository in the log", async () => {
 });
 
 test("closes the open issue and pull request, skips the closed and missing ones and itself", async () => {
-  const { calls, logs, failed } = await run({ body: "Fixes #1, #2 and #3. Supersedes #4. Closes #10. Fixes #1." });
+  const { calls, logs, failed } = await run({
+    body: "Fixes #1, #2 and #3. Supersedes #4. Resolves #5. Closes #10. Fixes #1.",
+  });
   expect(logs).toEqual([
-    "#10: #1, #2, #3, #4",
+    "#10: #1, #2, #3, #4, #5",
     "#1: closed issue (fixes in #10)",
     "#2: closed pull request (fixes in #10)",
     "#3: already closed, skipping",
     "#4: does not exist, skipping",
+    "#5: does not exist, skipping",
   ]);
   expect(calls).toEqual([
     { method: "issues.update", params: { ...REPO, issue_number: 1, state: "closed", state_reason: "completed" } },
@@ -321,6 +336,13 @@ test("a PR whose description closes nothing changes nothing", async () => {
   const { calls, logs } = await run({ body: "See #1 and #2." });
   expect(logs).toEqual(["#10: no references to close"]);
   expect(calls).toEqual([]);
+});
+
+test("a failed lookup fails the run after the other references were tried", async () => {
+  const { calls, logs, failed } = await run({ body: "Fixes #1 and #2", failGet: 1 });
+  expect(logs).toEqual(["#10: #1, #2", "error: #1: boom", "#2: closed pull request (fixes in #10)"]);
+  expect(calls.map(call => call.method)).toEqual(["pulls.update", "issues.createComment"]);
+  expect(failed).toBe("1 of 2 references could not be closed");
 });
 
 test("a failed close fails the run after the other references were tried", async () => {

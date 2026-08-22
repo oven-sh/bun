@@ -141,16 +141,18 @@ jobs:
             // Whether the keyword at `index` states that the PR closes what follows.
             // Decided by the word before it.
             function isClosingStatement(tokens, index, keyword) {
-              let k = index - 1;
-              for (; k >= 0; k--) {
-                const token = tokens[k];
-                if (token.kind !== "word" || !ADVERBS.has(token.text)) break;
-              }
+              const k = skipAdverbsBack(tokens, index - 1);
               const before = tokens[k];
               // "#100 supersedes #1": another pull request is the subject. A line
               // break ends that reading: "Fixes #1\nFixes #2" is two statements.
               if (before?.kind === "ref") return false;
-              if (before === undefined || before.kind !== "word") return true;
+              if (before === undefined) return true;
+              if (before.kind === "newline") {
+                // A disqualifier still applies across a wrapped line: "does not\nfix #1".
+                const wrapped = tokens[skipAdverbsBack(tokens, k - 1)];
+                return !(wrapped?.kind === "word" && DISQUALIFIERS.has(wrapped.text));
+              }
+              if (before.kind !== "word") return true;
               // "Reverts #100, which fixed #1": the same, through a relative pronoun.
               if (before.text === "which" || before.text === "that") {
                 const antecedent = tokens[isPunct(tokens[k - 1], ",") ? k - 2 : k - 1];
@@ -158,6 +160,11 @@ jobs:
               }
               if (DISQUALIFIERS.has(before.text)) return false;
               return !BASE_FORMS.has(keyword) || VERB_MARKERS.has(before.text);
+            }
+
+            function skipAdverbsBack(tokens, k) {
+              while (k >= 0 && tokens[k].kind === "word" && ADVERBS.has(tokens[k].text)) k--;
+              return k;
             }
 
             function isPunct(token, text) {
@@ -251,8 +258,8 @@ jobs:
             }
 
             // Removes the text between a run of `marker` and the next run of the same
-            // length: `code spans` for "`", ~~struck-through text~~ for "~" with
-            // `runLength` 2. A run with no closing run stays as it is.
+            // length in the same paragraph: `code spans` for "`", ~~struck-through
+            // text~~ for "~" with `runLength` 2. A run with no closing run stays as it is.
             function removeSpans(text, marker, runLength) {
               let out = "";
               let i = 0;
@@ -263,11 +270,12 @@ jobs:
                   continue;
                 }
                 const opening = leadingRun(text.slice(i), marker);
+                const limit = nextBlankLine(text, i);
                 let close = -1;
-                let from = runLength === undefined || opening.length === runLength ? i + opening.length : text.length;
-                while (from < text.length) {
+                let from = runLength === undefined || opening.length === runLength ? i + opening.length : limit;
+                while (from < limit) {
                   const at = text.indexOf(opening, from);
-                  if (at === -1) break;
+                  if (at === -1 || at >= limit) break;
                   const run = leadingRun(text.slice(at), marker);
                   if (run.length === opening.length) {
                     close = at;
@@ -284,6 +292,18 @@ jobs:
                 i = close + opening.length;
               }
               return out;
+            }
+
+            // The index of the first blank line after `from`, or the end of the text.
+            function nextBlankLine(text, from) {
+              let at = text.indexOf("\n", from);
+              while (at !== -1) {
+                let j = at + 1;
+                while (j < text.length && (text[j] === " " || text[j] === "\t")) j++;
+                if (j === text.length || text[j] === "\n") return at;
+                at = text.indexOf("\n", j);
+              }
+              return text.length;
             }
 
             function tokenize(text) {
@@ -475,11 +495,14 @@ jobs:
               try {
                 ({ data: issue } = await github.rest.issues.get({ owner, repo, issue_number: ref.number }));
               } catch (error) {
-                if (error.status === 404) {
+                // 410: deleted by an admin.
+                if (error.status === 404 || error.status === 410) {
                   core.info(`#${ref.number}: does not exist, skipping`);
                   continue;
                 }
-                throw error;
+                failed++;
+                core.error(`#${ref.number}: ${error.message}`);
+                continue;
               }
               if (issue.state !== "open") {
                 core.info(`#${ref.number}: already closed, skipping`);

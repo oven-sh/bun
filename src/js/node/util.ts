@@ -622,8 +622,6 @@ let lazyAbortedRegistry: FinalizationRegistry<{
   ref: WeakRef<AbortSignal>;
   listener: (...args: any[]) => void;
 }>;
-// The promise is also the FinalizationRegistry unregister token: once the
-// signal aborts, the resource no longer needs its listener removed on GC.
 function onAbortedCallback(promise: Promise<void>) {
   lazyAbortedRegistry.unregister(promise);
 

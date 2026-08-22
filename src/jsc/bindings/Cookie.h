@@ -15,6 +15,8 @@ enum class CookieSameSite : uint8_t {
 
 JSC::JSValue toJS(JSC::JSGlobalObject*, CookieSameSite);
 
+std::optional<int64_t> parseCookieDate(std::span<const Latin1Character>);
+
 struct CookieInit {
     String name = String();
     String value = String();

@@ -1189,7 +1189,7 @@ test("errored pipeline releases the compression coder eagerly", async () => {
 describe("CompressionStream level option", () => {
   // Deterministic semi-random text: enough entropy that the level changes the output.
   let seed = 42;
-  const rand = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+  const rand = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
   let text = "";
   for (let i = 0; text.length < 64_000; i++) {
     text += `<section id="s${i}"><p>${rand().toString(36).slice(2)} lorem ipsum ${((i * 2654435761) >>> 0).toString(36)}</p></section>`;

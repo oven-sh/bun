@@ -1664,11 +1664,8 @@ impl CapturedWriter {
         // `io_writer::ChildPtr::subproc_capture` / `WriterTag::Subproc`.
         let child = io_writer::ChildPtr::subproc_capture(std::ptr::from_mut(self).cast::<c_void>());
         let y = writer.enqueue(child, None, chunk);
-        // A dead writer hands the chunk's error completion back as `y`
-        // (`IOWriter::handle_dead_writer` / `on_sync_error`); running it lands
-        // in `on_iowriter_chunk` → `on_capture_failed`, which re-enters the Cmd
-        // and derefs the embedding `PipeReader` through `Readable::Pipe`, so
-        // no `&PipeReader` may be live here (see `run_yield_with`).
+        // On a dead writer `y` is the chunk's error completion, which can free
+        // the embedding `PipeReader` (`on_capture_failed`).
         PipeReader::run_yield_with(interp, y);
     }
 
@@ -1700,16 +1697,14 @@ impl CapturedWriter {
             );
             self.err = Some(e);
             // SAFETY: `parent_mut` recovers the embedding `PipeReader`; raw-ptr
-            // form per `on_capture_failed` / `try_signal_done_to_cmd` contract
-            // (no `&mut PipeReader` held across the Cmd re-entry). The call may
-            // free the PipeReader, and `self` with it, so nothing touches
-            // `self` after it.
+            // form per `on_capture_failed` contract (no `&mut PipeReader` held
+            // across the Cmd re-entry). May free `self`; last use of it.
             return unsafe { PipeReader::on_capture_failed(self.parent_mut()) };
         }
         if !all_written {
             return Yield::Suspended;
         }
-        // SAFETY: as above.
+        // SAFETY: as above, per `try_signal_done_to_cmd` contract.
         unsafe { PipeReader::try_signal_done_to_cmd(self.parent_mut()) }
     }
 }
@@ -1766,14 +1761,9 @@ impl PipeReader {
         self.captured_writer_done(0)
     }
 
-    /// Drive a `Yield` from inside an async I/O callback. Mirrors
-    /// `IOWriter::run_yield` / `IOReader::run_yield`. `interp` is the reader's
-    /// own `interp` field, wired at `create` time from the spawning `Cmd`; the
-    /// null guard is a defensive debug-assert for tests that construct a
-    /// PipeReader without a Cmd. Takes the pointer rather than `&self` because
-    /// callers must not hold any `&PipeReader` borrow across the interpreter
-    /// trampoline, which can re-derive `&PipeReader` via the `Readable::Pipe`
-    /// `Arc`.
+    /// Drive a `Yield` from inside an async I/O callback with the reader's
+    /// `interp` (wired at `create`). Not `&self`: the trampoline can re-derive
+    /// `&PipeReader` via the `Readable::Pipe` `Arc`, or free it.
     fn run_yield_with(interp: *mut crate::shell::interpreter::Interpreter, y: Yield) {
         if interp.is_null() {
             debug_assert!(
@@ -1905,19 +1895,14 @@ impl PipeReader {
     }
 
     /// `BufferedReaderParent::on_read_chunk` adapter — invoked with the
-    /// `PipeReader` registered via `reader.set_parent(self)`.
-    ///
-    /// Takes `*mut Self` like [`Self::on_reader_done`]: `do_write` can reject
-    /// the chunk synchronously (the shell's writer is already dead) and then
-    /// finish this pipe's capture (`on_capture_failed`), which re-enters the
-    /// `Cmd` and reaches this same allocation again through the
-    /// `Readable::Pipe` `Arc`. Only the `captured_writer` field is borrowed
-    /// across that call.
+    /// `PipeReader` registered via `reader.set_parent(self)`. Raw `*mut Self`
+    /// like [`Self::on_reader_done`]: `do_write` can re-enter the `Cmd`
+    /// (`on_capture_failed`), which reaches this allocation through the
+    /// `Readable::Pipe` `Arc`.
     ///
     /// # Safety
-    /// `this` must point into the live `Arc<PipeReader>` allocation; the
-    /// read loop that dispatches this holds the `ref_`/`deref` keepalive, so
-    /// the allocation outlives the call even if the `Cmd` drops its `Arc`.
+    /// `this` must point into the live `Arc<PipeReader>` allocation. The read
+    /// loop's `ref_`/`deref` keepalive covers the `Arc` the `Cmd` may drop.
     pub(crate) unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], has_more: ReadState) -> bool {
         // SAFETY: caller contract; each borrow is scoped to its own statement.
         unsafe {
@@ -1933,15 +1918,10 @@ impl PipeReader {
             (*this).captured_writer.do_write(chunk);
         }
 
-        // No explicit re-arm here (`register_poll()` on POSIX /
-        // `start_with_current_pipe()` on Windows). This callback runs from
-        // inside the bun_io read loop, which first checks whether the
-        // callback closed the reader (`on_capture_failed` does) and otherwise
-        // re-registers the poll itself based on the bool we return
-        // (`IOReader::on_read_chunk_cb` and `WindowsBufferedReader::on_read`
-        // document the same contract). A re-arm from here would also run
-        // `register_poll()`'s failure path, `on_reader_error`, a terminal
-        // callback, from inside a non-terminal one.
+        // No explicit re-arm here: the bun_io read loop checks whether the
+        // callback closed the reader, then re-registers the poll itself from
+        // the bool we return (`IOReader::on_read_chunk_cb` documents the same
+        // contract).
         has_more != ReadState::Eof
     }
 
@@ -2073,29 +2053,19 @@ impl PipeReader {
         Yield::Suspended
     }
 
-    /// The `CapturedWriter` failed to relay this pipe's output to the shell's
-    /// stdout/stderr and has recorded the error (typically EPIPE: nothing
-    /// reads the process's stdout any more). If the child still has its end
-    /// of the pipe open (`Pending`), stop reading and close ours, so that its
-    /// next write fails (EPIPE/SIGPIPE, as under a real shell) instead of
-    /// being appended to `buffered_output` for as long as it keeps writing
-    /// while the command never finishes. The state transition is the one
-    /// `on_reader_done` makes at EOF (`deinit` has just emptied the reader's
-    /// buffer, hence the empty `Done`); `try_signal_done_to_cmd` then hands
-    /// the relay error to the `Cmd` via `take_captured_error`, exactly as it
-    /// does when the relay fails after EOF.
+    /// The `CapturedWriter` could not relay this pipe's output (EPIPE: nothing
+    /// reads the process's stdout any more) and has recorded the error. While
+    /// the child still holds its end (`Pending`), close ours so its next write
+    /// fails, as under a real shell, instead of reading it for as long as it
+    /// writes. The state becomes what EOF leaves, so `try_signal_done_to_cmd`
+    /// reports the relay error to the `Cmd` now.
     ///
     /// # Safety
-    /// Same contract as [`Self::try_signal_done_to_cmd`]. This is also
-    /// reached from inside this reader's own `on_read_chunk` (a chunk enqueued
-    /// on an already dead writer is rejected synchronously): `deinit` only
-    /// closes the handle, which the read loop checks for after the callback,
-    /// and the loop's `ref_`/`deref` keepalive (see the
-    /// `impl_buffered_reader_parent!` block below) keeps the allocation alive
-    /// until it returns even though the `Cmd` drops its `Arc` in here.
+    /// Same contract as [`Self::try_signal_done_to_cmd`]. May run inside this
+    /// reader's own `on_read_chunk`: `deinit` fires no callback, and the read
+    /// loop's `ref_`/`deref` keepalive covers the `Arc` the `Cmd` drops here.
     pub(crate) unsafe fn on_capture_failed(this: *mut Self) -> Yield {
-        // SAFETY: caller contract; the borrow ends before the Cmd re-entry in
-        // `try_signal_done_to_cmd`. `reader.deinit()` fires no callback.
+        // SAFETY: caller contract; the borrow ends before the Cmd re-entry.
         unsafe {
             if matches!((*this).state, PipeReaderState::Pending) {
                 log!(
@@ -2282,12 +2252,9 @@ impl Drop for PipeReader {
 // autoref) — see their doc-comments: the body builds an `Arc` keepalive that
 // may free `this` on drop, so a `&mut self` protector would be UB.
 //
-// `ref_`/`deref` bracket every read-loop entry (`bun_io`'s `ref_parent`) with
-// a strong count on the `Arc` this reader lives in, the same way `IOReader`
-// guards itself. `on_read_chunk` can finish the pipe's capture from inside the
-// loop (`CapturedWriter::do_write` → `on_capture_failed`), which makes the Cmd
-// drop the `Readable::Pipe` `Arc`; the loop still reads the reader's flags
-// after the callback returns, so the last ref must not go away before then.
+// `ref_`/`deref`: the read loop's keepalive on our `Arc` (as in `IOReader`).
+// `on_read_chunk` can make the `Cmd` drop the `Readable::Pipe` `Arc` while the
+// loop still has to read the reader's flags.
 bun_io::impl_buffered_reader_parent! {
     ShellPipeReader for PipeReader;
     has_on_read_chunk = true;

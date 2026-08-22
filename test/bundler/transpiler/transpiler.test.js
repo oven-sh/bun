@@ -311,6 +311,29 @@ describe("Bun.Transpiler", () => {
       exp("declare class Foo {}", "");
     });
 
+    it("class modifiers followed by a bigint literal key", () => {
+      const exp = ts.expectPrinted_;
+
+      // Same output as tsc: the modifiers are erased and the bigint key is kept.
+      exp("class A { static 1n: bigint = 1n }", "class A {\n  static 1n = 1n;\n}");
+      exp("class A { static 1n!: number }", "class A {\n  static 1n;\n}");
+      exp("class A { public 1n = 1 }", "class A {\n  1n = 1;\n}");
+      exp("class A { private static 1n = 1 }", "class A {\n  static 1n = 1;\n}");
+      exp("class A { protected static readonly 1n = 1 }", "class A {\n  static 1n = 1;\n}");
+      exp("class A { readonly 1n = 1 }", "class A {\n  1n = 1;\n}");
+      exp("class A extends B { override 1n() {} }", "class A extends B {\n  1n() {}\n}");
+      exp("class A extends B { public override async 1n() {} }", "class A extends B {\n  async 1n() {}\n}");
+      exp("class A { public get 1n(): number { return 1 } }", "class A {\n  get 1n() {\n    return 1;\n  }\n}");
+      exp("class A { private static set 1n(v: number) {} }", "class A {\n  static set 1n(v) {}\n}");
+      exp("class A { declare 1n: number; x = 1 }", "class A {\n  x = 1;\n}");
+      exp("class A { declare static 1n: number; x = 1 }", "class A {\n  x = 1;\n}");
+      exp("abstract class A { abstract 1n: number; abstract 2n(): void; x = 1 }", "class A {\n  x = 1;\n}");
+      exp(
+        "interface I { 1n(): void }\nclass A implements I { static 1n() {} 1n() {} }",
+        "class A {\n  static 1n() {}\n  1n() {}\n}",
+      );
+    });
+
     it("contextual keywords followed by a newline apply ASI instead of acting as modifiers", () => {
       const exp = ts.expectPrinted_;
       const err = ts.expectParseError;
@@ -1003,6 +1026,9 @@ function foo() {}
       exp("type x = [-1, 0, 1]\na([])", "a([]);\n");
       exp("type x = [-1n, 0n, 1n]\na([])", "a([]);\n");
       exp("type x = {0: number, readonly 1: boolean}\na([])", "a([]);\n");
+      exp("type x = {0n: number, readonly 1n: boolean, 2n?: string}\na([])", "a([]);\n");
+      exp("type x = {0n(): void, get 1n(): number, set 1n(v: number), 2n?(): void}\na([])", "a([]);\n");
+      exp("interface x {0n: number, 1n(): void}\na([])", "a([]);\n");
       exp("type x = {'a': number, readonly 'b': boolean}\na([])", "a([]);\n");
       exp("type\nFoo = {}", "type;\nFoo = {};\n");
       err("export type\nFoo = {}", 'Unexpected newline after "type"');
@@ -1033,6 +1059,10 @@ function foo() {}
       err("let x: {[typeof: string]: number}", 'Expected identifier but found ":"');
       exp("let x: () => void = Foo", "let x = Foo;\n");
       exp("let x: new () => void = Foo", "let x = Foo;\n");
+      exp("let x: ({ 1: a, 'b': b }: T) => void = Foo", "let x = Foo;\n");
+      exp("let x: ({ 1n: a }: T) => void = Foo", "let x = Foo;\n");
+      exp("let x: new ({ 1n: a }: T) => void = Foo", "let x = Foo;\n");
+      exp("type x = {m({ 1n: a }: T): void}\na([])", "a([]);\n");
       exp("let x = 'x' as keyof T", 'let x = "x";\n');
       exp("let x = [1] as readonly [number]", "let x = [1];\n");
       exp("let x = 'x' as keyof typeof Foo", 'let x = "x";\n');
@@ -2867,6 +2897,160 @@ console.log(a)
       expectBunPrinted_("export const foo = 1 + 2", "export const foo = 3");
       expectBunPrinted_("export const foo = 1 - 2", "export const foo = -1");
       expectBunPrinted_("export const foo = 1 * 2", "export const foo = 2");
+    });
+
+    it("bigint literal keys after modifier keywords", () => {
+      // A bigint literal is a valid property name, so like a numeric literal it
+      // marks the word before it as a modifier.
+      expectPrinted_("class A { static 1n = 1 }", "class A {\n  static 1n = 1;\n}");
+      expectPrinted_("class A { static 1n }", "class A {\n  static 1n;\n}");
+      expectPrinted_("class A { static 1n() {} }", "class A {\n  static 1n() {}\n}");
+      expectPrinted_("class A { get 1n() { return 1 } }", "class A {\n  get 1n() {\n    return 1;\n  }\n}");
+      expectPrinted_("class A { set 1n(v) {} }", "class A {\n  set 1n(v) {}\n}");
+      expectPrinted_("class A { async 1n() {} }", "class A {\n  async 1n() {}\n}");
+      expectPrinted_(
+        "class A { static get 1n() { return 1 } }",
+        "class A {\n  static get 1n() {\n    return 1;\n  }\n}",
+      );
+      expectPrinted_("class A { static set 1n(v) {} }", "class A {\n  static set 1n(v) {}\n}");
+      expectPrinted_("class A { static async 1n() {} }", "class A {\n  static async 1n() {}\n}");
+      expectPrinted_("class A { static async *1n() {} }", "class A {\n  static async* 1n() {}\n}");
+      expectPrinted_("class A { static *1n() {} }", "class A {\n  static *1n() {}\n}");
+      expectPrinted_("class A { async *1n() {} }", "class A {\n  async* 1n() {}\n}");
+      expectPrinted_("class A { 1n = 1; 2n() {} }", "class A {\n  1n = 1;\n  2n() {}\n}");
+
+      expectPrinted_("x = { get 1n() { return 1 } }", "x = { get 1n() {\n  return 1;\n} };\n");
+      expectPrinted_("x = { set 1n(v) {} }", "x = { set 1n(v) {} };\n");
+      expectPrinted_("x = { async 1n() {} }", "x = { async 1n() {} };\n");
+      expectPrinted_("x = { async *1n() {} }", "x = { async* 1n() {} };\n");
+
+      // "static", "get" and "set" bind to a key on the next line; no semicolon
+      // is inserted because the key can continue the member.
+      expectPrinted_("class A { static\n 1n = 1 }", "class A {\n  static 1n = 1;\n}");
+      expectPrinted_("class A { get\n 1n() { return 1 } }", "class A {\n  get 1n() {\n    return 1;\n  }\n}");
+      expectPrinted_("class A { set\n 1n(v) {} }", "class A {\n  set 1n(v) {}\n}");
+      // "async" must be on the same line as the key, so this is a field named
+      // "async" followed by a method.
+      expectPrinted_("class A { async\n 1n() {} }", "class A {\n  async;\n  1n() {}\n}");
+
+      // The words are still plain keys when a bigint is the value rather than the next key.
+      expectPrinted_("class A { static = 1n }", "class A {\n  static = 1n;\n}");
+      expectPrinted_("class A { static; 1n = 1 }", "class A {\n  static;\n  1n = 1;\n}");
+      expectPrinted_("x = { get: 1n }", "x = { get: 1n };\n");
+      expectPrinted_("x = { async: 1n, set: 2n }", "x = { async: 1n, set: 2n };\n");
+      // "static" is only a modifier in a class body; like `{ static 1() {} }` this is rejected.
+      expectParseError("x = { static 1n() {} }", "Parse error");
+    });
+
+    it("class members with bigint literal keys after modifiers behave like numeric keys at runtime", async () => {
+      // Uses a .js file rather than -e so that "accessor" is parsed (the repo
+      // tsconfig enables experimentalDecorators, which disables it).
+      using dir = tempDir("bigint-member-keys", {
+        "index.js": `
+          class A {
+            static 1n = "static field";
+            get 2n() {
+              return "getter";
+            }
+            set 3n(v) {
+              this.setterValue = v;
+            }
+            async 4n() {
+              return "async method";
+            }
+            static async 5n() {
+              return "static async method";
+            }
+            static get 6n() {
+              return "static getter";
+            }
+            static set 7n(v) {
+              this.staticSetterValue = v;
+            }
+            static async *8n() {
+              yield "static async generator";
+            }
+            static
+            9n = "static field on the next line";
+            get
+            10n() {
+              return "getter on the next line";
+            }
+            async
+            11n() {
+              return "method after a field named async";
+            }
+            accessor 12n = "accessor";
+            static accessor 13n = "static accessor";
+          }
+          const o = {
+            get 1n() {
+              return "object getter";
+            },
+            set 2n(v) {
+              this.setterValue = v;
+            },
+            async 3n() {
+              return "object async method";
+            },
+          };
+
+          const a = new A();
+          a[3] = "setter";
+          A[7] = "static setter";
+          o[2] = "object setter";
+          const isAccessor = (obj, key) => {
+            const { get, set } = Object.getOwnPropertyDescriptor(obj, key);
+            return typeof get === "function" && typeof set === "function";
+          };
+
+          console.log(
+            JSON.stringify({
+              1: A[1],
+              2: a[2],
+              3: a.setterValue,
+              4: await a[4](),
+              5: await A[5](),
+              6: A[6],
+              7: A.staticSetterValue,
+              8: (await A[8]().next()).value,
+              9: A[9],
+              10: a[10],
+              11: [Object.hasOwn(a, "async"), await a[11]()],
+              12: [a[12], isAccessor(A.prototype, "12")],
+              13: [A[13], isAccessor(A, "13")],
+              o: [o[1], o.setterValue, await o[3]()],
+              prototypeKeys: Object.getOwnPropertyNames(A.prototype),
+            }),
+          );
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        1: "static field",
+        2: "getter",
+        3: "setter",
+        4: "async method",
+        5: "static async method",
+        6: "static getter",
+        7: "static setter",
+        8: "static async generator",
+        9: "static field on the next line",
+        10: "getter on the next line",
+        11: [true, "method after a field named async"],
+        12: ["accessor", true],
+        13: ["static accessor", true],
+        o: ["object getter", "object setter", "object async method"],
+        prototypeKeys: ["2", "3", "4", "10", "11", "12", "constructor"],
+      });
+      expect(exitCode).toBe(0);
     });
 
     it.todo("pass objects to macros", () => {

@@ -115,8 +115,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
 
                         // "{1: y}"
+                        // "{1n: y}"
                         // "{'x': y}"
-                        T::TStringLiteral | T::TNumericLiteral => {
+                        T::TStringLiteral | T::TNumericLiteral | T::TBigIntegerLiteral => {
                             self.lexer.next()?;
                         }
 
@@ -1036,6 +1037,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             while self.lexer.is_identifier_or_keyword()
                 || self.lexer.token == T::TStringLiteral
                 || self.lexer.token == T::TNumericLiteral
+                || self.lexer.token == T::TBigIntegerLiteral
             {
                 self.lexer.next()?;
                 found_key = true;

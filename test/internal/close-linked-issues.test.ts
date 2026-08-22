@@ -66,6 +66,8 @@ test.each([
   ["Fixes [#9](https://example.com/9)", [9]],
   ["Fixes [#1](https://github.com/oven-sh/bun/issues/1), [#2](https://github.com/oven-sh/bun/issues/2)", [1, 2]],
   ["Fixes #1\r\nFixes #2", [1, 2]],
+  ["```bun test``` prints nothing.\nFixes #2", [2]],
+  ["~~Fixes #1~~ Fixes #2", [2]],
 ] as [string, (number | string)[]][])("finds %j", (body, expected) => {
   expect(refs(body)).toEqual(expected);
 });
@@ -99,6 +101,15 @@ test.each([
   "Flagged by a review comment on closed #35351 (duplicate of merged #35344).",
   "The same helper as the open `rm` fix #37521.",
   "This fix #1 is small.",
+  // another reference is the subject
+  "#100 supersedes #1",
+  "PR #100 fixes #1.",
+  "#100 and #101 fix #1",
+  // an infinitive says nothing about what the PR does
+  "I was unable to fix #1 here.",
+  "Decided not to close #1.",
+  "How to fix #1: run the test twice.",
+  "Changes the parser to fix #1 and #2.",
   // the number is part of a longer word
   "This supersedes #33130's right-sized-copy optimisation.",
   "Fixes #1abc",
@@ -115,6 +126,8 @@ test.each([
   "<!-- Fixes #1 -->",
   "<!-- Fixes #1",
   "> Fixes #1",
+  "~~Fixes #1~~",
+  "~~~ `sh`\nFixes #1\n~~~",
   // a list does not cross a paragraph break or continue without a separator
   "Closes:\n\n#1",
   // other GitHub URLs
@@ -142,7 +155,6 @@ test.each([
   ["Fixes #1\n```\nCloses #2\n```\nCloses #3", [1, 3]],
   ["Fix #1, #2", [1, 2]],
   ["- Fix #1", [1]],
-  ["Changes the parser to fix #1 and #2.", [1, 2]],
   ["This will fix #1.", [1]],
   ["Adds the flag and fixes #1.", [1]],
 ] as [string, number[]][])("stops at the right place in %j", (body, expected) => {

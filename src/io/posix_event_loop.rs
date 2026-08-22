@@ -1456,9 +1456,13 @@ impl Pollable {
     }
 }
 
-// `current_ready_poll`/`ready_polls` only exist on the POSIX uws loop layout;
-// on Windows the libuv loop drives readiness, so this entry point is never
-// linked there. Restrict to the platforms where the fields are present.
+// Called by the epoll/kqueue loop's dispatch; on Windows the libuv loop drives
+// readiness and this entry point is never linked.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+type ReadyEvent = bun_sys::linux::epoll_event;
+#[cfg(any(target_os = "macos", target_os = "freebsd"))]
+type ReadyEvent = KQueueEvent;
+
 #[cfg(any(
     target_os = "linux",
     target_os = "android",
@@ -1467,11 +1471,12 @@ impl Pollable {
 ))]
 #[unsafe(no_mangle)]
 /// # Safety
-/// uWS C callback: `loop_` is the live per-thread `us_loop_t`; `tagged_pointer`
-/// was registered via `Pollable::init` in `register_with_fd`.
+/// uWS C callback: `tagged_pointer` was registered via `Pollable::init` in
+/// `register_with_fd`; `event` is the loop's ready-poll entry being dispatched.
 unsafe extern "C" fn Bun__internal_dispatch_ready_poll(
-    loop_: *mut Loop,
+    _loop: *mut Loop,
     tagged_pointer: *mut c_void,
+    event: *const ReadyEvent,
 ) {
     let tag = Pollable::from(tagged_pointer);
 
@@ -1485,14 +1490,10 @@ unsafe extern "C" fn Bun__internal_dispatch_ready_poll(
         return;
     }
 
-    // SAFETY: `loop_` is the live uws loop. Do *not* materialize `&mut *loop_`
-    // here — `on_update` (via `__bun_run_file_poll`) re-enters the loop and conjures
-    // a fresh `&mut Loop` through `EventLoopCtx::platform_event_loop()`; a
-    // protected `&mut Loop` spanning that call would be SB-UB. Take a short-lived
-    // `&*loop_` only to copy the POD event onto the stack (the `BackRef`-style
-    // accessor returns by value), then drop the borrow before dispatching so the
-    // handler is free to form its own `&mut Loop`.
-    let ev = unsafe { &*loop_ }.current_ready_event();
+    // Copied out: the handler may tick the loop, which reuses the array `event`
+    // points into.
+    // SAFETY: points at a live `ready_polls` entry for the duration of this call.
+    let ev = unsafe { *event };
 
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     file_poll.on_kqueue_event(&ev);

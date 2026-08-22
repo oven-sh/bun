@@ -807,6 +807,57 @@ describe("should not hang", () => {
   }
 });
 
+// Two children answer at once, so one poll of the event loop collects both
+// stdout pipes. The read handler that runs first calls Bun.build() with an async
+// plugin setup(), which Bun waits for by ticking the event loop from inside that
+// handler, and setup() needs the other child's output: the nested tick has to
+// deliver an event the outer tick already collected - pipe polls are one-shot,
+// so nothing will report it again.
+it("a stdout chunk the loop already collected is delivered while another stdout handler waits in Bun.build()", async () => {
+  const script = /* js */ `
+    const child = 'process.stdout.write("r"); process.stdin.on("data", () => { process.stdout.write("x"); });';
+    const spawn = () => Bun.spawn({ cmd: [process.execPath, "-e", child], stdin: "pipe", stdout: "pipe", stderr: "inherit" });
+    const a = spawn(), b = spawn();
+    const ra = a.stdout.getReader(), rb = b.stdout.getReader();
+    await ra.read();
+    await rb.read();
+    const got = { a: Promise.withResolvers(), b: Promise.withResolvers() };
+    const order = [];
+    const handled = (me, other) => async () => {
+      order.push(me + ":start");
+      got[me].resolve();
+      if (order.length === 1) {
+        // Only the wait for setup() matters; the entrypoint does not exist.
+        await Bun.build({
+          entrypoints: ["./does-not-exist.ts"],
+          plugins: [{
+            name: "waits-for-" + other,
+            async setup() {
+              const lost = await Promise.race([got[other].promise, new Promise(r => setTimeout(r, 3000, true))]);
+              if (lost) { console.log(order.join(" ") + " - " + other + " was never delivered"); process.exit(1); }
+            },
+          }],
+        }).catch(() => {});
+      }
+      order.push(me + ":end");
+    };
+    const done = Promise.all([ra.read().then(handled("a", "b")), rb.read().then(handled("b", "a"))]);
+    a.stdin.write("go"); a.stdin.flush();
+    b.stdin.write("go"); b.stdin.flush();
+    // Stay busy until both children have certainly answered.
+    Bun.sleepSync(200);
+    await done;
+    // Which pipe is dispatched first is up to the kernel.
+    const first = order[0][0];
+    console.log(order.map(s => (s[0] === first ? "1" : "2") + s.slice(1)).join(" "));
+    a.kill(); b.kill();
+  `;
+  await using proc = spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "inherit" });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("1:start 2:start 2:end 1:end\n");
+  expect(exitCode).toBe(0);
+});
+
 describe("unref() + .exited with nothing else ref'd (Windows)", () => {
   // Windows: with only an unref'd uv_process_t left, uv_run() used to skip its
   // body and never dequeue the IOCP exit packet, so these children busy-spun

@@ -82,10 +82,9 @@ struct us_loop_t {
     /* Number of non-fallthrough polls in the loop */
     int num_polls;
 
-    /* Number of ready polls this iteration */
+    /* ready_polls[current_ready_poll .. num_ready_polls) are collected but not
+     * dispatched yet; the cursor is advanced before an entry is dispatched */
     int num_ready_polls;
-
-    /* Current index in list of ready polls */
     int current_ready_poll;
 
     /* Loop's own file descriptor */

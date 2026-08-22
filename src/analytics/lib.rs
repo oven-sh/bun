@@ -297,6 +297,12 @@ pub mod features {
         #[unsafe(export_name = "Bun__Feature__webview_webkit")]
         57 => (webview_webkit, "webview_webkit"),
         58 => (xml_parse, "xml_parse", core = XML_PARSE),
+        /// `bun:ffi` `dlopen()` loaded a library (`process_dlopen` is the Node-API counterpart).
+        59 => (ffi_dlopen, "ffi_dlopen"),
+        /// Set while crashing when the crash is inside a native module, not in Bun.
+        60 => (native_module_crash, "native_module_crash"),
+        /// `bun:ffi` `cc()` compiled C into the process (it has no image a crash could be attributed to).
+        61 => (ffi_cc, "ffi_cc"),
     }
 
     // C++ declares these as `extern "C" size_t Bun__...;` and

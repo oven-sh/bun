@@ -295,7 +295,9 @@ describe.concurrent("fetch-tls", () => {
     // Fixture reports unexpected outcomes on stdout.
     expect(stdout).toStartWith("OK ");
     expect(exitCode).toBe(0);
-  });
+    // The fixture's stalled handshakes wait for the padded 1s idle timer,
+    // which the 4s sweep fires at ~4-8s, so this outlives the 5s default.
+  }, 30_000);
 
   // When checkServerIdentity is provided, the HTTP thread sends an intermediate
   // progress update carrying the server certificate before response headers

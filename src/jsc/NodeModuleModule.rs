@@ -1,6 +1,6 @@
 use crate::{
-    self as jsc, ErrorableString, JSArray, JSGlobalObject, JSValue, JsError, JsResult, StringJsc,
-    Strong, VirtualMachineRef as VirtualMachine,
+    self as jsc, ErrorableString, JSArray, JSGlobalObject, JSValue, JsResult, StringJsc, Strong,
+    VirtualMachineRef as VirtualMachine,
 };
 use bun_ast::Loader;
 use bun_bundler::options::DEFAULT_LOADERS;
@@ -68,7 +68,7 @@ fn find_path(
                 // `OwnedString` releases the +1 from `from_js` on drop.
                 let cur_path = OwnedString::new(BunString::from_js(path, global)?);
 
-                if let Some(found) = find_path_inner(request_bun_str, cur_path.get(), global) {
+                if let Some(found) = find_path_inner(request_bun_str, cur_path.get(), global)? {
                     break 'found Some(found);
                 }
             }
@@ -76,7 +76,7 @@ fn find_path(
             break 'found None;
         }
     } else {
-        find_path_inner(request_bun_str, BunString::static_(b""), global)
+        find_path_inner(request_bun_str, BunString::static_(b""), global)?
     };
 
     if let Some(str) = found.as_mut() {
@@ -90,28 +90,20 @@ fn find_path_inner(
     request: BunString,
     cur_path: BunString,
     global: &JSGlobalObject,
-) -> Option<BunString> {
+) -> JsResult<Option<BunString>> {
     // SAFETY: zero-init is the documented `ErrorableString` "empty" state; the
     // callee fully overwrites it on both ok/err paths.
     let mut errorable: ErrorableString = unsafe { bun_core::ffi::zeroed_unchecked() };
     // `bun_core::String` is `Copy` — passing by value makes no refcount change.
-    match VirtualMachine::resolve_maybe_needs_trailing_slash::<true>(
+    VirtualMachine::resolve_maybe_needs_trailing_slash::<true>(
         &mut errorable,
         global,
         request,
         cur_path,
         None,
         crate::virtual_machine::ResolveMode::RequireResolve,
-    ) {
-        Ok(()) => {}
-        Err(JsError::Thrown) => {
-            // TODO sus — clears the pending exception here.
-            global.clear_exception();
-            return None;
-        }
-        Err(_) => return None,
-    }
-    errorable.unwrap().ok()
+    )?;
+    Ok(errorable.unwrap().ok())
 }
 
 pub fn stat(path: &[u8]) -> i32 {

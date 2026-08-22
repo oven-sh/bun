@@ -383,7 +383,7 @@ impl JunitReporter {
         let dir = FileSystem::instance().top_level_dir;
         for frame in exception.stack.frames() {
             let source_url = frame.source_url.to_utf8();
-            let file = resolve_path::relative(dir, source_url.slice());
+            let file = jsc::ZigStackFrame::relative_source_url(dir, source_url.slice());
             let func = frame.function_name.to_utf8();
             if file.is_empty() && func.slice().is_empty() {
                 continue;
@@ -1577,16 +1577,15 @@ impl CommandLineReporter {
         }
     }
 
-    pub(crate) fn generate_code_coverage<
-        const REPORTERS_TEXT: bool,
-        const REPORTERS_LCOV: bool,
-        const ENABLE_ANSI_COLORS: bool,
-    >(
+    pub(crate) fn generate_code_coverage(
         &mut self,
         vm: &mut VirtualMachine,
         opts: &mut CodeCoverageOptions,
+        reporters_text: bool,
+        reporters_lcov: bool,
+        enable_ansi_colors: bool,
     ) -> crate::Result<()> {
-        if !REPORTERS_TEXT && !REPORTERS_LCOV {
+        if !reporters_text && !reporters_lcov {
             return Ok(());
         }
 
@@ -1610,10 +1609,13 @@ impl CommandLineReporter {
 
         index_sort::sort_slice_by(&mut byte_ranges, coverage::is_less_than_cmp);
 
-        self.print_code_coverage::<REPORTERS_TEXT, REPORTERS_LCOV, ENABLE_ANSI_COLORS>(
+        self.print_code_coverage(
             vm,
             opts,
             &mut byte_ranges,
+            reporters_text,
+            reporters_lcov,
+            enable_ansi_colors,
         )
     }
 
@@ -1668,36 +1670,45 @@ impl CommandLineReporter {
         Some(buffered)
     }
 
-    pub(crate) fn print_code_coverage<
-        const REPORTERS_TEXT: bool,
-        const REPORTERS_LCOV: bool,
-        const ENABLE_ANSI_COLORS: bool,
-    >(
+    pub(crate) fn print_code_coverage(
         &mut self,
         vm: &mut VirtualMachine,
         opts: &mut CodeCoverageOptions,
         byte_ranges: &mut [&mut ByteRangeMapping],
+        reporters_text: bool,
+        reporters_lcov: bool,
+        enable_ansi_colors: bool,
     ) -> crate::Result<()> {
+        // Both spellings are compile-time constants; pick one by the runtime flag.
+        macro_rules! pretty_lit {
+            ($fmt:literal) => {
+                if enable_ansi_colors {
+                    bun_core::pretty_fmt!($fmt, true).as_bytes()
+                } else {
+                    bun_core::pretty_fmt!($fmt, false).as_bytes()
+                }
+            };
+        }
         // `perf::Ctx` ends its span on Drop.
-        let _trace = if REPORTERS_TEXT && REPORTERS_LCOV {
+        let _trace = if reporters_text && reporters_lcov {
             bun::perf::trace("TestCommand.printCodeCoverageLCovAndText")
-        } else if REPORTERS_TEXT {
+        } else if reporters_text {
             bun::perf::trace("TestCommand.printCodeCoverageText")
-        } else if REPORTERS_LCOV {
+        } else if reporters_lcov {
             bun::perf::trace("TestCommand.printCodeCoverageLCov")
         } else {
             // Unreachable by construction.
             unreachable!("No reporters enabled")
         };
 
-        if !REPORTERS_TEXT && !REPORTERS_LCOV {
+        if !reporters_text && !reporters_lcov {
             unreachable!("No reporters enabled");
         }
 
         let relative_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
 
         // --- Text ---
-        let max_filepath_length: usize = if REPORTERS_TEXT {
+        let max_filepath_length: usize = if reporters_text {
             'brk: {
                 let mut len = b"All files".len();
                 for entry in byte_ranges.iter() {
@@ -1734,11 +1745,8 @@ impl CommandLineReporter {
         let base_fraction = opts.fractions;
         let mut failing = false;
 
-        if REPORTERS_TEXT {
-            if console
-                .write_all(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><d>"))
-                .is_err()
-            {
+        if reporters_text {
+            if console.write_all(pretty_lit!("<r><d>")).is_err() {
                 return Ok(());
             }
             if console
@@ -1748,9 +1756,7 @@ impl CommandLineReporter {
                 return Ok(());
             }
             if console
-                .write_all(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>(
-                    "|---------|---------|-------------------<r>\n",
-                ))
+                .write_all(pretty_lit!("|---------|---------|-------------------<r>\n"))
                 .is_err()
             {
                 return Ok(());
@@ -1765,17 +1771,14 @@ impl CommandLineReporter {
                 return Ok(());
             }
             if console
-                .write_all(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>(
-                    " <d>|<r> % Funcs <d>|<r> % Lines <d>|<r> Uncovered Line #s\n",
+                .write_all(pretty_lit!(
+                    " <d>|<r> % Funcs <d>|<r> % Lines <d>|<r> Uncovered Line #s\n"
                 ))
                 .is_err()
             {
                 return Ok(());
             }
-            if console
-                .write_all(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<d>"))
-                .is_err()
-            {
+            if console.write_all(pretty_lit!("<d>")).is_err() {
                 return Ok(());
             }
             if console
@@ -1785,9 +1788,7 @@ impl CommandLineReporter {
                 return Ok(());
             }
             if console
-                .write_all(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>(
-                    "|---------|---------|-------------------<r>\n",
-                ))
+                .write_all(pretty_lit!("|---------|---------|-------------------<r>\n"))
                 .is_err()
             {
                 return Ok(());
@@ -1809,7 +1810,7 @@ impl CommandLineReporter {
         // --- LCOV ---
         let mut lcov_name_buf = PathBuffer::uninit();
         let mut lcov_state: Option<(File, &bun_core::ZStr, /*buffered*/ Vec<u8>)> =
-            if REPORTERS_LCOV {
+            if reporters_lcov {
                 'brk: {
                     // Ensure the directory exists
                     let mut fs = crate::node::fs::NodeFS::default();
@@ -1877,7 +1878,7 @@ impl CommandLineReporter {
         let mut lcov_guard = scopeguard::guard(
             &mut lcov_state,
             |s: &mut Option<(File, &bun_core::ZStr, Vec<u8>)>| {
-                if REPORTERS_LCOV {
+                if reporters_lcov {
                     if let Some((file, name, _)) = s.take() {
                         let _ = file.close(); // close error is non-actionable
                         let _ = bun_sys::unlink(name);
@@ -1912,7 +1913,7 @@ impl CommandLineReporter {
                 continue;
             };
 
-            if REPORTERS_TEXT {
+            if reporters_text {
                 let mut fraction = base_fraction;
                 if coverage::Text::write_format(
                     &report,
@@ -1920,7 +1921,7 @@ impl CommandLineReporter {
                     &mut fraction,
                     relative_dir,
                     console_writer,
-                    ENABLE_ANSI_COLORS,
+                    enable_ansi_colors,
                 )
                 .is_err()
                 {
@@ -1937,7 +1938,7 @@ impl CommandLineReporter {
                 console_writer.extend_from_slice(b"\n");
             }
 
-            if REPORTERS_LCOV {
+            if reporters_lcov {
                 if let Some((_, _, buffered)) = lcov_guard.as_mut() {
                     if coverage::Lcov::write_format(&report, relative_dir, buffered).is_err() {
                         continue;
@@ -1948,7 +1949,7 @@ impl CommandLineReporter {
             drop(report);
         }
 
-        if REPORTERS_TEXT {
+        if reporters_text {
             {
                 if avg_count == 0.0 {
                     avg.functions = 0.0;
@@ -1979,14 +1980,14 @@ impl CommandLineReporter {
                     failing,
                     &mut console,
                     false,
-                    ENABLE_ANSI_COLORS,
+                    enable_ansi_colors,
                 )?;
 
-                console.write_all(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><d> |<r>\n"))?;
+                console.write_all(pretty_lit!("<r><d> |<r>\n"))?;
             }
 
             console.write_all(&console_buffer)?;
-            console.write_all(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><d>"))?;
+            console.write_all(pretty_lit!("<r><d>"))?;
             // Disarm the lcov cleanup guard before the early `Ok(())`; the
             // temp file is left for the OS.
             if console
@@ -1997,9 +1998,7 @@ impl CommandLineReporter {
                 return Ok(());
             }
             if console
-                .write_all(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>(
-                    "|---------|---------|-------------------<r>\n",
-                ))
+                .write_all(pretty_lit!("|---------|---------|-------------------<r>\n"))
                 .is_err()
             {
                 let _ = scopeguard::ScopeGuard::into_inner(lcov_guard);
@@ -2010,7 +2009,7 @@ impl CommandLineReporter {
             Output::flush();
         }
 
-        if REPORTERS_LCOV {
+        if reporters_lcov {
             // `try lcov_writer.flush()` — keep the errdefer guard armed across the
             // write so an error here still closes + unlinks the temp file.
             if let Some((lcov_file, _, buffered)) = &mut **lcov_guard {
@@ -2132,7 +2131,10 @@ impl TestCommand {
         // `exec()` never returns before process exit, so the heap allocation
         // outlives all observers.
         let mut env_loader: Box<DotEnv::Loader> = Box::new(DotEnv::Loader::init());
-        jsc::initialize_with(false, ctx.test_options.isolate);
+        jsc::initialize(jsc::InitializeOptions {
+            short_lived_globals: ctx.test_options.isolate,
+            ..Default::default()
+        });
         bun_http::http_thread::init(&Default::default());
 
         let enable_random = ctx.test_options.randomize;
@@ -2844,30 +2846,17 @@ impl TestCommand {
             pretty_error!("\n");
 
             if coverage_options.enabled && !ran_parallel {
-                // 8-way dispatch over 3 runtime bools.
-                match (
-                    Output::enable_ansi_colors_stderr(),
+                let (text, lcov) = (
                     coverage_options.reporters.text,
                     coverage_options.reporters.lcov,
-                ) {
-                    (true, true, true) => reporter
-                        .generate_code_coverage::<true, true, true>(vm, &mut coverage_options)?,
-                    (true, true, false) => reporter
-                        .generate_code_coverage::<true, false, true>(vm, &mut coverage_options)?,
-                    (true, false, true) => reporter
-                        .generate_code_coverage::<false, true, true>(vm, &mut coverage_options)?,
-                    (true, false, false) => reporter
-                        .generate_code_coverage::<false, false, true>(vm, &mut coverage_options)?,
-                    (false, true, true) => reporter
-                        .generate_code_coverage::<true, true, false>(vm, &mut coverage_options)?,
-                    (false, true, false) => reporter
-                        .generate_code_coverage::<true, false, false>(vm, &mut coverage_options)?,
-                    (false, false, true) => reporter
-                        .generate_code_coverage::<false, true, false>(vm, &mut coverage_options)?,
-                    (false, false, false) => reporter
-                        .generate_code_coverage::<false, false, false>(vm, &mut coverage_options)?,
-                }
-                // Generic param order is <TEXT, LCOV, COLORS>; the match tuple is (colors, text, lcov).
+                );
+                reporter.generate_code_coverage(
+                    vm,
+                    &mut coverage_options,
+                    text,
+                    lcov,
+                    Output::enable_ansi_colors_stderr(),
+                )?;
             }
 
             // `Summary` is `Copy`; take a value snapshot so the `&mut` from

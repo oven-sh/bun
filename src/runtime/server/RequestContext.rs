@@ -179,6 +179,13 @@ pub struct RequestContext<
     pub(crate) defer_deinit_until_callback_completes: Cell<Option<DeferDeinitFlag>>,
 
     pub(crate) additional_on_abort: JsCell<Option<AdditionalOnAbortCallback>>,
+
+    /// The `NativePromiseContext` cell whose claim (one ref on this context)
+    /// is still outstanding, or `ZERO`. Not visited by GC: the promise
+    /// reaction keeps the cell alive, and the cell's destructor clears this
+    /// field before the value can dangle. `on_abort` reclaims the ref through
+    /// it so an aborted request is torn down without waiting for GC.
+    promise_cell: Cell<JSValue>,
     // TODO: support builtin compression
 }
 
@@ -668,11 +675,12 @@ where
 
         let arguments = callframe.arguments_as_array::<2>();
         let Some(ctx) = NativePromiseContext::take::<Self>(arguments[1]) else {
-            // The cell's destructor already released the ref (the Promise
-            // was collected before a prior microtask turn reached us).
+            // A termination path (abort, end, upgrade) reclaimed the cell's
+            // claim; the context may already be gone.
             return Ok(JSValue::UNDEFINED);
         };
         let ctx = RequestContextRef::adopt(ctx.as_ptr());
+        ctx.ctx().promise_cell.set(JSValue::ZERO);
 
         let result = arguments[0];
         result.ensure_still_alive();
@@ -917,16 +925,49 @@ where
         self.ref_count.set(ref_count + 1);
     }
 
+    /// Takes one ref as the cell's claim on this context and remembers the
+    /// cell in `promise_cell`. The settle reactions (`take()` + a field
+    /// clear), `on_abort`, or the cell's destructor release the claim.
+    fn create_promise_cell(&self, global: &JSGlobalObject) -> JSValue {
+        debug_assert!(self.promise_cell.get().is_empty());
+        self.ref_();
+        let cell = NativePromiseContext::create(global, self.as_ctx_ptr());
+        self.promise_cell.set(cell);
+        cell
+    }
+
+    /// Called from the cell's destructor (GC sweep) when the claim was never
+    /// taken: the deref is deferred (or skipped at VM teardown), but the field
+    /// must stop pointing at the dying cell now. A plain field write, safe
+    /// during sweep.
+    pub(crate) fn promise_cell_collected(&self) {
+        self.promise_cell.set(JSValue::ZERO);
+    }
+
+    /// Once the response is detached or ended, the promise this context
+    /// subscribed to can no longer do anything for the request. Reclaim the
+    /// cell's claim so the context is torn down now instead of when GC
+    /// collects the promise; the settle reactions then see a null `take()`
+    /// and no-op. A no-op when no claim is outstanding (the common case on
+    /// paths reached from a settle reaction, which already cleared the field).
+    pub(crate) fn reclaim_promise_cell(&self) {
+        let cell = self.promise_cell.replace(JSValue::ZERO);
+        if !cell.is_empty() && NativePromiseContext::take::<Self>(cell).is_some() {
+            self.deref();
+        }
+    }
+
     pub(crate) fn on_reject(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         ctx_log!("onReject");
 
         let arguments = callframe.arguments_as_array::<2>();
         let Some(ctx) = NativePromiseContext::take::<Self>(arguments[1]) else {
-            // The cell's destructor already released the ref (the Promise
-            // was collected before a prior microtask turn reached us).
+            // A termination path (abort, end, upgrade) reclaimed the cell's
+            // claim; the context may already be gone.
             return Ok(JSValue::UNDEFINED);
         };
         let ctx = RequestContextRef::adopt(ctx.as_ptr());
+        ctx.ctx().promise_cell.set(JSValue::ZERO);
 
         let err = arguments[0];
         // Pass the rejection reason through verbatim (including `null` and
@@ -1138,6 +1179,7 @@ where
         ctx_log!("end");
         if let Some(resp) = self.resp.get() {
             self.detach_response();
+            self.reclaim_promise_cell();
             // SAFETY: FFI handle
             resp.end(data, close_connection);
             // end_request_streaming_and_drain() must run after the last
@@ -1152,6 +1194,7 @@ where
         ctx_log!("endStream");
         if let Some(resp) = self.resp.get() {
             self.detach_response();
+            self.reclaim_promise_cell();
             // This will send a terminating 0\r\n\r\n chunk to the client
             // We only want to do that if they're still expecting a body
             // We cannot call this function if the Content-Length header was previously set
@@ -1193,6 +1236,7 @@ where
             self.flags.set_is_waiting_for_request_body(false);
             self.flags.set_has_abort_handler(false);
             self.request_body_buf.set(Vec::new());
+            self.reclaim_promise_cell();
             self.end_request_streaming_and_drain();
             self.deref();
         }
@@ -1202,6 +1246,10 @@ where
         ctx_log!("endWithoutBody");
         if let Some(resp) = self.resp.get() {
             self.detach_response();
+            // uWS markDone() clears onAborted on end, so on_abort can never
+            // run for this request; this is the last chance to reclaim an
+            // outstanding claim (e.g. a 413 while the handler promise parks).
+            self.reclaim_promise_cell();
             // SAFETY: FFI handle
             resp.end_without_body(close_connection);
             // This end can run uncorked (e.g. render_production_error from a
@@ -1221,6 +1269,7 @@ where
     pub(crate) fn force_close(&self) {
         if let Some(resp) = self.resp.get() {
             self.detach_response();
+            self.reclaim_promise_cell();
             // SAFETY: FFI handle
             resp.force_close();
             // end_request_streaming_and_drain() must run after the last
@@ -1314,6 +1363,7 @@ where
                 pathname: Cell::new(BunString::empty()),
                 response_buf_owned: JsCell::new(Vec::new()),
                 additional_on_abort: JsCell::new(None),
+                promise_cell: Cell::new(JSValue::ZERO),
             });
         }
 
@@ -1352,6 +1402,9 @@ where
         let server = this.server();
         let vm = server.vm();
         let global_this = server.global_this();
+        // Entered for the abort listeners below, and (dropped last) for the
+        // drains below and in the release of `_ref`.
+        let _entered = vm.enter_event_loop_scope_without_checkpoint();
         let _ref = RequestContextRef::adopt(this.as_ctx_ptr());
         // This is a task in the event loop.
         // If we called into JavaScript, we must drain the microtask queue.
@@ -1392,6 +1445,12 @@ where
                         .cast::<ResponseStream<SSL_ENABLED, HTTP3>>(),
                 );
             }
+            // End request streaming here, not in deinit: a `Used` body
+            // (textStream) can only be rejected through
+            // request_body_readable_stream_ref, and finalize_without_deinit
+            // drops that ref without erroring it. any_js_calls is already set.
+            let _ = this.end_request_streaming();
+            this.reclaim_promise_cell();
             return;
         }
 
@@ -1421,6 +1480,12 @@ where
                 }
             }
         }
+
+        // Reclaim only after the block above: the claim's ref must still
+        // count in `is_dead_request`, so a parked request-body read goes
+        // through `end_request_streaming` and rejects instead of being
+        // silently dropped by `finalize_without_deinit`.
+        this.reclaim_promise_cell();
     }
 
     // This function may be called multiple times
@@ -2050,7 +2115,7 @@ where
             );
             this.sink.set(None);
             Self::destroy_sink(response_stream_ptr);
-            stream.done(global_this);
+            stream.done();
             this.response_body_readable_stream_ref
                 .with_mut(|s| s.deinit());
             this.end_stream(this.should_close_connection());
@@ -2111,8 +2176,7 @@ where
                             global: std::ptr::from_ref(global_this),
                             ..Default::default()
                         });
-                        this.ref_();
-                        let cell = NativePromiseContext::create(global_this, this.as_ctx_ptr());
+                        let cell = this.create_promise_cell(global_this);
                         effective_result.then_with_value(
                             global_this,
                             cell,
@@ -2129,7 +2193,7 @@ where
                         // NOTE: cleanup runs after handle_resolve_stream:
                         // body first, then the deferred cleanup.
                         this.handle_resolve_stream();
-                        stream.done(global_this);
+                        stream.done();
                         readable_ref.deinit();
                     }
                     jsc::PromiseResult::Rejected(err) => {
@@ -2576,6 +2640,12 @@ where
     //
     // - If you return a Promise, we drain the microtask queue once
     // - If you return a streaming Response, we drain the microtask queue (possibly the 2nd time this task!)
+    //
+    // Like a task, the handler and these drains run with the event loop entered
+    // (the dispatchers hold `enter_event_loop_scope_without_checkpoint`), so a
+    // callback the handler dispatches synchronously through `enter()`/`exit()`
+    // (`server.upgrade()` -> `open()`, `ws.close()` -> `close()`) does not
+    // drain in the middle of the handler.
     pub(crate) fn on_response(
         &self,
         this: &ThisServer,
@@ -2638,8 +2708,7 @@ where
             // If we immediately have the value available, we can skip the extra event loop tick
             match promise.unwrap(vm.global().vm(), jsc::PromiseUnwrapMode::MarkHandled) {
                 jsc::PromiseResult::Pending => {
-                    ctx.ref_();
-                    let cell = NativePromiseContext::create(this.global_this(), ctx.as_ctx_ptr());
+                    let cell = ctx.create_promise_cell(this.global_this());
                     response_value.then_with_value(
                         this.global_this(),
                         cell,
@@ -2726,8 +2795,7 @@ where
                     stream_log!("handleResolveStream: waiting for pending flush");
                     debug_assert!(self.server.get().is_some());
                     let global_this = self.server().global_this();
-                    self.ref_();
-                    let cell = NativePromiseContext::create(global_this, self.as_ctx_ptr());
+                    let cell = self.create_promise_cell(global_this);
                     // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
                     jsc::JSPromise::opaque_ref(flush).to_js().then_with_value(
                         global_this,
@@ -2780,7 +2848,7 @@ where
                 stream.value.ensure_still_alive();
                 resp.detach_readable_stream(global_this);
 
-                stream.done(global_this);
+                stream.done();
             }
 
             *resp.get_body_value() = Body::Value::Used;
@@ -2822,6 +2890,7 @@ where
             return Ok(JSValue::UNDEFINED);
         };
         let req = RequestContextRef::adopt(req.as_ptr());
+        req.ctx().promise_cell.set(JSValue::ZERO);
         req.ctx().handle_resolve_stream();
         Ok(JSValue::UNDEFINED)
     }
@@ -2837,6 +2906,7 @@ where
         };
         let err = args[0];
         let req = RequestContextRef::adopt(req.as_ptr());
+        req.ctx().promise_cell.set(JSValue::ZERO);
 
         req.ctx().handle_reject_stream(global_this, err);
         Ok(JSValue::UNDEFINED)
@@ -2886,7 +2956,7 @@ where
             if let Some(stream) = resp.get_body_readable_stream() {
                 stream.value.ensure_still_alive();
                 resp.detach_readable_stream(global_this);
-                stream.done(global_this);
+                stream.done();
             }
 
             let body_value = resp.get_body_value();
@@ -3082,8 +3152,7 @@ where
                         readable_stream::Source::Blob(_)
                         | readable_stream::Source::File(_)
                         // These are the common scenario:
-                        | readable_stream::Source::JavaScript
-                        | readable_stream::Source::Direct => {
+                        | readable_stream::Source::JavaScript => {
                             if let Some(resp) = this.resp.get() {
                                 let mut pair = StreamPair { stream, this };
                                 resp.run_corked_with_type(Self::do_render_stream, &raw mut pair);
@@ -3103,7 +3172,7 @@ where
                             debug_assert!(this.byte_stream.get().is_none());
                             if this.resp.get().is_none() {
                                 // we don't have a response, so we can discard the stream
-                                stream.done(global_this);
+                                stream.done();
                                 this.response_body_readable_stream_ref
                                     .with_mut(|s| s.deinit());
                                 return;
@@ -3587,8 +3656,7 @@ where
         match promise.unwrap(vm.global().vm(), jsc::PromiseUnwrapMode::MarkHandled) {
             jsc::PromiseResult::Pending => {
                 ctx.flags.set_is_error_promise_pending(true);
-                ctx.ref_();
-                let cell = NativePromiseContext::create(server.global_this(), ctx.as_ctx_ptr());
+                let cell = ctx.create_promise_cell(server.global_this());
                 promise_js.then_with_value(
                     server.global_this(),
                     cell,

@@ -343,6 +343,24 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       // This tests the fix for napi_reference_unref underflow protection
       await checkSameOutput("test_ref_unref_underflow", []);
     });
+    it("napi_create_reference accepts primitives when the module declares NAPI_VERSION >= 10", async () => {
+      // Node.js keys the primitive-reference gate on the module's declared
+      // Node-API version: >= 10 may reference any napi_valuetype, < 10 only
+      // object/function/symbol. A value that cannot be held weakly is released
+      // once the count reaches zero (heldAtZero=0) and a later ref stays at 0;
+      // weakly held values survive (the test still holds them) and ref again to
+      // 1. checkSameOutput asserts parity with Node for both addon builds.
+      const result = await checkSameOutput("test_create_reference_primitive_by_version", []);
+      const notWeakable = ["undefined", "null", "boolean", "number", "string", "bigint"];
+      const weakable = ["symbol", "registered symbol", "object", "function"];
+      // napi_ok = 0, napi_invalid_arg = 1
+      expect(result.split(/\r?\n/)).toEqual([
+        ...notWeakable.map(name => `declared=10 header=10 ${name}: status=0 roundTrip=1 heldAtZero=0 reref=0`),
+        ...weakable.map(name => `declared=10 header=10 ${name}: status=0 roundTrip=1 heldAtZero=1 reref=1`),
+        ...notWeakable.map(name => `declared=8 header=8 ${name}: status=1`),
+        ...weakable.map(name => `declared=8 header=8 ${name}: status=0 roundTrip=1 heldAtZero=1 reref=1`),
+      ]);
+    });
   });
 
   describe("napi_get_version / node_api_create_external_string_*", () => {
@@ -411,6 +429,60 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(result).toContain("status=10");
       expect(result).toContain("PASS: caller retains ownership on failure with pending exception");
       expect(result).not.toContain("FAIL");
+    });
+  });
+
+  // The finalizer of an external buffer belongs to the env that created it, and that env's
+  // teardown frees the bytes, so the bytes must not be transferred to another thread.
+  describe("external buffers are untransferable", () => {
+    it("every transfer entry point throws DataCloneError and leaves the buffer intact", async () => {
+      const result = await checkSameOutput("test_external_buffer_untransferable", []);
+      const expected = (kind: string) =>
+        [
+          `${kind}: isMarkedAsUntransferable(created)=${kind === "arraybuffer"} isMarkedAsUntransferable(arrayBuffer)=true ownKeys=0`,
+          `${kind}: structuredClone: DataCloneError code=25`,
+          `${kind}: MessagePort.postMessage: DataCloneError code=25`,
+          `${kind}: new Worker transferList: DataCloneError code=25`,
+          `${kind}: structuredClone after a plain ArrayBuffer: DataCloneError code=25`,
+          `${kind}: byteLength=8 plain.byteLength=2`,
+          `${kind}: copy=[1,2,3,4,5,6,7,8] byteLength=8`,
+        ].join("\n");
+      const expectedEmpty = (kind: string) =>
+        [
+          `empty ${kind}: isMarkedAsUntransferable(arrayBuffer)=true`,
+          `empty ${kind}: structuredClone: DataCloneError code=25`,
+        ].join("\n");
+      expect(result).toBe(
+        [
+          expected("arraybuffer"),
+          expected("buffer"),
+          expectedEmpty("arraybuffer"),
+          expectedEmpty("buffer"),
+          'stats: {"finalized":0,"finalizedOffThread":0}',
+        ].join("\n"),
+      );
+    });
+
+    it("a worker's buffers reach the parent as copies and are finalized by the worker's env teardown", async () => {
+      const result = await checkSameOutput("test_external_buffer_worker_exit", []);
+      const message = JSON.stringify({
+        transfers: {
+          arraybuffer: "DataCloneError code=25",
+          arraybufferByteLength: 4,
+          buffer: "DataCloneError code=25",
+          bufferByteLength: 4,
+        },
+        copies: { arraybuffer: [1, 2, 3, 4], buffer: [1, 2, 3, 4] },
+        stats: { finalized: 0, finalizedOffThread: 0 },
+      });
+      expect(result).toBe(
+        [
+          "worker exited with 0",
+          `messages: [${message}]`,
+          'stats after exit: {"finalized":2,"finalizedOffThread":0}',
+          "resolved to undefined",
+        ].join("\n"),
+      );
     });
   });
 
@@ -658,6 +730,60 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       const result = await checkSameOutput("test_threadsafe_function_call_js_throws", []);
       expect(result).toContain("uncaughtException 3 call_js error 3");
       expect(result).toContain("done 3");
+    });
+
+    // Items still queued when the function stops being dispatched. Node's
+    // process.exit() leaves them alone; an addon's call_js is usually written
+    // for a live env and aborts when handed a null one at exit (the finalizer
+    // is not printed: bun runs it at exit, node does not).
+    it("drops the queued items at process.exit()", async () => {
+      const result = await checkSameOutput("test_threadsafe_function_queued_items_at_process_exit", []);
+      expect(result).toBe("exiting with 3 items queued");
+    });
+
+    it("does not re-enter call_js when its callback calls process.exit()", async () => {
+      const result = await checkSameOutput("test_threadsafe_function_process_exit_inside_callback", []);
+      expect(result).toBe("call_js: item 1, env live, js_callback set");
+    });
+
+    // A worker's env really goes away while the addon's threads live on, so
+    // each item goes back to call_js the normal way, with the live env (calling
+    // into JS is refused: napi_cannot_run_js, 23, as this addon is built with
+    // NAPI_EXPERIMENTAL), and then the finalizer runs. Node does the same when
+    // its env cleanup turns the loop a last time.
+    it.each([
+      ["exit", 0],
+      ["terminate", 1],
+    ])("delivers the queued items with the live env when the creating worker is gone (%s)", async (how, code) => {
+      const result = await checkSameOutput(`test_threadsafe_function_queued_items_at_worker_${how}`, []);
+      // printf ends its lines with \r\n on Windows.
+      expect(result.replaceAll("\r\n", "\n")).toBe(
+        [
+          ...[1, 2, 3].flatMap(item => [
+            `call_js: item ${item}, env live, js_callback set`,
+            `call_js: item ${item}, call_function 23`,
+          ]),
+          "finalize: env live",
+          `worker exited with ${code}`,
+          "resolved to undefined",
+        ].join("\n"),
+      );
+    });
+
+    // After napi_tsfn_abort nothing queued runs any more: each item goes back
+    // to call_js with a null env and js_callback (the documented "free this"
+    // signal), then the function finalizes.
+    it("hands the queued items back with a null env after abort instead of running them", async () => {
+      const result = await checkSameOutput("test_threadsafe_function_abort_hands_queued_items_back", []);
+      expect(result.replaceAll("\r\n", "\n")).toBe(
+        [
+          "abort: 0",
+          ...[1, 2, 3].map(item => `call_js: item ${item}, env null, js_callback null`),
+          "finalize: env live",
+          "finalized: true",
+          "resolved to undefined",
+        ].join("\n"),
+      );
     });
 
     // An addon's own threads outlive the worker that created the threadsafe

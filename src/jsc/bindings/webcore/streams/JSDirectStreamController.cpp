@@ -85,17 +85,12 @@ void JSDirectStreamController::armEndOfTickFlush(JSGlobalObject* globalObject)
 
 Structure* JSDirectStreamController::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 GCClient::IsoSubspace* JSDirectStreamController::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSDirectStreamController, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForDirectStreamController.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForDirectStreamController = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForDirectStreamController.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForDirectStreamController = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSDirectStreamController, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForDirectStreamController, m_subspaceForDirectStreamController));
 }
 
 DEFINE_VISIT_CHILDREN(JSDirectStreamController);
@@ -869,15 +864,15 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectEndOfTickFlush, (JSGlobalOb
         return JSValue::encode(jsUndefined());
     // onFlush may throw (e.g. a read request's chunkSteps threw). This is a boundary:
     // convert the abrupt completion into the direct controller's error action so the
-    // stream errors instead of surfacing as an uncaught nextTick exception.
+    // stream errors instead of surfacing as an uncaught nextTick exception. If erroring
+    // the stream itself throws, that is left for the tick runner to report.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     controller->onFlush(globalObject);
     if (scope.exception()) [[unlikely]] {
         JSC::JSValue error = takeAbruptCompletion(globalObject, scope);
-        if (!error)
-            return JSValue::encode(jsUndefined());
+        RETURN_IF_EXCEPTION(scope, {}); // termination is left pending
         controller->handleError(globalObject, error);
-        scope.clearExceptionExceptTermination();
+        RETURN_IF_EXCEPTION(scope, {});
     }
     return JSValue::encode(jsUndefined());
 }

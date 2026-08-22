@@ -32,6 +32,7 @@
 
 #include "ContextDestructionObserver.h"
 #include <variant>
+#include <wtf/Lock.h>
 #include <wtf/RefCounted.h>
 #include <wtf/text/WTFString.h>
 #include "blob.h"
@@ -77,6 +78,15 @@ public:
     size_t count() const { return m_items.size(); }
     size_t memoryCost() const;
 
+    template<typename Visitor> void visitWrappers(Visitor& visitor)
+    {
+        Locker locker { m_itemsLock };
+        for (auto& item : m_items) {
+            if (auto* blob = std::get_if<RefPtr<Blob>>(&item.data))
+                (*blob)->visitWrapper(visitor);
+        }
+    }
+
     String toURLEncodedString();
 
     class Iterator {
@@ -97,6 +107,8 @@ private:
     void set(const String& name, Item&&);
 
     Vector<Item> m_items;
+    // Guards m_items against concurrent iteration from visitWrappers (GC thread).
+    Lock m_itemsLock;
 };
 
 } // namespace WebCore

@@ -452,20 +452,35 @@ function makeTraceState(raw: string) {
   return new TraceState(raw);
 }
 
-export default {
+// ── Bun.otel.span / wrap / set ────────────────────────────────────────────
+//
+// All native: `span` and the functions `wrap` returns are JSTracedFunctions
+// (a JIT thunk runs JSTelemetryTracer.cpp's enter/leave hooks around a direct
+// call), and `set` writes to the active span without a Span object.
+const span = $cpp("JSTelemetryTracer.cpp", "createTelemetrySpanFunction");
+const wrapFunction = $newCppFunction("JSTelemetryTracer.cpp", "jsTelemetryOtelWrap", 2);
+const set = $newCppFunction("JSTelemetryTracer.cpp", "jsTelemetryOtelSet", 2);
+
+/** Run `fn` with `span` (a Span, SpanContext-like object, or api Context) active. */
+function withActive(spanOrContext: any, fn: Function, thisArg?: unknown, ...args: any[]) {
+  if (spanOrContext && typeof spanOrContext.getValue === "function") {
+    return runWithContext(spanOrContext, fn, thisArg, args);
+  }
+  const span = toNativeSpan(spanOrContext);
+  // No span: run with no active span (like ROOT_CONTEXT), keeping ALS stores.
+  if (span === undefined) return runWithContext(ROOT_CONTEXT, fn, thisArg, args);
+  return withContext(span, fn, thisArg, ...args);
+}
+
+/** `Bun.otel`. */
+const bunOtel = {
   start,
+  span,
+  wrap: wrapFunction,
+  set,
   tracer: getTracer,
   activeSpan: nativeActiveSpan,
-  /** Run `fn` with `span` (a Span, SpanContext-like object, or api Context) active. */
-  with(spanOrContext: any, fn: Function, thisArg?: unknown, ...args: any[]) {
-    if (spanOrContext && typeof spanOrContext.getValue === "function") {
-      return runWithContext(spanOrContext, fn, thisArg, args);
-    }
-    const span = toNativeSpan(spanOrContext);
-    // No span: run with no active span (like ROOT_CONTEXT), keeping ALS stores.
-    if (span === undefined) return runWithContext(ROOT_CONTEXT, fn, thisArg, args);
-    return withContext(span, fn, thisArg, ...args);
-  },
+  with: withActive,
   forceFlush: () => nativeForceFlush(),
   shutdown,
   stats: nativeStats,
@@ -473,7 +488,6 @@ export default {
   get enabled() {
     return nativeIsEnabled();
   },
-  installGlobal,
   // api-compatible building blocks, for manual wiring
   // (`trace.setGlobalTracerProvider(Bun.otel.tracerProvider)` etc.)
   tracerProvider,
@@ -482,7 +496,16 @@ export default {
   ROOT_CONTEXT,
   SpanKind,
   SpanStatusCode,
-  // internal, for node:http, JSTelemetrySpan.cpp and JSTelemetryTracer.cpp
+  [Symbol.for("nodejs.util.inspect.custom")]() {
+    return `Bun.otel { enabled: ${nativeIsEnabled()} }`;
+  },
+};
+
+// The module's exports: `Bun.otel` plus helpers for node:http,
+// JSTelemetrySpan.cpp and JSTelemetryTracer.cpp (not user-reachable).
+export default {
+  bunOtel,
+  installGlobal,
   startClientSpan,
   propagationHeaders,
   unpackContext,
@@ -490,7 +513,4 @@ export default {
   makeTraceState,
   baggageHeaderFromExtras,
   TraceState,
-  [Symbol.for("nodejs.util.inspect.custom")]() {
-    return `Bun.otel { enabled: ${nativeIsEnabled()} }`;
-  },
 };

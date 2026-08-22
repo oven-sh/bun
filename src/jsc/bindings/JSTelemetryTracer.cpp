@@ -14,6 +14,8 @@
 #include <JavaScriptCore/FrameTracers.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/JSPromise.h>
+#include <JavaScriptCore/JSTracedFunction.h>
 
 namespace Bun {
 using namespace JSC;
@@ -177,7 +179,7 @@ static JSTelemetrySpan* tracerStartSpan(Zig::GlobalObject* globalObject, JSTelem
 
     TelemetrySpanStub stub;
     Bun__Telemetry__stubStart(globalObject, &stub, parentCell ? &parentCell->m_stub : nullptr, telemetryTimeInputToNs(startTime));
-    auto* span = JSTelemetrySpan::create(vm, globalObject, stub, tracer->m_scope, telemetryApiKind(kind), name, 0);
+    auto* span = JSTelemetrySpan::create(vm, globalObject, stub, tracer->m_scope, telemetryApiKind(globalObject, kind), name, 0);
     inheritPropagation(vm, globalObject, span, 0, parentCell);
 
     if (attributes.isObject()) {
@@ -296,6 +298,177 @@ JSTelemetryTracer* JSTelemetryTracer::create(VM& vm, Zig::GlobalObject* globalOb
     return tracer;
 }
 
+// ── Bun.otel.span / Bun.otel.wrap / Bun.otel.set ─────────────────────────
+//
+// `Bun.otel.span` and the functions `Bun.otel.wrap` returns are
+// JSTracedFunctions: a JIT thunk calls tracedEnter, then the user's function
+// directly (a JS→JS call, no interpreter re-entry), then tracedLeave — or
+// tracedUnwind if it threw. So a traced call costs the span and nothing else:
+// no options object, closure, or promise chain is allocated.
+
+extern "C" uint64_t Bun__Telemetry__activeNativeHandle(Zig::GlobalObject*);
+
+// enter: create the span (attributes from `span(name, {...}, fn)`), make it
+// active, and hand it to the thunk (and, for span(), to `fn`).
+static EncodedJSValue tracedEnter(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame, JSTracedFunction* traced)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSString* name;
+    JSValue attributes = jsUndefined();
+    if (traced->shape() == JSTracedFunction::Shape::Wrap)
+        name = asString(traced->data());
+    else {
+        // span(name, attributes?, fn?)
+        name = callFrame->argument(0).toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        JSValue second = callFrame->argument(1);
+        if (!second.isCallable())
+            attributes = second;
+        JSValue last = callFrame->argumentCount() ? callFrame->uncheckedArgument(callFrame->argumentCount() - 1) : jsUndefined();
+        if (callFrame->argumentCount() >= 2 && !last.isUndefined() && !last.isCallable()) {
+            if (callFrame->argumentCount() > 2 || !last.isObject())
+                return throwVMTypeError(globalObject, scope, "Bun.otel.span: the last argument must be a function"_s);
+        }
+    }
+    auto* span = telemetryCreateSpan(globalObject, Bun__Telemetry__userScope(), 0, name);
+    if (attributes.isObject()) {
+        telemetrySpanSetAttributes(globalObject, span, attributes);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    JSValue prev = JSValue::decode(Bun__Telemetry__enterWithExtras(globalObject, JSValue::encode(span), encodedJSValue()));
+    span->field(JSTelemetrySpan::Field::Restore).set(vm, span, prev ? prev : jsUndefined());
+    return JSValue::encode(span);
+}
+
+// leave: `fn` returned. Restore the context; end the span now, or when the
+// promise it returned settles.
+static EncodedJSValue tracedLeave(JSGlobalObject* lexicalGlobalObject, JSTracedFunction*, EncodedJSValue spanValue, EncodedJSValue resultValue)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto* span = toTelemetrySpan(JSValue::decode(spanValue));
+    if (!span)
+        return resultValue;
+    telemetryExitSpan(globalObject, span);
+    JSValue result = JSValue::decode(resultValue);
+    if (auto* promise = result.isCell() ? dynamicDowncast<JSPromise>(result.asCell()) : nullptr) {
+        if (promise->status() == JSPromise::Status::Pending) {
+            promise->addSettlementObserver(globalObject->vm(), span);
+            return resultValue;
+        }
+        if (promise->status() == JSPromise::Status::Rejected)
+            telemetryFailSpanNoJS(globalObject, span, promise->result());
+    }
+    telemetryEndSpan(globalObject, span, 0);
+    return resultValue;
+}
+
+// unwind: `fn` threw (called while the exception unwinds through the thunk
+// frame; runs no JS).
+static void tracedUnwind(JSGlobalObject* lexicalGlobalObject, JSTracedFunction*, JSValue spanValue, JSC::Exception* exception)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto* span = toTelemetrySpan(spanValue);
+    if (!span)
+        return;
+    telemetryExitSpan(globalObject, span);
+    if (exception && !globalObject->vm().isTerminationException(exception))
+        telemetryFailSpanNoJS(globalObject, span, exception->value());
+    telemetryEndSpan(globalObject, span, 0);
+}
+
+// settled: the promise a traced call returned has settled.
+static void tracedSettled(JSGlobalObject* lexicalGlobalObject, JSValue spanValue, bool fulfilled, JSValue result)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto* span = toTelemetrySpan(spanValue);
+    if (!span)
+        return;
+    if (!fulfilled)
+        telemetryFailSpanNoJS(globalObject, span, result);
+    telemetryEndSpan(globalObject, span, 0);
+}
+
+static void ensureTracedFunctionHooks(VM& vm)
+{
+    auto& hooks = vm.tracedFunctionHooks();
+    if (hooks.enter)
+        return;
+    hooks.enter = tracedEnter;
+    hooks.leave = tracedLeave;
+    hooks.unwind = tracedUnwind;
+    hooks.settled = tracedSettled;
+}
+
+// `Bun.otel.span` itself ($cpp from internal/telemetry.ts).
+JSValue createTelemetrySpanFunction(Zig::GlobalObject* globalObject)
+{
+    auto& vm = globalObject->vm();
+    ensureTracedFunctionHooks(vm);
+    return JSTracedFunction::create(vm, globalObject, JSTracedFunction::Shape::CallLast, nullptr, jsUndefined(), "span"_s, 3);
+}
+
+// Bun.otel.wrap(name, fn) — or wrap(fn), named after the function.
+JSC_DEFINE_HOST_FUNCTION(jsTelemetryOtelWrap, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue nameValue = callFrame->argument(0), fn = callFrame->argument(1);
+    if (nameValue.isCallable()) {
+        fn = nameValue;
+        nameValue = jsUndefined();
+    }
+    if (!fn.isCallable()) [[unlikely]]
+        return throwVMTypeError(globalObject, scope, "Bun.otel.wrap: fn must be a function"_s);
+    JSObject* target = fn.getObject();
+    JSValue targetName = target->get(globalObject, vm.propertyNames->name);
+    RETURN_IF_EXCEPTION(scope, {});
+    WTF::String fnName = targetName.isString() ? asString(targetName)->tryGetValue() : WTF::String();
+    JSString* spanName = nameValue.isUndefined() ? nullptr : nameValue.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!spanName || !spanName->length()) {
+        if (fnName.isEmpty())
+            return throwVMTypeError(globalObject, scope, "Bun.otel.wrap: a span name is required when the function is anonymous"_s);
+        spanName = asString(targetName);
+    }
+    JSValue lengthValue = target->get(globalObject, vm.propertyNames->length);
+    RETURN_IF_EXCEPTION(scope, {});
+    unsigned length = lengthValue.isNumber() && lengthValue.asNumber() > 0 ? static_cast<unsigned>(lengthValue.asNumber()) : 0;
+    ensureTracedFunctionHooks(vm);
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSTracedFunction::create(vm, globalObject, JSTracedFunction::Shape::Wrap, target, spanName, fnName.isEmpty() ? spanName->tryGetValue() : fnName, length)));
+}
+
+// Bun.otel.set(key, value) / set({...attributes}) on the active span; false if there is none.
+JSC_DEFINE_HOST_FUNCTION(jsTelemetryOtelSet, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue keyOrAttributes = callFrame->argument(0), value = callFrame->argument(1);
+    auto active = TelemetryContextSlot::current(globalObject);
+    if (!active.header)
+        return JSValue::encode(jsBoolean(false));
+    if (uint64_t handle = active.poolHandle(); handle && keyOrAttributes.isString()) {
+        // A request span and one attribute: straight into the slot, no Span object.
+        if (!value.isUndefinedOrNull())
+            telemetryNativeSetAttribute(globalObject, handle, asString(keyOrAttributes), value);
+        return JSValue::encode(jsBoolean(true));
+    }
+    JSTelemetrySpan* span = toTelemetrySpan(active.header);
+    if (!span)
+        span = toTelemetrySpan(JSValue::decode(Bun__Telemetry__activeSpanCell(globalObject)));
+    if (!span)
+        return JSValue::encode(jsBoolean(false));
+    if (keyOrAttributes.isString())
+        telemetrySpanSetAttribute(globalObject, span, asString(keyOrAttributes), value);
+    else
+        telemetrySpanSetAttributes(globalObject, span, keyOrAttributes);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsBoolean(true));
+}
+
 // createTracer(scopeId, name, version)
 JSC_DEFINE_HOST_FUNCTION(jsTelemetryCreateTracer, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -407,7 +580,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryStartInstrumentSpan, (JSGlobalObject * lexic
     if (!instrument.isInt32() || !name.isString())
         return JSValue::encode(jsUndefined());
     BunString n = telemetryBorrow(asString(name));
-    return Bun__Telemetry__startInstrumentSpan(globalObject, static_cast<uint32_t>(instrument.asInt32()), &n, telemetryApiKind(callFrame->argument(2)));
+    return Bun__Telemetry__startInstrumentSpan(globalObject, static_cast<uint32_t>(instrument.asInt32()), &n, telemetryApiKind(globalObject, callFrame->argument(2)));
 }
 
 // propagationHeaders(span) → [traceparent?, tracestate?, baggage?], honouring OTEL_PROPAGATORS.

@@ -137,27 +137,54 @@ See the [`Bun.otel` type definitions](https://github.com/oven-sh/bun/blob/main/p
 
 ## Creating spans
 
-`Bun.otel.tracer()` returns a tracer whose spans join the same traces as the built-in ones.
+`Bun.otel.span(name, attributes?, fn)` runs `fn` inside a new span. The span is active for everything `fn` does (so `fetch`, queries and nested spans become its children, across `await`), and it ends when `fn` returns or its promise settles. If `fn` throws or rejects, the error is recorded on the span and rethrown.
 
 ```ts title="spans.ts" icon="/icons/typescript.svg"
-const tracer = Bun.otel.tracer("my-app");
-
 async function chargeCard(orderId: string) {
-  using span = tracer.startActiveSpan("chargeCard", { attributes: { "order.id": orderId } });
-  const res = await fetch("https://payments.example.com/charge", { method: "POST" }); // child of chargeCard
-  span.setAttribute("payment.status", res.status);
-} // span ends here
+  return Bun.otel.span("chargeCard", { "order.id": orderId }, async span => {
+    const res = await fetch("https://payments.example.com/charge", { method: "POST" }); // child of chargeCard
+    span.set("payment.status", res.status);
+    return res.ok;
+  });
+}
 
 Bun.serve({
   routes: {
     "/orders/:id/pay": async req => {
-      Bun.otel.activeSpan()?.setAttribute("order.id", req.params.id); // the request's SERVER span
+      Bun.otel.set("order.id", req.params.id); // on the request's SERVER span
       await chargeCard(req.params.id);
       return new Response("ok");
     },
   },
 });
 ```
+
+`Bun.otel.wrap(fn)` does the same for every call of a function, declared once: `this` and the arguments pass through, and the span is named after the function.
+
+```ts
+export const loadUser = Bun.otel.wrap(async function loadUser(id: string) {
+  Bun.otel.set("user.id", id); // attribute on the active span
+  return await sql`SELECT * FROM users WHERE id = ${id}`;
+});
+```
+
+`Bun.otel.set(key, value)` / `Bun.otel.set({ ... })` annotates whatever span is active — inside a request handler that is the request's span — and returns `false` when there is none.
+
+Without a callback, `Bun.otel.span()` returns the span, active until it is disposed:
+
+```ts
+{
+  using span = Bun.otel.span("resize", { width, height });
+  const out = await sharp(input).resize(width, height).toBuffer();
+  span.set("bytes", out.length);
+} // span ends here
+```
+
+A span has `set(key, value)` / `set({ ... })` for attributes, `fail(error)` (records the exception and marks the span failed), `ok()`, `addEvent(name, attributes?)` and `updateName(name)`. It also implements the full `@opentelemetry/api` `Span` interface; wherever that interface takes a `SpanKind` or `SpanStatusCode` number, Bun also accepts the name (`{ kind: "client" }`, `setStatus("error", message)`).
+
+These are native: `span`, and the functions `wrap` returns, call your function directly from a JIT stub with the span bookkeeping on either side, so a traced call allocates nothing but the span — no options object, closure or promise chain.
+
+For library instrumentation, `Bun.otel.tracer(name, version?)` returns an `@opentelemetry/api`-compatible `Tracer` (`startSpan`, `startActiveSpan`) whose spans carry that instrumentation scope.
 
 The active span follows `await`, timers, promise callbacks and event-loop callbacks registered while it was active. `AsyncLocalStorage` keeps working alongside it.
 

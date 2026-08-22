@@ -609,6 +609,22 @@ describe("http.request.method", () => {
   });
 });
 
+describe("Bun.otel.set", () => {
+  test("Bun.otel.set annotates the active request span without materializing a Span", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        Bun.otel.set("app.user", "u1");
+        Bun.otel.set({ "app.plan": "pro", "app.n": 3 });
+        return new Response("ok");
+      },
+    });
+    await (await fetch(server.url)).text();
+    const [srv] = byName(await collect(), "bun.http.server");
+    expect(srv.attributes).toMatchObject({ "app.user": "u1", "app.plan": "pro", "app.n": 3 });
+  });
+});
+
 describe("client.address", () => {
   test("comes from X-Forwarded-For even when there is no socket peer (unix listener); IPv6 Host is bare", async () => {
     using dir = tempDir("otel-unix", {});

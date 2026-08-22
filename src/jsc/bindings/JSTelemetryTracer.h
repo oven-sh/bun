@@ -46,7 +46,10 @@ private:
     }
 };
 
-// $newCppFunction("JSTelemetryTracer.cpp", …) targets for internal/telemetry.ts.
+// $cpp / $newCppFunction("JSTelemetryTracer.cpp", …) targets for internal/telemetry.ts.
+JSC::JSValue createTelemetrySpanFunction(Zig::GlobalObject*);
+JSC_DECLARE_HOST_FUNCTION(jsTelemetryOtelWrap);
+JSC_DECLARE_HOST_FUNCTION(jsTelemetryOtelSet);
 JSC_DECLARE_HOST_FUNCTION(jsTelemetryCreateTracer);
 JSC_DECLARE_HOST_FUNCTION(jsTelemetryCreateBinding);
 JSC_DECLARE_HOST_FUNCTION(jsTelemetryWrapSpanContext);

@@ -1,5 +1,12 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
+
+async function run(script: string) {
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "inherit" });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  return { stdout, exitCode };
+}
 
 // One process-wide pipeline: every test in this file shares the collector.
 const spans: any[] = [];
@@ -27,6 +34,153 @@ async function collect(): Promise<any[]> {
 }
 
 describe("Bun.otel", () => {
+  test("Bun.otel.span(name, attributes, fn): active inside, ends with fn, records a throw / rejection", async () => {
+    const seen: unknown[] = [];
+    const v = Bun.otel.span("sync", { a: 1 }, span => {
+      seen.push(Bun.otel.activeSpan() === span);
+      span.set("b", 2).set({ c: "3" });
+      return 7;
+    });
+    expect(v).toBe(7);
+    expect(Bun.otel.activeSpan()).toBeUndefined();
+    const p = Bun.otel.span("async", async span => {
+      await 1;
+      seen.push(Bun.otel.activeSpan() === span);
+      const child = Bun.otel.span("child", () => Bun.otel.activeSpan());
+      seen.push((child as any).parentSpanId === (span as any).spanId);
+      return "done";
+    });
+    expect(p).toBeInstanceOf(Promise);
+    expect(await p).toBe("done");
+    expect(() =>
+      Bun.otel.span("throws", () => {
+        throw new TypeError("boom");
+      }),
+    ).toThrow("boom");
+    await expect(
+      Bun.otel.span("rejects", async () => {
+        await 1;
+        throw Object.assign(new Error("nope"), { code: "E_NOPE" });
+      }),
+    ).rejects.toThrow("nope");
+    {
+      using span = Bun.otel.span("scoped", { s: true });
+      seen.push(Bun.otel.activeSpan() === span);
+      span.ok();
+    }
+    expect(seen).toEqual([true, true, true, true]);
+    const got = Object.fromEntries((await collect()).map(s => [s.name, s]));
+    expect(got.sync).toMatchObject({ attributes: { a: 1, b: 2, c: "3" }, status: { code: 0 } });
+    expect(got.child.parentSpanId).toBe(got.async.spanId);
+    expect(got.throws.status).toEqual({ code: 2, message: "boom" });
+    expect(got.throws.events[0]).toMatchObject({
+      name: "exception",
+      attributes: { "exception.type": "TypeError", "exception.message": "boom" },
+    });
+    expect(got.rejects.status).toEqual({ code: 2, message: "nope" });
+    expect(got.rejects.events[0].attributes["exception.type"]).toBe("E_NOPE");
+    expect(got.scoped).toMatchObject({ attributes: { s: true }, status: { code: 1 } });
+    for (const name of ["sync", "async", "child", "throws", "rejects", "scoped"])
+      expect(got[name].endTime).toBeGreaterThan(0);
+    // the default tracer's scope
+    expect(got.sync.scope.name).toBe("bun");
+  });
+
+  test("span.fail / span.ok / string status and kind names", async () => {
+    const s1 = tracer.startSpan("s1", { kind: "producer" });
+    s1.fail("just a message").end();
+    const s2 = tracer.startSpan("s2", { kind: "client" });
+    s2.setStatus("error", "e").ok().setStatus("error", "ignored after ok").end();
+    const s3 = tracer.startSpan("s3", { kind: "bogus" as any });
+    s3.setStatus("unset").end();
+    const got = Object.fromEntries((await collect()).map(s => [s.name, s]));
+    expect([got.s1.kind, got.s1.status, got.s1.events[0].attributes]).toEqual([
+      3,
+      { code: 2, message: "just a message" },
+      { "exception.message": "just a message" },
+    ]);
+    expect([got.s2.kind, got.s2.status]).toEqual([2, { code: 1 }]);
+    expect([got.s3.kind, got.s3.status]).toEqual([0, { code: 0 }]);
+  });
+
+  test("Bun.otel exposes only the public surface", () => {
+    expect(Object.keys(Bun.otel).sort()).toEqual([
+      "ROOT_CONTEXT",
+      "SpanKind",
+      "SpanStatusCode",
+      "activeSpan",
+      "contextManager",
+      "decode",
+      "enabled",
+      "forceFlush",
+      "propagator",
+      "set",
+      "shutdown",
+      "span",
+      "start",
+      "stats",
+      "tracer",
+      "tracerProvider",
+      "with",
+      "wrap",
+    ]);
+    expect(() => (Bun.otel.span as any)("x", { a: 1 }, "not a function")).toThrow();
+  });
+
+  test("Bun.otel.wrap: name/length/this forwarded, span per call, errors and rejections recorded", async () => {
+    const add = Bun.otel.wrap("add", function (this: any, a: number, b: number) {
+      Bun.otel.set("args", `${a},${b}`);
+      return (this?.base ?? 0) + a + b;
+    });
+    expect([add.name, add.length, add(1, 2), add.call({ base: 10 }, 1, 2)]).toEqual(["add", 2, 3, 13]);
+    const named = Bun.otel.wrap(async function loadUser(id: string) {
+      await 1;
+      Bun.otel.set({ "user.id": id });
+      return { id };
+    });
+    expect(named.name).toBe("loadUser");
+    expect(await named("u1")).toEqual({ id: "u1" });
+    const boom = Bun.otel.wrap("boom", () => {
+      throw new RangeError("nope");
+    });
+    expect(() => boom()).toThrow("nope");
+    const rejects = Bun.otel.wrap("rejects", async () => {
+      await 1;
+      throw Object.assign(new Error("later"), { code: "E_LATER" });
+    });
+    await expect(rejects()).rejects.toThrow("later");
+    expect(() => (Bun.otel.wrap as any)(() => 1)).toThrow(/span name/);
+    // no active span → false
+    expect(Bun.otel.set("k", 1)).toBe(false);
+    const got = await collect();
+    const by = (n: string) => got.filter(s => s.name === n);
+    expect(by("add").map(s => s.attributes.args)).toEqual(["1,2", "1,2"]);
+    expect(by("loadUser")[0].attributes).toEqual({ "user.id": "u1" });
+    expect(by("boom")[0]).toMatchObject({
+      status: { code: 2, message: "nope" },
+      attributes: { "error.type": "RangeError" },
+      events: [{ name: "exception", attributes: { "exception.type": "RangeError", "exception.message": "nope" } }],
+    });
+    expect(by("rejects")[0]).toMatchObject({
+      status: { code: 2, message: "later" },
+      attributes: { "error.type": "E_LATER" },
+    });
+  });
+
+  test("Bun.otel.wrap'd async function: the returned promise is the function's own and stays unhandled if nobody handles it", async () => {
+    const { stdout, exitCode } = await run(`
+      Bun.otel.start({ exporters: [] });
+      const f = Bun.otel.wrap("f", async () => { await 1; throw new Error("unhandled!"); });
+      process.on("unhandledRejection", (e) => { console.log("unhandledRejection", e.message); });
+      const inner = (async () => 1)();
+      const same = Bun.otel.wrap("g", () => inner)() === inner;
+      console.log("same promise", same);
+      f();
+    `);
+    expect(stdout.trim().split("\n")).toEqual(["same promise true", "unhandledRejection unhandled!"]);
+    expect(exitCode).toBe(0);
+  });
+
   test("is enabled after start()", () => {
     expect(Bun.otel.enabled).toBe(true);
   });

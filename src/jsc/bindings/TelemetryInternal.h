@@ -73,9 +73,24 @@ inline uint64_t telemetryTimeInputToNs(JSValue v)
 
 // @opentelemetry/api SpanKind (INTERNAL 0 … CONSUMER 4); anything else is INTERNAL.
 // Stored and passed to Rust as-is; bun_telemetry::SpanKind::from_api is the only conversion.
-ALWAYS_INLINE uint8_t telemetryApiKind(JSValue v)
+// api SpanKind number, or "internal" | "server" | "client" | "producer" | "consumer".
+ALWAYS_INLINE uint8_t telemetryApiKind(JSGlobalObject* globalObject, JSValue v)
 {
-    return v.isInt32() && v.asInt32() >= 0 && v.asInt32() <= 4 ? static_cast<uint8_t>(v.asInt32()) : 0;
+    if (v.isInt32())
+        return v.asInt32() >= 0 && v.asInt32() <= 4 ? static_cast<uint8_t>(v.asInt32()) : 0;
+    if (!v.isString())
+        return 0;
+    auto holder = asString(v)->tryGetValue();
+    const WTF::String& k = holder;
+    if (k == "server"_s)
+        return 1;
+    if (k == "client"_s)
+        return 2;
+    if (k == "producer"_s)
+        return 3;
+    if (k == "consumer"_s)
+        return 4;
+    return 0;
 }
 
 ALWAYS_INLINE uint16_t telemetryScopeId(JSValue v)
@@ -85,5 +100,16 @@ ALWAYS_INLINE uint16_t telemetryScopeId(JSValue v)
 
 // `require("internal/telemetry")[name]` — the module's JS helpers.
 JSValue telemetryInternalFunction(Zig::GlobalObject*, const Identifier&);
+// End `span` at `endNs` (0 = now). Never runs JS.
+void telemetryEndSpan(Zig::GlobalObject*, JSTelemetrySpan*, uint64_t endNs);
+// One attribute onto a pooled span.
+void telemetryNativeSetAttribute(Zig::GlobalObject*, uint64_t handle, JSString* key, JSValue value);
+// Restore the context `span.enter()` displaced (no-op if not entered).
+void telemetryExitSpan(Zig::GlobalObject*, JSTelemetrySpan*);
+// span.setAttribute / span.setAttributes({...}) without calling into JS for the common cases.
+void telemetrySpanSetAttribute(Zig::GlobalObject*, JSTelemetrySpan*, JSString* key, JSValue value);
+bool telemetrySpanSetAttributes(Zig::GlobalObject*, JSTelemetrySpan*, JSValue attributes);
+// `span.fail(error)` without running any JS (for use while unwinding).
+void telemetryFailSpanNoJS(Zig::GlobalObject*, JSTelemetrySpan*, JSValue error);
 
 } // namespace Bun

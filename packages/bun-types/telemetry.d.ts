@@ -15,11 +15,13 @@ declare module "bun" {
      * `SpanKind` numbering from `@opentelemetry/api`.
      */
     type SpanKind = 0 | 1 | 2 | 3 | 4;
+    type SpanKindName = "internal" | "server" | "client" | "producer" | "consumer";
 
     /**
      * `SpanStatusCode` numbering from `@opentelemetry/api`.
      */
     type SpanStatusCode = 0 | 1 | 2;
+    type SpanStatusName = "unset" | "ok" | "error";
 
     type AttributeValue = string | number | boolean | bigint | ReadonlyArray<string | number | boolean>;
     type Attributes = Record<string, AttributeValue | undefined | null>;
@@ -64,8 +66,8 @@ declare module "bun" {
     }
 
     interface SpanOptions {
-      /** @default SpanKind.INTERNAL */
-      kind?: SpanKind | undefined;
+      /** @default "internal" */
+      kind?: SpanKind | SpanKindName | undefined;
       attributes?: Attributes | undefined;
       links?: Link[] | undefined;
       /** Defaults to now. */
@@ -101,6 +103,9 @@ declare module "bun" {
       isRecording(): boolean;
       setAttribute(key: string, value: AttributeValue): this;
       setAttributes(attributes: Attributes): this;
+      /** Shorthand for {@link setAttribute} / {@link setAttributes}. */
+      set(key: string, value: AttributeValue): this;
+      set(attributes: Attributes): this;
       /**
        * @param attributesOrStartTime attributes for the event, or its timestamp
        * @param startTime timestamp when the second argument is attributes
@@ -108,9 +113,17 @@ declare module "bun" {
       addEvent(name: string, attributesOrStartTime?: Attributes | TimeInput, startTime?: TimeInput): this;
       addLink(link: Link): this;
       addLinks(links: Link[]): this;
-      /** `message` is only kept for `SpanStatusCode.ERROR`. */
+      /** `message` is only kept for `"error"`. */
       setStatus(status: { code: SpanStatusCode; message?: string }): this;
-      setStatus(code: SpanStatusCode, message?: string): this;
+      setStatus(code: SpanStatusCode | SpanStatusName, message?: string): this;
+      /**
+       * Record `error` as an `exception` event and set the status to `"error"`
+       * with its message. `Bun.otel.span(name, fn)` does this for you when
+       * `fn` throws or rejects.
+       */
+      fail(error: unknown): this;
+      /** Set the status to `"ok"` (final: a later error does not override it). */
+      ok(): this;
       updateName(name: string): this;
       /** Adds an `exception` event with `exception.type` / `.message` / `.stacktrace`. */
       recordException(exception: unknown, time?: TimeInput): this;
@@ -383,8 +396,72 @@ declare module "bun" {
     readonly enabled: boolean;
 
     /**
-     * Get the tracer for an instrumentation scope. Tracers are cached by
-     * `name@version`.
+     * Run `fn` inside a new span, active for everything `fn` does (including
+     * across `await`). The span ends when `fn` returns, or when the promise it
+     * returns settles; if `fn` throws or rejects, the error is recorded on the
+     * span ({@link otel.Span.fail}) and rethrown.
+     *
+     * ```ts
+     * const user = await Bun.otel.span("loadUser", { "user.id": id }, async span => {
+     *   const user = await db.users.find(id); // a child span
+     *   span.set("cache.hit", false);
+     *   return user;
+     * });
+     * ```
+     *
+     * Without `fn`, returns the span, active until it is disposed:
+     *
+     * ```ts
+     * {
+     *   using span = Bun.otel.span("resize", { width, height });
+     *   // ...
+     * } // ends here
+     * ```
+     *
+     * For other span options (kind, links, an explicit parent) use
+     * {@link otel.Tracer.startActiveSpan}.
+     */
+    span<R>(name: string, fn: (span: otel.Span) => R): R;
+    span<R>(name: string, attributes: otel.Attributes | undefined, fn: (span: otel.Span) => R): R;
+    span(name: string, attributes?: otel.Attributes): otel.Span;
+
+    /**
+     * Wrap a function so that every call runs inside a span — like
+     * {@link span}, but declared once, with `this` and the arguments passed
+     * through and the span named after the function (or `name`). The span
+     * ends when the call returns or the promise it returns settles; a throw
+     * or rejection is recorded on it.
+     *
+     * ```ts
+     * export const loadUser = Bun.otel.wrap(async function loadUser(id: string) {
+     *   Bun.otel.set("user.id", id);
+     *   return await db.users.find(id);
+     * });
+     * ```
+     */
+    wrap<F extends (...args: any[]) => any>(fn: F): F;
+    wrap<F extends (...args: any[]) => any>(name: string, fn: F): F;
+
+    /**
+     * Set attributes on the active span (the current request's, a
+     * `wrap()`ed call's, …). Returns `false` when no span is active.
+     *
+     * ```ts
+     * Bun.serve({
+     *   fetch(req) {
+     *     Bun.otel.set("user.id", auth(req).id);
+     *     // ...
+     *   },
+     * });
+     * ```
+     */
+    set(key: string, value: otel.AttributeValue): boolean;
+    set(attributes: otel.Attributes): boolean;
+
+    /**
+     * Get the tracer for an instrumentation scope (a library name and
+     * version). Tracers are cached by `name@version`; `Bun.otel.span()` uses
+     * the default one.
      */
     tracer(name?: string, version?: string): otel.Tracer;
 

@@ -113,10 +113,13 @@ export function setStatus(this: unknown, status: any, messageArg?: unknown) {
   if (!$isTelemetrySpan(this)) throw new TypeError("not a Span");
   const state = $getInternalField(this, Field.State) as number;
   if (!(state & State.Recording) || status == null) return this;
-  // api SpanStatusCode: UNSET 0, OK 1, ERROR 2
+  // api SpanStatusCode: UNSET 0, OK 1, ERROR 2 — or "unset" | "ok" | "error"
   let code: number, msg: unknown;
   if (typeof status === "number") {
     code = status | 0;
+    msg = messageArg;
+  } else if (typeof status === "string") {
+    code = status === "error" ? 2 : status === "ok" ? 1 : 0;
     msg = messageArg;
   } else {
     code = status.code | 0;
@@ -150,6 +153,47 @@ export function addEvent(this: unknown, name: unknown, a?: unknown, b?: unknown)
   const flat = $telemetryFlattenAttributes(attributes);
   $telemetryAddEvent(this, name + "", flat, time);
   return this;
+}
+
+// set(key, value) — or set({ ...attributes })
+export function set(this: any, keyOrAttributes: unknown, value?: unknown) {
+  if (!$isTelemetrySpan(this)) throw new TypeError("not a Span");
+  if (typeof keyOrAttributes !== "string") return this.setAttributes(keyOrAttributes);
+  // = setAttribute, inlined
+  const state = $getInternalField(this, Field.State) as number;
+  if (!(state & State.Recording) || value == null) return this;
+  if (state & State.Native) {
+    $telemetrySetAttribute(this, keyOrAttributes, value);
+    return this;
+  }
+  const attrs = $getInternalField(this, Field.Attributes) as unknown[] | null;
+  if (attrs === null) {
+    $putInternalField(this, Field.Attributes, [keyOrAttributes, value]);
+    return this;
+  }
+  const n = attrs.length;
+  for (let i = 0; i < n; i += 2) {
+    if (attrs[i] === keyOrAttributes) {
+      attrs[i + 1] = value;
+      return this;
+    }
+  }
+  $arrayPush(attrs, keyOrAttributes);
+  $arrayPush(attrs, value);
+  return this;
+}
+
+// fail(error) — record the exception and mark the span failed with its message
+export function fail(this: any, error: any) {
+  if (!$isTelemetrySpan(this)) throw new TypeError("not a Span");
+  this.recordException(error);
+  const message = error == null ? undefined : typeof error === "string" ? error : error.message;
+  return this.setStatus(2, message);
+}
+
+export function ok(this: any) {
+  if (!$isTelemetrySpan(this)) throw new TypeError("not a Span");
+  return this.setStatus(1);
 }
 
 export function recordException(this: any, exception: any, time?: unknown) {

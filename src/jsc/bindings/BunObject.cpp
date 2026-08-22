@@ -324,8 +324,11 @@ static JSValue defaultBunSQLObject(VM& vm, JSObject* bunObject)
 
 static JSValue constructBunOtelObject(VM& vm, JSObject* bunObject)
 {
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(bunObject->globalObject());
-    return globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::InternalTelemetry);
+    JSValue mod = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::InternalTelemetry);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, mod.getObject()->get(globalObject, Identifier::fromString(vm, "bunOtel"_s)));
 }
 
 static JSValue constructBunSQLObject(VM& vm, JSObject* bunObject)

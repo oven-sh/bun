@@ -54,6 +54,23 @@ impl JsCellRef {
     }
 }
 
+/// Which of 64 buckets an attribute key falls in (length and edge bytes:
+/// cheap, and distinct for the handful of keys one span carries).
+#[inline(always)]
+fn key_bit(key: &[u8]) -> u64 {
+    let n = key.len();
+    let h = match n {
+        0 => 0,
+        _ => {
+            n.wrapping_mul(31)
+                ^ (key[0] as usize).wrapping_mul(7)
+                ^ (key[n - 1] as usize).wrapping_mul(13)
+                ^ (key[n / 2] as usize)
+        }
+    };
+    1u64 << (h & 63)
+}
+
 pub struct Slot {
     generation: u32,
     live: bool,
@@ -64,6 +81,9 @@ pub struct Slot {
     pub status: StatusCode,
     pub n_attrs: u16,
     pub dropped_attrs: u16,
+    /// One bit per `key_bit(key)` of the attributes pushed so far, so
+    /// `set_attribute` only scans for a duplicate when there may be one.
+    attr_keys: u64,
     pub n_events: u16,
     pub n_links: u16,
     pub dropped_events: u16,
@@ -92,6 +112,7 @@ impl Slot {
             status: StatusCode::Unset,
             n_attrs: 0,
             dropped_attrs: 0,
+            attr_keys: 0,
             n_events: 0,
             n_links: 0,
             dropped_events: 0,
@@ -112,6 +133,7 @@ impl Slot {
         self.status = StatusCode::Unset;
         self.n_attrs = 0;
         self.dropped_attrs = 0;
+        self.attr_keys = 0;
         self.n_events = 0;
         self.n_links = 0;
         self.dropped_events = 0;
@@ -153,6 +175,7 @@ impl Slot {
             return;
         }
         self.n_attrs += 1;
+        self.attr_keys |= key_bit(key);
         match *v {
             Value::Str(s) if s.len() > limits.attribute_value_length as usize => {
                 otlp::write_key_value(
@@ -171,9 +194,11 @@ impl Slot {
 
     /// Last-write-wins variant for keys that may repeat (user code).
     pub fn set_attribute(&mut self, key: &[u8], v: &Value<'_>, limits: &Limits) {
-        if let Some((off, len)) = otlp::find_attribute(&self.attrs, key) {
-            self.attrs.drain(off..off + len);
-            self.n_attrs -= 1;
+        if self.attr_keys & key_bit(key) != 0 {
+            if let Some((off, len)) = otlp::find_attribute(&self.attrs, key) {
+                self.attrs.drain(off..off + len);
+                self.n_attrs -= 1;
+            }
         }
         self.push_attribute(key, v, limits);
     }
@@ -450,4 +475,34 @@ pub fn stub_ptr(p: &Pool, handle: NativeSpan) -> *const SpanStub {
 /// Whether the span behind `handle` is still open.
 pub fn is_live(p: &Pool, handle: NativeSpan) -> bool {
     with_ref(p, handle, |_| ()).is_some()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::data::DEFAULT_LIMITS;
+
+    #[test]
+    fn set_attribute_is_last_write_wins_even_when_key_bits_collide() {
+        let mut slot = Slot::new();
+        let l = &DEFAULT_LIMITS;
+        // Distinct keys, some of which share a `key_bit` bucket by construction
+        // (64 buckets, 100 keys), then overwrite every one.
+        let keys: Vec<Vec<u8>> = (0..100u32).map(|i| format!("k{i}").into_bytes()).collect();
+        for k in &keys {
+            slot.set_attribute(k, &Value::Int(1), l);
+        }
+        for k in &keys {
+            slot.set_attribute(k, &Value::Int(2), l);
+        }
+        assert_eq!(slot.n_attrs as usize, keys.len());
+        for k in &keys {
+            let (off, len) = otlp::find_attribute(&slot.attrs, k).expect("present once");
+            // and only once
+            assert!(otlp::find_attribute(&slot.attrs[off + len..], k).is_none());
+        }
+        // A key never set is not found and its bucket bit alone does not confuse set_attribute.
+        slot.set_attribute(b"fresh", &Value::Bool(true), l);
+        assert!(otlp::find_attribute(&slot.attrs, b"fresh").is_some());
+    }
 }

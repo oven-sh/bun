@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import path from "path";
 
@@ -642,7 +642,8 @@ test("only imports the function", () => {
   expect(exitCode).toBe(0);
 });
 
-// Longer than the path buffer on every platform (the largest one, on Windows, is 96 KiB).
+// MAX_PATH_BYTES in src/bun_core/util.rs: the size of the buffers the report relativizes paths in.
+const pathBufferSize = isWindows ? 32767 * 3 + 1 : isLinux ? 4096 : 1024;
 const longerThanAPathBuffer = 128 * 1024;
 
 // `virtualId` and `dataUrl` are JavaScript expressions. The virtual module is a
@@ -734,14 +735,20 @@ test.concurrent("virtual modules are reported under their id and data: URL modul
   expect(exitCode).toBe(0);
 });
 
-// A plain id, and an id that looks like an absolute path but does not fit a path buffer.
-for (const prefix of ["virtual-", "/virtual/"]) {
-  test.concurrent(`a virtual module id longer than a path buffer is reported as it is (${prefix})`, async () => {
-    const virtualId = prefix + Buffer.alloc(longerThanAPathBuffer, "x").toString();
+// Ids that do not fit the path buffers: a plain id, an id that looks like an absolute path, and
+// one that fits by itself but not once the report puts a `../` per directory of the cwd before it.
+const longIds = [
+  { shape: "a plain id", prefix: "virtual-", length: longerThanAPathBuffer },
+  { shape: "an absolute path", prefix: "/virtual/", length: longerThanAPathBuffer },
+  { shape: "an absolute path that almost fills the buffer", prefix: "/virtual/", length: pathBufferSize - 4 },
+];
+for (const { shape, prefix, length } of longIds) {
+  test.concurrent(`a virtual module id too long to relativize is reported as it is (${shape})`, async () => {
+    const virtualId = prefix + Buffer.alloc(length - prefix.length, "x").toString();
     using dir = tempDir(
       "cov",
       virtualModuleFixture(
-        `${JSON.stringify(prefix)} + Buffer.alloc(${longerThanAPathBuffer}, "x").toString()`,
+        `${JSON.stringify(prefix)} + Buffer.alloc(${length - prefix.length}, "x").toString()`,
         `"data:text/javascript,export default 'data';"`,
       ),
     );

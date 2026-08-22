@@ -3402,33 +3402,23 @@ static JSC::EncodedJSValue createJSBufferFromJS(JSC::JSGlobalObject* lexicalGlob
         case BigInt64ArrayType:
         case BigUint64ArrayType: {
             // byteOffset and byteLength are ignored in this case, which is consitent with Node.js and new Uint8Array()
+            // A detached view has length 0 (JSC zeroes it on detach), so it becomes an empty Buffer, as in Node.
             JSC::JSArrayBufferView* view = uncheckedDowncast<JSC::JSArrayBufferView>(distinguishingArg.asCell());
-            void* data = view->vector();
-            size_t byteLength = view->length();
-            if (!data) [[unlikely]] {
-                throwException(globalObject, throwScope, createRangeError(globalObject, "Buffer is detached"_s));
-                return {};
-            }
-            auto* uint8Array = createUninitializedBuffer(lexicalGlobalObject, byteLength);
+            size_t length = view->length();
+            auto* uint8Array = createUninitializedBuffer(lexicalGlobalObject, length);
             RETURN_IF_EXCEPTION(throwScope, {});
-            if (byteLength) {
-                uint8Array->setFromTypedArray(lexicalGlobalObject, 0, view, 0, byteLength, CopyType::LeftToRight);
+            if (length) {
+                uint8Array->setFromTypedArray(lexicalGlobalObject, 0, view, 0, length, CopyType::LeftToRight);
             }
             RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));
-            break;
         }
         case DataViewType:
         case Uint8ArrayType:
         case Uint8ClampedArrayType: {
             // byteOffset and byteLength are ignored in this case, which is consitent with Node.js and new Uint8Array()
+            // A detached view has a null vector and byteLength 0, which createBuffer turns into an empty Buffer, as in Node.
             JSC::JSArrayBufferView* view = uncheckedDowncast<JSC::JSArrayBufferView>(distinguishingArg.asCell());
-            void* data = view->vector();
-            size_t byteLength = view->byteLength();
-            if (!data) [[unlikely]] {
-                throwException(globalObject, throwScope, createRangeError(globalObject, "Buffer is detached"_s));
-                return {};
-            }
-            auto* uint8Array = createBuffer(lexicalGlobalObject, static_cast<uint8_t*>(data), byteLength);
+            auto* uint8Array = createBuffer(lexicalGlobalObject, static_cast<const uint8_t*>(view->vector()), view->byteLength());
             RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));
         }
         case ArrayBufferType: {

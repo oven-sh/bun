@@ -670,7 +670,7 @@ enum Installed {
 struct HoistedTreeInit {
     /// suppress per-package progress output
     quiet: bool,
-    /// restrict to `--filter`-selected workspaces
+    /// the expected tree excludes dev/optional/peer dependencies (`--production` / `--omit`)
     filtered: bool,
 }
 

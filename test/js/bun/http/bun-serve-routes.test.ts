@@ -3,6 +3,52 @@ import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import net from "node:net";
 
+describe("deep path routing at MAX_URL_SEGMENTS boundary", () => {
+  const seg = (n: number, prefix: string) => "/" + Array.from({ length: n }, (_, i) => `${prefix}${i}`).join("/");
+
+  let server: Server;
+  beforeAll(() => {
+    const routes: Record<string, (req: BunRequest) => Response> = {
+      "/*": () => new Response("catchall"),
+    };
+    for (const n of [99, 100]) {
+      routes[seg(n, `d${n}x`)] = () => new Response(`exact-${n}`);
+    }
+    routes[`${seg(99, "p")}/:last`] = req => new Response(`param ${JSON.stringify(req.params)}`);
+    server = Bun.serve({ port: 0, development: false, routes, fetch: () => new Response("fallback") });
+    server.unref();
+  });
+  afterAll(() => server.stop(true));
+
+  const hit = async (path: string) => {
+    const res = await fetch(new URL(path, server.url));
+    return res.text();
+  };
+
+  it.each([99, 100])("matches a %i-segment exact route on its exact URL", async n => {
+    expect(await hit(seg(n, `d${n}x`))).toBe(`exact-${n}`);
+  });
+
+  it.each([99, 100])(
+    "does not match a %i-segment exact route when the request has extra trailing segments",
+    async n => {
+      expect(await hit(seg(n, `d${n}x`) + "/EXTRA/SEGMENTS")).toBe("catchall");
+    },
+  );
+
+  it("matches a 100-segment :param route on its exact URL", async () => {
+    expect(await hit(`${seg(99, "p")}/VALUE`)).toBe(`param {"last":"VALUE"}`);
+  });
+
+  it("does not match a 100-segment :param route when the request has extra trailing segments", async () => {
+    expect(await hit(`${seg(99, "p")}/VALUE/AND/MORE/SEGMENTS`)).toBe("catchall");
+  });
+
+  it("catchall still matches requests far deeper than the segment limit", async () => {
+    expect(await hit(seg(200, "z"))).toBe("catchall");
+  });
+});
+
 describe("path parameters", () => {
   let server: Server;
 

@@ -2,7 +2,7 @@ import { spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
 import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, symlinkSync } from "fs";
 import { rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, isMacOS, isWindows, readdirSorted, tempDir } from "harness";
+import { bunExe, bunEnv as env, isWindows, readdirSorted, tempDir } from "harness";
 import { basename, dirname, join } from "path";
 import {
   dummyAfterAll,
@@ -203,27 +203,25 @@ it("bun pm cache unpack refuses hostile packs", async () => {
   // no staging directory is left behind after a failed unpack
   expect((await readdirSorted(cache)).filter(n => n.startsWith(".unpack-"))).toEqual([]);
 
-  // (symlink records are validated but not materialised on Windows, matching tarball
-  // extraction there, so the scenarios that read through created links are POSIX-only)
-  if (!isWindows) {
-    // a file written *through* a symlink created earlier in the same package: the link
-    // itself is legal (points inside the package), the write through it is not
-    await writeFile(
-      join(dir, "through.pack"),
-      Buffer.concat([
-        MAGIC,
-        rec(1, "through@1.0.0", 0, ""),
-        rec(4, "real", 0o755, ""),
-        rec(3, "esc", 0o777, "real"),
-        rec(2, "esc/pwned", 0o644, "owned"),
-        rec(0, "", 0, ""),
-      ]),
-    );
-    r = await run(["pm", "cache", "unpack", join(dir, "through.pack")], dir, cache);
-    expect(r.err).toContain("traverses");
-    expect(r.code).not.toBe(0);
-  }
-  // intra-package relative links are fine (bin/cli -> ../lib/cli.js), climbing out is not
+  // a file written *through* a symlink created earlier in the same package: the link
+  // itself is legal (points inside the package), the write through it is not
+  await writeFile(
+    join(dir, "through.pack"),
+    Buffer.concat([
+      MAGIC,
+      rec(1, "through@1.0.0", 0, ""),
+      rec(4, "real", 0o755, ""),
+      rec(3, "esc", 0o777, "real"),
+      rec(2, "esc/pwned", 0o644, "owned"),
+      rec(0, "", 0, ""),
+    ]),
+  );
+  r = await run(["pm", "cache", "unpack", join(dir, "through.pack")], dir, cache);
+  expect(r.err).toContain("traverses");
+  expect(r.code).not.toBe(0);
+  // intra-package relative links are fine (bin/cli -> ../lib/cli.js), climbing out is not.
+  // (symlink records are validated everywhere but only materialised on POSIX, matching
+  // tarball extraction, so the scenarios that read through created links are POSIX-only)
   if (!isWindows) {
     await writeFile(
       join(dir, "links.pack"),
@@ -321,9 +319,11 @@ it("bun pm cache unpack refuses hostile packs", async () => {
     expect(readFileSync(join(cache, links2, "bin", "cli"), "utf8")).toBe("y");
   }
   // a non-ASCII pair that only a case-insensitive/normalising filesystem equates: the
-  // lexical check cannot see it, the physical parent-chain walk must (macOS; APFS is
-  // case-insensitive by default)
-  if (isMacOS) {
+  // lexical check cannot see it, the physical walks must. Only meaningful where the
+  // filesystem actually folds `ä`/`Ä` (default APFS; not ext4 or case-sensitive APFS).
+  await writeFile(join(dir, "ä-probe"), "");
+  const folds = !isWindows && existsSync(join(dir, "Ä-probe"));
+  if (folds) {
     await writeFile(
       join(dir, "chain4.pack"),
       Buffer.concat([

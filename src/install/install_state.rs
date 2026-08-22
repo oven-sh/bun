@@ -808,8 +808,6 @@ fn collect_dirs(dir: &[u8], depth: usize, out: &mut Vec<Vec<u8>>, budget: &mut u
     true
 }
 
-/// Recursively record `l` stamps for a local-source directory (skipping node_modules
-/// and VCS dirs). Returns false if the walk exceeded `budget` entries or failed.
 /// `l`/`n`-stamp a nested or store `node_modules` directory, plus each `@scope`
 /// directory directly inside it (removing `@scope/pkg` only touches `@scope`'s mtime).
 /// Returns false when something that exists could not be read.
@@ -853,6 +851,8 @@ fn stamp_dir_and_scopes(out: &mut Vec<u8>, dir: &[u8], record_absent: bool) -> b
     }
 }
 
+/// Recursively record `l` stamps for a local-source directory (skipping node_modules
+/// and VCS dirs). Returns false if the walk exceeded `budget` entries or failed.
 fn stamp_source_tree(out: &mut Vec<u8>, dir: &[u8], budget: &mut usize) -> bool {
     // a symlinked source (or entry inside it) would be walked through the link while only
     // the link's own mtime is recorded: not trackable

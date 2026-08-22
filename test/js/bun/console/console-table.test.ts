@@ -165,6 +165,15 @@ describe("console.table", () => {
     const actualOutput = renderTable(...args());
     expect(actualOutput).toMatchSnapshot();
   });
+
+  test("symbol-keyed properties are skipped", () => {
+    const sym = Symbol("SYMK");
+    expect(renderTable([{ a: 2, [sym]: 1 }])).toBe(renderTable([{ a: 2 }]));
+    expect(renderTable({ r: { a: 2, [sym]: 1 } })).toBe(renderTable({ r: { a: 2 } }));
+    // Symbol keys still print through Bun.inspect, whose property walk can
+    // represent them.
+    expect(Bun.inspect({ [sym]: 1 })).toBe("{\n  [Symbol(SYMK)]: 1,\n}");
+  });
 });
 
 test("console.table json fixture", () => {

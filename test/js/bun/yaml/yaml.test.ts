@@ -2723,6 +2723,13 @@ config:
       expect(YAML.stringify(undefined)).toBe(undefined);
     });
 
+    test("skips symbol-keyed properties", () => {
+      const sym = Symbol("SYMK");
+      expect(YAML.stringify({ a: 2, [sym]: 1 })).toBe("{a: 2}");
+      expect(YAML.stringify({ [sym]: 1 })).toBe("{}");
+      expect(YAML.stringify({ [Symbol.iterator]: 1 })).toBe("{}");
+    });
+
     test("stringifies booleans", () => {
       expect(YAML.stringify(true)).toBe("true");
       expect(YAML.stringify(false)).toBe("false");
@@ -4302,8 +4309,8 @@ refs:
           normalKey: "normal value",
           symbolValue: sym,
         };
-        // Symbol keys are not enumerable, symbol values are undefined
-        expect(YAML.stringify(obj, null, 2)).toBe("normalKey: normal value\ntest: symbol key value");
+        // Symbol keys are skipped, symbol values are undefined
+        expect(YAML.stringify(obj, null, 2)).toBe("normalKey: normal value");
       });
 
       test("handles WeakMap and WeakSet", () => {

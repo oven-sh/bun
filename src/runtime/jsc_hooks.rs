@@ -486,11 +486,24 @@ unsafe fn init_runtime_state(
                                 id: bun_resolver::install_types::DependencyID,
                                 err: &'static str,
                             ) {
-                                // SAFETY: `ctx` is the `WakeContext` set just above; its queue is `(*vm).modules`.
+                                // `Queue` is JS-thread-affine: dispatch only on its owning VM's thread.
+                                let Some(vm) = VirtualMachine::get_or_null() else {
+                                    return;
+                                };
+                                // SAFETY: `ctx` is some VM's live `WakeContext` (whichever
+                                // resolver last set the singleton's handler); the check
+                                // below rejects one that is not this thread's VM's.
+                                let queue = unsafe {
+                                    bun_jsc::async_module::Queue::queue_from_wake_context(ctx)
+                                };
+                                // SAFETY: `vm` is this thread's live VM.
+                                if queue != unsafe { &raw mut (*vm).modules } {
+                                    return;
+                                }
+                                // SAFETY: queue identity checked above.
                                 unsafe {
                                     bun_jsc::async_module::Queue::on_dependency_error(
-                                        bun_jsc::async_module::Queue::queue_from_wake_context(ctx)
-                                            .cast(),
+                                        queue.cast(),
                                         dep,
                                         id,
                                         err,

@@ -28,6 +28,10 @@ unsafe extern "Rust" {
     /// for the current thread. Kept as a bare extern (no owner). No caller-side
     /// preconditions: panics (not UB) if no VM is bound on this thread.
     pub(crate) safe fn __bun_js_event_loop_current() -> *mut ();
+
+    /// Like `__bun_js_event_loop_current`, but returns null instead of
+    /// panicking when no VM is bound on this thread.
+    pub(crate) safe fn __bun_js_event_loop_current_or_null() -> *mut ();
 }
 
 /// Wrap an erased `*mut jsc::EventLoop` in a
@@ -116,6 +120,17 @@ impl AnyEventLoop {
     pub fn js_current() -> AnyEventLoop {
         AnyEventLoop::Js {
             owner: JsEventLoop::current(),
+        }
+    }
+
+    /// Like `js_current`, but falls back to a fresh `Mini` event loop when
+    /// no VM is bound on the calling thread.
+    pub fn js_current_or_mini() -> AnyEventLoop {
+        let ptr = __bun_js_event_loop_current_or_null();
+        if ptr.is_null() {
+            AnyEventLoop::Mini(Box::new(MiniEventLoop::init()))
+        } else {
+            AnyEventLoop::js(ptr)
         }
     }
 

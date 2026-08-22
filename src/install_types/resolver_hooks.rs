@@ -1450,6 +1450,11 @@ pub trait AutoInstaller {
 
     // ── PackageManager ops ────────────────────────────────────────────────
     fn set_on_wake(&mut self, handler: WakeHandler);
+    /// Current `on_wake.context`, so a caller can avoid clobbering a
+    /// registered handler.
+    fn on_wake_context(&self) -> Option<NonNull<c_void>>;
+    /// Repoint the singleton's error log at the caller's live log.
+    fn set_log(&mut self, log: *mut bun_ast::Log);
     fn path_for_resolution<'b>(
         &mut self,
         package_id: PackageID,

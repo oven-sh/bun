@@ -86,6 +86,10 @@ pub struct JSBundleCompletionTask {
     pub(crate) transpiler: *mut BundleV2<'static>,
     pub(crate) plugins: Option<NonNull<Plugin>>,
     pub(crate) started_at_ns: u64,
+    /// Auto-install config captured from the VM's transpiler.
+    pub(crate) global_cache: options::GlobalCache,
+    pub(crate) install: Option<NonNull<api::BunInstall>>,
+    pub(crate) install_preference: options::OfflineMode,
 }
 
 #[repr(u8)]
@@ -143,7 +147,9 @@ pub(crate) fn create_and_schedule_completion_task(
     global_this: &JSGlobalObject,
 ) -> crate::Result<*mut JSBundleCompletionTask> {
     let vm = global_this.bun_vm_ptr();
-    let env = global_this.bun_vm().transpiler.env;
+    let vm_transpiler = &global_this.bun_vm().transpiler;
+    let env = vm_transpiler.env;
+    let vm_opts = &vm_transpiler.options;
     let completion = bun_core::heap::into_raw(Box::new(JSBundleCompletionTask {
         ref_count: RefCount::init(),
         config,
@@ -162,6 +168,9 @@ pub(crate) fn create_and_schedule_completion_task(
         transpiler: ptr::null_mut(),
         plugins,
         started_at_ns: 0,
+        global_cache: vm_opts.global_cache,
+        install: vm_opts.install,
+        install_preference: vm_opts.install_preference,
     }));
     // SAFETY: freshly-boxed allocation with ref_count == 1; sole handle.
     unsafe {
@@ -1090,6 +1099,10 @@ impl CompletionStruct for JSBundleCompletionTask {
             // Emitting DCE annotations is nonsensical in --compile.
             transpiler.options.emit_dce_annotations = false;
         }
+
+        transpiler.options.global_cache = self.global_cache;
+        transpiler.options.install = self.install;
+        transpiler.options.install_preference = self.install_preference;
 
         transpiler.configure_linker();
         transpiler.configure_defines()?;

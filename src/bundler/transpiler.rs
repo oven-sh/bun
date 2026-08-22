@@ -190,6 +190,7 @@ impl<'a> Transpiler<'a> {
         if let Some(ctx) = self.macro_context.take() {
             ctx.deinit();
         }
+        self.resolver.clear_package_manager_handler();
         // SAFETY: `options`, `result`, and `resolver.opts` are init'd and never
         // read past `destroy()` / the `--changed` scan teardown. Caller upholds
         // the no-auto-drop contract above.

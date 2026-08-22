@@ -438,7 +438,7 @@ impl Processor {
                 .store(clock::now_unix_nanos(), Ordering::Relaxed);
             self.inflight.fetch_add(exporters.len(), Ordering::AcqRel);
             payload.expect(exporters.len());
-            for e in exporters {
+            for e in exporters.drain(..) {
                 e.export(self, Arc::clone(&payload), 0);
             }
             // Only the outermost dispatcher chains; and only if asked to.

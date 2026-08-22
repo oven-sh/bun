@@ -734,6 +734,10 @@ pub enum ForTarballError {
     OutOfMemory,
     #[error("InvalidURL")]
     InvalidURL,
+    /// `--offline` and the tarball is not in the cache. Already reported (once per
+    /// package); callers treat it like `AlreadyFailed`.
+    #[error("TarballFailedToDownload")]
+    Offline,
     /// Returned by `enqueue_*_for_download` when the dedupe map already records
     /// a terminal failure for this task id. Callers handle it silently (the
     /// original failure was already reported) and advance their own bookkeeping.
@@ -746,7 +750,9 @@ impl From<ForTarballError> for crate::Error {
         match e {
             ForTarballError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
             ForTarballError::InvalidURL => crate::Error::InvalidURL,
-            ForTarballError::AlreadyFailed => crate::Error::TarballFailedToDownload,
+            ForTarballError::AlreadyFailed | ForTarballError::Offline => {
+                crate::Error::TarballFailedToDownload
+            }
         }
     }
 }
@@ -802,20 +808,6 @@ impl NetworkTask {
                     "Expected tarball URL to start with https:// or http://, got {} while fetching package {}",
                     quote(&self.url_buf),
                     quote(tarball.name.slice()),
-                ),
-            );
-            return Err(ForTarballError::InvalidURL);
-        }
-
-        // Only reached when the tarball is not already in the cache.
-        if pm.options.offline == crate::package_manager_real::options::OfflineMode::Offline {
-            pm.log_mut().add_error_fmt(
-                None,
-                bun_ast::Loc::EMPTY,
-                format_args!(
-                    "--offline: {} is not in the cache (would fetch {})",
-                    quote(tarball.name.slice()),
-                    quote(&self.url_buf),
                 ),
             );
             return Err(ForTarballError::InvalidURL);

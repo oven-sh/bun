@@ -186,7 +186,7 @@ With a warm cache, `bun install` can run without the network:
 # Use cached package metadata regardless of age; only fetch what is missing from the cache
 bun install --prefer-offline
 
-# Never touch the network; anything that is not already cached is an error
+# Never touch the network (registry, tarball URLs, git); a required dependency that is not cached is an error
 bun install --offline
 ```
 

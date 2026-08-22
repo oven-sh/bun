@@ -1,4 +1,12 @@
 use crate::bun_schema::api as Api;
+use bun_core::ZStr;
+use bun_core::{Output, env_var};
+use bun_paths::PathBuffer;
+
+use super::Subcommand;
+use super::command_line_arguments::{self, CommandLineArguments};
+use bun_dotenv::Loader as DotEnvLoader;
+use bun_install::{Features, Npm};
 
 /// Network policy for this install.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
@@ -13,14 +21,6 @@ pub enum OfflineMode {
     /// in the cache is an error.
     Offline,
 }
-use bun_core::ZStr;
-use bun_core::{Output, env_var};
-use bun_paths::PathBuffer;
-
-use super::Subcommand;
-use super::command_line_arguments::{self, CommandLineArguments};
-use bun_dotenv::Loader as DotEnvLoader;
-use bun_install::{Features, Npm};
 
 // `string` fields are `[]const u8` borrowed from CLI args / bunfig config,
 // which live for the process lifetime. There is no `deinit` on Options. Mapped to
@@ -935,6 +935,11 @@ impl Options {
         // moved from `defer { ... }` after scope assignment (see note above).
         self.did_override_default_scope = self.scope.url_hash != *Npm::registry::DEFAULT_URL_HASH;
 
+        // The manifest cache is the data source for --prefer-offline/--offline; keep it on
+        // even where it is otherwise bypassed (`bun update`, `--no-cache`, `--force`).
+        if self.offline != OfflineMode::Online {
+            self.enable.set(Enable::MANIFEST_CACHE, true);
+        }
         Ok(())
     }
 }

@@ -2426,7 +2426,10 @@ pub(crate) fn install_isolated_packages(
                                 Err(e) if e == crate::Error::Alloc(bun_alloc::AllocError) => {
                                     return Err(AllocError);
                                 }
-                                Err(crate::network_task::ForTarballError::AlreadyFailed) => {
+                                Err(
+                                    crate::network_task::ForTarballError::AlreadyFailed
+                                    | crate::network_task::ForTarballError::Offline,
+                                ) => {
                                     // .monotonic is okay because an error means the task isn't
                                     // running on another thread.
                                     entry_steps[entry_id.get() as usize]
@@ -2485,7 +2488,10 @@ pub(crate) fn install_isolated_packages(
                                 Err(e) if e == crate::Error::Alloc(bun_alloc::AllocError) => {
                                     bun_core::out_of_memory()
                                 }
-                                Err(crate::network_task::ForTarballError::AlreadyFailed) => {
+                                Err(
+                                    crate::network_task::ForTarballError::AlreadyFailed
+                                    | crate::network_task::ForTarballError::Offline,
+                                ) => {
                                     // .monotonic is okay because an error means the task isn't
                                     // running on another thread.
                                     entry_steps[entry_id.get() as usize]
@@ -2538,7 +2544,10 @@ pub(crate) fn install_isolated_packages(
                                 Err(e) if e == crate::Error::Alloc(bun_alloc::AllocError) => {
                                     bun_core::out_of_memory()
                                 }
-                                Err(crate::network_task::ForTarballError::AlreadyFailed) => {
+                                Err(
+                                    crate::network_task::ForTarballError::AlreadyFailed
+                                    | crate::network_task::ForTarballError::Offline,
+                                ) => {
                                     // .monotonic is okay because an error means the task isn't
                                     // running on another thread.
                                     entry_steps[entry_id.get() as usize]

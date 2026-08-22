@@ -1146,15 +1146,19 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 if this.options.offline
                                     == crate::package_manager_real::options::OfflineMode::Offline
                                 {
-                                    let _ = this.network_dedupe_map.remove(&task_id);
-                                    let _ = this.log_mut().add_error_fmt(
-                                        None,
-                                        bun_ast::Loc::EMPTY,
-                                        format_args!(
-                                            "--offline: no cached manifest for \"{}\" (run once online, or use --prefer-offline)",
-                                            bstr::BStr::new(&name_str),
-                                        ),
-                                    );
+                                    // Keep the dedupe reservation so later edges to the same
+                                    // package do not report it again; optional/peer deps are
+                                    // skipped like any other unavailable optional dependency.
+                                    if dependency.behavior.is_required() {
+                                        let _ = this.log_mut().add_error_fmt(
+                                            None,
+                                            bun_ast::Loc::EMPTY,
+                                            format_args!(
+                                                "--offline: no cached manifest for \"{}\" (run once online, or use --prefer-offline)",
+                                                bstr::BStr::new(&name_str),
+                                            ),
+                                        );
+                                    }
                                     return Ok(());
                                 }
 

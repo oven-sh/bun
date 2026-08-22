@@ -1,5 +1,5 @@
 import { spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { rm, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, readdirSorted, tempDir } from "harness";
 import { join } from "path";
@@ -116,8 +116,8 @@ it("--offline never issues a request and fails cleanly on a cache miss", async (
   // manifest for `bar` was never fetched → clean error, still no request
   const dir3 = await newProject({ bar: "0.0.2" });
   r = await install(dir3, ["--offline"]);
-  expect(r.code).not.toBe(0);
   expect(r.err).toContain("--offline");
+  expect(r.code).not.toBe(0);
   expect(urls.length).toBe(before);
 
   // manifest cached but that version's tarball evicted → clean error, no request
@@ -126,17 +126,17 @@ it("--offline never issues a request and fails cleanly on a cache miss", async (
   }
   const dir4 = await newProject({ baz: "0.0.3" });
   r = await install(dir4, ["--offline"]);
-  expect(r.code).not.toBe(0);
   expect(r.err).toContain("--offline");
+  expect(r.code).not.toBe(0);
   expect(urls.length).toBe(before);
 });
 
 // Regression: with an *expired* cached manifest (here forced via --force, which turns off
 // the max-age check) --prefer-offline / --offline must still resolve from it, not spin.
-it("--prefer-offline and --offline use an expired cached manifest", async () => {
-  const urls: string[] = [];
-  setHandler(dummyRegistry(urls, { "0.0.3": {}, "0.0.5": {} }));
-  for (const flag of ["--prefer-offline", "--offline"]) {
+describe.each(["--prefer-offline", "--offline"])("%s with an expired cached manifest", flag => {
+  it("resolves a range from it instead of spinning", async () => {
+    const urls: string[] = [];
+    setHandler(dummyRegistry(urls, { "0.0.3": {}, "0.0.5": {} }));
     // each mode gets its own warmed cache so one cannot pre-fetch for the other
     const cache = mkdtemp();
     const warm = await newProject({ baz: "0.0.3" }, cache);
@@ -148,10 +148,55 @@ it("--prefer-offline and --offline use an expired cached manifest", async () => 
     const r = await install(dir, ["--force", flag]);
     expect(r.err).not.toContain("error:");
     expect(r.code).toBe(0);
-    // resolved the range from the cached manifest (0.0.5 is listed there too, but its
-    // tarball was never downloaded; 0.0.3's was) — no manifest request either way
-    expect(urls.slice(before).filter(u => !u.endsWith(".tgz"))).toEqual([]);
-  }
+    if (flag === "--offline") {
+      // never any request
+      expect(urls.slice(before)).toEqual([]);
+    } else {
+      // resolved the range from the cached manifest: no *manifest* request (a missing
+      // tarball may still be fetched in this mode)
+      expect(urls.slice(before).filter(u => !u.endsWith(".tgz"))).toEqual([]);
+    }
+  });
+});
+
+it("--offline skips an optional dependency that is not in the cache", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls, { "0.0.3": {}, "0.0.5": {} }));
+  const warm = await newProject({ baz: "0.0.3" });
+  const w = await install(warm, []);
+  expect(w.err).not.toContain("error:");
+  expect(w.code).toBe(0);
+  const before = urls.length;
+  // `bar` was never fetched: as an optionalDependency it is skipped, not an error
+  const dir = mkdtemp();
+  await writeFile(
+    join(dir, "bunfig.toml"),
+    Bun.TOML.stringify({
+      install: { cache: { dir: cache_dir }, registry: root_url + "/", saveTextLockfile: true, linker: "hoisted" },
+    }),
+  );
+  await writeFile(
+    join(dir, "package.json"),
+    JSON.stringify({
+      name: "app",
+      version: "1.0.0",
+      dependencies: { baz: "0.0.3" },
+      optionalDependencies: { bar: "0.0.2" },
+    }),
+  );
+  const r = await install(dir, ["--offline"]);
+  expect(r.err).not.toContain("error:");
+  expect(r.code).toBe(0);
+  expect(urls.slice(before)).toEqual([]);
+  expect(await readdirSorted(join(dir, "node_modules"))).toContain("baz");
+});
+
+it("--offline refuses an uncached git dependency without running git", async () => {
+  const dir = await newProject({ dep: "git+https://127.0.0.1:1/nobody/nothing.git#deadbeef" });
+  const r = await install(dir, ["--offline"]);
+  expect(r.err).toContain("--offline");
+  expect(r.err).not.toContain('"git clone"');
+  expect(r.code).not.toBe(0);
 });
 
 it('install.prefer = "offline" and install.offline = true in bunfig.toml behave like the flags', async () => {
@@ -189,7 +234,7 @@ it('install.prefer = "offline" and install.offline = true in bunfig.toml behave 
   );
   await writeFile(join(dir3, "package.json"), JSON.stringify({ name: "app", dependencies: { bar: "0.0.2" } }));
   r = await install(dir3, []);
-  expect(r.code).not.toBe(0);
   expect(r.err).toContain("--offline");
+  expect(r.code).not.toBe(0);
   expect(urls.length).toBe(before);
 });

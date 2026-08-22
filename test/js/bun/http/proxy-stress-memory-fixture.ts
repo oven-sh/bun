@@ -15,6 +15,10 @@
  *                 builds it through us_ssl_ctx_from_options), so a tunnel
  *                 that is never released shows up here as +1 per request,
  *                 independent of how much memory it holds.
+ *   sslCtxInFlight  the highest live SSL_CTX count sampled while tunnels were
+ *                 in flight, minus the lowest count sampled while none were.
+ *                 This is the number of tunnels alive at once that owned a
+ *                 context: the proof that `sslCtxGrowth` can see a leak.
  *   rssGrowth     RSS at the end minus RSS after the warm-up, in bytes
  *
  * The first quarter of the iterations is the warm-up (JIT, allocator and
@@ -24,6 +28,10 @@
  * Env:   TLS_CERT, TLS_KEY: PEM used by the origin and by the https proxy.
  *        The test passes them in so this child does not import "harness",
  *        which costs about a second of start-up per child in a debug build.
+ *        The rest of the environment is bunEnv, which is also what enables
+ *        the `bun:internal-for-testing` import below; to run this file by
+ *        hand, set BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=1 and
+ *        BUN_GARBAGE_COLLECTOR_LEVEL=0 as well.
  */
 
 import { sslCtxLiveCount } from "bun:internal-for-testing";
@@ -69,6 +77,13 @@ const origin = Bun.serve({
 let connects = 0;
 let onNextConnect: (() => void) | undefined;
 
+// SSL_CTX samples. `sslCtxStart` is taken after the warm-up; until then the
+// in-flight and idle samples are skipped, so that contexts created lazily
+// during the warm-up do not count as tunnels.
+let sslCtxStart = -1;
+let sslCtxIdleMin = Infinity;
+let sslCtxBusyMax = -Infinity;
+
 // A CONNECT proxy (plain or TLS outer socket). It counts CONNECT heads so
 // the test can check that every request went through it and so that
 // "after-connect" aborts can be synchronized to the CONNECT boundary.
@@ -100,6 +115,11 @@ function handleClient(client: net.Socket) {
     upstream = net.connect(port, "127.0.0.1", () => {
       client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
       if (leftover.length) upstream!.write(leftover);
+      // The first upstream byte is the origin's TLS ServerHello: the client
+      // has started its tunnel by now, so its SSL_CTX is alive and counted.
+      upstream!.once("data", () => {
+        if (sslCtxStart !== -1) sslCtxBusyMax = Math.max(sslCtxBusyMax, sslCtxLiveCount());
+      });
       // client → upstream is relayed by the "data" handler above; only the
       // upstream → client direction is piped.
       upstream!.pipe(client);
@@ -170,17 +190,18 @@ const rss: () => number =
 
 const warmup = Math.floor(iterations / 4);
 let rssStart = -1;
-let sslCtxStart = -1;
 
 for (let done = 0; done < iterations; ) {
   const batch = Math.min(concurrency, iterations - done);
   await Promise.all(Array.from({ length: batch }, (_, j) => one(done + j)));
   done += batch;
+  // Nothing is in flight here.
   if (rssStart === -1 && done >= warmup) {
     Bun.gc(true);
     rssStart = rss();
     sslCtxStart = sslCtxLiveCount();
   }
+  if (sslCtxStart !== -1) sslCtxIdleMin = Math.min(sslCtxIdleMin, sslCtxLiveCount());
 }
 
 Bun.gc(true);
@@ -195,6 +216,8 @@ while (sslCtxLiveCount() > sslCtxStart && Date.now() < deadline) {
   await Bun.sleep(5);
   Bun.gc(true);
 }
+const sslCtxEnd = sslCtxLiveCount();
+sslCtxIdleMin = Math.min(sslCtxIdleMin, sslCtxEnd);
 
 console.log(
   JSON.stringify({
@@ -202,7 +225,8 @@ console.log(
     failed,
     errors,
     connects,
-    sslCtxGrowth: sslCtxLiveCount() - sslCtxStart,
+    sslCtxGrowth: sslCtxEnd - sslCtxStart,
+    sslCtxInFlight: sslCtxBusyMax === -Infinity ? 0 : sslCtxBusyMax - sslCtxIdleMin,
     rssGrowth: rssEnd - rssStart,
   }),
 );

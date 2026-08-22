@@ -129,7 +129,7 @@ describe("memory probe (subprocess)", () => {
         // Anything on stderr is a crash, a sanitizer report, or a fixture
         // error; asserting it first puts the actual report in the failure.
         expect(stderr).toBe("");
-        const { connects, sslCtxGrowth, rssGrowth, ...outcome } = JSON.parse(stdout);
+        const { connects, sslCtxGrowth, sslCtxInFlight, rssGrowth, ...outcome } = JSON.parse(stdout);
 
         const want = EXPECTED[mode];
         expect(outcome).toEqual(want.outcome);
@@ -142,8 +142,13 @@ describe("memory probe (subprocess)", () => {
         // Steady state is 0 (the fixture waits for the last tunnel's context
         // to be freed). A tunnel that is never released adds one per request
         // made after the warm-up: 200 and more per cell, twice that in
-        // redirect mode.
+        // redirect mode. `sslCtxInFlight` is the proof that this detector
+        // works: while tunnels were in flight the live count stood above the
+        // idle count by the number of tunnels (1 in the sequential modes, up
+        // to 32 in concurrent-32). If tunnels ever stop owning a context,
+        // this fails instead of the growth check going silent.
         expect(sslCtxGrowth).toBeLessThanOrEqual(2);
+        if (want.outcome.completed > 0) expect(sslCtxInFlight).toBeGreaterThanOrEqual(1);
 
         // RSS growth over the 200-odd requests after the warm-up. On a
         // release build every cell measures 0 to 9 MB of allocator and JIT
@@ -163,8 +168,9 @@ describe("memory probe (subprocess)", () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Parallel requests to one origin through one proxy. All N are dispatched
-// before the proxy (which runs on this thread) can relay anything, so none of
-// them can reuse a pooled connection: the proxy must see exactly N
+// before the proxy (which runs on this thread) can relay anything, and N is
+// below the client's in-flight cap (256, BUN_CONFIG_MAX_HTTP_REQUESTS), so
+// none of them can reuse a pooled connection: the proxy must see exactly N
 // connections, whatever the keepalive setting.
 // ─────────────────────────────────────────────────────────────────────────────
 

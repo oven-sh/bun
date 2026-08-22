@@ -134,7 +134,7 @@ function ptrify(ty: string): { cTy: string; deref: (n: string) => string; extraL
   ty = ty.trim();
   // `&[T]` — C passes `(const T* name, size_t name_len)`; the thunk rebuilds
   // the slice (null/0 → empty).
-  const slice = /^&\s*\[\s*(.+)\s*\]$/.exec(ty);
+  const slice = /^&\s*\[\s*([^;]+?)\s*\]$/.exec(ty);
   if (slice) {
     const elem = slice[1].trim();
     return {
@@ -463,6 +463,9 @@ pub extern "Rust" fn ${e.symbol}(${sig}) -> ${e.ret} {
 }`;
     }
     case "generic": {
+      for (const p of e.params)
+        if (p.extraLen && e.params.some(q => q.name === `${p.name}_len`))
+          throw new Error(`${loc}: slice param \`${p.name}\` needs a synthesized \`${p.name}_len\`, which collides with an existing param`);
       const sig = e.params
         .map(p => (p.extraLen ? `${p.name}: ${p.cTy}, ${p.name}_len: usize` : `${p.name}: ${p.cTy}`))
         .join(", ");

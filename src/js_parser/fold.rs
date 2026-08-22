@@ -3,7 +3,7 @@ use bun_collections::VecExt;
 use bun_core::feature_flags as FeatureFlags;
 
 use crate::p::P;
-use crate::parser::{self as js_parser, IdentifierOpts, RelocateVars, RelocateVarsMode};
+use crate::parser::{IdentifierOpts, RelocateVars, RelocateVarsMode};
 use bun_ast::ast_result::CommonJSNamedExport;
 use bun_ast::{self as js_ast, Binding, E, Expr, Flags, G, LocRef, S};
 
@@ -130,6 +130,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut sw_data = target.data;
         'sw: loop {
             match sw_data {
+                js_ast::ExprData::EImportMeta(_) => {
+                    return p.maybe_rewrite_import_meta_property(
+                        target,
+                        name,
+                        name_loc,
+                        loc,
+                        identifier_opts,
+                    );
+                }
+                // `options.lower_import_meta` already replaced `import.meta` with
+                // the `import_meta` stand-in when the target was visited.
+                js_ast::ExprData::EIdentifier(id) if p.is_import_meta_stand_in(id.ref_) => {
+                    return p.maybe_rewrite_import_meta_property(
+                        target,
+                        name,
+                        name_loc,
+                        loc,
+                        identifier_opts,
+                    );
+                }
                 js_ast::ExprData::EIdentifier(id) => {
                     // Rewrite property accesses on explicit namespace imports as an identifier.
                     // This lets us replace them easily in the printer to rebind them to
@@ -492,65 +512,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
                 }
-                js_ast::ExprData::EImportMeta(_) => {
-                    if name == b"main" {
-                        return Some(p.value_for_import_meta_main(false, target.loc));
-                    }
-
-                    if name == b"hot" {
-                        return Some(Expr {
-                            data: js_ast::ExprData::ESpecial(
-                                if p.options.features.hot_module_reloading {
-                                    E::Special::HotEnabled
-                                } else {
-                                    E::Special::HotDisabled
-                                },
-                            ),
-                            loc,
-                        });
-                    }
-
-                    // Inline import.meta properties for Bake
-                    if p.options.framework.is_some()
-                        || (p.options.bundle
-                            && p.options.output_format == js_parser::options::Format::Cjs)
-                    {
-                        if name == b"dir" || name == b"dirname" {
-                            // Inline import.meta.dir
-                            return Some(
-                                p.new_expr(e_string_init(p.source.path.name().dir), name_loc),
-                            );
-                        } else if name == b"file" {
-                            // Inline import.meta.file (filename only)
-                            return Some(
-                                p.new_expr(e_string_init(p.source.path.name().filename), name_loc),
-                            );
-                        } else if name == b"path" {
-                            // Inline import.meta.path (full path)
-                            return Some(p.new_expr(e_string_init(p.source.path.text), name_loc));
-                        } else if name == b"url" {
-                            // Inline import.meta.url as file:// URL
-                            let bunstr = bun_core::String::from_bytes(p.source.path.text);
-                            let url = p.arena.alloc_slice_copy(
-                                format!("{}", bun_url::file_url_from_string(&bunstr)).as_bytes(),
-                            );
-                            bunstr.deref();
-                            return Some(p.new_expr(e_string_init(url), name_loc));
-                        }
-                    }
-
-                    // Make all property accesses on `import.meta.url` side effect free.
-                    return Some(p.new_expr(
-                        E::Dot {
-                            target,
-                            name: name_static,
-                            name_loc,
-                            can_be_removed_if_unused: true,
-                            ..Default::default()
-                        },
-                        target.loc,
-                    ));
-                }
                 js_ast::ExprData::ERequireCallTarget => {
                     if name == b"main" {
                         return Some(Expr {
@@ -746,6 +707,82 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         None
+    }
+
+    /// `target` is `import.meta`, or the `import_meta` stand-in it was
+    /// rewritten to under `options.lower_import_meta`.
+    fn maybe_rewrite_import_meta_property(
+        &mut self,
+        target: Expr,
+        name: &'a [u8],
+        name_loc: bun_ast::Loc,
+        loc: bun_ast::Loc,
+        identifier_opts: IdentifierOpts,
+    ) -> Option<Expr> {
+        let p = self;
+
+        // `import.meta.url = x` / `delete import.meta.url` must stay a property
+        // access: inlining the value would print `"file:///..." = x`.
+        if identifier_opts.assign_target() != js_ast::AssignTarget::None
+            || identifier_opts.is_delete_target()
+        {
+            return None;
+        }
+
+        let inlined: Option<Expr> = if name == b"main" {
+            Some(p.value_for_import_meta_main(false, target.loc))
+        } else if name == b"hot" {
+            Some(Expr {
+                data: js_ast::ExprData::ESpecial(if p.options.features.hot_module_reloading {
+                    E::Special::HotEnabled
+                } else {
+                    E::Special::HotDisabled
+                }),
+                loc,
+            })
+        } else if p.options.framework.is_some() || p.options.lower_import_meta {
+            // Bake serves its own `import.meta` and non-module output has none,
+            // so properties with a bundle-time-known value are inlined.
+            match name {
+                b"dir" | b"dirname" => {
+                    Some(p.new_expr(e_string_init(p.source.path.name().dir), name_loc))
+                }
+                b"file" => Some(p.new_expr(e_string_init(p.source.path.name().filename), name_loc)),
+                b"path" | b"filename" => {
+                    Some(p.new_expr(e_string_init(p.source.path.text), name_loc))
+                }
+                b"url" => {
+                    let bunstr = bun_core::String::from_bytes(p.source.path.text);
+                    let url = p.arena.alloc_slice_copy(
+                        format!("{}", bun_url::file_url_from_string(&bunstr)).as_bytes(),
+                    );
+                    bunstr.deref();
+                    Some(p.new_expr(e_string_init(url), name_loc))
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+
+        if let Some(inlined) = inlined {
+            if matches!(target.data, js_ast::ExprData::EIdentifier(_)) {
+                p.ignore_usage_of_import_meta(&target);
+            }
+            return Some(inlined);
+        }
+
+        // Make all property accesses on `import.meta` side effect free.
+        Some(p.new_expr(
+            E::Dot {
+                target,
+                name: E::Str::new(name),
+                name_loc,
+                can_be_removed_if_unused: true,
+                ..Default::default()
+            },
+            target.loc,
+        ))
     }
 
     fn maybe_rewrite_property_access_for_namespace(

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isBroken, isWindows, tempDir } from "harness";
 import { readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { decodeSourceMappingsLine, itBundled } from "./expectBundled";
 
 // A public path composes with the referenced file's path relative to the output
@@ -3222,6 +3223,326 @@ describe("bundler", () => {
     onAfterBundle(api) {
       api.expectFile("/out.js").toContain("var arguments = 1;");
     },
+  });
+
+  // `import.meta` is a syntax error outside of an ES module, which is what cjs
+  // output is (node rejects it; bun evaluates the `@bun-cjs` wrapper as a
+  // script, and `--bytecode` compiles that wrapper). The properties with a
+  // bundle-time value are inlined, everything else is rewritten to a per-file
+  // `var import_meta = {}`. The outputs run as `.cjs` under node on purpose:
+  // node would re-parse a `.js` file as ESM and bun accepts `import.meta`
+  // anywhere, so only that combination observes the syntax error.
+  const importMetaCjsFiles = {
+    "/entry.js": /* js */ `
+      import { depMeta, depUrl } from "./dep.js";
+      import cjsDep from "./cjs-dep.cjs";
+      const meta = import.meta;
+      console.log(typeof meta, JSON.stringify(meta), meta === depMeta, depMeta === cjsDep.meta);
+      console.log(import.meta.env?.MODE, typeof import.meta.resolve, typeof import.meta.require);
+      console.log(
+        import.meta.url.startsWith("file:///"),
+        import.meta.url.endsWith("/entry.js"),
+        depUrl.endsWith("/dep.js"),
+        cjsDep.url.endsWith("/cjs-dep.cjs"),
+      );
+      console.log(import.meta.file, import.meta.path.endsWith("entry.js"), import.meta.filename === import.meta.path);
+      console.log(import.meta.dirname === import.meta.dir, import.meta.path.startsWith(import.meta.dir));
+    `,
+    "/dep.js": /* js */ `
+      export const depMeta = import.meta;
+      export const depUrl = import.meta.url;
+    `,
+    "/cjs-dep.cjs": /* js */ `
+      module.exports = { meta: import.meta, url: import.meta.url };
+    `,
+  };
+  const importMetaCjsStdout = `
+    object {} false false
+    undefined undefined undefined
+    true true true true
+    entry.js true true
+    true true
+  `;
+  itBundled("edgecase/ImportMetaCjsBecomesEmptyObject", {
+    files: importMetaCjsFiles,
+    format: "cjs",
+    target: "node",
+    outfile: "out.cjs",
+    onAfterBundle(api) {
+      const code = api.readFile("out.cjs");
+      expect(code).not.toContain("import.meta");
+      // One object per file that still references it.
+      expect(code.match(/var import_meta\w* = \{\}/g)).toHaveLength(3);
+    },
+    run: [{ runtime: "node", stdout: importMetaCjsStdout }, { stdout: importMetaCjsStdout }],
+  });
+  itBundled("edgecase/ImportMetaCjsBecomesEmptyObjectMinified", {
+    files: importMetaCjsFiles,
+    format: "cjs",
+    target: "node",
+    outfile: "out.cjs",
+    minifyIdentifiers: true,
+    minifySyntax: true,
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      api.expectFile("out.cjs").not.toContain("import.meta");
+    },
+    run: { runtime: "node", stdout: importMetaCjsStdout },
+  });
+  // `--bytecode` defaults to cjs output and compiles the `@bun-cjs` wrapper, so
+  // a left over `import.meta` made JSC refuse to generate the bytecode
+  // ("Failed to generate bytecode") and then fail to load the output.
+  itBundled("edgecase/ImportMetaCjsBytecode", {
+    files: importMetaCjsFiles,
+    format: "cjs",
+    target: "bun",
+    bytecode: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toContain("// @bun @bytecode @bun-cjs");
+      api.expectFile("/out/entry.js").not.toContain("import.meta");
+      api.assertFileExists("/out/entry.js.jsc");
+    },
+    run: { stdout: importMetaCjsStdout },
+  });
+  // The inlined values are those of the source file being parsed, like
+  // `__dirname`: a file in a subdirectory gets its own directory, and `url` is
+  // the source file's URL rather than the bundle's.
+  const importMetaPathsFiles = {
+    "/entry.js": /* js */ `
+      import { dep } from "./lib/dep.js";
+      console.log(
+        JSON.stringify([
+          import.meta.dir,
+          import.meta.dirname,
+          import.meta.file,
+          import.meta.path,
+          import.meta.filename,
+          import.meta.url,
+          dep,
+        ]),
+      );
+    `,
+    "/lib/dep.js": /* js */ `
+      export const dep = [import.meta.dir, import.meta.file, import.meta.path, import.meta.url];
+    `,
+  };
+  const importMetaPathsStdout = (root: string) =>
+    JSON.stringify([
+      root,
+      root,
+      "entry.js",
+      join(root, "entry.js"),
+      join(root, "entry.js"),
+      pathToFileURL(join(root, "entry.js")).href,
+      [join(root, "lib"), "dep.js", join(root, "lib", "dep.js"), pathToFileURL(join(root, "lib", "dep.js")).href],
+    ]);
+  itBundled("edgecase/ImportMetaCjsPathsAreInlinedPerFile", ({ root }) => ({
+    files: importMetaPathsFiles,
+    format: "cjs",
+    target: "node",
+    outfile: "out.cjs",
+    onAfterBundle(api) {
+      api.expectFile("out.cjs").not.toContain("import.meta");
+      api.expectFile("out.cjs").not.toContain("import_meta");
+    },
+    run: { runtime: "node", stdout: importMetaPathsStdout(root) },
+  }));
+  itBundled("edgecase/ImportMetaCjsExpressionShapes", {
+    files: {
+      "/entry.js": /* js */ `
+        var import_meta = "declared by the user";
+        console.log(import_meta, typeof import.meta, import.meta?.env, import.meta["file"], typeof import.meta.hot);
+        console.log(delete import.meta, [import.meta].length, (0, import.meta).nothing);
+        // Assignment targets are not inlined: the writes land on the object.
+        const meta = import.meta;
+        import.meta.url = "assigned";
+        import.meta.file++;
+        console.log(meta.url, meta.file, import.meta.url.startsWith("file:///"), import.meta.file);
+      `,
+    },
+    format: "cjs",
+    target: "node",
+    outfile: "out.cjs",
+    onAfterBundle(api) {
+      const code = api.readFile("out.cjs");
+      expect(code).not.toContain("import.meta");
+      // The user's variable and the generated one get distinct names.
+      expect(code).toMatch(/var import_meta\w* = "declared by the user"/);
+      expect(code).toMatch(/var import_meta\w* = \{\}/);
+      expect(code).not.toContain(".hot");
+      expect(code).toContain('.url = "assigned"');
+    },
+    run: {
+      runtime: "node",
+      stdout: `
+        declared by the user object undefined entry.js undefined
+        true 1 undefined
+        assigned NaN true entry.js
+      `,
+    },
+  });
+  itBundled("edgecase/ImportMetaCjsInlinedAccessesNeedNoObject", {
+    files: {
+      "/entry.js": /* js */ `
+        import { used } from "./dep.js";
+        console.log(import.meta.url.startsWith("file:///"), import.meta.file, used);
+      `,
+      "/dep.js": /* js */ `
+        export const used = import.meta.dir === import.meta.dirname;
+        export function unused() {
+          return import.meta.env;
+        }
+        export function alsoUnused() {
+          return import.meta;
+        }
+      `,
+    },
+    format: "cjs",
+    target: "node",
+    outfile: "out.cjs",
+    onAfterBundle(api) {
+      const code = api.readFile("out.cjs");
+      expect(code).not.toContain("import.meta");
+      expect(code).not.toContain("unused");
+      // Every access that made it into the output was inlined, and the
+      // references inside the tree shaken functions do not keep dep.js's
+      // object alive, so no object is declared in either file.
+      expect(code).not.toContain("import_meta");
+    },
+    run: { runtime: "node", stdout: "true entry.js true" },
+  });
+  itBundled("edgecase/ImportMetaCjsWarnsPerEmptiedReference", {
+    files: {
+      "/entry.js": /* js */ `
+        import "dep";
+        console.log(import.meta.url.startsWith("file:///"), import.meta.dir === import.meta.dirname);
+        console.log(typeof import.meta, import.meta.env);
+        try {
+          console.log(import.meta.resolve("./x"));
+        } catch {
+          console.log("caught");
+        }
+      `,
+      "/node_modules/dep/index.js": /* js */ `
+        console.log(JSON.stringify(import.meta), import.meta.env);
+      `,
+    },
+    format: "cjs",
+    target: "node",
+    outfile: "out.cjs",
+    bundleWarnings: {
+      "/entry.js": [
+        '"import.meta" is not available with the "cjs" output format and will be empty',
+        '"import.meta" is not available with the "cjs" output format and will be empty',
+      ],
+    },
+    onAfterBundle(api) {
+      const [first, second] = api.warnings["/entry.js"];
+      // Inlined accesses, the `try` body and node_modules are not reported.
+      expect([first.line, second.line]).toEqual(["3", "3"]);
+    },
+    run: {
+      runtime: "node",
+      stdout: `
+        {} undefined
+        true true
+        object undefined
+        caught
+      `,
+    },
+  });
+  // iife output is a classic script for every target but bun, which loads its
+  // `// @bun` output as a module, where the real `import.meta` keeps working.
+  itBundled("edgecase/ImportMetaIifeBecomesEmptyObject", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(JSON.stringify(import.meta), import.meta.env, import.meta.url.startsWith("file:///"), import.meta.file);
+      `,
+    },
+    format: "iife",
+    target: "browser",
+    outfile: "out.cjs",
+    bundleWarnings: {
+      "/entry.js": [
+        '"import.meta" is not available with the "iife" output format and will be empty',
+        '"import.meta" is not available with the "iife" output format and will be empty',
+      ],
+    },
+    onAfterBundle(api) {
+      api.expectFile("out.cjs").not.toContain("import.meta");
+    },
+    run: { runtime: "node", stdout: "{} undefined true entry.js" },
+  });
+  itBundled("edgecase/ImportMetaIifeBecomesEmptyObjectTargetNode", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(JSON.stringify(import.meta), import.meta.env, import.meta.url.startsWith("file:///"), import.meta.file);
+      `,
+    },
+    format: "iife",
+    target: "node",
+    outfile: "out.cjs",
+    onAfterBundle(api) {
+      api.expectFile("out.cjs").not.toContain("import.meta");
+    },
+    run: { runtime: "node", stdout: "{} undefined true entry.js" },
+  });
+  itBundled("edgecase/ImportMetaIifePathsAreInlinedPerFile", ({ root }) => ({
+    files: importMetaPathsFiles,
+    format: "iife",
+    target: "browser",
+    outfile: "out.cjs",
+    onAfterBundle(api) {
+      api.expectFile("out.cjs").not.toContain("import.meta");
+      api.expectFile("out.cjs").not.toContain("import_meta");
+    },
+    run: { runtime: "node", stdout: importMetaPathsStdout(root) },
+  }));
+  itBundled("edgecase/ImportMetaIifePathsAreInlinedPerFileTargetNode", ({ root }) => ({
+    files: importMetaPathsFiles,
+    format: "iife",
+    target: "node",
+    outfile: "out.cjs",
+    onAfterBundle(api) {
+      api.expectFile("out.cjs").not.toContain("import.meta");
+      api.expectFile("out.cjs").not.toContain("import_meta");
+    },
+    run: { runtime: "node", stdout: importMetaPathsStdout(root) },
+  }));
+  itBundled("edgecase/ImportMetaIifeTargetBunKeepsImportMeta", ({ root }) => ({
+    files: {
+      "/entry.js": /* js */ `
+        console.log(typeof import.meta.resolve, typeof import.meta.require, import.meta.url);
+      `,
+    },
+    format: "iife",
+    target: "bun",
+    onAfterBundle(api) {
+      const code = api.readFile("out.js");
+      expect(code).toContain("import.meta.resolve");
+      expect(code).toContain("import.meta.url");
+      expect(code).not.toContain("import_meta");
+    },
+    // The bundle's own `import.meta`, not entry.js's inlined one.
+    run: { stdout: `function function ${pathToFileURL(join(root, "out.js")).href}` },
+  }));
+  itBundled("edgecase/ImportMetaEsmKeepsImportMeta", {
+    files: {
+      "/entry.js": /* js */ `
+        const meta = import.meta;
+        import.meta.custom = "assigned";
+        console.log(meta.custom, typeof meta.url, import.meta.url === meta.url);
+      `,
+    },
+    format: "esm",
+    target: "bun",
+    onAfterBundle(api) {
+      const code = api.readFile("out.js");
+      expect(code).toContain('import.meta.custom = "assigned"');
+      expect(code).not.toContain("import_meta");
+    },
+    run: { stdout: "assigned string true" },
   });
 });
 

@@ -2045,6 +2045,9 @@ void GlobalObject::finishCreation(VM& vm)
         { OBJECT_OFFSETOF(GlobalObject, m_JSDirentClassStructure), [](LazyClassStructure::Initializer& init) {
              Bun::initJSDirentClassStructure(init);
          } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSDOMFileClassStructure), [](LazyClassStructure::Initializer& init) {
+             Bun::initJSDOMFileClassStructure(init);
+         } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSX509CertificateClassStructure), [](LazyClassStructure::Initializer& init) {
              setupX509CertificateClassStructure(init);
          } },
@@ -2434,10 +2437,6 @@ void GlobalObject::finishCreation(VM& vm)
     static const LazyPropertyInit<JSObject> lazyObjectInits[] = {
         { OBJECT_OFFSETOF(GlobalObject, m_JSAsymmetricKeyObjectPrototype), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
              setupAsymmetricKeyObjectPrototype(init);
-         } },
-        { OBJECT_OFFSETOF(GlobalObject, m_JSDOMFileConstructor), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
-             JSObject* fileConstructor = Bun::createJSDOMFileConstructor(init.vm, init.owner);
-             init.set(fileConstructor);
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_cryptoObject), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
              JSC::JSGlobalObject* globalObject = init.owner;

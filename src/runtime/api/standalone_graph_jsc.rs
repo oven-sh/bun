@@ -58,6 +58,8 @@ impl FileJsc for File {
             let store_ptr = store.as_ptr();
 
             let b = Blob::init_with_store(store, global);
+            // Set on the cached blob so every dupe() of it gets File.prototype.
+            b.is_jsdom_file.set(true);
 
             if let Some(mime) = MimeType::by_extension_no_default(strings::trim_leading_char(
                 bun_paths::extension(self.name),

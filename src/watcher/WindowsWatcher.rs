@@ -3,7 +3,10 @@
 use core::mem::size_of;
 use core::ptr;
 
-use crate::watcher_impl::{Op, WatchEvent, WatchItemColumns, WatchItemIndex, Watcher};
+use crate::watcher_impl::{
+    MAX_COALESCE_ITERATIONS, Op, WatchEvent, WatchItemColumns, WatchItemIndex, Watcher,
+    coalesce_interval_ns,
+};
 use bun_core::strings;
 use bun_paths::resolve_path::{ParentEqual, is_parent_or_equal};
 use bun_paths::{PathBuffer, WPathBuffer};
@@ -22,6 +25,8 @@ pub struct WindowsWatcher {
     pub(crate) watcher: DirWatcher,
     pub(crate) buf: PathBuffer,
     pub(crate) base_idx: usize,
+    /// [`coalesce_interval_ns`] in the milliseconds `GetQueuedCompletionStatus` takes.
+    pub(crate) coalesce_interval_ms: w::DWORD,
 }
 
 impl Default for WindowsWatcher {
@@ -35,6 +40,7 @@ impl Default for WindowsWatcher {
             },
             buf: PathBuffer::uninit(),
             base_idx: 0,
+            coalesce_interval_ms: 0,
         }
     }
 }
@@ -293,14 +299,18 @@ impl WindowsWatcher {
             root.len()
         };
 
+        // div_ceil so a sub-millisecond override still waits instead of becoming 0.
+        self.coalesce_interval_ms =
+            w::DWORD::try_from(coalesce_interval_ns().div_ceil(1_000_000)).unwrap_or(w::INFINITE);
+
         // disarm the cleanup scopeguards on success
         scopeguard::ScopeGuard::into_inner(iocp_guard);
         scopeguard::ScopeGuard::into_inner(handle_guard);
         Ok(())
     }
 
-    /// wait until new events are available
-    fn next(&mut self, timeout: Timeout) -> bun_sys::Result<Option<EventIterator>> {
+    /// Waits up to `timeout_ms` (a `GetQueuedCompletionStatus` timeout) for events.
+    fn next(&mut self, timeout_ms: w::DWORD) -> bun_sys::Result<Option<EventIterator>> {
         if let Err(err) = self.watcher.prepare() {
             bun_core::scoped_log!(watcher, "prepare() returned error");
             return Err(err);
@@ -317,7 +327,7 @@ impl WindowsWatcher {
                     &mut nbytes,
                     &mut key,
                     &mut overlapped,
-                    timeout as w::DWORD,
+                    timeout_ms,
                 )
             };
             if rc == 0 {
@@ -389,13 +399,6 @@ impl WindowsWatcher {
     }
 }
 
-#[repr(u32)]
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub(crate) enum Timeout {
-    Infinite = w::INFINITE,
-    None = 0,
-}
-
 pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     // We re-borrow buf inside the inner loop instead of holding `&this.platform.buf`
     // across calls to `this.platform.next()`.
@@ -403,17 +406,16 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
 
     let mut event_id: usize = 0;
 
-    // first wait has infinite timeout - we're waiting for the next event and don't want to spin
-    let mut timeout = Timeout::Infinite;
-    loop {
-        let mut iter = match this.platform.next(timeout)? {
+    // `<=`: the blocking INFINITE wait is iteration zero; the coalesce sweeps are the rest.
+    let mut timeout_ms: w::DWORD = w::INFINITE;
+    let mut iterations: u32 = 0;
+    while iterations <= MAX_COALESCE_ITERATIONS {
+        let mut iter = match this.platform.next(timeout_ms)? {
             Some(it) => it,
             None => break,
         };
-        // after the first wait, we want to coalesce further events but don't want to wait for them
-        // NOTE: using a 1ms timeout would be ideal, but that actually makes the thread wait for at least 10ms more than it should
-        // Instead we use a 0ms timeout, which may not do as much coalescing but is more responsive.
-        timeout = Timeout::None;
+        timeout_ms = this.platform.coalesce_interval_ms;
+        iterations += 1;
         bun_core::scoped_log!(
             watcher,
             "number of watched items: {}",

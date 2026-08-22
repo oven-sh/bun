@@ -4,7 +4,7 @@ use core::fmt;
 use std::borrow::Cow;
 
 use bun_collections::MultiArrayList;
-use bun_core::{ThreadLock, ZStr, feature_flags, output as Output, strings, zstr};
+use bun_core::{ThreadLock, ZStr, env_var, feature_flags, output as Output, strings, zstr};
 use bun_sys::{self as sys, Fd};
 use bun_threading::Mutex;
 
@@ -26,6 +26,26 @@ bun_core::define_scoped_log!(log, watcher, visible);
 // ─── constants ────────────────────────────────────────────────────────────
 
 pub const MAX_COUNT: usize = 128;
+
+/// Quiet window (ns) that folds one editor save's several events into one dispatch (#13511).
+pub(crate) fn coalesce_interval_ns() -> u64 {
+    env_var::BUN_INOTIFY_COALESCE_INTERVAL
+        .get()
+        .expect("BUN_INOTIFY_COALESCE_INTERVAL declares a default")
+}
+
+/// Caps a drain (kqueue wakes once per event) so a continuously written file can't starve the loop.
+pub(crate) const MAX_COALESCE_ITERATIONS: u32 = 32;
+
+/// `ns` split into a `timespec`; `tv_nsec` must stay below one second.
+#[cfg(not(windows))]
+pub(crate) fn coalesce_timespec(ns: u64) -> libc::timespec {
+    const NS_PER_S: u64 = 1_000_000_000;
+    libc::timespec {
+        tv_sec: (ns / NS_PER_S) as _,
+        tv_nsec: (ns % NS_PER_S) as _,
+    }
+}
 
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
 pub const REQUIRES_FILE_DESCRIPTORS: bool = true;

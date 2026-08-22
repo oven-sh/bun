@@ -596,14 +596,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         } else {
             uws::SocketKind::BunSocketTcp
         };
-        let socket_flags = self.flags.get();
-        let mut flags: i32 = 0;
-        if socket_flags.contains(Flags::ALLOW_HALF_OPEN) {
-            flags |= uws::LIBUS_SOCKET_ALLOW_HALF_OPEN;
-        }
-        if socket_flags.contains(Flags::PAUSE_ON_CONNECT) {
-            flags |= uws::LIBUS_SOCKET_OPEN_PAUSED;
-        }
+        let flags: i32 = if self.flags.get().contains(Flags::ALLOW_HALF_OPEN) {
+            uws::LIBUS_SOCKET_ALLOW_HALF_OPEN
+        } else {
+            0
+        };
         let ssl_ctx: Option<*mut uws::SslCtx> = if SSL {
             self.owned_ssl_ctx.get().map(|p| p.cast::<uws::SslCtx>())
         } else {
@@ -670,6 +667,12 @@ impl<const SSL: bool> NewSocket<SSL> {
                 self.socket.set(SocketHandler::<SSL>::from(s));
             }
             Some(UnixOrHost::Fd(f)) => {
+                // The fd is connected, so it is registered paused outright; a dial is paused in on_open.
+                let flags = if self.flags.get().contains(Flags::PAUSE_ON_CONNECT) {
+                    flags | uws::LIBUS_SOCKET_OPEN_PAUSED
+                } else {
+                    flags
+                };
                 // `LIBUS_SOCKET_DESCRIPTOR` is `c_int` on POSIX, `SOCKET`
                 // (`usize`) on Windows; `Fd::native()` is `c_int` / HANDLE
                 // (`*mut c_void`) respectively; cast to bridge the Rust-side `usize` alias.
@@ -4180,7 +4183,7 @@ bitflags::bitflags! {
         /// even though its `Handlers` mode is `Client` (no listener), so the
         /// client-only server-identity check must not run against its peer.
         const TLS_SERVER_ROLE      = 1 << 14;
-        /// node:net's `pauseOnConnect`: paused in `on_open` (plain, see `LIBUS_SOCKET_OPEN_PAUSED`) or after the handshake (TLS).
+        /// node:net's `pauseOnConnect`: paused in `on_open` (plain; free for a socket that was registered with `LIBUS_SOCKET_OPEN_PAUSED`) or after the handshake (TLS).
         const PAUSE_ON_CONNECT     = 1 << 15;
     }
 }

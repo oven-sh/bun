@@ -579,7 +579,7 @@ function releaseReadHold(self, handle) {
 // The handle opened paused (pauseOnConnect in its native config): https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L494-L498
 function pauseOnCreate(self, handle) {
   releaseReadHold(self, handle);
-  Duplex.prototype.pause.$call(self);
+  self.readableFlowing = false;
 }
 
 // Reads are flowing again: give back the hold readStop dropped. Cleared even when
@@ -988,7 +988,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
         self.authorized = true;
       }
     }
-    const pauseOnConnect = server && (server.pauseOnConnect ?? server[bunSocketServerOptions]?.pauseOnConnect);
+    const pauseOnConnect = server?.pauseOnConnect;
     if (pauseOnConnect) {
       pauseOnCreate(self, socket);
     }
@@ -1164,7 +1164,9 @@ function onconnection(err, clientHandle) {
   }
   clientHandle[kServerSocket] = handle;
   const options = self[bunSocketServerOptions];
-  const { pauseOnConnect, connectionListener, [kSocketClass]: SClass } = options;
+  const { connectionListener, [kSocketClass]: SClass } = options;
+  // Read per connection like node; the listener itself was created with the value listen() saw.
+  const pauseOnConnect = self.pauseOnConnect;
   // Propagate the server's half-open/highWaterMark settings to the accepted
   // socket so the Duplex's allowHalfOpen matches what the native layer was
   // configured with in kRealListen; without this, net.createServer({
@@ -1237,11 +1239,8 @@ function onconnection(err, clientHandle) {
     pauseOnCreate(_socket, clientHandle);
   }
 
-  if (typeof connectionListener === "function") {
-    clientHandle.pauseOnConnect = pauseOnConnect;
-    if (!isTLS) {
-      self.prependOnceListener("connection", connectionListener);
-    }
+  if (typeof connectionListener === "function" && !isTLS) {
+    self.prependOnceListener("connection", connectionListener);
   }
   if (isTLS) initAcceptedTLSSocket(self, _socket);
 
@@ -1931,9 +1930,9 @@ Socket.prototype.connect = function connect(...args) {
       });
     }
     if (pauseOnConnect) {
-      // An fd is open already; a dial opens paused through its req, and afterConnect releases its hold.
+      // An fd is open already; a dial is paused when it opens, and afterConnect releases its hold.
       if (fd != null) pauseOnCreate(this, this._handle);
-      else Duplex.prototype.pause.$call(this);
+      else this.readableFlowing = false;
     } else {
       process.nextTick(() => {
         // Honor pause()/resume() calls made while connecting — only start

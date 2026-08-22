@@ -1,7 +1,7 @@
 // CSS tests concern bundling bugs with CSS files
 import { expect } from "bun:test";
 import assert from "node:assert";
-import { devTest, emptyHtmlFile, imageFixtures } from "../bake-harness";
+import { Dev, devTest, emptyHtmlFile, imageFixtures } from "../bake-harness";
 
 devTest("css file with syntax error does not kill old styles", {
   files: {
@@ -41,8 +41,21 @@ devTest("css file with syntax error does not kill old styles", {
       `,
     );
     await c.style("body").backgroundColor.expect.toBe("#00f");
+    expect(await servedStylesheet(dev)).toMatchInlineSnapshot(`
+      "/* styles.css */
+      body {
+        color: red;
+        background-color: #00f;
+      }
+      "
+    `);
     await dev.write("styles.css", ` `, { dedent: false });
     await c.style("body").notFound();
+    expect(await servedStylesheet(dev)).toMatchInlineSnapshot(`
+      "/* styles.css */
+
+      "
+    `);
   },
 });
 devTest("css file with initial syntax error gets recovered", {
@@ -61,6 +74,7 @@ devTest("css file with initial syntax error gets recovered", {
     await using c = await dev.client("/", {
       errors: ["styles.css:3:3: error: Unexpected end of input"],
     });
+    await expectBuildFailed(dev);
     // hard reload to dismiss the error overlay
     await c.expectReload(async () => {
       await dev.write(
@@ -73,6 +87,13 @@ devTest("css file with initial syntax error gets recovered", {
       );
     });
     await c.style("body").color.expect.toBe("red");
+    expect(await servedStylesheet(dev)).toMatchInlineSnapshot(`
+      "/* styles.css */
+      body {
+        color: red;
+      }
+      "
+    `);
     await dev.write(
       "styles.css",
       `
@@ -93,6 +114,8 @@ devTest("css file with initial syntax error gets recovered", {
         errors: ["styles.css:3:3: error: Unexpected end of input"],
       },
     );
+    // A failing stylesheet keeps the last good rules in the page.
+    await c.style("body").color.expect.toBe("#00f");
   },
 });
 devTest("add new css import later", {
@@ -117,10 +140,20 @@ devTest("add new css import later", {
   async test(dev) {
     await using c = await dev.client("/");
     await c.style("body").notFound();
+    expect(await servedStylesheets(dev)).toEqual([]);
     await dev.patch("index.ts", { find: "// import", replace: "import" });
     await c.style("body").color.expect.toBe("red");
+    // A stylesheet imported from JS is linked from the served HTML.
+    expect(await servedStylesheet(dev)).toMatchInlineSnapshot(`
+      "/* styles.css */
+      body {
+        color: red;
+      }
+      "
+    `);
     await dev.patch("index.ts", { find: "import", replace: "// import" });
     await c.style("body").notFound();
+    expect(await servedStylesheets(dev)).toEqual([]);
   },
 });
 devTest("css import another css file", {
@@ -157,6 +190,19 @@ devTest("css import another css file", {
     );
     await c.style("h1").color.expect.toBe("green");
     await c.style("body").color.expect.toBe("red");
+    // The imported file comes first in the served chunk.
+    expect(await servedStylesheet(dev)).toMatchInlineSnapshot(`
+      "/* second.css */
+      h1 {
+        color: green;
+      }
+
+      /* styles.css */
+      body {
+        color: red;
+      }
+      "
+    `);
 
     // Check that the styles still work after a reload
     await c.hardReload();
@@ -183,8 +229,7 @@ devTest("asset referenced in css", {
     await dev.fetch(extractCssUrl(backgroundImage)).expectFile(imageFixtures.bun);
     // The served stylesheet is the chunk with the asset reference resolved and
     // nothing else: CSS never gets a source map, so no debugId trailer either.
-    const stylesheetHref = (await (await dev.fetch("/")).text()).match(/<link rel="stylesheet"[^>]*href="([^"]+)"/)![1];
-    const stylesheet = await (await dev.fetch(stylesheetHref)).text();
+    const stylesheet = await servedStylesheet(dev);
     expect(stylesheet).toContain("background-image:");
     expect(stylesheet).not.toContain("debugId");
     await dev.write("bun.png", imageFixtures.bun2);
@@ -206,10 +251,38 @@ devTest("syntax error crash", {
     }),
   },
   async test(dev) {
-    expect((await dev.fetch("/")).status).toBe(200);
+    expect(await servedStylesheet(dev)).toMatchInlineSnapshot(`
+      "/* styles.css */
+      body {
+        background-image: url;
+      }
+      "
+    `);
     // previously: panic(main thread): Asset double unref: 0000000000000000
     await dev.patch("styles.css", { find: "url\n", replace: "url(\n" });
-    expect((await dev.fetch("/")).status).toBe(500);
+    await expectBuildFailed(dev);
+    // The unterminated url() takes the closing brace as its path.
+    await using c = await dev.client("/", {
+      errors: ['styles.css:2:21: error: Could not resolve: "}". Maybe you need to "bun install"?'],
+    });
+    await c.expectReload(async () => {
+      await dev.write(
+        "styles.css",
+        `
+          body {
+            background-image: none;
+          }
+        `,
+      );
+    });
+    await c.style("body").backgroundImage.expect.toBe("none");
+    expect(await servedStylesheet(dev)).toMatchInlineSnapshot(`
+      "/* styles.css */
+      body {
+        background-image: none;
+      }
+      "
+    `);
   },
 });
 devTest("css url resolve error on hot reload is recoverable", {
@@ -242,7 +315,8 @@ devTest("css url resolve error on hot reload is recoverable", {
           errors: ['styles.css:2:21: error: Could not resolve: "./missing.png"'],
         },
       );
-      expect((await dev.fetch("/")).status).toBe(500);
+      await c.style("body").color.expect.toBe("red");
+      await expectBuildFailed(dev);
     }
     // Recovery is checked without a connected client: when a failed CSS root
     // recovers, the patch currently ships the HTML route as a JS module
@@ -256,7 +330,13 @@ devTest("css url resolve error on hot reload is recoverable", {
         }
       `,
     );
-    expect((await dev.fetch("/")).status).toBe(200);
+    expect(await servedStylesheet(dev)).toMatchInlineSnapshot(`
+      "/* styles.css */
+      body {
+        color: #00f;
+      }
+      "
+    `);
   },
 });
 devTest("circular css imports handle hot reload", {
@@ -292,6 +372,19 @@ devTest("circular css imports handle hot reload", {
     );
     await client.style(".a").color.expect.toBe("green");
     await client.style(".b").color.expect.toBe("#00f");
+    // Each file appears once in the served chunk.
+    expect(await servedStylesheet(dev)).toMatchInlineSnapshot(`
+      "/* b.css */
+      .b {
+        color: #00f;
+      }
+
+      /* a.css */
+      .a {
+        color: green;
+      }
+      "
+    `);
   },
 });
 devTest("asset index stays valid after another css root is freed", {
@@ -328,12 +421,14 @@ devTest("asset index stays valid after another css root is freed", {
 
     // Failing `first.css` frees its asset slot via `unrefByPath`, which
     // swap-removes it and moves the data for `second.css` into its slot.
+    // Build errors reach every connected client, so /second shows it too.
+    const firstBroken = "first.css:1:24: error: Unexpected end of input";
     await dev.write(
       "first.css",
       `
         .first { color: red; }}
       `,
-      { errors: null },
+      { errors: [firstBroken] },
     );
 
     // Editing `second.css` now goes through `replacePath`, which looks up
@@ -344,9 +439,16 @@ devTest("asset index stays valid after another css root is freed", {
       `
         .second { color: green; }
       `,
-      { errors: null },
+      { errors: [firstBroken] },
     );
     await c2.style(".second").color.expect.toBe("green");
+    expect(await servedStylesheet(dev, "/second")).toMatchInlineSnapshot(`
+      "/* second.css */
+      .second {
+        color: green;
+      }
+      "
+    `);
 
     // Fix the first file and ensure both pages still work afterwards.
     await dev.write(
@@ -360,6 +462,13 @@ devTest("asset index stays valid after another css root is freed", {
       await using c1 = await dev.client("/first");
       await c1.style(".first").color.expect.toBe("#ff0");
     }
+    expect(await servedStylesheet(dev, "/first")).toMatchInlineSnapshot(`
+      "/* first.css */
+      .first {
+        color: #ff0;
+      }
+      "
+    `);
   },
 });
 devTest("css hot update carries the edited stylesheet when another root fails in the same rebuild", {
@@ -401,7 +510,10 @@ devTest("css hot update carries the edited stylesheet when another root fails in
       await c2.style(".second").color.expect.toBe("#00f");
 
       {
-        await using batch = await dev.batchChanges({ errors: null });
+        // Both clients show the failure of the root they do not use.
+        await using batch = await dev.batchChanges({
+          errors: ['first.css:2:21: error: Could not resolve: "./missing.png"'],
+        });
         await dev.write(
           "first.css",
           `
@@ -482,6 +594,31 @@ devTest("multiple stylesheets importing same dependency", {
 
     await c1.style(".shared").color.expect.toBe("#ff0");
     await c2.style(".shared").color.expect.toBe("#ff0");
+    // Both served chunks carry the updated dependency.
+    expect(await servedStylesheet(dev, "/first")).toMatchInlineSnapshot(`
+      "/* shared.css */
+      .shared {
+        color: #ff0;
+      }
+
+      /* first.css */
+      .first {
+        color: red;
+      }
+      "
+    `);
+    expect(await servedStylesheet(dev, "/second")).toMatchInlineSnapshot(`
+      "/* shared.css */
+      .shared {
+        color: #ff0;
+      }
+
+      /* second.css */
+      .second {
+        color: #00f;
+      }
+      "
+    `);
   },
 });
 devTest("removing and re-adding css import", {
@@ -510,6 +647,13 @@ devTest("removing and re-adding css import", {
       `,
     );
     await c.style(".colored").notFound();
+    expect(await servedStylesheet(dev)).toMatchInlineSnapshot(`
+      "/* main.css */
+      .main {
+        background: #fff;
+      }
+      "
+    `);
 
     // A change to 'colors.css' should not trigger a rebuild of 'main.css', nor notify any clients.
     await c.expectNoWebSocketActivity(async () => {
@@ -538,6 +682,18 @@ devTest("removing and re-adding css import", {
     );
     await c.style(".colored").color.expect.toBe("#00f");
     await c.style(".main").backgroundColor.expect.toBe("#fff");
+    expect(await servedStylesheet(dev)).toMatchInlineSnapshot(`
+      "/* colors.css */
+      .colored {
+        color: #00f;
+      }
+
+      /* main.css */
+      .main {
+        background: #fff;
+      }
+      "
+    `);
   },
 });
 devTest("changing html file with link tag works", {
@@ -610,6 +766,20 @@ devTest("changing html file with link tag works", {
     await c.style(".other").color.expect.toBe("red");
     await c.style(".test").color.expect.toBe("#00f");
     await c.style(".test").fontSize.expect.toBe("24px");
+    // Each link tag is its own CSS root and gets its own chunk.
+    expect((await servedStylesheets(dev)).sort().join("\n")).toMatchInlineSnapshot(`
+      "/* other.css */
+      .other {
+        color: red;
+      }
+
+      /* styles.css */
+      .test {
+        color: #00f;
+        font-size: 24px;
+      }
+      "
+    `);
   },
 });
 devTest("css import before create", {
@@ -625,7 +795,7 @@ devTest("css import before create", {
     await using c = await dev.client("/", {
       errors: ['index.html: error: Could not resolve: "styles.css". Maybe you need to "bun install"?'],
     });
-    await dev.fetch("/").expect.not.toContain("HELLO");
+    await expectBuildFailed(dev);
     await dev.write(
       "styles.css",
       `
@@ -637,6 +807,7 @@ devTest("css import before create", {
         errors: ['styles.css:2:21: error: Could not resolve: "bun.png". Maybe you need to "bun install"?'],
       },
     );
+    await expectBuildFailed(dev);
     await c.expectReload(async () => {
       await dev.write("bun.png", imageFixtures.bun);
     });
@@ -660,7 +831,9 @@ devTest("css import before create project relative", {
     await using c = await dev.client("/", {
       errors: ['html/index.html: error: Could not resolve: "/style/styles.css"'],
     });
-    await dev.fetch("/").expect.not.toContain("HELLO");
+    await expectBuildFailed(dev);
+    // An absolute url() is not resolved against the project root.
+    const absoluteUrl = 'style/styles.css:2:21: error: Could not resolve: "/assets/bun.png"';
     await dev.write(
       "style/styles.css",
       `
@@ -668,15 +841,13 @@ devTest("css import before create project relative", {
           background-image: url(/assets/bun.png);
         }
       `,
-      {
-        errors: ['style/styles.css:2:21: error: Could not resolve: "/assets/bun.png"'],
-      },
+      { errors: [absoluteUrl] },
     );
     await c.expectNoWebSocketActivity(async () => {
-      await dev.write("assets/bun.png", imageFixtures.bun, { errors: null });
-      await dev.delete("assets/bun.png", { errors: null });
+      await dev.write("assets/bun.png", imageFixtures.bun, { errors: [absoluteUrl] });
+      await dev.delete("assets/bun.png", { errors: [absoluteUrl] });
     });
-    await dev.fetch("/").expect.not.toContain("HELLO");
+    await expectBuildFailed(dev);
     await dev.write(
       "style/styles.css",
       `
@@ -704,4 +875,29 @@ function extractCssUrl(backgroundImage: string): string {
     throw new Error("No url found in background-image: " + backgroundImage);
   }
   return url[2];
+}
+
+/** The bundled stylesheets the served page links, in the order the dev server injected them. */
+async function servedStylesheets(dev: Dev, route = "/"): Promise<string[]> {
+  const res = await dev.fetch(route);
+  const html = await res.text();
+  expect(res.status).toBe(200);
+  // Only the links the dev server injected: after a failed root recovers, the
+  // page also keeps the source link tag (https://github.com/oven-sh/bun/issues/40081).
+  const hrefs = [...html.matchAll(/<link rel="stylesheet" href="(\/_bun\/asset\/[^"]+)">/g)].map(m => m[1]);
+  return Promise.all(hrefs.map(href => dev.fetch(href).text()));
+}
+
+/** The one bundled stylesheet the served page links. */
+async function servedStylesheet(dev: Dev, route = "/"): Promise<string> {
+  const stylesheets = await servedStylesheets(dev, route);
+  expect(stylesheets).toHaveLength(1);
+  return stylesheets[0];
+}
+
+/** The route serves the dev server's build error page. */
+async function expectBuildFailed(dev: Dev, route = "/") {
+  const res = await dev.fetch(route);
+  expect(await res.text()).toContain("<title>Bun - Build Failed</title>");
+  expect(res.status).toBe(500);
 }

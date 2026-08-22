@@ -1253,7 +1253,15 @@ describe("CompressionStream level option", () => {
 
   test("level combines with highWaterMark", async () => {
     const highWaterMark = 1024;
-    const out = await compress("brotli", { level: 1, highWaterMark });
+    const [out, q1, dflt] = await Promise.all([
+      compress("brotli", { level: 1, highWaterMark }),
+      compress("brotli", { level: 1 }),
+      compress("brotli"),
+    ]);
+    // The level took effect (quality 1 output is larger than the quality 11 default)...
+    expect(out.length).toBeGreaterThan(dflt.length);
+    // ...and highWaterMark only bounds the pieces, it does not change the bytes.
+    expect(out.equals(q1)).toBe(true);
     expect(zlib.brotliDecompressSync(out).equals(input)).toBe(true);
   });
 

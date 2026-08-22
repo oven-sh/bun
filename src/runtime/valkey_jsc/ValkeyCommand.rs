@@ -133,7 +133,9 @@ impl Default for Meta {
 }
 
 bun_core::comptime_string_set! {
-    /// Commands that must not be auto-pipelined.
+    /// Commands that must not be auto-pipelined. Subscription commands are
+    /// not listed here: `Meta::check` excludes everything
+    /// `is_subscription_command` matches.
     static AUTO_PIPELINE_DISALLOWED_COMMANDS = {
         b"AUTH",
         b"EXEC",
@@ -147,10 +149,6 @@ bun_core::comptime_string_set! {
         b"DISCARD",
         b"UNWATCH",
         b"PIPELINE",
-        b"SUBSCRIBE",
-        b"PSUBSCRIBE",
-        b"UNSUBSCRIBE",
-        b"UNPSUBSCRIBE",
     };
 }
 
@@ -163,6 +161,9 @@ impl Meta {
         );
         if is_subscription_command(command.command) {
             new.insert(Meta::SUBSCRIPTION_REQUEST);
+        }
+        if new.contains(Meta::SUBSCRIPTION_REQUEST) {
+            new.remove(Meta::SUPPORTS_AUTO_PIPELINING);
         }
         new
     }

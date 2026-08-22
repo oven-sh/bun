@@ -652,6 +652,21 @@ describe("bun install --libc flag and the libc field", () => {
     return { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(package_dir, ".bun-cache") };
   }
 
+  /**
+   * bun writes a fetched manifest to the cache from a thread pool task that does not hold up its
+   * exit, so an install that must find it there waits for the file first.
+   */
+  async function cachedManifestCount(atLeast: number) {
+    const cacheDir = join(package_dir, ".bun-cache");
+    for (;;) {
+      const count = (await readdirSorted(cacheDir).catch(() => [] as string[])).filter(name =>
+        name.endsWith(".npm"),
+      ).length;
+      if (count >= atLeast) return count;
+      await Bun.sleep(5);
+    }
+  }
+
   async function installWithEnv(env: typeof bunEnv, ...args: string[]) {
     const { stderr, exited } = spawn({
       cmd: [bunExe(), "install", ...args],
@@ -1001,6 +1016,34 @@ describe("bun install --libc flag and the libc field", () => {
     expect(await install("--libc", "glibc", "--frozen-lockfile")).not.toContain("warn:");
     expect(accepts).toEqual({});
     expect(await installed()).toEqual(["baz", "dep-both", "dep-universal"]);
+  });
+
+  it("uses a cached abbreviated manifest for an optional dependency under --offline", async () => {
+    const urls: string[] = [];
+    // A regular dependency caches the abbreviated manifest (and the tarball), as every install
+    // did before libc was read. Offline, the full document cannot be fetched, so an optional
+    // dependency on the same package resolves from that document instead of being dropped; the
+    // libc goes unchecked, like when the request for the full document fails.
+    const accepts = serveRecordingAccepts(urls);
+    const env = await enableManifestCache();
+    await writePackageJson({ dependencies: { "dep-musl": "2.0.0" } });
+    await installWithEnv(env, "--libc", "glibc");
+    expect(await installed()).toEqual(["dep-musl"]);
+    expect(accepts).toEqual({ "dep-musl": [ABBREVIATED_MANIFEST_ACCEPT] });
+    expect(await cachedManifestCount(1)).toBe(1);
+
+    await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
+    await rm(join(package_dir, "bun.lockb"), { force: true });
+    clear(accepts, urls);
+    await writePackageJson({ optionalDependencies: { "dep-musl": "2.0.0" } });
+    const err = await installWithEnv(env, "--libc", "glibc", "--offline", "--save-text-lockfile");
+    expect(err).toContain(
+      "warn: --offline: no cached full package metadata for dep-musl, using the cached abbreviated metadata: its libc field will not be checked",
+    );
+    expect(accepts).toEqual({});
+    expect(urls).toEqual([]);
+    expect(await installed()).toEqual(["dep-musl"]);
+    expect(await lockfileEntry("dep-musl")).not.toContain(`"libc"`);
   });
 
   it("records libc when migrating a yarn.lock whose package is a regular dependency first and an optional one later", async () => {

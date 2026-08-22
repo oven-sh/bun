@@ -1270,6 +1270,31 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 if this.options.offline
                                     == crate::package_manager_real::options::OfflineMode::Offline
                                 {
+                                    // The full document cannot be fetched, but the lookup above may
+                                    // have found the abbreviated one (now in memory). Use it the way
+                                    // a failed request for the full one is used: the package installs
+                                    // with its libc unchecked, as before libc was read at all.
+                                    if needs_extended_manifest
+                                        && this
+                                            .manifests
+                                            .by_name_hash_in_memory(&name_str, name_hash)
+                                            .is_some()
+                                        && this.fall_back_to_abbreviated_manifest(task_id)
+                                    {
+                                        bun_ast::add_warning_pretty!(
+                                            this.log_mut(),
+                                            None,
+                                            bun_ast::Loc::EMPTY,
+                                            "--offline: no cached full package metadata for <b>{}<r>, using the cached abbreviated metadata: its <b>libc<r> field will not be checked (run once online to refresh it)",
+                                            bstr::BStr::new(&name_str),
+                                        );
+                                        this.manifest_request_not_sent(
+                                            task_id,
+                                            needs_extended_manifest,
+                                        );
+                                        continue 'retry_from_manifests_ptr;
+                                    }
+
                                     // Optional/peer edges are skipped like any other unavailable
                                     // optional dependency (and release the reservation so a later
                                     // *required* edge on the same package still reports it); a

@@ -48,7 +48,7 @@ static void dispatchDigest(PAL::CryptoDigest::Algorithm algorithm,
         auto moved = WTF::move(message);
         digest->addBytes(moved.begin(), moved.size());
         auto result = digest->computeHash();
-        ScriptExecutionContext::postTaskTo(context.identifier(),
+        ScriptExecutionContext::postTaskTo(context.identifier(), context.currentLoopKind(),
             [callback = WTF::move(callback), result = WTF::move(result)](auto&) {
                 callback(result);
             });

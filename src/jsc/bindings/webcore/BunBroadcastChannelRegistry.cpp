@@ -74,10 +74,10 @@ void BunBroadcastChannelRegistry::post(const String& name, BroadcastChannel& sou
     // Same-context subscribers share a task queue, so this preserves the
     // spec-mandated (message-major, creation-minor) delivery order.
     for (auto& [ctxId, ctxLoopKind, weakChannel] : targets) {
-        ScriptExecutionContext::postTaskTo(ctxId, [weakChannel, message = message.copyRef()](ScriptExecutionContext&) mutable {
+        ScriptExecutionContext::postTaskTo(ctxId, ctxLoopKind, [weakChannel, message = message.copyRef()](ScriptExecutionContext&) mutable {
             // Resolve on the target thread so any last deref happens here.
             if (RefPtr channel = weakChannel.get())
-                channel->dispatchMessage(WTF::move(message)); }, ctxLoopKind);
+                channel->dispatchMessage(WTF::move(message)); });
     }
 }
 

@@ -55,7 +55,7 @@ void CryptoAlgorithmSHA384::digest(Vector<uint8_t>&& message, VectorCallback&& c
         auto moved = WTF::move(message);
         digest->addBytes(moved.begin(), moved.size());
         auto result = digest->computeHash();
-        ScriptExecutionContext::postTaskTo(context.identifier(), [callback = WTF::move(callback), result = WTF::move(result)](auto&) {
+        ScriptExecutionContext::postTaskTo(context.identifier(), context.currentLoopKind(), [callback = WTF::move(callback), result = WTF::move(result)](auto&) {
             callback(result);
         });
         return;

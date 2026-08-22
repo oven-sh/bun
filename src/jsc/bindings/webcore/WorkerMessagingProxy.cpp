@@ -209,7 +209,7 @@ void WorkerMessagingProxy::postMessageToWorkerGlobalScope(MessageWithMessagePort
             return;
         m_toWorker.drainScheduled = true;
     }
-    bool posted = ScriptExecutionContext::postTaskTo(m_workerContextIdentifier, [protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+    bool posted = ScriptExecutionContext::postTaskTo(m_workerContextIdentifier, BunLoopKind::Regular, [protectedThis = Ref { *this }](ScriptExecutionContext& context) {
         protectedThis->drainMessagesToWorkerGlobalScope(context);
     });
     if (!posted) {
@@ -220,7 +220,7 @@ void WorkerMessagingProxy::postMessageToWorkerGlobalScope(MessageWithMessagePort
 
 bool WorkerMessagingProxy::postTaskToWorkerObject(Function<void(ScriptExecutionContext&)>&& task)
 {
-    return ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, WTF::move(task), m_loaderLoopKind);
+    return ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, WTF::move(task));
 }
 
 bool WorkerMessagingProxy::postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>&& task)
@@ -238,7 +238,7 @@ bool WorkerMessagingProxy::postTaskToWorkerGlobalScope(Function<void(ScriptExecu
             return false;
         }
     }
-    return ScriptExecutionContext::postTaskTo(m_workerContextIdentifier, WTF::move(task));
+    return ScriptExecutionContext::postTaskTo(m_workerContextIdentifier, BunLoopKind::Regular, WTF::move(task));
 }
 
 uint64_t WorkerMessagingProxy::registerCrossVMRequest(JSC::VM& vm, JSC::JSPromise* promise)

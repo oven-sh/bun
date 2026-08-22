@@ -178,7 +178,7 @@ void ScriptExecutionContext::willDestroyActiveDOMObject(ActiveDOMObject& activeD
     m_activeDOMObjects.remove(activeDOMObject);
 }
 
-bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identifier, Function<void(ScriptExecutionContext&)>&& task, BunLoopKind loopKind)
+bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identifier, BunLoopKind loopKind, Function<void(ScriptExecutionContext&)>&& task)
 {
     // The map lock covers the lookup only. The context may be destroyed the moment the
     // lock is released, so nothing of it is used afterwards except a count taken on its

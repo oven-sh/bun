@@ -24,9 +24,10 @@ use crate::{
     FindLabelSymbolResult, FnOnlyDataVisit, FnOrArrowDataParse, FnOrArrowDataVisit, IdentifierOpts,
     ImportItemForNamespaceMap, InvalidLoc, JSXImport, JSXTransformType, Jest,
     LOC_MODULE_SCOPE as loc_module_scope, LocList, MacroState, ParseStatementOptions, ParsedPath,
-    PrependTempRefsOpts, ReactRefresh, Ref, RefMap, RefRefMap, RuntimeImports, ScopeOrder,
-    ScopeOrderList, StrictModeFeature, StringBoolMap, Substitution, TempRef, ThenCatchChain,
-    TransposeState, WrapMode, fs, is_eval_or_arguments, options, statement_cares_about_scope,
+    PrependTempRefsOpts, ReactRefresh, Ref, RefMap, RefRefMap, RelocateVarsMode, RuntimeImports,
+    ScopeOrder, ScopeOrderList, StrictModeFeature, StringBoolMap, Substitution, TempRef,
+    ThenCatchChain, TransposeState, WrapMode, fs, is_eval_or_arguments, options,
+    statement_cares_about_scope,
 };
 use bun_ast as js_ast;
 use bun_ast::DeclaredSymbol;
@@ -8826,9 +8827,11 @@ impl LowerUsingDeclarationsContext {
     ) -> ListManaged<'a, Stmt> {
         let mut result = BumpVec::new_in(p.arena);
         let mut exports = BumpVec::<js_ast::ClauseItem>::new_in(p.arena);
+        // The linker's `__esm` wrapper and the REPL transform hoist only top-level declarations.
+        let relocate_module_vars = p.current_scope == p.module_scope;
         let mut end: u32 = 0;
         for i in 0..stmts.len() {
-            let stmt = stmts[i];
+            let mut stmt = stmts[i];
             match stmt.data {
                 js_ast::StmtData::SDirective(_)
                 | js_ast::StmtData::SImport(_)
@@ -8895,6 +8898,16 @@ impl LowerUsingDeclarationsContext {
                         }
                         if any_ident {
                             local.kind = js_ast::s::Kind::KVar;
+                        }
+                    }
+
+                    if relocate_module_vars && local.kind == js_ast::s::Kind::KVar {
+                        match p.relocate_vars_to_top_level(
+                            local.decls.slice(),
+                            RelocateVarsMode::Normal,
+                        ) {
+                            Some(assignments) => stmt = assignments,
+                            None => continue,
                         }
                     }
                 }

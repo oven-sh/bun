@@ -5,7 +5,7 @@ use bun_core::feature_flags as FeatureFlags;
 use crate::p::P;
 use crate::parser::{self as js_parser, IdentifierOpts, RelocateVars, RelocateVarsMode};
 use bun_ast::ast_result::CommonJSNamedExport;
-use bun_ast::{self as js_ast, Binding, E, Expr, Flags, G, LocRef, S};
+use bun_ast::{self as js_ast, Binding, E, Expr, Flags, G, LocRef, S, Stmt};
 
 // ── local EString shims ────────────────────────────────────────────────────
 // E.rs currently carries two `impl EString` blocks (live + round-C draft) with
@@ -79,6 +79,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             };
         }
 
+        RelocateVars {
+            stmt: p.relocate_vars_to_top_level(decls, mode),
+            ok: true,
+        }
+    }
+
+    /// Declares these `var`s at the part's top level; returns the assignments that replace them.
+    pub(crate) fn relocate_vars_to_top_level(
+        &mut self,
+        decls: &[G::Decl],
+        mode: RelocateVarsMode,
+    ) -> Option<Stmt> {
+        let p = self;
         let mut value: Expr = Expr::EMPTY;
         for decl in decls {
             // Derive `*mut P` from the live `&mut Self` so the trampoline's
@@ -94,22 +107,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         if matches!(value.data, js_ast::ExprData::EMissing(_)) {
-            return RelocateVars {
-                ok: true,
-                ..Default::default()
-            };
+            return None;
         }
 
-        RelocateVars {
-            stmt: Some(p.s(
-                S::SExpr {
-                    value,
-                    does_not_affect_tree_shaking: false,
-                },
-                value.loc,
-            )),
-            ok: true,
-        }
+        Some(p.s(
+            S::SExpr {
+                value,
+                does_not_affect_tree_shaking: false,
+            },
+            value.loc,
+        ))
     }
 
     // EDot nodes represent a property access. This function may return an

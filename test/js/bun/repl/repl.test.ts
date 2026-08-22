@@ -875,6 +875,18 @@ describe.concurrent("Bun REPL", () => {
       expect(stripAnsi(stdout)).toContain("deep");
       expect(exitCode).toBe(0);
     });
+
+    test("declarations on a line with a top-level using persist", async () => {
+      // `using` is lowered into a try/finally before the REPL hoists the line's
+      // declarations, so the declarations must not stay trapped inside of it.
+      const { stdout, exitCode } = await runRepl([
+        "var disposed = false; using handle = { [Symbol.dispose]() { disposed = true; } }; const a = 6000; let b = 70; var c = 8",
+        "disposed && a + b + c",
+        ".exit",
+      ]);
+      expect(stripAnsi(stdout)).toContain("6078");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("multiline input", () => {

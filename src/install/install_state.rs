@@ -196,15 +196,15 @@ fn env_and_argv_hash(manager: &PackageManager) -> u64 {
         .iter()
         .map(|k| &**k)
         .filter(|k| {
-            k.starts_with(b"BUN_INSTALL")
-                || k.starts_with(b"BUN_CONFIG_")
+            starts_with_ci(k, b"BUN_INSTALL")
+                || starts_with_ci(k, b"BUN_CONFIG_")
                 || k.len() >= 11 && k[..11].eq_ignore_ascii_case(b"NPM_CONFIG_")
                 // spliced into argv (see below)
-                || k == b"BUN_OPTIONS"
+                || k.eq_ignore_ascii_case(b"BUN_OPTIONS")
                 // where the global .npmrc / .bunfig.toml are looked up
-                || k == b"HOME"
-                || k == b"USERPROFILE"
-                || k == b"XDG_CONFIG_HOME"
+                || k.eq_ignore_ascii_case(b"HOME")
+                || k.eq_ignore_ascii_case(b"USERPROFILE")
+                || k.eq_ignore_ascii_case(b"XDG_CONFIG_HOME")
         })
         .collect();
     keys.sort_unstable();
@@ -250,7 +250,7 @@ pub fn applicable(manager: &PackageManager) -> bool {
 }
 
 struct Recorded {
-    lines: Vec<(u8, u64, Vec<u8>)>, // kind ('f' file hash / 'd' dir stamp / 'e' env), value, path
+    lines: Vec<(u8, u64, Vec<u8>)>, // kind (one per record; kinds are matched in `is_up_to_date`), value, path
 }
 
 /// `<cache dir>/.install-state/<hash of project root>` — kept out of node_modules so
@@ -623,8 +623,19 @@ pub fn save(manager: &mut PackageManager, root_dir: &[u8], entries: u64, package
                 continue;
             }
             let dir = join(root_dir, nm.relative_path.as_bytes());
-            if !stamp_dir_and_scopes(&mut out, &dir, true) {
-                unreadable = true;
+            // same per-entry stamps as the root/workspace trees (entries, their
+            // package.json, @scope subdirectories); an absent nested dir must stay absent
+            match lstat_stamp_strict(&dir) {
+                Stamp::Absent => {
+                    let _ = write!(out, "n {:016x} ", 0);
+                    out.extend_from_slice(&dir);
+                    out.push(b'\n');
+                }
+                _ => {
+                    if !stamp_tree(&mut out, &dir, 0) {
+                        unreadable = true;
+                    }
+                }
             }
             match lstat_stamp_strict(&join(&dir, b".bin")) {
                 Stamp::At(stamp) => {
@@ -655,7 +666,7 @@ pub fn save(manager: &mut PackageManager, root_dir: &[u8], entries: u64, package
                     } else {
                         join(&join(&store, &name), b"node_modules")
                     };
-                    if !stamp_dir_and_scopes(&mut out, &dir, false) {
+                    if !stamp_tree(&mut out, &dir, 0) {
                         unreadable = true;
                     }
                 }
@@ -737,6 +748,12 @@ fn stamp_tree(out: &mut Vec<u8>, dir: &[u8], depth: u8) -> bool {
     true
 }
 
+/// ASCII-case-insensitive prefix test (env var names are case-insensitive on Windows,
+/// and the loader's map lookups are too).
+fn starts_with_ci(s: &[u8], prefix: &[u8]) -> bool {
+    s.len() >= prefix.len() && s[..prefix.len()].eq_ignore_ascii_case(prefix)
+}
+
 fn strings_contains(hay: &[u8], needle: &[u8]) -> bool {
     bun_core::strings::index_of(hay, needle).is_some()
 }
@@ -806,49 +823,6 @@ fn collect_dirs(dir: &[u8], depth: usize, out: &mut Vec<Vec<u8>>, budget: &mut u
         }
     }
     true
-}
-
-/// `l`/`n`-stamp a nested or store `node_modules` directory, plus each `@scope`
-/// directory directly inside it (removing `@scope/pkg` only touches `@scope`'s mtime).
-/// Returns false when something that exists could not be read.
-fn stamp_dir_and_scopes(out: &mut Vec<u8>, dir: &[u8], record_absent: bool) -> bool {
-    match lstat_stamp_strict(dir) {
-        Stamp::At(stamp) => {
-            let _ = write!(out, "l {stamp:016x} ");
-            out.extend_from_slice(dir);
-            out.push(b'\n');
-        }
-        Stamp::Absent => {
-            if record_absent {
-                let _ = write!(out, "n {:016x} ", 0);
-                out.extend_from_slice(dir);
-                out.push(b'\n');
-            }
-            return true;
-        }
-        Stamp::Unreadable => return false,
-    }
-    match read_dir(dir) {
-        DirList::Absent => true,
-        DirList::Unreadable => false,
-        DirList::Entries(entries) => {
-            for (name, is_dir) in entries {
-                if is_dir && name.first() == Some(&b'@') {
-                    let scope = join(dir, &name);
-                    match lstat_stamp_strict(&scope) {
-                        Stamp::At(stamp) => {
-                            let _ = write!(out, "l {stamp:016x} ");
-                            out.extend_from_slice(&scope);
-                            out.push(b'\n');
-                        }
-                        Stamp::Absent => {}
-                        Stamp::Unreadable => return false,
-                    }
-                }
-            }
-            true
-        }
-    }
 }
 
 /// Recursively record `l` stamps for a local-source directory (skipping node_modules

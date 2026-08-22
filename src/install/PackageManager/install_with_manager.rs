@@ -688,10 +688,12 @@ pub fn install_with_manager(
         }
     };
     let lockfile_before_clean = core::mem::replace(&mut manager.lockfile, new_lockfile);
-    if manager.subcommand == Subcommand::Update && !manager.options.dry_run {
+    let has_orphaned_patches = if !manager.options.dry_run {
         Output::flush();
-        crate::update_transitive::warn_orphaned_patches(manager);
-    }
+        crate::update_transitive::warn_orphaned_patches(manager)
+    } else {
+        false
+    };
     let requests_removed_from_lockfile = if manager.subcommand == Subcommand::Remove {
         count_requests_removed_from_lockfile(manager, &lockfile_before_clean)
     } else {
@@ -792,7 +794,7 @@ pub fn install_with_manager(
     {
         'frozen_lockfile: {
             let changed_section = frozen_changed_section(manager, root_package_json_path);
-            if changed_section.is_none() {
+            if changed_section.is_none() && !has_orphaned_patches {
                 if load_result.loaded_from_text_lockfile() {
                     if bun_core::handle_oom(Lockfile::eql(
                         &manager.lockfile,
@@ -823,6 +825,10 @@ pub fn install_with_manager(
                         "{} in package.json changed since {} was saved",
                         section,
                         loaded_lockfile_name(&load_result)
+                    );
+                } else if has_orphaned_patches {
+                    bun_core::note!(
+                        "a patchedDependencies entry in package.json no longer applies to any installed package version"
                     );
                 }
                 bun_core::note!(

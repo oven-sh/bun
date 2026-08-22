@@ -1,3 +1,10 @@
+// Ambient-only alias re-exporting `"bun"`; `bun.ns.d.ts` imports this instead
+// of `"bun"` so the `Bun` global never resolves through the `@types/bun` stub.
+// See #30503.
+declare module "bun-types:internal" {
+  export * from "bun";
+}
+
 /**
  * Bun runtime APIs
  *

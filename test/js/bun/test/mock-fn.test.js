@@ -1137,6 +1137,57 @@ describe("spyOn", () => {
       expect(arr[0]).toBe(original);
     });
 
+    // Non-callable indexed properties get the same getter/setter spy as named ones
+    // ("spyOn works on object" above).
+    test("spyOn on a missing indexed property installs a getter/setter spy", () => {
+      const obj = {};
+      const fn = spyOn(obj, 9);
+      expect(fn).not.toHaveBeenCalled();
+      expect(obj[9]).toBeUndefined();
+      expect(fn).toHaveBeenCalledTimes(1);
+      obj[9] = 5;
+      expect(fn).toHaveBeenCalledTimes(2);
+      expect(fn.mock.calls[1]).toEqual([5]);
+      expect(obj[9]).toBeUndefined();
+      expect(fn).toHaveBeenCalledTimes(3);
+      // Same as named keys: the property is an accessor now, so it can't be spied again.
+      expect(() => spyOn(obj, 9)).toThrow("does not support accessor properties");
+      expect(obj[9]).toBeUndefined();
+      expect(fn).toHaveBeenCalledTimes(4);
+    });
+
+    test("spyOn on an existing non-callable indexed property returns the original and can be restored", () => {
+      const obj = { 1: "original" };
+      const fn = spyOn(obj, 1);
+      expect(obj[1]).toBe("original");
+      expect(fn).toHaveBeenCalledTimes(1);
+      expect(Object.getOwnPropertyDescriptor(obj, 1)).toHaveProperty("get");
+      fn.mockRestore();
+      expect(obj[1]).toBe("original");
+      expect(Object.getOwnPropertyDescriptor(obj, 1)).toEqual({
+        value: "original",
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+      expect(fn).not.toHaveBeenCalled();
+    });
+
+    test("spyOn on a non-callable array element returns the original and can be restored", () => {
+      const arr = [1, 2, 3];
+      const fn = spyOn(arr, 1);
+      expect(arr[1]).toBe(2);
+      expect(fn).toHaveBeenCalledTimes(1);
+      fn.mockRestore();
+      expect(Object.getOwnPropertyDescriptor(arr, 1)).toEqual({
+        value: 2,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+      expect(arr).toEqual([1, 2, 3]);
+    });
+
     test("spyOn works with indexed properties using BigInt keys", () => {
       function original() {
         return 456;

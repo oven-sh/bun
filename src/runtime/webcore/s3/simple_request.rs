@@ -566,6 +566,12 @@ pub(crate) fn execute_simple_s3_request(
         )?;
         return Ok(());
     }
+    // Before anything is allocated for the request, like a signing error.
+    if let Err(err) = bun_http::http_thread::init(&Default::default()) {
+        let message = err.to_string();
+        callback.fail(err.code().as_bytes(), message.as_bytes(), callback_context)?;
+        return Ok(());
+    }
     let result = match this.sign_request::<false>(
         &SignOptions {
             path: options.path,
@@ -697,7 +703,6 @@ pub(crate) fn execute_simple_s3_request(
     // `schedule` below); scoped exclusive write of the `http` field.
     unsafe { (*task_ptr).http.write(async_http) };
     // queue http request
-    bun_http::http_thread::init(&Default::default());
     let mut batch = thread_pool::Batch::default();
     // SAFETY: `http` was initialised immediately above; scoped exclusive access.
     unsafe { (*task_ptr).http.assume_init_mut() }.schedule(&mut batch);

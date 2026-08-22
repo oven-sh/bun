@@ -14,6 +14,10 @@ pub enum Error {
     VersionSpecifierNotAllowedHere,
     #[error("ParseErrorAlreadyLogged")]
     ParseErrorAlreadyLogged,
+    /// The OS refused the auto-installer's HTTP client thread. Not `Sys`, which
+    /// on that path means the top-level directory could not be read.
+    #[error("{0}")]
+    HttpThread(bun_errno::SystemErrno),
     #[error(transparent)]
     Sys(#[from] bun_errno::SystemErrno),
     #[error(transparent)]
@@ -35,7 +39,7 @@ impl Error {
             Self::ModuleNotFound => "ModuleNotFound",
             Self::VersionSpecifierNotAllowedHere => "VersionSpecifierNotAllowedHere",
             Self::ParseErrorAlreadyLogged => "ParseErrorAlreadyLogged",
-            Self::Sys(e) => <&'static str>::from(e),
+            Self::HttpThread(e) | Self::Sys(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",
             Self::Core(e) => e.name(),
             Self::Overflow(_) => "Overflow",

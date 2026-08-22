@@ -137,6 +137,9 @@ unsafe impl Send for JSBundleCompletionTask {}
 
 /// `BundleV2.createAndScheduleCompletionTask` — construct, take a process-keepalive
 /// ref, and hand the task to the bundle-thread singleton.
+///
+/// The caller has already called `singleton::start`: only it knows whether
+/// `plugins` is its own or the server's when that fails.
 pub(crate) fn create_and_schedule_completion_task(
     config: JSBundlerConfig,
     plugins: Option<NonNull<Plugin>>,

@@ -225,6 +225,34 @@ describe("Bun.serve per-serverName client certificate policy", () => {
     });
   });
 
+  test("the entry's policy applies however the client spells the name", async () => {
+    // SNI server names are DNS names (RFC 4343): ADMIN.EXAMPLE.COM selects the
+    // admin.example.com entry, not the default one.
+    using server = Bun.serve({
+      port: 0,
+      tls: [
+        { key: serverKey, cert: serverCert },
+        {
+          serverName: "admin.example.com",
+          key: serverKey,
+          cert: serverCert,
+          ca: clientCa,
+          requestCert: true,
+          rejectUnauthorized: true,
+        },
+      ],
+      fetch: req => new Response(`served ${req.headers.get("host")}`),
+    });
+    const { status: upperNoCert } = await request(server.port, "ADMIN.EXAMPLE.COM");
+    const { status: mixedNoCert } = await request(server.port, "Admin.Example.com");
+    const { status: upperTrustedCert } = await request(server.port, "ADMIN.EXAMPLE.COM", trustedClient);
+    expect({ upperNoCert, mixedNoCert, upperTrustedCert }).toEqual({
+      upperNoCert: "connection closed without a response",
+      mixedNoCert: "connection closed without a response",
+      upperTrustedCert: "HTTP/1.1 200 OK",
+    });
+  });
+
   test("a session established on the open default name cannot be resumed to bypass a gated name", async () => {
     using server = Bun.serve({
       port: 0,

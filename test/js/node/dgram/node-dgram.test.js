@@ -66,7 +66,7 @@ test("node:dgram Symbol.asyncDispose closes the socket and resolves after 'close
   expect(events).toEqual(["close", "disposed"]);
   // The handle is gone, so disposing again resolves without touching the socket.
   await expect(socket[Symbol.asyncDispose]()).resolves.toBeUndefined();
-  expect(() => socket.address()).toThrow();
+  expect(() => socket.address()).toThrow(expect.objectContaining({ code: "ERR_SOCKET_DGRAM_NOT_RUNNING" }));
 });
 
 describe.skipIf(!isIPv6())("node:dgram", () => {

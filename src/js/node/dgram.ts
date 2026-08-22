@@ -1161,7 +1161,7 @@ Socket.prototype[SymbolAsyncDispose] = async function () {
     return;
   }
   const promise = $newPromise();
-  this.close(onAsyncDisposeClosed.bind(undefined, promise));
+  this.close(FunctionPrototypeBind.$call(onAsyncDisposeClosed, undefined, promise));
 
   return promise;
 };

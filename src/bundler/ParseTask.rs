@@ -200,7 +200,6 @@ pub(crate) struct ResultError {
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum Step {
     Pending,
-    ReadFile,
     Parse,
     Resolve,
 }
@@ -1687,25 +1686,6 @@ pub mod parse_worker {
         pub(crate) line_end: i32,
         pub(crate) column: i32,
         pub(crate) column_end: i32,
-    }
-
-    impl Default for BunLogOptions {
-        fn default() -> Self {
-            Self {
-                struct_size: core::mem::size_of::<BunLogOptions>(),
-                message_ptr: core::ptr::null(),
-                message_len: 0,
-                path_ptr: core::ptr::null(),
-                path_len: 0,
-                source_line_text_ptr: core::ptr::null(),
-                source_line_text_len: 0,
-                level: bun_ast::Level::Err,
-                line: 0,
-                line_end: 0,
-                column: 0,
-                column_end: 0,
-            }
-        }
     }
 
     // These structs are passed by-pointer to **third-party** native plugins via

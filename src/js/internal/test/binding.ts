@@ -601,10 +601,6 @@ function internalBinding(name: string) {
     // against it reports HAVE_SSL_TRACE = false; --trace-tls tests skip.
     case "tls_wrap":
       return { HAVE_SSL_TRACE: false };
-    case "worker":
-      // node's env message port is the thread's control channel to its parent;
-      // bun's equivalent is the port to the main-thread messaging hub.
-      return { getEnvMessagePort: require("internal/worker/messaging").getMainThreadPort };
     case "js_stream":
       return { JSStream: getJSStreamClass() };
     case "stream_wrap":

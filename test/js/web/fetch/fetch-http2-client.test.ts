@@ -818,6 +818,53 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     }
   });
 
+  test("a 204, a 205 and the response to a HEAD request have a null body", async () => {
+    const server = makeH2Server();
+    server.on("stream", (stream, headers) => {
+      stream.on("error", () => {});
+      if (headers[":method"] === "HEAD") {
+        stream.respond({ ":status": 200, "content-length": "5" }, { endStream: true });
+      } else if (headers[":path"] === "/204") {
+        stream.respond({ ":status": 204 }, { endStream: true });
+      } else {
+        // RFC 9110 section 15.3.6 forbids content on a 205. A server that sends
+        // some anyway must not get it into the body.
+        stream.respond({ ":status": 205 });
+        stream.end("hello");
+      }
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const { port } = server.address() as import("node:net").AddressInfo;
+    try {
+      await using proc = await spawnFetch(`
+        const results = [];
+        for (const [path, init] of [["/204", {}], ["/205", {}], ["/head", { method: "HEAD" }]]) {
+          const r = await fetch("https://localhost:${port}" + path, { ...init, tls: { rejectUnauthorized: false } });
+          results.push({
+            status: r.status,
+            contentLength: r.headers.get("content-length"),
+            body: r.body,
+            text: await r.text(),
+            bodyUsed: r.bodyUsed,
+            cloneBody: r.clone().body,
+          });
+        }
+        console.log(JSON.stringify(results));
+      `);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual([
+        { status: 204, contentLength: null, body: null, text: "", bodyUsed: false, cloneBody: null },
+        { status: 205, contentLength: null, body: null, text: "", bodyUsed: false, cloneBody: null },
+        { status: 200, contentLength: "5", body: null, text: "", bodyUsed: false, cloneBody: null },
+      ]);
+      expect(exitCode).toBe(0);
+    } finally {
+      server.close();
+    }
+  });
+
   describe("raw frame server", () => {
     test("REFUSED_STREAM is transparently retried on the same connection", async () => {
       let attempts = 0;

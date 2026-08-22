@@ -3,10 +3,10 @@
 // tarball-URL / `github:` dependencies that appear both directly and
 // transitively (issues #10915, #8501, #11348, #28284). Everything is local:
 // a bare repo on disk (served over git's dumb HTTP protocol by Bun.serve
-// when an http URL is needed) or static tarballs.
-import { expect, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+// when an http URL is needed) or tarballs built in memory.
+import { afterAll, beforeAll, expect, test } from "bun:test";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "path";
 import { pathToFileURL } from "url";
 
@@ -19,8 +19,15 @@ const gitEnv = {
   GIT_COMMITTER_EMAIL: "test@example.com",
 };
 
-async function run(cwd: string, cmd: string[], what: string) {
-  await using proc = Bun.spawn({ cmd, cwd, env: gitEnv, stdout: "ignore", stderr: "pipe" });
+async function run(cwd: string, cmd: string[], what: string, stdin?: string) {
+  await using proc = Bun.spawn({
+    cmd,
+    cwd,
+    env: gitEnv,
+    stdin: stdin === undefined ? "ignore" : Buffer.from(stdin),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
   if (exitCode !== 0) {
     throw new Error(`${what} failed in ${cwd}:\n${stderr}`);
@@ -31,34 +38,105 @@ function git(cwd: string, ...args: string[]) {
   return run(cwd, ["git", ...args], `git ${args.join(" ")}`);
 }
 
+// The fixture packages are `@scope/pkg-<letter>`. Each one's branch or tarball
+// is named `pkg-<letter>`, and so is the marker its index.js exports, which is
+// how a test tells what got installed (a later commit exports its own marker).
+const letters = "abcdefghijklmnop".split("");
+const nameOf = (l: string) => `@scope/pkg-${l}`;
+const markers = (installed: string[]) => Object.fromEntries(installed.map(l => [nameOf(l), `pkg-${l}`]));
+
 interface BranchPackage {
-  name: string;
+  name?: string;
   branch: string;
   dependencies?: Record<string, string>;
+  /** Files committed next to package.json; an `index.js` entry replaces the default one. */
+  files?: Record<string, string>;
 }
 
-// Creates `<root>/shared-repo.git`, a bare repo with one orphan branch per
-// package, and prepares it for serving over dumb HTTP.
-async function makeSharedRepo(root: string, packages: BranchPackage[]): Promise<string> {
-  const bare = join(root, "shared-repo.git");
-  const work = join(root, "work");
-  await git(root, "init", "-q", "--bare", "shared-repo.git");
-  mkdirSync(work);
-  await git(work, "init", "-q");
-  for (const pkg of packages) {
-    await git(work, "checkout", "-q", "--orphan", pkg.branch);
-    writeFileSync(
-      join(work, "package.json"),
-      JSON.stringify({ name: pkg.name, version: "1.0.0", dependencies: pkg.dependencies }, null, 2),
-    );
-    writeFileSync(join(work, "index.js"), `module.exports = ${JSON.stringify(pkg.branch)};\n`);
-    await git(work, "add", "-A");
-    await git(work, "commit", "-q", "-m", pkg.branch, "--no-gpg-sign");
-    await git(work, "push", "-q", bare, pkg.branch);
+function indexJs(marker: string) {
+  return `module.exports = ${JSON.stringify(marker)};\n`;
+}
+
+function packageFiles(name: string | undefined, marker: string, dependencies?: Record<string, string>) {
+  return {
+    "package.json": JSON.stringify({ name, version: "1.0.0", dependencies }),
+    "index.js": indexJs(marker),
+  };
+}
+
+interface Commit {
+  /** The full name of the ref the commit lands on: `refs/heads/<branch>` or `refs/tags/<tag>`. */
+  ref: string;
+  /**
+   * The ref or commit the new commit extends, as the repo has it before this
+   * call; its files carry over unless `files` replaces them. Without it the
+   * commit has no parent.
+   */
+  from?: string;
+  message: string;
+  files: Record<string, string>;
+}
+
+function fastImportData(text: string) {
+  return `data ${Buffer.byteLength(text)}\n${text}\n`;
+}
+
+// Writes the commits to the bare repo with a single `git fast-import`, so a
+// fixture costs the same two processes however many refs it has, then
+// regenerates the static files that dumb HTTP clients read.
+async function commitTo(bare: string, commits: Commit[]) {
+  let stream = "";
+  for (const { ref, from, message, files } of commits) {
+    stream += `commit ${ref}\n`;
+    stream += `committer ${gitEnv.GIT_COMMITTER_NAME} <${gitEnv.GIT_COMMITTER_EMAIL}> 0 +0000\n`;
+    stream += fastImportData(message);
+    // `^0` makes fast-import look the name up in the repo instead of in this
+    // stream, so a commit can extend the very ref it updates.
+    if (from) stream += `from ${from}^0\n`;
+    for (const [path, contents] of Object.entries(files)) {
+      stream += `M 100644 inline ${path}\n${fastImportData(contents)}`;
+    }
+    stream += "\n";
   }
-  // dumb HTTP clients read the static files this generates
+  await run(bare, ["git", "fast-import", "--quiet"], "git fast-import", stream);
   await git(bare, "update-server-info");
+}
+
+// Creates `<root>/<repoName>`, a bare repo with one branch per package (a
+// single root commit each), ready to be served over dumb HTTP.
+async function makeSharedRepo(
+  root: string,
+  packages: BranchPackage[],
+  repoName: string = "shared-repo.git",
+): Promise<string> {
+  const bare = join(root, repoName);
+  await git(root, "init", "-q", "--bare", repoName);
+  await commitTo(
+    bare,
+    packages.map(pkg => ({
+      ref: `refs/heads/${pkg.branch}`,
+      message: pkg.branch,
+      files: { ...packageFiles(pkg.name, pkg.branch, pkg.dependencies), ...pkg.files },
+    })),
+  );
   return bare;
+}
+
+// Adds a commit to `branch` that changes the marker its index.js exports.
+function moveBranch(bare: string, branch: string, marker: string) {
+  const ref = `refs/heads/${branch}`;
+  return commitTo(bare, [{ ref, from: ref, message: marker, files: { "index.js": indexJs(marker) } }]);
+}
+
+// branch -> commit SHA, read from the `info/refs` that `update-server-info`
+// writes (one `<sha>\t<ref>` line per ref).
+function branchCommits(bare: string): Record<string, string> {
+  const commits: Record<string, string> = {};
+  for (const line of readFileSync(join(bare, "info", "refs"), "utf8").split("\n")) {
+    const [sha, ref] = line.split("\t");
+    if (ref?.startsWith("refs/heads/")) commits[ref.slice("refs/heads/".length)] = sha;
+  }
+  return commits;
 }
 
 function serveStatic(root: string) {
@@ -69,6 +147,42 @@ function serveStatic(root: string) {
       return (await file.exists()) ? new Response(file) : new Response("not found", { status: 404 });
     },
   });
+}
+
+// A gzipped tarball of `files` under `rootDir`, built in memory. Like the
+// `tar -czf <dir>` output it replaces, it starts with the root directory's own
+// entry: for a GitHub tarball bun reads the `<owner>-<repo>-<committish>` name
+// of that first entry and takes the committish as the resolved one.
+function tarballOf(rootDir: string, files: Record<string, string>) {
+  const entries: Record<string, string> = { [`${rootDir}/`]: "" };
+  for (const [path, contents] of Object.entries(files)) entries[`${rootDir}/${path}`] = contents;
+  return new Bun.Archive(entries, { compress: "gzip" }).bytes();
+}
+
+// letter -> the tarball of `@scope/pkg-<letter>`; `dependencies` become pkg-a's.
+async function packageTarballs(
+  letters: string[],
+  dependencies: Record<string, string>,
+  rootDirOf: (l: string) => string,
+) {
+  const tarballs = new Map<string, Uint8Array>();
+  for (const l of letters) {
+    const files = packageFiles(nameOf(l), `pkg-${l}`, l === "a" ? dependencies : undefined);
+    tarballs.set(l, await tarballOf(rootDirOf(l), files));
+  }
+  return tarballs;
+}
+
+// The integrity bun.lock records for a tarball.
+function integrityOf(tarball: Uint8Array) {
+  return `sha512-${new Bun.CryptoHasher("sha512").update(tarball).digest("base64")}`;
+}
+
+function writeProject(root: string, dependencies: Record<string, string>): string {
+  const project = join(root, "project");
+  mkdirSync(project, { recursive: true });
+  writeFileSync(join(project, "package.json"), JSON.stringify({ name: "project", version: "1.0.0", dependencies }));
+  return project;
 }
 
 async function runInstall(cwd: string, cacheDir: string, extraEnv: Record<string, string>, ...args: string[]) {
@@ -88,11 +202,91 @@ async function runInstall(cwd: string, cacheDir: string, extraEnv: Record<string
   return { stdout, stderr, exitCode };
 }
 
+// What `bun install` printed, as lines: its version header, `+ <name>@<resolution>`
+// for each package it installed (sorted by name) and the summary, minus the timing.
+function installOutput(stdout: string): string[] {
+  return stdout.replace(/\s*\[[\d.]+m?s\]\s*$/, "").split(/\r?\n/);
+}
+
+function expectInstalled(stdout: string, resolutions: Record<string, string>) {
+  const names = Object.keys(resolutions).sort();
+  expect(installOutput(stdout)).toEqual([
+    expect.stringContaining("bun install v"),
+    "",
+    ...names.map(name => `+ ${name}@${resolutions[name]}`),
+    "",
+    `${names.length} package${names.length === 1 ? "" : "s"} installed`,
+  ]);
+}
+
+// bun.lock's `packages` section: name -> [`<name>@<resolution>`, metadata, ...resolution details].
+async function lockedPackages(project: string): Promise<Record<string, unknown[]>> {
+  const lockfile = Bun.JSONC.parse(await Bun.file(join(project, "bun.lock")).text()) as {
+    packages: Record<string, unknown[]>;
+  };
+  return lockfile.packages;
+}
+
 async function installedVersionOf(dir: string, name: string): Promise<string | null> {
   const file = Bun.file(join(dir, "node_modules", name, "index.js"));
   if (!(await file.exists())) return null;
   const text = await file.text();
   return JSON.parse(text.slice(text.indexOf("=") + 1, text.lastIndexOf(";")));
+}
+
+// name -> marker exported by the installed package's index.js (null if absent).
+async function installedVersions(dir: string, names: string[]): Promise<Record<string, string | null>> {
+  return Object.fromEntries(await Promise.all(names.map(async name => [name, await installedVersionOf(dir, name)])));
+}
+
+// The read-only fixture the git tests install from: one bare repo with the
+// branches pkg-a..pkg-p, served over dumb HTTP for the whole file. pkg-a
+// re-declares 11 of its siblings as its own dependencies through the served
+// URL, so those specs appear both directly (from a project) and transitively.
+// Every test installs into a directory and cache of its own; the tests that
+// have to change a repo build their own.
+let sharedRoot: ReturnType<typeof tempDir>;
+let sharedServer: ReturnType<typeof Bun.serve>;
+let sharedBare: string;
+let sharedRepoUrl: string;
+let sharedCommits: Record<string, string>;
+let sharedTransitive: Record<string, string>;
+
+beforeAll(async () => {
+  sharedRoot = tempDir("git-deps-shared", {});
+  sharedServer = serveStatic(String(sharedRoot));
+  sharedRepoUrl = `git+http://localhost:${sharedServer.port}/shared-repo.git`;
+  sharedTransitive = Object.fromEntries(letters.slice(1, 12).map(l => [nameOf(l), `${sharedRepoUrl}#pkg-${l}`]));
+  sharedBare = await makeSharedRepo(
+    String(sharedRoot),
+    letters.map(l => ({ name: nameOf(l), branch: `pkg-${l}`, dependencies: l === "a" ? sharedTransitive : undefined })),
+  );
+  sharedCommits = branchCommits(sharedBare);
+});
+
+afterAll(() => {
+  sharedServer?.stop(true);
+  sharedRoot?.[Symbol.dispose]();
+});
+
+// What installing the `pkg-<letter>` branches of one repo must print and lock:
+// each branch resolves to the commit at its tip. `dependencies` holds the
+// package.json dependencies of the packages that declare any.
+function expectedGitPackages(
+  repoUrl: string,
+  commits: Record<string, string>,
+  installed: string[],
+  dependencies: Record<string, Record<string, string>> = {},
+) {
+  const resolutions: Record<string, string> = {};
+  const locked: Record<string, unknown[]> = {};
+  for (const l of installed) {
+    const name = nameOf(l);
+    const sha = commits[`pkg-${l}`];
+    resolutions[name] = `${repoUrl}#${sha}`;
+    locked[name] = [`${name}@${repoUrl}#${sha}`, name in dependencies ? { dependencies: dependencies[name] } : {}, sha];
+  }
+  return { resolutions, locked };
 }
 
 // issue #35420 bug 1: with no lockfile and a cold cache, dependencies that
@@ -101,46 +295,27 @@ async function installedVersionOf(dir: string, name: string): Promise<string | n
 test.concurrent(
   "installs every git dependency when many branches of one repo appear directly and transitively",
   async () => {
-    const letters = "abcdefghijklmnop".split("");
     using dir = tempDir("git-dep-dup", {});
     const root = String(dir);
-
-    await using server = serveStatic(root);
-    const repoUrl = `git+http://localhost:${server.port}/shared-repo.git`;
-
-    // pkg-a re-declares 11 of its siblings as its own dependencies, so those
-    // specs appear both directly (from the project) and transitively.
-    const transitive = Object.fromEntries(letters.slice(1, 12).map(l => [`@scope/pkg-${l}`, `${repoUrl}#pkg-${l}`]));
-    await makeSharedRepo(
-      root,
-      letters.map(l => ({
-        name: `@scope/pkg-${l}`,
-        branch: `pkg-${l}`,
-        dependencies: l === "a" ? transitive : undefined,
-      })),
-    );
-
-    const project = join(root, "project");
-    mkdirSync(project);
-    writeFileSync(
-      join(project, "package.json"),
-      JSON.stringify({
-        name: "project",
-        version: "1.0.0",
-        dependencies: Object.fromEntries(letters.map(l => [`@scope/pkg-${l}`, `${repoUrl}#pkg-${l}`])),
-      }),
-    );
+    const project = writeProject(root, Object.fromEntries(letters.map(l => [nameOf(l), `${sharedRepoUrl}#pkg-${l}`])));
+    const { resolutions, locked } = expectedGitPackages(sharedRepoUrl, sharedCommits, letters, {
+      [nameOf("a")]: sharedTransitive,
+    });
 
     // the race depends on threadpool scheduling; two fresh-cache attempts to
     // make the failure reliable on the unfixed code
     for (let attempt = 0; attempt < 2; attempt++) {
-      await Bun.$`rm -rf ${join(project, "node_modules")} ${join(project, "bun.lock")} ${join(root, "cache-" + attempt)}`;
-      const { stderr, exitCode } = await runInstall(project, join(root, `cache-${attempt}`), {});
-      expect(stderr).not.toContain("failed to resolve");
-      expect(stderr).not.toContain("error:");
-      for (const l of letters) {
-        expect(await installedVersionOf(project, `@scope/pkg-${l}`)).toBe(`pkg-${l}`);
-      }
+      rmSync(join(project, "node_modules"), { recursive: true, force: true });
+      rmSync(join(project, "bun.lock"), { force: true });
+      const { stdout, stderr, exitCode } = await runInstall(project, join(root, `cache-${attempt}`), {});
+      expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+        "Resolving dependencies
+        Resolved, downloaded and extracted [17]
+        Saved lockfile"
+      `);
+      expectInstalled(stdout, resolutions);
+      expect(await installedVersions(project, letters.map(nameOf))).toEqual(markers(letters));
+      expect(await lockedPackages(project)).toEqual(locked);
       expect(exitCode).toBe(0);
     }
   },
@@ -154,54 +329,55 @@ test.concurrent(
 test.concurrent(
   "installs every tarball-URL dependency that appears directly and transitively",
   async () => {
-    const letters = "abcdefghijklmnop".split("");
     using dir = tempDir("tarball-dep-dup", {});
     const root = String(dir);
-    const tarballs = join(root, "tarballs");
-    mkdirSync(tarballs);
 
-    await using server = serveStatic(tarballs);
+    // the tarballs embed the server's URL, so they are built once it listens
+    let tarballs: Map<string, Uint8Array>;
+    const downloads: string[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const match = /^\/pkg-([a-z])\.tgz$/.exec(new URL(req.url).pathname);
+        const tarball = match && tarballs.get(match[1]);
+        if (!tarball) return new Response("not found", { status: 404 });
+        downloads.push(match[1]);
+        return new Response(tarball);
+      },
+    });
     const urlOf = (l: string) => `http://localhost:${server.port}/pkg-${l}.tgz`;
 
     // pkg-a re-declares 11 of its siblings as its own dependencies, so those
     // tarball specs appear both directly (from the project) and transitively.
-    const transitive = Object.fromEntries(letters.slice(1, 12).map(l => [`@scope/pkg-${l}`, urlOf(l)]));
-    for (const l of letters) {
-      const pkgDir = join(root, `work-${l}`, "package");
-      mkdirSync(pkgDir, { recursive: true });
-      writeFileSync(
-        join(pkgDir, "package.json"),
-        JSON.stringify({
-          name: `@scope/pkg-${l}`,
-          version: "1.0.0",
-          dependencies: l === "a" ? transitive : undefined,
-        }),
-      );
-      writeFileSync(join(pkgDir, "index.js"), `module.exports = ${JSON.stringify(`pkg-${l}`)};\n`);
-      await run(root, ["tar", "-czf", join(tarballs, `pkg-${l}.tgz`), "-C", join(root, `work-${l}`), "package"], "tar");
-    }
+    const transitive = Object.fromEntries(letters.slice(1, 12).map(l => [nameOf(l), urlOf(l)]));
+    tarballs = await packageTarballs(letters, transitive, () => "package");
 
-    const project = join(root, "project");
-    mkdirSync(project);
-    writeFileSync(
-      join(project, "package.json"),
-      JSON.stringify({
-        name: "project",
-        version: "1.0.0",
-        dependencies: Object.fromEntries(letters.map(l => [`@scope/pkg-${l}`, urlOf(l)])),
-      }),
+    const project = writeProject(root, Object.fromEntries(letters.map(l => [nameOf(l), urlOf(l)])));
+    const resolutions = Object.fromEntries(letters.map(l => [nameOf(l), urlOf(l)]));
+    const locked = Object.fromEntries(
+      letters.map(l => [
+        nameOf(l),
+        [`${nameOf(l)}@${urlOf(l)}`, l === "a" ? { dependencies: transitive } : {}, integrityOf(tarballs.get(l)!)],
+      ]),
     );
 
     // the race depends on threadpool scheduling; two fresh-cache attempts to
     // make the failure reliable on the unfixed code
     for (let attempt = 0; attempt < 2; attempt++) {
-      await Bun.$`rm -rf ${join(project, "node_modules")} ${join(project, "bun.lock")} ${join(root, "cache-" + attempt)}`;
-      const { stderr, exitCode } = await runInstall(project, join(root, `cache-${attempt}`), {});
-      expect(stderr).not.toContain("failed to resolve");
-      expect(stderr).not.toContain("error:");
-      for (const l of letters) {
-        expect(await installedVersionOf(project, `@scope/pkg-${l}`)).toBe(`pkg-${l}`);
-      }
+      rmSync(join(project, "node_modules"), { recursive: true, force: true });
+      rmSync(join(project, "bun.lock"), { force: true });
+      downloads.length = 0;
+      const { stdout, stderr, exitCode } = await runInstall(project, join(root, `cache-${attempt}`), {});
+      expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+        "Resolving dependencies
+        Resolved, downloaded and extracted [32]
+        Saved lockfile"
+      `);
+      expectInstalled(stdout, resolutions);
+      // the second occurrence of a spec joins the first one's download
+      expect(downloads.sort()).toEqual(letters);
+      expect(await installedVersions(project, letters.map(nameOf))).toEqual(markers(letters));
+      expect(await lockedPackages(project)).toEqual(locked);
       expect(exitCode).toBe(0);
     }
   },
@@ -218,62 +394,59 @@ test.concurrent(
     const letters = "abcdefgh".split("");
     using dir = tempDir("github-dep-dup", {});
     const root = String(dir);
-    const tarballs = join(root, "tarballs");
-    mkdirSync(tarballs);
 
     // pkg-a re-declares its siblings as its own dependencies, so those
     // `github:` specs appear both directly (from the project) and transitively.
-    const transitive = Object.fromEntries(letters.slice(1).map(l => [`@scope/pkg-${l}`, `github:scope/pkg-${l}`]));
-    for (const l of letters) {
-      // GitHub tarballs have a top-level `<owner>-<repo>-<sha>` directory; the
-      // extractor reads it as the resolved tag and it becomes the cache key.
-      const top = `scope-pkg-${l}-0000000`;
-      const pkgDir = join(root, `work-${l}`, top);
-      mkdirSync(pkgDir, { recursive: true });
-      writeFileSync(
-        join(pkgDir, "package.json"),
-        JSON.stringify({
-          name: `@scope/pkg-${l}`,
-          version: "1.0.0",
-          dependencies: l === "a" ? transitive : undefined,
-        }),
-      );
-      writeFileSync(join(pkgDir, "index.js"), `module.exports = ${JSON.stringify(`pkg-${l}`)};\n`);
-      await run(root, ["tar", "-czf", join(tarballs, `pkg-${l}.tgz`), "-C", join(root, `work-${l}`), top], "tar");
-    }
+    const transitive = Object.fromEntries(letters.slice(1).map(l => [nameOf(l), `github:scope/pkg-${l}`]));
+    // GitHub tarballs have a top-level `<owner>-<repo>-<sha>` directory; the
+    // extractor reads it as the resolved tag and it becomes the cache key.
+    const tarballs = await packageTarballs(letters, transitive, l => `scope-pkg-${l}-0000000`);
 
+    const downloads: string[] = [];
     await using server = Bun.serve({
       port: 0,
       fetch(req) {
-        const match = /^\/repos\/scope\/(pkg-[a-z])\/tarball\/?$/.exec(new URL(req.url).pathname);
-        if (match) return new Response(Bun.file(join(tarballs, `${match[1]}.tgz`)));
-        return new Response("not found", { status: 404 });
+        const match = /^\/repos\/scope\/pkg-([a-z])\/tarball\/?$/.exec(new URL(req.url).pathname);
+        const tarball = match && tarballs.get(match[1]);
+        if (!tarball) return new Response("not found", { status: 404 });
+        downloads.push(match[1]);
+        return new Response(tarball);
       },
     });
 
-    const project = join(root, "project");
-    mkdirSync(project);
-    writeFileSync(
-      join(project, "package.json"),
-      JSON.stringify({
-        name: "project",
-        version: "1.0.0",
-        dependencies: Object.fromEntries(letters.map(l => [`@scope/pkg-${l}`, `github:scope/pkg-${l}`])),
-      }),
+    const project = writeProject(root, Object.fromEntries(letters.map(l => [nameOf(l), `github:scope/pkg-${l}`])));
+    const resolutions = Object.fromEntries(letters.map(l => [nameOf(l), `github:scope/pkg-${l}#0000000`]));
+    const locked = Object.fromEntries(
+      letters.map(l => [
+        nameOf(l),
+        [
+          `${nameOf(l)}@github:scope/pkg-${l}#0000000`,
+          l === "a" ? { dependencies: transitive } : {},
+          `scope-pkg-${l}-0000000`,
+          integrityOf(tarballs.get(l)!),
+        ],
+      ]),
     );
 
     // the race depends on threadpool scheduling; two fresh-cache attempts to
     // make the failure reliable on the unfixed code
     for (let attempt = 0; attempt < 2; attempt++) {
-      await Bun.$`rm -rf ${join(project, "node_modules")} ${join(project, "bun.lock")} ${join(root, "cache-" + attempt)}`;
-      const { stderr, exitCode } = await runInstall(project, join(root, `cache-${attempt}`), {
+      rmSync(join(project, "node_modules"), { recursive: true, force: true });
+      rmSync(join(project, "bun.lock"), { force: true });
+      downloads.length = 0;
+      const { stdout, stderr, exitCode } = await runInstall(project, join(root, `cache-${attempt}`), {
         GITHUB_API_URL: `http://localhost:${server.port}`,
       });
-      expect(stderr).not.toContain("failed to resolve");
-      expect(stderr).not.toContain("error:");
-      for (const l of letters) {
-        expect(await installedVersionOf(project, `@scope/pkg-${l}`)).toBe(`pkg-${l}`);
-      }
+      expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+        "Resolving dependencies
+        Resolved, downloaded and extracted [16]
+        Saved lockfile"
+      `);
+      expectInstalled(stdout, resolutions);
+      // the second occurrence of a spec joins the first one's download
+      expect(downloads.sort()).toEqual(letters);
+      expect(await installedVersions(project, letters.map(nameOf))).toEqual(markers(letters));
+      expect(await lockedPackages(project)).toEqual(locked);
       expect(exitCode).toBe(0);
     }
   },
@@ -288,43 +461,33 @@ test.concurrent(
   async () => {
     using dir = tempDir("git-dep-lockfile", {});
     const root = String(dir);
-
-    await using server = serveStatic(root);
-    const repoUrl = `git+http://localhost:${server.port}/shared-repo.git`;
-    await makeSharedRepo(root, [
-      { name: "@scope/pkg-m", branch: "pkg-m" },
-      { name: "@scope/pkg-n", branch: "pkg-n" },
-    ]);
-
-    const project = join(root, "project");
-    mkdirSync(project);
-    writeFileSync(
-      join(project, "package.json"),
-      JSON.stringify({
-        name: "project",
-        version: "1.0.0",
-        dependencies: {
-          "@scope/pkg-m": `${repoUrl}#pkg-m`,
-          "@scope/pkg-n": `${repoUrl}#pkg-n`,
-        },
-      }),
-    );
+    const project = writeProject(root, {
+      [nameOf("m")]: `${sharedRepoUrl}#pkg-m`,
+      [nameOf("n")]: `${sharedRepoUrl}#pkg-n`,
+    });
+    const { resolutions, locked } = expectedGitPackages(sharedRepoUrl, sharedCommits, ["m", "n"]);
 
     // fresh install to produce a complete lockfile
     {
-      const { stderr, exitCode } = await runInstall(project, join(root, "cache-warm"), {});
-      expect(stderr).not.toContain("error:");
+      const { stdout, stderr, exitCode } = await runInstall(project, join(root, "cache-warm"), {});
+      expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+        "Resolving dependencies
+        Resolved, downloaded and extracted [3]
+        Saved lockfile"
+      `);
+      expectInstalled(stdout, resolutions);
+      expect(await installedVersions(project, [nameOf("m"), nameOf("n")])).toEqual(markers(["m", "n"]));
+      expect(await lockedPackages(project)).toEqual(locked);
       expect(exitCode).toBe(0);
-      expect(await installedVersionOf(project, "@scope/pkg-m")).toBe("pkg-m");
-      expect(await installedVersionOf(project, "@scope/pkg-n")).toBe("pkg-n");
     }
 
     // simulate a fresh machine: keep bun.lock, drop node_modules + cache
-    await Bun.$`rm -rf ${join(project, "node_modules")}`;
-    const { stderr, exitCode } = await runInstall(project, join(root, "cache-cold"), {}, "--frozen-lockfile");
-    expect(stderr).not.toContain("error:");
-    expect(await installedVersionOf(project, "@scope/pkg-m")).toBe("pkg-m");
-    expect(await installedVersionOf(project, "@scope/pkg-n")).toBe("pkg-n");
+    rmSync(join(project, "node_modules"), { recursive: true });
+    const { stdout, stderr, exitCode } = await runInstall(project, join(root, "cache-cold"), {}, "--frozen-lockfile");
+    expect(stderr).toBe("");
+    expectInstalled(stdout, resolutions);
+    expect(await installedVersions(project, [nameOf("m"), nameOf("n")])).toEqual(markers(["m", "n"]));
+    expect(await lockedPackages(project)).toEqual(locked);
     expect(exitCode).toBe(0);
   },
   30_000,
@@ -343,54 +506,59 @@ for (const linker of ["hoisted", "isolated"] as const) {
       using dir = tempDir(`git-dep-${linker}-moved`, {});
       const root = String(dir);
 
+      // this test moves a branch, so it gets a repo of its own
       await using server = serveStatic(root);
       const repoUrl = `git+http://localhost:${server.port}/shared-repo.git`;
       const bare = await makeSharedRepo(root, [
-        { name: "@scope/pkg-m", branch: "pkg-m" },
-        { name: "@scope/pkg-n", branch: "pkg-n" },
+        { name: nameOf("m"), branch: "pkg-m" },
+        { name: nameOf("n"), branch: "pkg-n" },
       ]);
+      const lockedCommits = branchCommits(bare);
+      const { resolutions, locked } = expectedGitPackages(repoUrl, lockedCommits, ["m", "n"]);
 
-      const project = join(root, "project");
-      mkdirSync(project);
-      writeFileSync(
-        join(project, "package.json"),
-        JSON.stringify({
-          name: "project",
-          version: "1.0.0",
-          dependencies: {
-            "@scope/pkg-m": `${repoUrl}#pkg-m`,
-            "@scope/pkg-n": `${repoUrl}#pkg-n`,
-          },
-        }),
-      );
+      const project = writeProject(root, {
+        [nameOf("m")]: `${repoUrl}#pkg-m`,
+        [nameOf("n")]: `${repoUrl}#pkg-n`,
+      });
 
       // fresh install to produce a complete lockfile
       {
-        const { stderr, exitCode } = await runInstall(project, join(root, "cache-warm"), {}, `--linker=${linker}`);
-        expect(stderr).not.toContain("error:");
+        const { stdout, stderr, exitCode } = await runInstall(
+          project,
+          join(root, "cache-warm"),
+          {},
+          `--linker=${linker}`,
+        );
+        expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+          "Resolving dependencies
+          Resolved, downloaded and extracted [3]
+          Saved lockfile"
+        `);
+        expectInstalled(stdout, resolutions);
+        expect(await installedVersions(project, [nameOf("m"), nameOf("n")])).toEqual(markers(["m", "n"]));
+        expect(await lockedPackages(project)).toEqual(locked);
         expect(exitCode).toBe(0);
       }
 
       // move pkg-m past the locked commit
-      const work = join(root, "work");
-      await git(work, "checkout", "-q", "pkg-m");
-      writeFileSync(join(work, "index.js"), `module.exports = "pkg-m-v2";\n`);
-      await git(work, "commit", "-aqm", "v2", "--no-gpg-sign");
-      await git(work, "push", "-q", bare, "pkg-m");
-      await git(bare, "update-server-info");
+      await moveBranch(bare, "pkg-m", "pkg-m-v2");
+      const movedCommits = branchCommits(bare);
+      expect(movedCommits["pkg-m"]).not.toBe(lockedCommits["pkg-m"]);
+      expect(movedCommits["pkg-n"]).toBe(lockedCommits["pkg-n"]);
 
       // cold cache from the lockfile: must install the locked commit, not the tip
-      await Bun.$`rm -rf ${join(project, "node_modules")}`;
-      const { stderr, exitCode } = await runInstall(
+      rmSync(join(project, "node_modules"), { recursive: true });
+      const { stdout, stderr, exitCode } = await runInstall(
         project,
         join(root, "cache-cold"),
         {},
         "--frozen-lockfile",
         `--linker=${linker}`,
       );
-      expect(stderr).not.toContain("error:");
-      expect(await installedVersionOf(project, "@scope/pkg-m")).toBe("pkg-m");
-      expect(await installedVersionOf(project, "@scope/pkg-n")).toBe("pkg-n");
+      expect(stderr).toBe("");
+      expectInstalled(stdout, resolutions);
+      expect(await installedVersions(project, [nameOf("m"), nameOf("n")])).toEqual(markers(["m", "n"]));
+      expect(await lockedPackages(project)).toEqual(locked);
       expect(exitCode).toBe(0);
     },
     30_000,
@@ -403,23 +571,18 @@ for (const linker of ["hoisted", "isolated"] as const) {
 test.concurrent("installs a git+file:// dependency", async () => {
   using dir = tempDir("git-dep-file", {});
   const root = String(dir);
-  const bare = await makeSharedRepo(root, [{ name: "@scope/pkg-b", branch: "pkg-b" }]);
+  const repoUrl = `git+${pathToFileURL(sharedBare)}`;
+  const project = writeProject(root, { [nameOf("b")]: `${repoUrl}#pkg-b` });
+  const { resolutions, locked } = expectedGitPackages(repoUrl, sharedCommits, ["b"]);
 
-  const project = join(root, "project");
-  mkdirSync(project);
-  writeFileSync(
-    join(project, "package.json"),
-    JSON.stringify({
-      name: "project",
-      version: "1.0.0",
-      dependencies: {
-        "@scope/pkg-b": `git+${pathToFileURL(bare)}#pkg-b`,
-      },
-    }),
-  );
-
-  const { stderr, exitCode } = await runInstall(project, join(root, "cache"), {});
-  expect(stderr).not.toContain("error:");
-  expect(await installedVersionOf(project, "@scope/pkg-b")).toBe("pkg-b");
+  const { stdout, stderr, exitCode } = await runInstall(project, join(root, "cache"), {});
+  expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+    "Resolving dependencies
+    Resolved, downloaded and extracted [2]
+    Saved lockfile"
+  `);
+  expectInstalled(stdout, resolutions);
+  expect(await installedVersions(project, [nameOf("b")])).toEqual(markers(["b"]));
+  expect(await lockedPackages(project)).toEqual(locked);
   expect(exitCode).toBe(0);
 });

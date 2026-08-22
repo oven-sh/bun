@@ -2,7 +2,6 @@
 const types = require("node:util/types");
 const EventEmitter = require("node:events");
 const fs = require("internal/fs/binding") as $ZigGeneratedClasses.NodeJSFS;
-const { Glob } = require("internal/fs/glob");
 const {
   validateInteger,
   validateBoolean,
@@ -13,7 +12,6 @@ const {
 } = require("internal/validators");
 
 const constants = $processBindingConstants.fs;
-const permission = require("internal/permission");
 
 var PromisePrototypeFinally = $Promise.prototype.finally; //TODO
 var SymbolAsyncDispose = Symbol.asyncDispose;
@@ -180,12 +178,11 @@ function watch(
 // and on MacOS, simple cases of recursive directory trees can be done in a single `clonefile()`
 // using filter and other options uses a lazily loaded js fallback ported from node.js
 async function cp(src, dest, options) {
-  const { checkCpPermissions, validateCpOptions } = require("internal/fs/cp-sync");
+  const { validateCpOptions } = require("internal/fs/cp-sync");
   const { getValidatedFsPath } = require("internal/validators");
   options = validateCpOptions(options);
   src = getValidatedFsPath(src, "src");
   dest = getValidatedFsPath(dest, "dest");
-  checkCpPermissions(src, dest);
   const { filter, dereference, preserveTimestamps, verbatimSymlinks, mode, errorOnExist, force, recursive } = options;
   if (!filter && !dereference && !preserveTimestamps && !verbatimSymlinks && !mode && !errorOnExist && force) {
     const { ok, checked } = await require("internal/fs/cp").tryNativeFastPath(src, dest, options);
@@ -247,7 +244,7 @@ const _appendFile = fs.appendFile.bind(fs);
 // Argument validation must run at the first .next(), not at call time: Node's
 // fs/promises glob is an async generator whose body constructs Glob lazily.
 async function* glob(pattern, options) {
-  yield* new Glob(pattern, options).glob();
+  yield* new (require("internal/fs/glob").Glob)(pattern, options).glob();
 }
 
 const exports = {
@@ -268,16 +265,8 @@ const exports = {
   },
   chown: asyncWrap(fs.chown, "chown"),
   chmod: asyncWrap(fs.chmod, "chmod"),
-  fchmod: permission.enabled
-    ? async function fchmod() {
-        throw permission.customAccessDeniedError("fchmod API is disabled when Permission Model is enabled.");
-      }
-    : asyncWrap(fs.fchmod, "fchmod"),
-  fchown: permission.enabled
-    ? async function fchown() {
-        throw permission.customAccessDeniedError("fchown API is disabled when Permission Model is enabled.");
-      }
-    : asyncWrap(fs.fchown, "fchown"),
+  fchmod: asyncWrap(fs.fchmod, "fchmod"),
+  fchown: asyncWrap(fs.fchown, "fchown"),
   fstat: asyncWrap(fs.fstat, "fstat"),
   fsync: asyncWrap(fs.fsync, "fsync"),
   fdatasync: asyncWrap(fs.fdatasync, "fdatasync"),
@@ -342,14 +331,7 @@ const exports = {
   realpath: asyncWrap(fs.realpath, "realpath"),
   rename: asyncWrap(fs.rename, "rename"),
   stat: asyncWrap(fs.stat, "stat"),
-  symlink: permission.enabled
-    ? async function symlink(target, path, type) {
-        if (!permission.has("fs")) {
-          throw permission.customAccessDeniedError("fs.symlink API requires full fs.read and fs.write permissions.");
-        }
-        return fs.symlink(target, path, type);
-      }
-    : asyncWrap(fs.symlink, "symlink"),
+  symlink: asyncWrap(fs.symlink, "symlink"),
   truncate: asyncWrap(fs.truncate, "truncate"),
   unlink: asyncWrap(fs.unlink, "unlink"),
   utimes: asyncWrap(fs.utimes, "utimes"),
@@ -383,10 +365,8 @@ const exports = {
     return fs.rm(path, options);
   },
   rmdir: async function rmdir(path, options) {
-    // node throws for any defined `recursive`, not just truthy ones
-    if (options?.recursive !== undefined) {
-      throw $ERR_INVALID_ARG_VALUE("options.recursive", options.recursive, "is no longer supported");
-    }
+    // Node 26 removed `recursive` (DEP0147), but packages still pass it. Keep it working through `rm`.
+    if (options?.recursive) return exports.rm(path, options);
     return fs.rmdir(path, options);
   },
   writev: async (fd, buffers, position) => {

@@ -1395,6 +1395,170 @@ describe("bundler", () => {
     run: { stdout: "resolved-by-plugin" },
   });
 
+  // --- Each barrel record is resolved once ---
+
+  // a.js is only discovered through the barrel, so its request for Broken and C
+  // always arrives after the barrel deferred both. Un-deferring Broken reports
+  // the failure. Un-deferring C must not resolve Broken (and report it) again.
+  itBundled("barrel/UnDeferReportsUnresolvableSiblingOnce", {
+    files: {
+      "/entry.js": /* js */ `
+        import { A } from 'oncelib';
+        console.log(A);
+      `,
+      "/node_modules/oncelib/package.json": JSON.stringify({
+        name: "oncelib",
+        main: "./index.js",
+        sideEffects: false,
+      }),
+      "/node_modules/oncelib/index.js": /* js */ `
+        export { A } from './a.js';
+        export { Broken } from './missing.js';
+        export { C } from './c.js';
+      `,
+      "/node_modules/oncelib/a.js": /* js */ `
+        import { Broken, C } from 'oncelib';
+        export const A = Broken + C;
+      `,
+      "/node_modules/oncelib/c.js": /* js */ `
+        export const C = "c";
+      `,
+    },
+    outfile: "/out.js",
+    bundleErrors: {
+      "/node_modules/oncelib/index.js": ['Could not resolve: "./missing.js"'],
+    },
+  });
+
+  // A re-export that resolves as external never gets a source_index. Requests
+  // for it from importers must not resolve the barrel again, so the onResolve
+  // plugin runs once for the record.
+  itBundled("barrel/ExternalReExportResolvesOnce", () => {
+    const resolved: string[] = [];
+    return {
+      files: {
+        "/entry.js": /* js */ `
+          import { React } from 'extlib';
+          import { other } from './other.js';
+          console.log(React, other);
+        `,
+        "/other.js": /* js */ `
+          import { React } from 'extlib';
+          export const other = React;
+        `,
+        "/node_modules/extlib/package.json": JSON.stringify({
+          name: "extlib",
+          main: "./index.js",
+          sideEffects: false,
+        }),
+        "/node_modules/extlib/index.js": /* js */ `
+          export { default as React } from 'react';
+          export { B } from './b.js';
+        `,
+        // Nobody imports B, so b.js must stay deferred.
+        "/node_modules/extlib/b.js": /* js */ `
+          export const B = <<<SYNTAX_ERROR>>>;
+        `,
+      },
+      outfile: "/out.js",
+      plugins(builder) {
+        resolved.length = 0;
+        builder.onResolve({ filter: /^react$/ }, args => {
+          resolved.push(args.path);
+          return { path: args.path, external: true };
+        });
+      },
+      onAfterBundle(api) {
+        expect(resolved).toEqual(["react"]);
+        api.expectFile("/out.js").toContain('from "react"');
+      },
+    };
+  });
+
+  // Un-deferring a.js resolves only that record. The external record, which
+  // also has no source_index, is not dispatched to the plugin again. late.js is
+  // loaded only after the react answer, so its request for A arrives after the
+  // barrel deferred a.js.
+  itBundled("barrel/ExternalReExportNotResolvedAgainOnUnDefer", () => {
+    const resolved: string[] = [];
+    return {
+      files: {
+        "/entry.js": /* js */ `
+          import { React } from 'latelib';
+          import './late.js';
+          console.log(React);
+        `,
+        "/late.js": ``,
+        "/node_modules/latelib/package.json": JSON.stringify({
+          name: "latelib",
+          main: "./index.js",
+          sideEffects: false,
+        }),
+        "/node_modules/latelib/index.js": /* js */ `
+          export { default as React } from 'react';
+          export { A } from './a.js';
+          export { B } from './b.js';
+        `,
+        "/node_modules/latelib/a.js": /* js */ `
+          export const A = "late-lib-a";
+        `,
+        // Nobody imports B, so b.js must stay deferred.
+        "/node_modules/latelib/b.js": /* js */ `
+          export const B = <<<SYNTAX_ERROR>>>;
+        `,
+      },
+      outfile: "/out.js",
+      plugins(builder) {
+        resolved.length = 0;
+        const reactResolved = Promise.withResolvers<void>();
+        builder.onResolve({ filter: /^react$/ }, args => {
+          resolved.push(args.path);
+          reactResolved.resolve();
+          return { path: args.path, external: true };
+        });
+        builder.onLoad({ filter: /late\.js$/ }, async () => {
+          await reactResolved.promise;
+          return { contents: `import { A } from 'latelib'; console.log(A);`, loader: "js" };
+        });
+      },
+      onAfterBundle(api) {
+        expect(resolved).toEqual(["react"]);
+        api.expectFile("/out.js").toContain('from "react"');
+        api.expectFile("/out.js").toContain("late-lib-a");
+      },
+    };
+  });
+
+  // When the plugin does not answer, the record falls back to the resolver and
+  // the failure is reported. Resolving the barrel again reported it twice.
+  itBundled("barrel/UnresolvableReExportReportedOnce", {
+    files: {
+      "/entry.js": /* js */ `
+        import { Missing } from 'missinglib';
+        console.log(Missing);
+      `,
+      "/node_modules/missinglib/package.json": JSON.stringify({
+        name: "missinglib",
+        main: "./index.js",
+        sideEffects: false,
+      }),
+      "/node_modules/missinglib/index.js": /* js */ `
+        export { Missing } from 'not-installed-pkg';
+        export { B } from './b.js';
+      `,
+      "/node_modules/missinglib/b.js": /* js */ `
+        export const B = "b";
+      `,
+    },
+    outfile: "/out.js",
+    plugins(builder) {
+      builder.onResolve({ filter: /^not-installed-pkg$/ }, () => undefined);
+    },
+    bundleErrors: {
+      "/node_modules/missinglib/index.js": ['Could not resolve: "not-installed-pkg"'],
+    },
+  });
+
   // --- Load plugin + barrel optimization ---
 
   itBundled("barrel/LoadPlugin", {

@@ -12,7 +12,6 @@ const {
   validateOneOf,
   validateString,
 } = require("internal/validators");
-const { uncurryThis } = require("internal/primordials");
 const { isDataView, isAnyArrayBuffer } = require("node:util/types");
 const jsc: typeof import("bun:jsc") = require("bun:jsc");
 const { isStringOneByteRepresentation, startGCProfiler, stopGCProfiler, discardGCProfiler } = $cpp(
@@ -21,6 +20,8 @@ const { isStringOneByteRepresentation, startGCProfiler, stopGCProfiler, discardG
 );
 
 const DateNow = Date.now;
+const FunctionPrototypeCall = Function.prototype.call;
+const uncurryThis = func => FunctionPrototypeCall.bind(func);
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const Uint8ArrayCtor = Uint8Array;
 const BufferAllocUnsafe = Buffer.allocUnsafe;

@@ -779,6 +779,7 @@ describe.concurrent("unref()/pause() around connect()", () => {
   });
 
   it.each([
+    ["before connect()", `s.unref(); s.ref(); s.resume(); s.connect(port, "127.0.0.1");`],
     ["right after connect()", `s.connect(port, "127.0.0.1"); s.unref(); s.ref(); s.resume();`],
     ["while the connect is in flight", `s.connect(port, "127.0.0.1"); ${inFlight("s.unref(); s.ref(); s.resume();")}`],
   ])("ref() after unref() %s keeps holding the loop", async (_, client) => {

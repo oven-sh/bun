@@ -779,6 +779,30 @@ describe("pm ls --json", () => {
     expect(exitCode).toBe(0);
   });
 
+  it("lists an optional peer dependency a dependency provides under peerDependencies only", async () => {
+    setHandler(dummyRegistry([]));
+    await installWithMoo(
+      {
+        dependencies: { moo: "./moo" },
+        peerDependencies: { bar: "*" },
+        peerDependenciesMeta: { bar: { optional: true } },
+      },
+      { dependencies: { bar: "0.0.2" } },
+    );
+
+    const [stdout, stderr, exitCode] = await spawnAndCollect("pm", "ls", "--json");
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([
+      {
+        ...root(),
+        ...emptyGroups,
+        dependencies: { moo: { from: "moo", version: "moo", path: nodeModules("moo") } },
+        peerDependencies: { bar: { from: "bar", version: "0.0.2", path: nodeModules("bar") } },
+      },
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   it("keys an alias by the alias and names the package it resolves to in from", async () => {
     setHandler(dummyRegistry([]));
     await installWithMoo({ dependencies: { "moo-1": "./moo", "bar-1": "npm:bar" } }, {});

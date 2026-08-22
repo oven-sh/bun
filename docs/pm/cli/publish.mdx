@@ -183,7 +183,7 @@ The first keys describe the tarball. They are the keys `bun pm pack --json` prin
 
 With `--dry-run` and no tarball path, `bun publish` builds no tarball, so `path`, `size`, `shasum` and `integrity` are `null`.
 
-Lifecycle scripts (`prepublishOnly`, `prepack`, `prepare`, `postpack`, `publish`, `postpublish`) inherit stdout, so anything they print comes before the document. Pass `--ignore-scripts` to keep stdout to the document alone.
+Lifecycle scripts (`prepublishOnly`, `prepack`, `prepare`, `postpack`, `publish`, `postpublish`) inherit stdout, so anything they print comes before the document. Pass `--ignore-scripts` to keep stdout to the document alone. The document is written after the `publish` and `postpublish` scripts. If one of them fails, the command exits with the script's exit code and no document, like `npm publish --json`.
 
 ---
 

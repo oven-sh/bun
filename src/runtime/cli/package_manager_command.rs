@@ -1146,19 +1146,14 @@ fn print_ls_json(pm: &PackageManager, trusted_only: bool) {
 
     let mut out: Vec<u8> = Vec::new();
     out.extend_from_slice(b"[\n  {");
-    write_json_key(&mut out, 2, b"name");
-    match pkg_names.first() {
-        Some(name) if !name.slice(string_bytes).is_empty() => {
-            let _ = write!(out, "{},", json_str(name.slice(string_bytes)));
+    for (key, value) in [(&b"name"[..], &root.name), (&b"version"[..], &root.version)] {
+        write_json_key(&mut out, 2, key);
+        match value {
+            Some(value) => {
+                let _ = write!(out, "{},", json_str(value));
+            }
+            None => out.extend_from_slice(b"null,"),
         }
-        _ => out.extend_from_slice(b"null,"),
-    }
-    write_json_key(&mut out, 2, b"version");
-    match &root.version {
-        Some(version) => {
-            let _ = write!(out, "{},", json_str(version));
-        }
-        None => out.extend_from_slice(b"null,"),
     }
     write_json_key(&mut out, 2, b"private");
     let _ = write!(out, "{},", root.private);
@@ -1225,27 +1220,32 @@ fn print_ls_json(pm: &PackageManager, trusted_only: bool) {
     print_json_document(&out);
 }
 
-/// The fields of the root package.json that the lockfile does not store.
+/// The root package.json fields the document prints, read from the file itself.
 #[derive(Default)]
 struct RootPackageJson {
+    name: Option<Vec<u8>>,
     version: Option<Vec<u8>>,
     private: bool,
 }
 
 fn root_package_json(pm: &PackageManager) -> RootPackageJson {
-    let Ok(contents) = File::read_from(Fd::cwd(), b"package.json") else {
+    let path = pm.original_package_json_path.as_bytes();
+    let Ok(contents) = File::read_from(Fd::cwd(), path) else {
         return RootPackageJson::default();
     };
-    let source = bun_ast::Source::init_path_string(b"package.json", contents.as_slice());
+    let source = bun_ast::Source::init_path_string(path, contents.as_slice());
     let arena = bun_alloc::Arena::new();
     let Ok(json) = bun_parsers::json::parse_package_json_utf8(&source, pm.log_mut(), &arena) else {
         return RootPackageJson::default();
     };
+    let string_field = |key: &[u8]| {
+        json.get(key)
+            .and_then(|value| value.as_utf8_string_literal().map(<[u8]>::to_vec))
+            .filter(|value| !value.is_empty())
+    };
     RootPackageJson {
-        version: json
-            .get(b"version")
-            .and_then(|version| version.as_utf8_string_literal().map(<[u8]>::to_vec))
-            .filter(|version| !version.is_empty()),
+        name: string_field(b"name"),
+        version: string_field(b"version"),
         private: json.get(b"private").and_then(|private| private.as_bool()) == Some(true),
     }
 }

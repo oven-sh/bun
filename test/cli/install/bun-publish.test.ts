@@ -1579,6 +1579,12 @@ describe.concurrent("--json", () => {
     );
 
     expect(mock.bodies).toHaveLength(1);
+    expect(tarball.entries.map((e: { pathname: string }) => e.pathname).toSorted()).toEqual([
+      "package/index.js",
+      "package/node_modules/dep1/node_modules/dep2/package.json",
+      "package/node_modules/dep1/package.json",
+      "package/package.json",
+    ]);
     const entry = (path: string) =>
       tarball.entries.find((e: { pathname: string }) => e.pathname === `package/${path}`)!;
     const [packageJsonEntry, indexEntry, depEntry, nestedDepEntry] = [
@@ -1587,7 +1593,6 @@ describe.concurrent("--json", () => {
       "node_modules/dep1/package.json",
       "node_modules/dep1/node_modules/dep2/package.json",
     ].map(entry);
-    expect(tarball.entries).toHaveLength(4);
     expect(JSON.parse(out)).toEqual({
       id: "publish-json-3@3.0.0",
       name: "publish-json-3",

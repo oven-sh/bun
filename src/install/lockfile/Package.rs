@@ -2414,6 +2414,31 @@ impl Package<u64> {
                                     missing_workspace,
                                 )?;
                             }
+                            // "workspaces": { "selfContained": ["apps/desktop"] } — workspaces
+                            // (by path or name) whose node_modules must be complete and
+                            // physical; see docs/pm/workspaces.mdx.
+                            if let Some(q) = dependencies_q.expr.as_property(b"selfContained") {
+                                if !q.expr.is_array() {
+                                    let _ = log.add_error_fmt(
+                                        source,
+                                        q.expr.loc,
+                                        format_args!(
+                                            "\"workspaces.selfContained\" expects an array of workspace paths or names"
+                                        ),
+                                    );
+                                    return Err(crate::Error::InvalidPackageJSON);
+                                }
+                                let mut owned: Vec<Vec<u8>> = Vec::new();
+                                if let Some(mut items) = q.expr.as_array() {
+                                    while let Some(item) = items.next() {
+                                        if let Some(s) = item.as_string(&bump) {
+                                            owned.push(s.to_vec());
+                                        }
+                                    }
+                                }
+                                let list: Vec<&[u8]> = owned.iter().map(|v| v.as_slice()).collect();
+                                workspace_names.mark_self_contained(&list);
+                            }
 
                             break 'brk;
                         }

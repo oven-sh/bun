@@ -180,10 +180,11 @@ pub struct Lockfile {
     pub(crate) scripts: Scripts,
     pub(crate) workspace_paths: NameHashMap,
     pub workspace_versions: VersionHashMap,
-    /// Workspaces (by name hash) whose package.json declares
-    /// `installConfig.hoistingLimits = "workspaces"`; unioned with
-    /// `install.selfContainedWorkspaces` at hoist time. Not serialized: it is
-    /// re-derived from the manifests on every install.
+    /// Workspaces (by name hash) that must get a self-contained node_modules: those
+    /// listed in the root manifest's `workspaces.selfContained` and those declaring
+    /// `installConfig.hoistingLimits = "workspaces"`. Mirrored from the manifests on
+    /// every install and persisted per workspace in bun.lock (`"hoistingLimits"`), so a
+    /// tree rebuilt from the lockfile is hoisted the same way.
     pub self_contained_workspaces: ArrayHashMap<PackageNameHash, (), ArrayIdentityContextU64>,
 
     /// Optional because `trustedDependencies` in package.json might be an
@@ -818,34 +819,22 @@ impl Lockfile {
         invalid_package_id
     }
 
-    /// Does this tree id belong to a workspace (including workspace root)?
-    /// TODO(dylan-conway) fix!
-    /// Workspace packages whose node_modules must be self-contained: listed in
-    /// `install.selfContainedWorkspaces` (by path or name) or declaring
-    /// `"installConfig": { "hoistingLimits": "workspaces" }` in their manifest
-    /// (recorded in `self_contained_workspaces` while the workspaces were parsed).
+    /// Workspace packages whose node_modules must be self-contained: listed in the
+    /// root manifest's `workspaces.selfContained` (by path or name) or declaring
+    /// `"installConfig": { "hoistingLimits": "workspaces" }` in their own manifest.
+    /// Both are recorded in `self_contained_workspaces` while the workspaces are
+    /// parsed (and persisted per workspace in bun.lock).
     pub(crate) fn self_contained_workspace_ids(&self) -> Vec<PackageID> {
-        let configured: &[&[u8]] = crate::PackageManager::try_get()
-            .map(|pm| pm.options.self_contained_workspaces)
-            .unwrap_or(&[]);
-        if configured.is_empty() && self.self_contained_workspaces.count() == 0 {
+        if self.self_contained_workspaces.count() == 0 {
             return Vec::new();
         }
         let mut out = Vec::new();
-        let buf = self.buffers.string_bytes.as_slice();
         let pkgs = self.packages.slice();
         for (i, res) in pkgs.items_resolution().iter().enumerate() {
-            if res.tag != crate::resolution::Tag::Workspace {
-                continue;
-            }
-            let path = res.workspace().slice(buf);
-            let name = pkgs.items_name()[i].slice(buf);
-            let name_hash = pkgs.items_name_hash()[i];
-            if self.self_contained_workspaces.contains(&name_hash)
-                || configured.iter().any(|c| {
-                    let c = bun_core::strings::without_trailing_slash(c);
-                    c == path || c == name
-                })
+            if res.tag == crate::resolution::Tag::Workspace
+                && self
+                    .self_contained_workspaces
+                    .contains(&pkgs.items_name_hash()[i])
             {
                 out.push(i as PackageID);
             }
@@ -871,6 +860,8 @@ impl Lockfile {
         0
     }
 
+    /// Does this tree id belong to a workspace (including workspace root)?
+    /// TODO(dylan-conway) fix!
     pub(crate) fn is_workspace_tree_id(&self, id: tree::Id) -> bool {
         id == 0
             || self.buffers.dependencies[self.buffers.trees[id as usize].dependency_id as usize]
@@ -2985,6 +2976,30 @@ impl Lockfile {
             string_builder.count(SCRIPTS_END);
         }
 
+        // Self-contained workspaces change the hoisted layout without changing any
+        // resolution; include them (sorted, only when present) so bun.lockb's
+        // frozen-lockfile check notices. Text lockfiles compare the tree itself.
+        const SELF_CONTAINED_BEGIN: &[u8] = b"\n-- BEGIN SELF-CONTAINED WORKSPACES --\n";
+        let mut self_contained_names: Vec<&[u8]> = Vec::new();
+        if self.self_contained_workspaces.count() > 0 {
+            for i in 0..packages_len {
+                if resolutions[i].tag == crate::resolution::Tag::Workspace
+                    && self
+                        .self_contained_workspaces
+                        .contains(&self.packages.items_name_hash()[i])
+                {
+                    self_contained_names.push(names[i].slice(bytes));
+                }
+            }
+            self_contained_names.sort_unstable();
+            if !self_contained_names.is_empty() {
+                string_builder.count(SELF_CONTAINED_BEGIN);
+                for n in &self_contained_names {
+                    string_builder.fmt_count(format_args!("{}\n", bstr::BStr::new(n)));
+                }
+            }
+        }
+
         {
             let alphabetizer = package::Alphabetizer::<u64> {
                 names: names.into(),
@@ -3021,6 +3036,13 @@ impl Lockfile {
                 }
             }
             let _ = string_builder.append(SCRIPTS_END);
+        }
+
+        if !self_contained_names.is_empty() {
+            let _ = string_builder.append(SELF_CONTAINED_BEGIN);
+            for n in &self_contained_names {
+                let _ = string_builder.fmt(format_args!("{}\n", bstr::BStr::new(n)));
+            }
         }
 
         let _ = string_builder.append(HASH_SUFFIX);

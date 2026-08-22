@@ -514,15 +514,6 @@ Valid values are:
 | `"offline"` | Skip staleness checks and resolve packages from the local cache. Equivalent to `--prefer-offline`. |
 | `"latest"`  | Always check npm for the latest matching versions. Equivalent to `--prefer-latest`.                |
 
-### `install.selfContainedWorkspaces`
-
-Workspaces (by path or name) that must have a complete, physical `node_modules` of their own when using the hoisted linker — see [Self-contained workspaces](/pm/workspaces#self-contained-workspaces). A workspace can also opt in itself with `"installConfig": { "hoistingLimits": "workspaces" }` in its `package.json`. Default `[]`.
-
-```toml title="bunfig.toml" icon="settings"
-[install]
-selfContainedWorkspaces = ["apps/desktop"]
-```
-
 ### `install.frozenLockfile`
 
 When `true`, `bun install` does not update `bun.lock`. Default `false`. If `package.json` and the existing `bun.lock` disagree, the install errors.

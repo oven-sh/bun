@@ -46,6 +46,22 @@ impl WorkspaceMap {
         self.map.values()
     }
 
+    /// Mark the workspaces listed in the root manifest's `workspaces.selfContained`
+    /// (by relative path or by package name) as self-contained.
+    pub(crate) fn mark_self_contained(&mut self, list: &[&[u8]]) {
+        let keys: Vec<Box<[u8]>> = self.map.keys().to_vec();
+        for (i, entry) in self.map.values_mut().iter_mut().enumerate() {
+            let path = strings::without_trailing_slash(&keys[i]);
+            if list.iter().any(|item| {
+                let item = strings::without_trailing_slash(item);
+                let item = item.strip_prefix(b"./").unwrap_or(item);
+                item == path || item == &*entry.name
+            }) {
+                entry.hoisting_limits = true;
+            }
+        }
+    }
+
     pub(crate) fn count(&self) -> usize {
         self.map.count()
     }
@@ -164,7 +180,24 @@ fn process_workspace_name(
             .get(b"installConfig")
             .and_then(|c| c.get(b"hoistingLimits"))
         {
-            Some(h) => h.as_string_cloned(&scratch)? == Some(b"workspaces".as_slice()),
+            Some(h) => match h.as_string_cloned(&scratch)? {
+                Some(v) if v == b"workspaces" => true,
+                other => {
+                    log.add_warning_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "{}: installConfig.hoistingLimits {} is not supported (only \"workspaces\" is); ignoring",
+                            BStr::new(abs_package_json_path),
+                            match &other {
+                                Some(v) => format!("\"{}\"", BStr::new(v)),
+                                None => "value".into(),
+                            }
+                        ),
+                    );
+                    false
+                }
+            },
             None => false,
         },
         version: 'brk: {

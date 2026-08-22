@@ -258,10 +258,6 @@ pub mod api {
         pub public_hoist_pattern: Option<PnpmMatcher>,
         pub hoist_pattern: Option<PnpmMatcher>,
         pub hoist: Option<bool>,
-        /// `selfContainedWorkspaces = ["apps/desktop"]` (workspace paths or names): with
-        /// the hoisted linker, nothing these workspaces depend on is hoisted above their
-        /// own node_modules, and their packages are copied rather than linked.
-        pub self_contained_workspaces: Option<Vec<Box<[u8]>>>,
     }
 
     #[repr(u8)]

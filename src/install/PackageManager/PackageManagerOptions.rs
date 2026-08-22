@@ -81,11 +81,6 @@ pub struct Options {
     /// fallback (pnpm's `hoist=false`); takes precedence over `hoist_pattern`.
     pub(crate) hoist: bool,
 
-    /// Workspaces (path or name) whose node_modules must be complete and physical:
-    /// a hoisting barrier + copy materialization. Also enabled per workspace by
-    /// `"installConfig": { "hoistingLimits": "workspaces" }` in its package.json.
-    pub self_contained_workspaces: &'static [&'static [u8]],
-
     // Security scanner module path
     pub security_scanner: Option<&'static [u8]>,
 
@@ -161,7 +156,6 @@ impl Default for Options {
             public_hoist_pattern: None,
             hoist_pattern: None,
             hoist: true,
-            self_contained_workspaces: &[],
             security_scanner: None,
             minimum_release_age_ms: None,
             minimum_release_age_excludes: None,
@@ -479,12 +473,6 @@ impl Options {
 
             if let Some(hoist) = config.hoist {
                 self.hoist = hoist;
-            }
-
-            if let Some(list) = &config.self_contained_workspaces {
-                let leaked: Vec<&'static [u8]> = list.iter().map(|e| leak_static(e)).collect();
-                self.self_contained_workspaces =
-                    &*bun_core::heap::release(leaked.into_boxed_slice());
             }
 
             if let Some(security_scanner) = config.security_scanner.as_deref() {

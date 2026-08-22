@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
-import { existsSync, readlinkSync, statSync } from "fs";
+import { existsSync, lstatSync, readlinkSync, statSync } from "fs";
 import { mkdir, rm, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, isWindows, readdirSorted } from "harness";
 import { join } from "path";
@@ -43,11 +43,11 @@ async function install(cwd: string, args: string[] = []) {
   return { out, err, code };
 }
 
-async function writeProject(desktopExtra: object, bunfigExtra: object) {
+async function writeProject(desktopExtra: object, workspacesExtra: object) {
   await writeFile(
     join(package_dir, "bunfig.toml"),
     Bun.TOML.stringify({
-      install: { cache: false, registry: root_url + "/", saveTextLockfile: true, linker: "hoisted", ...bunfigExtra },
+      install: { cache: false, registry: root_url + "/", saveTextLockfile: true, linker: "hoisted" },
     }),
   );
   await mkdir(join(package_dir, "apps", "desktop"), { recursive: true });
@@ -58,7 +58,7 @@ async function writeProject(desktopExtra: object, bunfigExtra: object) {
     JSON.stringify({
       name: "root",
       private: true,
-      workspaces: ["apps/*", "packages/*"],
+      workspaces: { packages: ["apps/*", "packages/*"], ...workspacesExtra },
       dependencies: { bar: "0.0.2" },
     }),
   );
@@ -87,10 +87,10 @@ describe.each([
     { installConfig: { hoistingLimits: "workspaces" } },
     {},
   ],
-  ["install.selfContainedWorkspaces in bunfig.toml", {}, { selfContainedWorkspaces: ["apps/desktop"] }],
-] as const)("self-contained workspace via %s", (_label, desktopExtra, bunfigExtra) => {
+  ["workspaces.selfContained in the root package.json", {}, { selfContained: ["apps/desktop"] }],
+] as const)("self-contained workspace via %s", (_label, desktopExtra, workspacesExtra) => {
   it("gets a complete, physical node_modules while other workspaces still hoist", async () => {
-    await writeProject(desktopExtra, bunfigExtra);
+    await writeProject(desktopExtra, workspacesExtra);
     const r = await install(package_dir);
     expect(r.err).not.toContain("error:");
     expect(r.code).toBe(0);
@@ -103,6 +103,8 @@ describe.each([
     expect(readlinkSync(join(desktopNm, "shared"))).toContain("shared");
     // … as real files, not hardlinks into the cache
     if (!isWindows) {
+      expect(lstatSync(join(desktopNm, "bar")).isSymbolicLink()).toBeFalse();
+      expect(lstatSync(join(desktopNm, "bar", "package.json")).isSymbolicLink()).toBeFalse();
       expect(statSync(join(desktopNm, "bar", "package.json")).nlink).toBe(1);
     }
     // even though `bar` also exists at the root for the root package / other workspaces

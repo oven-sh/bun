@@ -728,20 +728,6 @@ impl PackageManager {
         unsafe { &*get() }
     }
 
-    /// `get()` for code that may also run before the manager exists (helpers that
-    /// only consult options when an install is in progress).
-    #[inline]
-    pub fn try_get() -> Option<&'static PackageManager> {
-        let p = get();
-        if p.is_null() {
-            None
-        } else {
-            // SAFETY: same as `get()` — non-null means `allocate_package_manager()`
-            // ran and the singleton lives for the process.
-            Some(unsafe { &*p })
-        }
-    }
-
     /// Associated-fn spelling that forwards to the free [`init`] so callers
     /// can write `PackageManager::init(ctx, cli, subcommand)`.
     #[inline]
@@ -1420,7 +1406,6 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
         public_hoist_pattern,
         hoist_pattern,
         hoist,
-        self_contained_workspaces,
     } = bunfig;
 
     if let Some(registry) = default_registry {
@@ -1475,7 +1460,6 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
         public_hoist_pattern,
         hoist_pattern,
         hoist,
-        self_contained_workspaces,
     );
 }
 

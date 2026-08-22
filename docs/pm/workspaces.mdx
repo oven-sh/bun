@@ -111,12 +111,18 @@ present under it. Mark such a workspace as self-contained, either in its own `pa
 }
 ```
 
-or from the root:
+or from the root `package.json`, next to the workspace globs:
 
-```toml title="bunfig.toml" icon="settings"
-[install]
-selfContainedWorkspaces = ["apps/desktop"] # workspace paths or names
+```json title="package.json" icon="file-json"
+{
+  "workspaces": {
+    "packages": ["apps/*", "packages/*"],
+    "selfContained": ["apps/desktop"]
+  }
+}
 ```
+
+(entries are workspace paths or package names)
 
 For that workspace `bun install` then behaves as a hoisting barrier — nothing it depends on,
 directly or transitively (including through other workspaces it depends on), is placed above

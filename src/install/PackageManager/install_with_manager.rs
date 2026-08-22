@@ -234,8 +234,9 @@ pub fn install_with_manager(
 
                 had_any_diffs = manager.summary.has_diffs();
                 // Which workspaces asked for a self-contained node_modules is a property
-                // of their manifests, not of the dependency graph: mirror it whether or
-                // not anything else changed (the loaded lockfile does not carry it).
+                // of their manifests, not of the dependency graph: mirror the freshly
+                // parsed manifests whether or not anything else changed, so the copy
+                // loaded from bun.lock never goes stale.
                 manager
                     .lockfile
                     .self_contained_workspaces

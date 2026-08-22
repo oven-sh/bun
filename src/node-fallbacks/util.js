@@ -498,8 +498,7 @@ export function isPrimitive(arg) {
   );
 }
 
-// There is no Buffer global in a browser. Detect the buffer polyfill by its
-// methods, the same way the npm `util` package does in its browser build.
+// Browsers have no Buffer global, so detect the buffer polyfill by its methods.
 export function isBuffer(arg) {
   return (
     typeof arg === "object" &&
@@ -663,9 +662,7 @@ export function callbackify(original) {
     var cb = function (...args) {
       return maybeCb.apply(self, args);
     };
-    // Node runs the callback on `nextTick` so that a throw inside it is an
-    // uncaught exception instead of a rejection of the promise. Browsers have
-    // no `process`, and `queueMicrotask` reports a throw the same way.
+    // Like process.nextTick in Node, a throw from the callback is an uncaught error, not a rejection.
     original.apply(this, args).then(
       function (ret) {
         queueMicrotask(cb.bind(null, null, ret));

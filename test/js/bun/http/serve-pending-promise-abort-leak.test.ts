@@ -680,6 +680,50 @@ test.each(closeDuringDispatchCases)(
   },
 );
 
+// Same window while the request body is still arriving and the handler has a
+// read parked on it: the abort has to reject that read as well (the context
+// is not dead at abort time, so this takes on_abort's other branch).
+test.each(closeWindows)(
+  "connection closed %s while the body is in flight: the request is aborted and the pending read rejects",
+  async (_where, closeWhen) => {
+    const events: string[] = [];
+    const { promise: closedDuringDispatch, resolve: signalClosed } = Promise.withResolvers<void>();
+    const { promise: bodyRead, resolve: signalBodyRead } = Promise.withResolvers<string>();
+    let client: import("node:net").Socket;
+    let clientClosed: Promise<void>;
+
+    using server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      fetch(req) {
+        req.signal.addEventListener("abort", () => events.push("abort"), { once: true });
+        req.text().then(
+          () => signalBodyRead("resolved"),
+          e => signalBodyRead(`rejected: ${(e as Error).name}`),
+        );
+        closeWhen(() => {
+          endClientAndWaitForServerClose(client, clientClosed);
+          signalClosed();
+        });
+        return new Promise<Response>(() => {});
+      },
+    });
+
+    client = connect(Number(server.port), "127.0.0.1", () => {
+      // Declares 1000 bytes and sends 10, so the body stays in flight.
+      client.write("POST / HTTP/1.1\r\nHost: example.com\r\nContent-Length: 1000\r\n\r\n0123456789");
+    });
+    client.on("error", () => {});
+    clientClosed = new Promise<void>(resolve => client.once("close", () => resolve()));
+
+    await closedDuringDispatch;
+    await new Promise(resolve => setImmediate(resolve));
+    expect(events).toEqual(["abort"]);
+    expect(await bodyRead).toBe("rejected: AbortError");
+    await stopAndAssertDrained(server);
+  },
+);
+
 test("a Promise<Response> that settles after its connection closed during dispatch is a no-op", async () => {
   // In a subprocess: on an unfixed build the late resolve renders into the
   // socket uSockets freed at the end of the tick (heap-use-after-free under

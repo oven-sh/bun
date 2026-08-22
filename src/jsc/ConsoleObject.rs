@@ -669,7 +669,6 @@ impl<'a> TablePrinter<'a> {
                 f.single_line = true;
                 f.max_depth = 5;
                 f.can_throw_stack_overflow = true;
-                f.stack_check = StackCheck::init();
                 f
             },
             values_col_width: None,
@@ -1360,7 +1359,6 @@ pub fn format2(
         fmt.max_depth = options.max_depth;
         fmt.single_line = options.single_line;
         fmt.indent = u32::from(options.default_indent);
-        fmt.stack_check = StackCheck::init();
         fmt.can_throw_stack_overflow = true;
         fmt.error_display_level = options.error_display_level;
         let tag = formatter::Tag::get(vals[0], global)?;
@@ -1423,7 +1421,6 @@ pub fn format2(
     fmt.max_depth = options.max_depth;
     fmt.single_line = options.single_line;
     fmt.indent = u32::from(options.default_indent);
-    fmt.stack_check = StackCheck::init();
     fmt.can_throw_stack_overflow = true;
     fmt.error_display_level = options.error_display_level;
     let mut tag: formatter::TagResult;
@@ -1653,10 +1650,7 @@ pub mod formatter {
                 ordered_properties: false,
                 custom_formatted_object: CustomFormattedObject::default(),
                 disable_inspect_custom: false,
-                // `StackCheck::default()` has `cached_stack_end = 0` ⇒ the
-                // check always passes; callers that want a real bound
-                // overwrite with `StackCheck::init()` explicitly.
-                stack_check: StackCheck::default(),
+                stack_check: StackCheck::init(),
                 can_throw_stack_overflow: false,
                 error_display_level: ErrorDisplayLevel::Full,
                 format_buffer_as_text: false,
@@ -3251,16 +3245,15 @@ pub mod formatter {
             if self.global_this.has_exception() {
                 return Err(jsc::JsError::Thrown);
             }
-            if !can_circ {
-                return Ok(true);
-            }
-
             if !self.stack_check.is_safe_to_recurse() {
                 self.failed = true;
                 if self.can_throw_stack_overflow {
                     return Err(self.global_this.throw_stack_overflow());
                 }
                 return Ok(false);
+            }
+            if !can_circ {
+                return Ok(true);
             }
 
             if self.map_node.is_none() {
@@ -5670,7 +5663,6 @@ pub mod formatter {
             value: JSValue,
             writer: &mut dyn bun_io::Write,
         ) -> JsResult<()> {
-            self.stack_check.update();
             let one = [value];
             self.remaining_values = bun_ptr::RawSlice::new(&one);
             let global = self.global_this;
@@ -5894,7 +5886,6 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
     fmt.max_depth = bun_options_types::context::try_get()
         .and_then(|ctx| ctx.runtime_options.console_depth)
         .unwrap_or(DEFAULT_CONSOLE_LOG_DEPTH);
-    fmt.stack_check = StackCheck::init();
     fmt.can_throw_stack_overflow = true;
     let console = vm_console(global);
     // SAFETY: see [`vm_console`] — points at the live boxed `ConsoleObject` for

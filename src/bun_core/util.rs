@@ -2226,16 +2226,6 @@ unsafe extern "C" {
     #[cfg(windows)]
     safe fn clock_gettime_monotonic(sec: &mut i64, nsec: &mut i64);
 }
-impl Default for StackCheck {
-    /// `cached_stack_end` defaults to `0`, so
-    /// `is_safe_to_recurse()` always reports true until `init`/`update`.
-    #[inline]
-    fn default() -> Self {
-        Self {
-            cached_stack_end: 0,
-        }
-    }
-}
 impl StackCheck {
     #[inline]
     pub fn configure_thread() {
@@ -2246,10 +2236,6 @@ impl StackCheck {
         Self {
             cached_stack_end: Bun__StackCheck__getMaxStack() as usize,
         }
-    }
-    #[inline]
-    pub fn update(&mut self) {
-        self.cached_stack_end = Bun__StackCheck__getMaxStack() as usize;
     }
     /// Is there enough stack space to safely recurse?
     /// Threshold: `> 256K` on Windows, `> 128K` elsewhere.

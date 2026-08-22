@@ -47,6 +47,7 @@ pub struct Options {
     pub(crate) update: DependencyGroup,
     pub dry_run: bool,
     pub check: bool,
+    pub why: bool,
     pub(crate) link_workspace_packages: bool,
     pub(crate) remote_package_features: Features,
     pub local_package_features: Features,
@@ -134,6 +135,7 @@ impl Default for Options {
             update: DependencyGroup::default(),
             dry_run: false,
             check: false,
+            why: false,
             link_workspace_packages: true,
             remote_package_features: Features {
                 optional_dependencies: true,
@@ -751,6 +753,7 @@ impl Options {
                 self.do_.set(Do::SAVE_LOCKFILE, false);
             }
             self.check = cli.check;
+            self.why = cli.why;
 
             if cli.no_summary || cli.log_level.is_silent() {
                 self.do_.set(Do::SUMMARY, false);

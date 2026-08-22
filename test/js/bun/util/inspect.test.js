@@ -249,23 +249,23 @@ it("TypedArray prints with colors", () => {
     `BigInt64Array(2) [ ${num("1n")}${comma}${num("2n")} ]`,
   );
   expect(Bun.inspect(new Uint8Array(0), { colors: true })).toBe("Uint8Array(0) []");
+});
 
-  for (let TypedArray of [
-    Uint8Array,
-    Uint16Array,
-    Uint32Array,
-    Uint8ClampedArray,
-    Int8Array,
-    Int16Array,
-    Int32Array,
-    Float32Array,
-    Float64Array,
-  ]) {
-    const buffer = new TypedArray([1, 2, 3]);
-    const plain = Bun.inspect(buffer, { colors: false });
-    expect(plain).toBe(`${TypedArray.name}(3) [ 1, 2, 3 ]`);
-    expect(Bun.stripANSI(Bun.inspect(buffer, { colors: true }))).toBe(plain);
-  }
+it.each([
+  ["Uint8Array", Uint8Array],
+  ["Uint16Array", Uint16Array],
+  ["Uint32Array", Uint32Array],
+  ["Uint8ClampedArray", Uint8ClampedArray],
+  ["Int8Array", Int8Array],
+  ["Int16Array", Int16Array],
+  ["Int32Array", Int32Array],
+  ["Float32Array", Float32Array],
+  ["Float64Array", Float64Array],
+])("%s with colors strips to the plain output", (name, TypedArray) => {
+  const buffer = new TypedArray([1, 2, 3]);
+  const plain = Bun.inspect(buffer, { colors: false });
+  expect(plain).toBe(`${name}(3) [ 1, 2, 3 ]`);
+  expect(Bun.stripANSI(Bun.inspect(buffer, { colors: true }))).toBe(plain);
 });
 
 it("BigIntArray", () => {

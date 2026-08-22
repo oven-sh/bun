@@ -2088,16 +2088,21 @@ bool Bun__deepMatch(
     // - two "simple" arrays
     // similar to what is done in deepEquals (canPerformFastPropertyEnumerationForIterationBun)
 
+    bool matched = true;
+
     // arrays should match exactly
     if (isArray(globalObject, objValue) && isArray(globalObject, subsetValue)) {
         if (obj->getArrayLength() != subsetObj->getArrayLength()) {
-            return false;
-        }
-        PropertyNameArrayBuilder objProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
-        obj->getPropertyNames(globalObject, objProps, DontEnumPropertiesMode::Exclude);
-        RETURN_IF_EXCEPTION(throwScope, false);
-        if (objProps.size() != subsetProps.size()) {
-            return false;
+            if (!replacePropsWithAsymmetricMatchers) return false;
+            matched = false;
+        } else {
+            PropertyNameArrayBuilder objProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
+            obj->getPropertyNames(globalObject, objProps, DontEnumPropertiesMode::Exclude);
+            RETURN_IF_EXCEPTION(throwScope, false);
+            if (objProps.size() != subsetProps.size()) {
+                if (!replacePropsWithAsymmetricMatchers) return false;
+                matched = false;
+            }
         }
     }
 
@@ -2105,7 +2110,9 @@ bool Bun__deepMatch(
         JSValue prop = obj->getIfPropertyExists(globalObject, property);
         RETURN_IF_EXCEPTION(throwScope, false);
         if (prop.isEmpty()) {
-            return false;
+            if (!replacePropsWithAsymmetricMatchers) return false;
+            matched = false;
+            continue;
         }
 
         JSValue subsetProp = subsetObj->get(globalObject, property);
@@ -2116,8 +2123,14 @@ bool Bun__deepMatch(
 
         if constexpr (enableAsymmetricMatchers) {
             if (subsetPropCell && subsetPropCell->type() == JSC::JSType(JSDOMWrapperType)) {
-                switch (matchAsymmetricMatcher(globalObject, subsetProp, prop, throwScope)) {
+                auto result = matchAsymmetricMatcher(globalObject, subsetProp, prop, throwScope);
+                RETURN_IF_EXCEPTION(throwScope, false);
+                switch (result) {
                 case AsymmetricMatcherResult::FAIL:
+                    if (replacePropsWithAsymmetricMatchers) {
+                        matched = false;
+                        continue;
+                    }
                     return false;
                 case AsymmetricMatcherResult::PASS:
                     if (replacePropsWithAsymmetricMatchers) {
@@ -2130,8 +2143,14 @@ bool Bun__deepMatch(
                     break;
                 }
             } else if (propCell && propCell->type() == JSC::JSType(JSDOMWrapperType)) {
-                switch (matchAsymmetricMatcher(globalObject, prop, subsetProp, throwScope)) {
+                auto result = matchAsymmetricMatcher(globalObject, prop, subsetProp, throwScope);
+                RETURN_IF_EXCEPTION(throwScope, false);
+                switch (result) {
                 case AsymmetricMatcherResult::FAIL:
+                    if (replacePropsWithAsymmetricMatchers) {
+                        matched = false;
+                        continue;
+                    }
                     return false;
                 case AsymmetricMatcherResult::PASS:
                     if (replacePropsWithAsymmetricMatchers) {
@@ -2166,18 +2185,24 @@ bool Bun__deepMatch(
                 gcBuffer->append(subsetProp);
                 // property cycle detected
                 if (!didInsertProp.second || !didInsertSubset.second) continue;
-                if (!Bun__deepMatch<enableAsymmetricMatchers>(prop, seenObjProperties, subsetProp, seenSubsetProperties, globalObject, throwScope, gcBuffer, replacePropsWithAsymmetricMatchers, isMatchingObjectContaining)) {
-                    return false;
+                bool nestedMatched = Bun__deepMatch<enableAsymmetricMatchers>(prop, seenObjProperties, subsetProp, seenSubsetProperties, globalObject, throwScope, gcBuffer, replacePropsWithAsymmetricMatchers, isMatchingObjectContaining);
+                RETURN_IF_EXCEPTION(throwScope, false);
+                if (!nestedMatched) {
+                    if (!replacePropsWithAsymmetricMatchers) return false;
+                    matched = false;
                 }
             }
         } else {
             auto same = JSC::sameValue(globalObject, prop, subsetProp);
             RETURN_IF_EXCEPTION(throwScope, false);
-            if (!same) return false;
+            if (!same) {
+                if (!replacePropsWithAsymmetricMatchers) return false;
+                matched = false;
+            }
         }
     }
 
-    return true;
+    return matched;
 }
 
 // anonymous namespace to avoid name collision

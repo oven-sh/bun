@@ -2092,10 +2092,10 @@ pub(crate) fn install_isolated_packages(
         // global link dir once on the main thread before any `.symlink`
         // resolution can be reached by a task. Guarded so installs without
         // `link:` deps don't touch the global dir.
-        if pkg_resolutions
-            .iter()
-            .any(|r| r.tag == ResolutionTag::Symlink)
-        {
+        if pkg_resolutions.iter().any(|r| {
+            r.tag == ResolutionTag::Symlink
+                && !crate::resolution::is_path_link(r.symlink().slice(string_buf))
+        }) {
             let _ = crate::package_manager_real::directories::global_link_dir_path(
                 installer.manager_mut(),
             );

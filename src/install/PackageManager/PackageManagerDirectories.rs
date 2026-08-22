@@ -1010,8 +1010,6 @@ pub fn compute_cache_dir_and_subpath<'a>(
             cache_dir = Fd::cwd();
         }
         ResolutionTag::Symlink => {
-            let directory = global_link_dir(manager);
-
             // borrowck — `global_link_dir_path` below reborrows
             // `manager` mutably, so copy the symlink target out of the lockfile
             // string buffer first instead of holding a slice across that call.
@@ -1030,12 +1028,12 @@ pub fn compute_cache_dir_and_subpath<'a>(
                 cache_dir_subpath = ZStr::from_buf(folder_path_buf, folder.len());
                 cache_dir = Fd::cwd();
             } else {
-                let global_link_dir = global_link_dir_path(manager);
+                let link_dir_path = global_link_dir_path(manager);
                 let ptr = &mut folder_path_buf.0[..];
                 let mut off = 0usize;
-                ptr[off..off + global_link_dir.len()].copy_from_slice(global_link_dir);
-                off += global_link_dir.len();
-                if global_link_dir[global_link_dir.len() - 1] != SEP {
+                ptr[off..off + link_dir_path.len()].copy_from_slice(link_dir_path);
+                off += link_dir_path.len();
+                if link_dir_path[link_dir_path.len() - 1] != SEP {
                     ptr[off] = SEP;
                     off += 1;
                 }
@@ -1044,7 +1042,7 @@ pub fn compute_cache_dir_and_subpath<'a>(
                 ptr[off] = 0;
                 let len = off;
                 cache_dir_subpath = ZStr::from_buf(folder_path_buf, len);
-                cache_dir = directory;
+                cache_dir = global_link_dir(manager);
             }
         }
         _ => {}

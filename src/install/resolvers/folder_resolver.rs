@@ -322,15 +322,11 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
             body.reset();
             match File::openat(Fd::cwd(), abs.as_bytes(), O::RDONLY, 0) {
                 Ok(file) => {
-                    // defer file.close()
-                    let read_result = file
-                        .read_to_end_with_array_list(
-                            &mut body.list,
-                            bun_sys::SizeHint::ProbablySmall,
-                        )
-                        .map(|_| ());
-                    let _ = file.close();
-                    read_result?;
+                    // closed on drop
+                    file.read_to_end_with_array_list(
+                        &mut body.list,
+                        bun_sys::SizeHint::ProbablySmall,
+                    )?;
                 }
                 Err(err) => {
                     // yarn/pnpm `link:./dir` may point at a plain directory without a
@@ -358,7 +354,9 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
                         if body.list.len() == start {
                             // nothing usable in the directory name: a stable synthetic one
                             use std::io::Write as _;
-                            let _ = write!(&mut body.list, "link-{:016x}", bun_wyhash::hash(dir));
+                            // hash the literal as written (project-stable), not the absolute path
+                            let _ =
+                                write!(&mut body.list, "link-{:016x}", bun_wyhash::hash(literal));
                         }
                         body.list.extend_from_slice(b"\",\"version\":\"0.0.0\"}");
                     } else {

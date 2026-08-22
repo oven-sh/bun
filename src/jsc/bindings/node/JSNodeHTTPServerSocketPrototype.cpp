@@ -23,6 +23,7 @@ using namespace WebCore;
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterOnClose);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterOnDrain);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterClosed);
+JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterHasIncompleteRequest);
 JSC_DECLARE_CUSTOM_SETTER(jsNodeHttpServerSocketSetterOnClose);
 JSC_DECLARE_CUSTOM_SETTER(jsNodeHttpServerSocketSetterOnDrain);
 JSC_DECLARE_CUSTOM_SETTER(jsNodeHttpServerSocketSetterOnData);
@@ -60,6 +61,7 @@ static const JSC::HashTableValue JSNodeHTTPServerSocketPrototypeTableValues[] = 
     { "ondata"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterOnData, jsNodeHttpServerSocketSetterOnData } },
     { "bytesWritten"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterBytesWritten, noOpSetter } },
     { "closed"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterClosed, noOpSetter } },
+    { "hasIncompleteRequest"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterHasIncompleteRequest, noOpSetter } },
     { "response"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterResponse, noOpSetter } },
     { "duplex"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterDuplex, jsNodeHttpServerSocketSetterDuplex } },
     { "remoteAddress"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterRemoteAddress, noOpSetter } },
@@ -511,6 +513,15 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterClosed, (JSC::JSGlobalObjec
         return JSValue::encode(JSC::jsUndefined());
     }
     return JSValue::encode(JSC::jsBoolean(thisObject->isClosed()));
+}
+
+JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterHasIncompleteRequest, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName propertyName))
+{
+    auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(JSC::JSValue::decode(thisValue));
+    if (!thisObject) [[unlikely]] {
+        return JSValue::encode(JSC::jsUndefined());
+    }
+    return JSValue::encode(JSC::jsBoolean(thisObject->hasIncompleteRequest()));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterBytesWritten, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName propertyName))

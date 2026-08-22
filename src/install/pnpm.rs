@@ -1626,7 +1626,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
 
     lockfile.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration::<false>(manager)?;
 
-    update_package_json_after_migration(manager, log, dir, &found_patches)?;
+    update_package_json_after_migration(lockfile, manager, log, dir, &found_patches)?;
 
     Ok(LoadResult::Ok(LoadResultOk {
         lockfile,
@@ -2333,6 +2333,7 @@ fn rewrite_bare_patch_keys(
 
 /// Updates package.json with workspace and catalog information after migration
 fn update_package_json_after_migration(
+    lockfile: &mut Lockfile,
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
     dir: Fd,
@@ -2555,6 +2556,13 @@ fn update_package_json_after_migration(
 
             catalog_obj = ws_root.get_object(b"catalog").filter(is_non_empty_object);
             catalogs_obj = ws_root.get_object(b"catalogs").filter(is_non_empty_object);
+            // The migrated root skips `Package::parse`, so the catalog these declare is recorded in the lockfile here.
+            crate::lockfile_real::CatalogMap::put_missing_from_pnpm_workspace(
+                &mut lockfile.catalogs,
+                catalog_obj,
+                catalogs_obj,
+                &mut sbuf!(lockfile),
+            )?;
             workspace_overrides_obj = ws_root.get_object(b"overrides").filter(is_non_empty_object);
             workspace_patched_deps_obj = ws_root
                 .get_object(b"patchedDependencies")

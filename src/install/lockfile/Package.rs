@@ -914,6 +914,7 @@ pub struct DiffSummary {
     pub(crate) script_only_updates: u32,
     pub(crate) overrides_changed: bool,
     pub(crate) catalogs_changed: bool,
+    pub(crate) workspace_versions_changed: bool,
 
     pub(crate) added_trusted_dependencies:
         ArrayHashMap<TruncatedPackageNameHash, AddedTrustedDependency, ArrayIdentityContext>,
@@ -937,6 +938,7 @@ impl DiffSummary {
     #[inline]
     pub(crate) fn has_diffs(&self) -> bool {
         self.changes_resolutions()
+            || self.workspace_versions_changed
             || self.added_trusted_dependencies.count() > 0
             || self.removed_trusted_dependencies.count() > 0
             || self.patched_dependencies_changed
@@ -1345,6 +1347,38 @@ impl Diff {
             }
             false
         };
+
+        if is_root {
+            summary.workspace_versions_changed = 'workspace_versions_changed: {
+                if from_lockfile.workspace_versions.count()
+                    != to_lockfile.workspace_versions.count()
+                {
+                    break 'workspace_versions_changed true;
+                }
+                let from_buf = from_lockfile.buffers.string_bytes.as_slice();
+                let to_buf = to_lockfile.buffers.string_bytes.as_slice();
+                for (key, to_version) in to_lockfile.workspace_versions.iter() {
+                    let Some(from_version) = from_lockfile.workspace_versions.get(key) else {
+                        break 'workspace_versions_changed true;
+                    };
+                    if from_version.major != to_version.major
+                        || from_version.minor != to_version.minor
+                        || from_version.patch != to_version.patch
+                        || from_version.tag.pre.slice(from_buf) != to_version.tag.pre.slice(to_buf)
+                        || from_version.tag.build.slice(from_buf)
+                            != to_version.tag.build.slice(to_buf)
+                    {
+                        break 'workspace_versions_changed true;
+                    }
+                }
+                for key in from_lockfile.workspace_versions.keys() {
+                    if !to_lockfile.workspace_versions.contains(key) {
+                        break 'workspace_versions_changed true;
+                    }
+                }
+                false
+            };
+        }
 
         let mut missing_workspaces: Vec<PackageID> = Vec::new();
         let mut survivors: Vec<(String, DependencySlice)> = Vec::new();

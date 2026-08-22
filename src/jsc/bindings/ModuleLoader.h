@@ -23,10 +23,7 @@ using namespace JSC;
 
 class JSCommonJSModule;
 
-// RAII owner for a stack ErrorableResolvedSource: derefs source_code and
-// frees owned sidecar bytecode that no consumer adopted
-// (SourceProvider::create clears the flag when it adopts).
-// Destructor is out-of-line in ModuleLoader.cpp (needs MimallocWTFMalloc.h).
+// RAII for a stack ErrorableResolvedSource: derefs source_code and frees unadopted owned sidecar bytecode; destructor out-of-line in ModuleLoader.cpp (needs MimallocWTFMalloc.h).
 class ResolvedSourceCodeHolder {
 public:
     ResolvedSourceCodeHolder(ErrorableResolvedSource* res_)

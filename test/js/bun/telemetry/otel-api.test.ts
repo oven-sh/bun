@@ -304,6 +304,18 @@ describe("context propagation", () => {
     expect(seen).toEqual([undefined, "entered-inside", "kept"]);
   });
 
+  test("removing the last AsyncLocalStorage store inside a span scope is kept after the scope", () => {
+    const als = new AsyncLocalStorage();
+    const seen = als.run("v", () => {
+      tracer.startActiveSpan("scope", span => {
+        als.disable(); // drops the only store; the slot collapses to the bare span
+        span.end();
+      });
+      return [Bun.otel.activeSpan(), als.getStore()];
+    });
+    expect(seen).toEqual([undefined, undefined]);
+  });
+
   test("tracer cache key: a name containing '@' does not collide with (name, version)", () => {
     expect(Bun.otel.tracer("a@1").version).toBeUndefined();
     expect(Bun.otel.tracer("a", "1").version).toBe("1");

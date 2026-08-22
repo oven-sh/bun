@@ -688,6 +688,25 @@ impl Options {
             }
         }
 
+        {
+            const IGNORE_SCRIPTS_KEYS: [&[u8]; 3] = [
+                b"BUN_CONFIG_IGNORE_SCRIPTS",
+                b"NPM_CONFIG_IGNORE_SCRIPTS",
+                b"npm_config_ignore_scripts",
+            ];
+
+            for key in IGNORE_SCRIPTS_KEYS {
+                if let Some(value) = env.get(key) {
+                    if !value.is_empty() {
+                        if value != b"0" && value != b"false" {
+                            self.do_.set(Do::RUN_SCRIPTS, false);
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
         if env.get(b"BUN_CONFIG_YARN_LOCKFILE").is_some() {
             self.do_.set(Do::SAVE_YARN_LOCK, true);
         }

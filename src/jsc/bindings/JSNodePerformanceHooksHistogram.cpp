@@ -245,20 +245,10 @@ void JSNodePerformanceHooksHistogram::getPercentiles(JSGlobalObject* globalObjec
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (!m_histogramData.histogram) return;
-
-    struct hdr_iter iter;
-    hdr_iter_percentile_init(&iter, m_histogramData.histogram, 1.0);
-
-    while (hdr_iter_next(&iter)) {
-        double percentile = iter.specifics.percentiles.percentile;
-        int64_t value = iter.highest_equivalent_value;
-        JSValue jsKey = jsNumber(percentile);
-        JSValue jsValue = JSBigInt::createFrom(globalObject, value);
-        RETURN_IF_EXCEPTION(scope, );
-        map->set(globalObject, jsKey, jsValue);
-        RETURN_IF_EXCEPTION(scope, void());
-    }
+    forEachPercentile([&](double percentile, int64_t value) {
+        map->set(globalObject, jsNumber(percentile), jsNumber(static_cast<double>(value)));
+        return !scope.exception();
+    });
 }
 
 void JSNodePerformanceHooksHistogram::getPercentilesBigInt(JSGlobalObject* globalObject, JSC::JSMap* map)
@@ -266,20 +256,30 @@ void JSNodePerformanceHooksHistogram::getPercentilesBigInt(JSGlobalObject* globa
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (!m_histogramData.histogram) return;
-
-    struct hdr_iter iter;
-    hdr_iter_percentile_init(&iter, m_histogramData.histogram, 1.0);
-
-    while (hdr_iter_next(&iter)) {
-        double percentile = iter.specifics.percentiles.percentile;
-        int64_t value = iter.highest_equivalent_value;
-        JSValue jsKey = jsNumber(percentile);
+    forEachPercentile([&](double percentile, int64_t value) {
         JSValue jsValue = JSBigInt::createFrom(globalObject, value);
-        RETURN_IF_EXCEPTION(scope, );
-        map->set(globalObject, jsKey, jsValue);
-        RETURN_IF_EXCEPTION(scope, void());
-    }
+        if (scope.exception()) [[unlikely]]
+            return false;
+        map->set(globalObject, jsNumber(percentile), jsValue);
+        return !scope.exception();
+    });
+}
+
+JSC::JSObject* JSNodePerformanceHooksHistogram::getPercentilesObject(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSObject* result = JSC::constructEmptyObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    forEachPercentile([&](double percentile, int64_t value) {
+        result->putDirectMayBeIndex(globalObject, Identifier::from(vm, percentile), jsNumber(static_cast<double>(value)));
+        return !scope.exception();
+    });
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    return result;
 }
 
 } // namespace Bun

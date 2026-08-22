@@ -115,6 +115,8 @@ pub mod lib_error {
     pub const BAD_CLIENT_MAGIC: i32 = -903;
     /// NGHTTP2_ERR_FLOODED — "Flooding was detected in this HTTP/2 session, and it must be closed"
     pub const FLOODED: i32 = -904;
+    /// NGHTTP2_ERR_TOO_MANY_CONTINUATIONS — "Too many CONTINUATION frames following a HEADER frame"
+    pub const TOO_MANY_CONTINUATIONS: i32 = -905;
 }
 
 /// RFC 9113 §6.5.2 SETTINGS parameter registry (+ RFC 8441, RFC 9218).

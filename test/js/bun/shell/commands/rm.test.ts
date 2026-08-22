@@ -145,6 +145,39 @@ foo/
     }
   });
 
+  // An empty operand names nothing. On Windows it used to resolve to the
+  // shell's cwd itself: `rm ""` reported "Is a directory", `rm -r ""` deleted
+  // the cwd's contents (and the cwd too, unless it was the process cwd) and
+  // `rm -d ""` deleted an empty cwd.
+  for (const [flags, stderr, exitCode] of [
+    [[], "rm: No such file or directory\n", 1],
+    [["-f"], "", 0],
+    [["-r"], "rm: No such file or directory\n", 1],
+    [["-rf"], "", 0],
+    [["-d"], "rm: No such file or directory\n", 1],
+  ] as const) {
+    TestBuilder.command`rm ${flags} ${""}`
+      .ensureTempDir()
+      .file("keep.txt", "keep")
+      .directory("sub")
+      .file("sub/inner.txt", "keep")
+      .stderr(stderr)
+      .exitCode(exitCode)
+      .fileEquals("keep.txt", "keep")
+      .fileEquals("sub/inner.txt", "keep")
+      .runAsTest(["empty operand:", "rm", ...flags, '""'].join(" "));
+  }
+
+  test('empty operand: rm -d "" in an empty cwd', async () => {
+    using cwd = tempDir("rm-d-empty-operand", {});
+    const { stderr, exitCode } = await $`rm -d ${""}`.cwd(String(cwd)).quiet();
+    expect({ stderr: stderr.toString(), exitCode, cwdExists: existsSync(String(cwd)) }).toEqual({
+      stderr: "rm: No such file or directory\n",
+      exitCode: 1,
+      cwdExists: true,
+    });
+  });
+
   // The DirTask parent/child hand-off had a lost-wakeup window between
   // `subtask_count.load() > 1` and `need_to_wait.store(true)`: the last
   // child could decrement and read `need_to_wait == false` in between,

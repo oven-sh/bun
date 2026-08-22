@@ -37,7 +37,7 @@ Extensions only ever _add_ entries. If the package already declares a dependency
 
 ## Where to configure it
 
-Bun reads `packageExtensions` from the root `package.json`, either at the top level (shown above) or under the `pnpm` key, so an existing pnpm configuration keeps working:
+Bun reads `packageExtensions` from the root `package.json`, both at the top level (shown above) and under the `pnpm` key, so an existing pnpm configuration keeps working:
 
 ```json package.json icon="file-json"
 {

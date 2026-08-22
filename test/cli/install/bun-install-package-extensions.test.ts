@@ -242,6 +242,8 @@ optionalDependencies = { left-pad = "1.0.0" }
       JSON.stringify({
         name: "app",
         dependencies: { "a-dep": "1.0.6", "peer-no-deps": "2.0.0" },
+        // top-level and pnpm-namespaced entries are both read
+        packageExtensions: { "a-dep": { optionalDependencies: { bar: "0.0.7" } } },
         pnpm: { packageExtensions: { "a-dep@*": { peerDependencies: { "peer-no-deps": "*" } } } },
       }),
     );
@@ -249,6 +251,7 @@ optionalDependencies = { left-pad = "1.0.0" }
     await runBunInstall(bunEnv, packageDir);
     expect(await lockfileEntry(packageDir, "a-dep")).toEqual({
       dependencies: { "no-deps": "1.0.1" },
+      optionalDependencies: { bar: "0.0.7" },
       peerDependencies: { "peer-no-deps": "*" },
     });
     expect(await lockfileEntry(packageDir, "peer-no-deps")).toEqual({
@@ -269,6 +272,7 @@ test("malformed package.json packageExtensions entries warn and are skipped", as
       packageExtensions: {
         "a-dep": { dependencies: { "no-deps": 1 } },
         "no-deps": "not an object",
+        "a-dep@not a range": { dependencies: { "no-deps": "1.0.0" } },
       },
     }),
   );
@@ -283,6 +287,7 @@ test("malformed package.json packageExtensions entries warn and are skipped", as
   const [_, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(err).toContain("warn: Expected a version range string");
   expect(err).toContain("warn: Expected an object with");
+  expect(err).toContain('warn: Expected a semver range after "@" in the package name');
   expect(err).not.toContain("error:");
   expect(exitCode).toBe(0);
   expect(await lockfileEntry(packageDir, "a-dep")).toEqual({});

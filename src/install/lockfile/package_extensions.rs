@@ -33,19 +33,19 @@ use bun_install_types::PackageExtensions::{
 };
 
 /// Does `range` (extension key suffix, `""`/`"*"` = any) admit `version`?
+/// `parse_from_expr` already rejected keys whose range does not parse.
 fn range_matches(range: &[u8], version: semver::Version, version_buf: &[u8]) -> bool {
     if range.is_empty() || range == b"*" {
         return true;
     }
-    match semver::query::parse(range, semver::SlicedString::init(range, range)) {
-        Ok(query) => !query.is_empty() && query.satisfies(version, range, version_buf),
-        Err(_) => false,
-    }
+    let query = semver::query::parse(range, semver::SlicedString::init(range, range))
+        .unwrap_or_else(|_| bun_core::out_of_memory());
+    !query.is_empty() && query.satisfies(version, range, version_buf)
 }
 
 impl PackageManager {
-    /// Append the root `package.json`'s `packageExtensions` (or, pnpm-style,
-    /// `pnpm.packageExtensions`) to `options.package_extensions`, after the
+    /// Append the root `package.json`'s `packageExtensions` and, pnpm-style,
+    /// `pnpm.packageExtensions` to `options.package_extensions`, after the
     /// ones bunfig contributed (replacing any read by an earlier call).
     /// Malformed entries warn and are skipped.
     pub(crate) fn load_package_extensions_from_package_json(
@@ -69,24 +69,29 @@ impl PackageManager {
             return Ok(());
         };
         scratch_log.append_to_maybe_recycled(log, &entry.source);
-        let Some(expr) = entry.root.get(b"packageExtensions").or_else(|| {
+        // Top-level first, then pnpm's namespaced field; both are read.
+        let sources = [
+            entry.root.get(b"packageExtensions"),
             entry
                 .root
                 .get(b"pnpm")
-                .and_then(|pnpm| pnpm.get(b"packageExtensions"))
-        }) else {
-            return Ok(());
-        };
-        match parse_package_extensions(
-            &mut self.options.package_extensions,
-            &expr,
-            log,
-            &entry.source,
-            Strictness::Warn,
-        ) {
-            Ok(()) | Err(FromExprError::UnexpectedExpr) => Ok(()),
-            Err(FromExprError::OutOfMemory) => Err(crate::Error::Alloc(bun_alloc::AllocError)),
+                .and_then(|pnpm| pnpm.get(b"packageExtensions")),
+        ];
+        for expr in sources.into_iter().flatten() {
+            match parse_package_extensions(
+                &mut self.options.package_extensions,
+                &expr,
+                log,
+                &entry.source,
+                Strictness::Warn,
+            ) {
+                Ok(()) | Err(FromExprError::UnexpectedExpr) => {}
+                Err(FromExprError::OutOfMemory) => {
+                    return Err(crate::Error::Alloc(bun_alloc::AllocError));
+                }
+            }
         }
+        Ok(())
     }
 }
 

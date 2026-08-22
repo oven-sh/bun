@@ -114,6 +114,14 @@ pub fn parse_from_expr(
         if name.is_empty() {
             return report(log, key_loc, b"Expected a package name");
         }
+        // `name@<range>`: reject a range that parses to nothing here, once,
+        // rather than letting the extension silently never match.
+        if !range.is_empty() && range != b"*" {
+            let query = bun_semver::query::parse(range, bun_semver::SlicedString::init(range, range))?;
+            if query.is_empty() {
+                return report(log, key_loc, b"Expected a semver range after \"@\" in the package name");
+            }
+        }
         if !value.is_object() {
             return report(
                 log,

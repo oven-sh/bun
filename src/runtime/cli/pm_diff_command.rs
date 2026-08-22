@@ -857,20 +857,26 @@ fn registry_get(
     accept: &[u8],
     for_error: Option<(&[u8], &[u8])>,
 ) -> Result<MutableString, crate::Error> {
+    // Same fetch-time policy as `bun install`: `install.rewrite`, then `install.allowedHosts`.
+    let rewritten = pm.options.rewrite_url(url.href);
+    let url = match &rewritten {
+        std::borrow::Cow::Owned(href) => URL::parse(href),
+        std::borrow::Cow::Borrowed(_) => url,
+    };
+    if !pm.options.is_host_allowed(url.href) {
+        Status::clear();
+        Output::err_generic(
+            "Refusing to fetch {}: host is not in install.allowedHosts",
+            (BStr::new(url.href),),
+        );
+        Global::exit(1);
+    }
     let mut headers = http::HeaderBuilder::default();
     headers.count(b"Accept", accept);
-    // `dist.tarball` is registry-controlled; credentials only go back to the registry's own origin.
-    let same_origin = {
-        let registry = scope.url.url();
-        url.protocol == registry.protocol
-            && url.hostname == registry.hostname
-            && url.get_port_auto() == registry.get_port_auto()
-    };
-    let (token, auth): (&[u8], &[u8]) = if same_origin {
-        (&scope.token, &scope.auth)
-    } else {
-        (b"", b"")
-    };
+    // `dist.tarball` is registry-controlled; credentials only go back to URLs
+    // under the registry's own origin and path (`Options::credentials_for`).
+    let credentials = pm.options.credentials_for(scope, url.href);
+    let (token, auth): (&[u8], &[u8]) = (credentials.token, credentials.auth);
     if !token.is_empty() {
         headers.count(b"Authorization", b"");
         headers.content.cap += b"Bearer ".len() + token.len();
@@ -905,6 +911,9 @@ fn registry_get(
         http::FetchRedirect::Follow,
     );
     req.client.flags.reject_unauthorized = pm.tls_reject_unauthorized();
+    req.client.redirect_policy = Some(bun_install::package_manager::Options::redirect_policy(
+        credentials,
+    ));
     let res = match req.send_sync(&mut response_buf) {
         Ok(r) => r,
         Err(err) => {

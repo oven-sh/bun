@@ -12,6 +12,7 @@ use bun_threading::thread_pool;
 use bun_wyhash::Wyhash11;
 
 use crate::npm;
+use crate::repository_real::git_host_refused;
 use crate::{
     DependencyID, ExtractData, ExtractTarball, NetworkTask, PackageManager, PatchTask, Repository,
     RepositoryExt as _, Resolution,
@@ -407,8 +408,62 @@ impl<'a> Task<'a> {
                     let url = req.url.slice();
                     let mut attempt: u8 = 1;
 
+                    // `install.allowedHosts`, decided per transport before `git`
+                    // is spawned (no clone, no fetch): the https and ssh forms
+                    // of one specifier differ in port, so `host:22` allows only
+                    // the ssh attempt and `host:443` only the https one. When
+                    // every candidate is refused, fail once naming the host
+                    // (never the URL — it may carry credentials).
+                    // SAFETY: see `manager` decl — `options` is read-only after init.
+                    let options = unsafe { &(*manager).options };
+                    // (owned copies: `try_https`/`try_ssh` return thread-local
+                    // buffers that the download calls below reuse)
+                    let (has_https, https_refused): (bool, Option<Box<[u8]>>) =
+                        match Repository::try_https(url) {
+                            Some(u) => (true, git_host_refused(options, u).map(Box::from)),
+                            None => (false, None),
+                        };
+                    let (has_ssh, ssh_refused): (bool, Option<Box<[u8]>>) =
+                        match Repository::try_ssh(url) {
+                            Some(u) => (true, git_host_refused(options, u).map(Box::from)),
+                            None => (false, None),
+                        };
+                    let skip_https = https_refused.is_some();
+                    let skip_ssh = ssh_refused.is_some();
+                    let all_refused: Option<Box<[u8]>> = if has_https || has_ssh {
+                        if (!has_https || skip_https) && (!has_ssh || skip_ssh) {
+                            https_refused.or(ssh_refused)
+                        } else {
+                            None
+                        }
+                    } else {
+                        git_host_refused(options, url).map(Box::from)
+                    };
+                    if let Some(host) = all_refused {
+                        this.log.add_error_fmt(
+                            None,
+                            Loc::EMPTY,
+                            format_args!(
+                                "Refusing to clone git dependency \"{}\" from \"{}\": host is not in install.allowedHosts",
+                                bstr::BStr::new(name),
+                                bstr::BStr::new(&host),
+                            ),
+                        );
+                        this.err = Some(crate::Error::HostNotAllowed);
+                        this.status = Status::Fail;
+                        this.data = Data {
+                            git_clone: ManuallyDrop::new(Fd::invalid()),
+                        };
+                        break 'body;
+                    }
+                    if skip_https || skip_ssh {
+                        // Only one transport will be tried; have `download`
+                        // report its failure instead of deferring to a retry.
+                        attempt += 1;
+                    }
+
                     let dir = 'brk: {
-                        if let Some(https) = Repository::try_https(url) {
+                        if !skip_https && let Some(https) = Repository::try_https(url) {
                             match Repository::download(
                                 req.env,
                                 &mut this.log,
@@ -448,7 +503,7 @@ impl<'a> Task<'a> {
                     let dir = match dir {
                         Some(d) => d,
                         None => {
-                            if let Some(ssh) = Repository::try_ssh(url) {
+                            if !skip_ssh && let Some(ssh) = Repository::try_ssh(url) {
                                 match Repository::download(
                                     req.env,
                                     &mut this.log,
@@ -469,7 +524,7 @@ impl<'a> Task<'a> {
                                         break 'body;
                                     }
                                 }
-                            } else if this.status != Status::Fail {
+                            } else if !has_https && !has_ssh && this.status != Status::Fail {
                                 // Neither matcher recognized the URL (`file://`,
                                 // `git://`, ...); clone with the URL as written
                                 // instead of finishing with zeroed task data.

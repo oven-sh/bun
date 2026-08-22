@@ -361,6 +361,52 @@ pub trait RepositoryExt: Sized {
     ) -> Result<ExtractData, Error>;
 }
 
+/// `install.allowedHosts` check for a git remote. `url` is what would be handed
+/// to `git clone`: an `https://` / `ssh://` / `git://` URL, or an scp-like
+/// `[user@]host:path`. Returns the offending host when it is not allowed;
+/// local paths (no host) are always allowed. The clone task evaluates this per
+/// transport (the https and ssh forms of one specifier differ in port) before
+/// spawning `git`.
+pub(crate) fn git_host_refused<'a>(
+    options: &crate::package_manager::Options::Options,
+    url: &'a [u8],
+) -> Option<&'a [u8]> {
+    // No allow-list configured: nothing is refused.
+    options.allowed_hosts?;
+    if strings::contains(url, b"://") {
+        if strings::has_prefix_comptime(url, b"file://") {
+            return None;
+        }
+        // `is_host_allowed` ignores any `git@` userinfo; report `host[:port]`
+        // without it too.
+        if options.is_host_allowed(url) {
+            return None;
+        }
+        let rest = &url[strings::index_of(url, b"://").unwrap_or(0) + b"://".len()..];
+        let authority = &rest[..strings::index_of_any(rest, b"/?#").unwrap_or(rest.len())];
+        return Some(match strings::last_index_of_char(authority, b'@') {
+            Some(at) => &authority[at + 1..],
+            None => authority,
+        });
+    }
+    if Dependency::is_scp_like_path(url) {
+        // `[user@]host:path` — rebuild as a URL so the same matcher applies.
+        let colon = strings::index_of_char(url, b':')? as usize;
+        let authority = &url[..colon];
+        let host = match strings::last_index_of_char(authority, b'@') {
+            Some(at) => &authority[at + 1..],
+            None => authority,
+        };
+        let mut as_url = Vec::with_capacity(b"ssh://".len() + host.len() + 1);
+        as_url.extend_from_slice(b"ssh://");
+        as_url.extend_from_slice(host);
+        as_url.push(b'/');
+        return (!options.is_host_allowed(&as_url)).then_some(host);
+    }
+    // A filesystem path.
+    None
+}
+
 /// A module-level free fn because trait methods cannot be private; called only
 /// from this file's `download`/`find_commit`/`checkout`.
 fn exec(env: &bun_dotenv::Map, argv: &[&[u8]]) -> Result<Vec<u8>, Error> {

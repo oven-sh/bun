@@ -9,6 +9,7 @@
 #![allow(clippy::collapsible_if, clippy::needless_return)]
 
 use bun_collections::VecExt;
+use bun_core::strings;
 use core::sync::atomic::Ordering;
 
 use bun_alloc::Arena as Bump;
@@ -34,6 +35,44 @@ pub(crate) struct Bunfig;
 #[inline]
 fn estring_to_owned(s: &E::EString, bump: &Bump) -> Box<[u8]> {
     Box::<[u8]>::from(s.string(bump).expect("OOM"))
+}
+
+/// `install.allowedHosts` entries are bare `hostname` or `hostname:port`
+/// (`[::1]:4873` for IPv6), never URLs or paths.
+fn is_valid_allowed_host(host: &[u8]) -> bool {
+    if host.is_empty()
+        || strings::contains_char(host, b'/')
+        || strings::contains_char(host, b'@')
+        || strings::contains_char(host, b' ')
+    {
+        return false;
+    }
+    let (name, port) = split_host_port(host);
+    !name.is_empty() && port.is_none_or(|p| !p.is_empty() && p.iter().all(u8::is_ascii_digit))
+}
+
+/// Split `host[:port]`, keeping a bracketed IPv6 literal intact.
+pub fn split_host_port(host: &[u8]) -> (&[u8], Option<&[u8]>) {
+    if strings::starts_with_char(host, b'[') {
+        return match strings::index_of_char(host, b']') {
+            Some(end) => {
+                let end = end as usize + 1;
+                let rest = &host[end..];
+                if rest.is_empty() {
+                    (&host[..end], None)
+                } else if rest[0] == b':' {
+                    (&host[..end], Some(&rest[1..]))
+                } else {
+                    (b"", None)
+                }
+            }
+            None => (b"", None),
+        };
+    }
+    match strings::last_index_of_char(host, b':') {
+        Some(colon) => (&host[..colon], Some(&host[colon + 1..])),
+        None => (host, None),
+    }
 }
 
 /// Macro-remap parsing (the `PackageJSON.parseMacrosJSON` shape),
@@ -1565,6 +1604,71 @@ impl<'a> Parser<'a> {
 
         if let Some(v) = install_obj.get(b"offline").and_then(|e| e.as_bool()) {
             install.offline = Some(v);
+        }
+
+        if let Some(hosts) = install_obj.get(b"allowedHosts") {
+            match &hosts.data {
+                ExprData::EArray(arr) => {
+                    let raw = arr.items.slice();
+                    // Present-but-empty is meaningful: only the configured
+                    // registries' hosts are allowed.
+                    let mut list: Vec<Box<[u8]>> = Vec::with_capacity(raw.len());
+                    for item in raw {
+                        self.expect_string(item)?;
+                        let host = item.as_string(self.bump).expect("infallible: type checked");
+                        if !is_valid_allowed_host(host) {
+                            self.add_error(
+                                item.loc,
+                                b"Expected a hostname or \"hostname:port\" (not a URL) in allowedHosts",
+                            )?;
+                        }
+                        list.push(host.into());
+                    }
+                    install.allowed_hosts = Some(list);
+                }
+                _ => {
+                    self.add_error(hosts.loc, b"Expected an array of strings for allowedHosts")?;
+                }
+            }
+        }
+
+        if let Some(rewrites) = install_obj.get(b"rewrite") {
+            match &rewrites.data {
+                ExprData::EArray(arr) => {
+                    let raw = arr.items.slice();
+                    let mut list: Vec<(Box<[u8]>, Box<[u8]>)> = Vec::with_capacity(raw.len());
+                    for item in raw {
+                        self.expect(item, ExprTag::EObject)?;
+                        let (Some(from), Some(to)) = (item.get(b"from"), item.get(b"to")) else {
+                            self.add_error(
+                                item.loc,
+                                b"Expected { from = \"<url prefix>\", to = \"<url prefix>\" } for rewrite",
+                            )?;
+                            continue;
+                        };
+                        self.expect_string(&from)?;
+                        self.expect_string(&to)?;
+                        let from = from.as_string(self.bump).expect("infallible: type checked");
+                        let to = to.as_string(self.bump).expect("infallible: type checked");
+                        for url in [from, to] {
+                            if !(url.starts_with(b"https://") || url.starts_with(b"http://")) {
+                                self.add_error(
+                                    item.loc,
+                                    b"Expected rewrite prefixes to be http:// or https:// URLs",
+                                )?;
+                            }
+                        }
+                        list.push((from.into(), to.into()));
+                    }
+                    install.url_rewrites = Some(list);
+                }
+                _ => {
+                    self.add_error(
+                        rewrites.loc,
+                        b"Expected an array of { from, to } tables for rewrite",
+                    )?;
+                }
+            }
         }
 
         Ok(())

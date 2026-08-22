@@ -912,7 +912,18 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     let resolve_result = match resolve_result_ {
                         Ok(v) => v,
                         Err(err) => {
-                            if err == crate::Error::DistTagNotFound {
+                            if err == crate::Error::InvalidURL {
+                                // The package resolved but its tarball request
+                                // was refused (`NetworkTask::for_tarball` has
+                                // already logged the error: unsupported scheme,
+                                // or a host outside `install.allowedHosts`).
+                                // That error fails the install; don't turn it
+                                // into an "internal error" on top.
+                                if let Some(fail) = fail_fn {
+                                    fail(this, dependency, id, err);
+                                }
+                                return Ok(());
+                            } else if err == crate::Error::DistTagNotFound {
                                 if dependency.behavior.is_required() {
                                     if let Some(fail) = fail_fn {
                                         fail(this, dependency, id, err);
@@ -1306,14 +1317,27 @@ pub fn enqueue_dependency_with_main_and_success_fn(
 
                                 let scope = this.scope_for_package_name(&name_str);
                                 // SAFETY: network_task points to a valid initialized NetworkTask slot
-                                unsafe {
+                                let prepared = unsafe {
                                     (*network_task).for_manifest(
                                         &name_str,
                                         scope,
                                         loaded_manifest.as_ref(),
                                         dependency.behavior.is_optional(),
                                         needs_extended_manifest,
-                                    )?;
+                                    )
+                                };
+                                if let Err(err) = prepared {
+                                    // Nothing was scheduled on the slot; return it,
+                                    // and record the (already reported, deterministic)
+                                    // refusal on the reservation made above so later
+                                    // edges neither re-report it nor wait on a request
+                                    // that was never sent.
+                                    // SAFETY: `write_init` made every field
+                                    // drop-safe and `for_manifest` fails before
+                                    // initializing `unsafe_http_client`.
+                                    unsafe { this.preallocated_network_tasks.put(network_task) };
+                                    this.mark_network_task_failed(task_id);
+                                    return Err(err.into());
                                 }
                                 enqueue_network_task(this, network_task);
                             }
@@ -1549,8 +1573,13 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 None,
                 crate::network_task::Authorization::NoAuthorization,
             ) {
-                // --offline miss: already reported (if required) / skipped (if optional)
-                Err(crate::network_task::ForTarballError::Offline) => return Ok(()),
+                // --offline miss (reported if required / skipped if optional),
+                // or a URL refused by `for_tarball` (scheme /
+                // `install.allowedHosts`; always reported as an error)
+                Err(
+                    crate::network_task::ForTarballError::Offline
+                    | crate::network_task::ForTarballError::InvalidURL,
+                ) => return Ok(()),
                 other => other?,
             };
             if let Some(network_task) = generated {
@@ -1785,8 +1814,13 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                             None,
                             crate::network_task::Authorization::NoAuthorization,
                         ) {
-                            // --offline miss: already reported / skipped
-                            Err(crate::network_task::ForTarballError::Offline) => return Ok(()),
+                            // --offline miss (reported / skipped), or a URL
+                            // refused by `for_tarball` (scheme /
+                            // `install.allowedHosts`; already reported)
+                            Err(
+                                crate::network_task::ForTarballError::Offline
+                                | crate::network_task::ForTarballError::InvalidURL,
+                            ) => return Ok(()),
                             other => other?.map(std::ptr::from_mut::<NetworkTask>),
                         };
                     if let Some(network_task) = network_task {

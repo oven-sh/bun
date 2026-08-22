@@ -67,6 +67,10 @@ pub enum Error {
     UnsupportedRedirectProtocol,
     #[error("RedirectURLTooLong")]
     RedirectURLTooLong,
+    /// A caller-supplied [`RedirectPolicy`](crate::RedirectPolicy) refused the
+    /// redirect target (the package manager's `install.allowedHosts`).
+    #[error("RedirectHostNotAllowed")]
+    RedirectHostNotAllowed,
     #[error("RedirectURLInvalid")]
     RedirectURLInvalid,
     #[error("InvalidRedirectURL")]
@@ -293,6 +297,7 @@ impl Error {
             Self::RequestBodyNotReusable => "RequestBodyNotReusable",
             Self::UnsupportedRedirectProtocol => "UnsupportedRedirectProtocol",
             Self::RedirectURLTooLong => "RedirectURLTooLong",
+            Self::RedirectHostNotAllowed => "RedirectHostNotAllowed",
             Self::RedirectURLInvalid => "RedirectURLInvalid",
             Self::InvalidRedirectURL => "InvalidRedirectURL",
             Self::UnexpectedRedirect => "UnexpectedRedirect",

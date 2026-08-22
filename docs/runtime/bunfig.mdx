@@ -605,6 +605,43 @@ myorg = { username = "myusername", password = "$npm_password", url = "https://re
 myorg = { token = "$npm_token", url = "https://registry.myorg.com/" }
 ```
 
+Registry credentials (a token, or a username and password) are only sent with requests under that registry's URL — the same origin _and_ path. A token configured for `https://registry.example.com/npm/team-a/` accompanies requests to `https://registry.example.com/npm/team-a/...`, but not to `https://registry.example.com/npm/team-b/...` or to another host a package's tarball URL points at. See [Scopes and registries](/pm/scopes-registries#credential-scoping).
+
+### `install.allowedHosts`
+
+Restrict which hosts `bun install` may download from. When this key is present — even as an empty array — Bun refuses to fetch a package manifest, tarball, or git repository from any host that is not either the host of a configured registry ([`install.registry`](#install-registry) and [`install.scopes`](#install-scopes), which are always allowed) or listed here. Entries are hostnames (any port) or `hostname:port`; they are not URLs. Unset by default, which allows any host.
+
+This matters because a package's tarball location comes from registry metadata (or a lockfile) rather than from your configuration: without an allow-list, a manifest can point the download anywhere.
+
+```toml title="bunfig.toml" icon="settings"
+[install]
+registry = "https://registry.example.com/npm/"
+
+# only the registry above ...
+allowedHosts = []
+
+# ... or the registry plus a CDN it redirects tarballs to and a git host
+allowedHosts = ["cdn.example.com", "git.example.com:8443"]
+```
+
+The check applies to the URL Bun requests, after any [`install.rewrite`](#install-rewrite) rules, and again to every HTTP redirect before it is followed. A dependency on a refused host fails the install — an optional dependency included, so the allow-list never quietly changes what gets installed. Entries match by host and port, not by protocol. For git dependencies the https and ssh forms of a specifier are checked separately against their own ports, so `"git.example.com:22"` admits the ssh form (port 22) but not the https form (port 443), and `"git.example.com:443"` the reverse.
+
+### `install.rewrite`
+
+Rewrite the URLs `bun install` requests, without changing what is recorded in `bun.lock`. Each rule replaces a URL prefix; when several rules match, the longest `from` wins. Use this to send registry traffic through a mirror or proxy in one environment (CI, an office network) while keeping the lockfile portable.
+
+```toml title="bunfig.toml" icon="settings"
+[[install.rewrite]]
+from = "https://registry.npmjs.org/"
+to = "https://mirror.example.com/npm/"
+
+[[install.rewrite]]
+from = "https://registry.example.com/downloads/"
+to = "https://cache.internal.example.com/downloads/"
+```
+
+Rules apply to manifest and tarball requests. Registry credentials and [`install.allowedHosts`](#install-allowedhosts) are evaluated against the rewritten URL, so a rewritten request only carries a registry's token if it still points under that registry's URL.
+
 ### `install.ca` and `install.cafile`
 
 To configure a CA certificate, set `install.ca` to the certificate string or `install.cafile` to the path of a certificate file.

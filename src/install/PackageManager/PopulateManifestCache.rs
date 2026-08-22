@@ -82,13 +82,22 @@ fn start_manifest_task(
     let task = unsafe { &mut *net_ptr };
     // `scope` points into `manager.options` which is not mutated by
     // `for_manifest` (it only writes the pool slot and `manager.log`).
-    task.for_manifest(
+    if let Err(err) = task.for_manifest(
         pkg_name,
         scope.get(),
         None,
         !is_required,
         needs_extended_manifest,
-    )?;
+    ) {
+        // Nothing was scheduled on the slot; return it, and record the (already
+        // reported) refusal on the reservation made above so later callers do
+        // not wait on a request that was never sent.
+        // SAFETY: `write_init` made every field drop-safe and `for_manifest`
+        // fails before initializing `unsafe_http_client`.
+        unsafe { manager.preallocated_network_tasks.put(net_ptr) };
+        run_tasks::mark_network_task_failed(manager, task_id);
+        return Err(err.into());
+    }
 
     enqueue::enqueue_network_task(manager, net_ptr);
     Ok(())

@@ -359,7 +359,16 @@ linker = "hoisted"
 # minimum age config
 minimumReleaseAge = 259200 # seconds
 minimumReleaseAgeExcludes = ["@types/node", "typescript"]
+
+# unset by default: when set, only these hosts (plus configured registries)
+# may serve manifests, tarballs and git repositories
+# allowedHosts = ["cdn.example.com"]
+
+# no rules by default: fetch-time URL prefix rewrites (bun.lock is unchanged)
+# rewrite = [{ from = "https://registry.npmjs.org/", to = "https://mirror.example.com/npm/" }]
 ```
+
+Registry credentials are scoped to the registry URL's host _and path_; see [Scopes and registries](/pm/scopes-registries#credential-scoping).
 
 ### Configuring with environment variables
 

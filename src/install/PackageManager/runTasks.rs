@@ -26,7 +26,7 @@ use crate::dependency::Behavior;
 use crate::isolated_install::installer as store_installer;
 use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _};
 use crate::lifecycle_script_runner::InstallCtx;
-use crate::network_task::{Authorization, ForTarballError};
+use crate::network_task::{Authorization, ForTarballError, refused_by_policy};
 use crate::package_manifest_map::Value as ManifestEntry;
 use bun_core::fmt::PathSep;
 use bun_install::lockfile::Package;
@@ -479,16 +479,14 @@ fn run_tasks_erased(
                     }
                 }
 
-                // Handle retry-able errors.
-                if task.response.metadata.is_none()
+                // Handle retry-able errors. (A redirect refused by
+                // `install.allowedHosts` is policy, not transient: not retried.)
+                if (task.response.metadata.is_none() && !refused_by_policy(&task.response))
                     || task
                         .response
                         .metadata
                         .as_ref()
-                        .unwrap()
-                        .response
-                        .status_code
-                        > 499
+                        .is_some_and(|m| m.response.status_code > 499)
                 {
                     let err = task
                         .response
@@ -529,7 +527,12 @@ fn run_tasks_erased(
                         (cb.on_package_manifest_error)(extract_ctx, name, err, &task.url_buf);
                     } else {
                         let fmt_args = (err.name(), name);
-                        if manager.is_network_task_required(task.task_id) {
+                        // A redirect refused by `install.allowedHosts` is an
+                        // error even for an optional dependency (policy, not
+                        // availability).
+                        if manager.is_network_task_required(task.task_id)
+                            || refused_by_policy(&task.response)
+                        {
                             bun_ast::add_error_pretty!(
                                 manager.log_mut(),
                                 None,
@@ -558,6 +561,15 @@ fn run_tasks_erased(
                                     manager.options.do_.remove(Do::INSTALL_PACKAGES);
                                 }
                             }
+                        }
+                    }
+
+                    if refused_by_policy(&task.response) {
+                        // Terminal, like a refused tarball: later edges on this
+                        // package must neither re-request nor queue behind it.
+                        mark_network_task_failed(manager, task.task_id);
+                        if let Some(removed) = manager.task_queue.remove(&task.task_id) {
+                            drop(removed);
                         }
                     }
 
@@ -755,15 +767,14 @@ fn run_tasks_erased(
                     }
                 }
 
-                if task.response.metadata.is_none()
+                // (A redirect refused by `install.allowedHosts` is policy, not
+                // transient: not retried.)
+                if (task.response.metadata.is_none() && !refused_by_policy(&task.response))
                     || task
                         .response
                         .metadata
                         .as_ref()
-                        .unwrap()
-                        .response
-                        .status_code
-                        > 499
+                        .is_some_and(|m| m.response.status_code > 499)
                 {
                     let err = task
                         .response
@@ -849,7 +860,9 @@ fn run_tasks_erased(
                         continue;
                     }
 
-                    if is_required {
+                    // A redirect refused by `install.allowedHosts` is an error
+                    // even for an optional dependency (policy, not availability).
+                    if is_required || refused_by_policy(&task.response) {
                         bun_ast::add_error_pretty!(
                             manager.log_mut(),
                             None,
@@ -1998,7 +2011,24 @@ pub fn generate_network_task_for_tarball<'a>(
         .expect("unreachable"),
     };
 
-    network_task.for_tarball(extract_tarball, scope, authorization)?;
+    if let Err(err) = network_task.for_tarball(extract_tarball, scope, authorization) {
+        if matches!(err, ForTarballError::InvalidURL) {
+            // The URL was refused before any request was made and the error
+            // was logged; record it on the dedupe entry — as a non-retryable
+            // HTTP status would be — so a later enqueue for the same tarball
+            // (e.g. from the install phase) fails fast with `AlreadyFailed`
+            // instead of reporting again or waiting on a task that was never
+            // scheduled.
+            mark_network_task_failed(this, task_id);
+        }
+        // Hand the pool slot back: nothing was scheduled on it.
+        // SAFETY: `net_ptr` came from `get_network_task` above and `write_init`
+        // made every field drop-safe; `for_tarball` fails before it initializes
+        // `unsafe_http_client` (a `MaybeUninit`, no drop glue), so dropping the
+        // slot in place is sound and nothing else aliases it.
+        unsafe { this.preallocated_network_tasks.put(net_ptr) };
+        return Err(err);
+    }
 
     if extract_tarball::uses_streaming_extraction() {
         // Pre-create the extract Task and streaming state here on the

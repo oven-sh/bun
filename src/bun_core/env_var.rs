@@ -122,6 +122,11 @@ platform_specific_new!(pub LIBRARY_PATH: string, posix = "LIBRARY_PATH", windows
 // `process.on('exit')` checks (e.g. common.mustCall) see completed async work.
 // Opt-in for the vendored node:test suite and run() children.
 new!(pub BUN_TEST_DRAIN_EVENT_LOOP: boolean, "BUN_TEST_DRAIN_EVENT_LOOP", { default: false });
+// Set by the `bun test --parallel` coordinator in its workers' environment when
+// it was given `--reporter=junit`. The workers build the JUnit elements that the
+// coordinator merges; the flag itself is not forwarded because it requires
+// `--reporter-outfile`, which only the coordinator writes.
+new!(pub BUN_TEST_WORKER_JUNIT: boolean, "BUN_TEST_WORKER_JUNIT", { default: false });
 new!(pub BUN_TMPDIR: string, "BUN_TMPDIR", {});
 new!(pub BUN_WATCHER_TRACE: string, "BUN_WATCHER_TRACE", {});
 new!(pub CI: boolean, "CI", {});

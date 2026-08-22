@@ -2185,6 +2185,15 @@ impl TestCommand {
             .map(|b| unsafe { bun_ptr::detach_lifetime::<u8>(b) })
             .collect();
 
+        // A --parallel worker learns about --reporter=junit from the coordinator
+        // through the environment. It has to land in `test_options` before
+        // `TestRunner` takes its reference below: `capture_test_line_number`
+        // reads the flag from there to decide whether test()/describe() record
+        // the line= attribute.
+        if ctx.test_options.test_worker && env_var::BUN_TEST_WORKER_JUNIT.get().unwrap_or(false) {
+            ctx.test_options.reporters.junit = true;
+        }
+
         // Keep an owned `Box` local — `exec()` never returns before process
         // exit, so the heap allocation outlives all raw-pointer observers
         // (e.g. `Jest::RUNNER` below).

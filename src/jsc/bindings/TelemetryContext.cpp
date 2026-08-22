@@ -122,18 +122,15 @@ extern "C" void Bun__Telemetry__exit(Zig::GlobalObject* globalObject, JSC::Encod
     auto* data = globalObject->m_asyncContextData.get();
     JSValue prev = JSValue::decode(prevValue);
     JSValue cur = data->getInternalField(0);
-    // Fast path: no ALS store was touched inside the scope unless the slot is
-    // an array whose store pairs differ from prev's.
+    // Fast path (the common case): neither slot carries ALS stores.
     auto now = TelemetryContextSlot::read(cur);
-    if (now.array) {
-        auto before = TelemetryContextSlot::read(prev);
-        unsigned n = now.storeValueCount();
-        bool same = before.storeValueCount() == n;
-        for (unsigned i = 0; same && i < n; ++i)
-            same = now.array->tryGetIndexQuickly(now.storesStart + i) == before.array->tryGetIndexQuickly(before.storesStart + i);
-        if (!same) {
-            prev = TelemetryContextSlot::build(globalObject, before.header, before.extras, now);
-        }
+    auto before = TelemetryContextSlot::read(prev);
+    unsigned n = now.storeValueCount();
+    bool same = before.storeValueCount() == n;
+    for (unsigned i = 0; same && i < n; ++i)
+        same = now.array->tryGetIndexQuickly(now.storesStart + i) == before.array->tryGetIndexQuickly(before.storesStart + i);
+    if (!same) {
+        prev = TelemetryContextSlot::build(globalObject, before.header, before.extras, now);
     }
     data->putInternalField(globalObject->vm(), 0, prev);
 }

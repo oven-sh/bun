@@ -422,8 +422,18 @@ int us_socket_stalled_write_means_peer_gone(struct us_socket_t *s) {
 #endif
 }
 
+/* A connect() still in flight (POLL_TYPE_SEMI_SOCKET) has nothing to send
+ * to. Linux returns the pending connect error from send() and clears
+ * SO_ERROR, so the completion then reads 0 and a refused connect surfaces as
+ * ECONNRESET; macOS returns ENOTCONN, which the fatal classification in
+ * us_socket_write_check_error treats as the peer being gone. Report 0 so the
+ * caller buffers until on_open, the same guard us_internal_ssl_write has. */
+static int us_internal_socket_is_connecting(struct us_socket_t *s) {
+    return !us_socket_is_established(s);
+}
+
 int us_socket_write2(struct us_socket_t *s, const char *header, int header_length, const char *payload, int payload_length) {
-    if (us_socket_is_closed(s) || us_socket_is_shut_down(s)) {
+    if (us_socket_is_closed(s) || us_socket_is_shut_down(s) || us_internal_socket_is_connecting(s)) {
         return 0;
     }
 
@@ -487,16 +497,6 @@ void *us_socket_get_native_handle(struct us_socket_t *s) {
 
 void *us_connecting_socket_get_native_handle(struct us_connecting_socket_t *c) {
     return (void *) (uintptr_t) -1;
-}
-
-/* A connect() still in flight (POLL_TYPE_SEMI_SOCKET) has nothing to send
- * to. Linux returns the pending connect error from send() and clears
- * SO_ERROR, so the completion then reads 0 and a refused connect surfaces as
- * ECONNRESET; macOS returns ENOTCONN, which the fatal classification below
- * treats as the peer being gone. Report 0 so the caller buffers until
- * on_open, the same guard us_internal_ssl_write has. */
-static int us_internal_socket_is_connecting(struct us_socket_t *s) {
-    return !us_socket_is_established(s);
 }
 
 int us_socket_write(struct us_socket_t *s, const char *data, int length) {
@@ -662,7 +662,7 @@ int us_socket_raw_write(struct us_socket_t *s, const char *data, int length) {
 /* Send a message with data and an attached file descriptor, for use in IPC. Returns the number of bytes written. If that
     number is less than the length, the file descriptor was not sent. */
 int us_socket_ipc_write_fd(struct us_socket_t *s, const char *data, int length, int fd) {
-    if (us_socket_is_closed(s) || us_socket_is_shut_down(s)) {
+    if (us_socket_is_closed(s) || us_socket_is_shut_down(s) || us_internal_socket_is_connecting(s)) {
         return 0;
     }
 

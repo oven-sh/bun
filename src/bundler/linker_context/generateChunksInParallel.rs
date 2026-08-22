@@ -61,11 +61,12 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         // TODO: instead of running a renamer per chunk, run it per file
         debug!(" START {} renamers", chunks.len());
         let ctx = GenerateChunkCtx {
-            chunk: bun_ptr::BackRef::new_mut(&mut chunks[0]),
             // SAFETY: `c` is the live `&mut LinkerContext` for the link step;
             // write provenance preserved.
             c: unsafe { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(c)) },
             chunks: bun_ptr::BackRef::new(&*chunks),
+            // Unused by the renamer tasks, which get their chunk from `each_ptr`.
+            chunk: bun_ptr::BackRef::new(&chunks[0]),
         };
         // SAFETY: `parse_graph` is the `BundleV2.graph` backref (valid for the
         // link step); `pool` is the arena-allocated bundler ThreadPool.
@@ -133,20 +134,8 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
         {
             let mut total_count: usize = 0;
-            // `GenerateChunkCtx` fields are raw pointers; capture them
-            // before the `iter_mut()` borrow so the same slice backref can be
-            // stored in every ctx.
-            // SAFETY: `c` is the live `&mut LinkerContext` for the link step.
-            let c_ref =
-                unsafe { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(c)) };
-            let chunks_ref: bun_ptr::BackRef<[Chunk]> = bun_ptr::BackRef::new(&*chunks);
             for chunk in chunks.iter_mut() {
-                chunk_contexts.push(GenerateChunkCtx {
-                    c: c_ref,
-                    chunks: chunks_ref,
-                    chunk: bun_ptr::BackRef::new_mut(chunk),
-                });
-                match &mut chunk.content {
+                match &chunk.content {
                     crate::chunk::Content::Javascript(js) => {
                         total_count += js.parts_in_chunk_in_order.len();
                         chunk.compile_results_for_chunk =
@@ -169,6 +158,20 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 }
             }
 
+            // Take the tasks' views only after the writes above, and until
+            // `group.wait()` only read `chunks` (no `iter_mut()`): writing
+            // through, or `&mut`-reborrowing, the owner invalidates every view
+            // previously taken from it.
+            // SAFETY: `c` is the live `&mut LinkerContext` for the link step;
+            // the fan-out only reads through this view.
+            let c_ref =
+                unsafe { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(c)) };
+            let chunks_ref: bun_ptr::BackRef<[Chunk]> = bun_ptr::BackRef::new(&*chunks);
+            chunk_contexts.extend(chunks.iter().map(|chunk| GenerateChunkCtx {
+                c: c_ref,
+                chunks: chunks_ref,
+                chunk: bun_ptr::BackRef::new(chunk),
+            }));
             debug_assert_eq!(chunks.len(), chunk_contexts.len());
 
             debug!(" START {} compiling part ranges", total_count);
@@ -177,7 +180,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             let group = bun_threading::WaitGroup::init_with_count(total_count);
             let mut combined_part_ranges: Vec<PendingPartRange> = Vec::with_capacity(total_count);
             let mut batch = ThreadPoolLib::Batch::default();
-            for (chunk, chunk_ctx) in chunks.iter_mut().zip(chunk_contexts.iter_mut()) {
+            for (chunk, chunk_ctx) in chunks.iter().zip(chunk_contexts.iter()) {
                 match &chunk.content {
                     crate::chunk::Content::Javascript(js) => {
                         for (i, part_range) in js.parts_in_chunk_in_order.iter().enumerate() {

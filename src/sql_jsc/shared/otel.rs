@@ -108,8 +108,11 @@ impl QuerySpan {
             None,
             Some(error),
         );
-        if let Err(e) = details {
-            let _ = bun_jsc::task::report_error_or_terminate(global, e);
+        // Describing the error must not change what the application sees:
+        // a throwing getter on it is ignored (the rejection itself follows);
+        // a pending termination stays pending for the caller.
+        if details.is_err() {
+            global.clear_exception_except_termination();
         }
     }
 }

@@ -638,6 +638,19 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         }
     }
 
+    // `Bun.otel.start()` with no exporter anywhere (options, env, bunfig, an
+    // earlier start) behaves like BUN_OTEL=1: the local collector default.
+    if !replaces_exporters
+        && !configured()
+        && cfg.otlp_exporters.is_empty()
+        && !cfg.console_exporter
+        && js_exporters.is_empty()
+    {
+        cfg.otlp_exporters
+            .push(OtlpExporterConfig::new(config::traces_endpoint(
+                "http://localhost:4318",
+            )));
+    }
     // An explicit exporter list replaces whatever was configured before
     // (env or an earlier start()), so repeated start() calls don't fan out
     // to duplicate destinations.

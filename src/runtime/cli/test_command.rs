@@ -941,6 +941,11 @@ pub struct CommandLineReporter {
     /// is sent over the IPC pipe instead of to stderr; the coordinator owns
     /// the terminal.
     pub(crate) worker_ipc_file_idx: Option<u32>,
+    /// When running as the `--parallel` coordinator: a worker reported that it
+    /// could not write the snapshots of the files it ran (it printed the
+    /// error). Fails the run like `write_inline_snapshots()` returning false
+    /// does in a serial run.
+    pub(crate) worker_snapshot_write_failed: bool,
 
     pub(crate) failures_to_repeat_buf: Vec<u8>,
     pub(crate) skips_to_repeat_buf: Vec<u8>,
@@ -2230,6 +2235,7 @@ impl TestCommand {
             repeat_count: 1,
             last_printed_dot: core::cell::Cell::new(false),
             worker_ipc_file_idx: None,
+            worker_snapshot_write_failed: false,
             failures_to_repeat_buf: Vec::new(),
             skips_to_repeat_buf: Vec::new(),
             todos_to_repeat_buf: Vec::new(),
@@ -3018,6 +3024,7 @@ impl TestCommand {
                 && coverage_options.fractions.failing
                 && coverage_options.fail_on_low_coverage)
             || !write_snapshots_success
+            || reporter.worker_snapshot_write_failed
             || reporter.jest.unhandled_errors_between_tests > 0
         {
             vm.exit_handler.exit_code = 1;

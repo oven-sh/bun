@@ -705,14 +705,30 @@ fn worker_flush_aggregates(
     cmds: &mut WorkerCommands,
 ) {
     // Snapshots flush lazily when the next file opens its snapshot file; the
-    // last file each worker ran has no successor to trigger that.
-    if let Some(runner) = crate::test_runner::jest::Jest::runner() {
-        let _ = runner.snapshots.write_inline_snapshots().unwrap_or(false);
-        let _ = runner.snapshots.write_snapshot_file();
+    // last file each worker ran has no successor to trigger that. A failed
+    // write exits 1 in serial mode; the coordinator ignores the exit status of
+    // a worker whose files are all done, so here it has to go over IPC.
+    let snapshots = &mut reporter.jest.snapshots;
+    let mut snapshots_written = match snapshots.write_inline_snapshots() {
+        // `false` has already printed a diagnostic per snapshot it could not write.
+        Ok(written) => written,
+        Err(err) => {
+            Output::err(err, "Failed to write inline snapshots", ());
+            false
+        }
+    };
+    if let Err(err) = snapshots.write_snapshot_file() {
+        Output::err(err, "Failed to write snapshot file", ());
+        snapshots_written = false;
     }
 
     // SAFETY: single-threaded worker; WORKER_FRAME is a process-global scratch buffer
     let wf = unsafe { &mut *WORKER_FRAME.get() };
+
+    if !snapshots_written {
+        wf.begin(frame::Kind::SnapshotWriteFailed);
+        cmds.send(wf.finish());
+    }
 
     wf.begin(frame::Kind::RepeatBufs);
     wf.str(reporter.failures_to_repeat_buf.as_slice());

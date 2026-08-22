@@ -632,7 +632,14 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
       return { stdout, stderr, exitCode };
     }
 
-    const app = (type: string, spec: string) => ({ name: "app", version: null, type, optional: false, spec, dependents: [] });
+    const app = (type: string, spec: string) => ({
+      name: "app",
+      version: null,
+      type,
+      optional: false,
+      spec,
+      dependents: [],
+    });
 
     it("prints the dependents tree, with the cycle and the root marked", async () => {
       using dir = tempDir(`why-json-${i++}`, files);

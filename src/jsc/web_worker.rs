@@ -1186,8 +1186,7 @@ fn on_unhandled_rejection(
         return;
     }
 
-    // The error is reported with the realm it was raised in, which may be a
-    // node:vm context; `WebWorker__dispatchError` needs the worker's own global.
+    // Not the realm the error was raised in: that may be a node:vm context.
     let global_object = vm.global();
 
     let mut error_instance = error_instance_or_exception

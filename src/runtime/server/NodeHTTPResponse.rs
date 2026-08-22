@@ -1752,10 +1752,19 @@ impl NodeHTTPResponse {
         if !p.is_some() {
             return;
         }
-        if let Some(raw) = self.raw_response.get() {
-            raw.spill_body(p.remaining());
+        // `raw_response` is cleared later than the close that destructs its buffer.
+        if !self.flags.get().contains(Flags::SOCKET_CLOSED) {
+            if let Some(raw) = self.raw_response.get() {
+                raw.spill_body(p.remaining());
+            }
         }
         self.clear_pending_pinned_write(global_object, JSValue::ZERO);
+    }
+
+    /// The same, for a raw `req.socket.write()`/`end()` on this connection.
+    #[uws::uws_callback(export = "Bun__NodeHTTPResponse_spillPendingPinnedWrite", no_catch)]
+    pub(crate) fn spill_pending_pinned_write_from_socket(&self) {
+        self.spill_pending_pinned_write(self.server.global_this());
     }
 
     /// Continue a zero-copy write from the stored offset. Returns `true` if

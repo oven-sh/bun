@@ -776,9 +776,6 @@ private:
         auto *httpContextData = getSocketContextDataS(s);
 
 
-        if (httpResponseData->isConnectRequest && httpResponseData->socketData && httpContextData->onSocketDrain) {
-            httpContextData->onSocketDrain(httpResponseData->socketData, SSL, (struct us_socket_t *) s);
-        }
         /* Ask the developer to write data and return success (true) or failure (false), OR skip sending anything and return success (true). */
         if (httpResponseData->onWritable) {
             /* We are now writable, so hang timeout again, the user does not have to do anything so we should hang until end or tryEnd rearms timeout */
@@ -816,6 +813,17 @@ private:
 
         /* Drain any socket buffer, this might empty our backpressure and thus finish the request */
         asyncSocket->flush();
+
+        /* Was the socket closed by the onWritable handler? Its ext block is gone then. */
+        if (us_socket_is_closed((us_socket_t *) s)) {
+            return s;
+        }
+
+        /* After callOnWritable: a deferred socket.end() FIN issued from this
+         * hook must follow the response's own drain writes. */
+        if (httpResponseData->socketData && httpContextData->onSocketDrain) {
+            httpContextData->onSocketDrain(httpResponseData->socketData, SSL, (struct us_socket_t *) s);
+        }
 
         /* node:http compat: reads were paused while pipelined responses were
          * queued and stayed paused because the socket still had outgoing

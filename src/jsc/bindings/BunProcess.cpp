@@ -3673,9 +3673,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyExit, (JSGlobalObject * globalObj
     // while native shutdown (profiles, cleanup hooks, SQLite close) still runs.
     zigGlobal->processObject()->m_isExiting = true;
     Bun__Process__exit(zigGlobal, exitCode);
-    // Main-thread Bun__Process__exit is noreturn. In a worker it returns; the
-    // WebWorker exit path it called requests JSC termination (guarded so it's a
-    // no-op when re-entered from a process.on('exit') handler).
+    // Main-thread Bun__Process__exit is noreturn. In a worker it returns with the
+    // thread's termination requested, also when re-entered from a process.on('exit')
+    // handler: the caller's next exception check (process.exit()'s, after this call)
+    // throws the TerminationException and the script unwinds there, as Node's
+    // reallyExit + stack guard check does.
     throwScope.release();
     return JSC::JSValue::encode(jsUndefined());
 }

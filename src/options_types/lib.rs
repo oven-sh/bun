@@ -22,8 +22,8 @@ pub use jsx as JSX;
 // Only the `schema::api`-coupled extension traits and option-only types
 // (`Format`, `ModuleType`, …) are surfaced from this crate.
 pub use bundle_enums::{
-    BuiltInModule, BundlePackage, ForceNodeEnv, Format, LOADER_API_NAMES, LoaderExt, ModuleType,
-    TargetExt, WindowsOptions,
+    BuiltInModule, BundlePackage, ForceNodeEnv, Format, LoaderExt, ModuleType, TargetExt,
+    WindowsOptions,
 };
 
 /// Compiled-standalone-binary virtual filesystem path prefix + predicate.

@@ -38,8 +38,7 @@ pub(crate) struct NodeModulesFolder {
     dependencies: Box<[DependencyID]>,
 }
 
-/// One line of `bun pm ls`: a dependency and the node_modules folder it is
-/// installed in (`node_modules`, `node_modules/a/node_modules`, ...).
+/// One line of `bun pm ls`: a dependency and the node_modules folder it is installed in.
 struct ListedDependency<'a> {
     dep_id: DependencyID,
     folder: &'a [u8],
@@ -897,8 +896,6 @@ fn print_node_modules_folder_structure(
             continue;
         }
 
-        // Recursively print node_modules. node_modules is removed from
-        // the directories list before traversal.
         if let Some(next) = take_nested_node_modules(directory, package_name, directories) {
             let mut new_depth: usize = 0;
             let mut temp_path: &[u8] = next.relative_path.as_bytes();

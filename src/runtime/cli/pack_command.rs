@@ -3958,10 +3958,6 @@ fn print_archived_files_and_packages(ctx: &Context<'_>, pack_list: &PackList) {
     Output::flush();
 }
 
-// ───────────────────────────────────────────────────────────────────────────
-// --json
-// ───────────────────────────────────────────────────────────────────────────
-
 pub(crate) fn json_str(s: &[u8]) -> bun_fmt::JSONFormatterUTF8<'_> {
     bun_fmt::format_json_string_utf8(s, Default::default())
 }

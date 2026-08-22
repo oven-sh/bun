@@ -130,6 +130,54 @@ var ResponsePrototype = Response.prototype;
 
 const kUrl = Symbol("kUrl");
 
+const kAgentTlsKeys = [
+  "ca",
+  "cert",
+  "key",
+  "passphrase",
+  "ciphers",
+  "secureOptions",
+  "minVersion",
+  "maxVersion",
+  "servername",
+  "rejectUnauthorized",
+  "checkServerIdentity",
+];
+
+function tlsFromAgent(agent, url) {
+  if ($isCallable(agent)) {
+    let parsedUrl;
+    if (url instanceof URL) parsedUrl = url;
+    else {
+      const href = typeof url === "string" ? url : $isObject(url) ? url.url : undefined;
+      if (typeof href !== "string" || !URL.canParse(href)) return undefined;
+      parsedUrl = new URL(href);
+    }
+    agent = agent.$call(undefined, parsedUrl);
+  }
+  if (!$isObject(agent)) return undefined;
+  // https.Agent keeps its options on `options`; the proxy-agent family uses `connectOpts`
+  let options = Object.hasOwn(agent, "options") ? agent.options : undefined;
+  if (!$isObject(options)) options = undefined;
+  let connectOpts = Object.hasOwn(agent, "connectOpts") ? agent.connectOpts : undefined;
+  if (!$isObject(connectOpts)) connectOpts = undefined;
+  if (options === undefined && connectOpts === undefined) return undefined;
+  const opts = { __proto__: null, ...connectOpts, ...options };
+  let tls;
+  for (const key of kAgentTlsKeys) {
+    let value = opts[key];
+    if (value === undefined) continue;
+    if (typeof value === "string" && (key === "minVersion" || key === "maxVersion")) {
+      value = require("internal/tls").tlsStringToProtocolVersion(value);
+      if (!value) continue;
+    } else if (key === "key") {
+      value = require("internal/tls").normalizePemKeyOption(value, opts.passphrase);
+    }
+    (tls ??= { __proto__: null })[key] = value;
+  }
+  return tls;
+}
+
 class Request extends WebRequest {
   [kUrl]?: string;
 
@@ -182,6 +230,11 @@ async function fetch(
       }
       init = { ...init, body: Readable.toWeb(readable) };
     }
+  }
+  const initAgent = init && Object.hasOwn(init, "agent") ? (init as any).agent : undefined;
+  if (initAgent && (init as any).tls === undefined) {
+    const tls = tlsFromAgent(initAgent, url);
+    if (tls !== undefined) init = { ...init, tls } as any;
   }
   const response = await nativeFetch.$call(undefined, url, init);
   Object.setPrototypeOf(response, ResponsePrototype);

@@ -256,6 +256,7 @@ export interface BundlerTestInput {
   legalComments?: "none" | "inline" | "eof" | "linked" | "external";
   loader?: Record<`.${string}`, Loader>;
   mangleProps?: RegExp;
+  reserveProps?: RegExp;
   mangleQuoted?: boolean;
   mainFields?: string[];
   metafile?: boolean | string;
@@ -515,6 +516,9 @@ function expectBundled(
     legalComments,
     loader,
     mainFields,
+    mangleProps,
+    mangleQuoted,
+    reserveProps,
     matchesReference,
     metafile,
     minifyIdentifiers,
@@ -835,6 +839,9 @@ function expectBundled(
               // legalComments && `--legal-comments=${legalComments}`,
               // treeShaking === false && `--no-tree-shaking`, // ??
               keepNames && `--keep-names`,
+              mangleProps && `--mangle-props=${mangleProps.source}`,
+              reserveProps && `--reserve-props=${reserveProps.source}`,
+              mangleQuoted && `--mangle-quoted`,
               // mainFields && `--main-fields=${mainFields}`,
               loader && Object.entries(loader).map(([k, v]) => ["--loader", `${k}:${v}`]),
               publicPath && `--public-path=${publicPath}`,
@@ -881,6 +888,9 @@ function expectBundled(
               treeShaking && `--tree-shaking`,
               outbase && `--outbase=${outbase}`,
               keepNames && `--keep-names`,
+              mangleProps && `--mangle-props=${mangleProps.source}`,
+              reserveProps && `--reserve-props=${reserveProps.source}`,
+              mangleQuoted && `--mangle-quoted`,
               mainFields && `--main-fields=${mainFields.join(",")}`,
               loader && Object.entries(loader).map(([k, v]) => `--loader:${k}=${v}`),
               publicPath && `--public-path=${publicPath}`,
@@ -1181,6 +1191,9 @@ function expectBundled(
             syntax: minifySyntax,
             keepNames: keepNames,
           },
+          mangleProps,
+          reserveProps,
+          mangleQuoted,
           naming: {
             entry: useOutFile ? path.basename(outfile!) : entryNaming,
             chunk: chunkNaming,

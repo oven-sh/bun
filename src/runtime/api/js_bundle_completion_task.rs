@@ -1022,6 +1022,11 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.minify_whitespace = config.minify.whitespace;
         transpiler.options.minify_identifiers = config.minify.identifiers;
         transpiler.options.keep_names = config.minify.keep_names;
+        // Cloning compiles the patterns again for this thread; see `PropertyMangler`.
+        transpiler
+            .options
+            .mangle_props
+            .clone_from(&config.mangle_props);
         transpiler.options.inlining = config.minify.syntax;
         transpiler.options.source_map = config.source_map;
         transpiler.options.packages = config.packages;

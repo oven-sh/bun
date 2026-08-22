@@ -51,6 +51,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     let _trace = bun_core::perf::trace("Bundler.generateChunksInParallel");
 
     c.mangle_local_css();
+    c.mangle_props()?;
 
     let mut has_js_chunk = false;
     let mut has_css_chunk = false;

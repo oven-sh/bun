@@ -43,7 +43,7 @@ pub type TopLevelSymbolToParts = bun_ast::ast_result::TopLevelSymbolToParts;
 // `BundledAstColumns` (`items_named_imports()`,
 // `items_named_exports()`, …) at `crate::bundled_ast::*`.
 //
-// 26 fields ≤ `multi_array_list::MAX_FIELDS` (32).
+// 27 fields ≤ `multi_array_list::MAX_FIELDS` (32).
 
 pub struct BundledAst<'arena> {
     pub(crate) approximate_newline_count: u32,
@@ -95,6 +95,8 @@ pub struct BundledAst<'arena> {
     // const_values: ConstValuesMap,
     pub(crate) ts_enums: bun_ast::ast_result::TsEnumsMap,
 
+    pub(crate) property_mangling: Option<bun_alloc::AstBox<bun_ast::PropertyMangling>>,
+
     pub(crate) flags: Flags,
 }
 
@@ -125,6 +127,7 @@ bun_collections::multi_array_columns! {
         redirect_import_record_index: u32,
         target: bun_ast::Target,
         ts_enums: bun_ast::ast_result::TsEnumsMap,
+        property_mangling: Option<bun_alloc::AstBox<bun_ast::PropertyMangling>>,
         flags: Flags,
     }
 }
@@ -180,6 +183,7 @@ impl<'arena> BundledAst<'arena> {
             redirect_import_record_index: u32::MAX,
             target: bun_ast::Target::Browser,
             ts_enums: bun_ast::ast_result::TsEnumsMap::default(),
+            property_mangling: None,
             flags: Flags::empty(),
         }
     }
@@ -233,6 +237,8 @@ impl<'arena> BundledAst<'arena> {
 
             // const_values: self.const_values,
             ts_enums: self.ts_enums,
+
+            property_mangling: self.property_mangling,
 
             uses_exports_ref: self.flags.contains(Flags::USES_EXPORTS_REF),
             uses_module_ref: self.flags.contains(Flags::USES_MODULE_REF),
@@ -323,6 +329,8 @@ impl<'arena> BundledAst<'arena> {
 
             // const_values: ast.const_values,
             ts_enums: ast.ts_enums,
+
+            property_mangling: ast.property_mangling,
 
             flags,
         }

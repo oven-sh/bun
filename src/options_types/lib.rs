@@ -9,10 +9,12 @@ pub mod context;
 pub mod error;
 pub mod global_cache;
 pub mod jsx;
+pub mod mangle_props;
 pub mod offline_mode;
 pub mod schema;
 
 pub use error::{Error, Result};
+pub use mangle_props::PropertyMangler;
 
 pub use jsx as JSX;
 

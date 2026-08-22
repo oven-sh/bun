@@ -1189,6 +1189,91 @@ await Bun.build({
 
 `--keep-names` preserves the `.name` property on functions and classes while still minifying the identifiers themselves.
 
+## Property mangling
+
+Identifier minification never renames properties, because a property name may be used by code outside of the bundle. `--mangle-props` opts specific properties in: every property whose name matches the given regular expression is renamed to a short name, consistently across the whole build (including across chunks when code splitting). It is independent of `--minify` and works with or without it.
+
+The usual approach is to pick a naming convention for internal properties, such as a trailing underscore, and mangle exactly those:
+
+```bash
+bun build ./index.ts --mangle-props='_$' --outfile=out.js
+```
+
+```ts
+await Bun.build({
+  entrypoints: ["./index.ts"],
+  outdir: "./out",
+  mangleProps: /_$/,
+});
+```
+
+```ts input.ts
+class Cache {
+  entries_ = new Map();
+  hits_ = 0;
+  get(key) {
+    this.hits_++;
+    return this.entries_.get(key);
+  }
+}
+```
+
+```js output.js
+class Cache {
+  a = new Map;
+  b = 0;
+  get(key) {
+    this.b++;
+    return this.a.get(key);
+  }
+}
+```
+
+The most frequently used properties get the shortest names. A generated name never collides with a property the build still uses under its real name, and `__proto__`, `constructor` and `prototype` are never renamed.
+
+Property names are renamed wherever they appear as syntax: member accesses (`obj.foo_`, `obj?.foo_`), object literal keys including shorthand, methods and accessors, class fields and methods, destructuring patterns (`const { foo_ } = obj` becomes `const { a: foo_ } = obj`), JSX attributes, TypeScript parameter properties, namespace exports and enum members. Private names (`#foo_`) are variables, not properties, and are handled by `--minify-identifiers` instead.
+
+### Quoted properties
+
+Properties written as string literals are left alone by default:
+
+```ts
+obj.foo_; // renamed
+obj["foo_"]; // not renamed
+"foo_" in obj; // not renamed
+const o = { "foo_": 1 }; // not renamed
+```
+
+This makes quoting the way to refer to a property by its real name, for example when the object is shared with code outside of the bundle. The names of quoted properties are also reserved, so a renamed property can never end up with the same name as a quoted one. If you would rather rename quoted properties too, pass `--mangle-quoted` (`mangleQuoted: true`). It also applies to computed keys such as `{ ["foo_"]: 1 }`, and to a string literal used as the value of a conditional or comma expression in one of those positions.
+
+A string literal can be marked as a property name individually with a `@__KEY__` comment, whether or not `--mangle-quoted` is used. This keeps dynamic lookups in sync with the renamed property:
+
+```ts
+const key = /* @__KEY__ */ "foo_";
+obj[key]; // works: "foo_" is renamed together with the property
+```
+
+The comment is preserved in the output, so the output can safely be bundled again.
+
+### Reserving properties
+
+`--reserve-props` (`reserveProps`) takes a second regular expression; properties matching it are never renamed, even if they also match `--mangle-props`:
+
+```bash
+bun build ./index.ts --mangle-props='_$' --reserve-props='^__' --outfile=out.js
+```
+
+### What not to mangle
+
+Mangling is only safe for properties that are defined and used entirely within the code being built. Bun cannot tell which names are also used somewhere else, so the pattern must not match:
+
+- Properties of host and platform objects (`document.body`, `process.env.FOO`, `response.headers`), or of packages marked as external.
+- Keys of data that enters or leaves the program: JSON files and `JSON.parse` results, objects sent over the network, `Object.keys()` output that is displayed or stored.
+- Names that cross a module boundary in CommonJS form: `exports.foo_` is an export, not a property, and is not renamed, but destructuring or reading the result of `require()` is property syntax and is. ES module imports and exports are not affected, since they resolve to bindings.
+- Properties built at runtime from strings (`obj["foo" + "_"]`, `Reflect.get`, `eval`), unless each such string is annotated with `@__KEY__`.
+
+A naming convention that is only used for internal properties, such as `/_$/` or `/^_/`, keeps all of these out of the pattern.
+
 ## Combined Example
 
 Using all three minification modes together:

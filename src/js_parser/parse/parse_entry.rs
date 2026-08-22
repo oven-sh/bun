@@ -85,6 +85,9 @@ pub struct Options<'a> {
 
     pub allow_unresolved: &'a options::AllowUnresolved,
 
+    /// `--mangle-props`. Borrowed from the (per-thread) `BundleOptions`.
+    pub mangle_props: Option<&'a options::PropertyMangler>,
+
     pub module_type: options::ModuleType,
     pub output_format: options::Format,
 
@@ -131,6 +134,7 @@ impl<'a> Default for Options<'a> {
             macro_context: None,
             warn_about_unbundled_modules: true,
             allow_unresolved: &options::AllowUnresolved::DEFAULT,
+            mangle_props: None,
             module_type: options::ModuleType::Unknown,
             output_format: options::Format::Esm,
             transform_only: false,
@@ -162,6 +166,7 @@ impl<'a> Options<'a> {
     /// - `features.bundler_feature_flags` — `import { feature } from
     ///   "bun:bundle"` cannot appear in a synthetic single-expr AST.
     /// - `features.runtime_transpiler_cache` — full-parse cache hook only.
+    /// - `mangle_props` — JSON/TOML keys are data, not property names.
     pub fn clone_for_lazy_export(&self) -> Options<'a> {
         let f = &self.features;
         Options {
@@ -215,6 +220,7 @@ impl<'a> Options<'a> {
             macro_context: None,
             warn_about_unbundled_modules: self.warn_about_unbundled_modules,
             allow_unresolved: self.allow_unresolved,
+            mangle_props: None,
             module_type: self.module_type,
             output_format: self.output_format,
             transform_only: self.transform_only,
@@ -287,6 +293,7 @@ impl<'a> Options<'a> {
             macro_context: None,
             warn_about_unbundled_modules: true,
             allow_unresolved: &options::AllowUnresolved::DEFAULT,
+            mangle_props: None,
             module_type: options::ModuleType::Unknown,
             output_format: options::Format::Esm,
             transform_only: false,

@@ -14,7 +14,9 @@ use bun_core::Output;
 use bun_core::{String as BunString, ZigString};
 use bun_jsc::ConcurrentTask::ConcurrentTask;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
+use bun_options_types::PropertyMangler;
 use bun_options_types::compile_target::CompileTarget;
+use bun_options_types::mangle_props::{InvalidPattern as InvalidManglePattern, RegExpSource};
 use bun_options_types::schema::api; // bun.schema.api
 use bun_standalone_graph::StandaloneModuleGraph;
 
@@ -112,6 +114,47 @@ pub mod js_bundler {
         Ok(this)
     }
 
+    /// `source` and `flags` of a `RegExp` option, copied out of the JS heap.
+    struct RegExpSourceStrings {
+        source: ZigStringSlice,
+        flags: ZigStringSlice,
+    }
+
+    impl RegExpSourceStrings {
+        fn as_source(&self) -> RegExpSource<'_> {
+            RegExpSource {
+                source: self.source.slice(),
+                flags: self.flags.slice(),
+            }
+        }
+    }
+
+    /// Reads `property` (`mangleProps` / `reserveProps`), which must be a `RegExp`
+    /// when present.
+    fn get_reg_exp_source(
+        config: JSValue,
+        global_this: &JSGlobalObject,
+        property: &'static str,
+    ) -> JsResult<Option<RegExpSourceStrings>> {
+        let Some(value) = config.get(global_this, property)? else {
+            return Ok(None);
+        };
+        if value.is_null() {
+            return Ok(None);
+        }
+        if !value.is_cell() || value.js_type() != jsc::JSType::RegExpObject {
+            return Err(global_this
+                .throw_invalid_arguments(format_args!("Expected {property} to be a RegExp")));
+        }
+        let source = value
+            .get_optional_slice(global_this, "source")?
+            .unwrap_or_default();
+        let flags = value
+            .get_optional_slice(global_this, "flags")?
+            .unwrap_or_default();
+        Ok(Some(RegExpSourceStrings { source, flags }))
+    }
+
     pub struct Config {
         pub(crate) target: Target,
         pub(crate) entry_points: StringSet,
@@ -128,6 +171,8 @@ pub mod js_bundler {
         pub(crate) force_node_env: options::ForceNodeEnv,
         pub(crate) code_splitting: bool,
         pub(crate) minify: Minify,
+        /// `mangleProps` / `reserveProps` / `mangleQuoted`.
+        pub(crate) mangle_props: Option<PropertyMangler>,
         pub(crate) no_macros: bool,
         pub(crate) ignore_dce_annotations: bool,
         pub(crate) emit_dce_annotations: Option<bool>,
@@ -190,6 +235,7 @@ pub mod js_bundler {
                 force_node_env: options::ForceNodeEnv::Unspecified,
                 code_splitting: false,
                 minify: Minify::default(),
+                mangle_props: None,
                 no_macros: false,
                 ignore_dce_annotations: false,
                 emit_dce_annotations: None,
@@ -805,6 +851,37 @@ pub mod js_bundler {
                     return Err(global_this.throw_invalid_arguments(format_args!(
                         "Expected minify to be a boolean or an object"
                     )));
+                }
+            }
+
+            if let Some(mangle_props) = get_reg_exp_source(config, global_this, "mangleProps")? {
+                let reserve_props = get_reg_exp_source(config, global_this, "reserveProps")?;
+                let mangle_quoted = config
+                    .get_boolean_loose(global_this, "mangleQuoted")?
+                    .unwrap_or(false);
+                match PropertyMangler::init(
+                    mangle_props.as_source(),
+                    reserve_props.as_ref().map(RegExpSourceStrings::as_source),
+                    mangle_quoted,
+                ) {
+                    Ok(mangler) => this.mangle_props = Some(mangler),
+                    Err(invalid) => {
+                        let (property, pattern) = match invalid {
+                            InvalidManglePattern::MangleProps => ("mangleProps", &mangle_props),
+                            InvalidManglePattern::ReserveProps => (
+                                "reserveProps",
+                                reserve_props
+                                    .as_ref()
+                                    .expect("reserveProps was the pattern that failed"),
+                            ),
+                        };
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "{} could not be compiled: /{}/{}",
+                            property,
+                            bstr::BStr::new(pattern.source.slice()),
+                            bstr::BStr::new(pattern.flags.slice()),
+                        )));
+                    }
                 }
             }
 

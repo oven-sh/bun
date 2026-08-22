@@ -1574,6 +1574,7 @@ impl<'a> Transpiler<'a> {
                     macro_context: None,
                     warn_about_unbundled_modules: !target.is_bun(),
                     allow_unresolved: &p_opts::AllowUnresolved::DEFAULT,
+                    mangle_props: None,
                     module_type: to_parser_module_type(this_parse.module_type),
                     output_format: p_opts::Format::Esm,
                     transform_only: self.options.transform_only,
@@ -1669,15 +1670,21 @@ impl<'a> Transpiler<'a> {
                 // `bun_js_parser::defines::Define`. Hand the parser the real
                 // table so user `--define` values apply at parse time.
                 let define: &'a js_ast::defines::Define;
-                // SAFETY: `self.options.define` / `self.macro_context` are
-                // owned by the long-lived `Transpiler`; the parser borrows
-                // them for `'a` (arena lifetime). Erase to `'a` so the
-                // returned `Ast<'a>` is not pinned to the `&mut self` borrow
-                // — neither field is dropped while a parse is in flight.
+                // SAFETY: `self.options.define` / `self.options.mangle_props` /
+                // `self.macro_context` are owned by the long-lived `Transpiler`;
+                // the parser borrows them for `'a` (arena lifetime). Erase to
+                // `'a` so the returned `Ast<'a>` is not pinned to the `&mut self`
+                // borrow — none of these fields is dropped while a parse is in
+                // flight.
                 unsafe {
                     let define_ptr: *const js_ast::defines::Define =
                         &raw const *self.options.define;
                     define = &*define_ptr;
+                    opts.mangle_props = self
+                        .options
+                        .mangle_props
+                        .as_ref()
+                        .map(|mangler| bun_ptr::detach_lifetime_ref(mangler));
                     opts.macro_context = self
                         .macro_context
                         .as_mut()
@@ -2348,6 +2355,11 @@ impl<'a> Transpiler<'a> {
 
         let exports_kind = ast.exports_kind;
 
+        // `--mangle-props` without bundling: each file is mangled on its own.
+        let mangled_props =
+            js_printer::mangle_props::mangled_props_for_single_file(&ast, &symbols)?;
+        let mangled_props = mangled_props.as_ref();
+
         // PERF: each `js_printer::print_*::<W, …>` call below stamps out a full
         // `__gated_printer::Printer<W,A,B,C,D>` instantiation tree (~35 kB of
         // .text per leaf method, 109 fns total). For `bun run` only the
@@ -2372,6 +2384,7 @@ impl<'a> Transpiler<'a> {
                 source,
                 source_map_context,
                 runtime_transpiler_cache,
+                mangled_props,
             ),
 
             js_printer::Format::EsmAscii => {
@@ -2389,6 +2402,7 @@ impl<'a> Transpiler<'a> {
                         exports_kind,
                         runtime_transpiler_cache,
                         module_info,
+                        mangled_props,
                     )
                 } else {
                     self.print_ast_esm_ascii_not_bun_cold::<ENABLE_SOURCE_MAP>(
@@ -2401,6 +2415,7 @@ impl<'a> Transpiler<'a> {
                         exports_kind,
                         runtime_transpiler_cache,
                         module_info,
+                        mangled_props,
                     )
                 }
             }
@@ -2422,6 +2437,7 @@ impl<'a> Transpiler<'a> {
         source: &bun_ast::Source,
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
         runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
+        mangled_props: Option<&js_printer::MangledProps>,
     ) -> crate::Result<usize> {
         let opts = js_printer::Options {
             bundling: false,
@@ -2434,7 +2450,7 @@ impl<'a> Transpiler<'a> {
             print_dce_annotations: self.options.emit_dce_annotations,
             runtime_transpiler_cache,
             hmr_ref: ast.wrapper_ref,
-            mangled_props: None,
+            mangled_props,
             ..Default::default()
         };
         js_printer::print_ast::<_, false, ENABLE_SOURCE_MAP>(
@@ -2466,6 +2482,7 @@ impl<'a> Transpiler<'a> {
         exports_kind: bun_ast::ExportsKind,
         runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
         module_info: Option<*mut analyze_transpiled_module::ModuleInfo>,
+        mangled_props: Option<&js_printer::MangledProps>,
     ) -> crate::Result<usize> {
         self.print_ast_esm_ascii::<ENABLE_SOURCE_MAP, false>(
             print_arena,
@@ -2477,6 +2494,7 @@ impl<'a> Transpiler<'a> {
             exports_kind,
             runtime_transpiler_cache,
             module_info,
+            mangled_props,
         )
     }
 
@@ -2494,6 +2512,7 @@ impl<'a> Transpiler<'a> {
         exports_kind: bun_ast::ExportsKind,
         runtime_transpiler_cache: Option<js_printer::RuntimeTranspilerCacheRef>,
         module_info: Option<*mut analyze_transpiled_module::ModuleInfo>,
+        mangled_props: Option<&js_printer::MangledProps>,
     ) -> crate::Result<usize> {
         // Both set on this (EsmAscii) arm only.
         // SAFETY: `module_info` is `ModuleInfo::create`'s `heap::alloc` (or
@@ -2522,7 +2541,7 @@ impl<'a> Transpiler<'a> {
             runtime_transpiler_cache,
             module_info,
             hmr_ref: ast.wrapper_ref,
-            mangled_props: None,
+            mangled_props,
             // The printer reads `opts.target` at
             // js_printer/lib.rs:6872 to gate the `var {require}=import.meta;`
             // hoist on `Target::Bun` — defaulting to `Browser` here regressed

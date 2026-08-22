@@ -165,12 +165,14 @@ impl Write for FileWriter {
     }
 }
 
-/// The cache folder name for every fetchable package in the lockfile, and whether
-/// the package is expected on this platform (os/cpu/libc) — used only to decide
-/// whether a missing folder deserves a warning.
+/// The cache folder name for every fetchable package in the lockfile — computed the way
+/// the installer looks packages up (`compute_cache_dir_and_subpath`, including the
+/// `_patch_hash=…` folder for patched dependencies) — and whether the package is expected
+/// on this platform (os/cpu), which only decides if a missing folder deserves a warning.
 pub fn cache_folder_names(pm: &mut PackageManager) -> Vec<(Vec<u8>, bool)> {
     let mut out: Vec<(Vec<u8>, bool)> = Vec::new();
     let count = pm.lockfile.packages.len();
+    let mut path_buf = bun_paths::PathBuffer::uninit();
     for i in 0..count {
         let (name, resolution, expected) = {
             let pkgs = &pm.lockfile.packages;
@@ -181,41 +183,43 @@ pub fn cache_folder_names(pm: &mut PackageManager) -> Vec<(Vec<u8>, bool)> {
                 !meta.is_disabled(pm.options.cpu, pm.options.os),
             )
         };
-        let folder: Option<Vec<u8>> = match resolution.tag {
-            ResolutionTag::Npm => {
-                let name = pm.lockfile.str(&name).to_vec();
-                Some(
-                    directories::cached_npm_package_folder_name(
-                        pm,
-                        &name,
-                        resolution.npm().version,
-                        None,
-                    )
-                    .as_bytes()
-                    .to_vec(),
-                )
-            }
-            ResolutionTag::Git => Some(
-                directories::cached_git_folder_name(pm, resolution.git(), None)
-                    .as_bytes()
-                    .to_vec(),
-            ),
-            ResolutionTag::Github => Some(
-                directories::cached_github_folder_name(pm, resolution.github(), None)
-                    .as_bytes()
-                    .to_vec(),
-            ),
-            ResolutionTag::RemoteTarball => Some(
-                directories::cached_tarball_folder_name(pm, *resolution.remote_tarball(), None)
-                    .as_bytes()
-                    .to_vec(),
-            ),
-            _ => None,
+        if !matches!(
+            resolution.tag,
+            ResolutionTag::Npm
+                | ResolutionTag::Git
+                | ResolutionTag::Github
+                | ResolutionTag::LocalTarball
+                | ResolutionTag::RemoteTarball
+        ) {
+            continue;
+        }
+        let name = pm.lockfile.str(&name).to_vec();
+        // patched dependencies live in `<folder>_patch_hash=<hex>` (keyed by "name@version")
+        let patch_hash = if pm.lockfile.patched_dependencies.count() == 0 {
+            None
+        } else {
+            let buf = pm.lockfile.buffers.string_bytes.as_slice();
+            let key = format!(
+                "{}@{}",
+                bstr::BStr::new(&name),
+                resolution.fmt(buf, bun_core::fmt::PathSep::Posix)
+            );
+            let key_hash = bun_semver::string::Builder::string_hash(key.as_bytes());
+            pm.lockfile
+                .patched_dependencies
+                .get(&key_hash)
+                .and_then(|p| p.patchfile_hash())
         };
-        if let Some(f) = folder {
-            if !f.is_empty() {
-                out.push((f, expected));
-            }
+        let r = directories::compute_cache_dir_and_subpath(
+            pm,
+            &name,
+            &resolution,
+            &mut path_buf,
+            patch_hash,
+        );
+        let folder = r.cache_dir_subpath.as_bytes().to_vec();
+        if !folder.is_empty() {
+            out.push((folder, expected));
         }
     }
     // sorted for a deterministic pack; the same folder can back several lockfile
@@ -275,7 +279,7 @@ fn pack_dir(
             bun_sys::FileKind::SymLink => {
                 let mut buf = bun_paths::path_buffer_pool::get();
                 let n = bun_sys::readlink(&z(&abs), &mut buf[..]).map_err(sys_err)?;
-                if n >= buf.len() {
+                if n >= buf.len().min(4096) {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
                         format!("symlink target of {} is too long", bstr::BStr::new(&abs)),
@@ -343,22 +347,29 @@ pub fn pack(
     // written next to the destination under a temporary name, moved into place at the end
     let out_dir = parent(out_path).unwrap_or(b".");
     let out_dir_fd = bun_sys::open_dir_at(bun_sys::Fd::cwd(), out_dir).map_err(sys_err)?;
-    let mut tmpname_buf = [0u8; 256];
-    let tmpname =
-        bun_paths::fs::FileSystem::tmpname(b"pack", &mut tmpname_buf, bun_wyhash::hash(out_path))
-            .map_err(|_| std::io::Error::other("could not build a temporary file name"))?;
-    let mut tmpfile = bun_sys::Tmpfile::create(out_dir_fd, tmpname).map_err(sys_err)?;
-    // `bun_sys::FileWriter` borrows the fd; the Tmpfile keeps ownership.
-    let result = pack_impl(&folders, cache_dir, bun_sys::FileWriter(tmpfile.fd)).and_then(|s| {
-        let dest = z(bun_paths::basename(out_path));
-        tmpfile.finish(&dest).map_err(sys_err)?;
-        Ok(s)
-    });
-    if result.is_err() {
-        // never leave a partial temp file behind (ENOSPC, unreadable cache entry, …)
-        let _ = bun_sys::unlinkat(out_dir_fd, tmpname);
-    }
-    let _ = bun_sys::close(tmpfile.fd);
+    let result = (|| {
+        let mut tmpname_buf = [0u8; 256];
+        let tmpname = bun_paths::fs::FileSystem::tmpname(
+            b"pack",
+            &mut tmpname_buf,
+            bun_wyhash::hash(out_path),
+        )
+        .map_err(|_| std::io::Error::other("could not build a temporary file name"))?;
+        let mut tmpfile = bun_sys::Tmpfile::create(out_dir_fd, tmpname).map_err(sys_err)?;
+        // `bun_sys::FileWriter` borrows the fd; the Tmpfile keeps ownership.
+        let result =
+            pack_impl(&folders, cache_dir, bun_sys::FileWriter(tmpfile.fd)).and_then(|s| {
+                let dest = z(bun_paths::basename(out_path));
+                tmpfile.finish(&dest).map_err(sys_err)?;
+                Ok(s)
+            });
+        if result.is_err() {
+            // never leave a partial temp file behind (ENOSPC, unreadable cache entry, …)
+            let _ = bun_sys::unlinkat(out_dir_fd, tmpname);
+        }
+        let _ = bun_sys::close(tmpfile.fd);
+        result
+    })();
     let _ = bun_sys::close(out_dir_fd);
     result
 }
@@ -458,39 +469,73 @@ fn symlink_target_stays_inside(link_path: &[u8], target: &[u8]) -> bool {
 /// later file) out of the package, whatever order the records arrived in. Links whose
 /// target passes through another link are refused rather than resolved.
 fn create_links(staging: &[u8], links: &mut Vec<(Vec<u8>, Vec<u8>)>) -> std::io::Result<()> {
-    for (rel, target) in links.drain(..) {
-        let no_link_components = |base: &[u8], rel_path: &[u8]| -> std::io::Result<bool> {
-            let mut p = base.to_vec();
-            for comp in strings::split_any(rel_path, b"/\\").filter(|c| !c.is_empty()) {
-                match comp {
-                    b"." => continue,
-                    b".." => {
-                        // stays inside by construction (checked lexically); pop a component
-                        if let Some(parent) = parent(&p) {
-                            p = parent.to_vec();
-                        }
-                        continue;
-                    }
-                    _ => p = join(&p, comp),
+    // Normalised package-relative paths of every link about to be created. A link's
+    // own path and its target (resolved lexically from the link's directory) may not
+    // pass *through* any of them — checked against the whole set up front, so the
+    // record order cannot matter — nor through a symlink already on disk.
+    fn components(p: &[u8]) -> impl Iterator<Item = &[u8]> {
+        strings::split_any(p, b"/\\").filter(|c| !c.is_empty() && *c != b".")
+    }
+    let link_paths: Vec<Vec<Vec<u8>>> = links
+        .iter()
+        .map(|(rel, _)| components(rel).map(|c| c.to_vec()).collect())
+        .collect();
+    let passes_through_link = |start: &[Vec<u8>], rel_path: &[u8], own: Option<usize>| {
+        // walk `rel_path` from `start` (package-relative components), checking every
+        // proper prefix reached against the pending link paths
+        let mut cur: Vec<Vec<u8>> = start.to_vec();
+        let comps: Vec<&[u8]> = components(rel_path).collect();
+        for (idx, comp) in comps.iter().enumerate() {
+            if *comp == b".." {
+                cur.pop();
+                continue;
+            }
+            cur.push(comp.to_vec());
+            let is_last = idx + 1 == comps.len();
+            for (k, lp) in link_paths.iter().enumerate() {
+                // the link's own final component is itself, not a traversal
+                if is_last && Some(k) == own {
+                    continue;
                 }
-                if lstat_kind(&p)? == Some(bun_sys::FileKind::SymLink) {
-                    return Ok(false);
+                if *lp == cur {
+                    return true;
                 }
             }
-            Ok(true)
+        }
+        false
+    };
+    for (k, (rel, target)) in links.iter().enumerate() {
+        let link_dir: Vec<Vec<u8>> = {
+            let mut c: Vec<Vec<u8>> = components(rel).map(|c| c.to_vec()).collect();
+            c.pop();
+            c
         };
-        let dest = join(staging, &rel);
-        let link_dir = parent(&dest).unwrap_or(staging).to_vec();
-        if !no_link_components(staging, &rel)? || !no_link_components(&link_dir, &target)? {
+        if passes_through_link(&[], rel, Some(k)) || passes_through_link(&link_dir, target, None) {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!(
                     "pack entry {} -> {} passes through another symlink; delete the pack file and re-create it with `bun pm cache pack`",
-                    bstr::BStr::new(&rel),
-                    bstr::BStr::new(&target)
+                    bstr::BStr::new(rel),
+                    bstr::BStr::new(target)
                 ),
             ));
         }
+        // and nothing already on disk along the link's parent chain may be a symlink
+        let mut p = staging.to_vec();
+        for comp in components(rel) {
+            p = join(&p, comp);
+            if p.len() < join(staging, rel).len()
+                && lstat_kind(&p)? == Some(bun_sys::FileKind::SymLink)
+            {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("pack entry {} traverses a symlink", bstr::BStr::new(rel)),
+                ));
+            }
+        }
+    }
+    for (rel, target) in links.drain(..) {
+        let dest = join(staging, &rel);
         if let Some(dir) = parent(&dest) {
             mkdir_p(dir)?;
         }
@@ -661,28 +706,14 @@ fn unpack_impl(cache_dir: &[u8], pack_path: &[u8]) -> std::io::Result<UnpackSumm
                 }
                 let (_, staging) = current.as_ref().unwrap();
                 let dest = join(staging, &path);
-                // refuse an entry placed under one of this package's (pending) symlinks …
+                // refuse an entry placed under one of this package's symlinks (they are
+                // created last, so on disk the parent chain here is plain directories)
                 if pending_links.iter().any(|(link, _)| {
                     path.len() > link.len()
                         && path.starts_with(link.as_slice())
                         && matches!(path[link.len()], b'/' | b'\\')
                 }) {
                     return Err(bad("pack entry traverses a symlink", record_no));
-                }
-                // … or under a symlink that already exists on disk
-                {
-                    let mut p = staging.clone();
-                    let comps: Vec<&[u8]> = strings::split_any(&path, b"/\\")
-                        .filter(|c| !c.is_empty())
-                        .collect();
-                    for (i, c) in comps.iter().enumerate() {
-                        p = join(&p, c);
-                        if lstat_kind(&p)? == Some(bun_sys::FileKind::SymLink)
-                            && (i + 1 < comps.len() || kind[0] != 3)
-                        {
-                            return Err(bad("pack entry traverses a symlink", record_no));
-                        }
-                    }
                 }
                 match kind[0] {
                     4 => {

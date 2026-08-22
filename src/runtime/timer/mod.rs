@@ -761,12 +761,6 @@ impl All {
         if !(self.uv_timer.is_active() && due_in <= wait_ms) {
             self.uv_timer.start(wait_ms, 0, Some(Self::on_uv_timer));
         }
-
-        if self.active_timer_count > 0 {
-            self.uv_timer.ref_();
-        } else {
-            self.uv_timer.unref();
-        }
     }
 
     /// libuv timer callback. Runs inside `uv_run`, so it must not run JS (a

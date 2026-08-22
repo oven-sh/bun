@@ -259,13 +259,15 @@ pub(crate) unsafe fn arm<R>(req: *mut R, cb: *mut c_void) {
     // SAFETY: caller passes a request it is about to hand to libuv.
     unsafe {
         let slots = req_slots(req);
-        // Re-issuing a request whose previous completion has not been dispatched
-        // yet would unlink nothing and corrupt the queue; owners issue the next
-        // operation from the completion callback, never before it.
+        // Owners issue the next operation from the completion callback, never
+        // before it. Re-issuing a request whose previous completion is still
+        // queued is a bug in the owner (that completion is lost); unlink it so
+        // it is only that, not a corrupted queue.
         debug_assert!(
             !(*slots).node.is_queued(),
             "libuv request re-issued before its completion was dispatched"
         );
+        Deferred::cancel(&raw mut (*slots).node);
         (*slots).cb = cb;
         (*slots).node = Deferred::new();
         (*slots).status = 0;

@@ -84,8 +84,7 @@ impl ChildPtr {
 pub enum WriterTag {
     /// Builtin running inside a Cmd — dispatch via `Builtin::on_io_writer_chunk`.
     Builtin,
-    /// The write-error report `Builtin::done` writes after the builtin has
-    /// finished; its completion, failed or not, finishes the Cmd with exit 1.
+    /// `Builtin::done`'s write-error report; any completion finishes the Cmd with exit 1.
     BuiltinReport,
     Cmd,
     CondExpr,

@@ -152,9 +152,7 @@ macro_rules! shell_builtins {
                 }
             }
 
-            /// Hoisted dispatch for the `onIOWriterChunk` callback. A failed
-            /// write is latched here, so every builtin gets the same exit
-            /// status and report from `Builtin::done`.
+            /// Hoisted dispatch for the `onIOWriterChunk` callback; latches a failed write for `Builtin::done`.
             pub fn on_io_writer_chunk(
                 interp: &Interpreter,
                 cmd: NodeId,
@@ -870,17 +868,13 @@ impl Builtin {
         interp.child_done(parent, cmd, 1)
     }
 
-    /// Finish the builtin with `exit_code` and signal the owning Cmd. A
-    /// builtin whose output write failed exits 1 instead, after
-    /// `"{kind}: write error: {strerror}"` on stderr; EPIPE is as silent as
-    /// SIGPIPE. The report's completion finishes the Cmd through
-    /// `WriterTag::BuiltinReport`, also when stderr rejects it.
+    /// Finish the builtin with `exit_code` and signal the owning Cmd. A failed
+    /// output write exits 1 instead, after `"{kind}: write error: {strerror}"`.
     pub(crate) fn done(interp: &Interpreter, cmd: NodeId, exit_code: ExitCode) -> Yield {
         let Some(errno) = Self::of_mut(interp, cmd).write_err.take() else {
-            // Output is written through immediately in `write_no_io`, so
-            // there is nothing to flush here.
             return Cmd::on_exec_done(interp, cmd, exit_code);
         };
+        // EPIPE is as silent as SIGPIPE.
         if errno == bun_sys::E::EPIPE {
             return Cmd::on_exec_done(interp, cmd, 1);
         }

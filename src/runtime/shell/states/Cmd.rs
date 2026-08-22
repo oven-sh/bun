@@ -286,9 +286,7 @@ impl Cmd {
         }
     }
 
-    /// IOWriter completion callback for the error message written in
-    /// `WaitingWriteErr`: the command failed, so finish with exit code 1
-    /// whether or not the message could be written.
+    /// The error message written in `WaitingWriteErr` completed: exit 1.
     pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         this: NodeId,
@@ -946,9 +944,7 @@ impl Cmd {
     /// captured bytes into the shell buffers); if that makes the command
     /// finished, transition to `Done` and yield back to the trampoline.
     ///
-    /// `err`: part of the output was lost while relaying it, which fails the
-    /// command with 1 (as `Builtin::done` does) unless it exited non-zero
-    /// itself. A status set here makes `on_process_exit` skip `on_exit`.
+    /// `err`: relayed output was lost; exit 1 unless the process exited non-zero itself.
     pub(crate) fn buffered_output_close(
         &mut self,
         kind: OutKind,

@@ -29,7 +29,7 @@ describe.if(isPosix)("IOWriter epipe", () => {
 // reports that and exits), instead of the shell reading the output into its
 // capture buffer for as long as the command keeps writing. `$` used to never
 // settle for such a command (the modes are described in the fixture).
-describe.if(isPosix)("relayed output after the stdout reader went away", () => {
+describe("relayed output after the stdout reader went away", () => {
   const fixture = join(import.meta.dir, "epipe-relay-fixture.ts");
 
   async function runFixture(mode: string) {

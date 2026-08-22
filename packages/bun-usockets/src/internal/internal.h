@@ -253,6 +253,11 @@ void us_internal_listen_socket_ssl_free(struct us_listen_socket_t *ls);
 /* Opaque SSL_CTX_up_ref/SSL_CTX_free so context.c needn't include OpenSSL. */
 void us_internal_ssl_ctx_up_ref(struct ssl_ctx_st *ssl_ctx);
 void us_internal_ssl_ctx_unref(struct ssl_ctx_st *ssl_ctx);
+/* X509_verify_cert plus the chain policy BoringSSL's verifier lacks (minimum
+ * key sizes). Every peer chain, TCP or QUIC, must be verified through this so
+ * the policy applies uniformly; same contract as X509_verify_cert. */
+struct x509_store_ctx_st;
+int us_internal_x509_verify_cert(struct x509_store_ctx_st *ctx);
 /* TCP-level FIN, bypassing the SSL layer (used by ssl_on_end). */
 void us_internal_socket_raw_shutdown(us_socket_r s);
 

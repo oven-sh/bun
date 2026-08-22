@@ -820,7 +820,7 @@ impl UpgradeCommand {
                     let Some(unzip_exe) = which(
                         &mut unzip_path_buf,
                         env_loader.map.get(b"PATH").unwrap_or(b""),
-                        filesystem.top_level_dir,
+                        filesystem.top_level_dir(),
                         b"unzip",
                     ) else {
                         let _ = sys::unlinkat(&save_dir, tmpname);

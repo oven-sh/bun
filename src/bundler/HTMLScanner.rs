@@ -73,7 +73,7 @@ impl<'a> HTMLScanner<'a> {
         // In that case, we don't want to use the absolute filesystem path, we want to use the path relative to the project root
         let path_to_use: &[u8] = if input_path.len() > 1 && input_path[0] == b'/' {
             resolve_path::join_abs_string::<platform::Auto>(
-                fs::FileSystem::instance().top_level_dir,
+                fs::FileSystem::instance().top_level_dir(),
                 &[&input_path[1..]],
             )
         }

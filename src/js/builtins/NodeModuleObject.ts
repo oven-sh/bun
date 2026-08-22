@@ -34,3 +34,8 @@ export function getSourceMapsSupport() {
 export function setSourceMapsSupport(enabled, options) {
   return require("internal/shared").setSourceMapsSupport(enabled, options);
 }
+
+// Implementation for `require('node:module').stripTypeScriptTypes`.
+export function stripTypeScriptTypes(code, options) {
+  return require("internal/shared").stripTypeScriptTypes(code, options);
+}

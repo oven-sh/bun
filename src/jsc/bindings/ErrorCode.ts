@@ -363,5 +363,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_INSPECTOR_NOT_WORKER", Error],
   ["ERR_INSPECTOR_COMMAND", Error],
   ["ERR_REDIS_SERVER_ERROR", Error, "RedisError"],
+  ["ERR_INVALID_TYPESCRIPT_SYNTAX", SyntaxError],
+  ["ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX", SyntaxError],
 ];
 export default errors;

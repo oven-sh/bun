@@ -27,8 +27,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             && !p.lexer.has_newline_before
             && (p.lexer.is_contextual_keyword(b"as") || p.lexer.is_contextual_keyword(b"satisfies"))
         {
+            let as_lo = p.lexer.start as u32;
             p.lexer.next()?;
+            let is_const_assertion = p.lexer.token == T::TConst;
             p.skip_type_script_type(Level::Lowest)?;
+            p.ts_strip_record_to_here(
+                crate::ts_strip::EntryKind::BlankAs { is_const_assertion },
+                as_lo,
+            );
 
             // These tokens are not allowed to follow a cast expression. This isn't
             // an outright error because it may be on a new line, in which case it's
@@ -190,7 +196,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return Err(crate::Error::SyntaxError);
                 }
 
+                let type_args_lo = p.lexer.start as u32;
                 let _ = p.skip_type_script_type_arguments::<false, false>()?;
+                p.ts_strip_record_to_here(crate::ts_strip::EntryKind::Blank, type_args_lo);
                 if p.lexer.token != T::TOpenParen {
                     p.lexer.expected(T::TOpenParen)?;
                 }
@@ -483,7 +491,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Err(crate::Error::SyntaxError);
         }
 
+        let bang_lo = p.lexer.start as u32;
+        let bang_hi = p.lexer.end as u32;
         p.lexer.next()?;
+        p.ts_strip_record_span(crate::ts_strip::EntryKind::Blank, bang_lo, bang_hi);
         *optional_chain = old_optional_chain;
 
         Ok(Continuation::Next)
@@ -864,10 +875,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // TypeScript allows type arguments to be specified with angle brackets
         // inside an expression. Unlike in other languages, this unfortunately
         // appears to require backtracking to parse.
-        if Self::IS_TYPESCRIPT_ENABLED && p.try_skip_type_script_type_arguments_with_backtracking()
-        {
-            *optional_chain = old_optional_chain;
-            return Ok(Continuation::Next);
+        if Self::IS_TYPESCRIPT_ENABLED {
+            let type_args_lo = p.lexer.start as u32;
+            if p.try_skip_type_script_type_arguments_with_backtracking() {
+                p.ts_strip_record_to_here(crate::ts_strip::EntryKind::Blank, type_args_lo);
+                *optional_chain = old_optional_chain;
+                return Ok(Continuation::Next);
+            }
         }
 
         if level.gte(Level::Compare) {
@@ -955,10 +969,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // TypeScript allows type arguments to be specified with angle brackets
         // inside an expression. Unlike in other languages, this unfortunately
         // appears to require backtracking to parse.
-        if Self::IS_TYPESCRIPT_ENABLED && p.try_skip_type_script_type_arguments_with_backtracking()
-        {
-            *optional_chain = old_optional_chain;
-            return Ok(Continuation::Next);
+        if Self::IS_TYPESCRIPT_ENABLED {
+            let type_args_lo = p.lexer.start as u32;
+            if p.try_skip_type_script_type_arguments_with_backtracking() {
+                p.ts_strip_record_to_here(crate::ts_strip::EntryKind::Blank, type_args_lo);
+                *optional_chain = old_optional_chain;
+                return Ok(Continuation::Next);
+            }
         }
 
         if level.gte(Level::Shift) {

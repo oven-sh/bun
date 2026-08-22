@@ -983,6 +983,9 @@ pub struct ParseOptions<'a, 'b> {
     pub experimental_decorators: bool,
     pub use_define_for_class_fields: bool,
     pub remove_cjs_module_wrapper: bool,
+    /// `module.stripTypeScriptTypes` strip mode: record type-only spans for
+    /// in-place blanking (see `bun_js_parser::ts_strip`).
+    pub ts_strip_mode: bool,
 
     pub dont_bundle_twice: bool,
     pub allow_commonjs: bool,
@@ -1593,6 +1596,7 @@ impl<'a> Transpiler<'a> {
                 opts.features.allow_runtime = self.options.allow_runtime;
                 opts.features.set_breakpoint_on_first_line =
                     this_parse.set_breakpoint_on_first_line;
+                opts.features.ts_strip_mode = this_parse.ts_strip_mode;
                 opts.features.trim_unused_imports = self
                     .options
                     .trim_unused_imports
@@ -2957,6 +2961,7 @@ impl<'a> Transpiler<'a> {
                     inject_jest_globals: false,
                     set_breakpoint_on_first_line: false,
                     remove_cjs_module_wrapper: false,
+                    ts_strip_mode: false,
                     dont_bundle_twice: false,
                     allow_commonjs: false,
                     module_type: options::ModuleType::Unknown,

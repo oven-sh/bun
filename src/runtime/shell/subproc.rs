@@ -1687,8 +1687,7 @@ impl CapturedWriter {
 
     /// The chunk completion from the shell's `IOWriter` (`WriterTag::Subproc`).
     /// Raw `*mut Self` like the reader callbacks: the tail call can drop the
-    /// last `Arc` of the embedding `PipeReader` (`Cmd::buffered_output_close`
-    /// → `close_io` → `detach`), which frees `this`.
+    /// last `Arc` of the embedding `PipeReader`, which frees `this`.
     ///
     /// # Safety
     /// `this` must be the `CapturedWriter` of a live `PipeReader` (the pointer

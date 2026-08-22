@@ -1789,9 +1789,8 @@ impl WindowsBufferedReader {
                 // Dropping the `Box<Pipe>` here would free a uv_pipe_t still
                 // linked into the loop's handle queue → UAF. Restore the source so
                 // close_impl can do the proper take + hand-off to libuv
-                // (into_raw + uv_close). It also moves `_buffer` to the File
-                // when a read is in flight (libuv still writes into it), so the
-                // buffer is released only after it.
+                // (into_raw + uv_close). It also takes `_buffer` for a read
+                // still in flight, so it runs before the buffer is released.
                 self.source = Some(source);
                 self.close_impl::<false>();
             } else {

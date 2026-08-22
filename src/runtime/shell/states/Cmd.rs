@@ -68,11 +68,9 @@ impl Cmd {
 pub struct SubprocExec {
     pub(crate) child: *mut ShellSubprocess,
     pub(crate) buffered_closed: BufferedIoClosed,
-    /// Status the command gets once the child exits, set when relaying its
-    /// output to the shell's stdout/stderr failed while it was still running.
-    /// The shell closed its end of that pipe; the child goes on until its next
-    /// write fails or it finishes, like under a real shell, so the command
-    /// waits for its exit instead of killing it.
+    /// Status a failed relay imposes once the child exits (`on_exit`). The
+    /// shell only closed its end of the pipe, so the child runs on until its
+    /// next write fails or it finishes, and the command waits for it.
     pub(crate) relay_status: Option<ExitCode>,
     /// NodeId-arena backrefs so the legacy `&mut self` subprocess callbacks
     /// (`buffered_output_close` / `on_exit`) can hand a [`Yield`] back to the
@@ -989,10 +987,8 @@ impl Cmd {
         Yield::suspended()
     }
 
-    /// A read error ends the command now, whether or not the child has exited
-    /// (`deinit` then kills it). A relay error ends it with that status once
-    /// the child has exited: the shell closed its end of the pipe, the child
-    /// runs on until its next write fails or it finishes.
+    /// A read error ends the command now (`deinit` kills a child still
+    /// running). A relay error becomes the status once the child has exited.
     fn record_capture_error(&mut self, err: Option<CaptureError>) {
         debug_assert!(matches!(self.exec, Exec::Subproc(_)));
         let Some(err) = err else { return };

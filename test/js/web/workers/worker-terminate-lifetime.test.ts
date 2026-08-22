@@ -164,6 +164,55 @@ test.skipIf(!isASAN)(
       ],
       env: {
         ...bunEnv,
+        // The CI runner sets this for every test; set it here too so the
+        // main thread's own per-VM state is not reported when run directly.
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+  },
+  timeout,
+);
+
+// Regression: the per-VM NodeFS that Bun.file().stat() (and bun:jsc's
+// startSamplingProfiler) use hung off the VirtualMachine as a raw box no
+// teardown path freed, so every Worker that called it leaked 4104 bytes on
+// exit, terminated or not. It now belongs to the VM's runtime state, which
+// teardown drops. stat() runs from a timer so that the allocation's stack holds
+// no module-evaluation frame, which leaksan.supp would suppress (how this
+// stayed hidden in scripts that stat() at top level).
+test.skipIf(!isASAN)(
+  "a worker's Bun.file().stat() does not leak the per-VM NodeFS when it exits or is terminated",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("worker_threads");
+        const stat = "setTimeout(() => Bun.file(process.execPath).stat().then(() => ";
+        const exits = stat + "process.exit(0)), 0);";
+        const signals = stat + "require('worker_threads').parentPort.postMessage(0)), 0);";
+        let done = 0;
+        const finish = () => { if (++done === 4) console.log("ok"); };
+        for (let i = 0; i < 2; i++) {
+          new Worker(exits, { eval: true }).on("exit", code => code === 0 && finish());
+          const w = new Worker(signals, { eval: true });
+          w.on("message", () => w.terminate().then(finish));
+        }
+      `,
+      ],
+      env: {
+        ...bunEnv,
+        // The CI runner sets this for every test; set it here too so the
+        // main thread's own per-VM state is not reported when run directly.
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
         ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
         LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
       },

@@ -450,7 +450,7 @@ impl Processor {
             let Some(next) = self.take_payload() else {
                 return true;
             };
-            exporters = self.exporters.read().clone();
+            exporters.clone_from(&self.exporters.read());
             if exporters.is_empty() {
                 self.stats
                     .spans_dropped

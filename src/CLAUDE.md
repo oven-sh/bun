@@ -1,8 +1,8 @@
 ## Rust
 
 `src/` is a Cargo workspace (rooted at the repo's top-level `Cargo.toml`, ~200
-member crates). The runtime is built as `libbun_rust.a` via `cargo build -p
-bun_bin` (driven by `scripts/build/rust.ts`). Key crates:
+member crates). The runtime is built as `libbun_runtime.a` via `cargo build -p
+bun_runtime` (driven by `scripts/build/rust.ts`). Key crates:
 
 - `bun_core` (`src/bun_core/`) — strings, formatting, logging, env vars, allocator/heap helpers, the foundation everything else uses
 - `bun_sys` (`src/sys/`) — cross-platform syscall wrappers (`File`, `Fd`, `Dir`, `Error`)
@@ -10,7 +10,9 @@ bun_bin` (driven by `scripts/build/rust.ts`). Key crates:
 - `bun_jsc` (`src/jsc/`) — JSC value types, `Strong`/`Weak`, FFI imports, `URL`
 - `bun_runtime` (`src/runtime/`) — JS-visible APIs (server, fetch, node compat, crypto)
 - `bun_js_parser`, `bun_js_printer`, `bun_resolver`, `bun_bundler`, `bun_install`, `bun_collections`, `bun_threading`, `bun_alloc` — the rest of the pipeline
-- `bun_bin` (`src/bun_bin/`) — the staticlib root that `cargo build` links
+- `bun_runtime::bin_entry` (`src/runtime/bin_entry/`) — the process entry point (`main`) and the
+  C-ABI symbols that must be direct link inputs; `bun_runtime` itself is the
+  `staticlib` that `cargo build` produces for the C++ link.
 
 Conventions:
 
@@ -101,19 +103,26 @@ let s = bun_core::String::from_js(value, global)?;
 let err = s.to_error_instance(global);
 ```
 
-`bun_core::strings` is the SIMD-backed `&[u8]` toolkit. Use it instead of
-`std::str` / `std::iter` for searching and comparing byte slices:
+`bun_core::strings` is the SIMD-backed `&[u8]` toolkit (Google Highway kernels
+with runtime CPU dispatch). Byte and substring search **must** go through it —
+`str::find`/`contains`/`split*`, `slice::windows`, `memchr::*` and
+`bstr::ByteSlice::find*` are denied in `clippy.toml`, and the byte-literal forms
+of `<[u8]>::contains`, `iter().position/rposition/any(|b| b == b'x')` and
+`.split(|b| ..)` are rejected by `test/internal/source-lints/byte-search.test.ts`:
 
 ```rust
 use bun_core::strings;
 
-strings::index_of(haystack, needle)      // Option<usize>
+strings::index_of_char_usize(s, b'x')    // Option<usize>   (not .iter().position())
+strings::index_of_any(s, b"\r\n")        // Option<usize>   first byte in set
+strings::last_index_of_char(s, b'x')     // Option<usize>   (not .iter().rposition())
+strings::contains_char(s, b'x')          // bool            (not .contains(&b'x'))
+strings::count_char(s, b'\n')            // usize
+strings::index_of(haystack, needle)      // Option<usize>   substring (memmem)
 strings::contains(haystack, needle)      // bool
-strings::eql(a, b)                       // bool
-strings::starts_with(s, prefix)          // bool
-strings::ends_with(s, suffix)            // bool
+strings::split(s, b",") / split_any(s, b" \t") / tokenize(s, b" ") / split_once_char(s, b'=')
+strings::eql(a, b)                       // bool  (== / starts_with / ends_with are memcmp and fine as-is)
 strings::has_prefix_comptime(s, b"x")    // 'static comparand
-strings::has_suffix_comptime(s, b"x")
 strings::first_non_ascii(s)              // Option<u32>
 strings::to_utf16_alloc(...)             // encoding conversions
 ```

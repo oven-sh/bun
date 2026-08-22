@@ -97,6 +97,42 @@ export function neverCalled(x) {
 }
 `;
 
+// The exported-declaration form makes JSC emit a zero-width basic block past
+// the end of the function, and an empty vm script would get a zero-width
+// whole-script range (issue #39821).
+const zeroWidthRangeFixture = `
+import { Session } from "node:inspector/promises";
+import vm from "node:vm";
+
+const session = new Session();
+session.connect();
+await session.post("Profiler.enable");
+await session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
+
+const { f } = await import("./exported-fn.mjs");
+f(1);
+vm.runInThisContext("", { filename: "file:///empty-script.js" });
+
+const coverage = await session.post("Profiler.takePreciseCoverage");
+await session.post("Profiler.stopPreciseCoverage");
+session.disconnect();
+
+const zeroWidth = [];
+let rangeCount = 0;
+for (const script of coverage.result) {
+  for (const fn of script.functions) {
+    for (const range of fn.ranges) {
+      rangeCount++;
+      if (range.startOffset >= range.endOffset) {
+        zeroWidth.push({ url: script.url, ...range });
+      }
+    }
+  }
+}
+const entry = coverage.result.find(script => script.url.endsWith("exported-fn.mjs"));
+console.log(JSON.stringify({ rangeCount, zeroWidth, fixtureRanges: entry?.functions.length ?? 0 }));
+`;
+
 // Picks the entry whose primary range most tightly encloses the offset, the
 // same way a coverage consumer attributes an AST node to a function.
 function entryCoveringOffset(functions: any[], offset: number) {
@@ -458,13 +494,24 @@ describe("node:inspector", () => {
     });
 
     // Unlike V8 (which has always-on invocation counters), JSC has none, so
-    // best-effort coverage is empty until startPreciseCoverage has run.
-    test("getBestEffortCoverage returns [] without a prior startPreciseCoverage", () => {
-      const session = new inspector.Session();
-      session.connect();
-      const { result } = session.post("Profiler.getBestEffortCoverage");
-      expect(result).toEqual([]);
-      session.disconnect();
+    // best-effort coverage is empty until startPreciseCoverage has run in the
+    // process (once started, the profiler stays for the VM's lifetime).
+    test("getBestEffortCoverage returns [] without a prior startPreciseCoverage", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const { Session } = require("node:inspector");
+           const session = new Session();
+           session.connect();
+           console.log(JSON.stringify(session.post("Profiler.getBestEffortCoverage").result));`,
+        ],
+        env: bunEnv,
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("[]\n");
+      expect(exitCode).toBe(0);
     });
 
     // CDP contract: takePreciseCoverage resets execution counters, so a second
@@ -502,6 +549,41 @@ console.log(JSON.stringify({ first: countFor(first), second: countFor(second) })
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
       expect(JSON.parse(stdout.trim())).toEqual({ first: 3, second: 1 });
+    });
+
+    // The VM's profiler outlives a stop, so a later start must re-base its
+    // counters: executions between stop and the next start are not reported.
+    test.concurrent("startPreciseCoverage after a stop counts from zero", async () => {
+      using dir = tempDir("inspector-coverage-restart", {
+        "fixture.mjs": `
+import { Session } from "node:inspector/promises";
+import vm from "node:vm";
+const session = new Session();
+session.connect();
+await session.post("Profiler.enable");
+await session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
+const url = "file:///restart-fixture/virtual.js";
+const f = vm.runInThisContext("function f(){return 1}; f", { filename: url });
+f();
+await session.post("Profiler.takePreciseCoverage");
+await session.post("Profiler.stopPreciseCoverage");
+for (let i = 0; i < 100; i++) f();
+await session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
+f(); f();
+const after = await session.post("Profiler.takePreciseCoverage");
+session.disconnect();
+const bodyOffset = "function f(){".length;
+const entry = after.result.find(s => s.url === url);
+const fn = entry?.functions
+  .filter(f => f.ranges[0].startOffset <= bodyOffset && bodyOffset < f.ranges[0].endOffset)
+  .sort((a, b) => a.ranges[0].endOffset - b.ranges[0].endOffset)[0];
+console.log(JSON.stringify({ count: fn?.ranges[0].count }));
+`,
+      });
+      await using proc = Bun.spawn({ cmd: [bunExe(), "fixture.mjs"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+      expect(JSON.parse(stdout.trim())).toEqual({ count: 2 });
     });
 
     test.concurrent("collects block coverage with call counts for vm scripts", async () => {
@@ -605,6 +687,32 @@ console.log(JSON.stringify({ first: countFor(first), second: countFor(second) })
       // double() ran twice, neverCalled() never ran.
       expect(functionCounts).toContain(2);
       expect(functionCounts).toContain(0);
+    });
+
+    // V8 never emits startOffset === endOffset; @bcoe/v8-coverage (vitest/c8
+    // --coverage) recurses forever on a zero-width range (issue #39821).
+    test.concurrent("never emits zero-width ranges", async () => {
+      using dir = tempDir("inspector-coverage-zero-width", {
+        "fixture.mjs": zeroWidthRangeFixture,
+        "exported-fn.mjs": "export function f(x){return x}\n",
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+      const { rangeCount, zeroWidth, fixtureRanges } = JSON.parse(stdout);
+
+      // The fixture module was reported and coverage was non-trivial.
+      expect(fixtureRanges).toBeGreaterThan(0);
+      expect(rangeCount).toBeGreaterThan(0);
+      // Every range across every script satisfies startOffset < endOffset.
+      expect(zeroWidth).toEqual([]);
     });
   });
 

@@ -1,0 +1,22 @@
+{
+  "_id": "catalog-dep",
+  "name": "catalog-dep",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "catalog-dep",
+      "version": "1.0.0",
+      "dependencies": {
+        "no-deps": "catalog:"
+      },
+      "_id": "catalog-dep@1.0.0",
+      "dist": {
+        "integrity": "sha512-jlVqcHEjM+7gYpduoLJj3a5s2QQxerO/50jL1F7AtV10v7nASoEgFN3EHsQAHp/8vZdfL/lqLtGYzFKRCldlqw==",
+        "shasum": "f5a80faf78828f7ceecb2554a1aa78edb8895130",
+        "tarball": "http://localhost:4873/catalog-dep/-/catalog-dep-1.0.0.tgz"
+      }
+    }
+  }
+}

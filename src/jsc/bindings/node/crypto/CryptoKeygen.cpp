@@ -70,19 +70,6 @@ void SecretKeyJobCtx::deinit()
     delete this;
 }
 
-extern "C" SecretKeyJob* Bun__SecretKeyJob__create(JSC::JSGlobalObject*, SecretKeyJobCtx*, EncodedJSValue callback);
-SecretKeyJob* SecretKeyJob::create(JSC::JSGlobalObject* lexicalGlobalObject, size_t length, JSC::JSValue callback)
-{
-    SecretKeyJobCtx* ctx = new SecretKeyJobCtx(length);
-    return Bun__SecretKeyJob__create(lexicalGlobalObject, ctx, JSValue::encode(callback));
-}
-
-extern "C" void Bun__SecretKeyJob__schedule(SecretKeyJob* job);
-void SecretKeyJob::schedule()
-{
-    Bun__SecretKeyJob__schedule(this);
-}
-
 extern "C" void Bun__SecretKeyJob__createAndSchedule(JSC::JSGlobalObject*, SecretKeyJobCtx*, EncodedJSValue callback);
 void SecretKeyJob::createAndSchedule(JSC::JSGlobalObject* lexicalGlobalObject, SecretKeyJobCtx&& ctx, JSC::JSValue callback)
 {

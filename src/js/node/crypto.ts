@@ -50,7 +50,7 @@ const {
 } = $cpp("node_crypto_binding.cpp", "createNodeCryptoBinding");
 
 const {
-  pbkdf2: _pbkdf2,
+  pbkdf2,
   pbkdf2Sync,
   timingSafeEqual,
   randomInt,
@@ -112,28 +112,13 @@ var Buffer = globalThis.Buffer;
 const { isAnyArrayBuffer, isArrayBufferView } = require("node:util/types");
 
 function getArrayBufferOrView(buffer, name, encoding?) {
-  if (buffer instanceof KeyObject) {
-    if (buffer.type !== "secret") {
-      const error = new TypeError(
-        `ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key object type ${key.type}, expected secret`,
-      );
-      error.code = "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE";
-      throw error;
-    }
-    buffer = buffer.export();
-  }
   if (isAnyArrayBuffer(buffer)) return buffer;
   if (typeof buffer === "string") {
     if (encoding === "buffer") encoding = "utf8";
     return Buffer.from(buffer, encoding);
   }
   if (!isArrayBufferView(buffer)) {
-    var error = new TypeError(
-      `ERR_INVALID_ARG_TYPE: The "${name}" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView. Received ` +
-        buffer,
-    );
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    throw $ERR_INVALID_ARG_TYPE(name, ["string", "ArrayBuffer", "Buffer", "TypedArray", "DataView"], buffer);
   }
   return buffer;
 }
@@ -163,25 +148,6 @@ var _subtle = webcrypto.subtle;
 crypto_exports.hash = function hash(algorithm, input, outputEncoding = "hex") {
   return CryptoHasher.hash(algorithm, input, outputEncoding);
 };
-
-// TODO: move this to zig
-function pbkdf2(password, salt, iterations, keylen, digest, callback) {
-  if (typeof digest === "function") {
-    callback = digest;
-    digest = undefined;
-  }
-
-  const promise = _pbkdf2(password, salt, iterations, keylen, digest, callback);
-  if (callback) {
-    promise.then(
-      result => callback(null, result),
-      err => callback(err),
-    );
-    return;
-  }
-
-  promise.then(() => {});
-}
 
 crypto_exports.pbkdf2 = pbkdf2;
 crypto_exports.pbkdf2Sync = pbkdf2Sync;

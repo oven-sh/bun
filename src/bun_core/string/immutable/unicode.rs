@@ -51,8 +51,7 @@ fn append_u16_as_u8(dst: &mut Vec<u8>, src: &[u16]) {
 
 /// Integer types usable as the codepoint result of [`decode_wtf8_rune_t`].
 /// Sealed to two instantiations (`i32` aka `CodePoint`, and `u32`);
-/// every caller in-tree is one of these. `ZERO_VALUE` is the per-type sentinel
-/// (`-1` for i32, `0` for u32).
+/// every caller in-tree is one of these.
 ///
 /// Bounds widened from `From<u8>` to include the bit-ops needed by
 /// `decode_wtf8_rune_t_multibyte` plus a `from_u32` constructor (folds in the
@@ -66,8 +65,6 @@ pub trait CodePointZero:
     + core::ops::BitOr<Output = Self>
     + core::ops::BitAnd<Output = Self>
 {
-    const ZERO_VALUE: Self;
-    const MAX: Self;
     fn from_u32(v: u32) -> Self;
     /// Alias kept for `decode_wtf8_rune_t_multibyte` integer-literal compares.
     #[inline]
@@ -77,8 +74,6 @@ pub trait CodePointZero:
 }
 
 impl CodePointZero for CodePoint {
-    const ZERO_VALUE: Self = -1;
-    const MAX: Self = CodePoint::MAX;
     #[inline]
     fn from_u32(v: u32) -> Self {
         v as i32
@@ -86,8 +81,6 @@ impl CodePointZero for CodePoint {
 }
 
 impl CodePointZero for u32 {
-    const ZERO_VALUE: Self = 0;
-    const MAX: Self = u32::MAX;
     #[inline]
     fn from_u32(v: u32) -> Self {
         v
@@ -984,14 +977,8 @@ pub fn copy_utf16_into_utf8_impl<const ALLOW_TRUNCATED_UTF8_SEQUENCE: bool>(
                 written: 0,
             };
         }
-        // `trim::utf16` strips a single trailing lone high surrogate so simdutf's
-        // length estimate never sees invalid input. If that empties the input, it
-        // was exactly one unpaired surrogate: 3 bytes of U+FFFD, not nothing.
-        let trimmed = simdutf::trim::utf16(utf16);
-        let out_len = if trimmed.is_empty() {
-            3
-        } else if buf.len() <= (trimmed.len() * 3 + 2) {
-            simdutf::length::utf8::from::utf16::le(trimmed)
+        let out_len = if buf.len() <= utf16.len().saturating_mul(3) {
+            simdutf::length::utf8::from::utf16::le(utf16)
         } else {
             buf.len()
         };

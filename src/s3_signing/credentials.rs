@@ -405,7 +405,7 @@ impl S3Credentials {
                     // The bucket is interpolated into the host; a `/` (or `\`,
                     // which encode_uri_component normalizes to `/`) would let a
                     // crafted bucket redirect the signed request to another host.
-                    if bucket.contains(&b'/') {
+                    if strings::contains_char(bucket, b'/') {
                         return Err(SignError::InvalidEndpoint);
                     }
                     // default to https://<BUCKET_NAME>.s3.<REGION>.amazonaws.com/
@@ -1059,12 +1059,6 @@ fn zero_sensitive(b: &mut Box<[u8]>) {
 #[derive(Clone, Copy)]
 pub struct SignQueryOptions {
     pub expires: usize,
-}
-
-impl Default for SignQueryOptions {
-    fn default() -> Self {
-        Self { expires: 86400 }
-    }
 }
 
 // transient param-pack struct; lifetime added because every field is a caller-owned

@@ -13,6 +13,7 @@
 #![warn(unused_must_use)]
 
 pub mod hive_array;
+pub mod index_sort;
 pub mod multi_array_list;
 pub mod vec_ext;
 // `bounded_array` moved down to `bun_core` (cycle-break for the
@@ -478,5 +479,4 @@ pub mod hash_map {
 }
 
 pub mod array_list;
-pub use array_list::ArrayListAlignedIn;
 pub use array_list::ArrayListDefault;

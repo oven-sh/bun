@@ -3,6 +3,8 @@
 
 use core::ffi::{c_char, c_int, c_uint, c_ulong, c_void};
 
+use bun_core::strings;
+
 #[repr(C)]
 pub struct lsquic_engine {
     _opaque: [u8; 0],
@@ -43,8 +45,6 @@ pub const LSCONN_ST_RESET: c_int = 5;
 pub const LSCONN_ST_ERROR: c_int = 7;
 pub const LSCONN_ST_VERNEG_FAILURE: c_int = 10;
 
-pub const LSQVER_I001: c_int = 5;
-pub const LSQVER_I002: c_int = 6;
 pub const N_LSQVER: c_int = 8;
 
 pub const LSQUIC_GLOBAL_CLIENT: c_int = 1;
@@ -158,8 +158,6 @@ unsafe extern "C" {
     pub fn lsquic_conn_status(c: *mut lsquic_conn, errbuf: *mut c_char, bufsz: usize) -> c_int;
     pub fn lsquic_conn_make_stream(c: *mut lsquic_conn);
     pub fn lsquic_conn_make_uni_stream(c: *mut lsquic_conn);
-    pub fn lsquic_conn_n_avail_streams(c: *const lsquic_conn) -> c_uint;
-    pub fn lsquic_conn_n_pending_streams(c: *const lsquic_conn) -> c_uint;
     pub fn lsquic_conn_get_sockaddr(
         c: *mut lsquic_conn,
         local: *mut *const sockaddr,
@@ -379,110 +377,6 @@ settings_setters! {
     delay_onclose => us_nq_settings_set_delay_onclose : c_int,
 }
 
-pub struct Engine(*mut lsquic_engine);
-
-impl Engine {
-    /// `vtable` and `alpn` must outlive the returned engine — lsquic stores both pointers.
-    pub fn new(
-        is_server: bool,
-        is_http: bool,
-        vtable: &NqVtable,
-        settings: &Settings,
-        alpn: Option<&[u8]>,
-    ) -> Option<Self> {
-        // SAFETY: settings is a live struct lsquic copies; alpn is
-        // caller-guaranteed to outlive the engine.
-        let raw = unsafe {
-            us_nq_engine_new(
-                is_server as c_int,
-                is_http as c_int,
-                core::ptr::from_ref(vtable).cast_mut(),
-                settings.as_ptr(),
-                alpn.map_or(core::ptr::null(), |a| a.as_ptr().cast()),
-            )
-        };
-        (!raw.is_null()).then_some(Self(raw))
-    }
-
-    /// # Safety
-    /// `local`/`peer` must point to valid sockaddrs for the duration of the
-    /// call, and `peer_ctx` must be the pointer the engine was configured with.
-    pub unsafe fn packet_in(
-        &self,
-        data: &[u8],
-        local: *const sockaddr,
-        peer: *const sockaddr,
-        peer_ctx: *mut c_void,
-    ) -> c_int {
-        // SAFETY: `self.0` is live; `data` is a slice; the sockaddrs are
-        // caller-guaranteed valid for this call (lsquic copies them).
-        unsafe {
-            lsquic_engine_packet_in(self.0, data.as_ptr(), data.len(), local, peer, peer_ctx, 0)
-        }
-    }
-
-    pub fn process_conns(&self) {
-        // SAFETY: `self.0` is live.
-        unsafe { lsquic_engine_process_conns(self.0) }
-    }
-
-    pub fn earliest_adv_tick(&self) -> Option<i32> {
-        let mut diff: c_int = 0;
-        // SAFETY: `self.0` is live; `diff` is a stack out-param.
-        if unsafe { lsquic_engine_earliest_adv_tick(self.0, core::ptr::from_mut(&mut diff)) } != 0 {
-            Some(diff)
-        } else {
-            None
-        }
-    }
-
-    /// # Safety
-    /// `local`/`peer` must point to valid sockaddrs for the duration of the
-    /// call; `peer_ctx`/`conn_ctx` must stay valid for the connection's life.
-    #[allow(clippy::too_many_arguments)]
-    pub unsafe fn connect(
-        &self,
-        local: *const sockaddr,
-        peer: *const sockaddr,
-        peer_ctx: *mut c_void,
-        conn_ctx: *mut c_void,
-        sni: Option<&[u8]>,
-        sess_resume: Option<&[u8]>,
-        token: Option<&[u8]>,
-    ) -> Option<Conn> {
-        // SAFETY: `self.0` is live; the sockaddrs/peer_ctx/conn_ctx are
-        // caller-guaranteed valid for this call. lsquic copies sni/sess/token.
-        let raw = unsafe {
-            lsquic_engine_connect(
-                self.0,
-                N_LSQVER,
-                local,
-                peer,
-                peer_ctx,
-                conn_ctx,
-                sni.map_or(core::ptr::null(), |s| s.as_ptr().cast()),
-                0,
-                sess_resume.map_or(core::ptr::null(), |s| s.as_ptr()),
-                sess_resume.map_or(0, |s| s.len()),
-                token.map_or(core::ptr::null(), |t| t.as_ptr()),
-                token.map_or(0, |t| t.len()),
-            )
-        };
-        (!raw.is_null()).then_some(Conn(raw))
-    }
-
-    pub fn raw(&self) -> *mut lsquic_engine {
-        self.0
-    }
-}
-
-impl Drop for Engine {
-    fn drop(&mut self) {
-        // SAFETY: `self.0` was returned by `us_nq_engine_new` and not freed.
-        unsafe { lsquic_engine_destroy(self.0) }
-    }
-}
-
 /// Borrowed `lsquic_conn_t`. lsquic owns the conn and frees it after
 /// `on_conn_closed` returns; callers must not hold a `Conn` past that point.
 #[derive(Copy, Clone)]
@@ -494,9 +388,6 @@ impl Conn {
     /// value (i.e. until `on_conn_closed` returns for it).
     pub unsafe fn from_raw(raw: *mut lsquic_conn) -> Option<Self> {
         (!raw.is_null()).then_some(Self(raw))
-    }
-    pub fn raw(&self) -> *mut lsquic_conn {
-        self.0
     }
     pub fn close(&self) {
         // SAFETY: `self.0` is live (caller contract).
@@ -532,16 +423,6 @@ impl Conn {
             v => Some(v != 0),
         }
     }
-    /// # Safety
-    /// `ctx` must outlive the connection (lsquic stores it verbatim).
-    pub unsafe fn set_ctx(&self, ctx: *mut c_void) {
-        // SAFETY: as above.
-        unsafe { lsquic_conn_set_ctx(self.0, ctx) }
-    }
-    pub fn ctx(&self) -> *mut c_void {
-        // SAFETY: as above.
-        unsafe { lsquic_conn_get_ctx(self.0) }
-    }
     pub fn make_stream(&self) {
         // SAFETY: as above.
         unsafe { lsquic_conn_make_stream(self.0) }
@@ -549,10 +430,6 @@ impl Conn {
     pub fn make_uni_stream(&self) {
         // SAFETY: as above.
         unsafe { lsquic_conn_make_uni_stream(self.0) }
-    }
-    pub fn n_avail_streams(&self) -> u32 {
-        // SAFETY: as above.
-        unsafe { lsquic_conn_n_avail_streams(self.0) }
     }
     pub fn want_datagram_write(&self, want: bool) -> c_int {
         // SAFETY: as above.
@@ -610,27 +487,6 @@ impl Conn {
     pub fn ssl(&self) -> *mut c_void {
         // SAFETY: as above.
         unsafe { lsquic_conn_get_ssl(self.0) }
-    }
-    pub fn sockaddr(&self) -> Option<(*const sockaddr, *const sockaddr)> {
-        let mut local: *const sockaddr = core::ptr::null();
-        let mut peer: *const sockaddr = core::ptr::null();
-        // SAFETY: as above; out-params are stack slots.
-        if unsafe {
-            lsquic_conn_get_sockaddr(
-                self.0,
-                core::ptr::from_mut(&mut local),
-                core::ptr::from_mut(&mut peer),
-            )
-        } == 0
-        {
-            Some((local, peer))
-        } else {
-            None
-        }
-    }
-    pub fn status(&self, buf: &mut [c_char]) -> c_int {
-        // SAFETY: as above; `buf` is a live slice.
-        unsafe { lsquic_conn_status(self.0, buf.as_mut_ptr(), buf.len()) }
     }
 }
 
@@ -816,7 +672,7 @@ impl HeaderSet {
         // SAFETY: the shim guarantees `p[..len]` is valid until free.
         let bytes = unsafe { core::slice::from_raw_parts(p.cast::<u8>(), len) };
         let bytes = bytes.strip_suffix(&[0u8][..]).unwrap_or(bytes);
-        bytes.split(|&b| b == 0).map(<[u8]>::to_vec).collect()
+        strings::split(bytes, b"\0").map(<[u8]>::to_vec).collect()
     }
 }
 
@@ -826,16 +682,6 @@ impl Drop for HeaderSet {
         // freed (lsquic transferred ownership).
         unsafe { us_nq_hset_free(self.0) }
     }
-}
-
-pub fn global_init() {
-    // SAFETY: pure library init.
-    unsafe { lsquic_global_init(LSQUIC_GLOBAL_CLIENT | LSQUIC_GLOBAL_SERVER) };
-}
-
-pub fn enable_logging(level: &core::ffi::CStr) {
-    // SAFETY: `level` is a NUL-terminated string.
-    unsafe { us_nq_enable_logging(level.as_ptr()) }
 }
 
 /// Mirrors `struct lsquic_conn_info` (lsquic.h).
@@ -895,7 +741,7 @@ pub const MAX_CID_LEN: usize = 20;
 
 impl NqTransportParams {
     fn cid_str(buf: &[u8; 2 * MAX_CID_LEN + 1]) -> &str {
-        let nul = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+        let nul = strings::index_of_char_usize(buf, 0).unwrap_or(buf.len());
         core::str::from_utf8(&buf[..nul]).unwrap_or("")
     }
     pub fn initial_scid_str(&self) -> &str {

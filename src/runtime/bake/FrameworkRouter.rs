@@ -70,11 +70,11 @@ pub struct FrameworkRouter {
     pub(crate) pattern_string_arena: Arena,
 }
 
-pub type StaticRouteMap = StringArrayHashMap<RouteIndex>;
-pub type DynamicRouteMap = ArrayHashMap<EncodedPattern, RouteIndex, EffectiveUrlContext>;
+pub(crate) type StaticRouteMap = StringArrayHashMap<RouteIndex>;
+pub(crate) type DynamicRouteMap = ArrayHashMap<EncodedPattern, RouteIndex, EffectiveUrlContext>;
 
 /// A logical route, for which layouts are looked up on after resolving a route.
-pub struct Route {
+pub(crate) struct Route {
     // Payload bytes borrow from the sibling `pattern_string_arena` field — a
     // self-referential borrow Rust lifetimes cannot express, so it is detached
     // to `'static` via `to_owned_part()` at insertion. See `to_owned_part` for
@@ -114,6 +114,16 @@ pub enum FileKind {
     #[strum(serialize = "layout")]
     Layout,
     // NotFound,
+}
+
+impl FileKind {
+    /// The noun in "Multiple {} matching the same route pattern is ambiguous".
+    pub(crate) fn collision_noun(self) -> &'static str {
+        match self {
+            FileKind::Page => "pages",
+            FileKind::Layout => "layout",
+        }
+    }
 }
 
 pub enum RouteMarker {}
@@ -229,7 +239,7 @@ impl FrameworkRouter {
 /// as a string, while easily decodable as []Part.
 // Copy: bitwise OK — `data` borrows from `pattern_string_arena`; the arena owns it.
 #[derive(Copy, Clone)]
-pub struct EncodedPattern {
+pub(crate) struct EncodedPattern {
     // ARENA: backed by `pattern_string_arena` (arena owns the bytes; outlives
     // every `EncodedPattern` — see `RawSlice` invariant in `bun_ptr`).
     pub(crate) data: bun_ptr::RawSlice<u8>,
@@ -418,7 +428,7 @@ impl<'a> Iterator for EncodedPatternIterator<'a> {
 
 /// Hash context for DynamicRouteMap — hashes/compares by effective URL.
 #[derive(Default, Clone, Copy)]
-pub struct EffectiveUrlContext;
+pub(crate) struct EffectiveUrlContext;
 impl ArrayHashContext<EncodedPattern> for EffectiveUrlContext {
     fn hash(&self, p: &EncodedPattern) -> u32 {
         p.effective_url_hash() as u32 // @truncate
@@ -802,7 +812,7 @@ impl Style {
             NextRoutingConvention::Pages => b"[",
             NextRoutingConvention::App => b"[(@",
         };
-        while let Some(start) = strings::index_of_any_pos_comptime(route_segment, stop_chars, i) {
+        while let Some(start) = strings::index_of_any_pos(route_segment, stop_chars, i) {
             if matches!(CONVENTIONS, NextRoutingConvention::Pages) || route_segment[start] == b'[' {
                 let mut end = match strings::index_of_char_pos(route_segment, b']', start + 1) {
                     Some(e) => e,
@@ -914,7 +924,7 @@ impl Style {
                 }
 
                 let between = &route_segment[i..start];
-                for part in between.split(|b| *b == b'/').filter(|s| !s.is_empty()) {
+                for part in strings::tokenize(between, b"/") {
                     parts.push(Part::Text(part));
                 }
                 parts.push(if is_optional {
@@ -968,7 +978,7 @@ impl Style {
                 }
 
                 let between = &route_segment[i..start];
-                for part in between.split(|b| *b == b'/').filter(|s| !s.is_empty()) {
+                for part in strings::tokenize(between, b"/") {
                     parts.push(Part::Text(part));
                 }
                 parts.push(Part::Group(group_name));
@@ -990,10 +1000,7 @@ impl Style {
             }
         }
         if !route_segment[i..].is_empty() {
-            for part in route_segment[i..]
-                .split(|b| *b == b'/')
-                .filter(|s| !s.is_empty())
-            {
+            for part in strings::tokenize(&route_segment[i..], b"/") {
                 parts.push(Part::Text(part));
             }
         }

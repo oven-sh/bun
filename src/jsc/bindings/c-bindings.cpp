@@ -3,6 +3,7 @@
 #include <cstdio>
 
 #if !OS(WINDOWS)
+#include <wtf/WTFConfig.h>
 #include <sys/resource.h>
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -207,11 +208,8 @@ extern "C" size_t Bun__memoryFootprint()
 #if OS(WINDOWS)
 #define MS_PER_SEC 1000ULL // MS = milliseconds
 #define US_PER_MS 1000ULL // US = microseconds
-#define HNS_PER_US 10ULL // HNS = hundred-nanoseconds (e.g., 1 hns = 100 ns)
-#define NS_PER_US 1000ULL
+#define NS_PER_US 1000ULL // NS = nanoseconds
 
-#define HNS_PER_SEC (MS_PER_SEC * US_PER_MS * HNS_PER_US)
-#define NS_PER_HNS (100ULL) // NS = nanoseconds
 #define NS_PER_SEC (MS_PER_SEC * US_PER_MS * NS_PER_US)
 
 extern "C" void clock_gettime_monotonic(int64_t* tv_sec, int64_t* tv_nsec)
@@ -283,6 +281,10 @@ extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigne
 }
 #endif
 
+#endif // OS(LINUX) || OS(FREEBSD)
+
+#if !OS(WINDOWS)
+
 static void unset_cloexec(int fd)
 {
     int flags = fcntl(fd, F_GETFD, 0);
@@ -293,24 +295,60 @@ static void unset_cloexec(int fd)
     fcntl(fd, F_SETFD, flags);
 }
 
-extern "C" void on_before_reload_process_linux()
+extern "C" void on_before_reload_process_posix()
 {
     unset_cloexec(STDIN_FILENO);
     unset_cloexec(STDOUT_FILENO);
     unset_cloexec(STDERR_FILENO);
 
+#if OS(LINUX) || OS(FREEBSD)
     // close all file descriptors except stdin, stdout, stderr and possibly IPC.
     // if you're passing additional file descriptors to Bun, you're probably not passing more than 8.
     // If this fails, it's ultimately okay, we're just trying our best to avoid leaking file descriptors.
     bun_close_range(3, ~0U, CLOSE_RANGE_CLOEXEC);
+#endif
 
-    // reset all signals to default
+    // Preserve the IPC channel to the parent across the execve: NODE_CHANNEL_FD survives in
+    // environ and the reloaded image re-attaches to it; CLOEXEC'd, the parent stops receiving
+    // 'message' events after the first reload.
+    if (const char* s = getenv("NODE_CHANNEL_FD")) {
+        char* end = nullptr;
+        long fd = strtol(s, &end, 10);
+        if (end != s && *end == '\0' && fd >= 3 && fd <= INT_MAX)
+            unset_cloexec(static_cast<int>(fd));
+    }
+
+    // Reset caught dispositions so a SIGTERM arriving between here and execve isn't queued-then-
+    // lost. Inherited SIG_IGN is left alone. SIGSEGV/SIGBUS/RT/sigThreadSuspendResume are left
+    // for execve to reset atomically — resetting them here races JSC's sampler/GC threads fatally.
+    struct sigaction sa {};
+    sa.sa_handler = SIG_DFL;
+    sigemptyset(&sa.sa_mask);
+    for (int s = 1; s < NSIG; s++) {
+        if (s == SIGKILL || s == SIGSTOP || s == SIGSEGV || s == SIGBUS)
+            continue;
+#if OS(LINUX)
+        if (s == g_wtfConfig.sigThreadSuspendResume)
+            continue;
+#endif
+#ifdef SIGRTMIN
+        if (s >= SIGRTMIN)
+            break;
+#endif
+        struct sigaction old {};
+        if (sigaction(s, nullptr, &old) != 0)
+            continue;
+        if (old.sa_handler == SIG_IGN || old.sa_handler == SIG_DFL)
+            continue;
+        sigaction(s, &sa, nullptr);
+    }
+
     sigset_t signal_set;
     sigemptyset(&signal_set);
     sigprocmask(SIG_SETMASK, &signal_set, nullptr);
 }
 
-#endif
+#endif // !OS(WINDOWS)
 
 #define LSHPACK_MAX_HEADER_SIZE 65536
 

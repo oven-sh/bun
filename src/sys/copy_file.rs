@@ -10,6 +10,8 @@ use crate::E;
 use crate::Fd;
 #[cfg(not(any(target_os = "linux", target_os = "android")))]
 use crate::Tag;
+#[cfg(not(windows))]
+use bun_core::vec::UninitBuf;
 
 // `declare_scope!` uses the ident as both static name AND tag string, but
 // `copy_file` would shadow `pub fn copy_file()` below. Hand-expand with the
@@ -433,8 +435,9 @@ pub(crate) fn copy_file_range(
 
 #[cfg(not(windows))]
 pub(crate) fn copy_file_read_write_loop(in_: fd_t, out: fd_t, len: usize) -> crate::Result<usize> {
-    // PERF: 32 KiB stack buffer is zero-initialized — profile if it shows up on a hot path
-    let mut buf = [0u8; 8 * 4096];
+    let mut stack_buf = UninitBuf::<{ 8 * 4096 }>::uninit();
+    // SAFETY: `read` below is the only writer of `buf`; only `buf[..amt_read]` is read back.
+    let buf = unsafe { stack_buf.as_bytes_mut() };
     let adjusted_count = buf.len().min(len);
     match crate::read(Fd::from_native(in_ as _), &mut buf[0..adjusted_count]) {
         Ok(amt_read) => {
@@ -463,12 +466,10 @@ pub(crate) fn copy_file_read_write_loop(in_: fd_t, out: fd_t, len: usize) -> cra
     }
 }
 
-/// `Platform.kernelVersion().orderWithoutTag(.{ major, minor }).compare(.gte)`.
-/// `bun_analytics::generate_header::Platform` (T6) is the canonical
-/// source; T1 routes through `bun_core::linux_kernel_version()` (TYPE_ONLY
-/// move-down) so this crate stays leaf. Compare is
-/// lexicographic on major→minor→patch,
-/// with patch defaulting to 0 in the comparand.
+/// Same probe as `bun_analytics::generate_header::generate_platform::kernel_version()`,
+/// routed through `bun_core::linux_kernel_version()` so this crate stays leaf.
+/// Compare is lexicographic on major→minor→patch, with patch defaulting to 0
+/// in the comparand.
 #[inline]
 fn kernel_at_least(major: u32, minor: u32) -> bool {
     let v = bun_core::linux_kernel_version();

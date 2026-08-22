@@ -175,7 +175,6 @@ pub enum Family {
     Unspecified,
     Inet,
     Inet6,
-    Unix,
 }
 
 bun_core::comptime_string_map! {
@@ -194,7 +193,6 @@ impl Family {
             Family::Unspecified => 0,
             Family::Inet => sock::AF_INET,
             Family::Inet6 => sock::AF_INET6,
-            Family::Unix => sock::AF_UNIX,
         }
     }
 }
@@ -288,12 +286,6 @@ impl Backend {
     #[cfg(all(not(any(target_os = "macos", windows)), not(target_os = "android")))]
     pub const fn default() -> Backend {
         Backend::CAres
-    }
-}
-
-impl Default for Backend {
-    fn default() -> Self {
-        Backend::default()
     }
 }
 

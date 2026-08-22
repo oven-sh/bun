@@ -2,7 +2,7 @@
 #
 # The analysis targets the shipped surface: a release-profile compile of the
 # workspace for each of the 11 targets Bun ships, unioned so an item used on
-# any platform is treated as live. `bun_bin` is analyzed through a throwaway
+# any platform is treated as live. `bun_runtime` is analyzed through a throwaway
 # `bun_hawk_root` bin (see tools/hawk/); the real reachability roots are the
 # #[no_mangle] exports, which Hawk pins automatically.
 
@@ -33,7 +33,7 @@ cargo-profile = "release"
 package = "bun_semver"
 
 [[production]]
-package = "bun_bin"
+package = "bun_runtime"
 bin = "bun_hawk_root"
 reason = "throwaway analysis root; real roots are the #[no_mangle] exports"
 
@@ -451,54 +451,6 @@ item = "weak::WeakRefType::PostgreSQLQueryClient"
 kind = "enum_variant"
 level = "expect"
 reason = "external code table: weak-ref type numbering shared with JSC"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_platform"
-item = "darwin::Category::PointsOfInterest"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: OSLog signpost category values"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_platform"
-item = "darwin::Category::Dynamicity"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: OSLog signpost category values"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_platform"
-item = "darwin::Category::SizeAndThroughput"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: OSLog signpost category values"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_platform"
-item = "darwin::Category::TimeProfile"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: OSLog signpost category values"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_platform"
-item = "darwin::Category::SystemReporting"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: OSLog signpost category values"
-
-[[override]]
-lint = "hawk::dead_public"
-crate = "bun_platform"
-item = "darwin::Category::UserCustom"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: OSLog signpost category values"
 
 [[override]]
 lint = "hawk::dead_public"

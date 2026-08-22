@@ -19,8 +19,6 @@ const {
 
 // ---- internal/util ----------------------------------------------------
 
-const { kEmptyObject } = require("internal/shared");
-
 // Node's real implementation reconstructs the regex in an internal realm so a
 // tampered `RegExp.prototype[Symbol.replace]` can't observe it. Bun has no
 // internal realm; the load-time-captured intrinsics close the `[Symbol.*]`
@@ -111,31 +109,12 @@ function has() {
   return true;
 }
 
-// ---- internal/streams/utils ----------------------------------------------
-
-function isWritable(stream) {
-  return typeof stream?.write === "function";
-}
-
-// ---- internal/events/abort_listener ----------------------------------------------
-
-const { addAbortListener } = require("internal/abort_listener");
-
 // ---- internal/bootstrap/realm ----------------------------------------------
 
 const BuiltinModule = {
   getSchemeOnlyModuleNames() {
     // Bare names; completion.js prefixes them with "node:" itself.
     return ["test"];
-  },
-  exists(id) {
-    return Module.isBuiltin(id);
-  },
-  canBeRequiredByUsers(id) {
-    return Module.isBuiltin(id);
-  },
-  canBeRequiredWithoutScheme(id) {
-    return Module.isBuiltin(id) && Module.isBuiltin("node:" + id);
   },
 };
 
@@ -271,10 +250,6 @@ function makeContextifyScript(
   });
 }
 
-function runScriptInThisContext(script, displayErrors, _breakOnFirstLine) {
-  return script.runInThisContext({ displayErrors });
-}
-
 // ---- internal/modules/cjs/loader (constructible Module shim) ----------------
 
 class CJSModuleShim {
@@ -324,9 +299,7 @@ function stopSigintWatchdog() {
 // ---- internalBinding('util') ----------------------------------------------
 
 const ALL_PROPERTIES = 0;
-const ONLY_WRITABLE = 1;
 const ONLY_ENUMERABLE = 2;
-const ONLY_CONFIGURABLE = 4;
 const SKIP_STRINGS = 8;
 const SKIP_SYMBOLS = 16;
 
@@ -406,10 +379,6 @@ export default {
   // internalBinding('util')
   constants: {
     ALL_PROPERTIES,
-    ONLY_WRITABLE,
-    ONLY_ENUMERABLE,
-    ONLY_CONFIGURABLE,
-    SKIP_STRINGS,
     SKIP_SYMBOLS,
   },
   getOwnNonIndexProperties,
@@ -419,8 +388,6 @@ export default {
   decorateErrorStack,
   deprecate: util.deprecate,
   isError,
-  kEmptyObject,
-  promisify: util.promisify,
   // internal/util/colors
   shouldColorize,
   // internal/util/debuglog
@@ -434,10 +401,6 @@ export default {
   // internal/process/permission (consumed as a namespace: permission.isEnabled())
   isEnabled,
   has,
-  // internal/streams/utils
-  isWritable,
-  // internal/events/abort_listener
-  addAbortListener,
   // internal/bootstrap/realm
   BuiltinModule,
   // internal/modules/esm/get_format
@@ -452,5 +415,4 @@ export default {
   makeRequireFunction,
   // internal/vm
   makeContextifyScript,
-  runScriptInThisContext,
 };

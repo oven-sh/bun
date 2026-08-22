@@ -776,12 +776,6 @@
     "musl": 71,
     "windows": 164
   },
-  "cli/feedback.test.ts": {
-    "default": 161,
-    "asan": 598,
-    "musl": 105,
-    "windows": 375
-  },
   "cli/heap-prof.test.ts": {
     "default": 102,
     "asan": 1011,
@@ -1875,7 +1869,7 @@
     "musl": 0,
     "windows": 0
   },
-  "js/bun/bun-object/deep-equals.spec.ts": {
+  "js/bun/bun-object/deep-equals.test.ts": {
     "default": 0,
     "asan": 20,
     "musl": 0,

@@ -1,3 +1,4 @@
+use crate::RawSlice;
 use crate::string::ZigStringSlice;
 use crate::strings;
 
@@ -34,7 +35,6 @@ impl WTFStringImplExt for WTFStringImplStruct {
     #[inline]
     fn to_latin1_slice(&self) -> ZigStringSlice {
         self.r#ref();
-        let s = self.latin1_slice();
         // ZigStringSlice::WTF derefs `self` on Drop.
         // SAFETY: `self` is a live WTF::StringImpl with refcount just bumped above;
         // we store only a `*const` (never materialize `&mut`) and the matching
@@ -42,8 +42,7 @@ impl WTFStringImplExt for WTFStringImplStruct {
         // interior mutability, same as `r#ref`/`deref` already rely on.
         ZigStringSlice::WTF {
             string_impl: std::ptr::from_ref::<Self>(self),
-            ptr: s.as_ptr(),
-            len: s.len(),
+            bytes: RawSlice::new(self.latin1_slice()),
         }
     }
 
@@ -89,11 +88,9 @@ impl WTFStringImplExt for WTFStringImplStruct {
             }
 
             // All-ASCII Latin-1: borrow the impl's own bytes, no refcount bump.
-            let s = self.latin1_slice();
             return ZigStringSlice::WtfBorrowed {
                 string_impl: std::ptr::from_ref::<Self>(self),
-                ptr: s.as_ptr(),
-                len: s.len(),
+                bytes: RawSlice::new(self.latin1_slice()),
             };
         }
 

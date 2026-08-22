@@ -219,7 +219,6 @@ impl Kind {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum IoKind {
-    Stdin,
     Stdout,
     Stderr,
 }
@@ -370,7 +369,7 @@ impl BuiltinIO {
                 unsafe {
                     let captured = match *target {
                         IoKind::Stdout => (*shell).buffered_stdout(),
-                        IoKind::Stderr | IoKind::Stdin => (*shell).buffered_stderr(),
+                        IoKind::Stderr => (*shell).buffered_stderr(),
                     };
                     (*captured).append_slice(buf)
                 };
@@ -450,6 +449,23 @@ impl Builtin {
     #[inline]
     pub(crate) fn args_slice(&self) -> &[*const c_char] {
         &self.args
+    }
+
+    /// `PinnedArrayBuf::drop`'s unpin would write to a `JSC::ArrayBuffer`
+    /// impl the heap sweep already deleted; see
+    /// `ShellSubprocess::defuse_array_buffer_unpins`. VM-shutdown finalizer
+    /// only.
+    #[cfg(not(windows))]
+    pub(crate) fn defuse_array_buf_pins(&mut self) {
+        if let BuiltinInput::ArrayBuf { buf, .. } = &mut self.stdin {
+            buf.pinned = false;
+        }
+        if let BuiltinIO::ArrayBuf { buf, .. } = &mut self.stdout {
+            buf.pinned = false;
+        }
+        if let BuiltinIO::ArrayBuf { buf, .. } = &mut self.stderr {
+            buf.pinned = false;
+        }
     }
 
     /// Borrow `argv[1..][idx]` as `&[u8]` (NUL excluded).
@@ -908,7 +924,6 @@ impl Builtin {
         let out: &mut BuiltinIO = match io_kind {
             IoKind::Stdout => &mut me.stdout,
             IoKind::Stderr => &mut me.stderr,
-            IoKind::Stdin => return Ok(0),
         };
         // SAFETY: `shell` is `cmd_node.base.shell`, live for the Cmd's lifetime.
         unsafe { out.write_no_io_to(shell, buf) }

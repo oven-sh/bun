@@ -82,8 +82,8 @@ use bun_s3_signing::{SignOptions, SignResult};
 use bun_url::PercentEncoding;
 use bun_url::URL as ZigURL;
 
-pub use self::fetch_tasklet::FetchTasklet;
 use self::fetch_tasklet::{FetchOptions, HTTPRequestBody};
+pub use self::fetch_tasklet::{FetchTasklet, FetchTaskletDeinitHop};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Local extension shims (upstream methods not yet ported / not in scope)
@@ -349,10 +349,15 @@ fn reject_on_exception(
 ) -> JsResult<JSValue> {
     let err = match result {
         Ok(v) if !v.is_empty() => return Ok(v),
-        Err(jsc::JsError::Terminated) => return Err(jsc::JsError::Terminated),
         Err(jsc::JsError::OutOfMemory) => global_this.create_out_of_memory_error(),
+        // A terminated worker gets no rejected promise: its termination keeps unwinding.
+        Ok(_) | Err(jsc::JsError::Thrown | jsc::JsError::Terminated)
+            if global_this.has_pending_termination_exception() =>
+        {
+            return Err(jsc::JsError::Thrown);
+        }
+        Err(jsc::JsError::Terminated) => return Err(jsc::JsError::Terminated),
         Ok(_) | Err(jsc::JsError::Thrown) => match global_this.try_take_exception() {
-            Some(exc) if exc.is_termination_exception() => return Err(jsc::JsError::Terminated),
             Some(exc) => exc.to_error().unwrap_or(exc),
             None => {
                 // `fetch_impl` only returns Ok(ZERO)/Err(Thrown) with an exception
@@ -643,8 +648,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // "decompress: boolean"
     disable_decompression = 'extract_disable_decompression: {
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
 
         for obj in objects_to_try {
@@ -673,8 +678,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // "compress: boolean | string | { encoding, level? }"
     'extract_compress: {
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
 
         for obj in objects_to_try {
@@ -700,8 +705,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // "maxRedirects: number"
     'extract_max_redirects: {
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
 
         for obj in objects_to_try {
@@ -738,8 +743,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // "tls: TLSConfig"
     ssl_config = 'extract_ssl_config: {
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
 
         for obj in objects_to_try {
@@ -795,8 +800,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // unix: string | undefined
     unix_socket_path = 'extract_unix_socket_path: {
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
 
         for obj in objects_to_try {
@@ -822,8 +827,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // protocol: "http2" | "h2" | "http1.1" | "h1" | undefined.
     'extract_protocol: {
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
         for obj in objects_to_try {
             if !obj.is_empty() {
@@ -852,8 +857,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // timeout: false | number | undefined
     disable_timeout = 'extract_disable_timeout: {
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
 
         for obj in objects_to_try {
@@ -903,8 +908,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         // Then check options/init objects which can override the Request's redirect
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
 
         for obj in objects_to_try {
@@ -931,8 +936,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // keepalive: boolean | undefined;
     disable_keepalive = 'extract_disable_keepalive: {
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
 
         for obj in objects_to_try {
@@ -961,8 +966,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // verbose: boolean | "curl" | undefined;
     verbose = 'extract_verbose: {
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
 
         for obj in objects_to_try {
@@ -994,8 +999,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // `defer if (proxy_headers) |*hdrs| hdrs.deinit();` → Headers impls Drop.
     url_proxy_buffer = 'extract_proxy: {
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
         for obj in objects_to_try {
             if !obj.is_empty() {
@@ -1157,7 +1162,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
 
         if let Some(req) = request_mut!() {
-            if let Some(signal_) = req.signal.get() {
+            if let Some(signal_) = req.abort_signal() {
                 break 'extract_signal NonNull::new(signal_.ref_());
             }
             break 'extract_signal None;
@@ -1238,7 +1243,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
 
             if matches!(*body_value, BodyValue::Locked(_)) {
-                if let Some(readable) = req.get_body_readable_stream(global_this) {
+                if let Some(readable) = req.get_body_readable_stream() {
                     if readable.is_disturbed(global_this) || readable.is_locked(global_this) {
                         return Err(global_this
                             .err(
@@ -1256,7 +1261,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     if locked.readable.has() {
                         break 'extract_body Some(HTTPRequestBody::ReadableStream(
                             readable_stream::Strong::init(
-                                locked.readable.get(global_this).unwrap(),
+                                locked.readable.get().unwrap(),
                                 global_this,
                             ),
                         ));
@@ -1268,7 +1273,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         if locked.readable.has() {
                             break 'extract_body Some(HTTPRequestBody::ReadableStream(
                                 readable_stream::Strong::init(
-                                    locked.readable.get(global_this).unwrap(),
+                                    locked.readable.get().unwrap(),
                                     global_this,
                                 ),
                             ));
@@ -1626,8 +1631,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         if sig.aborted() {
             let reason = sig.js_reason(global_this);
             if let HTTPRequestBody::ReadableStream(stream_ref) = &body {
-                if let Some(stream) = stream_ref.get(global_this) {
-                    stream.cancel_with_reason(global_this, reason);
+                if let Some(stream) = stream_ref.get() {
+                    stream.cancel_with_reason(global_this, reason)?;
                 }
             }
             body.detach();
@@ -1949,7 +1954,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             let _ = s3::upload_stream(
                 credentials_with_options.credentials.dupe(),
                 s3_path,
-                readable_stream.get(global_this).unwrap(),
+                readable_stream.get().unwrap(),
                 global_this,
                 credentials_with_options.options,
                 credentials_with_options.acl,
@@ -2082,7 +2087,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         proxy_headers: proxy_headers.take(),
         url_proxy_buffer: url_proxy_boxed,
         signal: signal.take(),
-        global_this: Some(global_this.into()),
         ssl_config: ssl_config.take(),
         hostname: hostname.take(),
         upgraded_connection,
@@ -2126,7 +2130,7 @@ struct S3StreamWrapper<'a> {
 }
 
 impl<'a> S3StreamWrapper<'a> {
-    fn resolve(result: s3::S3UploadResult, self_: *mut Self) -> Result<(), bun_jsc::JsTerminated> {
+    fn resolve(result: s3::S3UploadResult, self_: *mut Self) -> JsResult<()> {
         // SAFETY: self_ was created via heap::alloc in fetch_impl; we reclaim
         // ownership here exactly once on the resolve callback.
         let mut self_ = unsafe { bun_core::heap::take(self_) };

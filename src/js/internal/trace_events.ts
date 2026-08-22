@@ -843,7 +843,6 @@ export default {
   trace,
   initFromCli,
   setFilePattern,
-  setTid,
   emitWorkerThreadName,
   inspectorStart,
   inspectorStop,

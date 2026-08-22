@@ -59,7 +59,9 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         this->state &= ~HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
 
         HttpResponseData<SSL> *httpResponseData = uwsRes->getHttpResponseData();
-        httpResponseData->isIdle = true;
+        /* A queued pipelined response (node:http) still owes output on this
+         * connection, so it is not idle between the responses. */
+        httpResponseData->isIdle = httpResponseData->nodeHttpQueuedPipelinedCount == 0;
     }
 
     /* Caller of onWritable. It is possible onWritable calls markDone so we need to borrow it. */
@@ -143,13 +145,19 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
          * into the shared word so the shared response-end path (internalEnd) never
          * has to touch the node-only field. */
         HTTP_NODE_HAS_RESPONSE_TRAILERS = 1 << 16,
+        /* Close this connection the next time it is idle (no request being
+         * received, no response in flight or queued). Set by
+         * App::closeIdle(true) on connections that were busy during a graceful
+         * shutdown sweep; the shouldCloseConnection() gates act on it once the
+         * in-flight work completes. */
+        HTTP_CLOSE_WHEN_IDLE = 1 << 17,
 
         /* Bits that describe the connection rather than the response in flight.
          * There is one HttpResponseData per socket, reused by every request on a
          * keep-alive connection, so starting a new response clears the rest of the
          * word (resetResponseState) - these have to survive that. */
         HTTP_CONNECTION_SCOPED = HTTP_NODE_PARSING_STOPPED | HTTP_NODE_READS_PAUSED
-            | HTTP_NODE_TUNNEL_AFTER_BODY | HTTP_NODE_RECEIVED_FIN,
+            | HTTP_NODE_TUNNEL_AFTER_BODY | HTTP_NODE_RECEIVED_FIN | HTTP_CLOSE_WHEN_IDLE,
     };
 
     /* Begin a new response on this connection. Clearing the word in one go is
@@ -158,6 +166,9 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
      * keep-alive socket; only the connection-scoped bits are carried over. */
     void resetResponseState() {
         state = (state & HTTP_CONNECTION_SCOPED) | HTTP_RESPONSE_PENDING;
+        /* A response is in flight again (a new request dispatched, or a queued
+         * pipelined response activated), so the connection is not idle. */
+        this->isIdle = false;
     }
 
     /* Set or clear a flag from a runtime bool. */
@@ -214,7 +225,8 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
      * any) has completed and all buffered outgoing data has been flushed. */
     bool shouldCloseConnection() const {
         return (state & HTTP_CONNECTION_CLOSE)
-            || ((state & HTTP_NODE_RECEIVED_FIN) && nodeHttpQueuedPipelinedCount == 0);
+            || ((state & HTTP_NODE_RECEIVED_FIN) && nodeHttpQueuedPipelinedCount == 0)
+            || ((state & HTTP_CLOSE_WHEN_IDLE) && this->isIdle);
     }
 
 #ifdef UWS_WITH_PROXY

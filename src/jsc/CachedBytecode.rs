@@ -129,13 +129,13 @@ impl bun_alloc::Allocator for CachedBytecode {}
 /// Symbol is definer-prefixed (`__bun_jsc_*`) per LAYERING_AUDIT — the body is
 /// jsc-internal setup, not bundler logic.
 #[unsafe(no_mangle)]
-fn __bun_jsc_generate_cached_bytecode(
+pub(crate) fn __bun_jsc_generate_cached_bytecode(
     format: Format,
     source: &[u8],
     source_provider_url: &mut BunString,
 ) -> Option<Box<[u8]>> {
     crate::virtual_machine::IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE.set(true);
-    crate::initialize(false);
+    crate::initialize(crate::InitializeOptions::default());
     let (bytes, handle) = CachedBytecode::generate(format, source, source_provider_url)?;
     let owned = Box::<[u8]>::from(bytes);
     // `handle` was just produced by C++ and is valid until deref;

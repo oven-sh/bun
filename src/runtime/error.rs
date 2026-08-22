@@ -188,8 +188,6 @@ pub enum Error {
     InvalidSessionToken,
     #[error("SignError")]
     SignError,
-    #[error("JSTerminated")]
-    JSTerminated,
     #[error("failed to parse multipart data")]
     FailedToParseMultipartData,
     #[error("boundary is too long")]
@@ -362,8 +360,6 @@ pub enum Error {
     WatchFailed,
     #[error("Unsupported")]
     Unsupported,
-    #[error("ExceptionOcurred")]
-    ExceptionOcurred,
     #[error("EscapeCalledTwice")]
     EscapeCalledTwice,
     #[error("UnsupportedAlgorithm")]
@@ -463,8 +459,6 @@ pub enum Error {
     Sourcemap(#[from] bun_sourcemap::Error),
     #[error(transparent)]
     StandaloneGraph(#[from] bun_standalone_graph::Error),
-    #[error(transparent)]
-    TerminalInit(crate::api::bun_terminal_body::InitError),
     #[error("JSError")]
     Js(bun_jsc::JsError),
 }
@@ -525,13 +519,6 @@ impl From<bun_shell_parser::braces::ParserError> for Error {
     #[inline]
     fn from(e: bun_shell_parser::braces::ParserError) -> Self {
         Self::Shell(e.into())
-    }
-}
-
-impl From<bun_jsc::JsTerminated> for Error {
-    #[inline]
-    fn from(_: bun_jsc::JsTerminated) -> Self {
-        Self::JSTerminated
     }
 }
 
@@ -675,7 +662,6 @@ impl Error {
             Self::InvalidEndpoint => "InvalidEndpoint",
             Self::InvalidSessionToken => "InvalidSessionToken",
             Self::SignError => "SignError",
-            Self::JSTerminated => "JSTerminated",
             Self::FailedToParseMultipartData => "failed to parse multipart data",
             Self::BoundaryIsTooLong => "boundary is too long",
             Self::MissingFinalBoundary => "missing final boundary",
@@ -764,7 +750,6 @@ impl Error {
             Self::ChromeNotFound => "ChromeNotFound",
             Self::WatchFailed => "WatchFailed",
             Self::Unsupported => "Unsupported",
-            Self::ExceptionOcurred => "ExceptionOcurred",
             Self::EscapeCalledTwice => "EscapeCalledTwice",
             Self::UnsupportedAlgorithm => "UnsupportedAlgorithm",
             Self::PasswordVerificationFailed => "PasswordVerificationFailed",
@@ -814,7 +799,6 @@ impl Error {
             Self::JsPrinter(e) => e.name(),
             Self::Sourcemap(e) => e.name(),
             Self::StandaloneGraph(e) => e.name(),
-            Self::TerminalInit(e) => <&'static str>::from(e),
             Self::Js(bun_jsc::JsError::OutOfMemory) => "OutOfMemory",
             Self::Js(_) => "JSError",
         }

@@ -1,6 +1,6 @@
 import { heapStats } from "bun:jsc";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 
 // `wire_input`'s materialized-body path transfers the body's `+1` (a
 // `WTFStringImpl` for an all-ASCII `new Response("...")`) into an `AnyBlob`
@@ -622,6 +622,54 @@ test("never-settling handler promises with a realized body release their parked 
   expect(results.every(m => m.includes("will never settle"))).toBe(true);
   expect(after - before).toBeLessThan(N / 3);
 });
+
+// Abandoning a transform whose JS-pump input stream never closes makes the
+// Transform cell and the pump's sink controller garbage in the same GC cycle.
+// The controller's destructor dispatches `__controllerDetached`/`__finalize`
+// into the shared RewriterPipe, and cells sweep in unspecified order, so the
+// pipe must survive whichever cell dies first (unfixed: ASAN
+// heap-use-after-free in `js_controller_detached`, Sink.rs). Only ASAN builds
+// observe the stale read, so release lanes skip it.
+test.skipIf(!isASAN)(
+  "abandoned transforms over a never-closing JS stream survive GC sweep order",
+  async () => {
+    const code = /* js */ `
+      function once() {
+        const rs = new ReadableStream({
+          pull(c) {
+            c.enqueue(new TextEncoder().encode("<p>x</p>"));
+            return new Promise(() => {});
+          },
+        });
+        new HTMLRewriter().on("p", { element() {} }).transform(new Response(rs));
+      }
+      for (let round = 0; round < 10; round++) {
+        for (let i = 0; i < 150; i++) once();
+        await Bun.sleep(0);
+        Bun.gc(true);
+      }
+      console.log("done");
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(
+      stderr
+        .split("\n")
+        .filter(l => !l.startsWith("WARNING: ASAN"))
+        .join("\n")
+        .trim(),
+    ).toBe("");
+    expect(stdout.trim()).toBe("done");
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
 
 // Input-side sibling of the realized-body case: a `type: 'direct'` pull
 // parked on `await controller.flush(true)` holds a pending-flush promise

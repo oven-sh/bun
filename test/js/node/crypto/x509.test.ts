@@ -104,3 +104,57 @@ describe("X509Certificate.subjectAltName", () => {
     expect(cert.toLegacyObject().subjectaltname).toBe("");
   });
 });
+
+describe("X509Certificate.prototype property descriptors", () => {
+  // validFromDate/validToDate were registered as CustomAccessorOrValue instead of
+  // CustomAccessor, so reading their descriptors asserted in debug builds.
+  test("validFromDate and validToDate descriptors read like their siblings", () => {
+    const proto = X509Certificate.prototype;
+    for (const name of ["validFromDate", "validToDate", "validFrom", "validTo"] as const) {
+      const desc = Object.getOwnPropertyDescriptor(proto, name)!;
+      expect({ ...desc, get: typeof desc.get }).toEqual({
+        get: "function",
+        set: undefined,
+        enumerable: true,
+        configurable: true,
+      });
+    }
+
+    const all = Object.getOwnPropertyDescriptors(proto);
+    expect(typeof all.validFromDate.get).toBe("function");
+    expect(typeof all.validToDate.get).toBe("function");
+  });
+
+  test("extracted validFromDate/validToDate getters work on an instance", () => {
+    const cert = new X509Certificate(wildcardSanCertPem);
+    const getFrom = Object.getOwnPropertyDescriptor(X509Certificate.prototype, "validFromDate")!.get!;
+    const getTo = Object.getOwnPropertyDescriptor(X509Certificate.prototype, "validToDate")!.get!;
+    expect(getFrom.call(cert)).toBeInstanceOf(Date);
+    expect(getFrom.call(cert)).toEqual(cert.validFromDate);
+    expect(getTo.call(cert)).toEqual(cert.validToDate);
+  });
+});
+
+describe("X509Certificate with an empty subject/issuer DN", () => {
+  // Self-signed, `openssl req -x509 -subj "/"`: both names are empty sequences.
+  const emptyDN = `-----BEGIN CERTIFICATE-----
+MIIBVjCB/aADAgECAhQuLsSmUr9yJhK85A6fr6KJxbEtYDAKBggqhkjOPQQDAjAA
+MCAXDTI2MDgyMTA2NDgzOVoYDzIxMjYwNzI4MDY0ODM5WjAAMFkwEwYHKoZIzj0C
+AQYIKoZIzj0DAQcDQgAEGcl07hz+Ga1M2lw9m8AcNiT3BtxyF0Yd4LNbAecfbGTy
+frdyY7uFQMgDJFcSRpuGxCKVBtL1Ba4OvyyHzK5lAKNTMFEwHQYDVR0OBBYEFE8M
+P5LabG8GsdSx97we9lwExHqZMB8GA1UdIwQYMBaAFE8MP5LabG8GsdSx97we9lwE
+xHqZMA8GA1UdEwEB/wQFMAMBAf8wCgYIKoZIzj0EAwIDSAAwRQIgVfqEVOsOI/6d
+hkcWEa9g5HIqxKTzvSMRYn6eH6gefDYCIQCAl55J4qfVTELr1B5REAw5LFnQRBGN
+vKS1+tUUY19gsw==
+-----END CERTIFICATE-----`;
+
+  test("subject/issuer are undefined and toLegacyObject() does not throw (matches Node)", () => {
+    const cert = new X509Certificate(emptyDN);
+    expect(cert.subject).toBeUndefined();
+    expect(cert.issuer).toBeUndefined();
+    const legacy = cert.toLegacyObject();
+    expect(legacy.subject).toEqual({});
+    expect(legacy.issuer).toEqual({});
+    expect(cert.checkIssued(cert)).toBe(true);
+  });
+});

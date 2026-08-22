@@ -435,6 +435,7 @@ class GlobalTestWrapper {
 public:
   static void set(const FunctionCallbackInfo<Value> &info);
   static void get(const FunctionCallbackInfo<Value> &info);
+  static void store(Isolate *isolate, Local<Value> new_value);
   static void cleanup(void *unused);
 
 private:
@@ -463,7 +464,36 @@ void GlobalTestWrapper::get(const FunctionCallbackInfo<Value> &info) {
   }
 }
 
+void GlobalTestWrapper::store(Isolate *isolate, Local<Value> new_value) {
+  value.Reset(isolate, new_value);
+}
+
 void GlobalTestWrapper::cleanup(void *unused) { value.Reset(); }
+
+// Native data property whose getter returns the holder it was invoked on and
+// whose setter stores it where global_get() can read it, so JS can check what
+// receiver the accessor callbacks see for different ways of reaching them.
+static void holder_getter(Local<Name> property,
+                          const PropertyCallbackInfo<Value> &info) {
+  info.GetReturnValue().Set(info.HolderV2());
+}
+
+static void holder_setter(Local<Name> property, Local<Value> value,
+                          const PropertyCallbackInfo<void> &info) {
+  GlobalTestWrapper::store(info.GetIsolate(), info.HolderV2());
+}
+
+void create_object_with_holder_accessor(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  Local<ObjectTemplate> obj_t = ObjectTemplate::New(isolate);
+  obj_t->SetNativeDataProperty(String::NewFromUtf8Literal(isolate, "holder"),
+                               holder_getter, holder_setter);
+
+  info.GetReturnValue().Set(obj_t->NewInstance(context).ToLocalChecked());
+}
 
 void test_many_v8_locals(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
@@ -727,6 +757,99 @@ void test_v8_locals_survive_nested_call(
   Local<String>::Cast(kept)->WriteUtf8V2(isolate, buf, sizeof buf,
                                          String::WriteFlags::kNullTerminate);
   LOG_EXPR(buf);
+}
+
+// Regression tests: GetReturnValue().Set() copies the Local's value into the
+// callback frame, and V8 guarantees the returned value outlives any handle
+// scope that closes before the callback returns (the stock nan idiom opens a
+// HandleScope, materializes a persistent with Nan::New, and returns a local
+// made inside that scope). The inline grant forces the scope's inline
+// destructor to run DeleteExtensions.
+
+// Calls info[1] (the JS driver passes a function that forces GC under bun)
+// while the callback is still on the stack, after the inner scope already
+// closed: the preserved return value must stay GC-visited until the runtime
+// reads the callback frame.
+static void call_gc_callback(const FunctionCallbackInfo<Value> &info) {
+  if (info.Length() > 1 && info[1]->IsFunction()) {
+    Isolate *isolate = info.GetIsolate();
+    Local<Context> context = isolate->GetCurrentContext();
+    (void)info[1].As<Function>()->Call(context, Undefined(isolate), 0, nullptr);
+  }
+}
+
+void return_string_from_inner_scope(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  {
+    HandleScope hs(isolate);
+    Local<Value> grant = Local<Value>::New(isolate, info[0]);
+    (void)grant;
+    info.GetReturnValue().Set(
+        String::NewFromUtf8(isolate, "returned-from-inner-scope")
+            .ToLocalChecked());
+  }
+  call_gc_callback(info);
+}
+
+void return_heap_number_from_inner_scope(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  {
+    HandleScope hs(isolate);
+    Local<Value> grant = Local<Value>::New(isolate, info[0]);
+    (void)grant;
+    info.GetReturnValue().Set(Number::New(isolate, 3.25));
+  }
+  call_gc_callback(info);
+}
+
+// The return value must also survive runtime-internal scopes that pop while
+// the callback frame is live: Array::Iterate runs the iteration callback
+// inside one, and the element locals it passes are created there.
+void return_array_element_from_iterate(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  Local<Array> array = info[0].As<Array>();
+  (void)array->Iterate(
+      context,
+      [](uint32_t index, Local<Value> element, void *data) {
+        auto *outer = static_cast<const FunctionCallbackInfo<Value> *>(data);
+        if (index == 1) {
+          outer->GetReturnValue().Set(element);
+        }
+        return Array::CallbackResult::kContinue;
+      },
+      const_cast<void *>(static_cast<const void *>(&info)));
+  call_gc_callback(info);
+}
+
+static void inner_scope_native_getter(Local<Name> property,
+                                      const PropertyCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  HandleScope hs(isolate);
+  Local<Value> grant = Local<Value>::New(isolate, Local<Value>::Cast(property));
+  (void)grant;
+  info.GetReturnValue().Set(
+      String::NewFromUtf8(isolate, "accessor-from-inner-scope")
+          .ToLocalChecked());
+}
+
+// Same scenario through a native-data-property accessor's
+// PropertyCallbackInfo.
+void return_accessor_value_from_inner_scope(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  Local<FunctionTemplate> ctor_t = FunctionTemplate::New(isolate);
+  ctor_t->PrototypeTemplate()->SetNativeDataProperty(
+      String::NewFromUtf8Literal(isolate, "prop"), inner_scope_native_getter);
+  Local<Function> ctor = ctor_t->GetFunction(context).ToLocalChecked();
+  Local<Object> inst = ctor->NewInstance(context).ToLocalChecked();
+  Local<Value> value =
+      inst->Get(context, String::NewFromUtf8(isolate, "prop").ToLocalChecked())
+          .ToLocalChecked();
+  info.GetReturnValue().Set(value);
 }
 
 void test_uv_os_getpid(const FunctionCallbackInfo<Value> &info) {
@@ -1767,6 +1890,172 @@ void test_v8_cpu_profiler(const FunctionCallbackInfo<Value> &info) {
   return ok(info);
 }
 
+// @datadog/pprof's restart path (used by dd-trace on every upload cycle) starts
+// the next profile *before* stopping the current one, ignores the status, and
+// then calls Stop() with whatever id Start() handed back. Overlapping sessions
+// must therefore be accepted and each Stop() must return its own profile.
+void test_v8_cpu_profiler_overlapping_sessions(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+
+  CpuProfiler *profiler = CpuProfiler::New(isolate);
+  if (profiler == nullptr) {
+    return fail(info, "CpuProfiler::New returned null");
+  }
+  profiler->SetSamplingInterval(100);
+
+  auto busy = [] {
+    volatile double sink = 0;
+    for (int i = 0; i < 100000; i++) sink += i * 0.5;
+    (void)sink;
+  };
+
+  Local<String> title_a =
+      String::NewFromUtf8(isolate, "bun-v8-test-a").ToLocalChecked();
+  Local<String> title_b =
+      String::NewFromUtf8(isolate, "bun-v8-test-b").ToLocalChecked();
+
+  CpuProfilingResult a = profiler->Start(
+      title_a, kLeafNodeLineNumbers, true, CpuProfilingOptions::kNoSampleLimit);
+  LOG_EXPR((int)a.status);
+  busy();
+
+  // Second session while the first is still running.
+  CpuProfilingResult b = profiler->Start(
+      title_b, kLeafNodeLineNumbers, true, CpuProfilingOptions::kNoSampleLimit);
+  LOG_EXPR((int)b.status);
+  LOG_EXPR(a.id != b.id);
+
+  CpuProfile *profile_a = profiler->Stop(a.id);
+  if (profile_a == nullptr) {
+    return fail(info, "Stop(a) returned null while b was running");
+  }
+  if (profile_a->GetTopDownRoot() == nullptr) {
+    return fail(info, "profile a has no root");
+  }
+  busy();
+
+  CpuProfile *profile_b = profiler->Stop(b.id);
+  if (profile_b == nullptr) {
+    return fail(info, "Stop(b) returned null after a was stopped");
+  }
+  if (profile_b->GetTopDownRoot() == nullptr) {
+    return fail(info, "profile b has no root");
+  }
+
+  // b started after a, and neither profile runs backwards in time.
+  LOG_EXPR(profile_b->GetStartTime() >= profile_a->GetStartTime());
+  LOG_EXPR(profile_a->GetStartTime() <= profile_a->GetEndTime());
+  LOG_EXPR(profile_b->GetStartTime() <= profile_b->GetEndTime());
+  // No sample recorded for b may predate b's start.
+  bool b_samples_in_range = true;
+  for (int i = 0; i < profile_b->GetSamplesCount(); i++) {
+    if (profile_b->GetSampleTimestamp(i) < profile_b->GetStartTime()) {
+      b_samples_in_range = false;
+      break;
+    }
+  }
+  LOG_EXPR(b_samples_in_range);
+
+  // Stopping an id that was already stopped is not a session.
+  LOG_EXPR(profiler->Stop(a.id) == nullptr);
+
+  profile_a->Delete();
+  profile_b->Delete();
+  profiler->Dispose();
+
+  return ok(info);
+}
+
+// google's pprof (and older addons such as v8-profiler-next) drive the
+// profiler through the title-keyed StartProfiling()/StopProfiling() overloads
+// and read the title back with CpuProfile::GetTitle(). Bun used to export only
+// the id-keyed Start()/Stop(), so loading pprof failed on these symbols
+// (oven-sh/bun#19678).
+void test_v8_cpu_profiler_title_api(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+
+  CpuProfiler *profiler = CpuProfiler::New(isolate);
+  if (profiler == nullptr) {
+    return fail(info, "CpuProfiler::New returned null");
+  }
+  profiler->SetSamplingInterval(100);
+
+  auto busy = [] {
+    volatile double sink = 0;
+    for (int i = 0; i < 100000; i++) sink += i * 0.5;
+    (void)sink;
+  };
+
+  Local<String> title_a =
+      String::NewFromUtf8(isolate, "pprof-a").ToLocalChecked();
+  Local<String> title_b =
+      String::NewFromUtf8(isolate, "pprof-b").ToLocalChecked();
+  Local<String> empty_title = String::NewFromUtf8(isolate, "").ToLocalChecked();
+  Local<String> unknown_title =
+      String::NewFromUtf8(isolate, "never-started").ToLocalChecked();
+
+  // pprof uses the two-argument overload, or the mode overload when line
+  // numbers were requested.
+  LOG_EXPR((int)profiler->StartProfiling(title_a, false));
+  LOG_EXPR((int)profiler->StartProfiling(title_b, kCallerLineNumbers, false));
+  // A title that is already running is not started a second time.
+  LOG_EXPR((int)profiler->StartProfiling(title_a, false));
+  busy();
+
+  LOG_EXPR(profiler->StopProfiling(unknown_title) == nullptr);
+
+  CpuProfile *profile_a = profiler->StopProfiling(title_a);
+  if (profile_a == nullptr) {
+    return fail(info, "StopProfiling(a) returned null");
+  }
+  LOG_EXPR(describe(isolate, profile_a->GetTitle()));
+  LOG_EXPR(profile_a->GetTopDownRoot() != nullptr);
+  LOG_EXPR(profile_a->GetStartTime() <= profile_a->GetEndTime());
+  // a is no longer running, so its title can neither be stopped again nor
+  // collide with a new session.
+  LOG_EXPR(profiler->StopProfiling(title_a) == nullptr);
+  LOG_EXPR((int)profiler->StartProfiling(title_a, false));
+  busy();
+
+  // An empty title stops the most recently started session: the restarted a,
+  // then b.
+  CpuProfile *profile_a2 = profiler->StopProfiling(empty_title);
+  if (profile_a2 == nullptr) {
+    return fail(info, "StopProfiling(\"\") returned null with two sessions");
+  }
+  LOG_EXPR(describe(isolate, profile_a2->GetTitle()));
+  CpuProfile *profile_b = profiler->StopProfiling(empty_title);
+  if (profile_b == nullptr) {
+    return fail(info, "StopProfiling(\"\") returned null with one session");
+  }
+  LOG_EXPR(describe(isolate, profile_b->GetTitle()));
+  LOG_EXPR(profiler->StopProfiling(empty_title) == nullptr);
+
+  // Both APIs share one set of sessions: a session started by id carries its
+  // title, blocks a title-keyed start, and can be stopped by title.
+  CpuProfilingResult by_id = profiler->Start(
+      title_b, kLeafNodeLineNumbers, true, CpuProfilingOptions::kNoSampleLimit);
+  LOG_EXPR((int)by_id.status);
+  LOG_EXPR((int)profiler->StartProfiling(title_b, false));
+  busy();
+  CpuProfile *profile_by_id = profiler->StopProfiling(title_b);
+  if (profile_by_id == nullptr) {
+    return fail(info, "StopProfiling(b) returned null for a session started "
+                      "with Start()");
+  }
+  LOG_EXPR(describe(isolate, profile_by_id->GetTitle()));
+  LOG_EXPR(profiler->Stop(by_id.id) == nullptr);
+
+  profile_a->Delete();
+  profile_a2->Delete();
+  profile_b->Delete();
+  profile_by_id->Delete();
+  profiler->Dispose();
+
+  return ok(info);
+}
+
 void initialize(Local<Object> exports, Local<Value> module,
                 Local<Context> context) {
   NODE_SET_METHOD(exports, "test_v8_native_call", test_v8_native_call);
@@ -1794,6 +2083,8 @@ void initialize(Local<Object> exports, Local<Value> module,
                   test_v8_function_template_set_class_name);
   NODE_SET_METHOD(exports, "print_values_from_js", print_values_from_js);
   NODE_SET_METHOD(exports, "return_this", return_this);
+  NODE_SET_METHOD(exports, "create_object_with_holder_accessor",
+                  create_object_with_holder_accessor);
   NODE_SET_METHOD(exports, "global_get", GlobalTestWrapper::get);
   NODE_SET_METHOD(exports, "global_set", GlobalTestWrapper::set);
   NODE_SET_METHOD(exports, "test_many_v8_locals", test_many_v8_locals);
@@ -1804,6 +2095,14 @@ void initialize(Local<Object> exports, Local<Value> module,
                   test_v8_escapable_handle_scope_inline_grants);
   NODE_SET_METHOD(exports, "test_v8_locals_survive_nested_call",
                   test_v8_locals_survive_nested_call);
+  NODE_SET_METHOD(exports, "return_string_from_inner_scope",
+                  return_string_from_inner_scope);
+  NODE_SET_METHOD(exports, "return_heap_number_from_inner_scope",
+                  return_heap_number_from_inner_scope);
+  NODE_SET_METHOD(exports, "return_array_element_from_iterate",
+                  return_array_element_from_iterate);
+  NODE_SET_METHOD(exports, "return_accessor_value_from_inner_scope",
+                  return_accessor_value_from_inner_scope);
   NODE_SET_METHOD(exports, "test_uv_os_getpid", test_uv_os_getpid);
   NODE_SET_METHOD(exports, "test_uv_os_getppid", test_uv_os_getppid);
   NODE_SET_METHOD(exports, "test_v8_object_get_by_key",
@@ -1848,6 +2147,10 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "test_v8_aligned_pointer_in_internal_field",
                   test_v8_aligned_pointer_in_internal_field);
   NODE_SET_METHOD(exports, "test_v8_cpu_profiler", test_v8_cpu_profiler);
+  NODE_SET_METHOD(exports, "test_v8_cpu_profiler_overlapping_sessions",
+                  test_v8_cpu_profiler_overlapping_sessions);
+  NODE_SET_METHOD(exports, "test_v8_cpu_profiler_title_api",
+                  test_v8_cpu_profiler_title_api);
 
   // without this, node hits a UAF deleting the Global
   // (Context::GetIsolate was removed in V8 14.6; the module initializer runs

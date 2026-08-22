@@ -148,8 +148,12 @@ impl Error {
     pub fn from_code_int(errno: c_int, syscall_tag: Tag) -> Error {
         #[cfg(windows)]
         let n = Int::try_from(errno.unsigned_abs()).unwrap();
+        // errno values are small positive integers; a truncating cast matches Zig's `@intCast`.
         #[cfg(not(windows))]
-        let n = u16::try_from(errno).expect("int cast");
+        let n = {
+            debug_assert!((0..=c_int::from(u16::MAX)).contains(&errno));
+            errno as u16
+        };
         Error {
             errno: n,
             syscall: syscall_tag,
@@ -330,6 +334,13 @@ impl Error {
         let e = self.resolve_system_errno()?;
         // strum::IntoStaticStr — variant name (e.g., "ENOENT").
         Some((<&'static str>::from(e), e))
+    }
+
+    /// (code, uv_strerror label) pair, e.g. `("ENOENT", "no such file or
+    /// directory")` — the pieces of Node's `UVException` message.
+    pub fn uv_code_label(&self) -> Option<(&'static str, &'static str)> {
+        let (code, system_errno) = self.get_error_code_tag_name()?;
+        Some((code, libuv_error_map::LIBUV_ERROR_MAP[system_errno]))
     }
 
     pub fn msg(&self) -> Option<&'static [u8]> {

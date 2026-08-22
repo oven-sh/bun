@@ -3,7 +3,6 @@
 #include "helpers.h"
 
 #include "ZigSourceProvider.h"
-#include "MimallocWTFMalloc.h"
 #include "BunAnalyzeTranspiledModule.h"
 
 #include "ZigGlobalObject.h"
@@ -58,6 +57,16 @@ JSC::SourceID sourceIDForSourceURL(const WTF::String& sourceURL)
 extern "C" bool BunTest__shouldGenerateCodeCoverage(BunString sourceURL);
 extern "C" void Bun__addSourceProviderSourceMap(void* bun_vm, SourceProvider* opaque_source_provider, BunString* specifier);
 extern "C" void Bun__removeSourceProviderSourceMap(void* bun_vm, SourceProvider* opaque_source_provider, BunString* specifier);
+extern "C" void Bun__MappedFile__destroy(void* file);
+
+void releaseBytecodeCache(ResolvedSource& resolvedSource)
+{
+    if (void* file = std::exchange(resolvedSource.bytecode_cache_file, nullptr)) {
+        Bun__MappedFile__destroy(file);
+        resolvedSource.bytecode_cache = nullptr;
+        resolvedSource.bytecode_cache_size = 0;
+    }
+}
 
 Ref<SourceProvider> SourceProvider::create(
     Zig::GlobalObject* globalObject,
@@ -103,20 +112,21 @@ Ref<SourceProvider> SourceProvider::create(
 
     const auto getProvider = [&]() -> Ref<SourceProvider> {
         if (resolvedSource.bytecode_cache != nullptr) {
-            const auto destructorPtr = [](const void* ptr) {
-                // `bytecode_cache` was `heap::into_raw`'d from a Rust `Box<[u8]>`
-                // (the global allocator); free with `defaultAllocatorFree` so
-                // it agrees with the `#[global_allocator]`.
-                Bun::defaultAllocatorFree(const_cast<void*>(ptr));
-            };
-            const auto destructorNoOp = [](const void* ptr) {
-                // no-op, for bun build --compile.
-            };
-            const auto destructor = resolvedSource.needsDeref ? destructorPtr : destructorNoOp;
+            // The CachedBytecode outlives every reader of the bytes (functions decoded
+            // lazily hold a ref to it), so it takes over the mapping. Exchanging the
+            // pointer out keeps the provider's copy of resolvedSource and the caller's
+            // ResolvedSourceCodeHolder from destroying it as well; borrowed bytes
+            // (standalone executable, Node compile cache) have no file to destroy.
+            JSC::CachePayload::Destructor destructor;
+            if (void* file = std::exchange(resolvedSource.bytecode_cache_file, nullptr)) {
+                destructor = [file](const void*) {
+                    Bun__MappedFile__destroy(file);
+                };
+            }
 
             auto origin = getSourceOrigin();
 
-            Ref<JSC::CachedBytecode> bytecode = JSC::CachedBytecode::create(std::span<uint8_t>(resolvedSource.bytecode_cache, resolvedSource.bytecode_cache_size), destructor, {});
+            Ref<JSC::CachedBytecode> bytecode = JSC::CachedBytecode::create(std::span<uint8_t>(resolvedSource.bytecode_cache, resolvedSource.bytecode_cache_size), WTF::move(destructor), {});
             auto provider = adoptRef(*new SourceProvider(
                 globalObject->bunVM(),
                 resolvedSource,

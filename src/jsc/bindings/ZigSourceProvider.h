@@ -22,6 +22,11 @@ class GlobalObject;
 
 JSC::SourceID sourceIDForSourceURL(const WTF::String& sourceURL);
 JSC::SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin);
+
+// Destroys the .jsc mapping a ResolvedSource still owns, for one that is being
+// discarded without a SourceProvider taking its bytecode. No-op otherwise.
+void releaseBytecodeCache(ResolvedSource& resolvedSource);
+
 class SourceProvider final : public JSC::SourceProvider {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(SourceProvider);
     using Base = JSC::SourceProvider;

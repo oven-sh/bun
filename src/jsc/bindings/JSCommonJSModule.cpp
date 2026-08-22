@@ -1446,6 +1446,9 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
     if (JSValue compileFunction = this->m_overriddenCompile.get()) {
         auto& vm = globalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
+        // The override only receives the source text; Module._extensions callers
+        // (JSCommonJSExtensions.cpp) have no ResolvedSourceCodeHolder to do this.
+        Zig::releaseBytecodeCache(source);
         if (!compileFunction) {
             throwTypeError(globalObject, scope, "overridden module._compile is not a function (called from overridden Module._extensions)"_s);
             return;

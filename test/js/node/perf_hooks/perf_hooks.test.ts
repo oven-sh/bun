@@ -159,9 +159,16 @@ test("eventLoopUtilization is zero before the loop starts and counts only loop t
 });
 
 // Same with an entry point that imports: the ticks that load the graph are not the loop starting.
+// An import is transpiled off-thread and the loop parks until it is ready. util.js is big enough that
+// this park always happens; a one-line import is usually ready before the park, so a stamp taken
+// there only showed up under load.
 test("eventLoopUtilization is still zero at the top level of an entry point with imports", async () => {
+  let util = "export const x = 1;\n";
+  for (let i = 0; i < 600; i++) {
+    util += `export function f${i}(a, b) { if (a > b) { return a - b + ${i}; } return [a, b, ${i}].map(v => v * 2).reduce((p, c) => p + c, 0); }\n`;
+  }
   using dir = tempDir("elu-imports", {
-    "util.js": `export const x = 1;`,
+    "util.js": util,
     "main.js": `
       import { x } from "./util.js";
       import { performance } from "perf_hooks";
@@ -190,7 +197,7 @@ test("eventLoopUtilization counts the loop time spent in a top-level await", asy
       const before = performance.eventLoopUtilization();
       await new Promise(r => setTimeout(r, 100));
       const after = performance.eventLoopUtilization();
-      console.log(JSON.stringify({ before, idleAfter: after.idle >= 50, activeAfter: after.active >= 0 }));
+      console.log(JSON.stringify({ before, idleAfter: after.idle >= 50, parkNotCharged: after.active < 50 }));
     `,
   });
   await using proc = Bun.spawn({
@@ -202,7 +209,7 @@ test("eventLoopUtilization counts the loop time spent in a top-level await", asy
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ out: JSON.parse(stdout), stderr }).toEqual({
-    out: { before: { idle: 0, active: 0, utilization: 0 }, idleAfter: true, activeAfter: true },
+    out: { before: { idle: 0, active: 0, utilization: 0 }, idleAfter: true, parkNotCharged: true },
     stderr: "",
   });
   expect(exitCode).toBe(0);

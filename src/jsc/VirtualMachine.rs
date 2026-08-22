@@ -300,6 +300,11 @@ pub struct VirtualMachine {
     /// The loop's idle counter when `loop_start_ns` was stamped: parking before the loop "began"
     /// (a watcher waiting for the first file, a debugger pause) is not loop idle time.
     pub loop_idle_base_ns: core::sync::atomic::AtomicU64,
+    /// `bun run` sets this around the entry load: the ticks that fetch the entry graph (imports
+    /// transpile off-thread) do not stamp `loop_start_ns`; once `entry_evaluation_started`, a tick
+    /// is the loop running under a top-level await and does. Node's loopStart works out the same:
+    /// zeros throughout the entry's synchronous evaluation, however its graph was loaded.
+    pub loop_start_deferred: bool,
     pub(crate) origin_timestamp: u64,
     /// For fake timers: override performance.now() with a specific value (in nanoseconds).
     pub overridden_performance_now: Option<u64>,
@@ -586,11 +591,12 @@ impl ExitHandler {
         vm.entry_evaluation_started = true;
     }
 
-    /// Only a worker's start waits on this (`wait_for_worker_entry_evaluation`);
-    /// any other VM answers `true` so the hook's registry probe never runs there.
+    /// Only a worker's start (`wait_for_worker_entry_evaluation`) and `bun run`'s deferred loop-start
+    /// stamp (`loop_start_deferred`) wait on this; any other VM answers `true` so the hook's registry
+    /// probe never runs there.
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__VM__entryEvaluationStarted(vm: &VirtualMachine) -> bool {
-        vm.entry_evaluation_started || vm.worker.is_none()
+        vm.entry_evaluation_started || !(vm.worker.is_some() || vm.loop_start_deferred)
     }
 
     /// The module-registry key of the current entry load's root: the
@@ -2726,11 +2732,13 @@ impl VirtualMachine {
 
     /// This thread's loop has begun: the main thread stamps it on its first poll (node's uv_run, after
     /// the entry point's synchronous evaluation); a worker stamps it before its script, whose
-    /// bootstrap already runs inside the loop.
+    /// bootstrap already runs inside the loop. A no-op while [`Self::loop_start_deferred`] holds.
     #[inline]
     pub fn mark_loop_started(&self) {
         use core::sync::atomic::Ordering;
-        if self.loop_start_ns.load(Ordering::Relaxed) != 0 {
+        if self.loop_start_ns.load(Ordering::Relaxed) != 0
+            || (self.loop_start_deferred && !self.entry_evaluation_started)
+        {
             return;
         }
         // SAFETY: `event_loop` is this VM's own loop; the idle counter is read atomically.
@@ -2742,6 +2750,12 @@ impl VirtualMachine {
         let _ = self
             .loop_start_ns
             .compare_exchange(0, ns, Ordering::Release, Ordering::Relaxed);
+    }
+
+    /// See [`Self::loop_start_deferred`]. `bun run` sets it before loading the entry point and clears
+    /// it, then stamps, when it enters its run loop.
+    pub fn defer_loop_start(&mut self, deferred: bool) {
+        self.loop_start_deferred = deferred;
     }
 
     /// Milliseconds since this thread's loop began polling; `None` before that.

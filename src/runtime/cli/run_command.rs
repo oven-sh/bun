@@ -1407,6 +1407,7 @@ impl Run<'_> {
             }
         }
 
+        vm.defer_loop_start(true);
         match vm.load_entry_point(entry) {
             Ok(promise) => {
                 // SAFETY: `promise` is a live GC cell returned by the module loader.
@@ -1467,6 +1468,10 @@ impl Run<'_> {
         }
 
         // ── core run-loop ──────────────────────────────────────────────────
+        // Node's loopStart: the entry point's synchronous evaluation is over, whether or not the
+        // evaluate hook saw it begin (a `Module.runMain` override runs the entry itself).
+        vm.defer_loop_start(false);
+        vm.mark_loop_started();
         if vm.is_watcher_enabled() {
             vm.report_exception_in_hot_reloaded_module_if_needed();
             loop {

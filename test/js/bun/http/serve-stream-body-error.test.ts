@@ -8,6 +8,8 @@
 //   3. A body that errored after chunks were already sent was still terminated
 //      with a clean `0\r\n\r\n`, so the client could not tell the truncated
 //      body apart from a complete one.
+// The natively streamed bodies further down (HTMLRewriter, proxied fetch) pin
+// the same mid-stream contract for the non-ReadableStream path.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN } from "harness";
 import { join } from "node:path";
@@ -115,6 +117,89 @@ test.concurrent("mid-stream error in development mode: reported and not terminat
     },
     exitCode: 0,
   });
+  expect(stderr).toContain("boom");
+});
+
+// Bodies that Bun.serve streams natively (an HTMLRewriter transform, a proxied
+// fetch() Response) reach the server through RequestContext::end_chunk rather
+// than handle_reject_stream. Once the status is on the wire, error() cannot
+// answer any more, so the failure gets the treatment the JS stream above gets:
+// the body is terminated (force-closed without the terminating chunk once body
+// bytes went out, ended empty otherwise) and, in development mode, the error is
+// printed. Before the fix end_chunk terminated the body and dropped the error,
+// so a rewriter handler that threw after the first byte left no trace anywhere.
+//
+// [variant, body bytes on the wire, ends with the clean terminator, what the
+// development-mode report must name]
+const nativeBodies = [
+  ["rewriter-mid-stream-throw", "e\r\n<b>chunk-a</b>\r\n", false, "boom"],
+  ["rewriter-mid-stream-reject", "e\r\n<b>chunk-a</b>\r\n", false, "boom"],
+  ["proxied-fetch-mid-stream", "7\r\nchunk-a\r\n", false, "ECONNRESET"],
+  ["proxied-fetch-after-status", "0\r\n\r\n", true, "ECONNRESET"],
+] as const;
+
+test.concurrent.each(nativeBodies)(
+  "%s in development mode: reported, and the body is terminated",
+  async (variant, body, cleanChunkedTerminator, reported) => {
+    const { stdout, stderr, exitCode } = await runFixture(variant, "development");
+    expect({ result: JSON.parse(stdout), exitCode }).toEqual({
+      result: {
+        statusLine: "HTTP/1.1 200 OK",
+        cleanChunkedTerminator,
+        body,
+        errorCb: 0,
+        unhandled: 0,
+        secondStatusLine: "HTTP/1.1 200 OK",
+      },
+      exitCode: 0,
+    });
+    expect(stderr).toContain(reported);
+  },
+);
+
+// The same wire contract with `development: false`. As for "mid-stream-reject"
+// above, stderr is deliberately not asserted: whether production mode should
+// also report a body that fails after the status is committed is one question
+// for the JS and native paths alike, and these tests do not take a position.
+test.concurrent.each(nativeBodies)("%s: the body is terminated", async (variant, body, cleanChunkedTerminator) => {
+  const { stdout, exitCode } = await runFixture(variant);
+  expect({ result: JSON.parse(stdout), exitCode }).toEqual({
+    result: {
+      statusLine: "HTTP/1.1 200 OK",
+      cleanChunkedTerminator,
+      body,
+      errorCb: 0,
+      unhandled: 0,
+      secondStatusLine: "HTTP/1.1 200 OK",
+    },
+    exitCode: 0,
+  });
+});
+
+// When the development server also runs a bake dev server (it has an HTML
+// route), the report additionally renders the dev error page as the rest of
+// the body and ends the response normally, so the browser shows the error
+// after whatever was already streamed. The JS stream has always taken this
+// branch; the native body now goes through the same code.
+test.concurrent.each([
+  ["rewriter-mid-stream-throw", "e\r\n<b>chunk-a</b>\r\n"],
+  ["mid-stream-reject", "7\r\nchunk-a\r\n"],
+])("%s under a dev server: the error page is appended to the body", async (variant, firstChunk) => {
+  const { stdout, stderr, exitCode } = await runFixture(variant, "development", "dev-server");
+  const { body, ...result } = JSON.parse(stdout);
+  expect({ result, exitCode }).toEqual({
+    result: {
+      statusLine: "HTTP/1.1 200 OK",
+      cleanChunkedTerminator: true,
+      errorCb: 0,
+      unhandled: 0,
+      secondStatusLine: "HTTP/1.1 200 OK",
+    },
+    exitCode: 0,
+  });
+  expect(body).toStartWith(firstChunk);
+  expect(body).toContain("Stream error during server-side rendering");
+  expect(body).toContain("boom");
   expect(stderr).toContain("boom");
 });
 

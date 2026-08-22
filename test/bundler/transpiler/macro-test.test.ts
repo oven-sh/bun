@@ -428,6 +428,20 @@ describe("the macro host", () => {
     expect(exitCode).toBe(1);
   });
 
+  test.concurrent("a macro module that does not parse reports its parse errors at the call site", async () => {
+    const { stderr, exitCode } = await run(
+      {
+        "m.ts": `export function f( { return 1 }\n`,
+        "index.ts": `import { f } from "./m.ts" with { type: "macro" };\nconsole.log(f());\n`,
+      },
+      ["run", "index.ts"],
+    );
+    expect(stderr).toContain(`Expected "}" but found "1"`);
+    expect(stderr).toContain("m.ts:1:");
+    expect(stderr).toContain("index.ts:2:13");
+    expect(exitCode).toBe(1);
+  });
+
   test.concurrent("process.exit() inside a macro fails the macro instead of exiting", async () => {
     const { stderr, exitCode } = await run(
       {

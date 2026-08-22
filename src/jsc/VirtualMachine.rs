@@ -737,7 +737,7 @@ impl VirtualMachine {
         VM.get()
     }
 
-    pub(crate) fn get_main_thread_vm() -> Option<*mut VirtualMachine> {
+    pub fn get_main_thread_vm() -> Option<*mut VirtualMachine> {
         let p = MAIN_THREAD_VM.load(core::sync::atomic::Ordering::Acquire);
         if p.is_null() { None } else { Some(p) }
     }

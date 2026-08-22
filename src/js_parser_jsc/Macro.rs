@@ -222,9 +222,7 @@ impl MacroContext {
         bun_analytics::features::macros.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
         // SAFETY: the `Transpiler` outlives `self`; read once to seed the host.
-        let host = MacroHost::get_or_start(|| unsafe {
-            MacroHostSeed::from_transpiler(&*self.transpiler)
-        });
+        let host = MacroHost::get_or_start(|| unsafe { MacroHostSeed::new(&*self.transpiler) });
 
         let mut request = MacroRequest {
             specifier,
@@ -645,17 +643,24 @@ fn expr_from_blob(
 // MacroHost: the thread and its VM
 // ══════════════════════════════════════════════════════════════════════════
 
-/// What the first caller supplies to configure the host VM's own transpiler
-/// (for the imports *inside* macro modules; the macro specifier itself is
-/// always resolved by the caller). Later callers' configuration is not
-/// consulted.
+/// Configures the host VM's own transpiler (for the imports *inside* macro
+/// modules; the macro specifier itself is always resolved by the caller):
+/// the program's configuration when there is a main-thread VM, as for a
+/// Worker; otherwise (`bun build`) the calling transpiler's, which is the
+/// command's.
 struct MacroHostSeed {
     transform_options: bun_options_types::schema::api::TransformOptions,
     env_map: bun_dotenv::Map,
 }
 
 impl MacroHostSeed {
-    fn from_transpiler(transpiler: &Transpiler<'_>) -> MacroHostSeed {
+    fn new(caller: &Transpiler<'_>) -> MacroHostSeed {
+        let transpiler: &Transpiler<'_> = match VirtualMachine::get_main_thread_vm() {
+            // SAFETY: the main-thread VM outlives every transpile in the
+            // process; its options and env are only read here.
+            Some(vm) => unsafe { &(*vm).transpiler },
+            None => caller,
+        };
         MacroHostSeed {
             transform_options: (*transpiler.options.transform_options).clone(),
             env_map: bun_core::handle_oom(transpiler.env().map.clone_with_allocator()),
@@ -1103,6 +1108,28 @@ impl HostState {
 
     /// An error value (thrown, rejected with, or returned) as log lines.
     fn failure_from_value(&self, global: &JSGlobalObject, value: JSValue) -> MacroFailure {
+        // The macro VM's own build/resolve errors (a macro module that does not
+        // parse, an import it cannot find): message and position, as the log
+        // would print them.
+        let build_msg = value
+            .as_class_ref::<BuildMessage>()
+            .map(|b| &b.msg)
+            .or_else(|| value.as_class_ref::<ResolveMessage>().map(|r| &r.msg));
+        if let Some(msg) = build_msg {
+            use std::io::Write as _;
+            let mut text = msg.data.text.to_vec();
+            if let Some(loc) = &msg.data.location {
+                let _ = write!(
+                    text,
+                    "
+    at {}:{}:{}",
+                    bstr::BStr::new(&loc.file),
+                    loc.line,
+                    loc.column
+                );
+            }
+            return MacroFailure { message: text };
+        }
         let mut holder = jsc::zig_exception::Holder::init();
         let exception = holder.zig_exception();
         if let Some(error) = value.to_error() {
@@ -1159,6 +1186,44 @@ impl HostState {
                     column
                 )
             };
+        }
+        // A module that fails to parse rejects its import with an
+        // AggregateError of the parse errors; those are the useful part.
+        if value.is_aggregate_error(global) {
+            let each = value.get(global, "errors").and_then(|errors| match errors {
+                Some(errors) if errors.is_array() => {
+                    errors.array_iterator(global).and_then(|mut it| {
+                        let mut out = Vec::new();
+                        while let Some(e) = it.next()? {
+                            out.push(self.failure_from_value(global, e).message);
+                        }
+                        Ok(out)
+                    })
+                }
+                _ => Ok(Vec::new()),
+            });
+            match each {
+                Ok(each) => {
+                    for message in each {
+                        text.extend_from_slice(
+                            b"
+  ",
+                        );
+                        text.extend_from_slice(&message);
+                    }
+                }
+                Err(err) => {
+                    text.extend_from_slice(
+                        b"
+  ",
+                    );
+                    text.extend_from_slice(
+                        &self
+                            .failure_from_exception(global, err, "error report")
+                            .message,
+                    );
+                }
+            }
         }
         MacroFailure { message: text }
     }

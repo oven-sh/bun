@@ -52,8 +52,12 @@ pub struct ConnectionInfo<'a> {
 /// status description.
 #[derive(Clone, Copy)]
 pub struct DbError<'a> {
+    /// `error.type`: SQLSTATE, driver error code, RESP error prefix, …
     pub ty: &'a [u8],
     pub message: &'a [u8],
+    /// `ty` is a status the database itself returned (`db.response.status_code`)
+    /// rather than a client-side condition (connection closed, …).
+    pub from_server: bool,
 }
 
 /// Start a CLIENT span for one query/command. `NativeSpan::NONE` when disabled.
@@ -68,7 +72,13 @@ pub fn begin(global: *mut c_void, system: System, conn: &ConnectionInfo<'_>) -> 
             &mut local.pool,
             stub,
             ScopeId::from(system.instrument()),
-            system.name().as_bytes(),
+            // semconv span name is `{operation} {target}`; the operation is
+            // prepended at end(). Target: namespace, else the system name.
+            if conn.namespace.is_empty() {
+                system.name().as_bytes()
+            } else {
+                conn.namespace
+            },
             SpanKind::Client,
             |s| {
                 if !stub.is_recording() {
@@ -215,7 +225,17 @@ pub fn end(
     let capture = rt::capture_db_statement();
     let ended = rt::with_local(global, |local| {
         if let Some(o) = op {
-            pool::with(&mut local.pool, span, |s| s.set_name(o));
+            pool::with(&mut local.pool, span, |s| {
+                // `{operation} {target}` when there is a namespace, else the operation.
+                let has_target = crate::otlp::find_attribute(&s.attrs, b"db.namespace").is_some();
+                let target = core::mem::take(&mut s.name);
+                s.name.reserve(o.len() + 1 + target.len());
+                s.name.extend_from_slice(o);
+                if has_target {
+                    s.name.push(b' ');
+                    s.name.extend_from_slice(&target);
+                }
+            });
         }
         pool::end(local, span, 0, |w| {
             if let Some(o) = op {
@@ -228,12 +248,16 @@ pub fn end(
                     crate::otlp::truncate_utf8(statement, 16 * 1024),
                 );
             }
-            if let Some(DbError { ty, message }) = error {
-                w.attr_opt("error.type", ty);
-                if !ty.is_empty() && ty.len() <= 8 && ty.iter().all(|c| c.is_ascii_alphanumeric()) {
-                    w.attr("db.response.status_code", ty);
+            if let Some(DbError {
+                ty,
+                message,
+                from_server,
+            }) = error
+            {
+                if from_server {
+                    w.attr_opt("db.response.status_code", ty);
                 }
-                w.status(crate::StatusCode::Error, message);
+                w.fail(if ty.is_empty() { b"_OTHER" } else { ty }, message);
             }
         })
     })

@@ -51,13 +51,16 @@ pub fn begin(global: &JSGlobalObject, headers: &mut Headers) -> SpanStub {
 
 /// Finish the client span. `url` is the request URL as originally given
 /// (before redirects); `status == 0` means no response was received.
+/// `minor_version`: HTTP/1.x minor version of the response, if one arrived.
+/// `error`: the `(code, message)` the request rejected with.
 pub fn end(
     global: &JSGlobalObject,
     stub: &SpanStub,
     method: Method,
     url: &[u8],
     status: u16,
-    error: Option<&str>,
+    minor_version: Option<u8>,
+    error: Option<(&[u8], &[u8])>,
 ) {
     if !stub.is_recording() {
         return;
@@ -67,10 +70,18 @@ pub fn end(
         global,
         Instrument::HttpClient,
         stub,
-        name.as_bytes(),
+        // semconv: `HTTP` names a span whose method is outside the known set.
+        if name == "_OTHER" {
+            b"HTTP"
+        } else {
+            name.as_bytes()
+        },
         SpanKind::Client,
         |w| {
             w.attr("http.request.method", name);
+            if name == "_OTHER" {
+                w.attr("http.request.method_original", method.as_str());
+            }
             let u = URL::parse(url);
             // url.full MUST NOT contain credentials. (`bun_url` does not
             // recognise a bare `user@host`, so scan the authority directly.)
@@ -93,9 +104,15 @@ pub fn end(
                 }
             }
             w.server(u.display_hostname(), u.get_port_auto());
+            if let Some(v) = minor_version {
+                w.attr(
+                    "network.protocol.version",
+                    if v == 0 { "1.0" } else { "1.1" },
+                );
+            }
             w.http_client_status(status);
-            if let Some(e) = error {
-                w.error(e.as_bytes(), e.as_bytes());
+            if let Some((code, message)) = error {
+                w.fail(code, message);
             }
         },
     );

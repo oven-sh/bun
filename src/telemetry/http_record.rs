@@ -16,6 +16,8 @@ pub const FLAG_HTTPS: u8 = 1;
 pub const FLAG_ABORTED: u8 = 2;
 pub const FLAG_HANDLER_ERROR: u8 = 4;
 pub const FLAG_HAS_QUERY: u8 = 8;
+/// An exception was recorded on the span (it carries `error.type` already).
+pub const FLAG_HAS_ERROR_TYPE: u8 = 16;
 
 /// `http.request.method`: the canonical token for known methods, `_OTHER`
 /// otherwise (semconv requires a bounded set).
@@ -67,7 +69,7 @@ impl PeerIp {
 
     /// Dotted quad / RFC 5952 (v4-mapped v6 as `::ffff:a.b.c.d`, matching
     /// `requestIP()`).
-    fn text<'b>(&'b self, buf: &'b mut [u8; 64]) -> &'b [u8] {
+    pub fn text<'b>(&'b self, buf: &'b mut [u8; 64]) -> &'b [u8] {
         use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
         let addr: SocketAddr = match self {
             PeerIp::None => return b"",
@@ -84,23 +86,50 @@ impl PeerIp {
 
 /// Request facts captured at begin; lives in the pool slot.
 pub struct Facts {
-    /// url | host | user-agent | route, back to back (see `lens`).
+    /// url | client | host | user-agent | route, back to back (see `lens`).
+    /// url and client (the forwarded-for address) vary per request; the
+    /// rest key the template.
     raw: Vec<u8>,
-    lens: [u32; 4],
+    lens: [u32; 5],
     /// Length of the path part of the url (`url.len()` if no query).
     path_len: u32,
     pub method: Method,
+    /// The socket peer (per request; not part of the template key).
     pub peer: PeerIp,
+    pub peer_port: u16,
+    pub version: HttpVersion,
     pub flags: u8,
     pub status: u16,
     /// This slot holds an HTTP server span rather than a generic one.
     pub active: bool,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum HttpVersion {
+    Unknown,
+    Http11,
+    Http2,
+    Http3,
+}
+
+impl HttpVersion {
+    fn text(self) -> &'static [u8] {
+        match self {
+            HttpVersion::Unknown => b"",
+            HttpVersion::Http11 => b"1.1",
+            HttpVersion::Http2 => b"2",
+            HttpVersion::Http3 => b"3",
+        }
+    }
+}
+
 struct Strings<'a> {
     url: &'a [u8],
+    /// First `X-Forwarded-For` / `Forwarded for=` hop, if any.
+    client: &'a [u8],
     /// host | user-agent | route (part of the template key).
-    after_url: &'a [u8],
+    keyed: &'a [u8],
     host: &'a [u8],
     user_agent: &'a [u8],
     route: &'a [u8],
@@ -110,10 +139,12 @@ impl Facts {
     pub const fn new() -> Facts {
         Facts {
             raw: Vec::new(),
-            lens: [0; 4],
+            lens: [0; 5],
             path_len: 0,
             method: Method::GET,
             peer: PeerIp::None,
+            peer_port: 0,
+            version: HttpVersion::Unknown,
             flags: 0,
             status: 0,
             active: false,
@@ -123,28 +154,47 @@ impl Facts {
     #[inline]
     pub fn reset(&mut self) {
         self.raw.clear();
-        self.lens = [0; 4];
+        self.lens = [0; 5];
         self.active = false;
         self.flags = 0;
         self.status = 0;
         self.peer = PeerIp::None;
+        self.peer_port = 0;
+        self.version = HttpVersion::Unknown;
         if self.raw.capacity() > 16 * 1024 {
             self.raw = Vec::new();
         }
     }
 
     /// Set the request strings in one go (must be called before `set_route`).
+    /// `client` is the first forwarded-for hop (empty if none).
     #[inline]
-    pub fn set_request(&mut self, url: &[u8], path_len: usize, host: &[u8], ua: &[u8]) {
+    pub fn set_request(
+        &mut self,
+        url: &[u8],
+        path_len: usize,
+        client: &[u8],
+        host: &[u8],
+        ua: &[u8],
+    ) {
         let url = &url[..url.len().min(u16::MAX as usize)];
+        let client = &client[..client.len().min(PeerIp::MAX_TEXT)];
         let host = &host[..host.len().min(u16::MAX as usize)];
         let ua = &ua[..ua.len().min(u16::MAX as usize)];
         self.raw.clear();
-        self.raw.reserve(url.len() + host.len() + ua.len());
+        self.raw
+            .reserve(url.len() + client.len() + host.len() + ua.len());
         self.raw.extend_from_slice(url);
+        self.raw.extend_from_slice(client);
         self.raw.extend_from_slice(host);
         self.raw.extend_from_slice(ua);
-        self.lens = [url.len() as u32, host.len() as u32, ua.len() as u32, 0];
+        self.lens = [
+            url.len() as u32,
+            client.len() as u32,
+            host.len() as u32,
+            ua.len() as u32,
+            0,
+        ];
         self.path_len = path_len.min(url.len()) as u32;
         if (self.path_len as usize) + 1 < url.len() {
             self.flags |= FLAG_HAS_QUERY;
@@ -154,31 +204,34 @@ impl Facts {
     #[inline]
     pub fn set_route(&mut self, route: &[u8]) {
         let route = &route[..route.len().min(u16::MAX as usize)];
-        let end = (self.lens[0] + self.lens[1] + self.lens[2]) as usize;
+        let end = (self.lens[0] + self.lens[1] + self.lens[2] + self.lens[3]) as usize;
         self.raw.truncate(end);
         self.raw.extend_from_slice(route);
-        self.lens[3] = route.len() as u32;
+        self.lens[4] = route.len() as u32;
     }
 
     #[inline]
     fn strings(&self) -> Strings<'_> {
-        let [a, b, c, d] = self.lens.map(|x| x as usize);
+        let [a, cl, b, c, d] = self.lens.map(|x| x as usize);
         let r = &self.raw[..];
-        if r.len() < a + b + c + d {
+        if r.len() < a + cl + b + c + d {
             return Strings {
                 url: b"",
-                after_url: b"",
+                client: b"",
+                keyed: b"",
                 host: b"",
                 user_agent: b"",
                 route: b"",
             };
         }
+        let k = a + cl;
         Strings {
             url: &r[..a],
-            after_url: &r[a..],
-            host: &r[a..a + b],
-            user_agent: &r[a + b..a + b + c],
-            route: &r[a + b + c..a + b + c + d],
+            client: &r[a..k],
+            keyed: &r[k..],
+            host: &r[k..k + b],
+            user_agent: &r[k + b..k + b + c],
+            route: &r[k + b + c..k + b + c + d],
         }
     }
 }
@@ -204,13 +257,13 @@ struct Template {
     status_code: StatusCode,
     has_parent: bool,
     method: Method,
-    peer: PeerIp,
+    version: HttpVersion,
     status: u16,
     dropped: u16,
     dropped_events: u16,
     dropped_links: u16,
     lens: [u32; 3],
-    /// after_url | attrs | extra | trace_state | name_override | status_message
+    /// keyed strings | attrs | extra | trace_state | name_override | status_message
     pieces: Vec<u8>,
     piece_len: [u32; 6],
     /// Encoded span up to (not including) the per-request tail.
@@ -231,11 +284,11 @@ impl Template {
             || self.status_code != p.status
             || self.has_parent != has_parent
             || self.method != facts.method
-            || self.peer != facts.peer
+            || self.version != facts.version
             || self.dropped != p.dropped_attrs
             || self.dropped_events != p.dropped_events
             || self.dropped_links != p.dropped_links
-            || self.lens != [facts.lens[1], facts.lens[2], facts.lens[3]]
+            || self.lens != [facts.lens[2], facts.lens[3], facts.lens[4]]
         {
             return false;
         }
@@ -303,7 +356,7 @@ pub fn encode(c: &mut Cache, out: &mut Vec<u8>, facts: &Facts, p: &SpanParts<'_>
     let s = facts.strings();
     let has_parent = p.stub.parent.is_valid();
     let pieces: [&[u8]; 6] = [
-        s.after_url,
+        s.keyed,
         p.attrs,
         p.extra,
         p.trace_state,
@@ -334,7 +387,7 @@ pub fn encode(c: &mut Cache, out: &mut Vec<u8>, facts: &Facts, p: &SpanParts<'_>
     out[st + 9..st + 17].copy_from_slice(&p.end_ns.to_le_bytes());
     // flags: 2-byte tag then fixed32
     out[st + 19..st + 23].copy_from_slice(&p.stub.ctx.flags.otlp().to_le_bytes());
-    append_tail(out, start, s.url, facts, limits);
+    append_tail(out, start, &s, facts, limits);
 }
 
 #[cold]
@@ -344,7 +397,7 @@ fn encode_untemplated(out: &mut Vec<u8>, facts: &Facts, p: &SpanParts<'_>, limit
     let start = out.len();
     let len_at = encode_head(out, facts, p, &s, limits);
     debug_assert_eq!(len_at, start + OFF_LEN);
-    append_tail(out, start, s.url, facts, limits);
+    append_tail(out, start, &s, facts, limits);
 }
 
 #[cold]
@@ -359,7 +412,7 @@ fn encode_miss(
 ) {
     let s = facts.strings();
     let pieces: [&[u8]; 6] = [
-        s.after_url,
+        s.keyed,
         p.attrs,
         p.extra,
         p.trace_state,
@@ -383,7 +436,7 @@ fn encode_miss(
         &bytes[off_start(has_parent) + 9..off_start(has_parent) + 17],
         &p.end_ns.to_le_bytes()
     );
-    append_tail(out, start, s.url, facts, limits);
+    append_tail(out, start, &s, facts, limits);
     let mut piece_len = [0u32; 6];
     let mut all = Vec::with_capacity(pieces.iter().map(|x| x.len()).sum());
     for (i, piece) in pieces.iter().enumerate() {
@@ -395,12 +448,12 @@ fn encode_miss(
         status_code: p.status,
         has_parent,
         method: facts.method,
-        peer: facts.peer,
+        version: facts.version,
         status: facts.status,
         dropped: p.dropped_attrs,
         dropped_events: p.dropped_events,
         dropped_links: p.dropped_links,
-        lens: [facts.lens[1], facts.lens[2], facts.lens[3]],
+        lens: [facts.lens[2], facts.lens[3], facts.lens[4]],
         pieces: all,
         piece_len,
         bytes,
@@ -411,12 +464,82 @@ fn encode_miss(
     c.entries.insert(0, t);
 }
 
+/// The originating client per RFC 7239 `Forwarded: for=` (first element) or,
+/// failing that, the first `X-Forwarded-For` entry; empty if neither.
+pub fn forwarded_client<'a>(
+    forwarded: Option<&'a [u8]>,
+    x_forwarded_for: Option<&'a [u8]>,
+) -> &'a [u8] {
+    use bun_core::strings;
+    if let Some(f) = forwarded {
+        // first element, `for=` parameter; value may be a quoted "[v6]:port".
+        let first = strings::split(f, b",").next().unwrap_or(f);
+        for param in strings::split(first, b";") {
+            let param = strings::trim(param, b" \t");
+            if param.len() > 4 && param[..4].eq_ignore_ascii_case(b"for=") {
+                let mut v = strings::trim(&param[4..], b"\"");
+                if v.first() == Some(&b'[') {
+                    if let Some(end) = strings::index_of_char_usize(v, b']') {
+                        return &v[1..end];
+                    }
+                } else if strings::count_char(v, b':') == 1 {
+                    v = &v[..strings::index_of_char_usize(v, b':').unwrap_or(v.len())];
+                }
+                return v;
+            }
+        }
+    }
+    if let Some(x) = x_forwarded_for {
+        let first = strings::split(x, b",").next().unwrap_or(x);
+        return strings::trim(first, b" \t");
+    }
+    b""
+}
+
+/// Attributes appended per request rather than templated (see `append_tail`).
+fn tail_attr_count(facts: &Facts) -> u32 {
+    1 + u32::from(facts.flags & FLAG_HAS_QUERY != 0)
+        + if matches!(facts.peer, PeerIp::None) {
+            0
+        } else {
+            2 + u32::from(facts.peer_port != 0)
+        }
+}
+
 /// Per-request attributes after the templated part, then the span length.
 #[inline]
-fn append_tail(out: &mut Vec<u8>, span_start: usize, url: &[u8], facts: &Facts, limits: &Limits) {
+fn append_tail(
+    out: &mut Vec<u8>,
+    span_start: usize,
+    s: &Strings<'_>,
+    facts: &Facts,
+    limits: &Limits,
+) {
     let max = limits.attribute_value_length as usize;
+    let url = s.url;
     let pl = (facts.path_len as usize).min(url.len());
     let (path, query) = (&url[..pl], url.get(pl + 1..).unwrap_or(b""));
+    let mut ip_buf = [0u8; 64];
+    let peer = facts.peer.text(&mut ip_buf);
+    if !peer.is_empty() {
+        // semconv: client.address is the client behind any proxies
+        // (X-Forwarded-For / Forwarded), network.peer.* the socket peer.
+        otlp::write_str_kv_small(
+            out,
+            f::ATTRIBUTES,
+            "client.address",
+            if s.client.is_empty() { peer } else { s.client },
+        );
+        otlp::write_str_kv_small(out, f::ATTRIBUTES, "network.peer.address", peer);
+        if facts.peer_port != 0 {
+            otlp::write_key_value(
+                out,
+                f::ATTRIBUTES,
+                b"network.peer.port",
+                &Value::Int(facts.peer_port as i64),
+            );
+        }
+    }
     otlp::write_str_kv_small(
         out,
         f::ATTRIBUTES,
@@ -444,6 +567,8 @@ fn encode_head(
     limits: &Limits,
 ) -> usize {
     let method = method_name(facts.method).as_bytes();
+    // semconv: the span name uses `HTTP` for methods outside the known set.
+    let method_in_name: &[u8] = if method == b"_OTHER" { b"HTTP" } else { method };
     let (host, ua, route) = (s.host, s.user_agent, s.route);
     let flags = facts.flags;
     let status = facts.status;
@@ -451,12 +576,13 @@ fn encode_head(
     let name: &[u8] = if !p.name_override.is_empty() {
         p.name_override
     } else if !route.is_empty() && route.len() <= 256 {
-        name_buf[..method.len()].copy_from_slice(method);
-        name_buf[method.len()] = b' ';
-        name_buf[method.len() + 1..method.len() + 1 + route.len()].copy_from_slice(route);
-        &name_buf[..method.len() + 1 + route.len()]
+        let m = method_in_name;
+        name_buf[..m.len()].copy_from_slice(m);
+        name_buf[m.len()] = b' ';
+        name_buf[m.len() + 1..m.len() + 1 + route.len()].copy_from_slice(route);
+        &name_buf[..m.len() + 1 + route.len()]
     } else {
-        method
+        method_in_name
     };
     let mut w = SpanWriter::begin(out, p.stub, name, SpanKind::Server, p.end_ns);
     w.trace_state(p.trace_state);
@@ -483,8 +609,14 @@ fn encode_head(
         budget,
     };
     a.put("http.request.method", Value::Str(method));
-    // url.path / url.query are appended per request (tail).
-    a.n += if flags & FLAG_HAS_QUERY != 0 { 2 } else { 1 };
+    if method == b"_OTHER" {
+        a.put(
+            "http.request.method_original",
+            Value::Str(facts.method.as_str().as_bytes()),
+        );
+    }
+    // url.path / url.query / client.address / network.peer.* are appended per request (tail).
+    a.n += tail_attr_count(facts);
     a.put(
         "url.scheme",
         Value::Str(if flags & FLAG_HTTPS != 0 {
@@ -496,17 +628,15 @@ fn encode_head(
     if !host.is_empty() {
         let (hname, port) = split_host_port(host);
         a.put("server.address", Value::Str(lim(hname)));
-        if let Some(port) = port {
-            a.put("server.port", Value::Int(port as i64));
-        }
+        // semconv: required when server.address is set; the scheme default when Host has none.
+        let port = port.unwrap_or(if flags & FLAG_HTTPS != 0 { 443 } else { 80 });
+        a.put("server.port", Value::Int(port as i64));
+    }
+    if facts.version != HttpVersion::Unknown {
+        a.put("network.protocol.version", Value::Str(facts.version.text()));
     }
     if !ua.is_empty() {
         a.put("user_agent.original", Value::Str(lim(ua)));
-    }
-    let mut ip_buf = [0u8; 64];
-    let ip = facts.peer.text(&mut ip_buf);
-    if !ip.is_empty() {
-        a.put("client.address", Value::Str(ip));
     }
     if !route.is_empty() {
         a.put("http.route", Value::Str(lim(route)));
@@ -516,14 +646,17 @@ fn encode_head(
     a.n += otlp::count_fields(p.attrs, f::ATTRIBUTES) as u32;
     let mut span_status = p.status;
     let mut msg: &[u8] = p.status_message;
+    let has_error_type = flags & FLAG_HAS_ERROR_TYPE != 0;
     if status != 0 {
         a.put("http.response.status_code", Value::Int(status as i64));
         if status >= 500 {
-            let mut buf = bun_core::fmt::ItoaBuf::new();
-            a.put(
-                "error.type",
-                Value::Str(bun_core::fmt::itoa(&mut buf, status)),
-            );
+            if !has_error_type {
+                let mut buf = bun_core::fmt::ItoaBuf::new();
+                a.put(
+                    "error.type",
+                    Value::Str(bun_core::fmt::itoa(&mut buf, status)),
+                );
+            }
             if span_status == StatusCode::Unset {
                 span_status = StatusCode::Error;
             }
@@ -531,16 +664,19 @@ fn encode_head(
     }
     if status < 500 && span_status != StatusCode::Ok {
         if flags & FLAG_ABORTED != 0 {
-            a.put("error.type", Value::Str(b"aborted"));
+            if !has_error_type {
+                a.put("error.type", Value::Str(b"aborted"));
+            }
             if span_status == StatusCode::Unset {
                 span_status = StatusCode::Error;
                 msg = b"request aborted";
             }
         } else if flags & FLAG_HANDLER_ERROR != 0 {
-            a.put("error.type", Value::Str(b"uncaught exception"));
+            if !has_error_type {
+                a.put("error.type", Value::Str(b"_OTHER"));
+            }
             if span_status == StatusCode::Unset {
                 span_status = StatusCode::Error;
-                msg = b"handler threw";
             }
         }
     }

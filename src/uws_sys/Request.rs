@@ -31,6 +31,8 @@ impl AnyRequest {
                     traceparent: RawSlice::of(r.header(b"traceparent")),
                     tracestate: RawSlice::of(r.header(b"tracestate")),
                     baggage: RawSlice::of(r.header(b"baggage")),
+                    forwarded: RawSlice::of(r.header(b"forwarded")),
+                    x_forwarded_for: RawSlice::of(r.header(b"x-forwarded-for")),
                     path_len: u32::MAX,
                     _req: core::marker::PhantomData,
                 }
@@ -96,6 +98,8 @@ pub struct TelemetryHeaders<'a> {
     traceparent: RawSlice,
     tracestate: RawSlice,
     baggage: RawSlice,
+    forwarded: RawSlice,
+    x_forwarded_for: RawSlice,
     /// Length of the path part of `url()` (up to `?`); `u32::MAX` if unknown.
     pub path_len: u32,
     _req: core::marker::PhantomData<&'a Request>,
@@ -125,6 +129,12 @@ impl<'a> TelemetryHeaders<'a> {
     pub fn baggage(&self) -> Option<&'a [u8]> {
         self.get(self.baggage)
     }
+    pub fn forwarded(&self) -> Option<&'a [u8]> {
+        self.get(self.forwarded)
+    }
+    pub fn x_forwarded_for(&self) -> Option<&'a [u8]> {
+        self.get(self.x_forwarded_for)
+    }
 }
 
 impl Request {
@@ -152,6 +162,8 @@ impl Request {
             traceparent: RawSlice::NONE,
             tracestate: RawSlice::NONE,
             baggage: RawSlice::NONE,
+            forwarded: RawSlice::NONE,
+            x_forwarded_for: RawSlice::NONE,
             path_len: u32::MAX,
             _req: core::marker::PhantomData,
         };

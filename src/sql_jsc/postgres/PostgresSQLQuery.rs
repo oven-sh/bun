@@ -223,6 +223,7 @@ impl PostgresSQLQuery {
             Some(DbError {
                 ty: <&'static str>::from(err).as_bytes(),
                 message: b"",
+                from_server: false,
             }),
         );
         // R-2: every field touched below is `Cell`/`JsCell`-backed, so `&self`
@@ -502,6 +503,7 @@ impl PostgresSQLQuery {
                 Some(DbError {
                     ty: b"_OTHER",
                     message: b"failed to run query",
+                    from_server: false,
                 }),
             );
         }

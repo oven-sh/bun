@@ -4955,7 +4955,7 @@ pub(crate) fn write_file_internal(
                 global_this,
                 bun_telemetry::Instrument::Fs,
                 &otel,
-                b"Bun.write",
+                b"fs.write",
                 bun_telemetry::SpanKind::Internal,
                 |w| {
                     if let PathOrFileDescriptor::Path(p) = pathlike {

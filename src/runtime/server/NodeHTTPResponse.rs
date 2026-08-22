@@ -1562,6 +1562,12 @@ fn node_http_request_on_reject(global_object: &JSGlobalObject, callframe: &CallF
                 this.write_status(raw_response, 500);
             }
             this.otel_handler_error.set(true);
+            let span = this.otel_span.get();
+            if span.is_some()
+                && crate::telemetry::span::record_exception(global_object, span, err).is_err()
+            {
+                return JSValue::ZERO; // terminating
+            }
             raw_response.end_stream(raw_response.state().is_http_connection_close());
         }
 

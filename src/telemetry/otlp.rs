@@ -448,7 +448,7 @@ impl<'a> SpanWriter<'a> {
         stack: &[u8],
     ) -> &mut Self {
         with_exception_attrs(ty, message, stack, |attrs| {
-            encode_event(self.out, b"exception", time_ns, attrs)
+            encode_event(self.out, b"exception", crate::clock::or_now(time_ns), attrs)
         });
         self
     }
@@ -504,6 +504,15 @@ impl<'a> SpanWriter<'a> {
     pub fn error(&mut self, ty: &[u8], message: &[u8]) -> &mut Self {
         self.attr("error.type", ty);
         self.status(StatusCode::Error, message)
+    }
+
+    /// A failed operation per semconv: `exception` event (type = `code`),
+    /// `error.type` = `code`, status Error described by `message`
+    /// (`code` when there is no message).
+    pub fn fail(&mut self, code: &[u8], message: &[u8]) -> &mut Self {
+        let message = if message.is_empty() { code } else { message };
+        self.exception(0, code, message, b"");
+        self.error(code, message)
     }
 
     #[inline]

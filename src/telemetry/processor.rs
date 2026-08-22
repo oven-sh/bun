@@ -44,6 +44,11 @@ pub trait Exporter: Send + Sync {
     /// Synchronous best-effort delivery during process exit. Return once the
     /// payload is sent or `deadline_ns` (clock::now_unix_nanos domain) passes.
     fn export_blocking(&self, payload: &ExportPayload, deadline_ns: u64) -> ExportResult;
+    /// Identity of the VM (thread) this exporter is bound to, if any: a
+    /// reconfigure on one thread leaves other threads' bound exporters alone.
+    fn owner(&self) -> Option<usize> {
+        None
+    }
 }
 
 /// A payload an exporter handed back for a later attempt. Parked payloads
@@ -185,10 +190,17 @@ impl Processor {
         }
     }
 
-    pub fn clear_exporters(&self) {
-        self.exporters.write().clear();
-        let parked = core::mem::take(&mut *self.retries.lock());
-        for r in parked {
+    /// Drop every exporter except those bound to a VM other than `owner`.
+    pub fn clear_exporters(&self, owner: usize) {
+        let keep = |e: &Arc<dyn Exporter>| e.owner().is_some_and(|o| o != owner);
+        self.exporters.write().retain(keep);
+        let mut retries = self.retries.lock();
+        let (kept, dropped): (Vec<_>, Vec<_>) = core::mem::take(&mut *retries)
+            .into_iter()
+            .partition(|r| keep(&r.exporter));
+        *retries = kept;
+        drop(retries);
+        for r in dropped {
             self.record_result(&r.payload, ExportResult::Failure);
         }
     }

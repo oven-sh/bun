@@ -331,13 +331,26 @@ fn configure_with(
         RETIRED_STATES.lock().push(old as usize);
     }
     *p.config.write() = cfg.batch;
-    let script = bun_paths::basename(vm.main());
+    let host_name = bun_core::OwnedString::new(crate::node::node_os::hostname_string());
+    let os_version = bun_core::OwnedString::new(crate::node::node_os::release());
     let resource = bun_telemetry::resource::encode(&bun_telemetry::resource::ResourceInfo {
         service_name: cfg.service_name.as_deref(),
         extra: &cfg.resource_attributes,
         runtime_version: bun_core::Environment::VERSION_STRING,
         pid: std::process::id(),
-        script: core::str::from_utf8(script).ok(),
+        command: vm.main(),
+        executable_path: bun_core::self_exe_path()
+            .map(|p| p.as_bytes())
+            .unwrap_or(b""),
+        host_name: host_name.to_utf8().slice(),
+        // semconv enum values
+        host_arch: match bun_core::Environment::ARCH {
+            bun_core::Environment::Architecture::X64 => "amd64",
+            bun_core::Environment::Architecture::Arm64 => "arm64",
+            bun_core::Environment::Architecture::Wasm => "wasm32",
+        },
+        os_type: bun_core::Environment::OS.npm_name(),
+        os_version: os_version.to_utf8().slice(),
     });
     p.set_resource(resource);
     for x in otlp_exporters {
@@ -642,7 +655,7 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         }
     };
     if replaces_exporters {
-        processor().clear_exporters();
+        processor().clear_exporters(core::ptr::from_ref(vm_state_or_init(global)) as usize);
         if let Some(s) = vm_state(global) {
             exporter::JsExporter::detach_all_for_vm(s);
         }

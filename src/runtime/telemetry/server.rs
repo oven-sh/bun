@@ -70,14 +70,29 @@ pub fn begin(
                 return;
             }
             f.flags = if is_https { R::FLAG_HTTPS } else { 0 };
-            f.peer = match resp {
-                bun_uws::AnyResponse::H3(_) => resp
-                    .get_remote_socket_info()
-                    .map_or(R::PeerIp::None, |a| R::PeerIp::from_text(a.ip())),
+            (f.peer, f.peer_port, f.version) = match resp {
+                bun_uws::AnyResponse::H3(_) => match resp.get_remote_socket_info() {
+                    Some(a) => (
+                        R::PeerIp::from_text(a.ip()),
+                        u16::try_from(a.port).unwrap_or(0),
+                        R::HttpVersion::Http3,
+                    ),
+                    None => (R::PeerIp::None, 0, R::HttpVersion::Http3),
+                },
                 _ => match resp.get_remote_address_raw() {
-                    Some((RawIp::V4(b), _)) => R::PeerIp::V4(b),
-                    Some((RawIp::V6(b), _)) => R::PeerIp::V6(b),
-                    None => R::PeerIp::None,
+                    Some((RawIp::V4(b), port)) => (R::PeerIp::V4(b), port, R::HttpVersion::Http11),
+                    // v4-mapped (::ffff:a.b.c.d) reads as the v4 address, as node reports it.
+                    Some((RawIp::V6(b), port)) => (
+                        match b {
+                            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, a, b_, c, d] => {
+                                R::PeerIp::V4([a, b_, c, d])
+                            }
+                            _ => R::PeerIp::V6(b),
+                        },
+                        port,
+                        R::HttpVersion::Http11,
+                    ),
+                    None => (R::PeerIp::None, 0, R::HttpVersion::Http11),
                 },
             };
             let url = req.url();
@@ -89,6 +104,7 @@ pub fn begin(
             f.set_request(
                 url,
                 path_len,
+                R::forwarded_client(h.forwarded(), h.x_forwarded_for()),
                 h.host().unwrap_or(b""),
                 h.user_agent().unwrap_or(b""),
             );
@@ -99,7 +115,8 @@ pub fn begin(
                         let mut key = Vec::with_capacity(20 + name.len());
                         key.extend_from_slice(b"http.request.header.");
                         key.extend_from_slice(name);
-                        s.push_attribute(&key, &Value::Str(v), l);
+                        // semconv: header values are string[].
+                        s.push_attribute(&key, &Value::Array(&[Value::Str(v)]), l);
                     }
                 }
             }

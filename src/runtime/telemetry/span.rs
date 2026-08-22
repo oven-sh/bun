@@ -1044,3 +1044,48 @@ pub extern "C" fn Bun__Telemetry__propagationFlags() -> u32 {
     let st = super::state();
     (st.propagate_trace_context as u32) | ((st.propagate_baggage as u32) << 1)
 }
+
+/// Record a thrown JS value on a native span per semconv: an `exception`
+/// event, `error.type` = the exception's class, status Error with its message.
+pub fn record_exception(
+    global: &JSGlobalObject,
+    span: NativeSpan,
+    err: JSValue,
+) -> bun_jsc::JsResult<()> {
+    let mut ty_s = None;
+    let mut msg_s = None;
+    let mut stack_s = None;
+    // Describing the thrown value must not change what the application sees:
+    // a throwing getter on it is ignored here (the error is still delivered
+    // by the caller); only a pending termination is propagated.
+    let read = |v: bun_jsc::JsResult<Option<JSValue>>| -> bun_jsc::JsResult<Option<bun_core::ZigStringSlice>> {
+        match v {
+            Ok(Some(v)) if v.is_string() => v.to_slice(global).map(Some),
+            Ok(_) => Ok(None),
+            Err(_) if global.clear_exception_except_termination() => Ok(None),
+            Err(e) => Err(e),
+        }
+    };
+    if err.is_object() {
+        ty_s = read(err.get(global, "name"))?;
+        msg_s = read(err.get(global, "message"))?;
+        stack_s = read(err.get(global, "stack"))?;
+    } else if err.is_string() {
+        msg_s = read(Ok(Some(err)))?;
+    }
+    let ty = ty_s.as_ref().map(|s| s.slice()).unwrap_or(b"Error");
+    let msg = msg_s.as_ref().map(|s| s.slice()).unwrap_or(b"");
+    let stack = stack_s.as_ref().map(|s| s.slice()).unwrap_or(b"");
+    if let Some(mut l) = super::local(global) {
+        let lim = limits();
+        pool::with(&mut l.pool, span, |s| {
+            bun_telemetry::otlp::with_exception_attrs(ty, msg, stack, |attrs| {
+                s.add_event(b"exception", 0, attrs, lim)
+            });
+            s.set_attribute(b"error.type", &Value::Str(ty), lim);
+            s.http.flags |= bun_telemetry::http_record::FLAG_HAS_ERROR_TYPE;
+            s.set_status(StatusCode::Error, msg);
+        });
+    }
+    Ok(())
+}

@@ -93,10 +93,12 @@ impl QuerySpan {
             Ok(d) => DbError {
                 ty: d.code.as_deref().unwrap_or(b"_OTHER"),
                 message: d.message.as_ref().map_or(b"", |m| m.slice()),
+                from_server: d.from_server,
             },
             Err(_) => DbError {
                 ty: b"_OTHER",
                 message: b"",
+                from_server: false,
             },
         };
         bun_telemetry::db::end(
@@ -114,6 +116,8 @@ impl QuerySpan {
 
 struct ErrorDetails {
     code: Option<Vec<u8>>,
+    /// `code` came from `errno` (a status the server sent) rather than `code` (`ERR_*`).
+    from_server: bool,
     message: Option<bun_core::ZigStringSlice>,
 }
 
@@ -121,6 +125,7 @@ impl ErrorDetails {
     fn of(global: &JSGlobalObject, err: JSValue) -> bun_jsc::JsResult<Self> {
         let mut this = Self {
             code: None,
+            from_server: false,
             message: None,
         };
         if !err.is_object() {
@@ -136,6 +141,7 @@ impl ErrorDetails {
                 }
             }
             if this.code.is_some() {
+                this.from_server = key == "errno";
                 break;
             }
         }

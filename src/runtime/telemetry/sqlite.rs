@@ -89,6 +89,7 @@ pub extern "C" fn Bun__Telemetry__sqliteEnd(
             Some(db::DbError {
                 ty: code,
                 message: msg,
+                from_server: true,
             }),
         );
     }

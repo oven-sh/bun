@@ -7031,7 +7031,12 @@ declare module "bun" {
      */
     type OptionsObject<In extends Writable, Out extends Readable, Err extends Readable> = BaseOptions<In, Out, Err>;
 
-    interface BaseOptions<In extends Writable, Out extends Readable, Err extends Readable> {
+    interface BaseOptions<
+      In extends Writable,
+      Out extends Readable,
+      Err extends Readable,
+      Term extends Terminal | undefined = undefined,
+    > {
       /**
        * The current working directory of the process
        *
@@ -7196,7 +7201,7 @@ declare module "bun" {
        * ```
        */
       onExit?(
-        subprocess: Subprocess<In, Out, Err>,
+        subprocess: Subprocess<In, Out, Err, Term>,
         exitCode: number | null,
         signalCode: number | null,
         /**
@@ -7262,7 +7267,7 @@ declare module "bun" {
         /**
          * The {@link Subprocess} that received the message
          */
-        subprocess: Subprocess<In, Out, Err>,
+        subprocess: Subprocess<In, Out, Err, Term>,
         handle?: unknown,
       ): void;
 
@@ -7373,8 +7378,21 @@ declare module "bun" {
     interface SpawnSyncOptions<In extends Writable, Out extends Readable, Err extends Readable>
       extends BaseOptions<In, Out, Err> {}
 
-    interface SpawnOptions<In extends Writable, Out extends Readable, Err extends Readable>
-      extends BaseOptions<In, Out, Err> {
+    /**
+     * Options accepted by {@link spawn}.
+     *
+     * `Term` is what {@link Subprocess.terminal} is on the process these options produce, and decides what
+     * the `terminal` option accepts: only `undefined` when `Term` is `undefined` (the default),
+     * `TerminalOptions | Terminal` when it is `Terminal`, and either when it is `Terminal | undefined`. The
+     * {@link Subprocess} passed to `onExit` and `ipc` has the same `Term`. {@link spawn} picks the overload,
+     * and with it `Term`, from whether the options it is called with carry a `terminal`.
+     */
+    interface SpawnOptions<
+      In extends Writable,
+      Out extends Readable,
+      Err extends Readable,
+      Term extends Terminal | undefined = undefined,
+    > extends BaseOptions<In, Out, Err, Term> {
       /**
        * If true, the stdout and stderr pipes don't automatically start reading
        * data. Reading begins only when you access the `stdout` or `stderr`
@@ -7397,14 +7415,23 @@ declare module "bun" {
        */
       lazy?: boolean;
 
+      // `terminal` is typed as a union that contains `Term` itself rather than as one conditional type on
+      // `Term`, so that TypeScript measures this interface as covariant in `Term`. With a bare conditional
+      // it measures it as bivariant, and a `SpawnOptions<.., Terminal | undefined>` value would then satisfy
+      // the `Term = undefined` instantiation that the terminal-less `spawn` overloads take.
       /**
        * Spawn the subprocess with a pseudo-terminal (PTY) attached.
        *
        * When this option is provided:
-       * - `stdin`, `stdout`, and `stderr` are all connected to the terminal
+       * - `stdin`, `stdout`, and `stderr` are all connected to the terminal; the
+       *   `stdin`, `stdout` and `stderr` options are ignored
        * - The subprocess sees itself running in a real terminal (`isTTY = true`)
-       * - Access the terminal via `subprocess.terminal`
-       * - `subprocess.stdin`, `subprocess.stdout`, `subprocess.stderr` return `null`
+       * - Access the terminal via `subprocess.terminal`, which is a {@link Terminal}
+       * - `subprocess.stdin`, `subprocess.stdout` and `subprocess.stderr` are `null`
+       *
+       * {@link spawn} types the returned {@link Subprocess} accordingly: its `terminal` is a `Terminal`
+       * and its `stdin`, `stdout` and `stderr` are `null`. When the option's value may be `undefined`, the
+       * returned process has both shapes in a union (`proc.stdout` is `ReadableStream | null`, and so on).
        *
        * Only available on POSIX systems (Linux, macOS).
        *
@@ -7433,7 +7460,7 @@ declare module "bun" {
        * terminal.close();
        * ```
        */
-      terminal?: TerminalOptions | Terminal;
+      terminal?: Term | (Term extends Terminal ? TerminalOptions : never);
     }
 
     type ReadableToIO<X extends Readable> = X extends "pipe" | undefined
@@ -7533,26 +7560,57 @@ declare module "bun" {
   /**
    * A process created by {@link Bun.spawn}.
    *
-   * The 3 optional type parameters correspond to the `stdio` array from the options object. Instead of specifying them, use one of these utility types:
+   * The first 3 optional type parameters correspond to the `stdio` array from the options object. Instead of specifying them, use one of these utility types:
    * - {@link ReadableSubprocess} (any, pipe, pipe)
    * - {@link WritableSubprocess} (pipe, any, any)
    * - {@link PipedSubprocess} (pipe, pipe, pipe)
    * - {@link NullSubprocess} (ignore, ignore, ignore)
+   *
+   * The 4th is the type of {@link Subprocess.terminal}: `Terminal` for a process spawned with the `terminal`
+   * option, whose `stdin`, `stdout`, `stderr` and `readable` are then `null`; `undefined` for a process
+   * without one, whose stdio properties are derived from the first 3 parameters. {@link Bun.spawn} picks it
+   * from the options it is called with.
+   *
+   * It defaults to `undefined` when the stdio parameters are given (`Subprocess<"ignore", "pipe", "pipe">`,
+   * the utility types above), so those types keep describing exactly the streams they name. When the stdio
+   * parameters are left unspecified as well (`Subprocess`, `Subprocess<any, any, any>`), it defaults to
+   * `Terminal | undefined`, so a plain `Subprocess` accepts every process {@link Bun.spawn} returns; its
+   * stdio properties then include `null`. `Subprocess<any, any, any, Terminal>` accepts exactly the
+   * processes that have a terminal.
    */
   interface Subprocess<
     In extends SpawnOptions.Writable = SpawnOptions.Writable,
     Out extends SpawnOptions.Readable = SpawnOptions.Readable,
     Err extends SpawnOptions.Readable = SpawnOptions.Readable,
+    Term extends Terminal | undefined = [SpawnOptions.Writable, SpawnOptions.Readable, SpawnOptions.Readable] extends [
+      In,
+      Out,
+      Err,
+    ]
+      ? Terminal | undefined
+      : undefined,
   > extends AsyncDisposable {
-    readonly stdin: SpawnOptions.WritableToIO<In>;
-    readonly stdout: SpawnOptions.ReadableToIO<Out>;
-    readonly stderr: SpawnOptions.ReadableToIO<Err>;
+    /**
+     * Derived from the `stdin` option (see {@link SpawnOptions.WritableToIO}), or `null` when the process
+     * was spawned with the `terminal` option: write to {@link Subprocess.terminal} instead.
+     */
+    readonly stdin: Term extends Terminal ? null : SpawnOptions.WritableToIO<In>;
+    /**
+     * Derived from the `stdout` option (see {@link SpawnOptions.ReadableToIO}), or `null` when the process
+     * was spawned with the `terminal` option: the output arrives in the terminal's `data` callback instead.
+     */
+    readonly stdout: Term extends Terminal ? null : SpawnOptions.ReadableToIO<Out>;
+    /**
+     * Derived from the `stderr` option (see {@link SpawnOptions.ReadableToIO}), or `null` when the process
+     * was spawned with the `terminal` option: the output arrives in the terminal's `data` callback instead.
+     */
+    readonly stderr: Term extends Terminal ? null : SpawnOptions.ReadableToIO<Err>;
 
     /**
-     * The terminal attached to this subprocess, if spawned with the `terminal` option.
-     * `undefined` if no terminal was attached.
+     * The terminal attached to this subprocess when it was spawned with the `terminal` option
+     * (the same object if an existing {@link Terminal} was passed), `undefined` otherwise.
      *
-     * When a terminal is attached, `stdin`, `stdout`, and `stderr` return `null`.
+     * When a terminal is attached, `stdin`, `stdout`, and `stderr` are `null`.
      * Use `terminal.write()` and the `data` callback instead.
      *
      * @example
@@ -7561,10 +7619,10 @@ declare module "bun" {
      *   terminal: { data: (term, data) => console.log(data.toString()) },
      * });
      *
-     * proc.terminal?.write("echo hello\n");
+     * proc.terminal.write("echo hello\n");
      * ```
      */
-    readonly terminal: Terminal | undefined;
+    readonly terminal: Term;
 
     /**
      * Extra file descriptors passed to the `stdio` option.
@@ -7583,7 +7641,7 @@ declare module "bun" {
      *
      * Exists for compatibility with {@link ReadableStream.pipeThrough}
      */
-    readonly readable: SpawnOptions.ReadableToIO<Out>;
+    readonly readable: Term extends Terminal ? null : SpawnOptions.ReadableToIO<Out>;
 
     /**
      * The process ID of the child process
@@ -7733,7 +7791,7 @@ declare module "bun" {
        */
       cmd: string[]; // to support dynamically constructed commands
     },
-  ): Subprocess<In, Out, Err>;
+  ): Subprocess<In, Out, Err, undefined>;
 
   /**
    * Spawn a new process
@@ -7767,7 +7825,95 @@ declare module "bun" {
      */
     cmds: string[],
     options?: SpawnOptions.SpawnOptions<In, Out, Err>,
-  ): Subprocess<In, Out, Err>;
+  ): Subprocess<In, Out, Err, undefined>;
+
+  /**
+   * Spawn a new process with a pseudo-terminal attached (the `terminal` option).
+   *
+   * The process's stdio goes through the terminal, so the returned {@link Subprocess} has a
+   * {@link Terminal} as its `terminal` and `null` as its `stdin`, `stdout` and `stderr`.
+   *
+   * ```ts
+   * const proc = Bun.spawn({
+   *   cmd: ["bash"],
+   *   terminal: { data: (term, data) => process.stdout.write(data) },
+   * });
+   * proc.terminal.write("echo hello\n");
+   * ```
+   */
+  function spawn<
+    const In extends SpawnOptions.Writable = "ignore",
+    const Out extends SpawnOptions.Readable = "pipe",
+    const Err extends SpawnOptions.Readable = "inherit",
+  >(
+    options: SpawnOptions.SpawnOptions<In, Out, Err, Terminal> & {
+      /** The command to run, resolved as described on the first overload. */
+      cmd: string[];
+      terminal: TerminalOptions | Terminal;
+    },
+  ): Subprocess<In, Out, Err, Terminal>;
+
+  /**
+   * Spawn a new process with a pseudo-terminal attached (the `terminal` option).
+   *
+   * The process's stdio goes through the terminal, so the returned {@link Subprocess} has a
+   * {@link Terminal} as its `terminal` and `null` as its `stdin`, `stdout` and `stderr`.
+   *
+   * ```ts
+   * const proc = Bun.spawn(["bash"], {
+   *   terminal: { data: (term, data) => process.stdout.write(data) },
+   * });
+   * proc.terminal.write("echo hello\n");
+   * ```
+   */
+  function spawn<
+    const In extends SpawnOptions.Writable = "ignore",
+    const Out extends SpawnOptions.Readable = "pipe",
+    const Err extends SpawnOptions.Readable = "inherit",
+  >(
+    /** The command to run, resolved as described on the first overload. */
+    cmds: string[],
+    options: SpawnOptions.SpawnOptions<In, Out, Err, Terminal> & { terminal: TerminalOptions | Terminal },
+  ): Subprocess<In, Out, Err, Terminal>;
+
+  // The two overloads below accept everything the four above accept, so they have to stay last. The
+  // object form is the very last one: when a one-argument call matches no overload, TypeScript reports
+  // the last overload's error, which should be the object form's, and `ReturnType<typeof Bun.spawn>` is
+  // the last overload's return type, which this way stays equal to a plain `Subprocess`.
+  /**
+   * Spawn a new process whose `terminal` option may or may not be set (for example
+   * `terminal: interactive ? { ... } : undefined`).
+   *
+   * The returned {@link Subprocess} covers both cases: its `terminal` is `Terminal | undefined` and
+   * its `stdin`, `stdout` and `stderr` are `null` when a terminal is attached.
+   */
+  function spawn<
+    const In extends SpawnOptions.Writable = "ignore",
+    const Out extends SpawnOptions.Readable = "pipe",
+    const Err extends SpawnOptions.Readable = "inherit",
+  >(
+    /** The command to run, resolved as described on the first overload. */
+    cmds: string[],
+    options: SpawnOptions.SpawnOptions<In, Out, Err, Terminal | undefined>,
+  ): Subprocess<In, Out, Err, Terminal | undefined>;
+
+  /**
+   * Spawn a new process whose `terminal` option may or may not be set (for example
+   * `terminal: interactive ? { ... } : undefined`).
+   *
+   * The returned {@link Subprocess} covers both cases: its `terminal` is `Terminal | undefined` and
+   * its `stdin`, `stdout` and `stderr` are `null` when a terminal is attached.
+   */
+  function spawn<
+    const In extends SpawnOptions.Writable = "ignore",
+    const Out extends SpawnOptions.Readable = "pipe",
+    const Err extends SpawnOptions.Readable = "inherit",
+  >(
+    options: SpawnOptions.SpawnOptions<In, Out, Err, Terminal | undefined> & {
+      /** The command to run, resolved as described on the first overload. */
+      cmd: string[];
+    },
+  ): Subprocess<In, Out, Err, Terminal | undefined>;
 
   /**
    * Synchronously spawn a new process

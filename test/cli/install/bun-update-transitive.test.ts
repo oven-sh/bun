@@ -651,21 +651,24 @@ test.concurrent(
 );
 
 // A version bump that leaves a patchedDependencies key behind is reported on every install, not only `bun update` (#40106).
-test.concurrent("`bun install` warns when a patchedDependencies key no longer matches the installed version", async () => {
-  const dir = await setup({
-    "package.json": pkgJson({ "no-deps": "1.0.0" }, PATCHED),
-    "patches/no-deps@1.0.0.patch": NO_DEPS_PATCH,
-  });
-  // the patch applies: installs stay quiet
-  expect(await install(dir)).not.toContain("warn:");
-  // a routine bump makes the key stale
-  await write(join(dir, "package.json"), stringify(pkgJson({ "no-deps": "1.1.0" }, PATCHED)));
-  const orphaned = "warn: patches/no-deps@1.0.0.patch no longer applies (no-deps is now 1.1.0)\n";
-  expect(await install(dir)).toContain(orphaned);
-  // and every later install repeats the warning until package.json is fixed
-  expect(await install(dir)).toContain(orphaned);
-  expect(await file(join(dir, "node_modules", "no-deps", "patched.txt")).exists()).toBeFalse();
-});
+test.concurrent(
+  "`bun install` warns when a patchedDependencies key no longer matches the installed version",
+  async () => {
+    const dir = await setup({
+      "package.json": pkgJson({ "no-deps": "1.0.0" }, PATCHED),
+      "patches/no-deps@1.0.0.patch": NO_DEPS_PATCH,
+    });
+    // the patch applies: installs stay quiet
+    expect(await install(dir)).not.toContain("warn:");
+    // a routine bump makes the key stale
+    await write(join(dir, "package.json"), stringify(pkgJson({ "no-deps": "1.1.0" }, PATCHED)));
+    const orphaned = "warn: patches/no-deps@1.0.0.patch no longer applies (no-deps is now 1.1.0)\n";
+    expect(await install(dir)).toContain(orphaned);
+    // and every later install repeats the warning until package.json is fixed
+    expect(await install(dir)).toContain(orphaned);
+    expect(await file(join(dir, "node_modules", "no-deps", "patched.txt")).exists()).toBeFalse();
+  },
+);
 
 // A declared patch that silently stopped applying fails --frozen-lockfile; a patched map edit alone still passes it (frozen-lockfile-pruned.test.ts) (#40106).
 test.concurrent("`bun install --frozen-lockfile` fails when a patchedDependencies key no longer applies", async () => {

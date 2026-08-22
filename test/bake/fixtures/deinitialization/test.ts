@@ -122,11 +122,16 @@ function liveServerWrappers() {
   return (c.HTTPServer ?? 0) + (c.DebugHTTPServer ?? 0) + (c.HTTPSServer ?? 0) + (c.DebugHTTPSServer ?? 0);
 }
 
+// A wrapper becomes collectable only once its server's sockets have finished
+// closing, which is loopback I/O: poll for it against a deadline rather than a
+// fixed number of setImmediate turns (those do not wait for I/O, and on a
+// loaded machine thirty of them pass before the last close lands).
 async function drainServerWrappers(target: number) {
-  for (let i = 0; i < 30 && liveServerWrappers() > target; i++) {
+  const deadline = performance.now() + 5000;
+  while (liveServerWrappers() > target && performance.now() < deadline) {
     Bun.gc(true);
     fullGC();
-    await new Promise(resolve => setImmediate(resolve));
+    await new Promise(resolve => setTimeout(resolve, 5));
   }
 }
 

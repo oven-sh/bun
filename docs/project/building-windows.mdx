@@ -15,6 +15,21 @@ By default, running unverified scripts is blocked.
 Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy Unrestricted
 ```
 
+### Enable Developer Mode
+
+Some of the source archives the build downloads contain symbolic links. A standard Windows account cannot create symbolic links until you turn on Developer Mode. Without Developer Mode, the build fails while extracting those archives:
+
+```
+[zstd] error: tar extraction failed (exit 1): tests/cli-tests/bin/unzstd: Can't create '\\?\C:\...\vendor\zstd\tests\cli-tests\bin\unzstd': Invalid argument
+ninja: build stopped: subcommand failed.
+```
+
+Search the Start menu for "Developer settings" and turn on Developer Mode. To confirm it is on, check that this prints `1`:
+
+```ps1
+(Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock").AllowDevelopmentWithoutDevLicense
+```
+
 ### System Dependencies
 
 Bun v1.1 or later. The build uses Bun to run its own code generators.

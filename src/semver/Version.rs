@@ -836,14 +836,9 @@ impl<'a, T: VersionInt> fmt::Display for DiffFormatter<'a, T> {
                 }
             } else {
                 if !set_color {
-                    write!(
-                        writer,
-                        concat!(bun_core::pretty_fmt!("<r><b><red>", true), "+{}"),
-                        self.version.tag.build.fmt(self.buf),
-                    )?;
-                } else {
-                    write!(writer, "+{}", self.version.tag.build.fmt(self.other_buf))?;
+                    writer.write_str(bun_core::pretty_fmt!("<r><b><red>", true))?;
                 }
+                write!(writer, "+{}", self.version.tag.build.fmt(self.buf))?;
             }
         }
 

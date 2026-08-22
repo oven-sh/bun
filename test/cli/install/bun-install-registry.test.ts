@@ -9112,6 +9112,38 @@ describe("outdated", () => {
     // The catalog grouping should show which workspaces use it
     expect(out).toMatch(/catalog.*workspace-a.*workspace-b|workspace-b.*workspace-a/);
   });
+
+  // The latest build-metadata-1 is 1.1.0-rc.1+build.20240101. Its build tag is
+  // longer than the 8 bytes a semver string stores inline, so printing it reads
+  // from the manifest's string buffer. The colored diff against the current
+  // version has to read it from that buffer too, not from the lockfile's.
+  const buildTagCases = [
+    {
+      current: "1.0.0",
+      // "1." dim, "1.0" yellow (minor bump), then the whole tag red because the
+      // current version has no prerelease.
+      latest: "\x1b[2m1.\x1b[0m\x1b[1m\x1b[33m1.0\x1b[0m\x1b[1m\x1b[31m-rc.1+build.20240101\x1b[0m",
+    },
+    {
+      current: "1.1.0-rc.0",
+      // Same major.minor.patch and prerelease prefix, red from the first
+      // differing prerelease character onwards.
+      latest: "\x1b[2m1.1.0-rc.\x1b[0m\x1b[1m\x1b[31m1+build.20240101\x1b[0m",
+    },
+  ];
+
+  for (const { current, latest } of buildTagCases) {
+    test(`colored latest version keeps its build tag (current ${current})`, async () => {
+      await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "build-metadata-1": current } }));
+      await runBunInstall(env, packageDir);
+
+      const out = await runBunOutdated({ ...env, FORCE_COLOR: "1" }, packageDir);
+      const row = out.split("\n").find(line => line.includes("build-metadata-1"))!;
+      const cells = row.split("│").map(cell => cell.trim());
+      expect(Bun.stripANSI(row)).toContain("1.1.0-rc.1+build.20240101");
+      expect(cells).toEqual(["", "build-metadata-1\x1b[2m\x1b[0m", current, `\x1b[2m${current}\x1b[0m`, latest, ""]);
+    });
+  }
 });
 
 // TODO: setup registry to run across multiple test files, then move this and a few other describe

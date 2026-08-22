@@ -321,11 +321,7 @@ describe("net.createServer listen", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // stderr only matters on failure: debug builds may print benign warnings.
-    expect({ stdout, failureDetail: exitCode === 0 ? "" : stderr }).toEqual({
-      stdout: "beforeExit again\n",
-      failureDetail: "",
-    });
+    expect({ stdout, stderr }).toEqual({ stdout: "beforeExit again\n", stderr: "" });
     expect(exitCode).toBe(0);
   });
 });

@@ -377,8 +377,17 @@ pub(crate) fn git_host_refused<'a>(
         if strings::has_prefix_comptime(url, b"file://") {
             return None;
         }
-        let host = bun_url::URL::parse(url).host;
-        return (!options.is_host_allowed(url)).then_some(host);
+        // `is_host_allowed` ignores any `git@` userinfo; report `host[:port]`
+        // without it too.
+        if options.is_host_allowed(url) {
+            return None;
+        }
+        let rest = &url[strings::index_of(url, b"://").unwrap_or(0) + b"://".len()..];
+        let authority = &rest[..strings::index_of_any(rest, b"/?#").unwrap_or(rest.len())];
+        return Some(match strings::last_index_of_char(authority, b'@') {
+            Some(at) => &authority[at + 1..],
+            None => authority,
+        });
     }
     if Dependency::is_scp_like_path(url) {
         // `[user@]host:path` — rebuild as a URL so the same matcher applies.

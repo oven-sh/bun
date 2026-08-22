@@ -839,6 +839,57 @@ allowedHosts = []
     expect(elsewhereReceived).toEqual([]);
   });
 
+  it("matches a git dependency with userinfo and a port by host:port", async () => {
+    // `git+ssh://git@host:2222/…` (tried as `https://git@host:2222/…` first):
+    // the `git@` must not become part of the host the allow-list compares.
+    // Allowed here, so the (failing-fast) clone is attempted rather than refused.
+    using dir = tempDir("allowed-hosts", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { repo: "git+ssh://git@git.example.invalid:2222/someone/repo.git" },
+      }),
+      "bunfig.toml": `
+[install]
+cache = false
+registry = "http://localhost:1/"
+allowedHosts = ["git.example.invalid:2222"]
+`,
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: { ...env, GIT_SSH_COMMAND: "false", GIT_TERMINAL_PROMPT: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("Refusing to clone");
+    expect(stderr).toContain(`"git clone" for "repo" failed`);
+    expect(exitCode).toBe(1);
+
+    // and the refusal names the bare host[:port] when it is not listed
+    using dir2 = tempDir("allowed-hosts", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { repo: "git+ssh://git@git.example.invalid:2222/someone/repo.git" },
+      }),
+      "bunfig.toml": `
+[install]
+cache = false
+registry = "http://localhost:1/"
+allowedHosts = []
+`,
+    });
+    const refused = await install(String(dir2));
+    expect(refused.stderr).toContain(
+      `error: Refusing to clone git dependency "repo" from "git.example.invalid:2222": host is not in install.allowedHosts`,
+    );
+    expect(refused.exitCode).toBe(1);
+  });
+
   it("a host allowed only on the ssh port still gets the ssh attempt", async () => {
     // `git@host:path` is tried over https first (port 443, not allowed here)
     // and then over ssh (port 22, allowed). The https form must be skipped

@@ -1038,6 +1038,7 @@ impl Request {
         let url_or_object = arguments[0];
         let url_or_object_type = url_or_object.js_type();
         let mut fields: EnumSet<Fields> = EnumSet::empty();
+        let mut input_body_to_transfer: Option<*mut Request> = None;
 
         let is_first_argument_a_url =
             // fastest path:
@@ -1087,12 +1088,23 @@ impl Request {
                 if let Some(request) = value.as_direct::<Request>() {
                     // SAFETY: as_direct returns a live *mut Request payload (m_ctx)
                     let request = unsafe { &*request };
+                    // Spec step 45's transfer applies only when this Request is
+                    // the *input* (arguments[0]); a Request supplied as *init*
+                    // (Bun extension) keeps the non-consuming tee, matching the
+                    // sibling Response-as-init branch below.
+                    let is_input = value == url_or_object;
                     if values_to_try.len() == 1 {
+                        if is_input {
+                            if let Err(e) = request.throw_if_body_unusable(global_this) {
+                                bail!(Err(e));
+                            }
+                        }
                         match Request::clone_into(
                             request,
                             &mut req,
                             global_this,
                             fields.contains(Fields::Url),
+                            is_input,
                         ) {
                             Ok(()) => {}
                             Err(e) => bail!(Err(e)),
@@ -1139,12 +1151,22 @@ impl Request {
 
                     if !fields.contains(Fields::Body) {
                         match request.body_value() {
-                            BodyValue::Null | BodyValue::Empty | BodyValue::Used => {}
+                            BodyValue::Null | BodyValue::Empty => {}
+                            _ if is_input => {
+                                if let Err(e) = request.throw_if_body_unusable(global_this) {
+                                    bail!(Err(e));
+                                }
+                                // Deferred until after URL validation so a
+                                // later bail! doesn't drop an already-taken
+                                // body. `request` stays live via arguments[0].
+                                input_body_to_transfer =
+                                    Some(std::ptr::from_ref(request).cast_mut());
+                                fields.insert(Fields::Body);
+                            }
+                            BodyValue::Used => {}
                             _ => {
                                 match request.clone_body_value_via_cached_stream(global_this) {
-                                    Ok(v) => {
-                                        *req.body_value_mut() = v;
-                                    }
+                                    Ok(v) => *req.body_value_mut() = v,
                                     Err(e) => bail!(Err(e)),
                                 }
                                 fields.insert(Fields::Body);
@@ -1212,7 +1234,7 @@ impl Request {
 
             if !fields.contains(Fields::Body) {
                 match value.fast_get(global_this, bun_jsc::BuiltinName::Body) {
-                    Ok(Some(body_)) => {
+                    Ok(Some(body_)) if !body_.is_null() => {
                         fields.insert(Fields::Body);
                         // fetch spec Request(init): `keepalive: true` with a ReadableStream
                         // body throws before body extraction (Node's message is "keepalive").
@@ -1234,7 +1256,7 @@ impl Request {
                             Err(e) => bail!(Err(e)),
                         }
                     }
-                    Ok(None) => {}
+                    Ok(_) => {}
                     Err(e) => bail!(Err(e)),
                 }
 
@@ -1442,6 +1464,15 @@ impl Request {
 
         req.url.set(href);
 
+        if let Some(input) = input_body_to_transfer {
+            // SAFETY: `input` is the live `*mut Request` payload of a
+            // DOMWrapper in `arguments`, rooted for this call.
+            match unsafe { &*input }.transfer_body_value(global_this) {
+                Ok(v) => *req.body_value_mut() = v,
+                Err(e) => bail!(Err(e)),
+            }
+        }
+
         if matches!(req.body_value(), BodyValue::Blob(_)) && req.headers.get().is_some() {
             if let BodyValue::Blob(blob) = req.body_value() {
                 let ct: &[u8] = blob.content_type_slice();
@@ -1507,10 +1538,15 @@ impl Request {
         req: &mut Request,
         global_this: &JSGlobalObject,
         preserve_url: bool,
+        transfer_body: bool,
     ) -> JsResult<()> {
         // allocator param dropped (global mimalloc)
         let _ = self.ensure_url();
-        let body_ = self.clone_body_value_via_cached_stream(global_this)?;
+        let body_ = if transfer_body {
+            self.transfer_body_value(global_this)?
+        } else {
+            self.clone_body_value_via_cached_stream(global_this)?
+        };
         // BodyValue's Drop frees `body_` on the `?` error path
         let body = body::hive_alloc(body_);
         // Last fallible call. The url computation is sunk below it
@@ -1588,7 +1624,7 @@ impl Request {
             reported_estimated_size: Cell::new(0),
         });
         // Box<Request> drops on the error path automatically
-        self.clone_into(&mut req, global_this, false)?;
+        self.clone_into(&mut req, global_this, false, false)?;
         Ok(req)
     }
 }

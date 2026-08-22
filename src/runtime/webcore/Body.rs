@@ -1726,6 +1726,57 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         Ok(cloned)
     }
 
+    /// Fetch §Request ctor step 45: move this body out (re-seating any stream
+    /// already migrated to the JS cache), leave this owner `Used`, and clear
+    /// its `body`/`stream` cache. Null/Empty bodies pass through unchanged.
+    fn transfer_body_value(&self, global_this: &JSGlobalObject) -> JsResult<Value> {
+        if matches!(self.get_body_value(), Value::Null | Value::Empty) {
+            return Ok(Value::Null);
+        }
+        // A Bun.serve body shares its slot with the RequestContext (= `task`):
+        // hand out a detached PendingValue instead of moving the Locked out.
+        // Prefer a stream that is already live (JS cache or `locked.readable`);
+        // only fall back to `to_readable_stream` to materialize one in place.
+        if matches!(self.get_body_value(), Value::Locked(l) if l.task.is_some()) {
+            let readable = match self.get_body_readable_stream(global_this) {
+                Some(rs) => Some(rs),
+                None => {
+                    let v = self.get_body_value().to_readable_stream(global_this)?;
+                    ReadableStream::from_js(v, global_this)?
+                }
+            };
+            *self.get_body_value() = Value::Used;
+            if let Some(js_ref) = self.js_ref() {
+                Self::stream_set_cached(js_ref, global_this, JSValue::ZERO);
+                Self::body_set_cached(js_ref, global_this, JSValue::ZERO);
+            }
+            return Ok(match readable {
+                Some(rs) => Value::Locked(PendingValue {
+                    readable: webcore::readable_stream::Strong::init(rs, global_this),
+                    ..PendingValue::new(global_this)
+                }),
+                None => Value::Null,
+            });
+        }
+        let cached_stream = match self.js_ref().and_then(Self::stream_get_cached) {
+            Some(stream) => ReadableStream::from_js(stream, global_this)?,
+            None => None,
+        };
+        let mut body = core::mem::replace(self.get_body_value(), Value::Used);
+        if let Value::Locked(locked) = &mut body {
+            if !locked.readable.has() {
+                if let Some(rs) = cached_stream {
+                    locked.readable = webcore::readable_stream::Strong::init(rs, global_this);
+                }
+            }
+        }
+        if let Some(js_ref) = self.js_ref() {
+            Self::stream_set_cached(js_ref, global_this, JSValue::ZERO);
+            Self::body_set_cached(js_ref, global_this, JSValue::ZERO);
+        }
+        Ok(body)
+    }
+
     fn get_text(&self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let value = self.get_body_value();
         if matches!(value, Value::Used) {

@@ -1210,4 +1210,369 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
   });
+
+  describe("undecorated auto-accessor lowering", () => {
+    test("initializer runs in source order with sibling fields", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const log = [];
+        const mk = (name, v) => (log.push(name), v);
+        class C {
+          a = mk("a", 1);
+          accessor b = mk("b", 2);
+          c = mk("c", this.b);
+        }
+        const c = new C();
+        console.log(log.join(","));
+        console.log(c.a, c.b, c.c);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("a,b,c\n1 2 2\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("static accessor initializer runs in source order with sibling static fields", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const log = [];
+        const mk = (name, v) => (log.push(name), v);
+        class C {
+          static a = mk("a", 1);
+          static accessor b = mk("b", 2);
+          static c = mk("c", C.b);
+        }
+        console.log(log.join(","));
+        console.log(C.a, C.b, C.c);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("a,b,c\n1 2 2\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("subclass may declare an accessor with the same name as its base", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class Base { accessor v = 1; }
+        class Sub extends Base { accessor v = 2; }
+        const s = new Sub();
+        console.log(s.v);
+        s.v = 99;
+        console.log(s.v);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("2\n99\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("two classes in a file may each declare a same-named accessor", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class A { accessor x = 1; }
+        class B { accessor x = 2; }
+        const a = new A(), b = new B();
+        a.x = 10;
+        console.log(a.x, b.x);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("10 2\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("instance and static accessors may share a name", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class C {
+          accessor x = 1;
+          static accessor x = 2;
+        }
+        const c = new C();
+        c.x = 10;
+        C.x = 20;
+        console.log(c.x, C.x);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("10 20\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("generated storage name avoids existing private names", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class C {
+          #y_accessor_storage = "user";
+          accessor y = "acc";
+          read() { return this.#y_accessor_storage; }
+        }
+        const c = new C();
+        console.log(c.y, c.read());
+        c.y = "changed";
+        console.log(c.y, c.read());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("acc user\nchanged user\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("generated storage name does not shadow a private referenced from an enclosing class", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class Outer {
+          #x_accessor_storage = 42;
+          make() {
+            const outer = this;
+            return class Inner {
+              accessor x = 1;
+              readOuter() { return outer.#x_accessor_storage; }
+            };
+          }
+        }
+        const Inner = new Outer().make();
+        const i = new Inner();
+        console.log(i.readOuter(), i.x);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("42 1\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("accessor with a private-name key round-trips", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class C {
+          accessor #z = 5;
+          get z() { return this.#z; }
+          set z(v) { this.#z = v; }
+        }
+        const c = new C();
+        console.log(c.z);
+        c.z = 50;
+        console.log(c.z);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("5\n50\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("static accessor with a private-name key round-trips", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class C {
+          static accessor #z = 5;
+          static get z() { return C.#z; }
+          static set z(v) { C.#z = v; }
+        }
+        console.log(C.z);
+        C.z = 50;
+        console.log(C.z);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("5\n50\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("private-name accessor is lowered with its siblings when the class WeakMap-lowers its privates", async () => {
+      // #helper's body is hoisted out of the class, so its this.#z must be
+      // rewritten along with every other lowered private.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v) { return v; }
+        class C {
+          @dec m() {}
+          accessor #z = 5;
+          #helper() { return this.#z; }
+          bump() { this.#z = this.#z + 1; return this.#helper(); }
+          static accessor #s = 10;
+          static #sh() { return C.#s; }
+          static readS() { C.#s = C.#s * 2; return C.#sh(); }
+        }
+        console.log(new C().bump(), C.readS());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("6 20\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("accessor with a non-identifier string key round-trips", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class C {
+          accessor "a-b" = 1;
+          static accessor "c d" = 2;
+        }
+        const c = new C();
+        c["a-b"] = 10;
+        C["c d"] = 20;
+        console.log(c["a-b"], C["c d"]);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("10 20\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("decorated accessor with a non-identifier string key round-trips", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const seen = [];
+        function dec(target, ctx) { seen.push(ctx.name); }
+        class C {
+          @dec accessor "a-b" = 1;
+          @dec static accessor "c d" = 2;
+        }
+        const c = new C();
+        c["a-b"] = 10;
+        C["c d"] = 20;
+        console.log(seen.sort().join(","), c["a-b"], C["c d"]);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("a-b,c d 10 20\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("computed accessor key is evaluated once, in source order, and shared by get and set", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const order = [];
+        const k = (name) => (order.push(name), name);
+        class C {
+          [k("m")]() {}
+          accessor [k("a")] = 1;
+          static accessor [k("s")] = 2;
+        }
+        console.log(order.join(","));
+        const c = new C();
+        c.a = 10;
+        C.s = 20;
+        const d = Object.getOwnPropertyDescriptor(C.prototype, "a");
+        console.log(c.a, C.s, typeof d.get, typeof d.set);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("m,a,s\n10 20 function function\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("instance fields run in source order when sibling #-privates are WeakMap-lowered", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v) { return v; }
+        const log = [];
+        class C {
+          @dec m() {}
+          #a = (log.push("a"), 1);
+          accessor b = (log.push("b"), this.readA());
+          c = (log.push("c"), this.b);
+          readA() { return this.#a; }
+        }
+        const o = new C();
+        console.log(log.join(","), o.b, o.c, o.readA());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("a,b,c 1 1 1\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("decorated instance #-private method's brand is installed before a following undecorated #-private field reads it", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v) { return v; }
+        class C {
+          @dec #m() { return 1; }
+          #a = this.readM();
+          readM() { return this.#m(); }
+        }
+        console.log(new C().readM());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("1\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("lowered #-method and #-getter brands are installed before any field, while #-field brands keep source order", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v) { return v; }
+        const log = [];
+        class C {
+          @dec y;
+          a = (log.push("a"), this.#m() + this.#g);
+          #f = (log.push("f"), 10);
+          b = (log.push("b"), this.#f);
+          #m() { return 1; }
+          get #g() { return 100; }
+          @dec #dm() { return 1000; }
+          c = this.#dm();
+        }
+        const o = new C();
+        console.log(log.join(","), o.a, o.b, o.c);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("a,f,b 101 10 1000\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("the same holds for static members: lowered static accessor storage and #-fields keep source order", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v) { return v; }
+        const log = [];
+        const mk = (n, v) => (log.push(n), v);
+        class C {
+          @dec m() {}
+          #p;
+          static a = mk("a", 1);
+          static accessor b = mk("b", C.a);
+          static #c = mk("c", C.b + 1);
+          static d = mk("d", C.#c);
+          static #sm() { return 1; }
+          static e = mk("e", C.#sm());
+        }
+        console.log(log.join(","), C.b, C.d, C.e);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("a,b,c,d,e 1 2 1\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("undecorated field, accessor and #-field initializers may read a WeakMap-lowered #-private directly", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v) { return v; }
+        class C {
+          @dec m() {}
+          #a = 1;
+          b = this.#a;
+          accessor c = this.#a + 10;
+          #d = this.#a + 100;
+          readD() { return this.#d; }
+        }
+        const o = new C();
+        console.log(o.b, o.c, o.readD());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("1 11 101\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("undecorated static #-field initializer may read a WeakMap-lowered static #-private directly", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v) { return v; }
+        class C {
+          @dec m() {}
+          static #a = 1;
+          static #b = C.#a + 1;
+          static readB() { return C.#b; }
+        }
+        console.log(C.readB());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("2\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("WeakMap-lowered #-private does not strip NamedEvaluation or new.target from sibling fields", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v) { return v; }
+        class C {
+          @dec m() {}
+          #p;
+          onClick = () => {};
+          nt = new.target;
+        }
+        const c = new C();
+        console.log(c.onClick.name, c.nt === undefined);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("onClick true\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("storage is a class-body private field, not a module-scope WeakMap", () => {
+      const transpiler = new Bun.Transpiler({ loader: "js", target: "bun" });
+      const out = transpiler.transformSync(`class C { accessor x = 1; }`);
+      expect(out).toContain("#x_accessor_storage");
+      expect(out).not.toContain("WeakMap");
+      expect(out).not.toContain("__privateAdd");
+    });
+  });
 });

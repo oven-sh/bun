@@ -4,6 +4,7 @@
 
 import { copyFileSync, existsSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
+import { setTimeout as setTimeoutPromise } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import {
@@ -21,11 +22,13 @@ import {
   getKernel,
   getOs,
   homedir,
+  isLinux,
   isMacOS,
   isPosix,
   isWindows,
   mkdir,
   spawnSafe,
+  spawnSync,
   which,
   writeFile,
 } from "./utils.mjs";
@@ -107,6 +110,15 @@ async function doBuildkiteAgent(action, cliOptions = {}) {
     }
 
     if (isOpenRc()) {
+      // openrc starts a runlevel's unrelated services one at a time in name
+      // order, so without `after docker` this service ("b") starts, and the
+      // ephemeral agent acquires its job, before the boot has reached "docker";
+      // the shard then begins with no daemon socket at all (routine on the
+      // alpine test agents, occasionally for minutes when a service in between
+      // is slow). `after` is ordering only: images without docker still boot
+      // the agent. Alpine's docker service returns as soon as dockerd is
+      // spawned, so start() below additionally waits for the daemon to answer.
+      // Both take effect when the images are next published.
       const servicePath = "/etc/init.d/buildkite-agent";
       const service = `#!/sbin/openrc-run
         name="buildkite-agent"
@@ -125,6 +137,7 @@ async function doBuildkiteAgent(action, cliOptions = {}) {
         depend() {
           need net
           use dns logger
+          after docker
         }
       `;
       writeFile(servicePath, service, { mode: 0o755 });
@@ -392,6 +405,19 @@ async function doBuildkiteAgent(action, cliOptions = {}) {
       .map(([key, value]) => `${key}=${value}`)
       .join(",");
 
+    // The job this machine was booted for starts the moment the agent
+    // registers (acquire-job above), and the Linux test jobs need dockerd. The
+    // init system only orders this service after docker's start script (see
+    // install()), which on alpine returns as soon as dockerd is spawned, so
+    // give the daemon a bounded head start here: registering later only
+    // delays the job, registering before the daemon listens starts the job
+    // against a dead socket (test/docker/index.ts has the history). Past the
+    // budget the agent registers anyway and the job's "--- Docker" section
+    // reports the daemon's state.
+    if (isLinux && which("docker")) {
+      await waitForDockerDaemon(2 * 60_000);
+    }
+
     await spawnSafe(
       [
         command,
@@ -410,6 +436,29 @@ async function doBuildkiteAgent(action, cliOptions = {}) {
   } else if (action === "start") {
     await start();
   }
+}
+
+/**
+ * Polls `docker version` (which fails until the daemon is listening) once a
+ * second for up to `budgetMs`. Returns either way; the outcome is logged.
+ * @param {number} budgetMs
+ */
+async function waitForDockerDaemon(budgetMs) {
+  const startedAt = Date.now();
+  const elapsed = () => `${Math.round((Date.now() - startedAt) / 1000)}s`;
+  const reachable = () => spawnSync(["docker", "version"], { timeout: 10_000 }).exitCode === 0;
+  if (reachable()) {
+    return;
+  }
+  console.log(`Docker daemon is not reachable yet; waiting up to ${Math.round(budgetMs / 1000)}s for it...`);
+  while (Date.now() - startedAt < budgetMs) {
+    await setTimeoutPromise(1_000);
+    if (reachable()) {
+      console.log(`Docker daemon became reachable after ${elapsed()}`);
+      return;
+    }
+  }
+  console.warn(`Docker daemon still unreachable after ${elapsed()}; starting the agent without it`);
 }
 
 /**

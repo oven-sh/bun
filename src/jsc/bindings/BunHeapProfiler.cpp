@@ -1,4 +1,5 @@
 #include "root.h"
+#include "BunHeapProfiler.h"
 #include "BunCPUProfiler.h"
 #include "headers-handwritten.h"
 #include "ZigGlobalObject.h"

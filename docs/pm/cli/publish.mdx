@@ -128,7 +128,7 @@ bun publish --otp 123456
 
 ### JSON Output
 
-Pass `--json` to get the publish summary as one JSON object, for scripts and CI. Nothing else is written to stdout, so the output can be piped straight into `jq` or `JSON.parse`. Errors still go to stderr, and the exit code does not change.
+Pass `--json` to get the publish summary as one JSON object, for scripts and CI. Bun writes nothing else to stdout, so with `--ignore-scripts` (or quiet lifecycle scripts) the output can be piped straight into `jq` or `JSON.parse`. Errors still go to stderr, and the exit code does not change.
 
 ```sh terminal icon="terminal"
 bun publish --json

@@ -179,7 +179,7 @@ bun pm pack --json
 ]
 ```
 
-`--json` prints an array with one object, the same shape as `npm pack --json`. Nothing else is written to stdout, so the output can be piped into `jq` or `JSON.parse`. Errors still go to stderr, and the exit code does not change.
+`--json` prints an array with one object, the same shape as `npm pack --json`. Bun writes nothing else to stdout, so with `--ignore-scripts` (or quiet lifecycle scripts) the output can be piped into `jq` or `JSON.parse`. Errors still go to stderr, and the exit code does not change.
 
 - `id`: `<name>@<version>`
 - `name`, `version`: the `name` and `version` fields of `package.json`

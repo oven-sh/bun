@@ -65,14 +65,12 @@ enum State {
     Closed = 3,
 }
 
-/// Which of the VM's two embedded loops a completion belongs to, decided on
-/// the JS thread when the work is initiated: a [`Ticket`] records
-/// [`VirtualMachine::current_loop_kind`] when it is taken, and a weak poster
-/// carries the kind its JS-side initiator captured (C++ `BunLoopKind`). Work
-/// started while a macro runs completes into the macro loop; once the macro
-/// has returned, the regular loop services what is left there
-/// (`EventLoop::finished_macro_loop`). `Bun.spawnSync`'s isolated loop is not
-/// one of these: its producers post through that loop's own [`JsPoster`].
+/// Which of the VM's two embedded loops a completion belongs to, fixed when
+/// the ticket is taken on the JS thread (work started while a macro runs
+/// completes into the macro loop); a weak poster passes the kind its JS-side
+/// initiator captured the same way (C++ `BunLoopKind`). `Bun.spawnSync`'s
+/// isolated loop is not one of these: its producers post through that loop's
+/// own [`JsPoster`].
 ///
 /// [`JsPoster`]: bun_event_loop::JsPoster
 #[repr(u8)] // C++: `BunLoopKind` (BunLoopKind.h)

@@ -330,20 +330,19 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
                 }
                 Err(err) => {
                     // yarn/pnpm `link:./dir` may point at a plain directory without a
-                    // package.json: treat it as an empty manifest named after the
-                    // directory (a lockfile package needs a name), with no dependencies.
+                    // package.json (or one that does not exist yet — the symlink is created
+                    // either way): treat it as an empty manifest named after the directory
+                    // (a lockfile package needs a name), with no dependencies.
                     let literal = version
                         .literal
                         .slice(manager.lockfile.buffers.string_bytes.as_slice());
                     let dir = bun_paths::dirname(abs.as_bytes()).unwrap_or(b"");
-                    let is_dir = matches!(
-                        bun_sys::stat(&bun_core::ZBox::from_bytes(dir)),
-                        Ok(st) if bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode) == bun_sys::FileKind::Directory
-                    );
                     let is_path_link = literal
                         .strip_prefix(b"link:")
                         .is_some_and(crate::resolution::is_path_link);
-                    if err.get_errno() == bun_sys::E::ENOENT && is_path_link && is_dir {
+                    if matches!(err.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR)
+                        && is_path_link
+                    {
                         body.list.extend_from_slice(b"{\"name\":\"");
                         let start = body.list.len();
                         for &c in bun_paths::basename(dir) {

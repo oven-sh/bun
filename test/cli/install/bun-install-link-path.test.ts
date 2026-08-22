@@ -70,3 +70,13 @@ describe.each(["hoisted", "isolated"])("link:./path dependencies (%s linker)", l
     expect(again.code).toBe(0);
   });
 });
+
+it("a link: path whose target does not exist is reported when linking, not as an unknown package", async () => {
+  using dir = tempDir("link-path-missing", {
+    "package.json": JSON.stringify({ name: "root", dependencies: { later: "link:./vendor/later" } }),
+  });
+  const r = await install(String(dir));
+  expect(r.err).not.toContain("is not linked");
+  expect(r.err).toContain("Saved lockfile");
+  expect(r.out + r.err).toContain("later");
+});

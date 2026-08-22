@@ -1635,6 +1635,17 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                             quoted: true
                         },
                     );
+                } else if dependency_tag == dependency::version::Tag::Symlink
+                    && crate::resolution::is_path_link(this.lockfile.str(version.symlink()))
+                {
+                    bun_ast::add_error_pretty!(
+                        this.log_mut(),
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        "Could not resolve \"{}\": link target <b>{}<r> could not be read",
+                        bstr::BStr::new(this.lockfile.str(&name)),
+                        bstr::BStr::new(this.lockfile.str(version.symlink())),
+                    );
                 } else {
                     bun_ast::add_error_pretty!(
                         this.log_mut(),
@@ -1657,6 +1668,17 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                             version,
                             quoted: true
                         },
+                    );
+                } else if dependency_tag == dependency::version::Tag::Symlink
+                    && crate::resolution::is_path_link(this.lockfile.str(version.symlink()))
+                {
+                    bun_ast::add_warning_pretty!(
+                        this.log_mut(),
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        "Could not resolve \"{}\": link target <b>{}<r> could not be read",
+                        bstr::BStr::new(this.lockfile.str(&name)),
+                        bstr::BStr::new(this.lockfile.str(version.symlink())),
                     );
                 } else {
                     bun_ast::add_warning_pretty!(
@@ -2968,12 +2990,22 @@ fn get_or_put_resolved_package(
             // `version.tag == Symlink`.
             let symlink_path = this.lockfile.str_detached(version.symlink());
             let res = if crate::resolution::is_path_link(symlink_path) {
-                // yarn/pnpm-style `link:./dir`: relative to the project, not to the
-                // global link directory
+                // yarn/pnpm-style `link:./dir`: relative to the project (already rebased
+                // to the root by Package.rs), not to the global link directory
+                let mut abs_buf = PathBuffer::uninit();
+                let link_path_abs = if bun_paths::is_absolute(symlink_path) {
+                    symlink_path
+                } else {
+                    Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
+                        FileSystem::instance().top_level_dir(),
+                        &mut abs_buf,
+                        &[symlink_path],
+                    )
+                };
                 FolderResolution::get_or_put(
                     GlobalOrRelative::Relative(dependency::version::Tag::Symlink),
                     version,
-                    symlink_path,
+                    link_path_abs,
                     this,
                 )
             } else {

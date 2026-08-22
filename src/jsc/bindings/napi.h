@@ -318,11 +318,6 @@ public:
         return *m_finalizers.add({ callback, hint, data }).iterator;
     }
 
-    bool hasFinalizers() const
-    {
-        return !m_finalizers.isEmpty();
-    }
-
     /// Will abort the process if a duplicate entry would be added.
     /// This matches Node.js behavior which always crashes on duplicates.
     void addCleanupHook(void (*function)(void*), void* data)
@@ -406,11 +401,6 @@ public:
                 NAPI_ABORT("A Node-API function that may affect GC state was called from a finalizer during garbage collection");
             }
         }
-    }
-
-    bool isVMTerminating() const
-    {
-        return this->vm().hasTerminationRequest();
     }
 
     void doFinalizer(napi_finalize finalize_cb, void* data, void* finalize_hint)
@@ -499,8 +489,6 @@ public:
     }
 
     inline bool isFinishingFinalizers() const { return m_isFinishingFinalizers; }
-    // The entry cleanup() is currently calling, if any (see BoundFinalizer::deactivate).
-    inline const BoundFinalizer* currentFinalizer() const { return m_currentFinalizer; }
 
     // Almost all NAPI functions should set error_code to the status they're returning right before
     // they return it
@@ -585,6 +573,7 @@ private:
     // ListHashSet preserves insertion order so cleanup() can run finalizers in reverse
     // (LIFO), matching Node.js teardown semantics for napi_wrap references.
     WTF::ListHashSet<BoundFinalizer, BoundFinalizer::Hash> m_finalizers;
+    // The entry cleanup() is currently calling, if any (see BoundFinalizer::deactivate).
     const BoundFinalizer* m_currentFinalizer = nullptr;
     bool m_isFinishingFinalizers = false;
     JSC::VM& m_vm;

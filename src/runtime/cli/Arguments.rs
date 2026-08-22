@@ -219,6 +219,9 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
         "--inspect-port <STR>              Set the default [host:]port used when the debugger is activated with --inspect"
     ),
     parse_param!("--debug-port <STR>"),
+    parse_param!("--permission"),
+    parse_param!("--allow-fs-read <STR>..."),
+    parse_param!("--allow-fs-write <STR>..."),
     parse_param!(
         "--cpu-prof                        Start CPU profiler and write profile to disk on exit"
     ),
@@ -335,17 +338,6 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!(
         "--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\""
     ),
-    // Node's permission model. Hidden from `--help` until every scope is enforced
-    // (today only `net` is); still parsed so `process.permission` reports grants.
-    parse_param!("--permission"),
-    parse_param!("--allow-fs-read <STR>..."),
-    parse_param!("--allow-fs-write <STR>..."),
-    parse_param!("--allow-child-process"),
-    parse_param!("--allow-worker"),
-    parse_param!("--allow-addons"),
-    parse_param!("--allow-net"),
-    parse_param!("--allow-wasi"),
-    parse_param!("--allow-inspector"),
     parse_param!(
         "--unhandled-rejections <STR>      One of \"strict\", \"throw\", \"warn\", \"none\", or \"warn-with-error-code\""
     ),
@@ -823,7 +815,7 @@ pub(crate) static Bun__Node__UseSystemCA: core::sync::atomic::AtomicBool =
 // their private helpers moved to `bun_bunfig::arguments` so `bun_install` can
 // call them without a tier-6 dependency. Re-export here so existing
 // `crate::cli::arguments::load_config*` callers are unaffected.
-pub use bun_bunfig::arguments::{load_config, load_config_path, load_config_with_cmd_args};
+pub use bun_bunfig::arguments::{load_config_path, load_config_with_cmd_args};
 
 /// The string Node prefixes its CLI errors with. Same source as
 /// `process.execPath` (node_process::get_exec_path), so the prefix matches what
@@ -1307,93 +1299,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             opts.allow_addons = Some(false);
         }
 
-        // Node's child_process copies the parent's permission-model flags into
-        // NODE_OPTIONS when spawning process.execPath, so a sandboxed parent's
-        // children inherit the sandbox; merge those with the argv flags.
-        let env_grants = crate::permission::grants_from_node_options();
-        if args.flag(b"--permission") || env_grants.is_some() {
-            let mut fs_read: Vec<&'static [u8]> = args.options(b"--allow-fs-read").to_vec();
-            let mut fs_write: Vec<&'static [u8]> = args.options(b"--allow-fs-write").to_vec();
-            let (mut child, mut worker, mut inspector, mut wasi, mut net, mut addon) = (
-                args.flag(b"--allow-child-process"),
-                args.flag(b"--allow-worker"),
-                args.flag(b"--allow-inspector"),
-                args.flag(b"--allow-wasi"),
-                args.flag(b"--allow-net"),
-                args.flag(b"--allow-addons"),
-            );
-            if let Some(env_grants) = env_grants {
-                fs_read.extend_from_slice(&env_grants.fs_read);
-                fs_write.extend_from_slice(&env_grants.fs_write);
-                child |= env_grants.child;
-                worker |= env_grants.worker;
-                inspector |= env_grants.inspector;
-                wasi |= env_grants.wasi;
-                net |= env_grants.net;
-                addon |= env_grants.addon;
-            }
-
-            // `env.cc` "Implicit allow entrypoint to kFileSystemRead": the
-            // entry script and every preloaded module are readable without an
-            // explicit grant. `-e`/`-p` runs have no entry script.
-            let mut implicit_fs_read: Vec<&[u8]> = Vec::new();
-            if args.option(b"--eval").is_none() && args.option(b"--print").is_none() {
-                if let Some(entry) = ctx.positionals.first() {
-                    implicit_fs_read.push(entry);
-                }
-            }
-            for preload in &ctx.preloads {
-                implicit_fs_read.push(preload);
-            }
-
-            if !addon {
-                // Node treats a missing --allow-addons exactly like
-                // --no-addons: process.dlopen throws and the "node-addons"
-                // export condition is dropped.
-                opts.allow_addons = Some(false);
-            }
-
-            crate::permission::init_from_cli(&crate::permission::CliGrants {
-                fs_read: &fs_read,
-                fs_write: &fs_write,
-                implicit_fs_read: &implicit_fs_read,
-                child,
-                worker,
-                inspector,
-                wasi,
-                net,
-                addon,
-            });
-        } else {
-            // Node's node.cc ProcessGlobalArgs: ERR_MISSING_OPTION when any
-            // --allow-* is passed without --permission.
-            for allow_flag in [&b"--allow-fs-read"[..], b"--allow-fs-write"] {
-                if !args.options(allow_flag).is_empty() {
-                    Output::err_generic(
-                        "--permission is required to use {}",
-                        format_args!("{}", BStr::new(allow_flag)),
-                    );
-                    Global::exit(1);
-                }
-            }
-            for allow_flag in [
-                &b"--allow-child-process"[..],
-                b"--allow-worker",
-                b"--allow-inspector",
-                b"--allow-wasi",
-                b"--allow-net",
-                b"--allow-addons",
-            ] {
-                if args.flag(allow_flag) {
-                    Output::err_generic(
-                        "--permission is required to use {}",
-                        format_args!("{}", BStr::new(allow_flag)),
-                    );
-                    Global::exit(1);
-                }
-            }
-        }
-
         if let Some(unhandled_rejections) = args.option(b"--unhandled-rejections") {
             opts.unhandled_rejections = match api::UnhandledRejections::MAP
                 .get(unhandled_rejections)
@@ -1593,6 +1498,28 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         {
             Output::err_generic("--cron-title and --cron-period must not be empty", ());
             Global::exit(1);
+        }
+
+        // Node.js permission-model flags. The model itself is not implemented;
+        // reject these loudly instead of silently running without the
+        // requested sandbox.
+        if args.flag(b"--permission") {
+            Output::err_generic(
+                "--permission is not supported by Bun (the Node.js permission model is not implemented)",
+                (),
+            );
+            Global::exit(1);
+        }
+        for allow_flag in [&b"--allow-fs-read"[..], b"--allow-fs-write"] {
+            if !args.options(allow_flag).is_empty() {
+                // Same constraint (and message substring) as Node's
+                // ERR_MISSING_OPTION: "--permission is required".
+                Output::err_generic(
+                    "--permission is required to use {}",
+                    format_args!("{}", BStr::new(allow_flag)),
+                );
+                Global::exit(1);
+            }
         }
 
         // `--inspect-port` / `--debug-port` set the default debugger target for --inspect*

@@ -337,16 +337,6 @@ pub struct FrameHeader {
     flags: u8,
     stream_identifier: u32,
 }
-impl Default for FrameHeader {
-    fn default() -> Self {
-        Self {
-            length: 0,
-            type_: FrameType::HTTP_FRAME_SETTINGS as u8,
-            flags: 0,
-            stream_identifier: 0,
-        }
-    }
-}
 impl FrameHeader {
     pub const BYTE_SIZE: usize = 9;
     #[inline]
@@ -765,7 +755,6 @@ impl Handlers {
     }
 }
 
-pub use JSH2FrameParser::get_constructor as H2FrameParserConstructor;
 /// snake_case alias for the codegen'd `$rust(h2_frame_parser.rs, H2FrameParserConstructor)`
 /// thunk in `generated_js2native.rs` (the generator snake-cases the export name).
 pub use JSH2FrameParser::get_constructor as h2_frame_parser_constructor;

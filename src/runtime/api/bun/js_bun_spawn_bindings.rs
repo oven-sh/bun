@@ -1449,7 +1449,8 @@ fn spawn_maybe_sync(
                             Box::leak(pipe).close(Subprocess::on_pipe_close)
                         }
                         spawn::WindowsStdioResult::BufferFd(fd) => fd.close(),
-                        spawn::WindowsStdioResult::Unavailable => {}
+                        spawn::WindowsStdioResult::UnownedFd(_)
+                        | spawn::WindowsStdioResult::Unavailable => {}
                     }
                 }
             }

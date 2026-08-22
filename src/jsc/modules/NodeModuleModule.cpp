@@ -496,6 +496,22 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveLookupPaths,
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(resolveLookupPaths(globalObject, request, parent)));
 }
 
+static void appendGlobalPaths(JSC::JSGlobalObject* globalObject, JSC::JSArray* array, JSC::ThrowScope& scope)
+{
+    JSValue globalPaths = JSValue::decode(Resolver__globalPathsJSValue(globalObject));
+    RETURN_IF_EXCEPTION(scope, );
+    auto* globalPathsArray = dynamicDowncast<JSArray>(globalPaths);
+    if (!globalPathsArray) [[unlikely]]
+        return;
+    auto len = globalPathsArray->length();
+    for (size_t i = 0; i < len; i++) {
+        auto path = globalPathsArray->getIndex(globalObject, i);
+        RETURN_IF_EXCEPTION(scope, );
+        array->push(globalObject, path);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+}
+
 JSC::JSValue resolveLookupPaths(JSC::JSGlobalObject* globalObject, String request, PathResolveModule parent)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -509,8 +525,9 @@ JSC::JSValue resolveLookupPaths(JSC::JSGlobalObject* globalObject, String reques
             true
 #endif
             )) {
+        JSArray* array;
         if (parent.paths) {
-            auto array = JSC::constructArray(globalObject, (ArrayAllocationProfile*)nullptr, nullptr, 0);
+            array = JSC::constructArray(globalObject, (ArrayAllocationProfile*)nullptr, nullptr, 0);
             RETURN_IF_EXCEPTION(scope, {});
             auto len = parent.paths->length();
             for (size_t i = 0; i < len; i++) {
@@ -519,18 +536,23 @@ JSC::JSValue resolveLookupPaths(JSC::JSGlobalObject* globalObject, String reques
                 array->push(globalObject, path);
                 RETURN_IF_EXCEPTION(scope, {});
             }
-            RELEASE_AND_RETURN(scope, array);
         } else if (parent.pathsArrayLazy && parent.filename) {
             auto filenameValue = parent.filename->value(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
             auto filename = Bun::toString(filenameValue);
             auto paths = JSValue::decode(Resolver__nodeModulePathsJSValue(filename, globalObject, true));
-            RELEASE_AND_RETURN(scope, paths);
-        } else {
-            auto array = JSC::constructEmptyArray(globalObject, nullptr, 0);
             RETURN_IF_EXCEPTION(scope, {});
-            RELEASE_AND_RETURN(scope, array);
+            array = dynamicDowncast<JSArray>(paths);
+            if (!array) [[unlikely]] {
+                RELEASE_AND_RETURN(scope, paths);
+            }
+        } else {
+            array = JSC::constructEmptyArray(globalObject, nullptr, 0);
+            RETURN_IF_EXCEPTION(scope, {});
         }
+        appendGlobalPaths(globalObject, array, scope);
+        RETURN_IF_EXCEPTION(scope, {});
+        RELEASE_AND_RETURN(scope, array);
     }
 
     JSValue dirname;
@@ -677,9 +699,7 @@ static JSValue getConstantsObject(VM& vm, JSObject* moduleObject)
 
 static JSValue getGlobalPathsObject(VM& vm, JSObject* moduleObject)
 {
-    return JSC::constructEmptyArray(
-        moduleObject->globalObject(),
-        static_cast<ArrayAllocationProfile*>(nullptr), 0);
+    return JSValue::decode(Resolver__globalPathsJSValue(moduleObject->globalObject()));
 }
 
 // Like the _resolveFilename / runMain setters: writing back the default (e.g. copying Module's statics onto a

@@ -3,6 +3,7 @@
 // synchronously, which is what nests event-loop ticks inside a socket's data
 // callback while the dispatch for that socket is still on the stack.
 import { expect, test } from "bun:test";
+import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -178,8 +179,7 @@ test("closing a pipe server from its connection handler while more accepts are p
   const name =
     process.platform === "win32"
       ? String.fromCharCode(92, 92, 46, 92) + "pipe" + String.fromCharCode(92) + "nested-close-" + process.pid
-      : require("path").join(require("os").tmpdir(), "nested-close-" + process.pid + ".sock");
-  const net = require("node:net");
+      : path.join(os.tmpdir(), "nested-close-" + process.pid + ".sock");
   let accepted = 0;
   const closed = Promise.withResolvers<void>();
   const server = net.createServer(c => {
@@ -191,6 +191,10 @@ test("closing a pipe server from its connection handler while more accepts are p
       expect(new Promise<void>(resolve => setTimeout(resolve, 20))).resolves.toBeUndefined();
     }
   });
+  const unlink = () => {
+    if (process.platform !== "win32") fs.rmSync(name, { force: true });
+  };
+  unlink();
   await new Promise<void>(resolve => server.listen(name, resolve));
   const clients = Array.from(
     { length: 8 },

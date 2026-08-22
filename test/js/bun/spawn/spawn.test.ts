@@ -812,9 +812,11 @@ describe("should not hang", () => {
 // plugin setup(), which Bun waits for by ticking the event loop from inside that
 // handler, and setup() needs the other child's output: the nested tick has to
 // deliver an event the outer tick already collected - pipe polls are one-shot,
-// so nothing will report it again.
-it("a stdout chunk the loop already collected is delivered while another stdout handler waits in Bun.build()", async () => {
-  const script = /* js */ `
+// so nothing will report it again. Windows: #40023.
+it.skipIf(isWindows)(
+  "a stdout chunk the loop already collected is delivered while another stdout handler waits in Bun.build()",
+  async () => {
+    const script = /* js */ `
     const child = 'process.stdout.write("r"); process.stdin.on("data", () => { process.stdout.write("x"); });';
     const spawn = () => Bun.spawn({ cmd: [process.execPath, "-e", child], stdin: "pipe", stdout: "pipe", stderr: "inherit" });
     const a = spawn(), b = spawn();
@@ -852,11 +854,12 @@ it("a stdout chunk the loop already collected is delivered while another stdout 
     console.log(order.map(s => (s[0] === first ? "1" : "2") + s.slice(1)).join(" "));
     a.kill(); b.kill();
   `;
-  await using proc = spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "inherit" });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(stdout).toBe("1:start 2:start 2:end 1:end\n");
-  expect(exitCode).toBe(0);
-});
+    await using proc = spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "inherit" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("1:start 2:start 2:end 1:end\n");
+    expect(exitCode).toBe(0);
+  },
+);
 
 describe("unref() + .exited with nothing else ref'd (Windows)", () => {
   // Windows: with only an unref'd uv_process_t left, uv_run() used to skip its

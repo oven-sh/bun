@@ -4668,8 +4668,8 @@ describe.concurrent("socket handlers that re-enter the event loop before returni
   // nested event-loop ticks from inside a data callback. It covers a socket that
   // is closed by its own data() and must stay allocated until that dispatch has
   // returned, and an event the outer tick already collected that the nested tick
-  // has to deliver.
-  it("keeps the socket alive and the collected events visible", async () => {
+  // has to deliver. Windows: #40023.
+  it.skipIf(isWindows)("keeps the socket alive and the collected events visible", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", fileURLToPath(new URL("./nested-event-loop-fixture.ts", import.meta.url))],
       env: bunEnv,

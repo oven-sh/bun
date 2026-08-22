@@ -2816,27 +2816,18 @@ pub fn get_thread_count() -> u16 {
                 crate::zstr!("UV_THREADPOOL_SIZE"),
                 crate::zstr!("GOMAXPROCS"),
             ] {
+                // Set var is always honoured (libuv semantics): junk/0/1/negative → MIN, overflow → MAX.
                 if let Some(v) = getenv_z(key) {
-                    if let Ok(n) = crate::fmt::parse_int::<u16>(v.trim_ascii(), 10) {
-                        if n >= MIN {
-                            return Some(n.min(MAX));
-                        }
+                    use crate::fmt::ParseIntError;
+                    let v = v.trim_ascii();
+                    if v.first() == Some(&b'-') {
+                        return Some(MIN);
                     }
-                }
-                // Windows: `getenv_z` is currently a no-op (no narrow C
-                // environ to borrow from); honour the override via
-                // `std::env::var` so behaviour matches
-                // on all platforms. POSIX keeps the borrow path above.
-                #[cfg(windows)]
-                if let Ok(s) = std::env::var(
-                    // SAFETY: keys above are ASCII literals.
-                    unsafe { core::str::from_utf8_unchecked(key.as_bytes()) },
-                ) {
-                    if let Ok(n) = s.trim().parse::<u16>() {
-                        if n >= MIN {
-                            return Some(n.min(MAX));
-                        }
-                    }
+                    return Some(match crate::fmt::parse_int::<u32>(v, 10) {
+                        Ok(n) => n.clamp(u32::from(MIN), u32::from(MAX)) as u16,
+                        Err(ParseIntError::Overflow) => MAX,
+                        Err(ParseIntError::InvalidCharacter) => MIN,
+                    });
                 }
             }
             None

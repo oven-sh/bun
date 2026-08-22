@@ -912,3 +912,89 @@ describe.concurrent("modules that fail to print", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+describe.concurrent("bun build --no-bundle keeps css url() references as written", () => {
+  // None of the referenced files exist: --no-bundle transpiles the one file
+  // and must not try to resolve, copy, or inline what it points at.
+  async function transpileCss(css: string, ...flags: string[]) {
+    using dir = tempDir("build-no-bundle-css", { "in.css": css });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", ...flags, "in.css"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  }
+
+  test("quoted relative url", async () => {
+    const [stdout, stderr, exitCode] = await transpileCss('.x { background: url("./img.png") }\n');
+    expect(stderr).toBe("");
+    expect(stdout).toBe('.x {\n  background: url("./img.png");\n}\n');
+    expect(exitCode).toBe(0);
+  });
+
+  test("unquoted relative url", async () => {
+    const [stdout, stderr, exitCode] = await transpileCss(".x { background-image: url(./img.png) }\n");
+    expect(stderr).toBe("");
+    expect(stdout).toBe('.x {\n  background-image: url("./img.png");\n}\n');
+    expect(exitCode).toBe(0);
+  });
+
+  test("data: url", async () => {
+    const [stdout, stderr, exitCode] = await transpileCss(".x { background: url(data:image/png;base64,AAAA) }\n");
+    expect(stderr).toBe("");
+    expect(stdout).toBe('.x {\n  background: url("data:image/png;base64,AAAA");\n}\n');
+    expect(exitCode).toBe(0);
+  });
+
+  test("url with a fragment", async () => {
+    const [stdout, stderr, exitCode] = await transpileCss('.x { mask: url("sprites.svg#icon") }\n');
+    expect(stderr).toBe("");
+    expect(stdout).toBe('.x {\n  mask: url("sprites.svg#icon");\n}\n');
+    expect(exitCode).toBe(0);
+  });
+
+  test("@font-face src", async () => {
+    const [stdout, stderr, exitCode] = await transpileCss('@font-face { font-family: F; src: url("./f.woff2") }\n');
+    expect(stderr).toBe("");
+    expect(stdout).toBe('@font-face {\n  font-family: F;\n  src: url("./f.woff2");\n}\n');
+    expect(exitCode).toBe(0);
+  });
+
+  test("url inside a custom property", async () => {
+    const [stdout, stderr, exitCode] = await transpileCss(":root { --bg: url(./img.png) }\n");
+    expect(stderr).toBe("");
+    expect(stdout).toBe(':root {\n  --bg: url("./img.png");\n}\n');
+    expect(exitCode).toBe(0);
+  });
+
+  test("image-set()", async () => {
+    const [stdout, stderr, exitCode] = await transpileCss(
+      '.x { background-image: image-set(url("./a.png") 1x, "./a@2x.png" 2x) }\n',
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toBe('.x {\n  background-image: image-set("./a.png" 1x, "./a@2x.png" 2x);\n}\n');
+    expect(exitCode).toBe(0);
+  });
+
+  test("alongside @import", async () => {
+    const [stdout, stderr, exitCode] = await transpileCss(
+      '@import "./base.css";\n.x { background: url("./img.png") }\n',
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toBe('@import "./base.css";\n\n.x {\n  background: url("./img.png");\n}\n');
+    expect(exitCode).toBe(0);
+  });
+
+  test("--minify", async () => {
+    const [stdout, stderr, exitCode] = await transpileCss(
+      '.x { background: url("./img.png") }\n.y { background: url(data:image/png;base64,AAAA) }\n',
+      "--minify",
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toBe(".x{background:url(./img.png)}.y{background:url(data:image/png;base64,AAAA)}");
+    expect(exitCode).toBe(0);
+  });
+});

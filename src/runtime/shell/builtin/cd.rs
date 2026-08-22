@@ -73,10 +73,15 @@ impl Cd {
         use bun_sys::E;
         let errno = err.get_errno();
         match errno {
-            E::ENOTDIR | E::ENOENT => Self::write_stderr_non_blocking(
+            E::ENOTDIR => Self::write_stderr_non_blocking(
                 interp,
                 cmd,
                 format_args!("not a directory: {}\n", bstr::BStr::new(new_cwd)),
+            ),
+            E::ENOENT => Self::write_stderr_non_blocking(
+                interp,
+                cmd,
+                format_args!("no such file or directory: {}\n", bstr::BStr::new(new_cwd)),
             ),
             E::ENAMETOOLONG => {
                 Self::write_stderr_non_blocking(interp, cmd, format_args!("file name too long\n"))

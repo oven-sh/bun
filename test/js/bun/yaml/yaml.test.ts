@@ -2123,7 +2123,7 @@ folded: >
           expect(() => YAML.parse('"\\U0000D83D\\U0000DE00"')).toThrow(SyntaxError);
         });
 
-        test("`\\uXXXX` unpaired surrogates are kept as lone code units, like JSON.parse", () => {
+        test("`\\uHHHH` unpaired surrogates are kept as lone code units, like JSON.parse", () => {
           // JSON allows an unpaired `\uD83D` and `JSON.parse` keeps it as one
           // UTF-16 code unit (RFC 8259 §8.2). js-yaml and eemeli/yaml do the
           // same, and so does `YAML.stringify` when it writes such a string.
@@ -2956,7 +2956,7 @@ config:
         expect(YAML.parse(YAML.stringify("a\u2028b\u2029c"))).toBe("a\u2028b\u2029c");
       });
 
-      test("escapes unpaired surrogates as \\uXXXX, like JSON.stringify", () => {
+      test("escapes unpaired surrogates as \\uHHHH, like JSON.stringify", () => {
         // An unpaired surrogate is not a Unicode character. Written as is, it
         // becomes U+FFFD at the next string to UTF-8 boundary (a file, stdout,
         // or `YAML.parse` itself). A surrogate pair is a character and is

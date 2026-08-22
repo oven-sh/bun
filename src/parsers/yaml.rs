@@ -5518,7 +5518,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             }
             // YAML 1.2 is a JSON superset. JSON writes a supplementary code
             // point as a `\uD8xx\uDCxx` pair, and `JSON.parse` keeps an
-            // unpaired `\uXXXX` surrogate as a lone UTF-16 code unit. So does
+            // unpaired `\uHHHH` surrogate as a lone UTF-16 code unit. So does
             // this parser (js-yaml and eemeli/yaml do the same).
             if bun_core::strings::u16_is_lead(cp as u16) {
                 if let Some(trail) = self.peek_trail_surrogate_escape() {

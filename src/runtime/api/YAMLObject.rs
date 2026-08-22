@@ -653,7 +653,7 @@ impl Stringifier {
                 0x2029 => self.builder.append_latin1(b"\\P"), // paragraph separator
 
                 // A surrogate pair is written as is. An unpaired surrogate is
-                // not a Unicode character, so it is written as `\uXXXX`, the
+                // not a Unicode character, so it is written as `\uHHHH`, the
                 // way `JSON.stringify` writes it.
                 0xd800..=0xdbff
                     if i < str.length() && bun_core::strings::u16_is_trail(str.char_at(i)) =>
@@ -914,7 +914,7 @@ fn string_needs_quotes(str: &BunString) -> bool {
             | 0x2029 => return true,
 
             // A surrogate pair is a printable character. An unpaired surrogate
-            // is not, and has to be written as a `\uXXXX` escape.
+            // is not, and has to be written as a `\uHHHH` escape.
             0xd800..=0xdbff => {
                 if i + 1 < str.length() && bun_core::strings::u16_is_trail(str.char_at(i + 1)) {
                     i += 2;

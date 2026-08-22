@@ -23,28 +23,37 @@ pub enum ExportResult {
     Failure,
 }
 
-/// A destination for span batches. Implemented by the runtime for OTLP/HTTP
-/// and for JS callback exporters.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RetryFilter {
+    Due,
+    All,
+}
+
+/// A destination for span batches. Implemented by the runtime for OTLP/HTTP,
+/// `console` and JS callback exporters.
 pub trait Exporter: Send + Sync {
-    /// Deliver `payload`. Must not block the calling thread; when finished
-    /// (including retries) call `processor.export_done(..)` exactly once.
-    fn export(&self, processor: &'static Processor, payload: Arc<ExportPayload>);
+    /// Deliver `payload` (delivery attempt `attempt`, 0-based) without
+    /// blocking the calling thread. Finish by calling exactly one of
+    /// [`Processor::export_done`] or [`Processor::retry_later`].
+    fn export(
+        self: Arc<Self>,
+        processor: &'static Processor,
+        payload: Arc<ExportPayload>,
+        attempt: u32,
+    );
     /// Synchronous best-effort delivery during process exit. Return once the
     /// payload is sent or `deadline_ns` (clock::now_unix_nanos domain) passes.
-    fn export_blocking(&self, payload: Arc<ExportPayload>, deadline_ns: u64) -> ExportResult;
-    /// Called on every processor tick (~scheduled delay) so exporters can
-    /// drive retries without their own timers.
-    fn tick(&self, _processor: &'static Processor) {}
-    /// Payloads parked for a later retry (see [`Processor::park`]).
-    fn pending_retries(&self) -> usize {
-        0
-    }
-    /// Send parked retries now instead of at their backoff deadline
-    /// (`forceFlush()`).
-    fn retry_now(&self, _processor: &'static Processor) {}
-    /// Synchronously deliver parked retries at process exit (when there is a
-    /// pending payload, `export_blocking` covers them).
-    fn flush_parked_blocking(&self, _deadline_ns: u64) {}
+    fn export_blocking(&self, payload: &ExportPayload, deadline_ns: u64) -> ExportResult;
+}
+
+/// A payload an exporter handed back for a later attempt. Parked payloads
+/// are not counted in `inflight`, so batching and process exit never wait
+/// out a backoff.
+struct ParkedRetry {
+    exporter: Arc<dyn Exporter>,
+    payload: Arc<ExportPayload>,
+    attempt: u32,
+    due_ns: u64,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -82,6 +91,7 @@ struct Pending {
 pub struct Processor {
     pending: Guarded<Pending>,
     exporters: RwLock<Vec<Arc<dyn Exporter>>>,
+    retries: Guarded<Vec<ParkedRetry>>,
     /// Encoded `Resource` body.
     resource: RwLock<Arc<[u8]>>,
     /// Encoded `InstrumentationScope` bodies, indexed by `ScopeId`.
@@ -136,6 +146,7 @@ impl Processor {
                 oldest_ns: 0,
             }),
             exporters: RwLock::new(Vec::new()),
+            retries: Guarded::new(Vec::new()),
             resource: RwLock::new(Arc::from(Vec::new())),
             scopes: RwLock::new(scopes),
             scope_names: RwLock::new(names),
@@ -162,26 +173,61 @@ impl Processor {
 
     pub fn clear_exporters(&self) {
         self.exporters.write().clear();
+        let parked = core::mem::take(&mut *self.retries.lock());
+        for r in parked {
+            self.record_result(&r.payload, ExportResult::Failure);
+        }
     }
 
     pub fn exporter_count(&self) -> usize {
         self.exporters.read().len()
     }
 
-    /// Called from any thread once nothing is in flight.
-    /// Payloads parked for retry across all exporters.
+    /// Payloads parked for a later retry.
     pub fn pending_retries(&self) -> usize {
-        self.exporters
-            .read()
-            .iter()
-            .map(|e| e.pending_retries())
-            .sum()
+        self.retries.lock().len()
     }
 
-    /// Kick parked retries immediately.
+    /// Instead of [`Processor::export_done`]: hand `payload` back to be
+    /// exported through `exporter` again after `backoff`, as attempt `attempt`.
+    pub fn retry_later(
+        &self,
+        exporter: Arc<dyn Exporter>,
+        payload: Arc<ExportPayload>,
+        attempt: u32,
+        backoff: Duration,
+    ) {
+        let due_ns = clock::now_unix_nanos().saturating_add(backoff.as_nanos() as u64);
+        self.retries.lock().push(ParkedRetry {
+            exporter,
+            payload,
+            attempt,
+            due_ns,
+        });
+        self.finish_one();
+    }
+
+    /// Send parked retries now instead of at their backoff deadline (`forceFlush()`).
     pub fn retry_now(&'static self) {
-        for e in self.exporters.read().clone() {
-            e.retry_now(self);
+        self.dispatch_retries(RetryFilter::All);
+    }
+
+    fn dispatch_retries(&'static self, filter: RetryFilter) {
+        let due: Vec<ParkedRetry> = {
+            let mut q = self.retries.lock();
+            if q.is_empty() {
+                return;
+            }
+            let now = clock::now_unix_nanos();
+            let (due, later) = q
+                .drain(..)
+                .partition(|r| filter == RetryFilter::All || r.due_ns <= now);
+            *q = later;
+            due
+        };
+        self.inflight.fetch_add(due.len(), Ordering::AcqRel);
+        for r in due {
+            r.exporter.export(self, r.payload, r.attempt);
         }
     }
 
@@ -260,9 +306,7 @@ impl Processor {
     /// after flushing its VM's local batch. Returns true if an export was
     /// started.
     pub fn tick(&'static self) -> bool {
-        for e in self.exporters.read().clone() {
-            e.tick(self);
-        }
+        self.dispatch_retries(RetryFilter::Due);
         let cfg = *self.config.read();
         let due = self.inflight() == 0 && {
             let p = self.pending.lock();
@@ -335,14 +379,12 @@ impl Processor {
             .store(clock::now_unix_nanos(), Ordering::Relaxed);
         self.inflight.fetch_add(exporters.len(), Ordering::AcqRel);
         for e in exporters {
-            e.export(self, Arc::clone(&payload));
+            e.export(self, Arc::clone(&payload), 0);
         }
         true
     }
 
-    /// Stats for a finished export attempt, without touching `inflight`
-    /// (for payloads that were parked for retry).
-    pub fn record_result(&self, payload: &ExportPayload, result: ExportResult) {
+    fn record_result(&self, payload: &ExportPayload, result: ExportResult) {
         match result {
             ExportResult::Success => {
                 self.stats.exports_ok.fetch_add(1, Ordering::Relaxed);
@@ -357,17 +399,6 @@ impl Processor {
                     .fetch_add(payload.span_count as u64, Ordering::Relaxed);
             }
         }
-    }
-
-    /// An exporter is holding a payload for a later retry: stop counting it
-    /// as in flight (so batching and shutdown are not blocked on the backoff)
-    /// until [`Processor::unpark`].
-    pub fn park(&self) {
-        self.finish_one();
-    }
-
-    pub fn unpark(&self) {
-        self.inflight.fetch_add(1, Ordering::AcqRel);
     }
 
     /// Exporters call this exactly once per `export` call.
@@ -418,27 +449,24 @@ impl Processor {
         true
     }
 
-    /// Process-exit path (caller flushed its VM's local batch): export
-    /// synchronously through each exporter's blocking path, bounded by
-    /// `export_timeout_ms`.
+    /// Process-exit path (caller flushed its VM's local batch): deliver parked
+    /// retries and the pending batch synchronously through each exporter's
+    /// blocking path, bounded by `export_timeout_ms`.
     pub fn shutdown_blocking(&'static self) {
         let cfg = *self.config.read();
         let deadline = clock::now_unix_nanos() + (cfg.export_timeout_ms as u64) * 1_000_000;
-        // Anything already handed to async exporters: give it the same budget.
-        let exporters = self.exporters.read().clone();
-        match self.take_payload() {
-            Some(payload) => {
-                for e in exporters {
-                    let result = e.export_blocking(Arc::clone(&payload), deadline);
-                    self.record_result(&payload, result);
-                }
-            }
-            None => {
-                for e in exporters {
-                    e.flush_parked_blocking(deadline);
-                }
+        let parked = core::mem::take(&mut *self.retries.lock());
+        for r in parked {
+            let result = r.exporter.export_blocking(&r.payload, deadline);
+            self.record_result(&r.payload, result);
+        }
+        if let Some(payload) = self.take_payload() {
+            for e in self.exporters.read().clone() {
+                let result = e.export_blocking(&payload, deadline);
+                self.record_result(&payload, result);
             }
         }
+        // Anything already handed to async exporters gets the same budget.
         let remaining = deadline.saturating_sub(clock::now_unix_nanos());
         if self.inflight() > 0 && remaining > 0 {
             self.wait_idle(Duration::from_nanos(remaining));

@@ -27,7 +27,7 @@
 // indices 0-1 of the array as [span, apiContextExtras|null]. Keys are matched
 // by identity, so that pair is invisible to getStore()/run(); the helpers
 // below only need to preserve it when building a fresh array. See
-// BunTelemetry.cpp.
+// TelemetryContext.cpp.
 //
 const setAsyncHooksEnabled = $newCppFunction("NodeAsyncHooks.cpp", "jsSetAsyncHooksEnabled", 1);
 const cleanupLater = $newCppFunction("NodeAsyncHooks.cpp", "jsCleanupLater", 0);

@@ -10,6 +10,7 @@ pub mod clock;
 pub mod config;
 pub mod data;
 pub mod db;
+pub mod decode;
 pub mod http_record;
 pub mod otlp;
 pub mod otlp_json;
@@ -101,10 +102,6 @@ impl Instrument {
         Instrument::Dns,
         Instrument::User,
     ];
-    // Mirrored as literals in src/js/internal/telemetry.ts (clientScopeId) and JSSQLStatement.cpp (kTelemetrySqliteBit).
-    const _MIRRORED: () =
-        assert!(Instrument::HttpClient as u8 == 1 && Instrument::Sqlite as u8 == 3);
-
     #[inline]
     pub const fn bit(self) -> u32 {
         1 << (self as u32)

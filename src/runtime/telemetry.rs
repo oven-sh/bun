@@ -990,6 +990,19 @@ pub fn http_client_enabled(global: &JSGlobalObject, _frame: &CallFrame) -> JsRes
     ))
 }
 
+/// `instrumentId(name)` → index of a built-in instrumentation (its
+/// `bun_telemetry::Instrument` discriminant), for `startInstrumentSpan`.
+#[bun_jsc::host_fn]
+pub fn instrument_id(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let name = arg_string(global, frame.argument(0))?.unwrap_or_default();
+    match Instrument::from_name(name.as_bytes()) {
+        Some(i) => Ok(JSValue::js_number_from_int32(i as i32)),
+        None => {
+            Err(global.throw_invalid_arguments(format_args!("unknown instrumentation \"{name}\"")))
+        }
+    }
+}
+
 /// `propagationFlags()` → bit 0: W3C trace context, bit 1: baggage.
 #[bun_jsc::host_fn]
 pub fn propagation_flags(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {

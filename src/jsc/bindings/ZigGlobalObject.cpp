@@ -62,7 +62,7 @@
 #include "JavaScriptCore/VM.h"
 #include "AddEventListenerOptions.h"
 #include "AsyncContextFrame.h"
-#include "BunTelemetry.h"
+#include "TelemetryContext.h"
 #include "BunClientData.h"
 #include "BunIDLConvert.h"
 #include "BunObject.h"
@@ -2944,7 +2944,11 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         { BuiltinName::k_inherits, 1, jsFunctionInherits },
         { BuiltinName::k_makeAbortError, 1, jsFunctionMakeAbortError },
         { BuiltinName::k_checkBufferRead, 1, jsFunctionCheckBufferRead },
-        { BuiltinName::k_telemetryNativeSpanOp, 4, Bun::jsTelemetryNativeSpanOp },
+        { BuiltinName::k_telemetrySetAttribute, 3, Bun::jsTelemetrySetAttribute },
+        { BuiltinName::k_telemetrySetName, 2, Bun::jsTelemetrySetName },
+        { BuiltinName::k_telemetrySetStatus, 3, Bun::jsTelemetrySetStatus },
+        { BuiltinName::k_telemetryAddEvent, 4, Bun::jsTelemetryAddEvent },
+        { BuiltinName::k_telemetryAddLink, 5, Bun::jsTelemetryAddLink },
     };
     Vector<GlobalPropertyInfo, 32> staticGlobals;
     staticGlobals.append(GlobalPropertyInfo { builtinNames.lazyPrivateName(),

@@ -200,13 +200,11 @@ static inline JSC::JSValue jsBigIntFromSQLite(JSC::JSGlobalObject* globalObject,
 
 // ── Native OpenTelemetry (see src/runtime/telemetry/sqlite.rs) ───────────────
 extern "C" uint32_t Bun__Telemetry__enabled;
+extern "C" const uint32_t Bun__Telemetry__SQLITE_MASK;
 extern "C" uint64_t Bun__Telemetry__sqliteBegin(JSC::JSGlobalObject*, const char* file, size_t fileLen);
 extern "C" void Bun__Telemetry__sqliteEnd(JSC::JSGlobalObject*, uint64_t span, const char* sql, size_t sqlLen, int errcode, const char* errmsg);
 
 namespace Bun {
-
-// bun_telemetry::Instrument::Sqlite == 3
-static constexpr uint32_t kTelemetrySqliteBit = 1u << 3;
 
 /// One query span around a statement execution. Zero cost when telemetry is
 /// off: a single relaxed load in the constructor.
@@ -216,7 +214,7 @@ public:
         : m_scope(scope)
         , m_db(db)
     {
-        if (__atomic_load_n(&Bun__Telemetry__enabled, __ATOMIC_RELAXED) & kTelemetrySqliteBit) [[unlikely]]
+        if (__atomic_load_n(&Bun__Telemetry__enabled, __ATOMIC_RELAXED) & Bun__Telemetry__SQLITE_MASK) [[unlikely]]
             begin(globalObject);
     }
 

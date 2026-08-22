@@ -1,8 +1,8 @@
 // Bun.otel — native OpenTelemetry tracing.
 //
-// Native side: src/runtime/telemetry.rs (host functions below), the
-// TelemetrySpan class (src/runtime/telemetry/span.rs), and the async-context
-// slot helpers in BunTelemetry.cpp. This module is the JS surface: `Bun.otel`
+// Native side: src/runtime/telemetry.rs (host functions below), the span /
+// tracer cells (JSTelemetrySpan.cpp, JSTelemetryTracer.cpp) and the
+// active-span slot (TelemetryContext.cpp). This module is the JS surface: `Bun.otel`
 // itself plus objects that satisfy the @opentelemetry/api TracerProvider /
 // ContextManager / TextMapPropagator interfaces so `trace.getTracer()` etc.
 // resolve to the native pipeline with no SDK installed.
@@ -11,17 +11,20 @@ const nativeStart = $newRustFunction("telemetry.rs", "start", 1);
 const nativeIsEnabled = $newRustFunction("telemetry.rs", "isEnabled", 0);
 const createScope = $newRustFunction("telemetry.rs", "createScope", 2);
 const nativeActiveSpan = $newRustFunction("telemetry.rs", "activeSpan", 0);
-const wrapSpanContext = $newCppFunction("BunTelemetry.cpp", "jsTelemetryWrapSpanContext", 1);
+const wrapSpanContext = $newCppFunction("JSTelemetryTracer.cpp", "jsTelemetryWrapSpanContext", 5);
+const parseTraceparent = $newCppFunction("JSTelemetryTracer.cpp", "jsTelemetryParseTraceparent", 2);
 const withContext = $newRustFunction("telemetry.rs", "withContext", 3);
 const nativeForceFlush = $newRustFunction("telemetry.rs", "forceFlush", 0);
 const nativeStats = $newRustFunction("telemetry.rs", "stats", 0);
 const nativeDecode = $newRustFunction("telemetry.rs", "decode", 1);
 const nativeSetEnabled = $newRustFunction("telemetry.rs", "setEnabled", 2);
 const nativePropagationFlags = $newRustFunction("telemetry.rs", "propagationFlags", 0);
-const nativeStartLeafSpan = $newCppFunction("BunTelemetry.cpp", "jsTelemetryStartInstrumentSpan", 3);
-const enterWithExtras = $newCppFunction("BunTelemetry.cpp", "jsEnterWithExtras", 2);
-const exitContext = $newCppFunction("BunTelemetry.cpp", "jsExitContext", 1);
-const activeExtras = $newCppFunction("BunTelemetry.cpp", "jsActiveExtras", 0);
+const nativeInstrumentId = $newRustFunction("telemetry.rs", "instrumentId", 1);
+const startInstrumentSpan = $newCppFunction("JSTelemetryTracer.cpp", "jsTelemetryStartInstrumentSpan", 3);
+const propagationHeaders = $newCppFunction("JSTelemetryTracer.cpp", "jsTelemetryPropagationHeaders", 1);
+const enterContext = $newCppFunction("TelemetryContext.cpp", "jsTelemetryEnterContext", 2);
+const exitContext = $newCppFunction("TelemetryContext.cpp", "jsTelemetryExitContext", 1);
+const activeExtras = $newCppFunction("TelemetryContext.cpp", "jsTelemetryActiveExtras", 0);
 
 // @opentelemetry/api well-known keys (createContextKey === Symbol.for).
 const SPAN_KEY = Symbol.for("OpenTelemetry Context Key SPAN");
@@ -31,12 +34,28 @@ const API_KEY = Symbol.for("opentelemetry.js.api.1");
 const SpanKind = { INTERNAL: 0, SERVER: 1, CLIENT: 2, PRODUCER: 3, CONSUMER: 4 } as const;
 const SpanStatusCode = { UNSET: 0, OK: 1, ERROR: 2 } as const;
 
-/** Coerce anything span-like (ours, or a foreign api NonRecordingSpan) to a TelemetrySpan. */
+/** W3C header form of an api `TraceState` (object with serialize()) or string. */
+function traceStateHeader(traceState: any): string | undefined {
+  if (traceState == null) return undefined;
+  if (typeof traceState === "string") return traceState;
+  if (typeof traceState.serialize === "function") return String(traceState.serialize());
+  return undefined;
+}
+
+/** A non-recording TelemetrySpan carrying `sc` (an api SpanContext-like object). */
+function wrap(sc: any) {
+  return wrapSpanContext(sc.traceId, sc.spanId, sc.traceFlags, sc.isRemote, traceStateHeader(sc.traceState));
+}
+
+/** Coerce anything span-like (ours, a foreign api Span, or a bare SpanContext) to a TelemetrySpan. */
 function toNativeSpan(span: any) {
   if (span == null) return undefined;
   if ($isTelemetrySpan(span)) return span;
-  if (typeof span.spanContext === "function") return wrapSpanContext(span.spanContext());
-  if (typeof span.traceId === "string") return wrapSpanContext(span);
+  if (typeof span.spanContext === "function") {
+    const sc = span.spanContext();
+    return sc == null ? undefined : wrap(sc);
+  }
+  if (typeof span.traceId === "string") return wrap(span);
   return undefined;
 }
 
@@ -116,12 +135,12 @@ function unpackContext(ctx: any): [any, Map<symbol, unknown> | undefined] {
 let emptySpan: any;
 /** Header placeholder for a Context that carries extras but no span. */
 function placeholderSpan() {
-  return (emptySpan ??= wrapSpanContext(null));
+  return (emptySpan ??= wrapSpanContext());
 }
 
 function runWithContext(ctx: any, fn: Function, thisArg: unknown, args: any[]) {
   const [span, extras] = unpackContext(ctx);
-  const prev = enterWithExtras(span ?? (extras ? placeholderSpan() : undefined), extras);
+  const prev = enterContext(span ?? (extras ? placeholderSpan() : undefined), extras);
   try {
     return fn.$apply(thisArg, args);
   } finally {
@@ -162,7 +181,7 @@ const contextManager = {
 //
 // Tracers are native (JSTelemetryTracer): startSpan/startActiveSpan never
 // touch JS except to run the user callback.
-const createTracer = $newCppFunction("BunTelemetry.cpp", "jsTelemetryCreateTracer", 3);
+const createTracer = $newCppFunction("JSTelemetryTracer.cpp", "jsTelemetryCreateTracer", 3);
 type Tracer = {
   readonly name: string;
   readonly version: string | undefined;
@@ -279,23 +298,17 @@ const propagator = {
     return ["traceparent", "tracestate", "baggage"];
   },
   inject(context: any, carrier: any, setter: any = defaultSetter) {
-    const flags = nativePropagationFlags();
     const [span, extras] = unpackContext(context ?? activeContext());
-    if (span && flags & 1) {
-      const ctx = span.spanContext();
-      const traceId = ctx.traceId;
-      if (traceId && traceId !== "00000000000000000000000000000000") {
-        setter.set(
-          carrier,
-          "traceparent",
-          "00-" + traceId + "-" + ctx.spanId + "-" + (ctx.traceFlags & 0xff).toString(16).padStart(2, "0"),
-        );
-        const ts = ctx.traceState;
-        if (ts) setter.set(carrier, "tracestate", typeof ts === "string" ? ts : ts.serialize());
+    if (span) {
+      // The native side formats the headers and honours OTEL_PROPAGATORS.
+      const [traceparent, tracestate] = propagationHeaders(span);
+      if (traceparent) {
+        setter.set(carrier, "traceparent", traceparent);
+        if (tracestate) setter.set(carrier, "tracestate", tracestate);
       }
     }
     const bag = extras?.get(BAGGAGE_KEY);
-    if (bag && flags & 2) {
+    if (bag && nativePropagationFlags() & 2) {
       const s = serializeBaggage(bag);
       if (s) setter.set(carrier, "baggage", s);
     }
@@ -305,19 +318,10 @@ const propagator = {
     let tp = getter.get(carrier, "traceparent");
     if ($isJSArray(tp)) tp = tp[0];
     if (typeof tp === "string") {
-      const m = /^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})(-.*)?$/.exec(tp.trim());
-      if (m && m[1] !== "ff" && !(m[1] === "00" && m[5]) && !/^0+$/.test(m[2]) && !/^0+$/.test(m[3])) {
-        let traceState = getter.get(carrier, "tracestate");
-        if ($isJSArray(traceState)) traceState = traceState.join(",");
-        const span = wrapSpanContext({
-          traceId: m[2],
-          spanId: m[3],
-          traceFlags: parseInt(m[4], 16),
-          isRemote: true,
-          traceState: typeof traceState === "string" ? traceState : undefined,
-        });
-        ctx = ctx.setValue(SPAN_KEY, span);
-      }
+      let traceState = getter.get(carrier, "tracestate");
+      if ($isJSArray(traceState)) traceState = traceState.join(",");
+      const span = parseTraceparent(tp, typeof traceState === "string" ? traceState : undefined);
+      if (span) ctx = ctx.setValue(SPAN_KEY, span);
     }
     let bg = getter.get(carrier, "baggage");
     if ($isJSArray(bg)) bg = bg.join(",");
@@ -352,12 +356,11 @@ function installGlobal() {
 
 // ── node:http client (see _http_client.ts) ────────────────────────────────
 
-const clientScopeId = 1; // bun_telemetry::Instrument::HttpClient
+const httpClientInstrument = nativeInstrumentId("fetch") as number;
 /** A CLIENT span under the active span, or undefined when disabled. */
 function startClientSpan(name: string) {
-  return nativeStartLeafSpan(clientScopeId, String(name), SpanKind.CLIENT);
+  return startInstrumentSpan(httpClientInstrument, String(name), SpanKind.CLIENT);
 }
-const propagationHeaders = $newCppFunction("BunTelemetry.cpp", "jsTelemetryPropagationHeaders", 1);
 
 // ── Bun.otel ──────────────────────────────────────────────────────────────
 
@@ -456,10 +459,11 @@ export default {
   ROOT_CONTEXT,
   SpanKind,
   SpanStatusCode,
-  // internal, for node:http and JSTelemetrySpan.cpp
+  // internal, for node:http, JSTelemetrySpan.cpp and JSTelemetryTracer.cpp
   startClientSpan,
   propagationHeaders,
   unpackContext,
+  toNativeSpan,
   makeTraceState,
   TraceState,
   [Symbol.for("nodejs.util.inspect.custom")]() {

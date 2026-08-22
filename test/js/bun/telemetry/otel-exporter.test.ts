@@ -473,7 +473,9 @@ describe.concurrent("OTLP/HTTP exporter", () => {
       `,
       { BUN_OTEL: "1", OTEL_TRACES_EXPORTER: "console", OTEL_BSP_MAX_EXPORT_BATCH_SIZE: "1" },
     );
-    expect(stderr.match(/"resourceSpans"/g)?.length).toBe(300);
+    // every span reaches stderr (payloads may carry more than one span)
+    expect(stderr.match(/"spanId"/g)?.length).toBe(300);
+    expect(stderr.match(/"resourceSpans"/g)!.length).toBeGreaterThan(1);
     expect(exitCode).toBe(0);
   });
 

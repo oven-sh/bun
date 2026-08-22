@@ -1,9 +1,19 @@
-import { ShellError, ShellExpression } from "bun";
+import { $, ShellError, ShellExpression } from "bun";
 // import { tempDirWithFiles } from "harness";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import { join } from "node:path";
 // import { bunExe } from "harness";
+
+type Expectation = "stdout" | "stderr" | "exitCode" | "error";
+
+function checkCallbackReturnedNothing(kind: Exclude<Expectation, "error">, returned: unknown): void {
+  if (returned !== undefined) {
+    throw new Error(
+      `TestBuilder: the .${kind}() callback returned a ${typeof returned}, but its return value is ignored. The callback must call expect() itself.`,
+    );
+  }
+}
 
 export function createTestBuilder(path: string) {
   var { describe, test, afterAll, beforeAll, expect, beforeEach, afterEach } = Bun.jest(path);
@@ -16,6 +26,7 @@ export function createTestBuilder(path: string) {
     expected_exit_code: number | ((code: number) => void) = 0;
     expected_error: ShellError | string | boolean | undefined = undefined;
     file_equals: { [filename: string]: string | (() => string | Promise<string>) } = {};
+    _expectationsSet: Set<Expectation> = new Set();
     _doesNotExist: string[] = [];
     _timeout: number | undefined = undefined;
 
@@ -121,22 +132,36 @@ export function createTestBuilder(path: string) {
       return this;
     }
 
+    _setExpectation(kind: Expectation): void {
+      if (this._expectationsSet.has(kind)) {
+        throw new Error(
+          `TestBuilder: the ${kind} expectation was set more than once; only the last one would be checked. Put all of the assertions in a single callback.`,
+        );
+      }
+      this._expectationsSet.add(kind);
+    }
+
     /**
      * Expect output from stdout
      *
-     * @param expected - can either be a string or a function which itself calls `expect()`
+     * @param expected - can either be a string (`$TEMP_DIR` is replaced with the temp directory) or
+     * a function which itself calls `expect()`. A function must not return anything: its return
+     * value is not an assertion.
      */
     stdout(expected: string | ((stdout: string, tempDir: string) => void)): this {
+      this._setExpectation("stdout");
       this.expected_stdout = expected;
       return this;
     }
 
     stderr(expected: string | ((stderr: string, tempDir: string) => void)): this {
+      this._setExpectation("stderr");
       this.expected_stderr = expected;
       return this;
     }
 
     stderr_contains(expected: string): this {
+      this._setExpectation("stderr");
       this.expected_stderr = { contains: expected };
       return this;
     }
@@ -155,7 +180,11 @@ export function createTestBuilder(path: string) {
       return this;
     }
 
+    /**
+     * Expect the command to throw (e.g. a parse error). The test fails if it completes instead.
+     */
     error(expected?: ShellError | string | boolean): this {
+      this._setExpectation("error");
       if (expected === undefined || expected === true) {
         this.expected_error = true;
       } else if (expected === false) {
@@ -167,6 +196,7 @@ export function createTestBuilder(path: string) {
     }
 
     exitCode(expected: number | ((code: number) => void)): this {
+      this._setExpectation("exitCode");
       this.expected_exit_code = expected;
       return this;
     }
@@ -211,21 +241,23 @@ export function createTestBuilder(path: string) {
         if (typeof this.expected_stdout === "string") {
           expect(stdout.toString()).toEqual(this.expected_stdout.replaceAll("$TEMP_DIR", tempdir));
         } else {
-          this.expected_stdout(stdout.toString(), tempdir);
+          checkCallbackReturnedNothing("stdout", this.expected_stdout(stdout.toString(), tempdir));
         }
       }
       if (this.expected_stderr !== undefined) {
         if (typeof this.expected_stderr === "string") {
           expect(stderr.toString()).toEqual(this.expected_stderr.replaceAll("$TEMP_DIR", tempdir));
         } else if (typeof this.expected_stderr === "function") {
-          this.expected_stderr(stderr.toString(), tempdir);
+          checkCallbackReturnedNothing("stderr", this.expected_stderr(stderr.toString(), tempdir));
         } else {
           expect(stderr.toString()).toContain(this.expected_stderr.contains);
         }
       }
       if (typeof this.expected_exit_code === "number") {
         expect(exitCode).toEqual(this.expected_exit_code);
-      } else if (typeof this.expected_exit_code === "function") this.expected_exit_code(exitCode);
+      } else {
+        checkCallbackReturnedNothing("exitCode", this.expected_exit_code(exitCode));
+      }
 
       for (const [filename, expected_raw] of Object.entries(this.file_equals)) {
         const expected = typeof expected_raw === "string" ? expected_raw : await expected_raw();
@@ -239,16 +271,14 @@ export function createTestBuilder(path: string) {
     }
 
     async run(): Promise<undefined> {
+      let output: $.ShellOutput;
       try {
         let finalPromise = Bun.$(this._scriptStr, ...this._expresssions);
         if (this.tempdir) finalPromise = finalPromise.cwd(this.tempdir);
         if (this._cwd) finalPromise = finalPromise.cwd(this._cwd);
         if (this._env) finalPromise = finalPromise.env(this._env);
         if (this._quiet) finalPromise = finalPromise.quiet();
-        const output = await finalPromise;
-
-        const { stdout, stderr, exitCode } = output;
-        await this.doChecks(stdout, stderr, exitCode);
+        output = await finalPromise;
       } catch (err_) {
         const err: ShellError = err_ as any;
         const { stdout, stderr, exitCode } = err;
@@ -256,7 +286,7 @@ export function createTestBuilder(path: string) {
           if (stdout === undefined || stderr === undefined || exitCode === undefined) {
             throw err_;
           }
-          this.doChecks(stdout, stderr, exitCode);
+          await this.doChecks(stdout, stderr, exitCode);
           return;
         }
         if (this.expected_error === true) return undefined;
@@ -273,7 +303,12 @@ export function createTestBuilder(path: string) {
         return undefined;
       }
 
-      // return output;
+      if (this.expected_error !== undefined && this.expected_error !== false) {
+        expect.unreachable(
+          `TestBuilder: expected the command to throw, but it completed with exit code ${output.exitCode}`,
+        );
+      }
+      await this.doChecks(output.stdout, output.stderr, output.exitCode);
     }
 
     todo(reason?: string): this {

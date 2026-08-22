@@ -259,7 +259,7 @@ _bun_pm_completion() {
     cmd2)
         sub_commands=(
             'bin\:"print the path to bin folder" '
-            'ls\:"list the dependency tree according to the current lockfile" '
+            'ls\:"list the tree of installed dependencies" '
             'licenses\:"list installed packages grouped by license" '
             'hash\:"generate & print the hash of the current lockfile" '
             'hash-string\:"print the string used to hash the lockfile" '
@@ -295,7 +295,7 @@ _bun_pm_completion() {
             ;;
         ls)
             pmargs=(
-                "--all[list the entire dependency tree according to the current lockfile]"
+                "--all[list the entire tree of installed dependencies]"
                 "--trusted[list only trusted dependencies]"
             )
 

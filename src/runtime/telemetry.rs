@@ -8,9 +8,8 @@ use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
 use std::sync::Arc;
 
-use bun_core::{OwnedString, String as BunString};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{CallFrame, JSArrayIterator, JSGlobalObject, JSValue, JsResult, StringJsc as _};
+use bun_jsc::{CallFrame, JSArrayIterator, JSGlobalObject, JSValue, JsResult};
 use bun_telemetry::config::{self, Compression, OtlpExporterConfig};
 use bun_telemetry::processor::{self, Processor};
 use bun_telemetry::{Instrument, Limits, Sampler, SpanContext, propagation};
@@ -20,7 +19,6 @@ use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerTag};
 pub mod exporter;
 pub mod fetch;
 pub mod fs;
-pub mod http;
 pub mod server;
 pub mod span;
 pub mod spawn;
@@ -414,13 +412,20 @@ pub use propagation::{format_traceparent, parse_traceparent};
 
 // ─────────────────────────── host functions (`$newRustFunction("telemetry.rs", …)`) ───────────────────────────
 
+/// `obj[key]` as an owned string; `undefined`/`null` → None, non-string throws.
+fn opt_str(global: &JSGlobalObject, obj: JSValue, key: &str) -> JsResult<Option<String>> {
+    Ok(obj
+        .get_optional_slice(global, key)?
+        .map(|s| bstr::ByteSlice::to_str_lossy(s.slice()).into_owned()))
+}
+
+/// A string argument as an owned string; anything else → None.
 fn arg_string(global: &JSGlobalObject, v: JSValue) -> JsResult<Option<String>> {
     if !v.is_string() {
         return Ok(None);
     }
-    let s = OwnedString::new(BunString::from_js(v, global)?);
     Ok(Some(
-        bstr::ByteSlice::to_str_lossy(s.to_utf8().slice()).into_owned(),
+        bstr::ByteSlice::to_str_lossy(v.to_slice(global)?.slice()).into_owned(),
     ))
 }
 
@@ -438,8 +443,8 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let mut replaces_exporters = false;
 
     if opts.is_object() {
-        if let Some(v) = opts.get(global, "serviceName")? {
-            cfg.service_name = arg_string(global, v)?;
+        if let Some(v) = opt_str(global, opts, "serviceName")? {
+            cfg.service_name = Some(v);
         }
         if let Some(v) = opts.get(global, "resourceAttributes")? {
             span::for_each_attribute(global, v, |k, val| {
@@ -460,12 +465,9 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             })?;
         }
         // `endpoint` / `url` + `headers` is shorthand for one OTLP exporter.
-        let endpoint = match opts.get(global, "endpoint")? {
-            Some(v) => arg_string(global, v)?,
-            None => match opts.get(global, "url")? {
-                Some(v) => arg_string(global, v)?,
-                None => None,
-            },
+        let endpoint = match opt_str(global, opts, "endpoint")? {
+            Some(v) => Some(v),
+            None => opt_str(global, opts, "url")?,
         };
         let explicit_exporters = opts.get(global, "exporters")?;
         if endpoint.is_some() || explicit_exporters.is_some() {
@@ -506,12 +508,7 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                     ("exportProtobuf", exporter::JsFormat::Protobuf),
                     ("exportJSON", exporter::JsFormat::Json),
                 ] {
-                    if let Some(f) = item.get(global, key)? {
-                        if !f.is_callable() {
-                            return Err(global.throw_invalid_arguments(format_args!(
-                                "exporter.{key} must be a function"
-                            )));
-                        }
+                    if let Some(f) = item.get_function(global, key)? {
                         if js_fn.is_some() {
                             return Err(global.throw_invalid_arguments(format_args!(
                                 "exporter must have only one of export(), exportProtobuf() or exportJSON()"
@@ -525,14 +522,8 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                     continue;
                 }
                 // Vendor preset: { type: "datadog" | "honeycomb" | …, apiKey?, site?, id?, endpoint? }
-                if let Some(t) = item.get(global, "type")? {
-                    let name = arg_string(global, t)?.unwrap_or_default();
-                    let field = |k: &str| -> JsResult<Option<String>> {
-                        match item.get(global, k)? {
-                            Some(v) if !v.is_undefined_or_null() => arg_string(global, v),
-                            _ => Ok(None),
-                        }
-                    };
+                if let Some(name) = opt_str(global, item, "type")? {
+                    let field = |k: &str| opt_str(global, item, k);
                     let input = bun_telemetry::presets::PresetInput {
                         name: &name,
                         api_key: field("apiKey")?,
@@ -553,12 +544,9 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                     cfg.otlp_exporters.push(x);
                     continue;
                 }
-                let url = match item.get(global, "url")? {
-                    Some(v) => arg_string(global, v)?,
-                    None => match item.get(global, "endpoint")? {
-                        Some(v) => arg_string(global, v)?,
-                        None => None,
-                    },
+                let url = match opt_str(global, item, "url")? {
+                    Some(v) => Some(v),
+                    None => opt_str(global, item, "endpoint")?,
                 };
                 let Some(url) = url else {
                     return Err(global.throw_invalid_arguments(format_args!(
@@ -583,23 +571,23 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         }
         if let Some(b) = opts.get(global, "batch")? {
             if b.is_object() {
-                if let Some(v) = b
-                    .get(global, "delayMs")?
-                    .or(b.get(global, "scheduledDelayMillis")?)
-                {
-                    cfg.batch.scheduled_delay_ms = v.to_number(global)?.max(0.0) as u32;
+                if let Some(v) = match b.get_optional_int::<u32>(global, "delayMs")? {
+                    Some(v) => Some(v),
+                    None => b.get_optional_int::<u32>(global, "scheduledDelayMillis")?,
+                } {
+                    cfg.batch.scheduled_delay_ms = v;
                 }
-                if let Some(v) = b
-                    .get(global, "timeoutMs")?
-                    .or(b.get(global, "exportTimeoutMillis")?)
-                {
-                    cfg.batch.export_timeout_ms = v.to_number(global)?.max(0.0) as u32;
+                if let Some(v) = match b.get_optional_int::<u32>(global, "timeoutMs")? {
+                    Some(v) => Some(v),
+                    None => b.get_optional_int::<u32>(global, "exportTimeoutMillis")?,
+                } {
+                    cfg.batch.export_timeout_ms = v;
                 }
-                if let Some(v) = b.get(global, "maxQueueSize")? {
-                    cfg.batch.max_queue_size = (v.to_number(global)?.max(1.0)) as u32;
+                if let Some(v) = b.get_optional_int::<u32>(global, "maxQueueSize")? {
+                    cfg.batch.max_queue_size = v.max(1);
                 }
-                if let Some(v) = b.get(global, "maxExportBatchSize")? {
-                    cfg.batch.max_export_batch_size = (v.to_number(global)?.max(1.0)) as u32;
+                if let Some(v) = b.get_optional_int::<u32>(global, "maxExportBatchSize")? {
+                    cfg.batch.max_export_batch_size = v.max(1);
                 }
                 cfg.batch.max_export_batch_size = cfg
                     .batch
@@ -626,17 +614,17 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         }
         if let Some(l) = opts.get(global, "limits")? {
             if l.is_object() {
-                if let Some(v) = l.get(global, "attributeCountLimit")? {
-                    cfg.limits.attributes = v.to_number(global)?.clamp(0.0, 65535.0) as u16;
+                if let Some(v) = l.get_optional_int::<u16>(global, "attributeCountLimit")? {
+                    cfg.limits.attributes = v;
                 }
-                if let Some(v) = l.get(global, "eventCountLimit")? {
-                    cfg.limits.events = v.to_number(global)?.clamp(0.0, 65535.0) as u16;
+                if let Some(v) = l.get_optional_int::<u16>(global, "eventCountLimit")? {
+                    cfg.limits.events = v;
                 }
-                if let Some(v) = l.get(global, "linkCountLimit")? {
-                    cfg.limits.links = v.to_number(global)?.clamp(0.0, 65535.0) as u16;
+                if let Some(v) = l.get_optional_int::<u16>(global, "linkCountLimit")? {
+                    cfg.limits.links = v;
                 }
-                if let Some(v) = l.get(global, "attributeValueLengthLimit")? {
-                    cfg.limits.attribute_value_length = v.to_number(global)?.max(0.0) as u32;
+                if let Some(v) = l.get_optional_int::<u32>(global, "attributeValueLengthLimit")? {
+                    cfg.limits.attribute_value_length = v;
                 }
             }
         }
@@ -684,14 +672,9 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 
 fn normalize_traces_url(url: &str) -> String {
     // A bare collector base URL gets the traces path; anything with a path is used as-is.
-    let trimmed = url.trim_end_matches('/');
-    let after_scheme = bun_core::strings::split_once(trimmed.as_bytes(), b"://")
-        .map(|(_, r)| r)
-        .unwrap_or(trimmed.as_bytes());
-    if bun_core::strings::contains_char(after_scheme, b'/') {
-        url.to_string()
-    } else {
-        format!("{trimmed}/v1/traces")
+    match bun_url::URL::parse(url.as_bytes()).pathname {
+        b"" | b"/" => config::traces_endpoint(url),
+        _ => url.to_string(),
     }
 }
 
@@ -700,38 +683,34 @@ fn read_exporter_extras(
     obj: JSValue,
     x: &mut OtlpExporterConfig,
 ) -> JsResult<()> {
+    // Same shapes `fetch` accepts: a Headers, a record, or [name, value] pairs.
     if let Some(h) = obj.get(global, "headers")? {
-        if let Some(o) = h.get_object() {
-            let mut iter = bun_jsc::JSPropertyIterator::init(
-                global,
-                o,
-                bun_jsc::JSPropertyIteratorOptions {
-                    skip_empty_name: true,
-                    include_value: true,
-                    ..Default::default()
-                },
-            )?;
-            while let Some(name) = iter.next()? {
-                let v = iter.value;
-                if let Some(vs) = arg_string(global, v)? {
-                    x.headers.push((
-                        bstr::ByteSlice::to_str_lossy(name.to_utf8().slice()).into_owned(),
-                        vs,
-                    ));
-                }
+        if let Some(fh) = bun_jsc::FetchHeaders::create_from_js(global, h)? {
+            // SAFETY: `create_from_js` returned a +1 owned FetchHeaders.
+            let fh = unsafe { &mut *fh.as_ptr() };
+            let headers = bun_http_jsc::headers_jsc::from_fetch_headers(Some(fh), None);
+            fh.deref();
+            use bun_http_types::ETag::HeaderEntryColumns;
+            let entries = headers.entries.slice();
+            for (name, value) in entries.items_name().iter().zip(entries.items_value()) {
+                x.headers.push((
+                    bstr::ByteSlice::to_str_lossy(headers.as_str(*name)).into_owned(),
+                    bstr::ByteSlice::to_str_lossy(headers.as_str(*value)).into_owned(),
+                ));
             }
         }
     }
-    if let Some(c) = obj.get(global, "compression")? {
-        x.compression = match arg_string(global, c)?.as_deref() {
-            Some("gzip") => Compression::Gzip,
-            _ => Compression::None,
-        };
-    }
-    if let Some(t) = obj.get(global, "timeoutMs")? {
-        if t.is_number() {
-            x.timeout_ms = t.as_number().max(0.0) as u32;
+    match opt_str(global, obj, "compression")?.as_deref() {
+        None | Some("none") => {}
+        Some("gzip") => x.compression = Compression::Gzip,
+        Some(other) => {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "unknown compression \"{other}\" (expected \"gzip\" or \"none\")"
+            )));
         }
+    }
+    if let Some(t) = obj.get_optional_int::<u32>(global, "timeoutMs")? {
+        x.timeout_ms = t;
     }
     Ok(())
 }

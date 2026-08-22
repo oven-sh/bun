@@ -552,29 +552,7 @@ fn encode_head(
     w.finish_unpatched()
 }
 
-/// Split `host[:port]` (Host header / URL authority).
-pub fn split_host_port(host: &[u8]) -> (&[u8], Option<u16>) {
-    let port = |s: &[u8]| bun_core::fmt::parse_unsigned::<u16>(s, 10).ok();
-    if host.first() == Some(&b'[') {
-        return match bun_core::strings::index_of_char_usize(host, b']') {
-            Some(end) => (
-                &host[..=end],
-                host[end + 1..].strip_prefix(b":").and_then(port),
-            ),
-            None => (host, None),
-        };
-    }
-    match bun_core::strings::last_index_of_char(host, b':') {
-        // A second ':' means an unbracketed IPv6 literal, which has no port.
-        Some(i) if !bun_core::strings::contains_char(&host[..i], b':') => {
-            match port(&host[i + 1..]) {
-                Some(p) => (&host[..i], Some(p)),
-                None => (host, None),
-            }
-        }
-        _ => (host, None),
-    }
-}
+pub use bun_core::fmt::split_host_port;
 
 #[cfg(test)]
 mod tests {

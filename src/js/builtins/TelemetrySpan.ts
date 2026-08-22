@@ -147,18 +147,7 @@ export function addEvent(this: unknown, name: unknown, a?: unknown, b?: unknown)
     attributes = a;
     time = b;
   }
-  // { k: v, … } → [k, v, …] without null/undefined values
-  let flat: unknown[] | null = null;
-  if (attributes != null && typeof attributes === "object") {
-    flat = [];
-    for (const key in attributes as object) {
-      const v = attributes[key];
-      if (v != null) {
-        $arrayPush(flat, key);
-        $arrayPush(flat, v);
-      }
-    }
-  }
+  const flat = $telemetryFlattenAttributes(attributes);
   $telemetryAddEvent(this, name + "", flat, time);
   return this;
 }
@@ -194,6 +183,21 @@ export function recordException(this: any, exception: any, time?: unknown) {
   return this;
 }
 
+// { k: v, … } → [k, v, …] without null/undefined values (null when not an object).
+$visibility = "Private";
+export function telemetryFlattenAttributes(attributes: unknown): unknown[] | null {
+  if (attributes == null || typeof attributes !== "object") return null;
+  const flat: unknown[] = [];
+  for (const key in attributes as object) {
+    const v = attributes[key];
+    if (v != null) {
+      $arrayPush(flat, key);
+      $arrayPush(flat, v);
+    }
+  }
+  return flat;
+}
+
 // One link onto `span` (shared by addLink/addLinks; not user-visible).
 $visibility = "Private";
 export function telemetryAddOneLink(span: unknown, state: number, link: any) {
@@ -204,18 +208,7 @@ export function telemetryAddOneLink(span: unknown, state: number, link: any) {
   const spanId = ctx.spanId + "";
   const traceFlags = ctx.traceFlags | 0;
   const attributes = link.attributes;
-  // { k: v, … } → [k, v, …] without null/undefined values
-  let flat: unknown[] | null = null;
-  if (attributes != null && typeof attributes === "object") {
-    flat = [];
-    for (const key in attributes as object) {
-      const v = attributes[key];
-      if (v != null) {
-        $arrayPush(flat, key);
-        $arrayPush(flat, v);
-      }
-    }
-  }
+  const flat = $telemetryFlattenAttributes(attributes);
   if (state & State.Native) {
     $telemetryAddLink(span, traceId, spanId, traceFlags, flat);
     return;

@@ -1117,10 +1117,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             bun_telemetry::SpanKind::Client,
             |w| {
                 w.attr("network.transport", transport);
-                w.attr_opt("server.address", host);
-                if port != 0 {
-                    w.attr("server.port", port);
-                }
+                w.server(host, port);
                 if SSL {
                     w.attr("tls.enabled", true);
                 }

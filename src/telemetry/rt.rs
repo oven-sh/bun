@@ -141,11 +141,7 @@ pub fn end_leaf_at(
     if !stub.is_recording() {
         return;
     }
-    let end_ns = if end_ns == 0 {
-        clock::now_unix_nanos()
-    } else {
-        end_ns
-    };
+    let end_ns = clock::or_now(end_ns);
     let recorded = with_local(global, |l| {
         batch::record(&mut l.batch, ScopeId::from(i), &mut |buf: &mut Vec<u8>| {
             let mut w = SpanWriter::begin(buf, stub, name, kind, end_ns);

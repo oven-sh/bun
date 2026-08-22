@@ -11,6 +11,7 @@ workspace = true
 
 [dependencies]
 bstr.workspace = true
+bun_base64.workspace = true
 bun_core.workspace = true
 bun_http_types.workspace = true
 bun_url.workspace = true

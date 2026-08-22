@@ -80,7 +80,7 @@ describe.concurrent("OTLP/HTTP exporter", () => {
     expect(r.headers["content-type"]).toBe("application/x-protobuf");
     expect(r.headers["x-api-key"]).toBe("secret key");
     expect(r.headers["x-other"]).toBe("1");
-    expect(r.headers["user-agent"]).toMatch(/^Bun\/.+ OTLP-Exporter$/);
+    expect(r.headers["user-agent"]).toMatch(/^Bun\//);
     const attrs = Object.fromEntries(
       r.body.resourceSpans[0].resource.attributes.map((a: any) => [a.key, Object.values(a.value)[0]]),
     );

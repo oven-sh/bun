@@ -9,10 +9,7 @@ static OFFSET: AtomicU64 = AtomicU64::new(0);
 
 #[inline]
 fn mono_now() -> u64 {
-    let t = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime);
-    (t.sec as u64)
-        .wrapping_mul(1_000_000_000)
-        .wrapping_add(t.nsec as u64)
+    bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime).ns()
 }
 
 #[cold]
@@ -33,4 +30,10 @@ pub fn now_unix_nanos() -> u64 {
         off = anchor();
     }
     mono_now().wrapping_add(off).max(1)
+}
+
+/// `ns`, or now when it is 0 (the ABI's "unspecified" timestamp).
+#[inline]
+pub fn or_now(ns: u64) -> u64 {
+    if ns == 0 { now_unix_nanos() } else { ns }
 }

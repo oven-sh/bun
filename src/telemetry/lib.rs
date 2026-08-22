@@ -43,8 +43,8 @@ pub struct Local {
     pub pool: pool::Pool,
     pub batch: batch::LocalBatch,
     pub http_templates: http_record::Cache,
-    /// xoshiro256++ state for span/trace ids; seeded lazily.
-    pub rng: [u64; 4],
+    /// PRNG for span/trace ids; seeded lazily from `bun_core::fast_random`.
+    pub rng: span::IdRng,
     /// Reused transcoding buffers for the JS span ABI: [key, value, name/misc].
     pub scratch: [Vec<u8>; 3],
 }
@@ -55,7 +55,7 @@ impl Local {
             pool: pool::Pool::new(),
             batch: batch::LocalBatch::new(),
             http_templates: http_record::Cache::new(),
-            rng: [0; 4],
+            rng: None,
             scratch: [Vec::new(), Vec::new(), Vec::new()],
         }
     }

@@ -194,6 +194,7 @@ using namespace JSC;
     macro(telemetryAddEvent) \
     macro(telemetryAddLink) \
     macro(telemetryAddOneLink) \
+    macro(telemetryFlattenAttributes) \
     macro(telemetrySetAttribute) \
     macro(telemetrySetName) \
     macro(telemetrySetStatus) \

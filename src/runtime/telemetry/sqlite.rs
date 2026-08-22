@@ -52,6 +52,7 @@ pub extern "C" fn Bun__Telemetry__sqliteEnd(
     sql: *const c_char,
     sql_len: usize,
     errcode: i32,
+    code_name: *const c_char,
     errmsg: *const c_char,
 ) {
     if span == 0 {
@@ -68,7 +69,12 @@ pub extern "C" fn Bun__Telemetry__sqliteEnd(
     if errcode == 0 {
         db::end(g, span, sql, None, None);
     } else {
-        let code = sqlite_code_name(errcode);
+        let code: &[u8] = if code_name.is_null() {
+            b"SQLITE_ERROR"
+        } else {
+            // SAFETY: non-null `code_name` is a static string from sqliteCodeName().
+            unsafe { core::ffi::CStr::from_ptr(code_name) }.to_bytes()
+        };
         let msg: &[u8] = if errmsg.is_null() {
             b""
         } else {
@@ -81,41 +87,9 @@ pub extern "C" fn Bun__Telemetry__sqliteEnd(
             sql,
             None,
             Some(db::DbError {
-                ty: code.as_bytes(),
+                ty: code,
                 message: msg,
             }),
         );
-    }
-}
-
-fn sqlite_code_name(code: i32) -> &'static str {
-    match code & 0xff {
-        1 => "SQLITE_ERROR",
-        2 => "SQLITE_INTERNAL",
-        3 => "SQLITE_PERM",
-        4 => "SQLITE_ABORT",
-        5 => "SQLITE_BUSY",
-        6 => "SQLITE_LOCKED",
-        7 => "SQLITE_NOMEM",
-        8 => "SQLITE_READONLY",
-        9 => "SQLITE_INTERRUPT",
-        10 => "SQLITE_IOERR",
-        11 => "SQLITE_CORRUPT",
-        12 => "SQLITE_NOTFOUND",
-        13 => "SQLITE_FULL",
-        14 => "SQLITE_CANTOPEN",
-        15 => "SQLITE_PROTOCOL",
-        16 => "SQLITE_EMPTY",
-        17 => "SQLITE_SCHEMA",
-        18 => "SQLITE_TOOBIG",
-        19 => "SQLITE_CONSTRAINT",
-        20 => "SQLITE_MISMATCH",
-        21 => "SQLITE_MISUSE",
-        22 => "SQLITE_NOLFS",
-        23 => "SQLITE_AUTH",
-        24 => "SQLITE_FORMAT",
-        25 => "SQLITE_RANGE",
-        26 => "SQLITE_NOTADB",
-        _ => "SQLITE_ERROR",
     }
 }

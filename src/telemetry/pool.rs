@@ -201,11 +201,7 @@ impl Slot {
             return;
         }
         self.n_events += 1;
-        let t = if time_ns == 0 {
-            clock::now_unix_nanos()
-        } else {
-            time_ns
-        };
+        let t = clock::or_now(time_ns);
         otlp::encode_event(&mut self.extra, name, t, attrs);
     }
 
@@ -398,11 +394,7 @@ pub fn end_with(
     prep: &mut dyn FnMut(&mut Slot),
     extra: &mut dyn FnMut(&mut SpanWriter<'_>),
 ) -> Option<Ended> {
-    let end_ns = if end_ns == 0 {
-        clock::now_unix_nanos()
-    } else {
-        end_ns
-    };
+    let end_ns = clock::or_now(end_ns);
     let Local {
         pool,
         batch,

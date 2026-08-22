@@ -118,15 +118,11 @@ pub fn record_exception_value(
     let ty = ty_s.as_ref().map(|s| s.slice()).unwrap_or(b"Error");
     let msg = msg_s.as_ref().map(|s| s.slice()).unwrap_or(b"");
     let stack = stack_s.as_ref().map(|s| s.slice()).unwrap_or(b"");
-    let attrs: [(&[u8], Value<'_>); 3] = [
-        (b"exception.type", Value::Str(ty)),
-        (b"exception.message", Value::Str(msg)),
-        (b"exception.stacktrace", Value::Str(stack)),
-    ];
-    let n = if stack.is_empty() { 2 } else { 3 };
     if let Some(mut l) = local(global) {
         pool::with(&mut l.pool, span, |s| {
-            s.add_event(b"exception", 0, &attrs[..n], super::span::limits());
+            bun_telemetry::otlp::with_exception_attrs(ty, msg, stack, |attrs| {
+                s.add_event(b"exception", 0, attrs, super::span::limits())
+            });
             s.set_status(StatusCode::Error, b"");
         });
     }

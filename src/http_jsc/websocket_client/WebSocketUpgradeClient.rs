@@ -204,21 +204,20 @@ impl ConnectSpan {
                     w.attr("network.transport", "unix");
                     w.attr("server.address", &path[..]);
                 } else {
-                    w.attr_opt("server.address", &self.host);
-                    if self.port != 0 {
-                        w.attr("server.port", self.port);
-                    }
+                    w.server(&self.host, self.port);
                 }
-                let scheme: &[u8] = if self.secure { b"wss://" } else { b"ws://" };
-                let mut url =
-                    Vec::with_capacity(scheme.len() + self.host.len() + 6 + self.path.len());
-                url.extend_from_slice(scheme);
-                url.extend_from_slice(&self.host);
-                if self.port != 0 && self.port != if self.secure { 443 } else { 80 } {
-                    url.push(b':');
-                    let mut ib = bun_core::fmt::ItoaBuf::new();
-                    url.extend_from_slice(bun_core::fmt::itoa(&mut ib, self.port));
-                }
+                use std::io::Write as _;
+                let mut url = Vec::with_capacity(8 + self.host.len() + 6 + self.path.len());
+                let _ = write!(
+                    url,
+                    "{}{}",
+                    if self.secure { "wss://" } else { "ws://" },
+                    HostFormatter {
+                        host: &self.host,
+                        port: Some(self.port).filter(|p| *p != 0),
+                        is_https: self.secure
+                    },
+                );
                 url.extend_from_slice(&self.path);
                 w.attr("url.full", &url[..]);
                 if let Some(e) = error {

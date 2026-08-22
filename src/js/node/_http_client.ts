@@ -164,6 +164,21 @@ function traceClientResponseEnd(req) {
   }
 }
 
+// `host[:port]` for the Host header / url.full: IPv6 addresses are enclosed in
+// square brackets (https://tools.ietf.org/html/rfc3986#section-3.2.2) and the
+// scheme's default port is omitted.
+function formatAuthority(host: string, port, defaultPort: number) {
+  let out = host;
+  const posColon = out.indexOf(":");
+  if (posColon !== -1 && out.includes(":", posColon + 1) && out.charCodeAt(0) !== 91 /* '[' */) {
+    out = `[${out}]`;
+  }
+  if (port && +port !== defaultPort) {
+    out += ":" + port;
+  }
+  return out;
+}
+
 // Native OpenTelemetry (Bun.otel): one CLIENT span per request, `traceparent`
 // injected before the header block is serialized. `otelHttpClientEnabled` is a
 // single native call that returns false unless tracing is on.
@@ -211,13 +226,11 @@ function otelClientRequestStart(req, protocol, host, port, arrayHeaders?) {
   }
   if (span.isRecording()) {
     const defaultPort = protocol === "https:" ? 443 : 80;
-    const p = +port || defaultPort;
-    const urlHost = host.indexOf(":") !== -1 && host.charCodeAt(0) !== 91 /* '[' */ ? "[" + host + "]" : host;
     span.setAttributes({
       "http.request.method": req.method,
       "server.address": host,
-      "server.port": p,
-      "url.full": protocol + "//" + urlHost + (p !== defaultPort ? ":" + p : "") + req.path,
+      "server.port": +port || defaultPort,
+      "url.full": protocol + "//" + formatAuthority(host, port, defaultPort) + req.path,
     });
   }
   return arrayHeaders;
@@ -440,20 +453,7 @@ function ClientRequest(input, options, cb) {
     }
 
     if (host && !this.getHeader("host") && setHost) {
-      let hostHeader = host;
-
-      // For the Host header, ensure that IPv6 addresses are enclosed
-      // in square brackets, as defined by URI formatting
-      // https://tools.ietf.org/html/rfc3986#section-3.2.2
-      const posColon = hostHeader.indexOf(":");
-      if (posColon !== -1 && hostHeader.includes(":", posColon + 1) && hostHeader.charCodeAt(0) !== 91 /* '[' */) {
-        hostHeader = `[${hostHeader}]`;
-      }
-
-      if (port && +port !== defaultPort) {
-        hostHeader += ":" + port;
-      }
-      this.setHeader("Host", hostHeader);
+      this.setHeader("Host", formatAuthority(host, port, defaultPort));
     }
 
     const auth = options.auth;

@@ -587,3 +587,5 @@ declare function $telemetryAddLink(
 ): void;
 /** TelemetrySpan.ts addOneLink builtin (shared by addLink/addLinks). */
 declare function $telemetryAddOneLink(span: unknown, state: number, link: unknown): void;
+/** TelemetrySpan.ts: `{k: v}` → `[k, v, …]` without null/undefined values; null if not an object. */
+declare function $telemetryFlattenAttributes(attributes: unknown): unknown[] | null;

@@ -265,6 +265,22 @@ pub fn truncate_utf8(s: &[u8], max: usize) -> &[u8] {
     &s[..end]
 }
 
+/// The semconv `exception.*` attribute set (stacktrace omitted when empty).
+#[inline]
+pub fn with_exception_attrs<R>(
+    ty: &[u8],
+    message: &[u8],
+    stack: &[u8],
+    f: impl FnOnce(&[(&[u8], Value<'_>)]) -> R,
+) -> R {
+    let attrs: [(&[u8], Value<'_>); 3] = [
+        (b"exception.type", Value::Str(ty)),
+        (b"exception.message", Value::Str(message)),
+        (b"exception.stacktrace", Value::Str(stack)),
+    ];
+    f(&attrs[..if stack.is_empty() { 2 } else { 3 }])
+}
+
 /// Number of top-level entries with `field` in a concatenated buffer.
 pub fn count_fields(buf: &[u8], field: u32) -> usize {
     let mut n = 0;
@@ -385,6 +401,16 @@ impl<'a> SpanWriter<'a> {
         self
     }
 
+    /// semconv `server.address` (+ `server.port` when known, i.e. non-zero).
+    #[inline]
+    pub fn server(&mut self, host: &[u8], port: u16) -> &mut Self {
+        self.attr_opt("server.address", host);
+        if port != 0 {
+            self.attr("server.port", port);
+        }
+        self
+    }
+
     /// Splice already-encoded `Span` fields (attributes/events/links produced
     /// by `write_key_value(.., ATTRIBUTES, ..)` / [`encode_event`]).
     #[inline]
@@ -421,13 +447,23 @@ impl<'a> SpanWriter<'a> {
         message: &[u8],
         stack: &[u8],
     ) -> &mut Self {
-        let attrs: [(&[u8], Value<'_>); 3] = [
-            (b"exception.type", Value::Str(ty)),
-            (b"exception.message", Value::Str(message)),
-            (b"exception.stacktrace", Value::Str(stack)),
-        ];
-        let n = if stack.is_empty() { 2 } else { 3 };
-        encode_event(self.out, b"exception", time_ns, &attrs[..n]);
+        with_exception_attrs(ty, message, stack, |attrs| {
+            encode_event(self.out, b"exception", time_ns, attrs)
+        });
+        self
+    }
+
+    /// HTTP client semconv: `http.response.status_code`, and 4xx/5xx mark the
+    /// span as an error with `error.type` = the status. (Server spans go
+    /// through `http_record`, where only 5xx is an error.)
+    pub fn http_client_status(&mut self, status: u16) -> &mut Self {
+        if status != 0 {
+            self.attr("http.response.status_code", status);
+            if status >= 400 {
+                let mut buf = bun_core::fmt::ItoaBuf::new();
+                self.error(bun_core::fmt::itoa(&mut buf, status), b"");
+            }
+        }
         self
     }
 

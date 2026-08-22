@@ -10,29 +10,16 @@
 namespace Bun {
 using namespace JSC;
 
-// A borrowed (not ref'd) BunString over `impl`; the owner keeps it alive.
-ALWAYS_INLINE BunString telemetryBorrow(const WTF::StringImpl* impl)
-{
-    if (!impl || !impl->length())
-        return { BunStringTag::Empty, {} };
-    return { BunStringTag::WTFStringImpl, { .wtf = const_cast<WTF::StringImpl*>(impl) } };
-}
-
-ALWAYS_INLINE BunString telemetryBorrow(const WTF::String& s)
-{
-    return telemetryBorrow(s.impl());
-}
-
-// Borrow the characters of a JSString the caller keeps alive, resolving a
-// rope in place first. Never throws: a rope that cannot be resolved (OOM)
-// reads as Empty.
+// Borrow (Bun::toString does not ref) the characters of a JSString the
+// caller keeps alive, resolving a rope in place first. Never throws: a rope
+// that cannot be resolved (OOM) reads as Empty.
 ALWAYS_INLINE BunString telemetryBorrow(JSString* str)
 {
     if (!str)
         return { BunStringTag::Empty, {} };
     if (const WTF::StringImpl* impl = str->tryGetValueImpl())
-        return telemetryBorrow(impl);
-    return telemetryBorrow(str->tryGetValue().data.impl());
+        return Bun::toString(const_cast<WTF::StringImpl*>(impl));
+    return Bun::toString(str->tryGetValue().data);
 }
 
 // The same JSString with any rope resolved (see telemetryBorrow).
@@ -50,14 +37,9 @@ ALWAYS_INLINE JSArray* telemetryArray(JSValue v)
     return v && v.isCell() ? dynamicDowncast<JSArray>(v.asCell()) : nullptr;
 }
 
-ALWAYS_INLINE JSValue telemetryArrayAt(JSArray* array, unsigned i)
-{
-    return array->canGetIndexQuickly(i) ? array->getIndexQuickly(i) : JSValue();
-}
-
 ALWAYS_INLINE JSString* telemetryArrayString(JSArray* array, unsigned i)
 {
-    JSValue v = telemetryArrayAt(array, i);
+    JSValue v = array->tryGetIndexQuickly(i);
     return v && v.isString() ? asString(v) : nullptr;
 }
 
@@ -77,9 +59,9 @@ inline uint64_t telemetryTimeInputToNs(JSValue v)
     if (auto* date = dynamicDowncast<DateInstance>(v.asCell()))
         return telemetryMsToNs(date->internalNumber());
     if (auto* arr = dynamicDowncast<JSArray>(v.asCell())) {
-        if (arr->length() >= 2 && arr->canGetIndexQuickly(0u) && arr->canGetIndexQuickly(1u)) {
-            JSValue s = arr->getIndexQuickly(0), n = arr->getIndexQuickly(1);
-            if (s.isNumber() && n.isNumber()) {
+        JSValue s = arr->tryGetIndexQuickly(0u), n = arr->tryGetIndexQuickly(1u);
+        if (s.isNumber() && n.isNumber()) {
+            {
                 double ds = s.asNumber(), dn = n.asNumber();
                 if (ds >= 0 && ds < 1.8e10 && dn >= 0 && dn < 1e12)
                     return static_cast<uint64_t>(ds) * 1000000000ull + static_cast<uint64_t>(dn);

@@ -11,6 +11,7 @@
 #include <JavaScriptCore/JSBigInt.h>
 #include <JavaScriptCore/JSInternalFieldObjectImplInlines.h>
 #include <JavaScriptCore/Lookup.h>
+#include <JavaScriptCore/MathCommon.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <limits>
 
@@ -98,15 +99,13 @@ extern "C" const TelemetrySpanStub* Bun__TelemetrySpan__stub(void* cell)
 extern "C" BunString Bun__TelemetrySpan__traceState(JSC::EncodedJSValue v)
 {
     auto* span = toTelemetrySpan(JSValue::decode(v));
-    JSString* s = span ? span->string(JSTelemetrySpan::Field::TraceState) : nullptr;
-    return telemetryBorrow(s ? s->tryGetValueImpl() : nullptr);
+    return telemetryBorrow(span ? span->string(JSTelemetrySpan::Field::TraceState) : nullptr);
 }
 
 extern "C" BunString Bun__TelemetrySpan__baggage(JSC::EncodedJSValue v)
 {
     auto* span = toTelemetrySpan(JSValue::decode(v));
-    JSString* s = span ? span->string(JSTelemetrySpan::Field::Baggage) : nullptr;
-    return telemetryBorrow(s ? s->tryGetValueImpl() : nullptr);
+    return telemetryBorrow(span ? span->string(JSTelemetrySpan::Field::Baggage) : nullptr);
 }
 
 // ─── attribute gathering ───
@@ -150,7 +149,7 @@ bool TelemetryAttrGatherer::fill(TelemetryAttrRef& out, JSValue v, bool allowArr
     }
     if (v.isNumber()) {
         double d = v.asNumber();
-        if (std::isfinite(d) && std::trunc(d) == d && std::abs(d) < 9007199254740992.0) {
+        if (isSafeInteger(d)) {
             out.kind = TelemetryAttrKind::Int;
             out.value.integer = static_cast<int64_t>(d);
         } else {
@@ -187,7 +186,7 @@ bool TelemetryAttrGatherer::fill(TelemetryAttrRef& out, JSValue v, bool allowArr
             uint32_t start = m_arrayItems.size();
             m_arrayItems.reserveCapacity(start + n);
             for (unsigned i = 0; i < n; ++i) {
-                JSValue item = telemetryArrayAt(arr, i);
+                JSValue item = arr->tryGetIndexQuickly(i);
                 if (!item)
                     continue;
                 m_arrayItems.grow(m_arrayItems.size() + 1);
@@ -226,11 +225,9 @@ TelemetryAttrSlice TelemetryAttrGatherer::gather(JSValue flatValue)
         n = 2 * kTelemetryMaxGather;
     }
     m_items.reserveCapacity(start + n / 2);
-    // The builtins build these with array literals / $arrayPush, so this is the shape.
-    bool contiguous = (flat->indexingType() & IndexingShapeMask) == ContiguousShape;
     for (unsigned i = 0; i < n; i += 2) {
-        JSValue k = contiguous ? flat->butterfly()->contiguous().at(flat, i).get() : telemetryArrayAt(flat, i);
-        JSValue v = contiguous ? flat->butterfly()->contiguous().at(flat, i + 1).get() : telemetryArrayAt(flat, i + 1);
+        JSValue k = flat->tryGetIndexQuickly(i);
+        JSValue v = flat->tryGetIndexQuickly(i + 1);
         JSString* key = k && k.isString() ? asString(k) : nullptr;
         if (!key || !v || v.isUndefinedOrNull())
             continue;
@@ -277,7 +274,7 @@ static void telemetryEndSpan(Zig::GlobalObject* globalObject, JSTelemetrySpan* s
             JSString* name = telemetryArrayString(list, i * 3);
             if (!name)
                 continue;
-            events.append({ telemetryBorrow(name), telemetryTimeInputToNs(telemetryArrayAt(list, i * 3 + 1)), gatherer.gather(telemetryArrayAt(list, i * 3 + 2)) });
+            events.append({ telemetryBorrow(name), telemetryTimeInputToNs(list->tryGetIndexQuickly(i * 3 + 1)), gatherer.gather(list->tryGetIndexQuickly(i * 3 + 2)) });
         }
     }
 
@@ -287,10 +284,10 @@ static void telemetryEndSpan(Zig::GlobalObject* globalObject, JSTelemetrySpan* s
         for (unsigned i = 0; i < n; ++i) {
             JSString* traceId = telemetryArrayString(list, i * 4);
             JSString* spanId = telemetryArrayString(list, i * 4 + 1);
-            JSValue flags = telemetryArrayAt(list, i * 4 + 2);
+            JSValue flags = list->tryGetIndexQuickly(i * 4 + 2);
             if (!traceId || !spanId)
                 continue;
-            links.append({ telemetryBorrow(traceId), telemetryBorrow(spanId), gatherer.gather(telemetryArrayAt(list, i * 4 + 3)), static_cast<uint8_t>(flags.isInt32() ? flags.asInt32() : 0) });
+            links.append({ telemetryBorrow(traceId), telemetryBorrow(spanId), gatherer.gather(list->tryGetIndexQuickly(i * 4 + 3)), static_cast<uint8_t>(flags.isInt32() ? flags.asInt32() : 0) });
         }
     }
 
@@ -574,8 +571,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTelemetrySpanGetter_parentSpanId, (JSGlobalObject * g
     auto* span = toTelemetrySpan(JSValue::decode(thisValue));
     if (!span)
         return JSValue::encode(jsUndefined());
-    static const uint8_t zero[8] = {};
-    if (!memcmp(span->m_stub.parentSpanId, zero, 8))
+    if (!span->m_stub.hasParent())
         return JSValue::encode(jsUndefined());
     return JSValue::encode(hexId(globalObject->vm(), std::span { span->m_stub.parentSpanId }));
 }

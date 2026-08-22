@@ -224,10 +224,7 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
 
     let num = |k: &str, w: &mut Vec<String>| -> Option<u32> {
         let v = get(k)?;
-        match core::str::from_utf8(v.trim_ascii())
-            .ok()
-            .and_then(|x| x.parse::<u32>().ok())
-        {
+        match bun_core::fmt::parse_unsigned::<u32>(v.trim_ascii(), 10).ok() {
             Some(n) => Some(n),
             None => {
                 w.push(format!("{k} is not a non-negative integer; ignoring"));

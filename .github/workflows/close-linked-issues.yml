@@ -79,14 +79,20 @@ jobs:
               "likely", "unlikely", "partially", "partly", "partial",
             ]);
 
+            // A clause that starts with one of these is a condition or a time, not a
+            // statement about this PR: "once we fix #1", "if this fixes #1".
+            const SUBORDINATORS = new Set(["if", "whether", "when", "whenever", "once", "until", "unless", "before", "after"]);
+
             // A keyword led by one of these does not state that the PR closes
-            // anything: a negation ("does not fix #1"), a hedge, or a determiner or
-            // preposition that makes the keyword an adjective ("the closed #1", "a
-            // comment on closed #1").
+            // anything: a negation ("does not fix #1"), a hedge, a subordinator ("if
+            // `bun install` fixes #1", where the look-back skips the removed span), or
+            // a determiner or preposition that makes the keyword an adjective ("the
+            // closed #1", "a comment on closed #1").
             const DISQUALIFIERS = new Set([
               "not", "never", "neither", "nor", "without", "cannot", "can't", "doesn't", "don't", "won't", "didn't",
               "isn't", "wasn't", "hasn't", "haven't", "hadn't", "wouldn't", "couldn't", "shouldn't", "mightn't", "mustn't",
               ...HEDGES,
+              ...SUBORDINATORS,
               "the", "a", "an", "of", "on", "in", "by", "from", "with", "for", "than",
             ]);
 
@@ -98,9 +104,6 @@ jobs:
             const BASE_FORMS = new Set(["close", "fix", "resolve", "supersede", "replace"]);
             const VERB_MARKERS = new Set(["will", "shall", "should", "does", "do", "did", "and", "we", "they", "i"]);
 
-            // A clause that starts with one of these is a condition or a time, not a
-            // statement about this PR: "once we fix #1", "if this fixes #1".
-            const SUBORDINATORS = new Set(["if", "whether", "when", "whenever", "once", "until", "unless", "before", "after"]);
             const DETERMINERS = new Set(["this", "that", "the", "a", "an"]);
 
             // Words that can sit between the deciding word and the keyword without
@@ -209,8 +212,33 @@ jobs:
               const word = tokens[k];
               if (word.kind !== "word" || (word.text !== "which" && word.text !== "that")) return false;
               let p = skipInterveningBack(tokens, k - 1);
-              while (tokens[p]?.kind === "newline" || isSeparator(tokens[p])) p = skipInterveningBack(tokens, p - 1);
-              return endsWithReference(tokens, p);
+              for (;;) {
+                if (endsWithReference(tokens, p)) return true;
+                if (tokens[p]?.kind === "newline" || isSeparator(tokens[p])) {
+                  p = skipInterveningBack(tokens, p - 1);
+                } else if (isPunct(tokens[p], ")") || isPunct(tokens[p], "]")) {
+                  // "Reverts #100 (the old approach), which fixed #1": an aside in brackets.
+                  const opener = openerOf(tokens, p);
+                  if (opener === -1) return false;
+                  p = skipInterveningBack(tokens, opener - 1);
+                } else {
+                  return false;
+                }
+              }
+            }
+
+            // The index of the "(" or "[" that the ")" or "]" at `p` closes, within a
+            // few tokens and the same paragraph, or -1.
+            function openerOf(tokens, p) {
+              const close = tokens[p].text;
+              const open = close === ")" ? "(" : "[";
+              let depth = 0;
+              for (let q = p; q >= 0 && q > p - 20; q--) {
+                if (tokens[q].kind === "break") return -1;
+                if (isPunct(tokens[q], close)) depth++;
+                else if (isPunct(tokens[q], open) && --depth === 0) return q;
+              }
+              return -1;
             }
 
             // A comma, an open parenthesis, a semicolon, a colon or a dash (hyphen, en
@@ -333,7 +361,10 @@ jobs:
                   // a paragraph is open is as it was before the comment.
                   const tail = removeComments(line.slice(end + 3), false, closesLater);
                   comment = tail.open;
-                  kept.push(tail.prose);
+                  // After an HTML block, a blank line fences the text off from the next
+                  // paragraph, as for the other single-line blocks.
+                  if (paragraph) kept.push(tail.prose);
+                  else kept.push(tail.prose, "");
                   continue;
                 }
                 const trimmed = line.trim();
@@ -763,10 +794,14 @@ jobs:
               return value > 0 ? { value, end } : null;
             }
 
-            // "#1's", "#1abc": the number is part of a longer word, not a reference.
+            // "#1's", "#1abc", "#1_foo": the number is part of a longer word, not a
+            // reference. Underscores followed by nothing or by punctuation close
+            // emphasis instead: "__Fixes #1__".
             function isAttached(chunk, index) {
-              const c = chunk[index];
-              return c !== undefined && (isLetter(c) || isDigit(c) || c === "'" || c === "\u2019" || c === "_");
+              let j = index;
+              while (chunk[j] === "_") j++;
+              const c = chunk[j];
+              return c !== undefined && (isLetter(c) || isDigit(c) || (j === index && (c === "'" || c === "\u2019")));
             }
 
             function isOwnerRepo(text) {

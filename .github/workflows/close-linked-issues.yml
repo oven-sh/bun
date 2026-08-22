@@ -95,6 +95,7 @@ jobs:
             // A clause that starts with one of these is a condition or a time, not a
             // statement about this PR: "once we fix #1", "if this fixes #1".
             const SUBORDINATORS = new Set(["if", "when", "whenever", "once", "until", "unless", "before", "after"]);
+            const DETERMINERS = new Set(["this", "that", "the", "a", "an"]);
 
             // Words that can sit between the deciding word and the keyword without
             // changing the reading: adverbs ("may also fix", "will fully fix") and the
@@ -176,7 +177,10 @@ jobs:
               if (before === undefined || before.kind !== "word") return true;
               if (isRelativeToReference(tokens, k)) return false;
               if (DISQUALIFIERS.has(before.text)) return false;
-              const prev = tokens[skipBack(tokens, k - 1)];
+              let p = skipBack(tokens, k - 1);
+              // "If this PR fixes #1": the subject may be a determiner and a noun.
+              if (tokens[p]?.kind === "word" && DETERMINERS.has(tokens[p].text)) p = skipBack(tokens, p - 1);
+              const prev = tokens[p];
               if (prev?.kind === "word" && SUBORDINATORS.has(prev.text)) return false;
               if (!BASE_FORMS.has(keyword)) return true;
               // "Fix #1" at the start of a line is a statement, "unable to\nfix #1" is not.
@@ -302,28 +306,32 @@ jobs:
                   kept.push("");
                   continue;
                 }
-                const opening = leadingRun(trimmed, "`") || leadingRun(trimmed, "~");
-                // A backtick fence's info string cannot hold a backtick: "```bun test```" is a code span.
                 // An opening fence has at most three spaces of indentation.
-                const isFence =
-                  opening.length >= 3 &&
-                  !isIndentedCode(rest) &&
-                  (opening[0] === "~" || !trimmed.slice(opening.length).includes("`"));
-                if (isFence) {
-                  fence = opening;
+                if (!isIndentedCode(rest) && isFenceOpening(trimmed)) {
+                  fence = leadingRun(trimmed, "`") || leadingRun(trimmed, "~");
                   quote = false;
                   paragraph = false;
                   kept.push("");
                   continue;
                 }
-                if (trimmed.startsWith(">") || (quote && !startsBlock(trimmed))) {
-                  quote = true;
+                if (trimmed.startsWith(">")) {
+                  // Only a quoted paragraph continues onto the next unmarked line. After a
+                  // quoted heading, rule, fence or empty quote, the next line is outside.
+                  const quoted = trimmed.slice(1).trim();
+                  quote = quoted !== "" && !isHeading(quoted) && !isThematicBreak(quoted) && !isFenceOpening(quoted);
+                  paragraph = false;
+                  kept.push("");
+                  continue;
+                }
+                if (quote && !startsBlock(trimmed)) {
                   paragraph = false;
                   kept.push("");
                   continue;
                 }
                 quote = false;
-                paragraph = !isHeading(trimmed) && !isThematicBreak(trimmed);
+                // A heading, a rule or a setext underline ("===" under a paragraph) is
+                // not a paragraph line.
+                paragraph = !isHeading(trimmed) && !isThematicBreak(trimmed) && !(paragraph && isRunOf(trimmed, "="));
                 if (!rest.includes("<!--")) {
                   kept.push(rest);
                   continue;
@@ -353,6 +361,13 @@ jobs:
                 kept.push(out);
               }
               return kept.join("\n");
+            }
+
+            // Three or more backticks or tildes. A backtick fence's info string cannot
+            // hold a backtick: "```bun test```" is a code span.
+            function isFenceOpening(trimmed) {
+              const opening = leadingRun(trimmed, "`") || leadingRun(trimmed, "~");
+              return opening.length >= 3 && (opening[0] === "~" || !trimmed.slice(opening.length).includes("`"));
             }
 
             // Four columns of indentation: four spaces, or a tab within the first four.

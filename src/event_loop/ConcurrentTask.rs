@@ -81,6 +81,7 @@ pub mod task_tag {
         WatchReloadTask,
         JSBundleCompletionTask,
         JSCDeferredWorkTask,
+        MacroCancel,              // bun_js_parser_jsc::Macro::MacroCancel (posted to the macro host VM)
         MacroRequest,             // bun_js_parser_jsc::Macro::MacroRequest (posted to the macro host VM)
         ManagedTask,
         NapiAsyncWork,            // napi_async_work

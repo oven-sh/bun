@@ -1816,6 +1816,12 @@ static void restoreDefaultSignalDisposition(int signalNumber)
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionAbort, (JSGlobalObject * globalObject, CallFrame*))
 {
+    if (Bun__VM__isMacroVM(bunVM(defaultGlobalObject(globalObject)))) [[unlikely]] {
+        auto& vm = JSC::getVM(globalObject);
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwTypeError(globalObject, throwScope, "process.abort() cannot be called from a macro"_s);
+        return {};
+    }
 #if OS(WINDOWS)
     // Raising SIGABRT is handled in the CRT in windows, calling _exit() with ambiguous code "3" by default.
     // This adjustment to the abort behavior gives a more sane exit code on abort, by calling _exit directly with code 134.

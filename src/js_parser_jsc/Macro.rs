@@ -104,6 +104,7 @@ impl MacroContext {
         import_range: Range,
         caller: Expr,
         function_name: &[u8],
+        waiting_vm: Option<&VmHandle>,
     ) -> crate::Result<Expr> {
         let import_record_path_without_macro_prefix = if is_macro_path(import_record_path) {
             &import_record_path[NAMESPACE_WITH_COLON.len()..]
@@ -234,8 +235,12 @@ impl MacroContext {
             )),
             done: ResetEvent::default(),
             task: ConcurrentTask::default(),
+            cancel: MacroCancel {
+                request: core::ptr::null_mut(),
+                task: ConcurrentTask::default(),
+            },
         };
-        host.run(&mut request);
+        host.run(&mut request, waiting_vm);
 
         match core::mem::replace(
             &mut request.outcome,
@@ -275,6 +280,7 @@ fn __bun_macro_context_init(transpiler: *mut c_void) -> js_parser::Macro::MacroC
     js_parser::Macro::MacroContext {
         javascript_object: js_parser::Macro::MacroJSCtx::ZERO,
         data: data.cast::<c_void>(),
+        waiting_vm: core::ptr::null(),
     }
 }
 
@@ -308,6 +314,9 @@ fn __bun_macro_context_call(
     // lower-tier handle is uniquely borrowed for this call so no alias exists.
     let inner = unsafe { &mut *ctx.data.cast::<MacroContext>() };
     inner.javascript_object = JSValue::from_encoded(ctx.javascript_object.0 as usize);
+    // SAFETY: set by `RuntimeTranspilerStore` to a `VmHandle` its job owns for
+    // the duration of the parse; null otherwise.
+    let waiting_vm = unsafe { ctx.waiting_vm.cast::<VmHandle>().as_ref() };
     inner
         .call(
             import_record_path,
@@ -317,6 +326,7 @@ fn __bun_macro_context_call(
             import_range,
             caller,
             function_name,
+            waiting_vm,
         )
         .map_err(|_| bun_js_parser::Error::MacroFailed)
 }
@@ -401,6 +411,36 @@ pub struct MacroRequest<'a> {
     outcome: MacroOutcome,
     done: ResetEvent,
     task: ConcurrentTask,
+    /// Posted to the host by the caller's VM if the caller is terminated
+    /// (`worker.terminate()`) while parked; see [`VmHandle::park`].
+    cancel: MacroCancel,
+}
+
+/// A [`MacroRequest`]'s "give up" task: the host answers the request as
+/// interrupted if it is still in flight, and ignores it otherwise.
+pub struct MacroCancel {
+    request: *mut MacroRequest<'static>,
+    task: ConcurrentTask,
+}
+
+impl Taskable for MacroCancel {
+    const TAG: TaskTag = task_tag::MacroCancel;
+    /// The host is tearing down: it answers every in-flight request itself.
+    unsafe fn release_unrun(_this: *mut Self) {}
+}
+
+impl MacroCancel {
+    /// `bun_runtime::dispatch` arm for [`task_tag::MacroCancel`].
+    ///
+    /// # Safety
+    /// `this` is the task the caller's VM posted; the caller cannot return
+    /// (and free it) before the host sets `done`, which `cancel` does last if
+    /// at all.
+    pub unsafe fn run_on_macro_host(this: *mut Self) {
+        // SAFETY: fn contract.
+        let request = unsafe { (*this).request };
+        HostState::with(|state| state.cancel(request));
+    }
 }
 
 // SAFETY: handed to the host thread through the concurrent task queue and
@@ -564,13 +604,10 @@ fn expr_from_blob(
     loc: Loc,
 ) -> crate::Result<Expr> {
     use bun_ast::StoreStr as Str;
+    use bun_http_types::MimeType::{Category, MimeType};
 
-    // MimeType::Category::Json — `application/json` or `+json`/`/json` suffix.
-    let is_json = mime_type == b"application/json"
-        || mime_type.ends_with(b"+json")
-        || mime_type.ends_with(b"/json");
-
-    if is_json {
+    let category = MimeType::init(mime_type, false, None).category;
+    if category == Category::Json {
         // The parsed strings borrow the source bytes; keep them in `bump`.
         let bytes: &[u8] = bump.alloc_slice_copy(bytes);
         let source = &Source::init_path_string(b"fetch.json", bytes);
@@ -587,14 +624,7 @@ fn expr_from_blob(
         return Ok(out_expr);
     }
 
-    // MimeType::Category::isTextLike — text/*, application/javascript-ish, xml.
-    let is_text_like = mime_type.starts_with(b"text/")
-        || mime_type == b"application/javascript"
-        || mime_type == b"application/x-javascript"
-        || mime_type == b"application/ecmascript"
-        || mime_type == b"application/xml";
-
-    if is_text_like {
+    if category.is_text_like() {
         let mut output = bun_core::MutableString::init_empty();
         bun_core::quote_for_json(bytes, &mut output, true)?;
         let owned = output.to_owned_slice();
@@ -722,7 +752,8 @@ impl MacroHost {
     }
 
     /// Post `request` to the host and park until it has been answered.
-    fn run(&self, request: &mut MacroRequest<'_>) {
+    /// `waiting_vm`: the VM this transpile is for, if not this thread's own.
+    fn run(&self, request: &mut MacroRequest<'_>, waiting_vm: Option<&VmHandle>) {
         let handle = match &self.handle {
             Ok(handle) => handle,
             Err(reason) => {
@@ -739,6 +770,26 @@ impl MacroHost {
         // Otherwise the host has shut down (process exit is under way on
         // another thread); `outcome` still holds its initial failure.
         if posted {
+            // The VM this parse is for (a Worker's, say) can be stopped while
+            // we wait; that posts `cancel` to the host so the wait ends.
+            request.cancel.request = request_ptr.cast();
+            let cancel_ptr: *mut MacroCancel = &raw mut request.cancel;
+            let cancel = NonNull::from(
+                request
+                    .cancel
+                    .task
+                    .from(cancel_ptr, AutoDeinit::ManualDeinit),
+            );
+            let own;
+            let waiting_vm = match waiting_vm {
+                Some(h) => Some(h),
+                None if VirtualMachine::is_loaded() => {
+                    own = VirtualMachine::get().handle();
+                    Some(&own)
+                }
+                None => None,
+            };
+            let _parked = waiting_vm.map(|h| h.park(handle.clone(), cancel));
             request.done.wait();
         }
     }
@@ -1049,6 +1100,19 @@ impl HostState {
                 }
             }
         }
+        // A `Response`/`Request` (e.g. `return fetch(url)`): its body may still
+        // be arriving, so read it as a Blob — a promise — and settle on that.
+        if value.js_type() == jsc::JSType::DOMWrapper {
+            let hooks = runtime_hooks().expect("RuntimeHooks not installed");
+            match (hooks.body_mixin_get_blob)(value, global) {
+                Ok(Some(body)) => return self.settle(request, global, body),
+                Ok(None) => {}
+                Err(err) => {
+                    let failure = self.failure_from_exception(global, err, "return value");
+                    return self.fail(request, failure);
+                }
+            }
+        }
         let outcome = {
             let mut convert = Convert {
                 global,
@@ -1071,6 +1135,24 @@ impl HostState {
 
     fn fail(&self, request: *mut MacroRequest<'static>, failure: MacroFailure) {
         self.answer(request, MacroOutcome::Failed(failure));
+    }
+
+    fn is_in_flight(&self, request: *mut MacroRequest<'static>) -> bool {
+        self.in_flight
+            .borrow()
+            .iter()
+            .any(|r| core::ptr::eq(*r, request))
+    }
+
+    /// The caller is being terminated: answer now if not answered yet. Its
+    /// pending reactions find the request gone and do nothing.
+    fn cancel(&self, request: *mut MacroRequest<'static>) {
+        if self.is_in_flight(request) {
+            self.fail(
+                request,
+                MacroFailure::text("interrupted: the thread waiting for this macro is terminating"),
+            );
+        }
     }
 
     fn answer(&self, request: *mut MacroRequest<'static>, outcome: MacroOutcome) {
@@ -1242,12 +1324,18 @@ fn request_from_callframe(callframe: &CallFrame) -> (*mut MacroRequest<'static>,
 
 fn import_resolved(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let (request, namespace) = request_from_callframe(callframe);
+    if !HostState::with(|state| state.is_in_flight(request)) {
+        return Ok(JSValue::UNDEFINED);
+    }
     HostState::with(|state| state.imported(request, global, namespace));
     Ok(JSValue::UNDEFINED)
 }
 
 fn import_rejected(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let (request, reason) = request_from_callframe(callframe);
+    if !HostState::with(|state| state.is_in_flight(request)) {
+        return Ok(JSValue::UNDEFINED);
+    }
     HostState::with(|state| {
         let failure = state.failure_from_value(global, reason);
         state.fail(request, failure);
@@ -1257,12 +1345,18 @@ fn import_rejected(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
 
 fn result_resolved(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let (request, value) = request_from_callframe(callframe);
+    if !HostState::with(|state| state.is_in_flight(request)) {
+        return Ok(JSValue::UNDEFINED);
+    }
     HostState::with(|state| state.settle(request, global, value));
     Ok(JSValue::UNDEFINED)
 }
 
 fn result_rejected(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let (request, reason) = request_from_callframe(callframe);
+    if !HostState::with(|state| state.is_in_flight(request)) {
+        return Ok(JSValue::UNDEFINED);
+    }
     HostState::with(|state| {
         let failure = state.failure_from_value(global, reason);
         state.fail(request, failure);
@@ -1390,7 +1484,7 @@ impl Convert<'_> {
                     }
                     PromiseStatus::Pending => {
                         return Err(ConvertError::Message(
-                            "macro returned a Promise inside an array or object; await it inside the macro instead"
+                            "macro returned a Promise (or a Response whose body is still streaming) inside an array or object; await it inside the macro instead"
                                 .into(),
                         ));
                     }

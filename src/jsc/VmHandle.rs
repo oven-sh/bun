@@ -95,6 +95,11 @@ pub struct Shared {
     /// The tearing-down JS thread sleeps here; ticket drops and posts notify
     /// it once draining has begun.
     drained: (Guarded<()>, Condvar),
+    /// Threads blocked natively on another VM on this VM's behalf (its own
+    /// thread, or a transpile job it is waiting for, parked on a macro
+    /// request): what [`request_termination`](VmHandle::request_termination)
+    /// posts, and where, to have each wait answered. See [`VmHandle::park`].
+    parked: Guarded<Vec<Parked>>,
     #[cfg(debug_assertions)]
     debug: DebugState,
 }
@@ -269,6 +274,29 @@ impl Drop for Ticket {
 #[repr(transparent)]
 pub struct VmHandle(Arc<Shared>);
 
+struct Parked {
+    on: VmHandle,
+    task: NonNull<ConcurrentTaskItem>,
+}
+
+/// Clears the [`VmHandle::park`] registration on drop.
+pub struct ParkGuard<'a>(&'a VmHandle, NonNull<ConcurrentTaskItem>);
+impl Drop for ParkGuard<'_> {
+    fn drop(&mut self) {
+        let mut parked = (self.0).0.parked.lock();
+        if let Some(i) = parked.iter().position(|p| p.task == self.1) {
+            parked.swap_remove(i);
+        }
+    }
+}
+
+impl Ticket {
+    /// The handle of the VM this ticket is held on.
+    pub fn handle(&self) -> VmHandle {
+        VmHandle(Arc::clone(&self.shared))
+    }
+}
+
 /// RAII: one unit of `active`. While held, `close_and_wait` cannot return.
 struct Access<'a>(&'a Shared);
 impl Drop for Access<'_> {
@@ -290,6 +318,7 @@ impl VmHandle {
             tickets: AtomicU32::new(0),
             active: AtomicU32::new(0),
             drained: (Guarded::new(()), Condvar::new()),
+            parked: Guarded::new(Vec::new()),
             #[cfg(debug_assertions)]
             debug: DebugState {
                 js_thread: std::thread::current().id(),
@@ -373,6 +402,27 @@ impl VmHandle {
             unsafe { (*(*self.0.hot.vm).jsc_vm.cast_const()).notify_need_termination() };
             self.0.event_loop().wakeup();
         }
+        // Neither of those reaches a thread blocked natively; ask whoever it
+        // is waiting on to answer it. Under the lock, so a parked thread
+        // cannot return (and free what `task` points at) before the post.
+        for p in self.0.parked.lock().drain(..) {
+            let _ = p.on.post(p.task);
+        }
+    }
+
+    /// While the returned guard lives, a thread working for this VM is
+    /// blocked natively waiting on `on`, and a stop of this VM
+    /// ([`request_termination`](Self::request_termination), from any thread —
+    /// or one that already happened) posts `task` to `on` so that VM answers
+    /// the wait. `task` must stay valid until the guard drops. Any thread.
+    pub fn park(&self, on: VmHandle, task: NonNull<ConcurrentTaskItem>) -> ParkGuard<'_> {
+        let mut parked = self.0.parked.lock();
+        if self.0.state() >= State::Stopping {
+            let _ = on.post(task);
+        } else {
+            parked.push(Parked { on, task });
+        }
+        ParkGuard(self, task)
     }
 
     /// Wake the VM's loop (no-op once closed). Any thread.

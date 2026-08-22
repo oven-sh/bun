@@ -758,6 +758,15 @@ impl TranspilerJob {
                     ctx.deinit();
                 }
             });
+        // This parse is for `vm`: if it waits on a macro and `vm` is stopped
+        // meanwhile (a terminated Worker), the wait is interrupted through
+        // this handle instead of holding `vm`'s teardown up.
+        let waiting_vm: crate::VmHandle = ticket.handle();
+        {
+            let mut ctx = bun_js_parser::Macro::MacroContext::init(&mut *transpiler);
+            ctx.waiting_vm = (&raw const waiting_vm).cast();
+            transpiler.macro_context = Some(ctx);
+        }
 
         let mut package_json: Option<&'static bun_watcher::PackageJSON> = None;
         let hash = Watcher::get_hash(path.text);

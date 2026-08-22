@@ -84,6 +84,10 @@ pub mod Macro {
         /// (transpiler back-pointer, bump). Allocated by `init`, freed by `deinit`;
         /// `bun_js_parser` never dereferences it.
         pub data: *mut core::ffi::c_void,
+        /// When this transpile runs on another thread on a VM's behalf
+        /// (`RuntimeTranspilerStore`): a `*const bun_jsc::VmHandle` of that VM,
+        /// so stopping it can interrupt a macro this parse is waiting on.
+        pub waiting_vm: *const core::ffi::c_void,
     }
     impl Default for MacroContext {
         #[inline]
@@ -91,6 +95,7 @@ pub mod Macro {
             Self {
                 javascript_object: MacroJSCtx::ZERO,
                 data: core::ptr::null_mut(),
+                waiting_vm: core::ptr::null(),
             }
         }
     }

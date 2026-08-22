@@ -1698,18 +1698,20 @@ impl VirtualMachine {
             // SAFETY: fn contract.
             unsafe { (hooks.disarm_all_timers_for_vm_teardown)(this) };
         }
-        // SAFETY: fn contract (statement-scoped exclusive access).
-        unsafe {
-            (*this).gc_controller.deinit();
-            crate::web_worker::join_child_workers(&mut *this);
-        }
         // The macro VM is another thread with a VM of its own, like a child
         // worker: it goes before this VM releases its work and parks the
-        // process-wide threads it may be using.
+        // process-wide threads it may be using — and before the children are
+        // joined, since a child (or a transpile it is waiting for) may itself
+        // be waiting on a macro, and stopping the host answers every waiter.
         if matches!(kind, Teardown::MainThreadExit) {
             if let Some(hooks) = runtime_hooks() {
                 (hooks.stop_macro_host)();
             }
+        }
+        // SAFETY: fn contract (statement-scoped exclusive access).
+        unsafe {
+            (*this).gc_controller.deinit();
+            crate::web_worker::join_child_workers(&mut *this);
         }
         // Children have closed their own; now this VM's sqlite connections
         // checkpoint and close, before finalizers could.

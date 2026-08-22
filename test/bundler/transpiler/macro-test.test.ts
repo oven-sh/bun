@@ -454,6 +454,73 @@ describe("the macro host", () => {
     expect(exitCode).toBe(1);
   });
 
+  test.concurrent("process.abort() inside a macro fails the macro instead of aborting", async () => {
+    const { stderr, exitCode } = await run(
+      {
+        "m.ts": `export function quit() { process.abort(); }`,
+        "index.ts": `import { quit } from "./m.ts" with { type: "macro" };\nconsole.log("value", quit());\n`,
+      },
+      ["run", "index.ts"],
+    );
+    expect(stderr).toContain("process.abort() cannot be called from a macro");
+    expect(exitCode).toBe(1);
+  });
+
+  // The worker is parked, natively, on a macro whose promise never settles. terminate() has to reach
+  // that wait (require: the worker thread itself; import: a transpiler-pool job on its behalf).
+  test.concurrent.each(["require", "import"])("terminate() interrupts a Worker waiting on a macro (%s)", async how => {
+    const load =
+      how === "require" ? `try { require("./uses.ts") } catch {}` : `await import("./uses.ts").catch(() => {})`;
+    const { lines, stderr, exitCode } = await run(
+      {
+        "never.ts": `export function never() { return new Promise(() => {}); }`,
+        "uses.ts": `import { never } from "./never.ts" with { type: "macro" };\nexport const v = never();\n`,
+        "worker.ts": `postMessage("parking");\n${load};\npostMessage("unreachable");\n`,
+        "index.ts": [
+          `const w = new Worker(new URL("./worker.ts", import.meta.url).href);`,
+          `const seen: string[] = [];`,
+          `w.onmessage = e => seen.push(e.data);`,
+          `await new Promise<void>(r => w.addEventListener("message", () => r(), { once: true }));`,
+          `await Bun.sleep(50);`,
+          `await w.terminate();`,
+          `console.log(JSON.stringify(seen));`,
+        ].join("\n"),
+      },
+      ["run", "index.ts"],
+    );
+    expect({ lines, stderr }).toEqual({ lines: [`["parking"]`], stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // The Response resolves on headers; its body is still streaming when the macro returns it.
+  test.concurrent("a macro can return fetch()'s Response while its body is still arriving", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response(
+          new ReadableStream({
+            async start(c) {
+              c.enqueue(new TextEncoder().encode('{"a":'));
+              await Bun.sleep(20);
+              c.enqueue(new TextEncoder().encode("[1,2]}"));
+              c.close();
+            },
+          }),
+          { headers: { "content-type": "application/json" } },
+        );
+      },
+    });
+    const { lines, stderr, exitCode } = await run(
+      {
+        "m.ts": `export function viaFetch(url: string) { return fetch(url); }`,
+        "index.ts": `import { viaFetch } from "./m.ts" with { type: "macro" };\nconsole.log(JSON.stringify(viaFetch(${JSON.stringify(server.url.href)})));\n`,
+      },
+      ["run", "index.ts"],
+    );
+    expect({ lines, stderr }).toEqual({ lines: [`{"a":[1,2]}`], stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("a macro cannot invoke another macro", async () => {
     const { stderr, exitCode } = await run(
       {

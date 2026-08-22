@@ -257,6 +257,13 @@ impl Category {
         Category::Other
     }
 
+    pub fn is_text_like(self) -> bool {
+        matches!(
+            self,
+            Category::Javascript | Category::Html | Category::Text | Category::Css | Category::Json
+        )
+    }
+
     pub fn autoset_filename(self) -> bool {
         !matches!(
             self,

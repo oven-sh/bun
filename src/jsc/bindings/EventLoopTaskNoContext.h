@@ -1,32 +1,37 @@
 #pragma once
 
-#include "ZigGlobalObject.h"
 #include "root.h"
+#include "EventLoopTask.h"
+#include "ZigGlobalObject.h"
 
 namespace Bun {
 
-// Just like WebCore::EventLoopTask but does not take a ScriptExecutionContext.
-// The Rust `ConcurrentCppTask` that carries one to the work pool holds the
-// creating VM's ticket, so that VM outlives the task.
+// Work for the thread pool that hands back what to run on the JS thread it
+// came from. The Rust `ConcurrentCppTask` that carries it holds the creating
+// VM's ticket, so that VM outlives the task, and posts the reply through that
+// ticket: to the loop that was current when the work was dispatched.
 class EventLoopTaskNoContext {
     WTF_MAKE_TZONE_ALLOCATED(EventLoopTaskNoContext);
 
 public:
-    EventLoopTaskNoContext(Function<void()>&& task)
+    using Reply = Function<void(WebCore::ScriptExecutionContext&)>;
+
+    EventLoopTaskNoContext(Function<Reply()>&& task)
         : m_task(WTF::move(task))
     {
     }
 
-    void performTask()
+    WebCore::EventLoopTask* performTask()
     {
-        m_task();
+        Reply reply = m_task();
         delete this;
+        return reply ? new WebCore::EventLoopTask(WTF::move(reply)) : nullptr;
     }
 
 private:
-    Function<void()> m_task;
+    Function<Reply()> m_task;
 };
 
-extern "C" void Bun__EventLoopTaskNoContext__performTask(EventLoopTaskNoContext* task);
+extern "C" WebCore::EventLoopTask* Bun__EventLoopTaskNoContext__performTask(EventLoopTaskNoContext* task);
 
 } // namespace Bun

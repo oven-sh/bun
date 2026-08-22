@@ -3,6 +3,7 @@
 #include "root.h"
 
 struct BunVmHandleRef;
+#include "BunLoopKind.h"
 #include "SharedEnvStore.h"
 #include <wtf/Function.h>
 #include <wtf/HashSet.h>
@@ -103,7 +104,10 @@ public:
     void reportException(const String& errorMessage, int lineNumber, int columnNumber, const String& sourceURL, JSC::Exception* exception, RefPtr<void*>&&, CachedScript* = nullptr, bool = false)
     {
     }
-    WEBCORE_EXPORT static bool postTaskTo(ScriptExecutionContextIdentifier identifier, Function<void(ScriptExecutionContext&)>&& task);
+    // From the target's own thread the task joins the loop that thread is running; from any other
+    // thread it joins `loop`, which the poster captured on the target's thread when the work whose
+    // completion this is was initiated (Regular for work no script there initiated).
+    WEBCORE_EXPORT static bool postTaskTo(ScriptExecutionContextIdentifier identifier, Function<void(ScriptExecutionContext&)>&& task, BunLoopKind loop = BunLoopKind::Regular);
     WEBCORE_EXPORT static bool ensureOnContextThread(ScriptExecutionContextIdentifier, Function<void(ScriptExecutionContext&)>&& task);
 
     WEBCORE_EXPORT JSC::JSGlobalObject* globalObject();

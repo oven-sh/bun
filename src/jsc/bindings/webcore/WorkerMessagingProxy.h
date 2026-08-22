@@ -109,6 +109,8 @@ public:
     // -- Either thread ---------------------------------------------------------------------------
     WorkerOptions& options() { return m_options; }
     ScriptExecutionContextIdentifier workerContextIdentifier() const { return m_workerContextIdentifier; }
+    // Post to the Worker object's (parent) context, onto the loop the Worker was created under.
+    bool postTaskToWorkerObject(Function<void(ScriptExecutionContext&)>&&);
 
     struct MessageInbox {
         Lock lock;
@@ -133,6 +135,9 @@ private:
     bool m_keepAliveReleased { false };
 
     const ScriptExecutionContextIdentifier m_loaderContextIdentifier;
+    // The parent loop that was current at `new Worker()`: a macro that creates a worker and awaits
+    // it is the one that hears from it.
+    const BunLoopKind m_loaderLoop;
     const ScriptExecutionContextIdentifier m_workerContextIdentifier;
     WorkerOptions m_options;
 

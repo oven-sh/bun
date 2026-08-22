@@ -552,9 +552,21 @@ impl EventLoop {
     }
 
     /// Whether a keep-alive delta (`ref_keep_alive`, here or through a
-    /// `VmHandle`) has been queued but not yet applied to the loop's `active` count.
+    /// `Ticket`/`VmHandle`) has been queued but not yet applied to the loop's
+    /// `active` count.
     pub fn has_pending_refs(&self) -> bool {
         self.concurrent_ref.load(Ordering::SeqCst) > 0
+            || self
+                .finished_macro_loop()
+                .is_some_and(|m| m.concurrent_ref.load(Ordering::SeqCst) > 0)
+    }
+
+    /// Other threads have posted work that this loop's next drain will pick up.
+    pub(crate) fn has_concurrent_tasks(&self) -> bool {
+        !self.concurrent_tasks.is_empty()
+            || self
+                .finished_macro_loop()
+                .is_some_and(|m| !m.concurrent_tasks.is_empty())
     }
 
     pub fn run_imminent_gc_timer(&mut self) {
@@ -589,9 +601,9 @@ impl EventLoop {
         let start_count = self.tasks.readable_length();
         let posted = self.concurrent_tasks.pop_batch();
         self.take_concurrent_batch(posted);
-        if let Some(regular) = self.regular_loop_during_macro() {
-            regular.apply_concurrent_ref_delta();
-            let posted = regular.concurrent_tasks.pop_batch();
+        if let Some(macro_loop) = self.finished_macro_loop() {
+            macro_loop.apply_concurrent_ref_delta();
+            let posted = macro_loop.concurrent_tasks.pop_batch();
             self.take_concurrent_batch(posted);
         }
         self.tasks.readable_length() - start_count
@@ -616,19 +628,23 @@ impl EventLoop {
         }
     }
 
-    /// The regular loop, when this is the macro loop a macro wait is ticking.
-    /// Weak posts (`VmHandle::post_cpp_task` — a WebCrypto result through
-    /// `postTaskTo`) always land on the regular loop, which does not tick
-    /// during the wait, so the wait services that queue too.
-    fn regular_loop_during_macro(&self) -> Option<&EventLoop> {
+    /// The macro loop, when this is the regular loop and no macro is running.
+    /// Work a macro started (a ticket or weak post of `LoopKind::Macro`) posts
+    /// its completion and keep-alive release there, but that loop only ticks
+    /// while a macro is being waited on; whatever finishes after the macro
+    /// returned is this loop's to run, and the platform loop both share stays
+    /// alive for it until then. Never the other way round: a macro wait runs
+    /// only what the macro started, not the program's pending completions.
+    fn finished_macro_loop(&self) -> Option<&EventLoop> {
         let vm = self.vm();
         // SAFETY: `vm` is the live owning VM (set in `init()`). `addr_of!`
         // projects to sibling fields without materializing a
         // `&VirtualMachine` that would alias the `&mut self` callers hold.
         unsafe {
-            (core::ptr::addr_of!((*vm).macro_mode).read()
-                && core::ptr::eq(self, core::ptr::addr_of!((*vm).macro_event_loop)))
-            .then(|| &*core::ptr::addr_of!((*vm).regular_event_loop))
+            (core::ptr::addr_of!((*vm).has_enabled_macro_mode).read()
+                && !core::ptr::addr_of!((*vm).macro_mode).read()
+                && core::ptr::eq(self, core::ptr::addr_of!((*vm).regular_event_loop)))
+            .then(|| &*core::ptr::addr_of!((*vm).macro_event_loop))
         }
     }
 
@@ -719,7 +735,7 @@ impl EventLoop {
     /// Work is queued that the next `tick()` will run: the poll before it must
     /// not block.
     pub fn has_pending_tasks(&self) -> bool {
-        self.tasks.readable_length() > 0 || !self.concurrent_tasks.is_empty()
+        self.tasks.readable_length() > 0 || self.has_concurrent_tasks()
     }
 
     pub fn tick(&mut self) {

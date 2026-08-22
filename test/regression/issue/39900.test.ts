@@ -78,12 +78,16 @@ console.log(await result.outputs[0].text());
   expect(exitCode).toBe(0);
 });
 
-// Same wait, other producers whose completion is posted to the regular loop
-// from another thread (JSC's DeferredWorkTimer, postTaskTo): each hung the
-// same way.
+// Same wait, other producers whose completion was posted without regard to
+// the loop the macro was waiting on (JSC's DeferredWorkTimer, WebCore's
+// postTaskTo from the same or another thread): each hung the same way.
 const producers = {
+  "crypto.subtle.digest of under 64 bytes": `const digest = await crypto.subtle.digest("SHA-256", new Uint8Array(16));
+  return "ok " + digest.byteLength;`,
   "WebAssembly.instantiate": `const { instance } = await WebAssembly.instantiate(new Uint8Array([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0]));
   return "ok " + typeof instance.exports;`,
+  "Atomics.waitAsync": `const { value } = Atomics.waitAsync(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+  return "ok " + (await value);`,
   "crypto.subtle.sign": `const key = await crypto.subtle.generateKey({ name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   return "ok " + (await crypto.subtle.sign("HMAC", key, new Uint8Array(8))).byteLength;`,
   MessageChannel: `const { port1, port2 } = new MessageChannel();

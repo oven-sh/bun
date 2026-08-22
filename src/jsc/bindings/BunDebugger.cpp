@@ -126,7 +126,7 @@ public:
         this->status = ConnectionStatus::Connected;
         auto* globalObject = context.jsGlobalObject();
         if (this->unrefOnDisconnect) {
-            Bun__VmHandle__refKeepAlive(WebCore::clientData(JSC::getVM(globalObject))->vmHandle, 1);
+            Bun__VmHandle__refKeepAlive(WebCore::clientData(JSC::getVM(globalObject))->vmHandle, BunLoopKind::Regular, 1);
         }
         globalObject->setInspectable(true);
         auto& inspector = globalObject->inspectorDebuggable();
@@ -213,7 +213,7 @@ public:
 
             if (connection->unrefOnDisconnect) {
                 connection->unrefOnDisconnect = false;
-                Bun__VmHandle__refKeepAlive(WebCore::clientData(context.vm())->vmHandle, -1);
+                Bun__VmHandle__refKeepAlive(WebCore::clientData(context.vm())->vmHandle, BunLoopKind::Regular, -1);
             }
 
             {

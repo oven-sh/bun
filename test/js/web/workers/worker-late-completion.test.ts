@@ -89,13 +89,12 @@ const ROWS: Row[] = [
   },
   {
     // WebCrypto's work queue: a C++ closure on the pool, carried (with a
-    // ticket) by ConcurrentCppTask; its *result* comes back by context id —
-    // WebCore's postTaskTo(), a weak post — and because the ticket kept the
-    // worker draining rather than closed, that post is delivered and its
-    // promise/callback refs are released on the worker's thread.
+    // ticket) by ConcurrentCppTask, which posts the closure's reply back
+    // through that ticket; its promise/callback refs are released on the
+    // worker's thread.
     name: "crypto.subtle.digest",
     worker: `crypto.subtle.digest("SHA-256", Buffer.alloc(65536));`,
-    weak: "CppTask",
+    ticket: "CppTask.rs",
   },
   {
     name: "Bun.password.hash",

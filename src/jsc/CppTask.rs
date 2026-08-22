@@ -3,7 +3,7 @@ use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
 unsafe extern "C" {
-    fn Bun__EventLoopTaskNoContext__performTask(task: *mut EventLoopTaskNoContext);
+    fn Bun__EventLoopTaskNoContext__performTask(task: *mut EventLoopTaskNoContext) -> *mut CppTask;
 }
 
 bun_opaque::opaque_ffi! {
@@ -44,16 +44,21 @@ impl CppTask {
 bun_opaque::opaque_ffi! { pub struct EventLoopTaskNoContext; }
 
 impl EventLoopTaskNoContext {
-    /// Deallocates `this`
-    pub unsafe fn run(this: *mut EventLoopTaskNoContext) {
-        // SAFETY: caller guarantees `this` is a valid C++ EventLoopTaskNoContext; performTask consumes/frees it.
+    /// Run and deallocate `this`; returns the `WebCore::EventLoopTask` the
+    /// work handed back for its JS thread, or null.
+    ///
+    /// # Safety
+    /// `this` is the live C++ task handed to `ConcurrentCppTask__createAndRun`.
+    pub unsafe fn run(this: *mut EventLoopTaskNoContext) -> *mut CppTask {
+        // SAFETY: fn contract; performTask consumes/frees it.
         unsafe { Bun__EventLoopTaskNoContext__performTask(this) }
     }
 }
 
 /// A task created from C++ code that runs inside the workpool (WebCrypto's
 /// `PhonyWorkQueue`). Holds the creating VM's ticket: the C++ closure captures
-/// context-affine objects and posts its result back by context id.
+/// context-affine objects, and the reply it returns is posted through the
+/// ticket, to the loop that was current when the work was dispatched.
 #[repr(C)]
 pub struct ConcurrentCppTask {
     pub(crate) cpp_task: *mut EventLoopTaskNoContext,
@@ -71,7 +76,12 @@ impl ConcurrentCppTask {
         } = *self;
         // SAFETY: `cpp_task` is the valid C++ handle stored by `ConcurrentCppTask__createAndRun`;
         // `run` consumes it here.
-        unsafe { EventLoopTaskNoContext::run(cpp_task) };
+        let reply = unsafe { EventLoopTaskNoContext::run(cpp_task) };
+        if !reply.is_null() {
+            ticket.post(bun_event_loop::ConcurrentTask::ConcurrentTask::create(
+                bun_event_loop::Task::init(reply),
+            ));
+        }
         ticket.unref_keep_alive();
     }
 }
@@ -84,11 +94,8 @@ extern "C" fn ConcurrentCppTask__createAndRun(
 ) {
     crate::mark_binding!();
     let vm = global.bun_vm();
-    // The result comes back through `postTaskTo` → `post_cpp_task`, a weak
-    // post that always lands on the regular loop, so the keep-alive and the
-    // ticket that releases it live there too.
-    vm.regular_event_loop.ref_keep_alive();
-    let ticket = vm.regular_ticket();
+    vm.event_loop_shared().ref_keep_alive();
+    let ticket = vm.ticket();
     WorkPool::schedule_new(ConcurrentCppTask {
         cpp_task,
         ticket,

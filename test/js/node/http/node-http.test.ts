@@ -2205,10 +2205,8 @@ it("socket handle write keeps buffered data intact when encoding coercion re-ent
   // re-entrant write's data and the outer write's data must survive; nothing may be
   // dropped or written through a stale buffer.
   //
-  // The raw handle.write()/streamBuffer path only has its drain machinery wired up for
-  // CONNECT-tunneled sockets (uWS HttpContext::onWritable gates onSocketDrain on
-  // isConnectRequest), so the scenario must be driven from a "connect" handler — on a
-  // plain GET the buffered bytes would never flush and the fixture would hang.
+  // Driven from a "connect" handler so the raw socket write path is exercised with no
+  // chunked framing or response head in the way.
   const MB = 1024 * 1024;
   const expectedTotal = 8 * MB + 4 * MB + 4 * MB;
   await using proc = Bun.spawn({
@@ -4190,4 +4188,83 @@ test("https 'clientError' for a connection whose handshake completes after close
     client?.destroy();
     raw.destroy();
   }
+});
+
+// In Node.js res.write() and req.socket.write() land on the same net.Socket
+// Writable, so raw bytes written between framework writes appear on the wire in
+// call order. Bun routed req.socket.write() straight to the fd while the
+// response head sat in a cork buffer, so the raw bytes would overtake the
+// status line and the client parsed a garbage "RAWHTTP/1.1 200 OK".
+describe.each(["http", "https"] as const)("req.socket.write() interleaved with res.write() (%s)", protocol => {
+  async function readWire(handler: http.RequestListener) {
+    const server = protocol === "https" ? createHttpsServer(tlsCert, handler) : createServer(handler);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const { port } = server.address() as AddressInfo;
+      const c =
+        protocol === "https"
+          ? tlsConnect({ port, host: "127.0.0.1", ca: tlsCert.cert, servername: "localhost" })
+          : connect(port, "127.0.0.1");
+      await once(c, protocol === "https" ? "secureConnect" : "connect");
+      const chunks: Buffer[] = [];
+      c.on("data", d => chunks.push(d));
+      c.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+      await once(c, "close");
+      const all = Buffer.concat(chunks);
+      const headEnd = all.indexOf("\r\n\r\n");
+      return { status: all.subarray(0, all.indexOf("\r\n")).toString(), body: all.subarray(headEnd + 4) };
+    } finally {
+      server.close();
+    }
+  }
+
+  it.each([true, false])(
+    "reaches the wire after the response head and in call order (flushHeaders=%p)",
+    async flush => {
+      const { status, body } = await readWire((req, res) => {
+        res.setHeader("Content-Length", "9");
+        if (flush) res.flushHeaders();
+        res.write("AAA");
+        req.socket.write("RAW");
+        res.write("BBB");
+        res.end();
+      });
+      expect(status).toBe("HTTP/1.1 200 OK");
+      expect(body.toString()).toBe("AAARAWBBB");
+    },
+  );
+
+  // A >16KB res.write() takes the zero-copy path (the unwritten tail is held
+  // in NodeHTTPResponse::pending_pinned_write, not the cork or AsyncSocket
+  // buffers); the raw write must still land after that tail, not mid-body.
+  // The body has to outgrow the loopback send+receive buffers (several MB on
+  // Linux) or the whole write lands in the kernel and nothing is pending.
+  it("is ordered after a >16KB res.write()'s zero-copy tail", async () => {
+    const BIG = Buffer.alloc(16 * 1024 * 1024, 0x61);
+    const { status, body } = await readWire((req, res) => {
+      res.setHeader("Content-Length", String(BIG.length + 6));
+      res.write(BIG);
+      req.socket.write("RAW");
+      res.end("BBB");
+    });
+    expect(status).toBe("HTTP/1.1 200 OK");
+    expect(body.length).toBe(BIG.length + 6);
+    // Where RAW starts must be BIG.length, not the kernel send-buffer boundary.
+    const i = body.indexOf("R");
+    expect({ rawAt: i, tail: body.subarray(i).toString() }).toEqual({
+      rawAt: BIG.length,
+      tail: "RAWBBB",
+    });
+  });
+
+  it("socket.end() after a >16KB res.write() delivers the full body before FIN", async () => {
+    const BIG = Buffer.alloc(8 * 1024 * 1024, 0x61);
+    const { status, body } = await readWire((req, res) => {
+      res.writeHead(200, { "Content-Length": String(BIG.length) });
+      res.write(BIG);
+      req.socket.end();
+    });
+    expect(status).toBe("HTTP/1.1 200 OK");
+    expect(body.length).toBe(BIG.length);
+  });
 });

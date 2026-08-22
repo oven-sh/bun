@@ -1527,14 +1527,15 @@ macro_rules! declare_scope {
 
 /// `bun.Output.scoped(.X, vis)("fmt", .{args})` → `scoped_log!(X, "fmt", args...)`
 ///
-/// MUST gate arg evaluation: expands to a dead branch in release builds.
+/// MUST gate arg evaluation: expands to a dead branch in builds without logs.
 #[macro_export]
 macro_rules! scoped_log {
     ($scope:path, $fmt:expr $(, $arg:expr)* $(,)?) => {
-        // Gate on `env::IS_DEBUG` (== `Environment::ENABLE_LOGS`) so release
-        // builds dead-strip the body. Do NOT gate on a Cargo feature — there
-        // is no `debug_logs` feature and §Forbidden bans silent no-ops.
-        if $crate::env::IS_DEBUG && $scope.is_visible() {
+        // Gate on `env::ENABLE_LOGS` (the build's `logs` option, which the
+        // `--logs` / `release-assertions` configs set independently of
+        // `IS_DEBUG`) so builds without logs dead-strip the body. Do NOT gate
+        // on a Cargo feature: there is none and §Forbidden bans silent no-ops.
+        if $crate::env::ENABLE_LOGS && $scope.is_visible() {
             const __NL: &str = $crate::output::_needs_nl($crate::pretty_fmt!($fmt, false));
             // Branch on ANSI *before* `format_args!` so each `$arg` evaluates
             // exactly once.
@@ -2585,13 +2586,11 @@ fn init_scoped_debug_writer_at_startup() {
 }
 
 fn scoped_writer() -> QuietWriter {
-    // All callers are already gated on `Environment::ENABLE_LOGS`; this is a
-    // Debug-build self-check (release-asan/release-assertions enable
-    // `debug_assertions` with `ENABLE_LOGS == false`, so keying on
-    // `debug_assertions` would turn it into a guaranteed abort there).
+    // Callers are gated on `ENABLE_LOGS`; this self-check is `bun_debug`, not
+    // `debug_assertions`, which release-asan enables with logs off.
     #[cfg(bun_debug)]
     if !Environment::ENABLE_LOGS {
-        unreachable!("scopedWriter() should only be called in debug mode");
+        unreachable!("scopedWriter() should only be called when logs are enabled");
     }
     // SAFETY: initialized in init_scoped_debug_writer_at_startup; QuietWriter is Copy POD.
     unsafe { scoped_debug_writer::SCOPED_FILE_WRITER.read() }

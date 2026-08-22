@@ -510,8 +510,8 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     rustflags.push("--cfg=bun_asan");
   }
   // `bun_debug`: the cargo profile is `dev` (a Debug-buildtype build).
-  // `bun_core::env::IS_DEBUG` and `build_options::ENABLE_LOGS` key on this
-  // instead of `cfg!(debug_assertions)` so that release-asan /
+  // `bun_core::env::IS_DEBUG` keys on this instead of
+  // `cfg!(debug_assertions)` so that release-asan /
   // release-assertions (which enable `debug-assertions` below for
   // `debug_assert!()` coverage) don't also flip on Debug-only conveniences:
   // `DUMP_SOURCE` (per-module writes to /tmp/bun-debug-src/), `debug_warn!`
@@ -522,6 +522,17 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   rustflags.push("--check-cfg=cfg(bun_debug)");
   if (cfg.debug) {
     rustflags.push("--cfg=bun_debug");
+  }
+  // `bun_logs`: `build_options::ENABLE_LOGS`, the compile-time gate on
+  // `scoped_log!`. Follows `cfg.logs`, which `release-assertions` / `--logs`
+  // set independently of `cfg.debug`. A cfg rather than a literal in
+  // build_options.rs so that bare `cargo check` / `cargo miri test` (no
+  // RUSTFLAGS, reading build/debug's file) keep the log bodies dead like
+  // `bun_debug` does; live, `ScopedLogger::is_visible()` would scan the
+  // environment through the Highway FFI, which Miri can't call.
+  rustflags.push("--check-cfg=cfg(bun_logs)");
+  if (cfg.logs) {
+    rustflags.push("--cfg=bun_logs");
   }
   // `bun_codegen_embed`: embed codegen-output `.js` (`include_bytes!`) instead
   // of reading them from `BUN_CODEGEN_DIR` at runtime. Mirrors Zig
@@ -553,9 +564,10 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   // file:line server-side, so the panic call site is recoverable from the trace
   // without embedding the location in the binary — same as the Zig build, which
   // had ~0 embedded source paths. Kept off for debug and `release-assertions`
-  // where panic messages are read locally. Nightly-only; the pinned toolchain
-  // is nightly.
-  if (cfg.release && !cfg.assertions) {
+  // where panic messages are read locally, and for logs builds, whose
+  // `mark_binding()`-style loggers print `Location::caller()` (`<redacted>:0`
+  // under this flag). Nightly-only; the pinned toolchain is nightly.
+  if (cfg.release && !cfg.assertions && !cfg.logs) {
     rustflags.push("-Zlocation-detail=none");
   }
   // Path remapping (CI reproducibility) — rustc equivalent of the C/C++

@@ -4594,29 +4594,54 @@ describe.concurrent("close() error after the peer resets the connection", () => 
 // socket's error, and its refused connect reported ECONNRESET.
 //
 // The fd arrangement in the fixture is what makes the stale read land on the new socket
-// on POSIX, where a new socket gets the lowest free number. The outcome it checks, a
-// refused connect reports ECONNREFUSED, holds on every platform, so it is not skipped
-// anywhere: on Windows the fixture is only that check.
+// on POSIX, where a new socket gets the lowest free number. The fixture reports whether
+// the arrangement held, so a change in how many fds the runtime opens fails this test
+// instead of leaving it passing without reaching the stale read. The outcome itself, a
+// refused connect reports ECONNREFUSED, holds on every platform, so the test is not
+// skipped anywhere: on Windows, where socket handles are not fd numbers, the fixture
+// reports only the outcome.
 describe.concurrent("a socket closed by data() while its peer's reset is being dispatched", () => {
   it("does not consume the connect error of a socket opened from close()", async () => {
     const source = `
-      import { closeSync, openSync } from "node:fs";
+      import { closeSync, fstatSync, openSync } from "node:fs";
 
-      // A port nothing listens on. The established connection keeps it bound, so no
-      // listener can take it while the test runs.
+      const checkFds = process.platform !== "win32";
+      function isOpen(fd) {
+        try {
+          fstatSync(fd);
+          return true;
+        } catch {
+          return false;
+        }
+      }
+
+      // A port nothing listens on. The holder binds its port itself (localAddress): a
+      // port that bind() handed out is not handed out again by a later connect() that
+      // binds automatically, so the connect below cannot be connected to itself. The
+      // port of a holder that connect() bound was, about once in 13k connects on Linux.
       const sink = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
-      const holder = await Bun.connect({ hostname: "127.0.0.1", port: sink.port, socket: { data() {} } });
+      const holder = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: sink.port,
+        localAddress: "127.0.0.1",
+        socket: { data() {} },
+      });
       const refusedPort = holder.localPort;
 
+      let acceptedFd = -1;
+      const report = {};
       const outcome = Promise.withResolvers();
       const server = Bun.listen({
         hostname: "127.0.0.1",
         port: 0,
         socket: {
           data(socket) {
+            acceptedFd = socket.fd;
             socket.terminate();
           },
           close() {
+            // Runs inside terminate(), after the accepted socket's fd was closed.
+            if (checkFds) report.acceptedFdFreeInClose = !isOpen(acceptedFd);
             Bun.connect({
               hostname: "127.0.0.1",
               port: refusedPort,
@@ -4626,6 +4651,10 @@ describe.concurrent("a socket closed by data() while its peer's reset is being d
                 connectError: (_socket, error) => outcome.resolve(error.code),
               },
             }).catch(() => {});
+            // Bun.connect() to an IP literal creates its socket before it returns. With
+            // the arrangement below that socket got the accepted socket's number: the
+            // number a stale SO_ERROR read for the accepted socket would hit.
+            if (checkFds) report.acceptedFdReusedByConnect = isOpen(acceptedFd);
           },
         },
       });
@@ -4643,7 +4672,8 @@ describe.concurrent("a socket closed by data() while its peer's reset is being d
       peer.write("x");
       peer.terminate();
 
-      console.log(await outcome.promise);
+      report.outcome = await outcome.promise;
+      console.log(JSON.stringify(report));
       holder.terminate();
       sink.stop(true);
       server.stop(true);
@@ -4658,7 +4688,10 @@ describe.concurrent("a socket closed by data() while its peer's reset is being d
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr }).toEqual({ stdout: "ECONNREFUSED\n", stderr: "" });
+    const expectedReport = isWindows
+      ? { outcome: "ECONNREFUSED" }
+      : { acceptedFdFreeInClose: true, acceptedFdReusedByConnect: true, outcome: "ECONNREFUSED" };
+    expect({ stdout, stderr }).toEqual({ stdout: JSON.stringify(expectedReport) + "\n", stderr: "" });
     expect(exitCode).toBe(0);
   });
 });

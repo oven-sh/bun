@@ -1664,8 +1664,6 @@ impl CapturedWriter {
         // `io_writer::ChildPtr::subproc_capture` / `WriterTag::Subproc`.
         let child = io_writer::ChildPtr::subproc_capture(std::ptr::from_mut(self).cast::<c_void>());
         let y = writer.enqueue(child, None, chunk);
-        // On a dead writer `y` is the chunk's error completion, which can free
-        // the embedding `PipeReader` (`on_capture_failed`).
         PipeReader::run_yield_with(interp, y);
     }
 
@@ -2053,12 +2051,10 @@ impl PipeReader {
         Yield::Suspended
     }
 
-    /// The `CapturedWriter` could not relay this pipe's output (EPIPE: nothing
-    /// reads the process's stdout any more) and has recorded the error. While
-    /// the child still holds its end (`Pending`), close ours so its next write
-    /// fails, as under a real shell, instead of reading it for as long as it
-    /// writes. The state becomes what EOF leaves, so `try_signal_done_to_cmd`
-    /// reports the relay error to the `Cmd` now.
+    /// Relaying this pipe's output failed (the `CapturedWriter` holds the
+    /// error). While the child still holds its end (`Pending`), close ours so
+    /// its next write fails, as under a real shell, and settle the state as
+    /// EOF would so `try_signal_done_to_cmd` reports the error to the `Cmd`.
     ///
     /// # Safety
     /// Same contract as [`Self::try_signal_done_to_cmd`]. May run inside this

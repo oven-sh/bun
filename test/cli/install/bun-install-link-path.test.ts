@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { lstatSync, readFileSync, realpathSync } from "fs";
+import { existsSync, lstatSync, readFileSync, realpathSync } from "fs";
 import { bunExe, bunEnv as env, tempDir } from "harness";
 import { join } from "path";
 
@@ -69,17 +69,21 @@ describe.each(["hoisted", "isolated"])("link:./path dependencies (%s linker)", l
     expect(again.err).not.toContain("error:");
     expect(again.code).toBe(0);
   });
-});
 
-it("a link: path whose target does not exist is reported when linking, not as an unknown package", async () => {
-  using dir = tempDir("link-path-missing", {
-    "package.json": JSON.stringify({ name: "root", dependencies: { later: "link:./vendor/later" } }),
+  it("a link: path whose target directory does not exist fails at resolve time and writes nothing", async () => {
+    using dir = tempDir("link-path-missing", {
+      "bunfig.toml": `[install]\nlinker = "${linker}"\n`,
+      "package.json": JSON.stringify({ name: "root", dependencies: { later: "link:./vendor/later" } }),
+    });
+    const root = String(dir);
+    const r = await install(root);
+    // reported as a missing directory (not as an unknown `bun link` registration)…
+    expect(r.err).toContain('error: Could not find directory "./vendor/later" for linked dependency "later"');
+    expect(r.err).not.toContain("is not linked");
+    expect(r.err).not.toContain("Saved lockfile");
+    expect(r.code).toBe(1);
+    // …before anything is written: no lockfile and no dangling symlink under either linker
+    expect(existsSync(join(root, "bun.lock"))).toBeFalse();
+    expect(existsSync(join(root, "node_modules"))).toBeFalse();
   });
-  const r = await install(String(dir));
-  // resolution succeeds (no "is not linked" / global-link hint) and the lockfile is written…
-  expect(r.err).not.toContain("is not linked");
-  expect(r.err).toContain("Saved lockfile");
-  // …but linking the missing directory fails and says which package
-  expect(r.out + r.err).toContain("failed linking dependency/workspace to node_modules for package later");
-  expect(r.out).toContain("Failed to install 1 package");
 });

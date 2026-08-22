@@ -164,9 +164,21 @@ impl ResolverContext for CacheFolderResolver {
 /// distinguishes the workspace resolver.
 trait FolderResolverImpl: ResolverContext {
     const IS_WORKSPACE: bool;
+
+    /// The stored (root-relative or absolute) target of a path-form `link:`
+    /// dependency, if that is what is being resolved. Such a target may be a
+    /// plain directory without a `package.json` (yarn/pnpm semantics).
+    fn link_path(&self) -> Option<&[u8]> {
+        None
+    }
 }
 impl<'a, const TAG: ResolutionTag> FolderResolverImpl for NewResolver<'a, TAG> {
     const IS_WORKSPACE: bool = matches!(TAG, ResolutionTag::Workspace);
+
+    fn link_path(&self) -> Option<&[u8]> {
+        (matches!(TAG, ResolutionTag::Symlink) && dependency::is_link_path(self.folder_path))
+            .then_some(self.folder_path)
+    }
 }
 impl FolderResolverImpl for CacheFolderResolver {
     const IS_WORKSPACE: bool = false;
@@ -328,40 +340,40 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
                         bun_sys::SizeHint::ProbablySmall,
                     )?;
                 }
-                Err(err) => {
-                    // yarn/pnpm `link:./dir` may point at a plain directory without a
-                    // package.json: treat it as an empty manifest named after the directory
-                    // (a lockfile package needs a name), with no dependencies. (If the
-                    // directory itself is missing, the link step reports that later.)
-                    let literal = version
-                        .literal
-                        .slice(manager.lockfile.buffers.string_bytes.as_slice());
-                    let dir = bun_paths::dirname(abs.as_bytes()).unwrap_or(b"");
-                    let is_path_link = literal
-                        .strip_prefix(b"link:")
-                        .is_some_and(crate::resolution::is_path_link);
+                // A path-form `link:` target may be a plain directory without a
+                // package.json: treat it as an empty manifest named after the
+                // directory (a lockfile package needs a name), with no dependencies.
+                // The directory itself must exist — neither linker opens the target
+                // when creating the symlink, so a missing one is reported here
+                // (before anything is written) rather than left dangling.
+                Err(err)
                     if matches!(err.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR)
-                        && is_path_link
-                    {
-                        body.list.extend_from_slice(b"{\"name\":\"");
-                        let start = body.list.len();
-                        for &c in bun_paths::basename(dir) {
-                            if c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_' | b'.') {
-                                body.list.push(c);
-                            }
-                        }
-                        if body.list.len() == start {
-                            // nothing usable in the directory name: a stable synthetic one
-                            use std::io::Write as _;
-                            // hash the literal as written (project-stable), not the absolute path
-                            let _ =
-                                write!(&mut body.list, "link-{:016x}", bun_wyhash::hash(literal));
-                        }
-                        body.list.extend_from_slice(b"\",\"version\":\"0.0.0\"}");
-                    } else {
-                        return Err(err.into());
+                        && resolver.link_path().is_some() =>
+                {
+                    let dir = bun_paths::dirname(abs.as_bytes()).unwrap_or(b"");
+                    if !matches!(
+                        bun_sys::directory_exists_at(Fd::cwd(), &bun_core::ZBox::from_bytes(dir)),
+                        Ok(true)
+                    ) {
+                        return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT));
                     }
+                    body.list.extend_from_slice(b"{\"name\":\"");
+                    let start = body.list.len();
+                    for &c in bun_paths::basename(dir) {
+                        if c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_' | b'.') {
+                            body.list.push(c);
+                        }
+                    }
+                    if body.list.len() == start {
+                        // nothing usable in the directory name: a stable synthetic one,
+                        // hashing the stored project-relative target (not the absolute path)
+                        use std::io::Write as _;
+                        let stored = resolver.link_path().unwrap_or(b"");
+                        let _ = write!(&mut body.list, "link-{:016x}", bun_wyhash::hash(stored));
+                    }
+                    body.list.extend_from_slice(b"\",\"version\":\"0.0.0\"}");
                 }
+                Err(err) => return Err(err.into()),
             }
 
             bun_ast::Source::init_path_string(abs.as_bytes(), body.list.as_slice())
@@ -504,19 +516,13 @@ pub(crate) fn get_or_put(
                     &mut resolver,
                 );
             }
-            // `link:./dir` — a path, not a globally registered name: recorded as a
-            // Symlink resolution whose value is the project-relative directory (see
-            // `resolution::is_path_link`), installed as a symlink to it.
-            dependency::version::Tag::Symlink => 'link: {
-                let mut dotted = Vec::with_capacity(rel.len() + 2);
-                if !crate::resolution::is_path_link(rel) {
-                    dotted.extend_from_slice(b"./");
-                }
-                dotted.extend_from_slice(rel);
-                let mut resolver: SymlinkResolver = NewResolver {
-                    folder_path: &dotted,
+            dependency::version::Tag::Symlink => 'symlink: {
+                let mut path = PathBuffer::uninit();
+                let Some(folder_path) = dependency::link_path_for_lockfile(rel, &mut path) else {
+                    break 'symlink Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                 };
-                break 'link read_package_json_from_disk(
+                let mut resolver: SymlinkResolver = NewResolver { folder_path };
+                break 'symlink read_package_json_from_disk(
                     manager,
                     abs,
                     version,

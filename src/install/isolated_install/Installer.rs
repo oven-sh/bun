@@ -2758,17 +2758,19 @@ impl<'a> Installer<'a> {
                 buf.append(pkg_res.workspace().slice(string_buf));
             }
             ResolutionTag::Symlink => {
-                // Lazily ensuring the global link dir would mutate
-                // `*PackageManager`, but `append_store_path` is
-                // `&self` and may run on worker
-                // threads, so the lazy init is hoisted to the main-thread caller
-                // (`isolated_install::install_packages`, before any `start_task`).
-                // Reading the cached field here is then equivalent.
-                let target = pkg_res.symlink().slice(string_buf);
-                if crate::resolution::is_path_link(target) {
-                    // `link:./dir`: project-relative (buf starts at the project root)
-                    buf.append(target);
+                let symlink = pkg_res.symlink().slice(string_buf);
+                if crate::dependency::is_link_path(symlink) {
+                    if bun_paths::is_absolute(symlink) {
+                        buf.clear();
+                    }
+                    buf.append(symlink);
                 } else {
+                    // Lazily ensuring the global link dir would mutate
+                    // `*PackageManager`, but `append_store_path` is
+                    // `&self` and may run on worker
+                    // threads, so the lazy init is hoisted to the main-thread caller
+                    // (`isolated_install::install_packages`, before any `start_task`).
+                    // Reading the cached field here is then equivalent.
                     let symlink_dir_path: &[u8] = &self.manager().global_link_dir_path;
                     debug_assert!(
                         !symlink_dir_path.is_empty(),
@@ -2777,7 +2779,7 @@ impl<'a> Installer<'a> {
 
                     buf.clear();
                     buf.append(symlink_dir_path);
-                    buf.append(target);
+                    buf.append(symlink);
                 }
             }
             _ => {

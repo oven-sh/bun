@@ -1578,6 +1578,19 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             ) {
                 Ok(v) => v,
                 Err(crate::Error::MissingPackageJSON) => None,
+                Err(crate::Error::UnsafeLinkTarget) => {
+                    if dependency.behavior.is_required() {
+                        bun_ast::add_error_pretty!(
+                            this.log_mut(),
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            "Refusing to link dependency \"{}\" to \"{}\": only the root package.json, a workspace, or an override may link to a path outside the project\n\n",
+                            bstr::BStr::new(this.lockfile.str(&name)),
+                            bstr::BStr::new(this.lockfile.str(version.symlink())),
+                        );
+                    }
+                    return Ok(());
+                }
                 Err(err) => return Err(err),
             };
 
@@ -1635,6 +1648,15 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                             quoted: true
                         },
                     );
+                } else if dependency::is_link_path(this.lockfile.str(version.symlink())) {
+                    bun_ast::add_error_pretty!(
+                        this.log_mut(),
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        "Could not find directory \"{}\" for linked dependency \"{}\"\n\n",
+                        bstr::BStr::new(this.lockfile.str(version.symlink())),
+                        bstr::BStr::new(this.lockfile.str(&name)),
+                    );
                 } else {
                     bun_ast::add_error_pretty!(
                         this.log_mut(),
@@ -1657,6 +1679,15 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                             version,
                             quoted: true
                         },
+                    );
+                } else if dependency::is_link_path(this.lockfile.str(version.symlink())) {
+                    bun_ast::add_warning_pretty!(
+                        this.log_mut(),
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        "Could not find directory \"{}\" for linked dependency \"{}\"\n\n",
+                        bstr::BStr::new(this.lockfile.str(version.symlink())),
+                        bstr::BStr::new(this.lockfile.str(&name)),
                     );
                 } else {
                     bun_ast::add_warning_pretty!(
@@ -2960,35 +2991,38 @@ fn get_or_put_resolved_package(
             // reshaped for borrowck — `link_dir` / `symlink_path`
             // borrow into `*this`; detach their lifetimes so the
             // `&mut PackageManager` reborrow for `get_or_put` does not
-            // conflict.
-            // SAFETY: `global_link_dir_path` returns a slice into the lazily-
-            // initialized `PackageManager.global_link_dir_path` (a `Box<[u8]>`
-            // set once and never freed); `get_or_put` copies `symlink_path`
-            // into the lockfile string buffer before any other mutation.
+            // conflict. `get_or_put` copies `symlink_path` into the lockfile
+            // string buffer before any other mutation.
             // `version.tag == Symlink`.
             let symlink_path = this.lockfile.str_detached(version.symlink());
-            let res = if crate::resolution::is_path_link(symlink_path) {
-                // yarn/pnpm-style `link:./dir`: relative to the project (already rebased
-                // to the root by Package.rs), not to the global link directory
-                let mut abs_buf = PathBuffer::uninit();
-                let link_path_abs = if bun_paths::is_absolute(symlink_path) {
-                    symlink_path
+            let res = if dependency::is_link_path(symlink_path) {
+                if !this
+                    .lockfile
+                    .link_target_allowed_for_dependency(dependency_id, symlink_path)
+                {
+                    FolderResolutionValue::Err(crate::Error::UnsafeLinkTarget)
                 } else {
-                    Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
-                        FileSystem::instance().top_level_dir(),
-                        &mut abs_buf,
-                        &[symlink_path],
+                    let mut buf2 = PathBuffer::uninit();
+                    let symlink_path_abs = if bun_paths::is_absolute(symlink_path) {
+                        symlink_path
+                    } else {
+                        Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
+                            FileSystem::instance().top_level_dir(),
+                            &mut buf2,
+                            &[symlink_path],
+                        )
+                    };
+                    FolderResolution::get_or_put(
+                        GlobalOrRelative::Relative(dependency::version::Tag::Symlink),
+                        version,
+                        symlink_path_abs,
+                        this,
                     )
-                };
-                FolderResolution::get_or_put(
-                    GlobalOrRelative::Relative(dependency::version::Tag::Symlink),
-                    version,
-                    link_path_abs,
-                    this,
-                )
+                }
             } else {
-                // SAFETY: see the note above — `global_link_dir_path` is set once and
-                // never freed; `get_or_put` copies what it needs before mutating.
+                // SAFETY: `global_link_dir_path` returns a slice into the
+                // lazily-initialized `PackageManager.global_link_dir_path`
+                // (a `Box<[u8]>` set once and never freed).
                 let link_dir =
                     unsafe { detach_lifetime(package_manager_real::global_link_dir_path(this)) };
                 FolderResolution::get_or_put(

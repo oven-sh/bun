@@ -894,6 +894,91 @@ describe("ChaCha20-Poly1305 and AKP review fixes", () => {
   });
 });
 
+describe("ML-DSA and ML-KEM rejections that carry a cause", () => {
+  // Node builds these rejections with `new DOMException(message, { name, cause })`,
+  // which stores `cause` as a non-enumerable own property (verified on v26.3.0),
+  // the same way Bun's own DOMException constructor does. One case per call
+  // site that attaches a cause: importKey for both AKP families, the inner
+  // import of unwrapKey, and the ML-DSA context length check in sign and verify.
+  const garbage = new Uint8Array(64).fill(1);
+  const iv = new Uint8Array(12);
+  const tooLongContext = { name: "ML-DSA-44", context: new Uint8Array(256) };
+  const cases: [string, string, RegExp, () => Promise<unknown>][] = [
+    [
+      "importKey pkcs8 ML-DSA-44",
+      "DataError",
+      /^ERR_OSSL_/,
+      () => crypto.subtle.importKey("pkcs8", garbage, "ML-DSA-44", false, ["sign"]),
+    ],
+    [
+      "importKey spki ML-KEM-768",
+      "DataError",
+      /^ERR_OSSL_/,
+      () => crypto.subtle.importKey("spki", garbage, "ML-KEM-768", false, ["encapsulateBits"]),
+    ],
+    [
+      "unwrapKey pkcs8 ML-DSA-44",
+      "DataError",
+      /^ERR_OSSL_/,
+      async () => {
+        const kek = await crypto.subtle.importKey("raw", new Uint8Array(16), "AES-GCM", false, [
+          "encrypt",
+          "unwrapKey",
+        ]);
+        const wrapped = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, kek, garbage);
+        return crypto.subtle.unwrapKey("pkcs8", wrapped, kek, { name: "AES-GCM", iv }, "ML-DSA-44", false, ["sign"]);
+      },
+    ],
+    [
+      "sign with a context longer than 255 bytes",
+      "OperationError",
+      /^ERR_OUT_OF_RANGE$/,
+      async () => {
+        const { privateKey } = (await crypto.subtle.generateKey("ML-DSA-44", false, [
+          "sign",
+          "verify",
+        ])) as CryptoKeyPair;
+        return crypto.subtle.sign(tooLongContext, privateKey, garbage);
+      },
+    ],
+    [
+      "verify with a context longer than 255 bytes",
+      "OperationError",
+      /^ERR_OUT_OF_RANGE$/,
+      async () => {
+        const { publicKey } = (await crypto.subtle.generateKey("ML-DSA-44", false, [
+          "sign",
+          "verify",
+        ])) as CryptoKeyPair;
+        return crypto.subtle.verify(tooLongContext, publicKey, garbage, garbage);
+      },
+    ],
+  ];
+
+  it.each(cases)("%s stores the cause like the DOMException constructor does", async (_, name, code, run) => {
+    const err = await run().then(
+      () => null,
+      e => e,
+    );
+    expect(err).toBeInstanceOf(DOMException);
+    expect(err.name).toBe(name);
+    expect(err.cause.code).toMatch(code);
+
+    const constructed = new DOMException(err.message, { name, cause: err.cause });
+    expect(Object.getOwnPropertyDescriptor(err, "cause")).toEqual(
+      Object.getOwnPropertyDescriptor(constructed, "cause"),
+    );
+    expect(Object.getOwnPropertyDescriptor(err, "cause")).toMatchObject({
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
+    expect(Object.keys(err)).not.toContain("cause");
+    expect(JSON.parse(JSON.stringify(err))).not.toHaveProperty("cause");
+    expect({ ...err }).not.toHaveProperty("cause");
+  });
+});
+
 // https://github.com/oven-sh/bun/issues/32613
 describe("AES-KW wrapKey/unwrapKey with jwk format", () => {
   // The serialized JWK is rarely a multiple of 8 bytes, which AES-KW (RFC 3394)

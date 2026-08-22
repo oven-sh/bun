@@ -4385,7 +4385,7 @@ where
     }
 
     pub(crate) fn get_fd(&self) -> Option<bun_core::Fd> {
-        let resp = self.resp.get()?;
+        let resp = self.live_resp()?;
         let fd = resp.get_fd();
         if fd.is_valid() { Some(fd) } else { None }
     }

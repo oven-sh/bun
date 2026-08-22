@@ -392,6 +392,12 @@ impl Debugger {
             .expect("Debugger::create: vm.debugger is None");
         dbg.script_execution_context_id = Bun__createJSDebugger(global_object);
 
+        // Install Bun's inspector controller and mark the global inspectable
+        // before user code so pre-connect console output reaches
+        // InspectorConsoleAgent's replay buffer; wait_for_debugger_if_necessary
+        // only reaches its own call on the `--inspect-wait` / `--inspect-brk` path.
+        Bun__ensureDebugger(dbg.script_execution_context_id, false);
+
         if !this_ref.has_started_debugger {
             this_ref.as_mut().has_started_debugger = true;
             // Everything the debugger thread needs from this VM, copied here;
@@ -586,16 +592,6 @@ pub fn start_node_inspector_server(url: &mut BunString, wait_for_connection: boo
         this.as_mut().debugger = None;
         return false;
     }
-
-    // Install Bun's controller before any yield can let a client
-    // connectFrontend() to JSC's default one; the waiting path's later call
-    // from wait_for_debugger_if_necessary is then a bunControllerInstalled
-    // no-op that only handles the block.
-    let ctx_id = match this.debugger.as_deref() {
-        Some(d) => d.script_execution_context_id,
-        None => return false,
-    };
-    Bun__ensureDebugger(ctx_id, false);
 
     true
 }

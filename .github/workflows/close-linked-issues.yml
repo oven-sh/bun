@@ -201,13 +201,20 @@ jobs:
 
             // "which" or "that" at `k` with a reference as its antecedent: "Reverts
             // #100, which fixed #1", "Reverts #100 (which fixed #1)", "Reverts #100 --
-            // which fixed #1", also across a line break.
+            // which fixed #1", "Reverts #100 ~~and #101~~, which fixed #1", also across
+            // a line break.
             function isRelativeToReference(tokens, k) {
               const word = tokens[k];
               if (word.kind !== "word" || (word.text !== "which" && word.text !== "that")) return false;
-              let p = k - 1;
-              while (tokens[p]?.kind === "newline" || (tokens[p]?.kind === "punct" && ",(;:-\u2013\u2014".includes(tokens[p].text))) p--;
+              let p = skipInterveningBack(tokens, k - 1);
+              while (tokens[p]?.kind === "newline" || isSeparator(tokens[p])) p = skipInterveningBack(tokens, p - 1);
               return endsWithReference(tokens, p);
+            }
+
+            // A comma, an open parenthesis, a semicolon, a colon or a dash (hyphen, en
+            // dash, em dash).
+            function isSeparator(token) {
+              return token !== undefined && token.kind === "punct" && ",(;:-\u2013\u2014".includes(token.text);
             }
 
             // Whether a reference ends at `k`: "#100", "(#100)", "**#100**", "<url>",
@@ -366,7 +373,11 @@ jobs:
                 }
                 const { prose, open } = removeComments(line, htmlBlock, closesLater);
                 comment = open;
-                kept.push(prose);
+                // A heading, a rule, an underline or an HTML block is a block of its
+                // own: a span cannot reach into it or out of it, so blank lines fence it
+                // off from the paragraphs around it.
+                if (indented || paragraph) kept.push(prose);
+                else kept.push("", prose, "");
               }
               return kept.join("\n");
             }

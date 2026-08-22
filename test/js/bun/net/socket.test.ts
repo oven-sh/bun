@@ -4724,7 +4724,7 @@ describe.concurrent("socket handlers that re-enter the event loop before returni
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // stdout carries only the runner's version banner; results go to stderr.
     expect(stdout).toMatch(/^bun test v\S+ \(\S+\)\n$/);
-    expect(stderr).toContain(isWindows ? " 3 pass" : " 2 pass");
+    expect(stderr).toContain(isWindows ? " 4 pass" : " 3 pass");
     expect(proc.signalCode).toBeNull();
     expect(exitCode).toBe(0);
   });

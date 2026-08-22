@@ -644,8 +644,11 @@ impl Process {
                 bun_sys::Tag::waitpid,
             ))
         };
-        // SAFETY: `this` is live; each call takes its own short `&mut`
-        // (`on_exit` runs the exit handler, which may reach this Process again).
+        // SAFETY: `this` is live. The guard's ref keeps it allocated across the
+        // exit handler, which may drop the owner's ref and tick the loop far
+        // enough to run the deferred `on_close_uv` (which drops the handle's).
+        let _keep = unsafe { bun_ptr::ScopedRef::<Process>::new(this) };
+        // SAFETY: as above; each call takes its own short `&mut`.
         unsafe {
             if !matches!(status, Status::Err(_)) {
                 (*this).close();

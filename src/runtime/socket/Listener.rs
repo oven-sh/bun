@@ -1847,8 +1847,13 @@ impl WindowsNamedPipeListeningContext {
         }
     }
 
-    /// Dispatch phase: accept what `uv_on_client_connect` counted. libuv keeps
-    /// the pending accepts queued on the server handle until `uv_accept`.
+    /// Dispatch phase: accept one connection `uv_on_client_connect` counted
+    /// (libuv keeps the pending accepts queued on the server handle until
+    /// `uv_accept`). If more are pending the node goes back on the queue
+    /// *before* the handler runs, so nothing here touches the context after
+    /// `on_client_connect`: its `open` handler may close the listener and tick
+    /// the loop, which runs the deferred `on_pipe_closed` and frees the context
+    /// (`deinit` cancels the re-queued node in that case).
     unsafe fn dispatch_connections(node: *mut uv::Deferred) {
         // SAFETY: `node` is `connections.deferred` of a live context.
         let this: *mut Self = unsafe {
@@ -1857,15 +1862,19 @@ impl WindowsNamedPipeListeningContext {
                 .sub(core::mem::offset_of!(Self, connections))
                 .cast()
         };
-        // SAFETY: `this` stays allocated across `on_client_connect` (a close it
-        // triggers frees the context from the close callback, queued later);
-        // each access is a fresh short borrow.
+        // SAFETY: `this` is live here (see above); not accessed after the handler.
         unsafe {
-            while (*this).connections.pending > 0 {
-                (*this).connections.pending -= 1;
-                Self::on_client_connect(this, uv::ReturnCode::ZERO);
+            debug_assert!((*this).connections.pending > 0);
+            (*this).connections.pending -= 1;
+            if (*this).connections.pending > 0 {
+                uv::Deferred::enqueue(
+                    (*this).uv_pipe.get_loop(),
+                    &raw mut (*this).connections.deferred,
+                    Self::dispatch_connections,
+                );
             }
         }
+        Self::on_client_connect(this, uv::ReturnCode::ZERO);
     }
 
     /// `uv_close_cb` trampoline. Only ever invoked by libuv (coerces to the

@@ -850,15 +850,23 @@ pub unsafe trait UvStream: UvHandle {
             }
             unsafe fn run<T: StreamReader>(node: *mut crate::deferred::Deferred) {
                 // SAFETY: `node` is `ReadDeferral.node` of a live reader
-                // (enqueue contract: the reader cancels it on teardown).
+                // (enqueue contract: the reader cancels it on teardown). The
+                // reader is not touched after a handler ran: if bytes and an
+                // error are both pending, the error goes back on the queue
+                // first (the reader's teardown cancels it if `on_read` ends up
+                // freeing the reader through a nested tick).
                 unsafe {
                     let d: *mut ReadDeferral = bun_core::from_field_ptr!(ReadDeferral, node, node);
                     let ctx: *mut T = (*d).ctx.cast();
                     let nread = core::mem::take(&mut (*d).nread);
-                    let err = core::mem::take(&mut (*d).err);
                     if nread > 0 {
+                        if (*d).err != 0 {
+                            crate::deferred::Deferred::enqueue((*d).loop_, node, run::<T>);
+                        }
                         T::on_read(ctx, nread);
+                        return;
                     }
+                    let err = core::mem::take(&mut (*d).err);
                     if err != 0 {
                         T::on_read_error(&mut *ctx, err);
                     }
@@ -866,8 +874,9 @@ pub unsafe trait UvStream: UvHandle {
             }
             // SAFETY: `d` is live; `req.loop_` is this handle's loop.
             unsafe {
-                crate::deferred::Deferred::enqueue((*req).loop_, &raw mut (*d).node, run::<T>)
-            };
+                (*d).loop_ = (*req).loop_;
+                crate::deferred::Deferred::enqueue((*req).loop_, &raw mut (*d).node, run::<T>);
+            }
         }
         // SAFETY: stream prefix invariant.
         unsafe { uv_read_start(self.as_stream(), Some(uv_allocb::<T>), Some(uv_readcb::<T>)) }
@@ -914,6 +923,7 @@ pub trait StreamReader: Sized {
 pub struct ReadDeferral {
     pub node: crate::deferred::Deferred,
     ctx: *mut c_void,
+    loop_: *mut Loop,
     nread: usize,
     err: c_int,
 }
@@ -922,6 +932,7 @@ impl ReadDeferral {
         Self {
             node: crate::deferred::Deferred::new(),
             ctx: ptr::null_mut(),
+            loop_: ptr::null_mut(),
             nread: 0,
             err: 0,
         }

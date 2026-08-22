@@ -1541,16 +1541,31 @@ impl<'a> PackageInstaller<'a> {
                     installer.cache_dir = Fd::cwd();
                 } else {
                     let global_link_dir = package_manager::global_link_dir_path(self.manager_mut());
-                    let buf = self.folder_path_buf.as_mut_slice();
-                    let mut len = 0usize;
-                    buf[len..len + global_link_dir.len()].copy_from_slice(global_link_dir);
-                    len += global_link_dir.len();
-                    if global_link_dir[global_link_dir.len() - 1] != SEP {
-                        buf[len] = SEP;
-                        len += 1;
+                    let sep_len = (global_link_dir[global_link_dir.len() - 1] != SEP) as usize;
+                    let len = global_link_dir.len() + sep_len + folder.len();
+                    // `folder` is the `link:` specifier as written in package.json.
+                    if len >= self.folder_path_buf.len() {
+                        if log_level != Options::LogLevel::Silent {
+                            Output::err(
+                                "ENAMETOOLONG",
+                                "link path for package <b>{}<r> is too long",
+                                (bstr::BStr::new(pkg_name.slice(string_buf!())),),
+                            );
+                        }
+                        self.summary.fail += 1;
+                        self.increment_tree_install_count(
+                            !is_pending_package_install,
+                            self.current_tree_id,
+                            log_level,
+                        );
+                        return;
                     }
-                    buf[len..len + folder.len()].copy_from_slice(folder);
-                    len += folder.len();
+                    let buf = self.folder_path_buf.as_mut_slice();
+                    buf[..global_link_dir.len()].copy_from_slice(global_link_dir);
+                    if sep_len != 0 {
+                        buf[global_link_dir.len()] = SEP;
+                    }
+                    buf[global_link_dir.len() + sep_len..len].copy_from_slice(folder);
                     buf[len] = 0;
                     // SAFETY: buf[len] == 0 written above
                     installer.cache_dir_subpath = ZStr::from_buf(&self.folder_path_buf, len);

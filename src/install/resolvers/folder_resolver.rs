@@ -2,7 +2,7 @@ use core::fmt;
 
 use bun_core::fmt::QuotedFormatter;
 use bun_core::{ZStr, strings};
-use bun_paths::{self, MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR};
+use bun_paths::{self, PathBuffer, SEP, SEP_STR, resolve_path};
 use bun_resolver::fs::FileSystem;
 use bun_semver::{self as semver, String as SemverString};
 use bun_sys::{self, Fd, File, O};
@@ -35,7 +35,6 @@ pub(crate) struct PackageWorkspaceSearchPathFormatter<'a> {
 
 impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut joined = [0u8; MAX_PATH_BYTES + 2];
         // Caller constructs this formatter only when
         // `self.version.tag == .workspace`.
         let workspace = self.version.workspace();
@@ -48,34 +47,38 @@ impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
             ))
             .unwrap_or(workspace);
 
-        // SAFETY: joined[2..] is exactly MAX_PATH_BYTES bytes long.
-        let joined_path: &mut PathBuffer =
-            unsafe { &mut *joined.as_mut_ptr().add(2).cast::<PathBuffer>() };
-        let mut paths = normalize_package_json_path(
-            GlobalOrRelative::Relative(dependency::version::Tag::Workspace),
-            joined_path,
-            self.manager.lockfile.str(str_to_use),
-        );
+        let search_path = self.manager.lockfile.str(str_to_use);
 
-        if !strings::starts_with_char(paths.rel, b'.') && !strings::starts_with_char(paths.rel, SEP)
-        {
-            joined[0] = b'.';
-            joined[1] = SEP;
-            // `paths.rel` points into `joined[2..]`; extend the view backward
-            // by the two bytes just written via safe slicing of `joined`.
-            let n = paths.rel.len() + 2;
-            paths.rel = &joined[..n];
-        }
+        let mut joined = PathBuffer::uninit();
+        let mut dot_slash_rel = Vec::new();
+        let rel: &[u8] = match normalize_package_json_path(
+            GlobalOrRelative::Relative(dependency::version::Tag::Workspace),
+            &mut joined,
+            search_path,
+        ) {
+            Some(paths)
+                if !strings::starts_with_char(paths.rel, b'.')
+                    && !strings::starts_with_char(paths.rel, SEP) =>
+            {
+                dot_slash_rel.push(b'.');
+                dot_slash_rel.push(SEP);
+                dot_slash_rel.extend_from_slice(paths.rel);
+                dot_slash_rel.as_slice()
+            }
+            Some(paths) => paths.rel,
+            // Too long to be a path; show it as written.
+            None => search_path,
+        };
 
         if self.quoted {
-            let quoted = QuotedFormatter { text: paths.rel };
+            let quoted = QuotedFormatter { text: rel };
             fmt::Display::fmt(&quoted, f)
         } else {
             // `fmt::Formatter` only accepts `&str`, so non-UTF-8 path bytes are emitted lossily
             // (U+FFFD) via `bstr::BStr`'s Display. Both current callers pass
             // `quoted = true`, so this branch is unreached today; if a future
             // caller needs byte-exact output it must use an `io::Write` sink.
-            write!(f, "{}", bstr::BStr::new(paths.rel))
+            write!(f, "{}", bstr::BStr::new(rel))
         }
     }
 }
@@ -91,10 +94,6 @@ pub struct Entry {
 
 // bun_collections::HashMap currently ignores the context/load-factor
 // type params (backed by std HashMap); identity hashing is a TODO(perf).
-
-fn normalize(path: &[u8]) -> &[u8] {
-    FileSystem::instance().normalize(path)
-}
 
 pub(crate) fn hash(normalized_path: &[u8]) -> u64 {
     bun_wyhash::hash(normalized_path)
@@ -177,84 +176,80 @@ struct Paths<'a> {
     rel: &'a [u8],
 }
 
+/// Returns `None` when the `package.json` path does not fit `joined`.
 fn normalize_package_json_path<'a>(
     global_or_relative: GlobalOrRelative<'_>,
     joined: &'a mut PathBuffer,
     non_normalized_path: &[u8],
-) -> Paths<'a> {
-    let abs: &[u8];
-
+) -> Option<Paths<'a>> {
+    let mut normalize_spill = Vec::new();
     // We consider it valid if there is a package.json in the folder
-    let normalized: &[u8] = if non_normalized_path.len() == 1 && non_normalized_path[0] == b'.' {
+    let normalized: &[u8] = if non_normalized_path == b"." {
         non_normalized_path
     } else if bun_paths::is_absolute(non_normalized_path) {
         strings::trim_right(non_normalized_path, SEP_STR.as_bytes())
     } else {
-        strings::trim_right(normalize(non_normalized_path), SEP_STR.as_bytes())
+        strings::trim_right(
+            resolve_path::normalize_string_spill::<true, bun_paths::platform::Auto>(
+                &mut normalize_spill,
+                non_normalized_path,
+            ),
+            SEP_STR.as_bytes(),
+        )
     };
 
     const PACKAGE_JSON_LEN: usize = "/package.json".len();
 
-    let rel: &[u8] = if strings::starts_with_char(normalized, b'.') {
-        let mut tempcat = PathBuffer::uninit();
+    // The last byte of `joined` is reserved for the NUL terminator.
+    let capacity = joined.len() - 1;
 
-        tempcat[..normalized.len()].copy_from_slice(normalized);
-        tempcat[normalized.len()] = SEP;
-        tempcat[normalized.len() + 1..normalized.len() + PACKAGE_JSON_LEN]
-            .copy_from_slice(b"package.json");
-        let parts: [&[u8]; 2] = [
-            FileSystem::instance().top_level_dir(),
-            &tempcat[0..normalized.len() + PACKAGE_JSON_LEN],
-        ];
-        abs = FileSystem::instance().abs_buf(&parts, joined);
-        FileSystem::instance().relative(
-            FileSystem::instance().top_level_dir(),
-            &abs[0..abs.len() - PACKAGE_JSON_LEN],
-        )
+    let abs_len = if strings::starts_with_char(normalized, b'.') {
+        let parts: [&[u8]; 2] = [normalized, b"package.json"];
+        FileSystem::instance()
+            .abs_buf_checked(&parts, &mut joined[..capacity])?
+            .len()
     } else {
-        let joined_len = joined.len();
-        let mut remain: &mut [u8] = &mut joined[..];
-        match &global_or_relative {
-            GlobalOrRelative::Global(path) | GlobalOrRelative::CacheFolder(path) => {
-                if !path.is_empty() {
-                    let offset = path
-                        .len()
-                        .saturating_sub((path[path.len().saturating_sub(1)] == SEP) as usize);
-                    if offset > 0 {
-                        remain[0..offset].copy_from_slice(&path[0..offset]);
-                    }
-                    remain = &mut remain[offset..];
-                    if !normalized.is_empty() {
-                        if (path[path.len() - 1] != SEP) && (normalized[0] != SEP) {
-                            remain[0] = SEP;
-                            remain = &mut remain[1..];
-                        }
-                    }
-                }
+        let (prefix, needs_sep): (&[u8], bool) = match global_or_relative {
+            GlobalOrRelative::Global(path) | GlobalOrRelative::CacheFolder(path)
+                if !path.is_empty() =>
+            {
+                let ends_with_sep = path[path.len() - 1] == SEP;
+                (
+                    &path[..path.len() - ends_with_sep as usize],
+                    !normalized.is_empty() && !ends_with_sep && normalized[0] != SEP,
+                )
             }
-            GlobalOrRelative::Relative(_) => {}
+            _ => (b"", false),
+        };
+        let abs_len = prefix.len() + needs_sep as usize + normalized.len() + PACKAGE_JSON_LEN;
+        if abs_len > capacity {
+            return None;
         }
-        remain[..normalized.len()].copy_from_slice(normalized);
-        remain[normalized.len()] = SEP;
-        remain[normalized.len() + 1..normalized.len() + PACKAGE_JSON_LEN]
-            .copy_from_slice(b"package.json");
-        let remain_after = remain.len() - (normalized.len() + PACKAGE_JSON_LEN);
-        // Compute abs len from remaining capacity.
-        let abs_len = joined_len - remain_after;
-        abs = &joined[0..abs_len];
-        // We store the folder name without package.json
-        FileSystem::instance().relative(
-            FileSystem::instance().top_level_dir(),
-            &abs[0..abs.len() - PACKAGE_JSON_LEN],
-        )
+
+        let mut len = prefix.len();
+        joined[..len].copy_from_slice(prefix);
+        if needs_sep {
+            joined[len] = SEP;
+            len += 1;
+        }
+        joined[len..len + normalized.len()].copy_from_slice(normalized);
+        len += normalized.len();
+        joined[len] = SEP;
+        joined[len + 1..len + PACKAGE_JSON_LEN].copy_from_slice(b"package.json");
+        abs_len
     };
-    let abs_len = abs.len();
+
+    // We store the folder name without package.json
+    let rel = FileSystem::instance().relative(
+        FileSystem::instance().top_level_dir(),
+        &joined[..abs_len - PACKAGE_JSON_LEN],
+    );
     joined[abs_len] = 0;
 
-    Paths {
+    Some(Paths {
         abs: ZStr::from_buf(joined, abs_len),
         rel,
-    }
+    })
 }
 
 fn read_package_json_from_disk<R: FolderResolverImpl>(
@@ -384,7 +379,11 @@ pub(crate) fn get_or_put(
     let mut joined = PathBuffer::uninit();
     #[cfg(windows)]
     let mut rel_buf = PathBuffer::uninit();
-    let paths = normalize_package_json_path(global_or_relative, &mut joined, non_normalized_path);
+    let Some(paths) =
+        normalize_package_json_path(global_or_relative, &mut joined, non_normalized_path)
+    else {
+        return FolderResolution::Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+    };
 
     #[cfg(not(windows))]
     let abs = paths.abs;
@@ -433,10 +432,10 @@ pub(crate) fn get_or_put(
 
     let result: crate::Result<LockfilePackage> = match global_or_relative {
         GlobalOrRelative::Global(_) => 'global: {
-            let mut path = PathBuffer::uninit();
-            path[..non_normalized_path.len()].copy_from_slice(non_normalized_path);
+            // `non_normalized_path` may alias the lockfile string buffer, which grows below.
+            let folder_path: Box<[u8]> = Box::from(non_normalized_path);
             let mut resolver: SymlinkResolver = NewResolver {
-                folder_path: &path[0..non_normalized_path.len()],
+                folder_path: &folder_path,
             };
             break 'global read_package_json_from_disk(
                 manager,

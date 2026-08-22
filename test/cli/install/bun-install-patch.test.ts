@@ -4,6 +4,7 @@ import { rmSync } from "fs";
 import {
   bunEnv,
   bunExe,
+  isWindows,
   normalizeBunSnapshot as normalizeBunSnapshot_,
   runBunInstall,
   tempDir,
@@ -1282,5 +1283,38 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
       });
       await installUnpatched(packageDir);
     });
+  });
+});
+
+describe("patchedDependencies path longer than the path buffer", () => {
+  // Hashing a patch joins its path onto the project directory in a path buffer
+  // (4096 bytes on Linux, 1024 on macOS, ~96 KiB on Windows). The join used to
+  // write past the buffer for a path that did not fit, aborting the install.
+  const longName = Buffer.alloc(100_000, "p").toString();
+
+  test("install reports the path instead of crashing", async () => {
+    using dir = tempDir("patch-path-too-long", {
+      "package.json": JSON.stringify({
+        name: "patch-path-too-long",
+        patchedDependencies: { "is-odd@3.0.1": `patches/${longName}.patch` },
+      }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // The path is handed to the OS as is. POSIX rejects anything longer than
+    // PATH_MAX with ENAMETOOLONG; Windows may report it as missing instead.
+    if (!isWindows) {
+      expect(stderr).toContain("error: failed to read patch file: ENAMETOOLONG: ");
+    }
+    expect(stderr).toContain(`${longName}.patch`);
+    expect(exitCode).toBe(1);
   });
 });

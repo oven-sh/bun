@@ -42,6 +42,7 @@
 #include "JavaScriptCore/ExceptionHelpers.h"
 #include "JavaScriptCore/ExceptionScope.h"
 #include "JavaScriptCore/FunctionConstructor.h"
+#include "JavaScriptCore/HeapProfiler.h"
 #include "JavaScriptCore/HeapSnapshotBuilder.h"
 #include "JavaScriptCore/Identifier.h"
 #include "JavaScriptCore/IteratorOperations.h"
@@ -4222,13 +4223,21 @@ JSC::EncodedJSValue JSC__JSGlobalObject__generateHeapSnapshot(JSC::JSGlobalObjec
 
     Bun__Feature__heap_snapshot += 1;
 
-    JSC::HeapSnapshotBuilder snapshotBuilder(vm.ensureHeapProfiler());
+    vm.ensureHeapProfiler();
+    auto& heapProfiler = *vm.heapProfiler();
+    heapProfiler.clearSnapshots();
+
+    JSC::HeapSnapshotBuilder snapshotBuilder(heapProfiler);
     snapshotBuilder.buildSnapshot();
 
     WTF::String jsonString = snapshotBuilder.json();
-    JSC::EncodedJSValue result = JSC::JSValue::encode(JSONParse(globalObject, jsonString));
-    scope.releaseAssertNoException();
-    return result;
+    if (jsonString.isNull()) {
+        JSC::throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+    JSC::JSValue result = JSONParseWithException(globalObject, jsonString);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSC::JSValue::encode(result);
 }
 
 // One load. always_inline so ThinLTO importers and the inliner never leave

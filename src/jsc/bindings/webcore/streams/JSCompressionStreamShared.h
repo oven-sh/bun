@@ -24,13 +24,10 @@ struct CodecOptions {
     size_t highWaterMark;
     std::optional<int32_t> level;
 };
-// One pass over the optional second constructor argument, read like a queuing strategy:
-// - highWaterMark (bytes, default 64 KiB) is the output bound of one codec step, i.e. the largest
-//   piece a consumer gets per read() and how far the coder runs ahead of a slow consumer. Throws
-//   RangeError / TypeError as ExtractHighWaterMark does; `size` is ignored.
-// - level, read only when `levelFormat` is engaged (CompressionStream), selects the compression
-//   level (zlib formats 0-9, brotli quality 0-11, zstd 1-22; absent = the format's default).
-//   Throws RangeError when invalid.
+// One pass over the optional second constructor argument (read like a queuing strategy; `size` is
+// ignored). highWaterMark (bytes, default 64 KiB) bounds one codec step's output. level, read only
+// when `levelFormat` is engaged (CompressionStream), selects the compression level: zlib formats
+// 0-9, brotli quality 0-11, zstd 1-22. Throws RangeError on an invalid value of either.
 CodecOptions parseCodecOptions(JSC::JSGlobalObject*, JSC::JSValue strategy, std::optional<CompressionFormat> levelFormat);
 
 } // namespace WebStreams

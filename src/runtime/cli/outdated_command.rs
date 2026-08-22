@@ -26,8 +26,7 @@ struct OutdatedInfo {
     dep_id: DependencyID,
     workspace_pkg_id: PackageID,
     is_catalog: bool,
-    /// The version columns as text, for `--json`. The table formats the versions
-    /// again because it colors the part that changed.
+    /// The version columns as text, for `--json`.
     current: Box<[u8]>,
     update: Box<[u8]>,
     latest: Box<[u8]>,
@@ -808,10 +807,7 @@ impl OutdatedCommand {
     }
 }
 
-/// `--json`: an array with one object per outdated dependency, in the order of
-/// the table. Catalog entries are not grouped: every workspace that uses one
-/// gets its own object, and `catalog` names the catalog (`"default"` for the
-/// unnamed one, as in `bun audit fix --json`), or is `null`.
+/// `--json`: one object per table row, in table order. Catalog rows are not folded.
 fn print_json(lockfile: &Lockfile, items: &[OutdatedInfo]) {
     fn js(s: &[u8]) -> bun_core::fmt::JSONFormatterUTF8<'_> {
         bun_core::fmt::format_json_string_utf8(s, Default::default())

@@ -582,10 +582,7 @@ fn print_package_with_type(prefix: &[u8], package: &DependentInfo) {
     }
 }
 
-/// `--json`: an array with one object per matched package. Each object holds the
-/// same tree as the text output: `dependents` is an array, or `null` where the
-/// text output stops expanding (`--depth`, `--top`, or a cycle, which also sets
-/// `circular`). The root package has no version and prints `"version": null`.
+/// `--json`: the same tree as the text output, `dependents` is `null` where the text stops.
 fn print_json(
     targets: &[VersionInfo],
     all_dependents: &HashMap<PackageID, Vec<DependentInfo>>,
@@ -656,9 +653,7 @@ fn write_json_key(out: &mut Vec<u8>, level: usize, key: &str) {
     let _ = write!(out, "\"{key}\": ");
 }
 
-/// Writes the array of `dependents` (already sorted). `depth` is the depth of
-/// these entries in the tree, `indent` the indentation level of the key they
-/// belong to.
+/// `depth` is the depth of these entries, `indent` the level of the key they belong to.
 fn write_json_dependents(
     out: &mut Vec<u8>,
     ctx: &mut TreeContext<'_>,
@@ -715,8 +710,7 @@ fn write_json_dependents(
     out.push(b']');
 }
 
-/// The JSON counterpart of `print_dependency_tree`: the value of `node`'s
-/// `dependents` key. `depth` is the depth of `node` itself.
+/// The JSON counterpart of `print_dependency_tree`. `depth` is the depth of `node`.
 fn write_json_subtree(
     out: &mut Vec<u8>,
     ctx: &mut TreeContext<'_>,

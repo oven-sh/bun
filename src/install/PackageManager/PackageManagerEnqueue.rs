@@ -721,9 +721,10 @@ pub fn enqueue_network_task_for_retry(
     // make sure the install loop wakes up for it even if no other I/O completes; if no
     // timer thread can be started (resource exhaustion), retry right away instead of
     // parking a deadline nothing would wake up for
-    if crate::package_manager_real::retry_timer::arm(this, not_before) {
-        this.retry_queue.push((not_before, task));
-    } else {
+    // queue first so a wake that races `arm` always finds the entry
+    this.retry_queue.push((not_before, task));
+    if !crate::package_manager_real::retry_timer::arm(this, not_before) {
+        let _ = this.retry_queue.pop();
         enqueue_network_task(this, task);
     }
 }

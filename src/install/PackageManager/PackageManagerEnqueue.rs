@@ -916,11 +916,14 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 // The package resolved but its tarball request
                                 // was refused (`NetworkTask::for_tarball` has
                                 // already logged why: unsupported scheme, or a
-                                // host outside `install.allowedHosts`). The
-                                // logged error fails the install; don't turn it
-                                // into an "internal error" on top.
-                                if let Some(fail) = fail_fn {
-                                    fail(this, dependency, id, err);
+                                // host outside `install.allowedHosts` — an
+                                // error for a required dependency, a warning
+                                // for an optional one). Don't turn it into an
+                                // "internal error" on top.
+                                if dependency.behavior.is_required() {
+                                    if let Some(fail) = fail_fn {
+                                        fail(this, dependency, id, err);
+                                    }
                                 }
                                 return Ok(());
                             } else if err == crate::Error::DistTagNotFound {

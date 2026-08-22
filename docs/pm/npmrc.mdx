@@ -86,7 +86,7 @@ Bun supports the following options:
 - `_auth` (base64 encoded username:password, for example `btoa(username + ":" + password)`)
 - `email`
 
-Credentials apply to requests under the `//host/path/` they are written for. An entry whose `//host/path/` is a configured registry's URL becomes that registry's credentials; any other entry is still used for requests under its host and path — for example when a registry serves tarballs from a different path than its API, give each path its own line:
+Credentials apply to requests under the `//host/path/` they are written for. An entry whose `//host/path/` is a configured registry's URL becomes that registry's credentials; any other entry is still used for `https://` requests under its host and path (and for `http://` requests only when a configured registry uses plain http on that same host and port) — for example when a registry serves tarballs from a different path than its API, give each path its own line:
 
 ```ini .npmrc icon="npm"
 @myorg:registry=https://registry.example.com/api/packages/npm/

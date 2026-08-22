@@ -4,6 +4,7 @@ use core::ptr::NonNull;
 use bun_jsc::call_frame::ArgumentsSlice;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsResult, SysErrorJsc as _};
+use bun_sys_jsc::SystemErrorJsc as _;
 
 use crate::node::fs::{
     self, AsyncCpTask, AsyncReaddirRecursiveTask, Flavor, FsArgument, FsReturn, NodeFS,
@@ -58,6 +59,69 @@ where
     }
 }
 
+/// Argument parsing shared by every promise-returning binding (`run_async`,
+/// `cp`, `readdir`). `Err` is what the binding returns instead of running the
+/// operation: a thrown validation error (node throws those synchronously
+/// too), or a promise already rejected, either with an already-aborted
+/// signal's error or with an errno-class argument failure
+/// (`ArgumentsSlice::deferred_error`), which node reports through the
+/// promise because it comes out of the syscall there.
+///
+/// Callers take `bun_vm().as_mut()` for the task only once this has returned:
+/// parsing holds a shared borrow of the VM and can re-enter JS.
+fn parse_async_args<A: FsArgument>(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> Result<A, JsResult<JSValue>> {
+    // SAFETY: JS-thread borrow of the per-thread VM; outlives `slice`.
+    let vm: &VirtualMachine = global.bun_vm();
+    let mut slice = ManuallyDrop::new(ArgumentsSlice::init(vm, frame.arguments()));
+    slice.will_be_async = true;
+
+    // `ManuallyDrop` keeps `slice` alive past return when ownership transfers
+    // to the Task: dropped only on the early-return branches; on the success
+    // path the Task owns `args` (whose protected JSValues are released by
+    // `Drop for ThreadSafe<A>` when the Task completes), and `slice` is
+    // intentionally not dropped — its `Drop`-unprotect would race that.
+
+    let mut args = match <A as FsArgument>::from_js(global, &mut slice) {
+        Ok(a) => a,
+        Err(err) => {
+            // SAFETY: not yet dropped; only drop site for this path.
+            unsafe { ManuallyDrop::drop(&mut slice) };
+            return Err(Err(err));
+        }
+    };
+
+    let early_return = 'early: {
+        if global.has_exception() {
+            break 'early JSValue::ZERO;
+        }
+        if A::HAVE_ABORT_SIGNAL {
+            if let Some(abort_error) = args
+                .signal()
+                .and_then(|signal| signal.node_abort_error_if_aborted(global))
+            {
+                break 'early JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                    global,
+                    abort_error,
+                );
+            }
+        }
+        if let Some(err) = slice.deferred_error.take() {
+            break 'early JSPromise::rejected_promise(global, (*err).to_error_instance(global))
+                .to_js();
+        }
+        return Ok(args);
+    };
+
+    args.unprotect();
+    drop(args);
+    // SAFETY: not yet dropped; only drop site for this path.
+    unsafe { ManuallyDrop::drop(&mut slice) };
+    Err(Ok(early_return))
+}
+
 /// `Bindings(FunctionEnum).runAsync` for every operation except `.cp` /
 /// `.readdir` (those have bespoke entry points below).
 ///
@@ -71,55 +135,10 @@ fn run_async<A: FsArgument>(
     frame: &CallFrame,
     create_task: fn(&JSGlobalObject, &Binding, A, &mut VirtualMachine) -> JSValue,
 ) -> JsResult<JSValue> {
-    // SAFETY: JS-thread borrow of the per-thread VM; outlives `slice`.
-    let vm: &mut VirtualMachine = global.bun_vm().as_mut();
-    let mut slice = ManuallyDrop::new(ArgumentsSlice::init(vm, frame.arguments()));
-    slice.will_be_async = true;
-
-    // `ManuallyDrop` keeps `slice` alive past return when ownership transfers
-    // to the Task: dropped only on the early-return
-    // error/abort branches; on the success path the Task owns `args` (whose
-    // protected JSValues are released by `Drop for ThreadSafe<A>` when the
-    // Task completes), and `slice` is intentionally not dropped — its
-    // `Drop`-unprotect would race that.
-
-    let mut args = match <A as FsArgument>::from_js(global, &mut slice) {
-        Ok(a) => a,
-        Err(err) => {
-            // SAFETY: not yet dropped; only drop site for this path.
-            unsafe { ManuallyDrop::drop(&mut slice) };
-            return Err(err);
-        }
+    let args = match parse_async_args::<A>(global, frame) {
+        Ok(args) => args,
+        Err(result) => return result,
     };
-
-    if global.has_exception() {
-        args.unprotect();
-        drop(args);
-        // SAFETY: not yet dropped; only drop site for this path.
-        unsafe { ManuallyDrop::drop(&mut slice) };
-        return Ok(JSValue::ZERO);
-    }
-
-    if A::HAVE_ABORT_SIGNAL {
-        if let Some(signal) = args.signal() {
-            if let Some(abort_error) = signal.node_abort_error_if_aborted(global) {
-                let promise =
-                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                        global,
-                        abort_error,
-                    );
-                args.unprotect();
-                drop(args);
-                // SAFETY: not yet dropped; only drop site for this path.
-                unsafe { ManuallyDrop::drop(&mut slice) };
-                return Ok(promise);
-            }
-        }
-    }
-
-    // The `cp` / `readdir` operations are handled by their dedicated
-    // bindings below.
-    // SAFETY: re-borrow `vm` mutably; the `slice` borrow is no longer used.
     let vm: &mut VirtualMachine = global.bun_vm().as_mut();
     Ok(create_task(global, this, args, vm))
 }
@@ -181,31 +200,12 @@ impl Binding {
 
     // ── Hand-written bindings for ops outside `NodeFSFunctionEnum` ────────
 
-    /// `callAsync(.cp)` — `AsyncCpTask::create` copies its paths via
-    /// `to_thread_safe()`, so the arena is dropped with `slice`.
+    /// `callAsync(.cp)`.
     pub(crate) fn cp(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        // SAFETY: JS-thread borrow of the per-thread VM; outlives `slice`.
-        let vm: &mut VirtualMachine = global.bun_vm().as_mut();
-        let mut slice = ManuallyDrop::new(ArgumentsSlice::init(vm, frame.arguments()));
-        slice.will_be_async = true;
-
-        let cp_args = match args::Cp::from_js(global, &mut slice) {
-            Ok(a) => a,
-            Err(err) => {
-                // SAFETY: not yet dropped; only drop site for this path.
-                unsafe { ManuallyDrop::drop(&mut slice) };
-                return Err(err);
-            }
+        let cp_args = match parse_async_args::<args::Cp>(global, frame) {
+            Ok(args) => args,
+            Err(result) => return result,
         };
-
-        if global.has_exception() {
-            drop(cp_args);
-            // SAFETY: not yet dropped; only drop site for this path.
-            unsafe { ManuallyDrop::drop(&mut slice) };
-            return Ok(JSValue::ZERO);
-        }
-
-        // SAFETY: re-borrow `vm` mutably; the `slice` borrow is no longer used.
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
         Ok(AsyncCpTask::create(global, this, cp_args, vm))
     }
@@ -241,28 +241,10 @@ impl Binding {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        // SAFETY: JS-thread borrow of the per-thread VM; outlives `slice`.
-        let vm: &mut VirtualMachine = global.bun_vm().as_mut();
-        let mut slice = ManuallyDrop::new(ArgumentsSlice::init(vm, frame.arguments()));
-        slice.will_be_async = true;
-
-        let rd_args = match args::Readdir::from_js(global, &mut slice) {
-            Ok(a) => a,
-            Err(err) => {
-                // SAFETY: not yet dropped; only drop site for this path.
-                unsafe { ManuallyDrop::drop(&mut slice) };
-                return Err(err);
-            }
+        let rd_args = match parse_async_args::<args::Readdir>(global, frame) {
+            Ok(args) => args,
+            Err(result) => return result,
         };
-
-        if global.has_exception() {
-            drop(rd_args);
-            // SAFETY: not yet dropped; only drop site for this path.
-            unsafe { ManuallyDrop::drop(&mut slice) };
-            return Ok(JSValue::ZERO);
-        }
-
-        // SAFETY: re-borrow `vm` mutably; the `slice` borrow is no longer used.
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
         // /$bunfs/ is in-memory; readdir_inner handles it (recursive included).
         let is_bunfs = bun_standalone_graph::Graph::get().is_some()

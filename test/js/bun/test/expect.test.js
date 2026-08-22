@@ -847,6 +847,34 @@ describe("expect()", () => {
       expect({ a: 123n }).toEqual({ a: expect.any(BigInt) });
       expect({ a: 123n }).not.toEqual({ a: expect.any(g) });
     });
+
+    it("should treat array holes as undefined when matched against asymmetric matchers", () => {
+      class Foo {}
+      // hole on the received side aligned with a matcher on the expected side
+      expect([, 1]).not.toEqual([expect.any(Date), 1]);
+      expect([, 1]).not.toEqual([expect.any(Number), 1]);
+      expect([, 1]).not.toEqual([expect.any(String), 1]);
+      expect([, 1]).not.toEqual([expect.any(Foo), 1]);
+      expect([, 1]).not.toEqual([expect.stringContaining("x"), 1]);
+      expect([, 1]).not.toEqual([expect.stringMatching(/x/), 1]);
+      expect([, 1]).not.toEqual([expect.objectContaining({ a: 1 }), 1]);
+      expect([, 1]).not.toEqual([expect.closeTo(1), 1]);
+      // hole on the expected side aligned with a matcher on the received side
+      expect([expect.any(Date), 1]).not.toEqual([, 1]);
+      expect([expect.any(String), 1]).not.toEqual([, 1]);
+      // nested
+      expect({ x: [, 1] }).not.toEqual({ x: [expect.any(Date), 1] });
+      // other ways of producing holes
+      expect(Array(2)).not.toEqual([expect.any(Date), expect.any(Number)]);
+      const deleted = [1, 2];
+      delete deleted[0];
+      expect(deleted).not.toEqual([expect.any(Number), 2]);
+      // expect.anything() rejects undefined, so it must also reject a hole
+      expect([, 1]).not.toEqual([expect.anything(), 1]);
+      expect([expect.anything(), 1]).not.toEqual([, 1]);
+      // sanity: holes still equal undefined under toEqual
+      expect([, 1]).toEqual([undefined, 1]);
+    });
   });
 
   test("toThrow asymmetric matchers", () => {

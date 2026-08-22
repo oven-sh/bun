@@ -1784,10 +1784,12 @@ impl CronJob {
 // C++ `promiseHandlerID` compares the handler passed to `JSValue::then` against
 // these symbols by address, so they must stay function exports.
 // HOST_EXPORT(Bun__CronJob__onPromiseResolve, jsc)
-pub fn on_promise_resolve(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let args = frame.arguments();
+pub fn on_promise_resolve(
+    this: ThisPtr<CronJob>,
+    _global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
     // `pending_ref` holds the ref taken before `then` until `release_pending_ref`.
-    let this = args[args.len() - 1].as_promise_this::<CronJob>();
     let _guard = scopeguard::guard(this, CronJob::release_pending_ref);
     let vm = this.global.bun_vm();
     if let Some(js_this) = this.this_value.get().try_get() {
@@ -1798,9 +1800,12 @@ pub fn on_promise_resolve(_global: &JSGlobalObject, frame: &CallFrame) -> JsResu
 }
 
 // HOST_EXPORT(Bun__CronJob__onPromiseReject, jsc)
-pub fn on_promise_reject(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub fn on_promise_reject(
+    this: ThisPtr<CronJob>,
+    _global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
     let args = frame.arguments();
-    let this = args[args.len() - 1].as_promise_this::<CronJob>();
     let _guard = scopeguard::guard(this, CronJob::release_pending_ref);
     let vm = this.global.bun_vm().as_mut();
     let err = args[0];

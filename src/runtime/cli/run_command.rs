@@ -1546,8 +1546,7 @@ impl Run<'_> {
 
         vm.on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
         let _ = vm.global().handle_rejected_promises();
-        // An uncaught error stops the loop (`is_event_loop_alive`) and brings us
-        // here: Node's fatal-exception exit, not a drain.
+        // The loop stopped on an uncaught error: Node's fatal-exception exit, not a drain.
         if vm.unhandled_error_counter > 0 {
             vm.exit_handler.requested = true;
         }

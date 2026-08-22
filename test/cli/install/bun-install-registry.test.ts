@@ -4800,10 +4800,7 @@ describe("hoisting", async () => {
   });
 
   test("a copy already in bun.lock is kept by a later install that only adds packages", async () => {
-    await write(
-      packageJson,
-      JSON.stringify({ name: "foo", dependencies: { "hoist-lockfile-1": "1.0.0" } }),
-    );
+    await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "hoist-lockfile-1": "1.0.0" } }));
     expect(await sharedResolutions()).toStrictEqual({ "hoist-lockfile-shared": "hoist-lockfile-shared@2.0.2" });
 
     await write(

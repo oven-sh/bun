@@ -1001,11 +1001,28 @@ interface Position {
   offset: number;
 }
 
-declare class ResolveMessage {
+/**
+ * A module specifier that could not be resolved. Thrown by `import`,
+ * `require()` and {@link Bun.resolveSync}, and reported in
+ * {@link Bun.BuildOutput.logs} by {@link Bun.build}.
+ */
+declare class ResolveMessage extends Error {
   readonly name: "ResolveMessage";
   readonly position: Position | null;
   readonly code: string;
   readonly message: string;
+  /**
+   * `"ResolveMessage: <message>"`, with no `at ...` frames: no JavaScript
+   * stack is captured when resolution fails.
+   */
+  stack: string;
+  /**
+   * Like the `requireStack` of a Node.js `MODULE_NOT_FOUND` error: the module
+   * whose `require()` or `require.resolve()` call did not find {@link specifier}
+   * (only the direct caller is recorded). `undefined` for every other failure,
+   * including everything reached through `import`.
+   */
+  readonly requireStack: string[] | undefined;
   readonly referrer: string;
   readonly specifier: string;
   readonly importKind:
@@ -1020,15 +1037,69 @@ declare class ResolveMessage {
     | "url"
     | "internal";
   readonly level: "error" | "warning" | "info" | "debug" | "verbose";
+  /**
+   * Zero-based line of {@link position}, or `0` when there is no position.
+   * `position.line` is the same line, one-based.
+   */
+  readonly line: number;
+  /**
+   * Zero-based column of {@link position}, or `0` when there is no position.
+   * `position.column` is the same column, one-based.
+   */
+  readonly column: number;
 
+  /**
+   * `"ResolveMessage: <message>"`, which is also what converting the object to
+   * a string (`String(...)`, a template literal) produces.
+   */
   toString(): string;
+  /**
+   * The fields `JSON.stringify()` serializes this message as.
+   */
+  toJSON(): Pick<ResolveMessage, "name" | "position" | "message" | "level" | "specifier" | "importKind" | "referrer">;
+  [Symbol.toPrimitive](hint: "default" | "string"): string;
+  [Symbol.toPrimitive](hint: string): string | null;
 }
 
-declare class BuildMessage {
+/**
+ * An error, warning or note produced while parsing or bundling a module.
+ * Thrown by `import` and `require()` of a file with a syntax error, and
+ * reported in {@link Bun.BuildOutput.logs} by {@link Bun.build}.
+ */
+declare class BuildMessage extends Error {
   readonly name: "BuildMessage";
   readonly position: Position | null;
   readonly message: string;
   readonly level: "error" | "warning" | "info" | "debug" | "verbose";
+  /**
+   * Secondary locations attached to this message, each a `BuildMessage` whose
+   * `level` is `"note"`, such as the original declaration behind a
+   * "has already been declared" error. Empty when there are none.
+   */
+  readonly notes: BuildMessage[];
+  /**
+   * Zero-based line of {@link position}, or `0` when there is no position.
+   * `position.line` is the same line, one-based.
+   */
+  readonly line: number;
+  /**
+   * Zero-based column of {@link position}, or `0` when there is no position.
+   * `position.column` is the same column, one-based.
+   */
+  readonly column: number;
+
+  /**
+   * `"BuildMessage: <message>"`, which is also what converting the object to a
+   * string (`String(...)`, a template literal) produces.
+   */
+  toString(): string;
+  /**
+   * The fields `JSON.stringify()` serializes this message as. {@link notes}
+   * are not included.
+   */
+  toJSON(): Pick<BuildMessage, "name" | "position" | "message" | "level">;
+  [Symbol.toPrimitive](hint: "default" | "string"): string;
+  [Symbol.toPrimitive](hint: string): string | null;
 }
 
 interface ErrorOptions {

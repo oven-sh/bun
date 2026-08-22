@@ -46,6 +46,7 @@
         "fast-glob": "3.3.1",
         "fastify": "5.2.2",
         "filenamify": "6.0.0",
+        "form-data": "4.0.0",
         "happy-dom": "17.0.3",
         "hono": "4.7.2",
         "http2-wrapper": "2.2.1",

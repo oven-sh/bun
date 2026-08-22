@@ -1,27 +1,44 @@
-import { bunEnv, bunExe, tempDir } from "harness";
+import { afterAll, beforeAll, expect, it } from "bun:test";
+import { bunEnv, bunExe, tempDir, VerdaccioRegistry } from "harness";
 
-it("duplicate dependencies should warn instead of error", () => {
+let registry: VerdaccioRegistry;
+
+beforeAll(async () => {
+  registry = new VerdaccioRegistry();
+  await registry.start();
+});
+
+afterAll(() => {
+  registry.stop();
+});
+
+it("duplicate dependencies should warn instead of error", async () => {
   const package_json = JSON.stringify({
     devDependencies: {
-      "empty-package-for-bun-test-runner": "1.0.0",
+      "no-deps": "1.0.0",
     },
     dependencies: {
-      "empty-package-for-bun-test-runner": "1.0.0",
+      "no-deps": "1.0.0",
     },
   });
 
   using dir = tempDir("07740", {
+    "bunfig.toml": `[install]\ncache = false\nregistry = "${registry.registryUrl()}"\n`,
     "package.json": package_json,
   });
 
-  const proc = Bun.spawnSync([bunExe(), "install"], {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "install"],
     env: bunEnv,
-    cwd: dir,
+    cwd: String(dir),
+    stdout: "pipe",
     stderr: "pipe",
   });
 
-  const stderr = proc.stderr.toString("utf-8").trim();
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).not.toContain("error: Duplicate dependency:");
   expect(stderr).toContain("warn: Duplicate dependency");
+  expect(stdout).toContain("1 package installed");
+  expect(exitCode).toBe(0);
 });

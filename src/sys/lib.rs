@@ -17,6 +17,8 @@ pub extern crate bun_core as bun_str;
 pub extern crate bun_libuv_sys;
 pub mod fd;
 pub use fd::{ErrorCase, FdExt, MakeLibUvOwnedError, RawFd};
+#[cfg(all(debug_assertions, any(target_os = "linux", target_os = "android")))]
+pub mod close_ledger;
 #[path = "Error.rs"]
 mod error;
 pub use error::Error;
@@ -1986,11 +1988,19 @@ mod posix_impl {
         // Darwin uses `close$NOCANCEL` (avoid pthread cancellation point).
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
+            #[cfg(debug_assertions)]
+            let description = crate::close_ledger::FdDescription::of(fd.native());
             return match super::linux_syscall::close(fd.native()) {
                 Err(e) if e == libc::EBADF => {
+                    #[cfg(debug_assertions)]
+                    crate::close_ledger::report_ebadf("bun_sys::close", fd.native());
                     Err(Error::from_code_int(libc::EBADF, Tag::close).with_fd(fd))
                 }
-                _ => Ok(()),
+                _ => {
+                    #[cfg(debug_assertions)]
+                    crate::close_ledger::record_closed(fd.native(), description);
+                    Ok(())
+                }
             };
         }
         #[cfg(not(any(target_os = "linux", target_os = "android")))]

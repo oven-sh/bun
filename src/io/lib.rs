@@ -2215,6 +2215,14 @@ pub mod closer {
     pub struct Closer {
         pub(crate) fd: Fd,
         task: WorkPoolTask,
+        #[cfg(all(debug_assertions, any(target_os = "linux", target_os = "android")))]
+        scheduled_from: bun_core::StoredTrace,
+        #[cfg(all(debug_assertions, any(target_os = "linux", target_os = "android")))]
+        scheduled_on_tid: i64,
+        /// What the fd pointed at when the close was scheduled (empty if it
+        /// was already closed by then).
+        #[cfg(all(debug_assertions, any(target_os = "linux", target_os = "android")))]
+        scheduled_description: bun_sys::close_ledger::FdDescription,
     }
 
     #[cfg(not(windows))]
@@ -2224,6 +2232,39 @@ pub mod closer {
     unsafe impl bun_threading::work_pool::OwnedTask for Closer {
         fn run(self: Box<Self>) {
             use bun_sys::FdExt;
+            #[cfg(all(debug_assertions, any(target_os = "linux", target_os = "android")))]
+            {
+                #[allow(clippy::print_stderr)]
+                if let Some(err) = self.fd.close_allowing_bad_file_descriptor(None) {
+                    if err.errno == bun_sys::E::EBADF as _ {
+                        std::eprintln!(
+                            "\n==================== Closer: close({}) = EBADF ====================",
+                            self.fd.native()
+                        );
+                        std::eprintln!(
+                            "when this Closer was scheduled the fd was \"{}\" (empty = already closed at that point)",
+                            self.scheduled_description.as_str()
+                        );
+                        std::eprintln!(
+                            "this Closer was scheduled on tid {} at:",
+                            self.scheduled_on_tid
+                        );
+                        bun_core::dump_stack_trace(
+                            &self.scheduled_from.trace(),
+                            bun_core::DumpStackTraceOptions::default(),
+                        );
+                        std::eprintln!(
+                            "======================================================================\n"
+                        );
+                        panic!(
+                            "Closer: fd {} was already closed when the async close ran (see report above)",
+                            self.fd.native()
+                        );
+                    }
+                }
+                return;
+            }
+            #[allow(unreachable_code)]
             self.fd.close();
         }
     }
@@ -2239,6 +2280,12 @@ pub mod closer {
                     node: Default::default(),
                     callback: <Self as bun_threading::work_pool::OwnedTask>::__callback,
                 },
+                #[cfg(all(debug_assertions, any(target_os = "linux", target_os = "android")))]
+                scheduled_from: bun_core::StoredTrace::capture(None),
+                #[cfg(all(debug_assertions, any(target_os = "linux", target_os = "android")))]
+                scheduled_on_tid: bun_sys::close_ledger::current_tid(),
+                #[cfg(all(debug_assertions, any(target_os = "linux", target_os = "android")))]
+                scheduled_description: bun_sys::close_ledger::FdDescription::of(fd.native()),
             }));
         }
     }

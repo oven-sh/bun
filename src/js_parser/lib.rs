@@ -68,7 +68,7 @@ pub mod Macro {
 
     /// Lower-tier handle for `js_parser_jsc::Macro::MacroContext`.
     ///
-    /// Real fields (`remap`, `resolver`, `bump`) reference
+    /// Real fields (a `Transpiler` back-pointer, `bump`) reference
     /// `Transpiler` and JSC types that live in crates which depend on
     /// `bun_js_parser`. To break the dep cycle the higher-tier `_jsc` crate
     /// owns that state behind `data`; the visit pass reaches it via
@@ -81,7 +81,7 @@ pub mod Macro {
         /// `bun_js_parser_jsc` reinterprets the bits as a `JSValue`.
         pub javascript_object: MacroJSCtx,
         /// Opaque pointer to the higher-tier macro-runner state
-        /// (resolver/remap/bump). Allocated by `init`, freed by `deinit`;
+        /// (transpiler back-pointer, bump). Allocated by `init`, freed by `deinit`;
         /// `bun_js_parser` never dereferences it.
         pub data: *mut core::ffi::c_void,
     }

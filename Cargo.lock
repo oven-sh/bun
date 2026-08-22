@@ -868,7 +868,6 @@ dependencies = [
  "bun_ptr",
  "bun_resolver",
  "bun_threading",
- "bun_wyhash",
  "strum",
  "thiserror",
 ]

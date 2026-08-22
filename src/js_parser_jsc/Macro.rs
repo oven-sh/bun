@@ -635,9 +635,16 @@ impl MacroHostSeed {
 
 pub struct MacroHost {
     /// How every other thread reaches the host VM: post a request, wake it.
-    handle: VmHandle,
+    /// `Err` if the VM could not be created; every request then fails with it.
+    handle: Result<VmHandle, Vec<u8>>,
     thread: bun_threading::Guarded<Option<std::thread::JoinHandle<()>>>,
 }
+
+/// What the host thread reports once it has started (or failed to).
+type HostStartup = std::sync::Arc<(
+    bun_threading::Guarded<Option<Result<VmHandle, Vec<u8>>>>,
+    ResetEvent,
+)>;
 
 static HOST: OnceLock<MacroHost> = OnceLock::new();
 
@@ -650,7 +657,7 @@ impl MacroHost {
     fn get_or_start(seed: impl FnOnce() -> MacroHostSeed) -> &'static MacroHost {
         HOST.get_or_init(|| {
             let seed = seed();
-            let ready: std::sync::Arc<(bun_threading::Guarded<Option<VmHandle>>, ResetEvent)> =
+            let ready: HostStartup =
                 std::sync::Arc::new((bun_threading::Guarded::new(None), ResetEvent::default()));
             let ready_for_thread = std::sync::Arc::clone(&ready);
             // `VirtualMachine::init` plus module evaluation needs more than the
@@ -665,8 +672,10 @@ impl MacroHost {
                 .0
                 .lock()
                 .take()
-                .expect("macro host published its handle before signalling ready");
-            bun_core::add_exit_callback(shutdown_at_exit);
+                .expect("macro host reported before signalling ready");
+            if handle.is_ok() {
+                bun_core::add_exit_callback(shutdown_at_exit);
+            }
             MacroHost {
                 handle,
                 thread: bun_threading::Guarded::new(Some(thread)),
@@ -676,9 +685,16 @@ impl MacroHost {
 
     /// Post `request` to the host and park until it has been answered.
     fn run(&self, request: &mut MacroRequest<'_>) {
+        let handle = match &self.handle {
+            Ok(handle) => handle,
+            Err(reason) => {
+                request.outcome = MacroOutcome::Failed(MacroFailure::text(reason.clone()));
+                return;
+            }
+        };
         let request_ptr: *mut MacroRequest<'_> = request;
         let task = NonNull::from(request.task.from(request_ptr, AutoDeinit::ManualDeinit));
-        match self.handle.post(task) {
+        match handle.post(task) {
             bun_jsc::Posted::Queued => request.done.wait(),
             // The host has already shut down (process exit is under way on
             // another thread); `outcome` still holds its initial failure.
@@ -700,9 +716,10 @@ impl MacroHost {
         if ON_HOST_THREAD.get() {
             return;
         }
+        let Ok(handle) = &host.handle else { return };
         STOP.store(true, core::sync::atomic::Ordering::Release);
         // Also interrupts a macro that is stuck in synchronous JS.
-        host.handle.request_termination();
+        handle.request_termination();
         let _ = thread.join();
     }
 }
@@ -711,10 +728,7 @@ extern "C" fn shutdown_at_exit() {
     MacroHost::shutdown();
 }
 
-fn host_thread_main(
-    seed: MacroHostSeed,
-    ready: std::sync::Arc<(bun_threading::Guarded<Option<VmHandle>>, ResetEvent)>,
-) {
+fn host_thread_main(seed: MacroHostSeed, ready: HostStartup) {
     Output::Source::configure_named_thread(bun_core::zstr!("Macros"));
     ON_HOST_THREAD.set(true);
     jsc::mark_binding();
@@ -727,19 +741,26 @@ fn host_thread_main(
     } = seed;
     let env_loader: *mut bun_dotenv::Loader =
         bun_core::heap::into_raw(Box::new(bun_dotenv::Loader::init_with_map(env_map)));
-    let vm_ptr = VirtualMachine::init(InitOptions {
+    let vm_ptr = match VirtualMachine::init(InitOptions {
         transform_options,
         env_loader: NonNull::new(env_loader),
         is_main_thread: false,
         is_macro_vm: true,
         ..Default::default()
-    })
-    .unwrap_or_else(|err| {
-        panic!(
-            "failed to start the macro VM: {}",
-            bun_core::output::ErrName::name(&err).escape_ascii()
-        )
-    });
+    }) {
+        Ok(vm) => vm,
+        Err(err) => {
+            *ready.0.lock() = Some(Err([
+                b"the macro VM failed to start: ".as_slice(),
+                bun_core::output::ErrName::name(&err),
+            ]
+            .concat()));
+            ready.1.set();
+            // SAFETY: `heap::into_raw` above; nothing else holds it.
+            drop(unsafe { bun_core::heap::take(env_loader) });
+            return;
+        }
+    };
     debug_assert!(core::ptr::eq(vm_ptr, VirtualMachine::get_mut_ptr()));
     let vm = VirtualMachine::get().as_mut();
 
@@ -774,7 +795,7 @@ fn host_thread_main(
     };
     HOST_STATE.set(&raw const state);
 
-    *ready.0.lock() = Some(vm.handle());
+    *ready.0.lock() = Some(Ok(vm.handle()));
     ready.1.set();
     drop(ready);
 
@@ -822,8 +843,8 @@ fn host_thread_main(
 /// microtask) while another request's macro call is on the stack.
 struct HostState {
     startup_error: Option<String>,
-    /// Loaded macro functions by `(specifier, export)`.
-    functions: RefCell<HashMap<u64, Strong>>,
+    /// Loaded macro functions by `specifier NUL export`.
+    functions: RefCell<HashMap<Box<[u8]>, Strong>>,
     /// Requests that have been started and not yet answered (waiting on an
     /// import or on the macro's promise).
     in_flight: RefCell<Vec<*mut MacroRequest<'static>>>,
@@ -846,18 +867,16 @@ impl HostState {
         f(unsafe { &*state })
     }
 
-    fn key(request: &MacroRequest<'_>) -> u64 {
-        let mut hasher = bun_wyhash::Wyhash11::init(0);
-        hasher.update(request.specifier);
-        hasher.update(b"\0");
-        hasher.update(request.function_name);
-        hasher.final_()
+    fn key(request: &MacroRequest<'_>) -> Box<[u8]> {
+        [request.specifier, b"\0", request.function_name]
+            .concat()
+            .into_boxed_slice()
     }
 
     fn start(&self, request: *mut MacroRequest<'static>, global: &JSGlobalObject) {
         self.in_flight.borrow_mut().push(request);
         // SAFETY: the caller is parked until we answer; exclusive access.
-        let req = unsafe { &mut *request };
+        let req = unsafe { &*request };
         if let Some(err) = &self.startup_error {
             return self.fail(request, MacroFailure::text(err.clone()));
         }
@@ -1184,6 +1203,15 @@ struct Convert<'a> {
 }
 
 impl Convert<'_> {
+    fn cannot_coerce(&self, value: JSValue) -> ConvertError {
+        let name = value.get_class_info_name().unwrap_or(b"unknown");
+        ConvertError::Message(format!(
+            "cannot coerce {} ({:?}) to Bun's AST. Please return a simpler type",
+            bstr::BStr::new(name),
+            value.js_type(),
+        ))
+    }
+
     fn value(&mut self, value: JSValue) -> Result<MacroValue, ConvertError> {
         use ConsoleObject::formatter::Tag as T;
         let global = self.global;
@@ -1277,16 +1305,9 @@ impl Convert<'_> {
                         return Err(ConvertError::Value(value));
                     }
                 }
-                MacroValue::String(Box::default())
+                return Err(self.cannot_coerce(value));
             }
-            _ => {
-                let name = value.get_class_info_name().unwrap_or(b"unknown");
-                return Err(ConvertError::Message(format!(
-                    "cannot coerce {} ({:?}) to Bun's AST. Please return a simpler type",
-                    bstr::BStr::new(name),
-                    value.js_type(),
-                )));
-            }
+            _ => return Err(self.cannot_coerce(value)),
         })
     }
 }

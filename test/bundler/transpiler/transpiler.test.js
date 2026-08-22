@@ -4481,9 +4481,9 @@ console.log(foo, array);
         "outer-macro.ts": `
           export function outer() {
             const code = new Bun.Transpiler({ loader: "ts" }).transformSync("export const v: number = 1 + 2;");
-            const folded = code.includes("v = 3") || code.includes("1 + 2");
+            const transformed = !code.includes(": number") && code.includes("1 + 2");
             const other = import.meta.require("./other.cjs");
-            return "folded=" + folded + " other=" + other.value;
+            return "transformed=" + transformed + " other=" + other.value;
           }
         `,
         "other.cjs": otherLines.join("\n"),
@@ -4510,7 +4510,7 @@ console.log(foo, array);
       expect(await Bun.file(join(String(dir), "out.json")).text()).toBe(
         JSON.stringify({
           pre: "inner-value",
-          res: "folded=true other=601",
+          res: "transformed=true other=601",
           tail: { list: [2, 4, 6], label: "a-b" },
         }),
       );

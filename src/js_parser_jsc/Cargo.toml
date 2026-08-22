@@ -29,5 +29,4 @@ bun_options_types.workspace = true
 bun_ptr.workspace = true
 bun_resolver.workspace = true
 bun_threading.workspace = true
-bun_wyhash.workspace = true
 thiserror.workspace = true

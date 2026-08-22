@@ -20,7 +20,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { ar, cc, cxx, nasm } from "./compile.ts";
 import type { BuildType, Config } from "./config.ts";
 import { assert } from "./error.ts";
@@ -162,7 +162,6 @@ export type Source =
  */
 export type BuildSpec =
   | NestedCmakeBuild
-  | CargoBuild
   | DirectBuild
   | {
       /** No build step — headers-only or prebuilt binaries. */
@@ -369,41 +368,6 @@ export interface PreBuildSpec {
   outputs: string[];
 }
 
-export interface CargoBuild {
-  kind: "cargo";
-  /**
-   * Subdirectory within the source dir containing the Cargo.toml to build.
-   * E.g. lolhtml's C bindings crate lives at `c-api/`, not the repo root
-   * (which is the pure-rust crate).
-   */
-  manifestDir: string;
-  /**
-   * Output library basename (no prefix/suffix). Cargo always names the output
-   * after the crate's `[lib] name`, which may differ from the directory name.
-   */
-  libName: string;
-  /**
-   * Rust target triple override. Cargo defaults to the host triple, which
-   * is usually what we want — but cross-compiles (e.g. arm64-windows on an
-   * x64 windows CI runner) need this explicitly.
-   *
-   * When set, cargo's output path changes to `<target-dir>/<triple>/<profile>/`.
-   */
-  rustTarget?: string;
-  /**
-   * RUSTFLAGS for this build. Passed via CARGO_ENCODED_RUSTFLAGS with
-   * unit-separator (\x1f) encoding so multi-word flags work.
-   */
-  rustflags?: string[];
-  /**
-   * Tier 3 targets (e.g. aarch64-unknown-freebsd) have no prebuilt std, so
-   * `rustup target add` (dep_cargo_cross rule) won't help. When true, passes
-   * `-Zbuild-std=std,panic_abort` so cargo builds std from source. Requires
-   * nightly cargo + `rustup component add rust-src`.
-   */
-  buildStd?: boolean;
-}
-
 /**
  * What a dependency provides to bun's build: libraries to link, headers to
  * include, defines to set. All paths are resolved to absolute during
@@ -503,7 +467,7 @@ export interface ResolvedDep {
   name: string;
   /**
    * Absolute paths to .a/.lib files for link(). Populated by nested-cmake/
-   * cargo/prebuilt deps, and by `direct` deps when `cfg.archiveDeps` is on.
+   * prebuilt deps, and by `direct` deps when `cfg.archiveDeps` is on.
    */
   libs: string[];
   /**
@@ -614,46 +578,6 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
     pool: "dep",
   });
 
-  // Cargo build: runs `cargo build` in the manifest dir. Only registered
-  // if cargo is available — a missing rust toolchain makes ninja fail with
-  // a clear "unknown build rule 'dep_cargo'" instead of a cryptic sh error.
-  //
-  // Env is passed via stream.ts --env (ninja has no native env support).
-  // restat: cargo's incremental build doesn't touch unchanged outputs.
-  if (cfg.cargo !== undefined) {
-    n.rule("dep_cargo", {
-      command: `${stream} --cwd=$manifestdir $env ${q(cfg.cargo)} build $args`,
-      description: "cargo $name",
-      restat: true,
-      pool: "dep",
-    });
-    // Cross-compile variant: ensure the rust std for the target triple is
-    // installed before building. CI images install rustup as a different
-    // user/HOME than the build runs under, so the target may be missing even
-    // though `rustup target add` ran at image-build time. `rustup toolchain
-    // install --force` reinstalls missing components rather than trusting
-    // "the dir exists" — also repairs a partially auto-installed pinned
-    // toolchain (no distributable manifest, which would otherwise error with
-    // `Missing manifest in toolchain '<channel>-<host>'` before cargo even
-    // ran). ~70ms no-op when complete. Same pattern as `rust_build_cross` in
-    // rust.ts — see the longer comment there.
-    const rustup = q(join(dirname(cfg.cargo), `rustup${cfg.host.exeSuffix}`));
-    const cargoCrossEnsure =
-      cfg.rustToolchain !== undefined
-        ? `${stream} $env ${rustup} -q toolchain install ${cfg.rustToolchain} --force --no-self-update --component rust-src --target $rust_target`
-        : `${stream} $env ${rustup} -q target add $rust_target`;
-    // Windows: ninja runs commands via CreateProcess (no shell) — wrap in
-    // `cmd /c "..."` so `&&` is interpreted as a chain operator instead of
-    // being passed as a literal arg. See rust.ts `rust_build_cross`.
-    const cargoCrossChain = `${cargoCrossEnsure} && ${stream} --cwd=$manifestdir $env ${q(cfg.cargo)} build $args`;
-    n.rule("dep_cargo_cross", {
-      command: hostWin ? `cmd /c "${cargoCrossChain}"` : cargoCrossChain,
-      description: "cargo $name ($rust_target)",
-      restat: true,
-      pool: "dep",
-    });
-  }
-
   // preBuild: runs an arbitrary command before cmake configure. Used for
   // build steps that live outside cmake (ICU via msbuild on Windows).
   // restat: if outputs are unchanged (script is idempotent), prune
@@ -707,7 +631,7 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
     restat: true,
   });
 
-  // The `dep` pool: depth-4 balances two concerns. Each nested cmake/cargo
+  // The `dep` pool: depth-4 balances two concerns. Each nested cmake
   // build spawns its own -j parallelism; running all 15 at once would
   // oversubscribe cores badly (15 × nproc jobs). Four-at-a-time keeps CPU
   // saturated without thrashing. Output streams live via FD 3 regardless —
@@ -841,7 +765,6 @@ export function resolveDep(
     // Local/in-tree: no .ref to write. Use the build system's manifest file
     // as the stamp — touching it triggers reconfigure/rebuild.
     //   cmake deps → CMakeLists.txt (in sourceSubdir if set, e.g. zstd)
-    //   cargo deps → Cargo.toml (in manifestDir)
     //   direct/header-only → none: the sources are on disk before ninja
     //     starts, so the compiler depfiles see edits directly. (Stamping the
     //     directory would rebuild the PCH whenever a top-level entry moved.)
@@ -850,9 +773,6 @@ export function resolveDep(
     if (buildSpec.kind === "nested-cmake") {
       stampDir = buildSpec.sourceSubdir ? resolve(srcDir, buildSpec.sourceSubdir) : srcDir;
       stampFile = "CMakeLists.txt";
-    } else if (buildSpec.kind === "cargo") {
-      stampDir = resolve(srcDir, buildSpec.manifestDir);
-      stampFile = "Cargo.toml";
     } else {
       stampDir = srcDir;
       stampFile = "";
@@ -906,10 +826,6 @@ export function resolveDep(
     });
     libs = result.libs;
     outputs = result.libs;
-  } else if (buildSpec.kind === "cargo") {
-    const result = emitCargo(n, cfg, dep.name, buildSpec, { srcDir, sourceStamp: sourceStamp! }); // .ref or Cargo.toml
-    libs = result.libs;
-    outputs = result.libs;
   } else if (buildSpec.kind === "direct") {
     const result = emitDirect(n, cfg, dep.name, buildSpec, { srcDir, sourceStamp, fetchDepStamps });
     libs = result.libs;
@@ -961,7 +877,7 @@ export function resolveDep(
  * download failed.
  *
  * Must stay in sync with the path computation inside emitNestedCmake /
- * emitCargo / emitPrebuilt — that's the contract between cpp-only
+ * emitPrebuilt — that's the contract between cpp-only
  * (producer) and link-only (consumer). If those emit-side paths change,
  * change this too.
  */
@@ -993,14 +909,6 @@ export function computeDepLibs(cfg: Config, dep: Dependency): string[] {
       libs.push(...buildSpec.preBuild.outputs);
     }
     return libs;
-  }
-
-  // cargo: single lib in targetDir/<triple?>/<profile>/.
-  if (buildSpec.kind === "cargo") {
-    const targetDir = depBuildDir(cfg, dep.name);
-    const profile = cfg.release ? "release" : "debug";
-    const outSubdir = buildSpec.rustTarget ? join(buildSpec.rustTarget, profile) : profile;
-    return [resolve(targetDir, outSubdir, `${cfg.libPrefix}${buildSpec.libName}${cfg.libSuffix}`)];
   }
 
   // direct: single lib<name>.a when archiveDeps; otherwise the dep's .o
@@ -1389,139 +1297,6 @@ function emitNestedCmake(
   n.phony(name, allLibs);
 
   return { libs: allLibs };
-}
-
-interface EmitCargoInput {
-  srcDir: string;
-  sourceStamp: string;
-}
-
-/**
- * Emit a ninja build rule for a cargo project. Returns the single static lib
- * cargo produces.
- *
- * Cargo's build model is self-contained — no separate configure step. We
- * just point it at a manifest dir, set the target dir, and let it resolve
- * everything. Its own incremental build is reliable, so restat=1 on the
- * rule keeps our downstream no-ops fast.
- */
-function emitCargo(n: Ninja, cfg: Config, name: string, spec: CargoBuild, input: EmitCargoInput): { libs: string[] } {
-  const hostWin = cfg.host.os === "windows";
-  assert(cfg.cargo !== undefined, `dep "${name}" requires cargo but no rust toolchain was found`, {
-    hint: "Install rust: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh",
-  });
-
-  const { srcDir, sourceStamp } = input;
-  const manifestDir = resolve(srcDir, spec.manifestDir);
-  const targetDir = depBuildDir(cfg, name);
-  const profile = cfg.release ? "release" : "debug";
-
-  // ─── Resolve output path ───
-  // Cargo's staticlib output layout:
-  //   <target-dir>/<profile>/{lib}<name>.{a,lib}           (no --target)
-  //   <target-dir>/<triple>/<profile>/{lib}<name>.{a,lib}  (with --target)
-  // Follows platform convention (cfg.libPrefix/libSuffix).
-  const outSubdir = spec.rustTarget ? join(spec.rustTarget, profile) : profile;
-  const lib = resolve(targetDir, outSubdir, `${cfg.libPrefix}${spec.libName}${cfg.libSuffix}`);
-
-  // ─── Build args ───
-  const args: string[] = ["--locked", "--target-dir", targetDir];
-  if (cfg.release) args.push("--release");
-  if (spec.rustTarget) args.push("--target", spec.rustTarget);
-  if (spec.buildStd) args.push("-Zbuild-std=std,panic_abort");
-
-  // ─── Environment ───
-  // CARGO_ENCODED_RUSTFLAGS: the separator is U+001F (unit separator), not
-  // space. This is cargo's way of passing multi-argument flags unambiguously.
-  const env: Record<string, string> = {
-    CARGO_TERM_COLOR: "always",
-  };
-  if (cfg.cargoHome !== undefined) env.CARGO_HOME = cfg.cargoHome;
-  if (cfg.rustupHome !== undefined) env.RUSTUP_HOME = cfg.rustupHome;
-  // Pin the toolchain explicitly. `vendor/` is commonly a symlink shared
-  // across worktrees; rustup's directory walk from manifestDir resolves
-  // through the symlink and picks up the *target* worktree's
-  // `rust-toolchain.toml`. The dep then bundles a libstd that doesn't match
-  // the workspace staticlib's, and the link dies on duplicate
-  // `rust_eh_personality`. RUSTUP_TOOLCHAIN overrides the directory walk.
-  if (cfg.rustToolchain !== undefined) env.RUSTUP_TOOLCHAIN = cfg.rustToolchain;
-
-  // Path remapping (CI reproducibility) — mirrors the C/C++
-  // `-ffile-prefix-map` entries in flags.ts and the same block in rust.ts,
-  // so vendored Rust deps built here (lol-html) don't embed the absolute
-  // checkout path in `file!()`/panic locations/debuginfo either.
-  const rustflags: string[] = [...(spec.rustflags ?? [])];
-  if (cfg.ci) {
-    rustflags.push(`--remap-path-prefix=${cfg.cwd}=.`);
-    rustflags.push(`--remap-path-prefix=${cfg.vendorDir}=vendor`);
-  }
-
-  if (rustflags.length > 0) {
-    // The \x1f encoding is deliberate — see cargo's docs on CARGO_ENCODED_RUSTFLAGS.
-    env.CARGO_ENCODED_RUSTFLAGS = rustflags.join("\x1f");
-  }
-
-  // Windows: pin the linker to MSVC's link.exe. Without this, if Git Bash
-  // is in PATH, its /usr/bin/link (GNU hard-link tool) shadows the real
-  // linker and cargo's link step fails with a baffling error.
-  if (cfg.windows && cfg.msvcLinker !== undefined) {
-    // Triple-specific linker env var. Cargo reads CARGO_TARGET_<TRIPLE>_LINKER
-    // where <TRIPLE> is uppercased with hyphens→underscores.
-    const triple = spec.rustTarget ?? (cfg.arm64 ? "aarch64-pc-windows-msvc" : "x86_64-pc-windows-msvc");
-    const envKey = `CARGO_TARGET_${triple.toUpperCase().replace(/-/g, "_")}_LINKER`;
-    env[envKey] = cfg.msvcLinker;
-  }
-
-  // Cross-compile (Android): cargo's default `cc` linker can't handle the
-  // foreign ELF objects. Use our clang as the linker driver and pass
-  // --target/--sysroot through, same as the C/C++ deps do via globalFlags.
-  // The cdylib output also wants -lunwind, which lives in the NDK's
-  // bundled clang resource dir (not the sysroot), so we add that -L too.
-  if (cfg.crossTarget !== undefined && spec.rustTarget !== undefined) {
-    const envKey = `CARGO_TARGET_${spec.rustTarget.toUpperCase().replace(/-/g, "_")}_LINKER`;
-    env[envKey] = cfg.cc;
-    const linkArgs = [`-Clink-arg=--target=${cfg.crossTarget}`];
-    if (cfg.sysroot !== undefined) linkArgs.push(`-Clink-arg=--sysroot=${cfg.sysroot}`);
-    if (cfg.androidNdkRuntimeDir !== undefined) {
-      const llvmArch = cfg.arm64 ? "aarch64" : "x86_64";
-      linkArgs.push(`-Clink-arg=-L${join(cfg.androidNdkRuntimeDir, llvmArch)}`);
-    }
-    env.CARGO_ENCODED_RUSTFLAGS = [...rustflags, ...linkArgs].join("\x1f");
-  }
-
-  // ─── Emit build node ───
-  // dep_cargo_cross prepends `rustup target add` for Tier 2 cross targets.
-  // Tier 3 targets (buildStd=true) have no prebuilt std, so target-add would
-  // fail — they use plain dep_cargo with -Zbuild-std instead.
-  const cross = cfg.crossTarget !== undefined && spec.rustTarget !== undefined && !spec.buildStd;
-  n.build({
-    outputs: [lib],
-    rule: cross ? "dep_cargo_cross" : "dep_cargo",
-    inputs: [],
-    // Rebuild if source changed, cargo binary changed, or the pinned
-    // toolchain changed. Cargo's own dependency tracking handles file-level
-    // granularity below manifestDir. `rust-toolchain.toml` matters because
-    // the dep's staticlib bundles a copy of libstd — if the workspace
-    // staticlib is built with a different nightly, the two archives carry
-    // mismatched std hashes and both get pulled into the link, colliding on
-    // unmangled symbols like `rust_eh_personality`.
-    implicitInputs: [sourceStamp, cfg.cargo, resolve(cfg.cwd, "rust-toolchain.toml")],
-    vars: {
-      name,
-      manifestdir: manifestDir,
-      args: quoteArgs(args, hostWin),
-      ...(cross ? { rust_target: spec.rustTarget! } : {}),
-      // stream.ts's --env=K=V format. Values platform-quoted since ninja
-      // passes the command line through the host's argv parser; stream.ts
-      // receives them as proper argv entries.
-      env: Object.entries(env)
-        .map(([k, v]) => `--env=${k}=${quote(v, hostWin)}`)
-        .join(" "),
-    },
-  });
-  n.phony(name, [lib]);
-
-  return { libs: [lib] };
 }
 
 // ---------------------------------------------------------------------------

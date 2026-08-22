@@ -21,7 +21,6 @@ const useColor = interactive && (globalThis.Bun?.enableANSIColors ?? true);
 export const dim = (s: string): string => (useColor ? `\x1b[2m${s}\x1b[22m` : s);
 export const cyan = (s: string): string => (useColor ? `\x1b[36m${s}\x1b[39m` : s);
 export const green = (s: string): string => (useColor ? `\x1b[32m${s}\x1b[39m` : s);
-export const red = (s: string): string => (useColor ? `\x1b[31m${s}\x1b[39m` : s);
 
 /**
  * Hash a name to a stable 256-color. Same name → same color across runs,

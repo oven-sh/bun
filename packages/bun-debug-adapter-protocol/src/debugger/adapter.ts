@@ -232,7 +232,6 @@ export type DebugAdapterEventMap = Pick<InspectorEventMap, InspectorEvent> & {
   "Adapter.response": [DAP.Response];
   "Adapter.event": [DAP.Event];
   "Adapter.error": [Error];
-  "Adapter.reverseRequest": [DAP.Request];
 } & {
   "Process.requested": [unknown];
   "Process.spawned": [ChildProcess];
@@ -412,15 +411,6 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
       process.nextTick(() => {
         this.emitAdapterEvent(event, body);
       });
-    });
-  }
-
-  #reverseRequest<T extends keyof DAP.RequestMap>(command: T, args?: DAP.RequestMap[T]): void {
-    this.emit("Adapter.reverseRequest", {
-      type: "request",
-      seq: 0,
-      command,
-      arguments: args,
     });
   }
 
@@ -1461,66 +1451,7 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
     });
   }
 
-  ["Console.messageAdded"](event: JSC.Console.MessageAddedEvent): void {
-    // const { message } = event;
-    // const { type, level, text, parameters, line, column, stackTrace } = message;
-    // let output: string;
-    // let variablesReference: number | undefined;
-    // if (parameters?.length) {
-    //   output = "";
-    //   const variables = parameters.map((parameter, i) => {
-    //     const variable = this.#addObject(parameter, { name: `${i}`, objectGroup: "console" });
-    //     output += remoteObjectToString(parameter, true) + " ";
-    //     return variable;
-    //   });
-    //   if (variables.length === 1) {
-    //     const [{ variablesReference: reference }] = variables;
-    //     variablesReference = reference;
-    //   } else {
-    //     variablesReference = this.#variableId++;
-    //     //this.#variables.set(variablesReference, variables);
-    //   }
-    // } else {
-    //   output = text;
-    // }
-    // if (!output.endsWith("\n")) {
-    //   output += "\n";
-    // }
-    // const color = consoleLevelToAnsiColor(level);
-    // if (color) {
-    //   output = `${color}${output}`;
-    // }
-    // if (variablesReference) {
-    //   const containerReference = this.#variableId++;
-    //   this.#variables.set(containerReference, {
-    //     name: "",
-    //     value: "",
-    //     type: undefined,
-    //     variablesReference,
-    //   });
-    //   variablesReference = containerReference;
-    // }
-    // let source: Source | undefined;
-    // if (stackTrace) {
-    //   const { callFrames } = stackTrace;
-    //   if (callFrames.length) {
-    //     const { scriptId } = callFrames.at(-1)!;
-    //     source = this.#getSourceIfPresent(scriptId);
-    //   }
-    // }
-    // let location: Location | {} = {};
-    // if (source) {
-    //   location = this.#originalLocation(source, line, column);
-    // }
-    // this.#emit("output", {
-    //   category: "debug console",
-    //   group: consoleMessageGroup(type),
-    //   output,
-    //   variablesReference,
-    //   source,
-    //   ...location,
-    // });
-  }
+  ["Console.messageAdded"](_event: JSC.Console.MessageAddedEvent): void {}
 
   #addSource(source: Source): Source {
     let { sourceId, scriptId, path } = source;
@@ -2528,18 +2459,6 @@ function completionToExpression(completion: string): { expression: string; hint?
   };
 }
 
-function consoleMessageGroup(type: JSC.Console.ConsoleMessage["type"]): DAP.OutputEvent["group"] {
-  switch (type) {
-    case "startGroup":
-      return "start";
-    case "startGroupCollapsed":
-      return "startCollapsed";
-    case "endGroup":
-      return "end";
-  }
-  return undefined;
-}
-
 function sourceToId(source?: DAP.Source): string | number {
   const { path, sourceReference } = source ?? {};
   if (path) {
@@ -2547,19 +2466,6 @@ function sourceToId(source?: DAP.Source): string | number {
   }
   if (sourceReference) {
     return sourceReference;
-  }
-  throw new Error("No source found.");
-}
-
-function sourceToPath(source?: DAP.Source | string): string {
-  if (typeof source === "string") {
-    return source;
-  }
-  if (source) {
-    const { path } = source;
-    if (path) {
-      return path;
-    }
   }
   throw new Error("No source found.");
 }
@@ -2778,26 +2684,8 @@ function variablesSortBy(a: DAP.Variable, b: DAP.Variable): number {
   return 0;
 }
 
-function isSameLocation(a: { line?: number; column?: number }, b: { line?: number; column?: number }): boolean {
-  return (a.line === b.line || (!a.line && !b.line)) && (a.column === b.column || (!a.column && !b.column));
-}
-
-function consoleLevelToAnsiColor(level: JSC.Console.ConsoleMessage["level"]): string | undefined {
-  switch (level) {
-    case "warning":
-      return "\u001b[33m";
-    case "error":
-      return "\u001b[31m";
-  }
-  return undefined;
-}
-
 function numberIsValid(number?: number): number is number {
   return typeof number === "number" && isFinite(number) && number >= 0;
-}
-
-function locationIsSame(a?: JSC.Debugger.Location, b?: JSC.Debugger.Location): boolean {
-  return a?.scriptId === b?.scriptId && a?.lineNumber === b?.lineNumber && a?.columnNumber === b?.columnNumber;
 }
 
 function stripAnsi(string: string): string {

@@ -255,6 +255,131 @@ describe("FormData", () => {
     }
   });
 
+  // RFC 2046 §5.1.1: the CRLF preceding the boundary delimiter line is part of
+  // the delimiter. A `--boundary` sequence that is not at the start of a line
+  // is part of the enclosing field's value, not a delimiter.
+  describe("multipart boundary must follow CRLF", () => {
+    const B = "AaB03x";
+    const CRLF = "\r\n";
+    const make = (body: string) =>
+      new Response(body, { headers: { "Content-Type": `multipart/form-data; boundary=${B}` } }).formData();
+
+    for (const prefix of ["hello", "x", "zz", "-", "--"]) {
+      it(`keeps mid-line '${prefix}--${B}\\r\\n' in a value (not a delimiter)`, async () => {
+        const value = `${prefix}--${B}${CRLF}` + `Content-Disposition: form-data; name="role"${CRLF}${CRLF}` + `admin`;
+        const body =
+          `--${B}${CRLF}` +
+          `Content-Disposition: form-data; name="comment"${CRLF}${CRLF}` +
+          `${value}${CRLF}` +
+          `--${B}--${CRLF}`;
+        const fd = await make(body);
+        expect([...fd]).toEqual([["comment", value]]);
+        expect(fd.get("role")).toBeNull();
+      });
+    }
+
+    it("keeps mid-line '--boundary--' in a value (not the close delimiter)", async () => {
+      const value = `hello--${B}--world`;
+      const body =
+        `--${B}${CRLF}` +
+        `Content-Disposition: form-data; name="comment"${CRLF}${CRLF}` +
+        `${value}${CRLF}` +
+        `--${B}--${CRLF}`;
+      const fd = await make(body);
+      expect([...fd]).toEqual([["comment", value]]);
+    });
+
+    it("stops at the first close delimiter and discards the epilogue", async () => {
+      const body =
+        `--${B}${CRLF}` +
+        `Content-Disposition: form-data; name="comment"${CRLF}${CRLF}` +
+        `foo${CRLF}` +
+        `--${B}--${CRLF}` +
+        `--${B}${CRLF}` +
+        `Content-Disposition: form-data; name="role"${CRLF}${CRLF}` +
+        `admin${CRLF}` +
+        `--${B}--${CRLF}`;
+      const fd = await make(body);
+      expect([...fd]).toEqual([["comment", "foo"]]);
+      expect(fd.get("role")).toBeNull();
+    });
+
+    it("keeps a value that ends in CRLF", async () => {
+      const value = `line1${CRLF}line2${CRLF}`;
+      const body =
+        `--${B}${CRLF}` +
+        `Content-Disposition: form-data; name="a"${CRLF}${CRLF}` +
+        `${value}${CRLF}` +
+        `--${B}--${CRLF}`;
+      const fd = await make(body);
+      expect([...fd]).toEqual([["a", value]]);
+    });
+
+    it("accepts the close delimiter at offset 0 (empty form)", async () => {
+      const fd = await make(`--${B}--${CRLF}`);
+      expect([...fd]).toEqual([]);
+    });
+
+    it("treats the offset-0 close delimiter as final even when more parts follow", async () => {
+      const body =
+        `--${B}--${CRLF}` +
+        `--${B}${CRLF}` +
+        `Content-Disposition: form-data; name="role"${CRLF}${CRLF}` +
+        `admin${CRLF}` +
+        `--${B}--${CRLF}`;
+      const fd = await make(body);
+      expect([...fd]).toEqual([]);
+      expect(fd.get("role")).toBeNull();
+    });
+
+    it("parses a headers-only part (no body octets) as an empty value", async () => {
+      const fd = await make(
+        `--${B}${CRLF}` + `Content-Disposition: form-data; name="a"${CRLF}` + `${CRLF}--${B}--${CRLF}`,
+      );
+      expect([...fd]).toEqual([["a", ""]]);
+    });
+
+    it("parses a zero-octet body as an empty value", async () => {
+      const fd = await make(
+        `--${B}${CRLF}` + `Content-Disposition: form-data; name="a"${CRLF}${CRLF}` + `${CRLF}--${B}--${CRLF}`,
+      );
+      expect([...fd]).toEqual([["a", ""]]);
+    });
+
+    it("ignores a preamble before the first delimiter", async () => {
+      const body =
+        `this is a preamble${CRLF}` +
+        `--${B}${CRLF}` +
+        `Content-Disposition: form-data; name="a"${CRLF}${CRLF}` +
+        `hello${CRLF}` +
+        `--${B}--${CRLF}`;
+      const fd = await make(body);
+      expect([...fd]).toEqual([["a", "hello"]]);
+    });
+
+    it("Bun.serve req.formData(): mid-line boundary in a value is not a delimiter", async () => {
+      const value = `hello--${B}${CRLF}` + `Content-Disposition: form-data; name="role"${CRLF}${CRLF}` + `admin`;
+      const body =
+        `--${B}${CRLF}` +
+        `Content-Disposition: form-data; name="comment"${CRLF}${CRLF}` +
+        `${value}${CRLF}` +
+        `--${B}--${CRLF}`;
+      await using server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          const fd = await req.formData();
+          return Response.json([...fd]);
+        },
+      });
+      const res = await fetch(server.url, {
+        method: "POST",
+        headers: { "Content-Type": `multipart/form-data; boundary=${B}` },
+        body,
+      });
+      expect(await res.json()).toEqual([["comment", value]]);
+    });
+  });
+
   // RFC 2045 §5.1 / RFC 7231 §3.1.1.1: media type/subtype and parameter
   // attribute names are case-insensitive; the boundary VALUE is byte-exact.
   describe("Content-Type case-insensitivity", () => {

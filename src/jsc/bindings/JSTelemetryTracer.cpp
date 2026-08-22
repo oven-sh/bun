@@ -268,7 +268,12 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryTracerStartActiveSpan, (JSGlobalObject * lex
     MarkedArgumentBuffer args;
     args.append(span);
     JSValue result = call(globalObject, fn, jsUndefined(), args, "startActiveSpan"_s);
-    Bun__Telemetry__exit(globalObject, JSValue::encode(prev));
+    {
+        // Restoring the slot may allocate (ALS stores changed inside `fn`);
+        // do it with any exception from `fn` set aside.
+        SuspendExceptionScope suspend(vm);
+        Bun__Telemetry__exit(globalObject, JSValue::encode(prev));
+    }
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(result);
 }
@@ -443,6 +448,12 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryPropagationHeaders, (JSGlobalObject * lexica
     if ((flags & 1) && traceState && asString(traceState)->length()) {
         out->putDirectIndex(globalObject, 1, traceState);
         RETURN_IF_EXCEPTION(scope, {});
+    }
+    if ((flags & 2) && !(baggage && asString(baggage)->length())) {
+        // Baggage set via the api Context (propagation.extract / setBaggage).
+        BunString bg = Bun__Telemetry__activeExtrasBaggage(globalObject);
+        if (bg.tag != BunStringTag::Empty)
+            baggage = jsString(vm, bg.transferToWTFString());
     }
     if ((flags & 2) && baggage && asString(baggage)->length()) {
         out->putDirectIndex(globalObject, 2, baggage);

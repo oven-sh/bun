@@ -3,6 +3,8 @@
 
 #include "root.h"
 #include "TelemetryContext.h"
+#include "TelemetryInternal.h"
+#include "BunClientData.h"
 
 namespace Bun {
 using namespace JSC;
@@ -179,4 +181,36 @@ extern "C" JSC::EncodedJSValue Bun__Telemetry__activeExtras(Zig::GlobalObject* g
 {
     JSValue extras = TelemetryContextSlot::current(globalObject).extras;
     return JSValue::encode(extras ? extras : jsUndefined());
+}
+
+/// The W3C `baggage` header for Baggage carried in the active api Context
+/// (e.g. `context.with(propagation.extract(...), ...)`), or Empty. +1 ref.
+/// A failure to serialize is swallowed (Empty), never left pending.
+extern "C" BunString Bun__Telemetry__activeExtrasBaggage(Zig::GlobalObject* globalObject)
+{
+    JSValue extras = TelemetryContextSlot::current(globalObject).extras;
+    if (!extras || !extras.isCell())
+        return { BunStringTag::Empty, {} };
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSValue fn = Bun::telemetryInternalFunction(globalObject, WebCore::builtinNames(vm).baggageHeaderFromExtrasPublicName());
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return { BunStringTag::Empty, {} };
+    }
+    MarkedArgumentBuffer args;
+    args.append(extras);
+    JSValue header = call(globalObject, fn, jsUndefined(), args, "baggageHeaderFromExtras"_s);
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return { BunStringTag::Empty, {} };
+    }
+    if (!header.isString() || !asString(header)->length())
+        return { BunStringTag::Empty, {} };
+    BunString out = Bun::toStringRef(globalObject, header);
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return { BunStringTag::Empty, {} };
+    }
+    return out;
 }

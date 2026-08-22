@@ -265,6 +265,12 @@ function parseBaggage(header: string): Baggage | undefined {
   return m.size ? new Baggage(m) : undefined;
 }
 
+/** W3C `baggage` header for the Baggage in an active-slot extras Map, or "" (used natively). */
+function baggageHeaderFromExtras(extras: unknown): string {
+  const bag = $isMap(extras) ? (extras as Map<symbol, unknown>).get(BAGGAGE_KEY) : undefined;
+  return bag != null && typeof (bag as any).getAllEntries === "function" ? serializeBaggage(bag) : "";
+}
+
 function serializeBaggage(bag: any): string {
   const parts: string[] = [];
   for (const [k, e] of bag.getAllEntries()) {
@@ -473,6 +479,7 @@ export default {
   unpackContext,
   toNativeSpan,
   makeTraceState,
+  baggageHeaderFromExtras,
   TraceState,
   [Symbol.for("nodejs.util.inspect.custom")]() {
     return `Bun.otel { enabled: ${nativeIsEnabled()} }`;

@@ -2018,6 +2018,12 @@ pub fn generate_network_task_for_tarball<'a>(
             // reporting again or waiting on a task that was never scheduled.
             mark_network_task_failed(this, task_id);
         }
+        // Hand the pool slot back: nothing was scheduled on it.
+        // SAFETY: `net_ptr` came from `get_network_task` above and `write_init`
+        // made every field drop-safe; `for_tarball` fails before it initializes
+        // `unsafe_http_client` (a `MaybeUninit`, no drop glue), so dropping the
+        // slot in place is sound and nothing else aliases it.
+        unsafe { this.preallocated_network_tasks.put(net_ptr) };
         return Err(err);
     }
 

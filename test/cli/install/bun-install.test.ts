@@ -162,20 +162,20 @@ describe.concurrent("bun-install", () => {
       args: ["--network-concurrency", "2"],
       extraEnv: { BUN_CONFIG_MAX_HTTP_REQUESTS: "50" },
     },
-  ])("bun install with $label doesnt go over $cap concurrent requests", async ({ cap, args, extraEnv }) => {
+  ])("bun install with $label keeps exactly $cap requests in flight", async ({ cap, args, extraEnv }) => {
     await withContext(defaultOpts, async ctx => {
-      let maxConcurrentRequests = 0;
-      let concurrentRequests = 0;
+      // The stub holds every manifest request open until the test releases them,
+      // so the number in flight is exactly how many the client is willing to send.
+      let inFlight = 0;
+      let peakInFlight = 0;
+      const { promise: capReached, resolve: onCapReached } = Promise.withResolvers<void>();
+      const { promise: released, resolve: release } = Promise.withResolvers<void>();
       setContextHandler(ctx, async function () {
-        concurrentRequests++;
-        maxConcurrentRequests = Math.max(maxConcurrentRequests, concurrentRequests);
-        try {
-          // Simulated registry latency: requests have to overlap for the stub to
-          // observe how many the client keeps in flight at once.
-          await Bun.sleep(10);
-        } finally {
-          concurrentRequests--;
-        }
+        inFlight++;
+        peakInFlight = Math.max(peakInFlight, inFlight);
+        if (inFlight >= cap) onCapReached();
+        await released;
+        inFlight--;
         return new Response("404", { status: 404 });
       });
 
@@ -195,9 +195,15 @@ describe.concurrent("bun-install", () => {
         stderr: "pipe",
         env: { ...env, ...extraEnv },
       });
+      await Promise.race([capReached, proc.exited]);
+      // Nothing observable says "the client has no free slot left": a client that
+      // ignores the cap opens more connections within this window, one that
+      // honours it opens none.
+      await Bun.sleep(50);
+      release();
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(maxConcurrentRequests).toBeLessThanOrEqual(cap);
+      expect(peakInFlight).toBe(cap);
       expect({ totalRequests: ctx.requested, stdout, stderr, exitCode }).toEqual({
         totalRequests: 51,
         stdout: expect.stringContaining("bun install v1."),

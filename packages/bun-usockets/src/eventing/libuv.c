@@ -24,9 +24,14 @@
 #if __has_include("wtf/Platform.h")
 #include "wtf/Platform.h"
 #elif !defined(ASSERT_ENABLED)
-#if defined(BUN_DEBUG) || defined(__has_feature) && __has_feature(address_sanitizer) || defined(__SANITIZE_ADDRESS__)
+#if defined(BUN_DEBUG) || defined(__SANITIZE_ADDRESS__)
 #define ASSERT_ENABLED 1
-#else
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define ASSERT_ENABLED 1
+#endif
+#endif
+#ifndef ASSERT_ENABLED
 #define ASSERT_ENABLED 0
 #endif
 #endif

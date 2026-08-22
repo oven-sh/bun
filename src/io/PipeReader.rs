@@ -1840,12 +1840,17 @@ impl WindowsBufferedReader {
 
     pub fn close_impl<const CALL_DONE: bool>(&mut self) {
         // Reads recorded for a handle this reader is letting go of are dropped
-        // with it (their bytes stay in `_buffer`).
+        // with it (their bytes stay in `_buffer`); an overdrawn `maxBuffer` is
+        // still reported, since the owner keys `exitedDueToMaxBuffer` off it.
         // SAFETY: the node is a field of `self`.
         unsafe { uv::Deferred::cancel(&raw mut self.stream_read.deferred) };
         self.stream_read.bytes = 0;
         self.stream_read.end = StreamReadEnd::Open;
-        self.stream_read.over_budget = false;
+        if mem::take(&mut self.stream_read.over_budget) {
+            if let Some(maxbuf) = self.maxbuf {
+                MaxBuf::overflowed(maxbuf);
+            }
+        }
         if let Some(source) = self.source.take() {
             match source {
                 Source::SyncFile(mut file) | Source::File(mut file) => {

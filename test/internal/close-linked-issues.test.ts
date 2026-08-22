@@ -36,7 +36,10 @@ interface Call {
 }
 
 interface Options {
+  /** The description in the merge event (or, for a manual run, the one the API returns). */
   body: string;
+  /** What `pulls.get` returns as the description. Defaults to `body`. */
+  apiBody?: string;
   merged?: boolean;
   base?: string;
   /** `workflow_dispatch` inputs. Without them the run comes from a `pull_request_target` event. */
@@ -78,7 +81,7 @@ async function run(options: Options) {
           return {
             data: {
               number: PR,
-              body: options.body,
+              body: options.apiBody ?? options.body,
               merged: options.merged ?? true,
               base: { ref: options.base ?? "main", repo: { default_branch: "main" } },
             },
@@ -101,7 +104,7 @@ async function run(options: Options) {
   };
   const context = {
     repo: REPO,
-    payload: options.inputs ? { inputs: options.inputs } : { pull_request: { number: PR } },
+    payload: options.inputs ? { inputs: options.inputs } : { pull_request: { number: PR, body: options.body } },
   };
   const core = {
     info: (message: string) => logs.push(message),
@@ -300,6 +303,24 @@ test("closes the open issue and pull request, skips the closed and missing ones 
     { method: "issues.createComment", params: { ...REPO, issue_number: 2, body: "Superseded by #10." } },
   ]);
   expect(failed).toBeNull();
+});
+
+test("the description from the merge event is parsed, not a later edit", async () => {
+  const { calls, logs } = await run({ body: "Fixes #1", apiBody: "Fixes #1 and #2" });
+  expect(logs).toEqual(["#10: #1", "#1: closed issue (fixes in #10)"]);
+  expect(calls.map(call => call.method)).toEqual(["issues.update", "issues.createComment"]);
+});
+
+test("an empty description in the merge event closes nothing, whatever the API returns now", async () => {
+  const { calls, logs } = await run({ body: "", apiBody: "Fixes #1" });
+  expect(logs).toEqual(["#10: no references to close"]);
+  expect(calls).toEqual([]);
+});
+
+test("a manual run reads the current description", async () => {
+  const { calls, logs } = await run({ body: "Fixes #1", inputs: { pr_number: "10", dry_run: "true" } });
+  expect(logs).toEqual(["#10: #1 (dry run)", "#1: would close issue (fixes in #10)"]);
+  expect(calls).toEqual([]);
 });
 
 test("a dry run from workflow_dispatch reads but never writes", async () => {

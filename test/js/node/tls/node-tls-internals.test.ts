@@ -1,5 +1,8 @@
 import { canonicalizeIP } from "bun:internal-for-testing";
 import { createTest } from "node-harness";
+import { createHash, X509Certificate } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { rootCertificates } from "tls";
 const { describe, expect } = createTest(import.meta.path);
 
@@ -32,5 +35,38 @@ describe("NodeTLS.cpp", () => {
       expect(cert).toStartWith("-----BEGIN CERTIFICATE-----");
       expect(cert).toEndWith("-----END CERTIFICATE-----");
     }
+  });
+
+  // Supply-chain integrity: the compiled-in trust store must be exactly the
+  // DER blobs committed in root_certs.h. If a PR injects/alters a root in the
+  // binary while hiding it from tls.rootCertificates (or vice versa), this
+  // fails. Pair with test/regression/issue/31611.test.ts which pins
+  // root_certs.h itself to Mozilla's certdata.txt.
+  test("tls.rootCertificates matches the DER blobs in root_certs.h exactly", () => {
+    const headerPath = join(import.meta.dirname, "../../../../packages/bun-usockets/src/crypto/root_certs.h");
+    const header = readFileSync(headerPath, "utf8");
+
+    const sha256 = (buf: Uint8Array) =>
+      createHash("sha256").update(buf).digest("hex").toUpperCase().match(/../g)!.join(":");
+
+    const sourceFingerprints: string[] = [];
+    for (const m of header.matchAll(/^static const unsigned char root_cert_der_\d+\[\] = \{\n([\s\S]*?)\};/gm)) {
+      const bytes = Uint8Array.from(m[1].match(/0x[0-9a-f]{2}/gi)!, h => parseInt(h, 16));
+      sourceFingerprints.push(sha256(bytes));
+    }
+
+    const tableEntries =
+      header
+        .match(/static const struct us_cert_der_t root_certs\[\] = \{\n([\s\S]*?)\};/)?.[1]
+        .match(/\{root_cert_der_\d+,/g)?.length ?? 0;
+
+    const runtimeFingerprints = rootCertificates.map(pem => new X509Certificate(pem).fingerprint256);
+
+    // Same certs, same order, nothing added or removed on either side.
+    expect(runtimeFingerprints).toEqual(sourceFingerprints);
+    // The lookup table must reference every DER array and nothing else.
+    expect(tableEntries).toBe(sourceFingerprints.length);
+    // No duplicate roots.
+    expect(new Set(runtimeFingerprints).size).toBe(runtimeFingerprints.length);
   });
 });

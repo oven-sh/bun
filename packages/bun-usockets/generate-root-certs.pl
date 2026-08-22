@@ -201,6 +201,7 @@ my $caname;
 my $certnum = 0;
 my $skipnum = 0;
 my $start_of_cert = 0;
+my @cert_entries;
 
 open(TXT,"$txt") or die "Couldn't open $txt: $!\n";
 print CRT "// Maintaining the root certificates \n";
@@ -210,8 +211,9 @@ print CRT "// for TLS certificate validation.\n";
 print CRT "//\n";
 print CRT "// The certificates come from Mozilla, specifically NSS's `certdata.txt` file.\n";
 print CRT "//\n";
-print CRT "// The PEM encodings of the certificates are converted to C strings, and committed\n";
-print CRT "// in `src/crypto/root_certs.h`.\n";
+print CRT "// The raw DER encodings of the certificates are embedded as C byte arrays so they can be\n";
+print CRT "// loaded via BoringSSL's CRYPTO_BUFFER_new_from_static_data_unsafe + X509_parse_from_buffer,\n";
+print CRT "// skipping PEM/base64 decoding and the heap copy that d2i_X509 would make.\n";
 print CRT "//\n";
 print CRT "// When to update\n";
 print CRT "//\n";
@@ -230,7 +232,6 @@ print CRT "//  * Using `git diff-files` to determine which certificate have been
 print CRT "//    removed.\n";
 print CRT "//  \n";
 print CRT "#include \"libusockets.h\"\n";
-print CRT "static struct us_cert_string_t root_certs[] = {\n";
 while (<TXT>) {
   if (/\*\*\*\*\* BEGIN LICENSE BLOCK \*\*\*\*\*/) {
     print CRT;
@@ -293,18 +294,22 @@ while (<TXT>) {
     } elsif ($caname =~ /TrustCor/) {
       $skipnum ++;
     } else {
-      my $encoded = MIME::Base64::encode_base64($data, '');
-      my $encoded_len_calc = $encoded;
-      $encoded_len_calc =~ s/(.{1,${opt_w}})/$1\n/g;
+      my @bytes = map { sprintf("0x%02x", ord($_)) } split(//, $data);
+      my $hex = "";
+      for (my $i = 0; $i < scalar(@bytes); $i += 16) {
+        my $end = $i + 15 < $#bytes ? $i + 15 : $#bytes;
+        $hex .= join(",", @bytes[$i..$end]) . ",\n";
+      }
+      my $der = "static const unsigned char root_cert_der_${certnum}[] = {\n"
+              . $hex
+              . "};\n";
+      push @cert_entries, "  {root_cert_der_${certnum}, sizeof(root_cert_der_${certnum})},";
 
-      my $cert_len = length($encoded_len_calc) + 53;
-      $encoded =~ s/(.{1,${opt_w}})/"$1\\n"\n/g;
-      
-      my $pem = "{.str=\"-----BEGIN CERTIFICATE-----\\n\"\n"
+      my $encoded = MIME::Base64::encode_base64($data, '');
+      $encoded =~ s/(.{1,${opt_w}})/$1\n/g;
+      my $pem = "-----BEGIN CERTIFICATE-----\n"
               . $encoded
-              . "\"-----END CERTIFICATE-----\",.len="
-              . $cert_len
-              ."},\n";
+              . "-----END CERTIFICATE-----\n";
       print CRT "\n/* $caname */\n";
 
       my $maxStringLength = length($caname);
@@ -316,7 +321,7 @@ while (<TXT>) {
         }
       }
       if (!$opt_t) {
-        print CRT $pem;
+        print CRT $der;
       } else {
         my $pipe = "";
         foreach my $hash (@included_signature_algorithms) {
@@ -350,7 +355,11 @@ while (<TXT>) {
     }
   }
 }
-print CRT "};\n";
+if (!$opt_t) {
+  print CRT "\nstatic const struct us_cert_der_t root_certs[] = {\n";
+  print CRT join("\n", @cert_entries) . "\n";
+  print CRT "};\n";
+}
 close(TXT) or die "Couldn't close $txt: $!\n";
 close(CRT) or die "Couldn't close $crt.~: $!\n";
 unless( $stdout ) {

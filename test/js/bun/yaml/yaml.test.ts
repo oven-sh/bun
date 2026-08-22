@@ -2869,8 +2869,89 @@ config:
       expect(YAML.stringify(Symbol("test"))).toBe(undefined);
     });
 
-    test("throws on replacer parameter", () => {
-      expect(() => YAML.stringify({ a: 1 }, () => {})).toThrow("YAML.stringify does not support the replacer argument");
+    // The replacer protocol (keys, holders, call order, how the list is read) is
+    // shared with JSON5.stringify and covered in json5.test.ts. These tests
+    // cover what is specific to the YAML output.
+    describe("replacer", () => {
+      test("a function replaces values in flow and block style", () => {
+        const input = { user: "ada", password: "hunter2", tokens: [1n, 2n] };
+        const replacer = (key: string, value: unknown) =>
+          key === "password" ? "***" : typeof value === "bigint" ? value.toString() : value;
+        expect(YAML.stringify(input, replacer)).toBe('{user: ada,password: "***",tokens: ["1","2"]}');
+        expect(YAML.stringify(input, replacer, 2)).toBe('user: ada\npassword: "***"\ntokens: \n  - "1"\n  - "2"');
+      });
+
+      test('a function is called for the root with the key ""', () => {
+        expect(YAML.stringify("x", (key, value) => (key === "" ? { wrapped: value } : value))).toBe("{wrapped: x}");
+        expect(YAML.stringify({ a: 1 }, () => undefined)).toBeUndefined();
+        expect(YAML.stringify(undefined, (key, value) => (key === "" ? [1] : value))).toBe("[1]");
+      });
+
+      test("undefined from the replacer is left out, in objects and in arrays", () => {
+        const drop = (key: string, value: unknown) => (key === "b" || key === "1" ? undefined : value);
+        expect(YAML.stringify({ a: 1, b: 2, list: [1, 2, 3] }, drop)).toBe("{a: 1,list: [1,3]}");
+        expect(YAML.stringify({ a: 1, b: 2, list: [1, 2, 3] }, drop, 2)).toBe("a: 1\nlist: \n  - 1\n  - 3");
+      });
+
+      test("a function replacer sees an object once per key it appears under, as with JSON.stringify", () => {
+        const shared = { x: 1 };
+        const input = { a: shared, b: shared };
+        expect(YAML.stringify(input)).toBe("{a: &a {x: 1},b: *a}");
+        // Each occurrence is replaced on its own, so the two are no longer one node.
+        const keys: string[] = [];
+        const keep = (key: string, value: unknown) => {
+          keys.push(key);
+          return value;
+        };
+        expect(YAML.stringify(input, keep)).toBe("{a: {x: 1},b: {x: 1}}");
+        expect(keys).toEqual(["", "a", "x", "b", "x"]);
+        let n = 0;
+        expect(YAML.stringify(input, (key, value) => (key === "x" ? ++n : value))).toBe("{a: {x: 1},b: {x: 2}}");
+        expect(input).toEqual({ a: { x: 1 }, b: { x: 1 } });
+        expect(input.a).toBe(shared);
+      });
+
+      test("a cycle the replacer keeps is written with an anchor; one it breaks is not", () => {
+        const cyclic: any = { name: "loop" };
+        cyclic.self = cyclic;
+        expect(YAML.stringify(cyclic, (key, value) => value, 2)).toBe(YAML.stringify(cyclic, null, 2));
+        expect(YAML.stringify(cyclic, (key, value) => value)).toBe("&root {name: loop,self: *root}");
+        expect(YAML.stringify(cyclic, (key, value) => (key === "self" ? "(cycle)" : value))).toBe(
+          "{name: loop,self: (cycle)}",
+        );
+      });
+
+      test("a BigInt or a Date the replacer converts no longer throws or turns into {}", () => {
+        expect(() => YAML.stringify({ big: 1n })).toThrow("YAML.stringify cannot serialize BigInt");
+        expect(YAML.stringify({ big: 1n }, (key, value) => (typeof value === "bigint" ? Number(value) : value))).toBe(
+          "{big: 1}",
+        );
+        expect(YAML.stringify({ d: new Date(0) })).toBe("{d: {}}");
+        expect(
+          YAML.stringify({ d: new Date(0) }, (key, value) => (value instanceof Date ? value.getTime() : value)),
+        ).toBe("{d: 0}");
+      });
+
+      test("an array lists the properties to write, in that order, at every level", () => {
+        const input = { b: 1, a: 2, secret: 3, nested: { secret: 4, a: 5 }, list: [{ secret: 6, b: 7 }, 8] };
+        expect(YAML.stringify(input, ["a", "b", "nested", "list"])).toBe("{a: 2,b: 1,nested: {a: 5},list: [{b: 7},8]}");
+        expect(YAML.stringify(input, ["nested", "a"], 2)).toBe("nested: \n  a: 5\na: 2");
+        expect(YAML.stringify(input, [])).toBe("{}");
+        expect(YAML.stringify("scalar", ["a"])).toBe("scalar");
+      });
+
+      test("an array keeps anchors and aliases between the listed values", () => {
+        const shared = { x: 1, y: 2 };
+        expect(YAML.stringify({ first: shared, skipped: 1, second: shared }, ["first", "second", "x"])).toBe(
+          "{first: &first {x: 1},second: *first}",
+        );
+      });
+
+      test("a replacer that is neither callable nor an array is ignored, as JSON.stringify ignores it", () => {
+        for (const replacer of [undefined, null, "a", 1, true, { 0: "a", length: 1 }]) {
+          expect(YAML.stringify({ a: 1, b: 2 }, replacer as any)).toBe("{a: 1,b: 2}");
+        }
+      });
     });
 
     test("handles functions", () => {
@@ -3873,26 +3954,17 @@ config:
         expect(() => YAML.stringify(deep)).toThrow("Maximum call stack size exceeded");
       });
 
-      test("stack overflow protection in the write pass", () => {
-        let deep = {};
-        let current = deep;
-        for (let i = 0; i < 1000000; i++) {
-          current.next = {};
-          current = current.next;
-        }
-
-        // stringify reads every property twice: once to find anchors and once
-        // to write. Hand the first read a shallow value so that only the write
-        // pass walks the deep structure.
+      test("reads every property once, before it writes", () => {
         let reads = 0;
         const root = {
           get value() {
-            return reads++ === 0 ? {} : deep;
+            reads++;
+            return { nested: [1, { deep: true }] };
           },
         };
 
-        expect(() => YAML.stringify(root)).toThrow("Maximum call stack size exceeded");
-        expect(reads).toBe(2);
+        expect(YAML.stringify(root)).toBe("{value: {nested: [1,{deep: true}]}}");
+        expect(reads).toBe(1);
       });
 
       test("handles arrays as root with references", () => {
@@ -4391,11 +4463,12 @@ refs:
           },
         };
 
+        // Each property is read once per call.
         const yaml1 = YAML.stringify(obj, null, 2);
         const yaml2 = YAML.stringify(obj, null, 2);
 
-        expect(yaml1).toBe("counter: 2");
-        expect(yaml2).toBe("counter: 4");
+        expect(yaml1).toBe("counter: 1");
+        expect(yaml2).toBe("counter: 2");
       });
 
       test.todo("handles circular getters", () => {

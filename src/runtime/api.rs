@@ -67,6 +67,8 @@ pub mod native_promise_context;
 pub mod output_file_jsc;
 #[path = "api/standalone_graph_jsc.rs"]
 pub mod standalone_graph_jsc;
+#[path = "api/stringify_replacer.rs"]
+mod stringify_replacer;
 #[path = "api/TOMLObject.rs"]
 pub mod toml_object;
 #[path = "api/UnsafeObject.rs"]

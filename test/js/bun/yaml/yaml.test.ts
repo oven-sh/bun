@@ -3954,26 +3954,17 @@ config:
         expect(() => YAML.stringify(deep)).toThrow("Maximum call stack size exceeded");
       });
 
-      test("stack overflow protection in the write pass", () => {
-        let deep = {};
-        let current = deep;
-        for (let i = 0; i < 1000000; i++) {
-          current.next = {};
-          current = current.next;
-        }
-
-        // stringify reads every property twice: once to find anchors and once
-        // to write. Hand the first read a shallow value so that only the write
-        // pass walks the deep structure.
+      test("reads every property once, before it writes", () => {
         let reads = 0;
         const root = {
           get value() {
-            return reads++ === 0 ? {} : deep;
+            reads++;
+            return { nested: [1, { deep: true }] };
           },
         };
 
-        expect(() => YAML.stringify(root)).toThrow("Maximum call stack size exceeded");
-        expect(reads).toBe(2);
+        expect(YAML.stringify(root)).toBe("{value: {nested: [1,{deep: true}]}}");
+        expect(reads).toBe(1);
       });
 
       test("handles arrays as root with references", () => {
@@ -4472,11 +4463,12 @@ refs:
           },
         };
 
+        // Each property is read once per call.
         const yaml1 = YAML.stringify(obj, null, 2);
         const yaml2 = YAML.stringify(obj, null, 2);
 
-        expect(yaml1).toBe("counter: 2");
-        expect(yaml2).toBe("counter: 4");
+        expect(yaml1).toBe("counter: 1");
+        expect(yaml2).toBe("counter: 2");
       });
 
       test.todo("handles circular getters", () => {

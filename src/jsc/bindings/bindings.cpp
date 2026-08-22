@@ -4326,7 +4326,7 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__putMayBeIndex(JSC::Enco
     RETURN_IF_EXCEPTION(scope, );
 }
 
-// [[Get]] of any property name, numeric index names included: the counterpart of JSC__JSValue__putMayBeIndex.
+// [[Get]] of any property name, index names included: the counterpart of JSC__JSValue__putMayBeIndex.
 extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue JSC__JSValue__getMayBeIndex(JSC::EncodedJSValue target, JSC::JSGlobalObject* globalObject, const BunString* key)
 {
     auto& vm = JSC::getVM(globalObject);

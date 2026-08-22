@@ -1496,7 +1496,7 @@ impl JSValue {
             JSC__JSValue__putMayBeIndex(self, global, key, value)
         })
     }
-    /// `[[Get]]` of any key, numeric keys included: the counterpart of [`put_may_be_index`](Self::put_may_be_index).
+    /// `[[Get]]` of any key, numeric keys included: the counterpart of [`Self::put_may_be_index`].
     pub fn get_may_be_index(
         self,
         global: &JSGlobalObject,

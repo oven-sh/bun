@@ -137,6 +137,8 @@ pub struct S3HttpSimpleTask {
     /// The HTTP client's abort flag: set by the VM's stop phase so a request
     /// still queued or in flight fails promptly and comes back.
     pub(crate) signal_store: bun_http::signals::Store,
+    /// `S3SimpleRequestOptions::outlives_test_isolation`.
+    pub(crate) outlives_test_isolation: bool,
 }
 
 impl Taskable for S3HttpSimpleTask {
@@ -528,6 +530,10 @@ pub struct S3SimpleRequestOptions<'a> {
     pub(crate) acl: Option<ACL>,
     pub(crate) storage_class: Option<StorageClass>,
     pub(crate) request_payer: bool,
+    /// The `bun test --isolate` swap stops the finished file's requests, except
+    /// one that is cleanup the swap itself caused (a failed upload's rollback):
+    /// that one completes, without script, on the next file's loop.
+    pub(crate) outlives_test_isolation: bool,
 }
 
 impl<'a> Default for S3SimpleRequestOptions<'a> {
@@ -545,9 +551,16 @@ impl<'a> Default for S3SimpleRequestOptions<'a> {
             acl: None,
             storage_class: None,
             request_payer: false,
+            outlives_test_isolation: false,
         }
     }
 }
+
+/// What an S3 operation fails with when its VM stops before it is done.
+pub(crate) const VM_SHUTDOWN: S3Error<'static> = S3Error {
+    code: b"ERR_S3_VM_SHUTDOWN",
+    message: b"The JavaScript VM that owns this request is shutting down",
+};
 
 pub(crate) fn execute_simple_s3_request(
     this: &S3Credentials,
@@ -559,11 +572,7 @@ pub(crate) fn execute_simple_s3_request(
     // release; nothing new leaves a VM that is stopping.
     if !VirtualMachine::get().script_allowed() {
         drop(options.range);
-        callback.fail(
-            b"ERR_S3_VM_SHUTDOWN",
-            b"The JavaScript VM that owns this request is shutting down",
-            callback_context,
-        )?;
+        callback.fail(VM_SHUTDOWN.code, VM_SHUTDOWN.message, callback_context)?;
         return Ok(());
     }
     let result = match this.sign_request::<false>(
@@ -640,6 +649,7 @@ pub(crate) fn execute_simple_s3_request(
         body: Box::<[u8]>::from(options.body),
         poll_ref,
         signal_store: Default::default(),
+        outlives_test_isolation: options.outlives_test_isolation,
     });
     // SAFETY: `task_ptr` is a freshly heap-allocated pointer; shared reads only until
     // the scoped exclusive `http` writes below.

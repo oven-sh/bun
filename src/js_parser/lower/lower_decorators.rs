@@ -1,6 +1,8 @@
 #![allow(clippy::too_many_arguments, clippy::needless_late_init)]
 //! Lowering for TC39 standard ES decorators.
 
+use core::cell::Cell;
+
 use bun_alloc::ArenaVecExt as _;
 
 use bun_collections::{HashMap, VecExt};
@@ -60,9 +62,18 @@ struct StaticElement {
 }
 
 #[derive(Clone, Copy)]
-enum RewriteKind {
+enum RewriteKind<'r> {
     ReplaceRef { old: Ref, new: Ref },
     ReplaceThis { ref_: Ref, loc: bun_ast::Loc },
+    LowerSuper(SuperLowering<'r>),
+}
+
+/// `super.x` in a method body that is leaving the class body, where `super` is a syntax error.
+#[derive(Clone, Copy)]
+struct SuperLowering<'r> {
+    /// Bound inside the class body: the class binding itself is reassigned by class decorators.
+    class_ref: &'r Cell<Option<Ref>>,
+    is_static: bool,
 }
 
 // ── Shallow-copy helpers (Property / Class are not `Clone` because they hold
@@ -416,7 +427,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     // ── Generic tree rewriter ────────────────────────────
 
-    fn rewrite_expr(&mut self, expr: &mut Expr, kind: RewriteKind) {
+    fn rewrite_expr(&mut self, expr: &mut Expr, kind: RewriteKind<'_>) {
         match kind {
             RewriteKind::ReplaceRef { old, new } => {
                 if let js_ast::ExprData::EIdentifier(id) = &expr.data {
@@ -433,6 +444,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             RewriteKind::ReplaceThis { ref_, loc } => {
                 if matches!(expr.data, js_ast::ExprData::EThis(_)) {
                     *expr = self.use_ref(ref_, loc);
+                    return;
+                }
+            }
+            RewriteKind::LowerSuper(ctx) => {
+                if self.lower_super_in_expr(expr, ctx) {
                     return;
                 }
             }
@@ -477,6 +493,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             js_ast::ExprData::EObject(e) => {
                 for prop in e.properties.slice_mut() {
+                    // Only computed keys hold an expression; literal keys are a no-op.
+                    if let Some(k) = &mut prop.key {
+                        self.rewrite_expr(k, kind);
+                    }
                     if let Some(v) = &mut prop.value {
                         self.rewrite_expr(v, kind);
                     }
@@ -494,25 +514,365 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.rewrite_expr(&mut part.value, kind);
                 }
             }
+            js_ast::ExprData::EAwait(e) => self.rewrite_expr(&mut e.value, kind),
+            js_ast::ExprData::EYield(e) => {
+                if let Some(v) = &mut e.value {
+                    self.rewrite_expr(v, kind);
+                }
+            }
+            js_ast::ExprData::EImport(e) => {
+                self.rewrite_expr(&mut e.expr, kind);
+                self.rewrite_expr(&mut e.options, kind);
+            }
             js_ast::ExprData::EArrow(e) => {
+                self.rewrite_args(e.args.slice_mut(), kind);
                 let stmts = e.body.stmts.slice_mut();
                 self.rewrite_stmts(stmts, kind);
             }
             js_ast::ExprData::EFunction(e) => match kind {
-                RewriteKind::ReplaceThis { .. } => {}
+                RewriteKind::ReplaceThis { .. } | RewriteKind::LowerSuper(_) => {}
                 RewriteKind::ReplaceRef { .. } => {
+                    self.rewrite_args(e.func.args.slice_mut(), kind);
                     let stmts = e.func.body.stmts.slice_mut();
                     if !stmts.is_empty() {
                         self.rewrite_stmts(stmts, kind);
                     }
                 }
             },
-            js_ast::ExprData::EClass(_) => {}
+            js_ast::ExprData::EClass(e) => self.rewrite_class(e, kind),
             _ => {}
         }
     }
 
-    fn rewrite_stmts(&mut self, stmts: &mut [Stmt], kind: RewriteKind) {
+    /// Only the extends clause and computed keys evaluate in the enclosing `this`/`super` context.
+    fn rewrite_class(&mut self, class: &mut G::Class, kind: RewriteKind<'_>) {
+        if let Some(ext) = &mut class.extends {
+            self.rewrite_expr(ext, kind);
+        }
+        let enter_members = matches!(kind, RewriteKind::ReplaceRef { .. });
+        for prop in class.properties.slice_mut() {
+            if let Some(k) = &mut prop.key {
+                self.rewrite_expr(k, kind);
+            }
+            if !enter_members {
+                continue;
+            }
+            if let Some(v) = &mut prop.value {
+                self.rewrite_expr(v, kind);
+            }
+            if let Some(ini) = &mut prop.initializer {
+                self.rewrite_expr(ini, kind);
+            }
+            if let Some(sb) = prop.class_static_block_mut() {
+                self.rewrite_stmts(sb.stmts.slice_mut(), kind);
+            }
+        }
+    }
+
+    fn rewrite_args(&mut self, args: &mut [G::Arg], kind: RewriteKind<'_>) {
+        for arg in args.iter_mut() {
+            self.rewrite_binding(&mut arg.binding, kind);
+            if let Some(d) = &mut arg.default {
+                self.rewrite_expr(d, kind);
+            }
+        }
+    }
+
+    fn rewrite_binding(&mut self, binding: &mut js_ast::Binding, kind: RewriteKind<'_>) {
+        match &mut binding.data {
+            js_ast::b::B::BIdentifier(_) | js_ast::b::B::BMissing(_) => {}
+            js_ast::b::B::BArray(arr) => {
+                for item in arr.items_mut() {
+                    self.rewrite_binding(&mut item.binding, kind);
+                    if let Some(d) = &mut item.default_value {
+                        self.rewrite_expr(d, kind);
+                    }
+                }
+            }
+            js_ast::b::B::BObject(obj) => {
+                for prop in obj.properties_mut() {
+                    self.rewrite_expr(&mut prop.key, kind);
+                    self.rewrite_binding(&mut prop.value, kind);
+                    if let Some(d) = &mut prop.default_value {
+                        self.rewrite_expr(d, kind);
+                    }
+                }
+            }
+        }
+    }
+
+    fn rewrite_for_head(&mut self, init: &mut Stmt, kind: RewriteKind<'_>) {
+        // `for (super.x of …)`: the head is written to, not read.
+        if let (RewriteKind::LowerSuper(ctx), js_ast::StmtData::SExpr(mut target)) =
+            (kind, init.data)
+        {
+            self.lower_super_in_assign_target(&mut target.value, ctx);
+            return;
+        }
+        self.rewrite_stmts(core::slice::from_mut(init), kind);
+    }
+
+    // ── `super` property access lowering ─────────────────
+
+    fn lower_super_in_extracted_method(&mut self, value: &mut Expr, ctx: SuperLowering<'_>) {
+        let js_ast::ExprData::EFunction(func) = value.data else {
+            return;
+        };
+        let kind = RewriteKind::LowerSuper(ctx);
+        self.rewrite_args(func.func.args.slice_mut(), kind);
+        self.rewrite_stmts(func.func.body.stmts.slice_mut(), kind);
+    }
+
+    /// The key of `super.name` / `super[expr]`; `None` for any other expression.
+    fn super_member_key(&mut self, expr: Expr, ctx: SuperLowering<'_>) -> Option<Expr> {
+        match expr.data {
+            js_ast::ExprData::EDot(dot)
+                if matches!(dot.target.data, js_ast::ExprData::ESuper(_)) =>
+            {
+                Some(self.new_expr(
+                    E::EString {
+                        data: dot.name,
+                        ..Default::default()
+                    },
+                    dot.name_loc,
+                ))
+            }
+            js_ast::ExprData::EIndex(mut index)
+                if matches!(index.target.data, js_ast::ExprData::ESuper(_)) =>
+            {
+                self.rewrite_expr(&mut index.index, RewriteKind::LowerSuper(ctx));
+                Some(index.index)
+            }
+            _ => None,
+        }
+    }
+
+    /// The method's [[HomeObject]]: `_home` for static members, `_home.prototype` otherwise.
+    fn super_home_expr(&mut self, ctx: SuperLowering<'_>, l: bun_ast::Loc) -> Expr {
+        let class_ref = match ctx.class_ref.get() {
+            Some(r) => r,
+            None => {
+                let r = self.new_sym(js_ast::symbol::Kind::Other, b"_home");
+                ctx.class_ref.set(Some(r));
+                r
+            }
+        };
+        let class_expr = self.use_ref(class_ref, l);
+        if ctx.is_static {
+            return class_expr;
+        }
+        self.new_expr(
+            E::Dot {
+                target: class_expr,
+                name: b"prototype".into(),
+                name_loc: l,
+                ..Default::default()
+            },
+            l,
+        )
+    }
+
+    /// `__superGet(home, this, key)`
+    fn super_get_expr(&mut self, ctx: SuperLowering<'_>, key: Expr, l: bun_ast::Loc) -> Expr {
+        let home = self.super_home_expr(ctx, l);
+        let this_e = self.new_expr(E::This {}, l);
+        self.call_rt(l, b"__superGet", &[home, this_e, key])
+    }
+
+    /// `__superSet(home, this, key, value)`
+    fn super_set_expr(
+        &mut self,
+        ctx: SuperLowering<'_>,
+        key: Expr,
+        value: Expr,
+        l: bun_ast::Loc,
+    ) -> Expr {
+        let home = self.super_home_expr(ctx, l);
+        let this_e = self.new_expr(E::This {}, l);
+        self.call_rt(l, b"__superSet", &[home, this_e, key, value])
+    }
+
+    /// `__superWrapper(...)._` is assignable, so `+=`, `++` and patterns keep their native semantics.
+    fn super_wrapper_expr(&mut self, ctx: SuperLowering<'_>, key: Expr, l: bun_ast::Loc) -> Expr {
+        let home = self.super_home_expr(ctx, l);
+        let this_e = self.new_expr(E::This {}, l);
+        let wrapper = self.call_rt(l, b"__superWrapper", &[home, this_e, key]);
+        self.new_expr(
+            E::Dot {
+                target: wrapper,
+                name: b"_".into(),
+                name_loc: l,
+                ..Default::default()
+            },
+            l,
+        )
+    }
+
+    /// Returns false when `expr` is not a `super` form, leaving it to the generic traversal.
+    fn lower_super_in_expr(&mut self, expr: &mut Expr, ctx: SuperLowering<'_>) -> bool {
+        let kind = RewriteKind::LowerSuper(ctx);
+        let loc = expr.loc;
+        if let Some(key) = self.super_member_key(*expr, ctx) {
+            *expr = self.super_get_expr(ctx, key, loc);
+            return true;
+        }
+        match expr.data {
+            // super.f(...) → __superGet(...).call(this, ...); super.f?.() keeps the ?. on .call
+            js_ast::ExprData::ECall(mut call) => {
+                let Some(key) = self.super_member_key(call.target, ctx) else {
+                    return false;
+                };
+                let method = self.super_get_expr(ctx, key, call.target.loc);
+                let is_optional = call.optional_chain.is_some();
+                call.target = self.new_expr(
+                    E::Dot {
+                        target: method,
+                        name: b"call".into(),
+                        name_loc: loc,
+                        optional_chain: is_optional.then_some(js_ast::OptionalChain::Start),
+                        ..Default::default()
+                    },
+                    loc,
+                );
+                if is_optional {
+                    call.optional_chain = Some(js_ast::OptionalChain::Continuation);
+                }
+                let bump = self.arena;
+                let orig_args = call.args.slice_mut();
+                let mut new_args = BumpVec::with_capacity_in(1 + orig_args.len(), bump);
+                new_args.push(self.new_expr(E::This {}, loc));
+                for arg in orig_args.iter_mut() {
+                    self.rewrite_expr(arg, kind);
+                    new_args.push(*arg);
+                }
+                call.args = ExprNodeList::from_bump_vec(new_args);
+                true
+            }
+            js_ast::ExprData::EBinary(mut bin) => match bin.op.binary_assign_target() {
+                js_ast::AssignTarget::None => false,
+                // super.x = v → __superSet(..., v)
+                js_ast::AssignTarget::Replace => {
+                    if let Some(key) = self.super_member_key(bin.left, ctx) {
+                        self.rewrite_expr(&mut bin.right, kind);
+                        *expr = self.super_set_expr(ctx, key, bin.right, loc);
+                        return true;
+                    }
+                    if !matches!(
+                        bin.left.data,
+                        js_ast::ExprData::EArray(_) | js_ast::ExprData::EObject(_)
+                    ) {
+                        return false;
+                    }
+                    self.lower_super_in_assign_target(&mut bin.left, ctx);
+                    self.rewrite_expr(&mut bin.right, kind);
+                    true
+                }
+                // super.x += v, super.x ??= v, … → __superWrapper(...)._ op= v
+                js_ast::AssignTarget::Update => {
+                    let Some(key) = self.super_member_key(bin.left, ctx) else {
+                        return false;
+                    };
+                    bin.left = self.super_wrapper_expr(ctx, key, bin.left.loc);
+                    self.rewrite_expr(&mut bin.right, kind);
+                    true
+                }
+            },
+            // super.x++ → __superWrapper(...)._++
+            js_ast::ExprData::EUnary(mut unary) => {
+                let is_update =
+                    js_ast::OpCode::unary_assign_target(unary.op) == js_ast::AssignTarget::Update;
+                if !is_update && unary.op != js_ast::OpCode::UnDelete {
+                    return false;
+                }
+                let Some(key) = self.super_member_key(unary.value, ctx) else {
+                    return false;
+                };
+                if is_update {
+                    unary.value = self.super_wrapper_expr(ctx, key, unary.value.loc);
+                } else {
+                    // delete super.x → __superDelete("x"), which throws like the native form
+                    *expr = self.call_rt(loc, b"__superDelete", &[key]);
+                }
+                true
+            }
+            // super.tag`…` → __superGet(...).bind(this)`…`
+            js_ast::ExprData::ETemplate(mut template) => {
+                let Some(tag) = template.tag else {
+                    return false;
+                };
+                let Some(key) = self.super_member_key(tag, ctx) else {
+                    return false;
+                };
+                let method = self.super_get_expr(ctx, key, tag.loc);
+                let bind = self.new_expr(
+                    E::Dot {
+                        target: method,
+                        name: b"bind".into(),
+                        name_loc: tag.loc,
+                        ..Default::default()
+                    },
+                    tag.loc,
+                );
+                let this_e = self.new_expr(E::This {}, tag.loc);
+                let args = self.arena.alloc_slice_copy(&[this_e]);
+                let bound = self.new_expr(
+                    E::Call {
+                        target: bind,
+                        args: ExprNodeList::from_arena_slice(args),
+                        ..Default::default()
+                    },
+                    tag.loc,
+                );
+                template.tag = Some(bound);
+                for part in template.parts_mut().iter_mut() {
+                    self.rewrite_expr(&mut part.value, kind);
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// `expr` is written to, not read: a destructuring assignment target or a for-in/of head.
+    fn lower_super_in_assign_target(&mut self, expr: &mut Expr, ctx: SuperLowering<'_>) {
+        let kind = RewriteKind::LowerSuper(ctx);
+        let loc = expr.loc;
+        if let Some(key) = self.super_member_key(*expr, ctx) {
+            *expr = self.super_wrapper_expr(ctx, key, loc);
+            return;
+        }
+        match expr.data {
+            js_ast::ExprData::EArray(mut arr) => {
+                for item in arr.items.slice_mut() {
+                    self.lower_super_in_assign_target(item, ctx);
+                }
+            }
+            js_ast::ExprData::EObject(mut obj) => {
+                for prop in obj.properties.slice_mut() {
+                    if let Some(k) = &mut prop.key {
+                        self.rewrite_expr(k, kind);
+                    }
+                    if let Some(v) = &mut prop.value {
+                        self.lower_super_in_assign_target(v, ctx);
+                    }
+                    if let Some(d) = &mut prop.initializer {
+                        self.rewrite_expr(d, kind);
+                    }
+                }
+            }
+            js_ast::ExprData::ESpread(mut spread) => {
+                self.lower_super_in_assign_target(&mut spread.value, ctx);
+            }
+            // `[target = default]`
+            js_ast::ExprData::EBinary(mut bin) if bin.op == js_ast::OpCode::BinAssign => {
+                self.lower_super_in_assign_target(&mut bin.left, ctx);
+                self.rewrite_expr(&mut bin.right, kind);
+            }
+            _ => self.rewrite_expr(expr, kind),
+        }
+    }
+
+    fn rewrite_stmts(&mut self, stmts: &mut [Stmt], kind: RewriteKind<'_>) {
         for cur_stmt in stmts.iter_mut() {
             let cur_loc = cur_stmt.loc;
             match &mut cur_stmt.data {
@@ -529,6 +889,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 js_ast::StmtData::SLocal(local) => {
                     for decl in local.decls.slice_mut() {
+                        self.rewrite_binding(&mut decl.binding, kind);
                         if let Some(v) = &mut decl.value {
                             self.rewrite_expr(v, kind);
                         }
@@ -570,6 +931,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     data.body = body;
                 }
                 js_ast::StmtData::SForIn(data) => {
+                    let mut init = data.init;
+                    self.rewrite_for_head(&mut init, kind);
+                    data.init = init;
                     let mut v = data.value;
                     self.rewrite_expr(&mut v, kind);
                     data.value = v;
@@ -578,6 +942,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     data.body = body;
                 }
                 js_ast::StmtData::SForOf(data) => {
+                    let mut init = data.init;
+                    self.rewrite_for_head(&mut init, kind);
+                    data.init = init;
                     let mut v = data.value;
                     self.rewrite_expr(&mut v, kind);
                     data.value = v;
@@ -618,6 +985,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let body = data.body.slice_mut();
                     self.rewrite_stmts(body, kind);
                     if let Some(c) = &mut data.catch {
+                        if let Some(b) = &mut c.binding {
+                            self.rewrite_binding(b, kind);
+                        }
                         let cb = c.body.slice_mut();
                         self.rewrite_stmts(cb, kind);
                     }
@@ -639,6 +1009,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.rewrite_stmts(core::slice::from_mut(&mut body), kind);
                     data.body = body;
                 }
+                js_ast::StmtData::SFunction(data) => match kind {
+                    RewriteKind::ReplaceThis { .. } | RewriteKind::LowerSuper(_) => {}
+                    RewriteKind::ReplaceRef { .. } => {
+                        self.rewrite_args(data.func.args.slice_mut(), kind);
+                        let stmts = data.func.body.stmts.slice_mut();
+                        self.rewrite_stmts(stmts, kind);
+                    }
+                },
+                js_ast::StmtData::SClass(data) => self.rewrite_class(&mut data.class, kind),
                 _ => {}
             }
         }
@@ -1392,6 +1771,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut accessor_storage_counter: usize = 0;
         let mut emitted_private_adds: HashMap<u32, ()> = HashMap::default();
         let mut static_private_add_blocks = BumpVec::<Property>::new_in(bump);
+        let super_home_ref: Cell<Option<Ref>> = Cell::new(None);
 
         // Pre-scan: determine if all private members need lowering
         let mut lower_all_private = false;
@@ -1486,9 +1866,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
 
                         // Assign function: _fn = function() { ... }
-                        let val = prop
+                        let mut val = prop
                             .value
                             .unwrap_or_else(|| p.new_expr(E::Undefined {}, loc));
+                        p.lower_super_in_extracted_method(
+                            &mut val,
+                            SuperLowering {
+                                class_ref: &super_home_ref,
+                                is_static: prop.flags.contains(Flags::Property::IsStatic),
+                            },
+                        );
                         let assign = p.assign_to(fn_ref, val, loc);
                         prefix_stmts.push(p.s(
                             S::SExpr {
@@ -1850,10 +2237,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 dec_args.push(p.use_ref(storage_ref, loc));
                 if dec_arg_count == 6 {
                     if (1..=3).contains(&k) {
-                        dec_args.push(
-                            prop.value
-                                .unwrap_or_else(|| p.new_expr(E::Undefined {}, loc)),
+                        let mut val = prop
+                            .value
+                            .unwrap_or_else(|| p.new_expr(E::Undefined {}, loc));
+                        p.lower_super_in_extracted_method(
+                            &mut val,
+                            SuperLowering {
+                                class_ref: &super_home_ref,
+                                is_static: prop.flags.contains(Flags::Property::IsStatic),
+                            },
                         );
+                        dec_args.push(val);
                     } else if k == 4 {
                         dec_args.push(p.use_ref(storage_ref, loc));
                     } else {
@@ -1970,6 +2364,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     instance_non_field_elements.push(element);
                 }
             }
+        }
+
+        if let Some(home_ref) = super_home_ref.get() {
+            prefix_stmts.insert(0, p.var_decl(home_ref, None, loc));
+            let this_e = p.new_expr(E::This {}, loc);
+            let capture = p.assign_to(home_ref, this_e, loc);
+            // First in the body: a static initializer may already call a lowered method.
+            static_private_add_blocks.insert(0, p.make_static_block(capture, loc));
         }
 
         // ── Phase 5: Rewrite private accesses ────────────

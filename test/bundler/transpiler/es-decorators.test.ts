@@ -1154,6 +1154,362 @@ describe("ES Decorators", () => {
     });
   });
 
+  // Once a class has a decorated member, its private methods, getters and
+  // setters are moved out of the class body into plain function expressions
+  // (`_m_fn = function () { ... }`, or the function passed to
+  // __decorateElement). `super.x` is a syntax error in a plain function, so
+  // the lowering rewrites it to __superGet / __superSet / __superWrapper
+  // calls that look the property up on the prototype of the original class
+  // (captured by a static block at the top of the class body), with the
+  // method's `this` as receiver.
+  describe.concurrent("super property access in lowered private methods", () => {
+    test("undecorated private method in a class with a decorated member", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) { return value; }
+        class Base { greet() { return "hi"; } }
+        class C extends Base {
+          @dec m() {}
+          #im() { return super.greet(); }
+          callI() { return this.#im(); }
+        }
+        console.log(new C().callI());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("hi\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("decorated private method, getter, setter and static method", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) { return value; }
+        function wrap(value, ctx) { return function (...args) { return "wrapped:" + value.call(this, ...args); }; }
+        class Base {
+          greet() { return "hi:" + this.id; }
+          get g() { return "g:" + this.id; }
+          set g(v) { this.last = "set:" + v; }
+          static sgreet() { return "shi:" + this.name; }
+        }
+        class C extends Base {
+          id = "c";
+          @wrap #im() { return super.greet(); }
+          @dec get #acc() { return super.g; }
+          @dec set #acc(v) { super.g = v; }
+          @dec static #sm() { return super.sgreet(); }
+          run() { this.#acc = 1; return [this.#im(), this.#acc, this.last, C.#sm()]; }
+        }
+        console.log(JSON.stringify(new C().run()));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe('["wrapped:hi:c","g:c","set:1","shi:C"]\n');
+      expect(exitCode).toBe(0);
+    });
+
+    test("class without an extends clause looks up Object.prototype and Function.prototype", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) { return value; }
+        class C {
+          @dec m() {}
+          #im() { return [super.hasOwnProperty === Object.prototype.hasOwnProperty, super.constructor === Object]; }
+          static #sm() { return [super.call === Function.prototype.call, super.constructor === Function]; }
+          run() { return [...this.#im(), ...C.#sm()]; }
+        }
+        console.log(JSON.stringify(new C().run()));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("[true,true,true,true]\n");
+      expect(exitCode).toBe(0);
+    });
+
+    // The same members are run twice: natively (class without decorators)
+    // and lowered (one decorated member added). Both must print the same
+    // thing, and the literal below documents what that is.
+    test("every access form behaves like the native class", async () => {
+      const members = `
+        #m(param = super.f("param")) {
+          const out = { param };
+          let keyEvals = 0;
+          const k = () => (keyEvals++, key);
+          super.x = 1;
+          out.get = [super.x, super["x"], super[key] === undefined];
+          out.assignValue = (super[key] = 2);
+          out.getComputed = super[key];
+          out.call = super.f(1, ...[2, 3]);
+          out.callComputed = super[(keyEvals++, "f")](4);
+          out.optionalCall = [super.f?.(5), super.nothing?.(), super.f(6)?.length];
+          out.compound = [(super.x += 10), super.x, (super[k()] **= 3), super.y, keyEvals];
+          this._y = null;
+          out.logical = [(super.x ??= "skipped"), (super.y ??= "filled"), (super.y &&= "and"), (super.x ||= "skipped"), super.x, super.y];
+          super[key] = 5;
+          out.update = [super.x++, ++super.x, super[key]--, --super[key], super.x, super.y];
+          [super.x, super[key]] = [100, 200];
+          out.arrayTarget = [super.x, super.y];
+          ({ a: super.x, b: super.y = "dflt", ...super.rest } = { a: 7, b: undefined, c: 1, d: 2 });
+          out.objectTarget = [super.x, super.y, this.rest];
+          [super.x = "arrDflt", ...super.spreadRest] = [undefined, 1, 2];
+          out.patternDefaults = [super.x, this.spreadRest];
+          for (super.x of [31, 32]) out.forOf = super.x;
+          for (super[key] in { k1: 0 }) out.forIn = super.y;
+          super.defined = "own";
+          out.definesOnReceiver = [Object.hasOwn(this, "defined"), "defined" in Base.prototype];
+          try { super.readonly = 1; out.readonly = "assigned"; } catch (e) { out.readonly = e.constructor.name; }
+          out.tagged = super.tag\`a\${1}b\${2}\`;
+          out.newed = new super.constructor.Made("n").made;
+          out.arrows = [(() => super.f("arrow"))(), ((q = super.x) => q)()];
+          const literal = { value: super.x, method() { return super.toString === Object.prototype.toString; } };
+          out.objectLiteral = [literal.value, literal.method()];
+          class Nested extends super.constructor { own() { return super.f("nested"); } }
+          out.nestedClass = new Nested().own();
+          function plain() { return { m() { return super.constructor === Object; } }.m(); }
+          out.plainFunction = plain();
+          out.typeofGet = typeof super.f;
+          out.privateOperands = [super[this.#keyName], super.f(this.#v, this.#p())];
+          let deleteKeyEvals = 0;
+          try {
+            out.deleteSuper = delete super[(deleteKeyEvals++, "probe")];
+          } catch (e) {
+            out.deleteSuper = [e.constructor.name, deleteKeyEvals, probeReads];
+          }
+          return out;
+        }
+        #keyName = "readonly";
+        #v = 42;
+        #p() { return "p"; }
+        get #acc() { return super.x; }
+        set #acc(v) { super.x = v; }
+        async #asyncM() { return await super.f("async"); }
+        *#gen() { yield super.f("gen"); }
+        static #s() {
+          super.sx = "s";
+          super.sx += "!";
+          return [super.sx, super.sf("a"), super.sf?.("b"), this._sx];
+        }
+        run() { self = this; this.#acc = "viaSetter"; return { m: this.#m(), acc: this.#acc }; }
+        runAsync() { self = this; return this.#asyncM(); }
+        runGen() { self = this; return [...this.#gen()]; }
+        static runStatic() { selfClass = this; return this.#s(); }
+      `;
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) { return value; }
+        let self, selfClass;
+        let probeReads = 0;
+        class Base {
+          get x() { return this._x; }
+          set x(v) { this._x = v; }
+          get y() { return this._y; }
+          set y(v) { this._y = v; }
+          get readonly() { return "ro"; }
+          get probe() { probeReads++; }
+          f(...args) { return [this === self, ...args]; }
+          tag(strings, ...subs) { return [strings.raw.join("|"), ...subs]; }
+          static get sx() { return this._sx; }
+          static set sx(v) { this._sx = v; }
+          static sf(a) { return [this === selfClass, a]; }
+          static Made = class { constructor(a) { this.made = a; } };
+        }
+        const key = "y";
+        class Native extends Base {${members}}
+        class Lowered extends Base {
+          @dec decorated() {}
+          ${members}
+        }
+        for (const C of [Native, Lowered]) {
+          const c = new C();
+          console.log(JSON.stringify({ sync: c.run(), async: await c.runAsync(), gen: c.runGen(), static: C.runStatic() }));
+        }
+      `);
+      expect(stderr).toBe("");
+      const [native, lowered] = stdout.trim().split("\n");
+      expect(lowered).toBe(native);
+      expect(JSON.parse(lowered)).toEqual({
+        sync: {
+          m: {
+            param: [true, "param"],
+            get: [1, 1, true],
+            assignValue: 2,
+            getComputed: 2,
+            call: [true, 1, 2, 3],
+            callComputed: [true, 4],
+            optionalCall: [[true, 5], null, 2],
+            compound: [11, 11, 8, 8, 2],
+            logical: [11, "filled", "and", 11, 11, "and"],
+            update: [11, 13, 5, 3, 13, 3],
+            arrayTarget: [100, 200],
+            objectTarget: [7, "dflt", { c: 1, d: 2 }],
+            patternDefaults: ["arrDflt", [1, 2]],
+            forOf: 32,
+            forIn: "k1",
+            definesOnReceiver: [true, false],
+            readonly: "TypeError",
+            tagged: ["a|b|", 1, 2],
+            newed: "n",
+            arrows: [[true, "arrow"], 32],
+            objectLiteral: [32, true],
+            nestedClass: [false, "nested"],
+            plainFunction: true,
+            typeofGet: "function",
+            privateOperands: ["ro", [true, 42, "p"]],
+            // The key is evaluated, the inherited getter is not, and the delete throws.
+            deleteSuper: ["ReferenceError", 1, 0],
+          },
+          acc: 32,
+        },
+        async: [true, "async"],
+        gen: [[true, "gen"]],
+        static: ["s!", [true, "a"], [true, "b"], "s!"],
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    test("a super tag function is called with the method's this", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) { return value; }
+        class Base { tag(strings) { return [this, strings[0]]; } }
+        class C extends Base {
+          @dec m() {}
+          #im() { return super.tag\`t\`; }
+          run() { const [receiver, text] = this.#im(); return [receiver === this, text]; }
+        }
+        console.log(JSON.stringify(new C().run()));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe('[true,"t"]\n');
+      expect(exitCode).toBe(0);
+    });
+
+    test("class declaration replaced by a class decorator keeps the original parent", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) { return value; }
+        class Base { greet() { return "base"; } }
+        function replace(cls, ctx) { return class extends cls { greet() { return "replacement:" + super.greet(); } }; }
+        @replace
+        class C extends Base {
+          @dec decorated() {}
+          greet() { return "c:" + super.greet(); }
+          #im() { return super.greet(); }
+          run() { return [this.#im(), this.greet()]; }
+        }
+        console.log(JSON.stringify(new C().run()));
+      `);
+      expect(stderr).toBe("");
+      // #im's super is Base.greet, not the original C.greet that a lookup
+      // through the replacement's prototype chain would find.
+      expect(stdout).toBe('["base","replacement:c:base"]\n');
+      expect(exitCode).toBe(0);
+    });
+
+    test("class expression replaced by a class decorator keeps the original parent", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) { return value; }
+        class Base { greet() { return "base"; } }
+        function replace(cls, ctx) { return class extends cls { greet() { return "replacement:" + super.greet(); } }; }
+        const C = @replace class extends Base {
+          @dec decorated() {}
+          greet() { return "c:" + super.greet(); }
+          #im() { return super.greet(); }
+          run() { return [this.#im(), this.greet()]; }
+        };
+        console.log(JSON.stringify(new C().run()));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe('["base","replacement:c:base"]\n');
+      expect(exitCode).toBe(0);
+    });
+
+    test("static private method using super can run while the class body is still being evaluated", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) { return value; }
+        class Base { static sgreet() { return "shi:" + this.name; } }
+        class C extends Base {
+          @dec m() {}
+          static #make() { return super.sgreet(); }
+          static helper() { return this.#make(); }
+          static early = this.helper();
+        }
+        console.log(C.early);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("shi:C\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("each evaluation of a class inside a function gets its own parent", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) { return value; }
+        function make(base) {
+          class C extends base {
+            @dec m() {}
+            #im() { return super.greet(); }
+            run() { return this.#im(); }
+          }
+          return new C();
+        }
+        class A { greet() { return "a"; } }
+        class B { greet() { return "b"; } }
+        const a = make(A);
+        const b = make(B);
+        console.log(a.run(), b.run());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("a b\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a class nested in a lowered method body keeps its own super", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) { return value; }
+        class InnerBase { greet() { return "inner"; } static sgreet() { return "static inner"; } }
+        class OuterBase { greet() { return "outer"; } innerBase() { return InnerBase; } }
+        class Outer extends OuterBase {
+          @dec m() {}
+          #im() {
+            // The extends clause is evaluated in the outer method, so its
+            // super is OuterBase's; everything inside the body is Inner's own.
+            class Inner extends super.innerBase() {
+              static { this.fromBlock = super.sgreet(); }
+              field = super.greet();
+              method() { return super.greet(); }
+            }
+            const inner = new Inner();
+            return [super.greet(), (() => super.greet())(), Inner.fromBlock, inner.field, inner.method()];
+          }
+          run() { return this.#im(); }
+        }
+        console.log(JSON.stringify(new Outer().run()));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe('["outer","outer","static inner","inner","inner"]\n');
+      expect(exitCode).toBe(0);
+    });
+
+    test("the class is only captured when a lowered method uses super", () => {
+      const transpiler = new Bun.Transpiler({ loader: "js" });
+      const withSuper = transpiler.transformSync(`
+        class C extends Base {
+          @dec m() {}
+          #im() { return super.greet(); }
+          static #sm() { return super.sgreet(); }
+        }
+      `);
+      // The runtime helpers are imported from bun:wrap under a suffixed alias.
+      expect(withSuper).toMatch(/__superGet\w*\(_home\.prototype, this, "greet"\)\.call\(this\)/);
+      expect(withSuper).toMatch(/__superGet\w*\(_home, this, "sgreet"\)\.call\(this\)/);
+      expect(withSuper).toContain("_home = this;");
+      expect(withSuper).not.toContain("super.");
+
+      const withoutSuper = transpiler.transformSync(`
+        class C extends Base {
+          @dec m() {}
+          #im() { return this.greet(); }
+          inBody() { return super.greet(); }
+        }
+      `);
+      expect(withoutSuper).not.toContain("_home");
+      expect(withoutSuper).not.toContain("__superGet");
+      // Methods that stay in the class body keep their native super.
+      expect(withoutSuper).toContain("return super.greet();");
+    });
+  });
+
   describe("accessor with TypeScript annotations", () => {
     test("accessor with definite assignment assertion (!)", async () => {
       using dir = tempDir("es-dec-accessor-bang", {

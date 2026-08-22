@@ -6376,17 +6376,26 @@ impl Any {
 
 impl Any {
     fn to_internal_blob_if_possible(&mut self) {
-        if let Any::Blob(blob) = self {
-            if let Some(s) = blob.store.get() {
-                if matches!(s.data, store::Data::Bytes(_)) && s.has_one_ref() {
-                    // `StoreRef` exposes interior-mutable `data_mut()` (no DerefMut).
-                    let internal = s.data_mut().as_bytes_mut().to_internal_blob();
-                    // StoreRef::drop on the replace below releases the store ref.
-                    *self = Any::InternalBlob(internal);
-                    return;
-                }
-            }
+        let Any::Blob(blob) = self else {
+            return;
+        };
+        let Some(s) = blob.store.get() else {
+            return;
+        };
+        let store::Data::Bytes(bytes) = &s.data else {
+            return;
+        };
+        // `to_internal_blob` moves the store's whole buffer out, so the Blob
+        // must view all of it: a `slice()` shares its parent's store and only
+        // narrows `offset`/`size`, and it can be the store's last reference
+        // once the parent has been collected.
+        if !s.has_one_ref() || blob.offset.get() != 0 || blob.size.get() < bytes.len() {
+            return;
         }
+        // `StoreRef` exposes interior-mutable `data_mut()` (no DerefMut).
+        let internal = s.data_mut().as_bytes_mut().to_internal_blob();
+        // StoreRef::drop on the replace below releases the store ref.
+        *self = Any::InternalBlob(internal);
     }
 
     pub(crate) fn to_action_value(

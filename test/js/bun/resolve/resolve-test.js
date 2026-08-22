@@ -79,10 +79,8 @@ it("import.meta.resolveSync", async () => {
     join(import.meta.path, "../node_modules/package-json-exports/package.json"),
   );
 
-  // if an unnecessary ".js" extension was added, try against /baz
-  expect(import.meta.resolveSync("package-json-exports/baz.js")).toBe(
-    join(import.meta.path, "../node_modules/package-json-exports/foo/bar.js"),
-  );
+  // "./baz.js" is not an exported subpath; Node rejects it and so do we.
+  expect(() => import.meta.resolveSync("package-json-exports/baz.js")).toThrow(ResolveMessage);
 
   // works with TypeScript compiler edgecases like:
   // - If the file ends with .js and it doesn't exist, try again with .ts and .tsx

@@ -51,6 +51,7 @@ const {
   kOutHeaders,
   onDataIncomingMessage,
   validateMsecs,
+  installSocketStubs,
 } = require("internal/http");
 const { FakeSocket } = require("internal/http/FakeSocket");
 const NumberIsNaN = Number.isNaN;
@@ -1725,14 +1726,6 @@ function getNodeHTTPServerSocket() {
       return this[kHandle]?.remoteAddress || null;
     }
 
-    get bufferSize() {
-      return this.writableLength;
-    }
-
-    connect(_port, _host, _connectListener) {
-      return this;
-    }
-
     _destroy(err, callback) {
       const handle = this[kHandle];
       if (!handle) {
@@ -1773,10 +1766,6 @@ function getNodeHTTPServerSocket() {
 
     get localPort() {
       return this[kHandle]?.localAddress?.port;
-    }
-
-    get pending() {
-      return this.connecting;
     }
 
     #resumeSocket() {
@@ -1821,15 +1810,6 @@ function getNodeHTTPServerSocket() {
       this.#resumeSocket();
     }
 
-    get readyState() {
-      if (this.connecting) return "opening";
-      if (this.readable) {
-        return this.writable ? "open" : "readOnly";
-      } else {
-        return this.writable ? "writeOnly" : "closed";
-      }
-    }
-
     // SNI hostname the client sent in its ClientHello, or false when the TLS
     // client sent none (matches Node's server-side TLSSocket.servername).
     get servername() {
@@ -1851,45 +1831,6 @@ function getNodeHTTPServerSocket() {
       if (!this.encrypted) return undefined;
       if (!this.server?.[tlsSymbol]?.requestCert) return null;
       return this[kHandle]?.authorizationError ?? null;
-    }
-
-    ref() {
-      return this;
-    }
-
-    get remoteAddress() {
-      return this.address()?.address;
-    }
-
-    set remoteAddress(val) {
-      // initialize the object so that other properties wouldn't be lost
-      this.address().address = val;
-    }
-
-    get remotePort() {
-      return this.address()?.port;
-    }
-
-    set remotePort(val) {
-      // initialize the object so that other properties wouldn't be lost
-      this.address().port = val;
-    }
-
-    get remoteFamily() {
-      return this.address()?.family;
-    }
-
-    set remoteFamily(val) {
-      // initialize the object so that other properties wouldn't be lost
-      this.address().family = val;
-    }
-
-    resetAndDestroy() {}
-
-    setKeepAlive(_enable = false, _initialDelay = 0) {}
-
-    setNoDelay(_noDelay = true) {
-      return this;
     }
 
     // Like Node.js's net.Socket#setTimeout (setStreamTimeout): an unref'd
@@ -1938,10 +1879,6 @@ function getNodeHTTPServerSocket() {
       throw err;
     }
 
-    unref() {
-      return this;
-    }
-
     _write(_chunk, _encoding, _callback) {
       const handle = this[kHandle];
       let err;
@@ -1983,6 +1920,7 @@ function getNodeHTTPServerSocket() {
     }
   } as unknown as typeof import("node:net").Socket;
   Object.defineProperty(NodeHTTPServerSocket, "name", { value: "Socket" });
+  installSocketStubs(NodeHTTPServerSocket);
   return NodeHTTPServerSocket;
 }
 

@@ -217,3 +217,104 @@ impl SettingsPayloadUnit {
         }
     }
 }
+
+// ─── field validation (RFC 9113 §8.2.1) ─────────
+
+/// RFC 9110 §5.6.2 `tchar`, restricted to lowercase: RFC 9113 §8.2.1 requires
+/// HTTP/2 field names to be lowercase, so uppercase tchars are rejected (or
+/// normalized) by callers rather than accepted here.
+#[inline]
+pub const fn is_lower_tchar(c: u8) -> bool {
+    matches!(
+        c,
+        b'a'..=b'z'
+            | b'0'..=b'9'
+            | b'!'
+            | b'#'
+            | b'$'
+            | b'%'
+            | b'&'
+            | b'\''
+            | b'*'
+            | b'+'
+            | b'-'
+            | b'.'
+            | b'^'
+            | b'_'
+            | b'`'
+            | b'|'
+            | b'~'
+    )
+}
+
+/// RFC 9113 §8.2.1: a field value MUST NOT contain NUL (0x00), LF (0x0a), or
+/// CR (0x0d). HPACK is length-prefixed so these would otherwise pass through
+/// verbatim, breaking the no-CR/LF invariant the HTTP/1.1 parser provides and
+/// enabling header injection when values are forwarded downstream.
+#[inline]
+pub fn is_malformed_field_value(value: &[u8]) -> bool {
+    bun_core::strings::contains_any(value, b"\0\r\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_lower_tchar;
+
+    /// Exhaustive parity check against the RFC 9110 §5.6.2 `tchar` grammar
+    /// with the uppercase range removed.
+    #[test]
+    fn lower_tchar_matches_grammar() {
+        // RFC 9110 defines tchar as any VCHAR except the delimiters below;
+        // deriving the oracle that way keeps it independent of the literal
+        // table in `is_lower_tchar`.
+        for c in 0..=u8::MAX {
+            let is_delimiter = matches!(
+                c,
+                b'"' | b'('
+                    | b')'
+                    | b','
+                    | b'/'
+                    | b':'
+                    | b';'
+                    | b'<'
+                    | b'='
+                    | b'>'
+                    | b'?'
+                    | b'@'
+                    | b'['
+                    | b'\\'
+                    | b']'
+                    | b'{'
+                    | b'}'
+            );
+            let expected = c.is_ascii_graphic() && !is_delimiter && !c.is_ascii_uppercase();
+            assert_eq!(is_lower_tchar(c), expected, "byte {c:#04x}");
+        }
+    }
+
+    /// `contains_any` is backed by the highway objects, which a native
+    /// `cargo test` of this leaf crate does not link; this crate's unit tests
+    /// run in CI under Miri, where highway takes its scalar paths.
+    #[cfg(miri)]
+    #[test]
+    fn field_value_rejects_exactly_nul_cr_lf() {
+        use super::is_malformed_field_value;
+
+        assert!(!is_malformed_field_value(b""));
+        assert!(!is_malformed_field_value(b"text/plain; charset=utf-8"));
+        // Tabs, spaces, and obs-text are legal in values.
+        assert!(!is_malformed_field_value(b"\ta b\xff"));
+        for bad in [b'\0', b'\r', b'\n'] {
+            assert!(is_malformed_field_value(&[bad]), "lone {bad:#04x}");
+            assert!(is_malformed_field_value(&[bad, b'x']), "leading {bad:#04x}");
+            assert!(
+                is_malformed_field_value(&[b'x', bad]),
+                "trailing {bad:#04x}"
+            );
+        }
+        let mut long = vec![b'a'; 100];
+        assert!(!is_malformed_field_value(&long));
+        long[99] = b'\n';
+        assert!(is_malformed_field_value(&long));
+    }
+}

@@ -4588,6 +4588,13 @@ JSC::EncodedJSValue JSC__JSValue__bigIntFromLatin1(JSC::JSGlobalObject* globalOb
     return JSC::JSValue::encode(JSC::JSBigInt::stringToBigInt(globalObject, WTF::StringView(std::span { reinterpret_cast<const char*>(ptr), len })));
 }
 
+// The text of a BigInt literal (without the `n`) -> BigInt. Throws SyntaxError
+// when the text is not a StringToBigInt literal.
+JSC::EncodedJSValue JSC__JSValue__bigIntFromLiteral(JSC::JSGlobalObject* globalObject, const uint8_t* ptr, size_t len)
+{
+    return JSC::JSValue::encode(JSC::JSBigInt::parseInt(globalObject, WTF::StringView(std::span { reinterpret_cast<const char*>(ptr), len }), JSC::JSBigInt::ErrorParseMode::ThrowExceptions));
+}
+
 JSC::EncodedJSValue JSC__JSValue__bigIntUnaryMinus(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
 {
     JSC::JSValue x = JSC::JSValue::decode(value);

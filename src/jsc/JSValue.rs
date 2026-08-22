@@ -672,21 +672,14 @@ impl JSValue {
         Ok(Some(value))
     }
     /// A BigInt from the text of a BigInt literal without its `n`: decimal
-    /// digits or a `0x`/`0o`/`0b`-prefixed integer (what `StringToBigInt`
-    /// accepts). Throws for anything else.
+    /// digits or a `0x`/`0o`/`0b`-prefixed integer. JSC throws a `SyntaxError`
+    /// for anything else.
     #[track_caller]
     pub fn big_int_from_literal(global: &JSGlobalObject, text: &[u8]) -> JsResult<JSValue> {
-        let value = host_fn::from_js_host_call(global, || {
+        host_fn::from_js_host_call(global, || {
             // SAFETY: `text` is a live slice for the duration of the call.
-            unsafe { JSC__JSValue__bigIntFromLatin1(global, text.as_ptr(), text.len()) }
-        })?;
-        if value.is_empty() {
-            return Err(global.throw(format_args!(
-                "invalid BigInt literal {}n",
-                bstr::BStr::new(text)
-            )));
-        }
-        Ok(value)
+            unsafe { JSC__JSValue__bigIntFromLiteral(global, text.as_ptr(), text.len()) }
+        })
     }
     /// `JSValue.fromTimevalNoTruncate` — encode a `struct timeval`
     /// as a BigInt (`sec * 1_000_000 + nsec`) without precision loss. May allocate
@@ -2012,6 +2005,11 @@ unsafe extern "C" {
     safe fn JSC__JSValue__fromInt64NoTruncate(global: &JSGlobalObject, i: i64) -> JSValue;
     safe fn JSC__JSValue__fromUInt64NoTruncate(global: &JSGlobalObject, i: u64) -> JSValue;
     fn JSC__JSValue__bigIntFromLatin1(
+        global: &JSGlobalObject,
+        ptr: *const u8,
+        len: usize,
+    ) -> JSValue;
+    fn JSC__JSValue__bigIntFromLiteral(
         global: &JSGlobalObject,
         ptr: *const u8,
         len: usize,

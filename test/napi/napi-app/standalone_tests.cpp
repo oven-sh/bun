@@ -241,6 +241,66 @@ static napi_value test_napi_threadsafe_function_abort_full_queue_finalized(
   return Napi::Boolean::New(info.Env(), tsfn_abort_full_finalized);
 }
 
+static napi_threadsafe_function tsfn_finalizer_handle = nullptr;
+static int tsfn_finalizer_context = 0;
+static int tsfn_finalizer_data = 0;
+static std::string tsfn_finalizer_report;
+
+// The finalizer of a threadsafe function runs before the function is freed
+// (Node: ThreadSafeFunction::Finalize deletes it once the callback returns), so
+// it may still use the handle, typically to read the context. Bun used to free
+// the function first.
+static void tsfn_finalizer_uses_handle(napi_env env, void *finalize_data,
+                                       void *finalize_hint) {
+  void *context = nullptr;
+  napi_status context_status =
+      napi_get_threadsafe_function_context(tsfn_finalizer_handle, &context);
+  napi_status unref_status =
+      napi_unref_threadsafe_function(env, tsfn_finalizer_handle);
+  // No thread reference is left by the time the finalizer runs.
+  napi_status release_status = napi_release_threadsafe_function(
+      tsfn_finalizer_handle, napi_tsfn_release);
+  char buf[256];
+  snprintf(buf, sizeof buf,
+           "context: status=%d matches=%d, hint is context=%d, data "
+           "matches=%d, unref status=%d, release status=%d",
+           static_cast<int>(context_status), context == &tsfn_finalizer_context,
+           finalize_hint == &tsfn_finalizer_context,
+           finalize_data == &tsfn_finalizer_data,
+           static_cast<int>(unref_status), static_cast<int>(release_status));
+  tsfn_finalizer_report = buf;
+  tsfn_finalizer_handle = nullptr;
+}
+
+// Creates a threadsafe function and releases its only thread reference, so
+// that it finalizes on a later turn of the event loop.
+static napi_value test_napi_threadsafe_function_finalizer_uses_handle(
+    const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  napi_value resource_name = Napi::String::New(env, "finalizer_uses_handle");
+  tsfn_finalizer_report.clear();
+  NODE_API_CALL(env, napi_create_threadsafe_function(
+                         env, /* JavaScript function */ nullptr,
+                         /* async resource */ nullptr, resource_name,
+                         /* max queue size (unlimited) */ 0,
+                         /* initial thread count */ 1, &tsfn_finalizer_data,
+                         tsfn_finalizer_uses_handle, &tsfn_finalizer_context,
+                         &noop_callback, &tsfn_finalizer_handle));
+  NODE_API_CALL(env, napi_release_threadsafe_function(tsfn_finalizer_handle,
+                                                      napi_tsfn_release));
+  return env.Undefined();
+}
+
+// What the finalizer saw, or undefined while it has not run yet.
+static napi_value test_napi_threadsafe_function_finalizer_uses_handle_report(
+    const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  if (tsfn_finalizer_report.empty()) {
+    return env.Undefined();
+  }
+  return Napi::String::New(env, tsfn_finalizer_report);
+}
+
 // Queue several items while the JS thread is parked here, so all of them run in
 // one dispatch. Microtasks queued by one callback must be drained before the
 // next callback runs (https://github.com/nodejs/node/pull/38506), and must not
@@ -4461,6 +4521,10 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_threadsafe_function_abort_full_queue);
   REGISTER_FUNCTION(
       env, exports, test_napi_threadsafe_function_abort_full_queue_finalized);
+  REGISTER_FUNCTION(env, exports,
+                    test_napi_threadsafe_function_finalizer_uses_handle);
+  REGISTER_FUNCTION(env, exports,
+                    test_napi_threadsafe_function_finalizer_uses_handle_report);
   REGISTER_FUNCTION(env, exports,
                     test_napi_threadsafe_function_microtask_order);
   REGISTER_FUNCTION(env, exports,

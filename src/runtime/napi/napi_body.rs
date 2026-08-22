@@ -2950,35 +2950,44 @@ impl ThreadSafeFunction {
         }
     }
 
-    /// Consumes and frees a heap-allocated ThreadSafeFunction (allocated by `new`).
+    /// Runs the addon's finalizer, then frees a ThreadSafeFunction allocated by `new`.
     /// SAFETY: `this` must be a live `*mut ThreadSafeFunction` returned from `heap::alloc`
     /// and not aliased; caller transfers ownership.
     pub(crate) unsafe fn destroy(this: *mut ThreadSafeFunction) {
-        // SAFETY: caller contract — `this` is a live heap allocation and we are
-        // the sole owner; reclaim the Box up front so the body works on owned
-        // state and the drop at scope end frees it.
-        let mut self_ = unsafe { bun_core::heap::take(this) };
-        self_.unref();
+        // SAFETY: caller contract: `this` is a live heap allocation and we are the
+        // sole owner. The borrow ends before the addon's finalizer runs, since the
+        // finalizer may still read the handle (napi_get_threadsafe_function_context).
+        let finalizer = unsafe {
+            let self_ = &mut *this;
+            self_.unref();
 
-        if let Some(env) = self_.env.as_ref() {
-            // SAFETY: env is live (we hold a ref); drops our registry entry so
-            // teardown cannot hand this pointer out after we free it. `this` is
-            // passed as an opaque registry key only, never dereferenced.
-            unsafe { NapiEnv__unregisterThreadSafeFunction(env.get(), this.cast()) };
+            if let Some(env) = self_.env.as_ref() {
+                // SAFETY: env is live (we hold a ref). `this` is passed as an opaque
+                // registry key only, never dereferenced, so teardown cannot hand it
+                // out after the free below.
+                NapiEnv__unregisterThreadSafeFunction(env.get(), this.cast());
+            }
+
+            self_
+                .finalizer_fun
+                .take()
+                .zip(self_.env.as_ref())
+                .map(|(fun, env)| Finalizer {
+                    env: env.clone(),
+                    fun,
+                    data: self_.finalizer_data,
+                    hint: self_.ctx,
+                })
+        };
+
+        // Before the free, as in Node and `env_teardown`: the finalizer may still use the handle.
+        if let Some(mut finalizer) = finalizer {
+            crate::dispatch::fold(finalizer.run());
         }
 
-        if let (Some(fun), Some(env)) = (self_.finalizer_fun, self_.env.as_ref()) {
-            // Note: ownership transfer of `env` into the Finalizer. We clone (bumps the
-            // external refcount) and let the original drop with the Box below — net refcount
-            // delta is zero.
-            let finalizer = Finalizer {
-                env: env.clone(),
-                fun,
-                data: self_.finalizer_data,
-                hint: self_.ctx,
-            };
-            finalizer.enqueue();
-        }
+        // SAFETY: caller contract as above; the finalizer has returned, and with
+        // `closing` at Closed and `thread_count` at zero nothing else reaches it.
+        drop(unsafe { bun_core::heap::take(this) });
     }
 
     /// Frees the allocation and nothing else: no finalizer, no registry entry,

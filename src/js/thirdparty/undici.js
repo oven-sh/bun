@@ -262,7 +262,7 @@ async function request(
   };
 }
 
-async function stream(url, factoryOrOptions, callbackOrFactory, maybeCallback) {
+function stream(url, factoryOrOptions, callbackOrFactory, maybeCallback) {
   // stream(url, options, factory, callback) overload
   let options = {};
   let factory = factoryOrOptions;

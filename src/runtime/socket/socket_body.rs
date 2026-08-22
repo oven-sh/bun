@@ -5157,6 +5157,21 @@ pub mod testing_apis {
         Ok(JSValue::from(cfg!(socket_fault_injection)))
     }
 
+    /// Live `WindowsNamedPipeContext`s (one per connected or accepted socket
+    /// over a Windows named pipe); always 0 elsewhere.
+    #[bun_jsc::host_fn]
+    pub(crate) fn js_named_pipe_context_live_count(
+        _global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        #[cfg(windows)]
+        let count = crate::socket::windows_named_pipe_context::LIVE_COUNT
+            .load(core::sync::atomic::Ordering::Relaxed);
+        #[cfg(not(windows))]
+        let count = 0usize;
+        Ok(JSValue::js_number(count as f64))
+    }
+
     #[bun_jsc::host_fn]
     pub(crate) fn js_clear_socket_faults(
         global: &JSGlobalObject,

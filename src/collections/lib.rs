@@ -478,5 +478,4 @@ pub mod hash_map {
 }
 
 pub mod array_list;
-pub use array_list::ArrayListAlignedIn;
 pub use array_list::ArrayListDefault;

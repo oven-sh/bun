@@ -1130,7 +1130,8 @@ pub(crate) unsafe fn __bun_fire_timer(
         }
         EventLoopTimerTag::CronJob => {
             let c: *mut CronJob = owner!(CronJob, event_loop_timer);
-            CronJob::on_timer_fire(c, VirtualMachine::get());
+            // SAFETY: a scheduled job's JS wrapper keeps it alive; `t` was just popped.
+            CronJob::on_timer_fire(unsafe { bun_ptr::ThisPtr::new(c) }, VirtualMachine::get());
             Ok(())
         }
         EventLoopTimerTag::QuicEndpoint => {

@@ -76,8 +76,6 @@ class GlobalObject;
 }
 
 namespace Bun {
-class StrongRootBlock;
-
 // JSC measures the live size of the heap at the end of each collection, but only
 // publishes it per scope: an eden collection updates
 // Heap::sizeAfterLastEdenCollection() and a full collection updates
@@ -251,18 +249,6 @@ public:
     // this thread and JSC forbids execution. Either way no script may be entered on this VM.
     ALWAYS_INLINE bool isStoppingOrStopped(const JSC::VM& vm) const { return !scriptAllowed() || vm.executionForbidden(); }
     Bun::JSCTaskScheduler deferredWorkTimer;
-
-    // Linked list of StrongRootBlock cells backing bun_jsc::Strong handles
-    // (see StrongRootBlock.h). Raw pointers into the GC heap: they are rooted
-    // by a SimpleMarkingConstraint registered in JSVMClientData::create(), so
-    // no HandleSet node is needed and no GlobalObject owns them (ShadowRealm /
-    // node:vm / `bun test --isolate` globals share one list).
-    Bun::StrongRootBlock* m_strongRootBlockHead { nullptr };
-    Bun::StrongRootBlock* m_strongRootBlockFree { nullptr };
-    // Last block acquire() found room in; always on the active list (cleared by
-    // release() if unlinked), so it is already rooted via m_strongRootBlockHead.
-    Bun::StrongRootBlock* m_strongRootBlockCursor { nullptr };
-    JSC::Structure* m_strongRootBlockStructure { nullptr };
 
     // Backing storage for Bun::IsolatedModuleCache (see IsolatedModuleCache.h).
     // All access should go through that class. Stored as the JSC base type to

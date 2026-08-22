@@ -449,6 +449,22 @@ describe.concurrent("OTLP/HTTP exporter", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("a function exporter that records spans while the process is exiting does not leave a timer behind", async () => {
+    const { stdout, exitCode } = await run(
+      `
+        let calls = 0;
+        Bun.otel.start({
+          exporters: [{ export(spans) { calls++; Bun.otel.tracer("x").startSpan("from-exporter").end(); } }],
+        });
+        Bun.otel.tracer("t").startSpan("s").end();
+        process.on("exit", () => console.log("calls", calls));
+      `,
+      {},
+    );
+    expect(stdout.trim()).toMatch(/^calls [1-9]/);
+    expect(exitCode).toBe(0);
+  });
+
   test("start() without exporters keeps the env-configured pipeline instead of duplicating it", async () => {
     using c = collector();
     const { exitCode, stderr } = await run(

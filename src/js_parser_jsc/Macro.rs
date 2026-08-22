@@ -45,6 +45,10 @@ use bun_threading::ResetEvent;
 
 use crate::expr_jsc::ExprJsc;
 
+unsafe extern "C" {
+    safe fn JSC__VM__getAPILock(vm: &jsc::VM);
+}
+
 const NAMESPACE_WITH_COLON: &[u8] = b"macro:";
 
 fn is_macro_path(str: &[u8]) -> bool {
@@ -817,8 +821,10 @@ fn host_thread_main(seed: MacroHostSeed, ready: HostStartup) {
     vm.event_loop_mut().ensure_waker();
 
     let global = vm.global();
-    // Held for the thread's whole life and destroyed with the VM, like a worker.
-    global.vm().hold_api_lock_for_thread();
+    // Held for the thread's whole life and abandoned with the VM, as
+    // `WebWorker::thread_main` does (no RAII guard: the VM is destroyed
+    // before this function returns).
+    JSC__VM__getAPILock(global.vm());
     // So another thread may `request_termination()` at process exit (a VM
     // creates the cell lazily, on its own thread).
     let _ = global.vm().termination_exception();

@@ -283,11 +283,13 @@ impl WhyCommand {
 <b>Options:<r>\n\
   <cyan>--top<r>         <d>Show only the top dependency tree instead of nested ones<r>\n\
   <cyan>--depth<r> <blue>\\<NUM\\><r> <d>Maximum depth of the dependency tree to display<r>\n\
+  <cyan>--json<r>        <d>Output in JSON format<r>\n\
 \n\
 <b>Examples:<r>\n\
   <d>$<r> <b><green>bun why<r> <blue>react<r>\n\
   <d>$<r> <b><green>bun why<r> <blue>\"@types/*\"<r> <cyan>--depth<r> <blue>2<r>\n\
   <d>$<r> <b><green>bun why<r> <blue>\"*-lodash\"<r> <cyan>--top<r>\n\
+  <d>$<r> <b><green>bun why<r> <blue>react<r> <cyan>--json<r>\n\
 "
         );
         Output::flush();
@@ -342,6 +344,7 @@ impl WhyCommand {
         // up front so we never need `pm` again once `lockfile` is borrowed.
         let depth_opt = pm.options.depth;
         let log_level = pm.options.log_level;
+        let json_output = pm.options.json_output;
         // SAFETY: CLI dispatch is single-threaded and `log`'s last use is the
         // `load_from_cwd` call below, which receives it as the sole `&mut Log`;
         // no other path (`pm`, `ctx`) reborrows the process-static `Log` while
@@ -466,11 +469,26 @@ impl WhyCommand {
         }
 
         if target_versions.is_empty() {
-            bun_core::prettyln!(
-                "<r><red>error<r>: No packages matching '{}' found in lockfile",
-                BStr::new(package_pattern)
-            );
+            if json_output {
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r>: No packages matching '{}' found in lockfile",
+                    BStr::new(package_pattern)
+                );
+                Output::flush();
+                let _ = Output::writer().write_all(b"[]\n");
+            } else {
+                bun_core::prettyln!(
+                    "<r><red>error<r>: No packages matching '{}' found in lockfile",
+                    BStr::new(package_pattern)
+                );
+            }
             Global::exit(1);
+        }
+
+        if json_output {
+            print_json(&target_versions, &all_dependents, pkg_names, string_bytes);
+            pm.lockfile = lockfile_box;
+            return Ok(());
         }
 
         for target_version in &target_versions {
@@ -562,6 +580,173 @@ fn print_package_with_type(prefix: &[u8], package: &DependentInfo) {
     } else {
         bun_core::prettyln!("");
     }
+}
+
+/// `--json`: an array with one object per matched package. Each object holds the
+/// same tree as the text output: `dependents` is an array, or `null` where the
+/// text output stops expanding (`--depth`, `--top`, or a cycle, which also sets
+/// `circular`). The root package has no version and prints `"version": null`.
+fn print_json(
+    targets: &[VersionInfo],
+    all_dependents: &HashMap<PackageID, Vec<DependentInfo>>,
+    pkg_names: &[semver::String],
+    string_bytes: &[u8],
+) {
+    let mut out: Vec<u8> = Vec::new();
+    out.push(b'[');
+    for (i, target) in targets.iter().enumerate() {
+        if i > 0 {
+            out.push(b',');
+        }
+        let name = pkg_names[target.pkg_id as usize].slice(string_bytes);
+        out.extend_from_slice(b"\n  {");
+        write_json_key(&mut out, 2, "name");
+        let _ = write!(out, "{},", json_str(name));
+        write_json_key(&mut out, 2, "version");
+        write_json_version(&mut out, &target.version);
+        out.push(b',');
+        write_json_key(&mut out, 2, "dependents");
+
+        match all_dependents.get(&target.pkg_id) {
+            Some(dependents) if !dependents.is_empty() => {
+                if MAX_DEPTH.load(AtomicOrdering::Relaxed) == 0 {
+                    out.extend_from_slice(b"null");
+                } else {
+                    let mut sorted: Vec<DependentInfo> = dependents.clone();
+                    index_sort::sort_slice_by(&mut sorted, cmp_dependents);
+                    let mut ctx = TreeContext::init(all_dependents);
+                    write_json_dependents(&mut out, &mut ctx, &sorted, 1, 2);
+                }
+            }
+            _ => out.extend_from_slice(b"[]"),
+        }
+        out.extend_from_slice(b"\n  }");
+    }
+    if !targets.is_empty() {
+        out.push(b'\n');
+    }
+    out.extend_from_slice(b"]\n");
+
+    let _ = Output::writer().write_all(&out);
+    Output::flush();
+}
+
+fn json_str(s: &[u8]) -> bun_core::fmt::JSONFormatterUTF8<'_> {
+    bun_core::fmt::format_json_string_utf8(s, Default::default())
+}
+
+fn write_json_version(out: &mut Vec<u8>, version: &[u8]) {
+    if version.is_empty() {
+        out.extend_from_slice(b"null");
+    } else {
+        let _ = write!(out, "{}", json_str(version));
+    }
+}
+
+fn write_json_indent(out: &mut Vec<u8>, level: usize) {
+    for _ in 0..level {
+        out.extend_from_slice(b"  ");
+    }
+}
+
+/// Starts a new line at `level` and writes `"key": `.
+fn write_json_key(out: &mut Vec<u8>, level: usize, key: &str) {
+    out.push(b'\n');
+    write_json_indent(out, level);
+    let _ = write!(out, "\"{key}\": ");
+}
+
+/// Writes the array of `dependents` (already sorted). `depth` is the depth of
+/// these entries in the tree, `indent` the indentation level of the key they
+/// belong to.
+fn write_json_dependents(
+    out: &mut Vec<u8>,
+    ctx: &mut TreeContext<'_>,
+    dependents: &[DependentInfo],
+    depth: usize,
+    indent: usize,
+) {
+    out.push(b'[');
+    for (i, dep) in dependents.iter().enumerate() {
+        if i > 0 {
+            out.push(b',');
+        }
+        let (dep_type, optional) = match dep.dep_type {
+            DependencyType::Prod => ("dependencies", false),
+            DependencyType::Dev => ("devDependencies", false),
+            DependencyType::Peer => ("peerDependencies", false),
+            DependencyType::Optional => ("optionalDependencies", true),
+            DependencyType::OptionalPeer => ("peerDependencies", true),
+        };
+
+        out.push(b'\n');
+        write_json_indent(out, indent + 1);
+        out.push(b'{');
+        write_json_key(out, indent + 2, "name");
+        let _ = write!(out, "{},", json_str(&dep.name));
+        write_json_key(out, indent + 2, "version");
+        write_json_version(out, &dep.version);
+        out.push(b',');
+        write_json_key(out, indent + 2, "type");
+        let _ = write!(out, "\"{dep_type}\",");
+        write_json_key(out, indent + 2, "optional");
+        let _ = write!(out, "{optional},");
+        write_json_key(out, indent + 2, "spec");
+        let _ = write!(out, "{},", json_str(&dep.spec));
+
+        if ctx.path_tracker.contains_key(&dep.pkg_id) {
+            write_json_key(out, indent + 2, "circular");
+            out.extend_from_slice(b"true,");
+            write_json_key(out, indent + 2, "dependents");
+            out.extend_from_slice(b"null");
+        } else {
+            write_json_key(out, indent + 2, "dependents");
+            write_json_subtree(out, ctx, dep, depth, indent + 2);
+        }
+
+        out.push(b'\n');
+        write_json_indent(out, indent + 1);
+        out.push(b'}');
+    }
+    if !dependents.is_empty() {
+        out.push(b'\n');
+        write_json_indent(out, indent);
+    }
+    out.push(b']');
+}
+
+/// The JSON counterpart of `print_dependency_tree`: the value of `node`'s
+/// `dependents` key. `depth` is the depth of `node` itself.
+fn write_json_subtree(
+    out: &mut Vec<u8>,
+    ctx: &mut TreeContext<'_>,
+    node: &DependentInfo,
+    depth: usize,
+    indent: usize,
+) {
+    let Some(dependents) = ctx.all_dependents.get(&node.pkg_id) else {
+        out.extend_from_slice(b"[]");
+        return;
+    };
+
+    let mut listed: Vec<DependentInfo> = dependents
+        .iter()
+        .filter(|dep| !(node.workspace && dep.version.is_empty()))
+        .cloned()
+        .collect();
+    if listed.is_empty() {
+        out.extend_from_slice(b"[]");
+        return;
+    }
+    if depth >= MAX_DEPTH.load(AtomicOrdering::Relaxed) {
+        out.extend_from_slice(b"null");
+        return;
+    }
+    index_sort::sort_slice_by(&mut listed, cmp_dependents);
+
+    ctx.path_tracker.insert(node.pkg_id, depth);
+    write_json_dependents(out, ctx, &listed, depth + 1, indent);
+    ctx.path_tracker.remove(&node.pkg_id);
 }
 
 pub(crate) struct TreeContext<'a> {

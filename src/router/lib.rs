@@ -1154,13 +1154,28 @@ pub mod pattern {
     }
 
     impl Pattern {
-        /// Match a filesystem route pattern to a URL path.
+        /// Match a filesystem route pattern to a URL path. On `false`, `params` is
+        /// truncated to its entry length so the next candidate starts clean.
         pub(crate) fn match_<'a, const ALLOW_OPTIONAL_CATCH_ALL: bool>(
             // `path` must be lowercased and have no leading slash
             path: &'a [u8],
             // case-sensitive, must not have a leading slash
             name: &'a [u8],
             // case-insensitive, must not have a leading slash
+            match_name: &[u8],
+            params: &mut route_param::List<'a>,
+        ) -> bool {
+            let params_len = params.len();
+            if Self::match_inner::<ALLOW_OPTIONAL_CATCH_ALL>(path, name, match_name, params) {
+                return true;
+            }
+            params.truncate(params_len);
+            false
+        }
+
+        fn match_inner<'a, const ALLOW_OPTIONAL_CATCH_ALL: bool>(
+            path: &'a [u8],
+            name: &'a [u8],
             match_name: &[u8],
             params: &mut route_param::List<'a>,
         ) -> bool {
@@ -1175,7 +1190,6 @@ pub mod pattern {
                         let segment = &path_
                             [0..strings::index_of_char_usize(path_, b'/').unwrap_or(path_.len())];
                         if !str_.eql_bytes(segment) {
-                            params.clear(); // shrinkRetainingCapacity(0)
                             return false;
                         }
 
@@ -1185,8 +1199,9 @@ pub mod pattern {
                             b""
                         };
 
-                        if path_.is_empty() && pattern.is_end(name) {
-                            return true;
+                        if pattern.is_end(name) {
+                            // If the pattern is exhausted, the URL must be too.
+                            return path_.is_empty();
                         }
                     }
                     Value::Dynamic(dynamic) => {
@@ -1198,7 +1213,6 @@ pub mod pattern {
                             path_ = &path_[i + 1..];
 
                             if pattern.is_end(name) {
-                                params.clear(); // shrinkRetainingCapacity(0)
                                 return false;
                             }
 
@@ -1222,7 +1236,6 @@ pub mod pattern {
                                 return true;
                             }
 
-                            params.clear(); // shrinkRetainingCapacity(0)
                             return false;
                         }
 
@@ -1279,8 +1292,7 @@ pub mod pattern {
             let mut offset: RoutePathInt = 0;
             debug_assert!(!input.is_empty());
             let mut kind = Tag::Static;
-            let end = (input.len() - 1) as u32;
-            while (offset as u32) < end {
+            while (offset as usize) < input.len() {
                 let pattern: Pattern = match Pattern::init_unhashed(input, offset) {
                     Ok(p) => p,
                     Err(err) => {
@@ -1358,7 +1370,7 @@ pub mod pattern {
         }
 
         pub(crate) fn is_end(self, input: &[u8]) -> bool {
-            self.len as usize >= input.len() - 1
+            self.len as usize >= input.len()
         }
 
         pub(crate) fn init_unhashed(
@@ -1396,18 +1408,11 @@ pub mod pattern {
 
             let end: RoutePathInt = u16::try_from(input.len() - 1).expect("route path fits in u16");
 
-            if offset == end {
-                return Ok(Pattern {
-                    len: offset,
-                    value: Value::Static(HashedString::EMPTY),
-                });
-            }
-
             while i <= end {
                 match input[i as usize] {
                     b'/' => {
                         return Ok(Pattern {
-                            len: (i + 1).min(end),
+                            len: i + 1,
                             value: Value::Static(init_hashed_string(
                                 &input[offset as usize..i as usize],
                             )),
@@ -1498,7 +1503,8 @@ pub mod pattern {
                         }
 
                         return Ok(Pattern {
-                            len: (i + 1).min(end),
+                            // `i` is one past `]`; the next call's leading-`/` skip consumes the separator.
+                            len: i,
                             value: match tag {
                                 Tag::Dynamic => Value::Dynamic(param),
                                 Tag::CatchAll => Value::CatchAll(param),
@@ -1697,6 +1703,23 @@ mod tests {
             (b"404", b"404", &[]),
             (b"404/[[...slug]]", b"404", &[]),
             (b"404a/[[...slug]]", b"404a", &[]),
+            // single-character static segment after a dynamic segment (#12206)
+            (
+                b"[test]/a",
+                b"value/a",
+                &[Entry {
+                    name: b"test",
+                    value: b"value",
+                }],
+            ),
+            (
+                b"a/[test]",
+                b"a/value",
+                &[Entry {
+                    name: b"test",
+                    value: b"value",
+                }],
+            ),
             (
                 b"[teamSlug]/lemon/[project]/[[...slug]]",
                 b"team/lemon/lemon/slugggg",
@@ -1777,6 +1800,59 @@ mod tests {
 
         assert!(run(regular_list) == 0);
         assert!(run(optional_catch_all) == 0);
+    }
+
+    #[test]
+    fn pattern_no_match_clears_params() {
+        // https://github.com/oven-sh/bun/issues/12206
+        let no_match: &[(&[u8], &[u8])] = &[
+            (
+                b"admin/[businessId]/providers",
+                b"admin/xxx/providers/create",
+            ),
+            (b"[test]/aa", b"value/aa/yyy"),
+            (b"[test]/a", b"value"),
+            (b"[test]/a", b"value/a/extra"),
+            (b"[test]/a/[test2]/lala", b"value/a"),
+            (b"[test]/[...rest]", b"value"),
+        ];
+        for (route, url) in no_match {
+            let mut params = route_param::List::default();
+            let matched = Pattern::match_::<true>(url, route, route, &mut params);
+            assert!(
+                !matched,
+                "route {:?} should not match {:?}",
+                bstr::BStr::new(route),
+                bstr::BStr::new(url),
+            );
+            assert!(
+                params.is_empty(),
+                "route {:?} left {} stale param(s) after rejecting {:?}",
+                bstr::BStr::new(route),
+                params.len(),
+                bstr::BStr::new(url),
+            );
+        }
+    }
+
+    #[test]
+    fn validate_rejects_trailing_open_bracket() {
+        // `match_inner` would panic on these if they reached the dynamic list.
+        let mut log = bun_ast::Log::default();
+        for route in [b"[x][" as &[u8], b"[id]/foo[", b"[x]/foo/[", b"[", b"a/["] {
+            assert!(
+                Pattern::validate(route, &mut log).is_none(),
+                "validate should reject {:?}",
+                bstr::BStr::new(route),
+            );
+        }
+        for route in [b"[x]" as &[u8], b"[x]/a", b"a/[x]", b"a"] {
+            assert!(
+                Pattern::validate(route, &mut log).is_some(),
+                "validate should accept {:?}",
+                bstr::BStr::new(route),
+            );
+        }
     }
 
     // The route-loader integration tests ("Github

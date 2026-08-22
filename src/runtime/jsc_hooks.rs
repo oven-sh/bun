@@ -1114,6 +1114,16 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
 /// `on_before_exit` drain loops where blocking when the loop is idle would
 /// hang shutdown.
 ///
+/// Contract: the callers are loops of the form `while is_event_loop_alive()
+/// { tick(); auto_tick_active(); }` (`Run::start`, `on_before_exit`,
+/// `WebWorker::spin`, the REPL, the debugger thread's own loop), so once a
+/// counted error has made that condition false this returns without polling.
+/// A wait for some other condition must use [`auto_tick`], as
+/// `wait_for_promise` and the debugger's attach wait do, or it would spin
+/// instead of parking while the counter is nonzero. (`AnyEventLoop::tick_once`
+/// also calls this, for a single pump between batches of install work; one
+/// skipped poll there changes nothing.)
+///
 /// # Safety
 /// `vm` is the live per-thread VM.
 unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
@@ -1125,7 +1135,18 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
 
     // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
     unsafe { (*el).tick_immediate_tasks(vm) };
-    // SAFETY: as above.
+    // An error nothing handled (raised by those immediates, or reported by the
+    // caller's `tick()` just before this) ends the run: the caller's loop
+    // condition is now false (see the contract above; the counter fails it
+    // unless more immediates are queued) and it runs nothing further. Parking
+    // in the poll below would only delay that exit until some unrelated wakeup,
+    // or forever, and run whatever the wakeup brings first. (With immediates
+    // queued the loop comes back for them, and the poll does not block anyway.)
+    // SAFETY: per fn contract.
+    if unsafe { &*vm }.unhandled_error_counter > 0 && !unsafe { &*vm }.is_event_loop_alive() {
+        return;
+    }
+    // SAFETY: `el` is the live per-thread event loop.
     let has_yielded_tasks = unsafe { (*el).promote_yield_tasks() };
     #[cfg(windows)]
     if has_yielded_tasks || !unsafe { &*el }.immediate_tasks.is_empty() {

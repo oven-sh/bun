@@ -86,6 +86,10 @@ impl Stmt {
         if !matches!(interp.node(child).kind(), StateKind::Async) {
             interp.deinit_node(child);
         }
+        if interp.interrupted(this) {
+            let me = interp.as_stmt_mut(this);
+            me.idx = Self::expr_count(me);
+        }
         Yield::Next(this)
     }
 

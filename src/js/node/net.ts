@@ -4085,6 +4085,7 @@ function lookupAndListen(
   onListen,
 ) {
   if (dns === undefined) dns = require("node:dns");
+  const flags = (ipv6Only === true ? 1 : 0) | (reusePort === true ? 2 : 0);
   const listeningId = server._listeningId;
   dns.lookup(hostname, { all: true }, (err, addresses) => {
     if (listeningId !== server._listeningId) {
@@ -4109,7 +4110,7 @@ function lookupAndListen(
         reusePort,
         readableAll,
         writableAll,
-        undefined,
+        flags,
         undefined,
         null,
         validAddress.address,
@@ -4146,48 +4147,6 @@ function listenInCluster(
   exclusive = !!exclusive;
 
   if (cluster === undefined) cluster = require("node:cluster");
-
-  if (
-    !cluster.isPrimary &&
-    !exclusive &&
-    typeof address === "string" &&
-    address.length > 0 &&
-    typeof port === "number" &&
-    port >= 0 &&
-    isIP(address) === 0
-  ) {
-    const lookupListeningId = (server[kClusterListeningId] = (server[kClusterListeningId] || 0) + 1);
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2259-L2278
-    require("node:dns").lookup(address, (err, ip, family) => {
-      if (lookupListeningId !== server[kClusterListeningId]) return;
-      if (err) {
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2268-L2269
-        server.emit("error", err);
-        return;
-      }
-      listenInCluster(
-        server,
-        ip,
-        port,
-        family === 6 ? 6 : 4,
-        backlog,
-        fd,
-        exclusive,
-        ipv6Only,
-        reusePort,
-        readableAll,
-        writableAll,
-        flags,
-        options,
-        path,
-        hostname,
-        tls,
-        contexts,
-        onListen,
-      );
-    });
-    return;
-  }
 
   if (cluster.isPrimary || exclusive) {
     server[kRealListen](

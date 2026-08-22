@@ -12,7 +12,8 @@ pub enum Kind {
     FileStart,
     /// u32 file_idx, str formatted_line (ANSI included; printed verbatim)
     TestDone,
-    /// 9 × u32: file_idx, pass, fail, skip, todo, expectations, skipped_label, files, unhandled
+    /// 9 × u32: file_idx, pass, fail, skip, todo, expectations, skipped_label, files, unhandled;
+    /// then the file's deltas of `Snapshots::summary_counts` (4 × u32, same order)
     FileDone,
     /// 3 × str: failures, skips, todos (verbatim repeat-buffer bytes)
     RepeatBufs,
@@ -29,6 +30,10 @@ pub enum Kind {
     /// str lcov — this worker's coverage data, sent at exit; the coordinator
     /// merges every worker's into the one report it writes.
     CoverageChunk,
+    /// 4 × u32 — deltas of `Snapshots::summary_counts` accrued after this
+    /// worker's last FileDone: inline snapshots only count as added once the
+    /// worker writes them into the test files, which it does at exit.
+    SnapshotCounts,
 }
 
 impl TryFrom<u8> for Kind {
@@ -45,6 +50,7 @@ impl TryFrom<u8> for Kind {
             6 => Kind::Shutdown,
             7 => Kind::JunitChunk,
             8 => Kind::CoverageChunk,
+            9 => Kind::SnapshotCounts,
             _ => return Err(()),
         })
     }
@@ -76,6 +82,14 @@ impl Frame {
 
     pub(crate) fn u32(&mut self, v: u32) {
         self.buf.extend_from_slice(&v.to_le_bytes());
+    }
+
+    /// How much each of N monotonic counters grew between two readings, one
+    /// u32 per counter; `Reader::counts` is the inverse.
+    pub(crate) fn count_deltas<const N: usize>(&mut self, after: [usize; N], before: [usize; N]) {
+        for (after, before) in after.into_iter().zip(before) {
+            self.u32(u32::try_from(after - before).unwrap_or(u32::MAX));
+        }
     }
 
     pub(crate) fn str(&mut self, s: &[u8]) {
@@ -131,6 +145,10 @@ impl<'a> Reader<'a> {
         let v = u32::from_le_bytes(self.p[0..4].try_into().unwrap());
         self.p = &self.p[4..];
         v
+    }
+
+    pub(crate) fn counts<const N: usize>(&mut self) -> [usize; N] {
+        core::array::from_fn(|_| self.u32() as usize)
     }
 
     pub(crate) fn str(&mut self) -> &'a [u8] {

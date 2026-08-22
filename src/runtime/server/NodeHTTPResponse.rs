@@ -734,7 +734,13 @@ impl NodeHTTPResponse {
         let vm = vm_get();
         self.clear_on_data_callback(self.get_this_value(), vm.global());
         self.clear_pending_pinned_write(vm.global(), JSValue::ZERO);
-        self.upgrade_context.with_mut(|c| c.reset());
+        // ws may still upgrade an open tunnel: keep a context whose request pointer is detached.
+        let tunneled = self.flags.get().contains(Flags::TUNNELED);
+        self.upgrade_context.with_mut(|c| {
+            if !tunneled || !c.request.is_null() {
+                c.reset();
+            }
+        });
 
         self.buffered_request_body_data_during_pause
             .with_mut(|b| b.clear_and_free());

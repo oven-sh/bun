@@ -129,6 +129,50 @@ for (const [name, copy] of impls) {
       assertContent(basename + "/result/a.txt", "win");
     });
 
+    test("overwriting a hard-linked file replaces the link instead of writing through it", async () => {
+      await using basename = tempDir("cp", {
+        "from/a.txt": "new",
+        "store/a.txt": "original",
+        "result": {},
+      });
+      // result/a.txt shares its inode with store/a.txt, the way a package
+      // manager hard-links node_modules files out of its cache. node unlinks
+      // the destination and creates a fresh file, so the store copy is untouched.
+      fs.linkSync(basename + "/store/a.txt", basename + "/result/a.txt");
+
+      await copy(basename + "/from/a.txt", basename + "/result/a.txt");
+
+      expect({
+        result: fs.readFileSync(basename + "/result/a.txt", "utf8"),
+        store: fs.readFileSync(basename + "/store/a.txt", "utf8"),
+        storeLinks: fs.statSync(basename + "/store/a.txt").nlink,
+      }).toEqual({
+        result: "new",
+        store: "original",
+        storeLinks: 1,
+      });
+    });
+
+    // As root, open() ignores the file mode, so the in-place overwrite this
+    // guards against succeeds either way.
+    test.skipIf(isWindows || process.getuid?.() === 0)("overwriting a read-only file replaces it", async () => {
+      await using basename = tempDir("cp", {
+        "from/a.txt": "new",
+        "result/a.txt": "original",
+      });
+      fs.chmodSync(basename + "/result/a.txt", 0o444);
+
+      await copy(basename + "/from/a.txt", basename + "/result/a.txt");
+
+      expect({
+        content: fs.readFileSync(basename + "/result/a.txt", "utf8"),
+        mode: fs.statSync(basename + "/result/a.txt").mode & 0o777,
+      }).toEqual({
+        content: "new",
+        mode: fs.statSync(basename + "/from/a.txt").mode & 0o777,
+      });
+    });
+
     test("'force: false' + 'errorOnExist: true' can throw", async () => {
       await using basename = tempDir("cp", {
         "from/a.txt": "lose",
@@ -428,6 +472,29 @@ test("cp with missing callback throws", () => {
     // @ts-expect-error
     fs.cp("a", "b" as any);
   }).toThrow(/"cb"/);
+});
+
+test("callback fs.cp overwriting a hard-linked file replaces the link instead of writing through it", async () => {
+  await using basename = tempDir("cp", {
+    "from/a.txt": "new",
+    "store/a.txt": "original",
+    "result": {},
+  });
+  fs.linkSync(join(basename, "store", "a.txt"), join(basename, "result", "a.txt"));
+
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+  fs.cp(join(basename, "from", "a.txt"), join(basename, "result", "a.txt"), err => (err ? reject(err) : resolve()));
+  await promise;
+
+  expect({
+    result: fs.readFileSync(join(basename, "result", "a.txt"), "utf8"),
+    store: fs.readFileSync(join(basename, "store", "a.txt"), "utf8"),
+    storeLinks: fs.statSync(join(basename, "store", "a.txt")).nlink,
+  }).toEqual({
+    result: "new",
+    store: "original",
+    storeLinks: 1,
+  });
 });
 
 // On Windows, _copySingleFileSync's reparse-point branch opens a handle to the

@@ -24,7 +24,8 @@ pub(crate) fn now_ms() -> u64 {
 }
 
 struct State {
-    /// earliest not-before timestamp (ms since epoch) the loop must be woken for
+    /// earliest not-before deadline (monotonic ms, a `now_ms()` value) the loop must be
+    /// woken for
     next_deadline_ms: Option<u64>,
 }
 

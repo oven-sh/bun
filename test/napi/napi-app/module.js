@@ -359,7 +359,6 @@ nativeTests.test_get_all_property_names_throwing_proxy_traps = () => {
       napi_key_keep_numbers,
     ),
   );
-
 };
 
 nativeTests.test_get_all_property_names_get_prototype_throws_in_descriptor_walk = () => {
@@ -1441,6 +1440,97 @@ nativeTests.test_async_cleanup_hook_remove_nonexistent = () => {
 nativeTests.test_async_cleanup_hook_tsfn_release = () => {
   const addon = require("./build/Debug/test_async_cleanup_hook_tsfn_release.node");
   addon.start();
+};
+
+const asyncCleanupHookWaitAddon = require("node:path").join(__dirname, "build/Debug/test_async_cleanup_hook_wait.node");
+
+// Resolves with the worker's exit code. A worker that posts a message is
+// terminated by us when it does.
+function runWorker(code) {
+  const { Worker } = require("node:worker_threads");
+  const worker = new Worker(code, { eval: true });
+  return new Promise((resolve, reject) => {
+    worker.on("error", reject);
+    worker.on("exit", resolve);
+    worker.on("message", () => worker.terminate());
+  });
+}
+
+// Env teardown waits for an async cleanup hook until the addon removes the
+// hook's handle, and turns the event loop meanwhile (test_async_cleanup_hook_wait.c
+// describes the `mode`s of completing the hook). `where` picks the exit that
+// tears the env down:
+//   "main": this thread's loop runs dry
+//   "worker": a Worker's loop runs dry
+//   "worker-exit": a Worker calls process.exit(); its env is still waited for
+//   "worker-terminate": the parent terminates a busy Worker; same
+//   "exit": this thread calls process.exit(); no env teardown (as in Node),
+//           except under BUN_DESTRUCT_VM_ON_EXIT, where the hooks are called
+//           but not waited for
+//   "uncaught": this thread dies of an uncaught exception; same as "exit"
+nativeTests.test_async_cleanup_hook_wait = async (_gc, mode, where) => {
+  const armInWorker = `require(${JSON.stringify(asyncCleanupHookWaitAddon)}).arm(${JSON.stringify(mode)});`;
+  switch (where) {
+    case "main":
+      require(asyncCleanupHookWaitAddon).arm(mode);
+      break;
+    case "worker":
+      console.log("worker exited with", await runWorker(armInWorker));
+      break;
+    case "worker-exit":
+      console.log("worker exited with", await runWorker(armInWorker + "process.exit(0);"));
+      break;
+    case "worker-terminate": {
+      const stayBusyAndReport = `setInterval(() => {}, 1000); require("node:worker_threads").parentPort.postMessage("armed");`;
+      console.log("worker exited with", await runWorker(armInWorker + stayBusyAndReport));
+      break;
+    }
+    case "exit":
+      require(asyncCleanupHookWaitAddon).arm(mode);
+      process.exit(0);
+      break;
+    case "uncaught":
+      // main.js turns an uncaught exception into process.exit(); this wants the real thing.
+      process.removeAllListeners("uncaughtException");
+      require(asyncCleanupHookWaitAddon).arm(mode);
+      setTimeout(() => {
+        throw new Error("uncaught, on purpose");
+      }, 0);
+      break;
+    default:
+      throw new Error(`unknown where: ${where}`);
+  }
+};
+
+// test_tsfn_released_at_exit.c: a threadsafe function's last event loop task is
+// still queued when its env is torn down. Here a second env, torn down later,
+// waits for its async cleanup hook and so dispatches that task.
+nativeTests.test_tsfn_released_at_exit_then_wait = () => {
+  require("./build/Debug/test_tsfn_released_at_exit.node").start("release");
+  require(asyncCleanupHookWaitAddon).arm("tsfn");
+};
+
+// Same, with the env's own second round of cleanup hooks dispatching the task.
+nativeTests.test_tsfn_released_at_exit_rearm = () => {
+  require("./build/Debug/test_tsfn_released_at_exit.node").start("rearm");
+};
+
+// Bun-only: the function freed once in each of the two ways a queued task ends,
+// dispatched (by the waiting env) or released unrun (by the Worker's teardown).
+nativeTests.test_tsfn_released_at_exit_in_worker = async () => {
+  const { napiThreadsafeFunctionLiveCount } = require("bun:internal-for-testing");
+  const path = require("node:path");
+  const releaseAddon = path.join(__dirname, "build/Debug/test_tsfn_released_at_exit.node");
+  const before = napiThreadsafeFunctionLiveCount();
+  const start = `require(${JSON.stringify(releaseAddon)}).start("release");`;
+  const unrun = await runWorker(start);
+  const liveAfterUnrun = napiThreadsafeFunctionLiveCount() - before;
+  const dispatched = await runWorker(start + `require(${JSON.stringify(asyncCleanupHookWaitAddon)}).arm("tsfn");`);
+  const liveAfterDispatched = napiThreadsafeFunctionLiveCount() - before;
+  // Printed after both workers are gone, so these lines cannot interleave with
+  // what the addons print from the workers.
+  console.log(`released unrun: worker exited with ${unrun}, live=${liveAfterUnrun}`);
+  console.log(`dispatched: worker exited with ${dispatched}, live=${liveAfterDispatched}`);
 };
 
 nativeTests.test_cleanup_hook_duplicates = () => {

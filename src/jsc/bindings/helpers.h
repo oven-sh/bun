@@ -383,42 +383,39 @@ static const WTF::String toStringStatic(ZigString str)
     return WTF::String(AtomStringImpl::add(std::span { untagged, str.len }));
 }
 
-static JSC::JSValue getErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
+static WTF::String errorMessageOrFallback(WTF::String message, const ZigString& source)
 {
-    WTF::String message = toString(*str);
-    if (message.isNull() && str->len > 0) [[unlikely]] {
-        // pending exception while creating an error.
-        return {};
-    }
+    if (message.isNull() && source.len > 0) [[unlikely]]
+        return "The error message exceeds the maximum string length"_s;
+    return message;
+}
 
-    JSC::JSObject* result = JSC::createError(globalObject, message);
+static JSC::JSValue createErrorInstance(JSC::JSGlobalObject* globalObject, JSC::ErrorType type, WTF::String message, const ZigString& source)
+{
+    JSC::JSObject* result = JSC::createError(globalObject, type, errorMessageOrFallback(WTF::move(message), source));
     JSC::EnsureStillAliveScope ensureAlive(result);
 
     return result;
+}
+
+static JSC::JSValue getErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
+{
+    return createErrorInstance(globalObject, JSC::ErrorType::Error, toString(*str), *str);
 }
 
 static JSC::JSValue getTypeErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
 {
-    JSC::JSObject* result = JSC::createTypeError(globalObject, toStringCopy(*str));
-    JSC::EnsureStillAliveScope ensureAlive(result);
-
-    return result;
+    return createErrorInstance(globalObject, JSC::ErrorType::TypeError, toStringCopy(*str), *str);
 }
 
 static JSC::JSValue getSyntaxErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
 {
-    JSC::JSObject* result = JSC::createSyntaxError(globalObject, toStringCopy(*str));
-    JSC::EnsureStillAliveScope ensureAlive(result);
-
-    return result;
+    return createErrorInstance(globalObject, JSC::ErrorType::SyntaxError, toStringCopy(*str), *str);
 }
 
 static JSC::JSValue getRangeErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
 {
-    JSC::JSObject* result = JSC::createRangeError(globalObject, toStringCopy(*str));
-    JSC::EnsureStillAliveScope ensureAlive(result);
-
-    return result;
+    return createErrorInstance(globalObject, JSC::ErrorType::RangeError, toStringCopy(*str), *str);
 }
 
 static const JSC::Identifier toIdentifier(ZigString str, JSC::JSGlobalObject* global)

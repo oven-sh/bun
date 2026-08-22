@@ -440,7 +440,7 @@ PYEOF
   warn "发现 $n 个使用非统一工具链 ABI 命名空间的对象:"
   sed 's|'"$REPO_ROOT"'|.|' "$STALE_ABI_LIST" | while read -r f; do warn "  $f"; done
 
-  if [ -n "$DRY_RUN" ]; then
+  if [ -n "${DRY_RUN:-}" ]; then
     warn "DRY_RUN=1, 不删除"
     rm -f "$STALE_ABI_LIST"
     return 0

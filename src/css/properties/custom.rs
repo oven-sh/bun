@@ -1562,16 +1562,6 @@ pub enum CustomPropertyName {
     Unknown(Ident),
 }
 
-// `DashedIdent`/`Ident` carry `*const [u8]` arena slices and
-// intentionally don't derive `PartialEq` (pointer-eq would be wrong).
-// `PropertyId` derives `PartialEq`, so compare the underlying bytes here.
-impl PartialEq for CustomPropertyName {
-    fn eq(&self, other: &Self) -> bool {
-        // SAFETY: arena-owned slices live for the parse session.
-        unsafe { (&*self.as_ptr()).eq(&*other.as_ptr()) }
-    }
-}
-
 impl CustomPropertyName {
     pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         match self {

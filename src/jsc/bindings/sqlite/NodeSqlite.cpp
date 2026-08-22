@@ -138,8 +138,6 @@ extern "C" const char* Bun__sqlite3_version()
     return BUN_SQLITE_BUNDLED_VERSION;
 }
 
-extern "C" bool Bun__Permission__isEnabled();
-
 namespace Bun {
 
 using namespace JSC;
@@ -1119,13 +1117,6 @@ bool JSDatabaseSync::open(JSGlobalObject* globalObject, ThrowScope& scope)
     }
 
     if (m_config.allowExtension) {
-        // https://github.com/nodejs/node/blob/v26.3.0/src/node_sqlite.cc#L993
-        if (Bun__Permission__isEnabled()) [[unlikely]] {
-            Bun::throwError(globalObject, scope, ErrorCode::ERR_LOAD_SQLITE_EXTENSION,
-                "Cannot load SQLite extensions when the permission model is enabled."_s);
-            closeInternal();
-            return false;
-        }
         if (!LAZY_SQLITE_HAS_LOAD_EXTENSION()) [[unlikely]] {
             Bun::throwError(globalObject, scope, ErrorCode::ERR_LOAD_SQLITE_EXTENSION,
                 "the loaded SQLite library was built with SQLITE_OMIT_LOAD_EXTENSION.\n"

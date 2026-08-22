@@ -758,16 +758,6 @@ impl TranspilerJob {
                     ctx.deinit();
                 }
             });
-        // The bytewise copy left
-        // `linker.resolver` pointing at `vm.transpiler.resolver` (wrong allocator/log); rewire
-        // it at the local copy so `print_with_source_map` resolves through the arena-backed
-        // resolver.
-        // SAFETY (lifetime erasure): `linker.resolver` is `*mut Resolver<'static>`; the local
-        // `transpiler.resolver` is `Resolver<'arena>`. The pointer is only dereferenced inside
-        // `print_with_source_map` below, which completes before `arena` (declared first) drops,
-        // so widening `'arena → 'static` for the raw-pointer field is sound — same justification
-        // as the `Transpiler<'_>` cast above.
-        transpiler.linker.resolver = ptr::addr_of_mut!(transpiler.resolver).cast();
 
         let mut package_json: Option<&'static bun_watcher::PackageJSON> = None;
         let hash = Watcher::get_hash(path.text);

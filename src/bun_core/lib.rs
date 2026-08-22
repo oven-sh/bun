@@ -997,14 +997,6 @@ pub enum JsError {
 
 bun_alloc::oom_from_alloc!(JsError);
 
-impl From<crate::Error> for JsError {
-    fn from(_: crate::Error) -> Self {
-        // Mapping to `Thrown` here lets `?` propagate while the actual throw
-        // is handled by the host-fn wrapper.
-        JsError::Thrown
-    }
-}
-
 /// Write `parts` consecutively
 /// into `dest` and return the written prefix as a mutable slice. Panics if
 /// `sum(parts.len()) > dest.len()`.
@@ -1016,13 +1008,6 @@ pub fn concat_into<'b, T: Copy>(dest: &'b mut [T], parts: &[&[T]]) -> &'b mut [T
         off += p.len();
     }
     &mut dest[..off]
-}
-
-/// Back-compat alias for the original `u8`-only buffer-concat. New code should
-/// call [`concat_into`] directly.
-#[inline]
-pub fn concat<'b>(buf: &'b mut [u8], parts: &[&[u8]]) -> &'b [u8] {
-    concat_into(buf, parts)
 }
 
 /// Tagged-union field projection — `data.file`, `chunk.content.javascript`.

@@ -21,6 +21,11 @@
       "SecretsOptions"
     ]
   },
+  "src/jsc/JSValue.rs": {
+    "unsafe impl Send": [
+      "ForeignBytes"
+    ]
+  },
   "src/jsc/NodeCompileCache.rs": {
     "thread spawn": 1,
     "unsafe impl Send": [

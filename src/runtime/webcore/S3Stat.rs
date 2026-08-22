@@ -1,5 +1,5 @@
 use bun_core::{OwnedString, String as BunString};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, Local, Scope};
 
 bun_output::declare_scope!(S3Stat, visible);
 
@@ -36,24 +36,25 @@ impl S3Stat {
         }))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_size(&self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(self.size as f64)
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub(crate) fn get_size<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        Ok(scope.number(this.size as f64))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_etag(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        self.etag.to_js(global)
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub(crate) fn get_etag<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        scope.string(&this.etag)
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_content_type(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        self.content_type.to_js(global)
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub(crate) fn get_content_type<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        scope.string(&this.content_type)
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_last_modified(&self, global: &JSGlobalObject) -> JSValue {
-        JSValue::from_date_number(global, self.last_modified)
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub(crate) fn get_last_modified<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        let v = JSValue::from_date_number(scope.unscoped_global(), this.last_modified);
+        Ok(scope.local(v))
     }
 }
 

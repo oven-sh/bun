@@ -124,30 +124,30 @@ impl ArrayBufferSink {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    pub(crate) fn end_from_js(
-        &mut self,
-        _global_this: &JSGlobalObject,
-    ) -> bun_sys::Result<ArrayBuffer> {
+    pub(crate) fn end_from_js(&mut self, global_this: &JSGlobalObject) -> bun_sys::Result<JSValue> {
         if self.done {
-            return Ok(ArrayBuffer::from_bytes(&mut [], JSType::ArrayBuffer));
+            // Host return: empty ⇒ the exception `create` left pending.
+            return Ok(
+                ArrayBuffer::create::<{ JSType::ArrayBuffer }>(global_this, b"")
+                    .or_pending_exception(),
+            );
         }
 
         self.done = true;
         self.source.close(None);
-        // `defer this.bytes = bun.Vec<u8>.empty` → take ownership, leave empty.
+        // `defer this.bytes = bun.Vec<u8>.empty` → take ownership, leave empty;
+        // ownership of the allocation transfers to JSC.
         let mut bytes = core::mem::take(&mut self.bytes);
-        // Ownership transfers to JSC: the trait impl below converts the returned
-        // `ArrayBuffer` with `to_js_unchecked`, which installs
-        // `MarkedArrayBuffer_deallocator` (frees via `mi_free` on GC).
-        let owned = bytes.to_owned_slice();
-        Ok(ArrayBuffer::from_owned_bytes(
-            owned,
+        Ok(bun_jsc::array_buffer::js_from_owned_slice(
+            global_this,
             if self.as_uint8array {
                 JSType::Uint8Array
             } else {
                 JSType::ArrayBuffer
             },
-        ))
+            bytes.to_owned_slice(),
+        )
+        .or_pending_exception())
     }
 
     pub(crate) fn memory_cost(&self) -> usize {
@@ -177,15 +177,7 @@ impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
         Self::construct(this);
     }
     fn end_from_js(&mut self, global: &JSGlobalObject) -> bun_sys::Result<JSValue> {
-        match Self::end_from_js(self, global) {
-            // Not `to_js`: its `mi_is_in_heap_region` probe would skip the
-            // deallocator when the global allocator isn't mimalloc.
-            bun_sys::Result::Ok(ab) => bun_sys::Result::Ok(match ab.to_js_unchecked(global) {
-                Ok(v) => v,
-                Err(_) => JSValue::ZERO,
-            }),
-            bun_sys::Result::Err(e) => bun_sys::Result::Err(e),
-        }
+        Self::end_from_js(self, global)
     }
     fn source(&mut self) -> Option<&mut SourceHandle> {
         Some(&mut self.source)

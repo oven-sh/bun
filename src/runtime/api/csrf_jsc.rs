@@ -4,7 +4,7 @@
 use bun_boringssl_sys as boring;
 use bun_core::zig_string::Slice as ZigStringSlice;
 use bun_csrf as csrf;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, Local, Scope};
 
 use crate::api::crypto::evp::Algorithm as EvpAlgorithm;
 use crate::crypto::evp;
@@ -74,8 +74,9 @@ fn get_optional_token_format(
 
 /// JS binding function for generating CSRF tokens
 /// First argument is secret (required), second is options (optional)
-#[bun_jsc::host_fn]
-pub(crate) fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn csrf__generate<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
     bun_analytics::features::csrf_generate.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
     // We should have at least one argument (secret)
@@ -85,11 +86,11 @@ pub(crate) fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
         let js_secret = args[0];
         // Extract the secret (required)
         if js_secret.is_empty_or_undefined_or_null() {
-            return Err(global.throw_invalid_arguments(format_args!("Secret is required")));
+            return Err(scope.throw_invalid_arguments(format_args!("Secret is required")));
         }
         if !js_secret.is_string() || js_secret.get_length(global)? == 0 {
             return Err(
-                global.throw_invalid_arguments(format_args!("Secret must be a non-empty string"))
+                scope.throw_invalid_arguments(format_args!("Secret must be a non-empty string"))
             );
         }
         secret = Some(js_secret.to_slice(global)?);
@@ -112,7 +113,7 @@ pub(crate) fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
         // Extract sessionId (optional)
         if let Some(session_id_slice) = options_value.get_optional_slice(global, b"sessionId")? {
             if session_id_slice.slice().is_empty() {
-                return Err(global.throw_invalid_arguments(format_args!(
+                return Err(scope.throw_invalid_arguments(format_args!(
                     "sessionId must be a non-empty string"
                 )));
             }
@@ -133,7 +134,7 @@ pub(crate) fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
                 ));
             }
             let Some(algo) = algorithm_from_js_case_insensitive(global, algorithm_js)? else {
-                return Err(global.throw_invalid_arguments(format_args!("Algorithm not supported")));
+                return Err(scope.throw_invalid_arguments(format_args!("Algorithm not supported")));
             };
             algorithm = algo;
             match algorithm {
@@ -145,7 +146,7 @@ pub(crate) fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
                 | EvpAlgorithm::Sha512_256 => {}
                 _ => {
                     return Err(
-                        global.throw_invalid_arguments(format_args!("Algorithm not supported"))
+                        scope.throw_invalid_arguments(format_args!("Algorithm not supported"))
                     );
                 }
             }
@@ -162,7 +163,11 @@ pub(crate) fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
                 Some(s) => s.slice(),
                 // SAFETY: `bun_vm()` never returns null for a Bun-owned global; we are
                 // on the JS thread so the VM singleton is exclusively reachable here.
-                None => global.bun_vm().as_mut().rare_data().default_csrf_secret(),
+                None => scope
+                    .unscoped_bun_vm()
+                    .as_mut()
+                    .rare_data()
+                    .default_csrf_secret(),
             },
             session_id: session_id.as_ref().map(|s| s.slice()).unwrap_or(b""),
             expires_in_ms: expires_in,
@@ -175,7 +180,7 @@ pub(crate) fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
         Err(err) => {
             return Err(match err {
                 csrf::Error::TokenCreationFailed => {
-                    global.throw(format_args!("Failed to create CSRF token"))
+                    scope.throw(format_args!("Failed to create CSRF token"))
                 }
             });
         }
@@ -188,30 +193,32 @@ pub(crate) fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
         csrf::TokenFormat::Base64Url => NodeEncoding::Base64url,
         csrf::TokenFormat::Hex => NodeEncoding::Hex,
     };
-    node_encoding.encode_with_max_size(global, boring::EVP_MAX_MD_SIZE as usize + 32, token_bytes)
+    let v = node_encoding.encode_with_max_size(
+        global,
+        boring::EVP_MAX_MD_SIZE as usize + 32,
+        token_bytes,
+    )?;
+    Ok(scope.local(v))
 }
 
 /// JS binding function for verifying CSRF tokens
 /// First argument is token (required), second is options (optional)
-#[bun_jsc::host_fn]
-pub(crate) fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn csrf__verify<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
     bun_analytics::features::csrf_verify.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     // We should have at least one argument (token)
     let args = frame.arguments();
     if args.len() < 1 {
-        return Err(
-            global.throw_invalid_arguments(format_args!("Missing required token parameter"))
-        );
+        return Err(scope.throw_invalid_arguments(format_args!("Missing required token parameter")));
     }
     let js_token: JSValue = args[0];
     // Extract the token (required)
     if js_token.is_undefined_or_null() {
-        return Err(global.throw_invalid_arguments(format_args!("Token is required")));
+        return Err(scope.throw_invalid_arguments(format_args!("Token is required")));
     }
     if !js_token.is_string() || js_token.get_length(global)? == 0 {
-        return Err(
-            global.throw_invalid_arguments(format_args!("Token must be a non-empty string"))
-        );
+        return Err(scope.throw_invalid_arguments(format_args!("Token must be a non-empty string")));
     }
     let token = js_token.to_slice(global)?;
 
@@ -231,7 +238,7 @@ pub(crate) fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
         // Extract the secret (required)
         if let Some(secret_slice) = options_value.get_optional_slice(global, b"secret")? {
             if secret_slice.slice().is_empty() {
-                return Err(global
+                return Err(scope
                     .throw_invalid_arguments(format_args!("Secret must be a non-empty string")));
             }
             secret = Some(secret_slice);
@@ -240,7 +247,7 @@ pub(crate) fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
         // Extract sessionId (optional)
         if let Some(session_id_slice) = options_value.get_optional_slice(global, b"sessionId")? {
             if session_id_slice.slice().is_empty() {
-                return Err(global.throw_invalid_arguments(format_args!(
+                return Err(scope.throw_invalid_arguments(format_args!(
                     "sessionId must be a non-empty string"
                 )));
             }
@@ -265,7 +272,7 @@ pub(crate) fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
                 ));
             }
             let Some(algo) = algorithm_from_js_case_insensitive(global, algorithm_js)? else {
-                return Err(global.throw_invalid_arguments(format_args!("Algorithm not supported")));
+                return Err(scope.throw_invalid_arguments(format_args!("Algorithm not supported")));
             };
             algorithm = algo;
             match algorithm {
@@ -277,7 +284,7 @@ pub(crate) fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
                 | EvpAlgorithm::Sha512_256 => {}
                 _ => {
                     return Err(
-                        global.throw_invalid_arguments(format_args!("Algorithm not supported"))
+                        scope.throw_invalid_arguments(format_args!("Algorithm not supported"))
                     );
                 }
             }
@@ -290,7 +297,11 @@ pub(crate) fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
             Some(s) => s.slice(),
             // SAFETY: `bun_vm()` never returns null for a Bun-owned global; we are
             // on the JS thread so the VM singleton is exclusively reachable here.
-            None => global.bun_vm().as_mut().rare_data().default_csrf_secret(),
+            None => scope
+                .unscoped_bun_vm()
+                .as_mut()
+                .rare_data()
+                .default_csrf_secret(),
         },
         session_id: session_id.as_ref().map(|s| s.slice()).unwrap_or(b""),
         max_age_ms: max_age,
@@ -298,5 +309,5 @@ pub(crate) fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
         algorithm,
     });
 
-    Ok(JSValue::from(is_valid))
+    Ok(scope.boolean(is_valid))
 }

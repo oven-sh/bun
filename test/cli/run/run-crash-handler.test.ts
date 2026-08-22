@@ -347,6 +347,152 @@ describe.if(isWindows)("Windows VEH handler and first-chance faults in external 
   });
 });
 
+/**
+ * Decodes the frames of the trace string in a crash report into the image each
+ * one belongs to: `"bun"` for bun's own executable, the file name of any other
+ * loaded module, or `null` for an address in no module at all (JIT code, or a
+ * stack slot that was reported as a frame without being a return address).
+ *
+ * Layout, from `encode_trace_string` in src/crash_handler/lib.rs: platform,
+ * command and format-version characters, the 7-character commit sha, two
+ * source-map VLQs of feature bits, then one entry per frame (`_`; or `VLQ(1)`,
+ * a VLQ length, the module name and a VLQ address; or just a VLQ address for a
+ * frame in bun's executable) and a zero VLQ terminator.
+ */
+function traceStringFrameImages(stderr: string): (string | null)[] {
+  const match = /\/\d+\.\d+\.\d+[^/\s]*\/([wW]\S+)/.exec(stderr);
+  if (!match) throw new Error(`no trace string in crash output:\n${stderr}`);
+  const body = match[1];
+  const VLQ_DIGITS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  let pos = 3 + 7;
+  function readVlq(): number {
+    let magnitude = 0;
+    for (let shift = 0; ; shift += 5) {
+      const digit = VLQ_DIGITS.indexOf(body[pos++]);
+      if (digit < 0) throw new Error(`malformed trace string: ${body}`);
+      magnitude += (digit & 31) * 2 ** shift;
+      if (!(digit & 32)) break;
+    }
+    return magnitude % 2 ? -(magnitude - 1) / 2 : magnitude / 2;
+  }
+  readVlq();
+  readVlq();
+  const images: (string | null)[] = [];
+  for (;;) {
+    if (body[pos] === "_") {
+      pos++;
+      images.push(null);
+      continue;
+    }
+    const value = readVlq();
+    if (value === 0) return images;
+    if (value !== 1) {
+      images.push("bun");
+      continue;
+    }
+    const length = readVlq();
+    images.push(body.slice(pos, pos + length));
+    pos += length;
+    readVlq();
+  }
+}
+
+// A native function called from JS sits above a JIT-pool thunk, then the JS
+// frames, then vmEntryToJavaScript and the C++ and Rust that entered JS. LLInt
+// and vmEntryToJavaScript are in bun's image but have no unwind info
+// (offlineasm emits none), so the walker steps through them with the frame
+// pointer, as the unwind info JSC registers for the JIT pool does. Treating
+// them as leaf functions read a CallFrame slot as the return address instead:
+// the null CodeBlock slot ended the trace one frame below the JIT thunk, and
+// below vmEntryToJavaScript the remaining slots were reported as frames in no
+// module until the frame buffer was full. Panics (and everything else that is
+// not a fault) were captured with RtlCaptureStackBackTrace, which stopped at
+// the JIT thunk itself.
+describe.if(isWindows)("Windows: crash trace continues below the JS frames", () => {
+  // JIT-pool code is in no loaded module; "JIT" is the tag a trace string may
+  // carry for it instead of the bare unknown-module marker.
+  const isJitFrame = (image: string | null) => image === null || image === "JIT";
+
+  function bunFramesBelowTheJitFrames(images: (string | null)[]): number {
+    const lastJitFrame = images.findLastIndex(isJitFrame);
+    // The thunk that called the native function is JIT-pool code even when
+    // the JS itself is interpreted; without it the count below is meaningless.
+    expect(lastJitFrame).toBeGreaterThan(0);
+    return images.slice(lastJitFrame + 1).filter(image => image === "bun").length;
+  }
+
+  // `segfault` is reported from the fault context the VEH receives; `panic`
+  // is reported from inside the panicking code, capturing its own stack.
+  test.concurrent.each([
+    ["segfault", "Segmentation fault at address 0xDEADBEEF"],
+    ["panic", "invoked crashByPanic() handler"],
+  ])("%s in bun's image called from interpreted JS", async (hook, header) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--debug-crash-handler-use-trace-string",
+        "-e",
+        `const { crash_handler } = require("bun:internal-for-testing");
+         function innermost() { crash_handler.${hook}(); }
+         function middle() { innermost(); }
+         function outermost() { middle(); }
+         outermost();`,
+      ],
+      env: noReportEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain(header);
+    const images = traceStringFrameImages(stderr);
+    expect(images[0]).toBe("bun");
+    // Interpreter return addresses for innermost, middle, outermost and the
+    // module body, then vmEntryToJavaScript, then at least the native code
+    // that called it. Unfixed, the segfault trace ended at the first of these
+    // and the panic trace had nothing below the thunk at all.
+    expect(bunFramesBelowTheJitFrames(images)).toBeGreaterThanOrEqual(4 + 1 + 1);
+    expect(exitCode).not.toBe(0);
+  });
+
+  // The fault is in a system DLL, so the report comes from the JSC SEH handler
+  // rather than the VEH, and the JS frames are JIT-compiled, so everything
+  // above vmEntryToJavaScript unwinds through JSC's registered unwind info.
+  test.concurrent("fault in a system DLL called from JIT-compiled JS", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--debug-crash-handler-use-trace-string",
+        "-e",
+        `const { dlopen } = require("bun:ffi");
+         const ntdll = dlopen("ntdll.dll", {
+           RtlFillMemory: { args: ["usize", "usize", "i32"], returns: "void" },
+         });
+         function innermost(i) { if (i === 10000) ntdll.symbols.RtlFillMemory(0xE8, 8, 0); return i; }
+         function middle(i) { return innermost(i); }
+         function outermost(i) { return middle(i); }
+         for (let i = 0; i <= 10000; i++) outermost(i);`,
+      ],
+      env: { ...noReportEnv, BUN_JSC_jitPolicyScale: "0", BUN_JSC_useConcurrentJIT: "0" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("Segmentation fault at address 0xE8");
+    const images = traceStringFrameImages(stderr);
+    // The loader reports system DLL names in whatever case it mapped them.
+    expect(images[0]).toMatch(/^ntdll\.dll$/i);
+    // The FFI call stub and the native-call thunk are JIT-pool code even for
+    // interpreted callers; a third JIT frame proves the JS was compiled (the
+    // DFG may inline the three functions into one frame).
+    expect(images.filter(isJitFrame).length).toBeGreaterThanOrEqual(2 + 1);
+    // vmEntryToJavaScript plus at least the JSC entry point that called it and
+    // the bun code that called that. Unfixed, the frames after
+    // vmEntryToJavaScript were stack slots in no module, so this was zero.
+    expect(bunFramesBelowTheJitFrames(images)).toBeGreaterThanOrEqual(1 + 2);
+    expect(exitCode).not.toBe(0);
+  });
+});
+
 test.if(process.platform === "darwin")("macOS has the assumed image offset", () => {
   // If this fails, then https://bun.report will be incorrect and the stack
   // trace remappings will stop working.

@@ -44,7 +44,7 @@ use crate::linker_context_mod::debug;
 
 // Const generics cannot vary the return type, so we always return
 // `Vec<OutputFile>` and the IS_DEV_SERVER path returns an empty Vec.
-pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
+pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     c: &mut LinkerContext,
     chunks: &mut [Chunk],
 ) -> crate::Result<Vec<options::OutputFile>> {
@@ -264,7 +264,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         // A part that failed to print (e.g. the recursion guard tripped on a
         // deeply nested AST) must fail the build instead of joining the chunk
         // as silently truncated output. Dev server excluded: its callers turn
-        // any `Err` here into an OOM panic (see `finish_from_bake_dev_server`),
+        // any `Err` here into an OOM panic (see `finish_from_dev_server`),
         // so unprintable parts keep the old dropped-code behavior there.
         if !IS_DEV_SERVER {
             let mut had_print_error = false;
@@ -1230,7 +1230,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         Some(
                             chunk.entry_point.source_index()
                                 - (if let Some(fw) = c.framework {
-                                    if fw.server_components.is_some() { 3 } else { 1 }
+                                    if fw.has_server_components { 3 } else { 1 }
                                 } else {
                                     1
                                 }) as u32,

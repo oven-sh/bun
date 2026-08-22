@@ -427,4 +427,59 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(fs.existsSync(path.join(temp, "CLAUDE.md"))).toBe(false);
     expect(fs.existsSync(path.join(temp, ".cursor"))).toBe(false);
   });
+
+  // The blank template and the react templates spawn the nested `bun install`
+  // from different places; both used to drop its exit status, so `bun init`
+  // exited 0 (and the react templates printed the success banner) after the
+  // install had failed.
+  test.each(["-y", "--react"])("bun init %s exits non-zero when the nested `bun install` fails", async flag => {
+    using registry = Bun.serve({
+      port: 0,
+      fetch: () => new Response("not found", { status: 404 }),
+    });
+    await using temp = tempDir(`bun-init-install-fails${flag.replace(/[^a-z]+/g, "-")}`, {});
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "init", flag],
+      cwd: temp,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...initEnv,
+        BUN_CONFIG_REGISTRY: String(registry.url),
+        BUN_INSTALL_CACHE_DIR: path.join(temp, ".bun-cache"),
+      },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // The scaffold is written before the install runs and stays on disk.
+    expect(fs.existsSync(path.join(temp, "package.json"))).toBe(true);
+    expect(fs.existsSync(path.join(temp, "node_modules"))).toBe(false);
+    expect(stderr).toContain("failed to resolve");
+    expect(stdout).not.toContain("New project configured!");
+    expect(exitCode).toBe(1);
+  });
+
+  // Failing to write package.json itself was also reported and then ignored:
+  // init went on to scaffold the rest of the project around it and exited 0.
+  // `ulimit -f 0` makes every regular-file write fail with EFBIG (bun ignores
+  // SIGXFSZ), and the existing package.json already lists everything the blank
+  // template would add, so no `bun install` runs and the exit code is init's
+  // own.
+  test.skipIf(isWindows)("bun init exits non-zero when package.json cannot be written", async () => {
+    const pkg = { name: "already-here", devDependencies: { "@types/bun": "latest", typescript: "^6" } };
+    await using temp = tempDir("bun-init-package-json-write-fails", { "package.json": JSON.stringify(pkg) });
+
+    await using proc = Bun.spawn({
+      cmd: ["/bin/sh", "-c", 'ulimit -f 0 && exec "$0" init -y', bunExe()],
+      cwd: temp,
+      stdio: ["ignore", "ignore", "pipe"],
+      env: initEnv,
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("package.json failed to write due to error EFBIG");
+    // Nothing else gets scaffolded once package.json has failed.
+    expect(readdirSync(temp).sort()).toEqual(["package.json"]);
+    expect(exitCode).toBe(1);
+  });
 });

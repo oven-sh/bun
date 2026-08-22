@@ -183,6 +183,9 @@ pub mod Runtime {
         /// Standalone usage of this flag / usage of this flag
         /// without '--format' set is an unsupported use case.
         pub hot_module_reloading: bool,
+        /// `bun --hot` runtime transpiles: keep `import.meta.hot` as a property
+        /// access instead of folding it to `undefined`.
+        pub runtime_hot: bool,
         /// Control how the parser handles server components and server functions.
         pub server_components: ServerComponentsMode,
 
@@ -276,6 +279,7 @@ pub mod Runtime {
                 react_compiler: ReactCompilerMode::Disabled,
                 react_compiler_parse_test_pragmas: false,
                 hot_module_reloading: false,
+                runtime_hot: false,
                 server_components: ServerComponentsMode::None,
                 is_macro_runtime: false,
                 top_level_await: false,

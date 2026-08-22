@@ -321,6 +321,7 @@ impl RuntimeTranspilerStore {
         referrer: String,
         loader: Loader,
         package_json: Option<&PackageJSON>,
+        runtime_hot: bool,
     ) -> *mut c_void {
         // The path text is heap-duplicated here and freed in `reset_for_pool` via
         // heap::take on `path.text`.
@@ -364,6 +365,7 @@ impl RuntimeTranspilerStore {
                 ticket: None,
                 log: bun_ast::Log::init(),
                 loader,
+                runtime_hot,
                 promise: StrongOptional::create(JSValue::from_cell(promise), global_object),
                 poll_ref: KeepAlive::default(),
                 fetcher: Fetcher::File,
@@ -413,6 +415,8 @@ pub struct TranspilerJob {
     pub(crate) non_threadsafe_input_specifier: OwnedString,
     pub(crate) non_threadsafe_referrer: OwnedString,
     pub(crate) loader: Loader,
+    /// `VirtualMachine::is_hot_reload_enabled()`, sampled on the JS thread.
+    pub(crate) runtime_hot: bool,
     pub(crate) promise: StrongOptional,
     // Note: struct is stored in a HiveArray and crosses to a worker thread;
     // raw pointers/BackRefs are used (BACKREF — VM owns the
@@ -847,6 +851,7 @@ impl TranspilerJob {
             replace_exports: Default::default(),
             dont_bundle_twice: true,
             allow_commonjs: true,
+            runtime_hot: self.runtime_hot,
             inject_jest_globals: transpiler.options.rewrite_jest_for_tests,
             // SAFETY: leaf-field `&` borrow on `*vm.debugger`; see `vm` note above.
             set_breakpoint_on_first_line: unsafe { &(*vm).debugger }

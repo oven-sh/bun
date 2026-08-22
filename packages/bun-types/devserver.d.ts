@@ -29,7 +29,17 @@ interface ImportMeta {
    * The check is usually unnecessary: Bun dead-code-eliminates calls to the
    * HMR APIs in production builds.
    *
+   * Available in two places:
+   * - In Bun's bundler dev server (the full API documented here).
+   * - In server-side code run with `bun --hot`, where every module is
+   *   re-evaluated on each change: `data` persists per module and
+   *   `dispose()` callbacks run on the next reload (see each member's
+   *   notes), while `accept()`, `decline()`, `on()`, `off()`, `prune()`,
+   *   `invalidate()` and `send()` are no-ops. Workers do not get
+   *   `import.meta.hot` since they are not reloaded.
+   *
    * https://bun.com/docs/bundler/hmr
+   * https://bun.com/docs/runtime/watch-mode#import-meta-hot
    */
   hot: {
     /**
@@ -46,6 +56,9 @@ interface ImportMeta {
      *
      * In production, `data` is inlined to `{}`, which lets Bun minify
      * `{}.prop ??= value` to `value`.
+     *
+     * Under `bun --hot`, `data` is kept per module across reloads; both
+     * mutating it and assigning to it persist.
      */
     data: any;
 
@@ -131,6 +144,12 @@ interface ImportMeta {
      *
      * Returning a promise delays module replacement until the module is
      * disposed. All dispose callbacks are called in parallel.
+     *
+     * Under `bun --hot`, every callback registered since the previous reload
+     * runs on the next one, before any module is re-evaluated, whether or not
+     * the module that registered it is evaluated again (a `--preload` script,
+     * for example, is only evaluated once). The reload waits for the returned
+     * promises to settle.
      */
     dispose(cb: (data: any) => void | Promise<void>): void;
 

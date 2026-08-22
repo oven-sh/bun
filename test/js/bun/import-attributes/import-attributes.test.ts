@@ -1,4 +1,4 @@
-import { bunExe, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
 import * as path from "path";
 
 const loaders = ["js", "jsx", "ts", "tsx", "json", "jsonc", "toml", "yaml", "text", "sqlite", "file"];
@@ -360,4 +360,87 @@ describe("?raw", () => {
       expect(await fn(question_raw, null, filename + "?raw")).toEqual({ default: code });
     });
   }
+});
+
+// Whichever way a file reaches the text loader (.txt extension, type: "text",
+// ?raw, require), a file that is not valid UTF-8 must decode the way
+// `Bun.file().text()`, `fs.readFileSync(path, "utf8")` and `TextDecoder` decode
+// it: one U+FFFD per ill-formed subsequence, keeping the well-formed bytes
+// around it.
+// https://github.com/oven-sh/bun/issues/12981
+describe("text loader with ill-formed UTF-8", () => {
+  const R = 0xfffd;
+  const cases: [name: string, bytes: number[], codePoints: number[]][] = [
+    ["bad lead byte keeps the bytes after it", [0xe2, 0x41, 0x42], [R, 0x41, 0x42]],
+    ["invalid lead bytes", [0xf5, 0x41, 0xff, 0x42], [R, 0x41, R, 0x42]],
+    ["lone continuation byte", [0x80, 0x41], [R, 0x41]],
+    ["overlong 2-byte sequence", [0xc0, 0xaf, 0x41], [R, R, 0x41]],
+    ["overlong 3-byte sequence", [0xe0, 0x80, 0x80, 0x41], [R, R, R, 0x41]],
+    ["overlong 4-byte sequence", [0xf0, 0x80, 0x80, 0x80, 0x41], [R, R, R, R, 0x41]],
+    ["UTF-8 encoded surrogate", [0xed, 0xa0, 0x80, 0x41], [R, R, R, 0x41]],
+    ["code point above U+10FFFF", [0xf4, 0x90, 0x80, 0x80, 0x41], [R, R, R, R, 0x41]],
+    ["truncated 3-byte sequence", [0xe2, 0x82, 0x41], [R, 0x41]],
+    ["truncated 4-byte sequence, 2 bytes", [0xf0, 0x9f, 0x41], [R, 0x41]],
+    ["truncated 4-byte sequence, 3 bytes", [0xf0, 0x9f, 0x98, 0x41], [R, 0x41]],
+    ["lead byte at end of file", [0x41, 0xe2], [0x41, R]],
+    ["truncated sequence at end of file", [0x41, 0xe2, 0x82], [0x41, R]],
+    ["well-formed U+FFFD is left alone", [0xef, 0xbf, 0xbd, 0x41], [R, 0x41]],
+    [
+      "well-formed text is byte-exact",
+      [0x41, 0xc3, 0xa9, 0xe2, 0x82, 0xac, 0xf0, 0x9f, 0x98, 0x80, 0x00, 0x0d, 0x0a, 0x42],
+      [0x41, 0xe9, 0x20ac, 0x1f600, 0x00, 0x0d, 0x0a, 0x42],
+    ],
+  ];
+  const codePointsOf = (text: string) => [...text].map(c => c.codePointAt(0));
+
+  const expected = Object.fromEntries(cases.map(([name, , codePoints]) => [name, codePoints]));
+
+  test("the expected code points are what TextDecoder produces", () => {
+    expect(
+      Object.fromEntries(
+        cases.map(([name, bytes]) => [name, codePointsOf(new TextDecoder().decode(Uint8Array.from(bytes)))]),
+      ),
+    ).toEqual(expected);
+  });
+
+  test("import, require, ?raw and type: 'text' decode like TextDecoder", async () => {
+    const [, badLeadByte, badLeadByteDecoded] = cases[0];
+    const files: Record<string, string | Buffer> = {
+      "raw.js": Buffer.from(badLeadByte),
+      "attr.bin": Buffer.from(badLeadByte),
+    };
+    cases.forEach(([, bytes], i) => (files[`case${i}.txt`] = Buffer.from(bytes)));
+    files["entry.ts"] = `
+      ${cases.map((_, i) => `import case${i} from "./case${i}.txt";`).join("\n")}
+      import raw from "./raw.js?raw";
+      import attr from "./attr.bin" with { type: "text" };
+      const required = require("./case0.txt").default;
+      const codePointsOf = (text: string) => [...text].map(c => c.codePointAt(0));
+      console.log(JSON.stringify({
+        ${cases.map(([name], i) => `${JSON.stringify(name)}: codePointsOf(case${i}),`).join("\n")}
+        "?raw": codePointsOf(raw),
+        "type: text": codePointsOf(attr),
+        "require": codePointsOf(required),
+      }));
+    `;
+    using dir = tempDir("import-attributes-ill-formed-utf8", files);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      ...expected,
+      "?raw": badLeadByteDecoded,
+      "type: text": badLeadByteDecoded,
+      "require": badLeadByteDecoded,
+    });
+    expect(exitCode).toBe(0);
+  });
 });

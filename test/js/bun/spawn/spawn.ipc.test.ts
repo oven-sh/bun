@@ -1,7 +1,38 @@
 import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gcTick, isWindows } from "harness";
+import { bunEnv, bunExe, gcTick, isLinux, isWindows } from "harness";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "path";
+
+// Kills the child and returns once it is dead without touching the event loop, so that its exit
+// is pending at the same time as whatever its death did to the channel. On Linux the child is dead
+// once /proc shows it as a zombie with no other threads left (the last thread to go is the one
+// that closes its descriptors and signals the exit; a debug build takes ~15ms to get there), or
+// once it is gone from /proc (already reaped by the waiter thread). Elsewhere a SIGKILL'd child is
+// gone within a few milliseconds.
+function killAndBlockUntilDead(child: Bun.Subprocess) {
+  child.kill("SIGKILL");
+  if (!isLinux) {
+    Bun.sleepSync(100);
+    return;
+  }
+  const deadline = Date.now() + 30_000;
+  for (;;) {
+    let dead: boolean;
+    try {
+      const stat = readFileSync(`/proc/${child.pid}/stat`, "latin1");
+      dead = stat[stat.lastIndexOf(")") + 2] === "Z" && readdirSync(`/proc/${child.pid}/task`).length === 1;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT" && (error as NodeJS.ErrnoException).code !== "ESRCH") {
+        throw error;
+      }
+      dead = true;
+    }
+    if (dead) return;
+    if (Date.now() > deadline) throw new Error("child did not die");
+    Bun.sleepSync(1);
+  }
+}
 
 describe.each(["advanced", "json"])("ipc mode %s", mode => {
   it("the subprocess should be defined and the child should send", done => {
@@ -120,7 +151,110 @@ describe.each(["advanced", "json"])("ipc mode %s", mode => {
           : { name: "DataCloneError", message: "The object can not be cloned." },
     });
   });
+
+  // The tests below kill the child and stay off the event loop until it is dead, so the channel
+  // going away and the exit are both pending when the loop resumes. As in node, the channel's close
+  // has to be reported before the exit; it used to be left to a later event-loop task, so onExit
+  // ran first.
+  async function killAndReportOrder(child: Bun.Subprocess, events: string[], done: Promise<unknown>) {
+    killAndBlockUntilDead(child);
+    await done;
+    return events;
+  }
+
+  it.concurrent("onDisconnect runs before onExit when the child dies with the channel drained", async () => {
+    const events: string[] = [];
+    const ready = Promise.withResolvers<void>();
+    const disconnected = Promise.withResolvers<void>();
+    const exited = Promise.withResolvers<void>();
+    await using child = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.on("message", () => console.log("received")); setInterval(() => {}, 1000); process.send("ready");`,
+      ],
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "inherit"],
+      serialization: mode,
+      ipc: () => ready.resolve(),
+      onDisconnect() {
+        events.push("disconnect");
+        disconnected.resolve();
+      },
+      onExit() {
+        events.push("exit");
+        exited.resolve();
+      },
+    });
+    await ready.promise;
+    child.send("read me");
+    // Once this is printed the child has read everything we sent, so its end closes cleanly (EOF).
+    await child.stdout.getReader().read();
+    expect(await killAndReportOrder(child, events, Promise.all([disconnected.promise, exited.promise]))).toEqual([
+      "disconnect",
+      "exit",
+    ]);
+  });
+
+  // The child never reads its end of the channel, so what we send stays unread; on Linux our end
+  // then reports ECONNRESET instead of EOF when the child dies, which closes the channel through
+  // a different path than the test above. A message larger than the channel's buffers is on top
+  // of that still being written when the child dies.
+  it.concurrent.each([
+    ["a short message", "never read"],
+    ["a message larger than the channel's buffers", Buffer.alloc(4 * 1024 * 1024, "x").toString()],
+  ])("onDisconnect runs before onExit when the child dies with %s unread", async (_label, message) => {
+    const events: string[] = [];
+    const disconnected = Promise.withResolvers<void>();
+    const exited = Promise.withResolvers<void>();
+    await using child = spawn({
+      cmd: [bunExe(), "-e", `console.log("ready"); setInterval(() => {}, 1000);`],
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "inherit"],
+      serialization: mode,
+      ipc() {},
+      onDisconnect() {
+        events.push("disconnect");
+        disconnected.resolve();
+      },
+      onExit() {
+        events.push("exit");
+        exited.resolve();
+      },
+    });
+    await child.stdout.getReader().read();
+    child.send(message);
+    expect(await killAndReportOrder(child, events, Promise.all([disconnected.promise, exited.promise]))).toEqual([
+      "disconnect",
+      "exit",
+    ]);
+  });
 });
+
+// The waiter thread is the Linux fallback for kernels and sandboxes without pidfd. It hands the
+// exit to the loop as a task, which runs before the loop so much as polls the channel, so the order
+// cannot come from which of the two the loop sees first. Reruns the ordering tests above that way.
+it.skipIf(!isLinux || Boolean(process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD))(
+  "onDisconnect runs before onExit when the exit is reported by the waiter thread",
+  async () => {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "test",
+        import.meta.path,
+        "-t",
+        "ipc mode json onDisconnect runs before onExit when the child dies",
+      ],
+      // Only honored together with BUN_GARBAGE_COLLECTOR_LEVEL, which bunEnv sets.
+      env: { ...bunEnv, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout + stderr).toContain(" 3 pass");
+    expect(exitCode).toBe(0);
+  },
+);
 
 describe("ipc mode advanced", () => {
   it("unwraps the Buffer envelope before cmd dispatch", async () => {

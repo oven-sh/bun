@@ -839,11 +839,6 @@ impl Subprocess<'_> {
         crate::ipc_host::do_send(this.ipc(), global, call_frame, context, this.pid() as u32)
     }
 
-    pub(crate) fn disconnect_ipc(&self, next_tick: bool) {
-        let Some(ipc_data) = self.ipc() else { return };
-        ipc_data.close_socket_next_tick(next_tick);
-    }
-
     #[bun_jsc::host_fn(method)]
     pub(crate) fn disconnect(
         this: &Self,
@@ -980,9 +975,7 @@ impl Subprocess<'_> {
         let is_sync = self.flags.get().contains(Flags::IS_SYNC);
         self.clear_abort_signal();
 
-        // `deref()` and `disconnect_ipc(true)` run at the tail of this body.
-        // R-2: now that both take `&self`, scopeguard would no longer alias —
-        // kept explicit at the tail for now (no early returns in this body).
+        // `deref()` runs at the tail of this body (no early returns).
 
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
             Self::timer_all().remove(self.event_loop_timer.as_ptr());
@@ -1134,6 +1127,11 @@ impl Subprocess<'_> {
             }
         }
 
+        // The channel's close is reported before the exit below, as in node.
+        if let Some(ipc) = self.ipc() {
+            ipc.close_after_peer_exit();
+        }
+
         let mut did_update_has_pending_activity = false;
 
         // Kept as raw `*mut` so the enter guard and the body can both call
@@ -1219,7 +1217,6 @@ impl Subprocess<'_> {
         if !did_update_has_pending_activity {
             self.update_has_pending_activity();
         }
-        self.disconnect_ipc(true);
         self.deref();
     }
 

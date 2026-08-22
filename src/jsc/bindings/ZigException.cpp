@@ -770,19 +770,26 @@ void exceptionFromString(ZigException& except, JSC::JSValue value, JSC::JSGlobal
             }
             if (line) {
                 if (line.isNumber()) {
-                    except.stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(line.toInt32(global)).zeroBasedInt();
+                    ZigStackFrame& frame = except.stack.frames_ptr[0];
+                    frame.position.line_zero_based = OrdinalNumber::fromOneBasedInt(line.toInt32(global)).zeroBasedInt();
+                    except.stack.frames_len = 1;
 
-                    // TODO: don't sourcemap it twice
+                    auto column = obj->getIfPropertyExists(global, vm.propertyNames->column);
+                    if (scope.exception()) [[unlikely]] {
+                        scope.clearExceptionExceptTermination();
+                    }
+                    if (column) {
+                        if (column.isNumber()) {
+                            frame.position.column_zero_based = OrdinalNumber::fromOneBasedInt(column.toInt32(global)).zeroBasedInt();
+                        }
+                    }
+
+                    // originalLine means line/column are already source-mapped, as in fromErrorInstance().
                     auto originalLine = obj->getIfPropertyExists(global, builtinNames(vm).originalLinePublicName());
                     if (scope.exception()) [[unlikely]] {
                         scope.clearExceptionExceptTermination();
                     }
-                    if (originalLine) {
-                        if (originalLine.isNumber()) {
-                            except.stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(originalLine.toInt32(global)).zeroBasedInt();
-                        }
-                    }
-                    except.stack.frames_len = 1;
+                    frame.remapped = !!originalLine;
                 }
             }
         }

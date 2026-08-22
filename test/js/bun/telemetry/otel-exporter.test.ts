@@ -452,16 +452,16 @@ describe.concurrent("OTLP/HTTP exporter", () => {
   test("a function exporter that records spans while the process is exiting does not leave a timer behind", async () => {
     const { stdout, exitCode } = await run(
       `
-        let calls = 0;
         Bun.otel.start({
-          exporters: [{ export(spans) { calls++; Bun.otel.tracer("x").startSpan("from-exporter").end(); } }],
+          exporters: [{ export(spans) { console.log("export", spans.length); Bun.otel.tracer("x").startSpan("from-exporter").end(); } }],
         });
         Bun.otel.tracer("t").startSpan("s").end();
-        process.on("exit", () => console.log("calls", calls));
       `,
       {},
     );
-    expect(stdout.trim()).toMatch(/^calls [1-9]/);
+    // The exit-time flush delivers "s"; the span ended inside the exporter must
+    // not re-arm a timer that outlives the VM (a use-after-free under ASAN).
+    expect(stdout).toContain("export 1");
     expect(exitCode).toBe(0);
   });
 

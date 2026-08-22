@@ -3466,6 +3466,13 @@ impl VirtualMachine {
             .unwrap_or(true)
     }
 
+    /// `BUN_FEATURE_FLAG_DISABLE_ADDON_DLL_NOTIFICATION` (see `NodeExeImportsWindows.cpp`).
+    #[unsafe(export_name = "Bun__disableAddonDllNotification")]
+    pub(crate) extern "C" fn disable_addon_dll_notification() -> bool {
+        bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ADDON_DLL_NOTIFICATION::get()
+            .unwrap_or(false)
+    }
+
     /// Whether to warn when a previously-unhandled rejection later gains a handler.
     #[unsafe(export_name = "Bun__VM__allowRejectionHandledWarning")]
     pub(crate) extern "C" fn allow_rejection_handled_warning(this: &VirtualMachine) -> bool {

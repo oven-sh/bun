@@ -4097,7 +4097,7 @@ function lookupAndListen(
     try {
       listenInCluster(
         server,
-        validAddress.address,
+        validAddress?.address,
         port,
         family,
         backlog,
@@ -4110,13 +4110,13 @@ function lookupAndListen(
         flags,
         undefined,
         null,
-        validAddress.address,
+        validAddress?.address,
         tls,
         contexts,
         onListen,
       );
     } catch (listenErr) {
-      emitErrorNextTick(server, formatListenError(listenErr, validAddress.address, port));
+      emitErrorNextTick(server, formatListenError(listenErr, validAddress?.address, port));
     }
   });
 }

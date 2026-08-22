@@ -7,6 +7,11 @@ const REPRL_CWFD = 101; // Control write FD
 const REPRL_DRFD = 102; // Data read FD
 
 const fs = require("node:fs");
+// Captured before any fuzzed script gets a chance to replace them.
+const { drainMicrotasks } = require("bun:jsc");
+const log = console.log.bind(console);
+const addListener = process.on.bind(process);
+const removeListener = process.off.bind(process);
 
 // Make common Node modules available
 globalThis.require = require;
@@ -42,6 +47,22 @@ if (responseBytes !== 4) {
   throw new Error(`REPRL handshake failed: expected 4 bytes, got ${responseBytes}`);
 }
 
+// Exit code of the script currently being executed.
+let exit_code = 0;
+
+function reportUncaught(error) {
+  let message;
+  try {
+    message = `${error}`;
+  } catch {
+    // Coercing the value threw (a Symbol, a hostile toPrimitive); throwing from here would kill the child.
+    message = "<unprintable>";
+  }
+  // Print uncaught exception like workerd does
+  log(`uncaught:${message}`);
+  exit_code = 1;
+}
+
 // Main REPRL loop
 while (true) {
   // Read command
@@ -74,15 +95,21 @@ while (true) {
   const script = script_data.toString("utf8");
 
   // Execute script
-  let exit_code = 0;
+  exit_code = 0;
+  // Errors from the script's microtasks and its unhandled rejections arrive through these events.
+  addListener("uncaughtException", reportUncaught);
+  addListener("unhandledRejection", reportUncaught);
   try {
     // Use indirect eval to execute in global scope
     (0, eval)(script);
   } catch (_e) {
-    // Print uncaught exception like workerd does
-    console.log(`uncaught:${_e}`);
-    exit_code = 1;
+    reportUncaught(_e);
   }
+  // This loop never yields to the event loop, so run what the script queued before reporting its status.
+  drainMicrotasks();
+  // Removed again so that an error escaping the loop itself still takes the child down.
+  removeListener("uncaughtException", reportUncaught);
+  removeListener("unhandledRejection", reportUncaught);
 
   // Send status back (4 bytes: exit code in REPRL format)
   // Format: lower 8 bits = signal number, next 8 bits = exit code

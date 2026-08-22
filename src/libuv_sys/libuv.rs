@@ -937,10 +937,12 @@ impl ReadDeferral {
             err: 0,
         }
     }
-    /// Owner teardown: drop a pending dispatch.
+    /// Owner teardown: drop a pending dispatch and what it would have reported.
     pub fn cancel(&mut self) {
         // SAFETY: `node` is a field of `self`.
         unsafe { crate::deferred::Deferred::cancel(&raw mut self.node) };
+        self.nread = 0;
+        self.err = 0;
     }
 }
 impl Default for ReadDeferral {

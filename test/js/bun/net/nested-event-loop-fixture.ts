@@ -78,13 +78,17 @@ test("an event collected by the outer tick is delivered to a nested tick", async
       data() {
         order.push("a:start");
         // The deadline turns "never delivered" into a failure of this test
-        // rather than a hang of the whole file.
+        // rather than a hang of the whole file; `aDone` settles either way.
         const deadline = new Promise<void>((_, reject) =>
           setTimeout(() => reject(new Error("b's data was not delivered to the nested tick")), 2000),
         );
-        expect(Promise.race([gotB.promise, deadline])).resolves.toBeUndefined();
-        order.push("a:end");
-        aDone.resolve();
+        try {
+          expect(Promise.race([gotB.promise, deadline])).resolves.toBeUndefined();
+          order.push("a:end");
+          aDone.resolve();
+        } catch (e) {
+          aDone.reject(e);
+        }
       },
     },
   });

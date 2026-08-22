@@ -72,7 +72,7 @@ pub struct SubprocExec {
     /// (`buffered_output_close` / `on_exit`) can hand a [`Yield`] back to the
     /// trampoline. The `Cmd` lives inside `interp.nodes`, so we stash the
     /// indices and
-    /// return `Yield::Next(this_id)` for the caller (`PipeReader::run_yield`)
+    /// return `Yield::Next(this_id)` for the caller (`PipeReader::run_yield_with`)
     /// to drive.
     pub(crate) interp: *mut Interpreter,
     pub(crate) this_id: NodeId,
@@ -922,7 +922,7 @@ impl Cmd {
     // `ShellSubprocess` / `PipeReader` hold a `*mut Cmd` backref and call
     // these via `&mut self`. The NodeId-arena port stashes `(interp, this_id)`
     // on `SubprocExec` so the resulting `Yield` can be driven by the caller's
-    // `PipeReader::run_yield` without aliasing `&Interpreter` against
+    // `PipeReader::run_yield_with` without aliasing `&Interpreter` against
     // `&mut self`.
 
     /// True once the command has both an exit code and (for subprocesses)
@@ -960,7 +960,7 @@ impl Cmd {
         }
         if self.has_finished() {
             // Set `state = Done` and hand the Yield back to the caller
-            // (`PipeReader::run_yield`), which drives the trampoline with the
+            // (`PipeReader::run_yield_with`), which drives the trampoline with the
             // `*mut Interpreter` it already holds, landing in `Cmd::next` →
             // `CmdState::Done` → `interp.child_done(...)`.
             self.state = CmdState::Done;

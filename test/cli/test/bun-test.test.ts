@@ -1405,6 +1405,105 @@ describe("bun test", () => {
     expect(stderr).toContain("1 pass");
   });
 
+  // A returned matcher call is a proper tail call, which would otherwise leave the failure with no
+  // frame in the file that contains the call.
+  describe("matcher call in tail position", () => {
+    test("a failure reports the line of the matcher call", () => {
+      const stderr = runTest({
+        input: [
+          {
+            filename: "tail.test.ts",
+            contents: [
+              `import { test, expect } from "bun:test";`,
+              `test("expression-bodied callback", () => expect(1).toBe(2));`,
+              `function check(value: number) { return expect(value).toBe(2); }`,
+              `test("helper", () => { check(1); });`,
+              `test("nullish", () => globalThis.nothing ?? expect(1).toBe(2));`,
+            ].join("\n"),
+          },
+        ],
+        expectExitCode: 1,
+      });
+      expect(stderr).toMatch(/at <anonymous> \(.*tail\.test\.ts:2:\d+\)/);
+      expect(stderr).toMatch(/at check \(.*tail\.test\.ts:3:\d+\)/);
+      expect(stderr).toMatch(/at <anonymous> \(.*tail\.test\.ts:5:\d+\)/);
+      expect(stderr).toContain("3 fail");
+    });
+
+    test("the matcher's return value still reaches the runner", () => {
+      const stderr = runTest({
+        input: `
+          import { test, expect } from "bun:test";
+          expect.extend({
+            async toFailLater() {
+              return { pass: false, message: () => "failed later" };
+            },
+          });
+          test("async matcher", () => expect(1).toFailLater());
+        `,
+        expectExitCode: 1,
+      });
+      expect(stderr).toContain("failed later");
+      expect(stderr).toContain("1 fail");
+    });
+
+    // `bun run` and `bun test` transpile the same file to different output now, so they must not
+    // share a transpiler cache entry. The file needs an explicit `bun:test` import (injected
+    // globals already bail out of the cache) and 4KB of source (the cache floor).
+    test("the rewrite is not lost to a transpiler cache entry from bun run", async () => {
+      const contents = [
+        `import { test, expect } from "bun:test";`,
+        `test("tail", () => expect(1).toBe(2));`,
+        `// ${Buffer.alloc(5000, "x").toString()}`,
+      ].join("\n");
+      using dir = tempDir("tail-cache", { "cached.test.ts": contents });
+      const cacheDir = join(String(dir), "cache");
+      mkdirSync(cacheDir);
+      const env = {
+        ...bunEnv,
+        BUN_RUNTIME_TRANSPILER_CACHE_PATH: cacheDir,
+        // Debug builds read the cache but serve from it only with this set.
+        BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: "1",
+      };
+      await using warm = Bun.spawn({
+        cmd: [bunExe(), "run", "cached.test.ts"],
+        env,
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      await warm.exited;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "cached.test.ts"],
+        env,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toMatch(/at <anonymous> \(.*cached\.test\.ts:2:\d+\)/);
+      expect(stderr).toContain("1 fail");
+      expect(exitCode).toBe(1);
+    });
+
+    // This arrow is rewritten in this very file, and its toString() text lands in a different
+    // module, so the rewrite must not reference anything from the module it was made in.
+    test("the rewrite survives a Function.toString round-trip into another module", async () => {
+      const fn = () => expect(1).toBe(1);
+      using dir = tempDir("tail-tostring", {
+        "roundtrip.test.ts": `import { test, expect } from "bun:test";\ntest("round-trip", ${fn.toString()});`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "roundtrip.test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("1 pass");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   test("path to a non-test.ts file will work", () => {
     const stderr = runTest({
       args: ["./index.ts"],

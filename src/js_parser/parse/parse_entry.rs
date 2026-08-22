@@ -2006,6 +2006,14 @@ impl<'a> Parser<'a> {
             }
         }
 
+        // `keep_matcher_call_frame` (visit_stmt.rs) rewrote a returned matcher call. Like the
+        // globals above, this makes the output specific to `bun test`, so it must not be cached.
+        if p.jest.rewrote_matcher_tail_call {
+            if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
+                cache.input_hash = None;
+            }
+        }
+
         if p.has_called_runtime {
             let mut runtime_imports: [u8; RuntimeImports::ALL.len()] =
                 [0; RuntimeImports::ALL.len()];

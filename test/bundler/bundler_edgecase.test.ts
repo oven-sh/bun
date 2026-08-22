@@ -2262,6 +2262,157 @@ describe("bundler", () => {
     },
   });
 
+  // Lowering a top-level `using` moves the module body into a try/catch, so a
+  // default-exported declaration has to be split into a binding and an export clause.
+  itBundled("edgecase/UsingExportDefaultDeclaration", {
+    files: {
+      "/entry.ts": `
+        import namedFn from "./named-fn.ts";
+        import anonymousFn from "./anonymous-fn.ts";
+        import NamedClass from "./named-class.ts";
+        import AnonymousClass from "./anonymous-class.ts";
+        console.log(namedFn(), anonymousFn(), NamedClass.describe(), AnonymousClass.tag);
+      `,
+      "/named-fn.ts": `
+        using a = { [Symbol.dispose]() { console.log("dispose named-fn"); } };
+        export default function namedFn() { return "named-fn"; }
+      `,
+      "/anonymous-fn.ts": `
+        using a = { [Symbol.dispose]() { console.log("dispose anonymous-fn"); } };
+        export default function () { return "anonymous-fn"; }
+      `,
+      "/named-class.ts": `
+        using a = { [Symbol.dispose]() { console.log("dispose named-class"); }, tag: "named-class" };
+        export default class NamedClass {
+          // Evaluated in place (after \`a\`), and the body still sees the class's own name.
+          static tag = a.tag;
+          static describe() { return NamedClass.tag; }
+        }
+      `,
+      "/anonymous-class.ts": `
+        using a = { [Symbol.dispose]() { console.log("dispose anonymous-class"); } };
+        export default class { static tag = "anonymous-class"; }
+      `,
+    },
+    run: {
+      stdout: [
+        "dispose named-fn",
+        "dispose anonymous-fn",
+        "dispose named-class",
+        "dispose anonymous-class",
+        "named-fn anonymous-fn named-class anonymous-class",
+      ].join("\n"),
+    },
+  });
+
+  itBundled("edgecase/UsingExportDefaultDecoratedClass", {
+    files: {
+      "/entry.ts": `
+        import Named from "./named.ts";
+        import Anonymous from "./anonymous.ts";
+        console.log(Named.decorated, Anonymous.decorated);
+      `,
+      "/decorate.ts": `
+        export function decorate(target: any, context: ClassDecoratorContext) {
+          console.log("decorate", String(context.name));
+          target.decorated = true;
+        }
+      `,
+      "/named.ts": `
+        import { decorate } from "./decorate.ts";
+        using a = { [Symbol.dispose]() { console.log("dispose named"); } };
+        @decorate
+        export default class Named {}
+      `,
+      "/anonymous.ts": `
+        import { decorate } from "./decorate.ts";
+        using a = { [Symbol.dispose]() { console.log("dispose anonymous"); } };
+        @decorate
+        export default class {}
+      `,
+    },
+    run: {
+      stdout: ["decorate Named", "dispose named", "decorate anonymous_default", "dispose anonymous", "true true"].join(
+        "\n",
+      ),
+    },
+  });
+
+  itBundled("edgecase/UsingExportDefaultBakeDev", {
+    // The dev server's module format builds each module's export object from the
+    // same lowered statements.
+    format: "internal_bake_dev",
+    files: {
+      "/entry.ts": `
+        import fn from "./fn.ts";
+        import Klass from "./klass.ts";
+        console.log(fn(), Klass.tag);
+      `,
+      "/fn.ts": `
+        using a = { [Symbol.dispose]() {} };
+        export default function fn() { return "fn"; }
+      `,
+      "/klass.ts": `
+        using a = { [Symbol.dispose]() {} };
+        export default class Klass { static tag = "klass"; }
+      `,
+    },
+    onAfterBundle(api) {
+      const output = api.readFile("/out.js");
+      expect(output).toMatch(/hmr\.exports = \{\s*default: fn\s*\}/);
+      expect(output).toMatch(/\bvar Klass = class Klass \{/);
+      expect(output).toMatch(/hmr\.exports = \{\s*default: Klass\s*\}/);
+    },
+  });
+
+  itBundled("edgecase/UsingExportDefaultReactFastRefresh", {
+    skipOnEsbuild: true,
+    reactFastRefresh: true,
+    files: {
+      "/entry.tsx": `
+        import "./refresh-runtime.ts";
+        import WithHooks from "./with-hooks.tsx";
+        import WithoutHooks from "./without-hooks.tsx";
+        console.log(WithHooks(), WithoutHooks(), JSON.stringify(globalThis.registered));
+      `,
+      "/refresh-runtime.ts": `
+        globalThis.registered = [];
+        globalThis.$RefreshSig$ = () => (component: any) => component;
+        globalThis.$RefreshReg$ = (component: any, id: string) => {
+          globalThis.registered.push(component.name + " as " + id.slice(id.lastIndexOf(":") + 1));
+        };
+      `,
+      "/react.ts": `
+        export function useState(initial: any) { return [initial, () => {}]; }
+      `,
+      "/with-hooks.tsx": `
+        import { useState } from "./react.ts";
+        using a = { [Symbol.dispose]() { console.log("dispose with-hooks"); } };
+        export default function WithHooks() {
+          const [value] = useState("with-hooks");
+          return value;
+        }
+      `,
+      "/without-hooks.tsx": `
+        using a = { [Symbol.dispose]() { console.log("dispose without-hooks"); } };
+        export default function WithoutHooks() { return "without-hooks"; }
+      `,
+    },
+    onAfterBundle(api) {
+      // The refresh transform declares the component itself; that binding must be
+      // function-scoped to escape the try/catch, and it is exported as-is.
+      api.expectFile("/out.js").toMatch(/var WithHooks = _s\(/);
+      api.expectFile("/out.js").not.toContain("WithHooks = WithHooks");
+    },
+    run: {
+      stdout: [
+        "dispose with-hooks",
+        "dispose without-hooks",
+        'with-hooks without-hooks ["WithHooks as default","WithoutHooks as default"]',
+      ].join("\n"),
+    },
+  });
+
   itBundled("edgecase/UsingExportClass", {
     files: {
       "/entry.ts": `

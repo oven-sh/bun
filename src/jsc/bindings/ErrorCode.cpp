@@ -385,6 +385,60 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& 
     builder.append(Bun__inspect_singleline(globalObject, arg).transferToWTFString());
 }
 
+// Port of the `object` arm of Node's determineSpecificType:
+//   if (value.constructor && 'name' in value.constructor) return `an instance of ${value.constructor.name}`;
+//   return inspect(value, { depth: -1 });
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L1038-L1041
+static void appendSpecificTypeOfObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::StringBuilder& builder, JSC::JSObject* object)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue constructor = object->get(globalObject, vm.propertyNames->constructor);
+    RETURN_IF_EXCEPTION(scope, );
+    if (constructor.toBoolean(globalObject)) {
+        JSObject* constructorObject = constructor.getObject();
+        if (!constructorObject) {
+            // `'name' in <primitive>` throws, so node's message builder throws too (worded as V8 words it).
+            String description;
+            if (constructor.isSymbol())
+                description = asSymbol(constructor)->tryGetDescriptiveString().value_or("Symbol()"_s);
+            else
+                description = constructor.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, );
+            throwTypeError(globalObject, scope, makeString("Cannot use 'in' operator to search for 'name' in "_s, description));
+            return;
+        }
+        JSValue name = constructorObject->getIfPropertyExists(globalObject, vm.propertyNames->name);
+        RETURN_IF_EXCEPTION(scope, );
+        if (name) {
+            auto* nameString = name.toString(globalObject);
+            RETURN_IF_EXCEPTION(scope, );
+            auto nameView = nameString->view(globalObject);
+            RETURN_IF_EXCEPTION(scope, );
+            builder.append("an instance of "_s);
+            builder.append(nameView);
+            return;
+        }
+    }
+
+    JSFunction* utilInspect = defaultGlobalObject(globalObject)->utilInspectFunction();
+    RETURN_IF_EXCEPTION(scope, );
+    JSObject* options = constructEmptyObject(globalObject);
+    options->putDirect(vm, Identifier::fromString(vm, "depth"_s), jsNumber(-1), 0);
+    auto callData = JSC::getCallData(utilInspect);
+    MarkedArgumentBuffer arguments;
+    arguments.append(object);
+    arguments.append(options);
+    ASSERT(!arguments.hasOverflowed());
+    JSValue inspected = JSC::profiledCall(globalObject, ProfilingReason::API, utilInspect, callData, jsUndefined(), arguments);
+    RETURN_IF_EXCEPTION(scope, );
+    auto* inspectedString = inspected.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, );
+    auto inspectedView = inspectedString->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, );
+    builder.append(inspectedView);
+}
+
 void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::StringBuilder& builder, JSValue value)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -405,6 +459,9 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
         if (d != d) return builder.append("type number (NaN)"_s);
         if (d == infinity) return builder.append("type number (Infinity)"_s);
         if (d == -infinity) return builder.append("type number (-Infinity)"_s);
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L1021-L1022
+        // Number-to-string drops the sign of -0, so node special-cases it.
+        if (d == 0 && std::signbit(d)) return builder.append("type number (-0)"_s);
         builder.append("type number ("_s);
         builder.append(d);
         builder.append(')');
@@ -503,19 +560,9 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
         return;
     }
     if (cell->isObject()) {
-        auto constructor = value.get(globalObject, vm.propertyNames->constructor);
-        RETURN_IF_EXCEPTION(scope, void());
-        if (constructor.toBoolean(globalObject)) {
-            auto name = constructor.get(globalObject, vm.propertyNames->name);
-            RETURN_IF_EXCEPTION(scope, void());
-            auto str = name.toString(globalObject);
-            RETURN_IF_EXCEPTION(scope, void());
-            builder.append("an instance of "_s);
-            auto view = str->view(globalObject);
-            RETURN_IF_EXCEPTION(scope, );
-            builder.append(view);
-            return;
-        }
+        appendSpecificTypeOfObject(vm, globalObject, builder, cell->getObject());
+        RETURN_IF_EXCEPTION(scope, );
+        return;
     }
 
     //       value = lazyInternalUtilInspect().inspect(value, { colors: false });

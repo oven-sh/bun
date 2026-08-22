@@ -1249,10 +1249,9 @@ impl core::fmt::Display for OwnedString {
 
 impl core::fmt::Display for String {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // A UTF-8-tagged ZigString holds whatever bytes `borrow_utf8` was given, so this is not a pure transcode.
         let s = self.to_utf8_without_ref();
-        // SAFETY: `to_utf8_without_ref` always yields valid UTF-8 — it
-        // transcodes Latin-1/UTF-16 and borrows already-UTF-8 inputs.
-        f.write_str(unsafe { core::str::from_utf8_unchecked(s.slice()) })
+        crate::fmt::write_bytes(f, s.slice())
     }
 }
 

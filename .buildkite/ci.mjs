@@ -1481,24 +1481,41 @@ async function darwinBetaQueueIdle() {
         headers: { Authorization: `Bearer ${token}` },
         signal: AbortSignal.timeout(10_000),
       });
-      return res.ok ? res.json() : undefined;
+      return res.ok ? res : undefined;
     };
 
     // No connected agent: a step added now would sit `scheduled` until
     // the box comes back, and soft_fail does nothing for a job that
-    // never starts.
-    const agents = await api("agents?per_page=100");
-    if (!agents?.some(({ meta_data = [] }) => meta_data.includes(`queue=${darwinBetaQueue}`))) {
+    // never starts. The org has a few hundred agents and the list pages
+    // at 100, so follow `Link: rel="next"`; `stopping` does not count.
+    let connected = false;
+    let next = "agents?per_page=100";
+    for (let page = 0; next && page < 10 && !connected; page++) {
+      const res = await api(next);
+      if (!res) {
+        return false;
+      }
+      const agents = await res.json();
+      connected = agents.some(
+        ({ connection_state, meta_data = [] }) =>
+          connection_state === "connected" && meta_data.includes(`queue=${darwinBetaQueue}`),
+      );
+      const link = res.headers.get("link") ?? "";
+      const match = link.match(/<https:\/\/api\.buildkite\.com\/v2\/organizations\/bun\/([^>]+)>;\s*rel="next"/);
+      next = match?.[1];
+    }
+    if (!connected) {
       return false;
     }
 
     // Builds in `failing` and `canceling` still carry live jobs.
-    const builds = await api(
+    const res = await api(
       "pipelines/bun/builds?state%5B%5D=running&state%5B%5D=scheduled&state%5B%5D=failing&state%5B%5D=canceling&per_page=100",
     );
-    if (!builds) {
+    if (!res) {
       return false;
     }
+    const builds = await res.json();
     const terminal = new Set(["passed", "failed", "canceled", "skipped", "timed_out", "expired", "broken", "finished"]);
     const busy = builds.some(({ jobs = [] }) =>
       jobs.some(

@@ -757,6 +757,20 @@ export const dnsCacheSeed = $newRustFunction("runtime/dns_jsc/dns.rs", "internal
   addresses: string[],
 ) => number[];
 
+/** Whether the connect-path resolver answers `hostname` with the loopback addresses itself instead of asking getaddrinfo. */
+export const dnsIsLocalhostName = $newRustFunction(
+  "runtime/dns_jsc/dns.rs",
+  "internal.isLocalhostNameForTesting",
+  1,
+) as (hostname: string) => boolean;
+
+/** Whether a getaddrinfo() answer made of `addresses` makes the connect-path resolver retry without AI_ADDRCONFIG. */
+export const dnsIsAllLoopbackOfOneFamily = $newRustFunction(
+  "runtime/dns_jsc/dns.rs",
+  "internal.isAllLoopbackOfOneFamilyForTesting",
+  1,
+) as (addresses: string[]) => boolean;
+
 export const fetchH2Internals = {
   liveCounts: $newRustFunction("http/H2Client.rs", "TestingAPIs.liveCounts", 0) as () => {
     sessions: number;

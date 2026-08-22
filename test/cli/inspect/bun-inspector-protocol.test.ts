@@ -98,13 +98,19 @@ function checkObject(
 const fixtureFiles = ["entry.mjs", "dep.cjs"];
 
 test("the protocol snapshot in packages/bun-inspector-protocol matches what bun sends", async () => {
+  // reportError() counts as an unhandled error, so bun exits with code 1 as soon as the
+  // module body finishes, whatever else is scheduled. The second debugger statement keeps
+  // the inspectee parked after the session resumes it from the first one: the inspector's
+  // messages are written by the debugger thread, and a process that exits right after
+  // resuming can be gone before the Debugger.resume response and the Debugger.resumed
+  // event have been written to the socket.
   using dir = tempDir("bun-inspector-protocol", {
     "entry.mjs": `
       import "./dep.cjs";
       console.log("hello");
       reportError(new Error("reported"));
       debugger;
-      setInterval(() => {}, 60_000);
+      debugger;
     `,
     "dep.cjs": `module.exports = 1;`,
   });
@@ -230,9 +236,12 @@ test("the protocol snapshot in packages/bun-inspector-protocol matches what bun 
     await send("LifecycleReporter.getModuleGraph");
 
     const resumed = waitForEvent("Debugger.resumed");
+    const pausedAgain = waitForEvent("Debugger.paused");
     await send("Debugger.resume");
     await resumed;
+    await pausedAgain;
   } finally {
+    // Closing the last connection resumes the parked inspectee, which then exits.
     ws.close();
   }
 

@@ -186,7 +186,8 @@ describe("IOWriter file output redirection", () => {
             await using proc = Bun.spawn({
               cmd: [bunExe(), "fixture.ts"],
               cwd: String(dir),
-              env: { ...bunEnv, FIFO: fifo, MODE: mode },
+              // `cat` is only a builtin on POSIX behind this flag.
+              env: { ...bunEnv, FIFO: fifo, MODE: mode, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
               stdout: "pipe",
               stderr: "pipe",
             });

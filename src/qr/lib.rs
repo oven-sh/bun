@@ -1630,10 +1630,8 @@ mod tests {
 
     #[test]
     fn data_too_long_reports_the_bits_the_data_needs() {
-        // 300 bytes: the 8-bit count field of versions 1..=9 cannot even hold
-        // the length, so the segment does not fit at any size up to v9. The
-        // error still reports the real bit length (4 + 8 + 300 * 8), not a
-        // sentinel.
+        // 300 exceeds the 8-bit count field of versions 1..=9; the error still
+        // reports the segment's bit length at v9 (4 + 8 + 300 * 8).
         let segs = [Segment::make_bytes(&[0u8; 300]).unwrap()];
         assert_eq!(
             QrCode::encode_segments(&segs, Ecc::Medium, VERSION_MIN, 9, None, true).err(),

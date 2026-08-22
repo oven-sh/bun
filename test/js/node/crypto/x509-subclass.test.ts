@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { X509Certificate } from "node:crypto";
+import { createPrivateKey, createPublicKey, X509Certificate } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
@@ -124,8 +124,56 @@ describe("X509Certificate#checkIssued", () => {
     expect(result).toBe(false);
   });
 
+  // Messages verified against node v26.3.0.
   test("throws ERR_INVALID_ARG_TYPE when the argument is not an X509Certificate", () => {
-    expect(() => agent1.checkIssued({} as any)).toThrow();
-    expect(() => agent1.checkIssued("" as any)).toThrow();
+    expect(() => agent1.checkIssued({} as any)).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: 'The "otherCert" argument must be an instance of X509Certificate. Received an instance of Object',
+      }),
+    );
+    expect(() => agent1.checkIssued("" as any)).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `The "otherCert" argument must be an instance of X509Certificate. Received type string ('')`,
+      }),
+    );
+  });
+});
+
+// Messages verified against node v26.3.0.
+describe("X509Certificate#checkPrivateKey and #verify argument validation", () => {
+  const agent1 = new X509Certificate(certPem);
+  const privateKey = createPrivateKey(readFileSync(path.join(keysDir, "agent1-key.pem")));
+  const publicKey = createPublicKey(privateKey);
+
+  test.each([
+    [1, "type number (1)"],
+    [{}, "an instance of Object"],
+    [undefined, "undefined"],
+    [null, "null"],
+    ["pem", "type string ('pem')"],
+  ])("%p is rejected with an instance-of KeyObject message", (value, received) => {
+    const expected = expect.objectContaining({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: `The "pkey" argument must be an instance of KeyObject. Received ${received}`,
+    });
+    expect(() => agent1.checkPrivateKey(value as any)).toThrow(expected);
+    expect(() => agent1.verify(value as any)).toThrow(expected);
+  });
+
+  test("a KeyObject of the wrong type is still ERR_INVALID_ARG_VALUE", () => {
+    expect(() => agent1.checkPrivateKey(publicKey)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
+    expect(() => agent1.verify(privateKey)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
+  });
+
+  test("matching keys are accepted", () => {
+    expect(agent1.checkPrivateKey(privateKey)).toBe(true);
+    // agent1 is signed by ca1, not by its own key.
+    expect(agent1.verify(publicKey)).toBe(false);
+    expect(agent1.verify(new X509Certificate(ca1Pem).publicKey)).toBe(true);
   });
 });

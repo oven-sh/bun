@@ -83,6 +83,10 @@ enum Bound {
 namespace ERR {
 
 JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral message);
+// `expected_type` is classified like a one-entry Node list: a primitive type name renders
+// "must be of type string", a class name "must be an instance of KeyObject", a phrase
+// "must be an Array of unique strings". A pre-rendered list such as "string or an instance of
+// Buffer" is printed as written after "must be of type ".
 JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& arg_name, const WTF::String& expected_type, JSC::JSValue val_actual_value);
 JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue arg_name, const WTF::String& expected_type, JSC::JSValue val_actual_value);
 // Renders Node's multi-type list ("must be one of type number or string").

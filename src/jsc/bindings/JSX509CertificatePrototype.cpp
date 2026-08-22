@@ -328,10 +328,10 @@ JSC_DEFINE_HOST_FUNCTION(jsX509CertificateProtoFuncCheckIssued, (JSGlobalObject 
     if (!thisObject) [[unlikely]]
         return throwVMError(globalObject, scope, createError(globalObject, ErrorCode::ERR_INVALID_THIS, "checkIssued called on incompatible receiver"_s));
 
-    JSX509Certificate* issuer = dynamicDowncast<JSX509Certificate>(callFrame->argument(0));
+    JSValue otherCertValue = callFrame->argument(0);
+    JSX509Certificate* issuer = dynamicDowncast<JSX509Certificate>(otherCertValue);
     if (!issuer) {
-        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "issuer must be a JSX509Certificate"_s);
-        return {};
+        return ERR::INVALID_ARG_TYPE(scope, globalObject, "otherCert"_s, "X509Certificate"_s, otherCertValue);
     }
 
     auto check = thisObject->checkIssued(globalObject, issuer);

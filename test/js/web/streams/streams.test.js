@@ -2386,6 +2386,36 @@ describe("Bun.readableStreamTo* on an already used stream", () => {
   });
 });
 
+describe("Bun.readableStreamTo* with something that is not a ReadableStream", () => {
+  const consumers = [
+    "readableStreamToText",
+    "readableStreamToArrayBuffer",
+    "readableStreamToBytes",
+    "readableStreamToJSON",
+    "readableStreamToArray",
+    "readableStreamToBlob",
+    "readableStreamToFormData",
+  ];
+
+  for (const consumer of consumers) {
+    test(`${consumer} throws ERR_INVALID_ARG_TYPE naming the ReadableStream class`, () => {
+      expect(() => Bun[consumer](1)).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: 'The "stream" argument must be an instance of ReadableStream. Received type number (1)',
+        }),
+      );
+      expect(() => Bun[consumer]({})).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_TYPE",
+          message: 'The "stream" argument must be an instance of ReadableStream. Received an instance of Object',
+        }),
+      );
+    });
+  }
+});
+
 // Text assembly past the string limit must throw a catchable out-of-memory error, never
 // abort the process. The synthetic allocation limit makes the path testable without
 // multi-gigabyte inputs; a subprocess isolates the lowered limit.

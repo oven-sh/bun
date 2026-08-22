@@ -236,13 +236,12 @@ extern "C" fn on_vm_exit(ctx: *mut c_void) {
     }
     exporter::JsExporter::detach_all_for_vm(s);
     processor().remove_idle_hooks(s.idle_hook_key());
-    if global.bun_vm().worker_ref().is_some() {
-        // The worker thread is going away; nothing can reach this VmState again.
-        global.bun_vm().as_mut().rare_data().telemetry = None;
-        // SAFETY: allocated by `vm_state_or_init` via Box::leak; the RareData
-        // slot that published it was just cleared.
-        drop(unsafe { Box::from_raw(ctx.cast::<VmState>()) });
-    }
+    // Nothing can reach this VmState past the cleanup hook (`local()` returns
+    // None once the slot is cleared).
+    global.bun_vm().as_mut().rare_data().telemetry = None;
+    // SAFETY: allocated by `vm_state_or_init` via Box::leak; the RareData
+    // slot that published it was just cleared.
+    drop(unsafe { Box::from_raw(ctx.cast::<VmState>()) });
 }
 
 /// After a span was recorded on `global`'s VM: make sure a flush is scheduled.

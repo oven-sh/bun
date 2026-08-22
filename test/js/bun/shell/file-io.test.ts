@@ -139,47 +139,49 @@ describe("IOWriter file output redirection", () => {
         const mode = process.env.MODE!;
         const echo = Bun.which("echo")!;
         const cat = Bun.which("cat")!;
+        const read = () => fs.promises.readFile(fifo, "utf8");
+        const write = () => fs.promises.writeFile(fifo, "hello\\n").then(() => "");
+        const none = async () => "";
         // .then() starts the shell; the redirect open now waits for a partner.
-        let result;
+        let pending, partner;
         switch (mode) {
-          case "builtin >": {
-            const pending = $\`echo hello > \${fifo}\`.quiet().nothrow().then(r => r);
-            const text = await fs.promises.readFile(fifo, "utf8");
-            const r = await pending;
-            result = { text, exitCode: r.exitCode, stderr: r.stderr.toString() };
-            break;
-          }
-          case "external >": {
-            const pending = $\`\${echo} hello > \${fifo}\`.quiet().nothrow().then(r => r);
-            const text = await fs.promises.readFile(fifo, "utf8");
-            const r = await pending;
-            result = { text, exitCode: r.exitCode, stderr: r.stderr.toString() };
-            break;
-          }
-          case "builtin <": {
-            const pending = $\`cat < \${fifo}\`.quiet().nothrow().then(r => r);
-            await fs.promises.writeFile(fifo, "hello\\n");
-            const r = await pending;
-            result = { text: r.stdout.toString(), exitCode: r.exitCode, stderr: r.stderr.toString() };
-            break;
-          }
-          case "external <": {
-            const pending = $\`\${cat} < \${fifo}\`.quiet().nothrow().then(r => r);
-            await fs.promises.writeFile(fifo, "hello\\n");
-            const r = await pending;
-            result = { text: r.stdout.toString(), exitCode: r.exitCode, stderr: r.stderr.toString() };
-            break;
-          }
+          case "builtin >": pending = $\`echo hello > \${fifo}\`.quiet().nothrow().then(r => r); partner = read; break;
+          case "external >": pending = $\`\${echo} hello > \${fifo}\`.quiet().nothrow().then(r => r); partner = read; break;
+          case "builtin <": pending = $\`cat < \${fifo}\`.quiet().nothrow().then(r => r); partner = write; break;
+          case "external <": pending = $\`\${cat} < \${fifo}\`.quiet().nothrow().then(r => r); partner = write; break;
+          // The redirect is opened, then nothing uses it: the reader gets EOF.
+          case "no argv": pending = $\`$(true) > \${fifo}\`.quiet().nothrow().then(r => r); partner = read; break;
+          case "command not found": pending = $\`nosuchcmd_17261 > \${fifo}\`.quiet().nothrow().then(r => r); partner = read; break;
+          // The FIFO has mode 000: the pool open fails and the error is reported like an inline one.
+          case "open error": pending = $\`echo hello > \${fifo}\`.quiet().nothrow().then(r => r); partner = none; break;
         }
-        console.log(JSON.stringify(result));
+        const [text, r] = await Promise.all([partner(), pending]);
+        console.log(JSON.stringify({
+          text: mode.endsWith("<") ? r.stdout.toString() : text,
+          exitCode: r.exitCode,
+          stderr: r.stderr.toString(),
+        }));
       `;
 
-      // macOS reports no kqueue or poll readiness when the last writer of a
-      // FIFO closes, so the builtin `cat` never sees EOF there (node's
-      // process.stdin has the same gap). The external `cat` blocks in read(2)
-      // and does.
-      const modes = ["builtin >", "external >", "external <", ...(isLinux ? ["builtin <"] : [])];
-      for (const mode of modes) {
+      const ok = { text: "hello\n", exitCode: 0, stderr: "" };
+      const isRoot = process.getuid?.() === 0;
+      const cases: Record<string, { text: string; exitCode: number; stderr: string | ((fifo: string) => string) }> = {
+        "builtin >": ok,
+        "external >": ok,
+        "external <": ok,
+        // macOS reports no kqueue or poll readiness when the last writer of a
+        // FIFO closes, so the builtin `cat` never sees EOF there (node's
+        // process.stdin has the same gap). The external `cat` blocks in
+        // read(2) and does.
+        ...(isLinux ? { "builtin <": ok } : {}),
+        "no argv": { text: "", exitCode: 0, stderr: "" },
+        "command not found": { text: "", exitCode: 1, stderr: "bun: command not found: nosuchcmd_17261\n" },
+        // root opens a mode 000 FIFO without an error.
+        ...(isRoot
+          ? {}
+          : { "open error": { text: "", exitCode: 1, stderr: fifo => `bun: Permission denied: ${fifo}` } }),
+      };
+      for (const [mode, want] of Object.entries(cases)) {
         test.concurrent(
           mode,
           async () => {
@@ -187,6 +189,7 @@ describe("IOWriter file output redirection", () => {
             const fifo = join(String(dir), "target.fifo");
             await using mk = Bun.spawn({ cmd: [Bun.which("mkfifo")!, fifo], env: bunEnv });
             expect(await mk.exited).toBe(0);
+            if (mode === "open error") fs.chmodSync(fifo, 0o000);
 
             await using proc = Bun.spawn({
               cmd: [bunExe(), "fixture.ts"],
@@ -214,7 +217,7 @@ describe("IOWriter file output redirection", () => {
               parsed = stdout;
             }
             expect({ parsed, stderr, exited }).toEqual({
-              parsed: { text: "hello\n", exitCode: 0, stderr: "" },
+              parsed: { ...want, stderr: typeof want.stderr === "function" ? want.stderr(fifo) : want.stderr },
               stderr: "",
               exited: 0,
             });

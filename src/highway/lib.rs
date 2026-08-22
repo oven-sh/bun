@@ -174,7 +174,7 @@ unsafe extern "C" {
 /// they do at most one (masked) vector op or just their scalar tail, so for
 /// haystacks this short the FFI hop plus the dispatch-table call dominates —
 /// do those bytes inline. Also keeps cold call sites from dragging an FFI
-/// call into a caller's hot loop (see `pop_last_segment_t` in node/path.rs).
+/// call into a caller's hot loop.
 const SCALAR_CUTOFF: usize = 16;
 
 /// Miri cannot call foreign functions, and the workspace denies std's search

@@ -50,7 +50,6 @@ using namespace JSC;
     macro(atimeMs) \
     macro(attributes) \
     macro(autoAllocateChunkSize) \
-    macro(basename) \
     macro(birthtimeMs) \
     macro(blob) \
     macro(body) \
@@ -67,6 +66,7 @@ using namespace JSC;
     macro(createInternalModuleById) \
     macro(createUninitializedArrayBuffer) \
     macro(ctimeMs) \
+    macro(cwd) \
     macro(data) \
     macro(dataView) \
     macro(decode) \
@@ -85,13 +85,11 @@ using namespace JSC;
     macro(evictIsolationSourceProviderCache) \
     macro(expires) \
     macro(exports) \
-    macro(extname) \
     macro(fastPath) \
     macro(fatal) \
     macro(fd) \
     macro(filename) \
     macro(flush) \
-    macro(format) \
     macro(handleEvent) \
     macro(headers) \
     macro(highWaterMark) \
@@ -107,10 +105,8 @@ using namespace JSC;
     macro(internalModuleRegistry) \
     macro(internalRequire) \
     macro(isAbortSignal) \
-    macro(isAbsolute) \
     macro(isUncloneable) \
     macro(isUntransferable) \
-    macro(join) \
     macro(json) \
     macro(kResistStopPropagation) \
     macro(key) \
@@ -131,13 +127,11 @@ using namespace JSC;
     macro(mtimeMs) \
     macro(napiDlopenHandle) \
     macro(napiWrappedContents) \
-    macro(normalize) \
     macro(onClose) \
     macro(onDrain) \
     macro(originalColumn) \
     macro(originalLine) \
     macro(overridableRequire) \
-    macro(parse) \
     macro(partitioned) \
     macro(path) \
     macro(paths) \
@@ -156,7 +150,6 @@ using namespace JSC;
     macro(readable) \
     macro(readableType) \
     macro(redirect) \
-    macro(relative) \
     macro(removeAbortAlgorithmFromSignal) \
     macro(require) \
     macro(requireESM) \
@@ -181,7 +174,6 @@ using namespace JSC;
     macro(textDecoderStreamDecoder) \
     macro(textEncoderStreamEncoder) \
     macro(toClass) \
-    macro(toNamespacedPath) \
     macro(transform) \
     macro(type) \
     macro(updateRef) \

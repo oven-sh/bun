@@ -83,6 +83,7 @@ const rustIdentifierPaths: Record<string, string> = {
   "pack_command.rs": "runtime/cli/pack_command.rs",
   "parse_args.rs": "runtime/node/util/parse_args.rs",
   "patch.rs": "patch/patch.rs",
+  "path.rs": "runtime/node/path.rs",
   "postgres.rs": "sql_jsc/postgres.rs",
   "runtime/dns_jsc/dns.rs": "runtime/dns_jsc/dns.rs",
   "runtime/node/types.rs": "runtime/node/types.rs",

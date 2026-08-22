@@ -7,8 +7,6 @@ using namespace std;
 
 #include "ZigGlobalObject.h"
 
-#include "Path.h"
-
 #include "DOMURL.h"
 
 #include <JavaScriptCore/CallFrame.h>

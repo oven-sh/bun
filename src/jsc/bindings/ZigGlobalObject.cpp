@@ -738,6 +738,29 @@ static bool isModuleEvaluating(JSC::AbstractModuleRecord* record)
     return cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluating;
 }
 
+// True once no load of this entry is in flight: the record finished evaluating
+// (with or without an error), or the load failed and the entry caches the error.
+static bool isModuleLoadSettled(JSC::ModuleRegistryEntry* entry)
+{
+    switch (entry->status()) {
+    case JSC::ModuleRegistryEntry::Status::New:
+    case JSC::ModuleRegistryEntry::Status::Fetching:
+        return false;
+    case JSC::ModuleRegistryEntry::Status::FetchFailed:
+    case JSC::ModuleRegistryEntry::Status::InstantiationFailed:
+    case JSC::ModuleRegistryEntry::Status::EvaluationFailed:
+        return true;
+    case JSC::ModuleRegistryEntry::Status::Fetched:
+        break;
+    }
+    auto* record = entry->record();
+    if (!record)
+        return false;
+    if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record))
+        return cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluated;
+    return record->moduleEnvironmentMayBeNull() != nullptr;
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionEsmNamespaceForCjs, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -764,7 +787,19 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryDelete, (JSC::JSGlobalObject * globa
         return JSValue::encode(jsBoolean(false));
     auto key = JSC::Identifier::fromString(vm, asString(keyValue)->value(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(jsBoolean(globalObject->moduleLoader()->removeEntry(key))); // takes the loader's cellLock itself
+    auto* moduleLoader = globalObject->moduleLoader();
+    // require.cache only lists ES modules that finished evaluating (its `has`
+    // and `get` traps go through functionEsmNamespaceForCjs). A module that is
+    // still loading is not in it, so deleting its key is a no-op like deleting
+    // any other missing key. Evicting the entry mid-load would make the next
+    // import() of the key build a second record for the same module while the
+    // loader's [[LoadedModules]] caches and pending microtasks hold the first.
+    // removeEntry() drops every (key, type) variant, so check each of them.
+    for (auto& [mapKey, entry] : moduleLoader->moduleMap()) {
+        if (mapKey.first == key.impl() && !isModuleLoadSettled(entry.get()))
+            return JSValue::encode(jsBoolean(false));
+    }
+    return JSValue::encode(jsBoolean(moduleLoader->removeEntry(key))); // takes the loader's cellLock itself
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryEvaluatedKeys, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))

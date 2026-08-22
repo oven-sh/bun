@@ -8,6 +8,18 @@ import path from "path";
 
 const tmpbase = tmpdir() + path.sep;
 
+describe("sqlite-type symbol", () => {
+  it("should have the sqlite-type symbol with value 'bun:sqlite'", () => {
+    const db = new Database(":memory:");
+    const sqliteTypeSymbol = Symbol.for("sqlite-type");
+
+    expect(sqliteTypeSymbol in db).toBe(true);
+    expect(db[sqliteTypeSymbol]).toBe("bun:sqlite");
+
+    db.close();
+  });
+});
+
 describe("as", () => {
   it("should return an implementation of the class", () => {
     const db = new Database(":memory:");

@@ -40,7 +40,8 @@ use crate::webcore::{AbortSignal, DrainResult, FetchHeaders, InternalBlob, Respo
 type ElJsResult<T> = bun_event_loop::JsResult<T>;
 
 /// How much of a body nothing is reading is taken off the socket before the transport is left
-/// paused (`FetchTasklet::after_body_chunk_delivered`). Below this an unread body still
+/// paused, whether it waits in `scheduled_response_buffer` (`FetchTasklet::callback`) or in a
+/// stream (`FetchTasklet::after_body_chunk_delivered`). Below this an unread body still
 /// completes, which frees the connection for reuse; above it memory stays bounded.
 const UNOBSERVED_BODY_HIGH_WATER_MARK: usize = 256 * 1024;
 
@@ -1937,26 +1938,12 @@ impl FetchTasklet {
         )
     }
 
+    /// After the caller aborted the fetch: discard what still arrives, let go of the response.
     fn ignore_remaining_response_body(&self) {
         bun_output::scoped_log!(FetchTasklet, "ignoreRemainingResponseBody");
-        // enabling streaming will make the http thread to drain into the main thread (aka stop buffering)
-        // without a stream ref, response body or response instance alive it will just ignore the result
-        // An aborted fetch is already shutting down; don't re-arm receive/resume
-        // draining, which would read the rest of an unbounded body and hold the
-        // socket open (drain_events resumes before shutdowns).
-        let aborted = self.signal_store.aborted.load(Ordering::Relaxed);
-        if self
-            .signal_store
-            .set_receive_mode_terminal(BodyReceiveMode::Ignore)
-            && !aborted
-        {
-            self.schedule_receive_resume();
-        }
-        if let Some(http_) = self.http.as_deref() {
-            if !aborted {
-                http_.enable_response_body_streaming();
-            }
-        }
+        debug_assert!(self.signal_store.aborted.load(Ordering::Relaxed));
+        self.signal_store
+            .set_receive_mode_terminal(BodyReceiveMode::Ignore);
         // we should not keep the process alive if we are ignoring the body
         self.poll_ref
             .with_mut(|poll_ref| poll_ref.unref(bun_io::js_vm_ctx()));
@@ -2418,9 +2405,9 @@ impl FetchTasklet {
         }
     }
 
-    /// Idempotent: reader.cancel(), an AbortSignal and a collected body stream can all
-    /// reach here for the same fetch. Only the first abort enqueues a shutdown; a second
-    /// would append a redundant ShutdownMessage for an already-closing socket. No JS.
+    /// Idempotent: reader.cancel(), an AbortSignal, a collected body stream and a collected
+    /// Response can all reach here for the same fetch. Only the first abort enqueues a shutdown;
+    /// a second would append a redundant ShutdownMessage for an already-closing socket. No JS.
     fn abort_transport(&self) -> bool {
         if self.signal_store.aborted.swap(true, Ordering::Relaxed) {
             return false;
@@ -2615,7 +2602,17 @@ impl FetchTasklet {
                     bun_core::handle_oom(scheduled.write(chunk));
                 }
             }
-            if task_ref.result.has_more && !task_ref.scheduled_response_buffer.list.is_empty() {
+            // A stream takes the body chunk by chunk and resumes per chunk: pause behind each.
+            // Until one attaches, the body waits here: pause once it holds the mark.
+            let buffered = task_ref.scheduled_response_buffer.list.len();
+            if task_ref.result.has_more
+                && buffered > 0
+                && (buffered >= UNOBSERVED_BODY_HIGH_WATER_MARK
+                    || task_ref
+                        .signal_store
+                        .response_body_streaming
+                        .load(Ordering::Acquire))
+            {
                 let _ = task_ref.signal_store.try_transition_receive_mode(
                     BodyReceiveMode::AutoPause,
                     BodyReceiveMode::Paused,
@@ -2738,31 +2735,29 @@ impl FetchTasklet {
             let body = unsafe { (*response).get_body_value() };
             // Three scenarios:
             //
-            // 1. We are streaming, in which case we should not ignore the body.
-            // 2. We were buffering, in which case
-            //    2a. if we have no promise, we should ignore the body.
-            //    2b. if we have a promise, we should keep loading the body.
-            // 3. We never started buffering, in which case we should ignore the body.
+            // 1. The body arrived, or it is a stream: a stream outlives its Response, and its
+            //    own collection ends the body (`on_body_stream_collected`).
+            // 2. A consumer waits for the whole body (`.text()` and friends hold a promise,
+            //    `Bun.write` an `on_receive_value`): keep loading.
+            // 3. Still arriving, so longer than the mark `callback` receives on its own, and
+            //    nothing will ever take it: abort, as for a collected stream.
             //
             // Inside a finalizer: decide from native state only.
             if !matches!(body, BodyValue::Locked(_)) || this.response_stream_source.get().is_some()
             {
-                // Scenario 1 or 3. In scenario 1 the stream can outlive its Response; if
-                // nothing reads it, it parks and its own collection ends the body
-                // (`on_body_stream_collected`).
                 return;
             }
 
             if let BodyValue::Locked(locked) = body {
-                if let Some(promise) = locked.promise {
-                    if promise.is_empty_or_undefined_or_null() {
-                        // Scenario 2b.
-                        this.ignore_remaining_response_body();
-                    }
-                } else {
-                    // Scenario 3.
-                    this.ignore_remaining_response_body();
+                let has_consumer = locked.on_receive_value.is_some()
+                    || locked
+                        .promise
+                        .is_some_and(|promise| !promise.is_empty_or_undefined_or_null());
+                if has_consumer {
+                    return;
                 }
+                this.abort_transport();
+                this.ignore_remaining_response_body();
             }
         }
     }

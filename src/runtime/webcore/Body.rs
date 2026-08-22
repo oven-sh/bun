@@ -784,10 +784,16 @@ impl Value {
                 self.locked_to_native_stream(global_this, false)
             }
             Value::Error(err) => {
-                // Leave `self` as `Error` so the promise-returning readers
-                // (`handle_body_error`) still reject too.
                 let reason = err.to_js(global_this);
-                ReadableStream::errored(global_this, reason)
+                let value = ReadableStream::errored(global_this, reason)?;
+                // As for a blob above: this stream is the body from here on, so `.body` hands it
+                // out again, `bodyUsed` follows it, and the promise readers reject through it.
+                let stream = ReadableStream::from_js_direct(value).unwrap();
+                *self = Value::Locked(PendingValue {
+                    readable: webcore::readable_stream::Strong::init(stream, global_this),
+                    ..PendingValue::new(global_this)
+                });
+                Ok(value)
             }
         }
     }
@@ -835,7 +841,9 @@ impl Value {
             Value::Locked(_) => self.locked_to_native_stream(global_this, true),
             Value::Error(err) => {
                 let reason = err.to_js(global_this);
-                ReadableStream::errored(global_this, reason)
+                let stream = ReadableStream::errored(global_this, reason)?;
+                *self = Value::Used;
+                Ok(stream)
             }
         }
     }

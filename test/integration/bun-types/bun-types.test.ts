@@ -400,6 +400,43 @@ describe("@types/bun integration test", () => {
     });
   });
 
+  // Runs on debug builds too, same as the Bun.mmap block above.
+  describe("TextDecoder", () => {
+    test("accepts the encoding labels the runtime supports", async () => {
+      const checkDir = join(TEMP_DIR, "text-decoder-encoding-check");
+      const tsconfig = structuredClone(sourceTsconfig);
+      tsconfig.include = ["text-decoder-encodings.ts"];
+      tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
+      await mkdir(checkDir, { recursive: true });
+      await makeTree(checkDir, {
+        "tsconfig.json": JSON.stringify(tsconfig, null, 2),
+        "text-decoder-encodings.ts": `new TextDecoder("windows-1251");
+           new TextDecoder("shift_jis");
+           new TextDecoder("utf8");
+           new TextDecoder("latin1");
+           new TextDecoder("gb18030", { fatal: true, ignoreBOM: true });
+           // @ts-expect-error - the TextDecoder constructor rejects the replacement encoding
+           "hz-gb-2312" satisfies Bun.Encoding;
+           // @ts-expect-error - not a label the Encoding Standard defines
+           "utf-99" satisfies Bun.Encoding;`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
+        env: bunEnv,
+        cwd: checkDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr.trim()).toBe("");
+      expect(stdout.trim()).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("Test Globals", () => {
     const code = `
       const test_shouldBeAFunction: Function = test;

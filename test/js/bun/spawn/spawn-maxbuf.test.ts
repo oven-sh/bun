@@ -1,6 +1,14 @@
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe } from "harness";
 
 const { isWindows } = require("../../node/test/common");
+
+// Every upper bound on elapsed time in this file also covers spawning a bun child and
+// reaping it. In the parallel CI batch that alone takes up to ~350ms on the Linux lanes
+// and over a second on Windows. The bounds only have to show that bun did not wait for
+// the child to finish on its own (`yes` never finishes, `sleep 5` takes 5s), so they are
+// loose. The "caps the buffer" tests below assert the promptness of the maxBuffer kill
+// in bytes, which does not depend on the machine's load.
+const spawnSlack = 2000;
 
 async function toUtf8(out: ReadableStream<Uint8Array>): Promise<string> {
   const stream = new TextDecoderStream();
@@ -13,13 +21,6 @@ async function toUtf8(out: ReadableStream<Uint8Array>): Promise<string> {
 }
 
 describe("yes is killed", () => {
-  // The wall-clock window below includes the child's startup (bunExe() has to
-  // boot before `yes` writes its first byte). On a debug/ASAN build that startup
-  // alone is ~150-250ms, so the release 100ms budget is spent before maxBuffer
-  // has anything to measure. Byte-level promptness is asserted by the "caps the
-  // buffer" tests below; this is the coarse "didn't wait a full tick" sanity check.
-  const killWindow = isDebug || isASAN ? 1000 : 100;
-
   test("Bun.spawn", async () => {
     const timeStart = Date.now();
     const proc = Bun.spawn([bunExe(), "exec", "yes"], {
@@ -31,7 +32,7 @@ describe("yes is killed", () => {
     expect(proc.exitCode).toBe(null);
     expect(proc.signalCode).toBe(isWindows ? "SIGKILL" : "SIGHUP");
     const timeEnd = Date.now();
-    expect(timeEnd - timeStart).toBeLessThan(killWindow);
+    expect(timeEnd - timeStart).toBeLessThan(spawnSlack);
     const result = await toUtf8(proc.stdout);
     expect(result).toStartWith("y\n".repeat(128));
     const stderr = await toUtf8(proc.stderr);
@@ -49,7 +50,7 @@ describe("yes is killed", () => {
     expect(proc.exitCode).toBe(null);
     expect(proc.signalCode).toBe(isWindows ? "SIGKILL" : "SIGHUP");
     const timeEnd = Date.now();
-    expect(timeEnd - timeStart).toBeLessThan(killWindow);
+    expect(timeEnd - timeStart).toBeLessThan(spawnSlack);
     const result = proc.stdout.toString("utf-8");
     expect(result).toStartWith("y\n".repeat(128));
     const stderr = proc.stderr.toString("utf-8");
@@ -186,7 +187,7 @@ describe("timeout kills the process", () => {
     expect(proc.exitCode).toBe(null);
     expect(proc.signalCode).toBe(isWindows ? "SIGKILL" : "SIGHUP");
     const timeEnd = Date.now();
-    expect(timeEnd - timeStart).toBeLessThan(200); // make sure it's terminating early
+    expect(timeEnd - timeStart).toBeLessThan(100 + spawnSlack); // make sure it's terminating early
     const result = await toUtf8(proc.stdout);
     expect(result).toBe("");
     const stderr = await toUtf8(proc.stderr);
@@ -241,7 +242,7 @@ describe("timeout kills the process", () => {
     // time spawnSync returns at least 100ms have elapsed. Date.now() truncates to
     // whole milliseconds, so floor(end) - floor(start) can equal exactly 100.
     expect(timeEnd - timeStart).toBeGreaterThanOrEqual(100); // make sure it actually waits
-    expect(timeEnd - timeStart).toBeLessThan(200); // make sure it's terminating early
+    expect(timeEnd - timeStart).toBeLessThan(100 + spawnSlack); // make sure it's terminating early
     const result = proc.stdout.toString("utf-8");
     expect(result).toBe("");
     const stderr = proc.stderr.toString("utf-8");
@@ -261,7 +262,7 @@ describe("timeout Infinity does not kill the process", () => {
     expect(proc.exitCode).toBe(0);
     const timeEnd = Date.now();
     expect(timeEnd - timeStart).toBeGreaterThan(1000); // make sure it actually waits
-    expect(timeEnd - timeStart).toBeLessThan(1500); // make sure it's terminating early
+    expect(timeEnd - timeStart).toBeLessThan(1000 + spawnSlack); // make sure it's terminating early
     const result = await toUtf8(proc.stdout);
     expect(result).toBe("");
     const stderr = await toUtf8(proc.stderr);
@@ -278,7 +279,7 @@ describe("timeout Infinity does not kill the process", () => {
     expect(proc.exitCode).toBe(0);
     const timeEnd = Date.now();
     expect(timeEnd - timeStart).toBeGreaterThan(1000); // make sure it actually waits
-    expect(timeEnd - timeStart).toBeLessThan(1500);
+    expect(timeEnd - timeStart).toBeLessThan(1000 + spawnSlack);
     const result = proc.stdout.toString("utf-8");
     expect(result).toBe("");
     const stderr = proc.stderr.toString("utf-8");

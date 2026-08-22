@@ -480,16 +480,15 @@ fn run_tasks_erased(
                     throttle_after_network_error(manager, &mut has_network_error);
                 }
 
-                // Handle retry-able errors.
-                if download_failed
+                // Handle retry-able errors. (A redirect refused by
+                // `install.allowedHosts` is policy, not transient: not retried.)
+                if (download_failed
+                    && task.response.fail != Some(bun_http::Error::RedirectHostNotAllowed))
                     || task
                         .response
                         .metadata
                         .as_ref()
-                        .unwrap()
-                        .response
-                        .status_code
-                        > 499
+                        .is_some_and(|m| m.response.status_code > 499)
                 {
                     let err = task
                         .response
@@ -531,7 +530,12 @@ fn run_tasks_erased(
                         (cb.on_package_manifest_error)(extract_ctx, name, err, &task.url_buf);
                     } else {
                         let fmt_args = (err.name(), name);
-                        if manager.is_network_task_required(task.task_id) {
+                        // A redirect refused by `install.allowedHosts` is an
+                        // error even for an optional dependency (policy, not
+                        // availability).
+                        if manager.is_network_task_required(task.task_id)
+                            || task.response.fail == Some(bun_http::Error::RedirectHostNotAllowed)
+                        {
                             bun_ast::add_error_pretty!(
                                 manager.log_mut(),
                                 None,
@@ -754,15 +758,15 @@ fn run_tasks_erased(
                     throttle_after_network_error(manager, &mut has_network_error);
                 }
 
-                if download_failed
+                // (A redirect refused by `install.allowedHosts` is policy, not
+                // transient: not retried.)
+                if (download_failed
+                    && task.response.fail != Some(bun_http::Error::RedirectHostNotAllowed))
                     || task
                         .response
                         .metadata
                         .as_ref()
-                        .unwrap()
-                        .response
-                        .status_code
-                        > 499
+                        .is_some_and(|m| m.response.status_code > 499)
                 {
                     let err = task
                         .response
@@ -846,7 +850,11 @@ fn run_tasks_erased(
                         continue;
                     }
 
-                    if is_required {
+                    // A redirect refused by `install.allowedHosts` is an error
+                    // even for an optional dependency (policy, not availability).
+                    if is_required
+                        || task.response.fail == Some(bun_http::Error::RedirectHostNotAllowed)
+                    {
                         bun_ast::add_error_pretty!(
                             manager.log_mut(),
                             None,

@@ -726,6 +726,11 @@ impl NetworkTask {
             },
         ));
         self.http_mut().client.flags.reject_unauthorized = pm.tls_reject_unauthorized();
+        // Redirect hops are held to the same rules as this request:
+        // `install.allowedHosts`, and credentials only while under their scope.
+        self.http_mut().client.redirect_policy = Some(
+            crate::package_manager::Options::redirect_policy(credentials),
+        );
 
         if PackageManager::verbose_install() {
             self.http_mut().client.verbose = HTTPVerboseLevel::Headers;
@@ -926,6 +931,19 @@ impl NetworkTask {
             }
             _ => None,
         };
+        // What a redirect hop must stay under to keep the `Authorization`
+        // header: the registry / `.npmrc` prefix the credentials were issued
+        // for, or — for credentials that came embedded in the tarball URL —
+        // that URL's origin.
+        let credentials_scope: &[u8] = if url_authorization.is_some() {
+            URL::parse(&self.url_buf).origin
+        } else {
+            credentials.scope
+        };
+        let redirect_policy = crate::package_manager::Options::redirect_policy(Credentials {
+            scope: credentials_scope,
+            ..credentials
+        });
 
         let header_buf: &'static [u8] = if header_builder.header_count > 0 {
             header_builder.allocate()?;
@@ -998,6 +1016,9 @@ impl NetworkTask {
             http_options,
         ));
         self.http_mut().client.flags.reject_unauthorized = pm.tls_reject_unauthorized();
+        // Redirect hops are held to the same rules as this request:
+        // `install.allowedHosts`, and credentials only while under their scope.
+        self.http_mut().client.redirect_policy = Some(redirect_policy);
         if PackageManager::verbose_install() {
             self.http_mut().client.verbose = HTTPVerboseLevel::Headers;
         }

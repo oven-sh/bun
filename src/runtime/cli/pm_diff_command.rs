@@ -911,6 +911,9 @@ fn registry_get(
         http::FetchRedirect::Follow,
     );
     req.client.flags.reject_unauthorized = pm.tls_reject_unauthorized();
+    req.client.redirect_policy = Some(bun_install::package_manager::Options::redirect_policy(
+        credentials,
+    ));
     let res = match req.send_sync(&mut response_buf) {
         Ok(r) => r,
         Err(err) => {

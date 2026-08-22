@@ -42,7 +42,7 @@ Bun attaches a registry's credentials (token, or username and password) to a req
 | `https://host.example.com/npm/team-a/` | `https://host.example.com/npm/team-ab/pkg.tgz`            | no               |
 | `https://host.example.com/npm/team-a/` | `https://cdn.example.com/npm/team-a/pkg.tgz`              | no               |
 
-This applies to package manifests and tarballs alike. A package's tarball URL comes from the registry's metadata, so this rule is what keeps a registry (or another tenant on a shared registry host) from directing your credentials somewhere else. It matches how npm scopes `//host/path/:_authToken` entries in `.npmrc`, and such [`.npmrc`](/pm/npmrc) entries are honoured the same way: a request not covered by its registry's credentials uses the `.npmrc` entry with the longest `//host/path/` that covers it, if any.
+This applies to package manifests and tarballs alike, and to each HTTP redirect they take: credentials are dropped on a hop that leaves the URL prefix they were issued for, even on the same host. A package's tarball URL comes from the registry's metadata, so this rule is what keeps a registry (or another tenant on a shared registry host) from directing your credentials somewhere else. It matches how npm scopes `//host/path/:_authToken` entries in `.npmrc`, and such [`.npmrc`](/pm/npmrc) entries are honoured the same way: a request not covered by its registry's credentials uses the `.npmrc` entry with the longest `//host/path/` that covers it, if any.
 
 To further restrict where `bun install` connects, see [`install.allowedHosts`](/runtime/bunfig#install-allowedhosts); to route requests through a mirror without changing `bun.lock`, see [`install.rewrite`](/runtime/bunfig#install-rewrite).
 

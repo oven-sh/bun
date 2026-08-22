@@ -801,6 +801,9 @@ pub struct HTTPClient<'a> {
     // allocator param dropped — global mimalloc
     pub verbose: HTTPVerboseLevel,
     pub remaining_redirect_count: i8,
+    /// Caller-supplied rules re-applied to every redirect hop on top of
+    /// fetch's cross-origin header stripping (see [`RedirectPolicy`]).
+    pub redirect_policy: Option<RedirectPolicy>,
     pub(crate) allow_retry: bool,
     /// Transparent re-dispatch count for REFUSED_STREAM / graceful-GOAWAY,
     /// where the server promises the request was not processed. Capped by
@@ -1066,6 +1069,23 @@ bun_core::comptime_string_map! {
         b"content-location" => (),
         b"content-type" => (),
     };
+}
+
+/// Extra redirect rules for callers whose policy is stricter than fetch's
+/// same-origin header stripping — the package manager's `install.allowedHosts`
+/// and path-scoped registry credentials. Evaluated on the HTTP thread for each
+/// hop, against the resolved `Location` URL, before anything is sent to it.
+#[derive(Clone, Copy)]
+pub struct RedirectPolicy {
+    /// `false` refuses to follow the redirect; the request fails with
+    /// [`Error::RedirectHostNotAllowed`](crate::Error::RedirectHostNotAllowed).
+    pub target_allowed: fn(url: &[u8]) -> bool,
+    /// The request's `Authorization` header survives a hop only while this
+    /// returns `true` for `(target url, authorization_scope)`; otherwise it is
+    /// dropped even on a same-origin redirect.
+    pub keep_authorization: fn(url: &[u8], scope: &[u8]) -> bool,
+    /// The URL prefix the `Authorization` header was issued for.
+    pub authorization_scope: &'static [u8],
 }
 
 bun_core::comptime_string_map! {
@@ -5212,6 +5232,29 @@ impl<'a> HTTPClient<'a> {
                                 .get_ascii_case_insensitive(name)
                                 .is_some()
                             {
+                                let _ = self.header_entries.ordered_remove(i);
+                            } else {
+                                i += 1;
+                            }
+                        }
+                    }
+                }
+
+                // Caller policy (package manager): refuse hosts outside its
+                // allow-list, and drop credentials that were scoped to a URL
+                // prefix the target is no longer under — before fetch's own
+                // cross-origin stripping below.
+                if let Some(policy) = self.redirect_policy {
+                    if !(policy.target_allowed)(self.url.href) {
+                        return Err(crate::Error::RedirectHostNotAllowed);
+                    }
+                    if self.header_entries.len() > 0
+                        && !(policy.keep_authorization)(self.url.href, policy.authorization_scope)
+                    {
+                        let mut i = 0;
+                        while i < self.header_entries.len() {
+                            let name = self.header_str(self.header_entries.items_name()[i]);
+                            if name.eq_ignore_ascii_case(b"authorization") {
                                 let _ = self.header_entries.ordered_remove(i);
                             } else {
                                 i += 1;

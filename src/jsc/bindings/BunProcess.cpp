@@ -8,6 +8,7 @@
 
 // Include the CMake-generated dependency versions header
 #include "bun_dependency_versions.h"
+#include <wtf/Scope.h>
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/JSMicrotask.h>
 #include <JavaScriptCore/ObjectConstructor.h>
@@ -597,6 +598,15 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
             }
         }
 
+        // Whatever happens below, no registration state may leak into the next dlopen().
+        auto resetPendingRegistrations = WTF::makeScopeExit([&] {
+            globalObject->m_pendingV8Modules.clear();
+            globalObject->m_pendingNapiModules.clear();
+            globalObject->napiModuleRegisterCallCount = 0;
+            globalObject->m_pendingNapiModuleAndExports[0].clear();
+            globalObject->m_pendingNapiModuleAndExports[1].clear();
+        });
+
         // Execute all NAPI modules. If an nm_register_func registers more
         // modules re-entrantly, they accumulate back in m_pendingNapiModules;
         // drain those too once the current batch is done.
@@ -608,26 +618,14 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
                 globalObject->m_pendingNapiModule = mod;
                 Napi::executePendingNapiModule(globalObject);
                 globalObject->m_pendingNapiModule = {};
-                if (scope.exception()) [[unlikely]]
-                    break;
+                RETURN_IF_EXCEPTION(scope, {});
             }
-            if (scope.exception() || globalObject->m_pendingNapiModules.isEmpty())
+            if (globalObject->m_pendingNapiModules.isEmpty())
                 break;
             pendingNapiModules = std::exchange(globalObject->m_pendingNapiModules, {});
         }
 
-        // Clear any re-entrant V8 registrations (not executed here), and napi ones left over if a
-        // registration threw.
-        globalObject->m_pendingV8Modules.clear();
-        globalObject->m_pendingNapiModules.clear();
-
         JSValue resultValue = globalObject->m_pendingNapiModuleAndExports[0].get();
-        globalObject->napiModuleRegisterCallCount = 0;
-        globalObject->m_pendingNapiModuleAndExports[0].clear();
-        globalObject->m_pendingNapiModuleAndExports[1].clear();
-
-        RETURN_IF_EXCEPTION(scope, {});
-
         if (resultValue && resultValue != strongModule.get()) {
             if (resultValue.isCell() && resultValue.getObject()->isErrorInstance()) {
                 JSC::throwException(globalObject, scope, resultValue);
@@ -654,10 +652,19 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
                 registration);
         }
 
+        // (The V8 registrations are already in DLHandleMap; nothing here re-saves them.)
+        auto resetPendingRegistrations = WTF::makeScopeExit([&] {
+            globalObject->m_pendingV8Modules.clear();
+            globalObject->m_pendingNapiModules.clear();
+            globalObject->napiModuleRegisterCallCount = 0;
+            globalObject->m_pendingNapiModuleAndExports[0].clear();
+            globalObject->m_pendingNapiModuleAndExports[1].clear();
+        });
+
         // Execute all NAPI modules that were just registered. Move to a
         // local first and drain so re-entrant napi_module_register() calls
         // from inside nm_register_func can't invalidate our iterator.
-        while (!scope.exception() && !globalObject->m_pendingNapiModules.isEmpty()) {
+        while (!globalObject->m_pendingNapiModules.isEmpty()) {
             auto pendingNapiModules = std::exchange(globalObject->m_pendingNapiModules, {});
             for (auto& mod : pendingNapiModules) {
                 // Restore dlopen handle for this module before execution
@@ -666,23 +673,11 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
                 globalObject->m_pendingNapiModule = mod;
                 Napi::executePendingNapiModule(globalObject);
                 globalObject->m_pendingNapiModule = {};
-                if (scope.exception()) [[unlikely]]
-                    break;
+                RETURN_IF_EXCEPTION(scope, {});
             }
         }
 
-        // Clear the V8 vector (no need to save again since already in DLHandleMap), and napi ones
-        // left over if a registration threw.
-        globalObject->m_pendingV8Modules.clear();
-        globalObject->m_pendingNapiModules.clear();
-
         JSValue resultValue = globalObject->m_pendingNapiModuleAndExports[0].get();
-        globalObject->napiModuleRegisterCallCount = 0;
-        globalObject->m_pendingNapiModuleAndExports[0].clear();
-        globalObject->m_pendingNapiModuleAndExports[1].clear();
-
-        RETURN_IF_EXCEPTION(scope, {});
-
         if (resultValue && resultValue != strongModule.get()) {
             if (resultValue.isCell() && resultValue.getObject()->isErrorInstance()) {
                 JSC::throwException(globalObject, scope, resultValue);

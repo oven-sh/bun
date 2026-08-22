@@ -313,6 +313,89 @@ describe("async context passes through", () => {
     expect(s.getStore()).toBe(undefined);
     expect(await promise).toBe("value");
   });
+  // Node re-initializes the async resource when refresh() reactivates a timer whose
+  // callback already ran, so later fires observe the refreshing caller's context.
+  test("setTimeout().refresh() after the callback ran", async () => {
+    const s = new AsyncLocalStorage<string>();
+    const seen: (string | null)[] = [];
+    let onFire!: () => void;
+    const fired = () => new Promise<void>(r => (onFire = r));
+
+    let t!: ReturnType<typeof setTimeout>;
+    let refreshFromInsideCallback = false;
+    const callback = () => {
+      seen.push(s.getStore() ?? null);
+      if (refreshFromInsideCallback) {
+        refreshFromInsideCallback = false;
+        // The callback is still running, so the timer is not destroyed yet and
+        // this refresh() must not re-bind it (Node keeps the existing context too).
+        s.run("inside", () => t.refresh());
+      }
+      onFire();
+    };
+
+    let wait = fired();
+    s.run("creator", () => {
+      t = setTimeout(callback, 1);
+    });
+    // Refreshing a timer that has not fired yet does not re-bind it.
+    s.run("early", () => t.refresh());
+    await wait;
+
+    // The callback already ran, so refresh() re-captures the caller's context.
+    expect((t as any)._destroyed).toBe(true);
+    wait = fired();
+    s.run("refresher", () => t.refresh());
+    await wait;
+
+    // Outside of any context, refresh() drops the previously captured context.
+    wait = fired();
+    t.refresh();
+    await wait;
+
+    // And a later refresh() binds the (previously unbound) callback again. That fire
+    // refreshes itself from inside its own callback, which must keep the same context.
+    refreshFromInsideCallback = true;
+    wait = fired();
+    s.run("again", () => t.refresh());
+    await wait;
+
+    wait = fired();
+    await wait;
+
+    expect(seen).toEqual(["creator", "refresher", null, "again", "again"]);
+  });
+  // A non-callable `_onTimeout` is treated as cleared when the timer fires, so refresh()
+  // must not wrap it in an async context frame: that would make it truthy and leave the
+  // refresher's context installed globally once the invoke fails.
+  test("setTimeout().refresh() does not re-bind a non-callable _onTimeout", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { AsyncLocalStorage } = require("async_hooks");
+        const als = new AsyncLocalStorage();
+        const errors = [];
+        process.on("uncaughtException", err => errors.push(String(err)));
+        async function main() {
+          let t;
+          await new Promise(resolve => (t = setTimeout(resolve, 1)));
+          t._onTimeout = null;
+          als.run("refresher", () => t.refresh());
+          setTimeout(() => {
+            console.log(JSON.stringify({ store: als.getStore() ?? null, errors }));
+          }, 20);
+        }
+        main();`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe('{"store":null,"errors":[]}');
+    expect(exitCode).toBe(0);
+  });
   test("setInterval", async () => {
     let resolve: (x: string[]) => void;
     const promise = new Promise<string[]>(r => (resolve = r));

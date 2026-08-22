@@ -892,8 +892,9 @@ async function withCustomServer(
   // racing it against a timer, keeps the next case from starting while this
   // fixture still holds its port.
   proc.stdin.end();
-  expect(await proc.exited).toBe(0);
+  const exitCode = await proc.exited;
   await drain;
+  expect(exitCode, `fixture exited with ${exitCode}; stderr:\n${buf}`).toBe(0);
 }
 
 // Concurrent: every case here has its own fixture process. The cases that probe

@@ -411,6 +411,13 @@ impl Handlers {
         self.cell.set_callbacks(global_object, &wrapped);
         self.binary_type.set(reloaded.binary_type);
     }
+
+    /// [`apply_reload`](Self::apply_reload) for callbacks `from_generated` already context-wrapped.
+    pub(crate) fn copy_callbacks_from(&self, global_object: &JSGlobalObject, source: &Handlers) {
+        self.cell
+            .set_callbacks(global_object, &source.cell.callbacks());
+        self.binary_type.set(source.binary_type.get());
+    }
 }
 
 /// One in-flight dispatch into JS. Holds an `Rc` so the callbacks it is about

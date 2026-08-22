@@ -65,16 +65,6 @@ export async function uploadAsset(tag: string, name: string, blob: Blob) {
   });
 }
 
-export async function downloadAsset(tag: string, name: string): Promise<Blob> {
-  const release = await getRelease(tag);
-  const asset = release.assets.find(asset => asset.name === name);
-  if (!asset) {
-    throw new Error(`Asset not found: ${name}`);
-  }
-  const response = await fetch(asset.browser_download_url);
-  return response.blob();
-}
-
 export async function getSha(tag: string, format?: "short" | "long") {
   const ref = formatTag(tag);
   const {

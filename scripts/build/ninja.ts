@@ -128,12 +128,6 @@ export class Ninja {
     return relative(this.buildDir, path);
   }
 
-  /** Define a top-level ninja variable. */
-  variable(name: string, value: string): void {
-    assert(/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name), `Invalid ninja variable name: ${name}`);
-    this.lines.push(`${name} = ${ninjaEscapeVarValue(value)}`);
-  }
-
   /** Add a comment line to the output. */
   comment(text: string): void {
     for (const line of text.split("\n")) {

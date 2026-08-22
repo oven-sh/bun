@@ -1420,18 +1420,13 @@ impl StringJsc for bun_core::String {
 
 /// Extension trait providing JSC-aware methods on
 /// `bun_core::SliceWithUnderlyingString` (lower-tier, no JSC dep) —
-/// `to_js`, `transfer_to_js`, `report_extra_memory`; the free-function bodies
+/// `transfer_to_js`, `report_extra_memory`; the free-function bodies
 /// live in [`bun_string_jsc`].
 pub trait SliceWithUnderlyingStringJsc {
-    fn to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue>;
     fn transfer_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue>;
     fn report_extra_memory(&mut self, vm: &VM);
 }
 impl SliceWithUnderlyingStringJsc for bun_core::SliceWithUnderlyingString {
-    #[inline]
-    fn to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_string_jsc::slice_with_underlying_string_to_js(self, global)
-    }
     #[inline]
     fn transfer_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
         bun_string_jsc::slice_with_underlying_string_transfer_to_js(self, global)

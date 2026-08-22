@@ -42,7 +42,7 @@ export function registerAllRules(n: Ninja, cfg: Config): void {
   // cxx, cc, pch, link, ar
   registerCompileRules(n, cfg);
 
-  // dep_fetch, dep_fetch_prebuilt, dep_configure, dep_build, dep_cargo
+  // dep_fetch, dep_fetch_prebuilt, dep_configure, dep_build
   // WebKit prebuilt uses dep_fetch_prebuilt; local uses dep_configure/dep_build.
   registerDepRules(n, cfg);
 

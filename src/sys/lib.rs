@@ -2646,9 +2646,7 @@ mod posix_impl {
         check!(safe_libc::ftruncate(fd.native(), len), Tag::ftruncate);
         Ok(())
     }
-    /// `ftruncate`, skipped when the file is already `len` bytes or shorter.
-    /// On XFS, setting the size of a file that just grew (every new file)
-    /// writes its dirty pages back synchronously, about 1ms per file.
+    /// On XFS, resizing a file that just grew flushes it synchronously, so skip the no-op case.
     pub fn ftruncate_if_longer(fd: Fd, len: i64) -> Maybe<()> {
         if let Ok(st) = fstat(fd) {
             if st.st_size <= len {

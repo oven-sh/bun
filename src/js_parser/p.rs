@@ -24,9 +24,10 @@ use crate::{
     FindLabelSymbolResult, FnOnlyDataVisit, FnOrArrowDataParse, FnOrArrowDataVisit, IdentifierOpts,
     ImportItemForNamespaceMap, InvalidLoc, JSXImport, JSXTransformType, Jest,
     LOC_MODULE_SCOPE as loc_module_scope, LocList, MacroState, ParseStatementOptions, ParsedPath,
-    PrependTempRefsOpts, ReactRefresh, Ref, RefMap, RefRefMap, RuntimeImports, ScopeOrder,
-    ScopeOrderList, StrictModeFeature, StringBoolMap, Substitution, TempRef, ThenCatchChain,
-    TransposeState, WrapMode, fs, is_eval_or_arguments, options, statement_cares_about_scope,
+    PrependTempRefsOpts, ReactRefresh, Ref, RefMap, RefRefMap, RequireUnwrap, RuntimeImports,
+    ScopeOrder, ScopeOrderList, StrictModeFeature, StringBoolMap, Substitution, TempRef,
+    ThenCatchChain, TransposeState, WrapMode, fs, is_eval_or_arguments, options,
+    statement_cares_about_scope,
 };
 use bun_ast as js_ast;
 use bun_ast::DeclaredSymbol;
@@ -1147,7 +1148,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // We cannot unwrap a require wrapped in a try/catch because
                     // import statements cannot be wrapped in a try/catch and
                     // require cannot return a promise.
-                    && !handles_import_errors;
+                    && !handles_import_errors
+                    && state.require_unwrap != RequireUnwrap::Disabled;
 
                 if should_unwrap_require {
                     let import_record_index = self.add_import_record_by_range_and_path(
@@ -1190,7 +1192,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         .insert(namespace_ref, ImportItemForNamespaceMap::default());
                     self.record_usage(namespace_ref);
 
-                    if !state.is_require_immediately_assigned_to_decl {
+                    if state.require_unwrap != RequireUnwrap::IntoDecl {
                         return self.new_expr(
                             E::Identifier {
                                 ref_: namespace_ref,

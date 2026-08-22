@@ -191,8 +191,13 @@ pub struct Promise {
 
 impl Drop for Promise {
     fn drop(&mut self) {
+        // Dropped without resolve/reject (client torn down with the command
+        // still queued): the command never got a reply, so no span for it.
         if self.otel.is_some() {
-            self.otel_end(jsc::virtual_machine::VirtualMachine::get().global(), None);
+            crate::telemetry::discard_native(
+                jsc::virtual_machine::VirtualMachine::get().global(),
+                core::mem::take(&mut self.otel),
+            );
         }
     }
 }

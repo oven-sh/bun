@@ -1,7 +1,7 @@
 #![feature(allocator_api)]
 // `#[thread_local]` for the per-node-allocation hot-path TLS
 // (`DATA_STORE_OVERRIDE`, `Expr/Stmt::data::Store::{INSTANCE,
-// MEMORY_ALLOCATOR, DISABLE_RESET}`, `store_ast_alloc_heap::ARENA`): bare
+// MEMORY_ALLOCATOR}`, `store_ast_alloc_heap::ARENA`): bare
 // `__thread` slot, vs the `thread_local!`
 // macro's `LocalKey` wrapper. All are `Cell<*mut _>` / `Cell<bool>` (no
 // destructor, const init).
@@ -3236,34 +3236,6 @@ pub fn initialize_store() {
 pub fn initialize_store_or_reset() {
     expr::data::Store::begin();
     stmt::data::Store::begin();
-}
-
-/// RAII guard that pins the thread-local `disable_reset` flag on both AST
-/// `Store`s for its scope.
-#[must_use = "disable_reset is restored on drop; bind to a named local"]
-pub struct DisableStoreReset {
-    prev_expr: bool,
-    prev_stmt: bool,
-}
-impl DisableStoreReset {
-    #[inline]
-    pub fn new() -> Self {
-        let prev_expr = expr::data::Store::disable_reset();
-        let prev_stmt = stmt::data::Store::disable_reset();
-        expr::data::Store::set_disable_reset(true);
-        stmt::data::Store::set_disable_reset(true);
-        Self {
-            prev_expr,
-            prev_stmt,
-        }
-    }
-}
-impl Drop for DisableStoreReset {
-    #[inline]
-    fn drop(&mut self) {
-        expr::data::Store::set_disable_reset(self.prev_expr);
-        stmt::data::Store::set_disable_reset(self.prev_stmt);
-    }
 }
 
 #[cfg(test)]

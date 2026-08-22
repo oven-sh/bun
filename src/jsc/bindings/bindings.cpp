@@ -4326,6 +4326,20 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__putMayBeIndex(JSC::Enco
     RETURN_IF_EXCEPTION(scope, );
 }
 
+// [[Get]] of any property name, numeric index names included: the counterpart of JSC__JSValue__putMayBeIndex.
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue JSC__JSValue__getMayBeIndex(JSC::EncodedJSValue target, JSC::JSGlobalObject* globalObject, const BunString* key)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::Identifier identifier = JSC::Identifier::fromString(vm, key->toWTFString(BunString::NonNull));
+
+    JSC::JSObject* object = JSC::JSValue::decode(target).asCell()->getObject();
+    JSC::JSValue result = object->get(globalObject, identifier);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSC::JSValue::encode(result);
+}
+
 extern "C" bool JSC__JSValue__deleteProperty(JSC::EncodedJSValue target, JSC::JSGlobalObject* globalObject, const ZigString* key)
 {
     JSC::JSValue targetValue = JSC::JSValue::decode(target);

@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use bun_collections::HashMap;
 use bun_core::StackCheck;
 use bun_core::{OwnedString, String as BunString};
@@ -5,6 +7,8 @@ use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, TemporalType, wtf,
 };
 use bun_parsers::toml::TOML;
+
+use super::stringify_replacer::{Properties, Replacer};
 
 pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
     bun_jsc::create_host_function_object(
@@ -59,24 +63,20 @@ fn stringify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // TOML output is line-oriented and has no nesting indentation.
     let [value, replacer, _space] = frame.arguments_as_array::<3>();
 
+    let replacer = Replacer::from_js(global, replacer)?;
+    let value = match &replacer {
+        Some(replacer) => replacer.apply(global, value, is_date_time)?,
+        None => value,
+    };
+
     value.ensure_still_alive();
 
     if value.is_undefined() || value.is_symbol() || value.is_function() {
         return Ok(JSValue::UNDEFINED);
     }
 
-    if !replacer.is_undefined_or_null() {
-        return Err(global.throw(format_args!(
-            "TOML.stringify does not support the replacer argument"
-        )));
-    }
-
     let unwrapped = value.unwrap_boxed_primitive(global)?;
-    if !unwrapped.is_object()
-        || unwrapped.is_array()
-        || unwrapped.is_date()
-        || temporal_object_type(unwrapped).is_some()
-    {
+    if !unwrapped.is_object() || unwrapped.is_array() || is_date_time(unwrapped) {
         return Err(global.throw(format_args!(
             "TOML.stringify expects an object at the top level (a TOML document is a table)"
         )));
@@ -88,6 +88,7 @@ fn stringify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         visiting: HashMap::default(),
         path: Vec::new(),
         wrote: false,
+        keys: replacer.and_then(|replacer| replacer.keys()),
     };
 
     if let Err(err) = stringifier.stringify_root(global, unwrapped) {
@@ -141,11 +142,13 @@ struct Stringifier {
     visiting: HashMap<JSValue, ()>,
     /// Header path of the table currently being emitted. Entries are
     /// borrowed, not ref-counted: each is pushed and popped within the one
-    /// `JSPropertyIterator` loop body whose iterator keeps the name alive
+    /// `Properties` loop body whose iterator keeps the name alive
     /// (the iterator's strings carry no extra reference).
     path: Vec<BunString>,
     /// Whether any line has been written (controls blank lines before headers).
     wrote: bool,
+    /// The replacer's property list, if any: the only properties written, in this order.
+    keys: Option<Rc<[OwnedString]>>,
 }
 
 impl Stringifier {
@@ -185,11 +188,7 @@ impl Stringifier {
             }
             while let Some(item) = iter.next()? {
                 let item = item.unwrap_boxed_primitive(global)?;
-                if !item.is_object()
-                    || item.is_array()
-                    || item.is_date()
-                    || item.is_function()
-                    || temporal_object_type(item).is_some()
+                if !item.is_object() || item.is_array() || item.is_function() || is_date_time(item)
                 {
                     return Ok(Layout::Keyval);
                 }
@@ -220,17 +219,10 @@ impl Stringifier {
         }
         let mut header_pending = own_header;
 
-        let iter_options = jsc::JSPropertyIteratorOptions {
-            skip_empty_name: false,
-            include_value: true,
-            ..Default::default()
-        };
-
         // Pass 1: keyvals.
-        let mut iter =
-            jsc::JSPropertyIterator::init(global, table.to_object(global)?, iter_options)?;
-        while let Some(prop_name) = iter.next()? {
-            let value = iter.value.unwrap_boxed_primitive(global)?;
+        let mut properties = Properties::init(global, table, self.keys.clone())?;
+        while let Some((prop_name, value)) = properties.next()? {
+            let value = value.unwrap_boxed_primitive(global)?;
             if value.is_null() {
                 return Err(self.err_null_value(global, &prop_name));
             }
@@ -252,10 +244,9 @@ impl Stringifier {
 
         // Pass 2: sections. Values are re-read; an array-of-tables element
         // that is no longer a plain object during emission gets an error.
-        let mut iter =
-            jsc::JSPropertyIterator::init(global, table.to_object(global)?, iter_options)?;
-        while let Some(prop_name) = iter.next()? {
-            let value = iter.value.unwrap_boxed_primitive(global)?;
+        let mut properties = Properties::init(global, table, self.keys.clone())?;
+        while let Some((prop_name, value)) = properties.next()? {
+            let value = value.unwrap_boxed_primitive(global)?;
             match self.layout_of(global, value)? {
                 Layout::Keyval | Layout::TemporalKeyval(_) | Layout::Skip => {}
                 Layout::Table => {
@@ -275,9 +266,8 @@ impl Stringifier {
                         let item = item.unwrap_boxed_primitive(global)?;
                         if !item.is_object()
                             || item.is_array()
-                            || item.is_date()
                             || item.is_function()
-                            || temporal_object_type(item).is_some()
+                            || is_date_time(item)
                         {
                             self.path.pop();
                             return Err(self.err_changed(global));
@@ -371,18 +361,10 @@ impl Stringifier {
 
         // A plain object inside an inline context becomes an inline table.
         self.mark_visiting(global, value)?;
-        let mut iter = jsc::JSPropertyIterator::init(
-            global,
-            value.to_object(global)?,
-            jsc::JSPropertyIteratorOptions {
-                skip_empty_name: false,
-                include_value: true,
-                ..Default::default()
-            },
-        )?;
+        let mut properties = Properties::init(global, value, self.keys.clone())?;
         let mut first = true;
-        while let Some(prop_name) = iter.next()? {
-            let prop_value = iter.value.unwrap_boxed_primitive(global)?;
+        while let Some((prop_name, prop_value)) = properties.next()? {
+            let prop_value = prop_value.unwrap_boxed_primitive(global)?;
             if prop_value.is_undefined() || prop_value.is_symbol() || prop_value.is_function() {
                 continue;
             }
@@ -592,6 +574,11 @@ fn temporal_object_type(value: JSValue) -> Option<TemporalType> {
         TemporalType::None => None,
         t => Some(t),
     }
+}
+
+/// The objects written as one date/time value rather than as a table.
+fn is_date_time(value: JSValue) -> bool {
+    value.is_date() || temporal_object_type(value).is_some()
 }
 
 /// Whether TOML has a date/time literal for this type.

@@ -1,9 +1,13 @@
+use std::rc::Rc;
+
 use bun_collections::HashMap;
 use bun_core::StackCheck;
 use bun_core::{OwnedString, String as BunString};
 use bun_js_parser::lexer;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, wtf};
 use bun_parsers::json5;
+
+use super::stringify_replacer::{Properties, Replacer};
 
 pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
     jsc::create_host_function_object(
@@ -19,19 +23,23 @@ pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
 fn stringify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let [value, replacer, space_value] = frame.arguments_as_array::<3>();
 
+    let replacer = Replacer::from_js(global, replacer)?;
+    let value = match &replacer {
+        Some(replacer) => replacer.apply(global, value, |_| false)?,
+        None => value,
+    };
+
     value.ensure_still_alive();
 
     if value.is_undefined() || value.is_symbol() || value.is_function() {
         return Ok(JSValue::UNDEFINED);
     }
 
-    if !replacer.is_undefined_or_null() {
-        return Err(global.throw(format_args!(
-            "JSON5.stringify does not support the replacer argument"
-        )));
-    }
-
-    let mut stringifier = Stringifier::init(global, space_value)?;
+    let mut stringifier = Stringifier::init(
+        global,
+        space_value,
+        replacer.and_then(|replacer| replacer.keys()),
+    )?;
 
     if let Err(err) = stringifier.stringify_value(global, value) {
         return match err {
@@ -88,6 +96,8 @@ struct Stringifier {
     // live on the native stack via the `stringify_value` recursion chain, so the
     // conservative GC scan keeps them alive.
     visiting: HashMap<JSValue, ()>,
+    /// The replacer's property list, if any: the only properties written, in this order.
+    keys: Option<Rc<[OwnedString]>>,
 }
 
 #[derive(Debug)]
@@ -136,13 +146,18 @@ impl Space {
 }
 
 impl Stringifier {
-    fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Stringifier> {
+    fn init(
+        global: &JSGlobalObject,
+        space_value: JSValue,
+        keys: Option<Rc<[OwnedString]>>,
+    ) -> JsResult<Stringifier> {
         Ok(Stringifier {
             stack_check: StackCheck::init(),
             builder: wtf::StringBuilder::init(),
             indent: 0,
             space: Space::init(global, space_value)?,
             visiting: HashMap::default(),
+            keys,
         })
     }
 
@@ -276,17 +291,9 @@ impl Stringifier {
     }
 
     fn stringify_object(&mut self, global: &JSGlobalObject, value: JSValue) -> StringifyResult<()> {
-        let mut iter = jsc::JSPropertyIterator::init(
-            global,
-            value.to_object(global)?,
-            jsc::JSPropertyIteratorOptions {
-                skip_empty_name: false,
-                include_value: true,
-                ..Default::default()
-            },
-        )?;
+        let mut properties = Properties::init(global, value, self.keys.clone())?;
 
-        if iter.len == 0 {
+        if properties.len() == 0 {
             self.builder.append_latin1(b"{}");
             return Ok(());
         }
@@ -296,11 +303,8 @@ impl Stringifier {
         match self.space {
             Space::Minified => {
                 let mut first = true;
-                while let Some(prop_name) = iter.next()? {
-                    if iter.value.is_undefined()
-                        || iter.value.is_symbol()
-                        || iter.value.is_function()
-                    {
+                while let Some((prop_name, value)) = properties.next()? {
+                    if value.is_undefined() || value.is_symbol() || value.is_function() {
                         continue;
                     }
                     if !first {
@@ -309,17 +313,14 @@ impl Stringifier {
                     first = false;
                     self.append_key(&prop_name);
                     self.builder.append_lchar(b':');
-                    self.stringify_value(global, iter.value)?;
+                    self.stringify_value(global, value)?;
                 }
             }
             Space::Number(_) | Space::Str(_) => {
                 self.indent += 1;
                 let mut first = true;
-                while let Some(prop_name) = iter.next()? {
-                    if iter.value.is_undefined()
-                        || iter.value.is_symbol()
-                        || iter.value.is_function()
-                    {
+                while let Some((prop_name, value)) = properties.next()? {
+                    if value.is_undefined() || value.is_symbol() || value.is_function() {
                         continue;
                     }
                     if !first {
@@ -329,7 +330,7 @@ impl Stringifier {
                     self.newline();
                     self.append_key(&prop_name);
                     self.builder.append_latin1(b": ");
-                    self.stringify_value(global, iter.value)?;
+                    self.stringify_value(global, value)?;
                 }
                 self.indent -= 1;
                 if !first {

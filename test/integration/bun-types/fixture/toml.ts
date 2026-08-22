@@ -8,3 +8,8 @@ expectType(TOML.parse(data)).is<object>();
 // `undefined` when the input is `undefined`, a function, or a symbol.
 expectType(Bun.TOML.stringify({ abc: "def" })).is<string | undefined>();
 expectType(TOML.stringify({ abc: "def" })).is<string | undefined>();
+expectType(TOML.stringify({ abc: "def" }, (key, value) => (key === "abc" ? undefined : value))).is<string | undefined>();
+expectType(TOML.stringify({ abc: "def" }, ["abc"])).is<string | undefined>();
+expectType(TOML.stringify({ abc: "def" }, null, 2)).is<string | undefined>();
+// @ts-expect-error
+TOML.stringify({ abc: "def" }, {});

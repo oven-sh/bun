@@ -1,15 +1,17 @@
 use bun_collections::VecExt;
 use core::ffi::c_void;
+use std::rc::Rc;
 
 use bun_ast::{Expr, expr::Data as ExprData};
 use bun_collections::{HashMap, StringHashMap};
 use bun_core::StackCheck;
 use bun_core::{OwnedString, String as BunString};
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue,
-    JsError, JsResult, MarkedArgumentBuffer, wtf,
+    self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, MarkedArgumentBuffer, wtf,
 };
 use bun_parsers::yaml::{CyclicAliases, YAML, YamlParseError};
+
+use super::stringify_replacer::{Properties, Replacer};
 
 pub(crate) fn create(global_this: &JSGlobalObject) -> JSValue {
     jsc::create_host_function_object(
@@ -25,19 +27,23 @@ pub(crate) fn create(global_this: &JSGlobalObject) -> JSValue {
 fn stringify(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
     let [value, replacer, space_value] = call_frame.arguments_as_array::<3>();
 
+    let replacer = Replacer::from_js(global, replacer)?;
+    let value = match &replacer {
+        Some(replacer) => replacer.apply(global, value, |_| false)?,
+        None => value,
+    };
+
     value.ensure_still_alive();
 
     if value.is_undefined() || value.is_symbol() || value.is_function() {
         return Ok(JSValue::UNDEFINED);
     }
 
-    if !replacer.is_undefined_or_null() {
-        return Err(global.throw(format_args!(
-            "YAML.stringify does not support the replacer argument"
-        )));
-    }
-
-    let mut stringifier = Stringifier::init(global, space_value)?;
+    let mut stringifier = Stringifier::init(
+        global,
+        space_value,
+        replacer.and_then(|replacer| replacer.keys()),
+    )?;
 
     stringifier
         .find_anchors_and_aliases(global, value, ValueOrigin::Root)
@@ -60,6 +66,8 @@ struct Stringifier {
     prop_names: StringHashMap<usize>,
 
     space: Space,
+    /// The replacer's property list, if any: the only properties written, in this order.
+    keys: Option<Rc<[OwnedString]>>,
 }
 
 enum Space {
@@ -185,7 +193,11 @@ impl StringifyError {
 bun_core::oom_from_alloc!(StringifyError);
 
 impl Stringifier {
-    fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Stringifier> {
+    fn init(
+        global: &JSGlobalObject,
+        space_value: JSValue,
+        keys: Option<Rc<[OwnedString]>>,
+    ) -> JsResult<Stringifier> {
         let mut prop_names: StringHashMap<usize> = StringHashMap::default();
         // always rename anchors named "root" to avoid collision with
         // root anchor/alias
@@ -199,6 +211,7 @@ impl Stringifier {
             array_item_counter: 0,
             prop_names,
             space: Space::init(global, space_value)?,
+            keys,
         })
     }
 
@@ -295,22 +308,13 @@ impl Stringifier {
             return Ok(());
         }
 
-        // const generics: <SKIP_EMPTY_NAME, INCLUDE_VALUE>
-        let mut iter = JSPropertyIterator::init(
-            global,
-            unwrapped.to_object(global)?,
-            JSPropertyIteratorOptions {
-                skip_empty_name: false,
-                include_value: true,
-                ..Default::default()
-            },
-        )?;
+        let mut properties = Properties::init(global, unwrapped, self.keys.clone())?;
 
-        while let Some(prop_name) = iter.next()? {
-            if iter.value.is_undefined() || iter.value.is_symbol() || iter.value.is_function() {
+        while let Some((prop_name, value)) = properties.next()? {
+            if value.is_undefined() || value.is_symbol() || value.is_function() {
                 continue;
             }
-            self.find_anchors_and_aliases(global, iter.value, ValueOrigin::PropValue(prop_name))?;
+            self.find_anchors_and_aliases(global, value, ValueOrigin::PropValue(prop_name))?;
         }
 
         Ok(())
@@ -492,18 +496,9 @@ impl Stringifier {
             return Ok(());
         }
 
-        // const generics: <SKIP_EMPTY_NAME, INCLUDE_VALUE>
-        let mut iter = JSPropertyIterator::init(
-            global,
-            unwrapped.to_object(global)?,
-            JSPropertyIteratorOptions {
-                skip_empty_name: false,
-                include_value: true,
-                ..Default::default()
-            },
-        )?;
+        let mut properties = Properties::init(global, unwrapped, self.keys.clone())?;
 
-        if iter.len == 0 {
+        if properties.len() == 0 {
             self.builder.append_latin1(b"{}");
             return Ok(());
         }
@@ -512,11 +507,8 @@ impl Stringifier {
             Space::Minified => {
                 self.builder.append_lchar(b'{');
                 let mut first = true;
-                while let Some(prop_name) = iter.next()? {
-                    if iter.value.is_undefined()
-                        || iter.value.is_symbol()
-                        || iter.value.is_function()
-                    {
+                while let Some((prop_name, value)) = properties.next()? {
+                    if value.is_undefined() || value.is_symbol() || value.is_function() {
                         continue;
                     }
 
@@ -528,19 +520,17 @@ impl Stringifier {
                     self.append_string(&prop_name);
                     self.builder.append_latin1(b": ");
 
-                    self.stringify(global, iter.value)?;
+                    self.stringify(global, value)?;
                 }
                 self.builder.append_lchar(b'}');
             }
             Space::Number(_) | Space::Str(_) => {
-                self.builder.ensure_unused_capacity(iter.len * b": ".len());
+                self.builder
+                    .ensure_unused_capacity(properties.len() * b": ".len());
 
                 let mut first = true;
-                while let Some(prop_name) = iter.next()? {
-                    if iter.value.is_undefined()
-                        || iter.value.is_symbol()
-                        || iter.value.is_function()
-                    {
+                while let Some((prop_name, value)) = properties.next()? {
+                    if value.is_undefined() || value.is_symbol() || value.is_function() {
                         continue;
                     }
 
@@ -554,7 +544,7 @@ impl Stringifier {
 
                     self.indent += 1;
 
-                    let prop_value = iter.value.unwrap_boxed_primitive(global)?;
+                    let prop_value = value.unwrap_boxed_primitive(global)?;
                     if prop_value_needs_newline(prop_value) {
                         self.newline();
                     }

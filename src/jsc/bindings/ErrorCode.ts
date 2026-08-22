@@ -361,5 +361,6 @@ const errors: ErrorCodeMapping = [
   ["ERR_INSPECTOR_NOT_WORKER", Error],
   ["ERR_INSPECTOR_COMMAND", Error],
   ["ERR_REDIS_SERVER_ERROR", Error, "RedisError"],
+  ["ERR_POSTGRES_SASL_ITERATION_COUNT_TOO_HIGH", Error, "PostgresError"],
 ];
 export default errors;

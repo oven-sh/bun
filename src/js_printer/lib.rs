@@ -1805,6 +1805,29 @@ pub(crate) mod __gated_printer {
             self.print_internal_bun_import(import, Some(b"globalThis.Bun"));
         }
 
+        /// Whether `is_global_bun_import_statement` can be true for any statement of this
+        /// file, answered from the import records so the common case stays a short scan.
+        pub(crate) fn has_global_bun_import_statement(&self) -> bool {
+            IS_BUN_PLATFORM
+                && self.import_records.iter().any(|record| {
+                    record.tag == ImportRecordTag::Bun && record.kind == ImportKind::Stmt
+                })
+        }
+
+        /// Whether `stmt` is an `import ... from "bun"` statement that
+        /// `print_global_bun_import_statement` turns into `var` declarations.
+        pub(crate) fn is_global_bun_import_statement(&self, stmt: &Stmt) -> bool {
+            if !IS_BUN_PLATFORM {
+                return false;
+            }
+            match &stmt.data {
+                StmtData::SImport(s) => {
+                    self.import_record(s.import_record_index as usize).tag == ImportRecordTag::Bun
+                }
+                _ => false,
+            }
+        }
+
         fn print_internal_bun_import(
             &mut self,
             import: &S::Import,
@@ -7524,8 +7547,29 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         }
     }
 
+    // `import ... from "bun"` is printed as `var` declarations reading `globalThis.Bun`,
+    // which the engine does not hoist like the import statement it replaces. The parser
+    // leaves import statements where they were written when not bundling, so print these
+    // declarations ahead of the module body to keep their bindings initialized before any
+    // statement that uses them.
+    let hoist_bun_imports = printer.has_global_bun_import_statement();
+    if hoist_bun_imports {
+        for part in tree.parts.iter() {
+            for stmt in slice_of(part.stmts).iter() {
+                if printer.is_global_bun_import_statement(stmt) {
+                    printer.print_stmt(*stmt)?;
+                    printer.writer.get_error()?;
+                    printer.print_semicolon_if_needed();
+                }
+            }
+        }
+    }
+
     for part in tree.parts.iter() {
         for stmt in slice_of(part.stmts).iter() {
+            if hoist_bun_imports && printer.is_global_bun_import_statement(stmt) {
+                continue;
+            }
             printer.print_stmt(*stmt)?;
             printer.writer.get_error()?;
             printer.print_semicolon_if_needed();

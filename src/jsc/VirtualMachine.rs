@@ -4783,14 +4783,8 @@ impl VirtualMachine {
         // `SavedSourceMap`'s `Drop` frees each stored map along with its table.
         drop(core::mem::take(&mut self.source_mappings));
 
-        // Drain cron jobs BEFORE taking rare_data off `self`: the teardown
-        // hook reads `self.rare_data` to find the job list, so calling it
-        // after `take()` is a no-op and `RareData::drop`'s
-        // `debug_assert!(cron_jobs.is_empty())` fires.
-        if self.rare_data.is_some() {
-            if let Some(hooks) = runtime_hooks() {
-                (hooks.stop_cron_for_vm_teardown)(self);
-            }
+        if let Some(hooks) = runtime_hooks() {
+            (hooks.stop_cron_for_vm_teardown)(self);
         }
         if let Some(rare) = self.rare_data.take() {
             // Paired with `rare_data()`'s register_root_region. Without this,

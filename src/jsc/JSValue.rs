@@ -99,6 +99,16 @@ impl JSValue {
         self.as_ptr_address() as *mut T
     }
 
+    /// The counterpart of passing `this.as_ptr()` as the `ctx` of [`then`](Self::then):
+    /// the reaction's trailing argument, as the `ThisPtr` it was minted from.
+    /// The caller took a ref before `then` and the reaction holds it until it
+    /// runs, so the pointee is live.
+    #[inline]
+    pub fn as_promise_this<T>(self) -> bun_ptr::ThisPtr<T> {
+        // SAFETY: see doc — the reaction's ctx is a live, ref'd `T`.
+        unsafe { bun_ptr::ThisPtr::new(self.as_promise_ptr::<T>()) }
+    }
+
     /// Attach `(resolve, reject)` reactions to this Promise, passing `ctx` as
     /// the trailing argument to each. Thin wrapper over `JSC__JSValue___then`.
     ///

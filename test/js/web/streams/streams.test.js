@@ -7,9 +7,18 @@ import {
   readableStreamToText,
 } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
-import { createReadStream, realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  createReadStream,
+  openSync,
+  realpathSync,
+  unlinkSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
 import { join } from "node:path";
 
 it("TransformStream", async () => {
@@ -425,7 +434,7 @@ it("ReadableStream.prototype.values", async () => {
   expect(chunks.join("")).toBe("helloworld");
 });
 
-it.todoIf(isWindows || isMacOS)("Bun.file() read text from pipe", async () => {
+it.todoIf(isWindows)("Bun.file() read text from pipe", async () => {
   const fifoPath = join(tmpdirSync(), "bun-streams-test-fifo");
   try {
     unlinkSync(fifoPath);
@@ -466,6 +475,48 @@ it.todoIf(isWindows || isMacOS)("Bun.file() read text from pipe", async () => {
   expect(output.length).toBe(large.length + 1);
   expect(output).toBe(large + "\n");
   expect(status).toBe(0);
+});
+
+// The stream drains what the writer sent and waits for more; then the last
+// writer closes. On macOS neither kqueue nor poll(2) reports that EOF for a
+// named pipe (only buffered bytes), so the stream never ended there.
+it.skipIf(isWindows)("Bun.file(fifo).stream() ends after the last writer closes", async () => {
+  using dir = tempDir("bun-file-fifo-stream", {});
+  const fifo = join(String(dir), "in.fifo");
+  mkfifo(fifo, 0o666);
+  // A write end cannot be opened before a reader exists; this one never reads,
+  // so every byte goes to the child, whose own open then finds a writer
+  // (a FIFO with no writer reads as EOF at once).
+  const holder = openSync(fifo, constants.O_RDONLY | constants.O_NONBLOCK);
+  let writer = openSync(fifo, "w");
+  try {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `for await (const chunk of Bun.file(process.env.FIFO).stream()) process.stdout.write("data:" + new TextDecoder().decode(chunk));
+         process.stdout.write("done\\n");`,
+      ],
+      env: { ...bunEnv, FIFO: fifo },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    writeSync(writer, "hello\n");
+
+    let stdout = "";
+    for await (const chunk of proc.stdout) {
+      stdout += Buffer.from(chunk).toString();
+      if (writer !== -1 && stdout.includes("data:hello\n")) {
+        closeSync(writer);
+        writer = -1;
+      }
+    }
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "data:hello\ndone\n", stderr: "", exitCode: 0 });
+  } finally {
+    if (writer !== -1) closeSync(writer);
+    closeSync(holder);
+  }
 });
 
 it("exists globally", () => {

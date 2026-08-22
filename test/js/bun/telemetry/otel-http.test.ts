@@ -550,6 +550,31 @@ describe("limits", () => {
   });
 });
 
+describe("attribute count limit", () => {
+  test("request spans honour attributeCountLimit including attributes set from JS", async () => {
+    Bun.otel.start({
+      exporters: [{ export: (b: any[]) => spans.push(...b) }],
+      instrumentations: { http: true, fetch: true },
+      limits: { attributeCountLimit: 16 },
+    });
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        const s = Bun.otel.activeSpan()!;
+        for (let i = 0; i < 20; i++) s.setAttribute("k" + i, i);
+        return new Response("x");
+      },
+    });
+    await (await fetch(`http://localhost:${server.port}/p?q=1`)).text();
+    const [srv] = byName(await collect(), "bun.http.server");
+    expect(Object.keys(srv.attributes).length).toBe(16);
+    // JS-set attributes are kept first; the rest is reported as dropped.
+    expect(srv.attributes.k0).toBe(0);
+    expect(srv.attributes.k15).toBe(15);
+    expect(srv.droppedAttributesCount).toBeGreaterThan(4);
+  });
+});
+
 describe("disable", () => {
   test("instrumentations: { http: false } stops server spans but keeps fetch", async () => {
     Bun.otel.start({

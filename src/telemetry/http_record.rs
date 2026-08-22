@@ -258,6 +258,8 @@ struct Template {
     has_parent: bool,
     method: Method,
     version: HttpVersion,
+    /// Per-request (tail) attribute count; shapes droppedAttributesCount.
+    tail_n: u8,
     status: u16,
     dropped: u16,
     dropped_events: u16,
@@ -285,6 +287,7 @@ impl Template {
             || self.has_parent != has_parent
             || self.method != facts.method
             || self.version != facts.version
+            || self.tail_n != tail_attr_count(facts) as u8
             || self.dropped != p.dropped_attrs
             || self.dropped_events != p.dropped_events
             || self.dropped_links != p.dropped_links
@@ -387,7 +390,14 @@ pub fn encode(c: &mut Cache, out: &mut Vec<u8>, facts: &Facts, p: &SpanParts<'_>
     out[st + 9..st + 17].copy_from_slice(&p.end_ns.to_le_bytes());
     // flags: 2-byte tag then fixed32
     out[st + 19..st + 23].copy_from_slice(&p.stub.ctx.flags.otlp().to_le_bytes());
-    append_tail(out, start, &s, facts, limits);
+    append_tail(
+        out,
+        start,
+        &s,
+        facts,
+        limits,
+        (limits.attributes as u32).saturating_sub(user_attr_count(p)),
+    );
 }
 
 #[cold]
@@ -397,7 +407,14 @@ fn encode_untemplated(out: &mut Vec<u8>, facts: &Facts, p: &SpanParts<'_>, limit
     let start = out.len();
     let len_at = encode_head(out, facts, p, &s, limits);
     debug_assert_eq!(len_at, start + OFF_LEN);
-    append_tail(out, start, &s, facts, limits);
+    append_tail(
+        out,
+        start,
+        &s,
+        facts,
+        limits,
+        (limits.attributes as u32).saturating_sub(user_attr_count(p)),
+    );
 }
 
 #[cold]
@@ -436,7 +453,14 @@ fn encode_miss(
         &bytes[off_start(has_parent) + 9..off_start(has_parent) + 17],
         &p.end_ns.to_le_bytes()
     );
-    append_tail(out, start, &s, facts, limits);
+    append_tail(
+        out,
+        start,
+        &s,
+        facts,
+        limits,
+        (limits.attributes as u32).saturating_sub(user_attr_count(p)),
+    );
     let mut piece_len = [0u32; 6];
     let mut all = Vec::with_capacity(pieces.iter().map(|x| x.len()).sum());
     for (i, piece) in pieces.iter().enumerate() {
@@ -449,6 +473,7 @@ fn encode_miss(
         has_parent,
         method: facts.method,
         version: facts.version,
+        tail_n: tail_attr_count(facts) as u8,
         status: facts.status,
         dropped: p.dropped_attrs,
         dropped_events: p.dropped_events,
@@ -506,7 +531,19 @@ fn tail_attr_count(facts: &Facts) -> u32 {
         }
 }
 
-/// Per-request attributes after the templated part, then the span length.
+/// Attributes the span already carries from the request path (captured
+/// headers, JS-set): they count first against `attributeCountLimit`.
+#[inline]
+fn user_attr_count(p: &SpanParts<'_>) -> u32 {
+    if p.attrs.is_empty() {
+        0
+    } else {
+        otlp::count_fields(p.attrs, f::ATTRIBUTES) as u32
+    }
+}
+
+/// Per-request attributes after the templated part (at most `room` of them,
+/// for `attributeCountLimit`), then the span length.
 #[inline]
 fn append_tail(
     out: &mut Vec<u8>,
@@ -514,24 +551,35 @@ fn append_tail(
     s: &Strings<'_>,
     facts: &Facts,
     limits: &Limits,
+    room: u32,
 ) {
     let max = limits.attribute_value_length as usize;
     let url = s.url;
     let pl = (facts.path_len as usize).min(url.len());
     let (path, query) = (&url[..pl], url.get(pl + 1..).unwrap_or(b""));
+    let mut room = room;
+    let mut take = || {
+        let ok = room != 0;
+        room = room.saturating_sub(1);
+        ok
+    };
     let mut ip_buf = [0u8; 64];
     let peer = facts.peer.text(&mut ip_buf);
     if !peer.is_empty() {
         // semconv: client.address is the client behind any proxies
         // (X-Forwarded-For / Forwarded), network.peer.* the socket peer.
-        otlp::write_str_kv_small(
-            out,
-            f::ATTRIBUTES,
-            "client.address",
-            if s.client.is_empty() { peer } else { s.client },
-        );
-        otlp::write_str_kv_small(out, f::ATTRIBUTES, "network.peer.address", peer);
-        if facts.peer_port != 0 {
+        if take() {
+            otlp::write_str_kv_small(
+                out,
+                f::ATTRIBUTES,
+                "client.address",
+                if s.client.is_empty() { peer } else { s.client },
+            );
+        }
+        if take() {
+            otlp::write_str_kv_small(out, f::ATTRIBUTES, "network.peer.address", peer);
+        }
+        if facts.peer_port != 0 && take() {
             otlp::write_key_value(
                 out,
                 f::ATTRIBUTES,
@@ -540,13 +588,15 @@ fn append_tail(
             );
         }
     }
-    otlp::write_str_kv_small(
-        out,
-        f::ATTRIBUTES,
-        "url.path",
-        otlp::truncate_utf8(path, max),
-    );
-    if !query.is_empty() {
+    if take() {
+        otlp::write_str_kv_small(
+            out,
+            f::ATTRIBUTES,
+            "url.path",
+            otlp::truncate_utf8(path, max),
+        );
+    }
+    if !query.is_empty() && take() {
         otlp::write_str_kv_small(
             out,
             f::ATTRIBUTES,
@@ -603,9 +653,12 @@ fn encode_head(
             self.n += 1;
         }
     }
+    // Attributes already on the span (captured headers, JS-set) and the
+    // per-request tail come first; the semconv set below fills what is left.
+    let user = user_attr_count(p);
     let mut a = Attrs {
         w: &mut w,
-        n: 0,
+        n: user + tail_attr_count(facts).min(budget.saturating_sub(user)),
         budget,
     };
     a.put("http.request.method", Value::Str(method));
@@ -615,8 +668,6 @@ fn encode_head(
             Value::Str(facts.method.as_str().as_bytes()),
         );
     }
-    // url.path / url.query / client.address / network.peer.* are appended per request (tail).
-    a.n += tail_attr_count(facts);
     a.put(
         "url.scheme",
         Value::Str(if flags & FLAG_HTTPS != 0 {
@@ -641,9 +692,8 @@ fn encode_head(
     if !route.is_empty() {
         a.put("http.route", Value::Str(lim(route)));
     }
-    // Attributes encoded on the request path (captured headers, JS-set).
+    // Attributes encoded on the request path (counted in `user` above).
     a.w.raw(p.attrs);
-    a.n += otlp::count_fields(p.attrs, f::ATTRIBUTES) as u32;
     let mut span_status = p.status;
     let mut msg: &[u8] = p.status_message;
     let has_error_type = flags & FLAG_HAS_ERROR_TYPE != 0;

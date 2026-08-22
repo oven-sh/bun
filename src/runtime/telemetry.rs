@@ -573,11 +573,6 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         }
         if let Some(v) = opts.get(global, "sampler")? {
             cfg.sampler = sampler_from_js(global, v, opts.get(global, "samplerArg")?)?;
-        } else if let Some(v) = opts.get(global, "sampleRate")? {
-            if v.is_number() {
-                cfg.sampler =
-                    Sampler::ParentBasedTraceIdRatio(Sampler::ratio_threshold(v.as_number()));
-            }
         }
         if let Some(v) = opts.get(global, "instrumentations")? {
             read_instrumentations(global, v, &mut cfg)?;

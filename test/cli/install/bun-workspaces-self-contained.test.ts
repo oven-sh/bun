@@ -153,6 +153,20 @@ describe.each([
   });
 });
 
+it("an entry that matches no workspace warns and the rest still applies", async () => {
+  await writeProject({}, { selfContained: ["apps/desktop", "apps/nope"] });
+  const r = await install(package_dir);
+  expect(r.err).not.toContain("error:");
+  expect(r.err).toContain('"apps/nope" does not match any workspace');
+  expect(r.code).toBe(0);
+  expect(await readdirSorted(join(package_dir, "apps", "desktop", "node_modules"))).toEqual([
+    "@barn",
+    "bar",
+    "baz",
+    "shared",
+  ]);
+});
+
 it("without either setting the workspace is hoisted normally", async () => {
   await writeProject({}, {});
   const r = await install(package_dir);

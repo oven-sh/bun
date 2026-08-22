@@ -101,6 +101,79 @@ describe.skipIf(isASAN)("given an add(a, b) function", () => {
   });
 }); // </given add(a, b) function>
 
+// `source` also accepts an array of files. Both tests spawn bun: an empty
+// array used to crash the process (the native side indexed the first source
+// file while building the "symbol is missing" error), which would take the
+// test runner down with it.
+describe.concurrent("given an array of source files", () => {
+  const symbols = {
+    add: { args: ["int", "int"], returns: "int" },
+    sub: { args: ["int", "int"], returns: "int" },
+  };
+
+  it("when the array is empty, throws instead of crashing", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+          import { cc } from "bun:ffi";
+          try {
+            cc({ source: [], symbols: ${JSON.stringify(symbols)} });
+            console.log(JSON.stringify("cc() did not throw"));
+          } catch (error) {
+            console.log(JSON.stringify({ name: error.name, code: error.code, message: error.message }));
+          }
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // stderr is only included so a crashed child shows why; debug builds may
+    // print benign warnings to it.
+    const thrown = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+    expect({ thrown, stderr, exitCode }).toMatchObject({
+      thrown: {
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_VALUE",
+        message: "The argument 'source' must be a non-empty array of file paths. Received []",
+      },
+      exitCode: 0,
+    });
+  });
+
+  it("compiles every file in the array", async () => {
+    using dir = tempDir("bun-ffi-cc-source-array", {
+      "add.c": /* c */ `int add(int a, int b) { return a + b; }`,
+      "sub.c": /* c */ `int sub(int a, int b) { return a - b; }`,
+      "fixture.js": /* js */ `
+        import { cc } from "bun:ffi";
+        import path from "path";
+
+        const { symbols } = cc({
+          source: [path.join(import.meta.dir, "add.c"), path.join(import.meta.dir, "sub.c")],
+          symbols: ${JSON.stringify(symbols)},
+        });
+        console.log(JSON.stringify([symbols.add(1, 2), symbols.sub(1, 2)]));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toMatchObject({ stdout: "[3,-1]", exitCode: 0 });
+  });
+}); // </given an array of source files>
+
 describe("given a source file with syntax errors", () => {
   const source = /* c */ `
     int add(int a, int b) {

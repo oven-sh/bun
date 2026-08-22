@@ -6508,20 +6508,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             continue;
                         };
 
+                        let key = prop.key.expect("infallible: prop has key");
+                        let is_static = prop.flags.contains(Flags::Property::IsStatic);
+                        // A non-literal computed key must still evaluate in the enclosing scope.
+                        let use_static_block = is_static
+                            && (!prop.flags.contains(Flags::Property::IsComputed)
+                                || key.unwrap_inlined().is_primitive_literal());
+
                         let mut target: Expr;
-                        if prop.flags.contains(Flags::Property::IsStatic) {
+                        if is_static && !use_static_block {
                             let class_name = s_class.class.class_name.unwrap();
                             let class_ref = class_name.ref_;
                             self.record_usage(class_ref);
                             target = self.new_expr(E::Identifier::init(class_ref), class_name.loc);
                         } else {
-                            target = self.new_expr(
-                                E::This {},
-                                prop.key.expect("infallible: prop has key").loc,
-                            );
+                            target = self.new_expr(E::This {}, key.loc);
                         }
 
-                        let key = prop.key.expect("infallible: prop has key");
                         target = match &key.data {
                             js_ast::ExprData::EString(s)
                                 if s.is_utf8()
@@ -6547,8 +6550,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             ),
                         };
 
-                        // remove fields with decorators from class body. Move static members outside of class.
-                        if prop.flags.contains(Flags::Property::IsStatic) {
+                        if use_static_block {
+                            let assign = Expr::assign(target, initializer);
+                            class_properties.push(self.make_static_block(assign, key.loc));
+                        } else if is_static {
                             static_members.push(Stmt::assign(target, initializer));
                         } else {
                             instance_members.push(Stmt::assign(target, initializer));

@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import DecoratedClass from "./decorator-export-default-class-fixture";
 import DecoratedAnonClass from "./decorator-export-default-class-fixture-anon";
 
@@ -1105,3 +1105,252 @@ test("lowering many decorated instance fields into a large constructor body stay
   const { tSmall, tLarge } = JSON.parse(stdout);
   expect(tLarge).toBeLessThan(tSmall * 3);
 }, 90_000);
+
+describe("decorated static field initializers", () => {
+  function dec(_target: any, _key?: any) {}
+
+  test("evaluate `this` as the class", () => {
+    class Base {
+      static tag = "base-tag";
+    }
+    class A extends Base {
+      static own = "own";
+      @dec static self = this;
+      @dec static inheritedTag = this.tag;
+      @dec static ownViaThis = this.own;
+      @dec static ["literal key"] = this;
+      @dec static 123 = this;
+      @dec static arrow = () => this;
+      @dec static fn = function (this: unknown) {
+        return this;
+      };
+    }
+
+    const receiver = {};
+    expect({
+      self: A.self === A,
+      inheritedTag: A.inheritedTag,
+      ownViaThis: A.ownViaThis,
+      literalKey: A["literal key"] === A,
+      numericKey: A[123] === A,
+      arrow: A.arrow() === A,
+      fn: A.fn.call(receiver) === receiver,
+    }).toEqual({
+      self: true,
+      inheritedTag: "base-tag",
+      ownViaThis: "own",
+      literalKey: true,
+      numericKey: true,
+      arrow: true,
+      fn: true,
+    });
+  });
+
+  test("run before the class decorator, against the class it decorates", () => {
+    const events: string[] = [];
+    let decorated: any;
+    function replace(target: any) {
+      events.push(`class:${target.name}`);
+      return class Replacement extends target {};
+    }
+    function member(target: any, key: string) {
+      decorated = target;
+      events.push(`member:${key}=${target[key] === target ? "class" : String(target[key])}`);
+    }
+
+    @replace
+    class A {
+      @member static self = this;
+      @member static n = events.push("init:n");
+    }
+
+    expect({
+      events,
+      binding: A.name,
+      decoratedIsOriginal: decorated === Object.getPrototypeOf(A),
+      selfIsOriginal: A.self === Object.getPrototypeOf(A),
+      n: A.n,
+    }).toEqual({
+      events: ["init:n", "member:self=class", "member:n=1", "class:A"],
+      binding: "Replacement",
+      decoratedIsOriginal: true,
+      selfIsOriginal: true,
+      n: 1,
+    });
+  });
+
+  test("keep a non-literal computed key in the enclosing scope", () => {
+    const decoratedKeys: string[] = [];
+    function record(_target: any, key: string) {
+      decoratedKeys.push(key);
+    }
+    function define(this: { name: string }, _first: string) {
+      class A {
+        @record static [this.name] = "from this";
+        @record static [arguments[0]] = "from arguments";
+      }
+      return A;
+    }
+
+    const A = define.call({ name: "thisKey" }, "argumentsKey");
+    expect({ decoratedKeys, thisKey: A.thisKey, argumentsKey: A.argumentsKey }).toEqual({
+      decoratedKeys: ["thisKey", "argumentsKey"],
+      thisKey: "from this",
+      argumentsKey: "from arguments",
+    });
+  });
+
+  test("run in source order with the other static members", () => {
+    const order: string[] = [];
+    function log(name: string) {
+      order.push(name);
+      return name;
+    }
+    function logDec(_target: any, key: string) {
+      order.push(`dec:${key}`);
+    }
+
+    class A {
+      static a = log("a");
+      @logDec static b = log("b");
+      static {
+        log("block");
+      }
+      @logDec static c = log("c");
+      static d = log("d");
+      @logDec e = log("e");
+    }
+
+    // Same order as tsc; `e` is an instance field, so only its decorator runs.
+    expect(order).toEqual(["a", "b", "block", "c", "d", "dec:e", "dec:b", "dec:c"]);
+  });
+
+  test.concurrent("can use `super`", async () => {
+    using dir = tempDir("legacy-decorator-static-super", {
+      "tsconfig.json": JSON.stringify({ compilerOptions: { experimentalDecorators: true } }),
+      "base.ts": `
+        export function dec(_target: any, _key?: any) {}
+        export class Base {
+          static x = 1;
+          static receiver() {
+            return this;
+          }
+          static get tagged() {
+            return "base:" + this.label;
+          }
+        }
+      `,
+      "anon.ts": `
+        import { Base, dec } from "./base";
+        export default class extends Base {
+          @dec static me = this;
+          @dec static viaSuper = super.receiver();
+        }
+      `,
+      "main.ts": `
+        import Anon from "./anon";
+        import { Base, dec } from "./base";
+        class A extends Base {
+          static label = "A";
+          @dec static call = super.receiver() === this;
+          @dec static getter = super.tagged;
+          @dec static arrow = (() => super.receiver())() === this;
+          @dec static computedMember = super["receiver"]() === this;
+          @dec static assigned = (super.x = 42);
+          @dec static ["computedKey"] = super.tagged;
+        }
+        console.log(
+          JSON.stringify({
+            call: A.call,
+            getter: A.getter,
+            arrow: A.arrow,
+            computedMember: A.computedMember,
+            assigned: A.assigned,
+            ownX: Object.hasOwn(A, "x") && A.x,
+            baseX: Base.x,
+            computedKey: A.computedKey,
+            anonMe: Anon.me === Anon,
+            anonViaSuper: Anon.viaSuper === Anon,
+          }),
+        );
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, result: stdout.trim() && JSON.parse(stdout), exitCode }).toEqual({
+      stderr: "",
+      result: {
+        call: true,
+        getter: "base:A",
+        arrow: true,
+        computedMember: true,
+        assigned: 42,
+        ownX: 42,
+        baseX: 1,
+        computedKey: "base:A",
+        anonMe: true,
+        anonViaSuper: true,
+      },
+      exitCode: 0,
+    });
+  });
+
+  test("stay in the class body as static blocks", () => {
+    const transpiler = new Bun.Transpiler({
+      loader: "ts",
+      tsconfig: { compilerOptions: { experimentalDecorators: true } },
+    });
+    const out = transpiler.transformSync(`
+      class A extends Base {
+        @dec static a = super.f();
+        static b = 1;
+        @dec static ["c"] = this.b;
+        @dec static [k] = 2;
+        @dec static d: number;
+        @dec e = this.f;
+      }
+    `);
+
+    // Everything after the import of the runtime helper.
+    const body = out.slice(out.indexOf("class A")).replace(/__legacyDecorateClassTS_\w+/g, "__legacyDecorateClassTS");
+    expect(body).toMatchInlineSnapshot(`
+      "class A extends Base {
+        constructor() {
+          super(...arguments);
+          this.e = this.f;
+        }
+        static {
+          this.a = super.f();
+        }
+        static b = 1;
+        static {
+          this["c"] = this.b;
+        }
+      }
+      A[k] = 2;
+      __legacyDecorateClassTS([
+        dec
+      ], A.prototype, "e", undefined);
+      __legacyDecorateClassTS([
+        dec
+      ], A, "a", undefined);
+      __legacyDecorateClassTS([
+        dec
+      ], A, "c", undefined);
+      __legacyDecorateClassTS([
+        dec
+      ], A, k, undefined);
+      __legacyDecorateClassTS([
+        dec
+      ], A, "d", undefined);
+      "
+    `);
+  });
+});

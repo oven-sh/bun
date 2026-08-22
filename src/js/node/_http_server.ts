@@ -1068,8 +1068,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       this.once("listening", onListen);
     }
 
-    // A tick, not a timer, as in node. A timer here sits in the bun:test fake timer heap while
-    // jest.useFakeTimers() is active and never fires on its own.
+    // A tick, not a timer, as in node: a timer never fires on its own under jest.useFakeTimers().
     process.nextTick(emitListeningNextTick, this, this[serverSymbol]?.hostname, this[serverSymbol]?.port);
   }
 };

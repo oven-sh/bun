@@ -2344,6 +2344,13 @@ pub(crate) mod __gated_printer {
             let floored = float.floor();
             let remainder = float - floored;
             let is_integer = remainder == 0.0;
+
+            // Minified JS: emit the shorter of decimal and scientific notation.
+            if !IS_JSON && (self.options.minify_whitespace || self.options.minify_syntax) {
+                self.print_float_smart(float);
+                return;
+            }
+
             if float < (u64::MAX >> 12) as f64 /* maxInt(u52) */ && is_integer {
                 // In JavaScript, numbers are represented as 64 bit floats
                 // However, they could also be signed or unsigned int 32 (when doing bit shifts)
@@ -2362,6 +2369,44 @@ pub(crate) mod __gated_printer {
             // `Display` for f64 emits the shortest digit string that
             // round-trips, never scientific notation.
             let _ = self.fmt(format_args!("{}", float));
+        }
+
+        /// Print the shorter of the decimal and scientific forms, matching esbuild.
+        fn print_float_smart(&mut self, float: f64) {
+            // f64's longest decimal form is ~310 digits.
+            let mut dec_buf = [0u8; 512];
+            let mut sci_buf = [0u8; 64];
+
+            let Ok(dec_full) = bun_core::fmt::buf_print(&mut dec_buf, format_args!("{}", float))
+            else {
+                let _ = self.fmt(format_args!("{}", float));
+                return;
+            };
+            let Ok(sci_full) = bun_core::fmt::buf_print(&mut sci_buf, format_args!("{:e}", float))
+            else {
+                self.print(dec_full);
+                return;
+            };
+
+            // `.5` parses identically to `0.5` in JS.
+            let dec: &[u8] = if dec_full.len() >= 2 && dec_full[0] == b'0' && dec_full[1] == b'.' {
+                &dec_full[1..]
+            } else {
+                dec_full
+            };
+
+            // `{:e}` prints `3e0` for integer mantissas; bare `3` is shorter.
+            let sci: &[u8] = match bun_core::strings::index_of_char_usize(sci_full, b'e') {
+                Some(e_pos) if &sci_full[e_pos + 1..] == b"0" => &sci_full[..e_pos],
+                _ => sci_full,
+            };
+
+            // Decimal wins ties, matching esbuild.
+            if sci.len() < dec.len() {
+                self.print(sci);
+            } else {
+                self.print(dec);
+            }
         }
 
         pub(crate) fn print_string_characters_utf8(&mut self, text: &[u8], quote: u8) {

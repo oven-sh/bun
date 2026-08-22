@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows } from "harness";
 import * as dgram from "node:dgram";
 import * as dns from "node:dns";
@@ -561,6 +561,301 @@ test("dns.promises.reverse", async () => {
   }
 });
 
+describe("dns.reverse rejects invalid IP strings with EINVAL", () => {
+  const invalid = [
+    "1.2.3",
+    "127.1",
+    "1",
+    "0x7f000001",
+    "10/8",
+    "256.1.1.1",
+    "999.9.9.9",
+    "not-an-ip",
+    "1.2.3.4.5",
+    " 1.2.3.4",
+    "1.2.3.4 ",
+    "%lo0",
+    "",
+  ];
+
+  const UV_EINVAL = isWindows ? -4071 : -22;
+
+  it.each(invalid)("callback form throws synchronously for %j", ip => {
+    let called = false;
+    expect(() => dns.reverse(ip, () => (called = true))).toThrow(
+      expect.objectContaining({ code: "EINVAL", errno: UV_EINVAL, syscall: "getHostByAddr" }),
+    );
+    expect(called).toBe(false);
+  });
+
+  it("callback form validates argument types in order", () => {
+    // non-string ip is ERR_INVALID_ARG_TYPE for "name", checked before callback
+    expect(() => dns.reverse(123, () => {})).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    expect(() => dns.reverse(123, 456)).toThrow(/"name" argument/);
+    // callback is validated before the IP string is parsed
+    expect(() => dns.reverse("1.2.3", 123)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+  });
+
+  it("top-level dns.promises.reverse rejects asynchronously", async () => {
+    for (const ip of ["999.9.9.9", "not-an-ip", "1.2.3.4.5"]) {
+      await expect(dns.promises.reverse(ip)).rejects.toEqual(
+        expect.objectContaining({ code: "EINVAL", syscall: "getHostByAddr", hostname: ip }),
+      );
+    }
+    // non-string input is a synchronous ERR_INVALID_ARG_TYPE even in the promises form
+    expect(() => dns.promises.reverse(123)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+  });
+
+  // The tests below share one loopback PTR responder. It records every queried
+  // name, answers "host.example", and returns NXDOMAIN for names whose first
+  // label is a hex letter (…::a through …::f). Each test consumes the names it
+  // expects to have produced, so an invalid input that leaked a query would show
+  // up in the next test's expectation.
+  describe("against a local PTR responder", () => {
+    const wire = [];
+    let srv;
+    let srvError;
+    let resolver;
+    let cbResolver;
+
+    const v6ptr = last => `${last}.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6.arpa`;
+    const notFound = ip =>
+      expect.objectContaining({
+        code: "ENOTFOUND",
+        syscall: "getHostByAddr",
+        hostname: ip,
+        message: `getHostByAddr ENOTFOUND ${ip}`,
+      });
+    const cbReverse = ip => {
+      const { promise, resolve } = Promise.withResolvers();
+      cbResolver.reverse(ip, (err, hostnames) => resolve(err ?? hostnames));
+      return promise;
+    };
+
+    beforeAll(async () => {
+      srv = dgram.createSocket("udp4");
+      srv.on("error", err => (srvError ??= err));
+      await new Promise((resolve, reject) => {
+        srv.once("error", reject);
+        srv.bind(0, "127.0.0.1", resolve);
+      });
+      srv.on("message", (m, ri) => {
+        let o = 12;
+        const labels = [];
+        while (m[o]) {
+          labels.push(m.subarray(o + 1, o + 1 + m[o]).toString());
+          o += 1 + m[o];
+        }
+        o++;
+        wire.push(labels.join("."));
+        const q = m.subarray(12, o + 4);
+        const enc = n =>
+          Buffer.concat([
+            ...n.split(".").map(p => Buffer.concat([Buffer.from([p.length]), Buffer.from(p)])),
+            Buffer.from([0]),
+          ]);
+        const rd = enc("host.example");
+        const a = Buffer.concat([Buffer.from([0xc0, 12, 0, 12, 0, 1, 0, 0, 0, 60, 0, rd.length]), rd]);
+        const nxdomain = /^[a-f]$/.test(labels[0]);
+        const h = Buffer.alloc(12);
+        h.writeUInt16BE(m.readUInt16BE(0), 0);
+        h.writeUInt16BE(nxdomain ? 0x8183 : 0x8180, 2);
+        h.writeUInt16BE(1, 4);
+        h.writeUInt16BE(nxdomain ? 0 : 1, 6);
+        srv.send(nxdomain ? Buffer.concat([h, q]) : Buffer.concat([h, q, a]), ri.port, ri.address);
+      });
+      const servers = [`127.0.0.1:${srv.address().port}`];
+      resolver = new dns.promises.Resolver({ timeout: 1500, tries: 1 });
+      resolver.setServers(servers);
+      cbResolver = new dns.Resolver({ timeout: 1500, tries: 1 });
+      cbResolver.setServers(servers);
+    });
+
+    afterAll(async () => {
+      await new Promise(resolve => srv.close(resolve));
+    });
+
+    it.each(invalid)("promises Resolver rejects %j without querying", async ip => {
+      const p = resolver.reverse(ip);
+      expect(p).toBeInstanceOf(Promise);
+      let err;
+      await p.catch(e => (err = e));
+      expect(err).toEqual(
+        expect.objectContaining({
+          code: "EINVAL",
+          errno: UV_EINVAL,
+          syscall: "getHostByAddr",
+          ...(ip ? { hostname: ip } : {}),
+        }),
+      );
+      expect("hostname" in err).toBe(!!ip);
+    });
+
+    it("rejects a zone id on an IPv4 literal, as uv_inet_pton does", async () => {
+      await expect(resolver.reverse("192.0.2.1%lo0")).rejects.toEqual(
+        expect.objectContaining({ code: "EINVAL", hostname: "192.0.2.1%lo0" }),
+      );
+    });
+
+    it("queries valid IPv4 and IPv6 literals", async () => {
+      expect(wire.splice(0)).toEqual([]);
+      expect(await resolver.reverse("192.0.2.1")).toEqual(["host.example"]);
+      expect(await resolver.reverse("2001:db8::5")).toEqual(["host.example"]);
+      expect(wire.splice(0)).toEqual(["1.2.0.192.in-addr.arpa", v6ptr(5)]);
+    });
+
+    it("strips an IPv6 zone id before querying, including one isIP() rejects", async () => {
+      expect(await resolver.reverse("2001:db8::6%lo0")).toEqual(["host.example"]);
+      expect(await resolver.reverse("2001:db8::7%br_lan")).toEqual(["host.example"]);
+      expect(await cbReverse("2001:db8::8%br_lan")).toEqual(["host.example"]);
+      expect(wire.splice(0)).toEqual([v6ptr(6), v6ptr(7), v6ptr(8)]);
+    });
+
+    it("reports the caller's string, zone id included, when the lookup fails", async () => {
+      await expect(resolver.reverse("2001:db8::a%br_lan")).rejects.toEqual(notFound("2001:db8::a%br_lan"));
+      expect(await cbReverse("2001:db8::b%lo0")).toEqual(notFound("2001:db8::b%lo0"));
+      await expect(resolver.reverse("2001:db8::c")).rejects.toEqual(notFound("2001:db8::c"));
+      expect(wire.splice(0)).toEqual([v6ptr("a"), v6ptr("b"), v6ptr("c")]);
+      expect(srvError).toBeUndefined();
+    });
+  });
+});
+
+describe("dns.lookupService rejects non-IP address strings", () => {
+  // Unlike reverse() and setLocalAddress(), Node gates lookupService() on isIP()
+  // itself, so a zone id isIP() rejects is rejected here too.
+  it.each(["127.1", "1.2.3", "0x7f000001", "google.com", "", 123, "fe80::1%br_lan"])(
+    "throws ERR_INVALID_ARG_VALUE synchronously for %j",
+    address => {
+      const expected = expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" });
+      expect(() => dns.lookupService(address, 22, () => {})).toThrow(expected);
+      expect(() => dns.promises.lookupService(address, 22)).toThrow(expected);
+    },
+  );
+
+  it("validates arguments in Node's order (address, port, callback)", () => {
+    expect(() => dns.lookupService("127.1", "bad", 123)).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+    );
+    expect(() => dns.lookupService("1.2.3.4", "bad", 123)).toThrow(
+      expect.objectContaining({ code: "ERR_SOCKET_BAD_PORT" }),
+    );
+    expect(() => dns.lookupService("1.2.3.4", 22, 123)).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+  });
+
+  it("strips an IPv6 zone id for the query and reports the caller's address on failure", async () => {
+    // lookupService() resolves PTR through the default resolver, so point it at a
+    // local NXDOMAIN responder in a child process. The responder records each name.
+    const wire = [];
+    let srvError;
+    const srv = dgram.createSocket("udp4");
+    try {
+      srv.on("error", err => (srvError ??= err));
+      await new Promise((resolve, reject) => {
+        srv.once("error", reject);
+        srv.bind(0, "127.0.0.1", resolve);
+      });
+      srv.on("message", (m, ri) => {
+        let o = 12;
+        const labels = [];
+        while (m[o]) {
+          labels.push(m.subarray(o + 1, o + 1 + m[o]).toString());
+          o += 1 + m[o];
+        }
+        wire.push(labels.join("."));
+        const h = Buffer.alloc(12);
+        h.writeUInt16BE(m.readUInt16BE(0), 0);
+        h.writeUInt16BE(0x8183, 2);
+        h.writeUInt16BE(1, 4);
+        srv.send(Buffer.concat([h, m.subarray(12, o + 5)]), ri.port, ri.address);
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const dns = require("node:dns");
+           dns.setServers(["127.0.0.1:" + process.argv[1]]);
+           const shape = e => ({ code: e.code, syscall: e.syscall, hostname: e.hostname, message: e.message });
+           const cb = new Promise(resolve => dns.lookupService("2001:db8::a%lo0", 22, e => resolve(shape(e))));
+           const promise = dns.promises.lookupService("2001:db8::b", 22).then(() => "resolved", shape);
+           Promise.all([cb, promise]).then(r => console.log(JSON.stringify(r)));`,
+          String(srv.address().port),
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(srvError).toBeUndefined();
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual([
+        {
+          code: "ENOTFOUND",
+          syscall: "getnameinfo",
+          hostname: "2001:db8::a%lo0",
+          message: "getnameinfo ENOTFOUND 2001:db8::a%lo0",
+        },
+        {
+          code: "ENOTFOUND",
+          syscall: "getnameinfo",
+          hostname: "2001:db8::b",
+          message: "getnameinfo ENOTFOUND 2001:db8::b",
+        },
+      ]);
+      expect(exitCode).toBe(0);
+      expect(wire.sort()).toEqual([
+        "a.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6.arpa",
+        "b.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6.arpa",
+      ]);
+    } finally {
+      await new Promise(resolve => srv.close(resolve));
+    }
+  });
+});
+
+describe("Resolver.setLocalAddress validates IP strings", () => {
+  it.each([
+    [["127.1"], "ERR_INVALID_ARG_VALUE", "Invalid IP address."],
+    [["0x7f000001"], "ERR_INVALID_ARG_VALUE", "Invalid IP address."],
+    [[""], "ERR_INVALID_ARG_VALUE", "Invalid IP address."],
+    [["1.2.3.4", "127.1"], "ERR_INVALID_ARG_VALUE", "Invalid IP address."],
+    [["1.2.3.4", "5.6.7.8"], "ERR_INVALID_ARG_VALUE", "Cannot specify two IPv4 addresses."],
+    [["::1", "::2"], "ERR_INVALID_ARG_VALUE", "Cannot specify two IPv6 addresses."],
+    [["::1%lo0", "::2%lo0"], "ERR_INVALID_ARG_VALUE", "Cannot specify two IPv6 addresses."],
+    // a zone id is only stripped from an IPv6 literal
+    [["1.2.3.4%lo0"], "ERR_INVALID_ARG_VALUE", "Invalid IP address."],
+    [[123], "ERR_INVALID_ARG_TYPE", /"ipv4" argument/],
+    [["1.2.3.4", 123], "ERR_INVALID_ARG_TYPE", /"ipv6" argument/],
+    // both types are checked before either value is parsed
+    [["not-an-ip", 123], "ERR_INVALID_ARG_TYPE", /"ipv6" argument/],
+  ])("rejects %j with %s", (args, code, message) => {
+    for (const Resolver of [dns.Resolver, dns.promises.Resolver]) {
+      const r = new Resolver();
+      expect(() => r.setLocalAddress(...args)).toThrow(expect.objectContaining({ code }));
+      expect(() => r.setLocalAddress(...args)).toThrow(message);
+    }
+  });
+
+  it.each([
+    [["1.2.3.4"]],
+    [["::1"]],
+    [["1.2.3.4", "::1"]],
+    [["::1", "1.2.3.4"]],
+    // uv_inet_pton strips an IPv6 zone id (whatever it contains); c-ares would reject it
+    [["fe80::1%lo0"]],
+    [["1.2.3.4", "fe80::1%lo0"]],
+    [["fe80::1%br_lan"]],
+    [["fe80::1%br_lan", "1.2.3.4"]],
+  ])("accepts %j", args => {
+    for (const Resolver of [dns.Resolver, dns.promises.Resolver]) {
+      const r = new Resolver();
+      expect(() => r.setLocalAddress(...args)).not.toThrow();
+    }
+  });
+});
+
 describe("test invalid arguments", () => {
   it.each([
     // TODO: dns.resolveAny is not implemented yet
@@ -612,10 +907,10 @@ describe("test invalid arguments", () => {
   it("dns.lookupService", async () => {
     expect(() => {
       dns.lookupService("", 443, (err, hostname, service) => {});
-    }).toThrow("Expected address to be a non-empty string for 'lookupService'.");
+    }).toThrow("The argument 'address' is invalid. Received ''");
     expect(() => {
       dns.lookupService("google.com", 443, (err, hostname, service) => {});
-    }).toThrow(`The "address" argument is invalid. Received type string ('google.com')`);
+    }).toThrow("The argument 'address' is invalid. Received 'google.com'");
   });
 });
 

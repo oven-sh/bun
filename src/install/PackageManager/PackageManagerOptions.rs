@@ -44,6 +44,9 @@ pub struct Options {
     pub enable: Enable,
     pub do_: Do,
     pub positionals: &'static [&'static [u8]],
+    /// `-c/--config <path>` as given on the command line (the bunfig that was loaded
+    /// *instead of* ./bunfig.toml), so the install-state fingerprint can cover it.
+    pub explicit_config_path: Option<&'static [u8]>,
     pub(crate) update: DependencyGroup,
     pub dry_run: bool,
     pub check: bool,
@@ -134,6 +137,7 @@ impl Default for Options {
             enable: Enable::default(),
             do_: Do::default(),
             positionals: &[],
+            explicit_config_path: None,
             update: DependencyGroup::default(),
             dry_run: false,
             check: false,
@@ -729,6 +733,9 @@ impl Options {
             self.enable.set(Enable::MANIFEST_CACHE_CONTROL, false);
         }
 
+        if let Some(cli) = &maybe_cli {
+            self.explicit_config_path = cli.config;
+        }
         if let Some(cli) = maybe_cli {
             self.do_.set(Do::ANALYZE, cli.analyze);
             self.enable

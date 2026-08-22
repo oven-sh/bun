@@ -647,6 +647,7 @@ void *us_socket_group_connect(struct us_socket_group_t *group, unsigned char kin
     c->options = options;
     c->kind = kind;
     c->loop = loop;
+    c->bun_epoch = Bun__runEpoch();
     c->ssl_ctx = ssl_ctx;
     if (ssl_ctx) us_internal_ssl_ctx_up_ref(ssl_ctx);
     c->timeout = 255;
@@ -719,6 +720,7 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         }
         ++opened;
         us_internal_init_connect_socket(s, group, c->kind, c->options);
+        s->p.bun_epoch = c->bun_epoch;
         s->timeout = c->timeout;
         s->long_timeout = c->long_timeout;
 

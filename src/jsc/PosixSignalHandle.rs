@@ -100,10 +100,13 @@ impl PosixSignalHandle {
         while let Some(signal) = self.dequeue() {
             // `Task` is a plain `{ tag, ptr }` pair (no bitfield packing), so build it
             // directly — `bun_runtime::dispatch::run_task` unpacks `task.ptr as usize as u8`.
-            let task = Task::new(
+            let mut task = Task::new(
                 <PosixSignalTask as Taskable>::TAG,
                 signal as usize as *mut (),
             );
+            // A signal is delivered to the program, never to whichever domain run
+            // happens to be turning the loop when it arrives.
+            task.birth = bun_event_loop::PRIMORDIAL_EPOCH;
             event_loop.enqueue_task(task);
         }
     }

@@ -115,6 +115,11 @@ void us_internal_sweep_if_due(struct us_loop_t *loop) {
     }
     /* Re-arm first: a timeout handler may unlink the last socket and disarm. */
     loop->data.sweep_next_tick_ns = now + LIBUS_TIMEOUT_GRANULARITY_NS;
+    /* Socket timeouts are their owners' callbacks, and their clocks are ticks of
+     * this sweep: while a domain run turns the loop they neither fire nor age. */
+    if (UNLIKELY(loop->data.run_start_epoch)) {
+        return;
+    }
     us_internal_timer_sweep(loop);
 }
 
@@ -356,6 +361,31 @@ int us_internal_handle_dns_results(struct us_loop_t *loop) {
     struct us_connecting_socket_t *s = loop->data.dns_ready_head;
     loop->data.dns_ready_head = NULL;
     Bun__unlock(&loop->data.mutex);
+    if (UNLIKELY(loop->data.run_start_epoch) && s) {
+        /* A connect started before the active domain run resolves to its owner's
+         * open/error handlers: not this run's to dispatch. Keep those queued. */
+        struct us_connecting_socket_t *ready = NULL, **ready_tail = &ready, *held = NULL, *next;
+        for (; s; s = next) {
+            next = s->next;
+            if (us_internal_epoch_is_foreign(loop, s->bun_epoch)) {
+                s->next = held;
+                held = s;
+            } else {
+                s->next = NULL;
+                *ready_tail = s;
+                ready_tail = &s->next;
+            }
+        }
+        if (held) {
+            Bun__lock(&loop->data.mutex);
+            struct us_connecting_socket_t **tail = &held;
+            while (*tail) tail = &(*tail)->next;
+            *tail = loop->data.dns_ready_head;
+            loop->data.dns_ready_head = held;
+            Bun__unlock(&loop->data.mutex);
+        }
+        s = ready;
+    }
     us_internal_drain_pending_dns_resolve(loop, s);
     return s != NULL;
 }
@@ -392,11 +422,21 @@ void sweep_timer_cb(struct us_internal_callback_t *cb) {
 }
 #endif
 
+/* A native-only domain run (spawnSync) turns the loop for its own I/O only: the
+ * embedder's pre/post hooks (cork flushes, deferred callbacks) and QUIC engine
+ * processing act on behalf of connections that predate it, so they wait. */
+static inline int us_internal_loop_runs_outer_hooks(struct us_loop_t *loop) {
+    return LIKELY(!loop->data.run_start_epoch) || loop->data.run_executes_scripts;
+}
+
 /* These may have somewhat different meaning depending on the underlying event library */
 void us_internal_loop_pre(struct us_loop_t *loop) {
     loop->data.iteration_nr++;
     us_internal_handle_dns_results(loop);
     us_internal_handle_low_priority_sockets(loop);
+    if (!us_internal_loop_runs_outer_hooks(loop)) {
+        return;
+    }
     loop->data.pre_cb(loop);
 #ifdef LIBUS_USE_QUIC
     /* Flush stream writes that JS tasks made before this tick (timers,
@@ -410,10 +450,12 @@ void us_internal_loop_pre(struct us_loop_t *loop) {
 
 void us_internal_loop_post(struct us_loop_t *loop) {
     us_internal_handle_dns_results(loop);
+    if (us_internal_loop_runs_outer_hooks(loop)) {
 #ifdef LIBUS_USE_QUIC
-    if (loop->data.quic_head) us_quic_loop_process(loop);
+        if (loop->data.quic_head) us_quic_loop_process(loop);
 #endif
-    if (loop->data.nq_head) us_nq_loop_flush_if_pending(loop);
+        if (loop->data.nq_head) us_nq_loop_flush_if_pending(loop);
+    }
     /* A poll callback may re-enter the loop (e.g. expect().toThrow() →
      * waitForPromise → us_loop_run_bun_tick). The inner tick must not free
      * closed sockets: the outer tick's dispatch is mid-iteration and may still
@@ -422,13 +464,21 @@ void us_internal_loop_post(struct us_loop_t *loop) {
     if (loop->data.tick_depth <= 1) {
         us_internal_free_closed_sockets(loop);
     }
-    loop->data.post_cb(loop);
+    if (us_internal_loop_runs_outer_hooks(loop)) {
+        loop->data.post_cb(loop);
+    }
 }
 
 #ifdef WIN32
 #define us_ioctl ioctlsocket
 #else
 #define us_ioctl ioctl
+#endif
+
+#ifdef LIBUS_USE_LIBUV
+void us_internal_release_held_polls(struct us_loop_t *loop, unsigned int outer_start_epoch) {
+    (void) loop; (void) outer_start_epoch;
+}
 #endif
 
 void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, int events) {

@@ -361,13 +361,27 @@ export function initializeNextTickQueue(
     queue = new FixedQueue();
     tickInitHooks = require("internal/async_hooks_tick").tickInitHooks;
 
-    function processTicksAndRejections() {
+    // `activeRun` is non-zero inside a domain run that executes code of its own
+    // (its start epoch; see EventLoopDomain.h): then only ticks queued since it
+    // started run. Older ticks are set aside in arrival order and put back once the
+    // run's ticks and microtasks are exhausted, so the code that queued them
+    // observes them later, in the same order, as if the run had not happened.
+    // Epochs compare as 31-bit serial numbers (`<< 1` makes bit 30 the sign).
+    function processTicksAndRejections(activeRun) {
+      var parked: any[] | undefined;
       var tock;
       do {
         while ((tock = queue.shift()) !== null) {
+          if (activeRun) {
+            const birth = tock.birth | 0;
+            if (birth <= 1 || (birth - activeRun) << 1 < 0) {
+              (parked ??= []).push(tock);
+              continue;
+            }
+          }
+          var frame = tock.frame;
           var callback = tock.callback;
           var args = tock.args;
-          var frame = tock.frame;
           var restore = $getInternalField($asyncContext, 0);
           $putInternalField($asyncContext, 0, frame);
           try {
@@ -401,6 +415,9 @@ export function initializeNextTickQueue(
 
         drainMicrotasks();
       } while (!queue.isEmpty());
+      if (parked !== undefined) {
+        for (var i = 0; i < parked.length; i++) queue.push(parked[i]);
+      }
     }
 
     $putInternalField(nextTickQueue, 0, 0);
@@ -423,6 +440,8 @@ export function initializeNextTickQueue(
       // a waste of memory and Array.prototype.slice shows up in profiling.
       args: $argumentCount() > 1 ? args : undefined,
       frame: $getInternalField($asyncContext, 0),
+      // The domain run this tick is born in (0 = none; see processTicksAndRejections).
+      birth: $getInternalField($asyncContext, 1),
     };
     if (tickInitHooks.length !== 0) {
       // node fires one TickObject init per process.nextTick() call, at

@@ -1111,12 +1111,10 @@ impl<'a> Repl<'a> {
             if SIGINT_DURING_WAIT.swap(false, Ordering::AcqRel) {
                 return true;
             }
-            vm.as_mut().event_loop_mut().tick();
-            if jsc::JSPromise::opaque_mut(promise).status() == PromiseStatus::Pending
-                && !SIGINT_DURING_WAIT.load(Ordering::Acquire)
-            {
-                vm.as_mut().event_loop_mut().auto_tick();
-            }
+            vm.as_mut().event_loop_mut().turn(None, || {
+                jsc::JSPromise::opaque_mut(promise).status() != PromiseStatus::Pending
+                    || SIGINT_DURING_WAIT.load(Ordering::Acquire)
+            });
         }
         false
     }
@@ -1855,10 +1853,7 @@ impl<'a> Repl<'a> {
 
         // Drain the event loop (timers, I/O, etc.) before printing / exiting
         vm.as_mut().tick();
-        while vm.is_event_loop_alive() {
-            vm.as_mut().tick();
-            vm.as_mut().auto_tick_active();
-        }
+        vm.as_mut().run_to_completion();
 
         if print_result {
             if actual_result.is_undefined() {

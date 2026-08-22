@@ -51,6 +51,9 @@ pub struct PosixLoop {
 
     /// The list of ready polls
     pub(crate) ready_polls: [EventType; 1024],
+    /// kqueue only: per-entry coalesced flags for the current batch (`ready_flags` in C).
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    pub(crate) ready_flags: [u8; 1024],
 }
 
 /// Zero-sized, 16-byte-aligned marker field type (see `_ready_polls_align`).
@@ -79,10 +82,19 @@ const _: () = {
         offset_of!(PosixLoop, ready_polls)
             == (offset_of!(PosixLoop, pending_wakeups) + 4).next_multiple_of(16)
     );
+    #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
     assert!(
         size_of::<PosixLoop>()
             == (offset_of!(PosixLoop, ready_polls) + 1024 * size_of::<EventType>())
                 .next_multiple_of(16)
+    );
+    // kqueue: `unsigned char ready_flags[1024]` follows `ready_polls`.
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    assert!(
+        offset_of!(PosixLoop, ready_flags)
+            == offset_of!(PosixLoop, ready_polls) + 1024 * size_of::<EventType>()
+            && size_of::<PosixLoop>()
+                == (offset_of!(PosixLoop, ready_flags) + 1024).next_multiple_of(16)
     );
 };
 
@@ -278,6 +290,25 @@ impl PosixLoop {
         unsafe { c::us_internal_free_closed_sockets(self) };
     }
 
+    /// A domain run has started on this loop's thread (see `bun_runtime::domain_run`):
+    /// readiness of polls older than `start_epoch` is held until it ends;
+    /// `executes_scripts` says whether the run runs code of its own (keeps
+    /// accepting on older listen sockets, adopts older sockets it writes to, runs
+    /// the embedder's pre/post hooks) or only waits on native work (spawnSync).
+    pub fn domain_run_began(&mut self, start_epoch: u32, executes_scripts: bool) {
+        self.internal_loop_data.run_start_epoch = start_epoch;
+        self.internal_loop_data.run_executes_scripts = executes_scripts as core::ffi::c_int;
+    }
+
+    /// The innermost domain run has ended and `outer` describes the run that is
+    /// now innermost (start epoch 0 if none): put back every held poll that is
+    /// not still foreign to the outer run.
+    pub fn domain_run_ended(&mut self, outer_start_epoch: u32, outer_executes_scripts: bool) {
+        self.domain_run_began(outer_start_epoch, outer_executes_scripts);
+        // SAFETY: self is a valid loop pointer
+        unsafe { c::us_internal_release_held_polls(self, outer_start_epoch) };
+    }
+
     /// `us_socket_group_close_all()` on every group currently linked to this
     /// loop — covers Listener/App-owned groups that `RareData`'s static field
     /// list doesn't enumerate. Returns whether any group was linked.
@@ -364,6 +395,21 @@ pub struct WindowsLoop {
 impl WindowsLoop {
     pub fn should_enable_date_header_timer(&self) -> bool {
         self.internal_loop_data.should_enable_date_header_timer()
+    }
+
+    /// See `PosixLoop::domain_run_began`. libuv-backed polls are not gated by
+    /// epoch (spawnSync keeps its isolated loop on Windows); this records the
+    /// state the shared C code reads.
+    pub fn domain_run_began(&mut self, start_epoch: u32, executes_scripts: bool) {
+        self.internal_loop_data.run_start_epoch = start_epoch;
+        self.internal_loop_data.run_executes_scripts = executes_scripts as core::ffi::c_int;
+    }
+
+    /// See `PosixLoop::domain_run_ended`.
+    pub fn domain_run_ended(&mut self, outer_start_epoch: u32, outer_executes_scripts: bool) {
+        self.domain_run_began(outer_start_epoch, outer_executes_scripts);
+        // SAFETY: self is a valid loop pointer
+        unsafe { c::us_internal_release_held_polls(self, outer_start_epoch) };
     }
 
     pub fn get() -> *mut WindowsLoop {
@@ -592,6 +638,7 @@ mod c {
             now_ns: u64,
         );
         pub(super) fn us_internal_free_closed_sockets(loop_: *mut Loop);
+        pub(super) fn us_internal_release_held_polls(loop_: *mut Loop, outer_start_epoch: u32);
         pub(super) fn us_loop_close_all_groups(loop_: *mut Loop) -> c_int;
         #[cfg(not(windows))]
         pub(super) safe fn uws_get_loop() -> *mut Loop;

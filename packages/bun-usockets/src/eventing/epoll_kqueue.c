@@ -58,6 +58,7 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 /* Loop */
 void us_loop_free(struct us_loop_t *loop) {
     us_internal_loop_data_free(loop);
+    us_free(loop->data.held_polls);
     close(loop->fd);
     us_free(loop);
 }
@@ -72,6 +73,9 @@ struct us_poll_t *us_create_poll(struct us_loop_t *loop, int fallthrough, unsign
 
 /* Todo: this one should be us_internal_poll_free */
 void us_poll_free(struct us_poll_t *p, struct us_loop_t *loop) {
+    if (UNLIKELY(p->held)) {
+        us_internal_held_poll_forget(loop, p);
+    }
     loop->num_polls--;
     us_free(p);
 }
@@ -80,6 +84,8 @@ void us_poll_free(struct us_poll_t *p, struct us_loop_t *loop) {
 void us_poll_init(struct us_poll_t *p, LIBUS_SOCKET_DESCRIPTOR fd, int poll_type) {
     p->state.fd = fd;
     p->state.poll_type = poll_type;
+    p->bun_epoch = Bun__runEpoch();
+    p->held = 0;
 }
 
 __attribute__((always_inline)) int us_poll_events(struct us_poll_t *p) {
@@ -245,10 +251,13 @@ struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t 
     return loop;
 }
 
-/* Shared dispatch loop for both us_loop_run and us_loop_run_bun_tick */
-static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
+/* Shared dispatch loop for both us_loop_run and us_loop_run_bun_tick.
+ * Dispatches loop->ready_polls[from..num_ready_polls); loop->current_ready_poll
+ * is the cursor, so a nested tick that continues an outer batch (see
+ * us_loop_run_bun_tick) leaves the outer iteration with nothing to repeat. */
+static void us_internal_dispatch_ready_polls_from(struct us_loop_t *loop, int from) {
 #ifdef LIBUS_USE_EPOLL
-    for (loop->current_ready_poll = 0; loop->current_ready_poll < loop->num_ready_polls; loop->current_ready_poll++) {
+    for (loop->current_ready_poll = from; loop->current_ready_poll < loop->num_ready_polls; loop->current_ready_poll++) {
         struct us_poll_t *poll = GET_READY_POLL(loop, loop->current_ready_poll);
         if (LIKELY(poll)) {
             if (CLEAR_POINTER_TAG(poll) != poll) {
@@ -265,6 +274,9 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
             const int eof = (events & EPOLLHUP) ? LIBUS_POLL_HANGUP : 0;
             events &= us_poll_events(poll);
             if (events || error || eof) {
+                if (UNLIKELY(loop->data.run_start_epoch) && us_internal_hold_foreign_ready_poll(loop, poll)) {
+                    continue;
+                }
                 us_internal_dispatch_ready_poll(poll, error, eof, events);
             }
         }
@@ -286,10 +298,11 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
     };
 
     _Static_assert(sizeof(struct kevent_flags) == 1, "kevent_flags must be 1 byte");
-    struct kevent_flags coalesced[LIBUS_MAX_READY_POLLS]; /* no zeroing needed — every index is written in the first pass */
+    struct kevent_flags *coalesced = (struct kevent_flags *) loop->ready_flags; /* no zeroing needed — every index is written in the first pass */
 
-    /* First pass: decode kevents and coalesce same-poll entries */
-    for (int i = 0; i < loop->num_ready_polls; i++) {
+    /* First pass: decode kevents and coalesce same-poll entries (already done
+     * for a batch being continued). */
+    for (int i = from ? loop->num_ready_polls : 0; i < loop->num_ready_polls; i++) {
         struct us_poll_t *poll = GET_READY_POLL(loop, i);
         if (!poll || CLEAR_POINTER_TAG(poll) != poll) {
             coalesced[i] = (struct kevent_flags){ .skip = 1 };
@@ -340,7 +353,7 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
     }
 
     /* Second pass: dispatch everything in order — tagged pointers and coalesced events */
-    for (loop->current_ready_poll = 0; loop->current_ready_poll < loop->num_ready_polls; loop->current_ready_poll++) {
+    for (loop->current_ready_poll = from; loop->current_ready_poll < loop->num_ready_polls; loop->current_ready_poll++) {
         struct us_poll_t *poll = GET_READY_POLL(loop, loop->current_ready_poll);
         if (!poll) continue;
 
@@ -387,10 +400,17 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
 
         events &= us_poll_events(poll);
         if (events || error || eof) {
+            if (UNLIKELY(loop->data.run_start_epoch) && us_internal_hold_foreign_ready_poll(loop, poll)) {
+                continue;
+            }
             us_internal_dispatch_ready_poll(poll, error, eof, events);
         }
     }
 #endif
+}
+
+static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
+    us_internal_dispatch_ready_polls_from(loop, 0);
 }
 
 /* If the kernel filled our entire buffer, more events are likely already queued.
@@ -469,6 +489,17 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 
     loop->data.tick_depth++;
 
+    /* Re-entered from inside a poll callback (a domain run started by a socket
+     * handler, waitForPromise): the outer tick was partway through its ready
+     * batch and polling again overwrites it. Finish dispatching that batch first
+     * — through the same gates, so what is foreign to a run is parked properly
+     * rather than dropped (a dropped one-shot event never reports again). The
+     * shared cursor ends at the end of the batch, so the outer tick does not
+     * repeat any of it. */
+    if (loop->data.tick_depth > 1 && loop->current_ready_poll + 1 < loop->num_ready_polls) {
+        us_internal_dispatch_ready_polls_from(loop, loop->current_ready_poll + 1);
+    }
+
     /* Emit pre callback */
     us_internal_loop_pre(loop);
 
@@ -477,7 +508,10 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
      * callers of us_loop_run_bun_tick (HTTP thread) pass NULL, so fold it
      * here so QUIC retransmit/idle timers fire without other I/O waking us. */
     struct timespec quic_ts;
-    if (loop->data.quic_head && loop->data.quic_next_tick_us >= 0) {
+    /* (A native-only domain run does not process QUIC engines, so their stale
+     * deadline is not a reason to wake.) */
+    if (loop->data.quic_head && loop->data.quic_next_tick_us >= 0
+        && (LIKELY(!loop->data.run_start_epoch) || loop->data.run_executes_scripts)) {
         long long us = loop->data.quic_next_tick_us;
         if (!timeout ||
             (long long) timeout->tv_sec * 1000000 + timeout->tv_nsec / 1000 > us) {
@@ -652,6 +686,12 @@ struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop, un
     loop->num_polls++;
     
     int events = us_poll_events(p);
+    if (UNLIKELY(p->held)) {
+        /* Out of the kernel set: nothing to re-point there; the run now holds new_p. */
+        us_internal_held_poll_moved(loop, p, new_p);
+        p->held = 0;
+        return new_p;
+    }
 #ifdef LIBUS_USE_EPOLL
     /* Hack: forcefully update poll by stripping away already set events */
     new_p->state.poll_type = us_internal_poll_type(new_p);
@@ -706,12 +746,155 @@ void us_poll_start(struct us_poll_t *p, struct us_loop_t *loop, int events) {
     us_poll_start_rc(p, loop, events);
 }
 
+/* Take `p` out of the kernel set without touching what it polls for (its
+ * POLLING_IN/OUT bits stay as they are). Idempotent. Pending entries for `p` in
+ * the current ready batch are dropped. Undone by us_poll_start_rc with
+ * us_poll_events(p); readiness still pending is level-triggered and reports again. */
+static void us_internal_poll_remove_from_kernel(struct us_poll_t *p, struct us_loop_t *loop) {
+#ifdef LIBUS_USE_EPOLL
+    struct epoll_event event;
+    int rc;
+    do {
+        rc = epoll_ctl(loop->fd, EPOLL_CTL_DEL, p->state.fd, &event);
+    } while (IS_EINTR(rc));
+#else
+    /* One change per call: FreeBSD stops applying a changelist at the first
+     * error, and either filter may legitimately be absent (ENOENT). */
+    struct kevent64_s change;
+    int rc;
+    EV_SET64(&change, p->state.fd, EVFILT_READ, EV_DELETE, 0, 0, (uint64_t)(void*)p, 0, 0);
+    do {
+        rc = kevent64(loop->fd, &change, 1, &change, 1, KEVENT_FLAG_ERROR_EVENTS, NULL);
+    } while (IS_EINTR(rc));
+    EV_SET64(&change, p->state.fd, EVFILT_WRITE, EV_DELETE, 0, 0, (uint64_t)(void*)p, 0, 0);
+    do {
+        rc = kevent64(loop->fd, &change, 1, &change, 1, KEVENT_FLAG_ERROR_EVENTS, NULL);
+    } while (IS_EINTR(rc));
+#endif
+    us_internal_loop_update_pending_ready_polls(loop, p, 0, us_poll_events(p), 0);
+}
+
+/* ---- Domain runs: held polls (see us_poll_t.held) ---- */
+
+static void us_internal_held_polls_push(struct us_loop_t *loop, struct us_poll_t *p) {
+    struct us_internal_loop_data_t *d = &loop->data;
+    if (d->held_polls_len == d->held_polls_cap) {
+        d->held_polls_cap = d->held_polls_cap ? d->held_polls_cap * 2 : 16;
+        d->held_polls = us_realloc(d->held_polls, d->held_polls_cap * sizeof(*d->held_polls));
+        if (!d->held_polls) {
+            Bun__outOfMemory();
+        }
+    }
+    d->held_polls[d->held_polls_len++] = p;
+}
+
+/* `p` is no longer the run's to put back (stopped, freed, or adopted by the run). */
+void us_internal_held_poll_forget(struct us_loop_t *loop, struct us_poll_t *p) {
+    struct us_internal_loop_data_t *d = &loop->data;
+    p->held = 0;
+    for (unsigned int i = d->held_polls_len; i-- > 0;) {
+        if (d->held_polls[i] == p) {
+            memmove(&d->held_polls[i], &d->held_polls[i + 1], (d->held_polls_len - i - 1) * sizeof(*d->held_polls));
+            d->held_polls_len--;
+            return;
+        }
+    }
+}
+
+void us_internal_held_poll_moved(struct us_loop_t *loop, struct us_poll_t *from, struct us_poll_t *to) {
+    struct us_internal_loop_data_t *d = &loop->data;
+    for (unsigned int i = d->held_polls_len; i-- > 0;) {
+        if (d->held_polls[i] == from) {
+            d->held_polls[i] = to;
+            return;
+        }
+    }
+}
+
+int us_internal_hold_foreign_ready_poll(struct us_loop_t *loop, struct us_poll_t *p) {
+    if (LIKELY(!us_internal_epoch_is_foreign(loop, p->bun_epoch))) {
+        return 0;
+    }
+    switch (us_internal_poll_type(p)) {
+    case POLL_TYPE_CALLBACK:
+        /* us_timer / us_internal_async. On epoll/kqueue these are the loop's own
+         * wakeup async and sweep timer (whose sweep gates itself on the run in
+         * us_internal_sweep_if_due) and the embedder's no-op keep-alive timer:
+         * infrastructure that serves whoever turns the loop. (The QUIC
+         * fallthrough timer exists only on libuv, which is not gated.) A timer
+         * added here whose callback reaches outer code must gate itself the same way. */
+        return 0;
+    case POLL_TYPE_SEMI_SOCKET:
+        if (!(us_poll_events(p) & LIBUS_SOCKET_WRITABLE) && loop->data.run_executes_scripts) {
+            /* A listen socket, and this run keeps accepting: a new connection is an
+             * external event, and a run that fetches from a server created outside
+             * it must not deadlock. */
+            return 0;
+        }
+        break;
+    default:
+        /* Sockets, UDP sockets: their handlers are outer code. */
+        break;
+    }
+    if (UNLIKELY(p->held)) {
+        /* Surfaced although held: something re-registered the fd meanwhile (an
+         * owner-side EV_ADD/CTL_ADD path). Take it out again rather than spin. */
+        us_internal_poll_remove_from_kernel(p, loop);
+        return 1;
+    }
+    p->held = 1;
+    us_internal_held_polls_push(loop, p);
+    us_internal_poll_remove_from_kernel(p, loop);
+    return 1;
+}
+
+/* Undo us_internal_poll_remove_from_kernel for a poll that is no longer held. */
+void us_internal_poll_put_back(struct us_poll_t *p, struct us_loop_t *loop) {
+    int events = us_poll_events(p);
+#ifdef LIBUS_USE_KQUEUE
+    if (kqueue_is_socket_poll(p) && !(events & LIBUS_SOCKET_READABLE)) {
+        /* A socket poll that is not reading still keeps an EV_CLEAR read knote (see
+         * kqueue_change); it was deleted with the rest and us_poll_start_rc would not
+         * add it, so register as a switch out of reading. */
+        kqueue_change(loop->fd, p->state.fd, LIBUS_SOCKET_READABLE, events, p, 1);
+        return;
+    }
+#endif
+    us_poll_start_rc(p, loop, events);
+}
+
+void us_internal_release_held_polls(struct us_loop_t *loop, unsigned int outer_start_epoch) {
+    struct us_internal_loop_data_t *d = &loop->data;
+    unsigned int kept = 0;
+    for (unsigned int i = 0; i < d->held_polls_len; i++) {
+        struct us_poll_t *p = d->held_polls[i];
+        if (us_internal_epoch_is_foreign_to(p->bun_epoch, outer_start_epoch)) {
+            /* Still foreign to the enclosing run: stays held. */
+            d->held_polls[kept++] = p;
+            continue;
+        }
+        p->held = 0;
+        us_internal_poll_put_back(p, loop);
+    }
+    d->held_polls_len = kept;
+    if (!kept && d->held_polls_cap > 64) {
+        us_free(d->held_polls);
+        d->held_polls = NULL;
+        d->held_polls_cap = 0;
+    }
+}
+
 int us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
     int old_events = us_poll_events(p);
     int rc = 0;
     if (old_events != events) {
 
         p->state.poll_type = us_internal_poll_type(p) | ((events & LIBUS_SOCKET_READABLE) ? POLL_TYPE_POLLING_IN : 0) | ((events & LIBUS_SOCKET_WRITABLE) ? POLL_TYPE_POLLING_OUT : 0);
+        if (UNLIKELY(p->held)) {
+            /* Out of the kernel set while a run holds it: the new interest takes
+             * effect when it is put back. */
+            return 0;
+        }
 
 #ifdef LIBUS_USE_EPOLL
         struct epoll_event event;
@@ -744,6 +927,10 @@ int us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
 void us_poll_stop(struct us_poll_t *p, struct us_loop_t *loop) {
     int old_events = us_poll_events(p);
     int new_events = 0;
+    if (UNLIKELY(p->held)) {
+        us_internal_held_poll_forget(loop, p);
+        return; /* already out of the kernel set and the ready batch */
+    }
 #ifdef LIBUS_USE_EPOLL
     struct epoll_event event;
     int rc;

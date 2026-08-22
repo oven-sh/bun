@@ -306,7 +306,7 @@ pub(crate) fn spawn_sync(
         secondary_args_value,
         &mut bun_test_deadline,
     );
-    // A bun:test deadline that passed while the isolated loop was blocking is reported only now: the loop is torn down and the child reaped, so the runner's callback re-enters nothing that is mid-flight. With an exception pending (spawn failure, termination) the file timer is left armed and reports it from the main loop instead.
+    // A bun:test deadline that passed while the sync wait was blocking is reported only now: the wait is over (domain run exited / isolated loop torn down) and the child reaped, so the runner's callback re-enters nothing that is mid-flight. With an exception pending (spawn failure, termination) the file timer is left armed and reports it from the main loop instead.
     if let Some(deadline) = bun_test_deadline
         && result.is_ok()
         && !global_this.has_exception()
@@ -325,6 +325,33 @@ pub(crate) fn spawn_sync(
         }
     }
     result
+}
+
+/// How spawnSync blocks. On POSIX it turns the real event loop inside a
+/// native-only domain run (`bun_jsc::domain_run`): the child's pipes and exit are ordinary
+/// polls on Bun's one loop while everything that predates the call is held until
+/// it returns. libuv-backed polls carry no birth epoch, so Windows waits on the
+/// isolated `SpawnSyncEventLoop`.
+enum SyncWait<'a> {
+    Run(bun_jsc::domain_run::DomainRun),
+    Isolated(&'a mut bun_event_loop::SpawnSyncEventLoop::SpawnSyncEventLoop),
+}
+
+impl SyncWait<'_> {
+    const USES_RUN: bool = cfg!(unix);
+
+    /// One turn, sleeping no later than `deadline`; `done` lets a run skip a
+    /// poll it no longer needs.
+    fn turn(&mut self, deadline: Option<&Timespec>, done: impl FnMut() -> bool) -> TickState {
+        match self {
+            // SAFETY: the run is the innermost one, entered on this thread.
+            SyncWait::Run(run) => match unsafe { run.turn(deadline, done) } {
+                true => TickState::Timeout,
+                false => TickState::Completed,
+            },
+            SyncWait::Isolated(sync_loop) => sync_loop.tick_with_timeout(deadline),
+        }
+    }
 }
 
 fn spawn_maybe_sync(
@@ -1079,18 +1106,25 @@ fn spawn_maybe_sync(
             .get()
             .unwrap_or(false);
 
-    // For spawnSync, use an isolated event loop to prevent JavaScript timers from firing
-    // and to avoid interfering with the main event loop.
-    //
     // Note: borrowck — `rare_data()` borrows `jsc_vm` mutably and the
     // returned `&mut SpawnSyncEventLoop` keeps that borrow alive, so we cannot
     // also pass `jsc_vm` into `spawn_sync_event_loop`/`prepare`/`cleanup` while
     // holding it. Route through a raw `*mut VirtualMachineRef` for the duration.
     let jsc_vm_ptr: *mut jsc::VirtualMachineRef = jsc_vm;
-    // For is_sync, use the isolated loop's `event_loop` (created by
-    // `SpawnSyncEventLoop::init`) so stdio readers/writers register on it
-    // instead of the main loop.
-    let event_loop: *mut jsc::event_loop::EventLoop = if is_sync {
+    // Enter the domain run before spawning so everything created from here on
+    // (the child's pipes, its process poll, its exit task) is born inside it.
+    // SAFETY: `bun_vm_ptr()` is the live per-thread VM; the run is dropped
+    // below (or on any early return), on this thread.
+    let mut domain_run = (is_sync && SyncWait::USES_RUN).then(|| unsafe {
+        bun_jsc::domain_run::DomainRun::enter(
+            global_this.bun_vm_ptr(),
+            bun_jsc::domain_run::Policy::Native,
+        )
+    });
+    // For is_sync without a domain run, use the isolated loop's `event_loop`
+    // (created by `SpawnSyncEventLoop::init`) so stdio readers/writers register
+    // on it instead of the main loop and JavaScript timers cannot fire.
+    let event_loop: *mut jsc::event_loop::EventLoop = if is_sync && !SyncWait::USES_RUN {
         // SAFETY: see note above; `spawn_sync_event_loop` re-borrows the
         // same VM via the raw pointer for its `vm` arg.
         unsafe {
@@ -1116,7 +1150,7 @@ fn spawn_maybe_sync(
     // local so the closure's captured place is disjoint.
     let jsc_vm_ptr_cleanup = jsc_vm_ptr;
     scopeguard::defer! {
-        if is_sync {
+        if is_sync && !SyncWait::USES_RUN {
             // SAFETY: defer runs while `jsc_vm` (the thread VM) is still live.
             unsafe {
                 let main_loop = (*jsc_vm_ptr_cleanup).event_loop();
@@ -1893,8 +1927,9 @@ fn spawn_maybe_sync(
 
     let mut did_timeout = false;
 
-    // Use the isolated event loop to tick instead of the main event loop
-    // This ensures JavaScript timers don't fire and stdin/stdout from the main process aren't affected
+    // Wait inside a domain run of the real loop (or, without one, by ticking the
+    // isolated loop): JavaScript timers don't fire and stdin/stdout from the main
+    // process aren't affected.
     {
         let mut absolute_timespec = Timespec::EPOCH;
         let mut now = Timespec::now(TimespecMockMode::ForceRealTime);
@@ -1937,10 +1972,18 @@ fn spawn_maybe_sync(
         let has_user_timespec = !user_timespec.eql(&Timespec::EPOCH);
         let mut bun_test_fired = false;
 
-        // SAFETY: jsc_vm_ptr is the live thread VM; re-borrowed for the nested arg.
-        let sync_loop = unsafe { &mut *jsc_vm_ptr }
-            .rare_data()
-            .spawn_sync_event_loop(unsafe { &mut *jsc_vm_ptr });
+        let mut wait = match domain_run.take() {
+            Some(run) => SyncWait::Run(run),
+            None => {
+                // SAFETY: jsc_vm_ptr is the live thread VM; re-borrowed for the nested arg.
+                let vm = unsafe { &mut *jsc_vm_ptr };
+                // SAFETY: as above.
+                SyncWait::Isolated(
+                    vm.rare_data()
+                        .spawn_sync_event_loop(unsafe { &mut *jsc_vm_ptr }),
+                )
+            }
+        };
 
         while subprocess.compute_has_pending_activity() {
             // Re-evaluate this at each iteration of the loop since it may change between iterations.
@@ -1978,13 +2021,12 @@ fn spawn_maybe_sync(
                 Readable::pipe_reader_mut(pipe).watch();
             }
 
-            // Tick the isolated event loop without passing timeout to avoid blocking
-            // The timeout check is done at the top of the loop
-            match sync_loop.tick_with_timeout(if has_timespec && !did_timeout {
+            let deadline = if has_timespec && !did_timeout {
                 Some(&absolute_timespec)
             } else {
                 None
-            }) {
+            };
+            match wait.turn(deadline, || !subprocess.compute_has_pending_activity()) {
                 TickState::Completed => {}
                 TickState::Timeout => {
                     now = Timespec::now(TimespecMockMode::ForceRealTime);
@@ -2000,7 +2042,7 @@ fn spawn_maybe_sync(
                     // Support bun:test timeouts AND spawnSync() timeout.
                     // There is a scenario where inside of spawnSync() a totally
                     // different test fails, and that SHOULD be okay.
-                    // Kill the dangling processes now so this loop can drain, but leave the runner's timeout callback to `spawn_sync`: it re-enters the test runner and must not run while this isolated loop is still active.
+                    // Kill the dangling processes now so this wait can drain, but leave the runner's timeout callback to `spawn_sync`: it re-enters the test runner and must not run while this wait is still active.
                     if has_bun_test_timeout
                         && bun_test_timeout.order(&now) == core::cmp::Ordering::Less
                     {
@@ -2029,7 +2071,10 @@ fn spawn_maybe_sync(
                 subprocess.close_readable_pipes();
             }
         }
+        // The wait is over: hand parked timers, immediates, tasks and I/O back to the loop.
+        drop(wait);
     }
+    drop(domain_run); // only still held if the sync wait was never reached
     if global_this.has_exception() {
         // e.g. a termination exception.
         // SAFETY: same as the `finalize` below; `subprocess` is not used after this line.

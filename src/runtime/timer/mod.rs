@@ -628,6 +628,11 @@ pub(crate) struct All {
     pub(crate) uv_idle: bun_sys::windows::libuv::uv_idle_t,
     pub(crate) event_loop_delay: EventLoopDelayMonitor,
     pub(crate) fake_timers: FakeTimers,
+    /// Timers that came due while a domain run they are foreign to was turning
+    /// the loop (`bun_jsc::domain_run`): out of `timers` so the poll timeout
+    /// ignores them, still `ACTIVE`, reinserted with their original deadlines
+    /// when the run exits (`unpark_after_run`).
+    parked: TimerHeap,
     pub(crate) maps: Maps,
     pub(crate) date_header_timer: DateHeaderTimer,
     pub(crate) wtf_timers: Guarded<TimerHeap>,
@@ -650,6 +655,7 @@ impl All {
             uv_idle: bun_core::ffi::zeroed(),
             event_loop_delay: EventLoopDelayMonitor::default(),
             fake_timers: FakeTimers::default(),
+            parked: TimerHeap::default(),
             maps: Maps::default(),
             date_header_timer: DateHeaderTimer::default(),
             wtf_timers: Guarded::init(TimerHeap::default()),
@@ -670,6 +676,9 @@ impl All {
         // SAFETY: caller guarantees `timer` is a valid live EventLoopTimer.
         let tag = unsafe { (*timer).tag };
         debug_assert!(tag != EventLoopTimerTag::WTFTimer, "use wtf_arm");
+        // Whoever arms (or re-arms) a timer owns its firing.
+        // SAFETY: as above.
+        unsafe { (*timer).birth = bun_io::run_epoch::birth() };
 
         // Bump the global epoch into the per-timer flags so equal-deadline JS
         // timers (setTimeout/setInterval/AbortSignal.timeout) fire in insertion
@@ -698,6 +707,38 @@ impl All {
             #[cfg(windows)]
             self.ensure_uv_timer();
         }
+    }
+
+    /// A domain run has ended and `outer_start` is now the innermost run's start
+    /// epoch (0 if none): put back every parked timer that is not still foreign
+    /// to that outer run, with its original deadline and epoch, so its order
+    /// relative to other timers is unchanged.
+    pub(crate) fn unpark_after_run(&mut self, outer_start: u32) {
+        self.assert_js_thread();
+        let mut still_parked: Vec<*mut EventLoopTimer> = Vec::new();
+        let mut any = false;
+        while let Some(timer) = self.parked.delete_min() {
+            // SAFETY: parked nodes are live (owners cancel through `remove`).
+            unsafe {
+                if bun_io::run_epoch::is_foreign_to((*timer).birth, outer_start) {
+                    still_parked.push(timer);
+                } else {
+                    self.timers.insert(timer);
+                    (*timer).in_heap = InHeap::Regular;
+                    any = true;
+                }
+            }
+        }
+        for timer in still_parked {
+            // SAFETY: just removed from `parked`; links are null.
+            unsafe { self.parked.insert(timer) };
+        }
+        #[cfg(windows)]
+        if any {
+            self.ensure_uv_timer();
+        }
+        #[cfg(not(windows))]
+        let _ = any;
     }
 
     /// The owning thread's JSC VM is gone (nothing schedules a WTFTimer any
@@ -832,6 +873,8 @@ impl All {
             InHeap::Regular => unsafe { self.timers.remove(timer) },
             // SAFETY: timer is in `self.fake_timers.timers` per `in_heap`
             InHeap::Fake => unsafe { self.fake_timers.timers.remove(timer) },
+            // SAFETY: timer is in `self.parked` per `in_heap`
+            InHeap::Parked => unsafe { self.parked.remove(timer) },
         }
         // SAFETY: `timer` is still a valid live EventLoopTimer.
         unsafe {
@@ -915,6 +958,12 @@ impl All {
         maybe_now: &mut Option<Timespec>,
         vm: *mut (),
     ) -> Option<Timespec> {
+        // JSC's run-loop timers (deferred work that settles promises and runs
+        // FinalizationRegistry callbacks, GC activity callbacks) are the
+        // program's: they neither fire inside a nested run nor keep its poll awake.
+        if bun_jsc::domain_run::in_nested_run() {
+            return None;
+        }
         loop {
             let min = {
                 // SAFETY: `this` is live; the guard drops before `fire`.
@@ -960,7 +1009,7 @@ impl All {
         }
     }
 
-    /// Called from `EventLoop::auto_tick` to compute the epoll/kqueue timeout.
+    /// Called from `jsc_hooks::poll` to compute the epoll/kqueue timeout.
     /// Returns `true` if `spec` was written. `now_out` receives the monotonic reading this
     /// took, if any, for the caller to share with the tick (see `NOW_NS_UNKNOWN`).
     ///
@@ -997,8 +1046,15 @@ impl All {
         // SAFETY: `this` is the live per-thread `All`; `vm` per fn contract.
         let wtf_next = unsafe { Self::drain_due_wtf_timers(this, maybe_now, vm) };
 
-        // SAFETY: `this` is live, and only this thread touches the regular heap.
-        let reg_next = (unsafe { &*this }).timers.peek().map(|min| {
+        // A native-only domain run has no timers of its own (spawnSync enforces
+        // its timeout by deadline), so the heap neither wakes it nor is drained.
+        let reg_next = if bun_io::run_epoch::active_run_is_native_only() {
+            None
+        } else {
+            // SAFETY: `this` is live, and only this thread touches the regular heap.
+            (unsafe { &*this }).timers.peek()
+        }
+        .map(|min| {
             // SAFETY: `peek` returns a live heap node.
             let next = unsafe { &(*min).next };
             Timespec {
@@ -1048,26 +1104,56 @@ impl All {
 
     /// Pop the next due timer. `now` is filled lazily on first call so we
     /// don't pay for `clock_gettime` when the heap is empty.
+    ///
+    /// During a domain run, a due timer that is foreign to the run is parked
+    /// instead of being returned, and the scan continues with the next node.
     fn next(&mut self, has_set_now: &mut bool, now: &mut Timespec) -> Option<*mut EventLoopTimer> {
-        let timer = self.timers.peek()?;
-        if !*has_set_now {
-            // Real clock: this heap is the opt-out-of-fake-timers set.
-            *now = Timespec::now(TimespecMockMode::ForceRealTime);
-            *has_set_now = true;
+        // 0 unless a nested run is active: the root parks nothing.
+        let run_start = if bun_jsc::domain_run::in_nested_run() {
+            bun_io::run_epoch::active_run_start()
+        } else {
+            0
+        };
+        loop {
+            let timer = self.timers.peek()?;
+            if !*has_set_now {
+                // Real clock: this heap is the opt-out-of-fake-timers set.
+                *now = Timespec::now(TimespecMockMode::ForceRealTime);
+                *has_set_now = true;
+            }
+            // SAFETY: peek returns a live heap node
+            let next = unsafe { &(*timer).next };
+            if (Timespec {
+                sec: next.sec,
+                nsec: next.nsec,
+            })
+            .greater(now)
+            {
+                return None;
+            }
+            let deleted = self.timers.delete_min().expect("peek succeeded");
+            debug_assert!(core::ptr::eq(deleted, timer));
+            // SAFETY: `timer` was just popped and is live.
+            let foreign = run_start != 0
+                && unsafe {
+                    (*timer).tag.is_run_gated()
+                        && bun_io::run_epoch::is_foreign_to((*timer).birth, run_start)
+                };
+            if foreign {
+                // SAFETY: just popped; links are null.
+                unsafe {
+                    self.parked.insert(timer);
+                    (*timer).in_heap = InHeap::Parked;
+                }
+                bun_core::scoped_log!(
+                    bun_jsc::domain_run::DomainRun,
+                    "parked foreign timer {:p}",
+                    timer
+                );
+                continue;
+            }
+            return Some(timer);
         }
-        // SAFETY: peek returns a live heap node
-        let next = unsafe { &(*timer).next };
-        if (Timespec {
-            sec: next.sec,
-            nsec: next.nsec,
-        })
-        .greater(now)
-        {
-            return None;
-        }
-        let deleted = self.timers.delete_min().expect("peek succeeded");
-        debug_assert!(core::ptr::eq(deleted, timer));
-        Some(timer)
     }
 
     /// # Safety
@@ -1077,6 +1163,10 @@ impl All {
     // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn drain_timers(&mut self, vm: *mut () /* erased *mut VirtualMachine */) {
+        if bun_io::run_epoch::active_run_is_native_only() {
+            // See `get_timeout`: nothing in either heap is the run's.
+            return;
+        }
         // Note (§Forbidden aliased-&mut): fired handlers re-enter `vm.timer`
         // (e.g. setInterval reschedule → `vm.timer.update(...)`, `cancel()` →
         // `vm.timer.remove(...)`). In Rust those re-entrant calls resolve to
@@ -1218,7 +1308,13 @@ impl All {
         let mut nodes: Vec<*mut EventLoopTimer> = Vec::new();
         let mut stack: Vec<*mut EventLoopTimer> = Vec::new();
         // SAFETY: fn contract.
-        let roots = unsafe { [(*this).timers.0.root, (*this).fake_timers.timers.0.root] };
+        let roots = unsafe {
+            [
+                (*this).timers.0.root,
+                (*this).fake_timers.timers.0.root,
+                (*this).parked.0.root,
+            ]
+        };
         for root in roots {
             if !root.is_null() {
                 stack.push(root);
@@ -1265,7 +1361,13 @@ impl All {
         let mut stack: Vec<*mut EventLoopTimer> = Vec::new();
 
         // SAFETY: `this` is the live per-thread `All` (JS thread only).
-        let roots = unsafe { [(*this).timers.0.root, (*this).fake_timers.timers.0.root] };
+        let roots = unsafe {
+            [
+                (*this).timers.0.root,
+                (*this).fake_timers.timers.0.root,
+                (*this).parked.0.root,
+            ]
+        };
         for root in roots {
             if !root.is_null() {
                 stack.push(root);

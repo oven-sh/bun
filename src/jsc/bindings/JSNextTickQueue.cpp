@@ -7,6 +7,7 @@
 #include <JavaScriptCore/GetterSetter.h>
 
 #include "JSNextTickQueue.h"
+#include "EventLoopDomain.h"
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/Structure.h>
 #include <JavaScriptCore/JSInternalFieldObjectImplInlines.h>
@@ -96,6 +97,9 @@ void JSNextTickQueue::drain(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
         if (!drainFn)
             return; // discarded at teardown
         MarkedArgumentBuffer drainArgs;
+        // processTicksAndRejections(activeRun): inside a domain run only ticks queued
+        // since it started run; older ones are set aside until it exits.
+        drainArgs.append(jsNumber(Bun::activeRun(vm)));
         JSC::call(globalObject, drainFn, drainArgs, "Failed to drain next tick queue"_s);
         RETURN_IF_EXCEPTION(throwScope, );
     }

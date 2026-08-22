@@ -440,6 +440,13 @@ pub(crate) fn run_task(
             #[cfg(windows)]
             unreachable!("posix-only");
         }
+        task_tag::RunEpochReplay => {
+            // SAFETY: JS thread, from the task queue (this dispatch).
+            #[cfg(not(windows))]
+            unsafe {
+                bun_io::held_polls::replay_ready()
+            };
+        }
         task_tag::PosixSignalTask => {
             // `ptr` here is *not* a pointer but a packed signal number.
             let _ = core::marker::PhantomData::<PosixSignalTask>;
@@ -589,7 +596,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 61,
+    task_tag::COUNT == 62,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -608,6 +615,9 @@ pub(crate) fn tick_queue_with_count(
     let global_vm = global.vm();
 
     while let Some(task) = el.tasks.read_item() {
+        if bun_jsc::domain_run::park_task_if_foreign(task) {
+            continue;
+        }
         // Incremented before dispatch so the count includes every task,
         // including the one that takes the HotReloadTask early return.
         *counter += 1;
@@ -841,14 +851,16 @@ unsafe fn __bun_run_immediate_task(
     task: *mut (),
     vm: *mut bun_jsc::virtual_machine::VirtualMachine,
 ) -> bool {
+    let immediate = task.cast::<crate::timer::ImmediateObject>();
+    // SAFETY: per fn contract — `task` is a live queued `ImmediateObject`.
+    if bun_jsc::domain_run::park_immediate_if_foreign(task, unsafe {
+        (*immediate).event_loop_timer.birth
+    }) {
+        return false;
+    }
     // SAFETY: per fn contract — the only producer (`TimerObjectInternals::init`)
     // stores a `*mut crate::timer::ImmediateObject`, so the cast is the identity.
-    unsafe {
-        crate::timer::ImmediateObject::run_immediate_task(
-            task.cast::<crate::timer::ImmediateObject>(),
-            vm,
-        )
-    }
+    unsafe { crate::timer::ImmediateObject::run_immediate_task(immediate, vm) }
 }
 
 /// `__bun_cancel_pending_immediate` body — VM-teardown release of the event
@@ -1258,6 +1270,8 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::NativeZstd => release!(NativeZstd),
         task_tag::PollPendingModulesTask => release!(bun_jsc::async_module::Queue),
         task_tag::PosixSignalTask => release!(PosixSignalTask),
+        // No payload; the held events go with the loop.
+        task_tag::RunEpochReplay => {}
         task_tag::MemoryPressureTask => release!(crate::node::memory_pressure::MemoryPressureTask),
         task_tag::ProcessWaiterThreadTask => {
             #[cfg(not(windows))]

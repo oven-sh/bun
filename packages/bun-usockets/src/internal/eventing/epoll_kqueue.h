@@ -103,6 +103,10 @@ struct us_loop_t {
     alignas(LIBUS_EXT_ALIGNMENT) struct epoll_event ready_polls[1024];
 #else
     alignas(LIBUS_EXT_ALIGNMENT) struct kevent64_s ready_polls[1024];
+    /* Per-entry decoded/coalesced flags for the current batch (kqueue reports
+     * each filter separately). Kept on the loop rather than the dispatching
+     * frame so a nested tick can finish dispatching an outer batch. */
+    unsigned char ready_flags[1024];
 #endif
 };
 
@@ -111,7 +115,18 @@ struct us_poll_t {
         signed int fd : 27; // we could have this unsigned if we wanted to, -1 should never be used
         unsigned int poll_type : 5;
     } state;
+    /* Bun run epoch (Bun__runEpoch) at creation (or adoption by a permissive
+     * run). While a domain run is active on this loop's thread, readiness of a
+     * poll older than the run's start belongs to the code the run interrupted:
+     * the poll is *held* — out of the kernel set and on loop->data.held_polls —
+     * until the run ends (us_internal_hold_foreign_ready_poll / _release_held_polls).
+     * `held` is the single source of truth for "not in the kernel set because a
+     * run holds it": us_poll_change/stop/resize/free consult it. Lives in the
+     * alignment padding, so it costs nothing. */
+    unsigned int bun_epoch : 31;
+    unsigned int held : 1;
 };
+_Static_assert(sizeof(struct us_poll_t) == LIBUS_EXT_ALIGNMENT, "bun_epoch must fit us_poll_t's alignment padding");
 
 #undef FD_BITS
 

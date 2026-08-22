@@ -37,8 +37,11 @@ pub mod windows_event_loop;
 // overrides `FilePoll`/`KeepAlive`/`Closer`/`Loop`/`Waker`. The platform-
 // specific bits inside (kqueue/epoll wakers, fd polling) are individually
 // `#[cfg(unix)]`-gated so the module still compiles on Windows.
+#[cfg(not(windows))]
+pub mod held_polls;
 mod keep_alive;
 pub mod posix_event_loop;
+pub mod run_epoch;
 pub use keep_alive::KeepAlive;
 
 // ParentDeathWatchdog: POSIX uses `PR_SET_PDEATHSIG` / `EVFILT_PROC` plus an

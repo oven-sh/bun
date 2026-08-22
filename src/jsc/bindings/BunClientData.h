@@ -77,6 +77,7 @@ class GlobalObject;
 
 namespace Bun {
 class StrongRootBlock;
+class EventLoopDomains;
 
 // JSC measures the live size of the heap at the end of each collection, but only
 // publishes it per scope: an eden collection updates
@@ -252,6 +253,9 @@ public:
     ALWAYS_INLINE bool isStoppingOrStopped(const JSC::VM& vm) const { return !scriptAllowed() || vm.executionForbidden(); }
     Bun::JSCTaskScheduler deferredWorkTimer;
 
+    // Domain runs (see EventLoopDomain.h).
+    Bun::EventLoopDomains& eventLoopDomains() { return *m_eventLoopDomains; }
+
     // Linked list of StrongRootBlock cells backing bun_jsc::Strong handles
     // (see StrongRootBlock.h). Raw pointers into the GC heap: they are rooted
     // by a SimpleMarkingConstraint registered in JSVMClientData::create(), so
@@ -286,6 +290,7 @@ private:
 
     BunBuiltinNames m_builtinNames;
     std::unique_ptr<JSBuiltinFunctions> m_builtinFunctions;
+    std::unique_ptr<Bun::EventLoopDomains> m_eventLoopDomains;
 
     // Owns the per-VM `JSHeapData`. Declared *before* the client `IsoSubspace`
     // members below so it is destroyed *after* them (members destruct in

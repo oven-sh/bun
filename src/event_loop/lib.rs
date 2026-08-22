@@ -26,6 +26,14 @@ pub mod SpawnSyncEventLoop;
 #[path = "AnyEventLoop.rs"]
 pub mod any_event_loop;
 
+// ─── domain runs ──────────────────────────────────────────────────
+// Attribution lives in the lowest tier (`bun_io::run_epoch`); re-exported so
+// task producers here and above stamp births without naming `bun_io`.
+pub use bun_io::run_epoch::{
+    PRIMORDIAL as PRIMORDIAL_EPOCH, active_run_is_native_only, active_run_start,
+    birth as birth_epoch,
+};
+
 // ─── public surface ─────────────────────────────────────────────────────────
 
 pub type JsResult<T> = core::result::Result<T, bun_core::JsError>;
@@ -51,8 +59,8 @@ bun_dispatch::link_interface! {
         fn put_file_poll(poll: *mut bun_io::FilePoll, was_ever_registered: bool);
         fn uws_loop() -> *mut bun_uws::Loop;
         fn tick();
-        fn auto_tick();
-        fn auto_tick_active();
+        fn turn(context: *mut core::ffi::c_void, is_done: fn(*mut core::ffi::c_void) -> bool);
+        fn turn_active();
         fn global_object() -> *mut ();
         fn bun_vm() -> *mut ();
         fn stdout() -> *mut ();

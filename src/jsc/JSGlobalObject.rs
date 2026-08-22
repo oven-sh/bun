@@ -1132,6 +1132,12 @@ impl JSGlobalObject {
     /// Runs the `unhandledRejection` machinery, which catches and reports its own exceptions; what
     /// can come back is the VM's termination (taken at this boundary when at loop level).
     pub fn handle_rejected_promises(&self) -> JsResult<()> {
+        // Inside a nested domain run the outer frame is mid-job and may still
+        // attach handlers; its unhandled-rejection processing waits for its own
+        // checkpoint.
+        if crate::domain_run::in_nested_run() {
+            return Ok(());
+        }
         crate::from_js_host_call_generic(self, || JSC__JSGlobalObject__handleRejectedPromises(self))
     }
 

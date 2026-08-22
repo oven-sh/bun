@@ -1334,7 +1334,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // answer it natively as above.
             if !result.is_empty() && !result.is_termination_exception() {
                 // SAFETY: `vm` is the process-static VirtualMachine.
-                let _ = unsafe { (*vm).uncaught_exception(global, result, false) };
+                let _ = unsafe {
+                    (*vm).uncaught_exception(
+                        global,
+                        result,
+                        bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception,
+                    )
+                };
             }
             server_body::respond_stopped_503(resp);
             // SAFETY: same `this`; balances `on_pending_request` above.
@@ -1441,7 +1447,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     (*vm).uncaught_exception(
                         global,
                         *err,
-                        matches!(http_result, HttpResult::Rejection(_)),
+                        if matches!(http_result, HttpResult::Rejection(_)) {
+                            bun_jsc::virtual_machine::UncaughtExceptionOrigin::Rejection
+                        } else {
+                            bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception
+                        },
                     )
                 };
 

@@ -420,6 +420,12 @@ function childShouldThrowAndAbort() {
     // continuous testing and developers' machines
     escapedArgs[0] = 'ulimit -c 0 && ' + escapedArgs[0];
   }
+  // Bun: the intentional SIGABRT goes through the crash handler; stop it
+  // uploading to CI's BUN_CRASH_REPORT_URL so the report isn't pinned on a
+  // later unrelated failing test and block its retry.
+  escapedArgs[1] = escapedArgs[1] || { env: { ...process.env } };
+  escapedArgs[1].env.BUN_CRASH_REPORT_URL = '';
+  escapedArgs[1].env.BUN_ENABLE_CRASH_REPORTING = '0';
   const child = exec(...escapedArgs);
   child.on('exit', function onExit(exitCode, signal) {
     const errMsg = 'Test should have aborted ' +

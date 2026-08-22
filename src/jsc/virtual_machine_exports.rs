@@ -78,10 +78,11 @@ pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) {
     // A TerminationException is not an error to report, and not this frame's to take: it stays pending for
     // the frames still unwinding above the caller, up to the landing frame (WebCore::reportException alike).
     if !value.is_termination_exception() {
-        let _ = global
-            .bun_vm()
-            .as_mut()
-            .uncaught_exception(global, value, false);
+        let _ = global.bun_vm().as_mut().uncaught_exception(
+            global,
+            value,
+            crate::virtual_machine::UncaughtExceptionOrigin::Exception,
+        );
     }
 }
 

@@ -27,6 +27,8 @@ class Process : public WebCore::JSEventEmitter {
     // Only used by internal code via passing to queueNextTick
     LazyProperty<Process, JSFunction> m_emitHelperFunction;
     WriteBarrier<Unknown> m_uncaughtExceptionCaptureCallback;
+    WriteBarrier<Unknown> m_domainErrorHandler;
+    WriteBarrier<Unknown> m_domainWouldClaim;
     WriteBarrier<JSObject> m_nextTickFunction;
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/bootstrap/switches/does_own_process_state.js#L113-L116
     WriteBarrier<JSString> m_cachedCwd;
@@ -131,6 +133,26 @@ public:
         return m_uncaughtExceptionCaptureCallback.get();
     }
 
+    inline void setDomainErrorHandler(JSC::JSValue callback)
+    {
+        m_domainErrorHandler.set(vm(), this, callback);
+    }
+
+    inline JSC::JSValue getDomainErrorHandler()
+    {
+        return m_domainErrorHandler.get();
+    }
+
+    inline void setDomainWouldClaim(JSC::JSValue callback)
+    {
+        m_domainWouldClaim.set(vm(), this, callback);
+    }
+
+    inline JSC::JSValue getDomainWouldClaim()
+    {
+        return m_domainWouldClaim.get();
+    }
+
     inline Structure* cpuUsageStructure() { return m_cpuUsageStructure.getInitializedOnMainThread(this); }
     inline Structure* resourceUsageStructure() { return m_resourceUsageStructure.getInitializedOnMainThread(this); }
     inline Structure* memoryUsageStructure() { return m_memoryUsageStructure.getInitializedOnMainThread(this); }
@@ -139,6 +161,7 @@ public:
 };
 
 JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionSetDomainErrorHandler);
 
 // Routes its argument onto the uncaught-exception path. Used by the
 // process.nextTick drain and, via $newCppFunction, by the node-style

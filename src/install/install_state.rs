@@ -611,8 +611,9 @@ pub fn save(manager: &mut PackageManager, root_dir: &[u8], entries: u64, package
         }
     }
     // Nested node_modules folders (hoisted: `node_modules/a/node_modules`, from the
-    // lockfile's tree list) and each isolated store entry's own `node_modules`: one
-    // lstat each, so a deleted nested package, `.bin` or dependency link is noticed.
+    // lockfile's tree list) and each isolated store entry's own `node_modules` get the
+    // same per-entry stamps as the root tree, so a deleted or corrupted nested package,
+    // `.bin` or dependency link is noticed.
     {
         let lockfile = &*manager.lockfile;
         let mut iter = crate::lockfile::tree::Iterator::<
@@ -636,19 +637,6 @@ pub fn save(manager: &mut PackageManager, root_dir: &[u8], entries: u64, package
                         unreadable = true;
                     }
                 }
-            }
-            match lstat_stamp_strict(&join(&dir, b".bin")) {
-                Stamp::At(stamp) => {
-                    let _ = write!(out, "l {stamp:016x} ");
-                    out.extend_from_slice(&join(&dir, b".bin"));
-                    out.push(b'\n');
-                }
-                Stamp::Absent => {
-                    let _ = write!(out, "n {:016x} ", 0);
-                    out.extend_from_slice(&join(&dir, b".bin"));
-                    out.push(b'\n');
-                }
-                Stamp::Unreadable => unreadable = true,
             }
         }
         let store = join(&join(root_dir, b"node_modules"), b".bun");

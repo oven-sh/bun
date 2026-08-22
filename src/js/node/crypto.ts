@@ -229,7 +229,6 @@ function createVerify(algorithm, options?) {
 
 crypto_exports.createVerify = createVerify;
 
-// Hash and Hmac are native classes (JSHash.cpp / JSHmac.cpp) whose prototypes extend LazyTransform.
 crypto_exports.Hash = deprecate(Hash, "crypto.Hash constructor is deprecated.", "DEP0179");
 crypto_exports.createHash = function createHash(algorithm, options) {
   return new Hash(algorithm, options);

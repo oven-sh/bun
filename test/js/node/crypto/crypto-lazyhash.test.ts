@@ -12,13 +12,11 @@ describe("LazyHash quirks", () => {
   });
 });
 
-// Hash/Hmac are single native objects (no JS wrapper holding a native handle) whose
-// prototypes extend LazyTransform. These pin the observable class shape against Node's.
 describe.each([
   ["Hash", Hash, (...extra: unknown[]) => new (Hash as any)("sha256", ...extra), 2],
   ["Hmac", Hmac, (...extra: unknown[]) => new (Hmac as any)("sha256", "key", ...extra), 3],
 ] as const)("%s class shape", (name, Ctor: any, make, length) => {
-  test("no wrapper/handle split: the instance carries no symbol-keyed handle", () => {
+  test("instance has no own symbol properties and only _options when options are passed", () => {
     const h = make();
     expect(Object.getOwnPropertySymbols(h)).toEqual([]);
     expect(Object.getOwnPropertyNames(h)).toEqual([]);
@@ -74,7 +72,7 @@ describe.each([
         ? createHash("sha256").update("streamed").digest("hex")
         : createHmac("sha256", "key").update("streamed").digest("hex");
     expect(out.toString("hex")).toBe(expected);
-    // Hash caches its digest; a finalized Hmac returns an empty string, as in Bun before.
+    // Hash caches its digest; a finalized Hmac returns an empty string.
     expect(h.digest("hex")).toBe(name === "Hash" ? expected : "");
   });
 });

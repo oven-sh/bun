@@ -725,6 +725,29 @@ static bool isModuleEvaluated(JSC::AbstractModuleRecord* record)
     return record->moduleEnvironmentMayBeNull() != nullptr;
 }
 
+// True once no load of this entry is in flight: the record finished evaluating
+// (with or without an error), or the load failed and the entry caches the error.
+static bool isModuleLoadSettled(JSC::ModuleRegistryEntry* entry)
+{
+    switch (entry->status()) {
+    case JSC::ModuleRegistryEntry::Status::New:
+    case JSC::ModuleRegistryEntry::Status::Fetching:
+        return false;
+    case JSC::ModuleRegistryEntry::Status::FetchFailed:
+    case JSC::ModuleRegistryEntry::Status::InstantiationFailed:
+    case JSC::ModuleRegistryEntry::Status::EvaluationFailed:
+        return true;
+    case JSC::ModuleRegistryEntry::Status::Fetched:
+        break;
+    }
+    auto* record = entry->record();
+    if (!record)
+        return false;
+    if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record))
+        return cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluated;
+    return record->moduleEnvironmentMayBeNull() != nullptr;
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionEsmNamespaceForCjs, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -752,6 +775,17 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryDelete, (JSC::JSGlobalObject * globa
     auto key = JSC::Identifier::fromString(vm, asString(keyValue)->value(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
     auto* moduleLoader = globalObject->moduleLoader();
+    // require.cache only lists ES modules that finished evaluating (its `has`
+    // and `get` traps go through functionEsmNamespaceForCjs). A module that is
+    // still loading is not in it, so deleting its key is a no-op like deleting
+    // any other missing key. Evicting the entry mid-load would make the next
+    // import() of the key build a second record for the same module while the
+    // loader's [[LoadedModules]] caches and pending microtasks hold the first.
+    // removeEntry() drops every (key, type) variant, so check each of them.
+    for (auto& [mapKey, entry] : moduleLoader->moduleMap()) {
+        if (mapKey.first == key.impl() && !isModuleLoadSettled(entry.get()))
+            return JSValue::encode(jsBoolean(false));
+    }
     // JSModuleLoader::visitChildrenImpl iterates these maps on the GC thread
     // under cellLock(); take the same lock so the removal can't race it.
     WTF::Locker locker { moduleLoader->cellLock() };

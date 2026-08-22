@@ -5,7 +5,7 @@ use bun_core::Progress::Progress;
 use bun_core::{Global, Output};
 use bun_core::{MutableString, ZStr};
 use bun_paths::strings;
-use bun_paths::{self as path, OSPathChar, OSPathSlice, PathBuffer, SEP, SEP_STR};
+use bun_paths::{self as path, OSPathChar, OSPathSlice, PathBuffer, SEP};
 use bun_semver::String as SemverString;
 #[cfg(not(windows))]
 use bun_sys::OpenDirOptions;
@@ -740,6 +740,48 @@ impl UninstallTask {
     }
 }
 
+/// `<destination_dir_subpath>/<name>`, written in place after the alias in
+/// `destination_dir_subpath_buf`. Dropping it restores the alias's NUL terminator.
+struct DestinationSubpath<'b> {
+    buf: &'b mut [u8],
+    alias_len: usize,
+    len: usize,
+}
+
+impl<'b> DestinationSubpath<'b> {
+    /// `None` when the path and its NUL terminator do not fit `buf`: the alias is
+    /// only required to fit the buffer by itself (`alias_is_safe_install_target`).
+    fn new(buf: &'b mut [u8], alias_len: usize, name: &[u8]) -> Option<Self> {
+        let name_start = alias_len + 1;
+        let len = name_start + name.len();
+        if len >= buf.len() {
+            return None;
+        }
+        buf[alias_len] = SEP;
+        buf[name_start..len].copy_from_slice(name);
+        buf[len] = 0;
+        Some(Self {
+            buf,
+            alias_len,
+            len,
+        })
+    }
+}
+
+impl core::ops::Deref for DestinationSubpath<'_> {
+    type Target = ZStr;
+
+    fn deref(&self) -> &ZStr {
+        ZStr::from_buf(self.buf, self.len)
+    }
+}
+
+impl Drop for DestinationSubpath<'_> {
+    fn drop(&mut self) {
+        self.buf[self.alias_len] = 0;
+    }
+}
+
 // ───────────────────────────── impl PackageInstall ─────────────────────────────
 
 impl<'a> PackageInstall<'a> {
@@ -778,28 +820,17 @@ impl<'a> PackageInstall<'a> {
     // 1. verify that .bun-tag exists (was it installed from bun?)
     // 2. check .bun-tag against the resolved version
     fn verify_git_resolution(&mut self, repo: &Repository, root_node_modules_dir: &Dir) -> bool {
-        let dest_len = self.destination_dir_subpath.len();
-        let suffix: &[u8] = &[SEP, b'.', b'b', b'u', b'n', b'-', b't', b'a', b'g'];
-        // Reshaped for borrowck — write into buf via raw indices.
-        self.destination_dir_subpath_buf[dest_len..dest_len + suffix.len()].copy_from_slice(suffix);
-        self.destination_dir_subpath_buf[dest_len + SEP_STR.len() + b".bun-tag".len()] = 0;
-        // SAFETY: NUL written above.
-        let bun_tag_path = unsafe {
-            ZStr::from_raw_mut(
-                self.destination_dir_subpath_buf.as_mut_ptr(),
-                dest_len + SEP_STR.len() + b".bun-tag".len(),
-            )
+        let Some(bun_tag_path) = DestinationSubpath::new(
+            self.destination_dir_subpath_buf,
+            self.destination_dir_subpath.len(),
+            b".bun-tag",
+        ) else {
+            return false;
         };
-        let _restore = scopeguard::guard(
-            self.destination_dir_subpath_buf.as_mut_ptr(),
-            // SAFETY: p points into destination_dir_subpath_buf which outlives this scope;
-            // dest_len < buf capacity (was the prior NUL position).
-            move |p| unsafe { *p.add(dest_len) = 0 },
-        );
 
         let Ok(bun_tag_file) = self
             .node_modules
-            .read_small_file(root_node_modules_dir, bun_tag_path)
+            .read_small_file(root_node_modules_dir, &bun_tag_path)
         else {
             return false;
         };
@@ -859,30 +890,15 @@ impl<'a> PackageInstall<'a> {
         mutable.reset();
         mutable.expand_to_capacity();
 
-        let dest_len = self.destination_dir_subpath.len();
-        // Write the literal directly into the path buffer; no intermediate Vec.
-        let suffix: &[u8] = &[
-            SEP, b'p', b'a', b'c', b'k', b'a', b'g', b'e', b'.', b'j', b's', b'o', b'n',
-        ];
-        self.destination_dir_subpath_buf[dest_len..dest_len + suffix.len()].copy_from_slice(suffix);
-        self.destination_dir_subpath_buf[dest_len + SEP_STR.len() + b"package.json".len()] = 0;
-        // SAFETY: NUL written above.
-        let package_json_path = unsafe {
-            ZStr::from_raw_mut(
-                self.destination_dir_subpath_buf.as_mut_ptr(),
-                dest_len + SEP_STR.len() + b"package.json".len(),
-            )
-        };
-        let _restore = scopeguard::guard(
-            self.destination_dir_subpath_buf.as_mut_ptr(),
-            // SAFETY: p points into destination_dir_subpath_buf which outlives this scope;
-            // dest_len < buf capacity (was the prior NUL position).
-            move |p| unsafe { *p.add(dest_len) = 0 },
-        );
+        let package_json_path = DestinationSubpath::new(
+            self.destination_dir_subpath_buf,
+            self.destination_dir_subpath.len(),
+            b"package.json",
+        )?;
 
         let package_json_file = self
             .node_modules
-            .open_file(root_node_modules_dir, package_json_path)
+            .open_file(root_node_modules_dir, &package_json_path)
             .ok()?;
 
         // Heuristic: most package.jsons will be less than 2048 bytes.

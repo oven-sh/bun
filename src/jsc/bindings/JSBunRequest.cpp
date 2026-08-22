@@ -151,14 +151,10 @@ JSBunRequest::JSBunRequest(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr
     , m_cookies(nullptr, JSC::WriteBarrierEarlyInit)
 {
 }
-extern SYSV_ABI "C" size_t Request__estimatedSize(void* requestPtr);
-extern "C" void Bun__JSRequest__calculateEstimatedByteSize(void* requestPtr);
 void JSBunRequest::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-
-    auto size = Request__estimatedSize(this->wrapped());
-    vm.heap.reportExtraMemoryAllocated(this, size);
+    reportExtraMemoryAllocated(vm);
 }
 
 template<typename Visitor>

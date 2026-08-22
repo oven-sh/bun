@@ -155,6 +155,8 @@ export default [
       storable: true,
     },
     estimatedSize: true,
+    // slice() / dupe() share the source's store; see Blob::newly_allocated_size.
+    newlyAllocatedSize: true,
     values: ["stream"],
     overridesToJS: true,
     proto: {

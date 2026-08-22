@@ -220,8 +220,20 @@ export class ClassDefinition {
    * ```
    *
    * Report `size_of::<Self>()` as well as any external allocations.
+   *
+   * Reported once per wrapper by the generated `JS${name}::reportExtraMemoryAllocated(vm)`
+   * and again from `visitChildren` on every GC.
    */
   estimatedSize?: boolean;
+  /**
+   * Requires `estimatedSize`. `JS${name}::reportExtraMemoryAllocated(vm)` reports this
+   * instead of `estimated_size()`, for objects that may only take a reference to memory
+   * another wrapper already reported (a Blob sharing its store). Called on the JS thread.
+   * ```rust
+   * pub fn newly_allocated_size(&self) -> usize;
+   * ```
+   */
+  newlyAllocatedSize?: boolean;
   /**
    * Used in heap snapshots.
    *

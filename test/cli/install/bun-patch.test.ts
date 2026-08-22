@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { lstatSync, readdirSync, readFileSync } from "fs";
+import { lstatSync, readdirSync, readFileSync, realpathSync } from "fs";
 import { bunEnv, bunExe, DirectoryTree, normalizeBunSnapshot, tempDir, VerdaccioRegistry } from "harness";
 import { isAbsolute, join, sep } from "path";
 
@@ -101,98 +101,71 @@ describe.concurrent("error messages", () => {
 // the spec it was installed from. These labels used to be formatted into 1024 byte
 // stack buffers (512 bytes in the installer itself), so a long enough spec crashed
 // every command that formatted it.
-describe("packages whose label is longer than 1024 bytes", () => {
+describe.concurrent("packages whose label is longer than 1024 bytes", () => {
   // `x/../` normalizes away, so the tarball still lives at a short path that is valid
   // on every platform while the recorded spec stays long.
   const longSpec = (tarball: string) => `./${Buffer.alloc(1050, "x/../").toString()}${tarball}`;
 
-  async function createProject(tarball: string, packageJson: Record<string, unknown>) {
-    const { packageDir } = await registry.createTestDir({
-      bunfigOpts: { linker: "hoisted" },
-      files: {
-        "package.json": JSON.stringify(packageJson),
-        [tarball]: readFileSync(join(import.meta.dir, tarball)),
-      },
+  // Two of these tests install `bar` from the identical spec at the same time. Each project
+  // has its own cache (`projectEnv`), so they never publish the same cache entry at once.
+  function createProject(tarball: string, packageJson: Record<string, unknown>) {
+    const dir = tempDir("patch-long-label", {
+      "package.json": JSON.stringify(packageJson),
+      [tarball]: readFileSync(join(import.meta.dir, tarball)),
     });
-    return packageDir;
+    return { dir: String(dir), env: projectEnv(String(dir)), [Symbol.asyncDispose]: () => dir[Symbol.asyncDispose]() };
   }
 
-  async function runBun(cwd: string, ...args: string[]) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), ...args],
-      cwd,
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode };
-  }
-
-  async function install(cwd: string) {
-    const { stderr, exitCode } = await runBun(cwd, "install");
-    expect(stderr).not.toContain("error:");
-    expect(exitCode).toBe(0);
-  }
-
-  test.concurrent("bun patch <name>@<label>", async () => {
+  test("bun patch <name>@<label>", async () => {
     const spec = longSpec("bar-0.0.2.tgz");
-    const packageDir = await createProject("bar-0.0.2.tgz", { name: "foo", dependencies: { bar: spec } });
-    await install(packageDir);
+    await using project = createProject("bar-0.0.2.tgz", { name: "foo", dependencies: { bar: spec } });
+    const { dir, env } = project;
+    await bunOk(dir, env, "install");
 
-    const { stdout, stderr, exitCode } = await runBun(packageDir, "patch", `bar@${spec}`);
-    expect(stderr).not.toContain("error:");
-    expect(stdout).toContain("To patch bar, edit the following folder:\n\n  node_modules/bar\n");
-    expect(exitCode).toBe(0);
+    expect(await bunOk(dir, env, "patch", `bar@${spec}`)).toContain(patchMessage("bar", "node_modules/bar"));
   });
 
   // `bun patch <path>` and `bun patch --commit <path>` find the package by comparing the
   // label of every package with that name against the version in <path>/package.json.
   // The lockfile lists the long-labeled `bar` before `bar-from-npm`, so both commands
   // format the long label before reaching the package that matches.
-  test.concurrent("bun patch <path> when another package with the same name has a long label", async () => {
-    const packageDir = await createProject("bar-0.0.2.tgz", {
+  test("bun patch <path> when another package with the same name has a long label", async () => {
+    await using project = createProject("bar-0.0.2.tgz", {
       name: "foo",
       dependencies: { "bar": longSpec("bar-0.0.2.tgz"), "bar-from-npm": "npm:bar@0.0.7" },
     });
-    await install(packageDir);
+    const { dir, env } = project;
+    await bunOk(dir, env, "install");
 
-    const prepare = await runBun(packageDir, "patch", "node_modules/bar-from-npm");
-    expect(prepare.stderr).not.toContain("error:");
-    expect(prepare.stdout).toContain("To patch bar, edit the following folder:\n\n  node_modules/bar-from-npm\n");
-    expect(prepare.exitCode).toBe(0);
+    expect(await bunOk(dir, env, "patch", "node_modules/bar-from-npm")).toContain(
+      patchMessage("bar", "node_modules/bar-from-npm"),
+    );
 
-    await Bun.write(join(packageDir, "node_modules", "bar-from-npm", "index.js"), "module.exports = 'patched';\n");
+    await Bun.write(join(dir, "node_modules", "bar-from-npm", "index.js"), "module.exports = 'patched';\n");
 
-    const commit = await runBun(packageDir, "patch", "--commit", "node_modules/bar-from-npm");
-    expect(commit.stderr).not.toContain("error:");
-    expect(commit.exitCode).toBe(0);
-    expect((await Bun.file(join(packageDir, "package.json")).json()).patchedDependencies).toEqual({
+    await bunOk(dir, env, "patch", "--commit", "node_modules/bar-from-npm");
+    expect((await Bun.file(join(dir, "package.json")).json()).patchedDependencies).toEqual({
       "bar@0.0.7": "patches/bar@0.0.7.patch",
     });
-    expect(await Bun.file(join(packageDir, "patches", "bar@0.0.7.patch")).text()).toContain(
-      "+module.exports = 'patched';",
-    );
+    expect(await Bun.file(join(dir, "patches", "bar@0.0.7.patch")).text()).toContain("+module.exports = 'patched';");
   });
 
   // Committing formats `name@label` before doing anything else. The commit itself cannot
   // succeed for such a package (the patch file is named after the label, which no file
   // system accepts at this length), so what is pinned here is that it fails at that step.
-  test.concurrent("bun patch --commit of a long-labeled package exits 1 without recording a patch", async () => {
+  test("bun patch --commit of a long-labeled package exits 1 without recording a patch", async () => {
     const packageJson = { name: "foo", dependencies: { baz: longSpec("baz-0.0.3.tgz") } };
-    const packageDir = await createProject("baz-0.0.3.tgz", packageJson);
-    await install(packageDir);
+    await using project = createProject("baz-0.0.3.tgz", packageJson);
+    const { dir, env } = project;
+    await bunOk(dir, env, "install");
+    await bunOk(dir, env, "patch", "node_modules/baz");
 
-    const prepare = await runBun(packageDir, "patch", "node_modules/baz");
-    expect(prepare.stderr).not.toContain("error:");
-    expect(prepare.exitCode).toBe(0);
+    await Bun.write(join(dir, "node_modules", "baz", "index.js"), "console.log('patched baz');\n");
 
-    await Bun.write(join(packageDir, "node_modules", "baz", "index.js"), "console.log('patched baz');\n");
-
-    const commit = await runBun(packageDir, "patch", "--commit", "node_modules/baz");
+    const commit = await runBun(dir, env, "patch", "--commit", "node_modules/baz");
     expect(commit.stderr).toContain("failed renaming patch file to patches dir");
     expect(commit.exitCode).toBe(1);
-    expect(await Bun.file(join(packageDir, "package.json")).json()).toEqual(packageJson);
+    expect(await Bun.file(join(dir, "package.json")).json()).toEqual(packageJson);
   });
 });
 
@@ -391,8 +364,22 @@ index 0000000000000000000000000000000000000000..4932cd6395b5d79049adb4736a669e22
         await Bun.write(join(String(root), folder, file), "LOL\n");
         await bunOk(cwd, env, "patch", "--commit", arg);
 
-        // The commit reinstalls with the patch applied.
-        expect(await Bun.file(join(String(root), folder, file)).text()).toBe("LOL\n");
+        // The commit reinstalls with the patch applied. The folder bun prepared is a copy detached
+        // from the isolated linker's store (or, by name from the root, a folder nothing resolves),
+        // so the proof is in the store entry and in what the dependent package resolves.
+        const store = join(
+          String(root),
+          "node_modules",
+          ".bun",
+          `@types+ws@${version}`,
+          "node_modules",
+          "@types",
+          "ws",
+        );
+        expect(await Bun.file(join(store, file)).text()).toBe("LOL\n");
+        const dependent = version === "7.4.7" ? "." : "packages/eslint-config";
+        const resolved = realpathSync(join(String(root), dependent, "node_modules", "@types", "ws"));
+        expect(await Bun.file(join(resolved, file)).text()).toBe("LOL\n");
 
         const key = `@types/ws@${version}`;
         const patchPath = `patches/@types%2Fws@${version}.patch`;
@@ -912,11 +899,7 @@ describe.concurrent("bun patch --commit for non-registry dependencies", () => {
       fetch: () => new Response(tgz, { headers: { "content-type": "application/gzip" } }),
     });
 
-    const env = {
-      ...bunEnv,
-      GITHUB_API_URL: `http://localhost:${server.port}`,
-      BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache"),
-    };
+    const env = { ...projectEnv(String(dir)), GITHUB_API_URL: `http://localhost:${server.port}` };
 
     const patchKey = await expectPatchFlowWorks(String(dir), env, "node_modules/pkg-to-patch");
     expect(patchKey).toBe("pkg-to-patch@github:testowner/testrepo#aaaaaaa");
@@ -964,7 +947,7 @@ describe.concurrent("bun patch --commit for non-registry dependencies", () => {
       JSON.stringify({ name: "test-patch-git", dependencies: { "pkg-to-patch": depUrl } }),
     );
 
-    const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") };
+    const env = projectEnv(String(dir));
 
     const patchKey = await expectPatchFlowWorks(project, env, "node_modules/pkg-to-patch");
     expect(patchKey).toStartWith(`pkg-to-patch@${depUrl}#`);
@@ -992,7 +975,7 @@ describe.concurrent("bun patch --commit for non-registry dependencies", () => {
     });
     expect(await tarProc.exited).toBe(0);
 
-    const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") };
+    const env = projectEnv(String(dir));
 
     // name-only argument exercises the name-and-version lookup path
     const patchKey = await expectPatchFlowWorks(String(dir), env, "pkg-to-patch");

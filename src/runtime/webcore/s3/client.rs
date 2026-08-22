@@ -500,10 +500,6 @@ pub(crate) fn writable_stream(
         request_payer,
         credentials,
         poll_ref: JsCell::new(KeepAlive::init()),
-        // SAFETY (JSC_BORROW): VirtualMachine::get() returns the live per-thread VM; it
-        // outlives every MultiPartUpload (the VM owns the heap that owns the JS objects
-        // keeping this task alive). Dereference to `&'static` for storage.
-        vm: VirtualMachine::get(),
         global_this: global_static,
         buffered: JsCell::new(StreamBuffer::default()),
         path: Box::<[u8]>::from(path),
@@ -952,9 +948,6 @@ pub(crate) fn upload_stream(
         request_payer,
         credentials,
         poll_ref: JsCell::new(KeepAlive::init()),
-        // SAFETY (JSC_BORROW): VirtualMachine::get() returns the live per-thread VM; it
-        // outlives every MultiPartUpload. Dereference to `&'static` for storage.
-        vm: VirtualMachine::get(),
         global_this: global_static,
         buffered: JsCell::new(StreamBuffer::default()),
         path: Box::<[u8]>::from(path),

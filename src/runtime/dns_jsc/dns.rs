@@ -764,7 +764,7 @@ impl CAresNameInfo {
 
 impl Drop for CAresNameInfo {
     fn drop(&mut self) {
-        self.poll_ref.unref(js_event_loop_ctx());
+        self.poll_ref.unref();
         // self.name freed by Box<[u8]> Drop
     }
 }
@@ -1545,7 +1545,7 @@ impl CAresReverse {
 impl Drop for CAresReverse {
     fn drop(&mut self) {
         let _ = self.global_this();
-        self.poll_ref.unref(js_event_loop_ctx());
+        self.poll_ref.unref();
         // RefPtr (= IntrusiveRc) does NOT deref on Drop; release the ref taken
         // by `init_ref` in `init()` / `GetHostByAddrInfoRequest::init()`.
         if let Some(resolver) = self.resolver.take() {
@@ -1683,7 +1683,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
 impl<T: CAresRecordType> Drop for CAresLookup<T> {
     fn drop(&mut self) {
         let _ = self.global_this();
-        self.poll_ref.unref(js_event_loop_ctx());
+        self.poll_ref.unref();
         // RefPtr (= IntrusiveRc) does NOT deref on Drop; release the ref taken
         // by `init_ref` in `init()` / `ResolveInfoRequest::init()`.
         if let Some(resolver) = self.resolver.take() {
@@ -1914,11 +1914,7 @@ impl Drop for DNSLookup {
     fn drop(&mut self) {
         bun_output::scoped_log!(DNSLookup, "deinit");
         let _ = self.global_this();
-        // DNSLookup is always created on the JS event loop (it holds a JSGlobalObject),
-        // so the Js-arm vtable is the correct EventLoopCtx for KeepAlive::unref.
-        self.poll_ref.unref(Async::posix_event_loop::get_vm_ctx(
-            Async::AllocatorType::Js,
-        ));
+        self.poll_ref.unref();
         // RefPtr (= IntrusiveRc) does NOT deref on Drop; release the ref taken
         // by `init_ref` in `init()` / `GetAddrInfoRequest::init()`.
         if let Some(resolver) = self.resolver.take() {
@@ -4854,8 +4850,6 @@ impl Resolver {
                 Async::posix_event_loop::poll_tag::DNS_RESOLVER,
                 self.as_ctx_ptr().cast::<()>(),
             );
-            // SAFETY: `event_loop_handle` is set once VM is initialized; live for VM lifetime.
-            let loop_ = unsafe { &mut *self.vm().event_loop_handle.unwrap() };
             // SAFETY: single-JS-thread; the `&mut PollsMap` borrow does not span
             // any re-entrant call (`FilePoll::register` is a syscall wrapper).
             let polls = unsafe { self.polls.get_mut() };
@@ -4885,12 +4879,12 @@ impl Resolver {
                 // direction armed would busy-loop on level-triggered writable
                 // once the socket connects. Full resync is the simplest
                 // correct path and c-ares DNS fds are short-lived.
-                let _ = poll.unregister(loop_, false);
+                let _ = poll.unregister(false);
                 if readable {
-                    let _ = poll.register(loop_, Async::PollKind::Readable, false);
+                    let _ = poll.register(Async::PollKind::Readable, false);
                 }
                 if writable {
-                    let _ = poll.register(loop_, Async::PollKind::Writable, false);
+                    let _ = poll.register(Async::PollKind::Writable, false);
                 }
             } else {
                 // Only adding directions (or no change). register() issues a
@@ -4898,10 +4892,10 @@ impl Resolver {
                 // on kqueue EV_ADD creates a separate (ident, filter) knote
                 // without disturbing the existing one.
                 if readable && !have_readable {
-                    let _ = poll.register(loop_, Async::PollKind::Readable, false);
+                    let _ = poll.register(Async::PollKind::Readable, false);
                 }
                 if writable && !have_writable {
-                    let _ = poll.register(loop_, Async::PollKind::Writable, false);
+                    let _ = poll.register(Async::PollKind::Writable, false);
                 }
             }
         }

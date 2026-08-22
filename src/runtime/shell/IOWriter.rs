@@ -1206,8 +1206,7 @@ impl Drop for IOWriter {
         if s.fd != Fd::INVALID {
             let _ = sys::close(s.fd);
         }
-        s.writer
-            .disable_keeping_process_alive(s.evtloop.as_event_loop_ctx());
+        s.writer.disable_keeping_process_alive();
     }
 }
 

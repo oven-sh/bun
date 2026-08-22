@@ -966,8 +966,7 @@ impl FetchTasklet {
                 // it again — cancel the sink so the JS side releases the reader;
                 // the pump-promise settlement drops the `startRequestStream` ref.
                 this.cancel_request_body_sink(JSValue::UNDEFINED);
-                this.poll_ref
-                    .with_mut(|poll_ref| poll_ref.unref(bun_io::js_vm_ctx()));
+                this.poll_ref.with_mut(|poll_ref| poll_ref.unref());
                 // SAFETY: `this` is the live heap tasklet; we hold a ref.
                 FetchTasklet::deref(std::ptr::from_mut(this));
             }
@@ -1797,8 +1796,7 @@ impl FetchTasklet {
             return;
         }
         bun_output::scoped_log!(FetchTasklet, "parkBodyStream");
-        self.poll_ref
-            .with_mut(|poll_ref| poll_ref.unref(bun_io::js_vm_ctx()));
+        self.poll_ref.with_mut(|poll_ref| poll_ref.unref());
         if let Some(source) = self.response_stream_source.get() {
             // SAFETY: live through the producer ref (same pattern as `increment_count`).
             unsafe { (*source.as_ptr()).unroot_wrapper() };
@@ -1958,8 +1956,7 @@ impl FetchTasklet {
             }
         }
         // we should not keep the process alive if we are ignoring the body
-        self.poll_ref
-            .with_mut(|poll_ref| poll_ref.unref(bun_io::js_vm_ctx()));
+        self.poll_ref.with_mut(|poll_ref| poll_ref.unref());
         // Also fine from GC sweeps (`on_response_finalize`, `on_body_stream_collected`):
         // unhooking touches no JS cell. The request-body sink is left for `clear_sink()` in
         // `deinit()` (an event-loop task, outside sweep) to detach.
@@ -1980,8 +1977,7 @@ impl FetchTasklet {
         // consumer hooks (`on_start_streaming_http_response_body_callback`,
         // `on_start_buffering_callback`) re-ref if the caller reads the body.
         if self.is_waiting_body {
-            self.poll_ref
-                .with_mut(|poll_ref| poll_ref.unref(bun_io::js_vm_ctx()));
+            self.poll_ref.with_mut(|poll_ref| poll_ref.unref());
         }
         // SAFETY: response is a freshly allocated Response; makeMaybePooled takes ownership semantics on the JS side
         let global_this = self.global_this;

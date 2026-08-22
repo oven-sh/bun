@@ -92,7 +92,7 @@ impl CountedKeepAlive {
     fn unref(&mut self, _vm: &VirtualMachine) {
         self.ref_count -= 1;
         if self.ref_count == 0 {
-            self.keep_alive.unref(bun_io::js_vm_ctx());
+            self.keep_alive.unref();
         }
     }
 }

@@ -239,7 +239,7 @@ impl PostgresSQLConnection {
         self.vm_mut().event_loop_mut()
     }
 
-    /// `KeepAlive::{ref_,unref}` take an `EventLoopCtx` (manual vtable, lives in
+    /// `KeepAlive::ref_` takes an `EventLoopCtx` (manual vtable, lives in
     /// `bun_io`). The sql_jsc-side `VirtualMachine` is a thin façade with no
     /// direct conversion; route through the global hook (`get_vm_ctx(.Js)`) which
     /// resolves to the same singleton VM stored in `self.vm`.
@@ -644,7 +644,7 @@ impl PostgresSQLConnection {
                 js_value.ensure_still_alive();
                 self.global()
                     .queue_microtask(on_connect, &[JSValue::NULL, js_value]);
-                self.poll_ref.with_mut(|r| r.unref(self.vm_ctx()));
+                self.poll_ref.with_mut(|r| r.unref());
             }
             _ => {}
         }
@@ -795,7 +795,7 @@ impl PostgresSQLConnection {
         self.unregister_auto_flusher();
         let event_loop = self.event_loop();
         event_loop.enter();
-        self.poll_ref.with_mut(|r| r.unref(self.vm_ctx()));
+        self.poll_ref.with_mut(|r| r.unref());
         fail(self);
         event_loop.exit();
     }
@@ -1039,7 +1039,7 @@ impl PostgresSQLConnection {
             && self.write_buffer.get().remaining().is_empty()
         {
             // Don't keep the process alive when there's nothing to do.
-            self.poll_ref.with_mut(|r| r.unref(self.vm_ctx()));
+            self.poll_ref.with_mut(|r| r.unref());
         } else if self.status.get() == Status::Connected {
             // Keep the process alive if there's something to do.
             self.poll_ref.with_mut(|r| r.r#ref(self.vm_ctx()));
@@ -1362,7 +1362,7 @@ impl PostgresSQLConnection {
 
     pub fn do_unref(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         this.update_flags(|f| f.remove(ConnectionFlags::KEEP_ALIVE_REQUESTED));
-        this.poll_ref.with_mut(|p| p.unref(this.vm_ctx()));
+        this.poll_ref.with_mut(|p| p.unref());
         this.update_has_pending_activity();
         Ok(JSValue::UNDEFINED)
     }
@@ -1388,7 +1388,7 @@ impl PostgresSQLConnection {
             // closing an in-flight connect dispatches no socket event, so the
             // poll ref taken at creation is released here rather than in a
             // socket callback
-            self.poll_ref.with_mut(|r| r.unref(self.vm_ctx()));
+            self.poll_ref.with_mut(|r| r.unref());
         } else {
             self.disconnect();
         }
@@ -3077,11 +3077,7 @@ impl PostgresSQLConnection {
                 ))
             });
         } else {
-            self.poll_ref.with_mut(|r| {
-                r.unref(bun_io::posix_event_loop::get_vm_ctx(
-                    bun_io::AllocatorType::Js,
-                ))
-            });
+            self.poll_ref.with_mut(|r| r.unref());
         }
     }
 

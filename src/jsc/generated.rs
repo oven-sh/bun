@@ -857,8 +857,7 @@ macro_rules! poll_ref_hostfns {
             _: &$crate::JSGlobalObject,
             _: &$crate::CallFrame,
         ) -> $crate::JsResult<$crate::JSValue> {
-            let ctx = this.$ctx();
-            this.$field.with_mut(|p| p.unref(ctx));
+            this.$field.with_mut(|p| p.unref());
             $( ($after)(this); )?
             ::core::result::Result::Ok($crate::JSValue::UNDEFINED)
         }

@@ -287,7 +287,7 @@ pub(crate) trait VirtualMachineSqlExt {
     fn timer(&mut self) -> &mut TimerHeap;
     /// RareData.ssl_ctx_cache — owned by RuntimeState.
     fn ssl_ctx_cache(&mut self) -> &mut SslCtxCache;
-    /// bun_io::EventLoopCtx for the JS-thread VM, for KeepAlive::{ref_,unref}.
+    /// bun_io::EventLoopCtx for the JS-thread VM, for KeepAlive::ref_.
     fn vm_ctx(&self) -> bun_io::EventLoopCtx;
     /// Lazy-init `RareData`'s per-protocol uws [`bun_uws::SocketGroup`].
     fn postgres_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup;

@@ -182,8 +182,7 @@ bun_io::impl_streaming_writer_parent! {
     on_error   = on_error,
     on_ready   = on_ready,
     on_close   = on_close,
-    event_loop = |this| (*this).io_evtloop(),
-    uws_loop   = |this| (*this).event_loop_handle.r#loop(),
+    event_loop = |this| (*this).event_loop_handle.as_event_loop_ctx(),
     uv_loop    = |this| (*this).event_loop_handle.uv_loop(),
     ref_       = |this| (&*this).ref_(),
     deref      = |this| FileSink::deref(this),
@@ -399,11 +398,7 @@ impl FileSink {
             // Only keep the event loop ref'd while there's a pending write in progress.
             // If there's no pending write, no need to keep the event loop ref'd.
             // `with_mut`: Windows `update_ref` is `&mut self` (posix is `&self`).
-            // Hoist `io_evtloop()` out of the closure so no raw deref appears inside it.
-            let evtloop = (*this).io_evtloop();
-            (*this)
-                .writer
-                .with_mut(|w| w.update_ref(evtloop, has_pending_data));
+            (*this).writer.with_mut(|w| w.update_ref(has_pending_data));
 
             if has_pending_data {
                 if let Some(vm) = (*this).js_vm() {
@@ -671,8 +666,7 @@ impl FileSink {
                         return sys::Result::Err(err);
                     }
                     sys::Result::Ok(()) => {
-                        self.writer
-                            .with_mut(|w| w.update_ref(self.io_evtloop(), false));
+                        self.writer.with_mut(|w| w.update_ref(false));
                     }
                 }
                 return sys::Result::Ok(());
@@ -688,8 +682,7 @@ impl FileSink {
             sys::Result::Ok(()) => {
                 // Only keep the event loop ref'd while there's a pending write in progress.
                 // If there's no pending write, no need to keep the event loop ref'd.
-                self.writer
-                    .with_mut(|w| w.update_ref(self.io_evtloop(), false));
+                self.writer.with_mut(|w| w.update_ref(false));
                 #[cfg(unix)]
                 {
                     if self.nonblocking.get() {
@@ -722,17 +715,6 @@ impl FileSink {
 
     pub(crate) fn event_loop(&self) -> EventLoopHandle {
         self.event_loop_handle
-    }
-
-    /// `bun_io::EventLoopHandle` is an opaque `*mut c_void` that the io-layer
-    /// `FilePollVTable` round-trips back to the runtime. We pass the address of
-    /// the stored `bun_jsc::EventLoopHandle` so the (runtime-registered) vtable
-    /// can recover it.
-    #[inline]
-    fn io_evtloop(&self) -> bun_io::EventLoopHandle {
-        // SAFETY: `bun_io::EventLoopHandle` stores `*mut c_void` purely for
-        // type-erasure; the vtable consumers treat the pointee as read-only
-        self.event_loop_handle.as_event_loop_ctx()
     }
 
     /// `EventLoopHandle::global_object()` returns an erased `*mut ()`; recover
@@ -1276,9 +1258,9 @@ impl FileSink {
         // covers both. No JS re-entry — pure libuv ref/unref.
         self.writer.with_mut(|w| {
             if value {
-                w.enable_keeping_process_alive(self.io_evtloop());
+                w.enable_keeping_process_alive();
             } else {
-                w.disable_keeping_process_alive(self.io_evtloop());
+                w.disable_keeping_process_alive();
             }
         });
     }
@@ -1557,8 +1539,7 @@ impl FileSink {
                 // A synchronous producer may have driven `end_from_stream`
                 // (clears `source`) inline; no keepalive then.
                 if !matches!(self.source.get(), streams::SourceHandle::None) {
-                    self.writer
-                        .with_mut(|w| w.enable_keeping_process_alive(self.io_evtloop()));
+                    self.writer.with_mut(|w| w.enable_keeping_process_alive());
                     if !self.must_be_kept_alive_until_eof.get() {
                         self.must_be_kept_alive_until_eof.set(true);
                         self.ref_();
@@ -1607,8 +1588,7 @@ impl FileSink {
                 // SAFETY: `as_any_promise` returned non-null.
                 match unsafe { (*js_promise).status() } {
                     bun_jsc::js_promise::Status::Pending => {
-                        self.writer
-                            .with_mut(|w| w.enable_keeping_process_alive(self.io_evtloop()));
+                        self.writer.with_mut(|w| w.enable_keeping_process_alive());
                         self.ref_();
                         // TODO: properly propagate exception upwards
                         // `JSValue::then` takes already-wrapped C-ABI

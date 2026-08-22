@@ -984,8 +984,7 @@ impl FSWatcher {
     ) -> JsResult<JSValue> {
         if self.persistent.get() {
             self.persistent.set(false);
-            let vm_ctx = self.vm_ctx();
-            self.poll_ref.with_mut(|r| r.unref(vm_ctx));
+            self.poll_ref.with_mut(|r| r.unref());
         }
         Ok(JSValue::UNDEFINED)
     }
@@ -1099,8 +1098,7 @@ impl FSWatcher {
 
         if self.persistent.get() {
             self.persistent.set(false);
-            let vm_ctx = self.vm_ctx();
-            self.poll_ref.with_mut(|r| r.unref(vm_ctx));
+            self.poll_ref.with_mut(|r| r.unref());
         }
 
         if let Some(signal) = self.signal.replace(None) {

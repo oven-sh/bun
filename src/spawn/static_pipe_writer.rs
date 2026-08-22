@@ -79,20 +79,15 @@ bun_io::impl_buffered_writer_parent! {
     // Deref the raw `*const [u8]` directly so `'a` is unbound from `P`'s
     // lifetime parameter.
     get_buffer = |this| &*(*this).buffer.as_ptr(),
-    event_loop = |this| (*this).io_evtloop(),
+    event_loop = |this| (*this).event_loop.as_event_loop_ctx(),
     uv_loop    = |this| (*this).event_loop.uv_loop(),
     ref_       = |this| RefCount::<Self>::ref_(this),
     deref      = |this| RefCount::<Self>::deref(this),
 }
 
 impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
-    #[inline]
-    fn io_evtloop(&self) -> bun_io::EventLoopHandle {
-        self.event_loop.as_event_loop_ctx()
-    }
-
     pub fn update_ref(&mut self, add: bool) {
-        self.writer.update_ref(self.io_evtloop(), add);
+        self.writer.update_ref(add);
     }
 
     pub fn close(&mut self) {

@@ -281,8 +281,7 @@ impl Process {
         // SAFETY: `_g` keeps `this` live; `&mut` scoped to the poller unref.
         unsafe {
             if let Poller::WaiterThread(waiter) = &mut (*this).poller {
-                let ctx = event_loop_handle_to_ctx((*this).event_loop);
-                waiter.unref(ctx);
+                waiter.unref();
                 (*this).poller = Poller::Detached;
             }
         }
@@ -413,24 +412,17 @@ impl Process {
             );
             // SAFETY: poll is live; exclusive on this thread (event loop).
             // Borrow scoped to the call.
-            unsafe { (*poll).enable_keeping_process_alive(ctx) };
+            unsafe { (*poll).enable_keeping_process_alive() };
 
-            // SAFETY: poll is live and `platform_event_loop` returns the live
-            // uws loop; both `&mut`s are scoped to the `register` call.
-            match unsafe {
-                (*poll).register(
-                    &mut *self.event_loop.platform_event_loop(),
-                    bun_io::PollKind::Process,
-                    PROCESS_POLL_ONE_SHOT,
-                )
-            } {
+            // SAFETY: poll is live; the `&mut` is scoped to the `register` call.
+            match unsafe { (*poll).register(bun_io::PollKind::Process, PROCESS_POLL_ONE_SHOT) } {
                 Ok(()) => {
                     self.ref_();
                     Ok(())
                 }
                 Err(err) => {
                     // SAFETY: poll is live; borrow scoped to the call.
-                    unsafe { (*poll).disable_keeping_process_alive(ctx) };
+                    unsafe { (*poll).disable_keeping_process_alive() };
                     Err(err)
                 }
             }
@@ -453,13 +445,7 @@ impl Process {
         }
 
         if let Some(fd) = self.poller.fd_poll_mut() {
-            // SAFETY: `platform_event_loop` returns the live uws loop; borrow
-            // scoped to the `register` call.
-            let maybe = fd.register(
-                unsafe { &mut *self.event_loop.platform_event_loop() },
-                bun_io::PollKind::Process,
-                PROCESS_POLL_ONE_SHOT,
-            );
+            let maybe = fd.register(bun_io::PollKind::Process, PROCESS_POLL_ONE_SHOT);
             if maybe.is_ok() {
                 self.ref_();
             }
@@ -609,8 +595,7 @@ impl Process {
     }
 
     pub fn disable_keeping_event_loop_alive(&mut self) {
-        let ctx = self.event_loop_ctx();
-        self.poller.disable_keeping_event_loop_alive(ctx);
+        self.poller.disable_keeping_event_loop_alive();
     }
 
     pub fn enable_keeping_event_loop_alive(&mut self) {
@@ -864,17 +849,17 @@ impl PollerPosix {
 
     pub(crate) fn enable_keeping_event_loop_alive(&mut self, ctx: bun_io::EventLoopCtx) {
         if let Some(poll) = self.fd_poll_mut() {
-            poll.enable_keeping_process_alive(ctx);
+            poll.enable_keeping_process_alive();
         } else if let PollerPosix::WaiterThread(waiter) = self {
             waiter.ref_(ctx);
         }
     }
 
-    pub(crate) fn disable_keeping_event_loop_alive(&mut self, ctx: bun_io::EventLoopCtx) {
+    pub(crate) fn disable_keeping_event_loop_alive(&mut self) {
         if let Some(poll) = self.fd_poll_mut() {
-            poll.disable_keeping_process_alive(ctx);
+            poll.disable_keeping_process_alive();
         } else if let PollerPosix::WaiterThread(waiter) = self {
-            waiter.unref(ctx);
+            waiter.unref();
         }
     }
 }
@@ -908,7 +893,7 @@ impl PollerWindows {
         }
     }
 
-    pub(crate) fn disable_keeping_event_loop_alive(&mut self, _event_loop: bun_io::EventLoopCtx) {
+    pub(crate) fn disable_keeping_event_loop_alive(&mut self) {
         // uv_unref() drops this handle from loop->active_handles. us_loop_pump
         // forces a non-blocking uv_run iteration regardless, so the
         // wait-thread's IOCP exit packet is still dequeued and on_exit_uv fires.

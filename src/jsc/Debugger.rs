@@ -274,7 +274,7 @@ impl Debugger {
                     // JS thread (libuv timer callback). Unwinding across
                     // `extern "C"` is UB so we early-return if no debugger.
                     if let Some(d) = VirtualMachine::get().as_mut().debugger.as_deref_mut() {
-                        d.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
+                        d.poll_ref.unref();
                     }
                     // SAFETY: `handle` is a live `uv_timer_t` (`uv_handle_t`
                     // at offset 0); `deinit_timer` matches `uv_close_cb`.
@@ -354,7 +354,7 @@ impl Debugger {
                         bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime);
                     if elapsed.order(&deadline) != core::cmp::Ordering::Less {
                         if let Some(d) = this.debugger_mut() {
-                            d.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
+                            d.poll_ref.unref();
                         }
                         bun_core::scoped_log!(debugger, "Timed out waiting for the debugger");
                         break;
@@ -633,7 +633,7 @@ pub fn abandon_node_inspector_wait() {
     if dbg.wait_for_connection != Wait::Off {
         dbg.wait_for_connection = Wait::Off;
         dbg.must_block_until_connected = false;
-        dbg.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
+        dbg.poll_ref.unref();
     }
 }
 
@@ -648,7 +648,7 @@ pub fn did_connect() {
     };
     if dbg.wait_for_connection != Wait::Off {
         dbg.wait_for_connection = Wait::Off;
-        dbg.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
+        dbg.poll_ref.unref();
         this.event_loop_mut().wakeup();
     }
 }

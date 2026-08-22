@@ -350,14 +350,9 @@ impl EventLoopCtx {
     // identical `ctx.platform_event_loop().op()` call sites into the single
     // deref inside [`loop_mut`].
     //
-    // `loop_mut` is the single nonnull-asref accessor: `pub(crate)`,
-    // `&self → &mut` (so it must NOT be called twice with overlapping live
-    // results). Every in-crate caller is a leaf op — counter bump,
-    // `FilePoll::activate`/`deactivate`, `unregister` — that consumes the
-    // borrow before returning and never re-enters `EventLoopCtx`, so no two
-    // `&mut Loop` ever coexist. Widened from impl-private to crate-private so
-    // `posix_event_loop`/`windows_event_loop` route their N identical
-    // `ctx.platform_event_loop()` derefs through this single accessor.
+    // `loop_mut` is the single nonnull-asref accessor: `&self → &mut`, so it
+    // must NOT be called twice with overlapping live results. Every caller is
+    // a leaf counter bump that drops the borrow before returning.
     #[inline]
     fn loop_mut(&self) -> &'static mut bun_uws_sys::Loop {
         // SAFETY: per-thread set-once pointer (the uws loop singleton); the
@@ -392,22 +387,9 @@ impl EventLoopCtx {
         self.loop_mut().ref_();
     }
     #[inline]
-    #[cfg(not(windows))]
-    pub(crate) fn loop_unref(&self) {
-        self.loop_mut().unref();
-    }
-    #[inline]
     #[cfg(windows)]
     pub(crate) fn loop_dec(&self) {
         self.loop_mut().dec();
-    }
-    #[inline]
-    pub(crate) fn loop_add_active(&self, n: u32) {
-        self.loop_mut().add_active(n);
-    }
-    #[inline]
-    pub(crate) fn loop_sub_active(&self, n: u32) {
-        self.loop_mut().sub_active(n);
     }
     #[cfg(not(windows))]
     #[inline]
@@ -1831,60 +1813,35 @@ impl FilePollRef {
     pub(crate) fn deinit_force_unregister(self) {
         self.inner().deinit_force_unregister();
     }
-    /// Single nonnull-asref accessor for the process-global uWS loop pointer.
-    ///
-    /// Type invariant (encapsulated `unsafe`): every caller of
-    /// [`unregister`](Self::unregister) / [`register_with_fd`](Self::register_with_fd)
-    /// passes `Loop::get()` (the per-thread uWS loop singleton), which is
-    /// non-null after init and lives for the program. The event loop is
-    /// single-threaded so the returned `&mut` is the sole live borrow at the
-    /// point of use. Collapses the two identical `&mut *loop_` deref blocks in
-    /// those wrappers into one.
-    #[inline(always)]
-    fn uws_loop_mut<'a>(loop_: *mut bun_uws_sys::Loop) -> &'a mut bun_uws_sys::Loop {
-        debug_assert!(!loop_.is_null());
-        // SAFETY: type invariant — see doc comment above.
-        unsafe { &mut *loop_ }
-    }
     #[inline]
-    pub(crate) fn unregister(self, loop_: *mut bun_uws_sys::Loop, force: bool) -> sys::Result<()> {
-        let loop_ = Self::uws_loop_mut(loop_);
+    pub(crate) fn unregister(self, force: bool) -> sys::Result<()> {
         #[cfg(not(windows))]
         {
-            self.inner().unregister(loop_, force)
+            self.inner().unregister(force)
         }
         #[cfg(windows)]
         {
             let _ = force;
             // The windows `FilePoll::unregister` always returns true — the
             // bool is vestigial, so there is no error path to surface here.
-            let _ = self.inner().unregister(loop_);
+            let _ = self.inner().unregister();
             Ok(())
         }
     }
     #[inline]
-    pub(crate) fn register_with_fd(
-        self,
-        loop_: *mut bun_uws_sys::Loop,
-        kind: FilePollKind,
-        fd: Fd,
-    ) -> sys::Result<()> {
+    pub(crate) fn register_with_fd(self, kind: FilePollKind, fd: Fd) -> sys::Result<()> {
         let flag = match kind {
             FilePollKind::Readable => PollFlags::Readable,
             FilePollKind::Writable => PollFlags::Writable,
         };
         #[cfg(not(windows))]
         {
-            self.inner().register_with_fd(
-                Self::uws_loop_mut(loop_),
-                flag,
-                OneShotFlag::Dispatch,
-                fd,
-            )
+            self.inner()
+                .register_with_fd(flag, OneShotFlag::Dispatch, fd)
         }
         #[cfg(windows)]
         {
-            let _ = (loop_, flag, fd);
+            let _ = (flag, fd);
             unreachable!("FilePoll fd registration is POSIX-only");
         }
     }
@@ -1920,19 +1877,19 @@ impl FilePollRef {
         self.inner().is_active()
     }
     #[inline]
-    pub(crate) fn enable_keeping_process_alive(self, ev: EventLoopHandle) {
-        self.inner().enable_keeping_process_alive(ev);
+    pub(crate) fn enable_keeping_process_alive(self) {
+        self.inner().enable_keeping_process_alive();
     }
     #[inline]
-    pub(crate) fn disable_keeping_process_alive(self, ev: EventLoopHandle) {
-        self.inner().disable_keeping_process_alive(ev);
+    pub(crate) fn disable_keeping_process_alive(self) {
+        self.inner().disable_keeping_process_alive();
     }
     #[inline]
-    pub(crate) fn set_keeping_process_alive(self, ev: EventLoopHandle, value: bool) {
+    pub(crate) fn set_keeping_process_alive(self, value: bool) {
         if value {
-            self.enable_keeping_process_alive(ev)
+            self.enable_keeping_process_alive()
         } else {
-            self.disable_keeping_process_alive(ev)
+            self.disable_keeping_process_alive()
         }
     }
 }

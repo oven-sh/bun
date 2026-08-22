@@ -87,11 +87,10 @@ pub struct EventLoop {
     #[cfg(not(windows))]
     pub holds_forever_poll: bool,
     pub deferred_tasks: DeferredTaskQueue::DeferredTaskQueue,
-    #[cfg(windows)]
-    // `?*uws.Loop` FFI handle.
+    /// The uws loop this instance drives: the thread's loop (set by
+    /// `ensure_waker`) or a `Bun.spawnSync` isolated loop. `concurrent_ref`
+    /// is applied to this loop, not to `vm.event_loop_handle`.
     pub uws_loop: Option<NonNull<uws::Loop>>,
-    #[cfg(not(windows))]
-    pub uws_loop: (),
 
     pub entered_event_loop_count: isize,
     pub concurrent_ref: AtomicI32,
@@ -132,10 +131,7 @@ impl Default for EventLoop {
             #[cfg(not(windows))]
             holds_forever_poll: false,
             deferred_tasks: DeferredTaskQueue::DeferredTaskQueue::default(),
-            #[cfg(windows)]
             uws_loop: None,
-            #[cfg(not(windows))]
-            uws_loop: (),
             entered_event_loop_count: 0,
             concurrent_ref: AtomicI32::new(0),
             imminent_gc_timer: AtomicPtr::new(core::ptr::null_mut()),
@@ -672,13 +668,8 @@ impl EventLoop {
     /// ports/channels/sockets on a loop that no longer ticks) so the loop is not
     /// torn down still believing something keeps it alive.
     pub(crate) fn apply_concurrent_ref_delta(&self) {
-        // Do NOT silently drop the swapped delta when the handle is
-        // missing — queued refs would be lost forever.
         let delta = self.concurrent_ref.swap(0, Ordering::SeqCst);
-        let loop_ = self
-            .vm_ref()
-            .platform_loop_opt()
-            .expect("event_loop_handle");
+        let loop_ = self.own_uws_loop();
         #[cfg(windows)]
         {
             if delta > 0 {
@@ -701,6 +692,17 @@ impl EventLoop {
                     .saturating_sub(u32::try_from(-delta).expect("int cast"));
             }
         }
+    }
+
+    /// [`Self::uws_loop`], or the thread's loop before `ensure_waker` has run.
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    fn own_uws_loop(&self) -> &mut uws::Loop {
+        let loop_ = self.uws_loop.map_or_else(uws::Loop::get, NonNull::as_ptr);
+        // SAFETY: the loop outlives this `EventLoop` (`SpawnSyncEventLoop::drop`
+        // destroys the `EventLoop` first), and the borrow is a single-threaded
+        // counter update that ends before the caller returns.
+        unsafe { &mut *loop_ }
     }
 
     /// Walk `self.virtual_machine.event_loop_handle` via raw-pointer
@@ -1053,10 +1055,6 @@ impl EventLoop {
     pub fn ensure_waker(&mut self) {
         jsc::mark_binding();
         if self.vm_ref().event_loop_handle.is_none() {
-            #[cfg(windows)]
-            {
-                self.uws_loop = NonNull::new(uws::Loop::get());
-            }
             let vm = self.vm();
             // SAFETY: `vm` is the live owning VM.
             unsafe { (*vm).event_loop_handle = Some(Async::Loop::get()) };
@@ -1069,11 +1067,8 @@ impl EventLoop {
                 (*gc).init(&mut *vm);
             }
         }
-        #[cfg(windows)]
-        {
-            if self.uws_loop.is_none() {
-                self.uws_loop = NonNull::new(uws::Loop::get());
-            }
+        if self.uws_loop.is_none() {
+            self.uws_loop = NonNull::new(uws::Loop::get());
         }
         // Note: `EventLoopHandle` lives in `bun_event_loop` (lower tier),
         // which cannot name `jsc::EventLoop`, so it stores `*mut ()`.
@@ -1561,22 +1556,14 @@ fn vm_from_ptr<'a>(vm: *mut ()) -> &'a mut VirtualMachine {
     unsafe { &mut *vm.cast::<VirtualMachine>() }
 }
 
-/// Heap-allocate a fresh `EventLoop` bound to `vm`; on Windows, store
-/// `uws_loop` in `event_loop.uws_loop`.
+/// Heap-allocate a fresh `EventLoop` bound to `vm` that drives `uws_loop`.
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_spawn_sync_create_event_loop(vm: *mut (), uws_loop: *mut uws::Loop) -> *mut () {
     let vm = vm_from_ptr(vm);
     let mut el = Box::new(EventLoop::default());
     el.global = NonNull::new(vm.global);
     el.virtual_machine = NonNull::new(std::ptr::from_mut(vm));
-    #[cfg(windows)]
-    {
-        el.uws_loop = NonNull::new(uws_loop);
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = uws_loop;
-    }
+    el.uws_loop = NonNull::new(uws_loop);
     let el = bun_core::heap::into_raw(el);
     // SAFETY: `el` is the stable heap address the poster targets until destroy.
     unsafe { (*el).isolated_poster = Some(crate::vm_handle::IsolatedPosterInner::new(el)) };

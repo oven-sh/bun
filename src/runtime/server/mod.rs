@@ -1655,7 +1655,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     pub(crate) fn unref(&mut self) {
-        self.poll_ref.unref(self.vm.loop_ctx());
+        self.poll_ref.unref();
     }
 
     pub(crate) fn stop_listening(&mut self, abrupt: bool) {

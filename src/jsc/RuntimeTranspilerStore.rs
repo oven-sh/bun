@@ -549,9 +549,7 @@ impl TranspilerJob {
         // before `reset_for_pool`/`put` need `&mut *self` below; deref at the
         // `fulfill` call site instead.
         let global_this = self.global_this;
-        // Note: the KeepAlive takes an `EventLoopCtx`
-        // vtable; resolve it via the `get_vm_ctx` hook (registered by `bun_runtime::init`).
-        self.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
+        self.poll_ref.unref();
 
         let referrer = core::mem::take(&mut self.non_threadsafe_referrer).into_inner();
         let mut log = core::mem::replace(&mut self.log, bun_ast::Log::init());

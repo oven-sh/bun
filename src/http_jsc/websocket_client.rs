@@ -154,7 +154,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     fn unref_keep_alive(&self) {
         let mut poll_ref = self.poll_ref.take();
-        poll_ref.unref(Self::vm_loop_ctx(&self.global_this));
+        poll_ref.unref();
         self.poll_ref.set(poll_ref);
     }
 

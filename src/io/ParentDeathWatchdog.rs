@@ -327,12 +327,8 @@ pub fn install_on_event_loop(handle: EventLoopCtx) {
             Owner::new(poll_tag::PARENT_DEATH_WATCHDOG, instance_ptr.cast()),
         );
         // SAFETY: `poll` was just allocated by `FilePoll::init`; sole `&mut`
-        // borrow; `register` does not re-derive the loop.
-        match unsafe { &mut *poll }.register(
-            handle.loop_mut(),
-            crate::file_poll::Pollable::Process,
-            true,
-        ) {
+        // borrow.
+        match unsafe { &mut *poll }.register(crate::file_poll::Pollable::Process, true) {
             bun_sys::Result::Ok(()) => {
                 // Do not keep the event loop alive on this poll's behalf — the
                 // watchdog must never prevent Bun from exiting when there is no

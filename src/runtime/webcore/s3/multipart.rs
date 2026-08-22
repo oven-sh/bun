@@ -100,7 +100,6 @@ use bun_collections::IntegerBitSet;
 use bun_core::{declare_scope, scoped_log};
 use bun_io::KeepAlive;
 use bun_io::StreamBuffer;
-use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JsCell};
 use bun_s3_signing::acl::ACL;
 use bun_s3_signing::credentials::S3Credentials;
@@ -136,7 +135,6 @@ pub struct MultiPartUpload {
     pub(crate) request_payer: bool,
     pub(crate) credentials: bun_ptr::IntrusiveRc<S3Credentials>,
     pub poll_ref: JsCell<KeepAlive>,
-    pub(crate) vm: &'static VirtualMachine,
     // JSC_BORROW per LIFETIMES.tsv row 1886 — rust_type `&JSGlobalObject` used verbatim
     pub global_this: GlobalRef,
 
@@ -372,14 +370,7 @@ impl Drop for MultiPartUpload {
     fn drop(&mut self) {
         scoped_log!(S3MultiPartUpload, "deinit");
         // queue: Box<[UploadPart]> — dropped automatically (parts' raw `data` already freed during lifecycle)
-        // KeepAlive::unref takes an `EventLoopCtx` (aio cycle-break vtable),
-        // not `&VirtualMachine`. Route through the global hook like simple_request does.
-        let _ = self.vm;
-        self.poll_ref.with_mut(|poll_ref| {
-            poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
-                bun_io::AllocatorType::Js,
-            ))
-        });
+        self.poll_ref.with_mut(|poll_ref| poll_ref.unref());
         // path, proxy, content_type, content_disposition, content_encoding — Box dropped automatically
         // `IntrusiveRc<T>` (= `RefPtr<T>`) has no `Drop` — release the +1 the
         // constructing `writable_stream`/`upload_stream` adopted.

@@ -571,7 +571,7 @@ impl BlobExt for Blob {
             }
             impl<H: ReadBytesHandler> Task<H> {
                 fn done(mut self: Box<Self>, r: ReadBytesResult) -> JsResult<()> {
-                    self.poll.unref(bun_io::js_vm_ctx());
+                    self.poll.unref();
                     self.blob.deinit();
                     let ctx = self.ctx;
                     drop(self);
@@ -5852,7 +5852,7 @@ impl S3BlobDownloadTask {
 impl Drop for S3BlobDownloadTask {
     fn drop(&mut self) {
         Blob::deinit(&mut self.blob);
-        self.poll_ref.unref(bun_io::js_vm_ctx());
+        self.poll_ref.unref();
         // promise: Drop handles deinit.
     }
 }

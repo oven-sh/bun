@@ -66,7 +66,7 @@ fn handshake_timeout_seconds() -> core::ffi::c_uint {
     )
 }
 
-/// Local `VirtualMachine → EventLoopCtx` adapter for `KeepAlive::{ref,unref}`.
+/// Local `VirtualMachine → EventLoopCtx` adapter for `KeepAlive::ref_`.
 /// Forwards to the canonical fully-populated vtable in `bun_jsc`.
 ///
 /// # Safety
@@ -422,8 +422,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                             // connection succeed against a host the user didn't
                             // trust. The C++ caller emits an `error` event on null.
                             log!("createSSLContext failed for WebSocket: {:?}", err);
-                            // SAFETY: `vm_ptr` is the live per-thread VM.
-                            poll_ref.unref(unsafe { vm_loop_ctx(vm_ptr) });
+                            poll_ref.unref();
                             return None;
                         };
                         secure = Some(SslCtxOwned(ctx));
@@ -577,10 +576,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     }
 
     pub(crate) fn clear_data(&self) {
-        self.poll_ref.with_mut(|p| {
-            // SAFETY: `get_mut_ptr()` is the live per-thread VM singleton.
-            p.unref(unsafe { vm_loop_ctx(VirtualMachineRef::get_mut_ptr()) })
-        });
+        self.poll_ref.with_mut(|p| p.unref());
 
         self.subprotocols.with_mut(|s| s.clear_and_free());
         self.clear_input();

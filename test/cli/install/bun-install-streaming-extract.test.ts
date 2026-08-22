@@ -492,9 +492,11 @@ describe("streaming tarball extraction", () => {
       using dir = tempDir("streaming-extract-drop-retry", {
         "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "stream-pkg": "1.0.0" } }),
         "bunfig.toml": Bun.TOML.stringify({ install: { registry: reg.url } }),
+        "tmp/.keep": "",
       });
+      const tmp = join(String(dir), "tmp");
 
-      const { stderr, exitCode } = await runInstall(String(dir), env);
+      const { stderr, exitCode } = await runInstall(String(dir), { ...env, BUN_TMPDIR: tmp, TMPDIR: tmp });
       expect(stderr).not.toContain("error:");
       expect(stderr).not.toContain("extracting tarball");
       expect(stderr.match(/ConnectionClosed downloading tarball stream-pkg@1\.0\.0\. Retrying/g)).toHaveLength(2);
@@ -510,7 +512,7 @@ describe("streaming tarball extraction", () => {
         expect([path, got.equals(body)]).toEqual([path, true]);
       }
       // Extraction temp dirs from the failed attempts are removed.
-      expect(readdirSync(join(String(dir), ".cache")).filter(f => f.endsWith(".stream-pkg"))).toEqual([]);
+      expect(readdirSync(tmp).filter(f => f.endsWith(".stream-pkg"))).toEqual([]);
       expect(exitCode).toBe(0);
     });
 

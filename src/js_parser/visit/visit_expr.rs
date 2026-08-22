@@ -1271,7 +1271,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     Op::UnCpl => {
                         if p.should_fold_typescript_constant_expressions {
-                            if let Some(value) = SideEffects::to_number(&e_.value.data) {
+                            if let Some(value) = SideEffects::to_number(&e_.value.data, p.arena) {
                                 *e = p.new_expr(
                                     E::Number::new(f64::from(!float_to_int32(value))),
                                     expr.loc,
@@ -1287,13 +1287,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
                     Op::UnPos => {
-                        if let Some(num) = SideEffects::to_number(&e_.value.data) {
+                        if let Some(num) = SideEffects::to_number(&e_.value.data, p.arena) {
                             *e = p.new_expr(E::Number::new(num), expr.loc);
                             return;
                         }
                     }
                     Op::UnNeg => {
-                        if let Some(num) = SideEffects::to_number(&e_.value.data) {
+                        if let Some(num) = SideEffects::to_number(&e_.value.data, p.arena) {
                             *e = p.new_expr(E::Number::new(-num), expr.loc);
                             return;
                         }

@@ -1574,13 +1574,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 };
             }
         }
-
-        if let Some(define) = &opts.define {
-            if !define.keys.is_empty() {
-                bun_jsc::runtime_transpiler_cache::IS_DISABLED
-                    .store(true, std::sync::atomic::Ordering::Relaxed);
-            }
-        }
     }
 
     if matches!(

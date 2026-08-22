@@ -250,6 +250,175 @@ describe("transpiler cache", () => {
     expect(newCacheCount()).toBe(0); // cache hit, order doesn't matter
   });
 
+  // Everything below changes the transpiled output of the same source bytes, so
+  // an entry written by one configuration must never be served to another. Each
+  // is part of the features hash, like --feature above: a different
+  // configuration replaces the entry (delete + write, net 0 new files), the same
+  // one hits it.
+  describe("the configuration is part of the cache key", () => {
+    // Prints what X was defined as, or "nodefine" when it was left alone.
+    const defineProbe = { code: 'typeof X === "undefined" ? "nodefine" : X' };
+
+    // Returns the last line the file printed. (`bun test` reports on stderr, but
+    // also prints its version banner to stdout ahead of the module's output.)
+    function run(args: string[]) {
+      const result = Bun.spawnSync({
+        cmd: [bunExe(), ...args],
+        cwd: temp_dir,
+        env,
+        stdin: "ignore",
+      });
+      const stdout = result.stdout.toString().trim();
+      expect({ stdout, stderr: result.stderr.toString(), exitCode: result.exitCode }).toMatchObject({ exitCode: 0 });
+      return stdout.split("\n").at(-1);
+    }
+
+    // Every configuration of a.js shares one entry (the file name is the hash
+    // of the source), so this is the entry as last written.
+    const cacheEntry = () => readFileSync(join(cache_dir, readdirSync(cache_dir)[0]));
+
+    test("--define", () => {
+      writeFileSync(join(temp_dir, "a.js"), dummyFile(5 * 1024, "1", defineProbe));
+
+      expect(run(["--define", 'X="cli"', "a.js"])).toBe("cli");
+      expect(existsSync(cache_dir)).toBeTrue();
+      expect(newCacheCount()).toBe(1);
+      const withDefine = cacheEntry();
+
+      expect(run(["--define", 'X="cli"', "a.js"])).toBe("cli");
+      expect(newCacheCount()).toBe(0);
+      expect(cacheEntry()).toEqual(withDefine);
+
+      expect(run(["a.js"])).toBe("nodefine");
+      expect(newCacheCount()).toBe(0);
+      expect(cacheEntry()).not.toEqual(withDefine);
+
+      expect(run(["--define", 'X="other"', "a.js"])).toBe("other");
+      expect(newCacheCount()).toBe(0);
+
+      expect(run(["--define", 'X="cli"', "a.js"])).toBe("cli");
+      expect(newCacheCount()).toBe(0);
+      expect(cacheEntry()).toEqual(withDefine);
+
+      // The order the defines are given in does not change the key.
+      expect(run(["--define", 'X="cli"', "--define", "Y=1", "a.js"])).toBe("cli");
+      expect(newCacheCount()).toBe(0);
+      const twoDefines = cacheEntry();
+      expect(twoDefines).not.toEqual(withDefine);
+      expect(run(["--define", "Y=1", "--define", 'X="cli"', "a.js"])).toBe("cli");
+      expect(newCacheCount()).toBe(0);
+      expect(cacheEntry()).toEqual(twoDefines);
+
+      // ...unless the same key is given twice: the last one wins, so these are
+      // two different configurations, and the second is the same one as a
+      // plain X=1.
+      expect(run(["--define", "X=1", "--define", "X=2", "a.js"])).toBe("2");
+      expect(newCacheCount()).toBe(0);
+      expect(run(["--define", "X=2", "--define", "X=1", "a.js"])).toBe("1");
+      expect(newCacheCount()).toBe(0);
+      const lastWins = cacheEntry();
+      expect(run(["--define", "X=1", "a.js"])).toBe("1");
+      expect(newCacheCount()).toBe(0);
+      expect(cacheEntry()).toEqual(lastWins);
+    });
+
+    test("--define passed to bun test", () => {
+      // The test file itself is too small to be cached; the module it imports
+      // is not, and is the same module `bun a.js` loads.
+      writeFileSync(join(temp_dir, "a.js"), dummyFile(5 * 1024, "1", defineProbe));
+      writeFileSync(
+        join(temp_dir, "a.test.js"),
+        `import "./a.js";\nimport { test } from "bun:test";\ntest("x", () => {});\n`,
+      );
+
+      expect(run(["test", "--define", 'X="cli"', "./a.test.js"])).toBe("cli");
+      expect(newCacheCount()).toBe(1);
+
+      expect(run(["test", "./a.test.js"])).toBe("nodefine");
+      expect(newCacheCount()).toBe(0);
+      expect(run(["a.js"])).toBe("nodefine");
+      expect(newCacheCount()).toBe(0);
+
+      expect(run(["test", "--define", 'X="cli"', "./a.test.js"])).toBe("cli");
+      expect(newCacheCount()).toBe(0);
+      expect(run(["a.js"])).toBe("nodefine");
+      expect(newCacheCount()).toBe(0);
+    });
+
+    test("define from bunfig.toml", () => {
+      // `bun run <file>` reads bunfig.toml only after the command line has
+      // been parsed; the defines it adds have to be keyed like --define.
+      writeFileSync(join(temp_dir, "a.js"), dummyFile(5 * 1024, "1", defineProbe));
+      writeFileSync(join(temp_dir, "bunfig.toml"), `[define]\nX = '"bunfig"'\n`);
+
+      expect(run(["run", "a.js"])).toBe("bunfig");
+      expect(newCacheCount()).toBe(1);
+      expect(run(["a.js"])).toBe("bunfig");
+      expect(newCacheCount()).toBe(0);
+
+      rmSync(join(temp_dir, "bunfig.toml"));
+      expect(run(["run", "a.js"])).toBe("nodefine");
+      expect(newCacheCount()).toBe(0);
+      expect(run(["a.js"])).toBe("nodefine");
+      expect(newCacheCount()).toBe(0);
+    });
+
+    test("--drop", () => {
+      writeFileSync(join(temp_dir, "a.js"), dummyFile(5 * 1024, "1", "console-kept"));
+
+      expect(run(["a.js"])).toBe("console-kept");
+      expect(newCacheCount()).toBe(1);
+
+      expect(run(["--drop=console", "a.js"])).toBe("");
+      expect(newCacheCount()).toBe(0);
+      expect(run(["--drop=console", "a.js"])).toBe("");
+      expect(newCacheCount()).toBe(0);
+
+      expect(run(["a.js"])).toBe("console-kept");
+      expect(newCacheCount()).toBe(0);
+    });
+
+    test('package.json "type" and the .cjs / .mjs extension', () => {
+      // The same bytes under every module type, so all four files share one
+      // entry. The module type decides whether a file without import/export
+      // syntax is wrapped as CommonJS, where `arguments` exists.
+      const source = dummyFile(5 * 1024, "1", { code: "typeof arguments" });
+      mkdirSync(join(temp_dir, "cjs"));
+      mkdirSync(join(temp_dir, "esm"));
+      writeFileSync(join(temp_dir, "cjs", "package.json"), `{ "type": "commonjs" }`);
+      writeFileSync(join(temp_dir, "esm", "package.json"), `{ "type": "module" }`);
+      for (const file of ["cjs/a.js", "esm/a.js", "a.cjs", "a.mjs"]) {
+        writeFileSync(join(temp_dir, file), source);
+      }
+
+      expect(run(["cjs/a.js"])).toBe("object");
+      expect(newCacheCount()).toBe(1);
+      expect(run(["esm/a.js"])).toBe("undefined");
+      expect(newCacheCount()).toBe(0);
+      expect(run(["a.cjs"])).toBe("object");
+      expect(newCacheCount()).toBe(0);
+      expect(run(["a.mjs"])).toBe("undefined");
+      expect(newCacheCount()).toBe(0);
+    });
+
+    test("--jsx-side-effects", () => {
+      // With the classic runtime an unused element is a bare call to the
+      // factory, which is dropped as dead code unless --jsx-side-effects says
+      // the call matters. (The flag is read together with the other JSX flags.)
+      const classic = ["--jsx-runtime=classic", "--jsx-factory=h"];
+      const code = `function h() { console.log("h called"); }\n<div />;`;
+      const filler = Buffer.alloc(5 * 1024, "/").toString();
+      writeFileSync(join(temp_dir, "a.jsx"), code + "\n//" + filler);
+
+      expect(run([...classic, "a.jsx"])).toBe("");
+      expect(newCacheCount()).toBe(1);
+      expect(run([...classic, "--jsx-side-effects", "a.jsx"])).toBe("h called");
+      expect(newCacheCount()).toBe(0);
+      expect(run([...classic, "a.jsx"])).toBe("");
+      expect(newCacheCount()).toBe(0);
+    });
+  });
+
   // Serving the entry point from the cache must not change how the modules it
   // loads are resolved. Both of these are gated on the `has_loaded` flag, which
   // used to be set only on the path that runs the printer.

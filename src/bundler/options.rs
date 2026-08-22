@@ -826,6 +826,7 @@ pub(crate) mod default_user_defines {
     }
 }
 
+/// Returns the `Define` table and `BundleOptions::define_hash` for it.
 pub(crate) fn defines_from_transform_options(
     log: &mut bun_ast::Log,
     // PERF: borrowed, not owned — the caller (`load_defines`) holds
@@ -842,7 +843,7 @@ pub(crate) fn defines_from_transform_options(
     drop: &[&[u8]],
     omit_unused_global_calls: bool,
     bump: &bun_alloc::Arena,
-) -> Result<Box<defines::Define>, crate::Error> {
+) -> Result<(Box<defines::Define>, Option<u64>), crate::Error> {
     let (input_keys, input_values): (&[Box<[u8]>], &[Box<[u8]>]) = match maybe_input_define {
         Some(m) => (&m.keys, &m.values),
         None => (&[], &[]),
@@ -928,6 +929,9 @@ pub(crate) fn defines_from_transform_options(
         }
     }
 
+    // Before `window` (implied by `user_defines`), so the default configuration stays `None`.
+    let define_hash = define_hash(&user_defines, &environment_defines, drop);
+
     if target.is_bun() {
         if !user_defines.contains(b"window") {
             environment_defines.get_or_put_value(
@@ -946,12 +950,66 @@ pub(crate) fn defines_from_transform_options(
 
     let drop_debugger = drop.iter().any(|item| *item == b"debugger");
 
-    Ok(defines::Define::init(
+    let define = defines::Define::init(
         Some(resolved_defines),
         Some(environment_defines),
         drop_debugger,
         omit_unused_global_calls,
-    )?)
+    )?;
+    Ok((define, define_hash))
+}
+
+/// Hashes everything the `Define` table is about to be built from, other than the
+/// constant tables. Order does not matter: the maps hold one value per key and
+/// everything is sorted. `None` for the default configuration (all three empty).
+fn define_hash(
+    user_defines: &defines::RawDefines,
+    environment_defines: &defines::UserDefinesArray,
+    drop: &[&[u8]],
+) -> Option<u64> {
+    if user_defines.is_empty() && environment_defines.is_empty() && drop.is_empty() {
+        return None;
+    }
+    let mut defines: Vec<(&[u8], &[u8])> = user_defines
+        .keys()
+        .iter()
+        .map(|k| &**k)
+        .zip(user_defines.values().iter().map(|v| &**v))
+        .collect();
+    defines.sort_unstable();
+    let mut env_defines: Vec<(&[u8], &defines::DefineData)> = environment_defines
+        .keys()
+        .iter()
+        .map(|k| &**k)
+        .zip(environment_defines.values().iter())
+        .collect();
+    env_defines.sort_unstable_by_key(|(key, _)| *key);
+    let mut drops: Vec<&[u8]> = drop.to_vec();
+    drops.sort_unstable();
+
+    let mut hasher = bun_wyhash::Wyhash::init(0);
+    let mut update = |bytes: &[u8]| {
+        hasher.update(&(bytes.len() as u64).to_le_bytes());
+        hasher.update(bytes);
+    };
+    update(&(defines.len() as u64).to_le_bytes());
+    for (key, value) in defines {
+        update(key);
+        update(value);
+    }
+    update(&(env_defines.len() as u64).to_le_bytes());
+    for (key, data) in env_defines {
+        update(key);
+        // `copy_env_for_define` stores every value as a string literal.
+        match data.value.e_string() {
+            Some(value) => update(value.slice8()),
+            None => update(b""),
+        }
+    }
+    for name in drops {
+        update(name);
+    }
+    Some(hasher.final_())
 }
 
 const DEFAULT_LOADER_EXT_BUN: &[&[u8]] = &[b".node", b".html"];
@@ -1169,6 +1227,8 @@ pub struct BundleOptions<'a> {
     pub banner: Cow<'static, [u8]>,
     pub define: Box<defines::Define>,
     pub drop: Box<[Box<[u8]>]>,
+    /// Hash of the input `define` was built from (see `define_hash`), for the runtime transpiler cache.
+    pub define_hash: Option<u64>,
     /// Set of enabled feature flags for dead-code elimination via `import { feature } from "bun:bundle"`.
     /// Initialized once from the CLI --feature flags.
     ///
@@ -1392,6 +1452,7 @@ impl<'a> BundleOptions<'a> {
                 drop_debugger: self.define.drop_debugger,
             }),
             drop: self.drop.clone(),
+            define_hash: self.define_hash,
             bundler_feature_flags: self
                 .bundler_feature_flags
                 .as_deref()
@@ -1583,7 +1644,7 @@ impl<'a> BundleOptions<'a> {
             Some(Cow::Borrowed(b"\"development\"".as_slice()))
         };
         // reshaped for borrowck — node_env computed before passing self.log
-        self.define = defines_from_transform_options(
+        let (define, define_hash) = defines_from_transform_options(
             // No other `&mut Log` is live across this call (see `log_mut`
             // caller contract).
             self.log_mut(),
@@ -1598,6 +1659,8 @@ impl<'a> BundleOptions<'a> {
             self.dead_code_elimination && self.minify_syntax,
             arena,
         )?;
+        self.define = define;
+        self.define_hash = define_hash;
         self.defines_loaded = true;
         Ok(())
     }
@@ -1651,6 +1714,7 @@ impl<'a> BundleOptions<'a> {
             transform_options: std::sync::Arc::clone(&transform),
             css_chunking: false,
             drop: transform.drop.clone().into_boxed_slice(),
+            define_hash: None,
             bundler_feature_flags,
 
             jsx: jsx::Pragma::default(),

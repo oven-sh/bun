@@ -1637,6 +1637,7 @@ impl<'a> Transpiler<'a> {
                     .bundler_feature_flags
                     .as_deref()
                     .and_then(|s| s.clone().ok().map(Box::new));
+                opts.features.define_hash = self.options.define_hash;
                 opts.features.repl_mode = self.options.repl_mode;
 
                 // we'll just always enable top-level await

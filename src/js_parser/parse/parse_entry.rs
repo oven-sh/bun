@@ -205,6 +205,7 @@ impl<'a> Options<'a> {
                 runtime_transpiler_cache: None,
                 lower_using: f.lower_using,
                 bundler_feature_flags: None,
+                define_hash: f.define_hash,
                 repl_mode: f.repl_mode,
                 jsx_optimization_inline: f.jsx_optimization_inline,
             },
@@ -254,6 +255,13 @@ impl<'a> Options<'a> {
 
         if !self.use_define_for_class_fields {
             hasher.update(b"udfcf=0");
+        }
+
+        // package.json "type" / .cjs / .mjs: decides `exports_kind` when the syntax does not.
+        match self.module_type {
+            options::ModuleType::Unknown => {}
+            options::ModuleType::Cjs => hasher.update(b"cjs"),
+            options::ModuleType::Esm => hasher.update(b"esm"),
         }
 
         self.features.hash_for_runtime_transpiler(hasher);

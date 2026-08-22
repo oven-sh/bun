@@ -63,9 +63,7 @@ describe("bun run --tsconfig-override", () => {
 
     expect(successStdout).toContain("success from custom tsconfig");
 
-    if (!successStderr.includes("Internal error: directory mismatch")) {
-      expect(successStderr).toBe("");
-    }
+    expect(successStderr).toBe("");
     expect(successExitCode).toBe(0);
   });
 
@@ -104,9 +102,7 @@ describe("bun run --tsconfig-override", () => {
 
     expect(stdout).toContain("42");
 
-    if (!stderr.includes("Internal error: directory mismatch")) {
-      expect(stderr).toBe("");
-    }
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 
@@ -151,9 +147,7 @@ describe("bun run --tsconfig-override", () => {
     expect(stdout).toContain("Button component");
     expect(stdout).toContain("monorepo-app");
 
-    if (!stderr.includes("Internal error: directory mismatch")) {
-      expect(stderr).toBe("");
-    }
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 
@@ -200,9 +194,7 @@ describe("bun run --tsconfig-override", () => {
     expect(stdout).toContain("home-data");
     expect(stdout).toContain("formatted-test");
 
-    if (!stderr.includes("Internal error: directory mismatch")) {
-      expect(stderr).toBe("");
-    }
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 
@@ -256,9 +248,7 @@ describe("bun run --tsconfig-override", () => {
     expect(stdout).toContain("core-module");
     expect(stdout).toContain("auth-feature");
 
-    if (!stderr.includes("Internal error: directory mismatch")) {
-      expect(stderr).toBe("");
-    }
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 
@@ -297,9 +287,33 @@ describe("bun run --tsconfig-override", () => {
 
     expect(stdout).toContain("Result: 8");
 
-    if (!stderr.includes("Internal error: directory mismatch")) {
-      expect(stderr).toBe("");
-    }
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("applies the override's compilerOptions instead of the cwd tsconfig.json's", async () => {
+    await using dir = tempDir("run-tsconfig-compiler-options", {
+      "index.tsx": `
+        const fromOverride = (tag: string, props: unknown) => JSON.stringify([tag, props]);
+        console.log(<main id="x" />);
+      `,
+      // fromTsconfigJson is not defined: picking this file up would throw.
+      "tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react", jsxFactory: "fromTsconfigJson" } }),
+      "custom-tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react", jsxFactory: "fromOverride" } }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--tsconfig-override", "custom-tsconfig.json", "index.tsx"],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe('["main",{"id":"x"}]\n');
     expect(exitCode).toBe(0);
   });
 

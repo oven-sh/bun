@@ -36,7 +36,7 @@ bun_output::declare_scope!(bun_test, hidden);
 // directly with `<ENABLE_ANSI_COLORS>`.
 mod coverage {
     pub(super) use bun_sourcemap_jsc::code_coverage::{
-        ByteRangeMapping, Fraction, Report as CodeCoverageReport, lcov as Lcov,
+        ByteRangeMapping, Fraction, Report as CodeCoverageReport, file_name, lcov as Lcov,
     };
 
     /// Less-than predicate adapted to the `Ordering` shape `sort_by` wants.
@@ -1644,7 +1644,7 @@ impl CommandLineReporter {
 
         for entry in byte_ranges.iter_mut() {
             if !opts.ignore_patterns.is_empty() {
-                let rel = resolve_path::relative(relative_dir, entry.source_url.slice());
+                let rel = coverage::file_name(entry.source_url.slice(), relative_dir);
                 let mut skip = false;
                 for p in &opts.ignore_patterns {
                     if bun_glob::r#match(p, rel).matches() {
@@ -1712,8 +1712,7 @@ impl CommandLineReporter {
             'brk: {
                 let mut len = b"All files".len();
                 for entry in byte_ranges.iter() {
-                    let utf8 = entry.source_url.slice();
-                    let relative_path = resolve_path::relative(relative_dir, utf8);
+                    let relative_path = coverage::file_name(entry.source_url.slice(), relative_dir);
 
                     // Check if this file should be ignored based on coveragePathIgnorePatterns
                     if !opts.ignore_patterns.is_empty() {
@@ -1891,8 +1890,7 @@ impl CommandLineReporter {
         for entry in byte_ranges.iter_mut() {
             // Check if this file should be ignored based on coveragePathIgnorePatterns
             if !opts.ignore_patterns.is_empty() {
-                let utf8 = entry.source_url.slice();
-                let relative_path = resolve_path::relative(relative_dir, utf8);
+                let relative_path = coverage::file_name(entry.source_url.slice(), relative_dir);
 
                 let mut should_ignore = false;
                 for pattern in &opts.ignore_patterns {
@@ -2049,6 +2047,11 @@ extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun_core::Strin
     // In this particular case, we don't actually care about non-ascii latin1 characters.
     // so we skip the ascii check
     let slice: &[u8] = zig_slice.slice();
+
+    // The report would name these rows by the source text itself or by a per-run UUID.
+    if slice.starts_with(b"data:") || slice.starts_with(b"blob:") {
+        return false;
+    }
 
     // always ignore node_modules.
     if strings::contains(slice, b"/node_modules/") || strings::contains(slice, b"\\node_modules\\")

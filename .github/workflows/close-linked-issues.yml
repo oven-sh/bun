@@ -162,6 +162,9 @@ jobs:
                 // "unable to\nfix #1", "#100, which\nfixed #1". A line that starts with
                 // "Fix #1" after prose still counts.
                 const w = skipInterveningBack(tokens, k - 1);
+                // "#100 has\nfixed #1": the reference is the subject when a word was skipped
+                // to reach it. With nothing between, "Fixes #1\nFixes #2" stays two statements.
+                if (w < k - 1 && endsWithReference(tokens, w)) return false;
                 const wrapped = tokens[w];
                 if (wrapped?.kind !== "word") return true;
                 if (DISQUALIFIERS.has(wrapped.text) || isRelativeToReference(tokens, w)) return false;
@@ -249,13 +252,13 @@ jobs:
             // nothing else: "<!--" in a fence is code, and "```" in a comment is
             // comment. An unclosed comment runs to the end, as in CommonMark. A line
             // after a quote line continues the quote until a blank line or a new block.
+            // An indented line opens a code block unless it continues a paragraph.
             function removeBlocks(text) {
               const kept = [];
               let fence = null;
               let comment = false;
-              let indented = false;
               let quote = false;
-              let blankBefore = true;
+              let paragraph = false;
               for (const line of text.split("\n")) {
                 let rest = line;
                 if (comment) {
@@ -270,40 +273,38 @@ jobs:
                 const trimmed = rest.trim();
                 if (fence !== null) {
                   if (trimmed.startsWith(fence) && isRunOf(trimmed.slice(fence.length), fence[0])) fence = null;
+                  paragraph = false;
                   kept.push("");
                   continue;
                 }
-                const blank = trimmed === "";
-                if (blank) {
+                if (trimmed === "") {
                   quote = false;
-                  blankBefore = true;
+                  paragraph = false;
                   kept.push("");
                   continue;
                 }
-                // Four spaces or a tab after a blank line open an indented code block.
-                if ((rest.startsWith("    ") || rest.startsWith("\t")) && (blankBefore || indented)) {
-                  indented = true;
-                  blankBefore = false;
+                if (!paragraph && isIndentedCode(rest)) {
                   kept.push("");
                   continue;
                 }
-                indented = false;
-                blankBefore = false;
                 const opening = leadingRun(trimmed, "`") || leadingRun(trimmed, "~");
                 // A backtick fence's info string cannot hold a backtick: "```bun test```" is a code span.
                 const isFence = opening.length >= 3 && (opening[0] === "~" || !trimmed.slice(opening.length).includes("`"));
                 if (isFence) {
                   fence = opening;
                   quote = false;
+                  paragraph = false;
                   kept.push("");
                   continue;
                 }
                 if (trimmed.startsWith(">") || (quote && !startsBlock(trimmed))) {
                   quote = true;
+                  paragraph = false;
                   kept.push("");
                   continue;
                 }
                 quote = false;
+                paragraph = !isHeading(trimmed);
                 // A "<!--" inside a code span on this line is code: "Handles `<!--`. Fixes #1".
                 const prose = removeSpans(rest, "`");
                 let out = "";
@@ -327,13 +328,31 @@ jobs:
               return kept.join("\n");
             }
 
-            // A heading, a list item or a rule ends a blockquote's lazy continuation.
+            // Four columns of indentation: four spaces, or a tab within the first four.
+            function isIndentedCode(line) {
+              let n = 0;
+              while (line[n] === " ") n++;
+              return n >= 4 || line[n] === "\t";
+            }
+
+            // A heading, a list item or a fence ends a blockquote's lazy continuation.
+            // The marker needs a space after it: "#100" and "**bold**" are text.
             function startsBlock(trimmed) {
               const c = trimmed[0];
-              if (c === "#" || c === "-" || c === "*" || c === "+") return true;
+              if (c === "-" || c === "*" || c === "+") return isGap(trimmed[1]);
+              if (c === "#") return isHeading(trimmed);
               let n = 0;
               while (isDigit(trimmed[n])) n++;
-              return n > 0 && (trimmed[n] === "." || trimmed[n] === ")");
+              return n > 0 && (trimmed[n] === "." || trimmed[n] === ")") && isGap(trimmed[n + 1]);
+            }
+
+            function isHeading(trimmed) {
+              const run = leadingRun(trimmed, "#");
+              return run.length >= 1 && run.length <= 6 && isGap(trimmed[run.length]);
+            }
+
+            function isGap(c) {
+              return c === undefined || c === " " || c === "\t";
             }
 
             // Removes "<tag>...</tag>" within a paragraph, for the HTML spellings of

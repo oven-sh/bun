@@ -540,6 +540,34 @@ describe.concurrent("bun test --isolate", () => {
   });
 });
 
+// --isolate raises JSC's FTL warm-up threshold. JSC options are set once per
+// process, by whoever initializes JSC first. The [install] hoist patterns are
+// regexes, and compiling them while bunfig.toml loaded used to initialize JSC
+// with the default options before `bun test` could pass its own.
+test.concurrent("--isolate: JSC options survive a bunfig.toml with an install hoist pattern", async () => {
+  using dir = tempDir("isolate-bunfig-hoist-pattern", {
+    "bunfig.toml": `[install]\nhoistPattern = ["*eslint*"]\n`,
+    "a.test.ts": `
+      import { test, expect } from "bun:test";
+      test("passes", () => {
+        expect(1).toBe(1);
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--isolate", "./a.test.ts"],
+    env: { ...bunEnv, BUN_JSC_dumpOptions: "2" },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const threshold = stderr.split("\n").find(line => line.includes("thresholdForFTLOptimizeAfterWarmUp="));
+  expect(threshold?.trim()).toBe("thresholdForFTLOptimizeAfterWarmUp=1000000");
+  expect(normalizeBunSnapshot(stderr, dir)).toContain("1 pass");
+  expect(exitCode).toBe(0);
+});
+
 // The eviction test below proves the SourceProvider cache is active (control:
 // b sees stale v1 → cache hit) and that delete require.cache evicts it
 // (treatment: b sees fresh v2). A/B timing was removed as flaky; this is the

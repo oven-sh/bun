@@ -115,8 +115,9 @@ function itBundledDevAndProd(
     prodTodo?: boolean;
   },
 ) {
-  const { devStdout, prodStdout, ...rest } = opts;
+  const { devStdout, prodStdout, devTodo, prodTodo, ...rest } = opts;
   itBundled(id + "Dev", {
+    todo: devTodo,
     ...rest,
     env: {
       NODE_ENV: "development",
@@ -129,6 +130,7 @@ function itBundledDevAndProd(
       : rest.run,
   });
   itBundled(id + "Prod", {
+    todo: prodTodo,
     ...rest,
     env: {
       NODE_ENV: "production",

@@ -16,7 +16,7 @@ import {
   rmSync,
   writeFileSync,
 } from "fs";
-import { bunEnv, bunExe, isCI, isDebug } from "harness";
+import { bunEnv, bunExe, isCI, isDebug, isWindows } from "harness";
 import { tmpdir } from "os";
 import path from "path";
 import { SourceMapConsumer } from "source-map";
@@ -463,18 +463,36 @@ function testRef(id: string, options: BundlerTestInput): BundlerTestRef {
   return { id, options };
 }
 
+/**
+ * Thrown by the option checks at the top of `expectBundled` when a test, as written, cannot run on
+ * the current backend or uses an option the harness does not implement. `itBundled` registers
+ * nothing for such a test (expectBundled.md: "these tests get auto-skipped"). Anything else thrown
+ * while a test is being registered is a mistake in the test and fails the file.
+ */
+class NotImplementedError extends Error {}
+
+/**
+ * Declared in `BundlerTestInput` but not passed to either backend: a test that sets one is skipped.
+ * An option that is not declared at all is a typo and fails the file.
+ */
+const unimplementedOptions: ReadonlySet<string> = new Set([
+  "alias",
+  "entryPointsAdvanced",
+  "extensionOrder",
+  "mangleProps",
+  "mangleQuoted",
+  "nodePaths",
+  "skipIfWeDidNotImplementWildcardSideEffects",
+  "stdin",
+  "targetFromAPI",
+] satisfies (keyof BundlerTestInput)[]);
+
 function expectBundled(
   id: string,
   opts: BundlerTestInput,
   dryRun = false,
   ignoreFilter = false,
 ): Promise<BundlerTestRef> | BundlerTestRef {
-  if (!new Error().stack!.includes("test/bundler/")) {
-    throw new Error(
-      `All bundler tests must be placed in ./test/bundler/ so that regressions can be quickly detected locally via the 'bun test bundler' command`,
-    );
-  }
-
   var { expect, it, test } = testForFile(currentFile ?? callerSourceOrigin());
   if (!ignoreFilter && FILTER && !filterMatches(id)) return testRef(id, opts);
 
@@ -553,6 +571,8 @@ function expectBundled(
     generateOutput = true,
     onAfterApiBundle,
     throw: _throw = false,
+    // Read by itBundled when it registers the test.
+    timeoutScale: _timeoutScale,
     ...unknownProps
   } = opts;
 
@@ -560,9 +580,12 @@ function expectBundled(
     splitting = true;
   }
 
-  // TODO: Remove this check once all options have been implemented
+  const unknownOptions = Object.keys(unknownProps).filter(option => !unimplementedOptions.has(option));
+  if (unknownOptions.length > 0) {
+    throw new Error(`expectBundled("${id}", ...) received unknown options: ${unknownOptions.join(", ")}`);
+  }
   if (Object.keys(unknownProps).length > 0) {
-    throw new Error("expectBundled received unexpected options: " + Object.keys(unknownProps).join(", "));
+    throw new NotImplementedError(`${Object.keys(unknownProps).join(", ")} not implemented in expectBundled`);
   }
 
   // This is a sanity check that protects against bad copy pasting.
@@ -597,46 +620,47 @@ function expectBundled(
           : entryPoints.length === 1;
 
   if (bundling === false && entryPoints.length > 1) {
-    throw new Error("bundling:false only supports a single entry point");
+    // Several entry points need --outdir, which `bun build --no-bundle` does not write to yet (#9859).
+    throw new NotImplementedError("bundling:false only supports a single entry point");
   }
 
   if (!ESBUILD && legalComments) {
-    throw new Error("legalComments not implemented in bun build");
+    throw new NotImplementedError("legalComments not implemented in bun build");
   }
   if (!ESBUILD && unsupportedJSFeatures && unsupportedJSFeatures.length) {
-    throw new Error("unsupportedJSFeatures not implemented in bun build");
+    throw new NotImplementedError("unsupportedJSFeatures not implemented in bun build");
   }
   if (!ESBUILD && unsupportedCSSFeatures && unsupportedCSSFeatures.length) {
-    throw new Error("unsupportedCSSFeatures not implemented in bun build");
+    throw new NotImplementedError("unsupportedCSSFeatures not implemented in bun build");
   }
   if (!ESBUILD && mainFields) {
-    throw new Error("mainFields not implemented in bun build");
+    throw new NotImplementedError("mainFields not implemented in bun build");
   }
   if (!ESBUILD && inject) {
-    throw new Error("inject not implemented in bun build");
+    throw new NotImplementedError("inject not implemented in bun build");
   }
   if (!ESBUILD && loader) {
     const loaderValues = [...new Set(Object.values(loader))];
     const supportedLoaderTypes = ["js", "jsx", "ts", "tsx", "css", "json", "text", "file", "wtf", "toml"];
     const unsupportedLoaderTypes = loaderValues.filter(x => !supportedLoaderTypes.includes(x));
     if (unsupportedLoaderTypes.length > 0) {
-      throw new Error(`loader '${unsupportedLoaderTypes.join("', '")}' not implemented in bun build`);
+      throw new NotImplementedError(`loader '${unsupportedLoaderTypes.join("', '")}' not implemented in bun build`);
     }
   }
   if (ESBUILD && bytecode) {
-    throw new Error("bytecode not implemented in esbuild");
+    throw new NotImplementedError("bytecode not implemented in esbuild");
   }
   if (ESBUILD && skipOnEsbuild) {
     return testRef(id, opts);
   }
   if (ESBUILD && dotenv) {
-    throw new Error("dotenv not implemented in esbuild");
+    throw new NotImplementedError("dotenv not implemented in esbuild");
   }
   if (ESBUILD && _throw) {
-    throw new Error("throw not implemented in esbuild");
+    throw new NotImplementedError("throw not implemented in esbuild");
   }
   if (ESBUILD && allowUnresolved !== undefined) {
-    throw new Error("allowUnresolved not possible in esbuild backend");
+    throw new NotImplementedError("allowUnresolved not possible in esbuild backend");
   }
   if (dryRun) {
     return testRef(id, opts);
@@ -1898,8 +1922,12 @@ export function itBundled(
     try {
       expectBundled(id, opts, true);
     } catch (error) {
-      return ref;
+      if (error instanceof NotImplementedError) return ref;
+      throw error;
     }
+    // itBundled tests have not been registered on Windows since #15181 (the dry run threw on every one
+    // of them there) and about 55 of them fail on it now. #34552 fixes or gates those and deletes this line.
+    if (isWindows) return ref;
   }
 
   if (opts.todo && !FILTER) {

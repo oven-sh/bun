@@ -43,6 +43,8 @@ jsxFragment = "Fragment"
 jsxImportSource = "react"
 ```
 
+When both `bunfig.toml` and `tsconfig.json` set a JSX field, the value from `bunfig.toml` wins. `--jsx-*` CLI flags likewise override both. Fields you don't set in `bunfig.toml` still fall through to `tsconfig.json`.
+
 Refer to the tsconfig docs for more information on these fields.
 
 - [`jsx`](https://www.typescriptlang.org/tsconfig#jsx)

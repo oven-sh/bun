@@ -83,6 +83,15 @@ describe("Bun.QR", () => {
       }
     });
 
+    test("undefined and NaN mask both mean automatic selection", () => {
+      const auto = Bun.QR.generate("hello").mask;
+      // "hello" picks a non-zero mask, so a NaN that collapsed to mask 0
+      // would be visible here.
+      expect(auto).not.toBe(0);
+      expect(Bun.QR.generate("hello", { mask: undefined }).mask).toBe(auto);
+      expect(Bun.QR.generate("hello", { mask: NaN }).mask).toBe(auto);
+    });
+
     test("accepts BufferSource", () => {
       const bytes = new Uint8Array([0x00, 0xff, 0x42, 0x99]);
       const fromBuf = Bun.QR.generate(bytes);
@@ -203,7 +212,11 @@ describe("Bun.QR", () => {
     });
 
     test("rejects images that would exceed the pixel cap", () => {
-      expect(() => Bun.QR.generate("x", { format: "image", scale: 1024, border: 1024 })).toThrow(RangeError);
+      // v1 is 21 modules; (21 + 2 * 1024) * 1024 = 2118656 px per side.
+      const huge = () => Bun.QR.generate("x", { format: "image", scale: 1024, border: 1024 });
+      expect(huge).toThrow(RangeError);
+      expect(huge).toThrow("A 2118656x2118656 pixel QR image exceeds the limit of");
+      expect(huge).toThrow("Reduce options.scale or options.border");
       expect(() =>
         Bun.QR.generate(Buffer.alloc(2953, 0xff), {
           format: "image",
@@ -266,6 +279,16 @@ describe("Bun.QR", () => {
     test("rejects wrong sizes", () => {
       expect(() => Bun.QR.parse(new Uint8Array(20 * 20))).toThrow(TypeError);
       expect(() => Bun.QR.parse({ matrix: new Uint8Array(10), size: 10 })).toThrow(RangeError);
+      // A valid size whose square is not the matrix length.
+      expect(() => Bun.QR.parse({ matrix: new Uint8Array(21 * 21), size: 25 })).toThrow(
+        "matrix must hold size*size modules, where size is 21..=177 and size % 4 == 1",
+      );
+    });
+
+    test("undefined and NaN size both mean infer from the matrix length", () => {
+      const { matrix } = Bun.QR.generate("sized");
+      expect(Bun.QR.parse({ matrix, size: undefined }).text).toBe("sized");
+      expect(Bun.QR.parse({ matrix, size: NaN }).text).toBe("sized");
     });
   });
 
@@ -312,13 +335,17 @@ describe("Bun.QR", () => {
     });
 
     test("data too long", () => {
-      // 2954 bytes > v40-L byte capacity (2953).
-      expect(() =>
+      // 2954 bytes > v40-L byte capacity (2953). The message reports the bits
+      // the input needs (4 mode + 16 count + 2954 * 8) against v40-L's 23648.
+      const tooLong = () =>
         Bun.QR.generate(Buffer.alloc(2954, 0xff), {
           errorCorrection: "L",
           boostErrorCorrection: false,
-        }),
-      ).toThrow(RangeError);
+        });
+      expect(tooLong).toThrow(RangeError);
+      expect(tooLong).toThrow(
+        "Input is too long to encode as a QR code: it needs 23652 data bits, but the largest allowed symbol holds 23648",
+      );
       // 2953 bytes fits.
       const ok = Bun.QR.generate(Buffer.alloc(2953, 0xff), {
         errorCorrection: "L",
@@ -343,7 +370,15 @@ describe("Bun.QR", () => {
     });
 
     test("data too long under maxVersion", () => {
-      expect(() => Bun.QR.generate(Buffer.alloc(200, "x").toString(), { maxVersion: 1 })).toThrow(RangeError);
+      // 200 byte-mode chars at v1 (8-bit count field): 4 + 8 + 1600 bits; v1-M holds 128.
+      const atV1 = () => Bun.QR.generate(Buffer.alloc(200, "x").toString(), { maxVersion: 1 });
+      expect(atV1).toThrow(RangeError);
+      expect(atV1).toThrow("it needs 1612 data bits, but the largest allowed symbol holds 128");
+      // 300 bytes do not even fit the 8-bit count field that versions 1-9
+      // use. The message still reports the real bit length, 4 + 8 + 2400.
+      const atV9 = () => Bun.QR.generate(new Uint8Array(300), { maxVersion: 9 });
+      expect(atV9).toThrow(RangeError);
+      expect(atV9).toThrow("it needs 2412 data bits, but the largest allowed symbol holds 1456");
     });
   });
 });

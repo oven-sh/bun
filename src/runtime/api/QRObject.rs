@@ -135,7 +135,7 @@ fn ecc_name(ecc: Ecc) -> &'static str {
     }
 }
 
-/// Reads an integer option. Absent or `undefined` yields `default`; a
+/// Reads an integer option. Absent, `undefined` or `NaN` yields `default`; a
 /// non-number or non-integer throws a TypeError; out of range throws a
 /// RangeError.
 fn int_option<T: bun_core::Integer>(
@@ -158,6 +158,34 @@ fn int_option<T: bun_core::Integer>(
             always_allow_zero: false,
         },
     )
+}
+
+/// [`int_option`] for an option whose default is "not set": the inputs that
+/// [`int_option`] maps to its default map to `None` here.
+fn optional_int_option<T: bun_core::Integer>(
+    global: &JSGlobalObject,
+    object: JSValue,
+    name: &'static str,
+    field_name: &'static [u8],
+    min: i128,
+    max: i128,
+) -> JsResult<Option<T>> {
+    let Some(value) = object.get(global, name)? else {
+        return Ok(None);
+    };
+    if value.get_number().is_some_and(f64::is_nan) {
+        return Ok(None);
+    }
+    Ok(Some(global.validate_integer_range::<T>(
+        value,
+        T::ZERO,
+        bun_jsc::IntegerRange {
+            min,
+            max,
+            field_name,
+            always_allow_zero: false,
+        },
+    )?))
 }
 
 fn color_option(
@@ -241,21 +269,8 @@ fn parse_options(global: &JSGlobalObject, value: JSValue) -> JsResult<Options> {
         1,
         MAX_SCALE,
     )?;
-    // No numeric default: an absent mask means "choose by penalty score".
-    if let Some(mask_value) = value.get(global, "mask")? {
-        if !mask_value.is_undefined() {
-            opts.mask = Some(global.validate_integer_range::<u8>(
-                mask_value,
-                0,
-                bun_jsc::IntegerRange {
-                    min: 0,
-                    max: 7,
-                    field_name: b"options.mask",
-                    always_allow_zero: false,
-                },
-            )?);
-        }
-    }
+    // No numeric default: an unset mask means "choose by penalty score".
+    opts.mask = optional_int_option::<u8>(global, value, "mask", b"options.mask", 0, 7)?;
 
     if let Some(v) = value.get_boolean_loose(global, "boostErrorCorrection")? {
         opts.boost_ecc = v;
@@ -277,36 +292,13 @@ fn parse_options(global: &JSGlobalObject, value: JSValue) -> JsResult<Options> {
 #[cold]
 fn encode_err_to_js(global: &JSGlobalObject, err: EncodeError) -> bun_jsc::JsError {
     match err {
-        EncodeError::DataTooLong {
-            max_bits,
-            need_bits,
-        } => global.throw_range_error(
-            i64::try_from(need_bits).unwrap_or(i64::MAX),
-            bun_jsc::RangeErrorOptions {
-                max: i64::try_from(max_bits).unwrap_or(i64::MAX),
-                field_name: b"data bit length",
-                msg: b"Input is too long to encode as a QR code",
-                ..Default::default()
-            },
-        ),
-        EncodeError::InvalidVersion => global.throw_range_error(
-            0i64,
-            bun_jsc::RangeErrorOptions {
-                min: i64::from(VERSION_MIN),
-                max: i64::from(VERSION_MAX),
-                field_name: b"version",
-                ..Default::default()
-            },
-        ),
-        EncodeError::InvalidMask => global.throw_range_error(
-            0i64,
-            bun_jsc::RangeErrorOptions {
-                min: 0,
-                max: 7,
-                field_name: b"mask",
-                ..Default::default()
-            },
-        ),
+        // `parse_options` range-checks version and mask, so only DataTooLong
+        // is reachable from JS here.
+        EncodeError::DataTooLong { .. }
+        | EncodeError::InvalidVersion
+        | EncodeError::InvalidMask => global
+            .err(bun_jsc::ErrCode::OUT_OF_RANGE, format_args!("{}", err))
+            .throw(),
         EncodeError::InvalidVersionRange => global.throw_invalid_arguments(format_args!(
             "options.minVersion must be <= options.maxVersion"
         )),
@@ -385,15 +377,15 @@ fn generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                 (u64::from(qr.size()) + 2 * u64::from(opts.border)) * u64::from(opts.scale);
             let px = dim_px * dim_px;
             if px > codecs::DEFAULT_MAX_PIXELS {
-                return Err(global.throw_range_error(
-                    px as i64,
-                    bun_jsc::RangeErrorOptions {
-                        max: codecs::DEFAULT_MAX_PIXELS as i64,
-                        field_name: b"output pixel count",
-                        msg: b"QR image too large; reduce options.scale or options.border",
-                        ..Default::default()
-                    },
-                ));
+                return Err(global
+                    .err(
+                        bun_jsc::ErrCode::OUT_OF_RANGE,
+                        format_args!(
+                            "A {dim_px}x{dim_px} pixel QR image exceeds the limit of {} pixels. Reduce options.scale or options.border",
+                            codecs::DEFAULT_MAX_PIXELS
+                        ),
+                    )
+                    .throw());
             }
             let (rgba, w, h) = bun_qr::to_rgba(
                 &qr,
@@ -463,20 +455,15 @@ fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     }
 
     let (matrix_value, declared_size) = match input_value.get(global, "matrix")? {
-        Some(m) if input_value.is_object() && !m.is_undefined_or_null() => {
-            let size = match input_value.get(global, "size")? {
-                Some(v) if !v.is_undefined() => Some(global.validate_integer_range::<usize>(
-                    v,
-                    0,
-                    bun_jsc::IntegerRange {
-                        min: 21,
-                        max: 177,
-                        field_name: b"size",
-                        always_allow_zero: false,
-                    },
-                )?),
-                _ => None,
-            };
+        Some(m) if input_value.is_object() && !m.is_null() => {
+            let size = optional_int_option::<usize>(
+                global,
+                input_value,
+                "size",
+                b"size",
+                i128::from(bun_qr::SIZE_MIN),
+                i128::from(bun_qr::SIZE_MAX),
+            )?;
             (m, size)
         }
         _ => (input_value, None),

@@ -229,6 +229,24 @@ describe("tsconfig compilerOptions.useDefineForClassFields", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent("comes from the tsconfig nearest to the file, not the cwd's", async () => {
+    using dir = tempDir("udfcf-nearest", {
+      "tsconfig.json": JSON.stringify({ compilerOptions: {} }),
+      "lib/tsconfig.json": JSON.stringify({ compilerOptions: { useDefineForClassFields: false } }),
+      // [[Define]] semantics would re-declare x as undefined; under
+      // useDefineForClassFields: false the bare declaration is dropped.
+      "lib/index.ts": `
+        class Base { x = 1; }
+        class Derived extends Base { x; }
+        console.log(new Derived().x);
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), "lib/index.ts");
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("1");
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("false: Bun.Transpiler honors the option", async () => {
     const t = new Bun.Transpiler({
       loader: "ts",

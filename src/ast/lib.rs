@@ -1217,16 +1217,6 @@ pub struct MetadataResolve {
     pub err: crate::Error,
 }
 
-impl Default for MetadataResolve {
-    fn default() -> Self {
-        MetadataResolve {
-            specifier: BabyString::new(0, 0),
-            import_kind: ImportKind::default(),
-            err: crate::Error::ModuleNotFound,
-        }
-    }
-}
-
 // ───────────────────────────────────────────────────────────────────────────
 // Range
 // ───────────────────────────────────────────────────────────────────────────

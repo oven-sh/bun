@@ -155,10 +155,6 @@ NEVER_INLINE void putDirectNamed(JSC::VM& vm, JSC::JSObject* object, ASCIILitera
 
 using namespace JSC;
 
-#define processObjectBindingCodeGenerator processObjectInternalsBindingCodeGenerator
-#define setProcessObjectInternalsMainModuleCodeGenerator processObjectInternalsSetMainModuleCodeGenerator
-#define setProcessObjectMainModuleCodeGenerator setMainModuleCodeGenerator
-
 #if !defined(BUN_WEBKIT_VERSION)
 #define BUN_WEBKIT_VERSION "unknown"
 #endif
@@ -190,8 +186,6 @@ BUN_DECLARE_HOST_FUNCTION(Bun__Process__send);
 
 extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global);
 extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValue value);
-
-extern "C" void Bun__suppressCrashOnProcessKillSelfIfDesired();
 
 static Process* getProcessObject(JSC::JSGlobalObject* lexicalGlobalObject, JSValue thisValue);
 bool setProcessExitCodeInner(JSC::JSGlobalObject* lexicalGlobalObject, Process* process, JSValue code);
@@ -982,17 +976,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionHRTimeBigInt, (JSC::JSGlobalObject * gl
     return JSC::JSValue::encode(JSValue(JSC::JSBigInt::createFrom(globalObject, Bun__readOriginTimer(globalObject->bunVM()))));
 }
 
-extern "C" bool Bun__Permission__isEnabled();
-extern "C" bool Bun__Permission__throwIfFsDenied(JSC::JSGlobalObject*, bool isWrite, const char* ptr, size_t len);
-
-/// The internal/permission builtin, for the diagnostics-channel publishes
-/// node's permission model does on denied checks and drops.
-extern "C" JSC::EncodedJSValue Bun__Permission__requireInternalPermissionModule(Zig::GlobalObject* globalObject)
-{
-    auto& vm = JSC::getVM(globalObject);
-    return JSValue::encode(globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::InternalPermission));
-}
-
 JSC_DEFINE_HOST_FUNCTION(Process_functionChdir, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -1002,16 +985,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionChdir, (JSC::JSGlobalObject * globalObj
     Bun::V::validateString(scope, globalObject, value, "directory"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto pathString = value.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (Bun__Permission__isEnabled()) [[unlikely]] {
-        // node_process_methods.cc Chdir: fs.read scope on the target.
-        auto utf8 = pathString.utf8();
-        if (Bun__Permission__throwIfFsDenied(globalObject, false, utf8.data(), utf8.length()))
-            return {};
-    }
-
-    ZigString str = Zig::toZigString(pathString);
+    ZigString str = Zig::toZigString(value.toWTFString(globalObject));
     JSC::JSValue result = JSC::JSValue::decode(Bun__Process__setCwd(globalObject, &str));
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -1831,6 +1805,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_throwValue, (JSGlobalObject * globalObject, 
     return {};
 }
 
+#if !OS(WINDOWS)
+static void restoreDefaultSignalDisposition(int signalNumber)
+{
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = SIG_DFL;
+    sigemptyset(&sa.sa_mask);
+    sigaction(signalNumber, &sa, nullptr);
+}
+#endif
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionAbort, (JSGlobalObject * globalObject, CallFrame*))
 {
 #if OS(WINDOWS)
@@ -1840,11 +1825,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionAbort, (JSGlobalObject * globalObject, 
 #else
     // process.abort() is user-requested; bypass the crash handler so it does
     // not print "Bun has crashed" or upload a report.
-    struct sigaction sa;
-    memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = SIG_DFL;
-    sigemptyset(&sa.sa_mask);
-    sigaction(SIGABRT, &sa, nullptr);
+    restoreDefaultSignalDisposition(SIGABRT);
     abort();
 #endif
 }
@@ -2750,21 +2731,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteReport, (JSGlobalObject * globalOb
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (Bun__Permission__isEnabled()) [[unlikely]] {
-        // node_report.cc WriteReport: fs.write on the filename as passed, or
-        // on the cwd when no filename is given.
-        auto filenameValue = callFrame->argument(0);
-        if (filenameValue.isString()) {
-            auto filename = filenameValue.toWTFString(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            auto utf8 = filename.utf8();
-            if (Bun__Permission__throwIfFsDenied(globalObject, true, utf8.data(), utf8.length()))
-                return {};
-        } else {
-            if (Bun__Permission__throwIfFsDenied(globalObject, true, nullptr, 0))
-                return {};
-        }
-    }
     // TODO:
     return JSValue::encode(callFrame->argument(0));
 }
@@ -3707,28 +3673,6 @@ JSValue createCryptoX509Object(JSGlobalObject* globalObject)
     return cryptoX509;
 }
 
-// Bun's own builtins call process.binding() where node's internals would call
-// internalBinding(), so neither the DEP0111 warning nor the permission-model
-// denial applies to them.
-static bool processBindingCallerIsInternal(JSC::VM& vm, CallFrame* callFrame)
-{
-    String callerURL;
-    JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
-        if (Zig::isImplementationVisibilityPrivate(visitor))
-            return WTF::IterationStatus::Continue;
-        if (visitor->hasLineAndColumnInfo()) {
-            callerURL = Zig::sourceURL(visitor);
-            return WTF::IterationStatus::Done;
-        }
-        return WTF::IterationStatus::Continue;
-    });
-    return callerURL.startsWith("node:"_s) || callerURL.startsWith("bun:"_s) || callerURL.startsWith("internal"_s);
-}
-
-extern "C" bool Bun__Permission__isEnabled();
-extern "C" void Bun__Permission__throwProcessBindingDenied(JSC::JSGlobalObject*);
-extern "C" JSC::EncodedJSValue Bun__Permission__createObject(JSC::JSGlobalObject*);
-
 JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(jsGlobalObject);
@@ -3736,15 +3680,21 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObje
     auto globalObject = uncheckedDowncast<Zig::GlobalObject>(jsGlobalObject);
     auto process = globalObject->processObject();
 
-    if (Bun__Permission__isEnabled() && !processBindingCallerIsInternal(vm, callFrame)) [[unlikely]] {
-        Bun__Permission__throwProcessBindingDenied(jsGlobalObject);
-        return {};
-    }
-
     if (Bun__Node__ProcessPendingDeprecation && !process->m_warnedProcessBinding) {
-        // Node latches DEP0111 through its deprecate() wrapper, once per
-        // Environment (each worker warns once).
-        if (!processBindingCallerIsInternal(vm, callFrame)) {
+        // Node latches DEP0111 once per Environment via deprecate(). Bun's own builtins call
+        // process.binding() too (node uses internalBinding), so internal callers don't warn/latch.
+        String callerURL;
+        JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
+            if (Zig::isImplementationVisibilityPrivate(visitor))
+                return WTF::IterationStatus::Continue;
+            if (visitor->hasLineAndColumnInfo()) {
+                callerURL = Zig::sourceURL(visitor);
+                return WTF::IterationStatus::Done;
+            }
+            return WTF::IterationStatus::Continue;
+        });
+        bool isInternalCaller = callerURL.startsWith("node:"_s) || callerURL.startsWith("bun:"_s) || callerURL.startsWith("internal"_s);
+        if (!isInternalCaller) {
             process->m_warnedProcessBinding = true;
             Process::emitWarning(globalObject,
                 jsString(vm, String("process.binding() is deprecated. Please use public APIs instead."_s)),
@@ -4788,6 +4738,27 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCwd, (JSC::JSGlobalObject * globalObjec
     return JSValue::encode(getCachedCwd(globalObject));
 }
 
+#if !OS(WINDOWS)
+extern "C" bool CrashHandler__isCrashSignal(int signalNumber);
+
+// kill(-1) never reaches the caller, not even when the caller's process group is 1, hence pid < -1.
+static bool killReachesThisProcess(int pid, int ownPid)
+{
+    return pid == ownPid || pid == 0 || (pid < -1 && pid == -getpgrp());
+}
+
+// Same as process.abort(). forwardSignal as the disposition means a JS listener owns the signal.
+static void bypassCrashHandlerForSelfSentSignal(int pid, int ownPid, int signalNumber)
+{
+    if (!CrashHandler__isCrashSignal(signalNumber) || !killReachesThisProcess(pid, ownPid))
+        return;
+    struct sigaction current;
+    if (sigaction(signalNumber, nullptr, &current) != 0 || current.sa_handler == forwardSignal)
+        return;
+    restoreDefaultSignalDisposition(signalNumber);
+}
+#endif
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
@@ -4817,9 +4788,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill, (JSC::JSGlobalObject * glob
     }
 
 #if !OS(WINDOWS)
-    if (pid == ownPid) {
-        Bun__suppressCrashOnProcessKillSelfIfDesired();
-    }
+    bypassCrashHandlerForSelfSentSignal(pid, ownPid, signal);
     int result = kill(pid, signal);
     if (result < 0)
         result = errno;
@@ -5146,13 +5115,6 @@ void Process::finishCreation(JSC::VM& vm)
         putDirect(vm, Identifier::fromString(vm, "pendingDeprecation"_s), jsBoolean(true), readOnlyAlias);
     if (Bun__Node__ProcessNoWarnings)
         putDirect(vm, Identifier::fromString(vm, "noProcessWarnings"_s), jsBoolean(true), readOnlyAlias);
-
-    // Node only defines process.permission when the permission model is on.
-    if (Bun__Permission__isEnabled()) [[unlikely]] {
-        putDirect(vm, Identifier::fromString(vm, "permission"_s),
-            JSValue::decode(Bun__Permission__createObject(globalObject())),
-            PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
-    }
 }
 
 } // namespace Bun

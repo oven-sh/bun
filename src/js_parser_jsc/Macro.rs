@@ -427,7 +427,7 @@ impl Macro {
             // CLI-path macro VM uses the caller's log sink and env loader.
 
             // JSC needs to be initialized if building from CLI
-            jsc::initialize(false);
+            jsc::initialize(jsc::InitializeOptions::default());
 
             let _vm = VirtualMachine::init(VirtualMachineInitOptions {
                 log: Some(NonNull::from(&mut *log)),

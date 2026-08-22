@@ -170,13 +170,10 @@ it("initializes authorizationError to null in the TLSSocket constructor", () => 
   socket.destroy();
 });
 
-it("setMaxSendFragment returns BoringSSL's verdict (clamps out-of-range sizes, reports success)", async () => {
-  // Node returns whatever SSL_set_max_send_fragment returns. Bun links
-  // BoringSSL, which clamps out-of-range sizes into [512, 16384] and reports
-  // success; upstream test-tls-max-send-fragment.js pins exactly this for
-  // process.features.openssl_is_boringssl builds. Negative sizes stay false
-  // (Node's C++ binding would CHECK-crash on a non-Uint32; Bun refuses
-  // gracefully).
+it("setMaxSendFragment mirrors OpenSSL's [512, 16384] acceptance without throwing", async () => {
+  // Node returns whatever SSL_set_max_send_fragment returns: OpenSSL rejects a
+  // size outside [512, 16384] with 0 (-> false). BoringSSL clamps and always
+  // returns 1, so bun enforces the same contract in the native binding.
   const server = tls.createServer(COMMON_CERT_, s => s.on("data", () => {}));
   await once(server.listen(0, "127.0.0.1"), "listening");
   const connected = Promise.withResolvers<void>();
@@ -189,12 +186,12 @@ it("setMaxSendFragment returns BoringSSL's verdict (clamps out-of-range sizes, r
     await connected.promise;
     const results = [0, -1, 511, 512, 16384, 16385].map(size => [size, client.setMaxSendFragment(size)]);
     expect(results).toEqual([
-      [0, true],
+      [0, false],
       [-1, false],
-      [511, true],
+      [511, false],
       [512, true],
       [16384, true],
-      [16385, true],
+      [16385, false],
     ]);
   } finally {
     client.destroy();

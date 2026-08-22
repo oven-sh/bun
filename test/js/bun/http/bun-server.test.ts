@@ -2530,6 +2530,34 @@ describe("HEAD requests #15355", () => {
       expect(response.headers.get("strict-transport-security")).toBe("max-age=31536000");
     });
   });
+
+  test("a proxied upstream HEAD response keeps the upstream Content-Length", async () => {
+    using upstream = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response("Hello World");
+      },
+    });
+    // The upstream's response to HEAD has a null body, so the handler-supplied
+    // Content-Length (the upstream's) is what gets sent, as for any bodiless
+    // Response above.
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        return fetch(upstream.url, { method: req.method });
+      },
+    });
+    const head = await fetch(server.url, { method: "HEAD" });
+    expect({ status: head.status, contentLength: head.headers.get("content-length"), text: await head.text() }).toEqual(
+      { status: 200, contentLength: "11", text: "" },
+    );
+    const get = await fetch(server.url);
+    expect({ status: get.status, contentLength: get.headers.get("content-length"), text: await get.text() }).toEqual({
+      status: 200,
+      contentLength: "11",
+      text: "Hello World",
+    });
+  });
 });
 
 describe("websocket and routes test", () => {
@@ -3153,11 +3181,25 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
         const echoed = Promise.withResolvers();
         const closed = Promise.withResolvers();
 
-        // Scope server so the only post-stop root is the connected websocket.
-        // Assign client directly to the outer var rather than returning it —
-        // returning keeps the async frame's scope (which contains server)
-        // alive via the resolved-value chain in JSC.
+        // The client and its handlers are created here, outside the scope that
+        // holds server. The client's close handler is the last function native
+        // code calls before the measurement below, and a pointer to it stays on
+        // the native stack (conservatively scanned) for a while. Had it been
+        // created next to server, it would share server's scope and keep the
+        // server alive through that stale pointer, which is not what this test
+        // measures.
         let client;
+        function connect(url) {
+          client = new WebSocket(url);
+          client.onopen = () => clientOpen.resolve();
+          client.onmessage = e => echoed.resolve(e.data);
+          client.onclose = () => closed.resolve();
+        }
+
+        // Scope server so the only post-stop root is the connected websocket.
+        // Nothing is returned from the arrow: a returned value would keep the
+        // async frame's scope (which contains server) alive via the
+        // resolved-value chain in JSC.
         await (async () => {
           const server = Bun.serve({
             port: 0,
@@ -3169,10 +3211,7 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
               message(ws, m) { ws.send(server.port + ":" + m); },
             },
           });
-          client = new WebSocket(server.url.href.replace("http", "ws"));
-          client.onopen = () => clientOpen.resolve();
-          client.onmessage = e => echoed.resolve(e.data);
-          client.onclose = () => closed.resolve();
+          connect(server.url.href.replace("http", "ws"));
           await opened.promise;      // server-side ws created (roots wrapper)
           await clientOpen.promise;  // client ready to send (avoid InvalidStateError)
           server.stop(); // graceful — listener gone, ws stays

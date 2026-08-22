@@ -143,6 +143,8 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
   return mod.exports;
 }
 
+// Exposed as require.resolve
+$overriddenName = "resolve";
 $visibility = "Private";
 export function requireResolve(
   this: string | { filename?: string; id?: string },

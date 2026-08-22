@@ -765,6 +765,9 @@ impl FileSink {
 
     pub(crate) fn start(&self, stream_start: &streams::Start) -> sys::Result<()> {
         match stream_start {
+            streams::Start::Err(err) => {
+                return sys::Result::Err(err.clone());
+            }
             streams::Start::FileSink(file)
                 if !matches!(file.input_path, PathOrFileDescriptor::Fd(Fd::INVALID)) =>
             {

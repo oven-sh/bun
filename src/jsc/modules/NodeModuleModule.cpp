@@ -477,18 +477,22 @@ PathResolveModule getParent(VM& vm, JSGlobalObject* global, JSValue maybe_parent
     RELEASE_AND_RETURN(scope, value);
 }
 
-static JSValue pathResolve(JSGlobalObject* globalObject, std::initializer_list<JSValue> parts)
-{
-    MarkedArgumentBuffer args;
-    for (JSValue part : parts)
-        args.append(part);
-    constexpr bool isWindows =
 #if OS(WINDOWS)
-        true;
+static constexpr bool hostIsWindows = true;
 #else
-        false;
+static constexpr bool hostIsWindows = false;
 #endif
-    return JSValue::decode(Bun__Path__resolve(globalObject, isWindows, args.data(), args.size()));
+
+// path.resolve() for the host platform. The segments are passed by value, so the caller's
+// stack keeps them alive for the duration of the call.
+static JSValue pathResolve(JSGlobalObject* globalObject, JSValue arg0, JSValue arg1)
+{
+    return JSValue::decode(Bun__Path__resolve2(globalObject, hostIsWindows, JSValue::encode(arg0), JSValue::encode(arg1)));
+}
+
+static JSValue pathResolve(JSGlobalObject* globalObject, JSValue arg0, JSValue arg1, JSValue arg2)
+{
+    return JSValue::decode(Bun__Path__resolve3(globalObject, hostIsWindows, JSValue::encode(arg0), JSValue::encode(arg1), JSValue::encode(arg2)));
 }
 
 // `Module._initPaths()`: compatibility stub that recomputes `Module.globalPaths`
@@ -517,9 +521,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionInitPaths, (JSC::JSGlobalObject * lexicalGlob
     JSValue dotdot = jsNontrivialString(vm, ".."_s);
     // process.execPath is $PREFIX/bin/node except on Windows where it is $PREFIX\node.exe.
 #if OS(WINDOWS)
-    JSValue prefixDir = pathResolve(globalObject, { execPath, dotdot });
+    JSValue prefixDir = pathResolve(globalObject, execPath, dotdot);
 #else
-    JSValue prefixDir = pathResolve(globalObject, { execPath, dotdot, dotdot });
+    JSValue prefixDir = pathResolve(globalObject, execPath, dotdot, dotdot);
 #endif
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -545,17 +549,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionInitPaths, (JSC::JSGlobalObject * lexicalGlob
     bool hasHomeDir = homeDir.toBoolean(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     if (hasHomeDir) {
-        JSValue nodeModules = pathResolve(globalObject, { homeDir, jsNontrivialString(vm, ".node_modules"_s) });
+        JSValue nodeModules = pathResolve(globalObject, homeDir, jsNontrivialString(vm, ".node_modules"_s));
         RETURN_IF_EXCEPTION(scope, {});
         paths->push(globalObject, nodeModules);
         RETURN_IF_EXCEPTION(scope, {});
-        JSValue nodeLibraries = pathResolve(globalObject, { homeDir, jsNontrivialString(vm, ".node_libraries"_s) });
+        JSValue nodeLibraries = pathResolve(globalObject, homeDir, jsNontrivialString(vm, ".node_libraries"_s));
         RETURN_IF_EXCEPTION(scope, {});
         paths->push(globalObject, nodeLibraries);
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    JSValue libNode = pathResolve(globalObject, { prefixDir, jsNontrivialString(vm, "lib"_s), jsNontrivialString(vm, "node"_s) });
+    JSValue libNode = pathResolve(globalObject, prefixDir, jsNontrivialString(vm, "lib"_s), jsNontrivialString(vm, "node"_s));
     RETURN_IF_EXCEPTION(scope, {});
     paths->push(globalObject, libNode);
     RETURN_IF_EXCEPTION(scope, {});

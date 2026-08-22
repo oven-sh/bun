@@ -49,7 +49,15 @@ describe.concurrent("node-module-module", () => {
          const second = M.globalPaths;
          process.execPath = ${JSON.stringify(fakeExecPath)};
          M._initPaths();
-         console.log(JSON.stringify({ execPath, first, second, third: M.globalPaths, sameObject: first === second }));`,
+         const third = M.globalPaths;
+         process.execPath = 42;
+         let thrown;
+         try {
+           M._initPaths();
+         } catch (e) {
+           thrown = e.code;
+         }
+         console.log(JSON.stringify({ execPath, first, second, third, sameObject: first === second, thrown, keptThird: M.globalPaths === third }));`,
       ],
       env: { ...bunEnv, HOME: home, USERPROFILE: home, NODE_PATH: "" },
       stdout: "pipe",
@@ -57,13 +65,16 @@ describe.concurrent("node-module-module", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    const { execPath, first, second, third, sameObject } = JSON.parse(stdout);
+    const { execPath, first, second, third, sameObject, thrown, keptThird } = JSON.parse(stdout);
     const prefix = isWindows ? path.dirname(execPath) : path.dirname(path.dirname(execPath));
     const lib = path.join(prefix, "lib", "node");
     expect(first).toEqual([path.join(home, ".node_modules"), path.join(home, ".node_libraries"), lib]);
     expect(second).toEqual(["/a", "rel", lib]);
     expect(third).toEqual(["/a", "rel", path.join(fakePrefix, "lib", "node")]);
     expect(sameObject).toBe(false);
+    // A non-string execPath makes path.resolve() throw. The error propagates and globalPaths is left as it was.
+    expect(thrown).toBe("ERR_INVALID_ARG_TYPE");
+    expect(keptThird).toBe(true);
     expect(exitCode).toBe(0);
   });
 

@@ -183,7 +183,6 @@ bun_io::impl_streaming_writer_parent! {
     on_ready   = on_ready,
     on_close   = on_close,
     event_loop = |this| (*this).event_loop_handle.as_event_loop_ctx(),
-    uws_loop   = |this| (*this).event_loop_handle.r#loop(),
     uv_loop    = |this| (*this).event_loop_handle.uv_loop(),
     ref_       = |this| (&*this).ref_(),
     deref      = |this| FileSink::deref(this),

@@ -119,7 +119,7 @@ pub fn get_vm_ctx(kind: AllocatorType) -> EventLoopCtx {
     __bun_get_vm_ctx(kind)
 }
 
-/// JS-thread [`EventLoopCtx`] for `KeepAlive::{ref_,unref}` / `FilePoll`.
+/// JS-thread [`EventLoopCtx`] for `KeepAlive::ref_` / `FilePoll`.
 ///
 /// The crate split routes through the
 /// link-time `__bun_get_vm_ctx` hook installed by `bun_runtime::init()`.

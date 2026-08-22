@@ -576,9 +576,6 @@ pub trait PosixStreamingWriterParent {
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn event_loop(this: *mut Self) -> EventLoopHandle;
-    /// # Safety
-    /// `this` must point to a live `Self`.
-    unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop;
 }
 
 pub struct PosixStreamingWriter<Parent: PosixStreamingWriterParent> {
@@ -2580,7 +2577,6 @@ pub mod __parent_macro {
     pub use ::bun_sys::Error as SysError;
     #[cfg(windows)]
     pub use ::bun_sys::windows::libuv::Loop as UvLoop;
-    pub use ::bun_uws_sys::Loop as UwsLoop;
 }
 
 /// Stamp `PosixStreamingWriterParent` + `WindowsWriterParent` +
@@ -2602,7 +2598,6 @@ macro_rules! impl_streaming_writer_parent {
         on_ready   = $on_ready:ident,
         on_close   = $on_close:ident,
         event_loop = |$el_this:ident| $el:expr,
-        uws_loop   = |$uws_this:ident| $uws:expr,
         uv_loop    = |$uv_this:ident| $uv:expr,
         ref_       = |$ref_this:ident| $ref_:expr,
         deref      = |$deref_this:ident| $deref:expr,
@@ -2641,13 +2636,6 @@ macro_rules! impl_streaming_writer_parent {
                 let $el_this = this;
                 #[allow(unused_unsafe)]
                 unsafe { $el }
-            }
-            #[inline]
-            unsafe fn loop_(this: *mut Self) -> *mut $crate::pipe_writer::__parent_macro::UwsLoop {
-                // SAFETY: see on_write. Shared-only read.
-                let $uws_this = this;
-                #[allow(unused_unsafe)]
-                unsafe { $uws }
             }
         }
 

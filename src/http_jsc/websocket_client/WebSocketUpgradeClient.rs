@@ -66,7 +66,7 @@ fn handshake_timeout_seconds() -> core::ffi::c_uint {
     )
 }
 
-/// Local `VirtualMachine → EventLoopCtx` adapter for `KeepAlive::{ref,unref}`.
+/// Local `VirtualMachine → EventLoopCtx` adapter for `KeepAlive::ref_`.
 /// Forwards to the canonical fully-populated vtable in `bun_jsc`.
 ///
 /// # Safety

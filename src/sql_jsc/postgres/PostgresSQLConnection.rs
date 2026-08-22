@@ -239,7 +239,7 @@ impl PostgresSQLConnection {
         self.vm_mut().event_loop_mut()
     }
 
-    /// `KeepAlive::{ref_,unref}` take an `EventLoopCtx` (manual vtable, lives in
+    /// `KeepAlive::ref_` takes an `EventLoopCtx` (manual vtable, lives in
     /// `bun_io`). The sql_jsc-side `VirtualMachine` is a thin façade with no
     /// direct conversion; route through the global hook (`get_vm_ctx(.Js)`) which
     /// resolves to the same singleton VM stored in `self.vm`.

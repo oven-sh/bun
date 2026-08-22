@@ -172,6 +172,9 @@ pub struct WindowsBackend {
     pub(crate) inflight: JsCell<Vec<u8>>,
     pub(crate) write_req: JsCell<uv::uv_write_t>,
     pub(crate) write_buf: JsCell<uv::uv_buf_t>,
+    /// Reads libuv recorded inside `uv_run`, dispatched after it returns
+    /// (`uv::UvStream::read_start_ctx`).
+    pub(crate) read_deferral: JsCell<uv::ReadDeferral>,
 }
 
 #[cfg(windows)]
@@ -183,6 +186,7 @@ impl Default for WindowsBackend {
             inflight: JsCell::new(Vec::new()),
             write_req: JsCell::new(bun_core::ffi::zeroed::<uv::uv_write_t>()),
             write_buf: JsCell::new(uv::uv_buf_t::init(b"")),
+            read_deferral: JsCell::new(uv::ReadDeferral::new()),
         }
     }
 }
@@ -582,6 +586,7 @@ impl<Owner> Drop for Channel<Owner> {
         self.done.set(true);
         #[cfg(windows)]
         {
+            self.backend.read_deferral.with_mut(|d| d.cancel());
             let p = self.backend.pipe.replace(core::ptr::null_mut());
             if !p.is_null() {
                 // SAFETY: Box-allocated; close_and_destroy reclaims via heap::take.
@@ -734,16 +739,27 @@ impl<Owner: ChannelOwner> uv::StreamReader for Channel<Owner> {
         WindowsHandlers::<Owner>::on_alloc(this, suggested_size)
     }
     #[inline]
+    unsafe fn on_read_commit(this: *mut Self, data: &[u8]) {
+        // SAFETY: `this` is the live `Channel` stashed in `handle.data` by
+        // `read_start_ctx`; `data` points into its `read_chunk` scratch, which
+        // the next read reuses, so it is copied out here.
+        let this = unsafe { &*this };
+        this.r#in.with_mut(|buf| buf.extend_from_slice(data));
+    }
+    #[inline]
+    unsafe fn on_read(this: *mut Self, _nread: usize) {
+        // SAFETY: as above; the bytes are already in `in`.
+        let this = unsafe { &*this };
+        this.ingest(&[]);
+    }
+    #[inline]
     fn on_read_error(this: &mut Self, err: core::ffi::c_int) {
         let e = bun_sys::windows::translate_uv_error_to_e(err);
         WindowsHandlers::<Owner>::on_error(this, e);
     }
     #[inline]
-    unsafe fn on_read(this: *mut Self, data: &[u8]) {
-        // SAFETY: `this` is the live `Channel` stashed in `handle.data` by
-        // `read_start_ctx`; `data` points into its `read_chunk` and is only
-        // read (copied by `ingest`).
-        let this = unsafe { &*this };
-        this.ingest(data);
+    fn read_deferral(this: *mut Self) -> *mut uv::ReadDeferral {
+        // SAFETY: `this` is the live `Channel`; raw field projection.
+        unsafe { (*this).backend.read_deferral.as_ptr() }
     }
 }

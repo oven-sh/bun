@@ -418,6 +418,11 @@ pub struct MainFile {
     /// To fix this: when the entrypoint gets NOTE_RENAME, we set this flag
     /// and skip the reload. Then when the parent directory gets NOTE_WRITE,
     /// we check if the file exists and trigger the reload.
+    ///
+    /// Windows uses it the same way for a DELETE of the entrypoint (rm + rename,
+    /// or an editor's atomic save): the DELETE evicts the per-file watch, so the
+    /// re-created file is only reported through its directory, and the Directory
+    /// arm of `on_file_update` reloads once the file exists again.
     pub(crate) is_waiting_for_dir_change: bool,
 }
 
@@ -899,6 +904,15 @@ where
                                 &[],
                             )
                         };
+                        // Windows matches directory-change records against the watchlist by
+                        // path, so once this eviction is flushed a re-created entrypoint (the
+                        // second half of rm + rename, or of an editor's atomic save) is only
+                        // visible as an event on its directory. The Directory arm picks it up
+                        // from there; see `is_waiting_for_dir_change`.
+                        #[cfg(windows)]
+                        if self.main.hash == current_hash && !RELOAD_IMMEDIATELY {
+                            self.main.is_waiting_for_dir_change = true;
+                        }
                     }
 
                     if self.verbose {
@@ -919,6 +933,10 @@ where
                         .intersects(WatchOp::WRITE | WatchOp::DELETE | WatchOp::RENAME)
                     {
                         record_changed_path(file_path);
+                        #[cfg(windows)]
+                        if self.main.hash == current_hash && !event.op.contains(WatchOp::DELETE) {
+                            self.main.is_waiting_for_dir_change = false;
+                        }
                         if IS_KQUEUE {
                             if event.op.contains(WatchOp::RENAME) {
                                 // Special case for entrypoint: defer reload until we get
@@ -944,12 +962,24 @@ where
                 bun_watcher::Kind::Directory => {
                     #[cfg(windows)]
                     {
-                        // on windows we receive file events for all items affected by a directory change
-                        // so we only need to clear the directory cache. all other effects will be handled
-                        // by the file events
+                        // On Windows a directory change is reported as a file event for every
+                        // *watched* item it affects, so beyond clearing the directory cache the
+                        // only thing left to handle here is an item that is no longer watched:
+                        // the entrypoint after a DELETE evicted it (see the File arm). Same
+                        // recovery as the kqueue/inotify paths - once its directory changes and
+                        // the file exists again, reload it; the per-file watch is re-armed on
+                        // the JS thread by `add_main_to_watcher_if_needed` after that reload.
                         let _ = self.ctx_mut().bust_dir_cache(
                             strings::paths::without_trailing_slash_windows_path(file_path),
                         );
+                        if self.main.is_waiting_for_dir_change
+                            && self.main.dir_hash == current_hash
+                            && bun_sys::exists(self.main.file)
+                        {
+                            self.main.is_waiting_for_dir_change = false;
+                            record_changed_path(self.main.file);
+                            current_task.append(self.main.hash);
+                        }
                         continue;
                     }
                     #[cfg(not(windows))]

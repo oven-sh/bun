@@ -6,6 +6,10 @@
 pub mod libuv;
 #[cfg(windows)]
 pub use libuv::*;
+#[cfg(windows)]
+pub mod deferred;
+#[cfg(windows)]
+pub use deferred::Deferred;
 
 // ──────────────────────────────────────────────────────────────────────────
 // `uv_dirent_type_t` (uv.h) — ABI constants for `uv_dirent_t::type`. The

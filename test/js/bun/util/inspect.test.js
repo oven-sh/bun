@@ -316,6 +316,176 @@ it("jsx with fragment", () => {
   expect(input).toBe(output);
 });
 
+it.concurrent("jsx with circular references does not crash", async () => {
+  // Run in a subprocess: without the fix this overflows the native stack and segfaults,
+  // which would otherwise kill the test runner before it can record a failure.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const a = { $$typeof: Symbol.for("react.element"), type: "div", props: null, key: null };
+        a.props = a;
+        console.log(Bun.inspect(a));
+
+        const b = { $$typeof: Symbol.for("react.element"), type: "div", key: null };
+        b.props = { children: b };
+        console.log(Bun.inspect(b));
+
+        const c = { $$typeof: Symbol.for("react.element"), type: "span", key: null };
+        c.props = { children: [c, c] };
+        console.log(Bun.inspect(c));
+
+        const d = { $$typeof: Symbol.for("react.element"), type: "div", props: {} };
+        d.key = d;
+        console.log(Bun.inspect(d));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("[Circular]");
+  expect(stdout).toContain("<div>\n  [Circular]\n</div>");
+  expect(stdout).toContain("<span>\n  [Circular]\n  [Circular]\n</span>");
+  expect(stdout).toContain("<div key=[Circular] />");
+  expect(exitCode).toBe(0);
+});
+
+it.concurrent("jsx with non-object props does not crash", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const el = { $$typeof: Symbol.for("react.element"), type: "div", props: 42, key: null };
+        console.log(Bun.inspect(el));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe("<div />");
+  expect(exitCode).toBe(0);
+});
+
+it.concurrent("jsx with circular props in test diff formatter", async () => {
+  using dir = tempDir("jsx-circular-diff", {
+    "diff.test.js": `
+      import { test, expect } from "bun:test";
+      test("circular", () => {
+        const el = { $$typeof: Symbol.for("react.element"), type: "div", props: null, key: null };
+        el.props = el;
+        expect(() => expect(el).toEqual({})).toThrow();
+      });
+      test("non-object props", () => {
+        const el = { $$typeof: Symbol.for("react.element"), type: "div", props: 42, key: null };
+        expect(() => expect(el).toEqual({})).toThrow();
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "diff.test.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("2 pass");
+  expect(exitCode).toBe(0);
+});
+
+it.concurrent("Event in test diff formatter is not spuriously [Circular]", async () => {
+  using dir = tempDir("event-diff", {
+    "diff.test.js": `
+      import { test, expect } from "bun:test";
+      test("close event", () => {
+        expect(() => expect(new CloseEvent("close", { code: 1000 })).toEqual({})).toThrow(/CloseEvent/);
+      });
+      test("custom event", () => {
+        expect(() => expect(new CustomEvent("foo")).toEqual({})).toThrow(/CustomEvent/);
+      });
+      test("circular message event still detected", () => {
+        const ev = new MessageEvent("message");
+        Object.defineProperty(ev, "data", { value: ev, configurable: true });
+        expect(() => expect(ev).toEqual({})).toThrow(/\\[Circular\\]/);
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "diff.test.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("3 pass");
+  expect(exitCode).toBe(0);
+});
+
+it.concurrent("deeply nested Proxy chain does not crash", async () => {
+  // Without the fix, print_proxy recurses on the target without a stack-safety
+  // check and segfaults; run in a subprocess so a regression fails the suite
+  // instead of killing the runner.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        let p = { ok: 1 };
+        for (let i = 0; i < 100000; i++) p = new Proxy(p, {});
+        console.log(Bun.inspect(p));
+        console.log(p);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+    "{
+      ok: 1,
+    }
+    {
+      ok: 1,
+    }"
+  `);
+  expect(proc.signalCode).toBeFalsy();
+  expect(exitCode).toBe(0);
+});
+
+it.concurrent("deeply nested non-cyclic jsx does not segfault", async () => {
+  // Stack size and release-build frame size vary by platform, so a fixed depth
+  // may or may not overflow: accept either a clean RangeError or successful
+  // completion. The regression was SIGSEGV.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        let el = { $$typeof: Symbol.for("react.element"), type: "div", props: {}, key: null };
+        for (let i = 0; i < 20000; i++)
+          el = { $$typeof: Symbol.for("react.element"), type: "div", props: { children: el }, key: null };
+        try { Bun.inspect(el); console.log("ok"); }
+        catch (e) { console.log(e.constructor.name); }
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(["RangeError", "ok"]).toContain(stdout.trim());
+  expect(proc.signalCode).toBeFalsy();
+  expect(exitCode).toBe(0);
+});
+
 it("inspect", () => {
   expect(Bun.inspect(new TypeError("what")).includes("TypeError: what")).toBe(true);
   expect(Bun.inspect("hi")).toBe('"hi"');

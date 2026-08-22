@@ -97,7 +97,7 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
 
     // Create a VM + global for loading the config file, plugins, and
     // performing build time prerendering.
-    jsc::initialize(false);
+    jsc::initialize(jsc::InitializeOptions::default());
     bun_ast::initialize_store();
 
     let mut arena = Arena::new();
@@ -1369,9 +1369,8 @@ extern "C" fn BakeProdResolve(
 /// to enqueue the entry points.
 ///
 /// Canonical definition lives in `bun_bundler::bake_types::production` (lower
-/// tier) so the bundler and runtime share ONE nominal type. Re-exported here
-/// for `bake::production::EntryPointMap` callers.
-pub use bun_bundler::bake_types::production::EntryPointMap;
+/// tier) so the bundler and runtime share ONE nominal type.
+pub(crate) use bun_bundler::bake_types::production::EntryPointMap;
 use bun_bundler::bake_types::production::{EntryPointHashMap, InputFile};
 
 impl framework_router::InsertionHandler for EntryPointMap {
@@ -1613,24 +1612,10 @@ extern "C" fn BakeProdLoad(pt: *mut PerThread, key: BunString) -> BunString {
     BunString::dead()
 }
 
-#[unsafe(no_mangle)]
-extern "C" fn BakeProdSourceMap(pt: *mut PerThread, key: BunString) -> BunString {
-    // SAFETY: `pt` is the non-null pointer previously attached via
-    // BakeGlobalObject__attachPerThreadData; C++ only calls this while attached.
-    let pt = unsafe { &*pt };
-    let utf8 = key.to_utf8();
-    if let Some(value) = pt.source_maps.get(utf8.slice()) {
-        return pt.bundled_outputs[value.get() as usize]
-            .value
-            .to_bun_string_ref();
-    }
-    BunString::dead()
-}
-
 /// Packed: type (u8) | no_client (bool, 1 bit) | unused (u23)
 #[repr(transparent)]
 #[derive(Clone, Copy)]
-pub struct TypeAndFlags(i32);
+pub(crate) struct TypeAndFlags(i32);
 
 impl TypeAndFlags {
     pub(crate) const fn new(ty: u8, no_client: bool) -> Self {

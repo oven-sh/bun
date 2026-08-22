@@ -3,7 +3,6 @@
 use core::ffi::c_char;
 
 use bun_core::env_var;
-use bun_core::env_var::feature_flag;
 use bun_core::{self, Environment, Global};
 use bun_jsc::zig_string::ZigString;
 use bun_jsc::{JSGlobalObject, JSValue, ZigStringJsc as _};
@@ -130,16 +129,6 @@ pub(crate) extern "C" fn Bun__Node__getDisabledWarnings(
         }
     }
     disabled.len()
-}
-
-#[unsafe(no_mangle)]
-extern "C" fn Bun__suppressCrashOnProcessKillSelfIfDesired() {
-    if feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF
-        .get()
-        .unwrap_or(false)
-    {
-        bun_crash_handler::suppress_reporting();
-    }
 }
 
 // Raw-pointer statics are `!Sync`; wrap in a

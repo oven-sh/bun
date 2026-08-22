@@ -3,8 +3,6 @@ type WebWorker = InstanceType<typeof globalThis.Worker>;
 
 const EventEmitter = require("node:events");
 const { SafeMap } = require("internal/primordials");
-const Readable = require("internal/streams/readable");
-const { internalEventLoopUtilization } = require("internal/perf/event_loop_utilization");
 const { throwNotImplemented } = require("internal/shared");
 const {
   validateString,
@@ -106,8 +104,9 @@ type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
 // Used to ensure that Blobs created to hold the source code for `eval: true` Workers get cleaned up
 // after their Worker exits
 let urlRevokeRegistry: FinalizationRegistry<string> | undefined = undefined;
+// Looked up here, not in the constructor: diagnostics_channel's registry is a Map, and `new Worker()`
+// has to keep working after user code replaces Map.prototype (the tamper tests in worker_threads.test.ts).
 const workerThreadsChannel = require("node:diagnostics_channel").channel("worker_threads");
-const { tickInitHooks, newAsyncId } = require("internal/async_hooks_tick");
 
 function injectFakeEmitter(Class) {
   // Per-instance registry mapping each event to (user listener -> wrapper), so
@@ -1000,6 +999,7 @@ class Worker extends EventEmitter {
   }
 
   #emitAsyncHooksInit() {
+    const { tickInitHooks, newAsyncId } = require("internal/async_hooks_tick");
     const count = tickInitHooks.length;
     if (count === 0) return;
     const worker = this;
@@ -1073,6 +1073,7 @@ class Worker extends EventEmitter {
   }
 
   #eventLoopUtilization(utilization1, utilization2) {
+    const { internalEventLoopUtilization } = require("internal/perf/event_loop_utilization");
     return internalEventLoopUtilization(_workerEventLoopUtilization(this.#worker), utilization1, utilization2);
   }
 
@@ -1118,7 +1119,7 @@ class Worker extends EventEmitter {
 
   getHeapSnapshot(options: unknown) {
     const stringPromise = this.#worker.getHeapSnapshot(options);
-    return stringPromise.then(s => new HeapSnapshotStream(s));
+    return stringPromise.then(makeHeapSnapshotStream);
   }
 
   getHeapStatistics() {
@@ -1281,21 +1282,25 @@ class Worker extends EventEmitter {
   }
 }
 
-class HeapSnapshotStream extends Readable {
-  #json: string | undefined;
+let _HeapSnapshotStream;
+function makeHeapSnapshotStream(json: string) {
+  _HeapSnapshotStream ??= class HeapSnapshotStream extends require("internal/streams/readable") {
+    #json: string | undefined;
 
-  constructor(json: string) {
-    super();
-    this.#json = json;
-  }
-
-  _read() {
-    if (this.#json !== undefined) {
-      this.push(this.#json);
-      this.push(null);
-      this.#json = undefined;
+    constructor(json: string) {
+      super();
+      this.#json = json;
     }
-  }
+
+    _read() {
+      if (this.#json !== undefined) {
+        this.push(this.#json);
+        this.push(null);
+        this.#json = undefined;
+      }
+    }
+  };
+  return new _HeapSnapshotStream(json);
 }
 
 export default {

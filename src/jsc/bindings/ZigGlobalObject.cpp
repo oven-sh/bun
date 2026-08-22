@@ -267,11 +267,6 @@ static consteval unsigned getWebKitBytecodeCacheVersion()
 }
 #undef WEBKIT_BYTECODE_CACHE_HASH_KEY
 
-extern "C" unsigned getJSCBytecodeCacheVersion()
-{
-    return getWebKitBytecodeCacheVersion();
-}
-
 // Declare fuzzilli function registration from FuzzilliREPRL.cpp
 #ifdef FUZZILLI_ENABLED
 extern "C" void Bun__REPRL__registerFuzzilliFunctions(Zig::GlobalObject*);
@@ -720,48 +715,6 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
     return globalObject;
 }
 
-JSC_DEFINE_HOST_FUNCTION(functionFulfillModuleSync,
-    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
-{
-    Zig::GlobalObject* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
-
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::JSValue keyAny = callFrame->argument(0);
-    JSC::JSString* moduleKeyString = keyAny.toString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    // Not `auto` (GCOwnedDataScope): fetchESMSourceCodeSync can spin the event loop for an async macro, and IncrementalSweeper asserts no scope is live with entryScope null.
-    WTF::String moduleKey = moduleKeyString->value(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    if (moduleKey.endsWith(".node"_s)) {
-        throwException(globalObject, scope, createTypeError(globalObject, "To load Node-API modules, use require() or process.dlopen instead of importSync."_s));
-        return {};
-    }
-
-    auto specifier = Bun::toString(moduleKey);
-    ErrorableResolvedSource res;
-    res.success = false;
-    // zero-initialize entire result union. zeroed BunString has BunStringTag::Dead, and zeroed
-    // EncodedJSValues are empty, which our code should be handling
-    memset(&res.result, 0, sizeof res.result);
-
-    JSValue result = Bun::fetchESMSourceCodeSync(
-        globalObject,
-        moduleKeyString,
-        &res,
-        &specifier,
-        &specifier,
-        nullptr);
-
-    if (scope.exception() || !result) {
-        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
-    }
-
-    globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, moduleKey), JSC::ScriptFetchParameters::Type::JavaScript, uncheckedDowncast<JSC::JSSourceCode>(result));
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
-}
-
 static bool isModuleEvaluated(JSC::AbstractModuleRecord* record)
 {
     if (!record)
@@ -913,20 +866,6 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     auto* ns = record->getModuleNamespace(globalObject, false);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(ns);
-}
-
-extern "C" void* Zig__GlobalObject__getModuleRegistryMap(JSC::JSGlobalObject*)
-{
-    // The JSC module loader registry is no longer a JS Map; snapshot/restore
-    // is no longer supported. This symbol has no callers, so this is dead
-    // code kept for ABI compatibility.
-    return nullptr;
-}
-
-extern "C" bool Zig__GlobalObject__resetModuleRegistryMap(JSC::JSGlobalObject*, void*)
-{
-    // See Zig__GlobalObject__getModuleRegistryMap above.
-    return false;
 }
 
 #define WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ConstructorName)                                                                                                            \
@@ -2779,26 +2718,6 @@ void GlobalObject::finishCreation(VM& vm)
     ASSERT(classInfo());
 }
 
-JSC_DEFINE_CUSTOM_GETTER(JSDOMFileConstructor_getter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName))
-{
-    Zig::GlobalObject* bunGlobalObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
-    return JSValue::encode(
-        bunGlobalObject->JSDOMFileConstructor());
-}
-
-JSC_DEFINE_CUSTOM_SETTER(JSDOMFileConstructor_setter,
-    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
-        JSC::EncodedJSValue value, JSC::PropertyName property))
-{
-    if (JSValue::decode(thisValue) != globalObject) {
-        return false;
-    }
-
-    auto& vm = JSC::getVM(globalObject);
-    globalObject->putDirect(vm, property, JSValue::decode(value), 0);
-    return true;
-}
-
 // `console.Console` or `import { Console } from 'console';`
 JSC_DEFINE_CUSTOM_GETTER(getConsoleConstructor, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName property))
 {
@@ -2967,18 +2886,6 @@ EncodedJSValue GlobalObject::assignToStream(JSValue stream, JSValue controller)
     return JSC::JSValue::encode(result);
 }
 
-JSC::JSObject* GlobalObject::navigatorObject()
-{
-    return this->m_navigatorObject.get(this);
-}
-
-JSC_DEFINE_CUSTOM_GETTER(functionLazyNavigatorGetter,
-    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
-        JSC::PropertyName))
-{
-    return JSC::JSValue::encode(static_cast<Zig::GlobalObject*>(globalObject)->navigatorObject());
-}
-
 JSC::GCClient::IsoSubspace* GlobalObject::subspaceForImpl(JSC::VM& vm)
 {
     return WebCore::subspaceForImpl<GlobalObject, WebCore::UseCustomHeapCellType::Yes>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForWorkerGlobalScope, m_subspaceForWorkerGlobalScope),
@@ -2988,11 +2895,6 @@ JSC::GCClient::IsoSubspace* GlobalObject::subspaceForImpl(JSC::VM& vm)
 BUN_DECLARE_HOST_FUNCTION(WebCore__alert);
 BUN_DECLARE_HOST_FUNCTION(WebCore__prompt);
 BUN_DECLARE_HOST_FUNCTION(WebCore__confirm);
-
-JSValue GlobalObject_getPerformanceObject(VM& vm, JSObject* globalObject)
-{
-    return uncheckedDowncast<Zig::GlobalObject>(globalObject)->performanceObject();
-}
 
 JSValue GlobalObject_getGlobalThis(VM& vm, JSObject* globalObject)
 {
@@ -3027,7 +2929,6 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         { BuiltinName::k_pokePromiseAsHandled, 1, jsBunPokePromiseAsHandled },
         { BuiltinName::k_webStreamClosedPromise, 1, jsWebStreamClosedPromise },
         { BuiltinName::k_webStreamControllerError, 2, jsWebStreamControllerError },
-        { BuiltinName::k_fulfillModuleSync, 1, functionFulfillModuleSync },
         { BuiltinName::k_esmNamespaceForCjs, 1, functionEsmNamespaceForCjs },
         { BuiltinName::k_esmRegistryDelete, 1, functionEsmRegistryDelete },
         { BuiltinName::k_esmRegistryEvaluatedKeys, 0, functionEsmRegistryEvaluatedKeys },
@@ -4147,17 +4048,6 @@ napi_env GlobalObject::makeNapiEnvForFFI()
     return &out.leakRef();
 }
 
-bool GlobalObject::hasNapiFinalizers() const
-{
-    for (const auto& env : m_napiEnvs) {
-        if (env->hasFinalizers()) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
 // `bun test --isolate`: the old global is about to be gcUnprotect()'d and
 // collected, but its NapiEnvs may outlive it — GC-enqueued NapiFinalizerTasks
 // hold Ref<NapiEnv> and run on the event loop while loading the *next* file.
@@ -4348,22 +4238,3 @@ const JSC::ClassInfo GlobalObject::s_info = { "GlobalObject"_s, &Base::s_info, &
     CREATE_METHOD_TABLE(GlobalObject) };
 
 } // namespace Zig
-
-JSC_DEFINE_HOST_FUNCTION(jsFunctionNotImplemented, (JSGlobalObject * leixcalGlobalObject, CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(leixcalGlobalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    return throwVMError(leixcalGlobalObject, scope, "Not implemented"_s);
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateFunctionThatMasqueradesAsUndefined, (JSC::JSGlobalObject * leixcalGlobalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(leixcalGlobalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto name = callFrame->argument(0).toWTFString(leixcalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    auto count = callFrame->argument(1).toNumber(leixcalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    auto* func = InternalFunction::createFunctionThatMasqueradesAsUndefined(vm, leixcalGlobalObject, count, name, jsFunctionNotImplemented);
-    return JSC::JSValue::encode(func);
-}

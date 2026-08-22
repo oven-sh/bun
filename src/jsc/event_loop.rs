@@ -1343,7 +1343,7 @@ pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
     // fields and call &-methods on it for the duration of this host fn.
     let vm_ref = global_object.bun_vm();
     let event_loop = vm_ref.event_loop_shared();
-    let result = JSValue::create_empty_object(global_object, 8);
+    let result = JSValue::create_empty_object(global_object, 9);
     result.put(
         global_object,
         b"activeTasks",
@@ -1393,6 +1393,12 @@ pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
         global_object,
         b"numPolls",
         JSValue::js_number(num_polls as f64),
+    );
+    result.put(
+        global_object,
+        b"iteration",
+        // SAFETY: usockets_loop() returns the live process-global loop.
+        JSValue::js_number(unsafe { (*event_loop.usockets_loop()).iteration_number() } as f64),
     );
     Ok(result)
 }

@@ -7198,7 +7198,7 @@ declare module "bun" {
       onExit?(
         subprocess: Subprocess<In, Out, Err>,
         exitCode: number | null,
-        signalCode: number | null,
+        signalCode: NodeJS.Signals | number | null,
         /**
          * If an error occurred in the call to waitpid2, this is the error.
          */
@@ -7616,10 +7616,10 @@ declare module "bun" {
      *
      * To receive signal code changes, use the `onExit` callback.
      *
-     * If the signal code is unknown, this is the original signal code
-     * number, but that case should never happen in practice.
+     * If the signal has no name (for example a Linux real-time signal), this
+     * is its number.
      */
-    readonly signalCode: NodeJS.Signals | null;
+    readonly signalCode: NodeJS.Signals | number | null;
 
     /**
      * Whether the process has exited
@@ -7689,7 +7689,7 @@ declare module "bun" {
      */
     resourceUsage: ResourceUsage;
 
-    signalCode?: string;
+    signalCode?: NodeJS.Signals | number;
     exitedDueToTimeout?: boolean;
     exitedDueToMaxBuffer?: boolean;
     pid: number;

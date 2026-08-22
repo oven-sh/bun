@@ -442,14 +442,13 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         match spawn_result.status {
             SpawnStatus::Exited(exit_code) => {
-                // `.signal` is a raw `u8` here; `signal_code()` range-checks
-                // 1..=31 (i.e. valid).
                 if let Some(sig) = spawn_result.status.signal_code() {
                     if sig != bun_core::SignalCode::SIGINT && !silent {
                         pretty_errorln!(
                             "<r><red>error<r><d>:<r> script <b>\"{}\"<r> was terminated by signal {}<r>",
                             bstr::BStr::new(name),
-                            bun_sys::SignalCode(sig as u8).fmt(Output::enable_ansi_colors_stderr()),
+                            bun_sys::SignalCode(exit_code.signal)
+                                .fmt(Output::enable_ansi_colors_stderr()),
                         );
                         Output::flush();
 
@@ -460,7 +459,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                             bun_crash_handler::suppress_reporting();
                         }
 
-                        Global::raise_ignoring_panic_handler(sig);
+                        Global::raise_ignoring_panic_handler_raw(::core::ffi::c_int::from(
+                            exit_code.signal,
+                        ));
                     }
                 }
 
@@ -478,17 +479,15 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 }
             }
 
-            SpawnStatus::Signaled(_) => {
-                // Only the *print* is gated on a valid signal code;
-                // `suppress_reporting` + `raise_ignoring_panic_handler`
-                // run unconditionally.
-                let signal_code = spawn_result.status.signal_code();
-                if let Some(sig) = signal_code {
+            SpawnStatus::Signaled(raw_signal) => {
+                // Only the print needs a table entry; the re-raise below forwards any signal.
+                if let Some(sig) = spawn_result.status.signal_code() {
                     if sig != bun_core::SignalCode::SIGINT && !silent {
                         pretty_errorln!(
                             "<r><red>error<r><d>:<r> script <b>\"{}\"<r> was terminated by signal {}<r>",
                             bstr::BStr::new(name),
-                            bun_sys::SignalCode(sig as u8).fmt(Output::enable_ansi_colors_stderr()),
+                            bun_sys::SignalCode(raw_signal)
+                                .fmt(Output::enable_ansi_colors_stderr()),
                         );
                         Output::flush();
                     }
@@ -500,12 +499,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     bun_crash_handler::suppress_reporting();
                 }
 
-                if let Some(sig) = signal_code {
-                    Global::raise_ignoring_panic_handler(sig);
-                }
-                // `.signaled` always carries 1..=31 in practice; fallback only
-                // for type-totality.
-                Global::exit(1);
+                Global::raise_ignoring_panic_handler_raw(::core::ffi::c_int::from(raw_signal));
             }
 
             SpawnStatus::Err(ref err) => {
@@ -2149,10 +2143,7 @@ impl RunCommand {
                     }
 
                     SpawnStatus::Signaled(signal) => {
-                        // The print is gated on a valid signal code (1..=31 ⇔
-                        // `signal_code.is_some()`); the re-raise is NOT — it
-                        // forwards the raw byte unconditionally so the parent
-                        // observes the real termination signal (incl. RT 32-64).
+                        // Only the print needs a table entry; the re-raise below forwards any signal.
                         if let Some(sc) = signal_code {
                             if sc != bun_core::SignalCode::SIGINT && !silent {
                                 pretty_errorln!(
@@ -2175,7 +2166,6 @@ impl RunCommand {
 
                     SpawnStatus::Exited(exit_code) => {
                         // A process can be both signaled and exited.
-                        // Gated on a valid signal code (1..=31).
                         if let Some(sc) = signal_code {
                             if !silent {
                                 pretty_errorln!(
@@ -2192,7 +2182,9 @@ impl RunCommand {
                                 bun_crash_handler::suppress_reporting();
                             }
 
-                            Global::raise_ignoring_panic_handler(sc);
+                            Global::raise_ignoring_panic_handler_raw(::core::ffi::c_int::from(
+                                exit_code.signal,
+                            ));
                         }
 
                         let code = exit_code.code;

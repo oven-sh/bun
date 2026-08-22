@@ -172,10 +172,10 @@ unsafe extern "C" {
         message: &mut BunString,
         err: JSValue,
     );
-    safe fn Bun__freeSharedHeaderBufferForThreadExit();
     // Raw FFI (no RAII guard) so `thread_main` can take the API lock and abandon
     // it with the VM — see the note there.
     safe fn JSC__VM__getAPILock(vm: &jsc::VM);
+    safe fn Bun__freeSharedHeaderBufferForThreadExit();
 }
 
 /// Node's `stop_sub_worker_contexts()`: the calling thread is exiting and its
@@ -1038,31 +1038,10 @@ impl WebWorker {
                 self.execution_context_id
             );
 
-            // ---- 3–5. Stop, forbid script, wait, ~VM, loops, destroy ----------
-            // SAFETY: this thread's VM; sole owner.
-            unsafe { VirtualMachine::teardown(vm_ptr, crate::virtual_machine::Teardown::Worker) };
-
-            // `destroy()` deinits the fields; reclaim the storage `init` put on
-            // the global heap (worker `init_worker` always passes `log: None`,
-            // so the log box is VM-owned here).
-            // SAFETY: sole owner; nothing past this point dereferences the VM.
-            unsafe {
-                let console = core::mem::replace(&mut (*vm_ptr).console, core::ptr::null_mut());
-                if !console.is_null() {
-                    bun_core::heap::destroy(console);
-                }
-                if let Some(log) = (*vm_ptr).log.take() {
-                    bun_core::heap::destroy(log.as_ptr());
-                }
-                virtual_machine::VMHolder::set_vm(None);
-                // The VM was `alloc_zeroed(Layout::<VirtualMachine>())` in
-                // `init`, NOT `Box::new` — dealloc the raw storage directly so
-                // field `Drop`s do not re-run on already-`deinit`'d state.
-                std::alloc::dealloc(
-                    vm_ptr.cast::<u8>(),
-                    core::alloc::Layout::new::<VirtualMachine>(),
-                );
-            }
+            // ---- 3–5. Stop, forbid script, wait, ~VM, loops, destroy, free -----
+            // SAFETY: this thread's VM (`init_worker` passes `log: None`); sole
+            // owner; nothing past this point dereferences it.
+            unsafe { VirtualMachine::teardown_and_free_thread_vm(vm_ptr) };
         }
         log!(
             "[{}] shutdown: VirtualMachine destroyed",

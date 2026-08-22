@@ -68,7 +68,7 @@ pub mod Macro {
 
     /// Lower-tier handle for `js_parser_jsc::Macro::MacroContext`.
     ///
-    /// Real fields (`env`, `macros`, `remap`, `resolver`, `bump`) reference
+    /// Real fields (a `Transpiler` back-pointer, `bump`) reference
     /// `Transpiler` and JSC types that live in crates which depend on
     /// `bun_js_parser`. To break the dep cycle the higher-tier `_jsc` crate
     /// owns that state behind `data`; the visit pass reaches it via
@@ -81,8 +81,8 @@ pub mod Macro {
         /// `bun_js_parser_jsc` reinterprets the bits as a `JSValue`.
         pub javascript_object: MacroJSCtx,
         /// Opaque pointer to the higher-tier macro-runner state
-        /// (resolver/env/macros/remap/bump). Allocated by `init` and leaked
-        /// (process lifetime); `bun_js_parser` never dereferences it.
+        /// (transpiler back-pointer, bump). Allocated by `init`, freed by `deinit`;
+        /// `bun_js_parser` never dereferences it.
         pub data: *mut core::ffi::c_void,
     }
     impl Default for MacroContext {
@@ -128,23 +128,8 @@ pub mod Macro {
             data: *mut core::ffi::c_void,
             path: &[u8],
         ) -> Option<&'static MacroRemapEntry>;
-        // No raw-pointer args; the body is a safe `pub fn` in
-        // `bun_js_parser_jsc`. See [`collect_vm_garbage`] for the call-site
-        // contract.
-        safe fn __bun_macro_collect_vm_garbage();
     }
 
-    /// Sweep this thread's bundler-macro VM so JS-wrapper-owned native boxes
-    /// (e.g. a `new Bun.Transpiler()` constructed inside a macro body) are
-    /// finalized before the worker thread's TLS root vanishes. Only call from
-    /// `bun_bundler::ThreadPool::Worker::deinit` after both per-worker
-    /// `MacroContext` boxes are freed — every other `MacroContext::deinit`
-    /// path is either inside JS execution or inside a GC sweep, where
-    /// re-entering `run_gc(true)` is unsound.
-    #[inline]
-    pub fn collect_vm_garbage() {
-        __bun_macro_collect_vm_garbage();
-    }
     impl MacroContext {
         #[inline]
         pub(crate) fn call(
@@ -185,10 +170,7 @@ pub mod Macro {
                 )
             }
         }
-        /// Free the boxed higher-tier state behind `data`. Only call when the
-        /// owning `Transpiler` is a short-lived bytewise clone (e.g. the
-        /// off-thread `RuntimeTranspilerStore` worker) — the long-lived
-        /// `vm.transpiler` instance leaks it intentionally (process-lifetime).
+        /// Free the boxed higher-tier state behind `data`.
         #[inline]
         pub fn deinit(self) {
             // SAFETY: `self.data` is either null (callee no-ops) or the exact

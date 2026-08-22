@@ -671,6 +671,16 @@ impl JSValue {
         })?;
         Ok(Some(value))
     }
+    /// A BigInt from the text of a BigInt literal without its `n`: decimal
+    /// digits or a `0x`/`0o`/`0b`-prefixed integer. JSC throws a `SyntaxError`
+    /// for anything else.
+    #[track_caller]
+    pub fn big_int_from_literal(global: &JSGlobalObject, text: &[u8]) -> JsResult<JSValue> {
+        host_fn::from_js_host_call(global, || {
+            // SAFETY: `text` is a live slice for the duration of the call.
+            unsafe { JSC__JSValue__bigIntFromLiteral(global, text.as_ptr(), text.len()) }
+        })
+    }
     /// `JSValue.fromTimevalNoTruncate` — encode a `struct timeval`
     /// as a BigInt (`sec * 1_000_000 + nsec`) without precision loss. May allocate
     /// a heap BigInt, so wrapped in `from_js_host_call` for exception checking.
@@ -686,6 +696,11 @@ impl JSValue {
     /// `JSValue.bigIntSum` — `a + b` where both are BigInt.
     pub fn big_int_sum(global: &JSGlobalObject, a: JSValue, b: JSValue) -> JSValue {
         JSC__JSValue__bigIntSum(global, a, b)
+    }
+    /// `-self`, where `self` is a BigInt.
+    pub fn big_int_unary_minus(self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        debug_assert!(self.is_big_int());
+        host_fn::from_js_host_call(global, || JSC__JSValue__bigIntUnaryMinus(global, self))
     }
     /// `JSValue.fromEntries` — build a plain object from
     /// parallel `keys`/`values` `ZigString` arrays. When `clone` is true the
@@ -1994,12 +2009,18 @@ unsafe extern "C" {
         ptr: *const u8,
         len: usize,
     ) -> JSValue;
+    fn JSC__JSValue__bigIntFromLiteral(
+        global: &JSGlobalObject,
+        ptr: *const u8,
+        len: usize,
+    ) -> JSValue;
     safe fn JSC__JSValue__fromTimevalNoTruncate(
         global: &JSGlobalObject,
         nsec: i64,
         sec: i64,
     ) -> JSValue;
     safe fn JSC__JSValue__bigIntSum(global: &JSGlobalObject, a: JSValue, b: JSValue) -> JSValue;
+    safe fn JSC__JSValue__bigIntUnaryMinus(global: &JSGlobalObject, value: JSValue) -> JSValue;
     fn JSC__JSValue__fromEntries(
         global: *const JSGlobalObject,
         keys: *mut bun_core::ZigString,

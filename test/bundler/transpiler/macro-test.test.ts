@@ -6,6 +6,7 @@ import path from "node:path";
 import defaultMacro, {
   addStrings,
   addStringsUTF16,
+  bigints,
   default as defaultMacroAlias,
   escape,
   identity,
@@ -36,6 +37,19 @@ test("type coercion", () => {
   expect(identity(1.5)).toBe(1.5);
   expect(identity(1)).toBe(1);
   expect(identity(true)).toBe(true);
+});
+
+test("BigInt return values become BigInt literals, and BigInt literals can be arguments", () => {
+  expect(bigints()).toEqual({
+    big: 18446744073709551617n,
+    negative: -1180591620717411303424n,
+    zero: 0n,
+    nested: [1n, { two: 2n }],
+  });
+  expect(identity(123n)).toBe(123n);
+  expect(identity(-0x10n)).toBe(-16n);
+  expect(identity(1_000_000n)).toBe(1000000n);
+  expect(identity([0o7n, 0b11n])).toEqual([7n, 3n]);
 });
 
 test("escaping", () => {
@@ -182,13 +196,12 @@ test("object destructuring of a macro result keeps every bound property regardle
   expect(exitCode).toBe(0);
 });
 
-// A macro's `await` is serviced by the VM's macro event loop, so completions have to be routed by which
-// loop was current when their work started: what the macro started goes to the macro loop (or the wait
-// hangs), what the program started stays on the regular loop (or program callbacks run mid-transpile),
-// and whatever a macro started but did not await is adopted by the regular loop once the macro returns
-// (or it is stranded and its keep-alive holds the process open). These run the macro in the main VM:
-// the entry file's macros, or a module require()d so it transpiles on the main thread.
-describe("event loop routing around macros", () => {
+// Macros run in the macro host's own VM and event loop while the transpiling thread waits. Work a macro
+// starts but does not await keeps running there and must neither hold the process open nor be waited for
+// at exit; work the *program* started must not run underneath the transpile, and must still run after it.
+// These exercise the main thread as the waiting caller: the entry file's macros, or a module require()d
+// so it transpiles on the main thread.
+describe("macros and the program's event loop", () => {
   async function run(files: Record<string, string>, env: Record<string, string> = {}) {
     using dir = tempDir("macro-loops", files);
     await using proc = Bun.spawn({
@@ -272,16 +285,16 @@ describe("event loop routing around macros", () => {
         },
         { MACRO_TEST_URL: server.url.href },
       );
-      // The continuation runs on the macro loop if the work finishes while the macro is still being waited
-      // on and on the regular loop otherwise, so its position relative to the entry module's output varies.
-      expect({ lines: lines.sort(), stderr }).toEqual({ lines: ["settled", "value 1"], stderr: "" });
+      // Whether the unawaited work finishes before the process exits is up to timing; either way the
+      // program's output is there, nothing is reported, and the process exits.
+      expect({ lines: lines.filter(line => line !== "settled"), stderr }).toEqual({ lines: ["value 1"], stderr: "" });
       expect(exitCode).toBe(0);
     },
   );
 
-  // The program's digest finishes (microseconds, on the work queue) while the macro is parked in its
-  // 200 ms wait. Its callback belongs to the program: it must run after require() returns, not inside
-  // the macro's wait underneath the transpiler, so the macro never sees "program" in the log.
+  // The program's digest finishes (microseconds, on the work queue) while the macro is in its 200 ms
+  // wait. Its callback belongs to the program: it runs after require() returns, not while the main
+  // thread is waiting on the macro. The macro runs in its own VM and does not see the program's globals.
   test.concurrent("a program completion that arrives during a macro waits for the macro to return", async () => {
     const { lines, stderr, exitCode } = await run({
       "m.ts": [
@@ -300,13 +313,10 @@ describe("event loop routing around macros", () => {
         `console.log(seen, JSON.stringify(globalThis.log));`,
       ].join("\n"),
     });
-    expect({ lines, stderr }).toEqual({ lines: [`[] ["required","program"]`], stderr: "" });
+    expect({ lines, stderr }).toEqual({ lines: [`undefined ["required","program"]`], stderr: "" });
     expect(exitCode).toBe(0);
   });
 
-  // If a program callback did run mid-macro, work it started there would be routed to the macro loop and,
-  // finishing after the macro returned, would need the regular loop to adopt it. Either way the chain
-  // must complete and the process must exit.
   test.concurrent("work chained off a program completion across a macro completes", async () => {
     const { lines, stderr, exitCode } = await run({
       "m.ts": `export async function probe() {\n  await Bun.sleep(200);\n  return 1;\n}\n`,
@@ -323,6 +333,201 @@ describe("event loop routing around macros", () => {
     });
     expect({ lines, stderr }).toEqual({ lines: ["1 chained"], stderr: "" });
     expect(exitCode).toBe(0);
+  });
+});
+
+// Every macro in the process runs in one dedicated VM on its own thread; the transpiling thread (the main
+// thread, a bundler worker, the runtime transpiler pool) waits for the answer.
+describe("the macro host", () => {
+  async function run(files: Record<string, string>, cmd: string[]) {
+    using dir = tempDir("macro-host", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...cmd],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const lines = stdout
+      .trim()
+      .split("\n")
+      .filter(line => line && !line.startsWith("[macro]"));
+    return { lines, stderr, exitCode, dir: String(dir) };
+  }
+
+  // Eight files are parsed on the bundler's worker pool; the macro they all call keeps a counter on its
+  // globalThis. One VM serves them all, so the eight results are the numbers 0..7 in some order.
+  test.concurrent("files transpiled on different threads share one macro VM", async () => {
+    const files: Record<string, string> = {
+      "counter.ts": `export function next() { globalThis.count ??= 0; return globalThis.count++; }`,
+      "build.ts": [
+        `const result = await Bun.build({ entrypoints: [0,1,2,3,4,5,6,7].map(i => "./e" + i + ".ts") });`,
+        `if (!result.success) throw new AggregateError(result.logs);`,
+        `const values = await Promise.all(result.outputs.map(async o => Number(/value = (\\d+)/.exec(await o.text())![1])));`,
+        `console.log(JSON.stringify(values.sort((a, b) => a - b)));`,
+      ].join("\n"),
+    };
+    for (let i = 0; i < 8; i++) {
+      files[`e${i}.ts`] = `import { next } from "./counter.ts" with { type: "macro" };\nexport const value = next();\n`;
+    }
+    const { lines, stderr, exitCode } = await run(files, ["run", "build.ts"]);
+    expect({ lines, stderr }).toEqual({ lines: ["[0,1,2,3,4,5,6,7]"], stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // The transpiling thread is a bundler worker here, which has no event loop of its own to run the
+  // macro's timer and fetch on: they run on the macro host's loop while the worker waits.
+  test.concurrent("an async macro completes when the file is transpiled off the main thread", async () => {
+    await using server = Bun.serve({ port: 0, fetch: () => new Response("from the server") });
+    const { lines, stderr, exitCode } = await run(
+      {
+        "m.ts": [
+          `export async function slow(url: string) {`,
+          `  await Bun.sleep(20);`,
+          `  return await (await fetch(url)).text();`,
+          `}`,
+        ].join("\n"),
+        "entry.ts": `import { slow } from "./m.ts" with { type: "macro" };\nexport const text = slow(${JSON.stringify(server.url.href)});\n`,
+        "build.ts": [
+          `const result = await Bun.build({ entrypoints: ["./entry.ts"] });`,
+          `if (!result.success) throw new AggregateError(result.logs);`,
+          `console.log(/text = "([^"]*)"/.exec(await result.outputs[0].text())![1]);`,
+        ].join("\n"),
+      },
+      ["run", "build.ts"],
+    );
+    expect({ lines, stderr }).toEqual({ lines: ["from the server"], stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("a macro that throws fails the build with the error at the call site", async () => {
+    const { lines, stderr, exitCode } = await run(
+      {
+        "m.ts": `export function boom() { throw new TypeError("no thanks"); }`,
+        "index.ts": `import { boom } from "./m.ts" with { type: "macro" };\nconsole.log("value", boom());\n`,
+      },
+      ["run", "index.ts"],
+    );
+    expect(lines).toEqual([]);
+    expect(stderr).toContain("TypeError: no thanks");
+    expect(stderr).toContain("index.ts:2:22");
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("a rejected macro module fails the build with the error at the call site", async () => {
+    const { stderr, exitCode } = await run(
+      {
+        "m.ts": `throw new Error("while loading");\nexport function f() { return 1; }`,
+        "index.ts": `import { f } from "./m.ts" with { type: "macro" };\nconsole.log("value", f());\n`,
+      },
+      ["run", "index.ts"],
+    );
+    expect(stderr).toContain("while loading");
+    expect(stderr).toContain("index.ts:2:22");
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("a macro module that does not parse reports its parse errors at the call site", async () => {
+    const { stderr, exitCode } = await run(
+      {
+        "m.ts": `export function f( { return 1 }\n`,
+        "index.ts": `import { f } from "./m.ts" with { type: "macro" };\nconsole.log(f());\n`,
+      },
+      ["run", "index.ts"],
+    );
+    expect(stderr).toContain(`Expected "}" but found "1"`);
+    expect(stderr).toContain("m.ts:1:");
+    expect(stderr).toContain("index.ts:2:13");
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("process.exit() inside a macro fails the macro instead of exiting", async () => {
+    const { stderr, exitCode } = await run(
+      {
+        "m.ts": `export function quit() { process.exit(0); }`,
+        "index.ts": `import { quit } from "./m.ts" with { type: "macro" };\nconsole.log("value", quit());\n`,
+      },
+      ["run", "index.ts"],
+    );
+    expect(stderr).toContain("process.exit() cannot be called from a macro");
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("a macro cannot invoke another macro", async () => {
+    const { stderr, exitCode } = await run(
+      {
+        "inner.ts": `export function inner() { return 1; }`,
+        "outer.ts": `import { inner } from "./inner.ts" with { type: "macro" };\nexport function outer() { return inner() + 1; }`,
+        "index.ts": `import { outer } from "./outer.ts" with { type: "macro" };\nconsole.log("value", outer());\n`,
+      },
+      ["run", "index.ts"],
+    );
+    expect(stderr).toContain("Macros cannot be invoked from inside a macro");
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("transformSync(code, context) hands the macro a clone of the context object", async () => {
+    const { lines, stderr, exitCode } = await run(
+      {
+        "m.ts": `export function last(...args: unknown[]) { return args[args.length - 1]; }`,
+        "index.ts": [
+          `import { join } from "node:path";`,
+          `const source = "import { last } from " + JSON.stringify(join(import.meta.dir, "m.ts")) + " with { type: 'macro' };\\nexport const v = last(1, 2);";`,
+          `const context = { hello: "world", nested: { list: [1, 2, 3] } };`,
+          `const code = new Bun.Transpiler({ loader: "ts" }).transformSync(source, context);`,
+          `console.log(code.replace(/\\s+/g, " ").trim());`,
+        ].join("\n"),
+      },
+      ["run", "index.ts"],
+    );
+    expect({ lines, stderr }).toEqual({
+      lines: [`export const v = { hello: "world", nested: { list: [ 1, 2, 3 ] } };`],
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // The worker is this VM's child, so exit joins it; it is busy, then transpiles a file that calls a
+  // macro — a request that reaches the host after it stopped. It must be answered, not stranded.
+  test.concurrent("exit does not hang on a Worker a macro started that is itself waiting on a macro", async () => {
+    const { lines, exitCode } = await run(
+      {
+        "inner.ts": `export function one() { return 1; }`,
+        "uses.ts": `import { one } from "./inner.ts" with { type: "macro" };\nexport const v = one();\n`,
+        "worker.ts": `const t = Date.now(); while (Date.now() - t < 300) {}\npostMessage(require("./uses.ts").v);\n`,
+        "m.ts": `export function spawn() { new Worker(new URL("./worker.ts", import.meta.url).href); return 1; }`,
+        "index.ts": `import { spawn } from "./m.ts" with { type: "macro" };\nconsole.log("value", spawn());\n`,
+      },
+      ["run", "index.ts"],
+    );
+    expect(lines).toEqual(["value 1"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("a macro may not return a RegExp or another object with no literal form", async () => {
+    const { stderr, exitCode } = await run(
+      {
+        "m.ts": `export const re = () => /a/g;\nexport const map = () => ({ m: new Map() });`,
+        "index.ts": `import { re, map } from "./m.ts" with { type: "macro" };\nconsole.log(re(), map());\n`,
+      },
+      ["run", "index.ts"],
+    );
+    expect(stderr).toContain("cannot coerce RegExp");
+    expect(stderr).toContain("cannot coerce Map");
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("a macro may not return a pending Promise nested inside its result", async () => {
+    const { stderr, exitCode } = await run(
+      {
+        "m.ts": `export function f() { return { later: new Promise(() => {}) }; }`,
+        "index.ts": `import { f } from "./m.ts" with { type: "macro" };\nconsole.log(f());\n`,
+      },
+      ["run", "index.ts"],
+    );
+    expect(stderr).toContain("await it inside the macro");
+    expect(exitCode).toBe(1);
   });
 });
 

@@ -43,7 +43,7 @@ BroadcastChannel::BroadcastChannel(ScriptExecutionContext& context, const String
     , m_contextId(context.identifier())
 {
     EventTarget::initializeWeakPtrFactory();
-    BunBroadcastChannelRegistry::singleton().subscribe(m_name, context, *this);
+    BunBroadcastChannelRegistry::singleton().subscribe(m_name, m_contextId, *this);
     jsRef(context.jsGlobalObject());
 }
 

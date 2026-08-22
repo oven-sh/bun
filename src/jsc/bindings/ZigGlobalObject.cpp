@@ -4023,6 +4023,14 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__HTMLRewriter__onResolveInputStream;
     } else if (handler == Bun__HTMLRewriter__onRejectInputStream) {
         return GlobalObject::PromiseFunctions::Bun__HTMLRewriter__onRejectInputStream;
+    } else if (handler == Bun__Macro__onImportResolve) {
+        return GlobalObject::PromiseFunctions::Bun__Macro__onImportResolve;
+    } else if (handler == Bun__Macro__onImportReject) {
+        return GlobalObject::PromiseFunctions::Bun__Macro__onImportReject;
+    } else if (handler == Bun__Macro__onResultResolve) {
+        return GlobalObject::PromiseFunctions::Bun__Macro__onResultResolve;
+    } else if (handler == Bun__Macro__onResultReject) {
+        return GlobalObject::PromiseFunctions::Bun__Macro__onResultReject;
     } else {
         RELEASE_ASSERT_NOT_REACHED();
     }

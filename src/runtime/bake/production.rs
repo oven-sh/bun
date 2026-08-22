@@ -127,8 +127,8 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
 
     // A special global object is used to allow registering virtual modules
     // that bypass Bun's normal module resolver and plugin system.
-    vm.regular_event_loop.global = NonNull::new(vm.global);
-    vm.event_loop_ref().ensure_waker();
+    vm.event_loop_mut().global = NonNull::new(vm.global);
+    vm.event_loop_mut().ensure_waker();
     {
         let b = &mut vm.transpiler;
         // preload/argv are `Vec<Box<[u8]>>`; clone because the VM owns its

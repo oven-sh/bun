@@ -4469,7 +4469,7 @@ console.log(foo, array);
       expect(out.includes("otherNamesStillWork")).toBe(true);
     });
 
-    it("a macro that runs a nested transformSync macro and then requires a module leaves the importing file intact", async () => {
+    it("a macro that runs transformSync and then requires a module leaves the importing file intact", async () => {
       const otherLines = [];
       for (let i = 0; i < 300; i++) {
         otherLines.push(`const v${i} = { a: [${i}, "s${i}"], b: (${i} + 1) * 2, c: String(${i}).length };`);
@@ -4479,16 +4479,11 @@ console.log(foo, array);
       using dir = tempDir("macro-nested-transform-sync", {
         "inner-macro.ts": `export function inner() { return "inner-value"; }`,
         "outer-macro.ts": `
-          import { join } from "node:path";
           export function outer() {
-            const source =
-              "import { inner } from " +
-              JSON.stringify(join(import.meta.dir, "inner-macro.ts")) +
-              ' with { type: "macro" };\\nexport const v = inner();\\n';
-            const code = new Bun.Transpiler({ loader: "ts" }).transformSync(source);
-            const expanded = code.includes('"inner-value"') && !code.includes("inner(");
+            const code = new Bun.Transpiler({ loader: "ts" }).transformSync("export const v: number = 1 + 2;");
+            const transformed = !code.includes(": number") && code.includes("1 + 2");
             const other = import.meta.require("./other.cjs");
-            return "expanded=" + expanded + " other=" + other.value;
+            return "transformed=" + transformed + " other=" + other.value;
           }
         `,
         "other.cjs": otherLines.join("\n"),
@@ -4515,10 +4510,40 @@ console.log(foo, array);
       expect(await Bun.file(join(String(dir), "out.json")).text()).toBe(
         JSON.stringify({
           pre: "inner-value",
-          res: "expanded=true other=601",
+          res: "transformed=true other=601",
           tail: { list: [2, 4, 6], label: "a-b" },
         }),
       );
+    });
+
+    it("a macro that transpiles code invoking another macro fails with a clear error", async () => {
+      using dir = tempDir("macro-in-macro", {
+        "inner-macro.ts": `export function inner() { return "inner-value"; }`,
+        "outer-macro.ts": `
+          import { join } from "node:path";
+          export function outer() {
+            const source =
+              "import { inner } from " +
+              JSON.stringify(join(import.meta.dir, "inner-macro.ts")) +
+              ' with { type: "macro" };\\nexport const v = inner();\\n';
+            return new Bun.Transpiler({ loader: "ts" }).transformSync(source);
+          }
+        `,
+        "index.ts": `
+          import { outer } from "./outer-macro.ts" with { type: "macro" };
+          console.log(outer());
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "index.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("Macros cannot be invoked from inside a macro");
+      expect(exitCode).toBe(1);
     });
 
     it("special identifier in import statement", () => {

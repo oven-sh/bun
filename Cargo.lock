@@ -852,18 +852,20 @@ version = "0.0.0"
 dependencies = [
  "bstr",
  "bun_alloc",
+ "bun_analytics",
  "bun_ast",
  "bun_base64",
  "bun_bundler",
  "bun_collections",
  "bun_core",
  "bun_dotenv",
+ "bun_event_loop",
  "bun_js_parser",
  "bun_jsc",
+ "bun_options_types",
  "bun_parsers",
- "bun_ptr",
  "bun_resolver",
- "strum",
+ "bun_threading",
  "thiserror",
 ]
 

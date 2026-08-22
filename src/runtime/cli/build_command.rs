@@ -1168,6 +1168,7 @@ fn exit_or_watch(code: u8, watch: bool) -> ! {
         // so this parks the thread for ~584 years — effectively forever.
         std::thread::sleep(std::time::Duration::from_secs(u64::MAX / 1_000_000_000));
     }
+    bun_js_parser_jsc::Macro::MacroHost::shutdown();
     Global::exit(u32::from(code));
 }
 

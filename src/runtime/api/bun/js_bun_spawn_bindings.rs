@@ -1119,11 +1119,10 @@ fn spawn_maybe_sync(
         if is_sync {
             // SAFETY: defer runs while `jsc_vm` (the thread VM) is still live.
             unsafe {
-                let main_loop = (*jsc_vm_ptr_cleanup).event_loop();
                 (*jsc_vm_ptr_cleanup)
                     .rare_data()
                     .spawn_sync_event_loop(&mut *jsc_vm_ptr_cleanup)
-                    .cleanup(jsc_vm_ptr_cleanup.cast(), main_loop.cast());
+                    .cleanup(jsc_vm_ptr_cleanup.cast());
             }
         }
     }

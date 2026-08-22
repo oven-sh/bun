@@ -2082,8 +2082,6 @@ pub mod cache {
             Set {
                 fs: Fs {
                     shared_buffer: MutableString::init(0).expect("unreachable"),
-                    macro_shared_buffer: MutableString::init(0).expect("unreachable"),
-                    use_alternate_source_cache: false,
                     stream: false,
                 },
                 json: Json::init(),
@@ -2091,13 +2089,9 @@ pub mod cache {
         }
     }
 
-    /// File-read cache: shared read buffers plus flags controlling buffer
-    /// reuse and streaming reads.
+    /// File-read cache: the shared read buffer, and whether reads stream.
     pub struct Fs {
         pub(crate) shared_buffer: MutableString,
-        pub(crate) macro_shared_buffer: MutableString,
-
-        pub use_alternate_source_cache: bool,
         pub(crate) stream: bool,
     }
 
@@ -2283,15 +2277,9 @@ pub mod cache {
     }
 
     impl Fs {
-        // When we are in a macro, the shared buffer may be in use by the in-progress macro.
-        // so we have to dynamically switch it out.
         #[inline]
         pub fn shared_buffer(&mut self) -> &mut MutableString {
-            if !self.use_alternate_source_cache {
-                &mut self.shared_buffer
-            } else {
-                &mut self.macro_shared_buffer
-            }
+            &mut self.shared_buffer
         }
 
         /// When we need to suspend/resume something that has pointers into the shared buffer, we need to
@@ -2304,8 +2292,6 @@ pub mod cache {
         pub fn reset_shared_buffer(&mut self, buffer: *const MutableString) -> MutableString {
             if core::ptr::eq(buffer, &raw const self.shared_buffer) {
                 core::mem::replace(&mut self.shared_buffer, MutableString::init_empty())
-            } else if core::ptr::eq(buffer, &raw const self.macro_shared_buffer) {
-                core::mem::replace(&mut self.macro_shared_buffer, MutableString::init_empty())
             } else {
                 unreachable!("resetSharedBuffer: invalid buffer");
             }

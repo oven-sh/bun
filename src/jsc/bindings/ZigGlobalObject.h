@@ -429,8 +429,13 @@ public:
         Bun__S3UploadStream__onRejectStream,
         Bun__HTMLRewriter__onResolveInputStream,
         Bun__HTMLRewriter__onRejectInputStream,
+        Bun__Macro__onImportResolve,
+        Bun__Macro__onImportReject,
+        Bun__Macro__onResultResolve,
+        Bun__Macro__onResultReject,
+        Count,
     };
-    static constexpr size_t promiseFunctionsSize = 48;
+    static constexpr size_t promiseFunctionsSize = static_cast<size_t>(PromiseFunctions::Count);
 
     static PromiseFunctions promiseHandlerID(SYSV_ABI EncodedJSValue (*handler)(JSC::JSGlobalObject* arg0, JSC::CallFrame* arg1));
 
@@ -455,7 +460,7 @@ public:
     template<typename T>
     using LazyPropertyOfGlobalObject = LazyProperty<JSGlobalObject, T>;
 
-    using ThenablesArray = std::array<WriteBarrier<JSFunction>, promiseFunctionsSize + 1>;
+    using ThenablesArray = std::array<WriteBarrier<JSFunction>, promiseFunctionsSize>;
     using NapiModuleAndExports = std::array<WriteBarrier<Unknown>, 2>;
     // Native module default-export cache so require(id) === (await import(id)).default.
     // Visited via FOR_EACH_GLOBALOBJECT_GC_MEMBER's std::array<WriteBarrier> overload.

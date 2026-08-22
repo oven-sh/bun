@@ -80,7 +80,6 @@ pub struct Queue {
 pub struct WakeContext {
     pub queue: *mut Queue,
     pub handle: crate::VmHandle,
-    pub kind: crate::LoopKind,
 }
 
 impl Queue {
@@ -384,7 +383,7 @@ impl Queue {
         // SAFETY: `ctx` is the leaked `WakeContext` registered with this handler.
         let ctx = unsafe { &*ctx.cast::<WakeContext>() };
         let task = ConcurrentTaskItem::create_from(ctx.queue);
-        if let crate::vm_handle::Posted::Refused(task) = ctx.handle.post(ctx.kind, task) {
+        if let crate::vm_handle::Posted::Refused(task) = ctx.handle.post(task) {
             // That VM has closed: nobody is waiting on these modules any more.
             // SAFETY: refused ⇒ we own the task box.
             unsafe { drop(bun_core::heap::take(task.as_ptr())) };

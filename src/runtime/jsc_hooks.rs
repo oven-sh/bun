@@ -474,7 +474,6 @@ unsafe fn init_runtime_state(
                         .insert(Box::new(bun_jsc::async_module::WakeContext {
                             queue: &raw mut (*vm).modules,
                             handle: (*vm).handle(),
-                            kind: (*vm).current_loop_kind(),
                         }));
                     t.resolver.on_wake_package_manager = bun_resolver::install_types::WakeHandler {
                         context: core::ptr::NonNull::new(wake_ctx.cast()),
@@ -955,7 +954,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     // `VirtualMachine`, so holding `&mut EventLoop` while also touching VM
     // siblings would alias. Dereference per-field via the raw `vm` ptr.
     // SAFETY: per fn contract — `vm` is the live per-thread VM.
-    let el: *mut bun_jsc::event_loop::EventLoop = unsafe { &*vm }.event_loop;
+    let el: *mut bun_jsc::event_loop::EventLoop = unsafe { &*vm }.event_loop();
     // SAFETY: `el` is the live per-thread event loop (field of `*vm`).
     let loop_ = unsafe { (*el).usockets_loop() };
 
@@ -1119,7 +1118,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
 unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
     // Note: reshaped for borrowck — see `auto_tick` above.
     // SAFETY: per fn contract — `vm` is the live per-thread VM.
-    let el: *mut bun_jsc::event_loop::EventLoop = unsafe { &*vm }.event_loop;
+    let el: *mut bun_jsc::event_loop::EventLoop = unsafe { &*vm }.event_loop();
     // SAFETY: `el` is the live per-thread event loop (field of `*vm`).
     let loop_ = unsafe { (*el).usockets_loop() };
 
@@ -1543,6 +1542,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     stop_dns_for_vm_teardown,
     stop_active_handles_for_vm_teardown: stop_active_handles_for_vm_teardown_hook,
     disarm_all_timers_for_vm_teardown,
+    stop_macro_host: bun_js_parser_jsc::Macro::MacroHost::shutdown,
     close_timer_loop_handles_after_vm_destroyed,
 };
 
@@ -2507,9 +2507,8 @@ fn transpile_source_code_inner(
             let is_node_override = specifier.starts_with(node_fallbacks::IMPORT_PATH);
 
             // SAFETY: per fn contract.
-            let (macro_mode, has_any_macro_remappings) =
-                unsafe { ((*jsc_vm).macro_mode, (*jsc_vm).has_any_macro_remappings) };
-            let macro_remappings = if macro_mode || !has_any_macro_remappings || is_node_override {
+            let has_any_macro_remappings = unsafe { (*jsc_vm).has_any_macro_remappings };
+            let macro_remappings = if !has_any_macro_remappings || is_node_override {
                 bun_resolver::package_json::MacroMap::default()
             } else {
                 // Note: `MacroMap`'s value type
@@ -3874,7 +3873,7 @@ fn get_hardcoded_module(
 }
 
 /// `ModuleLoader.fetchBuiltinModule(jsc_vm, specifier)` — `HardcodedModule`
-/// lookup + macro-namespace + standalone-module-graph probe; also covers the
+/// lookup + standalone-module-graph probe; also covers the
 /// `Bun__fetchBuiltinModule` export wrapper.
 ///
 /// # Safety
@@ -3918,33 +3917,6 @@ unsafe fn fetch_builtin_module(
         // SAFETY: per fn contract — `out` is a valid out-param.
         unsafe { *out = ErrorableResolvedSource::ok(resolved) };
         return FetchBuiltinResult::Found;
-    }
-
-    // ── `macro:` namespace ──────────────────────────────────────────────
-    // `vm.macro_entry_points` values are
-    // `*mut MacroEntryPoint` (gated `bun_bundler::entry_points` type); the
-    // map itself is keyed by `i32` hash of the specifier.
-    if spec.starts_with(b"macro:") {
-        use bun_bundler::entry_points::MacroEntryPoint;
-        let id = MacroEntryPoint::generate_id_from_specifier(spec);
-        // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-        if let Some(&entry) = unsafe { &*jsc_vm }.macro_entry_points.get(&id) {
-            let entry = entry.cast::<MacroEntryPoint>();
-            // SAFETY: `entry` is the `heap::alloc`d `MacroEntryPoint`
-            // inserted by `load_macro_entry_point`; map ownership keeps it
-            // alive for the VM lifetime.
-            unsafe {
-                *out = ErrorableResolvedSource::ok(ResolvedSource {
-                    source_code: bun_core::String::clone_utf8(&(*entry).source.contents),
-                    // +1 each: ~SourceProvider() derefs both.
-                    specifier: specifier.dupe_ref(),
-                    source_url: specifier.dupe_ref(),
-                    ..ResolvedSource::default()
-                });
-            }
-            return FetchBuiltinResult::Found;
-        }
-        return FetchBuiltinResult::NotFound;
     }
 
     // ── Standalone-module-graph probe ───────────────────────────────────

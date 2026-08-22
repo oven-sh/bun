@@ -362,6 +362,32 @@ describe("encoding", () => {
     expect(d.attributes).toEqual({ a: 1 });
     expect(d.spanId).toBe(s.spanId);
   });
+
+  test("Bun.otel.decode caps attribute nesting instead of recursing without bound", () => {
+    // Hand-rolled protobuf: one span whose attribute "k" is an array nested `levels` deep.
+    const varint = (n: number) => {
+      const out: number[] = [];
+      while (n > 0x7f) {
+        out.push((n & 0x7f) | 0x80);
+        n >>>= 7;
+      }
+      out.push(n);
+      return out;
+    };
+    const len = (field: number, body: number[]) => [(field << 3) | 2, ...varint(body.length), ...body];
+    const str = (field: number, v: string) => len(field, [...Buffer.from(v)]);
+    let any: number[] = len(1, [...Buffer.from("leaf")]); // AnyValue.string_value
+    const levels = 200;
+    for (let i = 0; i < levels; i++) any = len(5, len(1, any)); // AnyValue.array_value{ values: [any] }
+    const kv = [...str(1, "k"), ...len(2, any)]; // KeyValue
+    const span = [...len(1, Array(16).fill(1)), ...len(2, Array(8).fill(2)), ...str(5, "deep"), ...len(9, kv)];
+    const req = len(1, len(2, len(2, span))); // resource_spans{ scope_spans{ spans } }
+    const [d] = Bun.otel.decode(new Uint8Array(req));
+    expect(d.name).toBe("deep");
+    let depth = 0;
+    for (let v: any = d.attributes.k; Array.isArray(v); v = v[0]) depth++;
+    expect(depth).toBe(32);
+  });
 });
 
 describe("configuration", () => {

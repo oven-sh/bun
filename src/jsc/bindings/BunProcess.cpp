@@ -608,8 +608,10 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
                 globalObject->m_pendingNapiModule = mod;
                 Napi::executePendingNapiModule(globalObject);
                 globalObject->m_pendingNapiModule = {};
+                if (scope.exception()) [[unlikely]]
+                    break;
             }
-            if (globalObject->m_pendingNapiModules.isEmpty())
+            if (scope.exception() || globalObject->m_pendingNapiModules.isEmpty())
                 break;
             pendingNapiModules = std::exchange(globalObject->m_pendingNapiModules, {});
         }
@@ -653,7 +655,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         // Execute all NAPI modules that were just registered. Move to a
         // local first and drain so re-entrant napi_module_register() calls
         // from inside nm_register_func can't invalidate our iterator.
-        while (!globalObject->m_pendingNapiModules.isEmpty()) {
+        while (!scope.exception() && !globalObject->m_pendingNapiModules.isEmpty()) {
             auto pendingNapiModules = std::exchange(globalObject->m_pendingNapiModules, {});
             for (auto& mod : pendingNapiModules) {
                 // Restore dlopen handle for this module before execution
@@ -662,6 +664,8 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
                 globalObject->m_pendingNapiModule = mod;
                 Napi::executePendingNapiModule(globalObject);
                 globalObject->m_pendingNapiModule = {};
+                if (scope.exception()) [[unlikely]]
+                    break;
             }
         }
 
@@ -771,9 +775,10 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
 
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/src/node_api.cc#L734-L742
     // https://github.com/oven-sh/bun/issues/1288
-    if (!resultValue.isEmpty() && !scope.exception() && (!strongExports || resultValue != strongExports.get())) {
+    if (!resultValue.isEmpty() && (!strongExports || resultValue != strongExports.get())) {
         PutPropertySlot slot(strongModule.get(), false);
         strongModule->put(strongModule.get(), globalObject, builtinNames(vm).exportsPublicName(), resultValue, slot);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     return JSValue::encode(resultValue);

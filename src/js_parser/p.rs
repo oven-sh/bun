@@ -239,6 +239,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) dirname_ref: Ref,
     pub(crate) import_meta_ref: Ref,
     pub(crate) hmr_api_ref: Ref,
+    /// Unbound `module` declared by `value_for_import_meta_main`; reserves the
+    /// name so the iife lowering compares against the host's `module`.
+    pub(crate) import_meta_main_host_module_ref: Ref,
 
     /// If bake is enabled and this is a server-side file, we want to use
     /// special `Response` class inside the `bun:app` built-in module to
@@ -5244,8 +5247,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         //
         // The printer can handle this for us, but we need to reference
         // a handle to the `__require` function.
-        if self.options.lower_import_meta_main_for_node_js {
+        //
+        // An iife runs as CommonJS, so there it prints `__require.main == module`
+        // with the host's `module`; the unbound symbol reserves the name in the
+        // renamer (cjs does the same via `compute_initial_reserved_names`).
+        if self.options.lower_import_meta_main {
             self.record_usage_of_runtime_require();
+            if self.options.output_format == options::Format::Iife
+                && self.import_meta_main_host_module_ref.is_empty()
+            {
+                self.import_meta_main_host_module_ref =
+                    self.declare_generated_symbol(js_ast::symbol::Kind::Unbound, b"module");
+            }
         }
         Expr {
             loc,
@@ -8642,6 +8655,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             dirname_ref: Ref::NONE,
             import_meta_ref: Ref::NONE,
             hmr_api_ref: Ref::NONE,
+            import_meta_main_host_module_ref: Ref::NONE,
             response_ref: Ref::NONE,
             bun_app_namespace_ref: Ref::NONE,
             bundler_feature_flag_ref: Ref::NONE,

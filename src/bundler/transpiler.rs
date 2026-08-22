@@ -1578,7 +1578,7 @@ impl<'a> Transpiler<'a> {
                     output_format: p_opts::Format::Esm,
                     transform_only: self.options.transform_only,
                     import_meta_main_value: None,
-                    lower_import_meta_main_for_node_js: false,
+                    lower_import_meta_main: false,
                     framework: None,
                     repl_mode: self.options.repl_mode,
                     lower_toml_datetimes: false,

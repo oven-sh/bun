@@ -597,4 +597,176 @@ describe("bundler", () => {
       stdout: "loaded ok",
     },
   });
+
+  // ============================================================================
+  // __require in iife output. Anything the printer rewrites to the runtime's
+  // `__require` (a require() with a non-literal argument, require.resolve(),
+  // an uncalled `require` reference, an external require) needs the runtime
+  // part that defines it to be kept in the bundle, for every target.
+  // ============================================================================
+
+  const dynamicRequireFiles = {
+    "/entry.js": /* js */ `
+      import value from "./dyn.cjs";
+      console.log(value);
+    `,
+    "/dyn.cjs": /* js */ `
+      var ext = ".cjs";
+      module.exports = require("./dep-runtime" + ext).value;
+    `,
+  };
+  const dynamicRequireRuntimeFiles = {
+    "/dep-runtime.cjs": /* js */ `module.exports = { value: "required at runtime" };`,
+  };
+
+  // Test 29: the node flavor of __require (createRequire(import.meta.url)) cannot
+  // exist inside an iife, so node gets the same shim as the browser and the
+  // shim forwards to the host's require when the iife is loaded as CommonJS.
+  itBundled("cjs/__require_iife_dynamic_require_target_node", {
+    files: dynamicRequireFiles,
+    runtimeFiles: dynamicRequireRuntimeFiles,
+    target: "node",
+    format: "iife",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toMatch(/var __require = /);
+      api.expectFile("/out.js").not.toContain("createRequire");
+      api.expectFile("/out.js").not.toContain("import.meta");
+    },
+    run: [{ runtime: "node", stdout: "required at runtime" }, { stdout: "required at runtime" }],
+  });
+
+  // Test 30: target bun keeps its import.meta.require flavor. Bun loads the
+  // `// @bun` output as an ES module, where that is the only require available.
+  itBundled("cjs/__require_iife_dynamic_require_target_bun", {
+    files: dynamicRequireFiles,
+    runtimeFiles: dynamicRequireRuntimeFiles,
+    target: "bun",
+    format: "iife",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("var __require = import.meta.require;");
+    },
+    run: {
+      stdout: "required at runtime",
+    },
+  });
+
+  // Test 31: target browser
+  itBundled("cjs/__require_iife_dynamic_require_target_browser", {
+    files: dynamicRequireFiles,
+    runtimeFiles: dynamicRequireRuntimeFiles,
+    target: "browser",
+    format: "iife",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toMatch(/var __require = /);
+    },
+    run: [{ runtime: "node", stdout: "required at runtime" }, { stdout: "required at runtime" }],
+  });
+
+  // Test 32: same as above with the renamer running over the runtime part
+  itBundled("cjs/__require_iife_dynamic_require_minified", {
+    files: dynamicRequireFiles,
+    runtimeFiles: dynamicRequireRuntimeFiles,
+    target: "browser",
+    format: "iife",
+    minifyIdentifiers: true,
+    minifySyntax: true,
+    minifyWhitespace: true,
+    run: [{ runtime: "node", stdout: "required at runtime" }, { stdout: "required at runtime" }],
+  });
+
+  // Test 33: without a host require() the shim throws esbuild's error instead of
+  // the bundle failing on the missing __require binding. `new Function` runs the
+  // iife in the global scope, where the module-scoped `require` is not visible.
+  itBundled("cjs/__require_iife_dynamic_require_without_host_require", {
+    files: {
+      ...dynamicRequireFiles,
+      "/test.js": /* js */ `
+        import { readFileSync } from "node:fs";
+        const code = readFileSync(new URL("./out.js", import.meta.url), "utf8");
+        try {
+          new Function(code)();
+        } catch (e) {
+          console.log(e.message);
+        }
+      `,
+    },
+    runtimeFiles: dynamicRequireRuntimeFiles,
+    target: "browser",
+    format: "iife",
+    run: {
+      file: "/test.js",
+      stdout: 'Dynamic require of "./dep-runtime.cjs" is not supported',
+    },
+  });
+
+  // Test 34: require.resolve(), an uncalled `require` and require.main all print
+  // through the same __require binding
+  itBundled("cjs/__require_iife_require_reference_forms", {
+    files: {
+      "/entry.js": /* js */ `
+        import value from "./forms.cjs";
+        console.log(value.join("\\n"));
+      `,
+      "/forms.cjs": /* js */ `
+        var ext = ".cjs";
+        var indirect = require;
+        module.exports = [
+          indirect("./dep-runtime" + ext).value,
+          require.resolve("./dep-runtime" + ext).endsWith("dep-runtime.cjs"),
+          typeof require.main,
+        ];
+      `,
+    },
+    runtimeFiles: dynamicRequireRuntimeFiles,
+    target: "node",
+    format: "iife",
+    run: [
+      { runtime: "node", stdout: "required at runtime\ntrue\nobject" },
+      { stdout: "required at runtime\ntrue\nobject" },
+    ],
+  });
+
+  // Test 35: a require() of an external package already pulled __require in for
+  // iife output, but target node defined it with an import of node:module that
+  // the iife turned into `__require("node:module")`, a reference to itself.
+  itBundled("cjs/__require_iife_external_require_target_node", {
+    files: {
+      "/entry.js": /* js */ `
+        import value from "./dep.cjs";
+        console.log(value);
+      `,
+      "/dep.cjs": /* js */ `
+        module.exports = require("ext").value;
+      `,
+    },
+    runtimeFiles: {
+      "/node_modules/ext/index.js": /* js */ `module.exports = { value: "external package" };`,
+    },
+    external: ["ext"],
+    target: "node",
+    format: "iife",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain('__require("ext")');
+      api.expectFile("/out.js").not.toContain('__require("node:module")');
+      api.expectFile("/out.js").not.toContain("import.meta");
+    },
+    run: [{ runtime: "node", stdout: "external package" }, { stdout: "external package" }],
+  });
+
+  // Test 36: esm output for node is unchanged by the iife shim
+  itBundled("cjs/__require_esm_dynamic_require_target_node", {
+    files: dynamicRequireFiles,
+    runtimeFiles: dynamicRequireRuntimeFiles,
+    target: "node",
+    format: "esm",
+    outfile: "/out.mjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.mjs").toContain('import { createRequire } from "node:module";');
+      api.expectFile("/out.mjs").toContain("createRequire(import.meta.url)");
+    },
+    run: {
+      runtime: "node",
+      stdout: "required at runtime",
+    },
+  });
 });

@@ -3247,7 +3247,10 @@ pub mod bv2_impl {
         /// Common prelude shared by all enqueue_entry_points_* variants: add the runtime task.
         fn enqueue_entry_points_common(&mut self) -> Result<(), Error> {
             // Add the runtime
-            let rt = ParseTask::get_runtime_source(self.transpiler.options.target);
+            let rt = ParseTask::get_runtime_source(
+                self.transpiler.options.target,
+                self.transpiler.options.output_format,
+            );
             self.graph.input_files.append(crate::Graph::InputFile {
                 source: rt.source,
                 loader: Loader::Js,

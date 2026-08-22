@@ -940,6 +940,13 @@ impl TranspilerJob {
                 }
             }
 
+            // Extension-sniffed, not the package.json-only `module_type` the
+            // parse used, so both transpile paths record the same type.
+            crate::node_compile_cache::note_parse_failure_for_module(
+                &path,
+                loader,
+                ModuleType::from_extension(path.name().ext, module_type),
+            );
             self.parse_error = Some(crate::CrateError::ParseError);
             return;
         };
@@ -1008,6 +1015,21 @@ impl TranspilerJob {
                 ptr::null_mut()
             };
 
+            let is_commonjs_module = entry.metadata.module_type == CacheModuleType::Cjs;
+            // UTF-16 transpiler-cache output cannot byte-match the printed
+            // form, so it never reaches the compile cache.
+            let (bytecode_cache, bytecode_cache_size) = if matches!(&entry.output_code, OutputCode::String(s) if s.is_utf16())
+            {
+                (ptr::null_mut(), 0)
+            } else {
+                crate::node_compile_cache::fetch_for_transpiled_module(
+                    &path,
+                    loader,
+                    is_commonjs_module,
+                    entry.output_code.byte_slice(),
+                )
+            };
+
             self.resolved_source = OwnedResolvedSource::from(ResolvedSource {
                 source_code: match &mut entry.output_code {
                     OutputCode::String(s) => *s,
@@ -1017,9 +1039,11 @@ impl TranspilerJob {
                         result
                     }
                 },
-                is_commonjs_module: entry.metadata.module_type == CacheModuleType::Cjs,
+                is_commonjs_module,
                 module_info,
                 tag: this_tag,
+                bytecode_cache,
+                bytecode_cache_size,
                 ..Default::default()
             });
 
@@ -1179,6 +1203,14 @@ impl TranspilerJob {
             dump_source(vm, specifier, source_code_printer);
         }
 
+        let (bytecode_cache, bytecode_cache_size) =
+            crate::node_compile_cache::fetch_for_transpiled_module(
+                &path,
+                loader,
+                is_commonjs_module,
+                source_code_printer.ctx.get_written(),
+            );
+
         let source_code = 'brk: {
             let written = source_code_printer.ctx.get_written();
 
@@ -1219,6 +1251,8 @@ impl TranspilerJob {
                 })
                 .unwrap_or(ptr::null_mut()),
             tag: this_tag,
+            bytecode_cache,
+            bytecode_cache_size,
             ..Default::default()
         });
 

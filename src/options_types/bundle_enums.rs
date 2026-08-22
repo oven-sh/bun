@@ -112,6 +112,20 @@ pub enum ModuleType {
 
 impl ModuleType {
     pub const LIST: __ComptimeStringMap_MODULE_TYPE_LIST = __ComptimeStringMap_MODULE_TYPE_LIST(());
+
+    /// Module type from a file extension (dot included). The extension is
+    /// authoritative; `package_json_type` (the enclosing package.json
+    /// `"type"`, [`ModuleType::Unknown`] when absent) applies only to
+    /// `.js`/`.ts`, and other extensions (`.jsx`, `.tsx`, ...) stay
+    /// [`ModuleType::Unknown`] so the file contents decide.
+    pub fn from_extension(ext: &[u8], package_json_type: ModuleType) -> ModuleType {
+        match ext {
+            b".cjs" | b".cts" => ModuleType::Cjs,
+            b".mjs" | b".mts" => ModuleType::Esm,
+            b".js" | b".ts" => package_json_type,
+            _ => ModuleType::Unknown,
+        }
+    }
 }
 
 bun_core::comptime_string_map! {

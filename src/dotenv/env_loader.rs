@@ -798,33 +798,32 @@ impl Loader {
 
         // `bun_sys` is errno-based; the match arms below group the recoverable
         // errnos. Any errno not listed propagates.
-        let file =
-            match bun_sys::File::openat(dir, base, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0) {
-                Ok(file) => file,
-                Err(err) => {
-                    use bun_sys::E;
-                    match err.get_errno() {
-                        E::EISDIR | E::ENOENT => {
-                            // prevent retrying
-                            self.default_files_loaded.insert(env_file);
-                            return Ok(());
-                        }
-                        E::EBUSY | E::EACCES => {
-                            if !self.quiet {
-                                bun_core::pretty_errorln!(
-                                    "<r><red>{}<r> error loading {} file",
-                                    bstr::BStr::new(err.name()),
-                                    bstr::BStr::new(base)
-                                );
-                            }
-                            // prevent retrying
-                            self.default_files_loaded.insert(env_file);
-                            return Ok(());
-                        }
-                        _ => return Err(err.into()),
+        let file = match bun_sys::File::open_regular_at(dir, base) {
+            Ok((file, _)) => file,
+            Err(err) => {
+                use bun_sys::E;
+                match err.get_errno() {
+                    E::EISDIR | E::ENODEV | E::ENOENT => {
+                        // prevent retrying
+                        self.default_files_loaded.insert(env_file);
+                        return Ok(());
                     }
+                    E::EBUSY | E::EACCES => {
+                        if !self.quiet {
+                            bun_core::pretty_errorln!(
+                                "<r><red>{}<r> error loading {} file",
+                                bstr::BStr::new(err.name()),
+                                bstr::BStr::new(base)
+                            );
+                        }
+                        // prevent retrying
+                        self.default_files_loaded.insert(env_file);
+                        return Ok(());
+                    }
+                    _ => return Err(err.into()),
                 }
-            };
+            }
+        };
 
         match read_env_file_contents(&file)? {
             ReadEnvFile::Empty => {}

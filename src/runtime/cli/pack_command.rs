@@ -3689,8 +3689,8 @@ impl IgnorePatterns {
 
         let mut ignore_kind = IgnorePatternsKind::Npmignore;
 
-        let ignore_file: File = match dir.open_file(b".npmignore", bun_sys::O::RDONLY, 0) {
-            Ok(f) => f,
+        let (ignore_file, size): (File, u64) = match File::open_regular_at(dir, b".npmignore") {
+            Ok(opened) => opened,
             Err(err) => 'ignore_file: {
                 if err.get_errno() != bun_sys::E::ENOENT {
                     // Crash if the file exists and fails to open. Don't want to create a tarball
@@ -3703,8 +3703,8 @@ impl IgnorePatterns {
                     );
                 }
                 ignore_kind = IgnorePatternsKind::Gitignore;
-                match dir.open_file(b".gitignore", bun_sys::O::RDONLY, 0) {
-                    Ok(f) => break 'ignore_file f,
+                match File::open_regular_at(dir, b".gitignore") {
+                    Ok(opened) => break 'ignore_file opened,
                     Err(err2) => {
                         if err2.get_errno() != bun_sys::E::ENOENT {
                             Self::ignore_file_fail(
@@ -3720,7 +3720,7 @@ impl IgnorePatterns {
             }
         };
 
-        let contents = match ignore_file.read_to_end() {
+        let contents = match ignore_file.read_to_end_sized(size) {
             Ok(c) => c,
             Err(err) => {
                 Self::ignore_file_fail(dir, ignore_kind, IgnoreFileFailReason::Read, err.into());

@@ -1546,53 +1546,19 @@ impl PipelineTask {
             // SAFETY: `p` borrows `image.source.path`, which outlives the task
             // because `this_ref` is held Strong while pending_tasks > 0.
             let p: &ZStr = unsafe { &*p };
-            // The path string came straight from the constructor, so treat
-            // it as untrusted: open + fstat first instead of `readFrom`.
-            //   • !S_ISREG → ENODEV. `/dev/zero`/`/dev/urandom` would
-            //     otherwise pread forever (st_size=0, never returns 0) until
-            //     the doubling Vec OOMs the process; a FIFO with no writer
-            //     would park this WorkPool thread in-kernel forever.
-            //   • st_size cap → file-based decompression-bomb fails up
-            //     front with a clear error instead of materialising a
-            //     multi-GB encoded buffer before `maxPixels` even runs.
-            // O_NONBLOCK so the open itself can't block on a FIFO. POSIX-only:
-            // on Windows it omits FILE_SYNCHRONOUS_IO_NONALERT (overlapped
-            // handle) and the subsequent sync read fails EINVAL. Windows has
-            // no open-blocking FIFOs in the same sense; the !S_ISREG check
-            // below still rejects pipes/devices.
-            #[cfg(unix)]
-            let oflags = sys::O::RDONLY | sys::O::NONBLOCK;
-            #[cfg(not(unix))]
-            let oflags = sys::O::RDONLY;
-            let file = match sys::File::openat(sys::Fd::cwd(), p, oflags, 0) {
-                sys::Result::Ok(f) => f,
+            let (file, size) = match sys::File::open_regular_at(sys::Fd::cwd(), p) {
+                sys::Result::Ok(opened) => opened,
                 sys::Result::Err(e) => {
                     self.result = TaskResult::IoErr(e.with_path(p.as_bytes()));
                     return;
                 }
             };
-            // `defer file.close()` — assume `sys::File` closes on Drop.
-            let st = match file.stat() {
-                sys::Result::Ok(s) => s,
-                sys::Result::Err(e) => {
-                    self.result = TaskResult::IoErr(e.with_path(p.as_bytes()));
-                    return;
-                }
-            };
-            if !sys::S::ISREG(st.st_mode as _) {
-                self.result = TaskResult::IoErr(sys::Error {
-                    errno: sys::E::ENODEV as _,
-                    syscall: sys::Tag::read,
-                    path: p.as_bytes().to_vec().into_boxed_slice(),
-                    ..Default::default()
-                });
-                return;
-            }
-            if u64::try_from(st.st_size.max(0)).expect("int cast") > MAX_INPUT_FILE_BYTES {
+            // A decompression bomb on disk fails before its encoded bytes are even read.
+            if size > MAX_INPUT_FILE_BYTES {
                 self.result = TaskResult::Err(codecs::Error::TooManyPixels);
                 return;
             }
-            match file.read_to_end() {
+            match file.read_to_end_sized(size) {
                 Ok(bytes) => owned_file = Some(bytes),
                 Err(e) => {
                     self.result = TaskResult::IoErr(e.with_path(p.as_bytes()));

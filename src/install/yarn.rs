@@ -631,11 +631,10 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     let mut root_dependencies: Vec<RootDep> = Vec::new();
 
     // read package.json to get specified dependencies
-    let Ok(package_json_fd) = bun_sys::File::openat(dir, b"package.json", bun_sys::O::RDONLY, 0)
-    else {
+    let Ok((package_json_fd, size)) = bun_sys::File::open_regular_at(dir, b"package.json") else {
         return Err(crate::Error::InvalidPackageJSON);
     };
-    let Ok(package_json_contents) = package_json_fd.read_to_end() else {
+    let Ok(package_json_contents) = package_json_fd.read_to_end_sized(size) else {
         return Err(crate::Error::InvalidPackageJSON);
     };
 

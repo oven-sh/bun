@@ -2,7 +2,7 @@ import { file, spawn, write } from "bun";
 import { install_test_helpers, npm_manifest_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { copyFileSync, mkdirSync } from "fs";
-import { cp, exists, lstat, mkdir, readlink, rename, rm, writeFile } from "fs/promises";
+import { cp, exists, lstat, mkdir, readlink, rename, rm, symlink, writeFile } from "fs/promises";
 import {
   assertManifestsPopulated,
   bunExe,
@@ -25,6 +25,7 @@ import {
   VerdaccioRegistry,
   writeShebangScript,
 } from "harness";
+import { mkfifo } from "mkfifo";
 import { join, resolve } from "path";
 const { parseLockfile } = install_test_helpers;
 
@@ -6755,6 +6756,32 @@ describe("pm trust", async () => {
       expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeTrue();
     });
   });
+
+  // After the scripts ran, `pm trust` records the packages in package.json,
+  // which it reads through the descriptor opened while the project was
+  // located. A device there used to be read like a file.
+  test.skipIf(isWindows)("package.json that is not a regular file", async () => {
+    await writeFile(packageJson, JSON.stringify({ name: "foo", dependencies: { "uses-what-bin": "1.0.0" } }));
+    await runBunInstall(env, packageDir);
+
+    await rm(packageJson);
+    await symlink("/dev/null", packageJson);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "pm", "trust", "uses-what-bin"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).toContain("ENODEV");
+    expect({ out, exitCode, stillTheSymlink: (await lstat(packageJson)).isSymbolicLink() }).toEqual({
+      out: "",
+      exitCode: 1,
+      stillTheSymlink: true,
+    });
+  });
 });
 
 test("it should be able to find binary in node_modules/.bin from parent directory of root package", async () => {
@@ -9863,6 +9890,48 @@ test("npm manifest cache entries are only reused for the package name they were 
 
   expect(parseManifest(byName["no-deps"], registryUrl()).name).toBe("no-deps");
   expect(exitCode).toBe(0);
+});
+
+// A FIFO at the cache entry's path used to block the install forever in
+// open(); a device file used to be read until the process ran out of memory.
+test.skipIf(isWindows)("npm manifest cache entry that is not a regular file is skipped and replaced", async () => {
+  const { parseManifest } = npm_manifest_test_helpers;
+  const cacheDir = join(packageDir, ".bun-cache");
+  await write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } }));
+
+  async function install() {
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+      // Only matters if the install blocks on the cache entry.
+      timeout: 30_000,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).toContain("Saved lockfile");
+    expect(out).toContain("+ no-deps@1.0.0");
+    expect(exitCode).toBe(0);
+  }
+
+  await install();
+  const manifestFiles = (await readdirSorted(cacheDir)).filter(name => name.endsWith(".npm"));
+  expect(manifestFiles).toHaveLength(1);
+  const manifestPath = join(cacheDir, manifestFiles[0]);
+
+  await Promise.all([
+    rm(manifestPath),
+    rm(join(packageDir, "node_modules"), { recursive: true, force: true }),
+    rm(join(packageDir, "bun.lockb"), { force: true }),
+    rm(join(packageDir, "bun.lock"), { force: true }),
+  ]);
+  mkfifo(manifestPath);
+
+  await install();
+  expect((await lstat(manifestPath)).isFile()).toBe(true);
+  expect(parseManifest(manifestPath, registryUrl()).name).toBe("no-deps");
 });
 
 describe("manifest conditional requests", () => {

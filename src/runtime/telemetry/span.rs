@@ -326,6 +326,8 @@ pub struct EventRef {
 pub struct LinkRef {
     trace_id: JsString,
     span_id: JsString,
+    /// W3C header form; may be empty.
+    trace_state: JsString,
     attrs: AttrSlice,
     trace_flags: u8,
 }
@@ -370,7 +372,7 @@ abi_layout!(AttrSlice, 8; start @ 0, length @ 4);
 abi_layout!(AttrRef, 56; key @ 0, kind @ 24, value @ 32);
 abi_layout!(AttrPool, 24; items @ 0, array_items @ 8, n_items @ 16, n_array_items @ 20);
 abi_layout!(EventRef, 40; name @ 0, time_ns @ 24, attrs @ 32);
-abi_layout!(LinkRef, 64; trace_id @ 0, span_id @ 24, attrs @ 48, trace_flags @ 56);
+abi_layout!(LinkRef, 88; trace_id @ 0, span_id @ 24, trace_state @ 48, attrs @ 72, trace_flags @ 80);
 abi_layout!(
     EndDesc, 152;
     stub @ 0, end_ns @ 8, name @ 16, status_message @ 40, trace_state @ 64, pool @ 88, attrs @ 112,
@@ -782,8 +784,9 @@ pub extern "C" fn Bun__Telemetry__encodeSpan(global: &JSGlobalObject, desc: &End
                 let Some(ctx) = link_context(lk) else {
                     continue;
                 };
+                let ts = lk.trace_state.to_utf8_without_ref();
                 OwnedAttrs::collect(desc.pool.slice(lk.attrs), &desc.pool)
-                    .with(value_limit, |pairs| w.link(&ctx, pairs));
+                    .with(value_limit, |pairs| w.link(&ctx, ts.slice(), pairs));
             }
             let dropped_attrs = desc.dropped_attrs + (attrs.len() - kept_attrs.len()) as u32;
             if dropped_attrs != 0 {
@@ -958,10 +961,11 @@ pub extern "C" fn Bun__Telemetry__nativeAddLink(
         return;
     };
     let owned = OwnedAttrs::collect(attrs.slice(link.attrs), attrs);
+    let ts = link.trace_state.to_utf8_without_ref();
     let Some(mut l) = local(global) else { return };
     owned.with(lim.attribute_value_length as usize, |pairs| {
         pool::with(&mut l.pool, NativeSpan(handle), |s| {
-            s.add_link(&ctx, pairs, lim)
+            s.add_link(&ctx, ts.slice(), pairs, lim)
         });
     });
 }

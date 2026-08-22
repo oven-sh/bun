@@ -495,10 +495,10 @@ impl FetchTasklet {
             .unwrap_or((0, None));
         let error = match self.result.fail {
             Some(e) => {
-                let (code, message) = fetch_error_strings(e, &BunString::EMPTY);
+                let e = fetch_error_strings(e, &BunString::EMPTY);
                 let (code, message) = (
-                    bun_core::OwnedString::new(code),
-                    bun_core::OwnedString::new(message),
+                    bun_core::OwnedString::new(e.code),
+                    bun_core::OwnedString::new(e.message),
                 );
                 Some((code.to_utf8_bytes(), message.to_utf8_bytes()))
             }
@@ -1427,7 +1427,7 @@ impl FetchTasklet {
             }
         }
 
-        let (code, message) = fetch_error_strings(fail, &path);
+        let FetchErrorStrings { code, message } = fetch_error_strings(fail, &path);
 
         let fetch_error = jsc::SystemError {
             code: code.into(),
@@ -2662,9 +2662,14 @@ impl bun_event_loop::Taskable for FetchTaskletPromiseSettle {
     }
 }
 
-/// The `code` and `message` a failed fetch rejects with (shared with telemetry
-/// so the span reports exactly what the caller sees).
-pub(crate) fn fetch_error_strings(fail: http::Error, path: &BunString) -> (BunString, BunString) {
+/// What a failed fetch rejects with (shared with telemetry so the span
+/// reports exactly what the caller sees). Both strings are +1.
+pub(crate) struct FetchErrorStrings {
+    pub code: BunString,
+    pub message: BunString,
+}
+
+pub(crate) fn fetch_error_strings(fail: http::Error, path: &BunString) -> FetchErrorStrings {
     let code = if fail == http::Error::ConnectionClosed {
         BunString::static_("ECONNRESET")
     } else {
@@ -2891,5 +2896,5 @@ pub(crate) fn fetch_error_strings(fail: http::Error, path: &BunString) -> (BunSt
             path,
         )),
     };
-    (code, message)
+    FetchErrorStrings { code, message }
 }

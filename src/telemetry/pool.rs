@@ -208,6 +208,7 @@ impl Slot {
     pub fn add_link(
         &mut self,
         ctx: &crate::SpanContext,
+        trace_state: &[u8],
         attrs: &[(&[u8], Value<'_>)],
         limits: &Limits,
     ) {
@@ -216,7 +217,7 @@ impl Slot {
             return;
         }
         self.n_links += 1;
-        otlp::encode_link(&mut self.extra, ctx, b"", attrs);
+        otlp::encode_link(&mut self.extra, ctx, trace_state, attrs);
     }
 
     fn write(

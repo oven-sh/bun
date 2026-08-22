@@ -490,8 +490,13 @@ impl<'a> SpanWriter<'a> {
     }
 
     #[inline]
-    pub fn link(&mut self, ctx: &SpanContext, attrs: &[(&[u8], Value<'_>)]) -> &mut Self {
-        encode_link(self.out, ctx, b"", attrs);
+    pub fn link(
+        &mut self,
+        ctx: &SpanContext,
+        trace_state: &[u8],
+        attrs: &[(&[u8], Value<'_>)],
+    ) -> &mut Self {
+        encode_link(self.out, ctx, trace_state, attrs);
         self
     }
 

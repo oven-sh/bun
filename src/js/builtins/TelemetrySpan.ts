@@ -207,10 +207,14 @@ export function telemetryAddOneLink(span: unknown, state: number, link: any) {
   const traceId = ctx.traceId + "";
   const spanId = ctx.spanId + "";
   const traceFlags = ctx.traceFlags | 0;
+  // api TraceState (has serialize()) or a raw header string
+  const ts = ctx.traceState;
+  const traceState =
+    ts == null ? "" : typeof ts === "string" ? ts : typeof ts.serialize === "function" ? ts.serialize() + "" : "";
   const attributes = link.attributes;
   const flat = $telemetryFlattenAttributes(attributes);
   if (state & State.Native) {
-    $telemetryAddLink(span, traceId, spanId, traceFlags, flat);
+    $telemetryAddLink(span, traceId, spanId, traceFlags, flat, traceState);
     return;
   }
   let links = $getInternalField(span, Field.Links) as unknown[] | null;
@@ -224,6 +228,7 @@ export function telemetryAddOneLink(span: unknown, state: number, link: any) {
   $arrayPush(links, spanId);
   $arrayPush(links, traceFlags);
   $arrayPush(links, flat);
+  $arrayPush(links, traceState);
   return;
 }
 

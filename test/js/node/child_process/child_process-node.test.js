@@ -750,8 +750,7 @@ describe("fork", () => {
     // https://github.com/nodejs/node/blob/v20.5.0/test/parallel/test-child-process-fork-stdio.js
   });
   describe("fork", () => {
-    it.todo("message", done => {
-      // TODO - bun has no `send` method in the process
+    it("message", done => {
       const { mustCall } = createCallCheckCtx(done);
       const args = ["foo", "bar"];
       const n = fork(fixtures.path("child-process-spawn-node.js"), args);

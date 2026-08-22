@@ -27,8 +27,7 @@ describe("url.pathToFileURL", () => {
     // }
   });
 
-  // TODO: Support UNC paths across platforms.
-  test.todo("UNC paths", () => {
+  test("UNC paths", () => {
     if (isWindows) {
       // UNC path: \\server\share\resource
 
@@ -171,8 +170,7 @@ describe("url.pathToFileURL", () => {
     }
   });
 
-  // TODO: Support throwing correct exception for non-string params.
-  test.todo("non-string parameter", () => {
+  test("non-string parameter", () => {
     for (const badPath of [
       undefined,
       null,

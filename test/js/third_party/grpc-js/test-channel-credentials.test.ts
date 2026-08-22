@@ -192,7 +192,7 @@ describe("ChannelCredentials usage", () => {
     assert2.afterMustCallsSatisfied(done);
   });
 
-  it.todo("Should call the checkServerIdentity callback", done => {
+  it("Should call the checkServerIdentity callback", done => {
     const channelCreds = ChannelCredentials.createSsl(caCert, null, null, {
       checkServerIdentity: assert2.mustCall((hostname, cert) => {
         assert.strictEqual(hostname, hostnameOverride);

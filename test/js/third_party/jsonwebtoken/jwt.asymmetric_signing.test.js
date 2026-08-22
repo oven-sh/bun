@@ -173,7 +173,7 @@ describe("Asymmetric Algorithms", function () {
   });
 
   describe("when signing a token with an unsupported private key type", function () {
-    it.todo("should throw an error", function () {
+    it("should throw an error", function () {
       const obj = { foo: "bar" };
       const key = loadKey("dsa-private.pem");
       const algorithm = "RS256";

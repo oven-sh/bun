@@ -4398,7 +4398,7 @@ refs:
         expect(yaml2).toBe("counter: 4");
       });
 
-      test.todo("handles circular getters", () => {
+      test("handles circular getters", () => {
         const obj = {
           get self() {
             return obj;

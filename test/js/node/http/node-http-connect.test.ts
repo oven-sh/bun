@@ -185,14 +185,15 @@ describe("HTTP server CONNECT", () => {
     expect(response).toContain("502 Bad Gateway");
   });
 
-  // TODO: timeout is not supported in bun socket yet
-  test.todo("should handle socket timeout", async () => {
+  test("should handle socket timeout", async () => {
     await using proxyServer = http.createServer();
     let timeoutFired = false;
 
     proxyServer.on("connect", (req, socket, head) => {
       socket.setTimeout(100);
-      socket.on("timeout", () => {
+      // The idle timer re-arms after the write below, so a slow close fires
+      // 'timeout' again; a second handler run would write after end().
+      socket.once("timeout", () => {
         timeoutFired = true;
         socket.write("HTTP/1.1 408 Request Timeout\r\n\r\n");
         socket.end();

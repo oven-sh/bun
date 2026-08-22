@@ -452,13 +452,21 @@ pub fn starts_with_windows_drive_letter_t<T: Ch>(s: &[T]) -> bool {
 
 pub use crate::strings::without_trailing_slash;
 
-/// Does not strip the device root (C:\ or \\Server\Share\ portion off of the path)
+/// [`without_trailing_slash_windows`] on Windows, [`without_trailing_slash`] elsewhere.
 pub fn without_trailing_slash_windows_path(input: &[u8]) -> &[u8] {
-    if cfg!(unix) || input.len() < 3 || input[1] != b':' {
+    if cfg!(unix) {
+        return without_trailing_slash(input);
+    }
+    without_trailing_slash_windows(input)
+}
+
+/// Windows rules on any host: trailing separators go, a drive root's own stays (`C:\\` -> `C:\`).
+pub fn without_trailing_slash_windows(input: &[u8]) -> &[u8] {
+    if input.len() < 3 || input[1] != b':' {
         return without_trailing_slash(input);
     }
 
-    let root_len = resolve_path::windows_filesystem_root(input).len() + 1;
+    let root_len = resolve_path::windows_filesystem_root(input).len();
 
     let mut path = input;
     while path.len() > root_len && matches!(path[path.len() - 1], b'/' | b'\\') {
@@ -720,5 +728,63 @@ mod tests {
         assert!(!fits_in_wide_path_buffer(&vec![0x80u8; 98300]));
         assert!(fits_in_wide_path_buffer(&vec![0x80u8; 32758]));
         assert!(fits_in_wide_path_buffer(&vec![0x80u8; 32757]));
+    }
+
+    fn check_without_trailing_slash_windows(cases: &[(&str, &str)]) {
+        for (input, expected) in cases {
+            assert_eq!(
+                bstr::BStr::new(without_trailing_slash_windows(input.as_bytes())),
+                bstr::BStr::new(expected.as_bytes()),
+                "input {input:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn without_trailing_slash_windows_strips_below_a_drive() {
+        check_without_trailing_slash_windows(&[
+            ("C:\\foo\\", "C:\\foo"),
+            ("C:\\foo\\\\", "C:\\foo"),
+            ("C:/foo/", "C:/foo"),
+            ("C:\\foo/\\", "C:\\foo"),
+            ("C:\\a\\", "C:\\a"),
+            ("C:\\foo", "C:\\foo"),
+            // Separators before the last component are not the helper's job.
+            ("C:\\\\foo\\", "C:\\\\foo"),
+            // Drive-relative: `C:` is the root and `foo` is relative to it.
+            ("C:foo\\", "C:foo"),
+            ("C:foo", "C:foo"),
+        ]);
+    }
+
+    #[test]
+    fn without_trailing_slash_windows_keeps_exactly_the_drive_root() {
+        check_without_trailing_slash_windows(&[
+            ("C:\\", "C:\\"),
+            ("C:/", "C:/"),
+            ("c:\\", "c:\\"),
+            // These used to keep one extra separator.
+            ("C:\\\\", "C:\\"),
+            ("C://", "C:/"),
+            ("C:\\/", "C:\\"),
+            ("C:\\\\\\\\", "C:\\"),
+        ]);
+    }
+
+    #[test]
+    fn without_trailing_slash_windows_strips_paths_without_a_drive_like_posix() {
+        check_without_trailing_slash_windows(&[
+            ("\\\\server\\share\\dir\\", "\\\\server\\share\\dir"),
+            // UNC roots are keyed without the slash (Resolver::assert_valid_cache_key).
+            ("\\\\server\\share\\", "\\\\server\\share"),
+            ("\\dir\\", "\\dir"),
+            ("dir\\", "dir"),
+            ("dir/", "dir"),
+            ("\\", "\\"),
+            ("/", "/"),
+            ("//", "/"),
+            ("C:", "C:"),
+            ("", ""),
+        ]);
     }
 }

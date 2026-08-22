@@ -4433,3 +4433,25 @@ describe.concurrent("a socket closed by data() while its peer's reset is being d
     expect(exitCode).toBe(0);
   });
 });
+
+describe.concurrent("a socket closed by data() which then re-enters the event loop before returning", () => {
+  // The fixture runs under `bun test` so that expect(promise).resolves can drive
+  // nested event-loop ticks from inside the data callback. The closed socket must
+  // stay allocated until the dispatch that invoked data() has returned; the loop
+  // used to free it from a nested tick on Windows, and the outer dispatch then
+  // read (and the allocator reused) freed memory.
+  it("is not freed until the dispatch that called data() has returned", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", fileURLToPath(new URL("./close-inside-data-reentrant-fixture.ts", import.meta.url))],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // stdout carries only the runner's version banner; results go to stderr.
+    expect(stdout).toMatch(/^bun test v\S+ \(\S+\)\n$/);
+    expect(stderr).toContain(" 1 pass");
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(0);
+  });
+});

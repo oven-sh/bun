@@ -170,10 +170,48 @@ static void prepare_cb(uv_prepare_t *p) {
   us_internal_loop_pre(loop);
 }
 
-/* Note: libuv timers execute AFTER the post callback */
+/* uv_run finishes closing handles - unlink from the loop, then the close
+ * callback, which is where an owner frees its handle - right after the check
+ * phase (uv__process_endgames). A nested tick (see us_internal_uv_run) must
+ * not: it runs inside a callback that an outer uv_run dispatched, and libuv's
+ * dispatch reads that callback's handle again once it returns. A poll closed
+ * from its own poll_cb (us_socket_close -> us_poll_stop) is the common case:
+ * the nested run would complete its close, and uv__fast_poll_process_poll_req
+ * would then find the handle "closing, nothing outstanding" a second time and
+ * queue its endgame again - two close callbacks, and uv__handle_close on an
+ * already unlinked handle. So a nested tick takes what it queued for closing
+ * off the loop and the outermost tick puts it back. A held handle keeps
+ * UV_HANDLE_ENDGAME_QUEUED set, so uv__want_endgame leaves it alone. */
+static void us_internal_hold_endgames(struct us_loop_t *loop) {
+  uv_handle_t *queued = loop->uv_loop->endgame_handles;
+  if (!queued) return;
+  uv_handle_t *last = queued;
+  while (last->endgame_next) last = last->endgame_next;
+  last->endgame_next = (uv_handle_t *)loop->data.held_endgames;
+  loop->data.held_endgames = queued;
+  loop->uv_loop->endgame_handles = NULL;
+}
+
+static void us_internal_release_held_endgames(struct us_loop_t *loop) {
+  uv_handle_t *held = (uv_handle_t *)loop->data.held_endgames;
+  if (!held) return;
+  uv_handle_t *last = held;
+  while (last->endgame_next) last = last->endgame_next;
+  last->endgame_next = loop->uv_loop->endgame_handles;
+  loop->uv_loop->endgame_handles = held;
+  loop->data.held_endgames = NULL;
+}
+
+/* Note: libuv timers execute AFTER the post callback; uv__process_endgames is
+ * what runs right after it. */
 static void check_cb(uv_check_t *p) {
   struct us_loop_t *loop = p->data;
   us_internal_loop_post(loop);
+  if (loop->data.tick_depth > 1) {
+    us_internal_hold_endgames(loop);
+  } else {
+    us_internal_release_held_endgames(loop);
+  }
 }
 
 /* Not used for polls, since polls need two frees */
@@ -345,7 +383,22 @@ static void *us_internal_js_event_loop(struct us_loop_t *loop) {
 static void us_internal_uv_run(struct us_loop_t *loop, uv_run_mode mode) {
   void *js_event_loop = us_internal_js_event_loop(loop);
   if (js_event_loop) Bun__JSEventLoop__enter(js_event_loop);
+  /* The scope above only moves microtask-driven re-entry out of uv_run. A
+   * callback whose own body drives the loop again (waitForPromise: bun:test's
+   * expect(promise).resolves, process.exit()'s drain) still nests a tick inside
+   * the outer uv_run's dispatch, which reads what it dispatched on once the
+   * callback returns. tick_depth > 1 marks that nested tick, and what the outer
+   * dispatch may still point at is then left for the outermost tick to free:
+   * closed sockets (us_internal_loop_post) and closing libuv handles
+   * (check_cb). Same bracket as us_loop_run / us_loop_run_bun_tick on
+   * epoll/kqueue. */
+  loop->data.tick_depth++;
   uv_run(loop->uv_loop, mode);
+  loop->data.tick_depth--;
+  /* A nested tick run from a timer callback holds after this run's check
+   * phase; nothing of libuv is on the stack any more, so hand those back for
+   * the next run to close. */
+  if (loop->data.tick_depth == 0) us_internal_release_held_endgames(loop);
   if (js_event_loop) Bun__JSEventLoop__exit(js_event_loop);
 }
 

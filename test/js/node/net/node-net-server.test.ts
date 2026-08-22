@@ -303,11 +303,11 @@ describe("net.createServer listen", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // stderr only matters on failure: debug builds may print benign warnings.
-    expect({ stdout, exitCode, failureDetail: exitCode === 0 ? "" : stderr }).toEqual({
+    expect({ stdout, failureDetail: exitCode === 0 ? "" : stderr }).toEqual({
       stdout: "beforeExit again\n",
-      exitCode: 0,
       failureDetail: "",
     });
+    expect(exitCode).toBe(0);
   });
 });
 

@@ -2646,9 +2646,6 @@ describe("server.requestFD", () => {
     return Response.json({ fd, rc, addrLen: addrLen[0] });
   };
 
-  // Gate FFI tests on linux/macOS only: `isPosix` also includes FreeBSD, but
-  // `libcPathForDlopen()` only handles linux/darwin today and would throw on
-  // any other POSIX platform.
   it.if(isLinux || isMacOS)("returns an fd usable with getsockname() via FFI", async () => {
     using server = Bun.serve({ port: 0, fetch: getsocknameHandler });
     const response = await fetch(server.url.origin).then(x => x.json());

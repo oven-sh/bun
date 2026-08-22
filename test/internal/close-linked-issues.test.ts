@@ -1,27 +1,119 @@
 /**
- * scripts/close-linked-issues.ts runs from .github/workflows/close-linked-issues.yml
- * on every merged PR. It closes the issues and pull requests that the PR's
- * description says it closes, fixes, resolves, supersedes or replaces, which
- * GitHub only does for the first reference after a closing keyword.
+ * .github/workflows/close-linked-issues.yml runs on every merged PR. Its inline
+ * github-script closes the issues and pull requests that the PR's description
+ * says it closes, fixes, resolves, supersedes or replaces, which GitHub only
+ * does for the first reference after a closing keyword.
  *
- * The first half pins the parser on phrases from real bun PR descriptions. The
- * second half runs the script against a fake GitHub API and checks what it
- * writes.
+ * The script lives in the workflow file, so this test reads it out of the YAML
+ * and runs it the way actions/github-script does: as the body of an async
+ * function with `github`, `context` and `core` in scope, here all fakes. The
+ * first half pins the parser on phrases from real bun PR descriptions, the
+ * second half checks what the script writes.
  */
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { findLinkedReferences } from "../../scripts/close-linked-issues.ts";
+const WORKFLOW = join(import.meta.dir, "../../.github/workflows/close-linked-issues.yml");
+const REPO = { owner: "oven-sh", repo: "bun" };
+const PR = 10;
 
-const REPO = "oven-sh/bun";
-const SCRIPT = join(import.meta.dir, "../../scripts/close-linked-issues.ts");
+const source = (() => {
+  const workflow = Bun.YAML.parse(readFileSync(WORKFLOW, "utf8")) as {
+    jobs: Record<string, { steps: { uses?: string; with?: { script?: string } }[] }>;
+  };
+  const step = workflow.jobs["close-linked-issues"].steps.find(step => step.uses?.startsWith("actions/github-script"));
+  return step!.with!.script!;
+})();
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as new (
+  ...args: string[]
+) => (github: unknown, context: unknown, core: unknown) => Promise<void>;
+const script = new AsyncFunction("github", "context", "core", source);
 
-/** Same-repo references as numbers, other repositories as "owner/repo#n". */
-function refs(body: string): (number | string)[] {
-  return findLinkedReferences(body, REPO).map(ref =>
-    ref.repository === REPO ? ref.number : `${ref.repository}#${ref.number}`,
-  );
+interface Call {
+  method: string;
+  params: Record<string, unknown>;
+}
+
+interface Options {
+  body: string;
+  merged?: boolean;
+  base?: string;
+  /** `workflow_dispatch` inputs. Without them the run comes from a `pull_request_target` event. */
+  inputs?: Record<string, string>;
+  /** Every number is an open issue (for parser cases). Otherwise: #1 open issue, #2 open PR, #3 closed, #4 missing. */
+  everyIssueOpen?: boolean;
+  failUpdate?: boolean;
+}
+
+const notFound = () => Object.assign(new Error("Not Found"), { status: 404 });
+
+/** Runs the script against a fake API for PR #10 and records what it does. */
+async function run(options: Options) {
+  const calls: Call[] = [];
+  const logs: string[] = [];
+  let failed: string | null = null;
+  const issues: Record<number, object> = {
+    1: { number: 1, state: "open" },
+    2: { number: 2, state: "open", pull_request: {} },
+    3: { number: 3, state: "closed" },
+    [PR]: { number: PR, state: "closed", pull_request: {} },
+  };
+  const write = (method: string) => async (params: Record<string, unknown>) => {
+    calls.push({ method, params });
+    if (options.failUpdate && method.endsWith("update")) throw new Error("boom");
+    return { data: {} };
+  };
+  const github = {
+    rest: {
+      pulls: {
+        get: async ({ pull_number }: { pull_number: number }) => {
+          if (pull_number !== PR) throw notFound();
+          return {
+            data: {
+              number: PR,
+              body: options.body,
+              merged: options.merged ?? true,
+              base: { ref: options.base ?? "main", repo: { default_branch: "main" } },
+            },
+          };
+        },
+        update: write("pulls.update"),
+      },
+      issues: {
+        get: async ({ issue_number }: { issue_number: number }) => {
+          if (options.everyIssueOpen) return { data: { number: issue_number, state: "open" } };
+          if (!(issue_number in issues)) throw notFound();
+          return { data: issues[issue_number] };
+        },
+        update: write("issues.update"),
+        createComment: write("issues.createComment"),
+      },
+    },
+  };
+  const context = {
+    repo: REPO,
+    payload: options.inputs ? { inputs: options.inputs } : { pull_request: { number: PR } },
+  };
+  const core = {
+    info: (message: string) => logs.push(message),
+    warning: (message: string) => logs.push(`warning: ${message}`),
+    error: (message: string) => logs.push(`error: ${message}`),
+    setFailed: (message: string) => {
+      failed = message;
+    },
+  };
+  await script(github, context, core);
+  return { calls, logs, failed: failed as string | null };
+}
+
+/** Closed same-repo numbers in order, then other-repository references as "owner/repo#n". */
+async function refs(body: string): Promise<(number | string)[]> {
+  const { calls, logs } = await run({ body, everyIssueOpen: true });
+  const closed = calls.filter(call => call.method === "issues.update").map(call => call.params.issue_number as number);
+  const suffix = ": another repository, skipping";
+  const foreign = logs.filter(log => log.endsWith(suffix)).map(log => log.slice(0, -suffix.length));
+  return [...closed, ...foreign];
 }
 
 test.each([
@@ -68,8 +160,8 @@ test.each([
   ["Fixes #1\r\nFixes #2", [1, 2]],
   ["```bun test``` prints nothing.\nFixes #2", [2]],
   ["~~Fixes #1~~ Fixes #2", [2]],
-] as [string, (number | string)[]][])("finds %j", (body, expected) => {
-  expect(refs(body)).toEqual(expected);
+] as [string, (number | string)[]][])("finds %j", async (body, expected) => {
+  expect(await refs(body)).toEqual(expected);
 });
 
 test.each([
@@ -137,8 +229,8 @@ test.each([
   "Fixes https://github.com/oven-sh/bun/commit/abcdef",
   "Fixes https://github.com/oven-sh/bun/issues/new",
   "Fixes https://github.com/oven-sh/bun",
-])("ignores %j", body => {
-  expect(refs(body)).toEqual([]);
+])("ignores %j", async body => {
+  expect(await refs(body)).toEqual([]);
 });
 
 test.each([
@@ -162,139 +254,78 @@ test.each([
   ["Adds the flag and fixes #1.", [1]],
   ["A change that fixes #1.", [1]],
   ["This PR, which fixes #1, also adds a test.", [1]],
-] as [string, number[]][])("stops at the right place in %j", (body, expected) => {
-  expect(refs(body)).toEqual(expected);
+] as [string, number[]][])("stops at the right place in %j", async (body, expected) => {
+  expect(await refs(body)).toEqual(expected);
 });
 
-test("reports the keyword and the repository", () => {
-  expect(findLinkedReferences("Supersedes #1. Fixes other/repo#2.", REPO)).toEqual([
-    { repository: REPO, number: 1, keyword: "supersedes" },
-    { repository: "other/repo", number: 2, keyword: "fixes" },
+test("names the keyword and the repository in the log", async () => {
+  const { logs } = await run({ body: "Supersedes #1. Fixes other/repo#2.", everyIssueOpen: true });
+  expect(logs).toEqual([
+    "other/repo#2: another repository, skipping",
+    "#10: #1",
+    "#1: closed issue (supersedes in #10)",
   ]);
 });
 
-interface Recorded {
-  method: string;
-  path: string;
-  body: unknown;
-}
-
-/**
- * A GitHub API with one merged PR (#10) and four referenced items: #1 an open
- * issue, #2 an open pull request, #3 a closed issue, #4 nothing. Every write is
- * recorded.
- */
-function fakeGitHub(pr: { body: string; merged?: boolean; base?: string }, options: { failPatch?: boolean } = {}) {
-  const writes: Recorded[] = [];
-  const issues: Record<string, object> = {
-    "1": { number: 1, state: "open" },
-    "2": { number: 2, state: "open", pull_request: {} },
-    "3": { number: 3, state: "closed" },
-    "10": { number: 10, state: "closed", pull_request: {} },
-  };
-  const server = Bun.serve({
-    port: 0,
-    async fetch(request) {
-      const { pathname } = new URL(request.url);
-      const [, owner, repo, resource, number, sub] = pathname.split("/").slice(1);
-      if (`${owner}/${repo}` !== REPO) return new Response("wrong repository", { status: 500 });
-      if (request.method === "GET") {
-        if (resource === "pulls" && number === "10") {
-          return Response.json({
-            number: 10,
-            body: pr.body,
-            merged: pr.merged ?? true,
-            base: { ref: pr.base ?? "main", repo: { default_branch: "main" } },
-          });
-        }
-        if (resource === "issues" && number in issues && sub === undefined) return Response.json(issues[number]);
-        return Response.json({ message: "Not Found" }, { status: 404 });
-      }
-      writes.push({ method: request.method, path: pathname, body: await request.json() });
-      if (options.failPatch && request.method === "PATCH") return new Response("boom", { status: 500 });
-      return Response.json({});
-    },
-  });
-  return { origin: server.url.origin, writes, [Symbol.asyncDispose]: () => server.stop(true) };
-}
-
-async function runScript(origin: string, extraEnv: Record<string, string> = {}) {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), SCRIPT],
-    env: {
-      ...bunEnv,
-      GITHUB_TOKEN: "test-token",
-      GITHUB_REPOSITORY: REPO,
-      GITHUB_API_URL: origin,
-      PR_NUMBER: "10",
-      DRY_RUN: "",
-      ...extraEnv,
-    },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
-}
-
-test.concurrent("closes the open issue and pull request, skips the closed and missing ones", async () => {
-  await using fake = fakeGitHub({ body: "Fixes #1, #2 and #3. Supersedes #4. Closes #10. Fixes #1." });
-  const { stdout, stderr, exitCode } = await runScript(fake.origin);
-  expect(stdout.trim().split("\n")).toEqual([
+test("closes the open issue and pull request, skips the closed and missing ones and itself", async () => {
+  const { calls, logs, failed } = await run({ body: "Fixes #1, #2 and #3. Supersedes #4. Closes #10. Fixes #1." });
+  expect(logs).toEqual([
     "#10: #1, #2, #3, #4",
     "#1: closed issue (fixes in #10)",
     "#2: closed pull request (fixes in #10)",
     "#3: already closed, skipping",
     "#4: does not exist, skipping",
   ]);
-  expect(stderr).toBe("");
-  expect(fake.writes).toEqual([
-    { method: "PATCH", path: "/repos/oven-sh/bun/issues/1", body: { state: "closed", state_reason: "completed" } },
-    { method: "POST", path: "/repos/oven-sh/bun/issues/1/comments", body: { body: "Closed as completed by #10." } },
-    { method: "PATCH", path: "/repos/oven-sh/bun/pulls/2", body: { state: "closed" } },
-    { method: "POST", path: "/repos/oven-sh/bun/issues/2/comments", body: { body: "Superseded by #10." } },
+  expect(calls).toEqual([
+    { method: "issues.update", params: { ...REPO, issue_number: 1, state: "closed", state_reason: "completed" } },
+    { method: "issues.createComment", params: { ...REPO, issue_number: 1, body: "Closed as completed by #10." } },
+    { method: "pulls.update", params: { ...REPO, pull_number: 2, state: "closed" } },
+    { method: "issues.createComment", params: { ...REPO, issue_number: 2, body: "Superseded by #10." } },
   ]);
-  expect(exitCode).toBe(0);
+  expect(failed).toBeNull();
 });
 
-test.concurrent("DRY_RUN reads but never writes", async () => {
-  await using fake = fakeGitHub({ body: "Fixes #1 and #2" });
-  const { stdout, exitCode } = await runScript(fake.origin, { DRY_RUN: "1" });
-  expect(stdout).toContain("#1: would close issue (fixes in #10)");
-  expect(stdout).toContain("#2: would close pull request (fixes in #10)");
-  expect(fake.writes).toEqual([]);
-  expect(exitCode).toBe(0);
+test("a dry run from workflow_dispatch reads but never writes", async () => {
+  const { calls, logs, failed } = await run({
+    body: "Fixes #1 and #2",
+    inputs: { pr_number: "10", dry_run: "true" },
+  });
+  expect(logs).toEqual([
+    "#10: #1, #2 (dry run)",
+    "#1: would close issue (fixes in #10)",
+    "#2: would close pull request (fixes in #10)",
+  ]);
+  expect(calls).toEqual([]);
+  expect(failed).toBeNull();
 });
 
-test.concurrent("a PR that is not merged changes nothing", async () => {
-  await using fake = fakeGitHub({ body: "Fixes #1", merged: false });
-  const { stdout, exitCode } = await runScript(fake.origin);
-  expect(stdout).toContain("#10: not merged, nothing to do");
-  expect(fake.writes).toEqual([]);
-  expect(exitCode).toBe(0);
+test("workflow_dispatch without a valid PR number fails before any request", async () => {
+  const { calls, failed } = await run({ body: "Fixes #1", inputs: { pr_number: "abc" } });
+  expect(calls).toEqual([]);
+  expect(failed).toBe("not a pull request number: abc");
 });
 
-test.concurrent("a PR merged into another branch than the default changes nothing", async () => {
-  await using fake = fakeGitHub({ body: "Fixes #1", base: "feature" });
-  const { stdout, exitCode } = await runScript(fake.origin);
-  expect(stdout).toContain("#10: merged into feature, not main, nothing to do");
-  expect(fake.writes).toEqual([]);
-  expect(exitCode).toBe(0);
+test("a PR that is not merged changes nothing", async () => {
+  const { calls, logs } = await run({ body: "Fixes #1", merged: false });
+  expect(logs).toEqual(["#10: not merged, nothing to do"]);
+  expect(calls).toEqual([]);
 });
 
-test.concurrent("a PR whose description closes nothing changes nothing", async () => {
-  await using fake = fakeGitHub({ body: "See #1 and #2." });
-  const { stdout, exitCode } = await runScript(fake.origin);
-  expect(stdout).toContain("#10: no references to close");
-  expect(fake.writes).toEqual([]);
-  expect(exitCode).toBe(0);
+test("a PR merged into another branch than the default changes nothing", async () => {
+  const { calls, logs } = await run({ body: "Fixes #1", base: "feature" });
+  expect(logs).toEqual(["#10: merged into feature, not main, nothing to do"]);
+  expect(calls).toEqual([]);
 });
 
-test.concurrent("a failed close fails the run after the other references were tried", async () => {
-  await using fake = fakeGitHub({ body: "Fixes #1 and #2" }, { failPatch: true });
-  const { stderr, exitCode } = await runScript(fake.origin);
-  expect(stderr).toContain("#1: Error: PATCH /issues/1 failed: 500");
-  expect(stderr).toContain("#2: Error: PATCH /pulls/2 failed: 500");
-  expect(fake.writes.map(write => write.path)).toEqual(["/repos/oven-sh/bun/issues/1", "/repos/oven-sh/bun/pulls/2"]);
-  expect(exitCode).toBe(1);
+test("a PR whose description closes nothing changes nothing", async () => {
+  const { calls, logs } = await run({ body: "See #1 and #2." });
+  expect(logs).toEqual(["#10: no references to close"]);
+  expect(calls).toEqual([]);
+});
+
+test("a failed close fails the run after the other references were tried", async () => {
+  const { calls, logs, failed } = await run({ body: "Fixes #1 and #2", failUpdate: true });
+  expect(logs).toEqual(["#10: #1, #2", "error: #1: boom", "error: #2: boom"]);
+  expect(calls.map(call => call.method)).toEqual(["issues.update", "pulls.update"]);
+  expect(failed).toBe("2 of 2 references could not be closed");
 });

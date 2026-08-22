@@ -31,7 +31,6 @@
     "../src/js/internal-for-testing.ts",
     "../scripts/glob-sources.ts",
     "../scripts/build/error.ts",
-    "../scripts/close-linked-issues.ts",
     "bake/exit-code-map.mjs",
     "docker/prestart-map.mjs",
     "../src/runtime/bake/client/**.ts"

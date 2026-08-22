@@ -2956,40 +2956,12 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_hexSlice, (JSGlobalObject * l
     return jsBufferPrototypeFunction_SliceWithEncoding<WebCore::BufferEncodingType::hex>(lexicalGlobalObject, callFrame);
 }
 
-template<typename I> void write_int64_le(uint8_t* buffer, I value)
-{
-    static_assert(std::endian::native == std::endian::little);
-    auto val = reinterpret_cast<uint8_t*>(&value);
-    buffer[0] = val[0];
-    buffer[1] = val[1];
-    buffer[2] = val[2];
-    buffer[3] = val[3];
-    buffer[4] = val[4];
-    buffer[5] = val[5];
-    buffer[6] = val[6];
-    buffer[7] = val[7];
-}
-
-template<typename I> void write_int64_be(uint8_t* buffer, I value)
-{
-    static_assert(std::endian::native == std::endian::little);
-    auto val = reinterpret_cast<uint8_t*>(&value);
-    buffer[0] = val[7];
-    buffer[1] = val[6];
-    buffer[2] = val[5];
-    buffer[3] = val[4];
-    buffer[4] = val[3];
-    buffer[5] = val[2];
-    buffer[6] = val[1];
-    buffer[7] = val[0];
-}
-
 // Fixed-width read* / write* (readInt8 ... writeDoubleBE, plus the BigInt64 reads). JSC JITs call
 // sites of these (BufferAccessorIntrinsic) and OSR-exits back here for anything it doesn't speculate,
 // so these functions own the error behavior: they follow lib/internal/buffer.js exactly.
 namespace {
 
-// Any ArrayBufferView receiver is accepted (byte-length semantics); anything else is
+// Any ArrayBufferView receiver is accepted (bounded by its element count, like `this.length`); anything else is
 // ERR_INVALID_ARG_TYPE("buf").
 static JSC::JSArrayBufferView* bufferAccessReceiver(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSC::JSValue thisValue)
 {
@@ -3461,7 +3433,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64LE, (JSGlobalObj
     size_t byteLength = castedThis->length();
     size_t offset = validateOffsetBigInt64(lexicalGlobalObject, scope, offsetVal, byteLength, castedThis->type() != JSC::DataViewType);
     RETURN_IF_EXCEPTION(scope, {});
-    write_int64_le(static_cast<uint8_t*>(castedThis->vector()) + offset, value);
+    bufferAccessStore<uint64_t, true>(static_cast<uint8_t*>(castedThis->vector()) + offset, static_cast<uint64_t>(value));
     return JSValue::encode(jsNumber(offset + 8));
 }
 
@@ -3497,7 +3469,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64BE, (JSGlobalObj
     size_t byteLength = castedThis->length();
     size_t offset = validateOffsetBigInt64(lexicalGlobalObject, scope, offsetVal, byteLength, castedThis->type() != JSC::DataViewType);
     RETURN_IF_EXCEPTION(scope, {});
-    write_int64_be(static_cast<uint8_t*>(castedThis->vector()) + offset, value);
+    bufferAccessStore<uint64_t, false>(static_cast<uint8_t*>(castedThis->vector()) + offset, static_cast<uint64_t>(value));
     return JSValue::encode(jsNumber(offset + 8));
 }
 
@@ -3532,7 +3504,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64LE, (JSGlobalOb
     size_t byteLength = castedThis->length();
     size_t offset = validateOffsetBigInt64(lexicalGlobalObject, scope, offsetVal, byteLength, castedThis->type() != JSC::DataViewType);
     RETURN_IF_EXCEPTION(scope, {});
-    write_int64_le(static_cast<uint8_t*>(castedThis->vector()) + offset, value);
+    bufferAccessStore<uint64_t, true>(static_cast<uint8_t*>(castedThis->vector()) + offset, static_cast<uint64_t>(value));
     return JSValue::encode(jsNumber(offset + 8));
 }
 
@@ -3567,7 +3539,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64BE, (JSGlobalOb
     size_t byteLength = castedThis->length();
     size_t offset = validateOffsetBigInt64(lexicalGlobalObject, scope, offsetVal, byteLength, castedThis->type() != JSC::DataViewType);
     RETURN_IF_EXCEPTION(scope, {});
-    write_int64_be(static_cast<uint8_t*>(castedThis->vector()) + offset, value);
+    bufferAccessStore<uint64_t, false>(static_cast<uint8_t*>(castedThis->vector()) + offset, static_cast<uint64_t>(value));
     return JSValue::encode(jsNumber(offset + 8));
 }
 

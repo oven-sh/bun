@@ -110,6 +110,38 @@ describe.concurrent("Buffer accessor JIT", () => {
     expect(exitCode).toBe(0);
   }, 30_000);
 
+  test("a fractional value the compiler has proven non-integral does not cause a recompile loop", async () => {
+    // The integer writers truncate a fractional number (no throw). When the value reaches the call as
+    // an unboxed double that is known to be non-integral, the uint32 writers' Int52 conversion exits
+    // with Int52Overflow and the int8 writer's Int32 conversion exits unconditionally (Uncountable);
+    // neither is the BadType exit a boxed argument produces, and both must stop the site from being
+    // inlined again. Runs at the default tier-up policy, where the loop shows up as ~10 compiles.
+    const { stdout, stderr, exitCode } = await run(
+      prelude +
+        `
+      function writeHalfU32(b, v, o) { return b.writeUInt32LE(v * 0.5, o); }
+      noInline(writeHalfU32);
+      function writeHalfVarU32(b, v, o) { return b.writeUIntBE(v * 0.5, o, 4); }
+      noInline(writeHalfVarU32);
+      function writeHalfI8(b, v, o) { return b.writeInt8(v * 0.5, o); }
+      noInline(writeHalfI8);
+      for (let i = 0; i < N * 10; i++) {
+        const v = (i & 127) | 1;
+        assert(writeHalfU32(buf, v, 64) === 68 && dv.getUint32(64, true) === (v * 0.5) >>> 0, "writeUInt32LE(fraction)");
+        assert(writeHalfVarU32(buf, v, 68) === 72 && dv.getUint32(68, false) === (v * 0.5) >>> 0, "writeUIntBE(fraction, 4)");
+        assert(writeHalfI8(buf, v, 72) === 73 && dv.getInt8(72) === ((v * 0.5) | 0), "writeInt8(fraction)");
+      }
+      const compiles = Math.max(numberOfDFGCompiles(writeHalfU32), numberOfDFGCompiles(writeHalfVarU32), numberOfDFGCompiles(writeHalfI8));
+      assert(compiles <= 4, "compile count did not converge: " + compiles);
+      console.log("OK");
+    `,
+      { BUN_JSC_jitPolicyScale: "1" },
+    );
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("OK");
+    expect(exitCode).toBe(0);
+  }, 30_000);
+
   test("host semantics survive every exit path (results, not just compile counts)", async () => {
     const { stdout, stderr, exitCode } = await run(
       prelude +
@@ -128,8 +160,8 @@ describe.concurrent("Buffer accessor JIT", () => {
       let coerced = 0;
       const counting = { valueOf() { coerced++; return 300; } };
       for (let i = 0; i < 1000; i++) {
-        try { scratch.writeInt8(counting, 0); } catch (e) { assert(e.code === "ERR_OUT_OF_RANGE", "range code"); }
-        try { scratch.writeInt8(counting, 100); } catch (e) { assert(e.code === "ERR_OUT_OF_RANGE", "value checked before offset for 1-byte writes? no: offset first"); }
+        try { scratch.writeInt8(counting, 0); assert(false, "should throw"); } catch (e) { assert(e.code === "ERR_OUT_OF_RANGE", "range code"); }
+        try { scratch.writeInt8(counting, 100); assert(false, "should throw"); } catch (e) { assert(e.code === "ERR_OUT_OF_RANGE", "an out-of-range value at an out-of-range offset is still ERR_OUT_OF_RANGE"); }
       }
       assert(coerced === 2000, "value coerced exactly once per call, even when it then throws: " + coerced);
       // The BigInt writers: too-wide BigInts throw; the widest valid ones store.

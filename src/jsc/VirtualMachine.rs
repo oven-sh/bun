@@ -1103,11 +1103,11 @@ impl VirtualMachine {
     }
 
     /// Safe accessor for the process-lifetime cwd string
-    /// (`vm.transpiler.fs.top_level_dir`). The `FileSystem` singleton is
+    /// (`vm.transpiler.fs.top_level_dir()`). The `FileSystem` singleton is
     /// allocated once during VM init and never freed.
     #[inline]
     pub fn top_level_dir(&self) -> &'static [u8] {
-        self.fs().top_level_dir
+        self.fs().top_level_dir()
     }
 
     /// Safe `&mut Debugger` accessor — the [`JsCell`] escape hatch applied to
@@ -5037,34 +5037,38 @@ impl VirtualMachine {
     }
 
     pub fn set_process_cwd(&mut self, to: &bun_core::ZStr) -> bun_sys::Result<()> {
-        let fs = self.transpiler.fs_mut();
+        let fs = self.fs();
         bun_sys::chdir(to)?;
         let mut buf = bun_paths::PathBuffer::uninit();
-        let into_cwd_len = match bun_sys::getcwd(&mut buf[..]) {
+        let mut len = match bun_sys::getcwd(&mut buf[..]) {
             bun_sys::Result::Ok(r) => r,
             bun_sys::Result::Err(err) => {
                 let mut rollback = bun_paths::PathBuffer::uninit();
-                let _ = bun_sys::chdir(bun_paths::resolve_path::z(fs.top_level_dir, &mut rollback));
+                let _ = bun_sys::chdir(bun_paths::resolve_path::z(
+                    fs.top_level_dir(),
+                    &mut rollback,
+                ));
                 return bun_sys::Result::Err(err);
             }
         };
-        fs.top_level_dir_buf[..into_cwd_len].copy_from_slice(&buf[..into_cwd_len]);
-        fs.top_level_dir_buf[into_cwd_len] = 0;
-        // SAFETY: `top_level_dir_buf` is a process-lifetime field of the
-        // FileSystem singleton, so the detached borrow never outlives its
-        // backing storage.
-        fs.top_level_dir =
-            unsafe { bun_ptr::detach_lifetime(&fs.top_level_dir_buf[..into_cwd_len]) };
-        let len = fs.top_level_dir.len();
-        if fs.top_level_dir_buf[len - 1] != bun_paths::SEP {
-            fs.top_level_dir_buf[len] = bun_paths::SEP;
-            fs.top_level_dir_buf[len + 1] = 0;
-            // SAFETY: see above.
-            fs.top_level_dir =
-                unsafe { bun_ptr::detach_lifetime(&fs.top_level_dir_buf[..len + 1]) };
+        if len > 0 && buf[len - 1] != bun_paths::SEP && len < buf.len() {
+            buf[len] = bun_paths::SEP;
+            len += 1;
         }
-        bun_core::set_top_level_dir(fs.top_level_dir);
+        fs.set_top_level_dir(Self::intern_cwd(fs, &buf[..len]));
         Ok(())
+    }
+
+    /// Deduplicated `DirnameStore` intern so `top_level_dir` is immutable and bounded.
+    fn intern_cwd(fs: &bun_resolver::fs::FileSystem, cwd: &[u8]) -> &'static [u8] {
+        static CACHE: bun_core::Mutex<Vec<&'static [u8]>> = bun_core::Mutex::new(Vec::new());
+        let mut cache = CACHE.lock();
+        if let Some(&s) = cache.iter().find(|&&s| s == cwd) {
+            return s;
+        }
+        let s = bun_core::handle_oom(fs.dirname_store().append(cwd));
+        cache.push(s);
+        s
     }
 
     /// Replaces the global object between test files so each file runs in a fresh realm.
@@ -6661,7 +6665,7 @@ impl VirtualMachine {
         let frames = exception.stack.frames();
         let top_frame = frames.first();
         let dir = bun_core::env_var::GITHUB_WORKSPACE::get()
-            .unwrap_or_else(|| bun_bundler::bun_fs::FileSystem::instance().top_level_dir);
+            .unwrap_or_else(|| bun_bundler::bun_fs::FileSystem::instance().top_level_dir());
         bun_core::Output::flush();
 
         let writer = bun_core::Output::error_writer();

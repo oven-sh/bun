@@ -632,7 +632,7 @@ impl RuntimeTranspilerCache {
         // `abs_buf` (no NUL-terminating `_z` variant), so go straight to the
         // underlying joiner with the same `top_level_dir` + `Loose` platform
         // that `absBufZ` used.
-        let top = FileSystem::instance().top_level_dir;
+        let top = FileSystem::instance().top_level_dir();
 
         if let Some(dir) = env_var::XDG_CACHE_HOME.get() {
             let parts: &[&[u8]] = &[dir, b"bun", b"@t@"];

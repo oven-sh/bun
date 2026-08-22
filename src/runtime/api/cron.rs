@@ -2067,7 +2067,7 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
         bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<
             bun_sys::windows::libuv::Pipe,
         >()));
-    let cwd = FileSystem::get().top_level_dir;
+    let cwd = FileSystem::get().top_level_dir();
     let spawn_options = SpawnOptions {
         stdin: stdin_opt,
         stdout: stdout_opt,

@@ -682,7 +682,7 @@ impl Framework {
         }
 
         for fsr in clone.file_system_router_types.iter_mut() {
-            let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+            let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
             fsr.root = arena_erase(arena.alloc_slice_copy(paths::resolve_path::join_abs::<
                 paths::platform::Auto,
             >(top_level_dir, fsr.root)));
@@ -725,7 +725,7 @@ impl Framework {
             return;
         }
 
-        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
         let mut result = match r.resolve(top_level_dir, *path, bun_ast::ImportKind::Stmt) {
             Ok(res) => res,
             Err(err) => {
@@ -1354,7 +1354,7 @@ impl Default for ReactFastRefresh {
 
 #[inline]
 fn resolve_or_null(r: &mut bun_resolver::Resolver, path: &[u8]) -> Option<&'static [u8]> {
-    let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+    let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
     match r.resolve(top_level_dir, path, bun_ast::ImportKind::Stmt) {
         // `path_const().text` is `&'static [u8]` already (`FilenameStore`-
         // backed; see note in `resolve_helper` above and `bun_ptr::Interned`).

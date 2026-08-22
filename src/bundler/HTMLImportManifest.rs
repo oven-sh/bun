@@ -188,7 +188,7 @@ pub(crate) fn write<W: Write + ?Sized>(
         &options.root_dir[..]
     } else {
         // SAFETY: FileSystem singleton is initialized before bundling.
-        FileSystem::get().top_level_dir
+        FileSystem::get().top_level_dir()
     };
 
     writer.write_all(b"{")?;

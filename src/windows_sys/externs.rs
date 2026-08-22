@@ -378,6 +378,7 @@ pub struct FILE_INFORMATION_CLASS(pub u32);
 impl FILE_INFORMATION_CLASS {
     pub const FileDirectoryInformation: Self = Self(1);
     pub const FileBasicInformation: Self = Self(4);
+    pub const FileRenameInformation: Self = Self(10);
     pub const FileDispositionInformation: Self = Self(13);
     pub const FileAllInformation: Self = Self(18);
     pub const FileEndOfFileInformation: Self = Self(20);
@@ -500,6 +501,36 @@ pub struct FILE_RENAME_INFORMATION_EX {
     pub FileNameLength: ULONG,
     pub FileName: [u16; 1],
 }
+
+/// `FILE_RENAME_INFORMATION` legacy variant (`ntifs.h`): the SDK declares the
+/// leading field as `union { BOOLEAN ReplaceIfExists; ULONG Flags; }`.
+#[repr(C)]
+pub struct FILE_RENAME_INFORMATION {
+    pub ReplaceIfExists: BOOLEAN,
+    pub RootDirectory: HANDLE,
+    pub FileNameLength: ULONG,
+    pub FileName: [u16; 1],
+}
+
+// `move_opened_file_at` reinterprets a populated `_EX` buffer as the legacy struct.
+const _: () = {
+    assert!(
+        core::mem::size_of::<FILE_RENAME_INFORMATION>()
+            == core::mem::size_of::<FILE_RENAME_INFORMATION_EX>()
+    );
+    assert!(
+        core::mem::offset_of!(FILE_RENAME_INFORMATION, RootDirectory)
+            == core::mem::offset_of!(FILE_RENAME_INFORMATION_EX, RootDirectory)
+    );
+    assert!(
+        core::mem::offset_of!(FILE_RENAME_INFORMATION, FileNameLength)
+            == core::mem::offset_of!(FILE_RENAME_INFORMATION_EX, FileNameLength)
+    );
+    assert!(
+        core::mem::offset_of!(FILE_RENAME_INFORMATION, FileName)
+            == core::mem::offset_of!(FILE_RENAME_INFORMATION_EX, FileName)
+    );
+};
 
 // `FILE_DISPOSITION_INFORMATION_EX.Flags` bits (winnt.h).
 

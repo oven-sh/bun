@@ -425,9 +425,12 @@ impl<'a> Parser<'a> {
                 }
 
                 if let Some(expr) = test.get(b"coverage") {
-                    self.expect(&expr, ExprTag::EBoolean)?;
-                    self.ctx.test_options.coverage.enabled =
-                        expr.as_bool().expect("infallible: type checked");
+                    // CLI --coverage takes precedence over bunfig.
+                    if !self.ctx.test_options.coverage_from_cli {
+                        self.expect(&expr, ExprTag::EBoolean)?;
+                        self.ctx.test_options.coverage.enabled =
+                            expr.as_bool().expect("infallible: type checked");
+                    }
                 }
 
                 if let Some(expr) = test.get(b"onlyFailures") {
@@ -457,6 +460,10 @@ impl<'a> Parser<'a> {
 
                 if let Some(expr) = test.get(b"coverageReporter") {
                     'brk: {
+                        // CLI --coverage-reporter takes precedence over bunfig.
+                        if self.ctx.test_options.coverage_reporter_from_cli {
+                            break 'brk;
+                        }
                         self.ctx.test_options.coverage.reporters = CoverageReporters {
                             text: false,
                             lcov: false,
@@ -477,14 +484,17 @@ impl<'a> Parser<'a> {
                 }
 
                 if let Some(expr) = test.get(b"coverageDir") {
-                    self.expect_string(&expr)?;
-                    self.ctx.test_options.coverage.reports_directory = estring_to_owned(
-                        expr.data
-                            .e_string()
-                            .expect("infallible: variant checked")
-                            .get(),
-                        self.bump,
-                    );
+                    // CLI --coverage-dir takes precedence over bunfig.
+                    if !self.ctx.test_options.coverage_dir_from_cli {
+                        self.expect_string(&expr)?;
+                        self.ctx.test_options.coverage.reports_directory = estring_to_owned(
+                            expr.data
+                                .e_string()
+                                .expect("infallible: variant checked")
+                                .get(),
+                            self.bump,
+                        );
+                    }
                 }
 
                 if let Some(expr) = test.get(b"coverageThreshold") {

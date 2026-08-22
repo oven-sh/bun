@@ -725,8 +725,7 @@ static bool isModuleEvaluated(JSC::AbstractModuleRecord* record)
     return record->moduleEnvironmentMayBeNull() != nullptr;
 }
 
-// True once no load of this entry is in flight: the record finished evaluating
-// (with or without an error), or the load failed and the entry caches the error.
+// No load of this entry is in flight: it evaluated (maybe with an error) or its load failed.
 static bool isModuleLoadSettled(JSC::ModuleRegistryEntry* entry)
 {
     switch (entry->status()) {
@@ -775,14 +774,10 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryDelete, (JSC::JSGlobalObject * globa
     auto key = JSC::Identifier::fromString(vm, asString(keyValue)->value(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
     auto* moduleLoader = globalObject->moduleLoader();
-    // require.cache only lists ES modules that finished evaluating (its `has`
-    // and `get` traps go through functionEsmNamespaceForCjs). A module that is
-    // still loading is not in it, so deleting its key is a no-op like deleting
-    // any other missing key. Evicting the entry mid-load would make the next
-    // import() of the key build a second record for the same module while the
-    // loader's [[LoadedModules]] caches and pending microtasks hold the first.
-    // removeEntry() drops every (key, type) variant with a full scan of the
-    // map, so check each variant the same way.
+    // A module that is still loading is not in require.cache (see
+    // functionEsmNamespaceForCjs), so deleting it is a no-op. Evicting it would
+    // give the next import() a second record for the key while [[LoadedModules]]
+    // still holds the first. removeEntry() drops every (key, type) variant.
     for (auto& [mapKey, entry] : moduleLoader->moduleMap()) {
         if (mapKey.first == key.impl() && entry && !isModuleLoadSettled(entry.get()))
             return JSValue::encode(jsBoolean(false));

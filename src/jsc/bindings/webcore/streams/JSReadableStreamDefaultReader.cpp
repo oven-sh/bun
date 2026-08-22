@@ -16,6 +16,7 @@
 #include "JSReadableStream.h"
 #include "JSReadableStreamDefaultController.h"
 #include "JSStreamsRuntime.h"
+#include "ObjectBindings.h"
 #include "WebCoreJSClientData.h"
 #include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInspectCustom.h"
@@ -172,9 +173,9 @@ static JSObject* createReadManyResult(JSC::VM& vm, JSGlobalObject* globalObject,
 {
     auto* structure = JSStreamsRuntime::from(globalObject)->readManyResultStructure(defaultGlobalObject(globalObject));
     auto* result = constructEmptyObject(vm, structure);
-    result->putDirectOffset(vm, 0, value);
-    result->putDirectOffset(vm, 1, jsNumber(size));
-    result->putDirectOffset(vm, 2, jsBoolean(done));
+    result->putDirectOffset(vm, JSStreamsRuntime::readManyResultValueOffset, value);
+    result->putDirectOffset(vm, JSStreamsRuntime::readManyResultSizeOffset, jsNumber(size));
+    result->putDirectOffset(vm, JSStreamsRuntime::readManyResultDoneOffset, jsBoolean(done));
     return result;
 }
 
@@ -318,9 +319,7 @@ static JSValue readManyAfterPull(JSC::VM& vm, JSGlobalObject* globalObject, JSRe
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!result.isObject()) [[unlikely]]
         RELEASE_AND_RETURN(scope, emptyDoneReadManyResult(vm, globalObject));
-    JSValue chunk = asObject(result)->get(globalObject, vm.propertyNames->value);
-    RETURN_IF_EXCEPTION(scope, {});
-    JSValue done = asObject(result)->get(globalObject, vm.propertyNames->done);
+    auto [done, chunk] = Bun::getIteratorResult(globalObject, asObject(result));
     RETURN_IF_EXCEPTION(scope, {});
     if (done.toBoolean(globalObject)) {
         auto* values = constructEmptyArray(globalObject, nullptr, chunk.toBoolean(globalObject) ? 1 : 0);
@@ -350,9 +349,7 @@ static JSValue readManyAfterDirectPull(JSC::VM& vm, JSGlobalObject* globalObject
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!result.isObject()) [[unlikely]]
         RELEASE_AND_RETURN(scope, emptyDoneReadManyResult(vm, globalObject));
-    JSValue chunk = asObject(result)->get(globalObject, vm.propertyNames->value);
-    RETURN_IF_EXCEPTION(scope, {});
-    JSValue done = asObject(result)->get(globalObject, vm.propertyNames->done);
+    auto [done, chunk] = Bun::getIteratorResult(globalObject, asObject(result));
     RETURN_IF_EXCEPTION(scope, {});
     bool isDone = done.toBoolean(globalObject);
     bool hasChunk = isDone ? chunk.toBoolean(globalObject) : true;

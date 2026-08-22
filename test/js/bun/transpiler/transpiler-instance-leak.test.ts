@@ -7,16 +7,17 @@
 // needs the JSON parser does that). GC finalizes instances in batches, so every
 // instance hit the full-page case. patches/mimalloc/free-heap-metadata-in-full-pages.patch
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN } from "harness";
+import { bunEnv, bunExe } from "harness";
 
 test("finalized Bun.Transpiler instances release their native memory", async () => {
   const fixture = `
-    const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+    const { heapStats } = require("bun:jsc");
+    const committed = () => heapStats().mimalloc.committed.current;
     const n = 1500;
     // Keep 64 instances alive so that every finalizer runs while many heaps exist.
     const live = new Array(64);
     Bun.gc(true);
-    const before = rss();
+    const before = committed();
     for (let i = 0; i < n; i++) {
       live[i % live.length] = new Bun.Transpiler({ define: { "process.env.LEAK_PROBE": "1" } });
     }
@@ -24,22 +25,13 @@ test("finalized Bun.Transpiler instances release their native memory", async () 
     Bun.gc(true);
     await new Promise(resolve => setTimeout(resolve, 10));
     Bun.gc(true);
-    const after = rss();
+    const after = committed();
     console.log(JSON.stringify({ delta_mb: (after - before) / 1024 / 1024 }));
   `;
 
-  const env = { ...bunEnv };
-  if (isASAN) {
-    // ASAN's allocator keeps freed chunks around. Shrink that so RSS follows the
-    // mimalloc heaps this test is about.
-    env.ASAN_OPTIONS = [env.ASAN_OPTIONS, "quarantine_size_mb=1", "allocator_release_to_os_interval_ms=0"]
-      .filter(Boolean)
-      .join(":");
-  }
-
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", fixture],
-    env,
+    env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -50,7 +42,8 @@ test("finalized Bun.Transpiler instances release their native memory", async () 
     exitCode: 0,
   });
   const { delta_mb } = JSON.parse(stdout);
-  // Before the fix: 225 MB in release and over 600 MB in debug+ASAN for n=1500.
-  // After: under 10 MB in release, about 55 MB in debug+ASAN.
-  expect(delta_mb).toBeLessThan(120);
+  // mimalloc's committed memory. Before the fix it grew by about 150 KiB per
+  // instance: 225 MB for n=1500, in release and debug builds alike. After the
+  // fix it stays within a few MB of where it started.
+  expect(delta_mb).toBeLessThan(100);
 }, 120_000);

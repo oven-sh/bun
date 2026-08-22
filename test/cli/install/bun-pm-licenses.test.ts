@@ -855,8 +855,7 @@ describe("bun pm licenses", () => {
       expect(stdout).toContain("MIT[31mEVIL (1)\n└── a-dep@1.0.1 (dev)\n    tabhere\n");
       expect(stdout).toContain("ISCGPL-3.0 (1)\n└── one-dep@1.0.0\n");
       expect(stdout).toContain("BSD2 (1)\n└── no-deps@1.0.0\n");
-      // (skip the `bun pm licenses vX (<commit>)` banner: an all-digit commit hash matches too)
-      expect(stdout.split("\n").filter(line => / \(\d+\)$/.test(line) && !line.startsWith("bun pm "))).toStrictEqual([
+      expect(stdout.split("\n").filter(line => / \(\d+\)$/.test(line))).toStrictEqual([
         "BSD2 (1)",
         "ISCGPL-3.0 (1)",
         "MIT (2)",

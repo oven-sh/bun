@@ -1770,6 +1770,10 @@ impl WindowsBufferedReader {
             return sys::Result::Ok(());
         }
         self.flags.remove(WindowsFlags::IS_PAUSED);
+        // This start supersedes a tty restart pending from `on_stream_read`
+        // (pause + resume inside the data handler), which would otherwise
+        // start the stream a second time.
+        self.stream_read.restart_tty = false;
         // BORROW_PARAM (raw-ptr break): the body needs `&mut self` (for
         // `get_read_buffer_…`/`flags`) while also holding `&mut File` borrowed
         // out of `self.source`. The boxed `File` is its own heap allocation, so
@@ -1865,6 +1869,7 @@ impl WindowsBufferedReader {
             return sys::Result::Ok(());
         }
         self.flags.insert(WindowsFlags::IS_PAUSED);
+        self.stream_read.restart_tty = false;
         let Some(source) = self.source.as_mut() else {
             return sys::Result::Ok(());
         };

@@ -622,10 +622,10 @@ let lazyAbortedRegistry: FinalizationRegistry<{
   ref: WeakRef<AbortSignal>;
   unregisterToken: (...args: any[]) => void;
 }>;
-function onAbortedCallback(resolveFn: Function) {
-  lazyAbortedRegistry.unregister(resolveFn);
+function onAbortedCallback(promise: Promise<void>) {
+  lazyAbortedRegistry.unregister(promise);
 
-  resolveFn();
+  $resolvePromiseWithFirstResolvingFunctionCallCheck(promise, undefined);
 }
 
 function aborted(signal: AbortSignal, resource: object) {
@@ -641,8 +641,8 @@ function aborted(signal: AbortSignal, resource: object) {
     return Promise.$resolve();
   }
 
-  const { promise, resolve } = $newPromiseCapability(Promise);
-  const unregisterToken = onAbortedCallback.bind(undefined, resolve);
+  const promise = $newPromise();
+  const unregisterToken = onAbortedCallback.bind(undefined, promise);
   signal.addEventListener(
     "abort",
     // Do not leak the current scope into the listener.

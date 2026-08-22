@@ -48,9 +48,6 @@ const ArrayPrototypeIncludes = Array.prototype.includes;
 const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypePush = Array.prototype.push;
 const MathMax = Math.max;
-const NumberParseInt = Number.parseInt;
-const StringPrototypeIndexOf = String.prototype.indexOf;
-const StringPrototypeSlice = String.prototype.slice;
 const MathMin = Math.min;
 
 let uvBinding;
@@ -511,7 +508,7 @@ const SocketHandlers: SocketHandler = {
     }
 
     if (self[kSetKeepAlive]) {
-      socket.setKeepAlive(true, self[kSetKeepAliveInitialDelay] * 1000);
+      socket.setKeepAlive(true, self[kSetKeepAliveInitialDelay]);
     }
 
     // A TOS value set before the connection existed (setTypeOfService before
@@ -1224,7 +1221,7 @@ function onconnection(err, clientHandle) {
   if (self.keepAlive && clientHandle.setKeepAlive) {
     _socket[kSetKeepAlive] = true;
     _socket[kSetKeepAliveInitialDelay] = self.keepAliveInitialDelay;
-    clientHandle.setKeepAlive(true, self.keepAliveInitialDelay * 1000);
+    clientHandle.setKeepAlive(true, self.keepAliveInitialDelay);
   }
 
   self._connections++;
@@ -1593,9 +1590,9 @@ function Socket(options?) {
 
   this[kSetNoDelay] = Boolean(noDelay);
   this[kSetKeepAlive] = Boolean(keepAlive);
-  // Node stores whole seconds here (libuv's unit); call sites convert back to
-  // milliseconds for Bun's native _handle.setKeepAlive.
-  this[kSetKeepAliveInitialDelay] = MathMax(0, ~~(keepAliveInitialDelay / 1000));
+  // Bun's native _handle.setKeepAlive takes milliseconds (it is the public
+  // Bun.Socket), so store ms here. Node stores seconds because libuv does.
+  this[kSetKeepAliveInitialDelay] = MathMax(0, ~~keepAliveInitialDelay);
 
   this[khandlers] = SocketHandlers2;
   this.bytesRead = 0;
@@ -1881,7 +1878,7 @@ Socket.prototype[kAttach] = function (port, socket) {
   }
 
   if (this[kSetKeepAlive]) {
-    socket.setKeepAlive(true, this[kSetKeepAliveInitialDelay] * 1000);
+    socket.setKeepAlive(true, this[kSetKeepAliveInitialDelay]);
   }
 
   if (!this[kupgraded]) {
@@ -2157,10 +2154,7 @@ Socket.prototype.connect = function connect(...args) {
 Socket.prototype[kReinitializeHandle] = function reinitializeHandle(handle) {
   this._handle?.close();
 
-  // Node's TLSSocket override creates the replacement handle itself when none
-  // is passed (net.Socket's version requires one); Bun's TLS sockets share
-  // this method, so default it here for both flavors.
-  this._handle = handle ?? newDetachedSocket(typeof this[bunTlsSymbol] === "function");
+  this._handle = handle;
   this._handle[owner_symbol] = this;
 
   initSocketHandle(this);
@@ -2603,10 +2597,10 @@ Socket.prototype.resetAndDestroy = function resetAndDestroy() {
 
 Socket.prototype.setKeepAlive = function setKeepAlive(enable = false, initialDelayMsecs = 0) {
   enable = Boolean(enable);
-  // Node truncates to whole seconds (libuv's TCP_KEEPIDLE unit) and stores
-  // seconds in kSetKeepAliveInitialDelay; Bun's native setKeepAlive takes
-  // milliseconds, so call sites convert back with * 1000.
-  const initialDelay = MathMax(0, ~~(initialDelayMsecs / 1000));
+  // Bun's native _handle.setKeepAlive takes milliseconds; the ms→seconds
+  // conversion for TCP_KEEPIDLE lives in the native binding. Clamp to 0 so
+  // negatives and ~~ overflow match Node's no-validate behavior.
+  const initialDelay = MathMax(0, ~~initialDelayMsecs);
 
   if (!this._handle) {
     this[kSetKeepAlive] = enable;
@@ -2619,7 +2613,7 @@ Socket.prototype.setKeepAlive = function setKeepAlive(enable = false, initialDel
   if (enable !== this[kSetKeepAlive] || (enable && this[kSetKeepAliveInitialDelay] !== initialDelay)) {
     this[kSetKeepAlive] = enable;
     this[kSetKeepAliveInitialDelay] = initialDelay;
-    this._handle.setKeepAlive(enable, initialDelay * 1000);
+    this._handle.setKeepAlive(enable, initialDelay);
   }
   return this;
 };
@@ -3390,7 +3384,7 @@ function afterConnect(status, handle, req, readable, writable) {
     }
 
     if (self[kSetKeepAlive] && self._handle.setKeepAlive) {
-      self._handle.setKeepAlive(true, self[kSetKeepAliveInitialDelay] * 1000);
+      self._handle.setKeepAlive(true, self[kSetKeepAliveInitialDelay]);
     }
 
     self.emit("connect");
@@ -3526,14 +3520,14 @@ function Server(options?, connectionListener?) {
   this._usingWorkers = false;
   this.workers = [];
   this._unref = false;
-  this._listeningId = 1;
+  this.listeningId = 1;
 
   this[bunSocketServerOptions] = undefined;
   // Server option coercion matches Node's Server constructor:
   // https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/net.js#L1880
   this.allowHalfOpen = allowHalfOpen;
   this.keepAlive = Boolean(keepAlive);
-  this.keepAliveInitialDelay = MathMax(0, ~~(keepAliveInitialDelay / 1000));
+  this.keepAliveInitialDelay = MathMax(0, ~~keepAliveInitialDelay);
   this.highWaterMark = highWaterMark;
   this.pauseOnConnect = Boolean(pauseOnConnect);
   this.noDelay = Boolean(noDelay);
@@ -3571,7 +3565,6 @@ Server.prototype.unref = function unref() {
 
 Server.prototype.close = function close(callback) {
   this[kClusterListeningId] = (this[kClusterListeningId] || 0) + 1;
-  this._listeningId++;
   if (typeof callback === "function") {
     if (!this._handle) {
       this.once("close", function close() {
@@ -3809,8 +3802,6 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     throw $ERR_SERVER_ALREADY_LISTEN();
   }
 
-  this._listeningId++;
-
   if (onListen != null) {
     this.once("listening", onListen);
   }
@@ -3831,25 +3822,6 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
       }
     } else {
       options[kSocketClass] = Socket;
-    }
-
-    if (typeof hostname === "string" && hostname !== "" && path == null && fd == null && isIP(hostname) === 0) {
-      lookupAndListen(
-        this,
-        port,
-        hostname,
-        backlog,
-        exclusive,
-        ipv6Only,
-        reusePort,
-        readableAll,
-        writableAll,
-        fd,
-        tls,
-        contexts,
-        onListen,
-      );
-      return this;
     }
 
     const flags = (ipv6Only === true ? 1 : 0) | (reusePort === true ? 2 : 0);
@@ -4049,83 +4021,6 @@ function emitListeningNextTick(self) {
 }
 
 let cluster;
-// fe80::/10: first byte 0xfe, top two bits of the second byte 10.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2230
-function isIpv6LinkLocal(ip) {
-  if (!isIPv6(ip)) return false;
-  const firstColon = StringPrototypeIndexOf.$call(ip, ":");
-  if (firstColon === 0) return false; // "::..." - first group is zero
-  const firstGroup = NumberParseInt(StringPrototypeSlice.$call(ip, 0, firstColon), 16);
-  return (firstGroup & 0xffc0) === 0xfe80;
-}
-
-// Return the first non IPv6 link-local address if present, otherwise the
-// first address.
-function filterOnlyValidAddress(addresses) {
-  for (const address of addresses) {
-    if (!isIpv6LinkLocal(address.address)) {
-      return address;
-    }
-  }
-  return addresses[0];
-}
-
-// Node resolves a non-IP listen host through dns.lookup({ all: true }) and binds the
-// first non-link-local address: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2259
-function lookupAndListen(
-  server,
-  port,
-  hostname,
-  backlog,
-  exclusive,
-  ipv6Only,
-  reusePort,
-  readableAll,
-  writableAll,
-  fd,
-  tls,
-  contexts,
-  onListen,
-) {
-  if (dns === undefined) dns = require("node:dns");
-  const listeningId = server._listeningId;
-  dns.lookup(hostname, { all: true }, (err, addresses) => {
-    if (listeningId !== server._listeningId) {
-      return;
-    }
-    if (err) {
-      server.emit("error", err);
-      return;
-    }
-    const validAddress = filterOnlyValidAddress(addresses);
-    const family = validAddress?.family || 4;
-    try {
-      listenInCluster(
-        server,
-        validAddress.address,
-        port,
-        family,
-        backlog,
-        fd,
-        exclusive,
-        ipv6Only,
-        reusePort,
-        readableAll,
-        writableAll,
-        undefined,
-        undefined,
-        null,
-        validAddress.address,
-        tls,
-        contexts,
-        onListen,
-      );
-    } catch (listenErr) {
-      emitErrorNextTick(server, formatListenError(listenErr, validAddress.address, port));
-    }
-  });
-}
-
 function listenInCluster(
   server,
   address,
@@ -4149,48 +4044,6 @@ function listenInCluster(
   exclusive = !!exclusive;
 
   if (cluster === undefined) cluster = require("node:cluster");
-
-  if (
-    !cluster.isPrimary &&
-    !exclusive &&
-    typeof address === "string" &&
-    address.length > 0 &&
-    typeof port === "number" &&
-    port >= 0 &&
-    isIP(address) === 0
-  ) {
-    const lookupListeningId = (server[kClusterListeningId] = (server[kClusterListeningId] || 0) + 1);
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2259-L2278
-    require("node:dns").lookup(address, (err, ip, family) => {
-      if (lookupListeningId !== server[kClusterListeningId]) return;
-      if (err) {
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2268-L2269
-        server.emit("error", err);
-        return;
-      }
-      listenInCluster(
-        server,
-        ip,
-        port,
-        family === 6 ? 6 : 4,
-        backlog,
-        fd,
-        exclusive,
-        ipv6Only,
-        reusePort,
-        readableAll,
-        writableAll,
-        flags,
-        options,
-        path,
-        hostname,
-        tls,
-        contexts,
-        onListen,
-      );
-    });
-    return;
-  }
 
   if (cluster.isPrimary || exclusive) {
     server[kRealListen](

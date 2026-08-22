@@ -198,10 +198,6 @@ pub enum HardcodedModule {
     /// gated behind '--expose-internals' like `bun:internal-for-testing`.
     #[strum(serialize = "internal/test/binding")]
     InternalTestBinding,
-    /// Node's `internal/worker/io` (message-type table), gated behind
-    /// '--expose-internals' like `internal/test/binding`.
-    #[strum(serialize = "internal/worker/io")]
-    InternalWorkerIo,
 }
 
 bun_core::comptime_string_map! {
@@ -225,7 +221,6 @@ bun_core::comptime_string_map! {
         b"internal/repl/history" => HardcodedModule::NodeInternalReplHistory,
         b"internal/util/inspect" => HardcodedModule::NodeInternalUtilInspect,
         b"internal/test/binding" => HardcodedModule::InternalTestBinding,
-        b"internal/worker/io" => HardcodedModule::InternalWorkerIo,
         // Node.js
         b"node:assert" => HardcodedModule::NodeAssert,
         b"node:assert/strict" => HardcodedModule::NodeAssertStrict,
@@ -738,7 +733,6 @@ const BUN_EXTRA_ALIAS_KVS: &[AliasKv] = &[
     entry!("internal/repl/history"),
     entry!("internal/util/inspect"),
     entry!("internal/test/binding"),
-    entry!("internal/worker/io"),
     (
         b"ffi",
         Alias {

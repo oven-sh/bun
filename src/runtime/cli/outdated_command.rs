@@ -350,7 +350,8 @@ impl OutdatedCommand {
         // `&manager.options`).
         let cache_ctx = manager.manifest_disk_cache_ctx();
         let min_age_ms = manager.options.minimum_release_age_ms;
-        let needs_extended = min_age_ms.is_some();
+        let changelog = manager.options.changelog;
+        let needs_extended = min_age_ms.is_some() || changelog;
         let excludes = manager.options.minimum_release_age_excludes;
 
         let mut version_buf: String = String::new();
@@ -778,6 +779,87 @@ impl OutdatedCommand {
             );
         }
 
+        if changelog {
+            let mut has_any_url = false;
+            // One URL per package name, even when workspaces pin different versions.
+            let mut seen_names: bun_collections::HashMap<Vec<u8>, ()> =
+                bun_collections::HashMap::new();
+            for item in &grouped_ids {
+                let package_id = item.package_id;
+                let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
+                let package_name =
+                    manager.lockfile.packages.items_name()[package_id as usize].slice(string_buf);
+                if seen_names.insert(package_name.to_vec(), ()).is_some() {
+                    continue;
+                }
+
+                let scope = manager.options.scope_for_package_name(package_name).clone();
+                let mut expired = false;
+                let Some(manifest) = manager.manifests.by_name_allow_expired(
+                    cache_ctx,
+                    &scope,
+                    package_name,
+                    Some(&mut expired),
+                    ManifestLoad::LoadFromMemoryFallbackToDisk,
+                    needs_extended,
+                ) else {
+                    continue;
+                };
+
+                let repo_url = &manifest.repository_url;
+                if repo_url.is_empty() {
+                    continue;
+                }
+
+                if !has_any_url {
+                    bun_core::prettyln!("\n<b>Changelogs:<r>");
+                    has_any_url = true;
+                }
+
+                // Full URL, `host/path`, or bare GitHub `user/repo` shorthand.
+                if strings::has_prefix_comptime(repo_url, b"https://")
+                    || strings::has_prefix_comptime(repo_url, b"http://")
+                {
+                    bun_core::prettyln!(
+                        "  <cyan>{}<r> <d>{}<r>",
+                        BStr::new(package_name),
+                        BStr::new(repo_url)
+                    );
+                } else if has_domain_prefix(repo_url) {
+                    bun_core::prettyln!(
+                        "  <cyan>{}<r> <d>https://{}<r>",
+                        BStr::new(package_name),
+                        BStr::new(repo_url)
+                    );
+                } else if strings::contains(repo_url, b"/") {
+                    bun_core::prettyln!(
+                        "  <cyan>{}<r> <d>https://github.com/{}<r>",
+                        BStr::new(package_name),
+                        BStr::new(repo_url)
+                    );
+                } else {
+                    bun_core::prettyln!(
+                        "  <cyan>{}<r> <d>{}<r>",
+                        BStr::new(package_name),
+                        BStr::new(repo_url)
+                    );
+                }
+            }
+        }
+
         Ok(())
     }
+}
+
+/// True when a `.` occurs before the first `/`: a hostname (`gitlab.gnome.org/…`)
+/// rather than a bare GitHub `user/repo` (GitHub names cannot contain `.`).
+fn has_domain_prefix(s: &[u8]) -> bool {
+    for &c in s {
+        match c {
+            b'/' => return false,
+            b'.' => return true,
+            _ => {}
+        }
+    }
+    false
 }

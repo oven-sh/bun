@@ -812,19 +812,17 @@ fn collect_dirs(dir: &[u8], depth: usize, out: &mut Vec<Vec<u8>>, budget: &mut u
 /// Recursively record `l` stamps for a local-source directory (skipping node_modules
 /// and VCS dirs). Returns false if the walk exceeded `budget` entries or failed.
 fn stamp_source_tree(out: &mut Vec<u8>, dir: &[u8], budget: &mut usize) -> bool {
-    // a symlinked source (or subdirectory) would be walked through the link while only the
-    // link's own mtime is recorded: not trackable
-    match bun_sys::lstat(&zpath(dir)) {
+    // a symlinked source (or entry inside it) would be walked through the link while only
+    // the link's own mtime is recorded: not trackable
+    let stamp = match bun_sys::lstat(&zpath(dir)) {
         Ok(st)
             if bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode)
                 == bun_sys::FileKind::SymLink =>
         {
             return false;
         }
-        _ => {}
-    }
-    let Some(stamp) = lstat_stamp(dir) else {
-        return false;
+        Ok(st) => mtime_ns(&st),
+        Err(_) => return false,
     };
     let _ = write!(out, "l {stamp:016x} ");
     out.extend_from_slice(dir);
@@ -846,11 +844,17 @@ fn stamp_source_tree(out: &mut Vec<u8>, dir: &[u8], budget: &mut usize) -> bool 
             if !stamp_source_tree(out, &child, budget) {
                 return false;
             }
-        } else if matches!(bun_sys::lstat(&zpath(&child)), Ok(st) if bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode) == bun_sys::FileKind::SymLink)
-        {
+        } else if let Some(stamp) = match bun_sys::lstat(&zpath(&child)) {
             // a symlinked entry inside the source: not trackable (see above)
-            return false;
-        } else if let Some(stamp) = lstat_stamp(&child) {
+            Ok(st)
+                if bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode)
+                    == bun_sys::FileKind::SymLink =>
+            {
+                return false;
+            }
+            Ok(st) => Some(mtime_ns(&st)),
+            Err(_) => None,
+        } {
             let _ = write!(out, "l {stamp:016x} ");
             out.extend_from_slice(&child);
             out.push(b'\n');

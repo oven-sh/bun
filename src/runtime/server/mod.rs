@@ -2375,6 +2375,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
                 let h3_app = bun_opaque::opaque_deref_mut(h3_app);
                 h3_app.webtransport_connect(b"/*", self_ptr, |server: &mut Self, req, res| {
+                    // The same gate every other dispatch entry point takes, and
+                    // this path needs it most: an HTTP/3 stream is not in the
+                    // connection accounting, so a CONNECT can still arrive after
+                    // the drain, and `decide` runs the user's `upgrade` handler.
+                    if server.js_value_for_dispatch().is_none() {
+                        server_body::respond_stopped_503(res);
+                        return;
+                    }
                     let global = server.global_this();
                     let Some(on_upgrade) = server
                         .config

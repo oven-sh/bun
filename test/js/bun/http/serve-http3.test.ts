@@ -1854,6 +1854,41 @@ describe("Bun.serve WebTransport", () => {
     }
   });
 
+  test("close() cuts an over-long reason at a UTF-8 boundary", async () => {
+    // 1023 ASCII bytes then a three-byte character, so the sequence straddles
+    // the 1024-byte cap at bytes 1023..1025. Cutting flat at 1024 would put
+    // half a character on the wire, and a peer that fails the session over a
+    // malformed reason never reports the code it was closed with.
+    const reason = "a".repeat(1023) + "\u20ac" + "b".repeat(64);
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      webtransport: {
+        datagram(session) {
+          session.close(7, reason);
+        },
+      },
+      fetch: () => new Response("plain http/3"),
+    });
+
+    const wt = await webTransportSession(server.port);
+    try {
+      wt.send("close me");
+      // 2 type + 2 length + 4 code + 1023 reason.
+      expect(await wt.until(() => wt.inbound.length >= 1031, 3000)).toBe(true);
+      const bytes = Uint8Array.from(wt.inbound);
+      // varint(0x2843), then 4 + 1023 as a two-byte varint, then the code.
+      expect(Array.from(bytes.subarray(0, 8))).toEqual([0x68, 0x43, 0x44, 0x03, 0x00, 0x00, 0x00, 0x07]);
+      const got = bytes.subarray(8, 8 + 1023);
+      // The whole character is dropped rather than half-written, so the
+      // reason is 1023 bytes and still decodes.
+      expect(new TextDecoder("utf-8", { fatal: true }).decode(got)).toBe("a".repeat(1023));
+    } finally {
+      await wt.close();
+    }
+  });
+
   test("upgrade() sees the request and its return value becomes session.data", async () => {
     const seen: Array<{ url: string; method: string; auth: string | null }> = [];
     await using server = Bun.serve({
@@ -1880,9 +1915,7 @@ describe("Bun.serve WebTransport", () => {
       expect(wt.text()).toEqual(["tok-1:hi"]);
       // :authority reaches the handler as `host` and the path keeps its
       // query, so this is the URL the peer asked for.
-      expect(seen).toEqual([
-        { url: "https://localhost/game?level=3", method: "CONNECT", auth: "tok-1" },
-      ]);
+      expect(seen).toEqual([{ url: "https://localhost/game?level=3", method: "CONNECT", auth: "tok-1" }]);
     } finally {
       await wt.close();
     }
@@ -2100,7 +2133,10 @@ describe("Bun.serve WebTransport", () => {
 
   test("stop(true) with a live session on an http3-only server", async () => {
     const closes: number[] = [];
-    const server = Bun.serve({
+    // `await using` as well as the explicit stop below: the stop is the thing
+    // under test, and disposal is what stops the server when an assertion
+    // before it throws. Stopping twice is a no-op.
+    await using server = Bun.serve({
       port: 0,
       tls,
       http3: true,
@@ -2172,6 +2208,9 @@ describe("Bun.serve WebTransport", () => {
       wt.send("after the capsule");
       expect(await wt.until(() => wt.datagrams.length >= 1, 3000)).toBe(true);
       expect(wt.text()).toEqual(["after the capsule"]);
+      // The capsule being ignored rather than fatal is the whole claim, so the
+      // session must not have closed behind the datagram round-trip.
+      expect(closes).toEqual([]);
     } finally {
       await wt.close();
     }
@@ -2208,14 +2247,20 @@ describe("Bun.serve WebTransport", () => {
   });
 
   test("rejects a webtransport handler on a server without http3", () => {
-    expect(() =>
-      Bun.serve({ port: 0, tls, webtransport: { datagram() {} }, fetch: () => new Response() }),
-    ).toThrow(/webtransport/);
+    expect(() => Bun.serve({ port: 0, tls, webtransport: { datagram() {} }, fetch: () => new Response() })).toThrow(
+      /webtransport/,
+    );
   });
 
   test("rejects a webtransport option that is not a handler object", () => {
     expect(() =>
-      Bun.serve({ port: 0, tls, http3: true, webtransport: { datagram: "nope" } as never, fetch: () => new Response() }),
+      Bun.serve({
+        port: 0,
+        tls,
+        http3: true,
+        webtransport: { datagram: "nope" } as never,
+        fetch: () => new Response(),
+      }),
     ).toThrow();
     expect(() =>
       Bun.serve({ port: 0, tls, http3: true, webtransport: {} as never, fetch: () => new Response() }),

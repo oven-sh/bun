@@ -143,6 +143,43 @@ NamedError: console.error a named error
 `);
 });
 
+it("console.log: %% collapses after format args are exhausted, %j of undefined prints 'undefined'", async () => {
+  const src = `
+    console.log("%s %%", "x");
+    console.log("%d %f %j %%", 1, 2, 3);
+    console.log("%s %% %% %%", "x");
+    console.log("%s %s %% end", "a");
+    console.log("100%%", "extra");
+    console.log("[%j]", undefined);
+    console.log("[%j]", function () {});
+    console.log("[%j]", Symbol("s"));
+    console.log("[%j]", null);
+    console.log("[%j]", { a: 1 });
+  `;
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.replaceAll("\r\n", "\n"), stderr, exitCode }).toEqual({
+    stdout:
+      "x %\n" +
+      "1 2 3 %\n" +
+      "x % % %\n" +
+      "a %s % end\n" +
+      "100% extra\n" +
+      "[undefined]\n" +
+      "[undefined]\n" +
+      "[undefined]\n" +
+      "[null]\n" +
+      '[{"a":1}]\n',
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 it("console.log with SharedArrayBuffer", () => {
   // console.log(x) === Bun.inspect(x) + "\n" written to stdout.
   expect(Bun.inspect(new ArrayBuffer(0))).toBe("ArrayBuffer(0) []");

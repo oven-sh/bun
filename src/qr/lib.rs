@@ -8,6 +8,10 @@ use core::fmt;
 
 pub const VERSION_MIN: u8 = 1;
 pub const VERSION_MAX: u8 = 40;
+/// Modules per side of a version-1 symbol; each version adds 4.
+pub const SIZE_MIN: u8 = VERSION_MIN * 4 + 17;
+/// Modules per side of a version-40 symbol.
+pub const SIZE_MAX: u8 = VERSION_MAX * 4 + 17;
 
 /// Error correction level. Higher levels tolerate more damage but reduce
 /// data capacity.
@@ -117,7 +121,7 @@ impl fmt::Display for EncodeError {
                 need_bits,
             } => write!(
                 f,
-                "data too long: needs {} bits but version allows at most {}",
+                "Input is too long to encode as a QR code: it needs {} data bits, but the largest allowed symbol holds {}",
                 need_bits, max_bits
             ),
             EncodeError::InvalidVersion => write!(f, "version must be between 1 and 40"),
@@ -259,17 +263,24 @@ impl Segment {
         Ok(vec![seg])
     }
 
-    /// Total bit length of `segs` at `version`, or None on overflow.
+    /// Bits `segs` occupy at `version`: mode indicator, character count and
+    /// payload of each segment.
+    fn bit_length(segs: &[Segment], version: u8) -> usize {
+        segs.iter().fold(0usize, |total, seg| {
+            total
+                .saturating_add(4 + usize::from(seg.mode.char_count_bits(version)))
+                .saturating_add(seg.data.len())
+        })
+    }
+
+    /// [`Segment::bit_length`], or `None` when a segment has more characters
+    /// than the count field holds at `version`, so it cannot be encoded there
+    /// at any length.
     fn total_bits(segs: &[Segment], version: u8) -> Option<usize> {
-        let mut total: usize = 0;
-        for seg in segs {
-            let cc_bits = seg.mode.char_count_bits(version);
-            if seg.num_chars >= (1usize << cc_bits) {
-                return None;
-            }
-            total = total.checked_add(4 + usize::from(cc_bits) + seg.data.len())?;
-        }
-        Some(total)
+        let fits_count_field = segs
+            .iter()
+            .all(|seg| seg.num_chars < (1usize << seg.mode.char_count_bits(version)));
+        fits_count_field.then(|| Segment::bit_length(segs, version))
     }
 }
 
@@ -386,10 +397,9 @@ impl QrCode {
                     break;
                 }
                 _ if version >= max_version => {
-                    let need = Segment::total_bits(segs, max_version).unwrap_or(usize::MAX);
                     return Err(EncodeError::DataTooLong {
-                        max_bits: data_codeword_count(max_version, ecc) * 8,
-                        need_bits: need,
+                        max_bits: capacity,
+                        need_bits: Segment::bit_length(segs, version),
                     });
                 }
                 _ => version += 1,
@@ -1032,9 +1042,10 @@ pub enum DecodeError {
 impl fmt::Display for DecodeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            DecodeError::InvalidSize => {
-                write!(f, "matrix size must be 21..=177 and congruent to 1 mod 4")
-            }
+            DecodeError::InvalidSize => write!(
+                f,
+                "matrix must hold size*size modules, where size is 21..=177 and size % 4 == 1"
+            ),
             DecodeError::InvalidFormatInfo => write!(f, "unable to read format information"),
             DecodeError::ReedSolomonFailure => {
                 write!(
@@ -1056,7 +1067,9 @@ pub struct Decoded {
 
 /// Decode a row-major `size*size` module matrix (0 = light, non-zero = dark).
 pub fn decode_matrix(modules: &[u8], size: usize) -> Result<Decoded, DecodeError> {
-    if !(21..=177).contains(&size) || !(size - 17).is_multiple_of(4) || modules.len() != size * size
+    if !(usize::from(SIZE_MIN)..=usize::from(SIZE_MAX)).contains(&size)
+        || !(size - 17).is_multiple_of(4)
+        || modules.len() != size * size
     {
         return Err(DecodeError::InvalidSize);
     }
@@ -1613,6 +1626,30 @@ mod tests {
             Segment::check_capacity(Mode::Numeric, usize::MAX),
             Err(EncodeError::DataTooLong { .. })
         ));
+    }
+
+    #[test]
+    fn data_too_long_reports_the_bits_the_data_needs() {
+        // 300 bytes: the 8-bit count field of versions 1..=9 cannot even hold
+        // the length, so the segment does not fit at any size up to v9. The
+        // error still reports the real bit length (4 + 8 + 300 * 8), not a
+        // sentinel.
+        let segs = [Segment::make_bytes(&[0u8; 300]).unwrap()];
+        assert_eq!(
+            QrCode::encode_segments(&segs, Ecc::Medium, VERSION_MIN, 9, None, true).err(),
+            Some(EncodeError::DataTooLong {
+                max_bits: data_codeword_count(9, Ecc::Medium) * 8,
+                need_bits: 4 + 8 + 300 * 8,
+            })
+        );
+        // At v10 the count field is 16 bits wide; the data is still too long.
+        assert_eq!(
+            QrCode::encode_segments(&segs, Ecc::Medium, VERSION_MIN, 10, None, true).err(),
+            Some(EncodeError::DataTooLong {
+                max_bits: data_codeword_count(10, Ecc::Medium) * 8,
+                need_bits: 4 + 16 + 300 * 8,
+            })
+        );
     }
 
     #[test]

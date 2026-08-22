@@ -7436,21 +7436,70 @@ declare module "bun" {
       terminal?: TerminalOptions | Terminal;
     }
 
+    /**
+     * The value of {@link Subprocess.stdout} / {@link Subprocess.stderr} for a given
+     * `stdout` / `stderr` option:
+     *
+     * - `"pipe"`: a {@link ReadableStream} of the process's output
+     * - a file descriptor, as a `number` or as `Bun.file(fd)`: that file descriptor, except
+     *   that the parent's own descriptor for the same stream (`1` for `stdout`, `2` for
+     *   `stderr`) is treated as `"inherit"` and gives `undefined`
+     * - anything else, including `Bun.file(path)`: `undefined`. Bun sends the output where the
+     *   option says; nothing is exposed on the {@link Subprocess}.
+     *
+     * When the process was spawned with the `terminal` option, `stdin`, `stdout` and `stderr`
+     * are all `null` instead.
+     */
     type ReadableToIO<X extends Readable> = X extends "pipe" | undefined
       ? ReadableStream<Uint8Array<ArrayBuffer>>
-      : X extends BunFile | ArrayBufferView | number
-        ? number
+      : X extends number | BunFile
+        ? number | undefined
         : undefined;
 
-    type ReadableToSyncIO<X extends Readable> = X extends "pipe" | undefined ? Buffer : undefined;
+    /**
+     * The value of {@link SyncSubprocess.stdout} / {@link SyncSubprocess.stderr} for a given
+     * `stdout` / `stderr` option:
+     *
+     * - `"pipe"`: everything the process wrote, as a `Buffer`
+     * - a file descriptor, as a `number` or as `Bun.file(fd)`: that file descriptor, except
+     *   that the parent's own descriptor for the same stream (`1` for `stdout`, `2` for
+     *   `stderr`) is treated as `"inherit"` and gives `undefined`
+     * - anything else, including `Bun.file(path)`: `undefined`
+     */
+    type ReadableToSyncIO<X extends Readable> = X extends "pipe" | undefined
+      ? Buffer
+      : X extends number | BunFile
+        ? number | undefined
+        : undefined;
 
-    type WritableIO = FileSink | number | undefined;
+    /**
+     * Every value {@link Subprocess.stdin} can hold. See {@link WritableToIO}.
+     */
+    type WritableIO = FileSink | ReadableStream | number | undefined;
 
+    /**
+     * The value of {@link Subprocess.stdin} for a given `stdin` option:
+     *
+     * - `"pipe"`: a {@link FileSink} that writes to the process's input
+     * - a file descriptor, as a `number` or as `Bun.file(fd)`: that file descriptor, except
+     *   that `0`, the parent's own stdin, is treated as `"inherit"` and gives `undefined`
+     * - a {@link ReadableStream}, or a {@link Request} / {@link Response} whose body is one:
+     *   the stream Bun is piping into the process. A stream Bun can read without piping
+     *   (`blob.stream()`, `Bun.file(path).stream()`), or a `Request` / `Response` whose body is
+     *   not a stream, is handled like the blob or file behind it and gives `undefined`.
+     * - anything else, including `Blob`, `ArrayBufferView` and `Bun.file(path)`: `undefined`.
+     *   Bun feeds the input to the process itself; nothing is exposed on the {@link Subprocess}.
+     *
+     * When the process was spawned with the `terminal` option, `stdin`, `stdout` and `stderr`
+     * are all `null` instead.
+     */
     type WritableToIO<X extends Writable> = X extends "pipe"
       ? FileSink
-      : X extends BunFile | ArrayBufferView | Blob | Request | Response | number
-        ? number
-        : undefined;
+      : X extends number | BunFile
+        ? number | undefined
+        : X extends ReadableStream | Request | Response
+          ? ReadableStream | undefined
+          : undefined;
   }
 
   interface ResourceUsage {
@@ -7544,8 +7593,21 @@ declare module "bun" {
     Out extends SpawnOptions.Readable = SpawnOptions.Readable,
     Err extends SpawnOptions.Readable = SpawnOptions.Readable,
   > extends AsyncDisposable {
+    /**
+     * The process's standard input: a {@link FileSink} with `stdin: "pipe"`, otherwise
+     * whatever {@link Spawn.WritableToIO} lists for the `stdin` option that was passed.
+     */
     readonly stdin: SpawnOptions.WritableToIO<In>;
+    /**
+     * The process's standard output: a {@link ReadableStream} with `stdout: "pipe"` (the default),
+     * otherwise whatever {@link Spawn.ReadableToIO} lists for the `stdout` option that was passed.
+     */
     readonly stdout: SpawnOptions.ReadableToIO<Out>;
+    /**
+     * The process's standard error: a {@link ReadableStream} with `stderr: "pipe"`, otherwise
+     * whatever {@link Spawn.ReadableToIO} lists for the `stderr` option that was passed
+     * (`undefined` for the default, `"inherit"`).
+     */
     readonly stderr: SpawnOptions.ReadableToIO<Err>;
 
     /**
@@ -7680,7 +7742,15 @@ declare module "bun" {
     Out extends SpawnOptions.Readable = SpawnOptions.Readable,
     Err extends SpawnOptions.Readable = SpawnOptions.Readable,
   > {
+    /**
+     * Everything the process wrote to stdout, as a `Buffer`, with `stdout: "pipe"` (the default).
+     * Otherwise whatever {@link Spawn.ReadableToSyncIO} lists for the `stdout` option that was passed.
+     */
     stdout: SpawnOptions.ReadableToSyncIO<Out>;
+    /**
+     * Everything the process wrote to stderr, as a `Buffer`, with `stderr: "pipe"` (the default).
+     * Otherwise whatever {@link Spawn.ReadableToSyncIO} lists for the `stderr` option that was passed.
+     */
     stderr: SpawnOptions.ReadableToSyncIO<Err>;
     exitCode: number;
     success: boolean;

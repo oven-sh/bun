@@ -159,25 +159,102 @@ function depromise<T>(_promise: Promise<T>): T {
   tsd.expectType(proc.stdout).is<undefined>();
   tsd.expectType(proc.stderr).is<undefined>();
 }
+// What each stdio option turns into on the Subprocess. Only a caller-supplied file descriptor
+// (a number or Bun.file(fd)) comes back out as a number, and even that becomes undefined when it
+// is the parent's own standard stream (Bun treats that as "inherit"). A ReadableStream passed as
+// stdin, including the body of a Request/Response, comes back as the stream; inputs Bun copies
+// into the process itself (Blob, ArrayBufferView, Bun.file(path), an in-memory Request/Response
+// body) leave the property undefined.
+declare const fd: number;
+declare const stdinStream: ReadableStream<Uint8Array>;
 {
-  const proc = Bun.spawn(["echo", "hello"], {
-    stdio: [new Request("1"), null, null],
+  const proc = Bun.spawn(["cat"], { stdin: fd, stdout: fd, stderr: fd });
+  tsd.expectType(proc.stdin).is<number | undefined>();
+  tsd.expectType(proc.stdout).is<number | undefined>();
+  tsd.expectType(proc.stderr).is<number | undefined>();
+  tsd.expectType(proc.readable).is<number | undefined>();
+}
+{
+  const proc = Bun.spawn(["cat"], { stdin: 0, stdout: 1, stderr: 2 });
+  tsd.expectType(proc.stdin).is<number | undefined>();
+  tsd.expectType(proc.stdout).is<number | undefined>();
+  tsd.expectType(proc.stderr).is<number | undefined>();
+}
+{
+  const proc = Bun.spawn(["cat"], {
+    stdin: Bun.file("input.txt"),
+    stdout: Bun.file("output.txt"),
+    stderr: Bun.file(fd),
   });
+  tsd.expectType(proc.stdin).is<number | undefined>();
+  tsd.expectType(proc.stdout).is<number | undefined>();
+  tsd.expectType(proc.stderr).is<number | undefined>();
+  tsd.expectType(proc.readable).is<number | undefined>();
+}
+{
+  const proc = Bun.spawn(["cat"], { stdin: new Blob(["hello"]) });
+  tsd.expectType(proc.stdin).is<undefined>();
+}
+{
+  const proc = Bun.spawn(["cat"], { stdin: new Uint8Array([1, 2, 3]) });
+  tsd.expectType(proc.stdin).is<undefined>();
+}
+{
+  const proc = Bun.spawn(["cat"], { stdio: [new Uint8Array([]), new Uint8Array(64), new Uint8Array(64)] });
+  tsd.expectType(proc.stdin).is<undefined>();
+  tsd.expectType(proc.stdout).is<undefined>();
+  tsd.expectType(proc.stderr).is<undefined>();
+}
+{
+  const proc = Bun.spawn(["cat"], { stdin: stdinStream });
+  tsd.expectType(proc.stdin).is<ReadableStream | undefined>();
+}
+{
+  const proc = Bun.spawn(["cat"], { stdio: [new Request("1"), null, null] });
+  tsd.expectType(proc.stdin).is<ReadableStream | undefined>();
+}
+{
+  const proc = Bun.spawn(["cat"], { stdin: new Response("1") });
+  tsd.expectType(proc.stdin).is<ReadableStream | undefined>();
+}
+{
+  const proc = Bun.spawn(["cat"], {
+    stdin: depromise(fetch("https://example.com/")),
+    stdout: "pipe",
+  });
+  tsd.expectType(proc.stdin).is<ReadableStream | undefined>();
+  tsd.expectType(proc.stdout).is<ReadableStream<Uint8Array<ArrayBuffer>>>();
+}
+{
+  const proc = Bun.spawnSync(["cat"], { stdout: fd, stderr: Bun.file("errors.txt") });
+  tsd.expectType(proc.stdout).is<number | undefined>();
+  tsd.expectType(proc.stderr).is<number | undefined>();
+}
+{
+  const proc = Bun.spawnSync(["cat"], { stdout: "pipe", stderr: "inherit" });
+  tsd.expectType(proc.stdout).is<Buffer>();
+  tsd.expectType(proc.stderr).is<undefined>();
+}
+{
+  const proc = Bun.spawnSync(["cat"], { stdio: ["ignore", new Uint8Array(64), null] });
+  tsd.expectType(proc.stdout).is<undefined>();
+  tsd.expectType(proc.stderr).is<undefined>();
+}
 
-  tsd.expectType<number>(proc.stdin);
-}
-{
-  const proc = Bun.spawn(["echo", "hello"], {
-    stdio: [new Response("1"), null, null],
-  });
-  tsd.expectType<number>(proc.stdin);
-}
-{
-  const proc = Bun.spawn(["echo", "hello"], {
-    stdio: [new Uint8Array([]), null, null],
-  });
-  tsd.expectType<number>(proc.stdin);
-}
+// The unions seen through a Subprocess whose stdio configuration is not known statically.
+tsd.expectType<Bun.Subprocess["stdin"]>().is<FileSink | ReadableStream | number | undefined>();
+tsd.expectType<Bun.Subprocess["stdin"]>().is<Bun.Spawn.WritableIO>();
+tsd.expectType<Bun.Subprocess["stdout"]>().is<ReadableStream<Uint8Array<ArrayBuffer>> | number | undefined>();
+tsd.expectType<Bun.Subprocess["stderr"]>().is<ReadableStream<Uint8Array<ArrayBuffer>> | number | undefined>();
+tsd.expectType<SyncSubprocess["stdout"]>().is<Buffer | number | undefined>();
+tsd.expectType<ReadableSubprocess["stdin"]>().is<FileSink | ReadableStream | number | undefined>();
+tsd.expectType<ReadableSubprocess["stdout"]>().is<ReadableStream<Uint8Array<ArrayBuffer>>>();
+tsd.expectType<WritableSubprocess["stdin"]>().is<FileSink>();
+tsd.expectType<NullSubprocess["stdin"]>().is<undefined>();
+tsd.expectAssignable<Bun.Subprocess>(Bun.spawn([], { stdin: stdinStream, stdout: Bun.file("out.txt"), stderr: fd }));
+tsd.expectAssignable<Bun.Subprocess>(Bun.spawn([], { stdin: new Blob(["hello"]), stdout: "inherit" }));
+tsd.expectAssignable<SyncSubprocess>(Bun.spawnSync([], { stdout: fd, stderr: Bun.file("errors.txt") }));
+
 tsd.expectAssignable<PipedSubprocess>(Bun.spawn([], { stdio: ["pipe", "pipe", "pipe"] }));
 tsd.expectAssignable<ReadableSubprocess>(Bun.spawn([], { stdio: ["ignore", "pipe", "pipe"] }));
 tsd.expectAssignable<ReadableSubprocess>(Bun.spawn([], { stdio: ["pipe", "pipe", "pipe"] }));

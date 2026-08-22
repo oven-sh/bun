@@ -1332,9 +1332,7 @@ pub(crate) fn inject<'a>(
                 match Syscall::open(
                     zname,
                     bun_sys::O::CLOEXEC | bun_sys::O::RDWR | bun_sys::O::CREAT | bun_sys::O::EXCL,
-                    // 0o600, not 0: some filesystems (WSL2 DrvFS/9p) re-check the
-                    // file mode on ftruncate() and return EACCES for a mode-000
-                    // file, even though the fd was opened O_RDWR (#40111).
+                    // Not 0: WSL2 DrvFS re-checks the mode on ftruncate() (#40111).
                     0o600,
                 ) {
                     Ok(res) => break 'brk2 res,

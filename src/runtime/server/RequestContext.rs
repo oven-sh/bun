@@ -2115,7 +2115,7 @@ where
             );
             this.sink.set(None);
             Self::destroy_sink(response_stream_ptr);
-            stream.done(global_this);
+            stream.done();
             this.response_body_readable_stream_ref
                 .with_mut(|s| s.deinit());
             this.end_stream(this.should_close_connection());
@@ -2193,7 +2193,7 @@ where
                         // NOTE: cleanup runs after handle_resolve_stream:
                         // body first, then the deferred cleanup.
                         this.handle_resolve_stream();
-                        stream.done(global_this);
+                        stream.done();
                         readable_ref.deinit();
                     }
                     jsc::PromiseResult::Rejected(err) => {
@@ -2848,7 +2848,7 @@ where
                 stream.value.ensure_still_alive();
                 resp.detach_readable_stream(global_this);
 
-                stream.done(global_this);
+                stream.done();
             }
 
             *resp.get_body_value() = Body::Value::Used;
@@ -2956,7 +2956,7 @@ where
             if let Some(stream) = resp.get_body_readable_stream() {
                 stream.value.ensure_still_alive();
                 resp.detach_readable_stream(global_this);
-                stream.done(global_this);
+                stream.done();
             }
 
             let body_value = resp.get_body_value();
@@ -3152,8 +3152,7 @@ where
                         readable_stream::Source::Blob(_)
                         | readable_stream::Source::File(_)
                         // These are the common scenario:
-                        | readable_stream::Source::JavaScript
-                        | readable_stream::Source::Direct => {
+                        | readable_stream::Source::JavaScript => {
                             if let Some(resp) = this.resp.get() {
                                 let mut pair = StreamPair { stream, this };
                                 resp.run_corked_with_type(Self::do_render_stream, &raw mut pair);
@@ -3173,7 +3172,7 @@ where
                             debug_assert!(this.byte_stream.get().is_none());
                             if this.resp.get().is_none() {
                                 // we don't have a response, so we can discard the stream
-                                stream.done(global_this);
+                                stream.done();
                                 this.response_body_readable_stream_ref
                                     .with_mut(|s| s.deinit());
                                 return;

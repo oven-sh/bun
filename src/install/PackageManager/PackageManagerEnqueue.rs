@@ -14,6 +14,7 @@ use crate::_folder_resolver::{
     self as FolderResolution, FolderResolution as FolderResolutionValue, GlobalOrRelative,
     PackageWorkspaceSearchPathFormatter,
 };
+use crate::dependency;
 use crate::dependency::{DependencyExt as _, TagExt as _, VersionExt as _};
 use crate::lockfile::PackageIndexEntry;
 use crate::lockfile::package::Package;
@@ -29,7 +30,6 @@ use crate::repository_real::RepositoryExt as _;
 use crate::resolution::{
     NpmVersionInfo as ResolutionNpmValue, Tag as ResolutionTag, TaggedValue as ResolutionTagged,
 };
-use crate::{ManifestLoad, dependency};
 use bun_install::NetworkTask;
 use bun_install::{
     self as install, Behavior, Dependency, DependencyID, ExtractTarball, Features, Integrity, Npm,
@@ -1041,7 +1041,6 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                             &name_str,
                                             name_hash,
                                             Some(&mut expired),
-                                            ManifestLoad::LoadFromMemoryFallbackToDisk,
                                             needs_extended_manifest,
                                         )
                                     } {
@@ -2473,7 +2472,6 @@ fn get_or_put_resolved_package(
                 scope.get(),
                 name_str,
                 name_hash,
-                ManifestLoad::LoadFromMemoryFallbackToDisk,
                 needs_ext,
             ) else {
                 return Ok(None); // manifest might still be downloading. This feels unreliable.

@@ -39,6 +39,7 @@ use bun_install_types::NodeLinker::NodeLinker;
 
 // Free-function "methods" on `PackageManager` hosted in sibling modules
 // to avoid one giant `impl PackageManager` block.
+use crate::package_manager_real::remove_stale_workspace_links::remove_stale_workspace_links;
 use crate::package_manager_real::run_tasks::{RunTasksCallbacks, run_tasks};
 use crate::package_manager_real::{
     UpdateRequest, enqueue_dependency_list, enqueue_dependency_with_main, enqueue_patch_task_pre,
@@ -862,6 +863,11 @@ pub fn install_with_manager(
     let install_summary: PackageInstallSummary = 'install_summary: {
         if !manager.options.do_.install_packages() {
             break 'install_summary PackageInstallSummary::default();
+        }
+
+        // Every workspace is a root dependency, so without a diff the workspace set is unchanged.
+        if had_any_diffs {
+            remove_stale_workspace_links(&lockfile_before_clean, &manager.lockfile);
         }
 
         let mut linker = manager.options.node_linker;

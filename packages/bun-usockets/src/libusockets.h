@@ -434,6 +434,8 @@ void us_ssl_ctx_set_sni_policy(struct ssl_ctx_st *ctx, int request_cert,
  * client-certificate verification error. */
 int us_socket_server_name_reject_unauthorized(us_socket_r s);
 int us_ssl_ctx_reject_unauthorized(struct ssl_ctx_st *ctx);
+/* 1 iff the SNI-selected context for this connection requests a client certificate. */
+int us_socket_server_name_request_cert(us_socket_r s);
 /* Socket-level SNI resolver, for a server-side socket adopted into TLS with no
  * listen socket behind it. Same contract as the listener resolver: an owned
  * SSL_CTX ref or NULL; *abort_handshake 1 = drop silently, 2 = suspend. */
@@ -550,6 +552,7 @@ struct ssl_ctx_st *us_ssl_ctx_from_options(
  * (uWS App.h) that don't pull in BoringSSL headers. */
 void us_internal_ssl_ctx_up_ref(struct ssl_ctx_st *ssl_ctx);
 void us_internal_ssl_ctx_unref(struct ssl_ctx_st *ssl_ctx);
+void us_internal_ssl_ctx_clear_sni_userdata(struct ssl_ctx_st *ssl_ctx);
 long us_ssl_ctx_live_count(void);
 /* Appends the certificates in the PEM `content` to `ctx`'s trust store;
  * returns 0 when nothing could be added. */

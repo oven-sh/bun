@@ -2,7 +2,7 @@ import { file, spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { rm, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, readdirSorted, tempDir } from "harness";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import { join } from "path";
 import {
@@ -38,6 +38,33 @@ async function withContext(
 
 // Default context options for most tests
 const defaultOpts = { linker: "hoisted" as const };
+
+/** A .tgz with the given files under the usual `package/` root. */
+function tarball(files: Record<string, Buffer>): Buffer {
+  function octal(n: number, width: number) {
+    return n.toString(8).padStart(width - 1, "0") + "\0";
+  }
+  const blocks: Buffer[] = [];
+  for (const [name, body] of Object.entries(files)) {
+    const header = Buffer.alloc(512, 0);
+    header.write(`package/${name}`, 0, 100, "utf8");
+    header.write(octal(0o644, 8), 100);
+    header.write(octal(0, 8), 108);
+    header.write(octal(0, 8), 116);
+    header.write(octal(body.length, 12), 124);
+    header.write(octal(0, 12), 136);
+    header.fill(" ", 148, 156);
+    header.write("0", 156);
+    header.write("ustar\0", 257);
+    header.write("00", 263);
+    let sum = 0;
+    for (let i = 0; i < 512; i++) sum += header[i];
+    header.write(octal(sum, 8), 148);
+    blocks.push(header, body, Buffer.alloc((512 - (body.length % 512)) % 512, 0));
+  }
+  blocks.push(Buffer.alloc(1024, 0));
+  return gzipSync(Buffer.concat(blocks));
+}
 
 describe.concurrent("tarball integrity", () => {
   it("should store integrity hash for tarball URL in text lockfile", async () => {
@@ -506,37 +533,8 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball integrity mi
   // callback is the void `onPackageDownloadError = {}` — i.e. the branch the
   // fix in runTasks.zig now cleans up.
   it("should fail (not hang) when tarball bytes don't match manifest SHA-512", { timeout: 60_000 }, async () => {
-    function octal(n: number, width: number) {
-      return n.toString(8).padStart(width - 1, "0") + "\0";
-    }
-    function tarHeader(name: string, size: number) {
-      const buf = Buffer.alloc(512, 0);
-      buf.write(name, 0, 100, "utf8");
-      buf.write(octal(0o644, 8), 100);
-      buf.write(octal(0, 8), 108);
-      buf.write(octal(0, 8), 116);
-      buf.write(octal(size, 12), 124);
-      buf.write(octal(0, 12), 136);
-      buf.fill(" ", 148, 156);
-      buf.write("0", 156);
-      buf.write("ustar\0", 257);
-      buf.write("00", 263);
-      let sum = 0;
-      for (let i = 0; i < 512; i++) sum += buf[i];
-      buf.write(octal(sum, 8), 148);
-      return buf;
-    }
-    function pad512(len: number) {
-      return Buffer.alloc((512 - (len % 512)) % 512, 0);
-    }
     function buildTarball(body: Buffer) {
-      const tar = Buffer.concat([
-        tarHeader("package/package.json", body.length),
-        body,
-        pad512(body.length),
-        Buffer.alloc(1024, 0),
-      ]);
-      const tgz = gzipSync(tar);
+      const tgz = tarball({ "package.json": body });
       return { tgz, integrity: "sha512-" + createHash("sha512").update(tgz).digest("base64") };
     }
 
@@ -617,34 +615,8 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball integrity mi
 });
 
 describe.concurrent("tarball integrity metadata forms", () => {
-  function octal(n: number, width: number) {
-    return n.toString(8).padStart(width - 1, "0") + "\0";
-  }
-  function tarHeader(name: string, size: number) {
-    const buf = Buffer.alloc(512, 0);
-    buf.write(name, 0, 100, "utf8");
-    buf.write(octal(0o644, 8), 100);
-    buf.write(octal(0, 8), 108);
-    buf.write(octal(0, 8), 116);
-    buf.write(octal(size, 12), 124);
-    buf.write(octal(0, 12), 136);
-    buf.fill(" ", 148, 156);
-    buf.write("0", 156);
-    buf.write("ustar\0", 257);
-    buf.write("00", 263);
-    let sum = 0;
-    for (let i = 0; i < 512; i++) sum += buf[i];
-    buf.write(octal(sum, 8), 148);
-    return buf;
-  }
   function buildTarball(body: Buffer) {
-    const tar = Buffer.concat([
-      tarHeader("package/package.json", body.length),
-      body,
-      Buffer.alloc((512 - (body.length % 512)) % 512, 0),
-      Buffer.alloc(1024, 0),
-    ]);
-    const tgz = gzipSync(tar);
+    const tgz = tarball({ "package.json": body });
     return {
       tgz,
       sha512: "sha512-" + createHash("sha512").update(tgz).digest("base64"),
@@ -852,5 +824,99 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball download fai
         expect(exitCode).not.toBe(0);
       }
     });
+  });
+});
+
+// A `file:` or URL tarball is cached under a folder named after its path or
+// URL, so installing without a lockfile extracts it again over the folder from
+// the previous install. The fresh copy must win (the tarball may have been
+// repacked) and the copy it displaces must not be left behind in the temp dir,
+// which used to grow by one extracted tarball per install.
+describe.concurrent("tarball re-extraction over an existing cache folder", () => {
+  function tarballOfVersion(version: string, padding: Record<string, Buffer> = {}) {
+    return tarball({ "package.json": Buffer.from(JSON.stringify({ name: "pkg", version }) + "\n"), ...padding });
+  }
+
+  function project(name: string, spec: string) {
+    return tempDir(name, {
+      "app/package.json": JSON.stringify({ name: "app", dependencies: { pkg: spec } }),
+      // The install extracts into tmp/ and renames into cache/; both are inside
+      // the test directory, so anything left in tmp/ after an install is a leak.
+      cache: {},
+      tmp: {},
+    });
+  }
+
+  /** `bun install` from scratch (no node_modules, no lockfile); returns the installed version of `pkg`. */
+  async function installFresh(dir: string) {
+    const app = join(dir, "app");
+    await Promise.all([
+      rm(join(app, "node_modules"), { recursive: true, force: true }),
+      rm(join(app, "bun.lock"), { force: true }),
+    ]);
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: app,
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(dir, "cache"), BUN_TMPDIR: join(dir, "tmp") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    const { version } = await file(join(app, "node_modules", "pkg", "package.json")).json();
+    return version as string;
+  }
+
+  async function cacheState(dir: string) {
+    const [tmp, cache] = await Promise.all([readdirSorted(join(dir, "tmp")), readdirSorted(join(dir, "cache"))]);
+    return { tmp, tarballFolders: cache.filter(name => name.startsWith("@T@")).length };
+  }
+
+  it("file: tarball", async () => {
+    using dir = project("tarball-reextract-file", "file:../pkg.tgz");
+    await writeFile(join(String(dir), "pkg.tgz"), tarballOfVersion("1.0.0"));
+
+    expect(await installFresh(String(dir))).toBe("1.0.0");
+    expect(await installFresh(String(dir))).toBe("1.0.0");
+    expect(await installFresh(String(dir))).toBe("1.0.0");
+    expect(await cacheState(String(dir))).toEqual({ tmp: [], tarballFolders: 1 });
+
+    await writeFile(join(String(dir), "pkg.tgz"), tarballOfVersion("2.0.0"));
+    expect(await installFresh(String(dir))).toBe("2.0.0");
+    expect(await cacheState(String(dir))).toEqual({ tmp: [], tarballFolders: 1 });
+  });
+
+  it("tarball URL", async () => {
+    // Incompressible padding, served without a Content-Length in several
+    // chunks, makes the download take the streaming extractor rather than
+    // being buffered and extracted in one go.
+    const padding = { "blob.bin": randomBytes(256 * 1024) };
+    let tgz = tarballOfVersion("1.0.0", padding);
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        let offset = 0;
+        return new Response(
+          new ReadableStream({
+            pull(controller) {
+              if (offset >= tgz.length) return controller.close();
+              controller.enqueue(tgz.subarray(offset, offset + 64 * 1024));
+              offset += 64 * 1024;
+            },
+          }),
+        );
+      },
+    });
+    using dir = project("tarball-reextract-url", `${server.url}pkg.tgz`);
+
+    expect(await installFresh(String(dir))).toBe("1.0.0");
+    expect(await installFresh(String(dir))).toBe("1.0.0");
+    expect(await installFresh(String(dir))).toBe("1.0.0");
+    expect(await cacheState(String(dir))).toEqual({ tmp: [], tarballFolders: 1 });
+
+    tgz = tarballOfVersion("2.0.0", padding);
+    expect(await installFresh(String(dir))).toBe("2.0.0");
+    expect(await cacheState(String(dir))).toEqual({ tmp: [], tarballFolders: 1 });
   });
 });

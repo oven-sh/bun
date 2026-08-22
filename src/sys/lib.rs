@@ -8920,7 +8920,13 @@ pub fn exists(path: &[u8]) -> bool {
 /// retries; on EXDEV falls back to the slow open+copy path. Only opens the
 /// source inside the EXDEV branch.
 pub fn move_file_z(from_dir: Fd, filename: &ZStr, to_dir: Fd, destination: &ZStr) -> Maybe<()> {
-    match renameat_concurrently_without_fallback(from_dir, filename, to_dir, destination) {
+    match renameat_concurrently_without_fallback(
+        from_dir,
+        filename,
+        to_dir,
+        destination,
+        RenameatConcurrentlyOptions::default(),
+    ) {
         Ok(()) => Ok(()),
         // allow over-writing an empty directory
         Err(e) if e.get_errno() == E::EISDIR => {
@@ -9001,6 +9007,9 @@ pub fn renameat_z(from_dir: impl AsFd, from: &ZStr, to_dir: impl AsFd, to: &ZStr
 #[derive(Default, Clone, Copy)]
 pub struct RenameatConcurrentlyOptions {
     pub move_fallback: bool,
+    /// If `to` already exists (another process published it first and may be
+    /// reading it), keep it and delete `from` instead of replacing it.
+    pub keep_existing_destination: bool,
 }
 /// Alias: `bun_install` call sites spell this `RenameOptions`.
 pub type RenameOptions = RenameatConcurrentlyOptions;
@@ -9019,7 +9028,9 @@ pub(crate) fn move_file_z_slow_maybe(
 
 /// `renameatConcurrently`. Tries an atomic NOREPLACE rename,
 /// then EXCHANGE, then a racy delete-tree + rename. With `move_fallback` set,
-/// an EXDEV result falls through to a slow open/copy.
+/// an EXDEV result falls through to a slow open/copy; see
+/// [`RenameatConcurrentlyOptions`] for `keep_existing_destination`.
+/// After an EXCHANGE, `from` holds the tree that was at `to`.
 pub fn renameat_concurrently(
     from_dir_fd: Fd,
     from: &ZStr,
@@ -9027,7 +9038,7 @@ pub fn renameat_concurrently(
     to: &ZStr,
     opts: RenameatConcurrentlyOptions,
 ) -> Maybe<()> {
-    match renameat_concurrently_without_fallback(from_dir_fd, from, to_dir_fd, to) {
+    match renameat_concurrently_without_fallback(from_dir_fd, from, to_dir_fd, to, opts) {
         Ok(()) => Ok(()),
         Err(e) => {
             if opts.move_fallback && e.get_errno() == E::EXDEV {
@@ -9047,6 +9058,7 @@ pub(crate) fn renameat_concurrently_without_fallback(
     from: &ZStr,
     to_dir_fd: Fd,
     to: &ZStr,
+    opts: RenameatConcurrentlyOptions,
 ) -> Maybe<()> {
     'attempt: {
         {
@@ -9071,6 +9083,27 @@ pub(crate) fn renameat_concurrently_without_fallback(
                 }
                 Ok(()) => break 'attempt,
             };
+
+            // Not keyed on the errno: Windows and filesystems without
+            // RENAME_NOREPLACE report an existing `to` differently.
+            if opts.keep_existing_destination
+                && exists_at_type(
+                    if to_dir_fd.is_valid() {
+                        to_dir_fd
+                    } else {
+                        Fd::cwd()
+                    },
+                    to,
+                )
+                .is_ok()
+            {
+                if from_dir_fd.is_valid() {
+                    let _ = Dir::borrow(&from_dir_fd).delete_tree(from.as_bytes());
+                } else {
+                    let _ = delete_tree_absolute(from.as_bytes());
+                }
+                break 'attempt;
+            }
 
             // Windows doesn't have any equivalent of renameat with swap
             #[cfg(not(windows))]
@@ -9452,6 +9485,7 @@ mod owned_handle_tests {
             b"sub",
             RenameatConcurrentlyOptions {
                 move_fallback: true,
+                ..Default::default()
             },
         )
         .expect("rename");
@@ -9463,6 +9497,48 @@ mod owned_handle_tests {
         );
 
         // Cleanup.
+        let _ = close(to_dir);
+        let _ = close(root);
+        let _ = Dir::open(&tmp).map(|d| d.delete_tree(b"."));
+    }
+
+    #[test]
+    fn renameat_concurrently_keep_existing_destination() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let mut tmp = std::env::temp_dir().as_os_str().as_encoded_bytes().to_vec();
+        tmp.extend_from_slice(b"/bun_sys_renameat_keep_existing_test");
+        let _ = Dir::open(&tmp).map(|d| d.delete_tree(b"."));
+        let _ = mkdir_recursive_at(Fd::cwd(), &tmp);
+        let root = open_dir_at(Fd::cwd(), &tmp).expect("open root");
+        let _ = mkdir_recursive_at(root, b"from/sub");
+        let _ = mkdir_recursive_at(root, b"to/sub");
+        File::write_file(root, ZStr::from_static(b"from/sub/loser\0"), b"").expect("loser");
+        File::write_file(root, ZStr::from_static(b"to/sub/winner\0"), b"").expect("winner");
+        let to_dir = open_dir_at(root, b"to").expect("open to");
+
+        let opts = RenameatConcurrentlyOptions {
+            keep_existing_destination: true,
+            ..Default::default()
+        };
+
+        // Destination taken: it is kept as-is and the source goes away.
+        renameat_concurrently_a(root, b"from/sub", to_dir, b"sub", opts).expect("rename");
+        assert!(matches!(
+            exists_at_type(root, ZStr::from_static(b"to/sub/winner\0")),
+            Ok(ExistsAtType::File)
+        ));
+        assert!(exists_at_type(root, ZStr::from_static(b"to/sub/loser\0")).is_err());
+        assert!(exists_at_type(root, ZStr::from_static(b"from/sub\0")).is_err());
+
+        // Destination free: a plain rename.
+        let _ = mkdir_recursive_at(root, b"from/other");
+        renameat_concurrently_a(root, b"from/other", to_dir, b"other", opts).expect("rename");
+        assert!(matches!(
+            exists_at_type(root, ZStr::from_static(b"to/other\0")),
+            Ok(ExistsAtType::Directory)
+        ));
+        assert!(exists_at_type(root, ZStr::from_static(b"from/other\0")).is_err());
+
         let _ = close(to_dir);
         let _ = close(root);
         let _ = Dir::open(&tmp).map(|d| d.delete_tree(b"."));

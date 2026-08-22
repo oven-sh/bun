@@ -137,33 +137,64 @@ function makeEntries(): Entry[] {
 // the BUN_INSTALL_STREAMING_MIN_SIZE gate.
 // -------------------------------------------------------------------
 
-async function makeRegistry(tgz: Buffer, shasum: string, integrity: string, chunkBytes: number) {
+type Faults = {
+  /** Pick the size of each body write (default: fixed `chunkBytes`). */
+  chunker?: (offset: number) => number;
+  /** Milliseconds to wait between writes (default: none, `setImmediate`). */
+  delayMs?: (offset: number) => number;
+  /** Destroy the tarball connection after this many body bytes... */
+  dropTarballAt?: number;
+  /** ...for the first N tarball requests (default: every request). */
+  dropTarballTimes?: number;
+  /** Destroy the first N manifest connections half-way through the body. */
+  dropManifestTimes?: number;
+};
+
+async function makeRegistry(tgz: Buffer, shasum: string, integrity: string, chunkBytes: number, faults: Faults = {}) {
   let tarballHits = 0;
+  let manifestHits = 0;
+  let tarballDropsLeft = faults.dropTarballTimes ?? Infinity;
+  let manifestDropsLeft = faults.dropManifestTimes ?? 0;
   const server: Server = createServer((req, res) => {
     const url = new URL(req.url!, "http://x");
-    if (url.pathname.endsWith("/stream-pkg")) {
+    // `stream-pkg`, plus `stream-pkg-<n>` aliases of the same tarball so a
+    // single install can run several streams at once.
+    const manifest = url.pathname.match(/^\/(stream-pkg(?:-\d+)?)$/);
+    if (manifest) {
+      manifestHits++;
+      const name = manifest[1];
       const body = JSON.stringify({
-        name: "stream-pkg",
+        name,
         "dist-tags": { latest: "1.0.0" },
         versions: {
           "1.0.0": {
-            name: "stream-pkg",
+            name,
             version: "1.0.0",
             dist: {
               shasum,
               integrity,
-              tarball: `http://127.0.0.1:${port}/stream-pkg/-/stream-pkg-1.0.0.tgz`,
+              tarball: `http://127.0.0.1:${port}/${name}/-/${name}-1.0.0.tgz`,
             },
           },
         },
       });
       res.setHeader("content-type", "application/json");
+      if (manifestDropsLeft > 0) {
+        manifestDropsLeft--;
+        // Promise a body twice as long as what is sent, then hang up.
+        const padded = body + " ".repeat(body.length);
+        res.setHeader("content-length", String(Buffer.byteLength(padded)));
+        res.write(padded.slice(0, body.length + 1), () => req.socket.destroy());
+        return;
+      }
       res.setHeader("content-length", String(Buffer.byteLength(body)));
       res.end(body);
       return;
     }
-    if (url.pathname.endsWith("/stream-pkg-1.0.0.tgz")) {
+    if (/\/stream-pkg(-\d+)?-1\.0\.0\.tgz$/.test(url.pathname)) {
       tarballHits++;
+      const dropAt = faults.dropTarballAt !== undefined && tarballDropsLeft > 0 ? faults.dropTarballAt : -1;
+      if (dropAt >= 0) tarballDropsLeft--;
       res.setHeader("content-type", "application/octet-stream");
       res.setHeader("content-length", String(tgz.length));
       // Prevent Nagle coalescing so each write() is its own packet.
@@ -174,9 +205,16 @@ async function makeRegistry(tgz: Buffer, shasum: string, integrity: string, chun
           res.end();
           return;
         }
-        res.write(tgz.subarray(i, Math.min(i + chunkBytes, tgz.length)));
-        i += chunkBytes;
-        setImmediate(step);
+        if (dropAt >= 0 && i >= dropAt) {
+          req.socket.destroy();
+          return;
+        }
+        const n = faults.chunker ? Math.max(1, faults.chunker(i)) : chunkBytes;
+        res.write(tgz.subarray(i, Math.min(i + n, tgz.length)));
+        i += n;
+        const delay = faults.delayMs ? faults.delayMs(i) : 0;
+        if (delay > 0) setTimeout(step, delay);
+        else setImmediate(step);
       };
       step();
       return;
@@ -190,6 +228,9 @@ async function makeRegistry(tgz: Buffer, shasum: string, integrity: string, chun
     url: `http://127.0.0.1:${port}/`,
     get tarballHits() {
       return tarballHits;
+    },
+    get manifestHits() {
+      return manifestHits;
     },
     [Symbol.asyncDispose]: () => new Promise<void>(resolve => server.close(() => resolve())),
   };
@@ -434,6 +475,143 @@ describe("streaming tarball extraction", () => {
     expect(stderr).toContain("Integrity check failed");
     expect(exitCode).not.toBe(0);
   });
+
+  // A connection that dies part-way through the body is a failed download,
+  // whichever extractor is consuming it: report the transport error, retry
+  // like any other failed download, and never hand the truncated body to
+  // libarchive (streaming) or the integrity check (buffered).
+  describe.each([
+    ["streaming", {}],
+    ["buffered", { BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL: "1" }],
+  ] as const)("tarball connection dropped mid-body (%s)", (label, env) => {
+    test.concurrent("is retried and then succeeds", async () => {
+      await using reg = await makeRegistry(tgz, shasum, integrity, 64 * 1024, {
+        dropTarballAt: tgz.length >> 1,
+        dropTarballTimes: 2,
+      });
+      using dir = tempDir("streaming-extract-drop-retry", {
+        "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "stream-pkg": "1.0.0" } }),
+        "bunfig.toml": Bun.TOML.stringify({ install: { registry: reg.url } }),
+        "tmp/.keep": "",
+      });
+      const tmp = join(String(dir), "tmp");
+
+      const { stderr, exitCode } = await runInstall(String(dir), { ...env, BUN_TMPDIR: tmp, TMPDIR: tmp });
+      expect(stderr).not.toContain("error:");
+      expect(stderr).not.toContain("extracting tarball");
+      expect(stderr.match(/ConnectionClosed downloading tarball stream-pkg@1\.0\.0\. Retrying/g)).toHaveLength(2);
+      if (label === "streaming") {
+        expect(stderr).toContain("Streamed ");
+      } else {
+        expect(stderr).not.toContain("Streamed ");
+      }
+      expect(reg.tarballHits).toBe(3);
+      const pkgRoot = join(String(dir), "node_modules", "stream-pkg");
+      for (const { path, body } of entries) {
+        const got = readFileSync(join(pkgRoot, path));
+        expect([path, got.equals(body)]).toEqual([path, true]);
+      }
+      // Extraction temp dirs from the failed attempts are removed.
+      expect(readdirSync(tmp).filter(f => f.endsWith(".stream-pkg"))).toEqual([]);
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("is reported as a download error once retries are exhausted", async () => {
+      await using reg = await makeRegistry(tgz, shasum, integrity, 64 * 1024, { dropTarballAt: tgz.length >> 1 });
+      using dir = tempDir("streaming-extract-drop-fail", {
+        "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "stream-pkg": "1.0.0" } }),
+        "bunfig.toml": Bun.TOML.stringify({ install: { registry: reg.url } }),
+      });
+
+      const { stderr, exitCode } = await runInstall(String(dir), { ...env, BUN_CONFIG_HTTP_RETRY_COUNT: "2" });
+      expect(stderr).not.toContain("extracting tarball");
+      expect(stderr).not.toContain("Integrity check failed");
+      expect(stderr).toContain("error: ConnectionClosed downloading tarball stream-pkg@1.0.0");
+      expect(reg.tarballHits).toBe(3);
+      expect(exitCode).toBe(1);
+    });
+  });
+
+  test.concurrent("manifest connection dropped mid-body is retried", async () => {
+    await using reg = await makeRegistry(tgz, shasum, integrity, 64 * 1024, { dropManifestTimes: 1 });
+    using dir = tempDir("streaming-extract-manifest-drop", {
+      "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "stream-pkg": "1.0.0" } }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: reg.url } }),
+    });
+
+    const { stderr, exitCode } = await runInstall(String(dir));
+    expect(stderr).not.toContain("error:");
+    expect(stderr).toContain("ConnectionClosed downloading package manifest stream-pkg. Retry 1/");
+    expect(reg.manifestHits).toBe(2);
+    expect(reg.tarballHits).toBe(1);
+    expect(exitCode).toBe(0);
+  });
+
+  // A body that arrives in full but is not a valid archive is an extraction
+  // failure: not retried, and the message carries libarchive's reason and
+  // the offset it gave up at.
+  test.concurrent("streaming reports libarchive's error for a corrupt tarball", async () => {
+    const corrupt = Buffer.from(tgz);
+    corrupt.fill(0x55, corrupt.length >> 1, (corrupt.length >> 1) + 4096);
+    const corruptIntegrity = "sha512-" + createHash("sha512").update(corrupt).digest("base64");
+    const corruptShasum = createHash("sha1").update(corrupt).digest("hex");
+    await using reg = await makeRegistry(corrupt, corruptShasum, corruptIntegrity, 64 * 1024);
+    using dir = tempDir("streaming-extract-corrupt", {
+      "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "stream-pkg": "1.0.0" } }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: reg.url } }),
+    });
+
+    const { stderr, exitCode } = await runInstall(String(dir));
+    expect(stderr).toMatch(
+      /error: Fail extracting tarball for "stream-pkg": [^\n]*(gzip decompression failed|[Tt]runcated|[Dd]amaged)[^\n]* \(at byte \d+ of \d+\)/,
+    );
+    expect(reg.tarballHits).toBe(1);
+    expect(exitCode).toBe(1);
+  });
+
+  // Chunk boundaries land at arbitrary points in the gzip/tar stream and the
+  // extractor yields its worker at each one. Sweep delivery patterns (tiny
+  // writes, MSS-sized, TLS-record-sized, bursts larger than the socket
+  // buffer, random) with several tarballs in flight at once so drains
+  // interleave across pool threads, and require byte-identical output.
+  {
+    let seed = 0x9e3779b9;
+    const rand = () => {
+      seed = (Math.imul(seed, 1103515245) + 12345) >>> 0;
+      return seed / 0x100000000;
+    };
+    const patterns: [string, Faults][] = [
+      // Tiny writes for the first 64 KB (gzip header, first tar headers),
+      // then sub-MSS writes so the debug build finishes in seconds.
+      ["tiny", { chunker: o => (o < 65536 ? 1 + Math.floor(rand() * 48) : 500 + Math.floor(rand() * 900)) }],
+      ["mss", { chunker: () => 1200 + Math.floor(rand() * 260), delayMs: () => (rand() < 0.02 ? 1 : 0) }],
+      ["16k", { chunker: () => 16384, delayMs: () => (rand() < 0.05 ? 2 : 0) }],
+      ["burst", { chunker: () => 512 * 1024 + Math.floor(rand() * 512 * 1024) }],
+      ["random", { chunker: () => 1 + Math.floor(rand() * 70000), delayMs: () => (rand() < 0.1 ? 1 : 0) }],
+      ["whole", { chunker: () => tgz.length }],
+    ];
+    const streams = 4;
+    test.concurrent.each(patterns)("streams concurrent tarballs correctly (%s chunks)", async (label, faults) => {
+      await using reg = await makeRegistry(tgz, shasum, integrity, chunkBytes, faults);
+      const dependencies: Record<string, string> = {};
+      for (let i = 0; i < streams; i++) dependencies[`stream-pkg-${i}`] = "1.0.0";
+      using dir = tempDir("streaming-extract-stress", {
+        "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies }),
+        "bunfig.toml": Bun.TOML.stringify({ install: { registry: reg.url } }),
+      });
+      const { stderr, exitCode } = await runInstall(String(dir), { BUN_INSTALL_STREAMING_DRAIN_THRESHOLD: "1" });
+      expect([label, stderr.match(/^error:.*$/m)?.[0] ?? null]).toEqual([label, null]);
+      expect([label, stderr.match(/Streamed /g)?.length]).toEqual([label, streams]);
+      for (let i = 0; i < streams; i++) {
+        const pkgRoot = join(String(dir), "node_modules", `stream-pkg-${i}`);
+        for (const { path, body } of entries) {
+          const got = readFileSync(join(pkgRoot, path));
+          expect([label, i, path, got.equals(body)]).toEqual([label, i, path, true]);
+        }
+      }
+      expect(exitCode).toBe(0);
+    });
+  }
 
   // Below the threshold no drain is scheduled, so nothing lands in the
   // extraction temp dir; crossing it schedules one drain that writes

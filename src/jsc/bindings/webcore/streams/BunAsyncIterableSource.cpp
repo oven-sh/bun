@@ -12,6 +12,7 @@
 #include "JSDOMWrapperCache.h"
 #include "JSReadableStream.h"
 #include "JSStreamsRuntime.h"
+#include "ObjectBindings.h"
 #include "WebCoreJSClientData.h"
 #include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInternals.h"
@@ -226,9 +227,7 @@ static NextStep asyncIterHandleNextResult(JSGlobalObject* globalObject, JSAsyncI
         throwTypeError(globalObject, scope, "Async iterator result is not an object"_s);
         return NextStep::Finished;
     }
-    JSValue doneValue = result.get(globalObject, vm.propertyNames->done);
-    RETURN_IF_EXCEPTION(scope, NextStep::Finished);
-    JSValue value = result.get(globalObject, vm.propertyNames->value);
+    auto [doneValue, value] = Bun::getIteratorResult(globalObject, asObject(result));
     RETURN_IF_EXCEPTION(scope, NextStep::Finished);
 
     if (doneValue.toBoolean(globalObject))

@@ -237,15 +237,18 @@ static ExceptionOr<std::optional<ProxyConfig>> setupProxy(const String& proxyUrl
         config.authorization = makeString("Basic "_s, encoded);
     }
 
-    // Store proxy headers
+    // Same validation and the same failure as the `headers` option: a name that
+    // is not a token or a value with CR/LF/NUL throws, instead of silently
+    // sending the CONNECT with every proxy header (Proxy-Authorization included)
+    // left out.
     if (proxyHeaders) {
         auto headersOrException = FetchHeaders::create(WTF::move(proxyHeaders));
-        if (!headersOrException.hasException()) {
-            auto hdrs = headersOrException.releaseReturnValue();
-            auto iterator = hdrs.get().createIterator(false);
-            while (auto value = iterator.next()) {
-                config.headers.append({ value->key, value->value });
-            }
+        if (headersOrException.hasException())
+            return headersOrException.releaseException();
+        auto hdrs = headersOrException.releaseReturnValue();
+        auto iterator = hdrs.get().createIterator(false);
+        while (auto value = iterator.next()) {
+            config.headers.append({ value->key, value->value });
         }
     }
 

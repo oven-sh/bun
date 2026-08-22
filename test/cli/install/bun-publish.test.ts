@@ -551,6 +551,68 @@ test("can publish from a tarball", async () => {
   await runBunInstall(env, packageDir, { savesLockfile: false });
   expect(await file(join(packageDir, "node_modules", "publish-pkg-2", "package.json")).json()).toEqual(json);
 });
+describe("relative tarball path", () => {
+  // `bun publish` chdirs to the package root (or the workspace root) before it reads the tarball.
+  // The path on the command line still has to be resolved against the directory the command ran from.
+  // --dry-run never talks to the registry, so a bogus one with auth in the url is enough.
+  const dryRunEnv = { ...env, npm_config_registry: "http://someuser:hunter2@127.0.0.1:1/" };
+
+  test.concurrent("is resolved against the cwd, not the package root above it", async () => {
+    using dir = tempDir("publish-tarball-cwd", {
+      "package.json": JSON.stringify({ name: "publish-tarball-cwd-root", version: "0.0.0" }),
+      "stale-src/package.json": JSON.stringify({ name: "publish-tarball-cwd-stale", version: "0.0.1" }),
+      "dist-src/package.json": JSON.stringify({ name: "publish-tarball-cwd-dist", version: "9.9.9" }),
+      "dist": {},
+    });
+    // a same-named tarball in the package root, and the one we actually mean in ./dist
+    await pack(join(String(dir), "stale-src"), env, "--filename", join(String(dir), "rel.tgz"));
+    await pack(join(String(dir), "dist-src"), env, "--filename", join(String(dir), "dist", "rel.tgz"));
+
+    const { out, err, exitCode } = await publish(dryRunEnv, join(String(dir), "dist"), "./rel.tgz", "--dry-run");
+    expect(err).not.toContain("error:");
+    expect(out).toContain(" + publish-tarball-cwd-dist@9.9.9");
+    expect(out).not.toContain("publish-tarball-cwd-stale");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("is found when the cwd is a subdirectory of the package root", async () => {
+    using dir = tempDir("publish-tarball-subdir", {
+      "package.json": JSON.stringify({ name: "publish-tarball-subdir-root", version: "0.0.0" }),
+      "dist-src/package.json": JSON.stringify({ name: "publish-tarball-subdir-dist", version: "1.0.0" }),
+      "dist": {},
+    });
+    await pack(join(String(dir), "dist-src"), env, "--filename", join(String(dir), "dist", "pkg.tgz"));
+
+    const { out, err, exitCode } = await publish(dryRunEnv, join(String(dir), "dist"), "pkg.tgz", "--dry-run");
+    expect(err).not.toContain("ENOENT");
+    expect(out).toContain(" + publish-tarball-subdir-dist@1.0.0");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("is found when the cwd is a workspace package", async () => {
+    using dir = tempDir("publish-tarball-workspace", {
+      "package.json": JSON.stringify({
+        name: "publish-tarball-workspace-root",
+        version: "0.0.0",
+        workspaces: ["packages/*"],
+      }),
+      "packages/member/package.json": JSON.stringify({ name: "publish-tarball-workspace-member", version: "1.2.3" }),
+    });
+    const memberDir = join(String(dir), "packages", "member");
+    await pack(memberDir, env);
+    expect(await exists(join(memberDir, "publish-tarball-workspace-member-1.2.3.tgz"))).toBeTrue();
+
+    const { out, err, exitCode } = await publish(
+      dryRunEnv,
+      memberDir,
+      "./publish-tarball-workspace-member-1.2.3.tgz",
+      "--dry-run",
+    );
+    expect(err).not.toContain("ENOENT");
+    expect(out).toContain(" + publish-tarball-workspace-member@1.2.3");
+    expect(exitCode).toBe(0);
+  });
+});
 test("can publish scoped packages", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();
   const bunfig = await registry.authBunfig("scoped-pkg");

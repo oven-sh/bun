@@ -155,6 +155,11 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
         return;
 
     VM& vm = scriptExecutionContext.vm();
+    // An earlier listener of this dispatch met a termination (a node:vm timeout keeps the VM's gate
+    // open): it is unwinding, and nothing enters script on top of it.
+    if (vm.hasPendingTerminationException()) [[unlikely]]
+        return;
+
     JSLockHolder lock(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
@@ -216,22 +221,21 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
             return jsNull();
         return toJS(lexicalGlobalObject, globalObject, *currentTarget);
     }();
-    NakedPtr<JSC::Exception> uncaughtException;
-    JSValue retval = JSC::profiledCall(lexicalGlobalObject, JSC::ProfilingReason::Other, handleEventFunction, callData, thisValue, args, uncaughtException);
+    JSValue retval = JSC::profiledCall(lexicalGlobalObject, JSC::ProfilingReason::Other, handleEventFunction, callData, thisValue, args);
 
     // InspectorInstrumentation::didCallFunction(&scriptExecutionContext);
 
-    auto handleExceptionIfNeeded = [&](JSC::Exception* exception) -> bool {
-        if (exception) {
-            event.target()->uncaughtExceptionInEventHandler();
-            reportException(lexicalGlobalObject, exception);
-            return true;
-        }
-        return false;
-    };
-
-    if (handleExceptionIfNeeded(uncaughtException))
+    if (scope.exception()) [[unlikely]] {
+        // A TerminationException is not this listener's uncaught error: tryClearException() leaves it
+        // pending and reportException() ignores it, so the frames above this dispatch unwind on it.
+        // The NakedPtr overload of profiledCall() would have cleared it unconditionally, and a
+        // microtask-only loop that dispatches events would keep running after terminate().
+        auto* exception = scope.exception();
+        (void)scope.tryClearException();
+        event.target()->uncaughtExceptionInEventHandler();
+        reportException(lexicalGlobalObject, exception);
         return;
+    }
 
     // Node handles promises in the return value and throws an uncaught exception on nextTick if it rejects.
     // See event_target.js function addCatch in node

@@ -247,7 +247,7 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
 
         if (!jsFunction) [[unlikely]]
             continue;
-        if (WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]]
+        if (WebCore::clientData(vm)->isStoppingOrStopped(vm) || vm.hasPendingTerminationException()) [[unlikely]]
             break;
 
         JSC::JSGlobalObject* lexicalGlobalObject = jsFunction->globalObject();
@@ -256,9 +256,18 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
             continue;
 
         fired = true;
-        WTF::NakedPtr<JSC::Exception> exceptionPtr;
-        call(lexicalGlobalObject, jsFunction, callData, thisValue, arguments, exceptionPtr);
-        auto* exception = exceptionPtr.get();
+        JSC::Exception* exception = nullptr;
+        {
+            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+            call(lexicalGlobalObject, jsFunction, callData, thisValue, arguments);
+            exception = scope.exception();
+            // A TerminationException stays pending: emit() unwinds on it, and no further listener
+            // is entered. The NakedPtr overload of call() would have cleared it unconditionally,
+            // and Bun__reportUnhandledError never reports a termination, so it was lost and the
+            // script that called emit() kept running after terminate().
+            if (exception && !scope.clearExceptionExceptTermination()) [[unlikely]]
+                return fired;
+        }
 
         if (exception) [[unlikely]] {
             auto errorIdentifier = vm.propertyNames->error;

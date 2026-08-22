@@ -1108,6 +1108,90 @@ test(
   timeout,
 );
 
+// A worker in a microtask-only loop could not be terminated when the terminate() trap was serviced inside
+// native code that caught the TerminationException and dropped it, so the checkpoint never stopped, the
+// worker never returned to its event loop, and `await worker.terminate()` never settled:
+// - the BunPerformMicrotaskJob handler in JSC (the job for `queueMicrotask()` and for the C++ web
+//   streams' start/pull reactions) cleared it with a plain clearException() (oven-sh/WebKit#491);
+// - JSEventListener::handleEvent and EventEmitter::innerInvokeEventListeners took it through the
+//   NakedPtr<Exception> overload of JSC::call(), which clears unconditionally, and then reported it to
+//   a reporter that ignores terminations.
+//
+// Every shape except the stream ones is deterministic: the listener or callback posts 'go' and spins,
+// so terminate() lands inside it while the `await 0` continuation is already queued behind it. Two
+// things would hide the bug, so the shapes avoid them: module linking during startup re-arms a dropped
+// termination (a DeferTermination scope fires the trap again), so the loop starts from a timer; and a
+// drain started after a timer callback is refused at its entry once the VM is stopping, so the listener
+// shapes spin from their second call, inside the checkpoint the `await 0` continuation runs in. The
+// stream shapes are the reported ones; there the trap only sometimes lands inside the start reaction.
+test(
+  "terminate() while a microtask-only loop keeps entering native-dispatched callbacks",
+  async () => {
+    const rounds = 2;
+    const deadline = slow ? 30_000 : 10_000;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const spin = "parentPort.postMessage('go'); for (;;) {}";
+        const spinOnSecondCall = "let n = 0; const L = () => { if (n++) { " + spin + " } };";
+        const shapes = {
+          queueMicrotask: { loop: "queueMicrotask(() => { " + spin + " });" },
+          read: { loop: "new Response('abc').body.getReader().read();", settle: true },
+          tee: { loop: "new Response('abc').body.tee();", settle: true },
+          eventTarget: {
+            setup: spinOnSecondCall + "const et = new EventTarget(); et.addEventListener('x', L);",
+            loop: "et.dispatchEvent(new Event('x'));",
+          },
+          abortSignal: {
+            setup: spinOnSecondCall,
+            loop: "{ const ac = new AbortController(); ac.signal.addEventListener('abort', L); ac.abort(); }",
+          },
+          processEmit: { setup: spinOnSecondCall + "process.on('evt', L);", loop: "process.emit('evt');" },
+        };
+        (async () => {
+          for (const [name, { setup, loop, settle }] of Object.entries(shapes)) {
+            for (let i = 0; i < ${rounds}; i++) {
+              const src =
+                "const { parentPort } = require('worker_threads');" +
+                (setup ?? "") +
+                "setTimeout(() => {" +
+                (settle ? "parentPort.postMessage('go');" : "") +
+                "(async () => { for (;;) { " + loop + " await 0; } })();" +
+                "}, 0);";
+              const w = new Worker(src, { eval: true });
+              await new Promise(r => w.once("message", r));
+              if (settle) await Bun.sleep(10);
+              const code = await Promise.race([
+                w.terminate(),
+                Bun.sleep(${deadline}).then(() => "HANG"),
+              ]);
+              if (code === "HANG") {
+                console.log("HANG " + name + " round " + i);
+                process.exit(2);
+              }
+            }
+          }
+          console.log("PASS");
+          process.exit(0);
+        })();
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("PASS\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
 // A worker terminated while async-iterable bodies are being driven (a `Bun.serve` handler returning
 // `new Response(asyncGenerator())`, a `fetch()` with an async-iterable request body): the pump met the
 // termination as the abrupt completion of `iterator.next()` and went on to notify the iterator —

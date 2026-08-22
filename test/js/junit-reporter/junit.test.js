@@ -467,9 +467,97 @@ describe("junit reporter", () => {
     const tc = inner.testcase[0];
     // The classname should decode back to the original describe names joined by " > ".
     expect(outer.$.name).toBe('suite <a> & "b"');
-    expect(tc.$.classname).toBe('inner > stuff > suite <a> & "b"');
+    expect(tc.$.classname).toBe('suite <a> & "b" > inner > stuff');
     expect(exitCode).toBe(0);
   });
+
+  // With --parallel each worker writes its files' part of the report and the coordinator
+  // stitches the parts together, so the classname is checked in both modes.
+  it.each([
+    ["serial", []],
+    ["--parallel=2", ["--parallel=2"]],
+  ])(
+    "lists describe scopes in classname outermost-first, like the console line and the <testsuite> nesting (%s)",
+    async (_mode, extraArgs) => {
+      await using tmpDir = tempDir("junit-classname-order", {
+        "package.json": "{}",
+        "nested.test.js": `
+          import { describe, test } from "bun:test";
+          test("top level", () => {});
+          describe("outer", () => {
+            test("in outer", () => {});
+            describe("middle", () => {
+              describe("inner", () => {
+                test("nested", () => {});
+              });
+            });
+            describe("", () => {
+              describe("below anonymous", () => {
+                test("skips the unnamed describe", () => {});
+              });
+            });
+          });
+        `,
+        "other.test.js": `
+          import { describe, test } from "bun:test";
+          describe("first", () => {
+            describe("second", () => {
+              test("deep", () => {});
+            });
+          });
+        `,
+      });
+
+      const junitPath = join(tmpDir, "junit.xml");
+      await using proc = spawn([bunExe(), "test", ...extraArgs, "--reporter=junit", "--reporter-outfile", junitPath], {
+        cwd: tmpDir,
+        env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      const xmlContent = await file(junitPath).text();
+      const result = await new Promise((resolve, reject) => {
+        xml2js.parseString(xmlContent, { strict: true }, (err, r) => (err ? reject(err) : resolve(r)));
+      });
+
+      // Every <testcase> in a file's suite, paired with the names of the describe
+      // <testsuite> elements it is nested in.
+      const collect = (suite, path, out) => {
+        for (const tc of suite.testcase ?? []) {
+          out.push({ name: tc.$.name, classname: tc.$.classname, suites: path });
+        }
+        for (const child of suite.testsuite ?? []) {
+          collect(child, [...path, child.$.name], out);
+        }
+        return out;
+      };
+      const byFile = Object.fromEntries(
+        result.testsuites.testsuite.map(suite => [suite.$.name, collect(suite, [], [])]),
+      );
+
+      expect(byFile).toEqual({
+        "nested.test.js": [
+          { name: "top level", classname: "", suites: [] },
+          { name: "in outer", classname: "outer", suites: ["outer"] },
+          { name: "nested", classname: "outer > middle > inner", suites: ["outer", "middle", "inner"] },
+          {
+            name: "skips the unnamed describe",
+            classname: "outer > below anonymous",
+            suites: ["outer", "below anonymous"],
+          },
+        ],
+        "other.test.js": [{ name: "deep", classname: "first > second", suites: ["first", "second"] }],
+      });
+
+      // The console reporter prints the same path in front of each test name.
+      expect(stderr).toContain("(pass) outer > middle > inner > nested");
+      expect(stderr).toContain("(pass) outer > below anonymous > skips the unnamed describe");
+      expect(stderr).toContain("(pass) first > second > deep");
+      expect(exitCode).toBe(0);
+    },
+  );
 
   it("keeps the test body's error in <failure> when afterEach also throws", async () => {
     await using tmpDir = tempDir("junit-aftereach", {

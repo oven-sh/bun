@@ -1339,23 +1339,17 @@ impl CommandLineReporter {
                 describe_suite_index += 1;
             }
 
+            // Outermost-first (`scopes` is innermost-first), matching the console
+            // reporter's "outer > inner > name" line and the <testsuite> nesting above.
             let mut concatenated_describe_scopes: Vec<u8> = Vec::new();
-
-            {
-                let initial_length = concatenated_describe_scopes.len();
-                for &scope in scopes {
-                    // SAFETY: scope alive for test run
-                    if let Some(name) = unsafe { (*scope).base.name.as_deref() } {
-                        if !name.is_empty() {
-                            if initial_length != concatenated_describe_scopes.len() {
-                                concatenated_describe_scopes.extend_from_slice(b" > ");
-                            }
-
-                            // write_test_case escapes class_name once; do not pre-escape here.
-                            concatenated_describe_scopes.extend_from_slice(name);
-                        }
-                    }
+            for (i, &scope) in needed_suites.iter().enumerate() {
+                if i > 0 {
+                    concatenated_describe_scopes.extend_from_slice(b" > ");
                 }
+                // SAFETY: scope alive for test run
+                let name = unsafe { (*scope).base.name.as_deref() }.unwrap_or(b"");
+                // write_test_case escapes class_name once; do not pre-escape here.
+                concatenated_describe_scopes.extend_from_slice(name);
             }
 
             junit

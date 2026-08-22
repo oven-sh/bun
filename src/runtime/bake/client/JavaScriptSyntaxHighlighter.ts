@@ -403,8 +403,6 @@ export class DraculaSyntaxHighlighter {
     return this.createToken(TokenType.String, value, TokenClass.String);
   }
 
-  // A template literal is several tokens: one string token per quasi, and for
-  // each interpolation the `${`, the tokens of the expression, and the `}`.
   private *lexTemplateString(): Generator<Token> {
     let str = this.consume(); // Initial backtick
 
@@ -428,9 +426,7 @@ export class DraculaSyntaxHighlighter {
         }
         yield this.createToken(TokenType.TemplateInterpolation, this.consume(2), TokenClass.Operator);
 
-        // `{` and `}` always lex as single-character punctuators, so peeking
-        // at the next character before lexing the next token is enough to
-        // find the `}` that closes this interpolation.
+        // `{` and `}` always lex as single-character punctuators.
         let braceDepth = 1;
         while (this.pos < this.text.length) {
           const c = this.peek();

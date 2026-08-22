@@ -34,8 +34,7 @@ use crate::linker_context::static_route_visitor::StaticRouteVisitor;
 use crate::linker_context::write_output_files_to_disk::write_output_files_to_disk;
 use crate::linker_context_mod::{GenerateChunkCtx, PendingPartRange};
 
-/// Bytecode output file extension (also defined in `writeOutputFilesToDisk.rs`).
-const BYTECODE_EXTENSION: &str = ".jsc";
+use crate::bytecode_sidecar::EXTENSION as BYTECODE_EXTENSION;
 
 // `Chunk.final_rel_path` / `metafile_chunk_json` are owned
 // `Box<[u8]>`; assignments
@@ -1064,6 +1063,12 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             &code_result.buffer,
                             &mut source_provider_url,
                         ) {
+                            // Executables embed the raw payload (aligned by the module graph).
+                            let bytecode = if c.options.compile_mode.is_executable() {
+                                bytecode
+                            } else {
+                                crate::bytecode_sidecar::frame(bytecode)
+                            };
                             let source_provider_url_str = source_provider_url.to_utf8();
                             debug!(
                                 "Bytecode cache generated {}: {}",

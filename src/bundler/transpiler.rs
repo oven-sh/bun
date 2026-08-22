@@ -1726,9 +1726,9 @@ impl<'a> Transpiler<'a> {
                             | js_ast::AlreadyBundled::Bytecode => 'brk: {
                                 // When the parser
                                 // saw `// @bun @bytecode`, attempt to load the
-                                // sidecar `<path>.jsc` cached bytecode. Only
-                                // fall back to re-parsing source on read
-                                // failure / empty file.
+                                // sidecar `<path>.jsc` cached bytecode. Fall
+                                // back to re-parsing source on read failure or
+                                // when the sidecar does not verify.
                                 let is_cjs =
                                     matches!(already_bundled, js_ast::AlreadyBundled::BytecodeCjs);
                                 let default_value = if is_cjs {
@@ -1739,9 +1739,8 @@ impl<'a> Transpiler<'a> {
                                 if this_parse.virtual_source.is_none()
                                     && this_parse.allow_bytecode_cache
                                 {
-                                    // No shared const for the bytecode extension
-                                    // in `bun_core` yet, so inline the literal.
-                                    const BYTECODE_EXT: &[u8] = b".jsc";
+                                    const BYTECODE_EXT: &[u8] =
+                                        crate::bytecode_sidecar::EXTENSION.as_bytes();
                                     let mut path_buf2 = bun_paths::PathBuffer::uninit();
                                     let n = path.text.len();
                                     let total = n + BYTECODE_EXT.len();
@@ -1763,7 +1762,13 @@ impl<'a> Transpiler<'a> {
                                     // `read_from` directly.
                                     let dir = dirname_fd.unwrap_valid().unwrap_or_else(FD::cwd);
                                     match bun_sys::File::read_from(dir, zpath) {
-                                        Ok(contents) if !contents.is_empty() => {
+                                        Ok(mut contents) => {
+                                            let Some(payload_len) =
+                                                crate::bytecode_sidecar::payload_len(&contents)
+                                            else {
+                                                break 'brk default_value;
+                                            };
+                                            contents.truncate(payload_len);
                                             break 'brk if is_cjs {
                                                 AlreadyBundled::BytecodeCjs(
                                                     contents.into_boxed_slice(),
@@ -1774,7 +1779,7 @@ impl<'a> Transpiler<'a> {
                                                 )
                                             };
                                         }
-                                        _ => {}
+                                        Err(_) => {}
                                     }
                                 }
                                 default_value

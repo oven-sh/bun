@@ -25,8 +25,7 @@ use bun_sys::{
     write_file_with_path_buffer,
 };
 
-/// Bytecode output file extension (also defined in `generateChunksInParallel.rs`).
-const BYTECODE_EXTENSION: &str = ".jsc";
+use crate::bytecode_sidecar::EXTENSION as BYTECODE_EXTENSION;
 
 pub(crate) fn write_output_files_to_disk(
     c: &mut LinkerContext,
@@ -409,6 +408,7 @@ pub(crate) fn write_output_files_to_disk(
                         &code_result.buffer,
                         &mut source_provider_url,
                     ) {
+                        let bytecode = crate::bytecode_sidecar::frame(bytecode);
                         let source_provider_url_str = source_provider_url.to_utf8();
                         debug!(
                             "Bytecode cache generated {}: {}",

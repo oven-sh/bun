@@ -90,6 +90,9 @@ impl Request {
         // ffi::slice tolerates the (null, 0) shape uWS returns when no parameter is present.
         unsafe { bun_core::ffi::slice(ptr, len) }
     }
+    pub fn headers_byte_length(&self) -> usize {
+        c::uws_req_get_headers_byte_length(self)
+    }
 }
 
 mod c {
@@ -115,5 +118,6 @@ mod c {
             dest: &mut *const u8,
         ) -> usize;
         pub(super) safe fn uws_req_has_transfer_encoding(res: &Request) -> bool;
+        pub(super) safe fn uws_req_get_headers_byte_length(res: &Request) -> usize;
     }
 }

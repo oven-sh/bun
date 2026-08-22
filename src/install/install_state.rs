@@ -199,8 +199,9 @@ fn env_and_argv_hash(manager: &PackageManager) -> u64 {
             k.starts_with(b"BUN_INSTALL")
                 || k.starts_with(b"BUN_CONFIG_")
                 || k.len() >= 11 && k[..11].eq_ignore_ascii_case(b"NPM_CONFIG_")
-                // where the global .npmrc / .bunfig.toml are looked up
+                // spliced into argv (see below)
                 || k == b"BUN_OPTIONS"
+                // where the global .npmrc / .bunfig.toml are looked up
                 || k == b"HOME"
                 || k == b"USERPROFILE"
                 || k == b"XDG_CONFIG_HOME"
@@ -220,7 +221,7 @@ fn env_and_argv_hash(manager: &PackageManager) -> u64 {
     for a in bun_core::argv()
         .into_iter()
         .skip(1)
-        .filter(|a| !matches!(&a[..], b"install" | b"i" | b"add" | b"remove" | b"update"))
+        .filter(|a| !matches!(&a[..], b"install" | b"i" | b"ci"))
     {
         acc.extend_from_slice(a);
         acc.push(0);
@@ -845,6 +846,10 @@ fn stamp_source_tree(out: &mut Vec<u8>, dir: &[u8], budget: &mut usize) -> bool 
             if !stamp_source_tree(out, &child, budget) {
                 return false;
             }
+        } else if matches!(bun_sys::lstat(&zpath(&child)), Ok(st) if bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode) == bun_sys::FileKind::SymLink)
+        {
+            // a symlinked entry inside the source: not trackable (see above)
+            return false;
         } else if let Some(stamp) = lstat_stamp(&child) {
             let _ = write!(out, "l {stamp:016x} ");
             out.extend_from_slice(&child);

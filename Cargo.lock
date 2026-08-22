@@ -470,7 +470,6 @@ dependencies = [
  "enum-map",
  "enumset",
  "libc",
- "scopeguard",
  "strum",
  "thiserror",
  "typed-arena",

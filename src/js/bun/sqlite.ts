@@ -419,6 +419,9 @@ class Database implements SqliteTypes.Database {
     if (anonymous && (flags & constants.SQLITE_OPEN_READONLY) !== 0) {
       throw new Error("Cannot open an anonymous database in read-only mode.");
     }
+    if (filename.indexOf("\u0000") !== -1) {
+      throw $ERR_INVALID_ARG_VALUE("filename", filename, "must be a string without null bytes");
+    }
 
     if (!SQL) {
       initializeSQL();
@@ -445,6 +448,9 @@ class Database implements SqliteTypes.Database {
   }
 
   loadExtension(name, entryPoint) {
+    if (typeof name === "string" && name.indexOf("\u0000") !== -1) {
+      throw $ERR_INVALID_ARG_VALUE("name", name, "must be a string without null bytes");
+    }
     return SQL.loadExtension(this.#handle, name, entryPoint);
   }
 
@@ -479,6 +485,9 @@ class Database implements SqliteTypes.Database {
   }
 
   static setCustomSQLite(path) {
+    if (typeof path === "string" && path.indexOf("\u0000") !== -1) {
+      throw $ERR_INVALID_ARG_VALUE("path", path, "must be a string without null bytes");
+    }
     if (!SQL) {
       initializeSQL();
     }

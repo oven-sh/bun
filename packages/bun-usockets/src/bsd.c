@@ -1410,6 +1410,22 @@ static LIBUS_SOCKET_DESCRIPTOR bsd_create_unix_socket_address(const char *path, 
         return LIBUS_SOCKET_ERROR;
     }
 
+    // Embedded NUL bytes would silently truncate the path at bind()/connect().
+    // Linux abstract-namespace names (leading NUL) may contain NULs throughout.
+    #if defined(__linux__)
+        int has_embedded_nul = path[0] != '\0' && memchr(path, '\0', path_len) != NULL;
+    #else
+        int has_embedded_nul = memchr(path, '\0', path_len) != NULL;
+    #endif
+    if (has_embedded_nul) {
+        #if defined(_WIN32)
+            WSASetLastError(WSAEINVAL);
+        #else
+            errno = EINVAL;
+        #endif
+        return LIBUS_SOCKET_ERROR;
+    }
+
     *addrlen = sizeof(struct sockaddr_un);
 
     #if defined(__linux__)

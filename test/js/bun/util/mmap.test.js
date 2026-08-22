@@ -198,6 +198,29 @@ console.log(JSON.stringify(out));`,
     });
   });
 
+  it("mmap rejects paths with null bytes", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `try {
+  Bun.mmap("/tmp/a\\0b");
+  console.log("no throw");
+} catch (e) {
+  console.log(e.code, e.message);
+}`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe(
+      `ERR_INVALID_ARG_VALUE The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received "/tmp/a\\u0000b"\n`,
+    );
+    expect(exitCode).toBe(0);
+  });
+
   it("mmap rejects negative offset", () => {
     expect(() => Bun.mmap(path, { offset: -1 })).toThrow("offset must be a non-negative integer");
   });

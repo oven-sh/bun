@@ -1,5 +1,5 @@
-import { realpathSync } from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { existsSync, realpathSync } from "fs";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { AddressInfo, createServer, Server, Socket } from "net";
 import { createTest } from "node-harness";
 import { once } from "node:events";
@@ -175,6 +175,18 @@ describe("net.createServer listen", () => {
         done();
       }),
     );
+  });
+
+  it.skipIf(isWindows)("should emit EINVAL for a unix socket path with null bytes", async () => {
+    using dir = tempDir("net-listen-nul", {});
+    const server: Server = createServer();
+    const { promise, resolve } = Promise.withResolvers<NodeJS.ErrnoException | null>();
+    server.on("error", resolve);
+    server.listen(join(String(dir), "nul\0byte.sock"), () => resolve(null));
+    const err = await promise;
+    server.close();
+    expect({ code: err?.code, syscall: err?.syscall }).toEqual({ code: "EINVAL", syscall: "listen" });
+    expect(existsSync(join(String(dir), "nul"))).toBe(false);
   });
 
   it("should bind IPv4 0.0.0.0 when listen on 0.0.0.0, issue#7355", done => {

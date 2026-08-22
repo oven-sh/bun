@@ -366,15 +366,20 @@ class BunWebSocket extends EventEmitter {
 
   #onHandshake(data) {
     const { statusCode, statusMessage, rawHeaders, body } = data;
-    const res = makeHandshakeResponse(statusCode, statusMessage, rawHeaders, statusCode === 101 ? null : body);
     if (statusCode === 101) {
-      this.emit("upgrade", res);
+      if (this.listenerCount("upgrade") > 0) {
+        this.emit("upgrade", makeHandshakeResponse(statusCode, statusMessage, rawHeaders, null));
+      }
       return;
     }
     if (this.listenerCount("unexpected-response") > 0) {
       this.#unexpectedResponseEmitted = true;
       this.#unexpectedResponseHandled = true;
-      this.emit("unexpected-response", this.#getSyntheticRequest(), res);
+      this.emit(
+        "unexpected-response",
+        this.#getSyntheticRequest(),
+        makeHandshakeResponse(statusCode, statusMessage, rawHeaders, body),
+      );
     } else if (this.listenerCount("error") > 0) {
       this.#unexpectedResponseEmitted = true;
       this.emit("error", new Error("Unexpected server response: " + statusCode));
@@ -434,6 +439,7 @@ class BunWebSocket extends EventEmitter {
           once,
         );
       } else if (event === "error") {
+        this.#ensureHandshakeListener();
         this.#ws.addEventListener(
           "error",
           err => {

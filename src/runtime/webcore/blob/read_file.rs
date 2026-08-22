@@ -715,6 +715,11 @@ impl ReadFile {
         }
 
         self.could_block = !bun_sys::is_regular_file(stat.st_mode as _);
+        // pipe(2) pipes are S_IFIFO with st_dev == 0.
+        #[cfg(target_os = "macos")]
+        if bun_sys::S::ISFIFO(stat.st_mode as _) && stat.st_dev != 0 {
+            self.io_poll.flags.insert(io::Flags::NamedFifo);
+        }
         self.total_size =
             SizeType::try_from((stat.st_size as i64).max(0).min(MAX_SIZE as i64)).unwrap();
 

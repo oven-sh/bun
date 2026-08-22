@@ -1393,6 +1393,8 @@ impl Tag {
     #[cfg(not(windows))]
     pub(crate) const setrlimit: Tag = Tag(106);
     pub const clone3: Tag = Tag(107);
+    #[cfg(target_os = "macos")]
+    pub const select: Tag = Tag(108);
     // `inotify_init1`/`inotify_add_watch` fold under the generic `.watch`
     // tag; `INotifyWatcher.rs` spells it `.inotify`. Alias to `.watch`
     // so the JS-facing `err.syscall == "watch"` string stays node-compatible.
@@ -1400,7 +1402,7 @@ impl Tag {
     /// The tag name — spelling is frozen (JS-facing
     /// `err.syscall` string; node-compat code matches on it).
     pub fn name(self) -> &'static str {
-        const NAMES: [&str; 108] = [
+        const NAMES: [&str; 109] = [
             "TODO",
             "dup",
             "access",
@@ -1510,6 +1512,7 @@ impl Tag {
             "getrlimit",
             "setrlimit",
             "clone3",
+            "select",
         ];
         NAMES.get(self.0 as usize).copied().unwrap_or("unknown")
     }
@@ -1687,6 +1690,15 @@ mod nocancel {
         ) -> isize;
         #[link_name = "poll$NOCANCEL"]
         pub(crate) fn poll(fds: *mut libc::pollfd, nfds: libc::nfds_t, timeout: c_int) -> c_int;
+        // `_DARWIN_UNLIMITED_SELECT` select(2): no FD_SETSIZE limit; a set is ceil(nfds/32) words.
+        #[link_name = "select$DARWIN_EXTSN$NOCANCEL"]
+        pub(crate) fn select(
+            nfds: c_int,
+            readfds: *mut u32,
+            writefds: *mut u32,
+            errorfds: *mut u32,
+            timeout: *mut libc::timeval,
+        ) -> c_int;
         // Remaining `$NOCANCEL` variants Bun links against.
         // safe: by-value `c_int` fd; bad fd → -1/EBADF, no UB.
         #[link_name = "close$NOCANCEL"]
@@ -7429,6 +7441,28 @@ pub fn kevent(
             E::EINTR => continue,
             e => return Err(Error::from_code(e, Tag::kevent).with_fd(fd)),
         }
+    }
+}
+
+/// `select(2)` with no timeout on a read set of `readfds.len() * 32` fds (macOS
+/// only). The kernel leaves only the ready bits set. `EINTR` is not retried.
+#[cfg(target_os = "macos")]
+pub fn select_readable(readfds: &mut [u32]) -> Maybe<usize> {
+    let nfds = c_int::try_from(readfds.len() * 32).expect("int cast");
+    // SAFETY: `readfds` holds the `nfds / 32` words the kernel reads and writes;
+    // the other sets and the timeout may be null.
+    let rc = unsafe {
+        nocancel::select(
+            nfds,
+            readfds.as_mut_ptr(),
+            core::ptr::null_mut(),
+            core::ptr::null_mut(),
+            core::ptr::null_mut(),
+        )
+    };
+    match get_errno(rc) {
+        E::SUCCESS => Ok(rc as usize),
+        e => Err(Error::from_code(e, Tag::select)),
     }
 }
 

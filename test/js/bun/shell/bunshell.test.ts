@@ -6,9 +6,10 @@
  */
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { chmodSync, mkdirSync } from "fs";
+import { chmodSync, closeSync, constants, mkdirSync, openSync, writeSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
 import { bunExe, isPosix, isWindows, rss, runWithErrorPromise, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { mkfifo } from "mkfifo";
 import { join, sep } from "path";
 import { createTestBuilder, sortedShellOutput } from "./util";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -572,6 +573,57 @@ describe("bunshell", () => {
       "err.txt": missingFileError,
     });
     expect(exitCode).toBe(0);
+  });
+
+  // The builtin cat drains what the writer sent, then waits for more; the
+  // writer closes. On macOS neither kqueue nor poll(2) reports that EOF for a
+  // named pipe (only buffered bytes), so both spellings used to hang there
+  // after printing the data.
+  describe.skipIf(isWindows)("builtin cat reads a named pipe (FIFO) to EOF", () => {
+    for (const [spelling, command] of [
+      ["as a redirect", "cat < ${fifo}"],
+      ["as an argument", "cat ${fifo}"],
+    ]) {
+      test.concurrent(spelling, async () => {
+        using dir = tempDir("builtin-cat-fifo", {});
+        const fifo = join(String(dir), "in.fifo");
+        mkfifo(fifo);
+        // A write end cannot be opened before a reader exists; this one never
+        // reads, so every byte goes to cat, whose own open then finds a writer.
+        const holder = openSync(fifo, constants.O_RDONLY | constants.O_NONBLOCK);
+        let writer = openSync(fifo, "w");
+        try {
+          await using proc = Bun.spawn({
+            cmd: [
+              bunExe(),
+              "-e",
+              `import { $ } from "bun";
+               const fifo = process.env.FIFO;
+               await $\`${command}\`;
+               console.log("done");`,
+            ],
+            env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1", FIFO: fifo },
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          writeSync(writer, "hello\n");
+
+          let stdout = "";
+          for await (const chunk of proc.stdout) {
+            stdout += Buffer.from(chunk).toString();
+            if (writer !== -1 && stdout.includes("hello\n")) {
+              closeSync(writer);
+              writer = -1;
+            }
+          }
+          const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+          expect({ stdout, stderr, exitCode }).toEqual({ stdout: "hello\ndone\n", stderr: "", exitCode: 0 });
+        } finally {
+          if (writer !== -1) closeSync(writer);
+          closeSync(holder);
+        }
+      });
+    }
   });
 
   describe("operators no spaces", async () => {

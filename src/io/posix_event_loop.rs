@@ -328,6 +328,21 @@ impl FilePoll {
         FileType::Pipe
     }
 
+    /// One `fstat` per poll; the answer is kept in `Flags::NamedFifo`.
+    #[cfg(target_os = "macos")]
+    fn is_named_fifo(&mut self, fd: Fd) -> bool {
+        if !self.flags.contains(Flags::NamedFifoChecked) {
+            self.flags.insert(Flags::NamedFifoChecked);
+            // pipe(2) pipes are S_IFIFO with st_dev == 0.
+            let named = sys::fstat(fd)
+                .is_ok_and(|stat| sys::S::ISFIFO(stat.st_mode as _) && stat.st_dev != 0);
+            if named {
+                self.flags.insert(Flags::NamedFifo);
+            }
+        }
+        self.flags.contains(Flags::NamedFifo)
+    }
+
     // Note: these handlers take no loop parameter: holding a
     // protected `&mut Loop` across `on_update` would alias the fresh `&mut Loop`
     // that downstream `__bun_run_file_poll` handlers conjure via
@@ -658,7 +673,22 @@ impl FilePoll {
             }
         }
         #[cfg(target_os = "macos")]
-        {
+        let named_fifo = flag == Flags::Readable && self.is_named_fifo(fd);
+        #[cfg(target_os = "macos")]
+        if named_fifo {
+            self.flags.insert(Flags::WasEverRegistered);
+            if let Err(err) = crate::fifo_select::arm(
+                Fd::from_native(watcher_fd),
+                fd,
+                Pollable::init(self).ptr() as u64,
+                self.generation_number as u64,
+            ) {
+                self.deactivate(loop_);
+                return Err(err);
+            }
+        }
+        #[cfg(target_os = "macos")]
+        if !named_fifo {
             use bun_sys::darwin::{EV, EVFILT, NOTE, kevent64_s};
             // SAFETY: all-zero is a valid kevent64_s
             let mut changelist: [kevent64_s; 2] = bun_core::ffi::zeroed();
@@ -980,10 +1010,19 @@ impl FilePoll {
             // SAFETY: all-zero is a valid kevent64_s
             let mut changelist: [kevent64_s; 2] = bun_core::ffi::zeroed();
 
+            let named_fifo = flag == Flags::Readable && self.flags.contains(Flags::NamedFifo);
+            if named_fifo {
+                crate::fifo_select::disarm(Fd::from_native(watcher_fd), fd);
+            }
+
             changelist[0] = match flag {
                 Flags::Readable => kevent64_s {
                     ident: u64::try_from(fd.native()).expect("int cast"),
-                    filter: EVFILT::READ,
+                    filter: if named_fifo {
+                        EVFILT::USER
+                    } else {
+                        EVFILT::READ
+                    },
                     data: 0,
                     fflags: 0,
                     udata: Pollable::init(self).ptr() as u64,
@@ -1193,6 +1232,9 @@ pub enum Flags {
 
     // What is the type of file descriptor?
     Fifo,
+    /// macOS: readable waits go through `fifo_select`, not a knote.
+    NamedFifo,
+    NamedFifoChecked,
 
     OneShot,
     NeedsRearm,
@@ -1241,6 +1283,12 @@ impl Flags {
             #[cfg(target_os = "macos")]
             if kqueue_event.filter == EVFILT::MEMORYSTATUS {
                 flags.insert(Flags::MemoryPressure);
+            }
+            #[cfg(target_os = "macos")]
+            if kqueue_event.filter == EVFILT::USER
+                && kqueue_event.fflags & crate::fifo_select::NOTE_FIFO_READABLE != 0
+            {
+                flags.insert(Flags::Readable);
             }
         }
         flags

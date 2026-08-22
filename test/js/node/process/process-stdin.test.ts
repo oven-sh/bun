@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { mkfifo } from "mkfifo";
 import { exec } from "node:child_process";
+import { closeSync, constants, openSync, writeSync } from "node:fs";
+import { join } from "node:path";
 
 test.concurrent("pipe does the right thing", async () => {
   // Note: Bun.spawnSync uses memfd_create on Linux for pipe, which means we see
@@ -32,6 +35,67 @@ test.concurrent("file does the right thing", async () => {
   `);
   expect(await result.stderr.text()).toMatchInlineSnapshot(`""`);
   expect(await result.exited).toBe(0);
+});
+
+// stdin as a named pipe (`bun script.js < fifo`). The reader drains what the
+// writer sent and then waits; the writer closes. On macOS neither kqueue nor
+// poll(2) reports that EOF for a FIFO (only bytes that are buffered), so the
+// end of each of these streams never arrived there.
+describe.skipIf(isWindows)("stdin is a named pipe (FIFO)", () => {
+  // Runs `script` with a blocking FIFO read end as stdin and a writer already
+  // connected to the FIFO (a write end cannot be opened before a reader exists,
+  // and a blocking read end cannot be opened before a writer does). Once the
+  // child has echoed `payload`, the writer closes; the child must then finish.
+  async function runWithFifoStdin(script: string, payload: string) {
+    using dir = tempDir("stdin-fifo", {});
+    const fifo = join(String(dir), "stdin.fifo");
+    mkfifo(fifo);
+    const holder = openSync(fifo, constants.O_RDONLY | constants.O_NONBLOCK);
+    let writer = openSync(fifo, "w");
+    const stdin = openSync(fifo, "r");
+    closeSync(holder);
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdin,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      closeSync(stdin);
+      writeSync(writer, payload);
+
+      let stdout = "";
+      for await (const chunk of proc.stdout) {
+        stdout += Buffer.from(chunk).toString();
+        if (writer !== -1 && stdout.includes(`data:${payload}`)) {
+          closeSync(writer);
+          writer = -1;
+        }
+      }
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    } finally {
+      if (writer !== -1) closeSync(writer);
+    }
+  }
+
+  test.concurrent("process.stdin emits 'end' after the last writer closes", async () => {
+    const result = await runWithFifoStdin(
+      `process.stdin.on("data", d => process.stdout.write("data:" + d)).on("end", () => process.stdout.write("end\\n"));`,
+      "hello\n",
+    );
+    expect(result).toEqual({ stdout: "data:hello\nend\n", stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("Bun.stdin.stream() ends after the last writer closes", async () => {
+    const result = await runWithFifoStdin(
+      `for await (const chunk of Bun.stdin.stream()) process.stdout.write("data:" + new TextDecoder().decode(chunk));
+       process.stdout.write("done\\n");`,
+      "hello\n",
+    );
+    expect(result).toEqual({ stdout: "data:hello\ndone\n", stderr: "", exitCode: 0 });
+  });
 });
 
 test.concurrent("stdin with 'readable' event handler should receive data when paused", async () => {

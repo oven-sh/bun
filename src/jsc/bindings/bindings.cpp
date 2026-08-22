@@ -4775,6 +4775,9 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
                 if (i == length) {
 
                     if (ic == '.') {
+                        if (currProp.isUndefinedOrNull()) {
+                            return {};
+                        }
                         auto* currPropObject = currProp.toObject(globalObject);
                         RETURN_IF_EXCEPTION(scope, {});
                         currProp = currPropObject->getIfPropertyExists(globalObject, vm.propertyNames->emptyIdentifier);
@@ -4793,6 +4796,9 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
                 char16_t previous = ic;
                 ic = pathString.codeUnitAt(i);
                 if (previous == '.' && ic == '.') {
+                    if (currProp.isUndefinedOrNull()) {
+                        return {};
+                    }
                     auto* currPropObject = currProp.toObject(globalObject);
                     RETURN_IF_EXCEPTION(scope, {});
                     currProp = currPropObject->getIfPropertyExists(globalObject, vm.propertyNames->emptyIdentifier);
@@ -4818,6 +4824,9 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
             String propNameStr = pathString.substring(i, j - i);
             PropertyName propName = PropertyName(Identifier::fromString(vm, propNameStr));
 
+            if (currProp.isUndefinedOrNull()) {
+                return {};
+            }
             auto* currPropObject = currProp.toObject(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
             currProp = currPropObject->getIfPropertyExists(globalObject, propName);
@@ -4848,6 +4857,10 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
             PropertyName propName = PropertyName(propNameString->toIdentifier(globalObject));
             RETURN_IF_EXCEPTION(scope, {});
 
+            if (currProp.isUndefinedOrNull()) {
+                currProp = {};
+                return false;
+            }
             auto* currPropObject = currProp.toObject(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
             currProp = currPropObject->getIfPropertyExists(globalObject, propName);

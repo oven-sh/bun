@@ -231,7 +231,8 @@ static EncodedJSValue hashDigest(JSGlobalObject* lexicalGlobalObject, ThrowScope
 
     if (hash->m_zigHasher) {
         if (hash->m_digest || len == 0) {
-            hash->m_finalized = finalize;
+            if (finalize)
+                hash->m_finalized = true;
             return StringBytes::encode(lexicalGlobalObject, scope, std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(hash->m_digest.data()), hash->m_mdLen }, encoding);
         }
 
@@ -248,7 +249,8 @@ static EncodedJSValue hashDigest(JSGlobalObject* lexicalGlobalObject, ThrowScope
             return {};
         }
 
-        hash->m_finalized = finalize;
+        if (finalize)
+            hash->m_finalized = true;
         hash->m_mdLen = std::min(len, totalDigestLen);
         hash->m_digest = ByteSource::allocated(data.release());
 
@@ -265,7 +267,8 @@ static EncodedJSValue hashDigest(JSGlobalObject* lexicalGlobalObject, ThrowScope
         hash->m_digest = ByteSource::allocated(data.release());
     }
 
-    hash->m_finalized = finalize;
+    if (finalize)
+        hash->m_finalized = true;
     return StringBytes::encode(lexicalGlobalObject, scope, std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(hash->m_digest.data()), len }, encoding);
 }
 

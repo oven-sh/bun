@@ -79,6 +79,18 @@ describe.each([
   });
 });
 
+test("_flush() after digest() does not un-finalize the hash", () => {
+  const h = createHash("sha256").update("abc");
+  const hex = h.digest("hex");
+  const pushed: Buffer[] = [];
+  (h as any).push = (chunk: Buffer) => pushed.push(chunk);
+  (h as any)._flush(() => {});
+  expect(Buffer.concat(pushed).toString("hex")).toBe(hex);
+  expect(() => h.update("d")).toThrow(expect.objectContaining({ code: "ERR_CRYPTO_HASH_FINALIZED" }));
+  expect(() => h.copy()).toThrow(expect.objectContaining({ code: "ERR_CRYPTO_HASH_FINALIZED" }));
+  expect(() => h.digest()).toThrow(expect.objectContaining({ code: "ERR_CRYPTO_HASH_FINALIZED" }));
+});
+
 test("hash.copy() returns a base Hash carrying the current state", () => {
   class Sub extends Hash {}
   const h = new (Sub as any)("sha256");

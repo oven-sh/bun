@@ -72,7 +72,7 @@ pub struct Options {
     // if set to `false` in bunfig, save a binary lockfile
     pub(crate) save_text_lockfile: Option<bool>,
 
-    pub(crate) lockfile_only: bool,
+    pub lockfile_only: bool,
 
     // `bun pm version` command options
     pub git_tag_version: bool,

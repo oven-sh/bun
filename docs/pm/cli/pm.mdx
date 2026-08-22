@@ -332,6 +332,25 @@ To clear Bun's global module cache:
 bun pm cache rm
 ```
 
+## fetch
+
+To download every dependency into Bun's global module cache without installing anything:
+
+```bash terminal icon="terminal"
+bun pm fetch
+```
+
+```txt
+bun pm fetch v1.3.0 (ca7428e9)
+
+Fetched 42 packages into cache [1.20s]
+Cache: /home/user/.bun/install/cache
+```
+
+Dependencies are resolved the same way `bun install` resolves them, but `node_modules` is not created, lifecycle scripts are not run, and `package.json` and the lockfile are left untouched. With an existing lockfile, only the tarballs missing from the cache are downloaded, using the URLs recorded in the lockfile. This is useful for warming a cache that will be shared between CI jobs, or for downloading everything before going offline; a later `bun install` then installs from the cache. Pass `-g` to fetch the dependencies of globally installed packages instead.
+
+Git dependencies that are already in the lockfile are skipped (a note is printed when this happens); they are downloaded by `bun install`.
+
 ## migrate
 
 To migrate another package manager's lockfile without installing anything:

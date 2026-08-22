@@ -14,7 +14,17 @@ import {
   toHaveBins,
 } from "harness";
 import { basename, join } from "path";
-import { dummyAfterAll, dummyAfterEach, dummyBeforeAll, dummyBeforeEach, getPort, package_dir } from "./dummy.registry";
+import {
+  dummyAfterAll,
+  dummyAfterEach,
+  dummyBeforeAll,
+  dummyBeforeEach,
+  dummyRegistry,
+  getPort,
+  package_dir,
+  root_url,
+  setHandler,
+} from "./dummy.registry";
 
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
@@ -595,6 +605,47 @@ describe.each(["hoisted", "isolated"])("link: with a filesystem path (%s)", link
 
     const second = await runBunInstall(env, package_dir, { frozenLockfile: true });
     expect(second.err).not.toContain("Saved lockfile");
+  });
+
+  it("the same directory as link: and file: is two packages (the file: one keeps its dependencies)", async () => {
+    // The folder-resolution cache is keyed on the target's package.json path; a
+    // link: entry (parsed without dependencies) must not be reused for file:.
+    const urls: string[] = [];
+    setHandler(dummyRegistry(urls));
+    await mkdir(join(package_dir, "vendor", "dual"), { recursive: true });
+    await writeFile(
+      join(package_dir, "vendor", "dual", "package.json"),
+      JSON.stringify({ name: "dual", version: "1.0.0", dependencies: { bar: "0.0.2" } }),
+    );
+    await mkdir(join(package_dir, "packages", "app"), { recursive: true });
+    await writeFile(
+      join(package_dir, "packages", "app", "package.json"),
+      JSON.stringify({ name: "app", version: "1.0.0", dependencies: { dual: "file:../../vendor/dual" } }),
+    );
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({ name: "root", workspaces: ["packages/*"], dependencies: { dual: "link:./vendor/dual" } }),
+    );
+    await setLinker();
+
+    for (const args of [{}, { frozenLockfile: true }]) {
+      const { err } = await runBunInstall(env, package_dir, args);
+      expect(err).not.toContain("error:");
+      // root: a symlink to the directory, no dependencies installed for it
+      expect((await readlink(join(package_dir, "node_modules", "dual"))).replaceAll("\\", "/")).toContain(
+        "vendor/dual",
+      );
+      // workspace: the file: copy, whose dependency `bar` was resolved and installed
+      const bar =
+        linker === "hoisted"
+          ? join(package_dir, "node_modules", "bar")
+          : join(package_dir, "node_modules", ".bun", "dual@file+vendor+dual", "node_modules", "bar");
+      expect(await file(join(bar, "package.json")).json()).toEqual({ name: "bar", version: "0.0.2" });
+    }
+    expect(urls).toContain(`${root_url}/bar`);
+    const lock = await file(join(package_dir, "bun.lock")).text();
+    expect(lock).toContain('"dual@link:./vendor/dual"');
+    expect(lock).toContain('"dual@file:vendor/dual", { "dependencies": { "bar": "0.0.2" } }');
   });
 
   it("errors at resolve time when the target directory does not exist", async () => {

@@ -83,9 +83,14 @@ impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
 /// Value stored in the folder-resolution map: the resolution plus the
 /// normalized absolute `package.json` path the key hash was computed from.
 /// Lookups compare the path, since a different path whose hash collides must
-/// not reuse this resolution.
+/// not reuse this resolution. `link` records whether the entry was resolved as
+/// a `link:` target (a `Symlink` resolution parsed with `Features::LINK`, i.e.
+/// without its dependencies) rather than as a folder/workspace: the same
+/// directory referenced both ways is two different packages, so it is part of
+/// the key (see `hash_for`) and of the equality check.
 pub struct Entry {
     pub(crate) abs_path: Box<[u8]>,
+    pub(crate) link: bool,
     pub(crate) resolution: FolderResolution,
 }
 
@@ -98,6 +103,14 @@ fn normalize(path: &[u8]) -> &[u8] {
 
 pub(crate) fn hash(normalized_path: &[u8]) -> u64 {
     bun_wyhash::hash(normalized_path)
+}
+
+/// Map key: the path hash, in a separate keyspace for `link:` entries so a
+/// `link:./x` and a `file:./x` (or workspace) naming the same directory do not
+/// share a resolution.
+fn hash_for(normalized_path: &[u8], link: bool) -> u64 {
+    let h = hash(normalized_path);
+    if link { h ^ 0x9E37_79B9_7F4A_7C15 } else { h }
 }
 
 // ── NewResolver ───────────────────────────────────────────────────────────
@@ -468,14 +481,23 @@ pub(crate) fn get_or_put(
             &rel_buf[..rel_len],
         )
     };
-    let abs_hash = hash(abs.as_bytes());
+    // `link:` targets (name-form under the global dir, or path-form) are parsed
+    // with `Features::LINK` into a `Symlink` resolution; the same directory as a
+    // `file:`/workspace target is a different package with its own dependencies.
+    let link = matches!(
+        global_or_relative,
+        GlobalOrRelative::Global(_) | GlobalOrRelative::Relative(dependency::version::Tag::Symlink)
+    );
+    let abs_hash = hash_for(abs.as_bytes(), link);
 
     // Check first, compute, then insert, because read_package_json_from_disk
-    // needs &mut manager. Compare the stored path, not just its hash: a
-    // different path whose hash collides must not reuse this resolution. On a
+    // needs &mut manager. Compare the stored path (and kind), not just its hash:
+    // a different path whose hash collides must not reuse this resolution. On a
     // collision, resolve fresh without caching so the first path's entry stays.
     let hash_collision = match manager.folders.get(&abs_hash) {
-        Some(existing) if *existing.abs_path == *abs.as_bytes() => return existing.resolution,
+        Some(existing) if existing.link == link && *existing.abs_path == *abs.as_bytes() => {
+            return existing.resolution;
+        }
         Some(_) => true,
         None => false,
     };
@@ -562,6 +584,7 @@ pub(crate) fn get_or_put(
                     abs_hash,
                     Entry {
                         abs_path: abs.as_bytes().into(),
+                        link,
                         resolution: stored,
                     },
                 );
@@ -575,6 +598,7 @@ pub(crate) fn get_or_put(
             abs_hash,
             Entry {
                 abs_path: abs.as_bytes().into(),
+                link,
                 resolution: FolderResolution::PackageId(package.meta.id),
             },
         );

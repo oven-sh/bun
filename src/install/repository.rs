@@ -793,9 +793,11 @@ impl RepositoryExt for Repository {
                     &[folder_name.as_bytes()],
                 );
 
-                // --prefer-offline / --offline: use the cached clone as is
+                // --offline: use the cached clone as is (--prefer-offline still fetches:
+                // git dependencies pin exact commits, so a stale clone would fail to find a
+                // newly referenced one rather than "resolve older")
                 if PackageManager::get().options.offline
-                    == crate::package_manager_real::options::OfflineMode::Online
+                    != crate::package_manager_real::options::OfflineMode::Offline
                 {
                     if let Err(err) = exec(env, &[b"git", b"-C", path, b"fetch", b"--quiet"]) {
                         log.add_error_fmt(

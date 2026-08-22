@@ -396,15 +396,19 @@ fn offline_git_miss(
         return false;
     }
     if is_required {
-        this.mark_network_task_failed(clone_id);
-        let _ = this.log_mut().add_error_fmt(
-            None,
-            bun_ast::Loc::EMPTY,
-            format_args!(
-                "--offline: git repository for \"{}\" is not in the cache",
-                bstr::BStr::new(name)
-            ),
-        );
+        if !this.network_task_has_failed(clone_id) {
+            // reserve + mark failed: reported once, later dependents see the failure
+            let _ = this.has_created_network_task(clone_id, true);
+            this.mark_network_task_failed(clone_id);
+            let _ = this.log_mut().add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "--offline: git repository for \"{}\" is not in the cache",
+                    bstr::BStr::new(name)
+                ),
+            );
+        }
     } else {
         // let a later required edge on the same repository report it
         let _ = this.network_dedupe_map.remove(&clone_id);

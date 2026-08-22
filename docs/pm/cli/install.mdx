@@ -602,6 +602,7 @@ Bun migrates the following pnpm configuration from both `pnpm-lock.yaml` and `pn
 - **Overrides**: Moved from `pnpm.overrides` to root-level `overrides` in `package.json`
 - **Patched Dependencies**: Moved from `pnpm.patchedDependencies` to root-level `patchedDependencies` in `package.json`
 - **Workspace Overrides**: Applied from `pnpm-workspace.yaml` to root `package.json`
+- **Allowed build scripts**: `onlyBuiltDependencies` (from `pnpm-workspace.yaml` or `pnpm.onlyBuiltDependencies` in `package.json`) is added to [`trustedDependencies`](/pm/lifecycle) in `package.json`, so the same packages keep running their lifecycle scripts
 
 ### Requirements and limitations
 

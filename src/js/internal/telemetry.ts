@@ -318,7 +318,8 @@ const propagator = {
   },
   extract(context: any, carrier: any, getter: any = defaultGetter): BunContext {
     let ctx: BunContext = context instanceof BunContext ? context : new BunContext(...unpackContext(context));
-    let tp = getter.get(carrier, "traceparent");
+    const flags = nativePropagationFlags();
+    let tp = flags & 1 ? getter.get(carrier, "traceparent") : undefined;
     if ($isJSArray(tp)) tp = tp[0];
     if (typeof tp === "string") {
       let traceState = getter.get(carrier, "tracestate");
@@ -326,7 +327,7 @@ const propagator = {
       const span = parseTraceparent(tp, typeof traceState === "string" ? traceState : undefined);
       if (span) ctx = ctx.setValue(SPAN_KEY, span);
     }
-    let bg = getter.get(carrier, "baggage");
+    let bg = flags & 2 ? getter.get(carrier, "baggage") : undefined;
     if ($isJSArray(bg)) bg = bg.join(",");
     if (typeof bg === "string") {
       const bag = parseBaggage(bg);

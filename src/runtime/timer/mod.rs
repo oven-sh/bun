@@ -693,11 +693,11 @@ impl All {
 
     /// Lazily `uv_timer_init` the
     /// per-`All` libuv timer, then (re)start it for the soonest deadline
-    /// across both heaps. On Windows this `uv_timer_t` is what wakes `uv_run`
-    /// for JS timers (alongside the tick's own deadline from `get_timeout`) and,
-    /// while a timer holds a ref, what keeps the libuv loop alive. It only
-    /// wakes: the timers themselves are drained by `drain_timers` once the tick
-    /// has returned, as on POSIX.
+    /// across both heaps. On Windows this (unref'd) `uv_timer_t` is what wakes
+    /// `uv_run` for JS timers, alongside the tick's own deadline from
+    /// `get_timeout`. It only wakes: the timers themselves are drained by
+    /// `drain_timers` once the tick has returned, as on POSIX, and the
+    /// keep-alive is the loop's counter (`increment_timer_ref`).
     #[cfg(windows)]
     fn ensure_uv_timer(&mut self) {
         // `vm` here means the OWNING VM (the one this timer is embedded in),
@@ -1160,26 +1160,17 @@ impl All {
         let new = old + delta;
         debug_assert!(new >= 0);
         self.active_timer_count = new;
+        // The keep-alive lives in the loop's own counter on every platform. On
+        // Windows the wake `uv_timer` stays unref'd: it is one-shot, so libuv
+        // drops it from its active count each time it fires, and whether the
+        // process stays alive must not depend on when it was last re-armed.
         if old <= 0 && new > 0 {
-            #[cfg(not(windows))]
             // SAFETY: caller passes the VM's live uws loop
             unsafe { &mut *uws_loop }.ref_();
-            // `uv_timer.ref()` is intentionally unconditional (no `data !=
-            // null` guard). Invariant: every path that reaches a positive
-            // `active_timer_count` first inserts a timer, and `insert`
-            // → `ensure_uv_timer` lazily `uv_timer_init`s the handle. Guarding
-            // here would silently drop the ref and let the loop exit early.
-            #[cfg(windows)]
-            self.uv_timer.ref_();
         } else if old > 0 && new <= 0 {
-            #[cfg(not(windows))]
             // SAFETY: caller passes the VM's live uws loop
             unsafe { &mut *uws_loop }.unref();
-            #[cfg(windows)]
-            self.uv_timer.unref();
         }
-        #[cfg(windows)]
-        let _ = uws_loop;
     }
 
     /// VM teardown, after `cancel_all_timeout_objects`: unlink every timer still

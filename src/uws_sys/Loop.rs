@@ -177,13 +177,6 @@ impl PosixLoop {
         self.active > 0
     }
 
-    /// Whether a poll-backend callback is on the stack. epoll/kqueue dispatch
-    /// from `us_loop_run_bun_tick` itself, so never; see the libuv impl.
-    #[inline]
-    pub fn in_uv_run(&self) -> bool {
-        false
-    }
-
     // This exists as a method so that we can stick a debugger in here
     pub fn add_active(&mut self, value: u32) {
         bun_core::scoped_log!(
@@ -411,6 +404,8 @@ impl WindowsLoop {
     pub fn tick_with_timeout(&mut self, timeout: Option<&Timespec>, _now_ns: u64) {
         let timeout_ms: i64 = match timeout {
             None => -1,
+            // A deadline that already passed: poll without parking.
+            Some(ts) if ts.sec < 0 || (ts.sec == 0 && ts.nsec <= 0) => 0,
             // Round up: waking early only to find the timer not yet due costs another park.
             Some(ts) => ts
                 .sec

@@ -159,7 +159,7 @@ impl MaxBuf {
         let delta = i64::try_from(bytes).unwrap_or(0);
         let remaining = mb.remaining_bytes.get().checked_sub(delta).unwrap_or(-1);
         mb.remaining_bytes.set(remaining);
-        remaining < 0
+        remaining < 0 && mb.owned_by_subprocess.get().is_some()
     }
 
     /// Tells the owning subprocess its `maxBuffer` was overdrawn (it kills the

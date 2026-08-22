@@ -450,8 +450,6 @@ LIBUS_SOCKET_DESCRIPTOR us_poll_fd(struct us_poll_t *p) { return p->fd; }
 
 /* No pending-events array to patch on this backend: the ready list is
  * intrusive and us_poll_stop / us_poll_resize maintain it directly. */
-void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop,
-    struct us_poll_t *old_poll, struct us_poll_t *new_poll, int old_events, int new_events) {}
 
 /* ── Loop ─────────────────────────────────────────────────────────────────── */
 
@@ -467,8 +465,7 @@ struct us_loop_t *us_create_loop(void *hint,
   loop->is_default = hint != 0;
   if (!hint) {
     /* A thread's own loop comes with its queue (uv::Loop::get); one made here
-     * keeps it in us_loop_t. See src/libuv_sys/deferred.rs. */
-    loop->deferred[0] = loop->deferred[1] = 0;
+     * keeps it in us_loop_t (zeroed by us_calloc). See src/libuv_sys/deferred.rs. */
     loop->uv_loop->data = loop->deferred;
   }
 
@@ -552,9 +549,21 @@ static void us_internal_loop_tick(struct us_loop_t *loop, uv_run_mode mode, long
     }
   }
 
+  /* POSIX parity for the non-blocking tick: us_loop_run_bun_tick polls and
+   * dispatches regardless of ref state (it only early-outs on num_polls == 0),
+   * but uv_run() skips its body when uv__loop_alive() is 0, so completions for
+   * unref'd handles (subprocess exit packets, socket events) and due timers
+   * would never be processed. Force the one iteration; only around uv_run, so
+   * handlers dispatched below see the loop's real aliveness. */
+  if (mode == UV_RUN_NOWAIT) {
+    loop->uv_loop->active_handles++;
+  }
   loop->in_uv_run++;
   uv_run(loop->uv_loop, mode);
   loop->in_uv_run--;
+  if (mode == UV_RUN_NOWAIT) {
+    loop->uv_loop->active_handles--;
+  }
 
   if (mode == UV_RUN_ONCE && timeout_ms > 0) {
     uv_timer_stop(loop->deadline_timer);
@@ -564,10 +573,6 @@ static void us_internal_loop_tick(struct us_loop_t *loop, uv_run_mode mode, long
   Bun__uv_dispatch_deferred(loop->uv_loop);
   us_internal_loop_post(loop);
   loop->data.tick_depth--;
-}
-
-int us_loop_in_uv_run(struct us_loop_t *loop) {
-  return loop->in_uv_run;
 }
 
 void us_loop_run(struct us_loop_t *loop) {
@@ -582,17 +587,10 @@ void us_loop_run_with_timeout(struct us_loop_t *loop, long long timeout_ms) {
   us_internal_loop_tick(loop, UV_RUN_ONCE, timeout_ms);
 }
 
+/* One non-blocking tick; Bun's outer drive loops (wait_for_promise, bun:test)
+ * supply their own keep-going predicate. */
 void us_loop_pump(struct us_loop_t *loop) {
-  /* POSIX parity: us_loop_run_bun_tick polls epoll/kqueue and dispatches
-   * regardless of ref state (it only early-outs on num_polls == 0). libuv's
-   * uv_run() skips its body when uv__loop_alive() is 0, so IOCP completions
-   * for unref'd handles (subprocess exit packets, socket events) and due
-   * timers are never processed. Bun's outer drive loops (wait_for_promise,
-   * bun:test) supply their own keep-going predicate, so force exactly one
-   * non-blocking iteration; UV_RUN_NOWAIT keeps the poll timeout at 0. */
-  loop->uv_loop->active_handles++;
   us_internal_loop_tick(loop, UV_RUN_NOWAIT, 0);
-  loop->uv_loop->active_handles--;
 }
 
 /* ── Timer ────────────────────────────────────────────────────────────────── */

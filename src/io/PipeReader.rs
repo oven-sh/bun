@@ -1013,6 +1013,9 @@ struct StreamRead {
     end: StreamReadEnd,
     /// `maxBuffer` ran out during these reads; its owner hears about it at dispatch.
     over_budget: bool,
+    /// A tty read was stopped inside the read callback (see `on_stream_read`)
+    /// and is started again once its bytes were handed to the parent.
+    restart_tty: bool,
 }
 
 #[cfg(windows)]
@@ -1098,8 +1101,10 @@ impl WindowsBufferedReader {
             self.stream_read.bytes = other.stream_read.bytes;
             self.stream_read.end = mem::take(&mut other.stream_read.end);
             self.stream_read.over_budget = other.stream_read.over_budget;
+            self.stream_read.restart_tty = other.stream_read.restart_tty;
             other.stream_read.bytes = 0;
             other.stream_read.over_budget = false;
+            other.stream_read.restart_tty = false;
             uv::Deferred::relocate(
                 &raw mut other.stream_read.deferred,
                 &raw mut self.stream_read.deferred,
@@ -1476,6 +1481,18 @@ impl WindowsBufferedReader {
                     if limit_reached || over_budget {
                         let _ = this.stop_reading();
                         this.stream_read.end = StreamReadEnd::Budget;
+                    } else if matches!(this.source, Some(Source::Tty(_))) {
+                        // A console in line mode queues its next read - alloc_cb
+                        // included - as soon as this callback returns, and fills
+                        // that buffer from a worker thread; the parent takes and
+                        // clears `_buffer` when these bytes are handed over, so no
+                        // read may be outstanding into it by then. Stop here (no
+                        // read is pending at this point, so nothing is cancelled)
+                        // and start again after the hand-over. `IS_PAUSED` is left
+                        // alone: to the parent this reader is still reading.
+                        // SAFETY: `stream` is the live tty handle.
+                        unsafe { uv::uv_read_stop(stream) };
+                        this.stream_read.restart_tty = true;
                     }
                 }
             }
@@ -1526,6 +1543,29 @@ impl WindowsBufferedReader {
                 if bytes > 0 {
                     // SAFETY: `this` is live (see above).
                     let _ = unsafe { (*this).on_read_chunk(ReadState::Progress) };
+                }
+                // SAFETY: `this` is live (see above; `_parent` holds the parent it
+                // is a field of). Resume a tty read stopped in `on_stream_read`,
+                // unless the hand-over paused, closed or finished the reader.
+                unsafe {
+                    if mem::take(&mut (*this).stream_read.restart_tty)
+                        && !(*this)
+                            .flags
+                            .intersects(WindowsFlags::IS_PAUSED | WindowsFlags::IS_DONE)
+                        && matches!((*this).stream_read.end, StreamReadEnd::Open)
+                    {
+                        if let Some(source @ Source::Tty(_)) = (*this).source.as_mut() {
+                            let rc = uv::uv_read_start(
+                                source.to_stream(),
+                                Some(Self::on_stream_alloc),
+                                Some(Self::on_stream_read),
+                            );
+                            if let Some(err) = rc.to_error(sys::Tag::open) {
+                                (*this).flags.insert(WindowsFlags::IS_PAUSED);
+                                Self::on_error(this, err);
+                            }
+                        }
+                    }
                 }
             }
             StreamReadEnd::Budget | StreamReadEnd::Eof => {
@@ -1721,9 +1761,11 @@ impl WindowsBufferedReader {
     #[cfg(windows)]
     fn start_reading(&mut self) -> sys::Result<()> {
         // A used-up limit stays paused: `start` has nothing to read and `unpause` reports it as EOF instead.
+        // An end (EOF, error, budget) recorded but not yet handed over is final too.
         if self.flags.contains(WindowsFlags::IS_DONE)
             || !self.flags.contains(WindowsFlags::IS_PAUSED)
             || self.limit.reached()
+            || !matches!(self.stream_read.end, StreamReadEnd::Open)
         {
             return sys::Result::Ok(());
         }
@@ -1846,6 +1888,7 @@ impl WindowsBufferedReader {
         unsafe { uv::Deferred::cancel(&raw mut self.stream_read.deferred) };
         self.stream_read.bytes = 0;
         self.stream_read.end = StreamReadEnd::Open;
+        self.stream_read.restart_tty = false;
         if mem::take(&mut self.stream_read.over_budget) {
             if let Some(maxbuf) = self.maxbuf {
                 MaxBuf::overflowed(maxbuf);

@@ -4843,6 +4843,7 @@ impl Resolver {
                     // libuv takes ownership of the handle until `on_close_uv`
                     // frees the allocation.
                     unsafe {
+                        uv::Deferred::cancel(&raw mut (*entry).deferred);
                         let handle: *mut uv::uv_handle_t =
                             core::ptr::from_mut(&mut (*entry).poll).cast();
                         uv::uv_close(
@@ -4893,6 +4894,7 @@ impl Resolver {
                 // `uv_close` is the required teardown path; `on_close_uv` frees
                 // the `UvDnsPoll` box.
                 unsafe {
+                    uv::Deferred::cancel(&raw mut (*poll).deferred);
                     let handle: *mut uv::uv_handle_t =
                         core::ptr::from_mut(&mut (*poll).poll).cast();
                     uv::uv_close(

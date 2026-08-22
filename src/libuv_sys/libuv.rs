@@ -466,7 +466,7 @@ impl Loop {
     /// `active_handles` with libuv, so an unbalanced ref would keep the loop
     /// alive forever). Every handle Bun registered on the loop must have been
     /// closed while its owner was alive; what remains here is uSockets' own
-    /// pre/check/async/timer, closed by us_loop_free and freed by their close
+    /// timers and wakeup async, closed by us_loop_free and freed by their close
     /// callbacks when the loop next turns.
     pub fn close_thread_loop() {
         THREADLOCAL_LOOP.with(|slot| {
@@ -909,8 +909,9 @@ pub trait StreamReader: Sized {
     /// Dispatch phase: reading failed or hit EOF; `err` is the raw negative
     /// libuv errno (e.g. `UV_EOF`), map via
     /// `bun_sys::windows::translate_uv_error_to_e` if `bun_sys::E` is needed.
-    /// Reading was already stopped. Runs after [`on_read`](Self::on_read) for
-    /// bytes that arrived before the error.
+    /// Reading was already stopped. Bytes that arrived before the error are
+    /// delivered first; if that [`on_read`](Self::on_read) ticks the loop, this
+    /// runs from the nested tick, i.e. while `on_read` is still on the stack.
     fn on_read_error(this: &mut Self, err: c_int);
     /// The [`ReadDeferral`] embedded in `*this`; the implementor cancels it
     /// ([`ReadDeferral::cancel`]) when it drops.

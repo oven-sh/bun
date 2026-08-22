@@ -91,6 +91,5 @@ struct us_poll_t {
  * libuv.c. us_loop_run (libusockets.h) is the unbounded form. */
 void us_loop_pump(struct us_loop_t *loop);
 void us_loop_run_with_timeout(struct us_loop_t *loop, long long timeout_ms);
-int us_loop_in_uv_run(struct us_loop_t *loop);
 
 #endif // LIBUV_H

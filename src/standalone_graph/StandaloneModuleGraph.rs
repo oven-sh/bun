@@ -1251,6 +1251,7 @@ pub(crate) fn inject(
                         "<r><red>error<r><d>:<r> failed to open temporary file to copy bun into\n{}",
                         e
                     );
+                    let _ = Syscall::unlink(temp_name);
                     return None;
                 }
             };
@@ -1266,13 +1267,17 @@ pub(crate) fn inject(
             if let bun_sys::Result::Ok(()) =
                 Syscall::clonefileat(Fd::cwd(), self_exe, out_dir, temp_name)
             {
-                if let bun_sys::Result::Ok(res) = Syscall::openat(
+                match Syscall::openat(
                     out_dir,
                     temp_name,
                     bun_sys::O::RDWR | bun_sys::O::CLOEXEC,
                     0,
                 ) {
-                    break 'brk res;
+                    Ok(res) => break 'brk res,
+                    // Remove the clone, or the O_EXCL create below fails with EEXIST.
+                    Err(_) => {
+                        let _ = Syscall::unlinkat(out_dir, temp_name);
+                    }
                 }
             }
         }

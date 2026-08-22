@@ -221,11 +221,10 @@ describe.concurrent("bun run", () => {
                   2,
                 ),
                 "index.js": "console.log('hi')",
-                ...(withLogLevel ? { "bunfig.toml": `logLevel = "debug"` } : {}),
+                "bunfig.toml": withLogLevel ? `logLevel = "debug"` : ``,
               });
 
               await using proc = Bun.spawn({
-                // TODO: figure out why -c is necessary here.
                 cmd: [
                   bunExe(),
                   ...(withRun ? ["run"] : []),

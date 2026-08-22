@@ -319,7 +319,7 @@ pub(crate) fn on_create(
                     "websocket expects maxPayloadLength to be an integer"
                 )));
             }
-            server.max_payload_length = value.to_int64().max(0) as u32;
+            server.max_payload_length = value.to_u32();
         }
     }
 
@@ -331,12 +331,14 @@ pub(crate) fn on_create(
                 )));
             }
 
-            let mut idle_timeout: u16 = value.to_int64().max(0) as u16;
+            let idle_timeout = value.to_int64().max(0);
             if idle_timeout > 960 {
                 return Err(global_object.throw_invalid_arguments(format_args!(
                     "websocket expects idleTimeout to be 960 or less"
                 )));
-            } else if idle_timeout > 0 {
+            }
+            let mut idle_timeout = idle_timeout as u16;
+            if idle_timeout > 0 {
                 // uws does not allow idleTimeout to be between (0, 8),
                 // since its timer is not that accurate, therefore round up.
                 idle_timeout = idle_timeout.max(8);
@@ -353,7 +355,7 @@ pub(crate) fn on_create(
                 )));
             }
 
-            server.backpressure_limit = value.to_int64().max(0) as u32;
+            server.backpressure_limit = value.to_u32();
         }
     }
 

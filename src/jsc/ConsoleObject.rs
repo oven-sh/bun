@@ -2628,6 +2628,24 @@ pub mod formatter {
         }
     }
 
+    /// Pass-through writer that records whether a newline went by, so the
+    /// array printer knows an element wrapped onto multiple lines.
+    struct NewlineTracker<'w> {
+        inner: &'w mut dyn bun_io::Write,
+        saw_newline: bool,
+    }
+
+    impl bun_io::Write for NewlineTracker<'_> {
+        fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
+            self.saw_newline = self.saw_newline || strings::contains_char(buf, b'\n');
+            self.inner.write_all(buf)
+        }
+
+        fn flush(&mut self) -> bun_io::Result<()> {
+            self.inner.flush()
+        }
+    }
+
     /// Failure-tracking writer wrapper over `&mut dyn bun_io::Write`.
     // PERF: dynamic dispatch rather than monomorphization — profile if hot.
     pub struct WrappedWriter<'w> {
@@ -3392,6 +3410,12 @@ pub mod formatter {
     // recursive `print_as` frame carry the union of all arms' locals. Each
     // body is therefore its own `#[inline(never)]` function.
     // ───────────────────────────────────────────────────────────────────────
+
+    /// See [`Formatter::array_layout`].
+    struct ArrayLayout {
+        one_per_line: bool,
+        force_multiline: bool,
+    }
 
     impl<'a> Formatter<'a> {
         fn tag_opts(&self) -> TagOptions {
@@ -4253,6 +4277,133 @@ pub mod formatter {
             Ok(())
         }
 
+        /// Decide, before printing, whether a wrapped array packs several
+        /// elements per line (uniformly short primitives) or prints one
+        /// element per line. Mirrors Node's `groupArrayElements` heuristic.
+        fn array_layout(
+            &self,
+            value: JSValue,
+            len: u64,
+            js_type: jsc::JSType,
+        ) -> JsResult<ArrayLayout> {
+            use crate::StringJsc as _;
+            const PACKED: ArrayLayout = ArrayLayout {
+                one_per_line: false,
+                force_multiline: false,
+            };
+            // The printer shows at most 100 present entries; measure that
+            // same set, skipping holes without spending the budget on them.
+            let mut max_len: usize = 0;
+            let mut total_len: usize = 0;
+            let mut count: usize = 0;
+            let mut i: u32 = 0;
+            while count < 100 && u64::from(i) < len {
+                let element = value.get_direct_index(self.global_this, i);
+                if element.is_empty() {
+                    if js_type.is_array() {
+                        match value.next_present_index(i + 1) {
+                            Some(next) if u64::from(next) < len => i = next,
+                            _ => break,
+                        }
+                    } else {
+                        i += 1;
+                    }
+                    continue;
+                }
+                // Classified from the value alone: `Tag::get_advanced` can run
+                // user getters (inspect.custom, $$typeof), which the print
+                // loop will run again.
+                let estimated: usize = if element.is_int32() {
+                    bun_core::fmt::digit_count(i64::from(element.as_int32()))
+                } else if element.is_boolean() {
+                    4 + usize::from(!element.to_boolean())
+                } else if element.is_null() {
+                    4
+                } else if element.is_undefined() {
+                    9
+                } else if element.is_number() {
+                    // Same formatting as `print_double`; Rust's `{}` never
+                    // uses scientific notation, so it would misjudge 1e100.
+                    let num = element.as_number();
+                    if num.is_nan() {
+                        3
+                    } else if num.is_infinite() {
+                        8 + usize::from(num < 0.0)
+                    } else {
+                        let mut buf = [0u8; 124];
+                        bun_core::fmt::FormatDouble::dtoa_with_negative_zero(&mut buf, num).len()
+                    }
+                } else {
+                    match element.js_type() {
+                        jsc::JSType::String => {
+                            // Rendered width (quotes and escapes included),
+                            // measured with the same escapers `print_string`
+                            // uses.
+                            let str =
+                                OwnedString::new(BunString::from_js(element, self.global_this)?);
+                            if str.is_utf16() {
+                                let mut out = OwnedString::new(BunString::empty());
+                                element.json_stringify(self.global_this, self.indent, &mut out)?;
+                                out.length()
+                            } else {
+                                let mut counter = bun_io::DiscardingWriter::new();
+                                JSPrinter::write_json_string(
+                                    str.latin1(),
+                                    &mut counter,
+                                    JSPrinter::Encoding::Latin1,
+                                )
+                                .expect("unreachable");
+                                counter.count
+                            }
+                        }
+                        jsc::JSType::Symbol => {
+                            // `Symbol(description)`
+                            "Symbol()".len() + element.get_description(self.global_this).len
+                        }
+                        jsc::JSType::HeapBigInt => {
+                            // `123n`
+                            element.get_zig_string(self.global_this)?.slice().len() + 1
+                        }
+                        jsc::JSType::NumberObject
+                        | jsc::JSType::BooleanObject
+                        | jsc::JSType::StringObject
+                        | jsc::JSType::DerivedStringObject
+                        | jsc::JSType::RegExpObject => {
+                            // Boxed primitives render as `[Number: 1]` etc.,
+                            // and regexes without quotes; keep the packed
+                            // fallback rather than measuring the raw value.
+                            return Ok(PACKED);
+                        }
+                        _ => {
+                            return Ok(ArrayLayout {
+                                one_per_line: true,
+                                force_multiline: false,
+                            });
+                        }
+                    }
+                };
+                count += 1;
+                total_len += estimated + 2;
+                max_len = max_len.max(estimated);
+                i += 1;
+            }
+
+            if count == 0 {
+                return Ok(PACKED);
+            }
+            // ", " between packed elements.
+            let actual_max = max_len + 2;
+            let packs = actual_max * 3 + (self.indent as usize + 1) * 2 < 80
+                && (total_len / actual_max > 5 || max_len <= 6);
+            let one_per_line = !packs;
+            Ok(ArrayLayout {
+                one_per_line,
+                // Open the bracket in multiline form when a single line would
+                // overflow, instead of leaving the first element after `[ `.
+                force_multiline: one_per_line && self.estimated_line_length + total_len + 2 > 80,
+            })
+        }
+
         #[inline(never)]
         fn print_array<const C: bool>(
             &mut self,
@@ -4264,6 +4415,26 @@ pub mod formatter {
             // function, and `WrappedWriter` holds `&mut self.estimated_line_length`
             // which prevents calling `&self` methods while it is live.
             let tag_opts = self.tag_opts();
+
+            let len = value.get_length(self.global_this)?;
+
+            if len == 0 {
+                if writer_.write_all(b"[]").is_err() {
+                    self.failed = true;
+                }
+                self.add_for_new_line(2);
+                return Ok(());
+            }
+
+            let layout = if self.single_line {
+                ArrayLayout {
+                    one_per_line: false,
+                    force_multiline: false,
+                }
+            } else {
+                self.array_layout(value, len, js_type)?
+            };
+
             let mut writer = WrappedWriter {
                 ctx: writer_,
                 failed: false,
@@ -4275,20 +4446,9 @@ pub mod formatter {
                 };
             }
 
-            let len = value.get_length(self.global_this)?;
-
-            // TODO: DerivedArray does not get passed along in JSType, and it's
-            // not clear why.
-
-            if len == 0 {
-                writer.write_all(b"[]");
-                writer.add_for_new_line(2);
-                return Ok(());
-            }
-
             let mut was_good_time = self.always_newline_scope ||
                 // heuristic: more than 10, probably should have a newline before it
-                len > 10;
+                len > 10 || layout.force_multiline;
             {
                 self.indent += 1;
                 self.depth += 1;
@@ -4386,11 +4546,13 @@ pub mod formatter {
                             writer.print_comma::<C>();
                             if !self.single_line
                                 && (self.ordered_properties
+                                    || (layout.one_per_line && was_good_time)
                                     || writer.good_time_for_a_new_line(self.indent))
                             {
                                 was_good_time = true;
                                 writer.write_all(b"\n");
                                 writer.write_indent(self.indent);
+                                writer.reset_line(self.indent);
                             } else {
                                 writer.space();
                             }
@@ -4418,18 +4580,28 @@ pub mod formatter {
 
                     writer.print_comma::<C>();
                     if !self.single_line
-                        && (self.ordered_properties || writer.good_time_for_a_new_line(self.indent))
+                        && (self.ordered_properties
+                            || (layout.one_per_line && was_good_time)
+                            || writer.good_time_for_a_new_line(self.indent))
                     {
                         writer.write_all(b"\n");
                         was_good_time = true;
                         writer.write_indent(self.indent);
+                        writer.reset_line(self.indent);
                     } else {
                         writer.space();
                     }
 
                     let tag = Tag::get_advanced(element, self.global_this, tag_opts)?;
 
-                    self.format::<C>(tag, writer_, element, self.global_this)?;
+                    let mut tracking = NewlineTracker {
+                        inner: &mut *writer_,
+                        saw_newline: false,
+                    };
+                    self.format::<C>(tag, &mut tracking, element, self.global_this)?;
+                    // Elements after a multiline one each start a fresh line
+                    // (`},\n{` instead of `}, {`).
+                    was_good_time = was_good_time || (layout.one_per_line && tracking.saw_newline);
                     writer = WrappedWriter {
                         ctx: writer_,
                         failed: false,
@@ -4447,11 +4619,13 @@ pub mod formatter {
                         writer.print_comma::<C>();
                         if !self.single_line
                             && (self.ordered_properties
+                                || (layout.one_per_line && was_good_time)
                                 || writer.good_time_for_a_new_line(self.indent))
                         {
                             writer.write_all(b"\n");
                             was_good_time = true;
                             writer.write_indent(self.indent);
+                            writer.reset_line(self.indent);
                         } else {
                             writer.space();
                         }

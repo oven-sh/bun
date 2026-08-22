@@ -280,6 +280,13 @@ impl<'a> AsyncHTTP<'a> {
         &MAX_SIMULTANEOUS_REQUESTS
     }
 
+    /// The method the request was made with. A redirect only ever rewrites the
+    /// HTTP thread's copy (`client.method`), and only to GET.
+    #[inline]
+    pub fn method(&self) -> Method {
+        self.method
+    }
+
     /// A store into the shared signal `Store`, not into `self`.
     pub fn enable_response_body_streaming(&self) {
         self.signals.store(

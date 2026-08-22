@@ -2382,15 +2382,7 @@ pub mod O {
         pub(super) const DIRECT: i32 = 0o40000;
         pub(super) const NOFOLLOW: i32 = 0o400000;
         pub(super) const SYNC: i32 = 0o4010000;
-        /// Records that the caller passed `_O_TEMPORARY` (delete on close). Uses
-        /// Linux's `__O_TMPFILE` bit; nothing else maps to it on Windows.
-        pub(super) const TEMPORARY: i32 = 0o20000000;
     }
-
-    /// The `bun.O` bit [`to_bun_o`] sets for `_O_TEMPORARY`. [`from_bun_o`] does
-    /// not translate it back, so the open itself is unchanged; the permission
-    /// model reads it, because node counts a delete-on-close open as a write.
-    pub const BUN_O_TEMPORARY: i32 = bun_o::TEMPORARY;
 
     /// Convert from internal `bun.O` flags to libuv/Windows flags.
     pub fn from_bun_o(c_flags: i32) -> i32 {
@@ -2472,9 +2464,6 @@ pub mod O {
         }
         if uv_flags & FILEMAP != 0 {
             flags |= FILEMAP;
-        }
-        if uv_flags & TEMPORARY != 0 {
-            flags |= bun_o::TEMPORARY;
         }
         flags
     }

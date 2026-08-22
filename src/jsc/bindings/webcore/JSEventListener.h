@@ -30,7 +30,6 @@
 #include <JavaScriptCore/WeakInlines.h>
 #include <wtf/Ref.h>
 #include <wtf/TypeCasts.h>
-#include <wtf/text/TextPosition.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
@@ -54,9 +53,6 @@ public:
 
     JSC::JSObject* jsFunction() const final { return m_jsFunction.get(); }
     JSC::JSObject* wrapper() const final { return m_wrapper.get(); }
-
-    virtual URL sourceURL() const { return {}; }
-    virtual TextPosition sourcePosition() const { return TextPosition(); }
 
     String functionName() const;
 

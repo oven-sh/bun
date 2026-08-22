@@ -45,14 +45,6 @@
 using namespace JSC;
 extern "C" BunString BunString__fromBytes(const char* bytes, size_t length);
 
-extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__WTFStringImpl__deref(WTF::StringImpl* impl)
-{
-    impl->deref();
-}
-extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__WTFStringImpl__ref(WTF::StringImpl* impl)
-{
-    impl->ref();
-}
 // Cold path for the Rust-side inlined `deref()`: caller has already brought
 // the refcount to zero via `fetch_sub`, so this is destroy-only.
 extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__WTFStringImpl__destroy(WTF::StringImpl* impl)

@@ -1604,37 +1604,8 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             cli.concurrent_scripts = strings::parse_int::<usize>(concurrency, 10).ok();
         }
 
-        if let Some(cwd_) = args.option(b"--cwd") {
-            let mut buf = PathBuffer::uninit();
-            let mut buf2 = PathBuffer::uninit();
-
-            let final_path: &mut bun_core::ZStr = if !cwd_.is_empty() && cwd_[0] == b'.' {
-                let cwd_len = bun_sys::getcwd(&mut buf[..])?;
-                let cwd = &buf[..cwd_len];
-                let parts: [&[u8]; 1] = [cwd_];
-                let len = Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
-                    cwd,
-                    &mut buf2[..],
-                    &parts,
-                )
-                .len();
-                buf2[len] = 0;
-                bun_core::ZStr::from_buf_mut(&mut buf2[..], len)
-            } else {
-                buf[..cwd_.len()].copy_from_slice(cwd_);
-                buf[cwd_.len()] = 0;
-                bun_core::ZStr::from_buf_mut(&mut buf[..], cwd_.len())
-            };
-            if let Err(err) = bun_sys::chdir(final_path) {
-                Output::err_generic(
-                    "failed to change directory to \"{}\": {}\n",
-                    (
-                        bstr::BStr::new(final_path.as_bytes()),
-                        bstr::BStr::new(err.name()),
-                    ),
-                );
-                Global::crash();
-            }
+        if let Some(cwd) = args.option(b"--cwd") {
+            change_directory(cwd)?;
         }
 
         if subcommand == Subcommand::Update {
@@ -1824,4 +1795,49 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
 
         Ok(cli)
     }
+}
+
+/// `--cwd`. Exits the process when the directory cannot be entered.
+fn change_directory(arg: &[u8]) -> Result<(), crate::Error> {
+    let mut buf = PathBuffer::uninit();
+    let mut buf2 = PathBuffer::uninit();
+    let too_long = || bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::chdir);
+
+    // Either buffer keeps its last byte for the NUL terminator `chdir` needs.
+    let resolved: Result<&bun_core::ZStr, bun_sys::Error> = if arg.first() == Some(&b'.') {
+        let cwd_len = bun_sys::getcwd(&mut buf[..])?;
+        let out_len = buf2.len() - 1;
+        match Path::resolve_path::join_abs_string_buf_checked::<Path::platform::Auto>(
+            &buf[..cwd_len],
+            &mut buf2[..out_len],
+            &[arg],
+        )
+        .map(|joined| joined.len())
+        {
+            Some(len) => {
+                buf2[len] = 0;
+                Ok(bun_core::ZStr::from_buf(&buf2[..], len))
+            }
+            None => Err(too_long()),
+        }
+    } else if arg.len() < buf.len() {
+        buf[..arg.len()].copy_from_slice(arg);
+        buf[arg.len()] = 0;
+        Ok(bun_core::ZStr::from_buf(&buf[..], arg.len()))
+    } else {
+        Err(too_long())
+    };
+
+    let (path, err) = match resolved {
+        Ok(path) => match bun_sys::chdir(path) {
+            Ok(()) => return Ok(()),
+            Err(err) => (path.as_bytes(), err),
+        },
+        Err(err) => (arg, err),
+    };
+    Output::err_generic(
+        "failed to change directory to \"{}\": {}\n",
+        (bstr::BStr::new(path), bstr::BStr::new(err.name())),
+    );
+    Global::crash();
 }

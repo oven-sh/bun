@@ -132,7 +132,7 @@ describe.concurrent("OTLP/HTTP exporter", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("2 pass");
     expect(exitCode).toBe(0);
     expect(
@@ -392,7 +392,7 @@ describe.concurrent("OTLP/HTTP exporter", () => {
       env: { ...bunEnv, BUN_OTEL: "1", BUN_OTEL_INSTRUMENTATIONS: "user", OTEL_EXPORTER_OTLP_ENDPOINT: c.url },
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
     expect(
@@ -410,7 +410,7 @@ describe.concurrent("OTLP/HTTP exporter", () => {
       "index.js": `Bun.otel.tracer("t").startSpan("bf").end();`,
     });
     await using proc = Bun.spawn({ cmd: [bunExe(), "index.js"], cwd: String(dir), env: bunEnv, stderr: "pipe" });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
     expect(c.spans().map((s: any) => s.name)).toEqual(["bf"]);

@@ -938,6 +938,10 @@ impl Lockfile {
                 let resolved_ids: &[PackageID] = res_list.get(self.buffers.resolutions.as_slice());
                 debug_assert_eq!(resolved_ids.len(), workspace_deps.len());
                 for (&package_id, dep) in resolved_ids.iter().zip(workspace_deps.iter()) {
+                    // The root's implicit `workspaces` rows are not package.json entries; bind to the entry naming the package.
+                    if dep.behavior.is_workspace() {
+                        continue;
+                    }
                     if update.matches(dep, string_buf) {
                         if package_id as usize > self.packages.len() {
                             continue;

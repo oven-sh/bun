@@ -1332,9 +1332,9 @@ pub(crate) fn edit(
             // derived from a `StoreRef` to the same `E::EString` is live inside this loop body,
             // so this is the sole mutable borrow.
             let e_string = unsafe { &mut *e_string };
-            // `bun update <pkg>` keeps a `catalog:` reference; `bun add` still replaces it.
+            // `bun update <pkg>` only moves registry entries, like `edit_update_entries`; `bun add` still replaces any entry.
             if manager.subcommand == Subcommand::Update
-                && dependency::Tag::infer(e_string.data.slice()) == dependency::Tag::Catalog
+                && !dependency::Tag::infer(e_string.data.slice()).is_npm()
             {
                 continue;
             }
@@ -1447,6 +1447,8 @@ pub(crate) fn edit(
                     arena_dup(arena, installed)
                 }
 
+                // A range that linked a workspace member has nothing to move to; `workspace:*` is what `bun add` writes.
+                resolution::Tag::Workspace if manager.subcommand == Subcommand::Update => continue,
                 resolution::Tag::Workspace => b"workspace:*",
                 _ => arena_dup(arena, request.version.literal.slice(request.version_buf())),
             };

@@ -479,11 +479,9 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
     auto& vm = JSC::getVM(global);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
+    // Node prints `err.stack`: the Error's own state wins over the wrapper's throw-site stack.
     bool getFromSourceURL = false;
-    if (stackTrace != nullptr && stackTrace->size() > 0) {
-        populateStackTrace(vm, *stackTrace, except.stack, global, flags);
-
-    } else if (err->stackTrace() != nullptr && err->stackTrace()->size() > 0) {
+    if (err->stackTrace() != nullptr && err->stackTrace()->size() > 0) {
         populateStackTrace(vm, *err->stackTrace(), except.stack, global, flags, FinalizerSafety::MustNotTriggerGC);
 
     } else {
@@ -583,11 +581,8 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
         JSC::JSValue stackValue = obj->getIfPropertyExists(global, vm.propertyNames->stack);
         if (!scope.clearExceptionExceptTermination()) [[unlikely]]
             return;
-        if (stackValue) {
-            // Prevent infinite recursion if stack property is the error object itself
-            if (stackValue == val) {
-                return;
-            }
+        // Skip self-referential `.stack` (fall through to the wrapper-stack fallback below).
+        if (stackValue && stackValue != val) {
             if (stackValue.isString()) {
                 WTF::String stack = stackValue.toWTFString(global);
                 if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
@@ -633,6 +628,12 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
                 }
             }
         }
+    }
+
+    if (except.stack.frames_len == 0 && stackTrace != nullptr && stackTrace->size() > 0) {
+        // Last resort: the wrapper's throw-site stack.
+        populateStackTrace(vm, *stackTrace, except.stack, global, flags);
+        getFromSourceURL = false;
     }
 
     if (except.stack.frames_len == 0 && getFromSourceURL) {
@@ -877,7 +878,11 @@ extern "C" void ZigException__collectSourceLines(JSC::EncodedJSValue jsException
         auto* jscException = uncheckedDowncast<JSC::Exception>(value);
         JSValue unwrapped = jscException->value();
 
-        if (jscException->stack().size() > 0) {
+        // Must match fromErrorInstance's selection: OnlySourceLines indexes the same vector via jsc_stack_frame_index.
+        if (auto* error = dynamicDowncast<JSC::ErrorInstance>(unwrapped);
+            error && error->stackTrace() != nullptr && error->stackTrace()->size() > 0) {
+            populateStackTrace(global->vm(), *error->stackTrace(), exception->stack, global, PopulateStackTraceFlags::OnlySourceLines, FinalizerSafety::MustNotTriggerGC);
+        } else if (jscException->stack().size() > 0) {
             populateStackTrace(global->vm(), jscException->stack(), exception->stack, global, PopulateStackTraceFlags::OnlySourceLines);
         }
 

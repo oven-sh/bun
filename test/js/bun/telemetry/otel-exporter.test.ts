@@ -318,6 +318,32 @@ describe.concurrent("OTLP/HTTP exporter", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("exit-time export is bounded by OTEL_BSP_EXPORT_TIMEOUT even when the per-request timeout is longer", async () => {
+    // A collector that accepts but never answers. The request timeout is 20s;
+    // the export deadline (1s, rounded up to the socket timer's granularity)
+    // is what bounds process exit.
+    const socks: any[] = [];
+    using hang = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(s) {
+          socks.push(s);
+        },
+        data() {},
+      },
+    });
+    const started = performance.now();
+    const { exitCode } = await run(`Bun.otel.tracer("t").startSpan("a").end();`, {
+      BUN_OTEL: "1",
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:" + hang.port,
+      OTEL_EXPORTER_OTLP_TIMEOUT: "20000",
+      OTEL_BSP_EXPORT_TIMEOUT: "1000",
+    });
+    expect(performance.now() - started).toBeLessThan(15_000);
+    expect(exitCode).toBe(0);
+  }, 30_000);
+
   test("a start() that throws (bad URL) leaves the previously configured exporters in place", async () => {
     using c = collector();
     const script = `

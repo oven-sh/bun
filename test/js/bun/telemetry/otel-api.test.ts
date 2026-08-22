@@ -302,8 +302,12 @@ describe("context propagation", () => {
       return [Bun.otel.activeSpan(), als.getStore(), other.getStore()];
     });
     expect(seen).toEqual([undefined, "entered-inside", "kept"]);
+  });
+
+  test("tracer cache key: a name containing '@' does not collide with (name, version)", () => {
     expect(Bun.otel.tracer("a@1").version).toBeUndefined();
     expect(Bun.otel.tracer("a", "1").version).toBe("1");
+    expect(Bun.otel.tracer("a@1")).not.toBe(Bun.otel.tracer("a", "1"));
   });
 
   test("Bun.otel.with(undefined, fn) clears the active span but keeps AsyncLocalStorage stores", () => {

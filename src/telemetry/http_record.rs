@@ -565,9 +565,16 @@ pub fn forwarded_client<'a>(
 }
 
 const PEER_ADDRESS_KEY: &str = "network.peer.address";
+const PEER_PORT_KEY: &str = "network.peer.port";
 /// Offset of the address text inside [`encode_peer_attrs`] output
 /// (4 header bytes + key + 4 value-header bytes; see `write_str_kv_small`).
 const PEER_TEXT_OFF: usize = 4 + PEER_ADDRESS_KEY.len() + 4;
+/// Upper bound of [`encode_peer_attrs`] output: the address KV with the
+/// longest text plus the port KV (4 + key + 3 value header + 3-byte varint).
+/// The transport's per-connection cache (uWS `HttpResponseData::peerAttrs`)
+/// is sized from this.
+pub const PEER_ATTRS_MAX: usize =
+    PEER_TEXT_OFF + PeerIp::MAX_TEXT + 4 + PEER_PORT_KEY.len() + 3 + 3;
 
 /// `network.peer.address` + `network.peer.port` for a connection. The
 /// transport caches this per connection and hands it back in
@@ -584,7 +591,7 @@ pub fn encode_peer_attrs(peer: &PeerIp, port: u16, out: &mut Vec<u8>) {
         otlp::write_key_value(
             out,
             f::ATTRIBUTES,
-            b"network.peer.port",
+            PEER_PORT_KEY.as_bytes(),
             &Value::Int(port as i64),
         );
     }
@@ -641,7 +648,7 @@ fn append_tail(
     let (encoded, n): (&[u8], u32) = if !s.peer_encoded.is_empty() {
         (s.peer_encoded, facts.peer_encoded_attrs as u32)
     } else if !matches!(facts.peer, PeerIp::None) {
-        fresh.reserve(112);
+        fresh.reserve(PEER_ATTRS_MAX);
         encode_peer_attrs(&facts.peer, facts.peer_port, &mut fresh);
         (&fresh, 1 + u32::from(facts.peer_port != 0))
     } else {
@@ -829,6 +836,29 @@ pub use bun_core::fmt::split_host_port;
 #[cfg(test)]
 mod tests {
     use super::split_host_port;
+
+    #[test]
+    fn peer_attrs_fit_the_connection_cache() {
+        use super::{PEER_ATTRS_MAX, PeerIp, encode_peer_attrs, peer_text_of};
+        // uWS sizes HttpResponseData::peerAttrs with this number.
+        assert_eq!(PEER_ATTRS_MAX, 100);
+        let widest = PeerIp::from_text(&[b'f'; PeerIp::MAX_TEXT]);
+        let mut out = Vec::new();
+        encode_peer_attrs(&widest, u16::MAX, &mut out);
+        assert!(
+            out.len() <= PEER_ATTRS_MAX,
+            "{} > {}",
+            out.len(),
+            PEER_ATTRS_MAX
+        );
+        assert_eq!(peer_text_of(&out), &[b'f'; PeerIp::MAX_TEXT][..]);
+        let mut v6 = Vec::new();
+        encode_peer_attrs(&PeerIp::V6([0xff; 16]), 65535, &mut v6);
+        assert!(v6.len() <= PEER_ATTRS_MAX);
+        let mut v4 = Vec::new();
+        encode_peer_attrs(&PeerIp::V4([127, 0, 0, 1]), 8080, &mut v4);
+        assert_eq!(peer_text_of(&v4), b"127.0.0.1");
+    }
 
     #[test]
     fn host_port() {

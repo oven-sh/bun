@@ -110,7 +110,7 @@ pub fn begin(
                     match (&cache, &f.peer) {
                         (None, _) | (_, R::PeerIp::None) => &b""[..],
                         (Some(cache), _) => {
-                            fresh.reserve(112);
+                            fresh.reserve(R::PEER_ATTRS_MAX);
                             R::encode_peer_attrs(&f.peer, f.peer_port, &mut fresh);
                             cache.set(&fresh);
                             &fresh[..]

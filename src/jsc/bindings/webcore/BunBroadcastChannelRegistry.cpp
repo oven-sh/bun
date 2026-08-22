@@ -77,7 +77,8 @@ void BunBroadcastChannelRegistry::post(const String& name, BroadcastChannel& sou
         ScriptExecutionContext::postTaskTo(ctxId, ctxLoopKind, [weakChannel, message = message.copyRef()](ScriptExecutionContext&) mutable {
             // Resolve on the target thread so any last deref happens here.
             if (RefPtr channel = weakChannel.get())
-                channel->dispatchMessage(WTF::move(message)); });
+                channel->dispatchMessage(WTF::move(message));
+        });
     }
 }
 

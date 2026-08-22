@@ -51,12 +51,9 @@ pub(crate) fn get_truthy_string_utf8(
     Ok(Some(utf8))
 }
 
-/// `opts.{name}` → `Some(integer)` when the property is present and not
-/// `null`/`undefined`. Coerces with ToNumber and truncates like 1.3.x did, so
-/// numeric strings and floats are accepted. The bounds are checked on the
-/// coerced f64 before it is narrowed, so the range error reports the value
-/// the caller passed rather than a saturated i32. NaN is rejected: ToNumber
-/// of an unset env var must not become a silent `0`.
+/// `opts.{name}` as a truncated integer in `min..=max`, or `None` when absent,
+/// `null` or `undefined`. ToNumber coercion, so numeric strings are accepted.
+/// NaN is rejected, and the range check runs on the f64 before narrowing.
 fn get_optional_int_in_range(
     opts: JSValue,
     global: &JSGlobalObject,
@@ -211,8 +208,7 @@ pub(crate) fn get_credentials_with_options(
                 new_credentials.changed_credentials = true;
             }
 
-            // `pageSize` is the deprecated alias. Both are validated when both
-            // are set, and the `partSize` value is the one that is kept.
+            // `pageSize` is the deprecated alias. `partSize` is applied last and wins.
             for name in [b"pageSize".as_slice(), b"partSize".as_slice()] {
                 if let Some(part_size) = get_optional_int_in_range(
                     opts,

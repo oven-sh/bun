@@ -63,6 +63,8 @@ public:
     }
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, bool isBake = false);
+    /// Structure of the per-module `import.meta.hot` object (`bun --hot` only).
+    static JSC::Structure* createHotStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
     static JSValue getPrototype(JSObject*, JSC::JSGlobalObject* globalObject);
 
@@ -72,6 +74,7 @@ public:
     LazyProperty<JSObject, JSString> urlProperty;
     LazyProperty<JSObject, JSString> fileProperty;
     LazyProperty<JSObject, JSString> pathProperty;
+    LazyProperty<JSObject, JSObject> hotProperty;
 
 private:
     static ImportMetaObject* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, const WTF::String& url);

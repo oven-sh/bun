@@ -301,6 +301,8 @@ pub struct VirtualMachine {
     pub pending_internal_promise_is_protected: bool,
     pub pending_internal_promise_reported_at: u32,
     pub(crate) hot_reload_deferred: bool,
+    /// Promise a reload is waiting on; see [`Self::reload`].
+    pub(crate) hot_reload_dispose_promise: crate::strong::Optional,
     pub entry_point_result: EntryPointResult,
 
     pub on_unhandled_rejection: OnUnhandledRejection,
@@ -1242,6 +1244,12 @@ impl VirtualMachine {
 
     pub(crate) fn is_main_thread(&self) -> bool {
         self.worker.is_none()
+    }
+
+    /// Whether `import.meta.hot` exists: `bun --hot`, main VM only (workers
+    /// inherit `hot_reload` but are never reloaded).
+    pub fn is_hot_reload_enabled(&self) -> bool {
+        self.hot_reload == HotReload::Hot && self.is_main_thread()
     }
 
     pub fn is_inspector_enabled(&self) -> bool {
@@ -3865,6 +3873,12 @@ impl VirtualMachine {
 
         if self.hot_reload_deferred {
             self.reload(None);
+            if !self.hot_reload_deferred {
+                // Unlike a reload run as a task, nothing after this drains the
+                // module loader's microtasks or stops the loop parking first.
+                self.drain_microtasks();
+                self.wakeup();
+            }
         }
         self.add_main_to_watcher_if_needed();
     }
@@ -3961,15 +3975,42 @@ impl VirtualMachine {
         }
         self.hot_reload_deferred = false;
 
-        bun_core::debug!("Reloading...");
-        let should_clear_terminal = !self
-            .env_loader()
-            .has_set_no_clear_terminal_on_reload(!bun_core::Output::enable_ansi_colors_stdout());
-        if should_clear_terminal {
-            bun_core::Output::flush();
-            bun_core::Output::disable_buffering();
-            bun_core::Output::reset_terminal_all();
-            bun_core::Output::enable_buffering();
+        if let Some(dispose) = self.hot_reload_dispose_promise.get() {
+            // Dispose callbacks already ran; wait for their promises. Further
+            // changes coalesce into this reload.
+            let promise = dispose
+                .as_promise()
+                .expect("hot_reload_dispose_promise only ever holds a promise");
+            if crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Pending {
+                self.hot_reload_deferred = true;
+                return;
+            }
+            self.hot_reload_dispose_promise.clear_without_deallocation();
+        } else {
+            bun_core::debug!("Reloading...");
+            let should_clear_terminal =
+                !self.env_loader().has_set_no_clear_terminal_on_reload(
+                    !bun_core::Output::enable_ansi_colors_stdout(),
+                );
+            if should_clear_terminal {
+                bun_core::Output::flush();
+                bun_core::Output::disable_buffering();
+                bun_core::Output::reset_terminal_all();
+                bun_core::Output::enable_buffering();
+            }
+
+            // If dispose callbacks returned pending promises, park until the
+            // deferred-reload poll (`report_exception_in_hot_reloaded_module_if_needed`)
+            // re-enters `reload` and the branch above resumes.
+            let global = self.global();
+            let dispose = crate::cpp::JSC__JSGlobalObject__runImportMetaHotDispose(global);
+            if let Some(promise) = dispose.as_promise() {
+                if crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Pending {
+                    self.hot_reload_dispose_promise.set(global, dispose);
+                    self.hot_reload_deferred = true;
+                    return;
+                }
+            }
         }
 
         if let Some(hooks) = runtime_hooks() {
@@ -4856,6 +4897,7 @@ impl VirtualMachine {
         drop(core::mem::take(&mut self.main_resolved_path));
 
         self.overridden_main.deinit();
+        self.hot_reload_dispose_promise.deinit();
 
         // `timer`/`entry_point` live in the high-tier `RuntimeState` box, so
         // dispatch the reclaim through the hook.

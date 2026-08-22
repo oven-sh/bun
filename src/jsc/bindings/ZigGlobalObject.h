@@ -16,6 +16,7 @@ class LazyClassStructure;
 class ScriptFetcher;
 class ScriptFetchParameters;
 class WebAssemblyCompileOptions;
+class InternalFieldTuple;
 enum class JSPromiseRejectionOperation : unsigned;
 } // namespace JSC
 
@@ -90,6 +91,7 @@ extern "C" void Bun__reportError(JSC::JSGlobalObject*, JSC::EncodedJSValue);
 extern "C" void Bun__reportUnhandledError(JSC::JSGlobalObject*, JSC::EncodedJSValue);
 
 extern "C" bool Bun__VirtualMachine__isShuttingDown(void* /* BunVM */);
+extern "C" bool Bun__VirtualMachine__isHotReloadEnabled(void* /* BunVM */);
 
 #if OS(WINDOWS)
 #include <uv.h>
@@ -543,6 +545,10 @@ public:
                                                                                                              \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_processEnvObject)                                      \
                                                                                                              \
+    /* import.meta.hot for `bun --hot`: module URL -> `data` object, and the instance structure. */          \
+    V(public, WriteBarrier<JSC::JSMap>, m_importMetaHotDataMap)                                              \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_importMetaHotStructure)                              \
+                                                                                                             \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_JSS3FileStructure)                                    \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_S3ErrorStructure)                                     \
                                                                                                              \
@@ -736,6 +742,13 @@ public:
 
     void reload();
     void clearModuleRegistry();
+
+    // import.meta.hot (bun --hot). Implemented in ImportMetaObject.cpp.
+    JSC::JSMap* importMetaHotDataMap();
+    JSC::Structure* importMetaHotStructure() const { return m_importMetaHotStructure.getInitializedOnMainThread(this); }
+    void addImportMetaHotDisposeCallback(JSC::InternalFieldTuple* callbackAndURL);
+    // Each entry is an InternalFieldTuple of (callback, module URL string).
+    Bun::WriteBarrierList<JSC::InternalFieldTuple> m_importMetaHotDisposeCallbacks;
 
     JSC::Structure* jsonlParseResultStructure() { return m_jsonlParseResultStructure.get(this); }
     JSC::Structure* pathParsedObjectStructure() { return m_pathParsedObjectStructure.get(this); }

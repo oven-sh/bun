@@ -1732,10 +1732,10 @@ impl<'a> LinkerContext<'a> {
                                 .path_with_pretty_initialized(&source.path, arena)
                                 .expect("OOM");
                         }
-                        // Note: `Path::assert_pretty_is_valid` lives on the
-                        // resolver-side `Path<'a>`; the logger `Path` has no
-                        // such debug hook yet.
-                        debug_assert!(source.path.text.as_ptr() != source.path.pretty.as_ptr());
+                        // `pretty` may legitimately alias `text` here: a relative path
+                        // (such as a bare `files` key) relativizes to itself, and
+                        // `dupe_alloc` re-slices it out of `text`.
+                        source.path.assert_pretty_is_valid();
 
                         break 'brk source.path.pretty;
                     } else {

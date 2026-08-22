@@ -2222,8 +2222,8 @@ pub mod bv2_impl {
                     &import_record.source_file,
                     &import_record.specifier,
                 ) {
-                    let file_map_result = _file_map_result;
-                    let mut path_primary = file_map_result.path_pair.primary;
+                    let mut file_map_result = _file_map_result;
+                    let path_primary = file_map_result.path_pair.primary;
                     // reshaped for borrowck — `get_or_put` borrows `*self` mutably via
                     // `self.graph`; capture the slot as `*mut u32` so subsequent `self.*` calls
                     // type-check. SAFETY: `path_to_source_index_map(target)` is not mutated again
@@ -2253,8 +2253,13 @@ pub mod bv2_impl {
                                 .loader(unsafe { &(*transpiler).options.loaders })
                                 .unwrap_or(Loader::File);
                         };
-                        // For virtual files, use the path text as-is (no relative path computation needed).
-                        path_primary.pretty = self.arena().alloc_slice_copy(path_primary.text);
+                        // Same display path as `resolve_import_records` gives this file when
+                        // no plugin runs, and as disk files get. `ParseTask::init` reads the
+                        // path back out of `file_map_result`, so write it back there too.
+                        let path_primary = self
+                            .path_with_pretty_initialized(&path_primary, target)
+                            .expect("oom");
+                        file_map_result.path_pair.primary = path_primary;
                         let mut tmp_source = bun_ast::Source {
                             path: path_as_static(&path_primary),
                             contents: std::borrow::Cow::Borrowed(&b""[..]),
@@ -6214,18 +6219,13 @@ pub mod bv2_impl {
                             continue;
                         }
 
-                        // For virtual files, use the path text as-is (no relative path computation needed).
-                        // SAFETY: arena outlives the bundle pass; raw-pointer detour erases the
-                        // `&self` lifetime so the resulting `&'static [u8]` doesn't pin `self`
-                        // (otherwise `path_primary: Path<'static>` forces `&self: 'static`,
-                        // cascading borrow conflicts into every `&mut self` call below).
-                        path_primary.pretty = unsafe {
-                            bun_ptr::detach_lifetime(
-                                self.arena().alloc_slice_copy(path_primary.text),
-                            )
-                        };
+                        // Same display path as a disk file (and as `run_resolver` gives this
+                        // file when a plugin declines it).
+                        path_primary = self
+                            .path_with_pretty_initialized(&path_primary, target)
+                            .expect("oom");
                         import_record.path = path_as_static(&path_primary);
-                        let _ = path_primary.text; // key already interned by get_or_put
+                        // key already interned by get_or_put
                         bun_core::scoped_log!(
                             Bundle,
                             "created ParseTask from FileMap: {}",

@@ -1,5 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
+import { join } from "node:path";
+
+async function buildSummary(result: Awaited<ReturnType<typeof Bun.build>>) {
+  expect(result.success).toBe(true);
+  return {
+    outputs: await Promise.all(result.outputs.map(async output => [output.path, await output.text()])),
+    inputs: result.metafile!.inputs,
+  };
+}
 
 describe("bundler files option", () => {
   test("basic in-memory file bundling", async () => {
@@ -571,6 +580,131 @@ describe("bundler files option", () => {
 
     const output = await result.outputs[0].text();
     expect(output).toContain("from actual-data");
+  });
+
+  test("in-memory import is displayed the same way no matter how it was resolved", async () => {
+    using dir = tempDir("bundler-files-display-path", {
+      "entry.js": `import { x } from "./lib.js"; console.log(x);`,
+    });
+    const libPath = join(String(dir), "lib.js");
+
+    const build = (plugins: Bun.BunPlugin[]) =>
+      Bun.build({
+        entrypoints: [join(String(dir), "entry.js")],
+        files: { [libPath]: `export const x = "lib from memory";` },
+        plugins,
+        metafile: true,
+        naming: "[name]-[hash].[ext]",
+      }).then(buildSummary);
+
+    // Three ways for the import to reach the `files` entry: the bundler's own
+    // resolver, an onResolve plugin that matched the import but declined it,
+    // and an onResolve plugin that returned the key itself.
+    const withoutPlugin = await build([]);
+    const declined = await build([
+      {
+        name: "decline",
+        setup(builder) {
+          builder.onResolve({ filter: /lib\.js$/ }, () => undefined);
+        },
+      },
+    ]);
+    const redirected = await build([
+      {
+        name: "redirect",
+        setup(builder) {
+          builder.onResolve({ filter: /lib\.js$/ }, () => ({ path: libPath, namespace: "file" }));
+        },
+      },
+    ]);
+
+    expect(withoutPlugin.outputs[0][1]).toContain("lib from memory");
+    expect(declined).toEqual(withoutPlugin);
+    expect(redirected).toEqual(withoutPlugin);
+  });
+
+  test("in-memory imports with relative keys are displayed the same way with and without a declining plugin", async () => {
+    using dir = tempDir("bundler-files-relative-key-display-path", {
+      "entry.js": `
+        import { x } from "bare-key.js";
+        import { y } from "./dot-slash-key.js";
+        console.log(x, y);
+      `,
+    });
+
+    const build = (plugins: Bun.BunPlugin[]) =>
+      Bun.build({
+        entrypoints: [join(String(dir), "entry.js")],
+        files: {
+          "bare-key.js": `export const x = "bare";`,
+          "./dot-slash-key.js": `export const y = "dot slash";`,
+        },
+        plugins,
+        metafile: true,
+        naming: "[name]-[hash].[ext]",
+      }).then(buildSummary);
+
+    const withoutPlugin = await build([]);
+    const declined = await build([
+      {
+        name: "decline",
+        setup(builder) {
+          builder.onResolve({ filter: /key\.js$/ }, () => undefined);
+        },
+      },
+    ]);
+
+    expect(withoutPlugin.outputs[0][1]).toContain("dot slash");
+    expect(Object.keys(withoutPlugin.inputs)).toHaveLength(3);
+    expect(declined).toEqual(withoutPlugin);
+  });
+
+  test("overriding a disk file in memory produces the same output as the disk file", async () => {
+    using dir = tempDir("bundler-files-override-output", {
+      "entry.js": `import { x } from "./lib.js"; console.log(x);`,
+      "lib.js": `export const x = "same contents on disk and in memory";`,
+    });
+    const entryPath = join(String(dir), "entry.js");
+    const libPath = join(String(dir), "lib.js");
+    const libContents = await Bun.file(libPath).text();
+
+    const fromDisk = await Bun.build({
+      entrypoints: [entryPath],
+      metafile: true,
+      naming: "[name]-[hash].[ext]",
+    }).then(buildSummary);
+    const fromMemory = await Bun.build({
+      entrypoints: [entryPath],
+      files: { [libPath]: libContents },
+      metafile: true,
+      naming: "[name]-[hash].[ext]",
+    }).then(buildSummary);
+
+    expect(fromDisk.outputs[0][1]).toContain("same contents on disk and in memory");
+    expect(fromMemory).toEqual(fromDisk);
+  });
+
+  test("in-memory import uses the same display path convention as its in-memory entry point", async () => {
+    using dir = tempDir("bundler-files-virtual-metafile", {});
+    const entryPath = join(String(dir), "entry.js");
+    const libPath = join(String(dir), "lib.js");
+
+    const result = await Bun.build({
+      entrypoints: [entryPath],
+      files: {
+        [entryPath]: `import { x } from "./lib.js"; console.log(x);`,
+        [libPath]: `export const x = 1;`,
+      },
+      metafile: true,
+    });
+    expect(result.success).toBe(true);
+
+    const inputs = result.metafile!.inputs;
+    const [entryKey] = Object.keys(inputs).filter(key => key.endsWith("/entry.js"));
+    expect(entryKey).toBeDefined();
+    const libKey = entryKey.replace(/entry\.js$/, "lib.js");
+    expect(Object.keys(inputs).sort()).toEqual([entryKey, libKey].sort());
+    expect(inputs[entryKey].imports.map(record => record.path)).toEqual([libKey]);
   });
 
   test("plugin can provide content for in-memory file via onLoad", async () => {

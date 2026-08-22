@@ -2948,6 +2948,26 @@ pub mod args {
 
     pub(crate) type LCHmod = Chmod;
 
+    /// Consumes the stat family's optional options object.
+    fn eat_stat_options(arguments: &mut ArgumentsSlice) -> Option<JSValue> {
+        let options = arguments.next()?;
+        if !options.is_object() || options.is_callable() {
+            return None;
+        }
+        arguments.eat();
+        Some(options)
+    }
+
+    /// Node does not validate the stat family's `bigint`: the binding reads it with
+    /// `IsTrue()`, so only exactly `true` selects BigInt stats.
+    /// https://github.com/nodejs/node/blob/v26.3.0/src/node_file.cc#L1140
+    fn stat_big_int_option(ctx: &JSGlobalObject, options: Option<JSValue>) -> JsResult<bool> {
+        match options {
+            Some(options) => Ok(options.get(ctx, "bigint")? == Some(JSValue::TRUE)),
+            None => Ok(false),
+        }
+    }
+
     pub struct StatFS {
         pub path: PathLike,
         pub(crate) big_int: bool,
@@ -2955,23 +2975,9 @@ pub mod args {
     fs_args_path_forwarders!(StatFS; path);
     impl StatFS {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<StatFS> {
-            // `Drop for PathLike` covers the
-            // `get_boolean_strict` throw below.
+            // `Drop for PathLike` covers the option getter throw below.
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
-            let big_int = 'brk: {
-                if let Some(next_val) = arguments.next() {
-                    if next_val.is_object() {
-                        if next_val.is_callable() {
-                            break 'brk false;
-                        }
-                        arguments.eat();
-                        if let Some(b) = next_val.get_boolean_strict(ctx, "bigint")? {
-                            break 'brk b;
-                        }
-                    }
-                }
-                false
-            };
+            let big_int = stat_big_int_option(ctx, eat_stat_options(arguments))?;
             Ok(StatFS { path, big_int })
         }
     }
@@ -2986,23 +2992,14 @@ pub mod args {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Stat> {
             // `Drop for PathLike` covers the error returns below.
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
-            let mut throw_if_no_entry = true;
-            let big_int = 'brk: {
-                if let Some(next_val) = arguments.next() {
-                    if next_val.is_object() {
-                        if next_val.is_callable() {
-                            break 'brk false;
-                        }
-                        arguments.eat();
-                        if let Some(v) = next_val.get_boolean_strict(ctx, "throwIfNoEntry")? {
-                            throw_if_no_entry = v;
-                        }
-                        if let Some(b) = next_val.get_boolean_strict(ctx, "bigint")? {
-                            break 'brk b;
-                        }
-                    }
-                }
-                false
+            let options = eat_stat_options(arguments);
+            let big_int = stat_big_int_option(ctx, options)?;
+            // Not validated by node either: the binding reads it with `IsFalse()`,
+            // so only exactly `false` keeps a missing path from throwing.
+            // https://github.com/nodejs/node/blob/v26.3.0/src/node_file.cc#L1143
+            let throw_if_no_entry = match options {
+                Some(options) => options.get(ctx, "throwIfNoEntry")? != Some(JSValue::FALSE),
+                None => true,
             };
             Ok(Stat {
                 path,
@@ -3020,20 +3017,7 @@ pub mod args {
         pub(crate) fn to_thread_safe(&mut self) {}
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Fstat> {
             let fd = FD::from_js_required(ctx, arguments)?;
-            let big_int = 'brk: {
-                if let Some(next_val) = arguments.next() {
-                    if next_val.is_object() {
-                        if next_val.is_callable() {
-                            break 'brk false;
-                        }
-                        arguments.eat();
-                        if let Some(b) = next_val.get_boolean_strict(ctx, "bigint")? {
-                            break 'brk b;
-                        }
-                    }
-                }
-                false
-            };
+            let big_int = stat_big_int_option(ctx, eat_stat_options(arguments))?;
             Ok(Fstat { fd, big_int })
         }
     }

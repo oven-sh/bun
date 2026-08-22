@@ -1102,7 +1102,11 @@ async function runInDir(dir: string, ...args: string[]) {
     stderr: "pipe",
     env,
   });
-  return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const result = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [, stderr, exitCode] = result;
+  // Every caller expects success; failing here shows the whole stderr rather than only the exit code.
+  if (exitCode !== 0) expect(stderr).toBe("");
+  return result;
 }
 
 test("bun pm untrusted and bun pm trust escape control characters in dependency scripts", async () => {

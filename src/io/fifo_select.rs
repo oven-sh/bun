@@ -18,14 +18,23 @@ use bun_threading::{Guarded, Mutex};
 pub(crate) const NOTE_FIFO_READABLE: u32 = 0x1;
 
 struct Armed {
+    /// Unique per registration: a delivery is for the registration `select`
+    /// observed, not for whatever owns the fd number by the time it runs.
+    id: u64,
     fd: Fd,
     kqueue: Fd,
     udata: u64,
     generation: u64,
 }
 
+#[derive(Default)]
+struct Registry {
+    entries: Vec<Armed>,
+    next_id: u64,
+}
+
 struct Watcher {
-    armed: Guarded<Vec<Armed>>,
+    armed: Guarded<Registry>,
     /// Self-pipe: a byte written here makes the thread leave `select` and
     /// rebuild its set.
     wake_read: Fd,
@@ -76,7 +85,7 @@ impl Watcher {
             }
         }
         Ok(Watcher {
-            armed: Guarded::new(Vec::new()),
+            armed: Guarded::new(Registry::default()),
             wake_read,
             wake_write,
         })
@@ -96,13 +105,13 @@ impl Watcher {
         }
     }
 
-    /// Disarms every registration of `fd` and delivers each to its kqueue.
-    fn deliver(&self, fd: Fd) {
+    /// Disarms registration `id`, if it is still there, and delivers it.
+    fn deliver(&self, id: u64) {
         let mut armed = self.armed.lock();
-        while let Some(index) = armed.iter().position(|a| a.fd == fd) {
+        if let Some(index) = armed.entries.iter().position(|a| a.id == id) {
             // Under the lock, so an owner that unregisters afterwards finds the
             // knote to delete.
-            armed.swap_remove(index).deliver();
+            armed.entries.swap_remove(index).deliver();
         }
     }
 
@@ -110,9 +119,9 @@ impl Watcher {
     /// the knote of a closed fd. Returns whether there was one.
     fn forget(&self, fd: Fd) -> bool {
         let mut armed = self.armed.lock();
-        let before = armed.len();
-        armed.retain(|a| a.fd != fd);
-        armed.len() != before
+        let before = armed.entries.len();
+        armed.entries.retain(|a| a.fd != fd);
+        armed.entries.len() != before
     }
 }
 
@@ -157,15 +166,22 @@ pub(crate) fn arm(kqueue: Fd, fd: Fd, udata: u64, generation: u64) -> sys::Resul
     let watcher = watcher()?;
     {
         let mut armed = watcher.armed.lock();
+        let id = armed.next_id;
+        armed.next_id += 1;
         let entry = Armed {
+            id,
             fd,
             kqueue,
             udata,
             generation,
         };
-        match armed.iter_mut().find(|a| a.fd == fd && a.kqueue == kqueue) {
+        match armed
+            .entries
+            .iter_mut()
+            .find(|a| a.fd == fd && a.kqueue == kqueue)
+        {
             Some(existing) => *existing = entry,
-            None => armed.push(entry),
+            None => armed.entries.push(entry),
         }
     }
     watcher.wake();
@@ -179,9 +195,13 @@ pub(crate) fn disarm(kqueue: Fd, fd: Fd) {
     };
     let removed = {
         let mut armed = watcher.armed.lock();
-        match armed.iter().position(|a| a.fd == fd && a.kqueue == kqueue) {
+        match armed
+            .entries
+            .iter()
+            .position(|a| a.fd == fd && a.kqueue == kqueue)
+        {
             Some(index) => {
-                armed.swap_remove(index);
+                armed.entries.swap_remove(index);
                 true
             }
             None => false,
@@ -206,20 +226,22 @@ fn run(watcher: &'static Watcher) {
     bun_core::Output::Source::configure_named_thread(bun_core::ZStr::from_static(
         b"FIFO Watcher\0",
     ));
-    let mut fds: Vec<Fd> = Vec::new();
+    // The registrations this round waits for, as (fd, id).
+    let mut watched: Vec<(Fd, u64)> = Vec::new();
     let mut set: Vec<u32> = Vec::new();
     loop {
-        fds.clear();
-        fds.push(watcher.wake_read);
-        for entry in watcher.armed.lock().iter() {
-            if !fds.contains(&entry.fd) {
-                fds.push(entry.fd);
-            }
-        }
-        let max_fd = fds.iter().map(|fd| fd.native()).max().unwrap_or(0) as usize;
+        watched.clear();
+        watched.extend(watcher.armed.lock().entries.iter().map(|a| (a.fd, a.id)));
+        let max_fd = watched
+            .iter()
+            .map(|(fd, _)| fd.native())
+            .max()
+            .unwrap_or(0)
+            .max(watcher.wake_read.native()) as usize;
         set.clear();
         set.resize(max_fd / 32 + 1, 0);
-        for fd in &fds {
+        set_bit(&mut set, watcher.wake_read);
+        for (fd, _) in &watched {
             set_bit(&mut set, *fd);
         }
 
@@ -236,7 +258,7 @@ fn run(watcher: &'static Watcher) {
                     // delivered without readiness: a blocking read would stall
                     // the owner's loop.
                     let mut forgot = false;
-                    for fd in &fds[1..] {
+                    for (fd, _) in &watched {
                         if sys::get_fcntl_flags(*fd).is_err() {
                             forgot |= watcher.forget(*fd);
                         }
@@ -252,9 +274,9 @@ fn run(watcher: &'static Watcher) {
         if is_set(&set, watcher.wake_read) {
             watcher.drain_wake();
         }
-        for fd in &fds[1..] {
+        for (fd, id) in &watched {
             if is_set(&set, *fd) {
-                watcher.deliver(*fd);
+                watcher.deliver(*id);
             }
         }
     }

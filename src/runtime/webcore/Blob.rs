@@ -23,6 +23,7 @@ use bun_http_types::MimeType::MimeType;
 use bun_jsc::StringJsc as _;
 use bun_sys::{self, Fd};
 
+use crate::webcore::body::BodyMixin;
 use crate::webcore::node_types::{PathOrBlob, PathOrFileDescriptor};
 use crate::webcore::s3 as S3;
 use crate::webcore::{self, Lifetime, ReadableStream, Request, Response, streams};
@@ -4872,6 +4873,23 @@ pub(crate) fn write_file_with_source_destination(
 // writeFileInternal / writeFile (Bun.write)
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Throws `ERR_BODY_ALREADY_USED` for a `Response`/`Request` source whose body is consumed.
+fn throw_if_body_consumed<T: BodyMixin>(global_this: &JSGlobalObject, owner: &T) -> JsResult<()> {
+    owner.throw_if_body_unusable(global_this)?;
+    if let webcore::body::Value::Locked(locked) = owner.get_body_value() {
+        // Set by an earlier write (or the server) that is still waiting for the bytes.
+        if locked.on_receive_value.is_some() {
+            return Err(global_this
+                .err(
+                    jsc::ErrorCode::BODY_ALREADY_USED,
+                    format_args!("Body already used"),
+                )
+                .throw());
+        }
+    }
+    Ok(())
+}
+
 /// ## Errors
 /// - If `path_or_blob` is a detached blob
 /// ## Panics
@@ -5161,6 +5179,7 @@ pub(crate) fn write_file_internal(
         // in `JSValue`); `get_body_value` / `get_body_readable_stream` both
         // take `&self` (interior mutability for the body cell).
         if let Some(response) = data.as_class_ref::<Response>() {
+            throw_if_body_consumed(global_this, response)?;
             let bv = std::ptr::from_mut(response.get_body_value());
             match body_dispatch(bv, &mut || response.get_body_readable_stream())? {
                 core::ops::ControlFlow::Break(v) => return Ok(v),
@@ -5169,6 +5188,7 @@ pub(crate) fn write_file_internal(
         }
 
         if let Some(request) = data.as_class_ref::<Request>() {
+            throw_if_body_consumed(global_this, request)?;
             let bv = std::ptr::from_mut(request.get_body_value());
             match body_dispatch(bv, &mut || request.get_body_readable_stream())? {
                 core::ops::ControlFlow::Break(v) => return Ok(v),

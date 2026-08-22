@@ -852,7 +852,9 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
           const resp = await fetch(\`http://127.0.0.1:\${server.port}/\`);
           ${expose}
           await Bun.sleep(5);
-          await Promise.race([Bun.write(${out}, resp).catch(() => {}), Bun.sleep(100)]);
+          // A disturbed body throws synchronously now; this test is about the
+          // heap-use-after-free only, not the rejection, so swallow both paths.
+          try { await Promise.race([Bun.write(${out}, resp), Bun.sleep(100)]); } catch {}
         }
         console.log("done");
         server.stop(true);
@@ -924,6 +926,148 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     openGate();
     await write;
     expect(await Bun.file(dest).text()).toBe("<p>x</p>");
+  });
+
+  describe("source body already consumed", () => {
+    const alreadyUsed = { name: "TypeError", code: "ERR_BODY_ALREADY_USED" };
+
+    // Not toThrow(): if the write is accepted it returns a promise, toThrow()
+    // waits for it, and a write that waits on a drained body never settles.
+    function syncThrow(write) {
+      try {
+        write();
+      } catch (error) {
+        return { name: error.name, code: error.code };
+      }
+      return "did not throw";
+    }
+
+    it.each([
+      [
+        "Response after .text()",
+        async () => {
+          const res = new Response("abc");
+          await res.text();
+          return res;
+        },
+      ],
+      [
+        "Response(Blob) after .arrayBuffer()",
+        async () => {
+          const res = new Response(new Blob(["abc"]));
+          await res.arrayBuffer();
+          return res;
+        },
+      ],
+      [
+        "Request after .text()",
+        async () => {
+          const req = new Request("http://example.com/", { method: "POST", body: "abc" });
+          await req.text();
+          return req;
+        },
+      ],
+      [
+        "Response drained through body.getReader()",
+        async () => {
+          const res = new Response("abc");
+          const reader = res.body.getReader();
+          while (!(await reader.read()).done);
+          reader.releaseLock();
+          return res;
+        },
+      ],
+      [
+        "Response whose body is locked by a reader",
+        async () => {
+          const res = new Response("abc");
+          res.body.getReader();
+          return res;
+        },
+      ],
+      [
+        "Response(ReadableStream) after .text()",
+        async () => {
+          const res = new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode("abc"));
+                controller.close();
+              },
+            }),
+          );
+          await res.text();
+          return res;
+        },
+      ],
+    ])("Bun.write(path, %s) throws ERR_BODY_ALREADY_USED and leaves the destination alone", async (_name, consume) => {
+      using dir = tempDir("bun-write-used-body", { "dest.txt": "previous contents" });
+      const dest = join(String(dir), "dest.txt");
+      const body = await consume();
+
+      expect(syncThrow(() => Bun.write(dest, body))).toEqual(alreadyUsed);
+
+      expect(await Bun.file(dest).text()).toBe("previous contents");
+    });
+
+    it("Bun.write(path, fetch() response) after the body was read", async () => {
+      using dir = tempDir("bun-write-used-fetch-body", { "cache.json": "previous contents" });
+      const dest = join(String(dir), "cache.json");
+      await using server = Bun.serve({ port: 0, fetch: () => Response.json({ hello: "world" }) });
+      const res = await fetch(server.url);
+      expect(await res.json()).toEqual({ hello: "world" });
+
+      expect(syncThrow(() => Bun.write(dest, res))).toEqual(alreadyUsed);
+
+      expect(await Bun.file(dest).text()).toBe("previous contents");
+    });
+
+    it("a second Bun.write() on a fetch() body the first one is still waiting for", async () => {
+      using dir = tempDir("bun-write-claimed-fetch-body", { "second.txt": "previous contents" });
+      const first = join(String(dir), "first.txt");
+      const second = join(String(dir), "second.txt");
+      const { promise: gate, resolve: openGate } = Promise.withResolvers();
+      await using server = Bun.serve({
+        port: 0,
+        fetch: () =>
+          new Response(async function* () {
+            yield "hello ";
+            await gate;
+            yield "world";
+          }),
+      });
+      const res = await fetch(server.url);
+      const firstWrite = Bun.write(first, res);
+      const secondWrite = syncThrow(() => Bun.write(second, res));
+      openGate();
+
+      expect(secondWrite).toEqual(alreadyUsed);
+      expect(await firstWrite).toBe(11);
+      expect(await Bun.file(first).text()).toBe("hello world");
+      expect(await Bun.file(second).text()).toBe("previous contents");
+    });
+
+    it("BunFile.write(usedResponse) throws and does not create the file", async () => {
+      using dir = tempDir("bun-write-used-body-bunfile", {});
+      const dest = join(String(dir), "never-created.txt");
+      const res = new Response("abc");
+      await res.text();
+
+      expect(syncThrow(() => Bun.file(dest).write(res))).toEqual(alreadyUsed);
+
+      expect(fs.existsSync(dest)).toBe(false);
+    });
+
+    it("a consumed body does not stop the same destination from being written afterwards", async () => {
+      using dir = tempDir("bun-write-used-body-then-fresh", { "dest.txt": "previous contents" });
+      const dest = join(String(dir), "dest.txt");
+      const used = new Response("abc");
+      await used.text();
+      expect(syncThrow(() => Bun.write(dest, used))).toEqual(alreadyUsed);
+
+      expect(await Bun.write(dest, new Response("fresh body"))).toBe(10);
+      expect(await Bun.file(dest).text()).toBe("fresh body");
+    });
   });
 
   it("BunFile.name survives concurrent write() calls + GC", async () => {

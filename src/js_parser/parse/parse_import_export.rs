@@ -16,16 +16,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         level: Level,
     ) -> Result<Expr, Error> {
         let p = self;
+        let mut phase_defer = false;
         // Parse an "import.meta" expression
         if p.lexer.token == T::TDot {
-            p.esm_import_keyword = js_lexer::range_of_identifier(p.source, loc);
             p.lexer.next()?;
             if p.lexer.is_contextual_keyword(b"meta") {
+                // Only `import.meta` implies ESM; `import.defer()` is a dynamic import.
+                p.esm_import_keyword = js_lexer::range_of_identifier(p.source, loc);
                 p.lexer.next()?;
                 p.has_import_meta = true;
                 return Ok(p.new_expr(E::ImportMeta {}, loc));
+            } else if p.lexer.is_contextual_keyword(b"defer") {
+                p.lexer.next()?;
+                phase_defer = true;
             } else {
-                p.lexer.expected_string(b"\"meta\"")?;
+                p.lexer.expected_string(b"\"meta\" or \"defer\"")?;
             }
         }
 
@@ -87,11 +92,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if let Some(slice) = slice_opt {
                 let import_record_index =
                     p.add_import_record(bun_ast::ImportKind::Dynamic, value.loc, slice);
+                p.import_records.items_mut()[import_record_index as usize]
+                    .flags
+                    .set(bun_ast::ImportRecordFlags::PHASE_DEFER, phase_defer);
                 return Ok(p.new_expr(
                     E::Import {
                         expr: value,
                         import_record_index,
                         options: import_options,
+                        phase_defer,
                     },
                     loc,
                 ));
@@ -106,6 +115,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // .leading_interior_comments = comments,
                 import_record_index: u32::MAX,
                 options: import_options,
+                phase_defer,
             },
             loc,
         ))

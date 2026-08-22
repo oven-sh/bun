@@ -693,6 +693,8 @@ pub struct TransposeState {
     pub(crate) import_record_tag: Option<bun_ast::ImportRecordTag>,
     pub(crate) import_loader: Option<bun_ast::Loader>,
     pub(crate) import_options: Expr,
+    /// True when transposing an `import.defer(...)` expression.
+    pub(crate) phase_defer: bool,
 }
 
 impl Default for TransposeState {
@@ -705,6 +707,7 @@ impl Default for TransposeState {
             import_record_tag: None,
             import_loader: None,
             import_options: Expr::EMPTY,
+            phase_defer: false,
         }
     }
 }

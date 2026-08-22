@@ -2703,7 +2703,12 @@ pub(crate) mod __gated_printer {
 
             // Allow it to fail at runtime, if it should
             if module_type != bundle_opts::Format::InternalBakeDev {
-                self.print(b"import(");
+                // The `__toESM` `.then()` below would touch the namespace immediately, defeating the defer.
+                if record.flags.contains(ImportRecordFlags::PHASE_DEFER) && !wrap_with_to_esm {
+                    self.print(b"import.defer(");
+                } else {
+                    self.print(b"import(");
+                }
                 self.print_import_record_path(record);
             } else {
                 self.print_symbol(self.options.hmr_ref);
@@ -3365,6 +3370,8 @@ pub(crate) mod __gated_printer {
                         if self.options.module_type == bundle_opts::Format::InternalBakeDev {
                             self.print_symbol(self.options.hmr_ref);
                             self.print(b".dynamicImport(");
+                        } else if e.phase_defer {
+                            self.print(b"import.defer(");
                         } else {
                             self.print(b"import(");
                         }

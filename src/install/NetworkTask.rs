@@ -485,11 +485,31 @@ impl NetworkTask {
                 name
             };
 
+            // The registry is a directory: force a "/"-terminated base so the
+            // WHATWG join appends the name instead of replacing the last segment.
+            // The join discards a query/fragment anyway, so they are cut first.
+            let registry_href = scope.url.href();
+            let base_storage;
+            let base: &[u8] = if strings::has_prefix_case_insensitive(registry_href, b"https://")
+                || strings::has_prefix_case_insensitive(registry_href, b"http://")
+            {
+                let path_end =
+                    strings::index_of_any(registry_href, b"?#").unwrap_or(registry_href.len());
+                base_storage = [
+                    strings::without_trailing_slash(&registry_href[..path_end]),
+                    b"/",
+                ]
+                .concat();
+                &base_storage
+            } else {
+                registry_href
+            };
+
             // `OwnedString` derefs the WTF-backed result on scope exit —
             // covers both the
             // success path and the InvalidURL early returns below.
             let tmp = bun_core::OwnedString::new(bun_url::join(
-                &bun_core::String::borrow_utf8(scope.url.href()),
+                &bun_core::String::borrow_utf8(base),
                 &bun_core::String::borrow_utf8(encoded_name),
             ));
 
@@ -546,7 +566,9 @@ impl NetworkTask {
 
             {
                 let joined = URL::parse(&url_bytes);
-                let registry = scope.url.url();
+                // Confine against the same base the join used, so ".." cannot
+                // escape a slash-less registry path.
+                let registry = URL::parse(base);
                 let registry_dir_end =
                     strings::last_index_of_char(registry.pathname, b'/').map_or(0, |i| i + 1);
                 let registry_dir = &registry.pathname[..registry_dir_end];

@@ -84,6 +84,8 @@ pub struct WebWorker {
     inherit_exec_argv: bool,
     unresolved_specifier: Box<[u8]>,
     preloads: Vec<Box<[u8]>>,
+    /// `--expose-gc` for this worker; inheriting children read it at their `create()`.
+    expose_gc: bool,
     name: bun_core::ZBox,
     /// `--cpu-prof` on the parent applies to workers that inherit its execArgv (as in node, where
     /// the flag is per-process); a worker with its own execArgv profiles only if that says so.
@@ -380,18 +382,34 @@ impl WebWorker {
         let parent_ref = unsafe { &*parent };
         let store_fd = parent_ref.transpiler.resolver.store_fd;
         let mut transform_options = (*parent_ref.transpiler.options.transform_options).clone();
-        // A worker's own `execArgv` carries node's per-Environment options (parsed with the
-        // RunCommand param table, hence the hook); without one it inherits the parent's.
-        let exec_argv: virtual_machine::WorkerExecArgv = if inherit_exec_argv {
-            Default::default()
-        } else {
-            let hooks = runtime_hooks().expect("RuntimeHooks not installed");
-            // SAFETY: caller passed valid (ptr,len) borrowed from the C++ WorkerOptions, alive
-            // for the proxy's lifetime; the hook only reads the slice.
-            unsafe {
-                (hooks.parse_worker_exec_argv)(bun_core::ffi::slice(exec_argv_ptr, exec_argv_len))
-            }
-        };
+        // A worker's own `execArgv` carries node's per-Environment options (validated and
+        // honoured by `cli::worker_exec_argv`, hence the hook); without one it inherits the
+        // parent's. `--expose-gc` chains through inheriting workers, so an inheriting worker takes
+        // it from its parent worker, or from the process argv when the parent is the main thread.
+        let hooks = runtime_hooks().expect("RuntimeHooks not installed");
+        let (mut exec_argv, expose_gc): (virtual_machine::WorkerExecArgv, bool) =
+            if inherit_exec_argv {
+                let expose_gc = match parent_ref.worker_ref() {
+                    Some(parent_worker) => parent_worker.expose_gc,
+                    // SAFETY: `None` reads only process-constant state.
+                    None => unsafe { (hooks.parse_worker_exec_argv)(None) }.expose_gc,
+                };
+                (Default::default(), expose_gc)
+            } else {
+                // SAFETY: caller passed valid (ptr,len) borrowed from the C++ WorkerOptions, alive
+                // for the proxy's lifetime; the hook only reads the slice.
+                let parsed = unsafe {
+                    (hooks.parse_worker_exec_argv)(Some(bun_core::ffi::slice(
+                        exec_argv_ptr,
+                        exec_argv_len,
+                    )))
+                };
+                let expose_gc = parsed.expose_gc;
+                (parsed, expose_gc)
+            };
+        // `--require`/`--import` specifiers join the worker's preload list; `load_preloads`
+        // resolves them on the worker thread, so a bad path fails at runtime as in node.
+        preloads.extend(core::mem::take(&mut exec_argv.preloads));
         if let Some(allow_addons) = exec_argv.allow_addons {
             let parent_allows = transform_options.allow_addons.unwrap_or(true);
             transform_options.allow_addons = Some(parent_allows && allow_addons);
@@ -455,6 +473,7 @@ impl WebWorker {
             inherit_exec_argv,
             unresolved_specifier: spec_slice.slice().to_vec().into_boxed_slice(),
             preloads,
+            expose_gc,
             name: if name_str.is_empty() {
                 bun_core::ZBox::default()
             } else {
@@ -845,6 +864,10 @@ impl WebWorker {
                 crate::bun_cpu_profiler::set_sampling_interval(config.interval);
                 vm_ref.cpu_profiler_config = Some(config);
                 crate::bun_cpu_profiler::start_cpu_profiler(vm_ref.jsc_vm_mut());
+            }
+
+            if self.expose_gc {
+                crate::cpp::JSC__JSGlobalObject__addGc(vm_ref.global());
             }
         }
 

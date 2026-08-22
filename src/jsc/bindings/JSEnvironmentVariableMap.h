@@ -45,6 +45,10 @@ public:
     static bool putByIndex(JSC::JSCell*, JSC::JSGlobalObject*, unsigned, JSC::JSValue, bool shouldThrow);
     static bool defineOwnProperty(JSC::JSObject*, JSC::JSGlobalObject*, JSC::PropertyName, const JSC::PropertyDescriptor&, bool shouldThrow);
     static bool deleteProperty(JSC::JSCell*, JSC::JSGlobalObject*, JSC::PropertyName, JSC::DeletePropertySlot&);
+    static bool preventExtensions(JSC::JSObject*, JSC::JSGlobalObject*)
+    {
+        return false;
+    }
 
 private:
     JSEnvironmentVariableMap(JSC::VM& vm, JSC::Structure* structure)
@@ -54,6 +58,10 @@ private:
 };
 
 JSC::JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject);
+
+#if OS(WINDOWS)
+JSC::JSValue wrapInWindowsEnvProxy(Zig::GlobalObject* globalObject, JSC::JSObject* object, JSC::JSArray* keyArray, bool syncOSEnv);
+#endif
 
 // Setting TZ must make *existing* Date instances recompute local time. JSC's DateCache
 // reset only clears shared slots; live DateInstances keep a Ref to DateInstanceData

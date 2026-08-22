@@ -2646,13 +2646,9 @@ mod posix_impl {
         check!(safe_libc::ftruncate(fd.native(), len), Tag::ftruncate);
         Ok(())
     }
-    /// `ftruncate` for callers that rewrote a file from offset 0 without
-    /// `O_TRUNC` and now want whatever the previous contents left past `len`
-    /// gone. Skipped when the file is already `len` bytes or shorter (new
-    /// files, same-size rewrites, grows): besides being a no-op there, the
-    /// call is expensive on XFS, which writes the just-dirtied pages back
-    /// synchronously when it is asked to set the size of a file whose size
-    /// grew since the last writeback (about 1ms per file on NVMe).
+    /// `ftruncate`, skipped when the file is already `len` bytes or shorter.
+    /// On XFS, setting the size of a file that just grew (every new file)
+    /// writes its dirty pages back synchronously, about 1ms per file.
     pub fn ftruncate_if_longer(fd: Fd, len: i64) -> Maybe<()> {
         if let Ok(st) = fstat(fd) {
             if st.st_size <= len {

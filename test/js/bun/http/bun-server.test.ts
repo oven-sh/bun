@@ -1708,41 +1708,39 @@ test("node:http close() drops the loop ref once in-flight requests finish, witho
 });
 
 test("request on a connection surviving graceful stop() never reaches a collected handler", async () => {
-  // Stress sibling of the late-keep-alive tests above. Each round parks two
-  // keep-alive connections on a server, stops it gracefully, drops the only
-  // binding, then churns the heap and forces GC before sending late requests
-  // on the parked connections (interleaved across rounds so the requests run
-  // from a different frame than the one whose conservative stack scan could
-  // still see the wrapper).
+  // Stress sibling of the late-keep-alive tests above, for the js_value
+  // downgrade gate: the wrapper (the handlers' only GC root) must stay Strong
+  // while a connection can still dispatch, even after the user dropped every
+  // JS reference to the server.
   //
-  // Late requests are written to the sockets parked before stop(), never to a
-  // fresh dial: stop() closes the listener, so the OS can hand the freed port
-  // to a later round's server and a reconnect would legitimately reach that
-  // foreign server, indistinguishable from the bug on the client side.
+  // node:http is the server kind whose keep-alive connections outlive a
+  // graceful close(): close() sweeps idle connections once and leaves busy
+  // ones alone, and they stay keep-alive after their response, as in Node.
+  // (Bun.serve marks busy connections close-when-idle at stop(), #37074, so a
+  // late request there is dropped before it reaches a handler.) Each round
+  // holds one request per parked connection across close(), drops the only
+  // binding, churns the heap and forces a GC, then sends late requests on the
+  // surviving connections. The late requests for a round's connections are
+  // sent from later rounds, so they run from a different frame than the one
+  // whose conservative stack scan could still see the wrapper.
   //
-  // Invariant: a late request on a parked connection is answered by the
-  // original handler ("ok <tag>") or the connection closes -- never with a
-  // foreign body and never by a server whose wrapper was already collected
-  // (FinalizationRegistry fired). Before the open-connection gate on the
-  // `js_value` downgrade, the churn closures here could reuse the swept
-  // handler cell and run AS the fetch handler (wrong bodies, "Expected a
-  // Response object, but received ...", or a swept-cell call that crashes
-  // outright under ASAN).
-  //
-  // Rounds alternate between a plain `fetch` handler and a `routes:` server
-  // with a param route: the route dispatch path reads the collected wrapper's
-  // ServerRouteList cell too (paramsObjectForRoute on a swept cell), so both
-  // trampolines are driven.
+  // Invariant: every late request is answered by the original handler
+  // ("ok <tag>"). A closed connection is a failure too: nothing but a
+  // regression closes a parked connection (keepAliveTimeout is 0 and node:http
+  // has no native idle timeout), and a round with no dispatch would prove
+  // nothing. Without the gate the wrapper is collected while the connections
+  // are open: its finalizer tears the native server down and closes them, and
+  // a dispatch that races the finalizer reaches a swept cell.
   const dir = tempDirWithFiles("stop-keepalive-gc", {
     "churn-fixture.js": `
-      // Bun.gc(true) collects AND sweeps synchronously: a wrapper collected in
-      // round N is destroyed and zapped before round N's late requests go out,
-      // so on a build without the downgrade gate the request in round N+1 hits
-      // the zapped cell and fails right there (Bun.gc(false) leaves dead cells
-      // intact until the lazy sweeper reaches their block, which is why the
-      // same bug used to take anywhere from 15 to 150 rounds to surface). A
-      // fixed round count is enough: the unfixed build fails in round 2, and
-      // ROUNDS gives each of the two server kinds eight rounds on top of that.
+      // Bun.gc(true) collects AND sweeps synchronously: a wrapper that lost its
+      // last root is destroyed (its finalizer runs) inside the call, not when
+      // the lazy sweeper reaches its block as with Bun.gc(false). So on a build
+      // without the downgrade gate the parked connections are closed before the
+      // same round's late requests are answered. A fixed round count is enough:
+      // a gateless build fails in round 1, and ROUNDS leaves a wide margin on
+      // top of that.
+      const http = require("node:http");
       const net = require("net");
       const ROUNDS = 16;
       let sink;
@@ -1755,10 +1753,10 @@ test("request on a connection surviving graceful stop() never reaches a collecte
         for (let j = 0; j < 4000; j++) sink = function () { return j; };
         for (let j = 0; j < 20; j++) sink = new Response("x");
       }
-      // One parked keep-alive connection. request() writes a GET on the
+      // One parked keep-alive connection. request(path) writes a GET on the
       // already-established socket and resolves { status, body } using
       // Content-Length framing, or null once the socket is gone.
-      function park(port, path) {
+      function park(port) {
         const sock = net.connect(port, "127.0.0.1");
         sock.setNoDelay(true);
         sock.on("error", () => {});
@@ -1784,7 +1782,7 @@ test("request on a connection surviving graceful stop() never reaches a collecte
         });
         return {
           connected: new Promise((res, rej) => { sock.on("connect", res); sock.on("error", rej); }),
-          request() {
+          request(path) {
             if (closed || sock.destroyed) return Promise.resolve(null);
             return new Promise(resolve => {
               pending = resolve;
@@ -1800,52 +1798,46 @@ test("request on a connection surviving graceful stop() never reaches a collecte
           destroy() { sock.destroy(); },
         };
       }
-      const dead = new Set();
-      const fr = new FinalizationRegistry(u => dead.add(u));
       const entries = [];
       const fails = [];
       for (let round = 1; round <= ROUNDS && !fails.length; round++) {
-        const tag = round;
-        const kind = round % 2 ? "fetch" : "routes";
-        // Every server binds the loopback address the parks dial. A wildcard
-        // port-0 bind is not safe here: macOS's ephemeral allocator honors
-        // only exact-address conflicts, so a wildcard listener can be handed
-        // a port some other process already holds at 127.0.0.1 (a leaked
-        // verdaccio from an install test, say), and that listener - being
-        // more specific - would answer this fixture's dials. With dozens of
-        // binds per run, this fixture can find such a port.
-        let server =
-          kind === "fetch"
-            ? Bun.serve({
-                port: 0,
-                hostname: "127.0.0.1",
-                idleTimeout: 60,
-                fetch() { return new Response("ok " + tag); },
-              })
-            : Bun.serve({
-                port: 0,
-                hostname: "127.0.0.1",
-                idleTimeout: 60,
-                routes: { "/r/:id": req => new Response("ok " + tag + " " + req.params.id) },
-                fetch() { return new Response("ok " + tag + " fallback"); },
-              });
-        const path = kind === "fetch" ? "/" : "/r/7";
-        const want = kind === "fetch" ? "ok " + tag : "ok " + tag + " 7";
-        const token = server.port + ":" + tag;
-        fr.register(server, token);
-        // Two parked keep-alive connections that outlive the server binding,
-        // one served request each so both are accepted and counted pre-stop.
-        const parks = [park(server.port, path), park(server.port, path)];
+        const want = "ok " + round;
+        const release = Promise.withResolvers();
+        const bothHeld = Promise.withResolvers();
+        let held = 0;
+        let srv = http.createServer(async (req, res) => {
+          if (req.url === "/hold") {
+            if (++held === 2) bothHeld.resolve();
+            await release.promise;
+          }
+          res.writeHead(200, { "content-length": String(want.length) });
+          res.end(want);
+        });
+        // No keep-alive timer: only a regression can close a parked connection.
+        srv.keepAliveTimeout = 0;
+        // Bind the loopback address the parks dial, not the wildcard: macOS's
+        // ephemeral allocator honors only exact-address conflicts, so a
+        // wildcard listener can be handed a port another process holds at
+        // 127.0.0.1 and that listener would answer this fixture's dials.
+        await new Promise(r => srv.listen(0, "127.0.0.1", r));
+        const port = srv.address().port;
+        // Two parked keep-alive connections, each busy with a held request
+        // when close() sweeps, so both outlive the server binding.
+        const parks = [park(port), park(port)];
         await Promise.all(parks.map(p => p.connected));
-        const first = await Promise.all(parks.map(p => p.request()));
+        const firsts = Promise.all(parks.map(p => p.request("/hold")));
+        await bothHeld.promise;
+        srv.close(); // graceful: the sweep skips the busy connections
+        srv = null;
+        release.resolve();
+        const first = await firsts;
         if (first.some(r => !r || r.status !== 200 || r.body !== want)) {
-          fails.push(kind + " round " + round + ": bad initial response " + JSON.stringify(first));
+          fails.push("round " + round + ": bad held response " + JSON.stringify(first));
           break;
         }
-        await new Promise(r => setImmediate(r));
-        server.stop(); // graceful: parked connections stay open
-        server = null;
-        entries.push({ parks, kind, want, token });
+        // The only binding is gone; the connections are idle keep-alive on a
+        // closed server.
+        entries.push({ parks, want });
         if (entries.length > 6) for (const p of entries.shift().parks) p.destroy();
         churn();
         Bun.gc(true);
@@ -1855,20 +1847,14 @@ test("request on a connection surviving graceful stop() never reaches a collecte
         for (let i = 0; i < 3; i++) decoys.push(Bun.serve({ port: 0, hostname: "127.0.0.1", fetch() { return new Response("decoy"); } }));
         churn();
         const rs = await Promise.all(
-          entries.flatMap(({ parks, kind, want, token }) =>
-            parks.map(p => {
-              const wasCollected = dead.has(token);
-              return p.request().then(r => ({ kind, want, wasCollected, r }));
-            }),
-          ),
+          entries.flatMap(({ parks, want }) => parks.map(p => p.request("/late").then(r => ({ want, r })))),
         );
         for (const d of decoys) d.stop(true);
-        for (const { kind, want, wasCollected, r } of rs) {
-          if (!r) continue; // connection closed: acceptable
-          if (r.status === 200 && r.body !== want) {
-            fails.push(kind + " round " + round + ": wrong body " + JSON.stringify(r.body.slice(0, 16)));
-          } else if (r.status === 200 && wasCollected) {
-            fails.push(kind + " round " + round + ": collected server answered");
+        for (const { want, r } of rs) {
+          if (!r) {
+            fails.push("round " + round + ": a parked connection closed");
+          } else if (r.status !== 200 || r.body !== want) {
+            fails.push("round " + round + ": wrong response " + JSON.stringify(r));
           }
         }
       }
@@ -2040,7 +2026,7 @@ test.concurrent("should be able to abrubtly close a upload request", async () =>
   const chunk = Buffer.alloc(1024 * 100, "a");
   using server = Bun.serve({
     port: 0,
-    hostname: "127.0.0.1",
+    hostname: "localhost",
     maxRequestBodySize: 1024 * 1024 * 1024 * 16,
     async fetch(req) {
       let total_size = 0;

@@ -5576,7 +5576,7 @@ const useNitroApp = () => nitroApp;
 
 try {
   const server = Bun.serve({
-    hostname: "127.0.0.1",
+    hostname: "localhost",
     port: process.env.NITRO_PORT || process.env.PORT || 3e3,
     async fetch(request) {
       const url = new URL(request.url);

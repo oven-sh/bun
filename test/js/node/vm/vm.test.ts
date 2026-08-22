@@ -4,6 +4,7 @@ import {
   compileFunction,
   constants,
   createContext,
+  isContext,
   runInContext,
   runInNewContext,
   runInThisContext,
@@ -1322,6 +1323,106 @@ test("Loader is not defined in vm context", () => {
   expect(runInContext("Object.hasOwn(globalThis, 'Loader');", customContext)).toBe(true);
   // Ensure internal JSC Loader properties are not leaking through
   expect(runInContext("typeof Loader.registry;", customContext)).toBe("undefined");
+});
+
+describe("the context argument", () => {
+  // Node routes every context argument through isContext() (lib/vm.js), whose
+  // validateObject(object, "object", kValidateObjectAllowArray) accepts arrays
+  // and rejects functions along with null and primitives. Expected messages
+  // were checked against node v26.3.0.
+  const script = new Script("1 + 1;");
+  // These contextify the argument; undefined and DONT_CONTEXTIFY mean "a fresh one".
+  const contextifying: Record<string, (context: unknown) => unknown> = {
+    "createContext()": context => runInContext("1 + 1;", createContext(context as any)),
+    "vm.runInNewContext()": context => runInNewContext("1 + 1;", context as any),
+    "Script#runInNewContext()": context => script.runInNewContext(context as any),
+  };
+  // These expect an existing context.
+  const requiringContext: Record<string, (context: unknown) => unknown> = {
+    "isContext()": context => isContext(context as any),
+    "vm.runInContext()": context => runInContext("1 + 1;", context as any),
+    "Script#runInContext()": context => script.runInContext(context as any),
+  };
+
+  function invalidArgType(received: string | RegExp) {
+    return expect.objectContaining({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message:
+        typeof received === "string"
+          ? `The "object" argument must be of type object. Received ${received}`
+          : expect.stringMatching(received),
+    });
+  }
+
+  const rejected: [description: string, context: unknown, received: string | RegExp][] = [
+    ["a function", function foo() {}, "function foo"],
+    ["an anonymous function", function () {}, "function "],
+    ["an arrow function", () => {}, "function "],
+    ["an async function", async function foo() {}, "function foo"],
+    ["a class", class Foo {}, "function Foo"],
+    // How these two are named differs from Node today; only the type matters here.
+    [
+      "a bound function",
+      function foo() {}.bind(null),
+      /^The "object" argument must be of type object\. Received function /,
+    ],
+    [
+      "a callable Proxy",
+      new Proxy(function foo() {}, {}),
+      /^The "object" argument must be of type object\. Received function /,
+    ],
+    ["null", null, "null"],
+    ["a number", 1, "type number (1)"],
+    ["a string", "sandbox", "type string ('sandbox')"],
+    ["a boolean", true, "type boolean (true)"],
+    ["a symbol", Symbol("sandbox"), "type symbol (Symbol(sandbox))"],
+  ];
+
+  describe.each(Object.entries({ ...contextifying, ...requiringContext }))("%s", (_, run) => {
+    test.each(rejected)("rejects %s", (_, context, received) => {
+      expect(() => run(context)).toThrow(invalidArgType(received));
+    });
+  });
+
+  describe.each(Object.entries(contextifying))("%s", (_, run) => {
+    test.each([
+      ["an array", []],
+      ["undefined", undefined],
+      ["vm.constants.DONT_CONTEXTIFY", constants.DONT_CONTEXTIFY],
+    ])("still contextifies %s", (_, context) => {
+      expect(run(context)).toBe(2);
+    });
+  });
+
+  describe.each(Object.entries(requiringContext))("%s", (_, run) => {
+    test("rejects undefined", () => {
+      expect(() => run(undefined)).toThrow(invalidArgType("undefined"));
+    });
+  });
+
+  test("a contextified array is a context everywhere", () => {
+    const sandbox: unknown[] = [];
+    expect(isContext(sandbox)).toBe(false);
+    expect(createContext(sandbox)).toBe(sandbox);
+    expect(isContext(sandbox)).toBe(true);
+    expect(runInContext("1 + 1;", sandbox)).toBe(2);
+    expect(script.runInContext(sandbox)).toBe(2);
+  });
+
+  test("an object that is not a context fails the vm.Context check, not the type check", () => {
+    const notAContext = expect.objectContaining({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: expect.stringContaining('The "contextifiedObject" argument must be an vm.Context'),
+    });
+    expect(isContext({})).toBe(false);
+    expect(isContext([])).toBe(false);
+    expect(() => runInContext("1 + 1;", {})).toThrow(notAContext);
+    expect(() => runInContext("1 + 1;", [])).toThrow(notAContext);
+    expect(() => script.runInContext({})).toThrow(notAContext);
+    expect(() => script.runInContext([])).toThrow(notAContext);
+  });
 });
 
 test("node:vm native Module prototype methods reject non-module receivers", async () => {

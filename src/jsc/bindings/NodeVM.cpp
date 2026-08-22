@@ -765,17 +765,12 @@ NodeVMGlobalObject* getGlobalObjectFromContext(JSGlobalObject* globalObject, JSV
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
-    if (contextValue.isUndefinedOrNull()) {
-        if (canThrow) {
-            ERR::INVALID_ARG_TYPE(scope, globalObject, "context"_s, "object"_s, contextValue);
-        }
-        return nullptr;
+    if (canThrow) {
+        validateContextArg(scope, globalObject, contextValue);
+        RETURN_IF_EXCEPTION(scope, nullptr);
     }
 
     if (!contextValue.isObject()) {
-        if (canThrow) {
-            ERR::INVALID_ARG_TYPE(scope, globalObject, "context"_s, "object"_s, contextValue);
-        }
         return nullptr;
     }
 
@@ -822,6 +817,14 @@ JSC::EncodedJSValue INVALID_ARG_VALUE_VM_VARIATION(JSC::ThrowScope& throwScope, 
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, makeString("The \""_s, name, "\" argument must be an vm.Context"_s)));
     throwScope.release();
     return {};
+}
+
+JSC::EncodedJSValue validateContextArg(JSC::ThrowScope& scope, JSGlobalObject* globalObject, JSValue contextArg)
+{
+    if (!contextArg.isObject() || contextArg.isCallable()) {
+        return ERR::INVALID_ARG_TYPE(scope, globalObject, "object"_s, "object"_s, contextArg);
+    }
+    return JSValue::encode(jsUndefined());
 }
 
 bool isContext(JSGlobalObject* globalObject, JSValue value)
@@ -1541,9 +1544,8 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
     bool notContextified = getContextArg(globalObject, contextArg);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (!contextArg.isObject()) {
-        return ERR::INVALID_ARG_TYPE(scope, globalObject, "context"_s, "object"_s, contextArg);
-    }
+    validateContextArg(scope, globalObject, contextArg);
+    RETURN_IF_EXCEPTION(scope, {});
 
     JSValue optionsArg = callFrame->argument(1);
 
@@ -1598,13 +1600,11 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
 
 JSC_DEFINE_HOST_FUNCTION(vmModule_isContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    ArgList args(callFrame);
     JSValue contextArg = callFrame->argument(0);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!contextArg || !contextArg.isObject()) {
-        return ERR::INVALID_ARG_TYPE(scope, globalObject, "object"_s, "object"_s, contextArg);
-    }
+    validateContextArg(scope, globalObject, contextArg);
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsBoolean(isContext(globalObject, contextArg)));
 }
 

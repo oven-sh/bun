@@ -195,11 +195,13 @@ test.each([
   ["> quoted\n\nFixes #1", [1]],
   ["> quoted\n- Fixes #1", [1]],
   ["> quoted\n## Fixes #1", [1]],
+  ["> quoted\n1. Fixes #1", [1]],
   ["Some text\n    Fixes #1", [1]],
   ["---\nFixes #1", [1]],
   ["```\ncode\n   ```\nFixes #1", [1]],
   ["<s>Fixes #1</s> Fixes #2", [2]],
   ["<s>old\n\nFixes #1", [1]],
+  ["İİ notes. <s>old plan</s> Fixes #100", [100]],
 ] as [string, (number | string)[]][])("finds %j", async (body, expected) => {
   expect(await refs(body)).toEqual(expected);
 });
@@ -234,6 +236,7 @@ test.each([
   "This hasn't fixed #1 yet.",
   "This PR neither fixes #1 nor closes #2.",
   "That would have fixed #1, but it was reverted.",
+  "This wouldn't have fixed #1.",
   "This may have fixed #1.",
   "#100 has fixed #1.",
   "#100 has\nfixed #1.",
@@ -300,10 +303,12 @@ test.each([
   "```sh\necho hi\n    ```\nFixes #1234\n```",
   "> quoted\n#100 has the details. Fixes #1.",
   "> quoted\n**Fixes #1**",
+  "> quoted\n2. Fixes #1",
   "~~Fixes #1~~",
   "<s>Fixes #1</s>",
   "See `note\nFixes #1234` and `done",
   "<DEL>Fixes #1</DEL>",
+  "İİİİİİİİİİİİİ <s>Fixes #100</s>",
   "<strike>Fixes #1</strike>",
   "~~~ `sh`\nFixes #1\n~~~",
   // a list does not cross a paragraph break or continue without a separator

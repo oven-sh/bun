@@ -1021,8 +1021,7 @@ fn is_listed(lockfile: &Lockfile, dep_id: DependencyID, trusted_only: bool) -> b
     )
 }
 
-/// The root package's listed dependencies, sorted by name. A name the root declares in more
-/// than one package.json section is returned once per declaration.
+/// The root's listed dependencies sorted by name, once per package.json section that declares them.
 fn root_dependencies_sorted(lockfile: &Lockfile, trusted_only: bool) -> Vec<DependencyID> {
     let root_deps = lockfile.packages.items_dependencies()[0];
     let mut sorted_dependencies: Vec<DependencyID> =
@@ -1124,9 +1123,7 @@ fn ls_json_group(behavior: Behavior) -> &'static str {
     }
 }
 
-/// `bun pm ls --json`: the root package with its dependencies grouped by package.json section,
-/// in the shape of `pnpm ls --json`. `--all` adds `transitiveDependencies`, one entry per
-/// installed copy of every other package.
+/// `bun pm ls --json`: the shape of `pnpm ls --json`, plus `transitiveDependencies` with `--all`.
 fn print_ls_json(
     pm: &PackageManager,
     directories: &[NodeModulesFolder],

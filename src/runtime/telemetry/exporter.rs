@@ -601,6 +601,8 @@ impl JsExporter {
         let list = core::mem::take(&mut *s.js_exporters.borrow_mut());
         for e in list {
             *e.callback.borrow_mut() = None;
+            let e: Arc<dyn Exporter> = e;
+            super::processor().remove_exporter(&e);
         }
     }
 

@@ -172,6 +172,19 @@ impl Processor {
         self.exporters.write().push(e);
     }
 
+    pub fn remove_exporter(&self, e: &Arc<dyn Exporter>) {
+        self.exporters.write().retain(|x| !Arc::ptr_eq(x, e));
+        let mut retries = self.retries.lock();
+        let (dropped, kept): (Vec<_>, Vec<_>) = core::mem::take(&mut *retries)
+            .into_iter()
+            .partition(|r| Arc::ptr_eq(&r.exporter, e));
+        *retries = kept;
+        drop(retries);
+        for r in dropped {
+            self.record_result(&r.payload, ExportResult::Failure);
+        }
+    }
+
     pub fn clear_exporters(&self) {
         self.exporters.write().clear();
         let parked = core::mem::take(&mut *self.retries.lock());

@@ -115,6 +115,32 @@ describe.concurrent("OTLP/HTTP exporter", () => {
     expect(c.spans().map((s: any) => s.name)).toEqual(["s"]);
   });
 
+  test("a worker's function exporter is removed when the worker exits (no failed exports afterwards)", async () => {
+    using dir = tempDir("otel-worker-exporter", {
+      "worker.js": `
+        Bun.otel.start({ exporters: [{ export() {} }] });
+        Bun.otel.tracer("w").startSpan("in-worker").end();
+        await Bun.otel.forceFlush();
+        postMessage("done");
+      `,
+      "index.js": `
+        Bun.otel.start({ exporters: [{ export() {} }] });
+        const w = new Worker("./worker.js");
+        await new Promise(r => (w.onmessage = r));
+        await w.terminate();
+        Bun.otel.tracer("m").startSpan("after-worker").end();
+        await Bun.otel.forceFlush();
+        const { exportsFailed, spansDropped } = Bun.otel.stats();
+        console.log(JSON.stringify({ exportsFailed, spansDropped }));
+      `,
+    });
+    await using proc = Bun.spawn({ cmd: [bunExe(), "index.js"], cwd: String(dir), env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe(JSON.stringify({ exportsFailed: 0, spansDropped: 0 }));
+    expect(exitCode).toBe(0);
+  });
+
   test("bun test --isolate: every file's global gets the api bridge and all spans export at exit", async () => {
     using c = collector();
     const file = (name: string) => `

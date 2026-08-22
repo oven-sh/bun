@@ -18,8 +18,6 @@ unsafe extern "C" {
     safe fn Bun__Telemetry__activeSpanCell(global: &JSGlobalObject) -> JSValue;
     safe fn Bun__Telemetry__enter(global: &JSGlobalObject, span: JSValue) -> JSValue;
     safe fn Bun__Telemetry__exit(global: &JSGlobalObject, prev: JSValue);
-    safe fn Bun__Telemetry__currentContext(global: &JSGlobalObject) -> JSValue;
-    safe fn Bun__Telemetry__swapContext(global: &JSGlobalObject, value: JSValue) -> JSValue;
     safe fn Bun__TelemetrySpan__createNative(
         global: &JSGlobalObject,
         stub: &SpanStub,
@@ -165,33 +163,6 @@ impl Drop for Entered {
         // SAFETY: created from a live `&JSGlobalObject` on this thread; the
         // global outlives any request/callback frame.
         Bun__Telemetry__exit(unsafe { &*self.global }, self.prev);
-    }
-}
-
-/// RAII swap of the whole context slot (re-enter a captured context).
-pub struct ContextScope<'a> {
-    global: &'a JSGlobalObject,
-    prev: JSValue,
-}
-
-impl<'a> ContextScope<'a> {
-    #[inline]
-    pub fn enter(global: &'a JSGlobalObject, context: JSValue) -> ContextScope<'a> {
-        ContextScope {
-            global,
-            prev: Bun__Telemetry__swapContext(global, context),
-        }
-    }
-    #[inline]
-    pub fn current(global: &JSGlobalObject) -> JSValue {
-        Bun__Telemetry__currentContext(global)
-    }
-}
-
-impl Drop for ContextScope<'_> {
-    #[inline]
-    fn drop(&mut self) {
-        Bun__Telemetry__swapContext(self.global, self.prev);
     }
 }
 

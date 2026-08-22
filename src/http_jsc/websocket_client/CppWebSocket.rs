@@ -54,6 +54,7 @@ unsafe extern "C" {
         deflate_params: *const websocket_deflate::Params,
     );
     safe fn WebSocket__didAbruptClose(websocket_context: &CppWebSocket, reason: ErrorCode);
+    safe fn WebSocket__didStartClosingHandshake(websocket_context: &CppWebSocket);
     fn WebSocket__didReceiveHandshakeResponse(
         websocket_context: &CppWebSocket,
         status_code: u16,
@@ -237,6 +238,11 @@ impl CppWebSocket {
         bun_jsc::mark_binding!();
         // SAFETY: self is a valid C++ WebCore::WebSocket; protocol outlives the call.
         unsafe { WebSocket__setProtocol(self, protocol) };
+    }
+
+    pub(crate) fn did_start_closing_handshake(&self) {
+        bun_jsc::mark_binding!();
+        WebSocket__didStartClosingHandshake(self);
     }
 }
 

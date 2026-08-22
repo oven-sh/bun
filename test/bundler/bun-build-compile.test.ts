@@ -1,6 +1,23 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isArm64, isLinux, isMacOS, isMusl, isPosix, isWindows, tempDir } from "harness";
-import { chmodSync, closeSync, cpSync, existsSync, openSync, readSync } from "node:fs";
+import {
+  accessSync,
+  chmodSync,
+  closeSync,
+  cpSync,
+  existsSync,
+  constants as fsConstants,
+  mkdtempSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "path";
 
 describe("Bun.build compile", () => {
@@ -761,6 +778,96 @@ describe("compiled binary in a deleted cwd", () => {
       expect(stdout).toBe("");
       expect(stderr).toContain("The current working directory was deleted");
       expect(exitCode).toBe(1);
+    },
+    60_000,
+  );
+});
+
+// The new executable is staged as a temp file and renamed over --outfile. The
+// temp file has to live in the outfile's directory: staged in the cwd, the
+// rename fails with EXDEV whenever the outfile is on another filesystem, and
+// the copy fallback unlinks the previous executable and then copies into its
+// place. A copy that fails (ENOSPC, EIO) or a build that is killed leaves a
+// non-executable partial file behind and the previous executable is gone.
+//
+// On Linux, /dev/shm is a tmpfs mount of its own, so it is not the filesystem
+// the temp dir is on. In a container it is usually 64 MB, too small for the
+// executable: the build must fail and leave the previous outfile untouched.
+// Where it is large the build succeeds and the outfile must switch from the
+// previous file to the finished executable in one step.
+const otherFilesystemDir = "/dev/shm";
+function hasOtherFilesystem(): boolean {
+  if (!isLinux) return false;
+  try {
+    accessSync(otherFilesystemDir, fsConstants.W_OK);
+    return statSync(otherFilesystemDir).dev !== statSync(realpathSync.native(tmpdir())).dev;
+  } catch {
+    return false;
+  }
+}
+
+describe("compile --outfile on another filesystem", () => {
+  test.if(hasOtherFilesystem())(
+    "replaces the previous outfile in one step and keeps it when the build fails",
+    async () => {
+      using dir = tempDir("build-compile-other-fs", {
+        "app.js": `console.log("new build");`,
+      });
+      const outDir = mkdtempSync(join(otherFilesystemDir, "bun-build-compile-other-fs-"));
+      try {
+        const outfile = join(outDir, "app");
+        const previous = "previous executable";
+        writeFileSync(outfile, previous, { mode: 0o755 });
+
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "build", "--compile", "./app.js", "--outfile", outfile],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const stdoutPromise = proc.stdout.text();
+        const stderrPromise = proc.stderr.text();
+
+        // While the build runs, the outfile is either the previous file or the
+        // finished executable. It is never missing, and never a file that is
+        // still being written (mode 0644 until the copy is done).
+        const badStates: string[] = [];
+        let exited = false;
+        const exitedPromise = proc.exited.finally(() => {
+          exited = true;
+        });
+        while (!exited && badStates.length === 0) {
+          const st = statSync(outfile, { throwIfNoEntry: false });
+          if (st === undefined) {
+            badStates.push("missing");
+          } else if ((st.mode & 0o111) === 0) {
+            badStates.push(`mode ${(st.mode & 0o777).toString(8)}, size ${st.size}`);
+          }
+          await Bun.sleep(1);
+        }
+
+        const [, stderr, exitCode] = await Promise.all([stdoutPromise, stderrPromise, exitedPromise]);
+        expect(badStates).toEqual([]);
+
+        const st = statSync(outfile);
+        expect(st.mode & 0o111).not.toBe(0);
+        if (exitCode === 0) {
+          const header = new Uint8Array(await Bun.file(outfile).slice(0, 4).arrayBuffer());
+          expect(header).toEqual(new Uint8Array([0x7f, 0x45, 0x4c, 0x46]));
+        } else {
+          // The only reason for the build to fail here is that the filesystem
+          // is too small for the executable.
+          expect(stderr).toContain("ENOSPC");
+          expect(readFileSync(outfile, "utf8")).toBe(previous);
+        }
+
+        // The temp file is renamed away or removed. Nothing is left in the cwd.
+        expect(readdirSync(outDir)).toEqual(["app"]);
+        expect(readdirSync(String(dir))).toEqual(["app.js"]);
+      } finally {
+        rmSync(outDir, { recursive: true, force: true });
+      }
     },
     60_000,
   );

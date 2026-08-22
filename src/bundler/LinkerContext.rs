@@ -192,8 +192,8 @@ impl<'a> LinkerContext<'a> {
     /// The returned borrow is tied to `&self`. Callers that need to hold a
     /// `&Graph` across a `&mut self` borrow (split-borrow patterns — e.g.
     /// `process_html_import_files`, TLA-check column caching, or
-    /// `generate_isolated_hash`) must continue to deref the raw
-    /// `self.parse_graph` field directly.
+    /// `initialize_pretty_paths_for_isolated_hashes`) must continue to deref
+    /// the raw `self.parse_graph` field directly.
     #[inline]
     pub(crate) fn parse_graph(&self) -> &Graph<'_> {
         debug_assert!(
@@ -293,7 +293,7 @@ impl<'a> LinkerContext<'a> {
     /// needlessly conflict on `&mut self`.
     ///
     /// `#[allow(clippy::mut_from_ref)]` follows the same precedent as
-    /// [`GenerateChunkCtx::c`]: the pointee is a set-once GRAPHBACKED backref,
+    /// [`Self::any_loop_mut`]: the pointee is a set-once GRAPHBACKED backref,
     /// not interior storage of `*self`, so `&self` cannot alias the returned
     /// `&mut Log`. Do not call this twice with overlapping live borrows.
     #[inline]
@@ -368,19 +368,37 @@ impl<'a> LinkerContext<'a> {
         self.graph.arena()
     }
 
-    /// `arena` must be the arena owned by the thread making this call — on
-    /// worker threads (chunk post-processing) that is `worker.arena()`, NOT
-    /// `self.arena()` (the bundle-thread graph arena). `generic_path_with_pretty_initialized`
-    /// allocates the duped display path from it, and `MimallocArena` asserts
-    /// single-thread ownership, so passing the wrong arena is a cross-thread
-    /// allocation (debug panic / release heap corruption).
-    pub(crate) fn path_with_pretty_initialized(
+    /// `generate_isolated_hash` hashes the pretty path of every file in a JS
+    /// chunk. It runs for all chunks at once and only reads the graph, so any
+    /// file still missing its pretty path gets it here, on the link thread,
+    /// before that pass starts.
+    pub(crate) fn initialize_pretty_paths_for_isolated_hashes(
         &mut self,
-        path: &bun_paths::fs::Path<'static>,
-        arena: &Bump,
-    ) -> Result<bun_paths::fs::Path<'static>, BunError> {
+        chunks: &[Chunk],
+    ) -> Result<(), BunError> {
         let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-        generic_path_with_pretty_initialized(path, self.options.target, top_level_dir, arena)
+        // SAFETY: `parse_graph` is the `BundleV2.graph` backref (see
+        // `parse_graph_mut`), disjoint from `*self`; deref'd raw so the column
+        // can be held across the `self.arena()` borrow below. Every worker pass
+        // that reads the sources has been joined by the caller.
+        let sources: &mut [Source] = unsafe { (*self.parse_graph).input_files.items_source_mut() };
+        for chunk in chunks {
+            let crate::chunk::Content::Javascript(js) = &chunk.content else {
+                continue;
+            };
+            for part_range in js.parts_in_chunk_in_order.iter() {
+                let path = &mut sources[part_range.source_index.get() as usize].path;
+                if path.is_file() && core::ptr::eq(path.text.as_ptr(), path.pretty.as_ptr()) {
+                    *path = generic_path_with_pretty_initialized(
+                        path,
+                        self.options.target,
+                        top_level_dir,
+                        self.arena(),
+                    )?;
+                }
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn should_include_part(&self, source_index: crate::IndexInt, part: &Part) -> bool {
@@ -948,30 +966,30 @@ impl<'a> LinkerContext<'a> {
         Ok(())
     }
 
-    // CONCURRENCY: `each_ptr` callback — runs on worker threads, one task per
-    // `chunk_index`. Writes: `chunk.intermediate_output`, `chunk.isolated_hash`,
-    // `chunk.output_source_map` (per-chunk, disjoint by `*mut Chunk`). Reads
-    // `ctx.c`/`ctx.chunks` shared. Never forms `&mut LinkerContext` — the
-    // `post_process_*` callees take `GenerateChunkCtx` by value and deref
-    // `ctx.c` to `&LinkerContext` for read-only graph access plus per-chunk
-    // raw-ptr writes (see `postProcessJSChunk.rs`).
-    pub(crate) fn generate_chunk(ctx: &GenerateChunkCtx, chunk: *mut Chunk, chunk_index: usize) {
-        // SAFETY: `each_ptr` hands us a unique `*mut Chunk` per task; deref for
-        // the duration of this body. ctx.c points into BundleV2.linker;
-        // container_of pattern. `Worker::get` only reads `bundle.graph.pool`
-        // (shared), so a `&` is sufficient and avoids aliasing.
+    // CONCURRENCY: `each_ptr` callback — one task per chunk, all of them at
+    // once. A task writes its own chunk and reads everything else through the
+    // `&LinkerContext` in `ctx` (the `post_process_*` callees are held to that
+    // by test/internal/source-lints/chunk-codegen-shared-borrows.test.ts).
+    pub(crate) fn generate_chunk(ctx: &PostProcessChunkCtx, chunk: *mut Chunk, chunk_index: usize) {
+        // SAFETY: `each_ptr` hands each task a distinct chunk and keeps the
+        // slice alive until every task has returned.
         let chunk: &mut Chunk = unsafe { &mut *chunk };
-        let worker = crate::thread_pool::Worker::get(ctx.bundle());
+        // SAFETY: `ctx.c` is the `linker` field of the `BundleV2` running this
+        // link step (container_of). `Worker::get` only reads `bundle.graph.pool`,
+        // and nothing writes to the bundle while the pass runs, so the shared
+        // borrow is sound alongside the peer tasks' copies of it.
+        let bundle: &BundleV2 = unsafe { &*LinkerContext::bundle_v2_const_ptr(ctx.c) };
+        let worker = crate::thread_pool::Worker::get(bundle);
         let mut worker = scopeguard::guard(worker, |w| w.unget());
         let worker: &mut crate::thread_pool::Worker = &mut **worker;
         // Note: dispatch on a discriminant copy so `chunk` isn't borrowed
         // across the post-process call (which takes `&mut Chunk`).
         let result = match chunk.content {
             crate::chunk::Content::Javascript(_) => {
-                post_process_js_chunk(*ctx, worker, chunk, chunk_index)
+                post_process_js_chunk(ctx, worker, chunk, chunk_index)
             }
-            crate::chunk::Content::Css(_) => post_process_css_chunk(*ctx, worker, chunk),
-            crate::chunk::Content::Html => post_process_html_chunk(*ctx, worker, chunk),
+            crate::chunk::Content::Css(_) => post_process_css_chunk(ctx, worker, chunk),
+            crate::chunk::Content::Html => post_process_html_chunk(ctx, worker, chunk),
         };
         if let Err(err) = result {
             Output::panic(format_args!("TODO: handle error: {}", err.name()));
@@ -990,7 +1008,7 @@ impl<'a> LinkerContext<'a> {
         chunk_index: usize,
     ) {
         // SAFETY: `each_ptr` hands us a unique `*mut Chunk` per task; deref for
-        // the body. container_of pattern — see `generate_chunk` above.
+        // the body. `ctx.bundle()` is the container_of described on it.
         let chunk: &mut Chunk = unsafe { &mut *chunk };
         let worker = crate::thread_pool::Worker::get(ctx.bundle());
         let mut worker = scopeguard::guard(worker, |w| w.unget());
@@ -1036,7 +1054,7 @@ impl<'a> LinkerContext<'a> {
     }
 
     pub(crate) fn generate_source_map_for_chunk(
-        &mut self,
+        &self,
         isolated_hash: u64,
         _worker: &mut crate::thread_pool::Worker,
         results: &MultiArrayList<CompileResultForSourceMap>,
@@ -1597,28 +1615,25 @@ pub struct ChunkMeta {
 
 pub(crate) type ChunkMetaMap = ArrayHashMap<Ref, ()>;
 
-/// Note: raw-pointer fields (was `&'a mut`) because `each_ptr` requires
-/// `Ctx: Sync + Copy` and the same context is observed from every worker
-/// thread. Each task only writes to its own `*mut Chunk` slot; reads of
-/// `c`/`chunks` are disjoint or read-only.
+/// Context shared by every task of the renamer pass (`generate_js_renamer`)
+/// and, per chunk, by every task of the part-range fan-out
+/// (`pending_part_range_prologue`). The post-process pass has
+/// [`PostProcessChunkCtx`].
 #[derive(Clone, Copy)]
 pub struct GenerateChunkCtx<'a> {
+    /// `Mut` only for the renamer pass: `rename_symbols_in_chunk` takes the
+    /// linker as `*mut` (what it writes is on its CONCURRENCY note). The
+    /// fan-out `get()`s it.
     pub(crate) c: bun_ptr::ParentRef<LinkerContext<'a>, bun_ptr::Mut>,
-    /// Backref to the full `chunks: &mut [Chunk]` slice owned by
-    /// `generate_chunks_in_parallel`. The slice outlives every
-    /// `GenerateChunkCtx` (joined via the batch's `group.wait()`), so [`bun_ptr::BackRef`]'s
-    /// owner-outlives-holder invariant holds and per-task reads go through
-    /// safe `Deref`. Read-only: each task writes only through its own
-    /// `*mut Chunk`.
+    /// All chunks, outliving every ctx (`generate_chunks_in_parallel` joins
+    /// each pass before returning).
     pub(crate) chunks: bun_ptr::BackRef<[Chunk]>,
-    /// Backref to this task's `Chunk` (an element of `chunks`). Constructed
-    /// via [`bun_ptr::BackRef::new_mut`] so the stored `NonNull` carries write
-    /// provenance; per-task slot writes recover the raw `*mut Chunk` via
-    /// [`bun_ptr::BackRef::as_ptr`], shared reads go through safe `Deref`.
-    pub(crate) chunk: bun_ptr::BackRef<Chunk, bun_ptr::Mut>,
+    /// This ctx's chunk, shared by all of its part-range tasks. Both views are
+    /// taken after the owner's last write to the chunks (see
+    /// `generate_chunks_in_parallel`).
+    pub(crate) chunk: bun_ptr::BackRef<Chunk>,
 }
-// SAFETY: see note above — each task writes only its own `*mut Chunk` slot;
-// shared reads are read-only.
+// SAFETY: see note above — the views are only read through.
 unsafe impl<'a> Send for GenerateChunkCtx<'a> {}
 // SAFETY: see the `Send` impl above — same backref-lifetime / disjoint-write invariants.
 unsafe impl<'a> Sync for GenerateChunkCtx<'a> {}
@@ -1637,20 +1652,25 @@ impl<'a> GenerateChunkCtx<'a> {
         // The bundle is valid for the link step.
         unsafe { &*LinkerContext::bundle_v2_ptr(self.c.as_mut_ptr()) }
     }
+}
 
-    /// Mutable view of the owning `LinkerContext`. Centralizes the `unsafe`
-    /// deref of the `c: *mut LinkerContext` backref (set in
-    /// `generate_chunks_in_parallel`); callers previously open-coded
-    /// `unsafe { &mut *ctx.c }`. The per-chunk tasks each touch a disjoint
-    /// chunk, so the linker fields they write don't alias across tasks.
+/// Context shared by every task of the post-process pass
+/// (`LinkerContext::generate_chunk`: one task per chunk, all at once). Each
+/// task writes the chunk `each_ptr` hands it, so no view of the chunks as a
+/// whole is valid during the pass; what a task needs from the other chunks is
+/// copied out beforehand. The linker is only read, and borrowing it here keeps
+/// `generate_chunks_in_parallel` from writing to it between taking the view
+/// and running the pass.
+pub(crate) struct PostProcessChunkCtx<'c, 'a> {
+    pub(crate) c: &'c LinkerContext<'a>,
+    /// `Chunk::unique_key` of every chunk, by chunk index.
+    pub(crate) chunk_unique_keys: &'c [&'static [u8]],
+}
+
+impl PostProcessChunkCtx<'_, '_> {
     #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub(crate) fn c(&self) -> &mut LinkerContext<'a> {
-        // SAFETY: ParentRef into `BundleV2.linker`, valid for the
-        // chunk-generation pass; this task's chunk row is disjoint from peers'.
-        // Constructed via `from_raw_mut` (write provenance) in
-        // `generate_chunks_in_parallel`.
-        unsafe { self.c.assume_mut() }
+    pub(crate) fn chunk_count(&self) -> u32 {
+        u32::try_from(self.chunk_unique_keys.len()).expect("int cast")
     }
 }
 
@@ -1661,54 +1681,40 @@ pub struct PendingPartRange<'a> {
     pub(crate) i: u32,
 }
 
-/// Shared prologue for `generate_compile_result_for_{js,css}_chunk` thread-pool
-/// callbacks: recover the intrusive [`PendingPartRange`] from `task`, extract
-/// the raw `*mut LinkerContext` / `*mut Chunk` from its [`GenerateChunkCtx`],
-/// and acquire the per-thread [`Worker`](crate::thread_pool::Worker) (returned
-/// as a scopeguard that calls `unget()` on drop).
-///
-/// `GenerateChunkCtx.{c, chunk}` are raw `*mut T` (Copy), so reading them
-/// through `&GenerateChunkCtx` preserves the mutable provenance they were
-/// constructed with in `generate_chunks_in_parallel` — many `PendingPartRange`
-/// tasks share one `chunk_ctx` across worker threads.
+/// Shared prologue for the `generate_compile_result_for_*_chunk` thread-pool
+/// callbacks: recovers the [`PendingPartRange`] from `task` and acquires the
+/// per-thread [`Worker`](crate::thread_pool::Worker) (released on drop). All
+/// part ranges run at once, so the callbacks get `&LinkerContext` / `&Chunk`
+/// (what they may write through those is spelled out on `impl Sync for Chunk`).
 ///
 /// # Safety
 /// `task` must point to the `task` field of a live `PendingPartRange` scheduled
-/// by `generate_chunks_in_parallel`. The returned `&PendingPartRange` borrows
-/// the task allocation for the callback's duration; the returned raw pointers
-/// carry the mutable provenance the `GenerateChunkCtx` was constructed with.
-/// Callers uphold the disjoint-write contract:
-///   - `chunk.compile_results_for_chunk[i]` is written at a per-task unique `i`
-///     via [`Chunk::write_compile_result_slot`] (raw `addr_of_mut!` +
-///     `UnsafeCell` slot write — never `&mut Chunk`),
-///   - `chunk.files_with_parts_in_chunk` entries are updated via atomic RMW only,
-///   - all other access through `c` / `chunk` during codegen is read-only.
+/// by `generate_chunks_in_parallel`, whose `group.wait()` keeps everything the
+/// returned borrows point at alive until the callback returns.
 #[inline]
 #[allow(clippy::type_complexity)]
 pub(crate) unsafe fn pending_part_range_prologue<'a>(
     task: *mut ThreadPoolLib::Task,
 ) -> (
     &'a PendingPartRange<'a>,
-    *mut LinkerContext<'a>,
-    *mut Chunk,
+    &'a LinkerContext<'a>,
+    &'a Chunk,
     scopeguard::ScopeGuard<
         &'static mut crate::thread_pool::Worker,
         impl FnOnce(&'static mut crate::thread_pool::Worker),
     >,
 ) {
     // SAFETY: per fn contract — `task` is the intrusive `task` field.
-    let part_range: &PendingPartRange =
+    let part_range: &'a PendingPartRange<'a> =
         unsafe { &*bun_core::from_field_ptr!(PendingPartRange, task, task) };
-    let ctx = part_range.ctx;
-    let c_ptr: *mut LinkerContext = ctx.c.as_mut_ptr().cast();
-    let chunk_ptr: *mut Chunk = ctx.chunk.as_ptr();
+    let ctx: &'a GenerateChunkCtx<'a> = part_range.ctx;
     let worker = crate::thread_pool::Worker::get(ctx.bundle());
     let worker = scopeguard::guard(worker, |w| w.unget());
-    (part_range, c_ptr, chunk_ptr, worker)
+    (part_range, ctx.c.get(), ctx.chunk.get(), worker)
 }
 
 impl<'a> LinkerContext<'a> {
-    pub(crate) fn generate_isolated_hash(&mut self, chunk: &Chunk, arena: &Bump) -> u64 {
+    pub(crate) fn generate_isolated_hash(&self, chunk: &Chunk) -> u64 {
         let _trace = bun::perf::trace("Bundler.generateIsolatedHash");
 
         let mut hasher = ContentHasher::default();
@@ -1718,33 +1724,25 @@ impl<'a> LinkerContext<'a> {
         // that live in separate parts in the same file must not be merged. This only
         // needs to be done for JavaScript files, not CSS files.
         if let crate::chunk::Content::Javascript(js) = &chunk.content {
-            // SAFETY: parse_graph backref; exclusive access via &mut *.
-            let sources = unsafe { (*self.parse_graph).input_files.items_source_mut() };
+            let sources = self.parse_graph().input_files.items_source();
             for part_range in js.parts_in_chunk_in_order.iter() {
-                let source: &mut Source = &mut sources[part_range.source_index.get() as usize];
+                let source: &Source = &sources[part_range.source_index.get() as usize];
 
-                let file_path: &[u8] = 'brk: {
-                    if source.path.is_file() {
-                        // Use the pretty path as the file name since it should be platform-
-                        // independent (relative paths and the "/" path separator)
-                        if source.path.text.as_ptr() == source.path.pretty.as_ptr() {
-                            source.path = self
-                                .path_with_pretty_initialized(&source.path, arena)
-                                .expect("OOM");
-                        }
-                        // Note: `Path::assert_pretty_is_valid` lives on the
-                        // resolver-side `Path<'a>`; the logger `Path` has no
-                        // such debug hook yet.
-                        debug_assert!(source.path.text.as_ptr() != source.path.pretty.as_ptr());
-
-                        break 'brk source.path.pretty;
-                    } else {
-                        // If this isn't in the "file" namespace, just use the full path text
-                        // verbatim. This could be a source of cross-platform differences if
-                        // plugins are storing platform-specific information in here, but then
-                        // that problem isn't caused by esbuild itself.
-                        break 'brk source.path.text;
-                    }
+                let file_path: &[u8] = if source.path.is_file() {
+                    // Use the pretty path as the file name since it should be platform-
+                    // independent (relative paths and the "/" path separator). It was
+                    // filled in by `initialize_pretty_paths_for_isolated_hashes`.
+                    debug_assert!(!core::ptr::eq(
+                        source.path.text.as_ptr(),
+                        source.path.pretty.as_ptr()
+                    ));
+                    source.path.pretty
+                } else {
+                    // If this isn't in the "file" namespace, just use the full path text
+                    // verbatim. This could be a source of cross-platform differences if
+                    // plugins are storing platform-specific information in here, but then
+                    // that problem isn't caused by esbuild itself.
+                    source.path.text
                 };
 
                 // Include the path namespace in the hash
@@ -1766,13 +1764,17 @@ impl<'a> LinkerContext<'a> {
             .flags
             .contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
         {
-            // SAFETY: self is BundleV2.linker; container_of recovers the parent.
-            // `transpiler_for_target` only reads `bundle.client_transpiler`.
-            let bundle = unsafe {
-                &mut *LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(self))
-            };
+            // SAFETY: `self` is the `linker` field of the `BundleV2` running
+            // this link step (container_of). Only a shared borrow is formed:
+            // this runs for every chunk at once, and nothing writes to the
+            // bundle during the pass.
+            let bundle: &BundleV2 = unsafe { &*LinkerContext::bundle_v2_const_ptr(self) };
+            // The flag is only set when a server build has HTML imports, and
+            // enqueuing one creates the client transpiler (`ensure_client_transpiler`),
+            // so unlike `transpiler_for_target` this never has to create it here.
             &bundle
-                .transpiler_for_target(Target::Browser)
+                .client_transpiler_ref()
+                .expect("a browser chunk of a server build implies a client transpiler")
                 .options
                 .public_path
         } else {
@@ -2021,7 +2023,7 @@ impl<'a> LinkerContext<'a> {
     }
 
     pub(crate) fn should_remove_import_export_stmt(
-        &mut self,
+        &self,
         stmts: &mut StmtList,
         loc: Loc,
         namespace_ref: Ref,
@@ -2155,7 +2157,7 @@ impl<'a> LinkerContext<'a> {
     }
 
     pub(crate) fn print_code_for_file_in_chunk_js(
-        &mut self,
+        &self,
         r: renamer::Renamer,
         alloc: &Bump,
         writer: &mut js_printer::BufferWriter,
@@ -2174,30 +2176,11 @@ impl<'a> LinkerContext<'a> {
             ..Default::default()
         }];
 
-        // SAFETY: parse_graph backref; raw deref because `parse_graph` is held
-        // across `RequireOrImportMetaCallback::init(self)` (`&mut self`) below.
-        let parse_graph = unsafe { &*self.parse_graph };
-
-        // Note: reshaped for borrowck — `Options` borrows `ts_enums` /
-        // `line_offset_tables` / `mangled_props` from `self.graph`, but the
-        // `require_or_import_meta_for_source_callback` field below needs
-        // `&mut self`. Detach the read-only borrows via raw-pointer round-trip
-        // (graph SoA storage is never reallocated during the print step).
-        // SAFETY: `self.graph` columns are stable heap allocations valid for
-        // the duration of this call; the printer only reads from them.
-        let ts_enums: &bun_ast::ast_result::TsEnumsMap =
-            unsafe { bun_ptr::detach_lifetime_ref(&self.graph.ts_enums) };
-        // SAFETY: `graph.files` SoA columns are stable heap allocations valid for this
-        // call (see above); the printer only reads from this slot.
-        let line_offset_table: &bun_sourcemap::line_offset_table::List<bun_alloc::AstAlloc> = unsafe {
-            bun_ptr::detach_lifetime_ref(
-                &self.graph.files.items_line_offset_table()[source_index.get() as usize],
-            )
-        };
-        let mangled_props: &MangledProps =
-            // SAFETY: `self.mangled_props` is not mutated during printing; detached borrow
-            // outlives only this call (see above).
-            unsafe { bun_ptr::detach_lifetime_ref(&self.mangled_props) };
+        let parse_graph = self.parse_graph();
+        let ts_enums: &bun_ast::ast_result::TsEnumsMap = &self.graph.ts_enums;
+        let line_offset_table: &bun_sourcemap::line_offset_table::List<bun_alloc::AstAlloc> =
+            &self.graph.files.items_line_offset_table()[source_index.get() as usize];
+        let mangled_props: &MangledProps = &self.mangled_props;
 
         let print_options = js_printer::Options {
             bundling: true,
@@ -2266,18 +2249,6 @@ impl<'a> LinkerContext<'a> {
         // the read is a bitwise copy whose result is never dropped.
         let printer_ast = core::mem::ManuallyDrop::new(unsafe { core::ptr::read(ast) }.to_ast());
 
-        // Note: `print_with_writer<'a>` requires `Renamer<'a,'a>` (the
-        // printer struct stores it with a single lifetime), but `Renamer`'s
-        // `'src` is invariant behind `&mut`, so the caller's `Renamer<'r,'src>`
-        // cannot unify with the local `'a` picked from `alloc`/`mangled_props`.
-        // Rebind via a
-        // lifetime-only cast — sound because the renamer's borrowed data
-        // (symbol map, source) strictly outlives this call.
-        // SAFETY: lifetime-only erase; layout identical across instantiations.
-        let r: renamer::Renamer<'_, '_> = unsafe {
-            core::mem::transmute::<renamer::Renamer<'_, '_>, renamer::Renamer<'_, '_>>(r)
-        };
-
         let enable_source_maps =
             self.options.source_maps != SourceMapOption::None && !source_index.is_runtime();
         let result = if enable_source_maps {
@@ -2312,7 +2283,7 @@ impl<'a> LinkerContext<'a> {
     }
 
     pub(crate) fn require_or_import_meta_for_source(
-        &mut self,
+        &self,
         source_index: crate::IndexInt,
         was_unwrapped_require: bool,
     ) -> js_printer::RequireOrImportMeta {
@@ -2568,7 +2539,7 @@ impl<'a> LinkerContext<'a> {
 impl<'a> js_printer::RequireOrImportMetaSource for LinkerContext<'a> {
     #[inline]
     fn require_or_import_meta_for_source(
-        &mut self,
+        &self,
         id: u32,
         was_unwrapped_require: bool,
     ) -> js_printer::RequireOrImportMeta {

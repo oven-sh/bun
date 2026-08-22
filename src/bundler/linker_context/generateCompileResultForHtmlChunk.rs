@@ -33,13 +33,10 @@ use crate::{Chunk, CompileResult};
 ///    a <link rel="modulepreload" href="..." crossorigin> tag that
 ///    points to the module or chunk's unique key so that we tell the
 ///    browser to preload the user's code.
-// CONCURRENCY: thread-pool callback — runs on worker threads, one task per
-// HTML `PendingPartRange` (exactly one per HTML chunk). Writes:
-// `chunk.compile_results_for_chunk[0]` (per-chunk disjoint). Reads
-// `c.parse_graph.input_files` / `c.graph` / `ctx.chunks` shared. Never forms
-// `&mut LinkerContext` — `c_ptr` stays raw; the HTML rewriter takes
-// `&LinkerContext`. See `generate_compile_result_for_js_chunk` for the
-// `PendingPartRange: Send` justification.
+// CONCURRENCY: thread-pool callback — one task per HTML chunk. Writes:
+// `chunk.compile_results_for_chunk[0]`; everything else, including the other
+// chunks' `unique_key` / `content` / `entry_point`, is read. See
+// `generate_compile_result_for_js_chunk`.
 //
 /// # Safety
 ///
@@ -51,21 +48,18 @@ use crate::{Chunk, CompileResult};
 pub(crate) unsafe fn generate_compile_result_for_html_chunk(task: *mut ThreadPoolLibTask) {
     // SAFETY: `task` is the intrusive `task` field of a `PendingPartRange`
     // scheduled by `generate_chunks_in_parallel`; see the helper's contract.
-    let (part_range, _c_ptr, chunk_ptr, _worker) =
+    let (part_range, c, chunk, _worker) =
         unsafe { crate::linker_context_mod::pending_part_range_prologue(task) };
-    let i = part_range.i as usize;
     let ctx: &GenerateChunkCtx = part_range.ctx;
-
-    // `ctx.c` is a `ParentRef` and `ctx.chunk` / `ctx.chunks` are `BackRef`s;
-    // all yield safe shared borrows via `.get()`. `chunk` is this task's
-    // exclusively-owned HTML chunk for the duration of the compile step.
-    let c_ref: &LinkerContext = ctx.c.get();
-    let chunk_ref: &Chunk = ctx.chunk.get();
     let chunks: &[Chunk] = ctx.chunks.get();
-    let result = generate_compile_result_for_html_chunk_impl(c_ref, chunk_ref, chunks);
-    // SAFETY: HTML chunks have exactly one part-range (i == 0); see
-    // `Chunk::write_compile_result_slot` for the disjoint-slot contract.
-    unsafe { Chunk::write_compile_result_slot(chunk_ptr, i, result) };
+    let result = generate_compile_result_for_html_chunk_impl(c, chunk, chunks);
+    // SAFETY: an HTML chunk has one part range, so this is the slot's only
+    // writer; nothing reads it before the join.
+    unsafe {
+        chunk
+            .compile_results_for_chunk
+            .write(part_range.i as usize, result)
+    };
 }
 
 #[derive(Default)]

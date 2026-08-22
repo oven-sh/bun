@@ -645,6 +645,70 @@ console.log("survived", require("./late.js"));`,
     expect(require("./esm_to_cjs_interop.mjs")).toEqual(Symbol.for("meow"));
   });
 
+  test("require.cache throws instead of crashing when its builtin throws", async () => {
+    // require.cache is built lazily by a JS builtin that uses the global Proxy.
+    // The first access used to assume that builtin cannot throw.
+    const code = `
+      const RealProxy = Proxy;
+      globalThis.Proxy = undefined;
+      const results = [];
+      try {
+        require.cache;
+        results.push("no throw");
+      } catch (e) {
+        results.push(e.constructor.name);
+      }
+      const Module = require("module");
+      try {
+        Module._cache;
+        results.push("no throw");
+      } catch (e) {
+        results.push(e.constructor.name);
+      }
+      globalThis.Proxy = RealProxy;
+      results.push(typeof require.cache, Module._cache === require.cache);
+      console.log(JSON.stringify(results));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe(JSON.stringify(["TypeError", "TypeError", "object", true]));
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("require.cache first accessed near the stack limit does not crash", async () => {
+    const code = `
+      let attempted = false;
+      function recurse() {
+        try {
+          recurse();
+        } catch (e) {
+          if (!attempted) {
+            attempted = true;
+            try {
+              require.cache;
+            } catch {}
+          }
+        }
+      }
+      recurse();
+      console.log(typeof require.cache);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("object");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   test("Module.runMain", async () => {
     await using proc = Bun.spawn({
       cmd: [

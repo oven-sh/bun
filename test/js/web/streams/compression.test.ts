@@ -1284,7 +1284,8 @@ describe("CompressionStream level option", () => {
   });
 
   test("DecompressionStream ignores level", () => {
-    expect(new DecompressionStream("brotli", { level: 3 } as any)).toBeInstanceOf(DecompressionStream);
+    // Out of range for every format: proves the member is ignored, not validated.
+    expect(new DecompressionStream("brotli", { level: 99 } as any)).toBeInstanceOf(DecompressionStream);
   });
 });
 

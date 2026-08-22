@@ -8879,19 +8879,7 @@ impl LowerUsingDeclarationsContext {
                         // StoreRef DerefMut; hoist the kind write below.
                         let mut any_ident = false;
                         for decl in local.decls.slice() {
-                            if let js_ast::b::B::BIdentifier(identifier) = decl.binding.data {
-                                let id_ref = identifier.r#ref;
-                                exports.push(js_ast::ClauseItem {
-                                    name: LocRef {
-                                        loc: decl.binding.loc,
-                                        ref_: id_ref,
-                                    },
-                                    alias: p.symbols[id_ref.inner_index() as usize].original_name,
-                                    alias_loc: decl.binding.loc,
-                                    ..Default::default()
-                                });
-                                any_ident = true;
-                            }
+                            any_ident |= Self::export_binding(p, decl.binding, &mut exports);
                         }
                         if any_ident {
                             local.kind = js_ast::s::Kind::KVar;
@@ -9134,6 +9122,44 @@ impl LowerUsingDeclarationsContext {
         }
 
         result
+    }
+
+    /// Exports every identifier `binding` declares, recursing through destructuring patterns.
+    fn export_binding<'a, const T: bool, const S_: bool>(
+        p: &P<'a, T, S_>,
+        binding: Binding,
+        exports: &mut BumpVec<'a, js_ast::ClauseItem>,
+    ) -> bool {
+        match binding.data {
+            js_ast::b::B::BMissing(_) => false,
+            js_ast::b::B::BIdentifier(identifier) => {
+                let id_ref = identifier.r#ref;
+                exports.push(js_ast::ClauseItem {
+                    name: LocRef {
+                        loc: binding.loc,
+                        ref_: id_ref,
+                    },
+                    alias: p.symbols[id_ref.inner_index() as usize].original_name,
+                    alias_loc: binding.loc,
+                    ..Default::default()
+                });
+                true
+            }
+            js_ast::b::B::BArray(array) => {
+                let mut any_ident = false;
+                for item in array.items.slice() {
+                    any_ident |= Self::export_binding(p, item.binding, exports);
+                }
+                any_ident
+            }
+            js_ast::b::B::BObject(object) => {
+                let mut any_ident = false;
+                for property in object.properties.slice() {
+                    any_ident |= Self::export_binding(p, property.value, exports);
+                }
+                any_ident
+            }
+        }
     }
 }
 

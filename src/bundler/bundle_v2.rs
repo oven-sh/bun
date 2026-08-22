@@ -456,7 +456,7 @@ pub mod bv2_impl {
 
         /// TYPE_ONLY subset of the `Framework` fields
         /// the bundler/parser actually consult; `file_system_router_types`
-        /// stays in T6 because only `bake::FrameworkRouter` reads it.
+        /// stays in T6 because only `bake::framework_router` reads it.
         #[non_exhaustive]
         pub struct Framework {
             pub(crate) built_in_modules: bun_collections::StringArrayHashMap<BuiltInModule>,
@@ -7397,7 +7397,6 @@ pub mod bv2_impl {
         }
     }
 
-    pub use crate::AdditionalFile;
     pub use bun_core::cheap_prefix_normalizer;
 
     #[derive(Clone, Copy, Default)]
@@ -7780,7 +7779,6 @@ pub mod bv2_impl {
     pub use crate::BundleThread::{BuildResult, BundleV2Result, CompletionStruct, singleton};
 
     // re-exports
-    pub use crate::IndexStringMap::IndexStringMap;
     pub use bun_ast::Loc;
 
     // C++ binding for lazy metafile getter (defined in BundlerMetafile.cpp)

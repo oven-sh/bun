@@ -611,8 +611,6 @@ impl Process {
                 (*this).pid,
             )
         };
-        // SAFETY: `this` is live; sole `&mut` for the handler calls below.
-        let this: &mut Process = unsafe { &mut *this };
         let exit_code: u8 = if exit_status >= 0 {
             (exit_status as u64) as u8
         } else {
@@ -632,29 +630,27 @@ impl Process {
             signal_code
         );
 
-        if let Some(sig) = signal_code {
-            this.close();
-            this.on_exit(Status::Signaled(sig), &rusage);
+        let status = if let Some(sig) = signal_code {
+            Status::Signaled(sig)
         } else if exit_status >= 0 {
-            // The check is on the signed libuv `exit_status`, so a negative
-            // `-UV_E*` reaches the Err arm.
-            this.close();
-            this.on_exit(
-                Status::Exited(Exited {
-                    code: exit_code,
-                    signal: 0,
-                    raw: exit_status as u32,
-                }),
-                &rusage,
-            );
+            Status::Exited(Exited {
+                code: exit_code,
+                signal: 0,
+                raw: exit_status as u32,
+            })
         } else {
-            this.on_exit(
-                Status::Err(bun_sys::Error::from_code(
-                    bun_sys::windows::translate_uv_error_to_e(exit_status as c_int),
-                    bun_sys::Tag::waitpid,
-                )),
-                &rusage,
-            );
+            Status::Err(bun_sys::Error::from_code(
+                bun_sys::windows::translate_uv_error_to_e(exit_status as c_int),
+                bun_sys::Tag::waitpid,
+            ))
+        };
+        // SAFETY: `this` is live; each call takes its own short `&mut`
+        // (`on_exit` runs the exit handler, which may reach this Process again).
+        unsafe {
+            if !matches!(status, Status::Err(_)) {
+                (*this).close();
+            }
+            (*this).on_exit(status, &rusage);
         }
     }
 

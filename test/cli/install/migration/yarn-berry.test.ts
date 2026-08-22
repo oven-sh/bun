@@ -351,6 +351,79 @@ describe("yarn berry migration", () => {
     await expectFrozenInstall(dir);
   });
 
+  test.concurrent("a parent@range/name resolution only applies to the parent locked from that range", async () => {
+    const { packageDir: dir } = await verdaccio.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "berry-ranged-parent",
+          dependencies: { "one-fixed-dep": "1.0.0", "one-fixed-dep-2": "npm:one-fixed-dep@2.0.0" },
+          // one-fixed-dep@1.0.0 wants no-deps@1.0.0 and gets 1.0.1; one-fixed-dep@2.0.0 keeps no-deps@2.0.0
+          resolutions: { "one-fixed-dep@npm:1.0.0/no-deps": "1.0.1" },
+        }),
+        "yarn.lock": `__metadata:
+  version: 8
+  cacheKey: 10c0
+
+"berry-ranged-parent@workspace:.":
+  version: 0.0.0-use.local
+  resolution: "berry-ranged-parent@workspace:."
+  dependencies:
+    one-fixed-dep: "npm:1.0.0"
+    one-fixed-dep-2: "npm:one-fixed-dep@2.0.0"
+  languageName: unknown
+  linkType: soft
+
+"no-deps@npm:1.0.1":
+  version: 1.0.1
+  resolution: "no-deps@npm:1.0.1"
+  languageName: node
+  linkType: hard
+
+"no-deps@npm:2.0.0":
+  version: 2.0.0
+  resolution: "no-deps@npm:2.0.0"
+  languageName: node
+  linkType: hard
+
+"one-fixed-dep-2@npm:one-fixed-dep@2.0.0":
+  version: 2.0.0
+  resolution: "one-fixed-dep@npm:2.0.0"
+  dependencies:
+    no-deps: "npm:2.0.0"
+  languageName: node
+  linkType: hard
+
+"one-fixed-dep@npm:1.0.0":
+  version: 1.0.0
+  resolution: "one-fixed-dep@npm:1.0.0"
+  dependencies:
+    no-deps: "npm:1.0.0"
+  languageName: node
+  linkType: hard
+`,
+      },
+    });
+
+    const { stderr, exitCode } = await run(dir, "install");
+    expect(stderr).toContain("migrated lockfile from yarn.lock");
+    expect(stderr).not.toContain("bun will resolve");
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    const bunLock = await bunLockOf(dir);
+    expect(lockedVersions(bunLock)).toEqual([
+      "no-deps@1.0.1",
+      "no-deps@2.0.0",
+      "one-fixed-dep@1.0.0",
+      "one-fixed-dep@2.0.0",
+    ]);
+    expect(bunLock).toMatch(/"one-fixed-dep-2\/no-deps": \["no-deps@2\.0\.0"|"no-deps": \["no-deps@2\.0\.0"/);
+    expect(bunLock).toMatch(/"one-fixed-dep\/no-deps": \["no-deps@1\.0\.1"|"no-deps": \["no-deps@1\.0\.1"/);
+
+    await expectFrozenInstall(dir);
+  });
+
   test.concurrent("file:, portal: and link: dependencies", async () => {
     const dir = await fixture("protocols");
 
@@ -360,27 +433,36 @@ describe("yarn berry migration", () => {
     expect(stderr).toContain(`"local-portal@portal:./local-portal" is migrated as "file:local-portal"`);
     // a bare `link:dir` (no `./`) is still yarn's folder link, not a `bun link` name
     expect(stderr).toContain(`"local-link@link:local-link" is migrated as "file:local-link"`);
+    expect(stderr).not.toContain("bun will resolve");
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
-    expect((await Bun.file(join(dir, "package.json")).json()).dependencies).toEqual({
+    const manifest = await Bun.file(join(dir, "package.json")).json();
+    expect(manifest.dependencies).toEqual({
       "local-file": "file:./local-file",
       "local-link": "file:local-link",
       "local-portal": "file:./local-portal",
     });
+    // a `portal:` target of a resolution is rewritten too
+    expect(manifest.resolutions).toEqual({ "a-dep": "file:./local-a-dep" });
     const bunLock = await bunLockOf(dir);
+    // `sub` is declared by the portal package with a path relative to it
     expect(lockedVersions(bunLock)).toEqual([
-      "a-dep@1.0.4",
+      "a-dep@file:local-a-dep",
       "local-file@file:local-file",
       "local-link@file:local-link",
       "local-portal@file:local-portal",
       "no-deps@1.0.1",
+      "sub@file:local-portal/sub",
     ]);
+    // bun keeps transitive folder dependencies under the package that declares them
     expect(nodeModulesPackages(join(dir, "node_modules"))).toMatchInlineSnapshot(`
-      "a-dep/a-dep@1.0.4
-      local-file/local-file@1.0.0
+      "local-file/local-file@1.0.0
       local-link/local-link@1.0.0
       local-portal/local-portal@1.0.0
+      local-portal/node_modules/a-dep/a-dep@9.9.9
+      local-portal/node_modules/sub/sub@1.0.0
+      local-portal/sub/sub@1.0.0
       no-deps/no-deps@1.0.1"
     `);
 

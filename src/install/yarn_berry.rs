@@ -377,6 +377,40 @@ fn locator_key(name: &[u8], reference: &[u8]) -> Vec<u8> {
     key
 }
 
+/// The project-relative directory of the package a (percent-encoded) locator
+/// names: `name@workspace:path` -> `path`; `name@portal:./p::locator=<owner>` ->
+/// `<owner dir>/p`. `None` for anything that is not a folder.
+fn locator_dir(encoded: &[u8], depth: u8) -> Option<Vec<u8>> {
+    let decoded = percent_decode(encoded);
+    let (_, reference) = split_locator(&decoded)?;
+    if let Some(path) = reference.strip_prefix(b"workspace:") {
+        return Some(path.to_vec());
+    }
+    let (head, params) = split_reference_params(reference);
+    let path = [b"file:".as_slice(), b"portal:", b"link:"]
+        .iter()
+        .find_map(|p| head.strip_prefix(*p))?;
+    let path = strings::split_once_char(path, b'#').map_or(path, |(p, _)| p);
+    let base = match param(&params, b"locator") {
+        Some(owner) if depth < 16 => locator_dir(owner, depth + 1).unwrap_or_default(),
+        _ => Vec::new(),
+    };
+    Some(join_folder(&base, path))
+}
+
+/// `base` + `path` (which yarn writes relative to the declaring package),
+/// both project-relative with `/` separators.
+fn join_folder(base: &[u8], path: &[u8]) -> Vec<u8> {
+    let rel = path.strip_prefix(b"./").unwrap_or(path);
+    let mut joined: Vec<u8> = Vec::new();
+    if !bun_paths::is_absolute(rel) && !base.is_empty() && base != b"." {
+        joined.extend_from_slice(base);
+        joined.push(b'/');
+    }
+    joined.extend_from_slice(rel);
+    joined
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum EntryKind {
     Workspace,
@@ -693,7 +727,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
     // yarn `resolutions`, consulted when a descriptor has no lockfile key of
     // its own because yarn rewrote it: (parent package name of a `parent/name`
     // key, last `name[@range]` segment, target).
-    let mut resolutions: Vec<(Option<&[u8]>, &[u8], &[u8])> = Vec::new();
+    let mut resolutions: Vec<(Option<Parent>, &[u8], &[u8])> = Vec::new();
     if let Some(ExprData::EObject(res)) = root_manifest.get(b"resolutions").map(|e| e.data) {
         for p in res.properties.slice() {
             let (Some(k), Some(v)) = (&p.key, &p.value) else {
@@ -708,15 +742,18 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
 
     let mut root_rewrites: Vec<ManifestRewrite> = Vec::new();
     let mut original_specs = OriginalSpecs::default();
-    // `"name@range": "patch:..."` values only make sense to yarn; bun gets the
-    // patch through `patchedDependencies` and the pinned range as the override.
-    for (_, _, target) in &resolutions {
-        if target.starts_with(b"patch:")
-            && !root_rewrites.iter().any(|r| &*r.original_spec == *target)
-        {
+    // `patch:` / `portal:` / `link:` values only make sense to yarn: bun gets a
+    // patch through `patchedDependencies` and the pinned range as the override,
+    // and a folder as `file:`.
+    for (_, pattern, target) in &resolutions {
+        if root_rewrites.iter().any(|r| &*r.original_spec == *target) {
+            continue;
+        }
+        let name = Dependency::split_name_and_maybe_version(pattern).0;
+        if let Some(new_spec) = yarn_only_range_for_bun(name, target, &yarn_links) {
             root_rewrites.push(ManifestRewrite {
                 original_spec: Box::from(*target),
-                new_spec: Box::from(patch_inner_range(target)),
+                new_spec: Box::from(new_spec),
             });
         }
     }
@@ -794,18 +831,16 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
         }
     }
 
-    // `name@workspace:path` (percent-encoded, as in `::locator=`) -> path
-    let workspace_path_of_locator = |encoded_or_decoded: &[u8]| -> Option<Vec<u8>> {
-        let decoded = percent_decode(encoded_or_decoded);
-        split_locator(&decoded)
-            .and_then(|(_, r)| r.strip_prefix(b"workspace:"))
-            .map(|p| p.to_vec())
-    };
+    // the directory a `::locator=` param points at: a workspace's path, or the
+    // folder of a `file:` / `portal:` / `link:` package (itself relative to its owner)
+    let workspace_path_of_locator = |encoded: &[u8]| -> Option<Vec<u8>> { locator_dir(encoded, 0) };
 
     // -- 3. third-party packages -----------------------------------------------
     let mut warned_registries: StringArrayHashMap<()> = StringArrayHashMap::new();
     // entries whose tarball lives outside the registry's conventional path
     let mut archive_url_entries: Vec<usize> = Vec::new();
+    // package id -> the lockfile entry it was built from (third-party packages)
+    let mut entry_of_package: Vec<Option<usize>> = Vec::new();
     for i in 0..entries.len() {
         if entries[i].kind != EntryKind::Package {
             continue;
@@ -856,17 +891,12 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
         {
             // `file:./x#./x::hash=..&locator=..`: drop the repeated `#path`
             let path = strings::split_once_char(path, b'#').map_or(path, |(p, _)| p);
-            // relative to the workspace that declared it (`::locator=name@workspace:path`)
+            // relative to the package that declared it (`::locator=name@workspace:path`)
             let base = param(&params, b"locator")
                 .and_then(workspace_path_of_locator)
                 .unwrap_or_default();
-            let rel = path.strip_prefix(b"./").unwrap_or(path);
-            let mut joined: Vec<u8> = Vec::new();
-            if !bun_paths::is_absolute(rel) && !base.is_empty() && base != b"." {
-                joined.extend_from_slice(&base);
-                joined.push(b'/');
-            }
-            joined.extend_from_slice(rel);
+            let joined = join_folder(&base, path);
+            let rel = joined.as_slice();
             if protocol != b"file:" && !silent {
                 // bun has no symlinked-folder protocol (`link:` means a package
                 // registered with `bun link`), so these install as copies.
@@ -917,6 +947,12 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
             pkg.meta.arch = cpu;
         }
         entries[i].package_id = this.append_package_dedupe(&mut pkg)?;
+        if let Some(slot) = entry_of_package.get_mut(entries[i].package_id as usize) {
+            *slot = Some(i);
+        } else {
+            entry_of_package.resize(entries[i].package_id as usize + 1, None);
+            entry_of_package[entries[i].package_id as usize] = Some(i);
+        }
     }
 
     // patch entries -> same package as the locator they patch (+ patchedDependencies).
@@ -981,6 +1017,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
     let mut key: Vec<u8> = Vec::with_capacity(128);
     let mut unbound: Vec<(Box<[u8]>, Box<[u8]>)> = Vec::new();
     let has_scoped_resolutions = resolutions.iter().any(|(parent, ..)| parent.is_some());
+
     let pkg_count = this.packages.len();
     for pkg_id in 0..pkg_count {
         // the owning workspace, for `::locator=` descriptors
@@ -992,7 +1029,18 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
                 _ => b"",
             };
             if ws_path.is_empty() {
-                None
+                // a `file:` / `portal:` package declaring its own relative deps: yarn
+                // keys those by this entry's full locator
+                entry_of_package.get(pkg_id).copied().flatten().map(|idx| {
+                    let e = &entries[idx];
+                    let mut raw = Vec::with_capacity(e.name.len() + 1 + e.reference.len());
+                    raw.extend_from_slice(e.name);
+                    raw.push(b'@');
+                    raw.extend_from_slice(e.reference);
+                    let mut enc = Vec::with_capacity(raw.len() + 16);
+                    percent_encode(&mut enc, &raw);
+                    enc
+                })
             } else {
                 // yarn names an unnamed workspace itself (`root-workspace-0b6124`),
                 // so prefer the name its lockfile entry carries
@@ -1030,11 +1078,29 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
             };
 
             let lookup = |key: &[u8]| -> Option<usize> { descriptor_to_entry.get(key).copied() };
-            let from_resolutions = |scoped_to: Option<&[u8]>| -> Option<usize> {
+            // `this_parent`: only resolutions whose `parent[@range]/` prefix names the
+            // package being bound (`None`: any parent, or none)
+            let from_resolutions = |this_parent: Option<&[u8]>| -> Option<usize> {
                 resolutions
                     .iter()
                     .filter(|(parent, pattern, _)| {
-                        *parent == scoped_to
+                        (this_parent.is_none() || parent.as_ref().map(|p| p.name) == this_parent)
+                            && parent.as_ref().is_none_or(|p| {
+                                // `parent@range/name`: only the parent entries that range
+                                // was locked to (yarn matches the parent's descriptor)
+                                this_parent.is_none()
+                                    || p.range.is_empty()
+                                    || [b"@".as_slice(), b"@npm:"].iter().any(|sep| {
+                                        descriptor_to_entry
+                                            .get(
+                                                &[p.name, sep, strip_npm_protocol(p.range)]
+                                                    .concat(),
+                                            )
+                                            .is_some_and(|&i| {
+                                                entries[i].package_id as usize == pkg_id
+                                            })
+                                    })
+                            })
                             && resolution_pattern_matches(pattern, name, original_literal, literal)
                     })
                     .find_map(|(_, _, target)| {
@@ -1080,7 +1146,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
                 }
                 found = lookup(&key);
             }
-            // 3. relative protocols (file:, portal:, link:) are keyed per declaring workspace
+            // 3. relative protocols (file:, portal:, link:) are keyed per declaring package
             if found.is_none() {
                 if let Some(owner) = &owner_locator {
                     key.clear();
@@ -1089,13 +1155,16 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
                     key.extend_from_slice(literal);
                     key.extend_from_slice(b"::locator=");
                     key.extend_from_slice(owner);
-                    found = lookup(&key).or_else(|| {
-                        bare_descriptor_to_entry
-                            .get(&key[..exact_len])
-                            .copied()
-                            .filter(|&i| i != usize::MAX)
-                    });
+                    found = lookup(&key);
+                    key.truncate(exact_len);
                 }
+            }
+            if found.is_none() && has_protocol(literal) {
+                // the only `name@literal::locator=…` descriptor, whoever declared it
+                found = bare_descriptor_to_entry
+                    .get(&key[..exact_len])
+                    .copied()
+                    .filter(|&i| i != usize::MAX);
             }
             // 4. workspaces by name (root -> workspace edges, and `workspace:` ranges however spelled)
             if found.is_none()
@@ -1112,12 +1181,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
             }
             // 5. package.json `resolutions` that rewrote this descriptor
             if found.is_none() && !dep.behavior.is_workspace() {
-                found = from_resolutions(None).or_else(|| {
-                    resolutions
-                        .iter()
-                        .filter(|(parent, ..)| parent.is_some())
-                        .find_map(|(parent, ..)| from_resolutions(*parent))
-                });
+                found = from_resolutions(None);
             }
 
             match found.map(|i| entries[i].package_id) {
@@ -1351,11 +1415,16 @@ fn git_resolution(this: &mut Lockfile, name: &[u8], head: &[u8]) -> Result<Resol
     })))
 }
 
-/// A `resolutions` key -> (the parent package's name for `parent/name` keys,
+/// A `resolutions` key -> (the parent package for `parent[@range]/name` keys,
 /// the last `name[@range]` segment). Yarn's grammar: segments are separated by
 /// `/`, a leading `@scope/` belongs to the name, and a range never contains `/`
 /// (`@babel/core@npm:^7.0.0/regenerator-runtime`, `**/left-pad`, `ms@^2`).
-fn resolution_key_parts(key: &[u8]) -> (Option<&[u8]>, &[u8]) {
+struct Parent<'a> {
+    name: &'a [u8],
+    range: &'a [u8],
+}
+
+fn resolution_key_parts(key: &[u8]) -> (Option<Parent<'_>>, &[u8]) {
     fn next_segment(rest: &[u8]) -> (&[u8], &[u8]) {
         let scope = match rest.first() {
             Some(&b'@') => strings::index_of_char_usize(rest, b'/').map_or(rest.len(), |i| i + 1),
@@ -1373,9 +1442,18 @@ fn resolution_key_parts(key: &[u8]) -> (Option<&[u8]>, &[u8]) {
         (segment, rest) = next_segment(rest);
     }
     let parent = parent.filter(|p| *p != b"**").map(|p| {
-        // `@scope/name@range` / `name@range` -> the name
+        // `@scope/name@range` / `name@range`
         let from = usize::from(p.first() == Some(&b'@'));
-        strings::index_of_char_usize(&p[from..], b'@').map_or(p, |i| &p[..from + i])
+        match strings::index_of_char_usize(&p[from..], b'@') {
+            Some(i) => Parent {
+                name: &p[..from + i],
+                range: &p[from + i + 1..],
+            },
+            None => Parent {
+                name: p,
+                range: b"",
+            },
+        }
     });
     (parent, segment)
 }
@@ -1597,24 +1675,7 @@ fn append_manifest_dependencies(
             }
             // Ranges only yarn understands: depend on what bun can read instead;
             // package.json is rewritten to match after migration.
-            let rewritten: Option<Vec<u8>> = if spec.starts_with(b"patch:") {
-                Some(patch_inner_range(spec).to_vec())
-            } else {
-                // `portal:` is always a path; a bare `link:name` could be a `bun link`
-                // registration, so `link:` needs to look like a path or be what yarn
-                // locked as one
-                spec.strip_prefix(b"portal:")
-                    .or_else(|| {
-                        spec.strip_prefix(b"link:").filter(|p| {
-                            p.starts_with(b".")
-                                || bun_paths::is_absolute(p)
-                                || strings::contains_char(p, b'/')
-                                || yarn_links.contains(&[name, b"@", spec].concat())
-                        })
-                    })
-                    .filter(|p| !p.is_empty())
-                    .map(|path| [b"file:".as_slice(), path].concat())
-            };
+            let rewritten = yarn_only_range_for_bun(name, spec, yarn_links);
             if !behavior.is_peer() {
                 // an earlier group's rewrite of this name no longer applies
                 originals.swap_remove(name);
@@ -1682,6 +1743,31 @@ fn append_manifest_dependencies(
         }
     }
     Ok((off as u32, (end - off) as u32))
+}
+
+/// What bun should read instead of a yarn-only range: `patch:…` -> the range it
+/// patches, `portal:`/`link:` path -> `file:` path. `None` when bun reads it fine.
+fn yarn_only_range_for_bun(
+    name: &[u8],
+    spec: &[u8],
+    yarn_links: &StringArrayHashMap<()>,
+) -> Option<Vec<u8>> {
+    if spec.starts_with(b"patch:") {
+        return Some(patch_inner_range(spec).to_vec());
+    }
+    // `portal:` is always a path; a bare `link:name` could be a `bun link`
+    // registration, so `link:` needs to look like a path or be what yarn locked as one
+    spec.strip_prefix(b"portal:")
+        .or_else(|| {
+            spec.strip_prefix(b"link:").filter(|p| {
+                p.starts_with(b".")
+                    || bun_paths::is_absolute(p)
+                    || strings::contains_char(p, b'/')
+                    || yarn_links.contains(&[name, b"@", spec].concat())
+            })
+        })
+        .filter(|p| !p.is_empty())
+        .map(|path| [b"file:".as_slice(), path].concat())
 }
 
 /// `patch:<locator>#<source>` -> the range of the locator being patched

@@ -19,10 +19,8 @@ pub struct Cp {
     /// `ExecState`) because `print_shell_cp_task` is also driven from
     /// `State::Ebusy` on Windows; both states must be able to stash/pop.
     pub(crate) output_queue: std::collections::VecDeque<*mut OutputTask<Cp>>,
-    /// First failure to write a task's output. Reported by
-    /// `Builtin::fail_write` in [`Self::finish`], once every task has
-    /// finished, because the tasks still running keep writing until then.
-    /// Lives on `Cp` for the same reason as `output_queue`.
+    /// First failed output write, reported by [`Self::finish`] once the tasks
+    /// that are still writing are done. On `Cp` for the same reason as above.
     pub(crate) write_err: Option<bun_sys::E>,
 }
 
@@ -191,9 +189,7 @@ impl Cp {
         }
     }
 
-    /// Every task has finished and all of its output has been written (or
-    /// failed to be): finish with `exit_code`, unless an output write failed,
-    /// which is reported and turns the exit code into 1.
+    /// Called once every task and every output chunk has completed.
     fn finish(interp: &Interpreter, cmd: NodeId, exit_code: ExitCode) -> Yield {
         if let Some(errno) = Self::state_mut(interp, cmd).write_err {
             return Builtin::fail_write(interp, cmd, errno, || {

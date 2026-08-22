@@ -37,9 +37,8 @@ pub struct ExecState {
     pub(crate) args_start: usize,
     pub(crate) total_tasks: usize,
     pub(crate) err: Option<bun_sys::Error>,
-    /// First failure to write a message or a `-v` line. Reported by
-    /// `Builtin::fail_write` in [`Rm::try_finish`], once every task has
-    /// finished, because the tasks still running keep writing until then.
+    /// First failed output write, reported by [`Rm::try_finish`] once the
+    /// tasks that are still writing are done.
     pub(crate) write_err: Option<E>,
     pub(crate) error_signal: AtomicBool,
     pub(crate) output_done: AtomicUsize,
@@ -368,16 +367,13 @@ impl Rm {
             _ => false,
         };
         if !in_exec {
-            // The chunk was an error message written from `ParseOpts`, or the
-            // write-error report: exit 1 whether or not it got through.
+            // The chunk was an error message; it failed the command already.
             return Builtin::done(interp, cmd, 1);
         }
         Self::try_finish(interp, cmd).unwrap_or_else(Yield::suspended)
     }
 
-    /// Once every task has finished and every queued chunk has completed,
-    /// finish: exit 1 if a removal failed or a chunk could not be written
-    /// (the latter is reported first), else 0. `None` while work is pending.
+    /// `None` while a task or an output chunk is still outstanding.
     fn try_finish(interp: &Interpreter, cmd: NodeId) -> Option<Yield> {
         let (failed, write_err) = match &Self::state_mut(interp, cmd).state {
             RmState::Exec(exec) if exec.tasks_done >= exec.total_tasks && exec.output_drained() => {

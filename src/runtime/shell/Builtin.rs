@@ -1099,19 +1099,12 @@ impl Builtin {
         Self::write_failing_error(interp, cmd, &buf, 1)
     }
 
-    /// Shared failure path for a builtin whose write to stdout or stderr
-    /// failed with `errno`: finish with exit 1, the status bash builtins and
-    /// coreutils use for a write error. Every errno except `EPIPE` is
-    /// reported first as `"{kind}: write error: {strerror}"` on stderr.
-    /// `EPIPE` is silent: the reader of the builtin's output went away
-    /// (`ls | head`), which kills an external command through SIGPIPE
-    /// without a message.
+    /// A write of the builtin's output failed with `errno`: exit 1 (what bash
+    /// and coreutils do), after reporting `"{kind}: write error: {strerror}"`
+    /// on stderr. `EPIPE` is not reported, like SIGPIPE for a process.
     ///
-    /// `set_wait_err` moves the builtin's state machine to the variant whose
-    /// `on_io_writer_chunk` finishes with exit 1 for any completion. That
-    /// variant also absorbs the failure of the report itself, which happens
-    /// when stderr is the stream that died (`2>&1`): the dead writer rejects
-    /// the report at once and the builtin still terminates.
+    /// `set_wait_err` selects the state whose `on_io_writer_chunk` exits 1 on
+    /// any completion, so a report that stderr rejects too still terminates.
     pub(crate) fn fail_write(
         interp: &Interpreter,
         cmd: NodeId,

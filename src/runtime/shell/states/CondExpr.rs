@@ -156,9 +156,8 @@ impl CondExpr {
         }
     }
 
-    /// IOWriter completion callback for the error message written in
-    /// `WaitingWriteErr`: the expression failed, so finish with exit code 1
-    /// whether or not the message could be written.
+    /// Completion of the error message written in `WaitingWriteErr`. The
+    /// expression failed either way: exit 1.
     pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         this: NodeId,

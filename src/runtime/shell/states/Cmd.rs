@@ -950,11 +950,9 @@ impl Cmd {
     /// captured bytes into the shell buffers); if that makes the command
     /// finished, transition to `Done` and yield back to the trampoline.
     ///
-    /// `err`: the shell failed to relay that stream (the pipe could not be
-    /// read, or the shell's own output rejected the bytes, e.g. EPIPE). Part
-    /// of the command's output is lost, so the command gets status 1, as a
-    /// builtin does from `Builtin::fail_write`, unless the process already
-    /// exited with a non-zero status of its own. A status set here also makes
+    /// `err`: the shell lost part of the output while relaying it. The command
+    /// fails with 1, like a builtin in `Builtin::fail_write`, unless the
+    /// process already exited non-zero. Setting a status here also makes
     /// `on_process_exit` skip `on_exit`, as before.
     pub(crate) fn buffered_output_close(
         &mut self,

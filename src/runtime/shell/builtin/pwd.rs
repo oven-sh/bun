@@ -75,8 +75,7 @@ impl Pwd {
             }
         };
         match kind {
-            // The message in flight was itself an error report (`too many
-            // arguments`, or the write-error report): exit 1 either way.
+            // The chunk was an error message; it failed the command already.
             None | Some(WaitKind::Stderr) => Builtin::done(interp, cmd, 1),
             Some(WaitKind::Stdout) => match err {
                 Some(err) => Builtin::fail_write(interp, cmd, err.get_errno(), || {

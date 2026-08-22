@@ -272,8 +272,6 @@ impl Cat {
                 }
                 _ => panic!("Invalid state"),
             }
-            // The other chunks this cat queued die with this one; make sure
-            // none of them reports back after the builtin is finished.
             let wchild = ChildPtr::new(cmd, WriterTag::Builtin);
             if let BuiltinIO::Fd(fd) = &Builtin::of(interp, cmd).stdout {
                 fd.writer.cancel_chunks(wchild);

@@ -36,9 +36,8 @@ pub struct Exec {
     /// self-reference).
     pub(crate) args_start: usize,
     pub(crate) err: Option<bun_sys::Error>,
-    /// First failure to write a task's output. Reported by
-    /// `Builtin::fail_write` once every task has finished, because the tasks
-    /// still running keep writing until then.
+    /// First failed output write, reported once the tasks that are still
+    /// writing are done.
     pub(crate) write_err: Option<bun_sys::E>,
     /// FIFO of in-flight OutputTask pointers awaiting an IOWriter chunk
     /// completion. Stopgap until `WriterTag` can carry the `*mut OutputTask`

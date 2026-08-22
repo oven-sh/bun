@@ -195,7 +195,7 @@ bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identif
         // On its own thread the work is being initiated right here: it belongs to the loop
         // this thread is running now, whatever the caller assumed.
         if (context->isContextThread())
-            loop = Bun__VM__currentLoopKind(context->m_bunVM);
+            loop = context->currentLoop();
         retained = Bun__VmHandle__retainRef(context->m_vmHandle);
     }
     Bun__VmHandle__postAndRelease(retained, new EventLoopTask(WTF::move(task)), loop);

@@ -114,6 +114,23 @@ const producers = {
   });
   await worker.terminate();
   return data;`,
+  "a MessagePort transferred to a Worker": `const { port1, port2 } = new MessageChannel();
+  const worker = new Worker(new URL("./port-worker.js", import.meta.url).href);
+  worker.postMessage(port2, [port2]);
+  const data = await new Promise((resolve, reject) => {
+    port1.onmessage = e => resolve(e.data);
+    worker.onerror = reject;
+  });
+  port1.close();
+  await worker.terminate();
+  return data;`,
+  "a BroadcastChannel message from a Worker": `const channel = new BroadcastChannel("39900-worker");
+  const received = new Promise(resolve => (channel.onmessage = e => resolve(e.data)));
+  const worker = new Worker(new URL("./broadcast-worker.js", import.meta.url).href);
+  const data = await received;
+  channel.close();
+  await worker.terminate();
+  return data;`,
 };
 
 for (const [name, body] of Object.entries(producers)) {
@@ -121,6 +138,10 @@ for (const [name, body] of Object.entries(producers)) {
     using dir = tempDir("39900-producer", {
       "macro.ts": `export async function value() {\n  ${body}\n}\n`,
       "worker.js": `postMessage("ok worker");`,
+      "port-worker.js": `onmessage = e => e.data.postMessage("ok port");`,
+      "broadcast-worker.js": `const channel = new BroadcastChannel("39900-worker");
+channel.postMessage("ok broadcast worker");
+channel.close();`,
       "index.ts": `import { value } from "./macro.ts" with { type: "macro" };
 console.log(JSON.stringify(value()));
 `,

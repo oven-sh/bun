@@ -86,7 +86,7 @@ WorkerMessagingProxy::WorkerMessagingProxy(Worker& workerObject, ScriptExecution
     : m_scriptExecutionContext(&parentContext)
     , m_workerObject(&workerObject)
     , m_loaderContextIdentifier(parentContext.identifier())
-    , m_loaderLoop(Bun__VM__currentLoopKind(WebCore::clientData(parentContext.vm())->bunVM))
+    , m_loaderLoop(parentContext.currentLoop())
     , m_workerContextIdentifier(ScriptExecutionContext::generateIdentifier())
     , m_options(WTF::move(options))
 {

@@ -130,6 +130,13 @@ public:
 
     JSC::VM& vm() { return *m_vm; }
     ScriptExecutionContextIdentifier identifier() const { return m_identifier; }
+    // This thread only: the loop the VM is running now. What an object that will later be posted to
+    // from another thread records alongside identifier() when script here sets it up.
+    BunLoopKind currentLoop()
+    {
+        ASSERT(isContextThread());
+        return Bun__VM__currentLoopKind(m_bunVM);
+    }
 
     bool isWorker = false;
 

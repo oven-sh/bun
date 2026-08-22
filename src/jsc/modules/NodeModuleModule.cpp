@@ -493,8 +493,7 @@ static JSValue pathResolve(JSGlobalObject* globalObject, JSValue arg0, JSValue a
     return JSValue::decode(Bun__Path__resolve3(globalObject, hostIsWindows, JSValue::encode(arg0), JSValue::encode(arg1), JSValue::encode(arg2)));
 }
 
-// Recomputes `Module.globalPaths` the way Node does. Bun's resolver does not read it.
-// https://github.com/nodejs/node/blob/v24.0.0/lib/internal/modules/cjs/loader.js#L1867
+// Port of https://github.com/nodejs/node/blob/v24.0.0/lib/internal/modules/cjs/loader.js#L1997 (Bun's resolver does not read globalPaths).
 JSC_DEFINE_HOST_FUNCTION(jsFunctionInitPaths, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame*))
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);

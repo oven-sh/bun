@@ -1496,7 +1496,9 @@ pub struct CustomFormattedObject {
 // Formatter
 // ───────────────────────────────────────────────────────────────────────────
 
-pub use formatter::{Formatter, Tag, TagOptions, TagPayload, TagResult, visited};
+pub use formatter::{
+    Formatter, Tag, TagOptions, TagPayload, TagResult, jsx_component_tag_name, visited,
+};
 
 pub mod formatter {
     use super::*;
@@ -3205,6 +3207,24 @@ pub mod formatter {
             return Ok(Some(ZigString::static_("[Object: null prototype]")));
         }
         Ok(None)
+    }
+
+    pub fn jsx_component_tag_name(
+        global_this: &JSGlobalObject,
+        component: JSValue,
+    ) -> JsResult<bun_core::ZigStringSlice> {
+        if let Some(display_name) = component
+            .get_truthy(global_this, "displayName")?
+            .filter(|display_name| display_name.is_string())
+        {
+            return display_name.to_slice(global_this);
+        }
+
+        let name = OwnedString::new(component.get_name(global_this)?);
+        if name.is_empty() {
+            return Ok(bun_core::ZigStringSlice::from_utf8_never_free(b"NoName"));
+        }
+        Ok(name.to_utf8())
     }
 
     // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle; remaining
@@ -5026,39 +5046,29 @@ pub mod formatter {
             writer.write_all(pf!("<r>").as_bytes());
             writer.write_all(b"<");
 
-            // Both arms of the `type` if/else below assign these, so deferred
-            // init avoids the dead-store warning.
-            let mut needs_space: bool;
-            let mut tag_name_str = ZigString::init(b"");
+            let mut needs_space = true;
+            let mut is_tag_kind_primitive = false;
 
             // `ZigStringSlice` frees on `Drop`, so no explicit cleanup is
             // needed.
-            let tag_name_slice: bun_core::ZigStringSlice;
-            let mut is_tag_kind_primitive = false;
+            let tag_name_slice: bun_core::ZigStringSlice =
+                if let Some(type_value) = value.get(self.global_this, "type")? {
+                    let _tag = Tag::get_advanced(type_value, self.global_this, tag_opts)?;
 
-            if let Some(type_value) = value.get(self.global_this, "type")? {
-                let _tag = Tag::get_advanced(type_value, self.global_this, tag_opts)?;
-
-                if _tag.cell == jsc::JSType::Symbol {
-                    // nothing
-                } else if _tag.cell.is_string_like() {
-                    type_value.to_zig_string(&mut tag_name_str, self.global_this)?;
-                    is_tag_kind_primitive = true;
-                } else if _tag.cell.is_object() || type_value.is_callable() {
-                    type_value.get_name_property(self.global_this, &mut tag_name_str)?;
-                    if tag_name_str.len == 0 {
-                        tag_name_str = ZigString::init(b"NoName");
+                    if _tag.cell == jsc::JSType::Symbol {
+                        // A fragment prints as `<>...</>`.
+                        bun_core::ZigStringSlice::EMPTY
+                    } else if _tag.cell.is_string_like() {
+                        is_tag_kind_primitive = true;
+                        type_value.to_slice(self.global_this)?
+                    } else if _tag.cell.is_object() || type_value.is_callable() {
+                        jsx_component_tag_name(self.global_this, type_value)?
+                    } else {
+                        type_value.to_slice(self.global_this)?
                     }
                 } else {
-                    type_value.to_zig_string(&mut tag_name_str, self.global_this)?;
-                }
-
-                tag_name_slice = tag_name_str.to_slice();
-                needs_space = true;
-            } else {
-                tag_name_slice = ZigString::init(b"unknown").to_slice();
-                needs_space = true;
-            }
+                    bun_core::ZigStringSlice::from_utf8_never_free(b"unknown")
+                };
 
             if !is_tag_kind_primitive {
                 writer.write_all(pf!("<cyan>").as_bytes());

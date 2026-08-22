@@ -1979,35 +1979,30 @@ impl<'a> Formatter<'a> {
 
                     writer.write_all(b"<");
 
-                    let mut needs_space;
-                    let mut tag_name_str = ZigString::init(b"");
-
-                    let tag_name_slice: ZigStringSlice;
+                    let mut needs_space = true;
                     let mut is_tag_kind_primitive = false;
 
-                    if let Some(type_value) = value.get(self.global_this, "type")? {
-                        let _tag = Tag::get(type_value, self.global_this)?;
+                    let tag_name_slice: ZigStringSlice =
+                        if let Some(type_value) = value.get(self.global_this, "type")? {
+                            let _tag = Tag::get(type_value, self.global_this)?;
 
-                        if _tag.cell == JSType::Symbol {
-                        } else if _tag.cell.is_string_like() {
-                            type_value.to_zig_string(&mut tag_name_str, self.global_this)?;
-                            is_tag_kind_primitive = true;
-                        } else if _tag.cell.is_object() || type_value.is_callable() {
-                            type_value.get_name_property(self.global_this, &mut tag_name_str)?;
-                            if tag_name_str.len == 0 {
-                                tag_name_str = ZigString::init(b"NoName");
+                            if _tag.cell == JSType::Symbol {
+                                // A fragment prints as `<>...</>`.
+                                ZigStringSlice::EMPTY
+                            } else if _tag.cell.is_string_like() {
+                                is_tag_kind_primitive = true;
+                                type_value.to_slice(self.global_this)?
+                            } else if _tag.cell.is_object() || type_value.is_callable() {
+                                jsc::console_object::jsx_component_tag_name(
+                                    self.global_this,
+                                    type_value,
+                                )?
+                            } else {
+                                type_value.to_slice(self.global_this)?
                             }
                         } else {
-                            type_value.to_zig_string(&mut tag_name_str, self.global_this)?;
-                        }
-
-                        tag_name_slice = tag_name_str.to_slice();
-                        needs_space = true;
-                    } else {
-                        tag_name_slice = ZigString::init(b"unknown").to_slice();
-
-                        needs_space = true;
-                    }
+                            ZigStringSlice::from_utf8_never_free(b"unknown")
+                        };
 
                     if !is_tag_kind_primitive {
                         writer.write_all(

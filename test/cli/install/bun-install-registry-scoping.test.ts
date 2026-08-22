@@ -437,6 +437,29 @@ allowedHosts = []
     expect(elsewhereReceived).toEqual([]);
   });
 
+  it("refuses a tarball URL dependency on a host that is not listed", async () => {
+    const elsewhereReceived: Received[] = [];
+    await using elsewhere = serveElsewhere(elsewhereReceived);
+    const tarballUrl = `http://127.0.0.1:${elsewhere.port}/no-deps-1.0.0.tgz`;
+    using dir = tempDir("allowed-hosts", {
+      "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "no-deps": tarballUrl } }),
+      "bunfig.toml": `
+[install]
+cache = false
+registry = "http://localhost:1/"
+allowedHosts = []
+`,
+    });
+
+    const { stderr, exitCode } = await install(String(dir));
+    expect(stderr).toContain(
+      `error: Refusing to download "${tarballUrl}" for package "no-deps": host is not in install.allowedHosts`,
+    );
+    expect(stderr).not.toContain("internal error");
+    expect(exitCode).toBe(1);
+    expect(elsewhereReceived).toEqual([]);
+  });
+
   it("skips an optional dependency whose tarball host is not listed instead of failing", async () => {
     const elsewhereReceived: Received[] = [];
     await using elsewhere = serveElsewhere(elsewhereReceived);

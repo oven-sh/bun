@@ -344,8 +344,12 @@ impl PatchTask {
                                 _ => Authorization::NoAuthorization,
                             },
                         ) {
-                            // --offline and not cached: already reported / skipped; nothing to patch
-                            Err(crate::network_task::ForTarballError::Offline) => return Ok(()),
+                            // --offline and not cached, or the tarball URL was refused
+                            // (`install.allowedHosts`): already reported / skipped; nothing to patch
+                            Err(
+                                crate::network_task::ForTarballError::Offline
+                                | crate::network_task::ForTarballError::InvalidURL,
+                            ) => return Ok(()),
                             other => other?.unwrap_or_else(|| unreachable!()),
                         };
                     if manager.get_preinstall_state(pkg_meta_id) == PreinstallState::Extract {

@@ -522,6 +522,35 @@ mod tests {
     }
 
     #[test]
+    fn small_int_kv_fast_paths_decode() {
+        use crate::otlp::{Value, write_key_value};
+        for v in [
+            0i64,
+            1,
+            127,
+            128,
+            300,
+            8080,
+            16383,
+            16384,
+            65535,
+            (1 << 21) - 1,
+            1 << 21,
+            -1,
+            i64::MAX,
+        ] {
+            let mut out = Vec::new();
+            write_key_value(&mut out, f::ATTRIBUTES, b"k", &Value::Int(v));
+            // strip the outer ATTRIBUTES tag+len and decode the KeyValue
+            let (fl, val) = super::fields(&out).next().unwrap();
+            assert_eq!(fl, f::ATTRIBUTES);
+            let kv = KeyValue::decode(val.as_bytes());
+            assert_eq!(kv.key, b"k");
+            assert!(matches!(kv.value, AnyValue::Int(x) if x == v), "{v}");
+        }
+    }
+
+    #[test]
     fn roundtrip() {
         let stub = SpanStub {
             ctx: SpanContext {

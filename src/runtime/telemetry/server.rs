@@ -70,30 +70,53 @@ pub fn begin(
                 return;
             }
             f.flags = if is_https { R::FLAG_HTTPS } else { 0 };
-            (f.peer, f.peer_port, f.version) = match resp {
-                bun_uws::AnyResponse::H3(_) => match resp.get_remote_socket_info() {
-                    Some(a) => (
-                        R::PeerIp::from_text(a.ip()),
-                        u16::try_from(a.port).unwrap_or(0),
-                        R::HttpVersion::Http3,
-                    ),
-                    None => (R::PeerIp::None, 0, R::HttpVersion::Http3),
-                },
-                _ => match resp.get_remote_address_raw() {
-                    Some((RawIp::V4(b), port)) => (R::PeerIp::V4(b), port, R::HttpVersion::Http11),
-                    // v4-mapped (::ffff:a.b.c.d) reads as the v4 address, as node reports it.
-                    Some((RawIp::V6(b), port)) => (
-                        match b {
-                            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, a, b_, c, d] => {
-                                R::PeerIp::V4([a, b_, c, d])
-                            }
-                            _ => R::PeerIp::V6(b),
+            // network.peer.* are per connection: encoded once and cached on the
+            // connection (H1); each request copies the bytes into its facts.
+            let mut fresh = Vec::new();
+            let cache = resp.peer_attrs_cache();
+            let cached: &[u8] = cache.as_ref().map_or(b"", |c| c.get());
+            let peer_encoded: &[u8] = if !cached.is_empty() {
+                f.version = R::HttpVersion::Http11;
+                cached
+            } else {
+                {
+                    (f.peer, f.peer_port, f.version) = match resp {
+                        bun_uws::AnyResponse::H3(_) => match resp.get_remote_socket_info() {
+                            Some(a) => (
+                                R::PeerIp::from_text(a.ip()),
+                                u16::try_from(a.port).unwrap_or(0),
+                                R::HttpVersion::Http3,
+                            ),
+                            None => (R::PeerIp::None, 0, R::HttpVersion::Http3),
                         },
-                        port,
-                        R::HttpVersion::Http11,
-                    ),
-                    None => (R::PeerIp::None, 0, R::HttpVersion::Http11),
-                },
+                        _ => match resp.get_remote_address_raw() {
+                            Some((RawIp::V4(b), port)) => {
+                                (R::PeerIp::V4(b), port, R::HttpVersion::Http11)
+                            }
+                            // v4-mapped (::ffff:a.b.c.d) reads as the v4 address, as node reports it.
+                            Some((RawIp::V6(b), port)) => (
+                                match b {
+                                    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, a, b_, c, d] => {
+                                        R::PeerIp::V4([a, b_, c, d])
+                                    }
+                                    _ => R::PeerIp::V6(b),
+                                },
+                                port,
+                                R::HttpVersion::Http11,
+                            ),
+                            None => (R::PeerIp::None, 0, R::HttpVersion::Http11),
+                        },
+                    };
+                    match (&cache, &f.peer) {
+                        (None, _) | (_, R::PeerIp::None) => &b""[..],
+                        (Some(cache), _) => {
+                            fresh.reserve(112);
+                            R::encode_peer_attrs(&f.peer, f.peer_port, &mut fresh);
+                            cache.set(&fresh);
+                            &fresh[..]
+                        }
+                    }
+                }
             };
             let url = req.url();
             let path_len = if h.path_len == u32::MAX {
@@ -102,6 +125,7 @@ pub fn begin(
                 h.path_len as usize
             };
             f.set_request(
+                peer_encoded,
                 url,
                 path_len,
                 R::forwarded_client(h.forwarded(), h.x_forwarded_for()),

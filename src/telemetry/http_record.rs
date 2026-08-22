@@ -67,19 +67,34 @@ impl PeerIp {
         }
     }
 
-    /// Dotted quad / RFC 5952 (v4-mapped v6 as `::ffff:a.b.c.d`, matching
-    /// `requestIP()`).
+    /// Dotted quad / RFC 5952. Runs per request, so v4 (the common case) is
+    /// four itoas rather than `std::net`'s formatter.
     pub fn text<'b>(&'b self, buf: &'b mut [u8; 64]) -> &'b [u8] {
-        use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
-        let addr: SocketAddr = match self {
-            PeerIp::None => return b"",
-            PeerIp::Text { len, buf } => return &buf[..*len as usize],
-            PeerIp::V4(b) => SocketAddrV4::new(Ipv4Addr::from(*b), 0).into(),
-            PeerIp::V6(b) => SocketAddrV6::new(Ipv6Addr::from(*b), 0, 0, 0).into(),
-        };
-        match bun_core::fmt::format_ip(&addr, buf) {
-            Ok(s) => s,
-            Err(_) => b"",
+        use std::net::{Ipv6Addr, SocketAddrV6};
+        match self {
+            PeerIp::None => b"",
+            PeerIp::Text { len, buf } => &buf[..*len as usize],
+            PeerIp::V4(b) => {
+                let mut n = 0;
+                let mut ib = bun_core::fmt::ItoaBuf::new();
+                for (i, octet) in b.iter().enumerate() {
+                    if i != 0 {
+                        buf[n] = b'.';
+                        n += 1;
+                    }
+                    let d = bun_core::fmt::itoa(&mut ib, *octet);
+                    buf[n..n + d.len()].copy_from_slice(d);
+                    n += d.len();
+                }
+                &buf[..n]
+            }
+            PeerIp::V6(b) => {
+                match bun_core::fmt::format_ip(&SocketAddrV6::new(Ipv6Addr::from(*b), 0, 0, 0), buf)
+                {
+                    Ok(s) => s,
+                    Err(_) => b"",
+                }
+            }
         }
     }
 }
@@ -97,6 +112,12 @@ pub struct Facts {
     /// The socket peer (per request; not part of the template key).
     pub peer: PeerIp,
     pub peer_port: u16,
+    /// Length of the encoded `network.peer.*` bytes at the front of `raw`
+    /// ([`encode_peer_attrs`]; the transport caches them per connection and
+    /// [`Facts::set_request`] copies them in). 0 = encode from `peer`.
+    peer_encoded_len: u8,
+    /// How many attributes those bytes hold (address, or address + port).
+    peer_encoded_attrs: u8,
     pub version: HttpVersion,
     pub flags: u8,
     pub status: u16,
@@ -125,6 +146,7 @@ impl HttpVersion {
 }
 
 struct Strings<'a> {
+    peer_encoded: &'a [u8],
     url: &'a [u8],
     /// First `X-Forwarded-For` / `Forwarded for=` hop, if any.
     client: &'a [u8],
@@ -144,6 +166,8 @@ impl Facts {
             method: Method::GET,
             peer: PeerIp::None,
             peer_port: 0,
+            peer_encoded_len: 0,
+            peer_encoded_attrs: 0,
             version: HttpVersion::Unknown,
             flags: 0,
             status: 0,
@@ -160,6 +184,8 @@ impl Facts {
         self.status = 0;
         self.peer = PeerIp::None;
         self.peer_port = 0;
+        self.peer_encoded_len = 0;
+        self.peer_encoded_attrs = 0;
         self.version = HttpVersion::Unknown;
         if self.raw.capacity() > 16 * 1024 {
             self.raw = Vec::new();
@@ -167,23 +193,36 @@ impl Facts {
     }
 
     /// Set the request strings in one go (must be called before `set_route`).
-    /// `client` is the first forwarded-for hop (empty if none).
+    /// `peer_encoded`: the connection's cached [`encode_peer_attrs`] bytes
+    /// (or empty); `client`: the first forwarded-for hop (empty if none).
     #[inline]
     pub fn set_request(
         &mut self,
+        peer_encoded: &[u8],
         url: &[u8],
         path_len: usize,
         client: &[u8],
         host: &[u8],
         ua: &[u8],
     ) {
+        let peer_encoded = if peer_encoded.len() > u8::MAX as usize {
+            &b""[..]
+        } else {
+            peer_encoded
+        };
         let url = &url[..url.len().min(u16::MAX as usize)];
         let client = &client[..client.len().min(PeerIp::MAX_TEXT)];
         let host = &host[..host.len().min(u16::MAX as usize)];
         let ua = &ua[..ua.len().min(u16::MAX as usize)];
         self.raw.clear();
         self.raw
-            .reserve(url.len() + client.len() + host.len() + ua.len());
+            .reserve(peer_encoded.len() + url.len() + client.len() + host.len() + ua.len());
+        self.raw.extend_from_slice(peer_encoded);
+        self.peer_encoded_len = peer_encoded.len() as u8;
+        self.peer_encoded_attrs = match peer_encoded.len() {
+            0 => 0,
+            n => 1 + u8::from(n > PEER_TEXT_OFF + peer_encoded[PEER_TEXT_OFF - 1] as usize),
+        };
         self.raw.extend_from_slice(url);
         self.raw.extend_from_slice(client);
         self.raw.extend_from_slice(host);
@@ -204,7 +243,8 @@ impl Facts {
     #[inline]
     pub fn set_route(&mut self, route: &[u8]) {
         let route = &route[..route.len().min(u16::MAX as usize)];
-        let end = (self.lens[0] + self.lens[1] + self.lens[2] + self.lens[3]) as usize;
+        let end = self.peer_encoded_len as usize
+            + (self.lens[0] + self.lens[1] + self.lens[2] + self.lens[3]) as usize;
         self.raw.truncate(end);
         self.raw.extend_from_slice(route);
         self.lens[4] = route.len() as u32;
@@ -213,9 +253,11 @@ impl Facts {
     #[inline]
     fn strings(&self) -> Strings<'_> {
         let [a, cl, b, c, d] = self.lens.map(|x| x as usize);
-        let r = &self.raw[..];
+        let pe = (self.peer_encoded_len as usize).min(self.raw.len());
+        let (peer_encoded, r) = self.raw.split_at(pe);
         if r.len() < a + cl + b + c + d {
             return Strings {
+                peer_encoded: b"",
                 url: b"",
                 client: b"",
                 keyed: b"",
@@ -226,6 +268,7 @@ impl Facts {
         }
         let k = a + cl;
         Strings {
+            peer_encoded,
             url: &r[..a],
             client: &r[a..k],
             keyed: &r[k..],
@@ -521,13 +564,48 @@ pub fn forwarded_client<'a>(
     b""
 }
 
+const PEER_ADDRESS_KEY: &str = "network.peer.address";
+/// Offset of the address text inside [`encode_peer_attrs`] output
+/// (4 header bytes + key + 4 value-header bytes; see `write_str_kv_small`).
+const PEER_TEXT_OFF: usize = 4 + PEER_ADDRESS_KEY.len() + 4;
+
+/// `network.peer.address` + `network.peer.port` for a connection. The
+/// transport caches this per connection and hands it back in
+/// `Facts::peer_encoded`, so steady-state requests copy instead of format.
+pub fn encode_peer_attrs(peer: &PeerIp, port: u16, out: &mut Vec<u8>) {
+    let mut ip_buf = [0u8; 64];
+    let text = peer.text(&mut ip_buf);
+    if text.is_empty() {
+        return;
+    }
+    otlp::write_str_kv_small(out, f::ATTRIBUTES, PEER_ADDRESS_KEY, text);
+    debug_assert_eq!(&out[PEER_TEXT_OFF..PEER_TEXT_OFF + text.len()], text);
+    if port != 0 {
+        otlp::write_key_value(
+            out,
+            f::ATTRIBUTES,
+            b"network.peer.port",
+            &Value::Int(port as i64),
+        );
+    }
+}
+
+/// The address text inside [`encode_peer_attrs`] output.
+fn peer_text_of(encoded: &[u8]) -> &[u8] {
+    let n = encoded.get(PEER_TEXT_OFF - 1).copied().unwrap_or(0) as usize;
+    encoded.get(PEER_TEXT_OFF..PEER_TEXT_OFF + n).unwrap_or(b"")
+}
+
 /// Attributes appended per request rather than templated (see `append_tail`).
 fn tail_attr_count(facts: &Facts) -> u32 {
+    // url.path [+ url.query] [+ client.address + network.peer.address [+ .port]]
     1 + u32::from(facts.flags & FLAG_HAS_QUERY != 0)
-        + if matches!(facts.peer, PeerIp::None) {
-            0
-        } else {
+        + if facts.peer_encoded_attrs != 0 {
+            1 + facts.peer_encoded_attrs as u32
+        } else if !matches!(facts.peer, PeerIp::None) {
             2 + u32::from(facts.peer_port != 0)
+        } else {
+            0
         }
 }
 
@@ -557,46 +635,46 @@ fn append_tail(
     let url = s.url;
     let pl = (facts.path_len as usize).min(url.len());
     let (path, query) = (&url[..pl], url.get(pl + 1..).unwrap_or(b""));
+    // `room`: how many more attributes fit under attributeCountLimit.
     let mut room = room;
-    let mut take = || {
-        let ok = room != 0;
-        room = room.saturating_sub(1);
-        ok
+    let mut fresh = Vec::new();
+    let (encoded, n): (&[u8], u32) = if !s.peer_encoded.is_empty() {
+        (s.peer_encoded, facts.peer_encoded_attrs as u32)
+    } else if !matches!(facts.peer, PeerIp::None) {
+        fresh.reserve(112);
+        encode_peer_attrs(&facts.peer, facts.peer_port, &mut fresh);
+        (&fresh, 1 + u32::from(facts.peer_port != 0))
+    } else {
+        (b"", 0)
     };
-    let mut ip_buf = [0u8; 64];
-    let peer = facts.peer.text(&mut ip_buf);
-    if !peer.is_empty() {
+    if !encoded.is_empty() && room != 0 {
         // semconv: client.address is the client behind any proxies
         // (X-Forwarded-For / Forwarded), network.peer.* the socket peer.
-        if take() {
-            otlp::write_str_kv_small(
-                out,
-                f::ATTRIBUTES,
-                "client.address",
-                if s.client.is_empty() { peer } else { s.client },
-            );
-        }
-        if take() {
-            otlp::write_str_kv_small(out, f::ATTRIBUTES, "network.peer.address", peer);
-        }
-        if facts.peer_port != 0 && take() {
-            otlp::write_key_value(
-                out,
-                f::ATTRIBUTES,
-                b"network.peer.port",
-                &Value::Int(facts.peer_port as i64),
-            );
+        let peer = peer_text_of(encoded);
+        otlp::write_str_kv_small(
+            out,
+            f::ATTRIBUTES,
+            "client.address",
+            if s.client.is_empty() { peer } else { s.client },
+        );
+        room -= 1;
+        if room >= n {
+            out.extend_from_slice(encoded);
+            room -= n;
+        } else {
+            room = 0;
         }
     }
-    if take() {
+    if room != 0 {
         otlp::write_str_kv_small(
             out,
             f::ATTRIBUTES,
             "url.path",
             otlp::truncate_utf8(path, max),
         );
+        room -= 1;
     }
-    if !query.is_empty() && take() {
+    if !query.is_empty() && room != 0 {
         otlp::write_str_kv_small(
             out,
             f::ATTRIBUTES,

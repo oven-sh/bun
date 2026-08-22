@@ -37,10 +37,10 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     });
     const got = await collect();
     expect(got.map(s => [s.name, s.attributes["db.query.text"], s.status.code])).toEqual([
-      ["SELECT", "select 1 as x", 0],
-      ["SELECT", expect.stringMatching(/^select \$1 ?::int as y$/), 0],
-      ["postgresql", "selec typo", 2],
-      ["SELECT", "select 3", 0],
+      ["SELECT postgres", "select 1 as x", 0],
+      ["SELECT postgres", expect.stringMatching(/^select \$1 ?::int as y$/), 0],
+      ["postgres", "selec typo", 2], // no recognised verb: the span is named by the target
+      ["SELECT postgres", "select 3", 0],
     ]);
     expect(got[0]).toMatchObject({
       kind: 2,
@@ -69,9 +69,9 @@ describeWithContainer("mysql", { image: "mysql_plain" }, container => {
     await sql`selec typo`.catch(() => {});
     const got = await collect();
     expect(got.map(s => [s.name, s.attributes["db.query.text"], s.status.code])).toEqual([
-      ["SELECT", "select 1 as x", 0],
-      ["SELECT", expect.stringMatching(/^select \?\s+as y$/), 0],
-      ["mysql", "selec typo", 2],
+      ["SELECT bun_sql_test", "select 1 as x", 0],
+      ["SELECT bun_sql_test", expect.stringMatching(/^select \?\s+as y$/), 0],
+      ["bun_sql_test", "selec typo", 2],
     ]);
     expect(got[0]).toMatchObject({
       kind: 2,

@@ -44,10 +44,16 @@ static int uws_res_remote_address_raw(uWS::HttpResponse<SSL> *res, uint8_t *out,
     return data->remoteAddressLength;
   }
 
-/* Header name equals a lowercase literal (same compare HttpRequest::getHeader uses). */
+/* Header name equals a lowercase literal. Inline ASCII case-fold rather than
+ * strncasecmp: this runs for every header of every request and glibc's
+ * locale-aware strncasecmp measured ~160 instructions/request here. */
 template <size_t N>
 static inline bool uws_header_is(std::string_view k, const char (&lit)[N]) {
-  return k.length() == N - 1 && !strncasecmp(k.data(), lit, N - 1);
+  if (k.length() != N - 1) return false;
+  for (size_t i = 0; i < N - 1; i++) {
+    if ((static_cast<unsigned char>(k[i]) | 0x20) != static_cast<unsigned char>(lit[i])) return false;
+  }
+  return true;
 }
 
 
@@ -1264,6 +1270,21 @@ extern "C"
   int uws_res_get_remote_address_raw(int ssl, uws_res_r res, uint8_t *out, int *port) {
     if (ssl) return uws_res_remote_address_raw((uWS::HttpResponse<true> *)res, out, port);
     return uws_res_remote_address_raw((uWS::HttpResponse<false> *)res, out, port);
+  }
+
+  /* Per-connection scratch for telemetry's encoded peer attributes.
+   * Returns the buffer and its capacity; **len is the filled length (0 = empty). */
+  uint8_t *uws_res_peer_attrs(int ssl, uws_res_r res, uint8_t **len, size_t *cap) {
+    if (ssl) {
+      auto *data = ((uWS::HttpResponse<true> *)res)->getHttpResponseData();
+      *len = &data->peerAttrsLength;
+      *cap = sizeof(data->peerAttrs);
+      return data->peerAttrs;
+    }
+    auto *data = ((uWS::HttpResponse<false> *)res)->getHttpResponseData();
+    *len = &data->peerAttrsLength;
+    *cap = sizeof(data->peerAttrs);
+    return data->peerAttrs;
   }
 
   void uws_res_mark_wrote_content_length_header(int ssl, uws_res_r res) {

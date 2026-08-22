@@ -211,6 +211,28 @@ pub fn write_key_value(out: &mut Vec<u8>, field: u32, key: &[u8], v: &Value<'_>)
             Value::Int(i) if (0..128).contains(&i) => {
                 out.extend_from_slice(&[value_tag, av as u8, (f::AV_INT << 3) as u8, i as u8]);
             }
+            // ports, status codes, sizes: a 2–3 byte varint without the generic path
+            Value::Int(i) if (128..1 << 21).contains(&i) => {
+                let i = i as u32;
+                if i < 1 << 14 {
+                    out.extend_from_slice(&[
+                        value_tag,
+                        av as u8,
+                        (f::AV_INT << 3) as u8,
+                        (i | 0x80) as u8,
+                        (i >> 7) as u8,
+                    ]);
+                } else {
+                    out.extend_from_slice(&[
+                        value_tag,
+                        av as u8,
+                        (f::AV_INT << 3) as u8,
+                        (i | 0x80) as u8,
+                        (i >> 7 | 0x80) as u8,
+                        (i >> 14) as u8,
+                    ]);
+                }
+            }
             _ => {
                 out.extend_from_slice(&[value_tag, av as u8]);
                 write_any_value_body(out, v);

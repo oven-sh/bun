@@ -210,6 +210,10 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     uint8_t remoteAddressLength = 0;
     uint16_t remotePort = 0;
     uint8_t remoteAddress[16];
+    /* Telemetry's encoded per-connection peer attributes (opaque to uWS),
+     * filled on the connection's first traced request; 0 = not yet. */
+    uint8_t peerAttrsLength = 0;
+    uint8_t peerAttrs[103];
     /* The parser writes this through a bool& (getHeaders / consumePostPadded),
      * so it cannot live in `state`. */
     bool isConnectRequest = false;

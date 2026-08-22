@@ -291,7 +291,7 @@ bun list --trusted
 
 ### JSON output
 
-Pass `--json` to get the list as a JSON object, for scripts and CI checks. The shape is the one of `pnpm ls --json`: the root package, then its dependencies grouped by the `package.json` section they are declared in. Nothing else is written to stdout, so the output can be piped into `jq` or `JSON.parse`. `--json` combines with `--all` and `--trusted`:
+Pass `--json` to get the list as JSON, for scripts and CI checks. The document has the shape of `pnpm ls --json`: an array whose only element is the root package, with its dependencies grouped by the `package.json` section they are declared in. Nothing else is written to stdout, so the output can be piped into `jq` or `JSON.parse`. `--json` combines with `--trusted`:
 
 ```bash terminal icon="terminal"
 bun pm ls --json
@@ -300,60 +300,38 @@ bun list --json
 ```
 
 ```json
-{
-  "name": "my-app",
-  "version": "1.0.0",
-  "path": "/path/to/project",
-  "dependencies": {
-    "react": { "from": "react", "version": "18.2.0", "path": "/path/to/project/node_modules/react" },
-    "react-17": { "from": "react", "version": "17.0.2", "path": "/path/to/project/node_modules/react-17" }
-  },
-  "devDependencies": {
-    "typescript": { "from": "typescript", "version": "5.0.4", "path": "/path/to/project/node_modules/typescript" }
-  },
-  "optionalDependencies": {},
-  "peerDependencies": {},
-  "workspaces": {
-    "ui": { "from": "ui", "version": "workspace:packages/ui", "path": "/path/to/project/node_modules/ui" }
+[
+  {
+    "name": "my-app",
+    "version": "1.0.0",
+    "private": true,
+    "path": "/path/to/project",
+    "dependencies": {
+      "react": { "from": "react", "version": "18.2.0", "path": "/path/to/project/node_modules/react" },
+      "react-17": { "from": "react", "version": "17.0.2", "path": "/path/to/project/node_modules/react-17" }
+    },
+    "devDependencies": {
+      "typescript": { "from": "typescript", "version": "5.0.4", "path": "/path/to/project/node_modules/typescript" }
+    },
+    "optionalDependencies": {},
+    "peerDependencies": {},
+    "workspaces": {
+      "ui": { "from": "ui", "version": "workspace:packages/ui", "path": "/path/to/project/packages/ui" }
+    }
   }
-}
+]
 ```
 
 - `name`: the name of the root package, or `null` when `package.json` has none
 - `version`: the `version` field of the root `package.json`, or `null` when it has none
+- `private`: `true` when the root `package.json` sets `"private": true`
 - `path`: the absolute path of the project, as printed at the start of the text output
 - `dependencies`, `devDependencies`, `optionalDependencies`, `peerDependencies`: the root's dependencies from that `package.json` section, keyed by the name they are installed under. `workspaces` lists the workspace packages. All five groups are always present, `{}` when empty. A package the root declares in two sections is listed in both. Each entry has:
   - `from`: the name of the installed package. For an `npm:` alias such as `"react-17": "npm:react@17"` the key is the alias and `from` is the real package name (`react`).
   - `version`: the resolved version as the text output prints it after the `@`: a version for a registry package, `workspace:<path>` for a workspace, the folder path for a `file:` dependency
-  - `path`: the absolute path of the folder the package is installed in
+  - `path`: the absolute path of the package: its folder under `node_modules`, or the workspace folder for a workspace package
 
-With `--all`, the document also has `transitiveDependencies`: every other installed package, one entry per `node_modules` folder it is installed in, sorted by name. It is an array because the same name can be installed in more than one folder, for example a nested `node_modules` that holds a second version. With `--trusted`, every group lists only the trusted packages.
-
-```bash terminal icon="terminal"
-bun pm ls --all --json
-```
-
-```json
-{
-  "name": "my-app",
-  "version": "1.0.0",
-  "path": "/path/to/project",
-  "dependencies": {
-    "react": { "from": "react", "version": "18.2.0", "path": "/path/to/project/node_modules/react" }
-  },
-  "devDependencies": {},
-  "optionalDependencies": {},
-  "peerDependencies": {},
-  "workspaces": {},
-  "transitiveDependencies": [
-    { "from": "loose-envify", "version": "1.4.0", "path": "/path/to/project/node_modules/loose-envify" },
-    { "from": "scheduler", "version": "0.23.0", "path": "/path/to/project/node_modules/react/node_modules/scheduler" },
-    { "from": "scheduler", "version": "0.24.0", "path": "/path/to/project/node_modules/scheduler" }
-  ]
-}
-```
-
-A missing lockfile is still reported on stderr with exit code `1`, and nothing is written to stdout.
+With `--trusted`, every group lists only the trusted packages. `--all` is not supported with `--json`: the command exits with `1` and an error on stderr. A missing lockfile is still reported on stderr with exit code `1`, and nothing is written to stdout.
 
 ## licenses
 

@@ -983,6 +983,44 @@ body {
     },
   });
 
+  // The HTML references manifest.json as an asset (file loader) while the script
+  // imports it as JSON. These are two modules; the script must not end up with
+  // the asset's output path in place of the parsed object.
+  itBundled("html/manifest-json-also-imported-as-json", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="manifest" href="./manifest.json" />
+  </head>
+  <body>
+    <script src="./app.js"></script>
+  </body>
+</html>`,
+      "/manifest.json": JSON.stringify({ name: "My App" }),
+      "/app.js": /* js */ `
+        import manifest from "./manifest.json";
+        console.log(manifest.name);
+      `,
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const htmlContent = api.readFile("out/index.html");
+
+      const manifestMatch = htmlContent.match(/href="(?:\.\/|\/)?(manifest-[a-zA-Z0-9]+\.json)"/);
+      expect(manifestMatch).not.toBeNull();
+      expect(api.readFile("out/" + manifestMatch![1])).toBe(JSON.stringify({ name: "My App" }));
+
+      const scriptMatch = htmlContent.match(/src="(?:\.\/|\/)?([^"]+\.js)"/);
+      expect(scriptMatch).not.toBeNull();
+      const js = api.readFile("out/" + scriptMatch![1]);
+      expect(js).toContain('"My App"');
+      expect(js).not.toContain(manifestMatch![1]);
+    },
+  });
+
   // Test that other non-JS/CSS file types referenced via URL imports are copied as assets
   itBundled("html/xml-asset", {
     outdir: "out/",

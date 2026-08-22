@@ -2267,6 +2267,16 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         base <= p && p + value.len() <= end
     }
 
+    /// Number of strings appended so far (`bun:internal-for-testing` probe).
+    ///
+    /// SAFETY: see [`append`](Self::append); concurrent appenders are allowed.
+    pub unsafe fn count(this: *mut Self) -> usize {
+        // SAFETY: `this` is live; the mutex serializes the reads against `do_append`.
+        let _guard = unsafe { (*this).mutex.lock() };
+        // SAFETY: mutex held.
+        unsafe { (*this).slice_buf_used as usize + (*this).overflow_list.count as usize }
+    }
+
     /// Append `value` and return a mutable slice over the freshly-reserved bytes.
     ///
     /// Takes `*mut Self` (not `&mut self`) so callers can pass the raw

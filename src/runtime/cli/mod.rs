@@ -364,6 +364,8 @@ pub mod pm_diff_semantic;
 pub(crate) mod pm_licenses_command;
 #[path = "pm_pkg_command.rs"]
 pub mod pm_pkg_command;
+#[path = "pm_sbom_command.rs"]
+pub mod pm_sbom_command;
 #[path = "pm_trusted_command.rs"]
 pub mod pm_trusted_command;
 pub mod pm_update_package_json;

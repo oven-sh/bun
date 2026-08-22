@@ -262,6 +262,7 @@ impl CryptoHasher {
             }
             string_value.get_zig_string(global)?
         };
+        let algorithm = algorithm.to_slice_clone();
 
         // Node.BlobOrStringOrBuffer
         let Some(input_arg) = next_eat() else {
@@ -298,7 +299,7 @@ impl CryptoHasher {
             buffer.buffer = ArrayBuffer::from_typed_array(global, buffer.buffer.value);
         }
 
-        Self::hash_(global, algorithm, &input, output)
+        Self::hash_(global, ZigString::from_utf8(algorithm.slice()), &input, output)
     }
 
     fn throw_hmac_consumed(global: &JSGlobalObject) -> JsError {
@@ -489,35 +490,28 @@ impl CryptoHasher {
             return Err(global.throw_invalid_arguments(format_args!("Invalid algorithm name")));
         }
 
-        let mut hmac_key: Option<StringOrBuffer> = None;
-        // `defer { if (hmac_key) |*key| key.deinit(); }` — handled by Drop on `hmac_key`.
-
-        if !hmac_value.is_empty_or_undefined_or_null() {
-            hmac_key = match StringOrBuffer::from_js(global, hmac_value)? {
-                Some(k) => Some(k),
-                None => {
-                    return Err(global
-                        .throw_invalid_arguments(format_args!("key must be a string or buffer")));
-                }
-            };
-        }
-
         let init = 'brk: {
-            if let Some(key) = &hmac_key {
-                // Inlined `JSValue::to_enum_from_map` (the `is_string` guard
-                // already ran above) so the lookup goes through the
-                // length-gated `evp::lookup_ignore_case` directly.
-                let chosen_algorithm: evp::Algorithm = {
-                    let slice = algorithm_name.to_slice(global)?;
-                    match evp::lookup_ignore_case(slice.slice()) {
-                        Some(v) => v,
-                        None => {
-                            return Err(global.throw_invalid_arguments(format_args!(
-                                "algorithm must be one of {}",
-                                evp::ALGORITHM_ONE_OF
-                            )));
-                        }
+            if !hmac_value.is_empty_or_undefined_or_null() {
+                let chosen_algorithm: Option<evp::Algorithm> = {
+                    let slice = algorithm.to_slice();
+                    evp::lookup_ignore_case(slice.slice())
+                };
+
+                let key = match StringOrBuffer::from_js(global, hmac_value)? {
+                    Some(k) => k,
+                    None => {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "key must be a string or buffer"
+                        )));
                     }
+                };
+                // `defer key.deinit()` — handled by Drop on `key`.
+
+                let Some(chosen_algorithm) = chosen_algorithm else {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "algorithm must be one of {}",
+                        evp::ALGORITHM_ONE_OF
+                    )));
                 };
 
                 break 'brk CryptoHasher::Hmac(JsCell::new(Some(

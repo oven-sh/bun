@@ -731,7 +731,13 @@ impl RareData {
             .push(CleanupHook::from(global_this, ctx, func));
     }
 
-    pub fn spawn_sync_event_loop(&mut self, vm: &mut VirtualMachine) -> &mut SpawnSyncEventLoop {
+    /// Lazily creates the isolated spawnSync loop. The first call can fail
+    /// with EMFILE/ENFILE when the loop cannot open its fds; nothing is cached
+    /// then, so a later call retries.
+    pub fn spawn_sync_event_loop(
+        &mut self,
+        vm: &mut VirtualMachine,
+    ) -> bun_sys::Result<&mut SpawnSyncEventLoop> {
         if self.spawn_sync_event_loop_.is_none() {
             // In-place out-param init: `event_loop` inside captures the
             // `self` address, so the value must not move after init; allocate
@@ -740,11 +746,11 @@ impl RareData {
             SpawnSyncEventLoop::init(
                 &mut *boxed,
                 core::ptr::from_mut::<VirtualMachine>(vm).cast::<()>(),
-            );
+            )?;
             // SAFETY: `init` fully initialised the slot.
             self.spawn_sync_event_loop_ = Some(unsafe { boxed.assume_init() });
         }
-        self.spawn_sync_event_loop_.as_mut().unwrap()
+        Ok(self.spawn_sync_event_loop_.as_mut().unwrap())
     }
 
     // ── watch-mode listen sockets ─────────────────────────────────────────

@@ -146,15 +146,22 @@ impl SpawnSyncEventLoop {
     // below, so `Self` MUST NOT move after `init` returns (no-move invariant
     // upheld by the caller). The caller provides uninitialized storage, hence
     // `MaybeUninit<Self>` (out-param ctor exception).
+    //
+    // Fails with the errno of the fd the loop could not open (EMFILE/ENFILE:
+    // the epoll/kqueue fd, or the eventfd on Linux). Nothing is written to
+    // `this` in that case.
     pub fn init(
         this: &mut core::mem::MaybeUninit<Self>,
         vm: *mut (), /* SAFETY: erased *mut VirtualMachine */
-    ) {
-        // `uws::Loop::create` takes a `LoopHandler` impl with associated-const fn ptrs.
-        let loop_ = uws::Loop::create::<handler::Handler>();
-
-        let loop_ =
-            NonNull::new(loop_).expect("uws::Loop::create never returns null (asserts on OOM)");
+    ) -> bun_sys::Result<()> {
+        // `uws::Loop::try_create` takes a `LoopHandler` impl with associated-const fn ptrs.
+        let Some(loop_) = uws::Loop::try_create::<handler::Handler>() else {
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            let tag = bun_sys::Tag::eventfd;
+            #[cfg(not(any(target_os = "linux", target_os = "android")))]
+            let tag = bun_sys::Tag::kqueue;
+            return Err(bun_sys::Error::from_code_int(bun_sys::last_errno(), tag));
+        };
 
         // Initialize the JSC EventLoop with empty state.
         // CRITICAL: On Windows, the impl stores our isolated loop pointer in `uws_loop`.
@@ -182,6 +189,7 @@ impl SpawnSyncEventLoop {
         let loop_data = &mut this.uws_loop_mut().internal_loop_data;
         loop_data.set_parent_raw(tag, ptr);
         loop_data.jsc_vm = core::ptr::null();
+        Ok(())
     }
 
     /// Erased `*mut bun_jsc::event_loop::EventLoop` (heap-owned via

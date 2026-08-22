@@ -1393,6 +1393,10 @@ impl Tag {
     #[cfg(not(windows))]
     pub(crate) const setrlimit: Tag = Tag(106);
     pub const clone3: Tag = Tag(107);
+    /// `eventfd(2)`. Also covers the `epoll_create1(2)` fd that a
+    /// `us_create_loop` needs right before it: C reports only "the loop
+    /// could not open its fds".
+    pub const eventfd: Tag = Tag(108);
     // `inotify_init1`/`inotify_add_watch` fold under the generic `.watch`
     // tag; `INotifyWatcher.rs` spells it `.inotify`. Alias to `.watch`
     // so the JS-facing `err.syscall == "watch"` string stays node-compatible.
@@ -1400,7 +1404,7 @@ impl Tag {
     /// The tag name — spelling is frozen (JS-facing
     /// `err.syscall` string; node-compat code matches on it).
     pub fn name(self) -> &'static str {
-        const NAMES: [&str; 108] = [
+        const NAMES: [&str; 109] = [
             "TODO",
             "dup",
             "access",
@@ -1510,6 +1514,7 @@ impl Tag {
             "getrlimit",
             "setrlimit",
             "clone3",
+            "eventfd",
         ];
         NAMES.get(self.0 as usize).copied().unwrap_or("unknown")
     }
@@ -9121,7 +9126,7 @@ pub(crate) fn renameat_concurrently_without_fallback(
 pub fn eventfd(initval: u32, flags: i32) -> Maybe<Fd> {
     let rc = safe_libc::eventfd(initval, flags);
     if rc < 0 {
-        return Err(err_with(Tag::open));
+        return Err(err_with(Tag::eventfd));
     }
     Ok(Fd::from_native(rc))
 }

@@ -241,7 +241,22 @@ struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t 
     loop->fd = kqueue();
 #endif
 
-    us_internal_loop_data_init(loop, wakeup_cb, pre_cb, post_cb);
+    /* EMFILE/ENFILE: hand the errno back to the caller instead of running
+     * with fd -1. */
+    if (loop->fd < 0) {
+        int saved_errno = errno;
+        us_free(loop);
+        errno = saved_errno;
+        return 0;
+    }
+
+    if (us_internal_loop_data_init(loop, wakeup_cb, pre_cb, post_cb)) {
+        int saved_errno = errno;
+        close(loop->fd);
+        us_free(loop);
+        errno = saved_errno;
+        return 0;
+    }
     return loop;
 }
 
@@ -786,10 +801,12 @@ struct us_internal_async *us_internal_create_async(struct us_loop_t *loop, int f
 
     int efd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
     if (efd == -1) {
-        // eventfd only fails on EMFILE/ENFILE — the loop is unusable without
-        // wakeup_async, and the sole caller doesn't NULL-check. Crash loudly
-        // rather than NULL-deref or store -1 as a poll fd.
-        BUN_PANIC("eventfd() failed during loop init (out of file descriptors?)");
+        /* EMFILE/ENFILE. The poll was created with fallthrough, so it never
+         * counted in loop->num_polls: free it directly. */
+        int saved_errno = errno;
+        us_free(p);
+        errno = saved_errno;
+        return 0;
     }
     us_poll_init(p, efd, POLL_TYPE_CALLBACK);
 

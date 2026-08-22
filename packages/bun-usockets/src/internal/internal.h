@@ -180,10 +180,12 @@ void us_internal_group_maybe_unlink(struct us_socket_group_t *group);
  * SSL path calls _raw once it's actually time to drop the fd. */
 struct us_socket_t *us_internal_socket_close_raw(us_socket_r s, int code, void *reason);
 struct us_socket_t *us_internal_ssl_close(us_socket_r s, int code, void *reason);
-void us_internal_loop_data_init(struct us_loop_t *loop,
-                                void (*wakeup_cb)(us_loop_r loop),
-                                void (*pre_cb)(us_loop_r loop),
-                                void (*post_cb)(us_loop_r loop));
+/* Returns 0, or -1 with errno set when the wakeup async could not get its fd
+ * (EMFILE/ENFILE). Nothing stays allocated on failure. */
+int us_internal_loop_data_init(struct us_loop_t *loop,
+                               void (*wakeup_cb)(us_loop_r loop),
+                               void (*pre_cb)(us_loop_r loop),
+                               void (*post_cb)(us_loop_r loop));
 void us_internal_loop_data_free(us_loop_r loop);
 void us_internal_loop_pre(us_loop_r loop);
 void us_internal_loop_post(us_loop_r loop);
@@ -195,7 +197,8 @@ void us_nq_loop_drain(struct us_loop_t *loop);
 void us_nq_loop_register(struct us_loop_t *loop, struct us_nq_driver_s *d, void *owner);
 void us_nq_loop_unregister(struct us_loop_t *loop, struct us_nq_driver_s *d);
 
-/* Asyncs (old) */
+/* Asyncs (old). Returns 0 with errno set when the eventfd cannot be created
+ * (epoll only: EMFILE/ENFILE). */
 struct us_internal_async *us_internal_create_async(struct us_loop_t *loop,
                                                    int fallthrough,
                                                    unsigned int ext_size);

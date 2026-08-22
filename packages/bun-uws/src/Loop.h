@@ -26,6 +26,7 @@
 #include "AsyncSocket.h"
 
 extern "C" int bun_is_exiting();
+extern "C" void __attribute__((__noreturn__)) Bun__panic(const char *message, size_t length);
 
 namespace uWS {
 struct Loop {
@@ -83,8 +84,13 @@ private:
     }
 
     static Loop *create(void *hint) {
-        Loop *loop = ((Loop *) us_create_loop(hint, wakeupCb, preCb, postCb, sizeof(LoopData)))->init();
-        return loop;
+        us_loop_t *raw = us_create_loop(hint, wakeupCb, preCb, postCb, sizeof(LoopData));
+        if (!raw) {
+            /* The thread's main loop: nothing can run on this thread without it. */
+            static const char message[] = "Failed to create the event loop (out of file descriptors?)";
+            Bun__panic(message, sizeof(message) - 1);
+        }
+        return ((Loop *) raw)->init();
     }
 
     /* What to do with loops created with existingNativeLoop? */

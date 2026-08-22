@@ -575,7 +575,9 @@ void *us_ssl_get_session_sink_owner(struct ssl_st *ssl);
 
 /* Public interfaces for loops */
 
-/* Returns a new event loop with user data extension */
+/* Returns a new event loop with user data extension. On epoll/kqueue the loop
+ * needs one or two fds; returns NULL with errno set (EMFILE/ENFILE) when the
+ * process cannot open them. */
 struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(us_loop_r loop),
     void (*pre_cb)(us_loop_r loop), void (*post_cb)(us_loop_r loop), unsigned int ext_size);
 

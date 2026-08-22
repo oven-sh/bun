@@ -229,13 +229,15 @@ impl PosixLoop {
         unsafe { c::us_quic_loop_flush_if_pending(self) };
     }
 
-    pub fn create<H: LoopHandler>() -> *mut Loop {
+    /// Creates a new loop. The loop owns one epoll/kqueue fd plus, on Linux, an
+    /// eventfd for wakeups. Returns `None` with errno set (EMFILE/ENFILE) when
+    /// the process cannot open them.
+    pub fn try_create<H: LoopHandler>() -> Option<core::ptr::NonNull<Loop>> {
         // SAFETY: us_create_loop allocates and returns a new loop; null hint is valid
         let p = unsafe {
             c::us_create_loop(core::ptr::null_mut(), Some(H::WAKEUP), H::PRE, H::POST, 0)
         };
-        assert!(!p.is_null(), "us_create_loop returned null");
-        p
+        core::ptr::NonNull::new(p)
     }
 
     pub fn wakeup(&mut self) {
@@ -450,13 +452,14 @@ impl WindowsLoop {
         unsafe { c::us_quic_loop_flush_if_pending(self) };
     }
 
-    pub fn create<H: LoopHandler>() -> *mut WindowsLoop {
+    /// Creates a new loop on top of a fresh `uv_loop_t`. Returns `None` with
+    /// errno set if the loop could not be created.
+    pub fn try_create<H: LoopHandler>() -> Option<core::ptr::NonNull<WindowsLoop>> {
         // SAFETY: us_create_loop allocates and returns a new loop; null hint is valid
         let p = unsafe {
             c::us_create_loop(core::ptr::null_mut(), Some(H::WAKEUP), H::PRE, H::POST, 0)
         };
-        assert!(!p.is_null(), "us_create_loop returned null");
-        p
+        core::ptr::NonNull::new(p)
     }
 
     pub fn run(&mut self) {

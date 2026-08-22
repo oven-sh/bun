@@ -1094,9 +1094,14 @@ fn spawn_maybe_sync(
         // SAFETY: see note above; `spawn_sync_event_loop` re-borrows the
         // same VM via the raw pointer for its `vm` arg.
         unsafe {
-            let sync_loop = (*jsc_vm_ptr)
+            let sync_loop = match (*jsc_vm_ptr)
                 .rare_data()
-                .spawn_sync_event_loop(&mut *jsc_vm_ptr);
+                .spawn_sync_event_loop(&mut *jsc_vm_ptr)
+            {
+                Ok(sync_loop) => sync_loop,
+                // EMFILE/ENFILE: the isolated loop could not open its fds.
+                Err(err) => return Err(global_this.throw_value(err.to_js(global_this))),
+            };
             sync_loop.prepare(jsc_vm_ptr.cast());
             // `SpawnSyncEventLoop.event_loop` is type-erased to `*mut ()`
             // (bun_event_loop is below bun_jsc); the accessor returns the
@@ -1123,6 +1128,7 @@ fn spawn_maybe_sync(
                 (*jsc_vm_ptr_cleanup)
                     .rare_data()
                     .spawn_sync_event_loop(&mut *jsc_vm_ptr_cleanup)
+                    .expect("the spawn-sync loop was created before this guard was armed")
                     .cleanup(jsc_vm_ptr_cleanup.cast(), main_loop.cast());
             }
         }
@@ -1940,7 +1946,8 @@ fn spawn_maybe_sync(
         // SAFETY: jsc_vm_ptr is the live thread VM; re-borrowed for the nested arg.
         let sync_loop = unsafe { &mut *jsc_vm_ptr }
             .rare_data()
-            .spawn_sync_event_loop(unsafe { &mut *jsc_vm_ptr });
+            .spawn_sync_event_loop(unsafe { &mut *jsc_vm_ptr })
+            .expect("the spawn-sync loop was created before the process was spawned");
 
         while subprocess.compute_has_pending_activity() {
             // Re-evaluate this at each iteration of the loop since it may change between iterations.

@@ -1472,11 +1472,13 @@ async function darwinBetaQueueIdle() {
   if (!isBuildkite) {
     return false;
   }
-  const token = getSecret("CI_QUEUE_PROBE_TOKEN", { required: false });
-  if (!token) {
-    return false;
-  }
   try {
+    // getSecret throws on Buildkite when the secret is absent; the probe
+    // must never take the pipeline down with it.
+    const token = getSecret("CI_QUEUE_PROBE_TOKEN", { required: false });
+    if (!token) {
+      return false;
+    }
     const res = await fetch(
       "https://api.buildkite.com/v2/organizations/bun/pipelines/bun/builds?state%5B%5D=running&state%5B%5D=scheduled&per_page=100",
       { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10_000) },

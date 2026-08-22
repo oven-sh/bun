@@ -1327,15 +1327,15 @@ test.skipIf(!isWindows)("retrying a failed fs.watch does not crash (windows)", a
     symlinkSync(target, link, "junction"); // junctions need no admin rights on Windows
     rmdirSync(target);                     // junction now dangles
 
-    // Call 1: readlink(link) SUCCEEDS (returns the vanished target path into
-    // a stack-local buffer), then uv_fs_event_start(target) fails ENOENT.
+    // Call 1: realpath(link) fails (the junction cannot be followed), so the
+    // link path itself goes to uv_fs_event_start, which follows the junction
+    // and fails ENOENT after the watcher was allocated.
     // On unpatched builds: map entry left with dangling key + uninit value.
     try { watch(link); throw new Error("expected first watch to fail"); }
     catch (e) { if (e.code !== "ENOENT") throw e; }
 
-    // Call 2: identical stack frame layout -> identical outbuf address ->
-    // identical key slice -> getOrPut returns found_existing=true ->
-    // returns uninitialized value as a *PathWatcher -> segfault on unpatched builds.
+    // Call 2: the same key; on unpatched builds this found the poisoned entry
+    // and returned its uninitialized value as a *PathWatcher -> segfault.
     // Correct behaviour: throw ENOENT again.
     try { watch(link); throw new Error("expected second watch to fail"); }
     catch (e) { if (e.code !== "ENOENT") throw e; }
@@ -1634,6 +1634,90 @@ test.skipIf(!isWindows)(
   },
   30000,
 );
+
+// On Windows, fs.watch() on a symlink watches the link's target. It used to hand
+// the raw readlink() result to libuv, so a link whose stored target is relative
+// (symlink("target.txt", "dir/link.txt")) was resolved against the process cwd
+// instead of the link's directory: ENOENT unless the cwd happened to be the
+// link's directory, or a same-named entry in the cwd silently watched instead.
+// The watched path is now resolved with realpath() first; when that fails, the
+// path goes to libuv as given, like in node (the dangling junction test above
+// covers that arm).
+//
+// Both fixtures run with their cwd set to an unrelated directory and receive the
+// link as an absolute path, so the only relative path involved is the link's
+// stored target.
+describe.concurrent.skipIf(!isWindows)("fs.watch on a symlink with a relative target (windows)", () => {
+  async function runFixture(fixture: string, cwd: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      cwd,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim().split(/\r?\n/), stderr, exitCode };
+  }
+
+  test("file symlink with a relative target is resolved against the link's directory, not the cwd", async () => {
+    using dir = tempDir("fswatch-relative-symlink-file", {
+      "links/target.txt": "hello",
+      "cwd/.keep": "",
+    });
+    const links = path.join(String(dir), "links");
+    const link = path.join(links, "link.txt");
+    fs.symlinkSync("target.txt", link, "file");
+
+    const fixture = /* js */ `
+      const fs = require("node:fs");
+      // Unfixed builds throw ENOENT here: there is no "target.txt" in the cwd.
+      const watcher = fs.watch(${JSON.stringify(link)}, event => {
+        console.log(JSON.stringify(event));
+        watcher.close();
+      });
+      // The watch is armed synchronously, so a single write is enough.
+      fs.writeFileSync(${JSON.stringify(path.join(links, "target.txt"))}, "changed");
+    `;
+
+    expect(await runFixture(fixture, path.join(String(dir), "cwd"))).toEqual({
+      stdout: ['"change"'],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("directory symlink with a relative target does not watch a same-named directory in the cwd", async () => {
+    using dir = tempDir("fswatch-relative-symlink-dir", {
+      "links/real/.keep": "",
+      // Same name as the link target, but in the cwd: what unfixed builds watch.
+      "cwd/real/.keep": "",
+    });
+    const links = path.join(String(dir), "links");
+    const link = path.join(links, "link");
+    fs.symlinkSync("real", link, "dir");
+
+    const fixture = /* js */ `
+      const fs = require("node:fs");
+      const path = require("node:path");
+      const watcher = fs.watch(${JSON.stringify(link)}, (event, filename) => {
+        console.log(JSON.stringify([event, filename]));
+        watcher.close();
+      });
+      // Only one of these lands in the watched directory, so the first event
+      // says which directory the watcher is attached to.
+      fs.writeFileSync(path.join(process.cwd(), "real", "decoy.txt"), "");
+      fs.writeFileSync(${JSON.stringify(path.join(links, "real", "real.txt"))}, "");
+    `;
+
+    expect(await runFixture(fixture, path.join(String(dir), "cwd"))).toEqual({
+      // Unfixed builds print ["rename","decoy.txt"].
+      stdout: ['["rename","real.txt"]'],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
 
 // FSWatcher::init joins the user-supplied watch path with the process cwd into a
 // fixed pooled path buffer. The raw-path length validator only bounds the path

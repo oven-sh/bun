@@ -105,6 +105,9 @@ test.each([
   "#100 supersedes #1",
   "PR #100 fixes #1.",
   "#100 and #101 fix #1",
+  "Reverts #100 which fixed #1.",
+  "Depends on #100, which fixes #1.",
+  "Stacked on #100 that resolves #1.",
   // an infinitive says nothing about what the PR does
   "I was unable to fix #1 here.",
   "Decided not to close #1.",
@@ -157,6 +160,8 @@ test.each([
   ["- Fix #1", [1]],
   ["This will fix #1.", [1]],
   ["Adds the flag and fixes #1.", [1]],
+  ["A change that fixes #1.", [1]],
+  ["This PR, which fixes #1, also adds a test.", [1]],
 ] as [string, number[]][])("stops at the right place in %j", (body, expected) => {
   expect(refs(body)).toEqual(expected);
 });

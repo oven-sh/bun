@@ -2550,6 +2550,29 @@ declare module "bun" {
     bitcount(key: RedisClient.KeyLike): Promise<number>;
 
     /**
+     * Count the number of set bits (population counting) in a range of a string
+     *
+     * `start` and `end` are inclusive and may be negative to count from the end
+     * of the string. They are byte offsets unless `unit` is `"BIT"`, in which
+     * case they are bit offsets (Redis 7.0+ / Valkey).
+     * @param key The key to count bits in
+     * @param start The first offset of the range
+     * @param end The last offset of the range
+     * @param unit Literal "BYTE" (the default) or "BIT" selecting what `start` and `end` are measured in
+     * @returns Promise that resolves with the number of bits set to 1 within the range
+     *
+     * @example
+     * ```ts
+     * await redis.set("mykey", "foobar");
+     * await redis.bitcount("mykey"); // 26
+     * await redis.bitcount("mykey", 0, 0); // 4
+     * await redis.bitcount("mykey", 1, 1); // 6
+     * await redis.bitcount("mykey", 5, 30, "BIT"); // 17
+     * ```
+     */
+    bitcount(key: RedisClient.KeyLike, start: number, end: number, unit?: "BYTE" | "BIT"): Promise<number>;
+
+    /**
      * Returns the bit value at offset in the string value stored at key
      * @param key The key containing the string value
      * @param offset The bit offset (zero-based)

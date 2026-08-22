@@ -440,6 +440,25 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         expect(count).toBe(3);
       });
 
+      test("should count bits within a range with BITCOUNT", async () => {
+        const redis = ctx.redis;
+        const key = "bitcount-range";
+        // "foobar" has 26 set bits: 'f' = 4, 'o' = 6, 'o' = 6, 'b' = 3, 'a' = 3, 'r' = 4.
+        await redis.set(key, "foobar");
+
+        expect(
+          await Promise.all([
+            redis.bitcount(key),
+            redis.bitcount(key, 0, 0),
+            redis.bitcount(key, 1, 1),
+            redis.bitcount(key, 1, 1, "BYTE"),
+            redis.bitcount(key, -1, -1),
+            redis.bitcount(key, 5, 30, "BIT"),
+            redis.bitcount(key, 0, -1),
+          ]),
+        ).toEqual([26, 4, 6, 6, 4, 17, 26]);
+      });
+
       test("should get range of string", async () => {
         const redis = ctx.redis;
         const key = "rangetest";
@@ -990,7 +1009,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const redis = ctx.redis;
         expect(async () => {
           await redis.unlink({} as any);
-        }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'unlink'."`);
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'unlink'."`);
       });
 
       test("should reject invalid additional key in UNLINK", async () => {
@@ -1004,7 +1023,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const redis = ctx.redis;
         expect(async () => {
           await redis.touch(null as any);
-        }).toThrowErrorMatchingInlineSnapshot(`"The "key" argument must be specified"`);
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'touch'."`);
       });
 
       test("should reject invalid additional key in TOUCH", async () => {
@@ -3395,16 +3414,14 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const redis = ctx.redis;
         expect(async () => {
           await redis.zrem({} as any, "member");
-        }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'zrem'."`);
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'zrem'."`);
       });
 
       test("should reject invalid key in ZMSCORE", async () => {
         const redis = ctx.redis;
         expect(async () => {
           await redis.zmscore([] as any, "member");
-        }).toThrowErrorMatchingInlineSnapshot(
-          `"Expected additional arguments to be a string or buffer for 'zmscore'."`,
-        );
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'zmscore'."`);
       });
 
       test("should add members to sorted set with ZADD", async () => {
@@ -4279,7 +4296,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const redis = ctx.redis;
         expect(async () => {
           await redis.zrangebylex(null as any, "-", "+");
-        }).toThrowErrorMatchingInlineSnapshot(`"The "key" argument must be specified"`);
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'zrangebylex'."`);
       });
 
       test("should return members in reverse lexicographical order with ZREVRANGEBYLEX", async () => {
@@ -4381,9 +4398,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const redis = ctx.redis;
         expect(async () => {
           await redis.zrevrangebylex({} as any, "+", "-");
-        }).toThrowErrorMatchingInlineSnapshot(
-          `"Expected additional arguments to be a string or buffer for 'zrevrangebylex'."`,
-        );
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'zrevrangebylex'."`);
       });
 
       test("should reject invalid destination in ZRANGESTORE", async () => {
@@ -7518,6 +7533,94 @@ describe("RedisClient argument validation", () => {
       client.close();
     }
   });
+
+  test("hscan() rejects a missing cursor instead of sending `HSCAN key`", () => {
+    const client = new RedisClient("redis://127.0.0.1:1", { autoReconnect: false });
+    try {
+      const expected = {
+        code: "ERR_INVALID_ARG_TYPE",
+        message: "Expected cursor to be a string or buffer for 'hscan'.",
+      };
+      // @ts-expect-error: testing runtime behavior with a missing argument
+      expect(syncThrow(() => client.hscan("h"))).toMatchObject(expected);
+      // @ts-expect-error: testing runtime behavior with an explicit undefined
+      expect(syncThrow(() => client.hscan("h", undefined))).toMatchObject(expected);
+      // @ts-expect-error: testing runtime behavior with an explicit null
+      expect(syncThrow(() => client.hscan("h", null))).toMatchObject(expected);
+      // @ts-expect-error: testing runtime behavior with a non-stringifiable cursor
+      expect(syncThrow(() => client.hscan("h", {}))).toMatchObject(expected);
+      // @ts-expect-error: testing runtime behavior with a MATCH clause in the cursor's slot
+      expect(syncThrow(() => client.hscan("h", undefined, "MATCH", "f*"))).toMatchObject(expected);
+    } finally {
+      client.close();
+    }
+  });
+
+  test("hscan() and bitcount() report a bad key by name", () => {
+    const client = new RedisClient("redis://127.0.0.1:1", { autoReconnect: false });
+    try {
+      // @ts-expect-error: testing runtime behavior with no arguments
+      expect(syncThrow(() => client.hscan())).toMatchObject({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: "Expected key to be a string or buffer for 'hscan'.",
+      });
+      expect(syncThrow(() => client.hscan({} as any, 0))).toMatchObject({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: "Expected key to be a string or buffer for 'hscan'.",
+      });
+      // @ts-expect-error: testing runtime behavior with no arguments
+      expect(syncThrow(() => client.bitcount())).toMatchObject({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: "Expected key to be a string or buffer for 'bitcount'.",
+      });
+      expect(syncThrow(() => client.bitcount({} as any, 0, -1))).toMatchObject({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: "Expected key to be a string or buffer for 'bitcount'.",
+      });
+      expect(syncThrow(() => client.bitcount("k", {} as any, -1))).toMatchObject({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: "Expected additional arguments to be a string or buffer for 'bitcount'.",
+      });
+    } finally {
+      client.close();
+    }
+  });
+
+  // Every required positional of these commands used to be skipped when it was
+  // undefined/null, which shifted the arguments after it into its slot (e.g.
+  // `zrank(key, undefined, "WITHSCORE")` looked up a member called WITHSCORE,
+  // `rpush(undefined, "a", "b")` pushed "b" onto a list called "a").
+  test.each<[call: string, invoke: (client: any) => unknown, missingArgument: string]>([
+    ['hdel("h")', c => c.hdel("h"), "field"],
+    ['hdel("h", null, "f2")', c => c.hdel("h", null, "f2"), "field"],
+    ['zrem("z", undefined, "b")', c => c.zrem("z", undefined, "b"), "member"],
+    ['zrank("z", undefined, "WITHSCORE")', c => c.zrank("z", undefined, "WITHSCORE"), "member"],
+    ['zrevrank("z", null, "WITHSCORE")', c => c.zrevrank("z", null, "WITHSCORE"), "member"],
+    ['zrangebylex("z", undefined, "+")', c => c.zrangebylex("z", undefined, "+"), "min"],
+    ['zrangebylex("z", "-")', c => c.zrangebylex("z", "-"), "max"],
+    ['zrevrangebylex("z", undefined, "-")', c => c.zrevrangebylex("z", undefined, "-"), "max"],
+    ['zrevrangebylex("z", "+")', c => c.zrevrangebylex("z", "+"), "min"],
+    ['zmscore("z")', c => c.zmscore("z"), "member"],
+    ['lpush("l")', c => c.lpush("l"), "value"],
+    ['lpushx("l", null, "b")', c => c.lpushx("l", null, "b"), "value"],
+    ['rpush(undefined, "a", "b")', c => c.rpush(undefined, "a", "b"), "key"],
+    ['rpushx("l", undefined, "b")', c => c.rpushx("l", undefined, "b"), "value"],
+    // Commands whose only required argument is the key use the same generator and report it by name too.
+    ["del()", c => c.del(), "key"],
+    ['mget(null, "b")', c => c.mget(null, "b"), "key"],
+    ["lpop({})", c => c.lpop({}), "key"],
+  ])("%s throws instead of shifting the later arguments into the empty slot", (call, invoke, missingArgument) => {
+    const client = new RedisClient("redis://127.0.0.1:1", { autoReconnect: false });
+    try {
+      const command = call.slice(0, call.indexOf("("));
+      expect(syncThrow(() => invoke(client))).toMatchObject({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `Expected ${missingArgument} to be a string or buffer for '${command}'.`,
+      });
+    } finally {
+      client.close();
+    }
+  });
 });
 
 describe("RedisClient command methods", () => {
@@ -7577,5 +7680,170 @@ describe("RedisClient command methods", () => {
     "xsetid",
   ] as const)("RedisClient.prototype.%s is a function", name => {
     expect(typeof RedisClient.prototype[name]).toBe("function");
+  });
+});
+
+describe("RedisClient command encoding", () => {
+  const CRLF = "\r\n";
+  const bulk = (s: string) => `$${Buffer.byteLength(s)}${CRLF}${s}${CRLF}`;
+  const HELLO_REPLY = `%2${CRLF}` + bulk("server") + bulk("redis") + bulk("proto") + `:3${CRLF}`;
+
+  /**
+   * Runs `body` against a fake server that answers HELLO, replies `:0` to
+   * everything else and records every command it received as an argv array.
+   */
+  async function recordCommands(body: (client: RedisClient) => Promise<unknown>): Promise<string[][]> {
+    const received: string[][] = [];
+    using server = Bun.listen<{ buf: Buffer }>({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          socket.data = { buf: Buffer.alloc(0) };
+        },
+        error() {},
+        close() {},
+        data(socket, chunk) {
+          let buf = (socket.data.buf = Buffer.concat([socket.data.buf, chunk]));
+          // Each client command is a RESP array of bulk strings:
+          // `*<argc>\r\n` followed by argc `$<len>\r\n<bytes>\r\n` frames.
+          for (;;) {
+            const headerEnd = buf.indexOf(CRLF);
+            if (headerEnd < 0 || buf[0] !== 0x2a /* '*' */) break;
+            const argc = parseInt(buf.subarray(1, headerEnd).toString("latin1"), 10);
+            const argv: string[] = [];
+            let pos = headerEnd + 2;
+            let complete = true;
+            for (let i = 0; i < argc; i++) {
+              const lenEnd = buf.indexOf(CRLF, pos);
+              if (lenEnd < 0 || buf[pos] !== 0x24 /* '$' */) {
+                complete = false;
+                break;
+              }
+              const len = parseInt(buf.subarray(pos + 1, lenEnd).toString("latin1"), 10);
+              const next = lenEnd + 2 + len + 2;
+              if (next > buf.length) {
+                complete = false;
+                break;
+              }
+              argv.push(buf.subarray(lenEnd + 2, lenEnd + 2 + len).toString("latin1"));
+              pos = next;
+            }
+            if (!complete) break;
+            buf = socket.data.buf = buf.subarray(pos);
+            if (argv[0] === "HELLO") {
+              socket.write(HELLO_REPLY);
+            } else {
+              received.push(argv);
+              socket.write(`:0${CRLF}`);
+            }
+          }
+        },
+      },
+    });
+
+    const client = new RedisClient(`redis://127.0.0.1:${server.port}`, { autoReconnect: false });
+    try {
+      await client.connect();
+      await body(client);
+    } finally {
+      client.close();
+    }
+    return received;
+  }
+
+  test("bitcount() forwards the start/end range and the BYTE|BIT unit", async () => {
+    const received = await recordCommands(async client => {
+      await client.bitcount("k");
+      await client.bitcount("k", 0, 10);
+      await client.bitcount("k", -2, -1);
+      await client.bitcount("k", 5, 30, "BIT");
+      await client.bitcount("k", 1, 1, "BYTE");
+      await client.bitcount(Buffer.from("binary-key"), 0, 0);
+    });
+    expect(received).toEqual([
+      ["BITCOUNT", "k"],
+      ["BITCOUNT", "k", "0", "10"],
+      ["BITCOUNT", "k", "-2", "-1"],
+      ["BITCOUNT", "k", "5", "30", "BIT"],
+      ["BITCOUNT", "k", "1", "1", "BYTE"],
+      ["BITCOUNT", "binary-key", "0", "0"],
+    ]);
+  });
+
+  test("bitcount() with an undefined range still sends a plain BITCOUNT", async () => {
+    const received = await recordCommands(async client => {
+      // @ts-expect-error: testing runtime behavior when optional arguments are passed as undefined
+      await client.bitcount("k", undefined, undefined);
+    });
+    expect(received).toEqual([["BITCOUNT", "k"]]);
+  });
+
+  test("hscan() forwards the cursor and its MATCH/COUNT/NOVALUES options", async () => {
+    const received = await recordCommands(async client => {
+      await client.hscan("h", 0);
+      await client.hscan("h", "42");
+      await client.hscan("h", 0, "MATCH", "field:*");
+      await client.hscan("h", 0, "COUNT", 25);
+      await client.hscan("h", 0, "MATCH", "field:*", "COUNT", 25);
+      // @ts-expect-error: NOVALUES is a Redis 7.4+ option not yet in the typings
+      await client.hscan("h", 0, "NOVALUES");
+      // @ts-expect-error: testing runtime behavior when an optional argument is passed as undefined
+      await client.hscan("h", 0, undefined);
+    });
+    expect(received).toEqual([
+      ["HSCAN", "h", "0"],
+      ["HSCAN", "h", "42"],
+      ["HSCAN", "h", "0", "MATCH", "field:*"],
+      ["HSCAN", "h", "0", "COUNT", "25"],
+      ["HSCAN", "h", "0", "MATCH", "field:*", "COUNT", "25"],
+      ["HSCAN", "h", "0", "NOVALUES"],
+      ["HSCAN", "h", "0"],
+    ]);
+  });
+
+  test("commands with required positionals still forward their variadic and option arguments", async () => {
+    const received = await recordCommands(async client => {
+      await client.hdel("h", "f1", "f2", Buffer.from("f3"));
+      await client.zrem("z", "a", "b");
+      await client.zrank("z", "a", "WITHSCORE");
+      await client.zrevrank("z", "a");
+      await client.zrangebylex("z", "-", "+", "LIMIT", 0, 10);
+      await client.zrevrangebylex("z", "+", "-", "LIMIT", "0", "10");
+      await client.zmscore("z", "a", "b", "c");
+      await client.lpush("l", "a", "b");
+      await client.lpushx("l", "a");
+      await client.rpush("l", "1", "2", "3");
+      await client.rpushx("l", "a");
+      await client.del("a", "b", "c");
+      await client.lpop("l", 2);
+      await client.hrandfield("h", 2, "WITHVALUES");
+      // An undefined option after the required arguments is still skipped.
+      // @ts-expect-error: testing runtime behavior when an optional argument is passed as undefined
+      await client.zrank("z", "a", undefined);
+      // @ts-expect-error: testing runtime behavior when a variadic argument is passed as undefined
+      await client.rpush("l", "a", undefined, "b");
+      // @ts-expect-error: testing runtime behavior when the optional count is passed as undefined
+      await client.lpop("l", undefined);
+    });
+    expect(received).toEqual([
+      ["HDEL", "h", "f1", "f2", "f3"],
+      ["ZREM", "z", "a", "b"],
+      ["ZRANK", "z", "a", "WITHSCORE"],
+      ["ZREVRANK", "z", "a"],
+      ["ZRANGEBYLEX", "z", "-", "+", "LIMIT", "0", "10"],
+      ["ZREVRANGEBYLEX", "z", "+", "-", "LIMIT", "0", "10"],
+      ["ZMSCORE", "z", "a", "b", "c"],
+      ["LPUSH", "l", "a", "b"],
+      ["LPUSHX", "l", "a"],
+      ["RPUSH", "l", "1", "2", "3"],
+      ["RPUSHX", "l", "a"],
+      ["DEL", "a", "b", "c"],
+      ["LPOP", "l", "2"],
+      ["HRANDFIELD", "h", "2", "WITHVALUES"],
+      ["ZRANK", "z", "a"],
+      ["RPUSH", "l", "a", "b"],
+      ["LPOP", "l"],
+    ]);
   });
 });

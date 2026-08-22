@@ -17,18 +17,49 @@ use crate::bunfig::Bunfig;
 
 // ─── bunfig loading ──────────────────────────────────────────────────────────
 
+/// Locate a global `bunfig.toml`. First existing file wins:
+/// `<xdg>/bun/bunfig.toml`, then `<xdg>/.bunfig.toml` (legacy), then
+/// `$HOME/.bunfig.toml` — where `<xdg>` is `$XDG_CONFIG_HOME`, or the
+/// XDG spec default `$HOME/.config` when that variable is unset or empty.
 fn get_home_config_path(buf: &mut PathBuffer) -> Option<&ZStr> {
-    let paths: [&[u8]; 1] = [b".bunfig.toml"];
+    let mut xdg_scratch = [0u8; 512];
+    let xdg_base: Option<&[u8]> = match (
+        env_var::XDG_CONFIG_HOME.get_not_empty(),
+        env_var::HOME.get_not_empty(),
+    ) {
+        (Some(data_dir), _) => Some(data_dir),
+        (None, Some(home_dir)) => {
+            const SUFFIX: &[u8] = b"/.config";
+            let total = home_dir.len() + SUFFIX.len();
+            if total <= xdg_scratch.len() {
+                xdg_scratch[..home_dir.len()].copy_from_slice(home_dir);
+                xdg_scratch[home_dir.len()..total].copy_from_slice(SUFFIX);
+                Some(&xdg_scratch[..total])
+            } else {
+                None
+            }
+        }
+        (None, None) => None,
+    };
 
-    if let Some(data_dir) = env_var::XDG_CONFIG_HOME.get() {
-        return Some(resolve_path::join_abs_string_buf_z::<platform::Auto>(
-            data_dir, &mut **buf, &paths,
-        ));
+    if let Some(base) = xdg_base {
+        for rel in [b"bun/bunfig.toml" as &[u8], b".bunfig.toml"] {
+            let parts: [&[u8]; 1] = [rel];
+            let path =
+                resolve_path::join_abs_string_buf_z::<platform::Auto>(base, &mut **buf, &parts);
+            if bun_sys::exists_z(path) {
+                let len = path.len();
+                return Some(ZStr::from_buf(&**buf, len));
+            }
+        }
     }
 
-    if let Some(home_dir) = env_var::HOME.get() {
+    // No existence check here: `load_bunfig(auto_loaded=true)` swallows a
+    // missing file, matching the original behaviour for this path.
+    if let Some(home_dir) = env_var::HOME.get_not_empty() {
+        let parts: [&[u8]; 1] = [b".bunfig.toml"];
         return Some(resolve_path::join_abs_string_buf_z::<platform::Auto>(
-            home_dir, &mut **buf, &paths,
+            home_dir, &mut **buf, &parts,
         ));
     }
 

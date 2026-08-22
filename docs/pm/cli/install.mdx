@@ -315,7 +315,7 @@ For more advanced security scanning, including integration with services and cus
 
 On `bun install`, `bun remove`, and `bun add`, Bun looks for `bunfig.toml` in:
 
-1. `$XDG_CONFIG_HOME/.bunfig.toml` or `$HOME/.bunfig.toml`
+1. A global config file — see [Global vs. local](/runtime/bunfig#global-vs-local) for the lookup order (the recommended location is `~/.config/bun/bunfig.toml`)
 2. `./bunfig.toml`
 
 If Bun finds both, it loads both. Keys set in the project's `bunfig.toml` override the same keys in the global file.

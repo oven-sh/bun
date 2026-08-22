@@ -80,6 +80,17 @@ fn dir_stamp(path: &[u8]) -> Option<u64> {
     bun_sys::stat(&zpath(path)).ok().map(|st| mtime_ns(&st))
 }
 
+/// `dir_stamp` (follows symlinks) distinguishing absent from unreadable.
+fn dir_stamp_strict(path: &[u8]) -> Stamp {
+    match bun_sys::stat(&zpath(path)) {
+        Ok(st) => Stamp::At(mtime_ns(&st)),
+        Err(e) if matches!(e.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) => {
+            Stamp::Absent
+        }
+        Err(_) => Stamp::Unreadable,
+    }
+}
+
 /// mtime of `path` itself (not following symlinks), None if it does not exist.
 fn lstat_stamp(path: &[u8]) -> Option<u64> {
     bun_sys::lstat(&zpath(path)).ok().map(|st| mtime_ns(&st))
@@ -202,7 +213,9 @@ fn env_and_argv_hash(manager: &PackageManager) -> u64 {
         acc.push(0);
     }
     acc.push(1);
-    for a in bun_core::argv().into_iter().skip(1) {
+    // argv[0] is the executable and argv[1] the subcommand token (`install`/`i`; the
+    // subcommand itself is part of `applicable()`), so start at the flags
+    for a in bun_core::argv().into_iter().skip(2) {
         acc.extend_from_slice(a);
         acc.push(0);
     }
@@ -464,9 +477,9 @@ pub fn save(manager: &mut PackageManager, root_dir: &[u8], entries: u64, package
         && !cfg.is_empty()
     {
         // `load_config` resolves a relative --config against the process cwd
-        let mut cwd_buf = bun_paths::PathBuffer::uninit();
-        let base: &[u8] = match bun_sys::getcwd(&mut cwd_buf.0) {
-            Ok(n) => &cwd_buf.0[..n],
+        let mut cwd_buf = bun_paths::path_buffer_pool::get();
+        let base: &[u8] = match bun_sys::getcwd(&mut cwd_buf[..]) {
+            Ok(n) => &cwd_buf[..n],
             Err(_) => root_dir,
         };
         if bun_paths::is_absolute(cfg) {
@@ -547,18 +560,19 @@ pub fn save(manager: &mut PackageManager, root_dir: &[u8], entries: u64, package
     }
     parents.sort();
     for p in parents {
-        match dir_stamp(&p) {
-            Some(stamp) => {
+        match dir_stamp_strict(&p) {
+            Stamp::At(stamp) => {
                 let _ = write!(out, "d {stamp:016x} ");
                 out.extend_from_slice(&p);
                 out.push(b'\n');
             }
-            None => {
+            Stamp::Absent => {
                 // absent now; must stay absent
                 let _ = write!(out, "n {:016x} ", 0);
                 out.extend_from_slice(&p);
                 out.push(b'\n');
             }
+            Stamp::Unreadable => globs_incomplete = true,
         }
     }
     // patch files

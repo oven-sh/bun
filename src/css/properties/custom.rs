@@ -414,11 +414,14 @@ impl TokenList {
                         has_whitespace = self.write_whitespace_if_needed(i, dest)?;
                     }
                     Token::Dimension(dim) => {
-                        css_parser::serializer::serialize_dimension(dim.num.value, dim.unit, dest)?;
+                        css_parser::serializer::serialize_dimension_num(&dim.num, dim.unit, dest)?;
                         has_whitespace = false;
                     }
                     Token::Number(v) => {
-                        CSSNumberFns::to_css(v.value, dest)?;
+                        match v.exact_int() {
+                            Some(int) => CSSIntegerFns::to_css(int, dest)?,
+                            None => CSSNumberFns::to_css(v.value, dest)?,
+                        }
                         has_whitespace = false;
                     }
                     _ => {

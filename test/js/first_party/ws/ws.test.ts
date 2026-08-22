@@ -292,6 +292,114 @@ describe("WebSocket", () => {
   });
 });
 
+// npm ws: send() throws while CONNECTING and, once CLOSING or CLOSED, passes an
+// Error to the callback (sendAfterClose) because the frame is never written.
+describe("WebSocket.send() when the socket is not OPEN", () => {
+  const readyStates = ["CONNECTING", "OPEN", "CLOSING", "CLOSED"];
+  const notOpen = (state: number) => `WebSocket is not open: readyState ${state} (${readyStates[state]})`;
+
+  // Resolves with the value send() passes to its callback.
+  function sendCb(ws: WebSocket, data: string | Buffer, opts?: { binary: boolean }) {
+    const { promise, resolve } = Promise.withResolvers<unknown>();
+    let inSend = true;
+    const cb = (err: unknown) => resolve(inSend ? new Error("send() called its callback synchronously") : err);
+    if (opts) ws.send(data, opts, cb);
+    else ws.send(data, cb);
+    inSend = false;
+    return promise;
+  }
+
+  function messageOf(err: unknown) {
+    expect(err).toBeInstanceOf(Error);
+    return (err as Error).message;
+  }
+
+  async function connectedPair() {
+    const wss = new WebSocketServer({ port: 0 });
+    const received: string[] = [];
+    const { promise: serverSawClose, resolve: onServerClose } = Promise.withResolvers<void>();
+    wss.on("connection", serverWs => {
+      serverWs.on("message", data => received.push(data.toString()));
+      serverWs.on("close", () => onServerClose());
+    });
+    const ws = new WebSocket(`ws://127.0.0.1:${(wss.address() as AddressInfo).port}/`);
+    await once(ws, "open");
+    return { wss, ws, received, serverSawClose };
+  }
+
+  it("throws synchronously while CONNECTING and never calls the callback", async () => {
+    const wss = new WebSocketServer({ port: 0 });
+    const ws = new WebSocket(`ws://127.0.0.1:${(wss.address() as AddressInfo).port}/`);
+    try {
+      const callbackArgs: unknown[] = [];
+      expect(ws.readyState).toBe(WebSocket.CONNECTING);
+      expect(() => ws.send("data", err => callbackArgs.push(err))).toThrow(notOpen(WebSocket.CONNECTING));
+      expect(() => ws.send("data")).toThrow(notOpen(WebSocket.CONNECTING));
+
+      await once(ws, "open");
+      const clientClosed = once(ws, "close");
+      ws.close();
+      await clientClosed;
+      expect(callbackArgs).toEqual([]);
+    } finally {
+      ws.terminate();
+      wss.close();
+    }
+  });
+
+  it("passes the CLOSING or CLOSED error to the callback after close() and sends nothing", async () => {
+    const { wss, ws, received, serverSawClose } = await connectedPair();
+    try {
+      expect(await sendCb(ws, "while open")).toBeNull();
+
+      const clientClosed = once(ws, "close");
+      ws.close();
+      expect(ws.readyState).toBe(WebSocket.CLOSING);
+      const closingResults = Promise.all([
+        sendCb(ws, "after close"),
+        sendCb(ws, Buffer.from("after close"), { binary: true }),
+        sendCb(ws, "after close", { binary: false }),
+      ]);
+      // Without a callback it must not throw, like npm ws.
+      ws.send("after close");
+      // npm ws and the WHATWG API both keep counting discarded payloads in bufferedAmount.
+      expect(ws.bufferedAmount).toBeGreaterThanOrEqual(4 * "after close".length);
+
+      expect((await closingResults).map(messageOf)).toEqual([
+        notOpen(WebSocket.CLOSING),
+        notOpen(WebSocket.CLOSING),
+        notOpen(WebSocket.CLOSING),
+      ]);
+
+      await clientClosed;
+      expect(ws.readyState).toBe(WebSocket.CLOSED);
+      expect(messageOf(await sendCb(ws, "after closed"))).toBe(notOpen(WebSocket.CLOSED));
+
+      await serverSawClose;
+      expect(received).toEqual(["while open"]);
+    } finally {
+      ws.terminate();
+      wss.close();
+    }
+  });
+
+  it("passes the error to the callback after terminate()", async () => {
+    const { wss, ws } = await connectedPair();
+    try {
+      const clientClosed = once(ws, "close");
+      ws.terminate();
+      // The error names the state send() saw, whether or not the close has completed yet.
+      const state = ws.readyState;
+      expect(state).toBeOneOf([WebSocket.CLOSING, WebSocket.CLOSED]);
+      expect(messageOf(await sendCb(ws, "after terminate"))).toBe(notOpen(state));
+      await clientClosed;
+      expect(messageOf(await sendCb(ws, "after closed"))).toBe(notOpen(WebSocket.CLOSED));
+    } finally {
+      wss.close();
+    }
+  });
+});
+
 describe("WebSocketServer", () => {
   it("sets websocket prototype properties correctly", async () => {
     const wss = new WebSocketServer({ port: 0 });

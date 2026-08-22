@@ -1147,18 +1147,24 @@ impl ServerConfig {
 
         if let Some(value) = arg.get(global, "idleTimeout")? {
             if !value.is_undefined_or_null() {
-                if !value.is_any_int() {
+                if !value.is_integer() {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "Bun.serve expects idleTimeout to be an integer",
                     )));
                 }
                 args.has_idle_timeout = true;
 
-                let idle_timeout: u64 = u64::try_from(value.to_int64().max(0)).expect("int cast");
-                if idle_timeout > 255 {
-                    return Err(global.throw_invalid_arguments(format_args!(
-                        "Bun.serve expects idleTimeout to be 255 or less",
-                    )));
+                let idle_timeout = value.as_number();
+                if !(0.0..=255.0).contains(&idle_timeout) {
+                    return Err(global.throw_range_error(
+                        idle_timeout,
+                        bun_fmt::OutOfRangeOptions {
+                            min: 0,
+                            max: 255,
+                            field_name: b"options.idleTimeout",
+                            ..Default::default()
+                        },
+                    ));
                 }
 
                 args.idle_timeout = idle_timeout as u8;

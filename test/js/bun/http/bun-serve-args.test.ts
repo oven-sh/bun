@@ -219,6 +219,105 @@ describe("Bun.serve websocket options", () => {
   });
 });
 
+describe("Bun.serve idleTimeout validation", () => {
+  // Returns the thrown error, or undefined when the server starts.
+  function serveWithIdleTimeout(where: "http" | "websocket", idleTimeout: unknown): unknown {
+    const options: any = {
+      port: 0,
+      fetch() {
+        return new Response("ok");
+      },
+    };
+    if (where === "http") {
+      options.idleTimeout = idleTimeout;
+    } else {
+      options.websocket = { message() {}, idleTimeout };
+    }
+    try {
+      serve(options).stop(true);
+      return undefined;
+    } catch (e) {
+      return e;
+    }
+  }
+
+  describe("websocket.idleTimeout", () => {
+    // The native field is 16 bits wide and uws aborts above 960 seconds.
+    // The range check has to see the full value: 65536 must not wrap to 0.
+    const rejected: { value: number; received: string }[] = [
+      { value: 961, received: "961" },
+      { value: 65535, received: "65535" },
+      { value: 65536, received: "65536" },
+      { value: 65536 + 8, received: "65544" },
+      { value: 65536 + 961, received: "66497" },
+      { value: 2 ** 32, received: "4294967296" },
+      { value: Number.MAX_SAFE_INTEGER, received: String(Number.MAX_SAFE_INTEGER) },
+      { value: 2 ** 53, received: "9007199254740992" },
+      { value: 1e21, received: "1e+21" },
+      { value: -1, received: "-1" },
+      { value: -65536, received: "-65536" },
+    ];
+
+    for (const { value, received } of rejected) {
+      test(`rejects ${value}`, () => {
+        const thrown = serveWithIdleTimeout("websocket", value);
+        expect(thrown).toBeInstanceOf(RangeError);
+        expect((thrown as RangeError).message).toContain('"options.websocket.idleTimeout"');
+        expect((thrown as RangeError).message).toContain("<= 960");
+        expect((thrown as RangeError).message).toContain(`Received ${received}`);
+      });
+    }
+
+    for (const value of [0, 1, 7, 8, 120, 960, null, undefined]) {
+      test(`accepts ${value}`, () => {
+        expect(serveWithIdleTimeout("websocket", value)).toBeUndefined();
+      });
+    }
+
+    for (const value of [NaN, Infinity, 1.5, "7", "60"]) {
+      test(`rejects non-integer ${typeof value === "string" ? JSON.stringify(value) : value}`, () => {
+        const thrown = serveWithIdleTimeout("websocket", value);
+        expect(thrown).toBeInstanceOf(TypeError);
+        expect((thrown as TypeError).message).toBe("websocket expects idleTimeout to be an integer");
+      });
+    }
+  });
+
+  describe("idleTimeout", () => {
+    const rejected: { value: number; received: string }[] = [
+      { value: 256, received: "256" },
+      { value: 65536, received: "65536" },
+      { value: 2 ** 32, received: "4294967296" },
+      { value: 2 ** 53, received: "9007199254740992" },
+      { value: -1, received: "-1" },
+    ];
+
+    for (const { value, received } of rejected) {
+      test(`rejects ${value}`, () => {
+        const thrown = serveWithIdleTimeout("http", value);
+        expect(thrown).toBeInstanceOf(RangeError);
+        expect((thrown as RangeError).message).toContain('"options.idleTimeout"');
+        expect((thrown as RangeError).message).toContain("<= 255");
+        expect((thrown as RangeError).message).toContain(`Received ${received}`);
+      });
+    }
+
+    for (const value of [0, 1, 10, 255, null, undefined]) {
+      test(`accepts ${value}`, () => {
+        expect(serveWithIdleTimeout("http", value)).toBeUndefined();
+      });
+    }
+
+    for (const value of [NaN, Infinity, 1.5, "7"]) {
+      test(`rejects non-integer ${typeof value === "string" ? JSON.stringify(value) : value}`, () => {
+        const thrown = serveWithIdleTimeout("http", value);
+        expect(thrown).toBeInstanceOf(TypeError);
+        expect((thrown as TypeError).message).toBe("Bun.serve expects idleTimeout to be an integer");
+      });
+    }
+  });
+});
+
 describe("Bun.serve development options", () => {
   test("development mode", () => {
     using server = serve({

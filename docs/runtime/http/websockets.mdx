@@ -275,7 +275,7 @@ The `.send(message)` method of `ServerWebSocket` returns a `number` indicating t
 
 ### Timeouts and limits
 
-By default, Bun closes a WebSocket connection that has been idle for 120 seconds. Configure this with the `idleTimeout` parameter.
+By default, Bun closes a WebSocket connection that has been idle for 120 seconds. Configure this with the `idleTimeout` parameter. The value is in seconds. The maximum is `960` (16 minutes), and `0` disables the timeout. Values from `1` to `7` round up to `8`.
 
 ```ts
 Bun.serve({
@@ -354,7 +354,7 @@ namespace Bun {
       drain?: (ws: ServerWebSocket) => void;
 
       maxPayloadLength?: number; // default: 16 * 1024 * 1024 = 16 MB
-      idleTimeout?: number; // default: 120 (seconds)
+      idleTimeout?: number; // default: 120 (seconds), max: 960
       backpressureLimit?: number; // default: 16 * 1024 * 1024 = 16 MB
       closeOnBackpressureLimit?: boolean; // default: false
       sendPings?: boolean; // default: true

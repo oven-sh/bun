@@ -325,24 +325,35 @@ pub(crate) fn on_create(
 
     if let Some(value) = object.get(global_object, "idleTimeout")? {
         if !value.is_undefined_or_null() {
-            if !value.is_any_int() {
+            if !value.is_integer() {
                 return Err(global_object.throw_invalid_arguments(format_args!(
                     "websocket expects idleTimeout to be an integer"
                 )));
             }
 
-            let mut idle_timeout: u16 = value.to_int64().max(0) as u16;
-            if idle_timeout > 960 {
-                return Err(global_object.throw_invalid_arguments(format_args!(
-                    "websocket expects idleTimeout to be 960 or less"
-                )));
-            } else if idle_timeout > 0 {
-                // uws does not allow idleTimeout to be between (0, 8),
-                // since its timer is not that accurate, therefore round up.
-                idle_timeout = idle_timeout.max(8);
+            // uws terminates the process on an idleTimeout above 960 (16
+            // minutes). Check the full value before narrowing to u16, or
+            // 65536 wraps to 0 and passes.
+            let idle_timeout = value.as_number();
+            if !(0.0..=960.0).contains(&idle_timeout) {
+                return Err(global_object.throw_range_error(
+                    idle_timeout,
+                    bun_core::fmt::OutOfRangeOptions {
+                        min: 0,
+                        max: 960,
+                        field_name: b"options.websocket.idleTimeout",
+                        ..Default::default()
+                    },
+                ));
             }
 
-            server.idle_timeout = idle_timeout;
+            // uws does not allow idleTimeout to be between (0, 8),
+            // since its timer is not that accurate, therefore round up.
+            server.idle_timeout = match idle_timeout as u16 {
+                0 => 0,
+                1..=7 => 8,
+                seconds => seconds,
+            };
         }
     }
     if let Some(value) = object.get(global_object, "backpressureLimit")? {

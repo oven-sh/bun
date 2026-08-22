@@ -155,8 +155,6 @@ impl ABIType {
 }
 
 impl ABIType {
-    pub(crate) const MAX: i32 = ABIType::NapiValue as i32;
-
     /// See [`ABI_TYPE_LABEL`].
     pub(crate) const LABEL: &'static __ComptimeStringMap_ABI_TYPE_LABEL = &ABI_TYPE_LABEL;
 

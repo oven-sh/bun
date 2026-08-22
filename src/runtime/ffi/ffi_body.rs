@@ -1763,15 +1763,13 @@ pub(super) fn generate_symbol_for_function(
             }
 
             if val.is_any_int() {
-                let int = val.to_int32();
-                if let Some(t) = ABIType::from_int(int).filter(|_| int <= ABIType::MAX) {
-                    abi_types.push(t);
-                    continue;
-                } else {
+                let Some(t) = ABIType::from_int(val.to_int32()) else {
                     return Ok(Some(
                         ZigString::static_(b"invalid ABI type").to_error_instance(global),
                     ));
-                }
+                };
+                abi_types.push(t);
+                continue;
             }
 
             if !val.js_type().is_string_like() {
@@ -1803,15 +1801,13 @@ pub(super) fn generate_symbol_for_function(
     'brk: {
         if let Some(ret_value) = value.get_truthy(global, "returns")? {
             if ret_value.is_any_int() {
-                let int = ret_value.to_int32();
-                if let Some(t) = ABIType::from_int(int).filter(|_| int <= ABIType::MAX) {
-                    return_type = t;
-                    break 'brk;
-                } else {
+                let Some(t) = ABIType::from_int(ret_value.to_int32()) else {
                     return Ok(Some(
                         ZigString::static_(b"invalid ABI type").to_error_instance(global),
                     ));
-                }
+                };
+                return_type = t;
+                break 'brk;
             }
 
             let ret_slice = ret_value.to_slice(global)?;

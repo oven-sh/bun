@@ -97,6 +97,29 @@ extern "C" JSC::EncodedJSValue AsyncContextFrame__withAsyncContextIfNeeded(JSGlo
     return JSValue::encode(AsyncContextFrame::withAsyncContextIfNeeded(globalObject, JSValue::decode(callback)));
 }
 
+// Pair behind bun_jsc::event_loop::SuspendedAsyncContext. needsCleanup is the enterWith() cleanup arming (jsCleanupLater), which a microtask run while suspended would otherwise consume.
+extern "C" JSC::EncodedJSValue AsyncContextFrame__suspend(JSGlobalObject* lexicalGlobalObject, bool* needsCleanup)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto* asyncContextData = globalObject->m_asyncContextData.get();
+    JSValue context = asyncContextData->getInternalField(0);
+    *needsCleanup = globalObject->asyncHooksNeedsCleanup;
+    if (!context.isUndefined()) {
+        asyncContextData->putInternalField(globalObject->vm(), 0, jsUndefined());
+    }
+    return JSValue::encode(context);
+}
+
+extern "C" void AsyncContextFrame__resume(JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue encodedContext, bool needsCleanup)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    globalObject->m_asyncContextData.get()->putInternalField(globalObject->vm(), 0, JSValue::decode(encodedContext));
+    if (globalObject->asyncHooksNeedsCleanup != needsCleanup) {
+        globalObject->asyncHooksNeedsCleanup = needsCleanup;
+        globalObject->resetOnEachMicrotaskTick();
+    }
+}
+
 #define ASYNCCONTEXTFRAME_CALL_IMPL(...)                                            \
     if (!functionObject.isCell())                                                   \
         return jsUndefined();                                                       \

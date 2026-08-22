@@ -240,6 +240,24 @@ describe("net.createServer listen", () => {
     expect(order).toEqual(["listening", "nextTick"]);
   });
 
+  // The error twin of the test above: a listen() that fails reports on the same tick as one that succeeds.
+  it("emits a listen() error on the next tick, before the event loop polls", async () => {
+    const occupant: Server = createServer();
+    occupant.listen(0, "127.0.0.1");
+    await once(occupant, "listening");
+    const { port } = occupant.address() as AddressInfo;
+
+    const server: Server = createServer();
+    const order: string[] = [];
+    server.on("error", (err: NodeJS.ErrnoException) => order.push("error:" + err.code));
+    server.listen(port, "127.0.0.1");
+    process.nextTick(() => order.push("nextTick"));
+    await once(server, "error");
+    occupant.close();
+    await once(occupant, "close");
+    expect(order).toEqual(["error:EADDRINUSE", "nextTick"]);
+  });
+
   // How vite, get-port and friends probe for a free port: listen, then close()
   // from the 'listening' handler. A peer that connects in between must be reset
   // by the kernel when the listening fd closes, not accepted into the closing

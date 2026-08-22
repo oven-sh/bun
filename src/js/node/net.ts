@@ -3864,7 +3864,11 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     );
   } catch (err) {
     const isUnix = path != null;
-    setTimeout(emitErrorNextTick, 1, this, formatListenError(err, isUnix ? path : hostname, isUnix ? undefined : port));
+    process.nextTick(
+      emitErrorNextTick,
+      this,
+      formatListenError(err, isUnix ? path : hostname, isUnix ? undefined : port),
+    );
   }
   return this;
 };
@@ -4154,7 +4158,7 @@ function listenInCluster(
         server[kClusterUnixPath] = undefined;
         handle[kClusterOwner] = null;
         handle.close();
-        setTimeout(emitErrorNextTick, 1, server, err);
+        process.nextTick(emitErrorNextTick, server, err);
       }
       return;
     }

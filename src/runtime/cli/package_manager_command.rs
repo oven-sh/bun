@@ -443,10 +443,17 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 let file = match pm.options.positionals.get(2..).unwrap_or(&[]) {
                     [file] if !file.is_empty() => *file,
                     rest => {
-                        Output::err_generic(
-                            "expected exactly one \\<file\\> argument, got {}\n  usage: bun pm cache {} \\<file\\>",
-                            (rest.len(), if is_pack { "pack" } else { "unpack" }),
-                        );
+                        if matches!(rest, [_]) {
+                            Output::err_generic(
+                                "the \\<file\\> argument must not be empty\n  usage: bun pm cache {} \\<file\\>",
+                                (if is_pack { "pack" } else { "unpack" },),
+                            );
+                        } else {
+                            Output::err_generic(
+                                "expected exactly one \\<file\\> argument, got {}\n  usage: bun pm cache {} \\<file\\>",
+                                (rest.len(), if is_pack { "pack" } else { "unpack" }),
+                            );
+                        }
                         Global::exit(1);
                     }
                 };

@@ -70,11 +70,11 @@ pub struct FrameworkRouter {
     pub(crate) pattern_string_arena: Arena,
 }
 
-pub type StaticRouteMap = StringArrayHashMap<RouteIndex>;
-pub type DynamicRouteMap = ArrayHashMap<EncodedPattern, RouteIndex, EffectiveUrlContext>;
+pub(crate) type StaticRouteMap = StringArrayHashMap<RouteIndex>;
+pub(crate) type DynamicRouteMap = ArrayHashMap<EncodedPattern, RouteIndex, EffectiveUrlContext>;
 
 /// A logical route, for which layouts are looked up on after resolving a route.
-pub struct Route {
+pub(crate) struct Route {
     // Payload bytes borrow from the sibling `pattern_string_arena` field — a
     // self-referential borrow Rust lifetimes cannot express, so it is detached
     // to `'static` via `to_owned_part()` at insertion. See `to_owned_part` for
@@ -239,7 +239,7 @@ impl FrameworkRouter {
 /// as a string, while easily decodable as []Part.
 // Copy: bitwise OK — `data` borrows from `pattern_string_arena`; the arena owns it.
 #[derive(Copy, Clone)]
-pub struct EncodedPattern {
+pub(crate) struct EncodedPattern {
     // ARENA: backed by `pattern_string_arena` (arena owns the bytes; outlives
     // every `EncodedPattern` — see `RawSlice` invariant in `bun_ptr`).
     pub(crate) data: bun_ptr::RawSlice<u8>,
@@ -428,7 +428,7 @@ impl<'a> Iterator for EncodedPatternIterator<'a> {
 
 /// Hash context for DynamicRouteMap — hashes/compares by effective URL.
 #[derive(Default, Clone, Copy)]
-pub struct EffectiveUrlContext;
+pub(crate) struct EffectiveUrlContext;
 impl ArrayHashContext<EncodedPattern> for EffectiveUrlContext {
     fn hash(&self, p: &EncodedPattern) -> u32 {
         p.effective_url_hash() as u32 // @truncate

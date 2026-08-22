@@ -36,7 +36,7 @@ pub struct WaitPidResult {}
 
 /// Low-level fd / memfd helpers historically grouped here as `spawn_sys`.
 /// MOVE_DOWN: real impls now live in `bun_sys` (lower crate); re-export so
-/// higher-tier callers (`bun_runtime::api::bun::spawn::stdio`, `Terminal`)
+/// higher-tier callers (`bun_runtime::api::bun_spawn::stdio`, `Terminal`)
 /// keep their `bun_spawn::process::spawn_sys::*` import path.
 pub mod spawn_sys {
     // POSIX-only — memfd / FD_CLOEXEC have no Windows equivalent
@@ -1460,6 +1460,12 @@ pub enum WindowsStdioResult {
     Unavailable,
     Buffer(Box<uv::Pipe>),
     BufferFd(Fd),
+    /// A stdio slot at index >= 3 whose value `Subprocess.stdio` has exposed:
+    /// a duplicate of the pipe's HANDLE that the caller owns and closes
+    /// (`net.connect({ fd })` adopts it). The `Buffer` it came from is closed
+    /// when the slot is downgraded, so nothing here closes this handle. The
+    /// counterpart of the POSIX `ExtraPipe::UnownedFd`.
+    UnownedFd(Fd),
 }
 
 #[cfg(windows)]

@@ -6981,8 +6981,6 @@ pub mod bv2_impl {
                     .push(core::mem::take(&mut parse_result.external));
             }
 
-            // defer bun.default_allocator.destroy(parse_result) — caller owns Box and drops at end
-
             let mut diff: i32 = -1;
             // The pending-items adjustment is
             // hoisted to tail position (see end of fn) so a deferred closure doesn't

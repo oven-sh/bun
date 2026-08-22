@@ -332,7 +332,6 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
             include_value: true,
         },
     )?;
-    // defer iter.deinit() — handled by Drop
 
     while let Some(key) = iter.next()? {
         let value = iter.value;
@@ -343,11 +342,9 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
         // Get the key as a null-terminated string
         let key_slice = key.to_utf8();
         let key_str = ZBox::from_vec_with_nul(key_slice.slice().to_vec());
-        // defer free(key_str)/key_slice.deinit() — handled by Drop
 
         // Get data - use view for Blob/ArrayBuffer, convert for strings
         let data_slice = get_entry_data(global, value)?;
-        // defer data_slice.deinit() — handled by Drop
 
         // Write entry to archive
         let data = data_slice.slice();

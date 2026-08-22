@@ -7686,7 +7686,30 @@ impl NodeFS {
         .unwrap_or(Ok(()))
     }
 
-    pub(crate) fn rm(&mut self, args: &args::Rm, _: Flavor) -> Maybe<ret::Rm> {
+    pub(crate) fn rm(&mut self, args: &args::Rm, flavor: Flavor) -> Maybe<ret::Rm> {
+        // `fs.promises.rm` retries from JS on a timer (as node's rimraf does)
+        // instead of parking a work-pool thread between attempts.
+        let max_retries = match flavor {
+            Flavor::Sync => args.max_retries,
+            Flavor::Async => 0,
+        };
+        let mut attempt: u32 = 0;
+        loop {
+            // A path that vanishes between attempts was removed by someone
+            // else; like rimraf, that counts as success even without `force`.
+            match self.rm_attempt(args, args.force || attempt > 0) {
+                Err(err) if attempt < max_retries && rm_error_is_retryable(err.get_errno()) => {
+                    attempt += 1;
+                    std::thread::sleep(core::time::Duration::from_millis(
+                        u64::from(attempt) * u64::from(args.retry_delay),
+                    ));
+                }
+                result => return result,
+            }
+        }
+    }
+
+    fn rm_attempt(&mut self, args: &args::Rm, force: bool) -> Maybe<ret::Rm> {
         // We cannot use removefileat() on macOS because it does not handle write-protected files as expected.
         if args.recursive {
             // See the matching comment in `rmdir`: pre-resolve the path on
@@ -7699,7 +7722,7 @@ impl NodeFS {
             let resolved = args.path.slice();
             if let Err(err) = zig_delete_tree(&sys::Dir::cwd(), resolved, sys::FileKind::File) {
                 if matches!(err, crate::Error::FileNotFound) {
-                    if args.force {
+                    if force {
                         return Ok(());
                     }
                     // Node reaches a missing path through the lstat() that
@@ -7738,7 +7761,7 @@ impl NodeFS {
                     args.path.slice(),
                 ) {
                     let e2 = err2.get_errno();
-                    if e2 == E::ENOENT && args.force {
+                    if e2 == E::ENOENT && force {
                         return Ok(());
                     }
                     return Err(sys::Error::from_code(map_rm_errno_narrow(e2), sys::Tag::rm)
@@ -7747,7 +7770,7 @@ impl NodeFS {
                 return Ok(());
             }
             if e1 == E::ENOENT {
-                if args.force {
+                if force {
                     return Ok(());
                 }
                 // See the recursive branch: node's ENOENT for rm comes from the
@@ -9530,6 +9553,16 @@ fn map_rm_errno_narrow(e: E) -> E {
         E::ELOOP | E::ENAMETOOLONG | E::ENOMEM | E::EROFS | E::EBUSY | E::ENOENT => e,
         _ => E::EFAULT,
     }
+}
+
+/// The errors `fs.rm`'s `maxRetries` option retries on: `retryErrorCodes` in
+/// node's lib/internal/fs/rimraf.js. `fs.promises.rm`'s copy of this set is
+/// `isRmRetryError` in src/js/node/fs.promises.ts.
+fn rm_error_is_retryable(e: E) -> bool {
+    matches!(
+        e,
+        E::EBUSY | E::EMFILE | E::ENFILE | E::ENOTEMPTY | E::EPERM
+    )
 }
 
 /// # Safety

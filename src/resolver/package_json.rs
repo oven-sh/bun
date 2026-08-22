@@ -1257,6 +1257,10 @@ pub(crate) struct ESModule<'a> {
     pub(crate) conditions: &'a ConditionsMap,
     // allocator dropped — global mimalloc
     pub(crate) module_type: &'a mut ModuleType,
+    /// Input: skip "bun" targets, but not "bun": null (second pass of the #7142 retry).
+    pub(crate) skip_bun_condition: bool,
+    /// Output: the "bun" key matched and produced a target, so a failed load is worth retrying.
+    pub(crate) matched_bun_condition: &'a mut bool,
 }
 
 #[derive(Clone)]
@@ -2100,6 +2104,27 @@ impl<'a> ESModule<'a> {
                         if result.status.is_undefined() {
                             *self.module_type = prev_module_type;
                             continue;
+                        }
+
+                        if key == b"bun"
+                            && matches!(
+                                result.status,
+                                Status::Exact
+                                    | Status::ExactEndsWithStar
+                                    | Status::Inexact
+                                    | Status::PackageResolve
+                            )
+                        {
+                            if self.skip_bun_condition {
+                                if let Some(log) = self.debug_logs.as_deref_mut() {
+                                    log.add_note_fmt(format_args!(
+                                        "The key \"bun\" is being skipped on this retry"
+                                    ));
+                                }
+                                *self.module_type = prev_module_type;
+                                continue;
+                            }
+                            *self.matched_bun_condition = true;
                         }
 
                         if key == b"import" {

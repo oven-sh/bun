@@ -341,6 +341,38 @@ describe("bundler", () => {
     minifySyntax: true,
     minifyWhitespace: true,
   });
+  itBundled("minify/InlineSingleObjectPropertyNonAscii", {
+    files: {
+      "/entry.js": /* js */ `
+        // key "\\u00c3\\u00a9" is the two-char string "Ã©"; accessor .é is one char "é".
+        // The UTF-8 bytes of "é" (0xC3 0xA9) numerically match the key's UTF-16 code
+        // units, but the strings are different and this must NOT be inlined.
+        const a = ({ "\\u00c3\\u00a9": 0x1001 }).é;
+        // key is "é" via escape; accessor is "é". Same string, should inline.
+        const b = ({ "\\u00e9": 0x2002 }).é;
+        // key is a literal "é"; accessor is "é". Same string, should inline.
+        const c = ({ "é": 0x3003 }).é;
+        // ascii baseline still inlines.
+        const d = ({ "e": 0x4004 }).e;
+        console.log(JSON.stringify([a, b, c, d]));
+      `,
+    },
+    minifySyntax: true,
+    target: "bun",
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // the mismatched key must not fold to its value: 4097 should still
+      // live inside an object literal, not as a bare expression
+      expect(out).toMatch(/:\s*4097\s*\}/);
+      // the matching non-ascii keys must fold: their object literals are gone
+      expect(out).not.toMatch(/:\s*8194\b/);
+      expect(out).not.toMatch(/:\s*12291\b/);
+      expect(out).not.toMatch(/:\s*16388\b/);
+    },
+    run: {
+      stdout: "[null,8194,12291,16388]",
+    },
+  });
   itBundled("minify/ForAndWhileLoopsWithMissingBlock", {
     files: {
       "/entry.js": /* js */ `

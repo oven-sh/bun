@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isPosix, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isPosix, tempDir } from "harness";
 import * as fs from "node:fs";
 import { join } from "node:path";
 import { createTestBuilder } from "./test_builder";
@@ -174,7 +174,12 @@ describe("IOWriter file output redirection", () => {
         console.log(JSON.stringify(result));
       `;
 
-      for (const mode of ["builtin >", "external >", "builtin <", "external <"]) {
+      // macOS reports no kqueue or poll readiness when the last writer of a
+      // FIFO closes, so the builtin `cat` never sees EOF there (node's
+      // process.stdin has the same gap). The external `cat` blocks in read(2)
+      // and does.
+      const modes = ["builtin >", "external >", "external <", ...(isLinux ? ["builtin <"] : [])];
+      for (const mode of modes) {
         test.concurrent(
           mode,
           async () => {
@@ -193,7 +198,10 @@ describe("IOWriter file output redirection", () => {
             });
             // A blocked open never returns on its own: the child's main thread
             // sits in open(2) and no partner ever arrives. Bound the wait.
-            const exited = await Promise.race([proc.exited, Bun.sleep(30_000).then(() => "hung" as const)]);
+            const hang = Promise.withResolvers<"hung">();
+            const deadline = setTimeout(() => hang.resolve("hung"), 30_000);
+            const exited = await Promise.race([proc.exited, hang.promise]);
+            clearTimeout(deadline);
             if (exited === "hung") {
               proc.kill(9);
               await proc.exited;
@@ -207,7 +215,7 @@ describe("IOWriter file output redirection", () => {
             }
             expect({ parsed, stderr, exited }).toEqual({
               parsed: { text: "hello\n", exitCode: 0, stderr: "" },
-              stderr: expect.any(String),
+              stderr: "",
               exited: 0,
             });
           },

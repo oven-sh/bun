@@ -34,6 +34,8 @@ let pendingReload = null;
 let pendingReloadTimer = null;
 // Bumped when the current window is abandoned; acks captured by an older window are dropped.
 let windowGeneration = 0;
+// Acks the current window still owes the harness: builds it received and its page load.
+let pendingAcks = () => 0;
 let objectURLRegistry = new Map();
 let internalAPIs;
 
@@ -77,6 +79,11 @@ function createWindow(windowUrl) {
     if (generation !== windowGeneration) return;
     process.send({ type: "received-hmr-event", args: [] });
   };
+  let pageLoadAcked = false;
+  const ackPageLoad = () => {
+    pageLoadAcked = true;
+    ackToHarness();
+  };
 
   // The HMR runtime reads this symbol-keyed callback off `globalThis` (which is
   // `window` inside happy-dom's script context) and passes its internal hooks.
@@ -88,6 +95,7 @@ function createWindow(windowUrl) {
     pendingBuildAcks--;
     ackToHarness();
   };
+  pendingAcks = () => pendingBuildAcks + (pageLoadAcked ? 0 : 1);
   window[Symbol.for("bun testing api, may change at any time")] = internal => {
     window.internal = internal;
     if (typeof internal.onEvent === "function") {
@@ -233,9 +241,7 @@ function createWindow(windowUrl) {
 
           // If no stylesheets of any kind, just emit the event
           if (styleLinks.length === 0 && styleTags.length === 0 && adoptedSheets.length === 0) {
-            process.nextTick(() => {
-              process.send({ type: "received-hmr-event", args: [] });
-            });
+            process.nextTick(ackPageLoad);
             return;
           }
 
@@ -273,9 +279,7 @@ function createWindow(windowUrl) {
             if (checkAttempts >= MAX_CHECK_ATTEMPTS && !allLoaded) {
               console.warn("[W] Reached maximum CSS load check attempts, proceeding anyway");
             }
-            process.nextTick(() => {
-              process.send({ type: "received-hmr-event", args: [] });
-            });
+            process.nextTick(ackPageLoad);
           } else {
             // Wait a bit and check again
             console.info(
@@ -433,6 +437,14 @@ process.on("message", async message => {
   }
   if (message.type === "set-allow-websocket-messages") {
     allowWebSocketMessages = message.args[0];
+  }
+  if (message.type === "ping") {
+    const [messageId] = message.args;
+    // Reply from the check phase: a frame received before this ping has then
+    // sent its ack, or is still counted in `pendingAcks`.
+    setImmediate(() => {
+      process.send({ type: `pong-${messageId}`, args: [{ value: pendingAcks() }] });
+    });
   }
   if (message.type === "hard-reload") {
     expectingReload = true;

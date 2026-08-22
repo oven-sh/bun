@@ -289,7 +289,8 @@ export class Dev extends EventEmitter {
     let dev = this;
     const initWait = this.#waitForSyncEvent(WatchSynchronization.Started);
     this.socket!.send("H");
-    await initWait;
+    // An ack a client still owes for an earlier build must not count for this batch.
+    await Promise.all([initWait, ...[...this.connectedClients].map(client => client.drainAcks())]);
 
     let hasSeenFiles = true;
     let seenFiles: PromiseWithResolvers<void>;
@@ -900,6 +901,7 @@ export class Client extends EventEmitter {
         this.#proc.send({ type: "hard-reload" });
         return;
       }
+      await this.drainAcks();
       const loaded = this.waitForPageLoad();
       this.#proc.send({ type: "hard-reload" });
       await loaded;
@@ -912,21 +914,88 @@ export class Client extends EventEmitter {
    * the fixture has acked the load, which it does after every stylesheet is
    * loaded. Register it before the load starts.
    */
-  waitForPageLoad(): Promise<void> {
-    const acked = Promise.withResolvers<void>();
-    const onAck = () => acked.resolve();
-    const onExit = (code: number | string) => acked.reject(clientExitedWhile("loading the page", code));
-    this.once("received-hmr-event", onAck);
-    this.once("exit", onExit);
-    const timeout = interactive ? interactive_timeout : (isWindows ? 10_000 : 5_000) * WAIT_MULTIPLIER;
-    const timer = setTimeout(() => acked.reject(new Error("Timeout waiting for the page load ack")), timeout);
-    return Promise.all([this.output.waitForLine(hmrClientInitRegex), acked.promise])
-      .then(() => {})
-      .finally(() => {
+  async waitForPageLoad(): Promise<void> {
+    const acked = this.#nextAck("loading the page", (isWindows ? 10_000 : 5_000) * WAIT_MULTIPLIER);
+    await Promise.all([this.output.waitForLine(hmrClientInitRegex), acked]);
+  }
+
+  /**
+   * Resolves once every ack the client still owes for builds that are already
+   * done has arrived, so none of them counts for the batch that starts next.
+   * The server also publishes to clients outside a batch: a fetch that
+   * re-bundles a failing route, or a page load that bundles a new route.
+   */
+  async drainAcks(): Promise<void> {
+    const pending = await this.#request<number>("ping", "pong", [], "draining its acks");
+    for (let i = 0; i < pending; i++) {
+      await this.#nextAck("draining its acks");
+    }
+  }
+
+  /** The next `received-hmr-event` ack. Rejects if the client exits or the timeout passes first. */
+  #nextAck(waitingFor: string, timeout = 2000 * WAIT_MULTIPLIER): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      const cleanup = () => {
         clearTimeout(timer);
         this.off("received-hmr-event", onAck);
         this.off("exit", onExit);
-      });
+      };
+      const onAck = () => {
+        cleanup();
+        resolve();
+      };
+      const onExit = (code: number | string) => {
+        cleanup();
+        reject(clientExitedWhile(waitingFor, code));
+      };
+      const timer = setTimeout(
+        () => {
+          cleanup();
+          reject(new Error(`Timeout waiting for the client's ack while ${waitingFor}`));
+        },
+        interactive ? interactive_timeout : timeout,
+      );
+      this.once("received-hmr-event", onAck);
+      this.once("exit", onExit);
+    });
+  }
+
+  /** Sends a request to client-fixture.mjs and returns its reply. Rejects if the client exits first. */
+  #request<T>(type: string, replyType: string, args: unknown[], waitingFor: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      if (this.exited) return reject(new Error("Client is not running."));
+      const messageId = Math.random().toString(36).slice(2);
+      const replyEvent = `${replyType}-${messageId}`;
+      const cleanup = () => {
+        clearTimeout(timer);
+        this.off(replyEvent, onReply);
+        this.off("exit", onExit);
+      };
+      const onReply = (result: { value?: T; error?: string }) => {
+        cleanup();
+        if (result.error) reject(new Error(result.error));
+        else resolve(result.value as T);
+      };
+      const onExit = (code: number | string) => {
+        cleanup();
+        reject(clientExitedWhile(waitingFor, code));
+      };
+      const timer = setTimeout(
+        () => {
+          cleanup();
+          reject(new Error(`Timeout waiting for the client while ${waitingFor}`));
+        },
+        interactive ? interactive_timeout : 2000 * WAIT_MULTIPLIER,
+      );
+      this.once(replyEvent, onReply);
+      this.once("exit", onExit);
+      try {
+        this.#proc.send({ type, args: [messageId, ...args] });
+      } catch (e) {
+        cleanup();
+        reject(e);
+      }
+    });
   }
 
   elemText(selector: string): Promise<string> {
@@ -938,6 +1007,25 @@ export class Client extends EventEmitter {
       `;
       if (text == null) throw new Error(`Element found but has no text content: ${selector}`);
       return text;
+    });
+  }
+
+  /**
+   * Waits until the element's innerHTML is `text`. For DOM that a framework
+   * commits in a later task than the update the client acked.
+   */
+  expectElemText(selector: string, text: string): Promise<void> {
+    return withAnnotatedStack(snapshotCallerLocation(), async () => {
+      const last = await this.js<string | null>`
+        const deadline = Date.now() + ${interactive ? interactive_timeout : 2000 * WAIT_MULTIPLIER};
+        let last = document.querySelector(${selector})?.innerHTML ?? null;
+        while (last !== ${text} && Date.now() < deadline) {
+          await new Promise(resolve => setTimeout(resolve, 10));
+          last = document.querySelector(${selector})?.innerHTML ?? null;
+        }
+        return last;
+      `;
+      expect(last).toBe(text);
     });
   }
 
@@ -958,7 +1046,10 @@ export class Client extends EventEmitter {
       this.#proc.send({ type: "exit" });
     } catch (e) {}
     await this.#proc.exited;
-    if (this.exitCode !== null && this.exitCode !== "0") {
+    // `exited` settles before `onExit` runs. Wait for it so `exitCode` is set
+    // and the `exit` listeners have removed this client from `connectedClients`.
+    if (!this.exited) await EventEmitter.once(this, "exit");
+    if (this.exitCode !== 0) {
       let code;
       if (exitCodeMapStrings[this.exitCode]) {
         code = ": " + JSON.stringify(exitCodeMapStrings[this.exitCode]);
@@ -1102,17 +1193,8 @@ export class Client extends EventEmitter {
   }
 
   /** The messages the error overlay shows, sorted. Empty when there is no overlay. */
-  async readErrorOverlay(): Promise<string[]> {
-    const messageId = Math.random().toString(36).slice(2);
-    this.#proc.send({
-      type: "get-errors",
-      args: [messageId],
-    });
-    const [result] = await EventEmitter.once(this, `get-errors-result-${messageId}`);
-    if (result.error) {
-      throw new Error(result.error);
-    }
-    return result.value;
+  readErrorOverlay(): Promise<string[]> {
+    return this.#request<string[]>("get-errors", "get-errors-result", [], "reading the error overlay");
   }
 
   getStringMessage(): Promise<string> {

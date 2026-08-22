@@ -91,7 +91,10 @@ pub fn install_with_manager(
     }
     // We are about to do real work (or were told to with --force / add / remove /
     // update): never leave a stale "clean" marker behind if this install dies half way.
-    crate::install_state::invalidate(manager, &state_root);
+    // Runs that cannot touch node_modules (--dry-run, --lockfile-only) keep it.
+    if !manager.options.dry_run && !manager.options.lockfile_only {
+        crate::install_state::invalidate(manager, &state_root);
+    }
 
     // Start resolving DNS for the default registry immediately.
     // Unless you're behind a proxy.

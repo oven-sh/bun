@@ -83,8 +83,8 @@ describe.each(["hoisted", "isolated"] as const)("install state (%s)", linker => 
     // 1. nothing changed → no requests, same summary wording as the classic no-op
     const before = urls.length;
     r = await install(package_dir);
-    expect(r.code).toBe(0);
     expect(r.out).toMatch(noChanges);
+    expect(r.code).toBe(0);
     expect(urls.length).toBe(before);
 
     // 2. a workspace manifest edit is noticed
@@ -93,8 +93,8 @@ describe.each(["hoisted", "isolated"] as const)("install state (%s)", linker => 
       JSON.stringify({ name: "a", version: "1.0.0", dependencies: { baz: "0.0.5" } }),
     );
     r = await install(package_dir);
-    expect(r.code).toBe(0);
     expect(r.err).toContain("Saved lockfile");
+    expect(r.code).toBe(0);
     expect(await file(join(package_dir, "bun.lock")).text()).toContain("baz@0.0.5");
 
     // 3. a new workspace appearing under the glob is noticed
@@ -104,8 +104,8 @@ describe.each(["hoisted", "isolated"] as const)("install state (%s)", linker => 
       JSON.stringify({ name: "b", version: "1.0.0" }),
     );
     r = await install(package_dir);
-    expect(r.code).toBe(0);
     expect(r.err).toContain("Saved lockfile");
+    expect(r.code).toBe(0);
     expect(await file(join(package_dir, "bun.lock")).text()).toContain('"packages/b"');
 
     // 4. removing something from node_modules is noticed and repaired
@@ -125,7 +125,9 @@ describe.each(["hoisted", "isolated"] as const)("install state (%s)", linker => 
     // 6. flags are part of the fingerprint: state recorded by an `--omit=dev` run is not
     //    valid for a plain run (and vice versa)
     const stateDir = join(package_dir, ".cache", ".install-state");
-    const stateFile = join(stateDir, (await Array.fromAsync(new Bun.Glob("*").scan(stateDir)))[0]);
+    const stateFiles = await Array.fromAsync(new Bun.Glob("*").scan(stateDir));
+    expect(stateFiles.length).toBe(1);
+    const stateFile = join(stateDir, stateFiles[0]);
     const envLine = async () => (await file(stateFile).text()).split("\n").find(l => l.startsWith("e "));
     const plainState = await envLine();
     r = await install(package_dir, ["--omit=dev"]);
@@ -138,10 +140,47 @@ describe.each(["hoisted", "isolated"] as const)("install state (%s)", linker => 
 
     // 7. --force always does the work
     r = await install(package_dir, ["--force"]);
-    expect(r.code).toBe(0);
     expect(r.out).not.toMatch(noChanges);
+    expect(r.code).toBe(0);
 
-    // 8. install.stateFile = false disables the fast path: no state is recorded, and the
+    // 8. `--config <file>`: the alternate config's contents are fingerprinted too. (A
+    //    full pass that finds nothing to do prints the same summary as the fast path, so
+    //    observe it through the state file: only a full pass rewrites it.)
+    const altConfig = (extra: object) =>
+      Bun.TOML.stringify({
+        install: {
+          cache: { dir: join(package_dir, ".cache") },
+          registry: root_url + "/",
+          saveTextLockfile: true,
+          linker,
+          ...extra,
+        },
+      });
+    const stateMtime = () => statSync(stateFile).mtimeMs;
+    await writeFile(join(package_dir, "alt.toml"), altConfig({}));
+    r = await install(package_dir, ["--config=alt.toml"]);
+    expect(r.code).toBe(0);
+    let m = stateMtime();
+    r = await install(package_dir, ["--config=alt.toml"]);
+    expect(r.out).toMatch(noChanges);
+    expect(r.code).toBe(0);
+    expect(stateMtime()).toBe(m);
+    await writeFile(join(package_dir, "alt.toml"), altConfig({ dev: false }));
+    r = await install(package_dir, ["--config=alt.toml"]);
+    expect(r.err).not.toContain("error:");
+    expect(r.code).toBe(0);
+    expect(stateMtime()).not.toBe(m);
+
+    // 9. --dry-run does not touch node_modules, so it leaves the marker alone
+    m = stateMtime();
+    r = await install(package_dir, ["--config=alt.toml", "--dry-run"]);
+    expect(r.code).toBe(0);
+    r = await install(package_dir, ["--config=alt.toml"]);
+    expect(r.out).toMatch(noChanges);
+    expect(r.code).toBe(0);
+    expect(stateMtime()).toBe(m);
+
+    // 10. install.stateFile = false disables the fast path: no state is recorded, and the
     //    classic per-package verification still repairs node_modules
     await writeFile(
       join(package_dir, "bunfig.toml"),
@@ -177,8 +216,8 @@ describe.each(["hoisted", "isolated"] as const)("install state (%s)", linker => 
     expect(r.err).not.toContain("error:");
     expect(r.code).toBe(0);
     r = await install(package_dir);
-    expect(r.code).toBe(0);
     expect(r.out).toMatch(noChanges);
+    expect(r.code).toBe(0);
 
     const src = join(package_dir, "local", "index.js");
     const before = statSync(src).mtimeMs;
@@ -186,8 +225,8 @@ describe.each(["hoisted", "isolated"] as const)("install state (%s)", linker => 
     // make the edit observable regardless of timestamp granularity
     utimesSync(src, new Date(before + 2000), new Date(before + 2000));
     r = await install(package_dir);
-    expect(r.code).toBe(0);
     expect(r.out).not.toMatch(noChanges);
+    expect(r.code).toBe(0);
     const installed =
       linker === "hoisted"
         ? join(package_dir, "node_modules", "local", "index.js")

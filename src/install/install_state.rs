@@ -91,23 +91,49 @@ fn is_directory(path: &[u8]) -> bool {
 
 /// Directory entries as (name, is_directory); `.`/`..` are never returned by the
 /// iterator. None if the directory cannot be opened.
-fn read_dir(path: &[u8]) -> Option<Vec<(Vec<u8>, bool)>> {
-    let fd = bun_sys::open_dir_for_iteration(Fd::cwd(), path).ok()?;
+enum DirList {
+    Entries(Vec<(Vec<u8>, bool)>),
+    /// ENOENT / ENOTDIR
+    Absent,
+    /// exists but could not be (fully) enumerated
+    Unreadable,
+}
+
+/// Directory entries as (name, is_directory); `.`/`..` are never returned by the
+/// iterator. An error part-way through is `Unreadable`, never a partial list.
+fn read_dir(path: &[u8]) -> DirList {
+    let fd = match bun_sys::open_dir_for_iteration(Fd::cwd(), path) {
+        Ok(fd) => fd,
+        Err(e) if matches!(e.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) => {
+            return DirList::Absent;
+        }
+        Err(_) => return DirList::Unreadable,
+    };
     let mut out = Vec::new();
     let mut iter = bun_sys::iterate_dir(fd);
-    while let Ok(Some(entry)) = iter.next() {
-        let name = entry.name.slice_u8();
-        let is_dir = match entry.kind {
-            bun_sys::EntryKind::Directory => true,
-            // some filesystems do not report d_type; ask
-            bun_sys::EntryKind::Unknown => is_directory(&join(path, name)),
-            _ => false,
-        };
-        out.push((name.to_vec(), is_dir));
-    }
+    let complete = loop {
+        match iter.next() {
+            Ok(Some(entry)) => {
+                let name = entry.name.slice_u8();
+                let is_dir = match entry.kind {
+                    bun_sys::EntryKind::Directory => true,
+                    // some filesystems do not report d_type; ask
+                    bun_sys::EntryKind::Unknown => is_directory(&join(path, name)),
+                    _ => false,
+                };
+                out.push((name.to_vec(), is_dir));
+            }
+            Ok(None) => break true,
+            Err(_) => break false,
+        }
+    };
     drop(iter);
     let _ = bun_sys::close(fd);
-    Some(out)
+    if complete {
+        DirList::Entries(out)
+    } else {
+        DirList::Unreadable
+    }
 }
 
 fn join(root: &[u8], rel: &[u8]) -> Vec<u8> {
@@ -381,6 +407,15 @@ pub fn save(manager: &mut PackageManager, root_dir: &[u8], entries: u64, package
     file(&mut out, join(root_dir, b"package.json"));
     file(&mut out, join(root_dir, b"bunfig.toml"));
     file(&mut out, join(root_dir, b".npmrc"));
+    // `-c <path>` is loaded instead of ./bunfig.toml; cover it too (its argv position is
+    // already part of the env+argv hash, its contents are not)
+    if let Some(cfg) = manager.options.explicit_config_path {
+        if bun_paths::is_absolute(cfg) {
+            file(&mut out, cfg.to_vec());
+        } else {
+            file(&mut out, join(root_dir, cfg));
+        }
+    }
     // global config, with the same precedence the loaders use: $XDG_CONFIG_HOME first
     // (its .npmrc wins when it exists), then $HOME (USERPROFILE on Windows)
     if let Some(xdg) = bun_core::env_var::XDG_CONFIG_HOME.get_not_empty() {
@@ -485,7 +520,9 @@ pub fn save(manager: &mut PackageManager, root_dir: &[u8], entries: u64, package
         }
     }
     for nm in nm_dirs {
-        stamp_tree(&mut out, &nm, 0);
+        if !stamp_tree(&mut out, &nm, 0) {
+            unreadable = true;
+        }
     }
     // Nested node_modules folders (hoisted: `node_modules/a/node_modules`, from the
     // lockfile's tree list) and each isolated store entry's own `node_modules`: one
@@ -516,16 +553,21 @@ pub fn save(manager: &mut PackageManager, root_dir: &[u8], entries: u64, package
             }
         }
         let store = join(&join(root_dir, b"node_modules"), b".bun");
-        if let Some(entries) = read_dir(&store) {
-            for (name, is_dir) in entries {
-                if !is_dir {
-                    continue;
-                }
-                let inner = join(&join(&store, &name), b"node_modules");
-                if let Some(stamp) = lstat_stamp(&inner) {
-                    let _ = write!(out, "l {stamp:016x} ");
-                    out.extend_from_slice(&inner);
-                    out.push(b'\n');
+        match read_dir(&store) {
+            DirList::Absent => {}
+            // an existing store we cannot enumerate makes the state unrecordable
+            DirList::Unreadable => unreadable = true,
+            DirList::Entries(entries) => {
+                for (name, is_dir) in entries {
+                    if !is_dir {
+                        continue;
+                    }
+                    let inner = join(&join(&store, &name), b"node_modules");
+                    if let Some(stamp) = lstat_stamp(&inner) {
+                        let _ = write!(out, "l {stamp:016x} ");
+                        out.extend_from_slice(&inner);
+                        out.push(b'\n');
+                    }
                 }
             }
         }
@@ -565,14 +607,18 @@ fn manifest_stamp(pkg_dir: &[u8]) -> u64 {
 /// Record `dir`, and for each entry: its own lstat mtime (`l`) plus its
 /// package.json stamp (`p`). Scope dirs are descended one level; bookkeeping dirs
 /// (`.bin`, `.bun`, …) get only the `l` stamp.
-fn stamp_tree(out: &mut Vec<u8>, dir: &[u8], depth: u8) {
+fn stamp_tree(out: &mut Vec<u8>, dir: &[u8], depth: u8) -> bool {
     let Some(stamp) = lstat_stamp(dir) else {
-        return;
+        return true;
     };
     let _ = write!(out, "l {stamp:016x} ");
     out.extend_from_slice(dir);
     out.push(b'\n');
-    let Some(rd) = read_dir(dir) else { return };
+    let rd = match read_dir(dir) {
+        DirList::Entries(rd) => rd,
+        DirList::Absent => return true,
+        DirList::Unreadable => return false,
+    };
     for (name, _) in &rd {
         let name = name.as_slice();
         if name == b".cache" || name == b".install-state" {
@@ -580,7 +626,9 @@ fn stamp_tree(out: &mut Vec<u8>, dir: &[u8], depth: u8) {
         }
         let child = join(dir, name);
         if depth < 1 && name.first() == Some(&b'@') {
-            stamp_tree(out, &child, depth + 1);
+            if !stamp_tree(out, &child, depth + 1) {
+                return false;
+            }
             continue;
         }
         if let Some(stamp) = lstat_stamp(&child) {
@@ -594,6 +642,7 @@ fn stamp_tree(out: &mut Vec<u8>, dir: &[u8], depth: u8) {
             out.push(b'\n');
         }
     }
+    true
 }
 
 fn strings_contains(hay: &[u8], needle: &[u8]) -> bool {
@@ -637,7 +686,10 @@ fn collect_dirs(dir: &[u8], depth: usize, out: &mut Vec<Vec<u8>>, budget: &mut u
     if depth == 0 || *budget == 0 {
         return;
     }
-    let Some(rd) = read_dir(dir) else { return };
+    // best effort: this only widens the set of directories that get an mtime stamp
+    let DirList::Entries(rd) = read_dir(dir) else {
+        return;
+    };
     for (name, is_dir) in &rd {
         if *budget == 0 {
             return;
@@ -667,7 +719,7 @@ fn stamp_source_tree(out: &mut Vec<u8>, dir: &[u8], budget: &mut usize) -> bool 
     let _ = write!(out, "l {stamp:016x} ");
     out.extend_from_slice(dir);
     out.push(b'\n');
-    let Some(rd) = read_dir(dir) else {
+    let DirList::Entries(rd) = read_dir(dir) else {
         return false;
     };
     for (name, is_dir) in &rd {

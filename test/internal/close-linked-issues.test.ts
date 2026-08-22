@@ -222,6 +222,7 @@ async function runScript(origin: string, extraEnv: Record<string, string> = {}) 
       GITHUB_REPOSITORY: REPO,
       GITHUB_API_URL: origin,
       PR_NUMBER: "10",
+      DRY_RUN: "",
       ...extraEnv,
     },
     stdout: "pipe",

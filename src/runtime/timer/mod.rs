@@ -614,8 +614,7 @@ pub(crate) struct All {
     pub(crate) thread_id: std::thread::ThreadId,
     pub(crate) timers: TimerHeap,
     pub(crate) active_timer_count: i32,
-    /// The loop ref'd when `active_timer_count` went positive; the unref has
-    /// to come off the same loop (see `bun_io::FilePoll::loop_`).
+    /// The loop ref'd when `active_timer_count` went positive.
     #[cfg(not(windows))]
     timer_refd_loop: *mut bun_uws_sys::Loop,
     #[cfg(windows)]
@@ -628,7 +627,7 @@ pub(crate) struct All {
     /// TimerObjectInternals.epoch. Masked to 25 bits on increment.
     pub(crate) epoch: u32,
     pub(crate) immediate_ref_count: i32,
-    /// Same as `timer_refd_loop`, for `immediate_ref_count`.
+    /// The loop ref'd when `immediate_ref_count` went positive.
     #[cfg(not(windows))]
     immediate_refd_loop: *mut bun_uws_sys::Loop,
     #[cfg(windows)]
@@ -640,14 +639,12 @@ pub(crate) struct All {
     pub(crate) wtf_timers: Guarded<TimerHeap>,
 }
 
-/// Balance the `ref_()` taken when a ref count went positive, on the loop it
-/// was taken on.
+/// Release the ref on the loop recorded in `refd` and clear it.
 #[cfg(not(windows))]
 fn unref_refd_loop(refd: &mut *mut bun_uws_sys::Loop) {
     let mut loop_ = core::ptr::NonNull::new(core::mem::replace(refd, core::ptr::null_mut()))
         .expect("timer ref count went positive without ref'ing a loop");
-    // SAFETY: recorded from the VM's live loop when the ref was taken, and
-    // `VirtualMachine::teardown` cancels all timers before it frees any loop.
+    // SAFETY: `VirtualMachine::teardown` cancels all timers before it frees any loop.
     unsafe { loop_.as_mut() }.unref();
 }
 

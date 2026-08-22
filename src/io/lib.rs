@@ -350,12 +350,9 @@ impl EventLoopCtx {
     // identical `ctx.platform_event_loop().op()` call sites into the single
     // deref inside [`loop_mut`].
     //
-    // `loop_mut` is the single nonnull-asref accessor: `&self → &mut` (so it
-    // must NOT be called twice with overlapping live results). Every caller
-    // is a leaf counter bump that consumes the borrow before returning and
-    // never re-enters `EventLoopCtx`, so no two `&mut Loop` ever coexist.
-    // `FilePoll` and `KeepAlive` do not go through it: they record the loop
-    // they registered with and update that one (see `FilePoll::loop_`).
+    // `loop_mut` is the single nonnull-asref accessor: `&self → &mut`, so it
+    // must NOT be called twice with overlapping live results. Every caller is
+    // a leaf counter bump that drops the borrow before returning.
     #[inline]
     fn loop_mut(&self) -> &'static mut bun_uws_sys::Loop {
         // SAFETY: per-thread set-once pointer (the uws loop singleton); the

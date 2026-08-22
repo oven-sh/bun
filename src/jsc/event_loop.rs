@@ -87,11 +87,9 @@ pub struct EventLoop {
     #[cfg(not(windows))]
     pub holds_forever_poll: bool,
     pub deferred_tasks: DeferredTaskQueue::DeferredTaskQueue,
-    /// The uws loop this instance drives: the thread's loop, set by
-    /// `ensure_waker`, or the isolated loop of a `Bun.spawnSync`.
-    /// `concurrent_ref` is folded into this loop, not into
-    /// `vm.event_loop_handle`, which spawnSync repoints while it waits (see
-    /// `bun_io::FilePoll::loop_`).
+    /// The uws loop this instance drives: the thread's loop (set by
+    /// `ensure_waker`) or a `Bun.spawnSync` isolated loop. `concurrent_ref`
+    /// is applied to this loop, not to `vm.event_loop_handle`.
     pub uws_loop: Option<NonNull<uws::Loop>>,
 
     pub entered_event_loop_count: isize,
@@ -697,17 +695,13 @@ impl EventLoop {
     }
 
     /// [`Self::uws_loop`], or the thread's loop before `ensure_waker` has run.
-    /// Unlike [`Self::usockets_loop`] this does not follow
-    /// `vm.event_loop_handle`.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     fn own_uws_loop(&self) -> &mut uws::Loop {
         let loop_ = self.uws_loop.map_or_else(uws::Loop::get, NonNull::as_ptr);
-        // SAFETY: the loop is live at every call site: `VirtualMachine::teardown`
-        // folds for the last time before it frees the thread's loop, and
-        // `SpawnSyncEventLoop` destroys its `EventLoop` before its uws loop. It
-        // is a separate allocation from `self`, reborrowed on the owning thread
-        // for one counter update.
+        // SAFETY: the loop outlives this `EventLoop` (`SpawnSyncEventLoop::drop`
+        // destroys the `EventLoop` first), and the borrow is a single-threaded
+        // counter update that ends before the caller returns.
         unsafe { &mut *loop_ }
     }
 
@@ -1562,8 +1556,7 @@ fn vm_from_ptr<'a>(vm: *mut ()) -> &'a mut VirtualMachine {
     unsafe { &mut *vm.cast::<VirtualMachine>() }
 }
 
-/// Heap-allocate a fresh `EventLoop` bound to `vm` and driven by `uws_loop`,
-/// spawnSync's isolated loop.
+/// Heap-allocate a fresh `EventLoop` bound to `vm` that drives `uws_loop`.
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_spawn_sync_create_event_loop(vm: *mut (), uws_loop: *mut uws::Loop) -> *mut () {
     let vm = vm_from_ptr(vm);

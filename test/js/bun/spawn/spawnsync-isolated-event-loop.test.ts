@@ -159,15 +159,11 @@ describe.concurrent("spawnSync isolated event loop", () => {
     expect(exitCode).toBe(0);
   });
 
-  // While spawnSync blocks, the VM's event loop handle points at the isolated
-  // loop. A GC that runs in that window finalizes objects whose polls are
-  // registered on the main loop; each poll has to be released against the
-  // main loop, not the isolated one. When the isolated loop's poll count is
-  // debited instead, it reaches zero while the next spawnSync still has live
-  // polls, and that spawnSync spins without polling until its timeout.
-  //
-  // BUN_INTERNAL_SPAWN_SYNC_GC (debug builds) collects inside spawnSync after
-  // the child has exited, which stands in for a GC that ends during the wait.
+  // A GC that runs while spawnSync blocks finalizes objects whose polls live on
+  // the main loop. If those polls are released against the isolated loop, its
+  // poll count reaches zero while the next spawnSync still has live polls, and
+  // that spawnSync spins without polling until its timeout.
+  // BUN_INTERNAL_SPAWN_SYNC_GC (debug builds) forces such a GC.
   test.skipIf(!isDebug || isWindows)(
     "finalizers that run inside spawnSync do not stall the next spawnSync",
     async () => {

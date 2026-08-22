@@ -30,9 +30,8 @@ pub struct FilePoll {
     pub(crate) fd: Fd,
     pub(crate) owner: Owner,
     pub(crate) flags: FlagsSet,
-    /// The loop this poll is bound to: the ctx's loop at `init`. Counter
-    /// updates go to this loop, never to the VM's current handle, which
-    /// `Bun.spawnSync` swaps to its isolated loop while it blocks.
+    /// The loop this poll is bound to, fixed at `init` (see the posix
+    /// `FilePoll::loop_`).
     loop_: ptr::NonNull<WindowsLoop>,
     pub(crate) next_to_free: *mut FilePoll,
 }
@@ -58,12 +57,10 @@ impl FilePoll {
             || self.flags.contains(Flags::PollMachport)
     }
 
-    /// The loop this poll is bound to. Same contract as
-    /// `EventLoopCtx::loop_mut`: the loop outlives its polls, the event loop
-    /// is single-threaded, and every caller is a leaf counter update.
     #[inline]
     fn loop_mut(&self) -> &'static mut WindowsLoop {
-        // SAFETY: see the contract above.
+        // SAFETY: a loop outlives every poll bound to it, the event loop is
+        // single-threaded, and every caller drops the borrow before returning.
         unsafe { &mut *self.loop_.as_ptr() }
     }
 

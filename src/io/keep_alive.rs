@@ -14,10 +14,8 @@ use crate::EventLoopCtx;
 #[derive(Default)]
 pub struct KeepAlive {
     status: Status,
-    /// The loop `ref_` counted on, so `unref` releases that same loop.
-    /// `Bun.spawnSync` swaps the VM's current loop to its isolated loop while
-    /// it blocks, so a teardown that runs in that window (a GC finalizer) must
-    /// not resolve the loop through the ctx again.
+    /// The loop `ref_` counted on; `unref` releases the same loop (see
+    /// `FilePoll::loop_`).
     loop_: Option<NonNull<bun_uws_sys::Loop>>,
 }
 
@@ -54,8 +52,8 @@ impl KeepAlive {
         let Some(loop_) = self.loop_.take() else {
             return;
         };
-        // SAFETY: `ref_` stored the live per-thread loop, which outlives every
-        // `KeepAlive` counted on it; single-threaded, leaf counter update.
+        // SAFETY: a loop outlives every `KeepAlive` counted on it, and the
+        // event loop is single-threaded.
         let loop_ = unsafe { &mut *loop_.as_ptr() };
         #[cfg(not(windows))]
         loop_.unref();

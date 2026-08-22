@@ -290,15 +290,9 @@ pub struct FilePoll {
     pub flags: FlagsSet,
     pub owner: Owner,
 
-    /// The loop this poll is registered with: the ctx's loop at `init`.
-    ///
-    /// Every epoll/kqueue change and every `num_polls`/`active` update goes
-    /// to this loop, never to the VM's current handle. `Bun.spawnSync` swaps
-    /// that handle to its isolated loop while it blocks, and a GC finalizer
-    /// that runs in that window (a leaked `FileSink`, a dead `Subprocess`)
-    /// tears down polls that belong to the main loop. Debiting the isolated
-    /// loop instead leaves its `num_polls` at zero with live polls, and
-    /// `us_loop_run_bun_tick` then returns without polling.
+    /// The loop this poll is registered with, fixed at `init`. Kernel changes
+    /// and counter updates go here and not to the VM's current loop handle,
+    /// which `Bun.spawnSync` points at its isolated loop while it blocks.
     loop_: ptr::NonNull<Loop>,
 
     /// We re-use FilePoll objects to avoid allocating new ones.
@@ -453,15 +447,10 @@ impl FilePoll {
                 || self.flags.contains(Flags::PollProcess))
     }
 
-    /// The loop this poll is registered with (see the field doc). Same
-    /// contract as `EventLoopCtx::loop_mut`: a loop outlives every poll
-    /// registered with it (the VM's loop lives until VM teardown, after its
-    /// polls are released; the spawnSync loop is freed with the VM's rare
-    /// data), the event loop is single-threaded, and every caller is a leaf
-    /// counter update or kernel call that drops the borrow before returning.
     #[inline]
     fn loop_mut(&self) -> &'static mut Loop {
-        // SAFETY: see the contract above.
+        // SAFETY: a loop outlives every poll registered with it, the event loop
+        // is single-threaded, and every caller drops the borrow before returning.
         unsafe { &mut *self.loop_.as_ptr() }
     }
 

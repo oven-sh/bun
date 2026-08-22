@@ -774,8 +774,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryDelete, (JSC::JSGlobalObject * globa
     auto key = JSC::Identifier::fromString(vm, asString(keyValue)->value(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
     auto* moduleLoader = globalObject->moduleLoader();
-    // A module that is still loading is not in require.cache, so deleting it is a no-op.
-    // Evicting it would give the next import() a second record for the same key.
+    // A module whose load is in flight is not in require.cache and is not evicted.
     for (auto& [mapKey, entry] : moduleLoader->moduleMap()) {
         if (mapKey.first == key.impl() && entry && !isModuleLoadSettled(entry.get()))
             return JSValue::encode(jsBoolean(false));

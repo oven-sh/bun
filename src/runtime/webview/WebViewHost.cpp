@@ -326,17 +326,33 @@ void WebViewHost::doNativeClick(float x, float y, uint8_t button, uint8_t modifi
     // handleMouseEvent → mouseEventQueue → XPC. WebContent synthesizes click
     // from the pair: pointerdown/mousedown/pointerup/mouseup/click all fire,
     // isTrusted:true, :active CSS applies.
+    //
+    // Stamp NSEvent::s_trackedButtonsMask around each event so WebCore's
+    // PlatformEventFactoryMac reads the correct DOM event.buttons for
+    // this click (pressing bit set for mousedown, cleared for mouseup).
+    // The static is process-wide — without stamping here, a prior
+    // unbalanced mouseDown on this view or a sibling view would leak
+    // its mask into this click's DOM events. Setting it explicitly
+    // also makes click()'s event.buttons spec-correct: mousedown sees
+    // the pressing bit, mouseup sees 0.
+    uint8_t pressBit = 1u << button;
     switch (button) {
     case 1:
+        NSEvent::s_trackedButtonsMask = pressBit;
         m_webview.rightMouseDown(NSEvent::mouseEvent(NSEvent::RightMouseDown, x, wy, mods, ts, win, clickCount));
+        NSEvent::s_trackedButtonsMask = 0;
         m_webview.rightMouseUp(NSEvent::mouseEvent(NSEvent::RightMouseUp, x, wy, mods, ts, win, clickCount));
         break;
     case 2:
+        NSEvent::s_trackedButtonsMask = pressBit;
         m_webview.otherMouseDown(NSEvent::mouseEvent(NSEvent::OtherMouseDown, x, wy, mods, ts, win, clickCount));
+        NSEvent::s_trackedButtonsMask = 0;
         m_webview.otherMouseUp(NSEvent::mouseEvent(NSEvent::OtherMouseUp, x, wy, mods, ts, win, clickCount));
         break;
     default:
+        NSEvent::s_trackedButtonsMask = pressBit;
         m_webview.mouseDown(NSEvent::mouseEvent(NSEvent::LeftMouseDown, x, wy, mods, ts, win, clickCount));
+        NSEvent::s_trackedButtonsMask = 0;
         m_webview.mouseUp(NSEvent::mouseEvent(NSEvent::LeftMouseUp, x, wy, mods, ts, win, clickCount));
     }
 
@@ -345,6 +361,189 @@ void WebViewHost::doNativeClick(float x, float y, uint8_t button, uint8_t modifi
     // fired all JS handlers. No polling, no evaluateJavaScript hack.
     m_inputPending = true;
     m_webview.doAfterPendingMouseEvents(makeHostBlock<&WebViewHost::onInputComplete>(*this));
+}
+
+// Low-level pointer primitives. Unlike click() which pairs down+up into
+// one barrier-gated sequence, these fire a single event (down/up) or a
+// burst of move events and let the caller compose. Each waits on
+// _doAfterProcessingAllPendingMouseEvents: so the promise resolves
+// after WebContent has dispatched every event's JS handlers.
+//
+// For mouseDown/mouseUp the button arg picks the NSEventType + the
+// right responder selector. buttonsMask is the post-op bitmap for the
+// DOM event.buttons field — set into NSEvent::s_trackedButtonsMask
+// before dispatch. WebCore reads +[NSEvent pressedMouseButtons] (which
+// we swapped in ObjCRuntime::load to return s_trackedButtonsMask)
+// synchronously inside [WKWebView mouseDown:]; the value captured
+// becomes event.buttons on the DOM event. Per spec, mousedown reports
+// buttons WITH the pressing bit set, mouseup reports WITHOUT it; the
+// caller (JSWebView::mouseDown/Up) already computed that, we just
+// publish it.
+bool WebViewHost::mouseDownIPC(float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount, uint8_t buttonsMask)
+{
+    using NSEvent = objc::NSEvent;
+    if (m_inputPending) {
+        hostWriter()->sendReplyStr(m_viewId, Reply::Error, "input operation already pending"_s);
+        return true;
+    }
+    double wy = static_cast<double>(m_height) - y;
+    unsigned long mods = expandModifiers(modifiers);
+    double ts = objc::NSProcessInfo::systemUptime();
+    long win = m_window.windowNumber();
+
+    NSEvent::s_trackedButtonsMask = buttonsMask;
+    switch (button) {
+    case 1:
+        m_webview.rightMouseDown(NSEvent::mouseEvent(NSEvent::RightMouseDown, x, wy, mods, ts, win, clickCount));
+        break;
+    case 2:
+        m_webview.otherMouseDown(NSEvent::mouseEvent(NSEvent::OtherMouseDown, x, wy, mods, ts, win, clickCount));
+        break;
+    default:
+        m_webview.mouseDown(NSEvent::mouseEvent(NSEvent::LeftMouseDown, x, wy, mods, ts, win, clickCount));
+    }
+
+    m_inputPending = true;
+    m_webview.doAfterPendingMouseEvents(makeHostBlock<&WebViewHost::onInputComplete>(*this));
+    return true;
+}
+
+bool WebViewHost::mouseUpIPC(float x, float y, uint8_t button, uint8_t modifiers, uint8_t clickCount, uint8_t buttonsMask)
+{
+    using NSEvent = objc::NSEvent;
+    if (m_inputPending) {
+        hostWriter()->sendReplyStr(m_viewId, Reply::Error, "input operation already pending"_s);
+        return true;
+    }
+    double wy = static_cast<double>(m_height) - y;
+    unsigned long mods = expandModifiers(modifiers);
+    double ts = objc::NSProcessInfo::systemUptime();
+    long win = m_window.windowNumber();
+
+    NSEvent::s_trackedButtonsMask = buttonsMask;
+    switch (button) {
+    case 1:
+        m_webview.rightMouseUp(NSEvent::mouseEvent(NSEvent::RightMouseUp, x, wy, mods, ts, win, clickCount));
+        break;
+    case 2:
+        m_webview.otherMouseUp(NSEvent::mouseEvent(NSEvent::OtherMouseUp, x, wy, mods, ts, win, clickCount));
+        break;
+    default:
+        m_webview.mouseUp(NSEvent::mouseEvent(NSEvent::LeftMouseUp, x, wy, mods, ts, win, clickCount));
+    }
+
+    m_inputPending = true;
+    m_webview.doAfterPendingMouseEvents(makeHostBlock<&WebViewHost::onInputComplete>(*this));
+    return true;
+}
+
+// mouseMove: fire `steps` NSEvents total = (steps - 1) intermediate
+// drag events interpolated from (fromX,fromY) → (x,y), then one final
+// event at the target. When buttonsMask==0 we sync-Ack without
+// dispatching any NSEvent (see the hover-path rationale below — the
+// _simulateMouseMove: SPI hangs the barrier on macOS 14/15 aarch64).
+// With a button held it's mouseDragged: (or right/other variant) —
+// AppKit's responder chain uses a separate selector per button. If
+// multiple buttons are held we pick the lowest-order set bit (left >
+// right > middle) for the drag selector. WebKit processes a single
+// drag event per main loop tick, so one NSEvent per intermediate coord
+// is what the handlers see. Each event lands in mouseEventQueue and
+// the final barrier drains them all.
+bool WebViewHost::mouseMoveIPC(float fromX, float fromY, float x, float y, uint32_t steps, uint8_t buttonsMask, uint8_t modifiers)
+{
+    using NSEvent = objc::NSEvent;
+    if (m_inputPending) {
+        hostWriter()->sendReplyStr(m_viewId, Reply::Error, "input operation already pending"_s);
+        return true;
+    }
+
+    // Hover path (no button held): the caller intends to reposition the
+    // cursor for a subsequent mouseDown, not to trigger :hover CSS. We
+    // intentionally skip the NSEvent dispatch and just Ack — observations:
+    //
+    //   1. On macOS 14/15 aarch64 the _simulateMouseMove: SPI enqueues
+    //      into mouseEventQueue but WebContent never drains it (likely
+    //      because the headless window's layer tree is ineligible for
+    //      hover hit-test on this OS/arch combo). The
+    //      _doAfterProcessingAllPendingMouseEvents: barrier then waits
+    //      forever and the test times out.
+    //   2. Drag handlers in real use look at `pointermove` with
+    //      `event.buttons != 0` — hover moves with buttons=0 are
+    //      semantically a "position the cursor" signal, not drag.
+    //   3. Parent-side state tracking (m_mouseX/Y on JSWebView) has
+    //      already happened, so the next mouseDown fires at (x, y)
+    //      regardless of whether we dispatched an event here.
+    //
+    // If a user needs trusted :hover on WebKit in the future, the fix
+    // is to post a CGEvent at screen coords (the same path
+    // WebAutomationSessionMac.mm uses for wheel events) — expensive
+    // since it moves the real cursor, so deferred until someone asks.
+    if (!buttonsMask) {
+        // Sync Ack — no barrier needed because we didn't dispatch.
+        return false;
+    }
+
+    unsigned long mods = expandModifiers(modifiers);
+    double ts = objc::NSProcessInfo::systemUptime();
+    long win = m_window.windowNumber();
+    double heightD = static_cast<double>(m_height);
+
+    // Publish the buttons state to +[NSEvent pressedMouseButtons] so
+    // every synthesized drag event gets the correct DOM event.buttons.
+    // See ObjCRuntime.cpp for the +[NSEvent pressedMouseButtons] swap.
+    NSEvent::s_trackedButtonsMask = buttonsMask;
+
+    // AppKit's responder chain uses a separate selector per button drag
+    // (mouseDragged: / rightMouseDragged: / otherMouseDragged:). Pick
+    // the lowest-order set button (left wins over right wins over
+    // middle); multi-button drags are rare enough that one event per
+    // tick is fine. Matches the Chrome backend's priority in
+    // ChromeBackend::mouseMove.
+    enum class MoveKind { LeftDrag,
+        RightDrag,
+        OtherDrag };
+    unsigned long evtType = NSEvent::LeftMouseDragged;
+    MoveKind kind = MoveKind::LeftDrag;
+    if (buttonsMask & 0x1) {
+        // Left — keep LeftDrag default (explicit so 0x3, 0x5, 0x7 all
+        // pick left instead of falling through to right/middle).
+    } else if (buttonsMask & 0x2) {
+        evtType = NSEvent::RightMouseDragged;
+        kind = MoveKind::RightDrag;
+    } else if (buttonsMask & 0x4) {
+        evtType = NSEvent::OtherMouseDragged;
+        kind = MoveKind::OtherDrag;
+    }
+    auto dispatch = [&](NSEvent e) {
+        switch (kind) {
+        case MoveKind::LeftDrag:
+            m_webview.mouseDragged(e);
+            return;
+        case MoveKind::RightDrag:
+            m_webview.rightMouseDragged(e);
+            return;
+        case MoveKind::OtherDrag:
+            m_webview.otherMouseDragged(e);
+            return;
+        }
+    };
+
+    if (steps < 1) steps = 1;
+    // (steps - 1) intermediate events at fractions i/steps, then the
+    // final event at the target — `steps` events total. clickCount 0 is
+    // the convention for non-click mouse events.
+    for (uint32_t i = 1; i < steps; ++i) {
+        double ix = static_cast<double>(fromX) + (static_cast<double>(x) - static_cast<double>(fromX)) * (static_cast<double>(i) / static_cast<double>(steps));
+        double iy = static_cast<double>(fromY) + (static_cast<double>(y) - static_cast<double>(fromY)) * (static_cast<double>(i) / static_cast<double>(steps));
+        double iwy = heightD - iy;
+        dispatch(NSEvent::mouseEvent(evtType, ix, iwy, mods, ts, win, 0));
+    }
+    double wy = heightD - static_cast<double>(y);
+    dispatch(NSEvent::mouseEvent(evtType, x, wy, mods, ts, win, 0));
+
+    m_inputPending = true;
+    m_webview.doAfterPendingMouseEvents(makeHostBlock<&WebViewHost::onInputComplete>(*this));
+    return true;
 }
 
 // Actionability check: Playwright-style rAF-polled predicate. Runs entirely

@@ -225,6 +225,83 @@ JSPromise* JSWebView::clickSelector(JSGlobalObject* g, const WTF::String& select
     WK_DISPATCH(WK::Ops::clickSelector(g, this, selector, timeout, button, modifiers, clickCount));
 }
 
+// Low-level pointer primitives. Each backend dispatches one event (down/up)
+// or a series (move with steps) and returns a promise that resolves when
+// WebContent has processed the event(s).
+//
+// State (m_mouseButtons, m_mouseX, m_mouseY) is what the NEXT call will
+// read, so it MUST reflect only successfully-sent events. Both backends'
+// send paths return a synchronously-rejected promise when the transport
+// is dead (WebKit host socket closed, Chrome pipe torn down, view closed
+// mid-chain) — in that case leave state untouched so a caller who catches
+// the rejection and opens a new view doesn't inherit a phantom held
+// button. Async rejections (WebKit host crash after accept, CDP error
+// reply) can't be reflected here without .then()-plumbing a continuation;
+// the view is already unusable past that point — every subsequent op
+// will reject — so the stale state is harmless. The in-flight
+// m_pendingMisc slot serializes ops so no overlapping call reads
+// half-updated state.
+JSPromise* JSWebView::mouseDown(JSGlobalObject* g, uint8_t button, uint8_t modifiers, uint8_t clickCount)
+{
+    uint8_t bit = 1u << button;
+    uint8_t newMask = m_mouseButtons | bit;
+    JSPromise* p;
+    if (m_backend == WebViewBackend::Chrome) {
+        p = CDP::Ops::mouseDown(g, this, m_mouseX, m_mouseY, button, modifiers, clickCount, newMask);
+    } else {
+#if OS(DARWIN)
+        p = WK::Ops::mouseDown(g, this, m_mouseX, m_mouseY, button, modifiers, clickCount, newMask);
+#else
+        RELEASE_ASSERT_NOT_REACHED();
+        p = nullptr;
+#endif
+    }
+    if (p && p->status() != JSPromise::Status::Rejected)
+        m_mouseButtons = newMask;
+    return p;
+}
+
+JSPromise* JSWebView::mouseUp(JSGlobalObject* g, uint8_t button, uint8_t modifiers, uint8_t clickCount)
+{
+    uint8_t bit = 1u << button;
+    uint8_t newMask = m_mouseButtons & ~bit;
+    JSPromise* p;
+    if (m_backend == WebViewBackend::Chrome) {
+        p = CDP::Ops::mouseUp(g, this, m_mouseX, m_mouseY, button, modifiers, clickCount, newMask);
+    } else {
+#if OS(DARWIN)
+        p = WK::Ops::mouseUp(g, this, m_mouseX, m_mouseY, button, modifiers, clickCount, newMask);
+#else
+        RELEASE_ASSERT_NOT_REACHED();
+        p = nullptr;
+#endif
+    }
+    if (p && p->status() != JSPromise::Status::Rejected)
+        m_mouseButtons = newMask;
+    return p;
+}
+
+JSPromise* JSWebView::mouseMove(JSGlobalObject* g, float x, float y, uint32_t steps, uint8_t modifiers)
+{
+    float fromX = m_mouseX, fromY = m_mouseY;
+    JSPromise* p;
+    if (m_backend == WebViewBackend::Chrome) {
+        p = CDP::Ops::mouseMove(g, this, fromX, fromY, x, y, steps, m_mouseButtons, modifiers);
+    } else {
+#if OS(DARWIN)
+        p = WK::Ops::mouseMove(g, this, fromX, fromY, x, y, steps, m_mouseButtons, modifiers);
+#else
+        RELEASE_ASSERT_NOT_REACHED();
+        p = nullptr;
+#endif
+    }
+    if (p && p->status() != JSPromise::Status::Rejected) {
+        m_mouseX = x;
+        m_mouseY = y;
+    }
+    return p;
+}
+
 JSPromise* JSWebView::type(JSGlobalObject* g, const WTF::String& text)
 {
     if (m_backend == WebViewBackend::Chrome) return CDP::Ops::type(g, this, text);

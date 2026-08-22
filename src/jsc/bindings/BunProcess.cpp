@@ -584,6 +584,14 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         // iterator dangling.
         auto pendingNapiModules = std::exchange(globalObject->m_pendingNapiModules, {});
         auto pendingV8Modules = std::exchange(globalObject->m_pendingV8Modules, {});
+        // Whatever happens below, no registration state may leak into the next dlopen().
+        auto resetPendingRegistrations = WTF::makeScopeExit([&] {
+            globalObject->m_pendingV8Modules.clear();
+            globalObject->m_pendingNapiModules.clear();
+            globalObject->napiModuleRegisterCallCount = 0;
+            globalObject->m_pendingNapiModuleAndExports[0].clear();
+            globalObject->m_pendingNapiModuleAndExports[1].clear();
+        });
 
         if (handle) {
             // Save all NAPI module registrations
@@ -598,14 +606,9 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
             }
         }
 
-        // Whatever happens below, no registration state may leak into the next dlopen().
-        auto resetPendingRegistrations = WTF::makeScopeExit([&] {
-            globalObject->m_pendingV8Modules.clear();
-            globalObject->m_pendingNapiModules.clear();
-            globalObject->napiModuleRegisterCallCount = 0;
-            globalObject->m_pendingNapiModuleAndExports[0].clear();
-            globalObject->m_pendingNapiModuleAndExports[1].clear();
-        });
+        // A V8-style module's nm_register_func already ran inside dlopen() (node_module_register)
+        // and may have thrown.
+        RETURN_IF_EXCEPTION(scope, {});
 
         // Execute all NAPI modules. If an nm_register_func registers more
         // modules re-entrantly, they accumulate back in m_pendingNapiModules;
@@ -638,20 +641,6 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
 
     // Module didn't self-register on this load. Check if we have cached registrations.
     if (auto cachedModules = Bun::DLHandleMap::singleton().get(handle)) {
-        // Replay all registrations from this handle
-        // This will populate the vectors again via register functions
-        for (auto& registration : *cachedModules) {
-            std::visit([](auto&& mod) {
-                using T = std::decay_t<decltype(mod)>;
-                if constexpr (std::is_same_v<T, node::node_module*>) {
-                    node::node_module_register(mod);
-                } else if constexpr (std::is_same_v<T, napi_module*>) {
-                    napi_module_register(mod);
-                }
-            },
-                registration);
-        }
-
         // (The V8 registrations are already in DLHandleMap; nothing here re-saves them.)
         auto resetPendingRegistrations = WTF::makeScopeExit([&] {
             globalObject->m_pendingV8Modules.clear();
@@ -660,6 +649,17 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
             globalObject->m_pendingNapiModuleAndExports[0].clear();
             globalObject->m_pendingNapiModuleAndExports[1].clear();
         });
+
+        // Replay all registrations from this handle. napi ones only queue into
+        // m_pendingNapiModules; a V8 one runs its nm_register_func right here.
+        for (auto& registration : *cachedModules) {
+            if (auto* const* nodeModule = std::get_if<node::node_module*>(&registration)) {
+                node::node_module_register(*nodeModule);
+                RETURN_IF_EXCEPTION(scope, {});
+            } else {
+                napi_module_register(std::get<napi_module*>(registration));
+            }
+        }
 
         // Execute all NAPI modules that were just registered. Move to a
         // local first and drain so re-entrant napi_module_register() calls

@@ -272,6 +272,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
+    /// `(() => { ...stmts })()`
+    fn iife(&mut self, stmts: js_ast::StmtNodeList, l: bun_ast::Loc) -> Expr {
+        let target = self.new_expr(
+            E::Arrow {
+                body: G::FnBody { loc: l, stmts },
+                ..Default::default()
+            },
+            l,
+        );
+        self.new_expr(
+            E::Call {
+                target,
+                args: bun_alloc::AstAlloc::vec(),
+                ..Default::default()
+            },
+            l,
+        )
+    }
+
     /// Create a static block property from a single expression.
     fn make_static_block(&mut self, expr: Expr, l: bun_ast::Loc) -> Property {
         let bump = self.arena;
@@ -2127,27 +2146,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 }
                             }
                         } else {
-                            // Wrap in IIFE
                             let stmts_ptr = bun_ast::StoreSlice::new_mut(stmts_slice);
-                            let iife_body = p.new_expr(
-                                E::Arrow {
-                                    body: G::FnBody {
-                                        loc,
-                                        stmts: stmts_ptr,
-                                    },
-                                    is_async: false,
-                                    ..Default::default()
-                                },
-                                loc,
-                            );
-                            suffix_exprs.push(p.new_expr(
-                                E::Call {
-                                    target: iife_body,
-                                    args: bun_alloc::AstAlloc::vec(),
-                                    ..Default::default()
-                                },
-                                loc,
-                            ));
+                            suffix_exprs.push(p.iife(stmts_ptr, loc));
                         }
                     }
                     StaticElementKind::FieldOrAccessor => {
@@ -2518,7 +2518,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 );
             }
 
-            // Emit var declarations
+            // The class keeps reading the temporaries after it is created
+            // (`_init` in the constructor, the accessor storage WeakMaps), so
+            // each evaluation of the expression needs its own set. Hoisting
+            // them into the nearest statement list is only right when that list
+            // runs once per evaluation; otherwise (a parameter default value, an
+            // instance field initializer, no list at all) they are declared in
+            // an arrow wrapped around the chain, which keeps `this`, `super`,
+            // `arguments` and `new.target` of the enclosing code. Neither of
+            // those positions can contain `await` or `yield`.
             if !expr_var_decls.is_empty() {
                 let decls = DeclList::from_bump_vec(expr_var_decls);
                 let var_decl_stmt = p.s(
@@ -2528,8 +2536,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                     loc,
                 );
-                if let Some(stmt_list) = p.nearest_stmt_list_mut() {
-                    stmt_list.push(var_decl_stmt);
+                let hoisted = !p.nearest_stmt_list_is_shared
+                    && match p.nearest_stmt_list_mut() {
+                        Some(stmt_list) => {
+                            stmt_list.push(var_decl_stmt);
+                            true
+                        }
+                        None => false,
+                    };
+                if !hoisted {
+                    let return_stmt = p.s(
+                        S::Return {
+                            value: Some(result),
+                        },
+                        loc,
+                    );
+                    let body = bump.alloc_slice_copy(&[var_decl_stmt, return_stmt]);
+                    result = p.iife(bun_ast::StoreSlice::new_mut(body), loc);
                 }
             }
 

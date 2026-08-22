@@ -216,6 +216,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             duplicate_args_check = Some(StringVoidMap::get());
         }
 
+        // Default values (including those nested in destructuring patterns) run
+        // once per call, while the statement list enclosing the function runs
+        // once; the function's own body installs its list later.
+        let old_nearest_stmt_list_is_shared = self.nearest_stmt_list_is_shared;
+        self.nearest_stmt_list_is_shared = true;
+
         for arg in args.iter_mut() {
             if arg.ts_decorators.len_u32() > 0 {
                 self.visit_ts_decorators(&mut arg.ts_decorators);
@@ -228,6 +234,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.visit_expr(default);
             }
         }
+
+        self.nearest_stmt_list_is_shared = old_nearest_stmt_list_is_shared;
     }
 
     // `Vec<Expr>` is not `Copy`; mutate in place.
@@ -970,7 +978,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 if let Some(val) = property.initializer {
-                    // if (property.flags.is_static and )
+                    // An instance initializer runs once per construction; a
+                    // static one runs with the class itself.
+                    let old_nearest_stmt_list_is_shared = self.nearest_stmt_list_is_shared;
+                    if !property.flags.contains(flags::Property::IsStatic) {
+                        self.nearest_stmt_list_is_shared = true;
+                    }
                     if let Some(name) = name_to_keep {
                         let was_anon = val.is_anonymous_named();
                         let prev_dcn2 = self.decorator_class_name;
@@ -989,6 +1002,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     } else {
                         self.visit_expr(property.initializer.as_mut().unwrap());
                     }
+                    self.nearest_stmt_list_is_shared = old_nearest_stmt_list_is_shared;
                 }
 
                 // manual restore for the two `defer`s above
@@ -1325,11 +1339,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ListManaged::with_capacity_in(stmts.len(), p.arena);
 
             let prev_nearest_stmt_list = p.nearest_stmt_list;
+            let prev_nearest_stmt_list_is_shared = p.nearest_stmt_list_is_shared;
             // BACKREF — `before` outlives this block; raw NonNull avoids
             // the `&'a mut` borrow conflict. Derive via `addr_of_mut!` (no intermediate
             // `&mut`) so the pointer shares the local's base tag and survives the
             // direct `&mut before` reborrows in the loop below (Stacked Borrows).
             p.nearest_stmt_list = NonNull::new(core::ptr::addr_of_mut!(before));
+            // `before` runs every time the statements it is emitted ahead of run.
+            p.nearest_stmt_list_is_shared = false;
 
             let mut preprocessed_enum_i: usize = 0;
 
@@ -1522,6 +1539,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // manual restore for the block-level `defer`s
             p.nearest_stmt_list = prev_nearest_stmt_list;
+            p.nearest_stmt_list_is_shared = prev_nearest_stmt_list_is_shared;
             p.is_control_flow_dead = old_is_control_flow_dead;
         }
 

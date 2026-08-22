@@ -604,6 +604,12 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// Name from assignment context for anonymous decorated class expressions.
     /// Set before visitExpr, consumed by lowerStandardDecoratorsImpl.
     pub(crate) decorator_class_name: Option<&'a [u8]>,
+    /// Set while visiting an expression that runs once per call or per
+    /// construction (a parameter default value, an instance field initializer)
+    /// although `nearest_stmt_list` runs once: a declaration hoisted there would
+    /// be shared by every evaluation of the expression. `visit_stmts` clears it
+    /// for the statements of any body nested inside such an expression.
+    pub(crate) nearest_stmt_list_is_shared: bool,
 }
 
 // `binding::ToExprWrapper` type-erases `*P` (which is generic over
@@ -8713,6 +8719,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             will_wrap_module_in_try_catch_for_using: false,
             nearest_stmt_list: None,
             decorator_class_name: None,
+            nearest_stmt_list_is_shared: false,
 
             jsx_transform,
 

@@ -1,7 +1,7 @@
 import { spawn } from "bun";
-import { beforeEach, expect, it } from "bun:test";
-import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug, isWindows, tmpdirSync, waitForFileToExist } from "harness";
+import { beforeEach, describe, expect, it } from "bun:test";
+import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, forEachLine, isDebug, isWindows, tempDir, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -776,3 +776,139 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
   },
   longTimeout,
 );
+
+// On Windows the cwd keeps the spelling the process was started with (8.3 short
+// names, a junction), while the entrypoint and the modules imported from it get
+// their real path. The watcher is rooted at the cwd and compared the two as
+// strings, so every module was reported as outside the project and nothing
+// reloaded. With an 8.3 cwd, a module resolved against the cwd (here the
+// preload) keeps the cwd's spelling, so both spellings have to be watched at
+// the same time.
+describe.concurrent.skipIf(!isWindows)("--hot when the cwd is spelled differently from the project's real path", () => {
+  const warning = "is not in the project directory";
+  const projectFiles = {
+    "entry.js": `
+      import { dep } from "./dep.js";
+      globalThis.loads = (globalThis.loads ?? 0) + 1;
+      console.log(
+        JSON.stringify({
+          loads: globalThis.loads,
+          dep,
+          cwd: process.cwd(),
+          entryDir: import.meta.dir,
+          preload: globalThis.preloadPath,
+        }),
+      );
+    `,
+    "dep.js": `export const dep = 0;`,
+    "preload.js": `globalThis.preloadPath = import.meta.path;`,
+  };
+  interface Load {
+    loads: number;
+    dep: number;
+    cwd: string;
+    entryDir: string;
+    preload: string;
+  }
+
+  /** The 8.3 spelling of `path` (`C:\\Users\\AZUREU~1\\...`), as far as the volume has short names for it. */
+  function shortPath(path: string): string {
+    using dir = tempDir("hot-short-path", {
+      "short.cmd": `@echo off\r\nfor %%I in ("${path}") do echo %%~sI\r\n`,
+    });
+    const { stdout, exitCode } = Bun.spawnSync({
+      cmd: ["cmd.exe", "/d", "/c", join(String(dir), "short.cmd")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    if (exitCode !== 0) throw new Error(`cmd.exe exited with ${exitCode}`);
+    return stdout.toString().trim();
+  }
+
+  // 8.3 name generation can be turned off per volume (fsutil 8dot3name), in
+  // which case there is no second spelling of the directory to start from.
+  const hasShortNames =
+    isWindows &&
+    (() => {
+      using dir = tempDir("hot-short-names-probe", {});
+      return shortPath(String(dir)).toLowerCase() !== String(dir).toLowerCase();
+    })();
+
+  // The entrypoint is passed by its real path so that the test does not depend
+  // on how a relative entrypoint is resolved; the preload is resolved against
+  // the cwd. `preload` is the path the preload ends up with. Editing either
+  // file has to reload.
+  async function expectReloadsFrom(cwd: string, project: string, preload: string) {
+    await using runner = spawn({
+      cmd: [bunExe(), "--hot", "--preload", "./preload.js", join(project, "entry.js")],
+      cwd,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+
+    // Without the fix the watcher prints this for every module and never
+    // reloads; failing on the warning is faster and clearer than a timeout.
+    let stderr = "";
+    const { promise: failed, reject: fail } = Promise.withResolvers<never>();
+    failed.catch(() => {});
+    (async () => {
+      const decoder = new TextDecoder();
+      for await (const chunk of runner.stderr) {
+        stderr += decoder.decode(chunk, { stream: true });
+        if (stderr.includes(warning)) fail(new Error(`--hot refused to watch the project:\n${stderr}`));
+      }
+    })().catch(fail);
+
+    const lines = forEachLine(runner.stdout);
+    async function nextLoad(matches: (load: Load) => boolean): Promise<Load> {
+      while (true) {
+        const { value, done } = await Promise.race([lines.next(), failed]);
+        if (done) throw new Error(`--hot exited with ${runner.exitCode} before reloading. stderr:\n${stderr}`);
+        const load: Load = JSON.parse(value);
+        if (matches(load)) return load;
+      }
+    }
+
+    const initial = await nextLoad(() => true);
+    expect(initial).toEqual({ loads: 1, dep: 0, cwd, entryDir: project, preload });
+
+    writeFileSync(join(project, "preload.js"), projectFiles["preload.js"] + "\n");
+    const afterPreloadEdit = await nextLoad(load => load.loads > initial.loads);
+    expect(afterPreloadEdit).toEqual({ ...initial, loads: afterPreloadEdit.loads });
+
+    writeFileSync(join(project, "dep.js"), `export const dep = 1;`);
+    const afterDepEdit = await nextLoad(load => load.dep === 1);
+    expect(afterDepEdit).toEqual({ ...initial, loads: afterDepEdit.loads, dep: 1 });
+    expect(afterDepEdit.loads).toBeGreaterThan(afterPreloadEdit.loads);
+  }
+
+  it.skipIf(!hasShortNames)(
+    "reloads when the cwd uses 8.3 short names",
+    async () => {
+      using project = tempDir("hot-short-cwd", projectFiles);
+      const cwd = shortPath(String(project));
+      expect(cwd.toLowerCase()).not.toBe(String(project).toLowerCase());
+
+      await expectReloadsFrom(cwd, String(project), join(cwd, "preload.js"));
+    },
+    timeout,
+  );
+
+  it(
+    "reloads when the cwd is a junction to the project",
+    async () => {
+      using project = tempDir("hot-junction-target", projectFiles);
+      using linkParent = tempDir("hot-junction-cwd", {});
+      const cwd = join(String(linkParent), "project");
+      symlinkSync(String(project), cwd, "junction");
+
+      // The resolver follows the junction, so here even the preload gets its real
+      // path and nothing is spelled like the cwd.
+      await expectReloadsFrom(cwd, String(project), join(String(project), "preload.js"));
+    },
+    timeout,
+  );
+});

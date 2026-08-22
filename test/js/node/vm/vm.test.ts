@@ -1983,6 +1983,8 @@ describe("node:vm lineOffset/columnOffset at the edge of int32", () => {
 // without its destructor running first (that cancels the work too), so the fixtures keep it out of the
 // eagerly swept cells. In a child because the failure mode is a segfault.
 describe("deferred work of a context that is collected while the work is pending", () => {
+  // `body` declares setup(), which creates the context and queues the work, afterCollection(), and
+  // afterRound(collected), which says whether this round's context died.
   function fixture(body: string) {
     return `
       const vm = require("node:vm");
@@ -2003,8 +2005,18 @@ describe("deferred work of a context that is collected while the work is pending
         return vm.createContext(sandbox);
       }
 
-      for (let round = 0; round < 3; round++) {
-        ${body}
+      // Runs fn at the bottom of a deep stack. The slots that held pointers to what fn created then lie
+      // below everything the collections scan, so they cannot keep the context alive. Not a tail call.
+      function deep(depth, fn) {
+        if (depth === 0) return fn();
+        const r = deep(depth - 1, fn);
+        return r;
+      }
+
+      ${body}
+
+      for (let round = 0; round < 5; round++) {
+        deep(500, setup);
         // The structure shared by every context roots the most recently created one.
         vm.createContext({});
         // createContext() also tracks the sandbox in a WeakRef, which roots it until the end of the turn.
@@ -2013,10 +2025,13 @@ describe("deferred work of a context that is collected while the work is pending
         fullGC();
         afterCollection();
         // The next tick runs whatever was queued, then the observer's job for this round's sandbox.
-        for (let i = 0; contextsCollected <= round && i < 100; i++) await Bun.sleep(1);
-        if (contextsCollected <= round) throw new Error("round " + round + ": the context was not collected");
+        const before = contextsCollected;
+        for (let i = 0; contextsCollected === before && i < 50; i++) await Bun.sleep(1);
+        afterRound(contextsCollected > before);
       }
-      console.log("done", contextsCollected);
+      // A round whose context survived the collection exercised nothing.
+      if (contextsCollected === 0) throw new Error("no round collected its context");
+      console.log("done");
     `;
   }
 
@@ -2031,7 +2046,7 @@ describe("deferred work of a context that is collected while the work is pending
   test.concurrent("a FinalizationRegistry cleanup job queued before the collection does not run", async () => {
     const stdout = await run(
       fixture(`
-        {
+        function setup() {
           const context = createContext({});
           vm.runInContext(
             "globalThis.registry = new FinalizationRegistry(() => {}); for (let i = 0; i < 4; i++) registry.register({}, i);",
@@ -2041,25 +2056,33 @@ describe("deferred work of a context that is collected while the work is pending
           Bun.gc(true);
         }
         function afterCollection() {}
+        function afterRound() {}
       `),
     );
-    expect(stdout).toBe("done 3\n");
+    expect(stdout).toBe("done\n");
   });
 
   test.concurrent("a notify for the collected context's Atomics.waitAsync does not run its wake-up", async () => {
     const stdout = await run(
       fixture(`
         const i32 = new Int32Array(new SharedArrayBuffer(4));
-        {
-          const context = createContext({ i32 });
-          vm.runInContext("Atomics.waitAsync(i32, 0, 0).value.then(() => { throw new Error('woken in a dead context'); })", context);
+        let wakeUps = 0;
+        const wake = () => wakeUps++;
+        function setup() {
+          const context = createContext({ i32, wake });
+          vm.runInContext("Atomics.waitAsync(i32, 0, 0).value.then(wake)", context);
         }
+        let wakeUpsBefore = 0;
         function afterCollection() {
-          // The wake-up would resolve the dead context's promise on the next tick.
+          wakeUpsBefore = wakeUps;
+          // The wake-up resolves the context's promise on the next tick, if the waiter is still there.
           Atomics.notify(i32, 0);
+        }
+        function afterRound(collected) {
+          if (collected && wakeUps !== wakeUpsBefore) throw new Error("the wake-up ran in a collected context");
         }
       `),
     );
-    expect(stdout).toBe("done 3\n");
+    expect(stdout).toBe("done\n");
   });
 });

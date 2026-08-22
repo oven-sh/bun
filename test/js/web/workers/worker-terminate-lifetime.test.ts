@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir, tls } from "harness";
 import { join } from "path";
 
 // Worker VM startup/teardown is much slower under debug and/or ASAN; these
@@ -725,6 +725,48 @@ test(
   timeout,
 );
 
+// Spawns workers that each start `connectExpr` in one immediate and call
+// process.exit(0) in the next, so whatever that connect attempt left behind is
+// still pending when the worker's VM tears down.
+async function exitRightAfterConnecting(connectExpr: string) {
+  const workers = slow ? 8 : 24;
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const { Worker } = require("node:worker_threads");
+      const src =
+        "const { parentPort } = require('node:worker_threads');" +
+        "Bun.file(process.execPath).slice(0, 100).json().catch(() => {});" +
+        ${JSON.stringify(`setImmediate(() => ${connectExpr}.catch(() => {}));`)} +
+        "parentPort.postMessage('up');" +
+        "setImmediate(() => process.exit(0));";
+      let started = 0, exited = 0;
+      function again() {
+        if (started >= ${workers}) {
+          if (exited === ${workers}) console.log("PASS");
+          return;
+        }
+        started++;
+        const w = new Worker(src, { eval: true });
+        w.on("error", (e) => { console.error(e); process.exit(1); });
+        w.on("exit", () => { exited++; again(); });
+      }
+      again(); again();
+    `,
+    ],
+    env: { ...bunEnv, UV_THREADPOOL_SIZE: "4" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("PASS\n");
+  expect(exitCode).toBe(0);
+}
+
 // For a debug build: host code that runs after the worker's own process.exit()
 // unwound script — here a redis connect started in the same immediate tick as
 // the exit, whose ECONNREFUSED then lands in that loop tick — builds JS error
@@ -735,43 +777,62 @@ test(
 // for as long as it keeps the exception.
 test.skipIf(!isDebug)(
   "process.exit() with native error completions landing in the same tick does not trip DeferTermination",
+  () =>
+    exitRightAfterConnecting(
+      "new Bun.RedisClient('redis://127.0.0.1:9', { connectionTimeout: 100, autoReconnect: false }).connect()",
+    ),
+  timeout,
+);
+
+// A TLS context that cannot be built fails the dial before there is a socket;
+// the redis client then settles that from a task it queues on the event loop,
+// holding a ref to itself and the loop. The exit in the next immediate tears
+// the VM down with that task still queued, so it has to be released without
+// running (a debug build asserts on the refcount if either ref is mishandled;
+// the ASAN build reports the leak).
+test.skipIf(!isDebug && !isASAN)(
+  "process.exit() with a redis client's deferred close still queued releases it cleanly",
+  () =>
+    exitRightAfterConnecting(
+      "new Bun.RedisClient('rediss://127.0.0.1:9', { tls: { key: 'x', cert: 'x' }, autoReconnect: false }).connect()",
+    ),
+  timeout,
+);
+
+// The same task, queued by a first command whose dial failed outright (a unix
+// socket path nobody listens on), with the command itself still queued behind it.
+test.skipIf((!isDebug && !isASAN) || isWindows)(
+  "process.exit() with a redis client's deferred close and a queued command releases both cleanly",
+  () => exitRightAfterConnecting("new Bun.RedisClient('redis+unix:///nonexistent/redis.sock').ping()"),
+  timeout,
+);
+
+// The same deferred close on the main thread, left to run: it settles the
+// connect and drops its refs, so nothing keeps the event loop alive and the
+// process exits on its own.
+test(
+  "a redis client whose TLS context cannot be built does not keep the process alive",
   async () => {
-    const workers = slow ? 8 : 24;
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
-        const { Worker } = require("node:worker_threads");
-        const src =
-          "const { parentPort } = require('node:worker_threads');" +
-          "Bun.file(process.execPath).slice(0, 100).json().catch(() => {});" +
-          "setImmediate(() => new Bun.RedisClient('redis://127.0.0.1:9', { connectionTimeout: 100, autoReconnect: false }).connect().catch(() => {}));" +
-          "parentPort.postMessage('up');" +
-          "setImmediate(() => process.exit(0));";
-        let started = 0, exited = 0;
-        function again() {
-          if (started >= ${workers}) {
-            if (exited === ${workers}) console.log("PASS");
-            return;
-          }
-          started++;
-          const w = new Worker(src, { eval: true });
-          w.on("error", (e) => { console.error(e); process.exit(1); });
-          w.on("exit", () => { exited++; again(); });
-        }
-        again(); again();
-      `,
+        new Bun.RedisClient("rediss://127.0.0.1:1", { tls: { key: "x", cert: "x" }, autoReconnect: false })
+          .connect()
+          .catch(err => console.log("connect rejected", err.code));
+        `,
       ],
-      env: { ...bunEnv, UV_THREADPOOL_SIZE: "4" },
+      env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
-
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toBe("PASS\n");
-    expect(exitCode).toBe(0);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "connect rejected ERR_REDIS_CONNECTION_CLOSED\n",
+      stderr: "",
+      exitCode: 0,
+    });
   },
   timeout,
 );
@@ -949,6 +1010,153 @@ test(
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout).toBe("all exited\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
+// A worker's Bun.serve() rendering a body whose microtask checkpoint meets the worker's termination
+// (a promise/stream body that spins in a microtask when terminate() lands): the render used to go on
+// and attach its continuation with the TerminationException pending (JSC assertNoException in the
+// promise `then`). The context's checkpoint now lands the termination and the render stands down.
+test(
+  "terminate() while the worker's Bun.serve() renders a promise/stream body stuck in a microtask",
+  async () => {
+    const workers = slow ? 6 : 12;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const src =
+          "const { parentPort } = require('worker_threads');" +
+          "const s = Bun.serve({ port: 0, fetch(req) {" +
+          "  if (new URL(req.url).pathname === '/stream') return new Response(new ReadableStream({ async pull(c) { await 1; c.enqueue(new TextEncoder().encode('x')); await 1; for (;;) {} } }));" +
+          "  return (async () => { await 1; for (;;) {} })();" +
+          "}});" +
+          "parentPort.postMessage(s.url.href);";
+        (async () => {
+          for (let i = 0; i < ${workers}; i++) {
+            const w = new Worker(src, { eval: true });
+            const url = await new Promise(r => w.once("message", r));
+            fetch(url + (i % 2 ? "stream" : "promise")).then(r => r.text()).catch(() => {});
+            await Bun.sleep(30);
+            await w.terminate();
+          }
+          console.log("PASS");
+          process.exit(0);
+        })();
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("PASS\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
+// A worker terminated while HTMLRewriter transforms with async element handlers are in flight: a
+// handler's promise reaction resumes the rewrite (more handlers, sink writes, stream delivery) beneath a
+// microtask, and the reaction returned a value with the termination it met still pending ("host fn
+// return/exception state mismatch"). It now reports the pending exception instead.
+test(
+  "terminate() while HTMLRewriter async element handlers resume beneath a microtask",
+  async () => {
+    const workers = slow ? 10 : 40;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const src =
+          "const { parentPort } = require('worker_threads');" +
+          "const T = f => { try { const x = f(); if (x && x.then) x.then(()=>{},()=>{}); } catch {} };" +
+          "const once = () => T(() => new HTMLRewriter().on('*', { async element(e) { await Bun.sleep(Math.random() * 3); T(() => e.setAttribute('y', '1')); } })" +
+          "  .transform(new Response('<p><a>x</a></p>'.repeat(50))).text().then(() => {}, () => {}));" +
+          "setInterval(() => { for (let i = 0; i < 4; i++) once(); }, 1);" +
+          "parentPort.postMessage('go');";
+        (async () => {
+          for (let i = 0; i < ${workers}; i++) {
+            const w = new Worker(src, { eval: true });
+            await new Promise(r => w.once("message", r));
+            await Bun.sleep(8 + (i % 8) * 3);
+            await w.terminate();
+          }
+          console.log("PASS");
+          process.exit(0);
+        })();
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("PASS\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
+// A worker terminated while async-iterable bodies are being driven (a `Bun.serve` handler returning
+// `new Response(asyncGenerator())`, a `fetch()` with an async-iterable request body): the pump met the
+// termination as the abrupt completion of `iterator.next()` and went on to notify the iterator —
+// `iterator.throw(undefined)` and error-code lookups with the TerminationException pending — walking
+// objects mid-teardown (JSC "object->structure() == this" assert). It now stands down instead.
+test(
+  "terminate() while async-iterable Response/request bodies are being pumped",
+  async () => {
+    const workers = slow ? 10 : 30;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const src =
+          "const { parentPort } = require('worker_threads');" +
+          "const T = f => { try { const x = f(); if (x && x.then) x.then(()=>{},()=>{}); } catch {} };" +
+          "async function* gen() { for (;;) { await Bun.sleep(Math.random() * 2); yield new TextEncoder().encode('chunk'); } }" +
+          "const s = Bun.serve({ port: 0, fetch: () => new Response(gen()) });" +
+          "setInterval(() => { T(() => fetch(s.url).then(r => r.body.getReader().read())); T(() => fetch(s.url, { method: 'POST', body: gen(), duplex: 'half' }).then(r => r.text())); }, 1);" +
+          "parentPort.postMessage('go');";
+        (async () => {
+          for (let i = 0; i < ${workers}; i++) {
+            const w = new Worker(src, { eval: true });
+            await new Promise(r => w.once("message", r));
+            await Bun.sleep(10 + (i % 6) * 5);
+            await w.terminate();
+          }
+          console.log("PASS");
+          process.exit(0);
+        })();
+      `,
+      ],
+      // Every fetch here is deliberately still in flight when its worker is terminated, and an
+      // in-flight fetch's tasklet is not reclaimed at worker teardown (pre-existing; not what this
+      // test is about), so leak checking is off for this child — the test guards the pump's
+      // termination handling, which aborts the child (no PASS) when it regresses.
+      env: { ...bunEnv, ASAN_OPTIONS: "detect_leaks=0:allow_user_segv_handler=1:disable_coredump=0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // A worker terminated mid-fetch of its own streaming response can report one rejection with an
+    // empty reason natively (its handlers can no longer run) — a bare "error" line, seen on main as
+    // well and unrelated to what this test guards; anything else on stderr fails the test.
+    expect(stderr.split("\n").filter(l => l.trim() !== "" && l.trim() !== "error")).toEqual([]);
+    expect(stdout).toBe("PASS\n");
     expect(exitCode).toBe(0);
   },
   timeout,

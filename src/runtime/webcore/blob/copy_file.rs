@@ -365,7 +365,6 @@ impl CopyFile {
         let src_fd = self.source_fd;
         let dest_fd = self.destination_fd;
 
-        // defer { this.read_len = @truncate(total_written); }
         let read_len_slot: *mut SizeType = &raw mut self.read_len;
         let total_written_slot: *const u64 = core::ptr::addr_of!(total_written);
         scopeguard::defer! {
@@ -626,8 +625,6 @@ impl CopyFile {
         }
         #[cfg(not(windows))]
         {
-            // defer task.onFinish();
-
             #[cfg(target_os = "macos")]
             let mut stat_: Option<Stat> = None;
             #[cfg(not(target_os = "macos"))]
@@ -988,7 +985,9 @@ fn read_write_loop_capped(
     cap: SizeType,
     total: &mut u64,
 ) -> bun_sys::Result<()> {
-    let mut buf = [0u8; 64 * 1024];
+    let mut stack_buf = bun_core::vec::UninitBuf::<{ 64 * 1024 }>::uninit();
+    // SAFETY: `read` is the only writer of `buf`; each iteration reads back only `buf[..amt]`.
+    let buf = unsafe { stack_buf.as_bytes_mut() };
     let mut remaining = cap;
     while remaining > 0 {
         let want = (buf.len() as SizeType).min(remaining) as usize;

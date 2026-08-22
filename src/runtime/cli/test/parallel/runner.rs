@@ -23,6 +23,7 @@ use super::worker::{Worker, WorkerPipe};
 use crate::Command;
 use crate::test_command::{self, CommandLineReporter, TestCommand};
 use crate::test_runner::bun_test::FirstLast;
+use bun_collections::index_sort;
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
 
 /// All workers are busy for at least this long before another is spawned.
@@ -92,7 +93,9 @@ pub(crate) fn run_as_coordinator(
     // explicitly opts out of locality (the caller already shuffled).
     let mut sorted: Vec<Interned> = files.to_vec();
     if !ctx.test_options.randomize {
-        sorted.sort_by(|a, b| bun_core::order(a.as_bytes(), b.as_bytes()));
+        index_sort::sort_slice_by(&mut sorted, |a, b| {
+            bun_core::order(a.as_bytes(), b.as_bytes())
+        });
     }
     // With --timings the contiguous chunks are cut by total duration instead
     // of file count, and each chunk is dispatched slowest-first (cache hits

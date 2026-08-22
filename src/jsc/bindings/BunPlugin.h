@@ -59,6 +59,13 @@ public:
         }
 
         void append(JSC::VM& vm, JSC::RegExp* filter, JSC::JSObject* func, String& namespaceString);
+
+        void clear()
+        {
+            fileNamespace.clear();
+            namespaces.clear();
+            groups.clear();
+        }
     };
 
     class OnLoad final : public Base {
@@ -78,6 +85,14 @@ public:
         void addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mock);
 
         std::optional<String> resolveVirtualModule(const String& path, const String& from);
+
+        void clear()
+        {
+            Base::clear();
+            delete virtualModules;
+            virtualModules = nullptr;
+            mustDoExpensiveRelativeLookup = false;
+        }
 
         ~OnLoad()
         {

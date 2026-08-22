@@ -219,19 +219,13 @@ pub enum IPCDecodeError {
     /// The decode ran under a VM that is stopping (loop-level; not an exception).
     #[error("Stopped")]
     Stopped,
-    // —— bun.JSError variants ——
-    #[error("JSError")]
-    JSError,
-    #[error("OutOfMemory")]
-    OutOfMemory,
+    #[error("{0:?}")]
+    Js(JsError),
 }
 
 impl From<JsError> for IPCDecodeError {
     fn from(e: JsError) -> Self {
-        match e {
-            JsError::Thrown => IPCDecodeError::JSError,
-            JsError::OutOfMemory => IPCDecodeError::OutOfMemory,
-        }
+        IPCDecodeError::Js(e)
     }
 }
 
@@ -250,7 +244,7 @@ pub enum IPCSerializationError {
 impl From<JsError> for IPCSerializationError {
     fn from(e: JsError) -> Self {
         match e {
-            JsError::Thrown => IPCSerializationError::JSError,
+            JsError::Thrown | JsError::Terminated => IPCSerializationError::JSError,
             JsError::OutOfMemory => IPCSerializationError::OutOfMemory,
         }
     }
@@ -508,7 +502,7 @@ mod json {
             );
             if s.tag() == bun_core::Tag::Dead {
                 bun_core::hint::cold();
-                return Err(IPCDecodeError::OutOfMemory);
+                return Err(IPCDecodeError::Js(JsError::OutOfMemory));
             }
             s
         } else {
@@ -530,6 +524,7 @@ mod json {
         }
         let deserialized = match parsed {
             Ok(v) => v,
+            Err(JsError::Terminated) => return Err(IPCDecodeError::Js(JsError::Terminated)),
             Err(JsError::Thrown) => {
                 // A malformed message; a pending termination is not cleared by this and keeps unwinding.
                 global_this.clear_exception();
@@ -2268,7 +2263,7 @@ fn finish_decode(send_queue: &SendQueue, step: &DecodeStep) {
         DecodeStep::Wait => {
             log!("hit NotEnoughBytes");
         }
-        DecodeStep::Fail(IPCDecodeError::OutOfMemory) => {
+        DecodeStep::Fail(IPCDecodeError::Js(JsError::OutOfMemory)) => {
             Output::print_errorln("IPC message is too long.");
             send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
         }
@@ -2276,8 +2271,8 @@ fn finish_decode(send_queue: &SendQueue, step: &DecodeStep) {
         // restore) threw: that is this message's delivery failing, folded like
         // a throwing listener, and the channel is closed as for any undecodable
         // input.
-        DecodeStep::Fail(IPCDecodeError::JSError) => {
-            crate::dispatch::fold(Err(JsError::Thrown));
+        DecodeStep::Fail(IPCDecodeError::Js(err)) => {
+            crate::dispatch::fold(Err(*err));
             send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
         }
         DecodeStep::Fail(_) => {

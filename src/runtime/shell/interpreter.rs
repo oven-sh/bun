@@ -1224,7 +1224,7 @@ impl Interpreter {
                             ],
                         ),
                         Err(err) if !global_this.has_pending_termination_exception() => {
-                            let error = global_this.take_exception(err);
+                            let error = global_this.take_error(err);
                             if let Some(reject) =
                                 JSShellInterpreter::reject_get_cached(this_jsvalue)
                             {
@@ -2077,7 +2077,6 @@ impl CowFd {
 // Convenience re-exports for state modules
 // ────────────────────────────────────────────────────────────────────────────
 
-pub use crate::shell::builtin::Builtin;
 pub use crate::shell::io_reader::IOReader;
 pub use crate::shell::io_writer::IOWriter;
 pub use crate::shell::states::assigns::AssignCtx;

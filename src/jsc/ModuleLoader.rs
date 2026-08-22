@@ -13,8 +13,8 @@ use bun_options_types::LoaderExt as _;
 
 use crate::virtual_machine::VirtualMachine;
 use crate::{
-    self as jsc, ErrorCode, ErrorableResolvedSource, ErrorableString, JSGlobalObject,
-    JSInternalPromise, JSValue, ResolvedSource,
+    self as jsc, ErrorCode, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSValue,
+    ResolvedSource,
 };
 
 // Re-exports.
@@ -210,26 +210,6 @@ pub struct LoaderHooks {
     /// `StandaloneModuleGraph`).
     pub resolve_embedded_node_file:
         unsafe fn(vm: *mut VirtualMachine, in_out_str: *mut bun_core::String) -> bool,
-    /// `VirtualMachine.resolveMaybeNeedsTrailingSlash(res, global, specifier,
-    /// source, query_string?, mode, is_a_file_path)` — the resolution path
-    /// behind
-    /// `Bun__resolveSync` / `Zig__GlobalObject__resolve` / `import.meta.resolve`.
-    /// Body reaches into `transpiler.resolver.resolveAndAutoInstall`, the
-    /// `PluginRunner`, `ObjectURLRegistry`, and `ServerEntryPoint` (all
-    /// `bun_runtime` types), so the low tier owns the symbol and dispatches.
-    ///
-    /// Writes `*res` (always — `.ok` or `.err`); writes `*query_string` (if
-    /// non-null) to a fresh owned `bun.String`. Returns `false` iff a JS
-    /// exception is pending on `global`.
-    pub resolve: unsafe fn(
-        res: *mut ErrorableString,
-        global: *mut JSGlobalObject,
-        specifier: bun_core::String,
-        source: bun_core::String,
-        query_string: *mut bun_core::String,
-        mode: crate::virtual_machine::ResolveMode,
-        is_a_file_path: bool,
-    ) -> bool,
     /// `Bun__transpileVirtualModule` body —
     /// transpiles plugin-provided source through the per-thread `BufferPrinter`
     /// (a `bun_runtime` thread-local). Writes `*ret` (always — `.ok` or `.err`)

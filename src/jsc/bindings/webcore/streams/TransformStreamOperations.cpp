@@ -40,28 +40,6 @@ static JSReadableStreamDefaultController* transformReadableController(JSTransfor
     return uncheckedDowncast<JSReadableStreamDefaultController>(readable->m_controller.get());
 }
 
-// WebIDL callback invoke returning Promise<undefined>: an abrupt completion becomes a
-// rejected promise (a sanctioned completion-record catch). Returns nullptr on VM termination.
-static JSPromise* invokePromiseReturningMethod(JSC::VM& vm, JSGlobalObject* globalObject, JSObject* method, JSValue thisValue, const MarkedArgumentBuffer& args)
-{
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue result;
-    JSValue thrown;
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        auto callData = getCallData(method);
-        ASSERT(callData.type != CallData::Type::None);
-        result = call(globalObject, method, callData, thisValue, args);
-        if (catchScope.exception()) [[unlikely]]
-            thrown = takeAbruptCompletion(globalObject, catchScope);
-    }
-    if (!thrown.isEmpty())
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
-    if (result.isEmpty())
-        return nullptr;
-    RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
-}
-
 // [[flushAlgorithm]] dispatch (needed only by the default sink close algorithm below).
 static JSPromise* performFlushAlgorithm(JSC::VM& vm, JSGlobalObject* globalObject, JSTransformStreamDefaultController* controller)
 {
@@ -72,7 +50,7 @@ static JSPromise* performFlushAlgorithm(JSC::VM& vm, JSGlobalObject* globalObjec
             MarkedArgumentBuffer args;
             args.append(controller);
             ASSERT(!args.hasOverflowed());
-            RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(vm, globalObject, method, controller->m_transformer.get(), args));
+            RELEASE_AND_RETURN(scope, invokeCallbackReturningPromise(globalObject, method, controller->m_transformer.get(), args));
         }
         break;
     case TransformerKind::Identity:
@@ -98,7 +76,7 @@ static JSPromise* performCancelAlgorithm(JSC::VM& vm, JSGlobalObject* globalObje
             MarkedArgumentBuffer args;
             args.append(reason);
             ASSERT(!args.hasOverflowed());
-            RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(vm, globalObject, method, controller->m_transformer.get(), args));
+            RELEASE_AND_RETURN(scope, invokeCallbackReturningPromise(globalObject, method, controller->m_transformer.get(), args));
         }
     }
     RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));

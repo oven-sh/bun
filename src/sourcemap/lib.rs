@@ -428,7 +428,6 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
         if load_hint != SourceMapLoadHint::IsExternalMap {
             'try_inline: {
                 let source = provider.get_source_slice();
-                // defer source.deref() → Drop on bun_core::String
                 debug_assert!(source.tag() == bun_core::Tag::ZigString);
 
                 let maybe_found_url = if source.is_8bit() {
@@ -440,7 +439,6 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
                 let Some(found_url) = maybe_found_url else {
                     break 'try_inline;
                 };
-                // defer found_url.deinit() → Drop
 
                 match parse_url(&arena, found_url.slice(), result) {
                     Ok(parsed) => break 'parsed (SourceMapLoadHint::IsInlineMap, parsed),
@@ -685,22 +683,10 @@ pub mod SerializedSourceMap {
             let decompressed = self.decompressed_files[index].get_or_init(|| {
                 let sp = self.map.compressed_source_file_at(index);
                 let compressed_file = sp.slice(self.map.bytes);
-                let size = bun_zstd::get_decompressed_size(compressed_file);
-
-                let mut bytes = vec![0u8; size];
-                match bun_zstd::decompress(&mut bytes, compressed_file) {
-                    bun_zstd::Result::Err(err) => {
-                        bun_core::warn!(
-                            "Source map decompression error: {}",
-                            ::bstr::BStr::new(err.as_bytes()),
-                        );
-                        Vec::new()
-                    }
-                    bun_zstd::Result::Success(n) => {
-                        bytes.truncate(n);
-                        bytes
-                    }
-                }
+                bun_zstd::decompress_alloc(compressed_file).unwrap_or_else(|err| {
+                    bun_core::warn!("Source map decompression error: {}", err);
+                    Vec::new()
+                })
             });
             if decompressed.is_empty() {
                 None

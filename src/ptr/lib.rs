@@ -22,6 +22,8 @@
 // `cow_slice::CowSlice<u8>`.
 #[path = "CowSlice.rs"]
 pub mod cow_slice;
+mod js_cell;
+pub use js_cell::JsCell;
 
 // FFI-crossing externally-ref-counted pointer (e.g., WTFStringImpl). Canonical
 // impl moved down to `bun_core::external_shared` (cycle-break for the
@@ -156,11 +158,6 @@ impl<T: ?Sized> BackRef<T, Mut> {
         // SAFETY: caller guarantees exclusivity; BackRef invariant guarantees
         // liveness/alignment; `Mut` records write provenance.
         unsafe { self.0.as_mut() }
-    }
-
-    #[inline]
-    pub const fn shared(self) -> BackRef<T, Shared> {
-        BackRef(self.0, core::marker::PhantomData)
     }
 }
 
@@ -710,12 +707,6 @@ impl<T> DetachablePtr<T> {
     #[inline]
     pub fn is_detached(&self) -> bool {
         self.0.get().is_null()
-    }
-
-    /// Recover the raw pointer (for forwarding / identity checks).
-    #[inline]
-    pub fn as_ptr(&self) -> *mut T {
-        self.0.get()
     }
 
     /// Load the parked `&mut T`, or `None` if detached.

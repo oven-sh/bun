@@ -1420,7 +1420,6 @@ pub(crate) fn inject<'a>(
 
         #[cfg(not(windows))]
         {
-            // defer self_fd.close()
             let _self_fd_guard = Syscall::CloseOnDrop::new(self_fd);
 
             if let Err(e) = bun_sys::copy_file(self_fd, fd) {
@@ -1472,16 +1471,28 @@ pub(crate) fn inject<'a>(
                 512 * 1024,
                 bun_sys::FileWriter(cloned_executable_fd),
             );
-            if let Err(e) = macho_file.build_and_sign(&mut buffered_writer) {
-                bun_core::pretty_errorln!(
-                    "Error writing standalone module graph: {}",
-                    bstr::BStr::new(e.name())
-                );
+            let written = match macho_file.build_and_sign(&mut buffered_writer) {
+                Ok(n) => n,
+                Err(e) => {
+                    bun_core::pretty_errorln!(
+                        "Error writing standalone module graph: {}",
+                        bstr::BStr::new(e.name())
+                    );
+                    cleanup(zname, cloned_executable_fd);
+                    return None;
+                }
+            };
+            if let Err(e) = std::io::Write::flush(&mut buffered_writer) {
+                bun_core::pretty_errorln!("Error flushing standalone module graph: {}", e);
                 cleanup(zname, cloned_executable_fd);
                 return None;
             }
-            if let Err(e) = std::io::Write::flush(&mut buffered_writer) {
-                bun_core::pretty_errorln!("Error flushing standalone module graph: {}", e);
+            // The template copy may be longer than the signed output; codesign rejects bytes past the signature.
+            if let Err(err) = Syscall::ftruncate(
+                cloned_executable_fd,
+                i64::try_from(written).expect("int cast"),
+            ) {
+                bun_core::pretty_errorln!("Error truncating temporary file: {}", err);
                 cleanup(zname, cloned_executable_fd);
                 return None;
             }
@@ -1790,7 +1801,6 @@ pub(crate) fn download_to_path(
         let mut tarball_bytes: Vec<u8> = Vec::new();
         {
             refresher.refresh();
-            // defer compressed_archive_bytes.list.deinit(allocator) — handled by Drop
 
             if compressed_archive_bytes.list.is_empty() {
                 // Return error without printing - let caller handle the messaging
@@ -1819,7 +1829,6 @@ pub(crate) fn download_to_path(
 
             {
                 refresher.start(b"Extracting", 0);
-                // defer node.end() — see explicit calls below
 
                 let mut tmpname_buf = [0u8; 1024];
                 let tempdir_name: &ZStr =

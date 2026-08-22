@@ -1838,8 +1838,7 @@ mod draft {
                 match pnpm_matcher_from_expr(&public_hoist_pattern_expr, log, source, bump) {
                     Ok(v) => Some(v),
                     Err(FromExprError::OutOfMemory) => return Err(AllocError),
-                    Err(_) => {
-                        // error.InvalidRegExp, error.UnexpectedExpr
+                    Err(FromExprError::UnexpectedExpr) => {
                         log.reset();
                         None
                     }
@@ -1851,8 +1850,7 @@ mod draft {
                 match pnpm_matcher_from_expr(&hoist_pattern_expr, log, source, bump) {
                     Ok(v) => Some(v),
                     Err(FromExprError::OutOfMemory) => return Err(AllocError),
-                    Err(_) => {
-                        // error.InvalidRegExp, error.UnexpectedExpr
+                    Err(FromExprError::UnexpectedExpr) => {
                         log.reset();
                         None
                     }
@@ -1946,8 +1944,8 @@ mod draft {
     }
 
     use bun_install_types::NodeLinker::{
-        Behavior as PnpmBehavior, CreateMatcherError, FromExprError, Matcher as PnpmMatcherEntry,
-        PnpmMatcher, create_matcher,
+        Behavior as PnpmBehavior, FromExprError, Matcher as PnpmMatcherEntry, PnpmMatcher,
+        create_matcher,
     };
 
     /// `PnpmMatcher.fromExpr` operating on
@@ -1964,11 +1962,6 @@ mod draft {
         source: &Source,
         bump: &Arena,
     ) -> Result<PnpmMatcher, FromExprError> {
-        let mut buf: Vec<u8> = Vec::new();
-
-        // bun.jsc.initialize(false) is performed lazily inside the regex vtable
-        // compile hook (tier-6 owns it).
-
         let mut matchers: Vec<PnpmMatcherEntry> = Vec::new();
         let mut has_include = false;
         let mut has_exclude = false;
@@ -1976,23 +1969,7 @@ mod draft {
         match &expr.data {
             ExprData::EString(s) => {
                 let mut s = *s;
-                let pattern = s.slice(bump);
-                let matcher = match create_matcher(pattern, &mut buf) {
-                    Ok(m) => m,
-                    Err(CreateMatcherError::OutOfMemory) => return Err(FromExprError::OutOfMemory),
-                    Err(CreateMatcherError::InvalidRegExp) => {
-                        log.add_error_fmt_opts(
-                            format_args!("Invalid regex: {}", bstr::BStr::new(pattern)),
-                            bun_ast::AddErrorOptions {
-                                loc: expr.loc,
-                                redact_sensitive_information: true,
-                                source: Some(source),
-                                ..Default::default()
-                            },
-                        );
-                        return Err(FromExprError::InvalidRegExp);
-                    }
-                };
+                let matcher = create_matcher(s.slice(bump));
                 has_include = has_include || !matcher.is_exclude;
                 has_exclude = has_exclude || matcher.is_exclude;
                 matchers.push(matcher);
@@ -2000,24 +1977,7 @@ mod draft {
             ExprData::EArray(patterns) => {
                 for pattern_expr in patterns.items.slice() {
                     if let Some(pattern) = pattern_expr.as_string_cloned(bump)? {
-                        let matcher = match create_matcher(pattern, &mut buf) {
-                            Ok(m) => m,
-                            Err(CreateMatcherError::OutOfMemory) => {
-                                return Err(FromExprError::OutOfMemory);
-                            }
-                            Err(CreateMatcherError::InvalidRegExp) => {
-                                log.add_error_fmt_opts(
-                                    format_args!("Invalid regex: {}", bstr::BStr::new(pattern)),
-                                    bun_ast::AddErrorOptions {
-                                        loc: pattern_expr.loc,
-                                        redact_sensitive_information: true,
-                                        source: Some(source),
-                                        ..Default::default()
-                                    },
-                                );
-                                return Err(FromExprError::InvalidRegExp);
-                            }
-                        };
+                        let matcher = create_matcher(pattern);
                         has_include = has_include || !matcher.is_exclude;
                         has_exclude = has_exclude || matcher.is_exclude;
                         matchers.push(matcher);

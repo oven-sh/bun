@@ -212,7 +212,7 @@ impl ABIType {
         ToCFormatter { tag: self, symbol }
     }
 
-    pub fn to_js(self, symbol: &[u8]) -> ToJSFormatter<'_> {
+    pub(crate) fn to_js(self, symbol: &[u8]) -> ToJSFormatter<'_> {
         ToJSFormatter { tag: self, symbol }
     }
 
@@ -226,7 +226,7 @@ impl ABIType {
     }
 }
 
-pub struct ToCFormatter<'a> {
+pub(crate) struct ToCFormatter<'a> {
     pub(crate) symbol: &'a [u8],
     pub(crate) tag: ABIType,
 }
@@ -248,7 +248,7 @@ impl fmt::Display for ToCFormatter<'_> {
     }
 }
 
-pub struct ToJSFormatter<'a> {
+pub(crate) struct ToJSFormatter<'a> {
     pub(crate) symbol: &'a [u8],
     pub(crate) tag: ABIType,
 }

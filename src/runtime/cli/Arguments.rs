@@ -763,7 +763,7 @@ pub(crate) static Bun__Node__UseSystemCA: core::sync::atomic::AtomicBool =
 // their private helpers moved to `bun_bunfig::arguments` so `bun_install` can
 // call them without a tier-6 dependency. Re-export here so existing
 // `crate::cli::arguments::load_config*` callers are unaffected.
-pub use bun_bunfig::arguments::{load_config, load_config_path, load_config_with_cmd_args};
+pub use bun_bunfig::arguments::{load_config_path, load_config_with_cmd_args};
 
 /// node aliases `-pe` to `--print --eval` as a whole token (node_options.cc):
 /// it can't be a short in either runtime, being ambiguous with `-p` carrying
@@ -836,9 +836,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         } else {
             bun_core::getcwd(&mut outbuf)?.as_bytes()
         };
-        let out = resolve_path::join_abs::<platform::Loose>(base, cwd_arg);
-        // `chdir` wants a NUL-terminated path; `join_abs` returns a borrowed
-        // slice into a threadlocal buffer, so dupe-Z once and reuse for both
+        let mut spill = Vec::new();
+        let out =
+            resolve_path::join_abs_string_spill::<platform::Loose>(base, &mut spill, &[cwd_arg]);
+        // `chdir` wants a NUL-terminated path, so dupe-Z once and reuse for both
         // the `chdir` arg and the stored `absolute_working_dir`.
         let out_z = bun_core::ZBox::from_bytes(out);
         if let bun_sys::Result::Err(err) = bun_sys::chdir(&out_z) {
@@ -963,17 +964,14 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         });
     }
 
-    opts.tsconfig_override = if let Some(ts) = args.option(b"--tsconfig-override") {
-        Some(
-            resolve_path::join_abs_string::<platform::Auto>(
-                ctx.args.absolute_working_dir.as_deref().unwrap(),
-                &[ts],
-            )
-            .into(),
-        )
-    } else {
-        None
-    };
+    opts.tsconfig_override = args.option(b"--tsconfig-override").map(|ts| {
+        let mut spill = Vec::new();
+        Box::from(resolve_path::join_abs_string_spill::<platform::Auto>(
+            ctx.args.absolute_working_dir.as_deref().unwrap(),
+            &mut spill,
+            &[ts],
+        ))
+    });
 
     opts.main_fields = slice_to_owned(args.options(b"--main-fields"));
     // we never actually supported inject.

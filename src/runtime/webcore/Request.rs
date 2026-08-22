@@ -131,10 +131,6 @@ impl Default for Flags {
     }
 }
 
-// NOTE: toJS is overridden
-pub use js_gen::from_js;
-pub use js_gen::from_js_direct;
-
 // Heap-allocates via Box::new (global mimalloc).
 impl Request {
     #[inline]
@@ -266,7 +262,7 @@ impl Request {
                 BodyValue::Blob(blob) => {
                     Some(std::ptr::from_ref::<[u8]>(blob.content_type_slice()))
                 }
-                BodyValue::Locked(locked) => match locked.readable.get(global_this) {
+                BodyValue::Locked(locked) => match locked.readable.get() {
                     Some(readable) => match readable.ptr {
                         crate::webcore::readable_stream::Source::Blob(blob) => {
                             // SAFETY: `Source::Blob` holds a live `*mut ByteBlobLoader`
@@ -469,11 +465,8 @@ impl Request {
 
 impl Request {
     #[inline]
-    pub(crate) fn get_body_readable_stream(
-        &self,
-        global_object: &JSGlobalObject,
-    ) -> Option<ReadableStream> {
-        <Self as BodyMixin>::get_body_readable_stream(self, global_object)
+    pub(crate) fn get_body_readable_stream(&self) -> Option<ReadableStream> {
+        <Self as BodyMixin>::get_body_readable_stream(self)
     }
 
     pub fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
@@ -645,7 +638,7 @@ impl Request {
                     }
                 }
                 BodyValue::Locked(_) => {
-                    if let Some(stream) = self.get_body_readable_stream(formatter.global_this()) {
+                    if let Some(stream) = self.get_body_readable_stream() {
                         writer.write_str("\n")?;
                         formatter.write_indent(writer)?;
                         formatter

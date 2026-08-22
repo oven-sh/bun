@@ -113,6 +113,32 @@ impl JestPrettyFormat {
         writer: &mut W,
         options: FormatOptions,
     ) -> JsResult<()> {
+        // Nested values re-enter the formatter through `ConsoleFormatter::print_as`
+        // with a `FmtAdapter<AsFmt>` sink; adapt the caller's writer to that same
+        // type up front so the whole `Formatter` tree is instantiated once.
+        let flush = options.flush;
+        let result = {
+            let mut bridge = AsFmt::new(&mut *writer);
+            let mut adapted = bun_io::write::FmtAdapter::new(&mut bridge);
+            Self::format_adapted(level, global, vals, len, &mut adapted, options)
+        };
+        // `FmtAdapter::flush` can't reach `writer`; do the requested flush here.
+        if flush {
+            let _ = writer.flush();
+        }
+        result
+    }
+
+    fn format_adapted(
+        level: MessageLevel,
+        global: &JSGlobalObject,
+        vals: &[JSValue],
+        len: usize,
+        writer: &mut bun_io::write::FmtAdapter<'_, AsFmt<'_>>,
+        options: FormatOptions,
+    ) -> JsResult<()> {
+        use bun_io::Write as _;
+        type W<'a, 'b> = bun_io::write::FmtAdapter<'a, AsFmt<'b>>;
         let mut fmt: Formatter;
         // `impl Drop for Formatter` below releases the pool map — the pool
         // node is acquired lazily inside `print_as` and swapped back on every
@@ -375,7 +401,6 @@ pub enum Tag {
 
     JSON,
     NativeCode,
-    ArrayBuffer,
 
     JSX,
     Event,
@@ -854,7 +879,7 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
                 writer.print(format_args!("{} ", name_str));
             } else {
                 value
-                    .get_prototype(global_this)
+                    .get_prototype(global_this)?
                     .get_name_property(global_this, &mut name_str)?;
                 if name_str.len > 0 && !name_str.eql_comptime(b"Object") {
                     writer.print(format_args!("{} ", name_str));
@@ -2457,7 +2482,6 @@ impl<'a> Formatter<'a> {
                         writer.write_all(b"]");
                     }
                 }
-                _ => {}
             }
 
             Ok(())
@@ -2522,7 +2546,7 @@ impl<'a> Formatter<'a> {
             Tag::Error => {
                 self.print_as::<W, { Tag::Error }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
             }
-            Tag::ArrayBuffer | Tag::TypedArray => self
+            Tag::TypedArray => self
                 .print_as::<W, { Tag::TypedArray }, ENABLE_ANSI_COLORS>(writer, value, result.cell),
             Tag::Map => {
                 self.print_as::<W, { Tag::Map }, ENABLE_ANSI_COLORS>(writer, value, result.cell)

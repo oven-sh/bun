@@ -458,24 +458,17 @@ impl JSMySQLConnection {
         else {
             return Ok(JSValue::ZERO);
         };
-        // Covers `try arguments[7/8].toBunString()` and the null-byte rejection
-        // below. Ownership passes to `MySQLConnection.init` once `Box::new`
-        // succeeds — we null the locals at that point so the connect-fail path
-        // (which `deref()`s the connection) doesn't double-free.
+        // Frees `secure` / drops `tls_config` on every early return until `into_inner` below.
         let tls_guard = connection_ctor_args::guard_tls(args.secure, args.tls_config);
 
-        let options_str = bun_core::OwnedString::new(arguments[7].to_bun_string(global_object)?);
         let path_str = bun_core::OwnedString::new(arguments[8].to_bun_string(global_object)?);
 
         // `init` takes `Box<[u8]>` per field (each separately owned), so we
-        // copy each string into its own allocation. `options_buf` becomes an
-        // empty box.
+        // copy each string into its own allocation.
         let username: Box<[u8]> = Box::from(args.username_str.to_utf8_without_ref().slice());
         let password: Box<[u8]> = Box::from(args.password_str.to_utf8_without_ref().slice());
         let database: Box<[u8]> = Box::from(args.database_str.to_utf8_without_ref().slice());
-        let options: Box<[u8]> = Box::from(options_str.to_utf8_without_ref().slice());
         let path: Box<[u8]> = Box::from(path_str.to_utf8_without_ref().slice());
-        let options_buf: Box<[u8]> = Box::default();
 
         // Reject null bytes in connection parameters to prevent protocol injection
         // (null bytes act as field terminators in the MySQL wire protocol).
@@ -517,8 +510,6 @@ impl JSMySQLConnection {
                 database,
                 username,
                 password,
-                options,
-                options_buf,
                 tls_config,
                 secure,
                 args.ssl_mode,
@@ -722,8 +713,6 @@ impl JSMySQLConnection {
         };
         on_close.ensure_still_alive();
         let loop_ = self.event_loop();
-        // loop.enter();
-        // defer loop.exit();
         self.ensure_js_value_is_alive();
         let mut js_error = value.to_error().unwrap_or(value);
         if js_error.is_empty() {
@@ -802,7 +791,6 @@ impl JSMySQLConnection {
             bigint: request.is_bigint_supported(),
             values: Box::default(),
         };
-        // defer row.deinit(allocator) — Drop on ResultSet::Row
         if let Err(e) = row.decode(reader) {
             if e == AnyMySQLErrorT::ShortRead {
                 return Err(OnResultRowError::ShortRead);

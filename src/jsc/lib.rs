@@ -80,8 +80,6 @@ pub mod script_execution_status;
 pub mod sizes;
 #[path = "SourceProvider.rs"]
 pub mod source_provider;
-#[path = "TextCodec.rs"]
-pub mod text_codec;
 #[path = "URLSearchParams.rs"]
 pub mod url_search_params;
 #[path = "WTF.rs"]
@@ -349,7 +347,7 @@ pub use self::counters::Counters;
 pub use self::decoded_js_value::DecodedJSValue;
 pub use self::deprecated_strong::DeprecatedStrong;
 pub use self::js_array::JSArray;
-pub use self::js_ref::JsRef;
+pub use self::js_ref::{JsCellRefExt, JsRef};
 pub use self::string_builder::StringBuilder;
 pub use self::uuid::{UUID, UUID5, UUID7};
 
@@ -392,9 +390,7 @@ pub use self::marked_argument_buffer::MarkedArgumentBuffer;
 pub use self::regular_expression::RegularExpression;
 pub use self::script_execution_status::ScriptExecutionStatus;
 pub use self::source_provider::SourceProvider;
-pub use self::text_codec::TextCodec;
 pub use self::url_search_params::URLSearchParams;
-pub use self::zig_error_type::ZigErrorType;
 pub use self::zig_stack_frame_code::ZigStackFrameCode;
 pub use self::zig_stack_frame_position::ZigStackFramePosition;
 
@@ -460,9 +456,7 @@ pub mod zig_exception;
 pub mod zig_stack_frame;
 #[path = "ZigStackTrace.rs"]
 pub mod zig_stack_trace;
-// `generated_classes_list.rs` is mounted by `bun_runtime` (see its lib.rs) —
-// every aliased type lives in api/webcore/test_runner/bake, so mounting it
-// here would create a `bun_jsc → bun_runtime` cycle.
+
 #[path = "AsyncModule.rs"]
 pub mod async_module;
 #[path = "bindgen.rs"]
@@ -486,21 +480,23 @@ pub mod jsc_scheduler;
 #[path = "ProcessAutoKiller.rs"]
 pub mod process_auto_killer;
 
-/// Binding for JSCInitialize in ZigGlobalObject.cpp
-pub fn initialize(eval_mode: bool) {
-    initialize_with(eval_mode, false);
+/// Flags for `JSCInitialize` in ZigGlobalObject.cpp. JSC is set up once per process: the first call's flags win.
+#[derive(Clone, Copy, Default)]
+pub struct InitializeOptions {
+    /// JSC `evalMode`: keeps completion values, for `bun --print` and the REPL.
+    pub eval_mode: bool,
+    /// `bun -e` / `bun -p` ([`is_one_shot_eval_invocation`]): no concurrent JIT or parallel GC marker threads.
+    pub one_shot: bool,
+    /// `bun test --isolate`/`--parallel`: each file gets a fresh global and per-global JIT code is discarded with it.
+    pub short_lived_globals: bool,
 }
 
-/// `short_lived_globals`: `bun test --isolate`/`--parallel`, where each file gets a fresh global and per-global JIT code is discarded with it.
-pub fn initialize_with(eval_mode: bool, short_lived_globals: bool) {
+/// Binding for JSCInitialize in ZigGlobalObject.cpp
+pub fn initialize(options: InitializeOptions) {
     // The counter lives in `bun_core` so this crate doesn't depend on
     // `bun_analytics`.
     bun_core::analytics::Features::jsc_inc();
     let env = bun_sys::environ();
-    // One-shot eval invocations (`bun -e ...` / `bun --print ...`) exit before
-    // any long-running event loop; tell JSC to skip the worker threads it
-    // otherwise spawns eagerly at VM creation (see `JSCInitialize`).
-    let one_shot = is_one_shot_eval_invocation();
     // SAFETY: `env` borrows the libc `environ` global for the duration of the
     // call; `on_jsc_invalid_env_var` is `extern "C"` and only reads the (ptr,len)
     // it is handed. JSCInitialize is called exactly once at startup.
@@ -509,9 +505,9 @@ pub fn initialize_with(eval_mode: bool, short_lived_globals: bool) {
             env.as_ptr(),
             env.len(),
             on_jsc_invalid_env_var,
-            eval_mode,
-            one_shot,
-            short_lived_globals,
+            options.eval_mode,
+            options.one_shot,
+            options.short_lived_globals,
         )
     };
 }
@@ -522,8 +518,8 @@ pub fn initialize_with(eval_mode: bool, short_lived_globals: bool) {
 ///
 /// Kept conservative on purpose: only the explicit eval flags qualify. `bun
 /// <file>` is *not* treated as one-shot (it may start a server), so server
-/// workloads keep the default multi-threaded JIT/GC configuration.
-fn is_one_shot_eval_invocation() -> bool {
+/// workloads keep the default multi-threaded JIT/GC configuration. Only valid for the `bun` CLI's own argv.
+pub fn is_one_shot_eval_invocation() -> bool {
     for arg in bun_core::argv().iter().skip(1) {
         if arg == b"-e" || arg == b"--eval" || arg == b"-p" || arg == b"--print" {
             return true;
@@ -556,15 +552,16 @@ Warning: options change between releases of Bun and WebKit without notice. This 
     bun_core::exit(1);
 }
 
-/// `bun.JSError` — the canonical Bun JS error union (`error{Thrown, OutOfMemory}`), defined at
-/// tier 0 (`bun_core`) so every layer names the one type.
+/// `bun.JSError` — the canonical Bun JS error union (`error{Thrown, OutOfMemory, Terminated}`),
+/// defined at tier 0 (`bun_core`) so every layer names the one type.
 ///
 /// `Err(JsError::Thrown)` means exactly what a JSC `ThrowScope` seeing an exception means: one is
-/// pending on the VM. There is deliberately no "terminated" variant: a worker being terminated reaches
-/// native code the way it reaches JSC's own host functions -- as a pending TerminationException, i.e.
-/// `Thrown` -- and only the boundary that entered JS asks whether the exception it takes is the
-/// termination one and stands the loop down with [`Stopped`]. Loop-level code that learns of a stop
-/// from the gate and must return a `JsError` throws that exception for real ([`Stopped::throw`]).
+/// pending on the VM — beneath script that includes the VM's TerminationException, which JSC unwinds.
+/// Where a TerminationException unwinds past the outermost script frame it is taken off the VM at that
+/// boundary (as WebCore's entry helpers do; JSC resets its own termination state there and expects the
+/// embedder to), execution is already forbidden, and the frames above learn of it as `Terminated`:
+/// nothing pending, stand down ([`Stopped`] at loop level). Loop-level code that learns of a stop from
+/// the gate uses [`Stopped::throw`], which only really throws when there is script above to unwind.
 pub use bun_core::JsError;
 /// `bun.JSError!T`. Dropping a `JsResult` leaves a JS exception pending on the
 /// VM: `?`-propagate it to the frame's dispatcher (which folds it —
@@ -583,7 +580,7 @@ pub type JsResult<T> = core::result::Result<T, JsError>;
 pub fn js_error_to_write_error(e: JsError) -> core::fmt::Error {
     match e {
         // TODO: this might lose a JSError, causing exception check problems
-        JsError::Thrown => core::fmt::Error,
+        JsError::Thrown | JsError::Terminated => core::fmt::Error,
         // `bun.handleOom(error.OutOfMemory)` — panic-on-OOM wrapper fed a literal OOM,
         // i.e. unconditionally abort.
         JsError::OutOfMemory => bun_alloc::out_of_memory(),
@@ -629,6 +626,7 @@ impl From<JsError> for crate::CrateError {
         match e {
             JsError::OutOfMemory => crate::CrateError::Alloc(bun_alloc::AllocError),
             JsError::Thrown => crate::CrateError::JSError,
+            JsError::Terminated => crate::CrateError::WorkerTerminated,
         }
     }
 }
@@ -922,6 +920,7 @@ pub enum BuiltinName {
     type_,
     signal,
     cmd,
+    errors,
     /// Private name (`$internal` in builtins); user code cannot set it.
     internal,
     /// Private name (`$sharedFd` in builtins); user code cannot set it.
@@ -945,39 +944,6 @@ impl BuiltinName {
     pub const Error: Self = Self::error;
     pub const Encoding: Self = Self::encoding;
     pub const Type: Self = Self::type_;
-
-    pub fn get(property: &[u8]) -> Option<BuiltinName> {
-        BUILTIN_NAME_MAP.get(property).copied()
-    }
-}
-
-bun_core::comptime_string_map! {
-    static BUILTIN_NAME_MAP: BuiltinName = {
-        b"method" => BuiltinName::method,
-        b"headers" => BuiltinName::headers,
-        b"status" => BuiltinName::status,
-        b"statusText" => BuiltinName::statusText,
-        b"url" => BuiltinName::url,
-        b"body" => BuiltinName::body,
-        b"data" => BuiltinName::data,
-        b"toString" => BuiltinName::toString,
-        b"redirect" => BuiltinName::redirect,
-        b"inspectCustom" => BuiltinName::inspectCustom,
-        b"highWaterMark" => BuiltinName::highWaterMark,
-        b"path" => BuiltinName::path,
-        b"stream" => BuiltinName::stream,
-        b"asyncIterator" => BuiltinName::asyncIterator,
-        b"name" => BuiltinName::name,
-        b"message" => BuiltinName::message,
-        b"error" => BuiltinName::error,
-        b"default" => BuiltinName::default,
-        b"encoding" => BuiltinName::encoding,
-        b"fatal" => BuiltinName::fatal,
-        b"ignoreBOM" => BuiltinName::ignoreBOM,
-        b"type" => BuiltinName::type_,
-        b"signal" => BuiltinName::signal,
-        b"cmd" => BuiltinName::cmd,
-    };
 }
 
 /// RAII guard that keeps a `JSValue` reachable across an FFI call by emitting
@@ -1400,10 +1366,6 @@ pub(crate) fn mark_member_binding(class: &'static str, src: &core::panic::Locati
     }
 }
 
-// LAYERING: no `Subprocess` alias is exported here — that type lives in
-// `bun_runtime::api` (forward-dep); callers reference
-// `bun_runtime::api::Subprocess` directly.
-
 /// Generated classes — re-run generate-classes.ts with .rs output.
 pub mod codegen {
     // GENERATED: re-run src/codegen/generate-classes.ts with .rs output
@@ -1423,8 +1385,6 @@ pub mod codegen {
     }
 }
 pub use self::codegen as Codegen;
-// `GeneratedClassesList` lives in `bun_runtime::GeneratedClassesList`
-// (layering: every aliased type is defined above `bun_jsc`).
 
 /// Extension trait providing JSC-aware methods on `bun_core::String`.
 pub trait StringJsc {

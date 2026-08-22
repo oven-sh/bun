@@ -32,12 +32,7 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<GlobalInternals, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForV8GlobalInternals.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForV8GlobalInternals = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForV8GlobalInternals.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForV8GlobalInternals = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<GlobalInternals, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForV8GlobalInternals, m_subspaceForV8GlobalInternals));
     }
 
     JSC::Structure* objectTemplateStructure(JSC::JSGlobalObject* globalObject) const

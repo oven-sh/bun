@@ -768,14 +768,6 @@ impl<'a> Parser<'a> {
         p.binary_expression_stack = BumpVec::with_capacity_in(41, p.arena);
         p.binary_expression_simplify_stack = BumpVec::with_capacity_in(47, p.arena);
 
-        // defer {
-        //     if (p.allocated_names_pool) |pool| {
-        //         pool.data = p.allocated_names;
-        //         pool.release();
-        //         p.allocated_names_pool = null;
-        //     }
-        // }
-
         // Consume a leading hashbang comment
         let mut hashbang: &[u8] = b"";
         if p.lexer.token == js_lexer::T::THashbang {
@@ -2024,10 +2016,13 @@ impl<'a> Parser<'a> {
                 i += 1;
             }
 
-            runtime_imports[0..i].sort_unstable_by(|a, b| {
-                RuntimeImports::ALL_SORTED_INDEX[*a as usize]
-                    .cmp(&RuntimeImports::ALL_SORTED_INDEX[*b as usize])
-            });
+            bun_collections::index_sort::sort_slice_unstable_by(
+                &mut runtime_imports[0..i],
+                |a, b| {
+                    RuntimeImports::ALL_SORTED_INDEX[*a as usize]
+                        .cmp(&RuntimeImports::ALL_SORTED_INDEX[*b as usize])
+                },
+            );
 
             if i > 0 {
                 // snapshot to break the `&mut self` ↔ `&self.runtime_imports`

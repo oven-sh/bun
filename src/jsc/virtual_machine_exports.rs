@@ -75,6 +75,8 @@ pub fn is_bun_main(global: &JSGlobalObject, str: &BunString) -> bool {
 pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) {
     crate::mark_binding!();
 
+    // A TerminationException is not an error to report, and not this frame's to take: it stays pending for
+    // the frames still unwinding above the caller, up to the landing frame (WebCore::reportException alike).
     if !value.is_termination_exception() {
         let _ = global
             .bun_vm()
@@ -100,7 +102,9 @@ pub fn vm_queue_task_after_yield(this: &VirtualMachine, task: *mut crate::cpp_ta
         .enqueue_task_after_yield(Task::init(task));
 }
 
-/// Off-thread counterpart of [`vm_queue_task`]: see [`crate::VmHandle::post_cpp_task`].
+/// Off-thread counterpart of [`vm_queue_task`] (`postTaskConcurrently`: the
+/// debugger and signal threads, work no script initiated), so it lands on the
+/// regular loop: see [`crate::VmHandle::post_cpp_task`].
 // HOST_EXPORT(Bun__VmHandle__queueTaskConcurrently, c)
 #[allow(clippy::not_unsafe_ptr_arg_deref)] // the C ABI boundary is the unsafe part
 pub fn vm_handle_queue_task_concurrently(
@@ -110,7 +114,7 @@ pub fn vm_handle_queue_task_concurrently(
     crate::mark_binding!();
     // SAFETY: C++ passes the reference its ScriptExecutionContext holds, and
     // hands over a live heap EventLoopTask.
-    unsafe { crate::VmHandle::borrow_ref(r).post_cpp_task(task) };
+    unsafe { crate::VmHandle::borrow_ref(r).post_cpp_task(crate::LoopKind::Regular, task) };
 }
 
 // HOST_EXPORT(Bun__handleRejectedPromise, c)

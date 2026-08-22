@@ -543,6 +543,59 @@ it("ReadableStream (direct)", async () => {
   expect((await reader.read()).done).toBe(true);
 });
 
+it("ReadableStream (direct): an underlyingSource close() hook that throws is not swallowed", async () => {
+  // close() runs when the controller closes; its exception propagates out of controller.close()
+  // (here: out of pull), which errors the stream like any other pull() throw.
+  const stream = new ReadableStream({
+    type: "direct",
+    pull(controller) {
+      controller.write("hello");
+      controller.close();
+    },
+    close() {
+      throw new Error("close hook threw");
+    },
+  });
+  await expect(new Response(stream).text()).rejects.toThrow("close hook threw");
+
+  // Same through a reader: pull() (and so read()) fails with the hook's error.
+  const stream2 = new ReadableStream({
+    type: "direct",
+    pull(controller) {
+      controller.write("hello");
+      controller.close();
+    },
+    close() {
+      throw new Error("close hook threw");
+    },
+  });
+  await expect(stream2.getReader().read()).rejects.toThrow("close hook threw");
+});
+
+it("ReadableStream (direct): controller.close() outside pull with a throwing close() hook settles the pending read and throws to the closer", async () => {
+  let controller;
+  const pulled = Promise.withResolvers();
+  const stream = new ReadableStream({
+    type: "direct",
+    pull(c) {
+      controller = c;
+      pulled.resolve();
+    },
+    close() {
+      throw new Error("close hook threw");
+    },
+  });
+  const reader = stream.getReader();
+  const pending = reader.read();
+  await pulled.promise;
+  controller.write("late");
+  expect(() => controller.close()).toThrow("close hook threw");
+  const first = await pending;
+  expect(first.done).toBe(false);
+  expect(new TextDecoder().decode(first.value)).toBe("late");
+  expect((await reader.read()).done).toBe(true);
+});
+
 it("ReadableStream (bytes)", async () => {
   var stream = new ReadableStream({
     start(controller) {

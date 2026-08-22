@@ -763,6 +763,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Stmt::alloc(t, loc)
     }
 
+    /// `parse_stmts_up_to` drops a module-level `"use strict"`, so script-like output re-emits it.
+    pub(crate) fn use_strict_directive(&self) -> Stmt {
+        debug_assert_eq!(
+            self.module_scope().strict_mode,
+            js_ast::StrictModeKind::ExplicitStrictMode
+        );
+        self.s(
+            S::Directive {
+                value: b"use strict".into(),
+            },
+            self.module_scope_directive_loc,
+        )
+    }
+
     pub(crate) fn load_name_from_ref(&self, r#ref: Ref) -> &'a [u8] {
         use js_ast::base::RefTag;
         match r#ref.tag() {
@@ -8012,6 +8026,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        // Goes in front of any other directive the file kept. The prologue order does not matter.
+        let preserve_strict_mode = wrap_mode == WrapMode::BunCommonjs
+            && self.module_scope().strict_mode == js_ast::StrictModeKind::ExplicitStrictMode;
+
         if wrap_mode == WrapMode::BunCommonjs && !self.options.features.remove_cjs_module_wrapper {
             // This transforms the user's code into.
             //
@@ -8085,12 +8103,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 total_stmts_count += part.stmts.len();
             }
 
-            let preserve_strict_mode = self.module_scope().strict_mode
-                == js_ast::StrictModeKind::ExplicitStrictMode
-                && !(parts.len() > 0
-                    && parts[0].stmts.len() > 0
-                    && matches!(parts[0].stmts[0].data, js_ast::StmtData::SDirective(_)));
-
             total_stmts_count += usize::from(preserve_strict_mode);
 
             // Stmt is not Default; fill with `Stmt::empty()`.
@@ -8098,12 +8110,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             {
                 let mut remaining_stmts = &mut stmts_to_copy[..];
                 if preserve_strict_mode {
-                    remaining_stmts[0] = self.s(
-                        S::Directive {
-                            value: b"use strict".into(),
-                        },
-                        self.module_scope_directive_loc,
-                    );
+                    remaining_stmts[0] = self.use_strict_directive();
                     remaining_stmts = &mut remaining_stmts[1..];
                 }
 
@@ -8146,6 +8153,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             parts.truncate(1);
             parts[0].stmts = bun_ast::StoreSlice::new_mut(top_level_stmts);
+        } else if preserve_strict_mode {
+            // No wrapper (the eval entry point): the output runs as a classic script, so lead it.
+            let stmts = arena.alloc_slice_copy(&[self.use_strict_directive()]);
+            parts.insert(
+                0,
+                js_ast::Part {
+                    stmts: bun_ast::StoreSlice::new_mut(stmts),
+                    ..Default::default()
+                },
+            );
         }
 
         // REPL mode transforms

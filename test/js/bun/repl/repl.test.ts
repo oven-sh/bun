@@ -904,6 +904,17 @@ describe.concurrent("Bun REPL", () => {
       expect(stripAnsi(stdout)).toContain("use strict");
       expect(exitCode).toBe(0);
     });
+
+    test('"use strict" still applies when another directive comes first', async () => {
+      const { stdout, exitCode } = await runRepl([
+        `"use client"; "use strict"; (function () { return this === undefined; })()`,
+        ".exit",
+      ]);
+      const output = stripAnsi(stdout);
+      expect(output).toContain("true");
+      expect(output).not.toContain("false");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("async evaluation", () => {

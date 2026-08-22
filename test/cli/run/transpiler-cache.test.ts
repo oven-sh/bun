@@ -94,6 +94,42 @@ describe("transpiler cache", () => {
     expect(await bunRun(join(temp_dir, "b.js"), env)).toSpawn("b");
     expect(newCacheCount()).toBe(0);
   });
+  test("the stdin entry point does not share entries with a file of the same contents", async () => {
+    // A CommonJS file is cached wrapped in the module function. The stdin (and
+    // -e) entry point is printed without that wrapper and evaluated as a plain
+    // script, so an entry written for the file must not be served to stdin and
+    // the other way around. Stdin is parsed with the tsx loader, so a .tsx file
+    // is the one that hashes to the same features.
+    const source = dummyFile(50 * 1024, "stdin", { code: `"cjs", typeof module` });
+    writeFileSync(join(temp_dir, "a.tsx"), source);
+
+    async function runStdin() {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-"],
+        cwd: temp_dir,
+        env,
+        stdin: source,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      return stdout.trim();
+    }
+
+    expect(await bunRun(join(temp_dir, "a.tsx"), env)).toSpawn("cjs object");
+    expect(newCacheCount()).toBe(1);
+
+    // Same input hash, different features hash: the file's entry is replaced,
+    // not reused. If stdin were served the file's entry, it would evaluate the
+    // wrapper function without calling it and print nothing at all.
+    expect(await runStdin()).toBe("cjs object");
+    expect(newCacheCount()).toBe(0);
+    expect(await runStdin()).toBe("cjs object");
+
+    expect(await bunRun(join(temp_dir, "a.tsx"), env)).toSpawn("cjs object");
+  });
   test("doing 50 buns at once does not crash", async () => {
     writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024, "1", "b"));
     writeFileSync(join(temp_dir, "b.js"), dummyFile(50 * 1024, "2", "b"));

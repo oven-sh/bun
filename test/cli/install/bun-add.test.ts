@@ -1,8 +1,11 @@
 import type { BunLockFile } from "bun";
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout, test } from "bun:test";
+import { randomBytes } from "crypto";
 import { access, appendFile, copyFile, mkdir, readlink, rm, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, readdirSorted, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
+import { createServer } from "http";
+import type { AddressInfo } from "net";
 import { join, relative, resolve } from "path";
 import {
   check_npm_auth_type,
@@ -2662,6 +2665,116 @@ it("should not add duplicate package.json entries when installing the same tarba
     dependencies: {
       baz: tarball_url,
     },
+  });
+});
+
+// `bun add <url>` names the dependency after the URL until the tarball's package.json has been read,
+// and the URL's basename labels the directory the tarball is extracted into. The query string and
+// fragment used to end up in that label: `?` cannot appear in a directory name on Windows, and a `:`
+// within the first 32 bytes of the label (it is truncated to that) fails the install folder name
+// check on every platform with "Refusing to install package with invalid name". A URL without a path
+// has nothing usable left once the query is gone (its basename is the `host:port`), so the label
+// falls back to "package" instead.
+describe("should add a tarball URL with a query string or fragment", () => {
+  const paths = [
+    ["query string", "/qs-pkg-1.0.0.tgz?token=abc"],
+    ["query string containing a colon", "/qs-pkg-1.0.0.tgz?expires=12:00"],
+    ["fragment containing a colon", "/qs-pkg-1.0.0.tgz#ref:main"],
+    ["query string on a URL without a path", "/?file=qs-pkg-1.0.0.tgz"],
+  ] as const;
+
+  let tarball: Uint8Array;
+  beforeAll(async () => {
+    tarball = await new Bun.Archive(
+      {
+        "package/package.json": JSON.stringify({ name: "qs-pkg", version: "1.0.0" }),
+        // Incompressible padding so the drip-fed response below arrives in many socket reads, which
+        // is what commits the install to the streaming extractor.
+        "package/pad.bin": randomBytes(256 * 1024),
+      },
+      { compress: "gzip" },
+    ).bytes();
+  });
+
+  // The tarball is extracted either from the fully buffered response body or, when the body is
+  // large enough and arrives in several reads, by the streaming extractor; both pick the extraction
+  // directory name the same way.
+  async function serveTarball(mode: "buffered" | "streaming") {
+    if (mode === "buffered") {
+      const server = Bun.serve({
+        port: 0,
+        fetch: () => new Response(tarball),
+      });
+      return {
+        origin: server.url.origin,
+        [Symbol.asyncDispose]: () => server.stop(true),
+      };
+    }
+
+    // node:http so the response carries a Content-Length and can still be written 1 KiB at a time.
+    const server = createServer((req, res) => {
+      res.setHeader("Content-Type", "application/gzip");
+      res.setHeader("Content-Length", String(tarball.length));
+      req.socket.setNoDelay(true);
+      let offset = 0;
+      const step = () => {
+        if (offset >= tarball.length) {
+          res.end();
+          return;
+        }
+        res.write(tarball.subarray(offset, offset + 1024));
+        offset += 1024;
+        setImmediate(step);
+      };
+      step();
+    });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+    return {
+      origin: `http://127.0.0.1:${port}`,
+      [Symbol.asyncDispose]: () => {
+        server.closeAllConnections();
+        return new Promise<void>(resolve => server.close(() => resolve()));
+      },
+    };
+  }
+
+  describe.each(["buffered", "streaming"] as const)("%s extraction", mode => {
+    test.each(paths)("%s", async (_, path) => {
+      await using server = await serveTarball(mode);
+      const url = `${server.origin}${path}`;
+      await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1" }));
+
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "add", url, "--verbose"],
+        cwd: package_dir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env: mode === "streaming" ? { ...env, BUN_INSTALL_STREAMING_MIN_SIZE: "1024" } : env,
+      });
+      const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+      expect(err).not.toContain("error:");
+      // Printed by the streaming extractor only, so each mode is known to have taken its own path.
+      if (mode === "streaming") {
+        expect(err).toContain("Streamed ");
+      } else {
+        expect(err).not.toContain("Streamed ");
+      }
+      expect(out).toContain(`+ qs-pkg@${url}`);
+      expect(exitCode).toBe(0);
+      expect(await file(join(package_dir, "package.json")).json()).toStrictEqual({
+        name: "foo",
+        version: "0.0.1",
+        dependencies: {
+          "qs-pkg": url,
+        },
+      });
+      expect(await file(join(package_dir, "node_modules", "qs-pkg", "package.json")).json()).toEqual({
+        name: "qs-pkg",
+        version: "1.0.0",
+      });
+    });
   });
 });
 

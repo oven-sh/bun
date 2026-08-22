@@ -253,7 +253,8 @@ jobs:
             function stripNonProse(body) {
               let text = removeBlocks(body.replaceAll("\r\n", "\n"));
               text = removeSpans(text, "`");
-              text = removeSpans(text, "~", 2);
+              text = removeSpans(text, "~", 2, true);
+              text = removeSpans(text, "~", 1, true);
               for (const tag of ["s", "del", "strike"]) text = removeTagged(text, tag);
               return text;
             }
@@ -303,7 +304,11 @@ jobs:
                 }
                 const opening = leadingRun(trimmed, "`") || leadingRun(trimmed, "~");
                 // A backtick fence's info string cannot hold a backtick: "```bun test```" is a code span.
-                const isFence = opening.length >= 3 && (opening[0] === "~" || !trimmed.slice(opening.length).includes("`"));
+                // An opening fence has at most three spaces of indentation.
+                const isFence =
+                  opening.length >= 3 &&
+                  !isIndentedCode(rest) &&
+                  (opening[0] === "~" || !trimmed.slice(opening.length).includes("`"));
                 if (isFence) {
                   fence = opening;
                   quote = false;
@@ -357,10 +362,12 @@ jobs:
               return n >= 4 || line[n] === "\t";
             }
 
-            // A heading or a list item ends a blockquote's lazy continuation. The marker
-            // needs a space after it ("#100" and "**bold**" are text), and an ordered
-            // item interrupts only when it starts at 1, as in CommonMark.
+            // A heading, a list item or a thematic break ends a blockquote's lazy
+            // continuation. The marker needs a space after it ("#100" and "**bold**" are
+            // text), and an ordered item interrupts only when it starts at 1, as in
+            // CommonMark.
             function startsBlock(trimmed) {
+              if (isThematicBreak(trimmed)) return true;
               const c = trimmed[0];
               if (c === "-" || c === "*" || c === "+") return isGap(trimmed[1]);
               if (c === "#") return isHeading(trimmed);
@@ -388,31 +395,6 @@ jobs:
               return c === undefined || c === " " || c === "\t";
             }
 
-            // Removes "<tag>...</tag>" within a paragraph, for the HTML spellings of
-            // strikethrough: <s>, <del>, <strike>.
-            function removeTagged(text, tag) {
-              const open = `<${tag}>`;
-              const close = `</${tag}>`;
-              let out = "";
-              let i = 0;
-              while (i < text.length) {
-                const start = indexOfTag(text, open, i);
-                if (start === -1) {
-                  out += text.slice(i);
-                  break;
-                }
-                const end = indexOfTag(text, close, start + open.length);
-                if (end === -1 || end >= nextBlankLine(text, start)) {
-                  out += text.slice(i, start + open.length);
-                  i = start + open.length;
-                  continue;
-                }
-                out += text.slice(i, start) + " ";
-                i = end + close.length;
-              }
-              return out;
-            }
-
             function leadingRun(text, char) {
               let n = 0;
               while (text[n] === char) n++;
@@ -423,22 +405,54 @@ jobs:
               return leadingRun(text, char).length === text.length;
             }
 
-            // The index of `tag` in `text` from `from`, in any case. Only the candidate
-            // is lowercased: lowercasing the whole text can change its length ("İ"
-            // becomes two code units), and the indexes would no longer match.
+            // The index of `tag` ("<s" or "</s") in `text` from `from`, in any case and
+            // followed by ">" or whitespace, so "<s" does not match "<section>". Only the
+            // candidate is lowercased: lowercasing the whole text can change its length
+            // ("İ" becomes two code units), and the indexes would no longer match.
             function indexOfTag(text, tag, from) {
               let at = text.indexOf("<", from);
               while (at !== -1) {
-                if (text.slice(at, at + tag.length).toLowerCase() === tag) return at;
+                const next = text[at + tag.length];
+                if (text.slice(at, at + tag.length).toLowerCase() === tag && (next === ">" || isSpace(next ?? "x"))) {
+                  return at;
+                }
                 at = text.indexOf("<", at + 1);
               }
               return -1;
             }
 
+            // Removes "<tag ...>...</tag>" within a paragraph, for the HTML spellings of
+            // strikethrough: <s>, <del>, <strike>, with or without attributes.
+            function removeTagged(text, tag) {
+              let out = "";
+              let i = 0;
+              while (i < text.length) {
+                const start = indexOfTag(text, `<${tag}`, i);
+                const startEnd = start === -1 ? -1 : text.indexOf(">", start);
+                if (startEnd === -1) {
+                  out += text.slice(i);
+                  break;
+                }
+                const end = indexOfTag(text, `</${tag}`, startEnd + 1);
+                const endEnd = end === -1 ? -1 : text.indexOf(">", end);
+                if (endEnd === -1 || end >= nextBlankLine(text, start)) {
+                  out += text.slice(i, startEnd + 1);
+                  i = startEnd + 1;
+                  continue;
+                }
+                out += text.slice(i, start) + " ";
+                i = endEnd + 1;
+              }
+              return out;
+            }
+
             // Removes the text between a run of `marker` and the next run of the same
             // length in the same paragraph: `code spans` for "`", ~~struck-through
-            // text~~ for "~" with `runLength` 2. A run with no closing run stays as it is.
-            function removeSpans(text, marker, runLength) {
+            // text~~ and ~struck-through text~ for "~" with `runLength` 2 and 1. With
+            // `flanking`, the opening run must touch the text after it and the closing
+            // run the text before it, so "~1.2 to ~1.3" strikes nothing. A run with
+            // no closing run stays as it is.
+            function removeSpans(text, marker, runLength, flanking = false) {
               let out = "";
               let i = 0;
               while (i < text.length) {
@@ -450,12 +464,15 @@ jobs:
                 const opening = leadingRun(text.slice(i), marker);
                 const limit = nextBlankLine(text, i);
                 let close = -1;
-                let from = runLength === undefined || opening.length === runLength ? i + opening.length : limit;
+                const opens =
+                  (runLength === undefined || opening.length === runLength) &&
+                  (!flanking || !isSpace(text[i + opening.length] ?? " "));
+                let from = opens ? i + opening.length : limit;
                 while (from < limit) {
                   const at = text.indexOf(opening, from);
                   if (at === -1 || at >= limit) break;
                   const run = leadingRun(text.slice(at), marker);
-                  if (run.length === opening.length) {
+                  if (run.length === opening.length && (!flanking || !isSpace(text[at - 1]))) {
                     close = at;
                     break;
                   }

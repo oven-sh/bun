@@ -491,6 +491,19 @@ describe("the macro host", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent("a macro may not return a RegExp or another object with no literal form", async () => {
+    const { stderr, exitCode } = await run(
+      {
+        "m.ts": `export const re = () => /a/g;\nexport const map = () => ({ m: new Map() });`,
+        "index.ts": `import { re, map } from "./m.ts" with { type: "macro" };\nconsole.log(re(), map());\n`,
+      },
+      ["run", "index.ts"],
+    );
+    expect(stderr).toContain("cannot coerce RegExp");
+    expect(stderr).toContain("cannot coerce Map");
+    expect(exitCode).toBe(1);
+  });
+
   test.concurrent("a macro may not return a pending Promise nested inside its result", async () => {
     const { stderr, exitCode } = await run(
       {

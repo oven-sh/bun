@@ -1099,8 +1099,7 @@ impl HostState {
         }
     }
 
-    /// A pending JS exception (`proof`) becomes the failure text; a
-    /// termination is left for the loop to observe.
+    /// A pending JS exception (`proof`) becomes the failure text.
     fn failure_from_exception(
         &self,
         global: &JSGlobalObject,
@@ -1108,7 +1107,7 @@ impl HostState {
         doing: &str,
     ) -> MacroFailure {
         let value = global.take_error(proof);
-        if value.is_empty() {
+        if value.is_termination_exception() {
             return MacroFailure::text(format!(
                 "the macro VM was terminated during the macro {doing}"
             ));

@@ -321,15 +321,18 @@ struct HttpResponseData;
 
                     // Parse comma-separated values, ensuring "chunked" is last if present
                     const auto value = h->value;
-                    if (value.find_first_not_of(" \t") != std::string_view::npos) {
-                        te.nonEmptyValue = true;
-                    }
                     size_t pos = 0;
 
                     while (pos < value.length()) {
                         // Skip leading whitespace
                         while (pos < value.length() && (value[pos] == ' ' || value[pos] == '\t')) {
                             pos++;
+                        }
+
+                        /* Any byte left after the whitespace skip is non-whitespace:
+                         * a coding-token byte or a comma. */
+                        if (pos < value.length()) {
+                            te.nonEmptyValue = true;
                         }
 
                         // Remember start of this token

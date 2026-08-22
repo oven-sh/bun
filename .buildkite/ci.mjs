@@ -408,7 +408,7 @@ function getTestAgent(platform, options) {
     // box — because the tier split bottlenecked the smaller pool and Intel
     // can't run latest anyway.
     return {
-      queue: `test-${os}`,
+      queue: tier === "beta" ? darwinBetaQueue : `test-${os}`,
       os,
       arch,
       ...(arch === "aarch64" && tier ? { "release-tier": tier } : {}),
@@ -829,7 +829,7 @@ function getTestBunStep(platform, options, testOptions = {}) {
   // The untiered darwin lane PR builds get (see prDarwinTestPlatforms) skips
   // the ~1% of files that take 10s or more; they are ~60% of a shard's wall
   // time and still run on every other PR lane and on main's darwin lanes.
-  if (os === "darwin" && !platform.tier) {
+  if (os === "darwin" && (!platform.tier || platform.tier === "beta")) {
     args.push("--skip-slower-than=10000");
   }
 
@@ -843,9 +843,12 @@ function getTestBunStep(platform, options, testOptions = {}) {
     label: `${getPlatformLabel(platform)} - test-bun`,
     depends_on: depends,
     agents: getTestAgent(platform, options),
+
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    parallelism: os === "darwin" ? 2 : os === "windows" ? 8 : 20,
+    // One beta box: one shard, and it cannot block a merge.
+    parallelism: platform.tier === "beta" ? 1 : os === "darwin" ? 2 : os === "windows" ? 8 : 20,
+    ...(platform.tier === "beta" ? { soft_fail: true } : {}),
     timeout_in_minutes: profile === "asan" || os === "windows" || os === "darwin" ? 45 : 30,
     env: {
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
@@ -1455,6 +1458,44 @@ async function getPipelineOptions() {
  * @param {PipelineOptions} [options]
  * @returns {Promise<Pipeline | undefined>}
  */
+/**
+ * True when no running or scheduled job in the pipeline targets the darwin
+ * beta queue, so one more PR can be given the beta lane without queueing
+ * behind another. Needs a REST token (`BUILDKITE_API_TOKEN`); without one,
+ * or on any error, the answer is false and the lane is simply not added.
+ * Two uploads a few seconds apart can both see "idle"; a queue of two is
+ * the worst case, never a backlog.
+ * @returns {Promise<boolean>}
+ */
+async function darwinBetaQueueIdle() {
+  const token = getEnv("BUILDKITE_API_TOKEN", false);
+  if (!token || !isBuildkite) {
+    return false;
+  }
+  try {
+    const res = await fetch(
+      "https://api.buildkite.com/v2/organizations/bun/pipelines/bun/builds?state%5B%5D=running&state%5B%5D=scheduled&per_page=100",
+      { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10_000) },
+    );
+    if (!res.ok) {
+      return false;
+    }
+    const builds = await res.json();
+    const busy = builds.some(({ jobs = [] }) =>
+      jobs.some(
+        ({ state, agent_query_rules = [] }) =>
+          (state === "running" || state === "scheduled" || state === "assigned" || state === "accepted") &&
+          agent_query_rules.includes(`queue=${darwinBetaQueue}`),
+      ),
+    );
+    return !busy;
+  } catch {
+    return false;
+  }
+}
+
+const darwinBetaQueue = "test-darwin-beta";
+
 async function getPipeline(options = {}) {
   const priority = getPriority();
 
@@ -1580,11 +1621,19 @@ async function getPipeline(options = {}) {
     { os: "darwin", arch: "x64", release: "any" },
   ];
   const darwinTestsEnabled = isMainBranch() || isBuildManual() || /\[(macos|darwin) tests?\]/i.test(getCommitMessage());
+  // The macOS beta lane: a single home-hosted mini on the next macOS,
+  // its own queue, soft-fail. PR builds get it only when that queue is
+  // idle at upload time, so it is always busy while PRs flow and never
+  // has a backlog: a PR that misses it loses nothing.
+  const betaDarwinTestPlatforms = (await darwinBetaQueueIdle())
+    ? [{ os: "darwin", arch: "aarch64", release: "27", tier: "beta" }]
+    : [];
   const relevantTestPlatforms = (
     includeASAN ? testPlatforms : testPlatforms.filter(({ profile }) => profile !== "asan")
   )
     .filter(({ os }) => os !== "darwin" || darwinTestsEnabled)
-    .concat(darwinTestsEnabled ? [] : prDarwinTestPlatforms);
+    .concat(darwinTestsEnabled ? [] : prDarwinTestPlatforms)
+    .concat(darwinTestsEnabled ? [] : betaDarwinTestPlatforms);
   /** @type {string[]} */
   const testStepKeys = [];
   {

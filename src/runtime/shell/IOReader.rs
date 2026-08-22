@@ -41,6 +41,8 @@ pub(crate) type ReaderImpl = bun_io::BufferedReader;
 
 struct State {
     fd: Fd,
+    /// Bytes the underlying reader produced while `readers` was empty, handed
+    /// to the next listener ahead of anything read for it. See `deliver`.
     buf: Vec<u8>,
     readers: Readers,
     /// The raw `sys::Error`. `SystemError` is not `Clone`
@@ -90,12 +92,14 @@ impl IOReader {
         // held by the bun_io read loop never overlaps a `&mut State` derived in a
         // vtable callback (see struct doc comment).
         //
-        // MUST NOT be invoked from within a `BufferedReaderParent` vtable
-        // callback (`on_read_chunk_cb`/`on_reader_done_cb`/`on_reader_error`):
-        // the read loop already holds a live `&mut ReaderImpl` on its stack
-        // while the callback runs (PipeReader.rs aliasing contract), so
-        // re-deriving here would create two simultaneous `&mut` to the same
-        // BufferedReader = Stacked-Borrows UB.
+        // Reached from inside `on_read_chunk_cb` / `on_reader_done_cb` only
+        // through `pause()`: the posix read loops dispatch both through a raw
+        // pointer and a copied vtable, holding no borrow across the dispatch,
+        // and `WindowsBufferedReader::on_read_chunk` launders its receiver
+        // around the dispatch so that the parent can pause it from there (as
+        // `FileReader::set_flowing` does). Must not be reached from
+        // `on_reader_error`: `start()` receives that one from inside
+        // `ReaderImpl::start()`, i.e. under its `&mut self`.
         unsafe { &mut *self.reader.get() }
     }
 
@@ -204,11 +208,15 @@ impl IOReader {
         let _ = reading;
     }
 
-    /// Idempotent function to start the reading.
+    /// Idempotent function to start the reading; also resumes after `pause()`.
+    /// Anything in `State::buf` is deliberately not delivered from here but
+    /// from the next read callback (`flush_buffered`): the caller is running
+    /// inside the trampoline, and delivering would re-enter it.
     pub(crate) fn start(&self) -> Yield {
         #[cfg(not(windows))]
         {
             let r = self.reader();
+            r.unpause();
             let need_start = match &r.handle {
                 bun_io::pipes::PollOrFd::Closed => true,
                 bun_io::pipes::PollOrFd::Poll(p) => !p.is_registered(),
@@ -226,6 +234,10 @@ impl IOReader {
         {
             let s = self.state();
             if s.is_reading {
+                // The read issued for the previous listener is still in
+                // flight (`pause()` could not cancel it); clearing the pause
+                // lets its completion re-arm for the new listener.
+                self.reader().unpause();
                 return Yield::suspended();
             }
             s.is_reading = true;
@@ -248,9 +260,21 @@ impl IOReader {
     /// Unregister a listener; no-op if it was never added.
     pub(crate) fn remove_reader(&self, reader: ChildPtr) {
         let s = self.state();
-        if let Some(idx) = s.readers.iter().position(|r| *r == reader) {
-            s.readers.swap_remove(idx);
+        let Some(idx) = s.readers.iter().position(|r| *r == reader) else {
+            return;
+        };
+        s.readers.swap_remove(idx);
+        if s.readers.is_empty() {
+            self.pause();
         }
+    }
+
+    /// Nobody is listening any more, so stop consuming the fd: what has not
+    /// been read yet stays in it for whatever reads it next (a later `cat` on
+    /// this reader, or a subprocess inheriting the fd), as it would after a
+    /// real `cat` exited. `start()` resumes.
+    fn pause(&self) {
+        self.reader().pause();
     }
 
     /// The `BufferedReader.onReadChunk` hook.
@@ -261,6 +285,36 @@ impl IOReader {
         // memory.
         let _keepalive = self.keepalive();
         self.set_reading(false);
+        self.flush_buffered();
+        self.deliver(chunk);
+
+        // No re-arm here: the posix read loop re-arms from the `bool` we
+        // return, and on Windows `on_file_read` re-arms unless the reader is
+        // paused (`WindowsBufferedReader::on_read` also clears the chunk
+        // buffer). A listener-less reader was paused by `deliver` /
+        // `remove_reader`, so the `false` returned for it is only advisory.
+        let should_continue =
+            has_more != bun_io::ReadState::Eof && !self.state().readers.is_empty();
+        if should_continue {
+            self.set_reading(true);
+        }
+        should_continue
+    }
+
+    /// Hands `chunk` to the listeners, or keeps it if there are none.
+    ///
+    /// Chunks can arrive without listeners: `pause()` does not stop a read
+    /// that is already in flight (Windows), and the posix loop drains a
+    /// hung-up pipe to EOF regardless of what we return. Bytes the kernel has
+    /// already given us cannot be put back, so they wait in `State::buf` for
+    /// the next listener (`flush_buffered`) instead of being dropped.
+    fn deliver(&self, chunk: &[u8]) {
+        let s = self.state();
+        if s.readers.is_empty() {
+            s.buf.extend_from_slice(chunk);
+            self.pause();
+            return;
+        }
         // NOTE: reshaped for borrowck — `dispatch_read_chunk`/`run_yield`
         // both re-derive `state()` (and the interpreter callback may re-enter
         // `add_reader`/`remove_reader`), so we must NOT hold a long-lived
@@ -273,32 +327,25 @@ impl IOReader {
             let mut remove = false;
             self.run_yield(dispatch_read_chunk(r, chunk, &mut remove, interp));
             if remove {
-                self.state().readers.swap_remove(i);
+                self.remove_reader(r);
             } else {
                 i += 1;
             }
         }
+    }
 
-        let should_continue = has_more != bun_io::ReadState::Eof;
-        if should_continue && !self.state().readers.is_empty() {
-            self.set_reading(true);
-            // NOTE: no explicit re-arm (`registerPoll()` on posix /
-            // `startWithCurrentPipe()` on windows) here: that would re-derive
-            // a second `&mut ReaderImpl` while the bun_io read loop still
-            // holds one on its stack (PipeReader.rs aliasing contract) —
-            // Stacked-Borrows UB.
-            // On posix the re-arm is redundant: the read loop re-registers
-            // itself after the callback returns based on the `bool` we return
-            // (PipeReader.rs:731/755/846/920/986). On Windows the re-arm is
-            // also handled by the caller (`on_file_read`'s defer block /
-            // `uv_read_start` for streams) — but `startWithCurrentPipe()` had
-            // a SECOND load-bearing side effect: `buffer().clearRetainingCapacity()`,
-            // which keeps `WindowsBufferedReader._buffer` bounded between
-            // chunks. That clear is now performed by
-            // `WindowsBufferedReader::on_read` after the streaming chunk is
-            // consumed, so we still do nothing here.
+    /// Delivers what `deliver` set aside once there is a listener again,
+    /// ahead of the next chunk or the EOF of the read `start()` issued for it.
+    /// Not ahead of a read error: `start()` can report one synchronously from
+    /// inside `ReaderImpl::start()` (see `reader()`), and a `cat` discards its
+    /// pending output on a read error anyway.
+    fn flush_buffered(&self) {
+        let s = self.state();
+        if s.buf.is_empty() || s.readers.is_empty() {
+            return;
         }
-        should_continue
+        let buffered = core::mem::take(&mut s.buf);
+        self.deliver(&buffered);
     }
 
     fn on_reader_error(&self, err: &sys::Error) {
@@ -326,6 +373,7 @@ impl IOReader {
         // Hold a strong ref across the body.
         let _keepalive = self.keepalive();
         self.set_reading(false);
+        self.flush_buffered();
         let s = self.state();
         let readers: Vec<ChildPtr> = s.readers.clone();
         let interp = s.interp;

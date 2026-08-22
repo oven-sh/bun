@@ -97,6 +97,22 @@ describe("fake node cli", () => {
     );
   });
 
+  // Like node, `-e`/`-p` take no script positional: everything after the
+  // code is process.argv (the first of them used to be dropped).
+  const argvExpr = "JSON.stringify(process.argv.slice(1))";
+  const logArgv = `console.log(${argvExpr})`;
+  test.each([
+    { args: ["-e", logArgv, "a", "b"], argv: ["a", "b"] },
+    { args: ["-e", logArgv, "a"], argv: ["a"] },
+    { args: ["-e", logArgv, "a", "--flag", "b"], argv: ["a", "--flag", "b"] },
+    { args: ["-e", logArgv], argv: [] },
+    { args: ["-p", argvExpr, "a", "b"], argv: ["a", "b"] },
+    { args: ["-pe", argvExpr, "a", "b"], argv: ["a", "b"] },
+  ])("node $args passes every positional through process.argv", ({ args, argv }) => {
+    using temp = tempDir("fake-node", {});
+    expect(JSON.parse(fakeNodeRun(temp, args).stdout)).toEqual(argv);
+  });
+
   // Bare `node` now matches Node.js: a TTY stdin enters the REPL, a
   // non-TTY stdin (pipe) prints "Missing script". fakeNodeRun's default
   // stdin is platform-dependent (Windows may inherit a console), so pin

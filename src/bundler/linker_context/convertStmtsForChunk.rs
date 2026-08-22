@@ -2,15 +2,14 @@ use crate::BundledAst as JSAst;
 use crate::mal_prelude::*;
 use bun_alloc::Arena as Bump;
 use bun_ast::ImportRecordFlags;
+use bun_ast::ImportRecordTag;
 use bun_ast::Loc;
 use bun_ast::{self as js_ast, Binding, Expr, ExprNodeList, Stmt};
 use bun_ast::{B, E, G, S};
 use bun_collections::VecExt;
 use bun_core::FeatureFlags;
 
-use crate::EntryPoint;
 use crate::WrapKind;
-use crate::chunk::Chunk;
 use crate::linker_context_mod::{LinkerContext, LinkerOptionsMode, StmtList, StmtListWhich};
 use crate::options::Format;
 
@@ -49,15 +48,15 @@ pub(crate) fn convert_stmts_for_chunk(
     source_index: u32,
     stmts: &mut StmtList,
     part_stmts: &[bun_ast::Stmt],
-    chunk: &mut Chunk,
     bump: &Bump,
     wrap: WrapKind,
     ast: &JSAst<'_>,
 ) -> Result<(), crate::Error> {
     let _ = bump;
     let should_extract_esm_stmts_for_wrap = wrap != WrapKind::None;
-    let should_strip_exports = c.options.mode != LinkerOptionsMode::Passthrough
-        || c.graph.files.items_entry_point_kind()[source_index as usize] != EntryPoint::Kind::None;
+    let is_entry_point =
+        c.graph.files.items_entry_point_kind()[source_index as usize].is_entry_point();
+    let should_strip_exports = c.options.mode != LinkerOptionsMode::Passthrough || is_entry_point;
 
     let output_format = c.options.output_format;
 
@@ -69,7 +68,7 @@ pub(crate) fn convert_stmts_for_chunk(
     // importing itself should not see the "__esModule" marker but a CommonJS module
     // importing us should see the "__esModule" marker.
     let mut module_exports_for_export: Option<Expr> = None;
-    if output_format == Format::Cjs && chunk.is_entry_point() {
+    if output_format == Format::Cjs && is_entry_point {
         module_exports_for_export = Some(Expr::allocate(
             bump,
             E::Dot {
@@ -169,16 +168,36 @@ pub(crate) fn convert_stmts_for_chunk(
                             .flags
                             .contains(ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN)
                         {
-                            // Turn this statement into "import * as ns from 'path'"
-                            stmt = Stmt::alloc(
-                                S::Import {
-                                    namespace_ref: s.namespace_ref,
-                                    import_record_index: s.import_record_index,
-                                    star_name_loc: stmt.loc,
-                                    ..Default::default()
-                                },
-                                stmt.loc,
-                            );
+                            // A "bun" import prints as an unhoisted var, too late for __reExport()
+                            let is_bun_builtin = record.tag == ImportRecordTag::Bun;
+                            let re_exported_module: Expr = if is_bun_builtin {
+                                Expr::init(
+                                    E::RequireString {
+                                        import_record_index: s.import_record_index,
+                                        ..Default::default()
+                                    },
+                                    stmt.loc,
+                                )
+                            } else {
+                                // Turn this statement into "import * as ns from 'path'"
+                                stmt = Stmt::alloc(
+                                    S::Import {
+                                        namespace_ref: s.namespace_ref,
+                                        import_record_index: s.import_record_index,
+                                        star_name_loc: stmt.loc,
+                                        ..Default::default()
+                                    },
+                                    stmt.loc,
+                                );
+
+                                Expr::init(
+                                    E::Identifier {
+                                        ref_: s.namespace_ref,
+                                        ..Default::default()
+                                    },
+                                    stmt.loc,
+                                )
+                            };
 
                             // Prefix this module with "__reExport(exports, ns, module.exports)"
                             let export_star_ref = c.runtime_function(b"__reExport");
@@ -191,13 +210,7 @@ pub(crate) fn convert_stmts_for_chunk(
                                 },
                                 stmt.loc,
                             ));
-                            args.push(Expr::init(
-                                E::Identifier {
-                                    ref_: s.namespace_ref,
-                                    ..Default::default()
-                                },
-                                stmt.loc,
-                            ));
+                            args.push(re_exported_module);
 
                             if let Some(mod_) = module_exports_for_export {
                                 // Per the "__reExport(exports, ns, module.exports)"
@@ -232,6 +245,11 @@ pub(crate) fn convert_stmts_for_chunk(
                                     },
                                     stmt.loc,
                                 ))?;
+
+                            if is_bun_builtin {
+                                // There is no import statement left to keep
+                                continue 'stmt_loop;
+                            }
 
                             // Make sure these don't end up in the wrapper closure
                             if should_extract_esm_stmts_for_wrap {

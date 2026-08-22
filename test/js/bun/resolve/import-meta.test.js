@@ -1,4 +1,4 @@
-import { spawnSync } from "bun";
+import { default as BunViaDefaultAlias, spawnSync } from "bun";
 import { isModuleResolveFilenameSlowPathEnabled } from "bun:internal-for-testing";
 import { expect, it, mock } from "bun:test";
 import { bunEnv, bunExe, ospath, tempDir } from "harness";
@@ -277,6 +277,11 @@ it('require("bun") works', () => {
 
 it('import("bun") works', async () => {
   expect(await import("bun")).toBe(Bun);
+});
+
+it('import { default as x } from "bun" is the Bun object', () => {
+  expect(BunViaDefaultAlias).toBe(Bun);
+  expect(spawnSync).toBe(Bun.spawnSync);
 });
 
 it("require.resolve with empty options object", () => {

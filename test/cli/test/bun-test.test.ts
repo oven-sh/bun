@@ -1812,6 +1812,203 @@ describe("bun test", () => {
   });
 });
 
+// https://github.com/oven-sh/bun/issues/34859
+describe.concurrent("script files with no test() registrations", () => {
+  async function runScripts(files: Record<string, string>, args: string[] = Object.keys(files), env = bunEnv) {
+    using dir = tempDir("bun-test-script-file", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...args],
+      env,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const rejectsAfterTimer = (message: string) => `
+    (async () => {
+      await new Promise(resolve => setTimeout(resolve, 20));
+      throw new Error(${JSON.stringify(message)});
+    })();
+  `;
+
+  test("fails on a rejection that happens after a timer", async () => {
+    const { stderr, exitCode } = await runScripts({ "script.test.js": rejectsAfterTimer("rejected after a timer") });
+    expect(stderr).toContain("Unhandled error between tests");
+    expect(stderr).toContain("rejected after a timer");
+    expect(stderr).toContain("1 error");
+    expect(exitCode).toBe(1);
+  });
+
+  test("fails on an exception thrown from a timer callback", async () => {
+    const { stderr, exitCode } = await runScripts({
+      "script.test.js": `setTimeout(() => { throw new Error("thrown from a timer"); }, 20);`,
+    });
+    expect(stderr).toContain("Unhandled error between tests");
+    expect(stderr).toContain("thrown from a timer");
+    expect(exitCode).toBe(1);
+  });
+
+  test("fails on a timer armed by a setImmediate callback", async () => {
+    const { stderr, exitCode } = await runScripts({
+      "script.test.js": `setImmediate(() => setTimeout(() => { throw new Error("thrown after an immediate"); }, 20));`,
+    });
+    expect(stderr).toContain("Unhandled error between tests");
+    expect(stderr).toContain("thrown after an immediate");
+    expect(exitCode).toBe(1);
+  });
+
+  // The shape of the vendored node tests from the issue: a check made after a child process replies.
+  test("fails on an error thrown after a child process replies", async () => {
+    const { stderr, exitCode } = await runScripts({
+      "script.test.js": `
+        const { spawn } = require("node:child_process");
+        const { once } = require("node:events");
+        (async () => {
+          const child = spawn(process.execPath, ["-e", "process.send(1, () => process.disconnect())"], {
+            stdio: ["ignore", "ignore", "ignore", "ipc"],
+          });
+          const [received] = await once(child, "message");
+          if (received !== 2) throw new Error("child replied with " + received);
+        })();
+      `,
+    });
+    expect(stderr).toContain("Unhandled error between tests");
+    expect(stderr).toContain("child replied with 1");
+    expect(exitCode).toBe(1);
+  });
+
+  test("lets the file's async work finish before moving on", async () => {
+    const { stdout, stderr, exitCode } = await runScripts({
+      "script.test.js": `
+        (async () => {
+          await new Promise(resolve => setTimeout(resolve, 20));
+          await Bun.file(__filename).text();
+          console.log("async work finished");
+        })();
+      `,
+    });
+    expect(stdout).toContain("async work finished");
+    expect(stderr).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  test("still fails on a rejection that is pending when the module finishes evaluating", async () => {
+    const { stderr, exitCode } = await runScripts({
+      "script.test.js": `(async () => { throw new Error("rejected during evaluation"); })();`,
+    });
+    expect(stderr).toContain("Unhandled error between tests");
+    expect(stderr).toContain("rejected during evaluation");
+    expect(exitCode).toBe(1);
+  });
+
+  test("drains each script file separately", async () => {
+    const { stderr, exitCode } = await runScripts({
+      "a.test.js": rejectsAfterTimer("file A rejected"),
+      "b.test.js": rejectsAfterTimer("file B rejected"),
+    });
+    expect(stderr).toContain("file A rejected");
+    expect(stderr).toContain("file B rejected");
+    expect(stderr).toContain("2 errors");
+    expect(exitCode).toBe(1);
+  });
+
+  test("drains with --timeout=0", async () => {
+    const { stderr, exitCode } = await runScripts({ "script.test.js": rejectsAfterTimer("rejected after a timer") }, [
+      "--timeout=0",
+      "script.test.js",
+    ]);
+    expect(stderr).toContain("rejected after a timer");
+    expect(exitCode).toBe(1);
+  });
+
+  test("gives up after the test timeout on work the file never finishes", async () => {
+    const { stdout, stderr, exitCode } = await runScripts(
+      {
+        "script.test.js": `
+          setTimeout(() => console.log("timer ran"), 20);
+          setInterval(() => {}, 60_000);
+        `,
+      },
+      ["--timeout=200", "script.test.js"],
+    );
+    expect(stdout).toContain("timer ran");
+    expect(stderr).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  test("fails the same way under BUN_TEST_DRAIN_EVENT_LOOP", async () => {
+    const { stderr, exitCode } = await runScripts(
+      { "script.test.js": rejectsAfterTimer("rejected after a timer") },
+      ["script.test.js"],
+      { ...bunEnv, BUN_TEST_DRAIN_EVENT_LOOP: "1" },
+    );
+    expect(stderr).toContain("Unhandled error between tests");
+    expect(stderr).toContain("rejected after a timer");
+    expect(exitCode).toBe(1);
+  });
+
+  // Only the drain runs timers once a file is done, so a run that correctly skips
+  // it exits without printing this. The script files below load nothing, so the
+  // timer cannot fire while one of them is still being loaded either.
+  const lateTimer = `setTimeout(() => console.log("late timer ran"), 2_000);`;
+  const scriptFile = `globalThis.loaded = true;`;
+
+  test("does not wait on a file that registered a test()", async () => {
+    const { stdout, stderr, exitCode } = await runScripts({
+      "with.test.js": `
+        const { test } = require("bun:test");
+        test("leaves a timer behind", () => { ${lateTimer} });
+      `,
+    });
+    expect(stdout).not.toContain("late timer ran");
+    expect(stderr).toContain("1 pass");
+    expect(exitCode).toBe(0);
+  });
+
+  test("does not wait when a prior file left a ref'd handle", async () => {
+    const { stdout, stderr, exitCode } = await runScripts({
+      "a.test.js": `
+        const { test } = require("bun:test");
+        test("leaves a timer behind", () => { ${lateTimer} });
+      `,
+      "b.test.js": scriptFile,
+    });
+    expect(stdout).not.toContain("late timer ran");
+    expect(stderr).toContain("1 pass");
+    expect(stderr).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  test("does not wait when a preload left a ref'd handle", async () => {
+    const { stdout, stderr, exitCode } = await runScripts({ "setup.js": lateTimer, "script.test.js": scriptFile }, [
+      "--preload",
+      "./setup.js",
+      "script.test.js",
+    ]);
+    expect(stdout).not.toContain("late timer ran");
+    expect(stderr).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  test("does not wait when a preload registered hooks", async () => {
+    const { stdout, stderr, exitCode } = await runScripts(
+      {
+        "setup.js": `
+          import { beforeAll } from "bun:test";
+          beforeAll(() => { ${lateTimer} });
+        `,
+        "script.test.js": scriptFile,
+      },
+      ["--preload", "./setup.js", "script.test.js"],
+    );
+    expect(stdout).not.toContain("late timer ran");
+    expect(stderr).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+});
+
 function createTest(input?: string | (string | { filename: string; contents: string })[], filename?: string): string {
   const cwd = tmpdirSync();
   const inputs = Array.isArray(input) ? input : [input ?? ""];

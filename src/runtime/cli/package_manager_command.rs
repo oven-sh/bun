@@ -38,6 +38,13 @@ pub(crate) struct NodeModulesFolder {
     dependencies: Box<[DependencyID]>,
 }
 
+/// One line of `bun pm ls`: a dependency and the node_modules folder it is
+/// installed in (`node_modules`, `node_modules/a/node_modules`, ...).
+struct ListedDependency<'a> {
+    dep_id: DependencyID,
+    folder: &'a [u8],
+}
+
 // Transient sort-comparator context; lifetime is fn-local.
 struct ByName<'a> {
     dependencies: &'a [Dependency],
@@ -183,13 +190,19 @@ impl PackageManagerCommand {
   <d>├<r> <cyan>--filename<r>                the name of the tarball\n\
   <d>├<r> <cyan>--ignore-scripts<r>          don't run pre/postpack and prepare scripts\n\
   <d>├<r> <cyan>--gzip-level<r>              specify a custom compression level for gzip (0-9, default is 9)\n\
-  <d>└<r> <cyan>--quiet<r>                   only output the tarball filename\n\
+  <d>├<r> <cyan>--quiet<r>                   only output the tarball filename\n\
+  <d>└<r> <cyan>--json<r>                    output as JSON\n\
   <b><green>bun pm<r> <blue>bin<r>                  print the path to bin folder\n\
-  <d>└<r> <cyan>-g<r>                        print the <b>global<r> path to bin folder\n\
+  <d>├<r> <cyan>-g<r>                        print the <b>global<r> path to bin folder\n\
+  <d>└<r> <cyan>--json<r>                    output as JSON\n\
   <b><green>bun pm<r> <blue>ls<r>                   list the dependency tree according to the current lockfile\n\
   <d>├<r> <cyan>--all<r>                     list the entire dependency tree according to the current lockfile\n\
-  <d>└<r> <cyan>--trusted<r>                 list only trusted dependencies\n\
+  <d>├<r> <cyan>--trusted<r>                 list only trusted dependencies\n\
+  <d>└<r> <cyan>--json<r>                    output as JSON\n\
   <b><green>bun pm<r> <blue>why<r> <d>\\<pkg\\><r>            show dependency tree explaining why a package is installed\n\
+  <d>├<r> <cyan>--top<r>                     show only the first level of dependents\n\
+  <d>├<r> <cyan>--depth<r> <d>\\<n\\><r>               maximum depth of the tree to display\n\
+  <d>└<r> <cyan>--json<r>                    output as JSON\n\
   <b><green>bun pm<r> <blue>diff<r> <d>[a] [b]<r>           show what changed between two versions of a package (or vs a folder/tarball)\n\
   <d>├<r> <d>bun pm diff react<r>            installed version → latest\n\
   <d>├<r> <d>bun pm diff react@18.2.0 19.0.0<r>\n\
@@ -206,7 +219,8 @@ impl PackageManagerCommand {
   <b><green>bun pm<r> <blue>whoami<r>               print the current npm username\n\
   <b><green>bun pm<r> <blue>view<r> <d>name[@version]<r>  view package metadata from the registry <d>(use `bun info` instead)<r>\n\
   <b><green>bun pm<r> <blue>version<r> <d>[increment]<r>  bump the version in package.json and create a git tag\n\
-  <d>└<r> <cyan>increment<r>                 patch, minor, major, prepatch, preminor, premajor, prerelease, from-git, or a specific version\n\
+  <d>├<r> <cyan>increment<r>                 patch, minor, major, prepatch, preminor, premajor, prerelease, from-git, or a specific version\n\
+  <d>└<r> <cyan>--json<r>                    output as JSON\n\
   <b><green>bun pm<r> <blue>pkg<r>                  manage data in package.json\n\
   <d>├<r> <cyan>get<r> <d>[key ...]<r>\n\
   <d>├<r> <cyan>set<r> <d>key=value ...<r>\n\
@@ -222,6 +236,9 @@ impl PackageManagerCommand {
   <b><green>bun pm<r> <blue>trust<r> <d>names ...<r>      run scripts for untrusted dependencies and add to `trustedDependencies`\n\
   <d>└<r>  <cyan>--all<r>                    trust all untrusted dependencies\n\
   <b><green>bun pm<r> <blue>default-trusted<r>      print the default trusted dependencies list\n\
+\n\
+<b>Flags:<r>\n\
+  <cyan>--json<r>                         output as JSON (scan, pack, bin, ls, why, diff, licenses, whoami, view, version, hash, hash-print, cache, untrusted, default-trusted)\n\
 \n\
 Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
 
@@ -321,6 +338,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             PackCommand::exec_with_manager(ctx, pm)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"whoami") {
+            let json_output = pm.options.json_output;
             let username = match Npm::whoami(pm) {
                 Ok(u) => u,
                 Err(err) => {
@@ -342,7 +360,11 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                     Global::crash();
                 }
             };
-            Output::println(format_args!("{}", bstr::BStr::new(&username)));
+            if json_output {
+                print_json_string("username", &username);
+            } else {
+                Output::println(format_args!("{}", bstr::BStr::new(&username)));
+            }
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"view") {
             let property_path = if pm.options.positionals.len() > 2 {
@@ -367,9 +389,13 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 top_level_dir,
                 pm.options.bin_path.as_bytes(),
             );
-            bun_core::prettyln!("{}", bstr::BStr::new(output_path));
-            if Output::stdout_descriptor_type() == Output::OutputStreamDescriptor::Terminal {
-                bun_core::prettyln!("\n");
+            if pm.options.json_output {
+                print_json_string("path", output_path);
+            } else {
+                bun_core::prettyln!("{}", bstr::BStr::new(output_path));
+                if Output::stdout_descriptor_type() == Output::OutputStreamDescriptor::Terminal {
+                    bun_core::prettyln!("\n");
+                }
             }
 
             if pm.options.global {
@@ -396,6 +422,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             return Ok(());
         } else if strings::eql_comptime(subcommand, b"hash") {
             let log_level = pm.options.log_level;
+            let json_output = pm.options.json_output;
             let load_lockfile = pm.load_lockfile_from_cwd::<true>();
             Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "hash");
 
@@ -405,20 +432,15 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 .lockfile
                 .has_meta_hash_changed(false, pm.lockfile.packages.len())?;
 
-            Output::flush();
-            Output::disable_buffering();
-            Output::writer().print(format_args!("{}", pm.lockfile.fmt_meta_hash()))?;
-            Output::enable_buffering();
+            print_meta_hash(&pm.lockfile, json_output)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"hash-print") {
             let log_level = pm.options.log_level;
+            let json_output = pm.options.json_output;
             let load_lockfile = pm.load_lockfile_from_cwd::<true>();
             Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "hash");
 
-            Output::flush();
-            Output::disable_buffering();
-            Output::writer().print(format_args!("{}", pm.lockfile.fmt_meta_hash()))?;
-            Output::enable_buffering();
+            print_meta_hash(&pm.lockfile, json_output)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"hash-string") {
             let log_level = pm.options.log_level;
@@ -544,10 +566,14 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                     Global::crash();
                 }
             };
-            let _ = Output::writer().write_all(outpath);
+            if pm.options.json_output {
+                print_json_string("path", outpath);
+            } else {
+                let _ = Output::writer().write_all(outpath);
+            }
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"default-trusted") {
-            DefaultTrustedCommand::exec()?;
+            DefaultTrustedCommand::exec(pm)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"untrusted") {
             UntrustedCommand::exec(&mut *ctx, pm, args)?;
@@ -557,11 +583,10 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"ls") {
             let log_level = pm.options.log_level;
+            let json_output = pm.options.json_output;
             let load_lockfile = pm.load_lockfile_from_cwd::<true>();
             Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "list");
 
-            Output::flush();
-            Output::disable_buffering();
             let lockfile: &Lockfile = &pm.lockfile;
             let mut iterator =
                 tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(lockfile);
@@ -588,6 +613,17 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 });
             }
 
+            let trusted_only = strings::left_has_any_in_right(args, &[b"--trusted"]);
+            let all = strings::left_has_any_in_right(args, &[b"-A", b"-a", b"--all"]);
+
+            if json_output {
+                print_ls_json(lockfile, directories, all, trusted_only);
+                Global::exit(0);
+            }
+
+            Output::flush();
+            Output::disable_buffering();
+
             if directories.is_empty() {
                 return Ok(());
             }
@@ -599,9 +635,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 more_packages[0] = true;
             }
 
-            let trusted_only = strings::left_has_any_in_right(args, &[b"--trusted"]);
-
-            if strings::left_has_any_in_right(args, &[b"-A", b"-a", b"--all"]) {
+            if all {
                 if trusted_only {
                     // Trust is by package name, not tree position, so a trusted
                     // package nested under an untrusted parent must still be
@@ -630,52 +664,19 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                     }
                 };
                 let dependencies = lockfile.buffers.dependencies.as_slice();
-                let slice = lockfile.packages.slice();
-                let resolutions = slice.items_resolution();
-                let pkg_names = slice.items_name();
-                let root_deps = slice.items_dependencies()[0];
+                let resolutions = lockfile.packages.items_resolution();
+                let string_bytes = lockfile.buffers.string_bytes.as_slice();
 
                 Output::println(format_args!(
                     "{} node_modules ({})",
                     bstr::BStr::new(path),
                     lockfile.buffers.hoisted_dependencies.len(),
                 ));
-                let string_bytes = lockfile.buffers.string_bytes.as_slice();
-                let mut sorted_dependencies: Vec<DependencyID> =
-                    Vec::with_capacity(root_deps.len as usize);
-                for i in 0..root_deps.len {
-                    sorted_dependencies.push((root_deps.off + i) as DependencyID);
-                }
-                let by_name = ByName {
-                    dependencies,
-                    buf: string_bytes,
-                };
-                // The root lists a workspace it also declares once per declaration.
-                index_sort::sort_indices(&mut sorted_dependencies, &mut |a, b| by_name.cmp(a, b));
-                sorted_dependencies.dedup_by(|a, b| by_name.cmp(*a, *b) == Ordering::Equal);
-
-                if trusted_only {
-                    sorted_dependencies.retain(|&dep_id| {
-                        let package_id = lockfile.buffers.resolutions.as_slice()[dep_id as usize];
-                        if package_id as usize >= lockfile.packages.len() {
-                            return false;
-                        }
-                        let alias = dependencies[dep_id as usize].name.slice(string_bytes);
-                        let pkg_name = pkg_names[package_id as usize].slice(string_bytes);
-                        lockfile.has_trusted_dependency(
-                            alias,
-                            pkg_name,
-                            &resolutions[package_id as usize],
-                        )
-                    });
-                }
+                let sorted_dependencies = root_dependencies_sorted(lockfile, trusted_only);
 
                 for (index, &dependency_id) in sorted_dependencies.iter().enumerate() {
                     let package_id =
                         lockfile.buffers.resolutions.as_slice()[dependency_id as usize];
-                    if package_id as usize >= lockfile.packages.len() {
-                        continue;
-                    }
                     let name = dependencies[dependency_id as usize]
                         .name
                         .slice(string_bytes);
@@ -884,16 +885,6 @@ fn print_node_modules_folder_structure(
         let package_name = dependencies[dependency_id as usize]
             .name
             .slice(string_bytes);
-        let mut possible_path: Vec<u8> = Vec::new();
-        write!(
-            &mut possible_path,
-            "{}{}{}{}node_modules",
-            bstr::BStr::new(directory.relative_path.as_bytes()),
-            bun_paths::SEP_STR,
-            bstr::BStr::new(package_name),
-            bun_paths::SEP_STR,
-        )
-        .expect("unreachable");
 
         if index + 1 == sorted_len {
             more_packages[depth] = false;
@@ -906,42 +897,27 @@ fn print_node_modules_folder_structure(
             continue;
         }
 
-        let mut dir_index: usize = 0;
-        let mut found_node_modules = false;
-        while dir_index < directories.len() {
-            // Recursively print node_modules. node_modules is removed from
-            // the directories list before traversal.
-            if strings::eql_long(
-                &possible_path,
-                directories[dir_index].relative_path.as_bytes(),
-                true,
-            ) {
-                found_node_modules = true;
-                let next = directories.remove(dir_index);
-
-                let mut new_depth: usize = 0;
-                let mut temp_path: &[u8] = &possible_path;
-                while let Some(j) =
-                    strings::index_of(&temp_path[b"node_modules".len()..], b"node_modules")
-                {
-                    new_depth += 1;
-                    temp_path = &temp_path[j + b"node_modules".len()..];
-                }
-
-                more_packages[new_depth] = true;
-                print_node_modules_folder_structure(
-                    &next,
-                    Some(package_id),
-                    new_depth,
-                    directories,
-                    lockfile,
-                    more_packages,
-                )?;
+        // Recursively print node_modules. node_modules is removed from
+        // the directories list before traversal.
+        if let Some(next) = take_nested_node_modules(directory, package_name, directories) {
+            let mut new_depth: usize = 0;
+            let mut temp_path: &[u8] = next.relative_path.as_bytes();
+            while let Some(j) =
+                strings::index_of(&temp_path[b"node_modules".len()..], b"node_modules")
+            {
+                new_depth += 1;
+                temp_path = &temp_path[j + b"node_modules".len()..];
             }
-            dir_index += 1;
-        }
 
-        if found_node_modules {
+            more_packages[new_depth] = true;
+            print_node_modules_folder_structure(
+                &next,
+                Some(package_id),
+                new_depth,
+                directories,
+                lockfile,
+                more_packages,
+            )?;
             continue;
         }
 
@@ -995,45 +971,12 @@ fn print_trusted_dependencies_flat(
     let dependencies = lockfile.buffers.dependencies.as_slice();
     let resolutions_buf = lockfile.buffers.resolutions.as_slice();
     let string_bytes = lockfile.buffers.string_bytes.as_slice();
-    let slice = lockfile.packages.slice();
-    let resolutions = slice.items_resolution();
-    let pkg_names = slice.items_name();
-    let pkg_count = lockfile.packages.len();
+    let resolutions = lockfile.packages.items_resolution();
 
-    let mut seen = bun_core::handle_oom(DynamicBitSet::init_empty(pkg_count));
-    let mut trusted: Vec<DependencyID> = Vec::new();
+    let trusted = trusted_dependencies_sorted(first_directory, directories, lockfile);
 
-    let mut visit = |dep_id: DependencyID| {
-        let package_id = resolutions_buf[dep_id as usize];
-        if package_id as usize >= pkg_count {
-            return;
-        }
-        if seen.is_set(package_id as usize) {
-            return;
-        }
-        let alias = dependencies[dep_id as usize].name.slice(string_bytes);
-        let pkg_name = pkg_names[package_id as usize].slice(string_bytes);
-        if lockfile.has_trusted_dependency(alias, pkg_name, &resolutions[package_id as usize]) {
-            seen.set(package_id as usize);
-            trusted.push(dep_id);
-        }
-    };
-    for &dep_id in first_directory.dependencies.iter() {
-        visit(dep_id);
-    }
-    for folder in directories {
-        for &dep_id in folder.dependencies.iter() {
-            visit(dep_id);
-        }
-    }
-
-    let by_name = ByName {
-        dependencies,
-        buf: string_bytes,
-    };
-    index_sort::sort_indices_unstable(&mut trusted, &mut |a, b| by_name.cmp(a, b));
-
-    for (index, &dep_id) in trusted.iter().enumerate() {
+    for (index, listed) in trusted.iter().enumerate() {
+        let dep_id = listed.dep_id;
         let package_id = resolutions_buf[dep_id as usize];
         let name = dependencies[dep_id as usize].name.slice(string_bytes);
         let resolution = resolutions[package_id as usize].fmt(string_bytes, PathSep::Auto);
@@ -1051,6 +994,331 @@ fn print_trusted_dependencies_flat(
             );
         }
     }
+}
+
+/// The root package's dependencies in the order `bun pm ls` lists them.
+fn root_dependencies_sorted(lockfile: &Lockfile, trusted_only: bool) -> Vec<DependencyID> {
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+    let string_bytes = lockfile.buffers.string_bytes.as_slice();
+    let slice = lockfile.packages.slice();
+    let resolutions = slice.items_resolution();
+    let pkg_names = slice.items_name();
+    let root_deps = slice.items_dependencies()[0];
+
+    let mut sorted_dependencies: Vec<DependencyID> = Vec::with_capacity(root_deps.len as usize);
+    for i in 0..root_deps.len {
+        sorted_dependencies.push((root_deps.off + i) as DependencyID);
+    }
+    let by_name = ByName {
+        dependencies,
+        buf: string_bytes,
+    };
+    // The root lists a workspace it also declares once per declaration.
+    index_sort::sort_indices(&mut sorted_dependencies, &mut |a, b| by_name.cmp(a, b));
+    sorted_dependencies.dedup_by(|a, b| by_name.cmp(*a, *b) == Ordering::Equal);
+
+    sorted_dependencies.retain(|&dep_id| {
+        let package_id = lockfile.buffers.resolutions.as_slice()[dep_id as usize];
+        if package_id as usize >= lockfile.packages.len() {
+            return false;
+        }
+        if !trusted_only {
+            return true;
+        }
+        let alias = dependencies[dep_id as usize].name.slice(string_bytes);
+        let pkg_name = pkg_names[package_id as usize].slice(string_bytes);
+        lockfile.has_trusted_dependency(alias, pkg_name, &resolutions[package_id as usize])
+    });
+    sorted_dependencies
+}
+
+/// The flat list `bun pm ls --all --trusted` prints: each trusted package once, sorted by name.
+fn trusted_dependencies_sorted<'a>(
+    first_directory: &'a NodeModulesFolder,
+    directories: &'a [NodeModulesFolder],
+    lockfile: &Lockfile,
+) -> Vec<ListedDependency<'a>> {
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+    let resolutions_buf = lockfile.buffers.resolutions.as_slice();
+    let string_bytes = lockfile.buffers.string_bytes.as_slice();
+    let slice = lockfile.packages.slice();
+    let resolutions = slice.items_resolution();
+    let pkg_names = slice.items_name();
+    let pkg_count = lockfile.packages.len();
+
+    let mut seen = bun_core::handle_oom(DynamicBitSet::init_empty(pkg_count));
+    let mut trusted: Vec<ListedDependency<'a>> = Vec::new();
+
+    let mut visit = |dep_id: DependencyID, folder: &'a [u8]| {
+        let package_id = resolutions_buf[dep_id as usize];
+        if package_id as usize >= pkg_count {
+            return;
+        }
+        if seen.is_set(package_id as usize) {
+            return;
+        }
+        let alias = dependencies[dep_id as usize].name.slice(string_bytes);
+        let pkg_name = pkg_names[package_id as usize].slice(string_bytes);
+        if lockfile.has_trusted_dependency(alias, pkg_name, &resolutions[package_id as usize]) {
+            seen.set(package_id as usize);
+            trusted.push(ListedDependency { dep_id, folder });
+        }
+    };
+    for &dep_id in first_directory.dependencies.iter() {
+        visit(dep_id, first_directory.relative_path.as_bytes());
+    }
+    for folder in directories {
+        for &dep_id in folder.dependencies.iter() {
+            visit(dep_id, folder.relative_path.as_bytes());
+        }
+    }
+
+    let by_name = ByName {
+        dependencies,
+        buf: string_bytes,
+    };
+    index_sort::sort_vec_unstable_by(&mut trusted, |a, b| by_name.cmp(a.dep_id, b.dep_id));
+    trusted
+}
+
+/// Removes and returns the node_modules folder of `package_name` inside `directory`, if it has one.
+fn take_nested_node_modules(
+    directory: &NodeModulesFolder,
+    package_name: &[u8],
+    directories: &mut Vec<NodeModulesFolder>,
+) -> Option<NodeModulesFolder> {
+    let mut possible_path: Vec<u8> = Vec::new();
+    write!(
+        &mut possible_path,
+        "{}{}{}{}node_modules",
+        bstr::BStr::new(directory.relative_path.as_bytes()),
+        bun_paths::SEP_STR,
+        bstr::BStr::new(package_name),
+        bun_paths::SEP_STR,
+    )
+    .expect("unreachable");
+
+    let index = directories.iter().position(|folder| {
+        strings::eql_long(&possible_path, folder.relative_path.as_bytes(), true)
+    })?;
+    Some(directories.remove(index))
+}
+
+/// `bun pm ls --json`: the root package and one entry per line of the text output.
+fn print_ls_json(
+    lockfile: &Lockfile,
+    mut directories: Vec<NodeModulesFolder>,
+    all: bool,
+    trusted_only: bool,
+) {
+    let mut cwd_buf = PathBuffer::uninit();
+    let cwd = match bun_sys::getcwd(&mut cwd_buf[..]) {
+        Ok(len) => &cwd_buf[..len],
+        Err(_) => {
+            bun_core::pretty_errorln!("<r><red>error<r>: Could not get current working directory",);
+            Global::exit(1);
+        }
+    };
+    let string_bytes = lockfile.buffers.string_bytes.as_slice();
+
+    let mut out: Vec<u8> = Vec::new();
+    out.push(b'{');
+    write_json_key(&mut out, 1, "name");
+    match lockfile.packages.items_name().first() {
+        Some(name) if !name.slice(string_bytes).is_empty() => {
+            let _ = write!(out, "{},", json_str(name.slice(string_bytes)));
+        }
+        _ => out.extend_from_slice(b"null,"),
+    }
+    write_json_key(&mut out, 1, "path");
+    let _ = write!(out, "{},", json_str(cwd));
+    write_json_key(&mut out, 1, "dependencies");
+
+    if directories.is_empty() {
+        out.extend_from_slice(b"[]");
+    } else {
+        let first_directory = directories.remove(0);
+        if all && trusted_only {
+            let trusted = trusted_dependencies_sorted(&first_directory, &directories, lockfile);
+            write_ls_json_list(&mut out, lockfile, &trusted, 1);
+        } else if all {
+            write_ls_json_tree(&mut out, lockfile, &first_directory, &mut directories, 1);
+        } else {
+            let root: Vec<ListedDependency<'_>> = root_dependencies_sorted(lockfile, trusted_only)
+                .into_iter()
+                .map(|dep_id| ListedDependency {
+                    dep_id,
+                    folder: first_directory.relative_path.as_bytes(),
+                })
+                .collect();
+            write_ls_json_list(&mut out, lockfile, &root, 1);
+        }
+    }
+    out.extend_from_slice(b"\n}\n");
+
+    print_json_document(&out);
+}
+
+/// A flat array of entries; `indent` is the level of the key the array belongs to.
+fn write_ls_json_list(
+    out: &mut Vec<u8>,
+    lockfile: &Lockfile,
+    listed: &[ListedDependency<'_>],
+    indent: usize,
+) {
+    out.push(b'[');
+    for (index, entry) in listed.iter().enumerate() {
+        if index > 0 {
+            out.push(b',');
+        }
+        out.push(b'\n');
+        write_json_indent(out, indent + 1);
+        out.push(b'{');
+        write_ls_json_entry(out, lockfile, entry, indent + 2);
+        out.push(b'\n');
+        write_json_indent(out, indent + 1);
+        out.push(b'}');
+    }
+    if !listed.is_empty() {
+        out.push(b'\n');
+        write_json_indent(out, indent);
+    }
+    out.push(b']');
+}
+
+/// The `--all` tree below `directory`, nesting each entry's own node_modules folder.
+fn write_ls_json_tree(
+    out: &mut Vec<u8>,
+    lockfile: &Lockfile,
+    directory: &NodeModulesFolder,
+    directories: &mut Vec<NodeModulesFolder>,
+    indent: usize,
+) {
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+    let string_bytes = lockfile.buffers.string_bytes.as_slice();
+
+    let mut sorted_dependencies: Vec<DependencyID> = directory.dependencies.to_vec();
+    let by_name = ByName {
+        dependencies,
+        buf: string_bytes,
+    };
+    index_sort::sort_indices_unstable(&mut sorted_dependencies, &mut |a, b| by_name.cmp(a, b));
+
+    out.push(b'[');
+    let mut written: usize = 0;
+    for &dep_id in &sorted_dependencies {
+        let package_id = lockfile.buffers.resolutions[dep_id as usize];
+        if package_id as usize >= lockfile.packages.len() {
+            // in case we are loading from a binary lockfile with invalid package ids
+            continue;
+        }
+        if written > 0 {
+            out.push(b',');
+        }
+        written += 1;
+
+        out.push(b'\n');
+        write_json_indent(out, indent + 1);
+        out.push(b'{');
+        let entry = ListedDependency {
+            dep_id,
+            folder: directory.relative_path.as_bytes(),
+        };
+        write_ls_json_entry(out, lockfile, &entry, indent + 2);
+        let alias = dependencies[dep_id as usize].name.slice(string_bytes);
+        if let Some(next) = take_nested_node_modules(directory, alias, directories) {
+            out.push(b',');
+            write_json_key(out, indent + 2, "dependencies");
+            write_ls_json_tree(out, lockfile, &next, directories, indent + 2);
+        }
+        out.push(b'\n');
+        write_json_indent(out, indent + 1);
+        out.push(b'}');
+    }
+    if written > 0 {
+        out.push(b'\n');
+        write_json_indent(out, indent);
+    }
+    out.push(b']');
+}
+
+/// The `name`, `version` and `path` keys of one entry, without a trailing comma.
+fn write_ls_json_entry(
+    out: &mut Vec<u8>,
+    lockfile: &Lockfile,
+    entry: &ListedDependency<'_>,
+    indent: usize,
+) {
+    let string_bytes = lockfile.buffers.string_bytes.as_slice();
+    let package_id = lockfile.buffers.resolutions[entry.dep_id as usize];
+    let alias = lockfile.buffers.dependencies[entry.dep_id as usize]
+        .name
+        .slice(string_bytes);
+    let name = lockfile.packages.items_name()[package_id as usize].slice(string_bytes);
+    let mut version: Vec<u8> = Vec::new();
+    let _ = write!(
+        version,
+        "{}",
+        lockfile.packages.items_resolution()[package_id as usize].fmt(string_bytes, PathSep::Posix)
+    );
+    let mut path: Vec<u8> = Vec::with_capacity(entry.folder.len() + 1 + alias.len());
+    path.extend_from_slice(entry.folder);
+    path.push(b'/');
+    path.extend_from_slice(alias);
+    Path::resolve_path::platform_to_posix_in_place(&mut path);
+
+    write_json_key(out, indent, "name");
+    let _ = write!(out, "{},", json_str(name));
+    write_json_key(out, indent, "version");
+    let _ = write!(out, "{},", json_str(&version));
+    write_json_key(out, indent, "path");
+    let _ = write!(out, "{}", json_str(&path));
+}
+
+/// `bun pm hash` / `bun pm hash-print`: the lockfile hash as text or as `{ "hash": "..." }`.
+fn print_meta_hash(lockfile: &Lockfile, json_output: bool) -> crate::Result<()> {
+    if json_output {
+        let mut hash: Vec<u8> = Vec::new();
+        let _ = write!(hash, "{}", lockfile.fmt_meta_hash());
+        print_json_string("hash", &hash);
+        return Ok(());
+    }
+    Output::flush();
+    Output::disable_buffering();
+    Output::writer().print(format_args!("{}", lockfile.fmt_meta_hash()))?;
+    Output::enable_buffering();
+    Ok(())
+}
+
+/// `--json` for the commands that print one string: `{ "<key>": "<value>" }`.
+fn print_json_string(key: &str, value: &[u8]) {
+    let mut out: Vec<u8> = Vec::with_capacity(key.len() + value.len() + 16);
+    let _ = write!(out, "{{\n  \"{key}\": {}\n}}\n", json_str(value));
+    print_json_document(&out);
+}
+
+/// Writes a finished `--json` document to stdout, after anything the buffered printers queued.
+fn print_json_document(out: &[u8]) {
+    Output::flush();
+    let _ = Output::writer().write_all(out);
+    Output::flush();
+}
+
+fn json_str(s: &[u8]) -> bun_core::fmt::JSONFormatterUTF8<'_> {
+    bun_core::fmt::format_json_string_utf8(s, Default::default())
+}
+
+fn write_json_indent(out: &mut Vec<u8>, level: usize) {
+    for _ in 0..level {
+        out.extend_from_slice(b"  ");
+    }
+}
+
+/// Starts a new line at `level` and writes `"key": `.
+fn write_json_key(out: &mut Vec<u8>, level: usize, key: &str) {
+    out.push(b'\n');
+    write_json_indent(out, level);
+    let _ = write!(out, "\"{key}\": ");
 }
 
 use bun_core::fmt::buf_print_infallible as buf_print;

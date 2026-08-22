@@ -1,5 +1,5 @@
 import { spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from "bun:test";
 import { exists, mkdir, writeFile } from "fs/promises";
 import { bunEnv, bunExe, bunEnv as env, normalizeBunSnapshot, readdirSorted, tempDir, tmpdirSync } from "harness";
 import { cpSync } from "node:fs";
@@ -10,6 +10,7 @@ import {
   dummyBeforeAll,
   dummyBeforeEach,
   dummyRegistry,
+  getPort,
   package_dir,
   requested,
   root_url,
@@ -678,6 +679,225 @@ it("should list a root optional peer that a dependency provides", async () => {
   expect(urls).toEqual([]);
 });
 
+// The JSON document carries what the text output prints: the root package name,
+// the project path, and one entry per listed line in the same order, with the
+// real package name, the resolution printed after `@`, and the folder the
+// package is installed in. `--all` nests each folder's own node_modules under
+// `dependencies`; a leaf has no `dependencies` key.
+describe("pm ls --json", () => {
+  // The default bunfig saves bun.lockb, which only stores the hashes of
+  // trustedDependencies. --trusted needs bun.lock.
+  async function useTextLockfile() {
+    await writeFile(
+      join(package_dir, "bunfig.toml"),
+      Bun.TOML.stringify({
+        install: {
+          cache: false,
+          registry: `${root_url}/`,
+        },
+      }),
+    );
+  }
+
+  async function installWithMoo(root: Record<string, unknown>, moo: Record<string, unknown>) {
+    await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1", ...root }));
+    await mkdir(join(package_dir, "moo"));
+    await writeFile(
+      join(package_dir, "moo", "package.json"),
+      JSON.stringify({ name: "moo", version: "0.1.0", ...moo }),
+    );
+    const [, err, exitCode] = await spawnAndCollect("install");
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(exitCode).toBe(0);
+  }
+
+  it.each([
+    { name: "bun pm ls --json lists the root dependencies", cmd: ["pm", "ls"] },
+    { name: "bun list --json lists the root dependencies", cmd: ["list"] },
+  ])("$name", async ({ cmd }) => {
+    setHandler(dummyRegistry([]));
+    await installWithMoo({ dependencies: { moo: "./moo", bar: "latest" } }, {});
+
+    const [stdout, stderr, exitCode] = await spawnAndCollect(...cmd, "--json");
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      name: "foo",
+      path: package_dir,
+      dependencies: [
+        { name: "bar", version: "0.0.2", path: "node_modules/bar" },
+        { name: "moo", version: "moo", path: "node_modules/moo" },
+      ],
+    });
+    expect(stdout).toEndWith("\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("names the package an alias resolves to and keeps the alias in path", async () => {
+    setHandler(dummyRegistry([]));
+    await installWithMoo({ dependencies: { "moo-1": "./moo", "bar-1": "npm:bar" } }, {});
+
+    const [stdout, stderr, exitCode] = await spawnAndCollect("pm", "ls", "--json");
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      name: "foo",
+      path: package_dir,
+      dependencies: [
+        { name: "bar", version: "0.0.2", path: "node_modules/bar-1" },
+        { name: "moo", version: "moo", path: "node_modules/moo-1" },
+      ],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("--all nests the dependencies of a nested node_modules folder", async () => {
+    setHandler(dummyRegistry([], { "0.0.3": {}, "0.0.5": {} }));
+    // moo needs baz@0.0.5 while the root pins baz@0.0.3, so moo gets its own
+    // node_modules/baz.
+    await installWithMoo({ dependencies: { baz: "0.0.3", moo: "./moo" } }, { dependencies: { baz: "0.0.5" } });
+
+    const [stdout, stderr, exitCode] = await spawnAndCollect("pm", "ls", "--all", "--json");
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      name: "foo",
+      path: package_dir,
+      dependencies: [
+        { name: "baz", version: "0.0.3", path: "node_modules/baz" },
+        {
+          name: "moo",
+          version: "moo",
+          path: "node_modules/moo",
+          dependencies: [{ name: "baz", version: "0.0.5", path: "node_modules/moo/node_modules/baz" }],
+        },
+      ],
+    });
+    expect(stdout).toEndWith("\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("--all lists a hoisted aliased dependency once, without a dependencies key", async () => {
+    setHandler(dummyRegistry([]));
+    await installWithMoo({ dependencies: { "moo-1": "./moo" } }, { dependencies: { "bar-1": "npm:bar" } });
+
+    const [stdout, stderr, exitCode] = await spawnAndCollect("pm", "ls", "--all", "--json");
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      name: "foo",
+      path: package_dir,
+      dependencies: [
+        { name: "bar", version: "0.0.2", path: "node_modules/bar-1" },
+        { name: "moo", version: "moo", path: "node_modules/moo-1" },
+      ],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("--trusted lists only the trusted dependencies", async () => {
+    setHandler(dummyRegistry([]));
+    await useTextLockfile();
+    await installWithMoo({ dependencies: { moo: "./moo", bar: "latest" }, trustedDependencies: ["bar"] }, {});
+
+    const [stdout, stderr, exitCode] = await spawnAndCollect("pm", "ls", "--trusted", "--json");
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      name: "foo",
+      path: package_dir,
+      dependencies: [{ name: "bar", version: "0.0.2", path: "node_modules/bar" }],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("--trusted prints an empty list when nothing is trusted", async () => {
+    setHandler(dummyRegistry([]));
+    await useTextLockfile();
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { bar: "latest" }, trustedDependencies: [] }),
+    );
+    const [, err, installExitCode] = await spawnAndCollect("install");
+    expect(err).not.toContain("error:");
+    expect(installExitCode).toBe(0);
+
+    const [stdout, stderr, exitCode] = await spawnAndCollect("pm", "ls", "--trusted", "--json");
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      name: "foo",
+      path: package_dir,
+      dependencies: [],
+    });
+    expect(stdout).toEndWith("\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("--all --trusted lists the trusted dependencies of every node_modules folder as a flat list", async () => {
+    setHandler(dummyRegistry([]));
+    await useTextLockfile();
+    await installWithMoo(
+      { dependencies: { moo: "./moo" }, trustedDependencies: ["bar"] },
+      { dependencies: { bar: "latest" } },
+    );
+
+    const [stdout, stderr, exitCode] = await spawnAndCollect("pm", "ls", "--all", "--trusted", "--json");
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      name: "foo",
+      path: package_dir,
+      dependencies: [{ name: "bar", version: "0.0.2", path: "node_modules/bar" }],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("lists a workspace the root also depends on once", async () => {
+    setHandler(dummyRegistry([]));
+    await installWorkspacesTheRootDependsOn(true);
+
+    const [stdout, stderr, exitCode] = await spawnAndCollect("pm", "ls", "--json");
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      name: "foo",
+      path: package_dir,
+      dependencies: [
+        { name: "bar", version: "0.0.2", path: "node_modules/bar" },
+        { name: "bar", version: "0.0.2", path: "node_modules/bar-alias" },
+        { name: "ws-once", version: "workspace:packages/ws-once", path: "node_modules/ws-once" },
+        { name: "ws-twice", version: "workspace:packages/ws-twice", path: "node_modules/ws-twice" },
+        { name: "ws-undeclared", version: "workspace:packages/ws-undeclared", path: "node_modules/ws-undeclared" },
+      ],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("prints an empty list when the lockfile has no packages", async () => {
+    // `bun install` without dependencies writes no lockfile; one is left behind
+    // after the last dependency is removed.
+    await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1" }));
+    await writeFile(
+      join(package_dir, "bun.lock"),
+      JSON.stringify({ lockfileVersion: 1, workspaces: { "": { name: "foo" } }, packages: {} }),
+    );
+
+    const [text, textErr, textExitCode] = await spawnAndCollect("pm", "ls");
+    expect(textErr).toBe("");
+    expect(text).toBe("");
+    expect(textExitCode).toBe(0);
+
+    const [stdout, stderr, exitCode] = await spawnAndCollect("pm", "ls", "--json");
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ name: "foo", path: package_dir, dependencies: [] });
+    expect(stdout).toEndWith("\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("keeps the missing lockfile error on stderr", async () => {
+    await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1" }));
+
+    const [stdout, stderr, exitCode] = await spawnAndCollect("pm", "ls", "--json");
+    expect(stdout).toBe("");
+    expect(stderr).toContain("missing lockfile");
+    expect(exitCode).toBe(1);
+  });
+});
+
 it("should remove all cache", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
@@ -796,6 +1016,94 @@ it("bun pm migrate", async () => {
   expect(hash).toMatchSnapshot();
 });
 
+describe("pm bin --json", () => {
+  it("prints the path of the local bin folder", async () => {
+    await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1" }));
+
+    const [stdout, stderr, exitCode] = await spawnAndCollect("pm", "bin", "--json");
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ path: join(package_dir, "node_modules", ".bin") });
+    expect(stdout).toEndWith("\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("prints the path of the global bin folder with -g", async () => {
+    await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1" }));
+    const globalDir = join(package_dir, "global");
+    await mkdir(globalDir);
+    await writeFile(join(globalDir, "package.json"), JSON.stringify({ name: "global", version: "0.0.1" }));
+    const binDir = join(package_dir, "global-bin");
+
+    await using proc = spawn({
+      cmd: [bunExe(), "pm", "bin", "-g", "--json"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env: { ...env, BUN_INSTALL_GLOBAL_DIR: globalDir, BUN_INSTALL_BIN: binDir },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ path: binDir });
+    expect(stdout).toEndWith("\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe("pm cache --json", () => {
+  it("prints the path of the cache folder", async () => {
+    await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1" }));
+    const cacheDir = join(package_dir, "node_modules", ".cache");
+
+    await using proc = spawn({
+      cmd: [bunExe(), "pm", "cache", "--json"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env: { ...env, BUN_INSTALL_CACHE_DIR: cacheDir },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ path: cacheDir });
+    expect(stdout).toEndWith("\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe("pm hash --json", () => {
+  it.each(["hash", "hash-print"])("bun pm %s --json prints the hash the text output prints", async subcommand => {
+    setHandler(dummyRegistry([]));
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { bar: "latest" } }),
+    );
+    const [, err, installExitCode] = await spawnAndCollect("install");
+    expect(err).not.toContain("error:");
+    expect(installExitCode).toBe(0);
+
+    const [text, textErr, textExitCode] = await spawnAndCollect("pm", subcommand);
+    expect(textErr).toBe("");
+    expect(text).toMatch(/^[0-9A-Fa-f]{16}-[0-9A-Fa-f]{16}-[0-9A-Fa-f]{16}-[0-9A-Fa-f]{16}$/);
+    expect(textExitCode).toBe(0);
+
+    const [stdout, stderr, exitCode] = await spawnAndCollect("pm", subcommand, "--json");
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ hash: text });
+    expect(stdout).toEndWith("\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("keeps the missing lockfile error on stderr", async () => {
+    await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1" }));
+
+    const [stdout, stderr, exitCode] = await spawnAndCollect("pm", "hash", "--json");
+    expect(stdout).toBe("");
+    expect(stderr).toContain("missing lockfile");
+    expect(exitCode).toBe(1);
+  });
+});
+
 test("bun whoami executes pm whoami", async () => {
   // Test that "bun whoami" doesn't show reservation message and instead executes pm whoami
   // First create a simple package.json
@@ -864,6 +1172,54 @@ test("bun pm whoami still works", async () => {
 
   // Exit code will be non-zero due to missing auth
   expect(exitCode).toBe(1);
+});
+
+describe("pm whoami --json", () => {
+  it.each([
+    { name: "bun whoami --json prints the username the registry reports", cmd: ["whoami"] },
+    { name: "bun pm whoami --json prints the username the registry reports", cmd: ["pm", "whoami"] },
+  ])("$name", async ({ cmd }) => {
+    const requests: string[] = [];
+    setHandler(async request => {
+      requests.push(`${request.method} ${new URL(request.url).pathname} ${request.headers.get("authorization")}`);
+      return new Response(JSON.stringify({ username: "whoami-json" }));
+    });
+    await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1" }));
+    await writeFile(
+      join(package_dir, ".npmrc"),
+      `registry=http://localhost:${getPort()}/\n//localhost:${getPort()}/:_authToken=whoami-json-token\n`,
+    );
+
+    const [stdout, stderr, exitCode] = await spawnAndCollect(...cmd, "--json");
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ username: "whoami-json" });
+    expect(stdout).toEndWith("\n");
+    expect(requests).toEqual(["GET /-/whoami Bearer whoami-json-token"]);
+    expect(exitCode).toBe(0);
+  });
+
+  it("reports a username from .npmrc without asking the registry", async () => {
+    await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1" }));
+    await writeFile(
+      join(package_dir, ".npmrc"),
+      `//localhost:${getPort()}/:username=whoami-npmrc\n//localhost:${getPort()}/:_password=123456\n`,
+    );
+
+    const [stdout, stderr, exitCode] = await spawnAndCollect("pm", "whoami", "--json");
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ username: "whoami-npmrc" });
+    expect(requested).toBe(0);
+    expect(exitCode).toBe(0);
+  });
+
+  it("keeps the authentication error on stderr", async () => {
+    await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1" }));
+
+    const [stdout, stderr, exitCode] = await spawnAndCollect("pm", "whoami", "--json");
+    expect(stdout).toBe("");
+    expect(stderr).toContain("missing authentication");
+    expect(exitCode).toBe(1);
+  });
 });
 
 test.each([

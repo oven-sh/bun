@@ -3847,15 +3847,10 @@ describe.concurrent("bun-install", () => {
         `${ctx.registry_url}baz-0.0.3.tgz`,
       ]);
       expect(ctx.requested).toBe(6);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([
-        ".bin",
-        ".cache",
-        "bar",
-        "baz",
-        "moz",
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar", "baz", "moz"]);
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules", "moz", "node_modules", ".bin"))).toHaveBins([
+        "baz-run",
       ]);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
-      expect(join(ctx.package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
       expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
         name: "bar",
@@ -3869,7 +3864,6 @@ describe.concurrent("bun-install", () => {
           "baz-run": "index.js",
         },
       });
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules", "moz"))).toEqual(["package.json"]);
       expect(await file(join(ctx.package_dir, "node_modules", "moz", "package.json")).json()).toEqual({
         name: "@barn/moo",
         version: "0.1.0",
@@ -3911,15 +3905,10 @@ describe.concurrent("bun-install", () => {
         `${ctx.registry_url}baz-0.0.3.tgz`,
       ]);
       expect(ctx.requested).toBe(9);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([
-        ".bin",
-        ".cache",
-        "bar",
-        "baz",
-        "moz",
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar", "baz", "moz"]);
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules", "moz", "node_modules", ".bin"))).toHaveBins([
+        "baz-run",
       ]);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
-      expect(join(ctx.package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
       expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
         name: "bar",
@@ -3933,7 +3922,6 @@ describe.concurrent("bun-install", () => {
           "baz-run": "index.js",
         },
       });
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules", "moz"))).toEqual(["package.json"]);
       expect(await file(join(ctx.package_dir, "node_modules", "moz", "package.json")).json()).toEqual({
         name: "@barn/moo",
         version: "0.1.0",
@@ -4814,18 +4802,13 @@ describe.concurrent("bun-install", () => {
         "uglify-js",
         "upper-case",
       ]);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins([
-        "he",
-        "html-minifier",
-        "uglifyjs",
-      ]);
-      expect(join(ctx.package_dir, "node_modules", ".bin", "he")).toBeValidBin(join("..", "he", "bin", "he"));
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["html-minifier"]);
       expect(join(ctx.package_dir, "node_modules", ".bin", "html-minifier")).toBeValidBin(
         join("..", "html-minifier", "cli.js"),
       );
-      expect(join(ctx.package_dir, "node_modules", ".bin", "uglifyjs")).toBeValidBin(
-        join("..", "uglify-js", "bin", "uglifyjs"),
-      );
+      expect(
+        await readdirSorted(join(ctx.package_dir, "node_modules", "html-minifier", "node_modules", ".bin")),
+      ).toHaveBins(["he", "uglifyjs"]);
       await access(join(ctx.package_dir, "bun.lockb"));
       // Perform `bun install` again but with lockfile from before
       await rm(join(ctx.package_dir, "node_modules"), { force: true, recursive: true });
@@ -4871,18 +4854,13 @@ describe.concurrent("bun-install", () => {
         "uglify-js",
         "upper-case",
       ]);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins([
-        "he",
-        "html-minifier",
-        "uglifyjs",
-      ]);
-      expect(join(ctx.package_dir, "node_modules", ".bin", "he")).toBeValidBin(join("..", "he", "bin", "he"));
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["html-minifier"]);
       expect(join(ctx.package_dir, "node_modules", ".bin", "html-minifier")).toBeValidBin(
         join("..", "html-minifier", "cli.js"),
       );
-      expect(join(ctx.package_dir, "node_modules", ".bin", "uglifyjs")).toBeValidBin(
-        join("..", "uglify-js", "bin", "uglifyjs"),
-      );
+      expect(
+        await readdirSorted(join(ctx.package_dir, "node_modules", "html-minifier", "node_modules", ".bin")),
+      ).toHaveBins(["he", "uglifyjs"]);
       await access(join(ctx.package_dir, "bun.lockb"));
     });
   });
@@ -6054,18 +6032,13 @@ describe.concurrent("bun-install", () => {
         "uglify-js",
         "upper-case",
       ]);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins([
-        "he",
-        "html-minifier",
-        "uglifyjs",
-      ]);
-      expect(join(ctx.package_dir, "node_modules", ".bin", "he")).toBeValidBin(join("..", "he", "bin", "he"));
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["html-minifier"]);
       expect(join(ctx.package_dir, "node_modules", ".bin", "html-minifier")).toBeValidBin(
         join("..", "html-minifier", "cli.js"),
       );
-      expect(join(ctx.package_dir, "node_modules", ".bin", "uglifyjs")).toBeValidBin(
-        join("..", "uglify-js", "bin", "uglifyjs"),
-      );
+      expect(
+        await readdirSorted(join(ctx.package_dir, "node_modules", "html-minifier", "node_modules", ".bin")),
+      ).toHaveBins(["he", "uglifyjs"]);
       await access(join(ctx.package_dir, "bun.lockb"));
       // Perform `bun install` again but with lockfile from before
       await rm(join(ctx.package_dir, "node_modules"), { force: true, recursive: true });
@@ -6111,18 +6084,13 @@ describe.concurrent("bun-install", () => {
         "uglify-js",
         "upper-case",
       ]);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins([
-        "he",
-        "html-minifier",
-        "uglifyjs",
-      ]);
-      expect(join(ctx.package_dir, "node_modules", ".bin", "he")).toBeValidBin(join("..", "he", "bin", "he"));
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["html-minifier"]);
       expect(join(ctx.package_dir, "node_modules", ".bin", "html-minifier")).toBeValidBin(
         join("..", "html-minifier", "cli.js"),
       );
-      expect(join(ctx.package_dir, "node_modules", ".bin", "uglifyjs")).toBeValidBin(
-        join("..", "uglify-js", "bin", "uglifyjs"),
-      );
+      expect(
+        await readdirSorted(join(ctx.package_dir, "node_modules", "html-minifier", "node_modules", ".bin")),
+      ).toHaveBins(["he", "uglifyjs"]);
       await access(join(ctx.package_dir, "bun.lockb"));
       // Perform `bun install` again but with cache & lockfile from before
       await Promise.all(
@@ -6185,18 +6153,13 @@ describe.concurrent("bun-install", () => {
         "uglify-js",
         "upper-case",
       ]);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins([
-        "he",
-        "html-minifier",
-        "uglifyjs",
-      ]);
-      expect(join(ctx.package_dir, "node_modules", ".bin", "he")).toBeValidBin(join("..", "he", "bin", "he"));
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["html-minifier"]);
       expect(join(ctx.package_dir, "node_modules", ".bin", "html-minifier")).toBeValidBin(
         join("..", "html-minifier", "cli.js"),
       );
-      expect(join(ctx.package_dir, "node_modules", ".bin", "uglifyjs")).toBeValidBin(
-        join("..", "uglify-js", "bin", "uglifyjs"),
-      );
+      expect(
+        await readdirSorted(join(ctx.package_dir, "node_modules", "html-minifier", "node_modules", ".bin")),
+      ).toHaveBins(["he", "uglifyjs"]);
       await access(join(ctx.package_dir, "bun.lockb"));
     });
   });
@@ -6617,17 +6580,16 @@ describe.concurrent("bun-install", () => {
         `${ctx.registry_url}moo-0.1.0.tgz`,
       ]);
       expect(ctx.requested).toBe(5);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([
-        ".bin",
-        ".cache",
-        "@barn",
-        "bar",
-        "baz",
-      ]);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
-      expect(join(ctx.package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "@barn", "bar", "baz"]);
+      // baz is a transitive dependency of the untrusted @barn/moo, so its bin
+      // is placed under the declaring package's nested .bin rather than root.
+      expect(
+        await readdirSorted(join(ctx.package_dir, "node_modules", "@barn", "moo", "node_modules", ".bin")),
+      ).toHaveBins(["baz-run"]);
+      expect(join(ctx.package_dir, "node_modules", "@barn", "moo", "node_modules", ".bin", "baz-run")).toBeValidBin(
+        join("..", "..", "..", "..", "baz", "index.js"),
+      );
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@barn"))).toEqual(["moo"]);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@barn", "moo"))).toEqual(["package.json"]);
       expect(await file(join(ctx.package_dir, "node_modules", "@barn", "moo", "package.json")).json()).toEqual({
         name: "@barn/moo",
         version: "0.1.0",
@@ -6708,17 +6670,11 @@ describe.concurrent("bun-install", () => {
         `${ctx.registry_url}moo-0.1.0.tgz`,
       ]);
       expect(ctx.requested).toBe(5);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([
-        ".bin",
-        ".cache",
-        "@barn",
-        "bar",
-        "baz",
-      ]);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
-      expect(join(ctx.package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "@barn", "bar", "baz"]);
+      expect(
+        await readdirSorted(join(ctx.package_dir, "node_modules", "@barn", "moo", "node_modules", ".bin")),
+      ).toHaveBins(["baz-run"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@barn"))).toEqual(["moo"]);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@barn", "moo"))).toEqual(["package.json"]);
       expect(await file(join(ctx.package_dir, "node_modules", "@barn", "moo", "package.json")).json()).toEqual({
         name: "@barn/moo",
         version: "0.1.0",
@@ -6773,17 +6729,11 @@ describe.concurrent("bun-install", () => {
         `${ctx.registry_url}moo-0.1.0.tgz`,
       ]);
       expect(ctx.requested).toBe(8);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([
-        ".bin",
-        ".cache",
-        "@barn",
-        "bar",
-        "baz",
-      ]);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
-      expect(join(ctx.package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "@barn", "bar", "baz"]);
+      expect(
+        await readdirSorted(join(ctx.package_dir, "node_modules", "@barn", "moo", "node_modules", ".bin")),
+      ).toHaveBins(["baz-run"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@barn"))).toEqual(["moo"]);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@barn", "moo"))).toEqual(["package.json"]);
       expect(await file(join(ctx.package_dir, "node_modules", "@barn", "moo", "package.json")).json()).toEqual({
         name: "@barn/moo",
         version: "0.1.0",
@@ -6863,17 +6813,11 @@ describe.concurrent("bun-install", () => {
         `${ctx.registry_url}baz-0.0.3.tgz`,
       ]);
       expect(ctx.requested).toBe(4);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([
-        ".bin",
-        ".cache",
-        "@barn",
-        "bar",
-        "baz",
-      ]);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
-      expect(join(ctx.package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "@barn", "bar", "baz"]);
+      expect(
+        await readdirSorted(join(ctx.package_dir, "node_modules", "@barn", "moo", "node_modules", ".bin")),
+      ).toHaveBins(["baz-run"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@barn"))).toEqual(["moo"]);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@barn", "moo"))).toEqual(["package.json"]);
       expect(await file(join(ctx.package_dir, "node_modules", "@barn", "moo", "package.json")).json()).toEqual({
         name: "@barn/moo",
         version: "0.1.0",
@@ -6924,17 +6868,11 @@ describe.concurrent("bun-install", () => {
       expect(await exited2).toBe(0);
       expect(urls.sort()).toEqual([`${ctx.registry_url}bar-0.0.2.tgz`, `${ctx.registry_url}baz-0.0.3.tgz`]);
       expect(ctx.requested).toBe(6);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([
-        ".bin",
-        ".cache",
-        "@barn",
-        "bar",
-        "baz",
-      ]);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
-      expect(join(ctx.package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "@barn", "bar", "baz"]);
+      expect(
+        await readdirSorted(join(ctx.package_dir, "node_modules", "@barn", "moo", "node_modules", ".bin")),
+      ).toHaveBins(["baz-run"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@barn"))).toEqual(["moo"]);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@barn", "moo"))).toEqual(["package.json"]);
       expect(await file(join(ctx.package_dir, "node_modules", "@barn", "moo", "package.json")).json()).toEqual({
         name: "@barn/moo",
         version: "0.1.0",
@@ -7732,8 +7670,6 @@ describe.concurrent("bun-install", () => {
       ]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins([
         "prettier",
-        "resolve",
-        "semver",
         "tsc",
         "tsd",
         "tsserver",

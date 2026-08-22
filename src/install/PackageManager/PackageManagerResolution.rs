@@ -71,7 +71,7 @@ impl PackageManager {
                 if let Some(latest_version) = manifest
                     .find_by_dist_tag_with_filter(
                         b"latest",
-                        self.options.minimum_release_age_ms,
+                        self.options.minimum_release_age_gate_ms(),
                         self.options.minimum_release_age_excludes,
                     )
                     .unwrap()

@@ -1490,20 +1490,33 @@ impl<'a> Parser<'a> {
         if let Some(min_age) = install_obj.get(b"minimumReleaseAge") {
             match &min_age.data {
                 ExprData::ENumber(seconds) => {
-                    if seconds.value() < 0.0 {
+                    let secs = seconds.value();
+                    if !(secs.is_finite() && secs >= 0.0) {
                         self.add_error(
                             min_age.loc,
-                            b"Expected positive number of seconds for minimumReleaseAge",
+                            b"Expected a non-negative number of seconds for minimumReleaseAge (0 disables)",
                         )?;
                         return Ok(());
                     }
                     const MS_PER_S: f64 = bun_core::time::MS_PER_S as f64;
-                    install.minimum_release_age_ms = Some(seconds.value() * MS_PER_S);
+                    install.minimum_release_age_ms = Some(secs * MS_PER_S);
+                }
+                ExprData::EString(s) => {
+                    let Some(ms) =
+                        bun_core::fmt::parse_seconds_or_duration_ms(s.string(self.bump)?)
+                    else {
+                        self.add_error(
+                            min_age.loc,
+                            b"Expected a non-negative number of seconds or a duration like \"2d\" for minimumReleaseAge",
+                        )?;
+                        return Ok(());
+                    };
+                    install.minimum_release_age_ms = Some(ms);
                 }
                 _ => {
                     self.add_error(
                         min_age.loc,
-                        b"Expected number of seconds for minimumReleaseAge",
+                        b"Expected a number of seconds or a duration string for minimumReleaseAge",
                     )?;
                 }
             }

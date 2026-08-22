@@ -666,8 +666,17 @@ enum Installed {
     OtherVersion,
 }
 
+#[derive(Clone, Copy)]
+struct HoistedTreeInit {
+    /// suppress per-package progress output
+    quiet: bool,
+    /// restrict to `--filter`-selected workspaces
+    filtered: bool,
+}
+
 impl<'a> HoistedTree<'a> {
-    fn init(lockfile: &'a Lockfile, quiet: bool, filtered: bool) -> HoistedTree<'a> {
+    fn init(lockfile: &'a Lockfile, opts: HoistedTreeInit) -> HoistedTree<'a> {
+        let HoistedTreeInit { quiet, filtered } = opts;
         let trees = lockfile.buffers.trees.as_slice();
         let deps = lockfile.buffers.dependencies.as_slice();
         let resolutions = lockfile.buffers.resolutions.as_slice();
@@ -960,7 +969,7 @@ fn plan_hoisted(
         || !features.optional_dependencies
         || !features.peer_dependencies;
     let lockfile: &Lockfile = &manager.lockfile;
-    let hoisted = HoistedTree::init(lockfile, quiet, filtered);
+    let hoisted = HoistedTree::init(lockfile, HoistedTreeInit { quiet, filtered });
     let buf = lockfile.buffers.string_bytes.as_slice();
     let deps = lockfile.buffers.dependencies.as_slice();
     let trees = lockfile.buffers.trees.as_slice();
@@ -1144,8 +1153,20 @@ pub(crate) fn remove_collapsed_copies(manager: &PackageManager, before: &Lockfil
         return;
     }
     let quiet = manager.options.log_level == LogLevel::Silent;
-    let old = HoistedTree::init(before, true, false);
-    let new = HoistedTree::init(after, quiet, false);
+    let old = HoistedTree::init(
+        before,
+        HoistedTreeInit {
+            quiet: true,
+            filtered: false,
+        },
+    );
+    let new = HoistedTree::init(
+        after,
+        HoistedTreeInit {
+            quiet,
+            filtered: false,
+        },
+    );
     let targets = manager.filtered_link_targets.as_ref();
     let selected: Option<Vec<PackageID>> = targets.map(|targets| targets.package_ids(before));
     let importers = selected.as_ref().map(|_| tree_importers(before));

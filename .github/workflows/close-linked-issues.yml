@@ -146,10 +146,11 @@ jobs:
                 for (;;) {
                   found.push({ repository: ref.token.repository ?? self, number: ref.token.number, keyword: token.text });
                   j = ref.end;
-                  // "#1, #2", "#1 and #2", "#1, and #2", "#1 & #2". A line break may sit
-                  // next to a separator ("#1,\n#2", "#1\nand #2"), but a break alone does
-                  // not continue the list: "Fixes #1\n#2" is one reference.
-                  let k = j;
+                  // "#1, #2", "#1 and #2", "#1, and #2", "#1 & #2", "**#1** and #2". A
+                  // line break may sit next to a separator ("#1,\n#2", "#1\nand #2"), but
+                  // a break alone does not continue the list: "Fixes #1\n#2" is one
+                  // reference.
+                  let k = skipEmphasis(tokens, j);
                   let separator = false;
                   if (isPunct(tokens[k], ",")) {
                     k++;
@@ -276,6 +277,11 @@ jobs:
               return k;
             }
 
+            function skipEmphasis(tokens, k) {
+              while (isPunct(tokens[k], "*") || isPunct(tokens[k], "_")) k++;
+              return k;
+            }
+
             // The same, also past one line break: "If\nthis fixes #1".
             function skipBack(tokens, k) {
               k = skipInterveningBack(tokens, k);
@@ -292,8 +298,10 @@ jobs:
             }
 
             // A reference token, an autolink `<issue url>`, or a markdown link
-            // `[#1](url)` / `[text](issue url)`, at `index`: { token, end } or null.
+            // `[#1](url)` / `[text](issue url)`, at `index`, after any emphasis markers
+            // ("Fixes **#1**", "**Fixes** #1"): { token, end } or null.
             function readReference(tokens, index) {
+              index = skipEmphasis(tokens, index);
               const token = tokens[index];
               if (token === undefined) return null;
               if (token.kind === "ref") return token.attached ? null : { token, end: index + 1 };
@@ -344,11 +352,7 @@ jobs:
               for (const line of text.split("\n")) {
                 // A "<!--" in the middle of a line is a comment only when a "-->" follows
                 // on a later line of the same paragraph.
-                let closesLater = false;
-                if (line.includes("<!--")) {
-                  const closer = text.indexOf("-->", offset + line.length);
-                  closesLater = closer !== -1 && closer < nextBlankLine(text, offset);
-                }
+                const closesLater = line.includes("<!--") && closesInParagraph(text, offset + line.length);
                 offset += line.length + 1;
                 if (comment) {
                   const end = line.indexOf("-->");
@@ -397,7 +401,8 @@ jobs:
                   continue;
                 }
                 if (!indented && trimmed.startsWith(">")) {
-                  quote = continueQuote(quote ?? { paragraph: false, fence: null, comment: false }, trimmed.slice(1));
+                  const lead = line.length - line.trimStart().length;
+                  quote = continueQuote(quote ?? { paragraph: false, fence: null, comment: false }, trimmed.slice(1), lead);
                   paragraph = false;
                   kept.push("");
                   continue;
@@ -428,6 +433,27 @@ jobs:
               return kept.join("\n");
             }
 
+            // Whether a "-->" follows the line that ends at `from`, before the paragraph
+            // ends: at a blank line, or at a line that starts a block (a fence, a quote,
+            // a heading, a rule, a list item, an HTML block or a setext underline).
+            function closesInParagraph(text, from) {
+              let at = from;
+              while (at < text.length) {
+                const end = text.indexOf("\n", at + 1);
+                const line = text.slice(at + 1, end === -1 ? text.length : end);
+                const trimmed = line.trim();
+                if (trimmed === "") return false;
+                if (!isIndentedCode(line)) {
+                  const underline = isRunOf(trimmed, "=") || isRunOf(trimmed, "-");
+                  if (underline || isFenceOpening(trimmed) || trimmed.startsWith(">") || startsBlock(trimmed)) return false;
+                }
+                if (line.includes("-->")) return true;
+                if (end === -1) return false;
+                at = end;
+              }
+              return false;
+            }
+
             // The quote's state after one more quoted line, `inner` being the text after
             // ">": { paragraph, fence, comment }, whether the quote's last leaf is a
             // paragraph, and the fence or comment open inside it. Only a quoted paragraph
@@ -437,8 +463,8 @@ jobs:
             // at the top level, a fence or a comment has at most three columns of
             // indentation after the marker's own space, and an indented line continues
             // whatever came before it.
-            function continueQuote(quote, inner) {
-              const { indent, content } = quoteIndent(inner);
+            function continueQuote(quote, inner, lead) {
+              const { indent, content } = quoteIndent(inner, lead);
               const quoted = content.trim();
               const indented = indent >= 5;
               if (quote.comment) return { paragraph: false, fence: null, comment: !quoted.includes("-->") };
@@ -455,17 +481,19 @@ jobs:
             }
 
             // The whitespace after ">" in columns, with tab stops of four counted from
-            // the marker, and the text after it. The marker's own space is one of the
-            // columns: ">\tfoo" has three, two of which indent "foo".
-            function quoteIndent(inner) {
-              let column = 1;
+            // the start of the line (`lead` spaces come before the ">"), and the text
+            // after it. The marker's own space is one of the columns: ">\tfoo" has
+            // three, two of which indent "foo".
+            function quoteIndent(inner, lead) {
+              const start = lead + 1;
+              let column = start;
               let i = 0;
               for (; i < inner.length; i++) {
                 if (inner[i] === " ") column++;
                 else if (inner[i] === "\t") column += 4 - (column % 4);
                 else break;
               }
-              return { indent: column - 1, content: inner.slice(i) };
+              return { indent: column - start, content: inner.slice(i) };
             }
 
             // Removes the HTML comments that start on `line`: { prose, open }, where

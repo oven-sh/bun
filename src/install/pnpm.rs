@@ -2368,6 +2368,7 @@ fn update_package_json_after_migration(
     let mut needs_update = false;
     let mut moved_overrides = false;
     let mut moved_patched_deps = false;
+    let mut moved_package_extensions = false;
     let mut moved: Vec<&'static str> = Vec::new();
 
     if let Some(mut pnpm_prop) = json.as_property(b"pnpm") {
@@ -2433,7 +2434,21 @@ fn update_package_json_after_migration(
                 }
             }
 
-            if moved_overrides || moved_patched_deps {
+            if let Some(extensions_field) = pnpm_obj.get(b"packageExtensions") {
+                if is_non_empty_object(&extensions_field) {
+                    merge_object_into_root(
+                        &mut json,
+                        &bump,
+                        b"packageExtensions",
+                        extensions_field,
+                    )?;
+                    moved_package_extensions = true;
+                    needs_update = true;
+                    moved.push("pnpm.packageExtensions to packageExtensions");
+                }
+            }
+
+            if moved_overrides || moved_patched_deps || moved_package_extensions {
                 let mut remaining_count: usize = 0;
                 for prop in pnpm_obj.properties.slice() {
                     let Some(key) = as_string(prop.key.as_ref().expect("infallible: prop has key"))
@@ -2445,6 +2460,9 @@ fn update_package_json_after_migration(
                         continue;
                     }
                     if moved_patched_deps && key == b"patchedDependencies" {
+                        continue;
+                    }
+                    if moved_package_extensions && key == b"packageExtensions" {
                         continue;
                     }
                     remaining_count += 1;
@@ -2493,6 +2511,9 @@ fn update_package_json_after_migration(
                         if moved_patched_deps && key == b"patchedDependencies" {
                             continue;
                         }
+                        if moved_package_extensions && key == b"packageExtensions" {
+                            continue;
+                        }
                         VecExt::append(&mut new_pnpm_props, shallow_clone_prop(prop));
                     }
 
@@ -2511,6 +2532,7 @@ fn update_package_json_after_migration(
     let mut catalogs_obj: Option<Expr> = None;
     let mut workspace_overrides_obj: Option<Expr> = None;
     let mut workspace_patched_deps_obj: Option<Expr> = None;
+    let mut workspace_package_extensions_obj: Option<Expr> = None;
 
     match sys::File::read_from(Fd::cwd(), b"pnpm-workspace.yaml") {
         Ok(contents) => 'read_pnpm_workspace_yaml: {
@@ -2559,6 +2581,9 @@ fn update_package_json_after_migration(
             workspace_patched_deps_obj = ws_root
                 .get_object(b"patchedDependencies")
                 .filter(is_non_empty_object);
+            workspace_package_extensions_obj = ws_root
+                .get_object(b"packageExtensions")
+                .filter(is_non_empty_object);
 
             // These subtrees escape this arm (into `json` and the cached
             // package.json tree) while `arena` drops with it, so their
@@ -2568,6 +2593,7 @@ fn update_package_json_after_migration(
                 &mut catalogs_obj,
                 &mut workspace_overrides_obj,
                 &mut workspace_patched_deps_obj,
+                &mut workspace_package_extensions_obj,
             ]
             .into_iter()
             .flatten()
@@ -2732,6 +2758,13 @@ fn update_package_json_after_migration(
         }
     }
 
+    // Handle packageExtensions from pnpm-workspace.yaml
+    if let Some(ws_extensions) = workspace_package_extensions_obj {
+        merge_object_into_root(&mut json, &bump, b"packageExtensions", ws_extensions)?;
+        needs_update = true;
+        moved.push("pnpm-workspace.yaml packageExtensions to packageExtensions");
+    }
+
     if needs_update {
         print_package_json_into_cache_entry(root_pkg_json, json);
         // The edits above spliced `Store`-allocated nodes into the cached tree,
@@ -2757,6 +2790,30 @@ fn update_package_json_after_migration(
     }
 
     Ok(())
+}
+
+/// Copy every property of `obj` into the root-level object `field` of `json`,
+/// creating `field` when the root does not have it yet (later keys win).
+fn merge_object_into_root(
+    json: &mut Expr,
+    bump: &bun_alloc::Arena,
+    field: &'static [u8],
+    obj: Expr,
+) -> Result<(), AllocError> {
+    if let Some(mut existing_prop) = json.as_property(field) {
+        if existing_prop.expr.is_object() {
+            let existing = e_object_mut(&mut existing_prop.expr);
+            for prop in e_object(&obj).properties.slice() {
+                let Some(key) = as_string(prop.key.as_ref().expect("infallible: prop has key"))
+                else {
+                    continue;
+                };
+                existing.put(bump, key, prop.value.expect("infallible: prop has value"))?;
+            }
+            return Ok(());
+        }
+    }
+    e_object_mut(json).put(bump, field, obj)
 }
 
 fn is_non_empty_object(expr: &Expr) -> bool {

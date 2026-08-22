@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { bunRun, tempDir } from "harness";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SourceMapConsumer } from "source-map";
@@ -523,5 +523,133 @@ console.log("✓ Both import types work correctly");
       expect(entryCode).toContain('\\\"index\\\":\\\"./index.html\\\"');
       expect(entryCode).toContain('\\\"files\\\":[');
     },
+  });
+
+  // Server code importing an HTML file binds the import to a generated manifest
+  // module. import() and require() of that module go through the same linker
+  // paths as import()/require() of any other module (wrapping it, making it a
+  // chunk of its own when splitting), which only works if the import record
+  // keeps its real kind.
+  const pageFiles = {
+    "page.html": `<!doctype html><html><head><script type="module" src="./app.ts"></script></head><body>hi</body></html>`,
+    "app.ts": `console.log("app");`,
+  };
+
+  async function buildServer(dir: string, entrypoints: string[], options: Partial<Bun.BuildConfig> = {}) {
+    const result = await Bun.build({
+      entrypoints: entrypoints.map(entry => join(dir, entry)),
+      outdir: join(dir, "out"),
+      target: "bun",
+      ...options,
+    });
+    expect(result.logs).toBeEmpty();
+    return result;
+  }
+
+  // `json` must be the manifest object itself (not a module namespace around it)
+  // for page.html, whose browser build is exactly the HTML file and its JS entry chunk.
+  function expectPageManifest(json: string) {
+    const manifest: { index: string; files: Array<{ path: string; loader: string; isEntry: boolean }> } =
+      JSON.parse(json);
+    expect(Object.keys(manifest)).toEqual(["index", "files"]);
+    expect(manifest.index).toBe("./page.html");
+    expect(manifest.files.map(f => [f.loader, f.isEntry]).sort()).toEqual([
+      ["html", true],
+      ["js", true],
+    ]);
+    return manifest;
+  }
+
+  test("html-import/dynamic-import", async () => {
+    await using dir = tempDir("html-import-dynamic", {
+      ...pageFiles,
+      "server.ts": `
+        const promise = import("./page.html");
+        console.log(promise instanceof Promise);
+        const { default: manifest } = await promise;
+        console.log(JSON.stringify(manifest));
+      `,
+    });
+
+    const result = await buildServer(dir, ["server.ts"], { metafile: true });
+
+    const { stdout, stderr, exitCode } = await bunRun(join(dir, "out", "server.js"));
+    expect(stderr).toBe("");
+    const [isPromise, manifestJson] = stdout.split("\n");
+    expect(isPromise).toBe("true");
+    expectPageManifest(manifestJson);
+    expect(exitCode).toBe(0);
+
+    const [, serverInput] = Object.entries(result.metafile!.inputs).find(([path]) => path.endsWith("server.ts"))!;
+    expect(serverInput.imports.map(({ kind, original }) => ({ kind, original }))).toEqual([
+      { kind: "dynamic-import", original: "./page.html" },
+    ]);
+  });
+
+  test("html-import/dynamic-import-with-splitting", async () => {
+    await using dir = tempDir("html-import-dynamic-splitting", {
+      ...pageFiles,
+      "server.ts": `
+        const { default: manifest } = await import("./page.html");
+        console.log(JSON.stringify(manifest));
+      `,
+    });
+
+    await buildServer(dir, ["server.ts"], { splitting: true });
+
+    // With splitting, the manifest module is loaded lazily from a chunk of its own.
+    const serverCode = readFileSync(join(dir, "out", "server.js"), "utf8");
+    const lazyChunk = serverCode.match(/import\("(\.\/[^"]+)"\)/)![1];
+    expect(readFileSync(join(dir, "out", lazyChunk), "utf8")).toStartWith("// @bun\n");
+
+    const { stdout, stderr, exitCode } = await bunRun(join(dir, "out", "server.js"));
+    expect(stderr).toBe("");
+    const manifest = expectPageManifest(stdout);
+    // That chunk is server code, so the manifest must not list it as a browser asset.
+    expect(manifest.files.map(f => f.path)).not.toContain(lazyChunk);
+    expect(exitCode).toBe(0);
+  });
+
+  // Like require() of a JSON file, require() of an HTML file evaluates to the
+  // manifest itself, whether the requiring file is ESM or CommonJS.
+  test.each(["esm", "cjs"])("html-import/require-from-%s", async kind => {
+    await using dir = tempDir(`html-import-require-${kind}`, {
+      ...pageFiles,
+      "server.ts": `
+        ${kind === "esm" ? "export {};" : ""}
+        const manifest = require("./page.html");
+        console.log(JSON.stringify(manifest));
+      `,
+    });
+
+    await buildServer(dir, ["server.ts"]);
+
+    const { stdout, stderr, exitCode } = await bunRun(join(dir, "out", "server.js"));
+    expect(stderr).toBe("");
+    expectPageManifest(stdout);
+    expect(exitCode).toBe(0);
+  });
+
+  // With splitting, a manifest module imported by several server entry points
+  // lands in a shared chunk. That chunk is server code: it must not be listed in
+  // the manifest as one of the page's browser files.
+  test("html-import/splitting-shared-manifest-chunk", async () => {
+    await using dir = tempDir("html-import-splitting-shared", {
+      ...pageFiles,
+      "a.ts": `import manifest from "./page.html"; console.log(JSON.stringify(manifest));`,
+      "b.ts": `import manifest from "./page.html"; console.log(manifest.files.length);`,
+    });
+
+    await buildServer(dir, ["a.ts", "b.ts"], { splitting: true });
+
+    const aCode = readFileSync(join(dir, "out", "a.js"), "utf8");
+    const sharedChunk = aCode.match(/from "(\.\/[^"]+)"/)![1];
+    expect(readFileSync(join(dir, "out", "b.js"), "utf8")).toContain(`from "${sharedChunk}"`);
+
+    const { stdout, stderr, exitCode } = await bunRun(join(dir, "out", "a.js"));
+    expect(stderr).toBe("");
+    const manifest = expectPageManifest(stdout);
+    expect(manifest.files.map(f => f.path)).not.toContain(sharedChunk);
+    expect(exitCode).toBe(0);
   });
 });

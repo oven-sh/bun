@@ -1363,8 +1363,7 @@ pub struct Tty {
     /// `alloc_cb` buffer, and a read cancelled by `uv_read_stop` is never
     /// handed back through `read_cb` — so the buffer must be owned by
     /// something libuv guarantees outlives the read. The handle is that
-    /// thing: its close callback only runs once no requests are pending,
-    /// and the process-static stdin tty is never closed at all.
+    /// thing: its close callback only runs once no requests are pending.
     pub read_scratch: Vec<u8>,
 }
 

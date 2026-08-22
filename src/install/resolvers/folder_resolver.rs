@@ -83,9 +83,14 @@ impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
 /// Value stored in the folder-resolution map: the resolution plus the
 /// normalized absolute `package.json` path the key hash was computed from.
 /// Lookups compare the path, since a different path whose hash collides must
-/// not reuse this resolution.
+/// not reuse this resolution. `link` records whether the entry was resolved as
+/// a `link:` target (a `Symlink` resolution parsed with `Features::LINK`, i.e.
+/// without its dependencies) rather than as a folder/workspace: the same
+/// directory referenced both ways is two different packages, so it is part of
+/// the key (see `hash_for`) and of the equality check.
 pub struct Entry {
     pub(crate) abs_path: Box<[u8]>,
+    pub(crate) link: bool,
     pub(crate) resolution: FolderResolution,
 }
 
@@ -98,6 +103,14 @@ fn normalize(path: &[u8]) -> &[u8] {
 
 pub(crate) fn hash(normalized_path: &[u8]) -> u64 {
     bun_wyhash::hash(normalized_path)
+}
+
+/// Map key: the path hash, in a separate keyspace for `link:` entries so a
+/// `link:./x` and a `file:./x` (or workspace) naming the same directory do not
+/// share a resolution.
+fn hash_for(normalized_path: &[u8], link: bool) -> u64 {
+    let h = hash(normalized_path);
+    if link { h ^ 0x9E37_79B9_7F4A_7C15 } else { h }
 }
 
 // ── NewResolver ───────────────────────────────────────────────────────────
@@ -164,9 +177,21 @@ impl ResolverContext for CacheFolderResolver {
 /// distinguishes the workspace resolver.
 trait FolderResolverImpl: ResolverContext {
     const IS_WORKSPACE: bool;
+
+    /// The stored (root-relative or absolute) target of a path-form `link:`
+    /// dependency, if that is what is being resolved. Such a target may be a
+    /// plain directory without a `package.json` (yarn/pnpm semantics).
+    fn link_path(&self) -> Option<&[u8]> {
+        None
+    }
 }
 impl<'a, const TAG: ResolutionTag> FolderResolverImpl for NewResolver<'a, TAG> {
     const IS_WORKSPACE: bool = matches!(TAG, ResolutionTag::Workspace);
+
+    fn link_path(&self) -> Option<&[u8]> {
+        (matches!(TAG, ResolutionTag::Symlink) && dependency::is_link_path(self.folder_path))
+            .then_some(self.folder_path)
+    }
 }
 impl FolderResolverImpl for CacheFolderResolver {
     const IS_WORKSPACE: bool = false;
@@ -319,13 +344,50 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
             bun_perf::trace(bun_perf::PerfEvent::FolderResolverReadPackageJSONFromDiskFolder);
 
         let source = {
-            let file = File::openat(Fd::cwd(), abs.as_bytes(), O::RDONLY, 0)?;
             body.reset();
-            let read_result = file
-                .read_to_end_with_array_list(&mut body.list, bun_sys::SizeHint::ProbablySmall)
-                .map(|_| ());
-            let _ = file.close();
-            read_result?;
+            match File::openat(Fd::cwd(), abs.as_bytes(), O::RDONLY, 0) {
+                Ok(file) => {
+                    // closed on drop
+                    file.read_to_end_with_array_list(
+                        &mut body.list,
+                        bun_sys::SizeHint::ProbablySmall,
+                    )?;
+                }
+                // A path-form `link:` target may be a plain directory without a
+                // package.json: treat it as an empty manifest named after the
+                // directory (a lockfile package needs a name), with no dependencies.
+                // The directory itself must exist — neither linker opens the target
+                // when creating the symlink, so a missing one is reported here
+                // (before anything is written) rather than left dangling.
+                Err(err)
+                    if matches!(err.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR)
+                        && resolver.link_path().is_some() =>
+                {
+                    let dir = bun_paths::dirname(abs.as_bytes()).unwrap_or(b"");
+                    if !matches!(
+                        bun_sys::directory_exists_at(Fd::cwd(), &bun_core::ZBox::from_bytes(dir)),
+                        Ok(true)
+                    ) {
+                        return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT));
+                    }
+                    body.list.extend_from_slice(b"{\"name\":\"");
+                    let start = body.list.len();
+                    for &c in bun_paths::basename(dir) {
+                        if c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_' | b'.') {
+                            body.list.push(c);
+                        }
+                    }
+                    if body.list.len() == start {
+                        // nothing usable in the directory name: a stable synthetic one,
+                        // hashing the stored project-relative target (not the absolute path)
+                        use std::io::Write as _;
+                        let stored = resolver.link_path().unwrap_or(b"");
+                        let _ = write!(&mut body.list, "link-{:016x}", bun_wyhash::hash(stored));
+                    }
+                    body.list.extend_from_slice(b"\",\"version\":\"0.0.0\"}");
+                }
+                Err(err) => return Err(err.into()),
+            }
 
             bun_ast::Source::init_path_string(abs.as_bytes(), body.list.as_slice())
         };
@@ -419,14 +481,23 @@ pub(crate) fn get_or_put(
             &rel_buf[..rel_len],
         )
     };
-    let abs_hash = hash(abs.as_bytes());
+    // `link:` targets (name-form under the global dir, or path-form) are parsed
+    // with `Features::LINK` into a `Symlink` resolution; the same directory as a
+    // `file:`/workspace target is a different package with its own dependencies.
+    let link = matches!(
+        global_or_relative,
+        GlobalOrRelative::Global(_) | GlobalOrRelative::Relative(dependency::version::Tag::Symlink)
+    );
+    let abs_hash = hash_for(abs.as_bytes(), link);
 
     // Check first, compute, then insert, because read_package_json_from_disk
-    // needs &mut manager. Compare the stored path, not just its hash: a
-    // different path whose hash collides must not reuse this resolution. On a
+    // needs &mut manager. Compare the stored path (and kind), not just its hash:
+    // a different path whose hash collides must not reuse this resolution. On a
     // collision, resolve fresh without caching so the first path's entry stays.
     let hash_collision = match manager.folders.get(&abs_hash) {
-        Some(existing) if *existing.abs_path == *abs.as_bytes() => return existing.resolution,
+        Some(existing) if existing.link == link && *existing.abs_path == *abs.as_bytes() => {
+            return existing.resolution;
+        }
         Some(_) => true,
         None => false,
     };
@@ -467,6 +538,20 @@ pub(crate) fn get_or_put(
                     &mut resolver,
                 );
             }
+            dependency::version::Tag::Symlink => 'symlink: {
+                let mut path = PathBuffer::uninit();
+                let Some(folder_path) = dependency::link_path_for_lockfile(rel, &mut path) else {
+                    break 'symlink Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+                };
+                let mut resolver: SymlinkResolver = NewResolver { folder_path };
+                break 'symlink read_package_json_from_disk(
+                    manager,
+                    abs,
+                    version,
+                    Features::LINK,
+                    &mut resolver,
+                );
+            }
             _ => unreachable!(),
         },
         GlobalOrRelative::CacheFolder(_) => 'cache_folder: {
@@ -499,6 +584,7 @@ pub(crate) fn get_or_put(
                     abs_hash,
                     Entry {
                         abs_path: abs.as_bytes().into(),
+                        link,
                         resolution: stored,
                     },
                 );
@@ -512,6 +598,7 @@ pub(crate) fn get_or_put(
             abs_hash,
             Entry {
                 abs_path: abs.as_bytes().into(),
+                link,
                 resolution: FolderResolution::PackageId(package.meta.id),
             },
         );

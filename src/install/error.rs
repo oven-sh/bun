@@ -60,6 +60,8 @@ pub enum Error {
     TooRecentVersion,
     #[error("MissingPackageJSON")]
     MissingPackageJSON,
+    #[error("UnsafeLinkTarget")]
+    UnsafeLinkTarget,
     #[error("InstallFailed")]
     InstallFailed,
     #[error("HTTPError")]
@@ -271,6 +273,7 @@ impl Error {
             Self::NoMatchingVersion => "NoMatchingVersion",
             Self::TooRecentVersion => "TooRecentVersion",
             Self::MissingPackageJSON => "MissingPackageJSON",
+            Self::UnsafeLinkTarget => "UnsafeLinkTarget",
             Self::InstallFailed => "InstallFailed",
             Self::HTTPError => "HTTPError",
             Self::Failed => "Failed",

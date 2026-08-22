@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { forceUTF16 } from "harness";
 
 // Constants matching the upstream slice-ansi test suite
 const ESCAPE = "\u001B";
@@ -1589,11 +1590,8 @@ describe("Bun.sliceAnsi", () => {
     });
 
     test("UTF-16 ASCII fast path (string forced to 16-bit)", () => {
-      // Force a string into UTF-16 representation by including then removing a wide char.
-      // JSC doesn't re-compact to Latin-1, so this exercises the uint16_t SIMD lane path.
-      const wide = "hello world" + "\u00ff".slice(0, 0); // stays Latin-1 actually
-      // Better: concat with a surrogate, then slice it off — result stays UTF-16
-      const utf16 = ("hello world" + "\u{1F600}").slice(0, 11);
+      // ASCII content in 16-bit storage exercises the uint16_t SIMD lane path.
+      const utf16 = forceUTF16("hello world");
       expect(Bun.sliceAnsi(utf16, 0, 5)).toBe("hello");
       expect(Bun.sliceAnsi(utf16, 6, 11)).toBe("world");
       expect(Bun.sliceAnsi(utf16)).toBe(utf16);

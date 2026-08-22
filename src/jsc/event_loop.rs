@@ -556,7 +556,7 @@ impl EventLoop {
     pub fn has_pending_refs(&self) -> bool {
         self.concurrent_ref.load(Ordering::SeqCst) > 0
             || self
-                .finished_macro_loop()
+                .macro_loop_if_not_running()
                 .is_some_and(|m| m.concurrent_ref.load(Ordering::SeqCst) > 0)
     }
 
@@ -564,7 +564,7 @@ impl EventLoop {
     pub(crate) fn has_concurrent_tasks(&self) -> bool {
         !self.concurrent_tasks.is_empty()
             || self
-                .finished_macro_loop()
+                .macro_loop_if_not_running()
                 .is_some_and(|m| !m.concurrent_tasks.is_empty())
     }
 
@@ -598,7 +598,7 @@ impl EventLoop {
         self.run_imminent_gc_timer();
 
         let start_count = self.tasks.readable_length();
-        if let Some(macro_loop) = self.finished_macro_loop() {
+        if let Some(macro_loop) = self.macro_loop_if_not_running() {
             macro_loop.apply_concurrent_ref_delta();
             let batch = macro_loop.concurrent_tasks.pop_batch();
             self.take_concurrent_tasks(batch);
@@ -652,7 +652,7 @@ impl EventLoop {
     /// while a macro is being waited on; whatever finishes after the macro
     /// returned is this loop's to run, and the platform loop both share stays
     /// alive for it until then.
-    fn finished_macro_loop(&self) -> Option<&EventLoop> {
+    fn macro_loop_if_not_running(&self) -> Option<&EventLoop> {
         let vm = self.vm();
         // SAFETY: `vm` is the live owning VM (set in `init()`). `addr_of!`
         // projects to sibling fields without materializing a

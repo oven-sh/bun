@@ -108,10 +108,25 @@ describe("dns", () => {
       });
     });
 
+    // These reject with whatever the resolver path reports for a name that
+    // cannot exist. On the system and libc backends that is an EAI code, and
+    // EAI_AGAIN (query unanswered, or SERVFAIL on glibc) used to come out of
+    // init_eai's catch-all as DNS_ENOTIMP, which is why ENOTIMP is in this set;
+    // since #36619 it is DNS_ETIMEOUT. It does happen: Google Public DNS
+    // (8.8.8.8) drops queries whose top-level label contains a space (" ",
+    // "this is not a hostname") instead of answering NXDOMAIN, and unless
+    // mDNSResponder fails over to the next resolver before its ~5s query
+    // timeout, the macOS system backend reports that timeout. c-ares stays
+    // strict: it rejects the ill-formed names itself (ARES_EBADNAME, nothing is
+    // sent) and "." gets a real rcode, so a timeout from it would be a bug.
+    const malformedHostnameCodes =
+      backend === "c-ares"
+        ? /^(?:DNS_ENOTFOUND|DNS_ESERVFAIL|DNS_ENOTIMP)$/
+        : /^(?:DNS_ENOTFOUND|DNS_ESERVFAIL|DNS_ENOTIMP|DNS_ETIMEOUT)$/;
     test.concurrent.each(malformedHostnames)("'%s'", async hostname => {
       // @ts-expect-error
       await expect(dns.lookup(hostname, { backend })).rejects.toMatchObject({
-        code: expect.stringMatching(/^DNS_ENOTFOUND|DNS_ESERVFAIL|DNS_ENOTIMP$/),
+        code: expect.stringMatching(malformedHostnameCodes),
         name: "DNSException",
       });
     });

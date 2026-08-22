@@ -617,7 +617,8 @@ pub(crate) fn effective_version(
     Some(version)
 }
 
-// Optional-peer edges are followed too: with an in-sync package.json `clean` runs with `keep_optional_peer_targets`.
+// Optional-peer edges are followed too: `clean` keeps a target the loaded lockfile held through them alone
+// (`Lockfile::held_at_load`), and a version that survives here keeps every edge it had, so anything else they reach stays held.
 fn reachable(lockfile: &Lockfile, resolutions: &[PackageID]) -> DynamicBitSet {
     crate::lockfile::reachable::packages(
         lockfile,

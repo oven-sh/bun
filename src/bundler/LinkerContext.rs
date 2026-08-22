@@ -1587,6 +1587,9 @@ pub(crate) enum MatchImportKind {
     ProbablyTypescriptType,
     /// The import resolved to multiple symbols via "export * from"
     Ambiguous,
+    /// Tracing the import's "export * from" alternatives would have
+    /// overflowed the stack
+    StackOverflow,
 }
 
 pub struct ChunkMeta {
@@ -3510,7 +3513,12 @@ impl<'a> LinkerContext<'a> {
             //
             // This uses a O(n^2) array scan instead of a O(n) map because the vast
             // majority of cases have one or two elements
-            for prev_tracker in &self.cycle_detector[cycle_detector_top..] {
+            //
+            // The entries below `cycle_detector_top` are the chains of the callers
+            // this is tracing an "export * from" alternative for (`Found` arm); an
+            // alternative leading back into one of them would otherwise recurse
+            // forever.
+            for prev_tracker in &self.cycle_detector {
                 if import_tracker_eq(&tracker, prev_tracker) {
                     result = MatchImport {
                         kind: MatchImportKind::Cycle,
@@ -3743,8 +3751,21 @@ impl<'a> LinkerContext<'a> {
                             [ambiguous_tracker.data.source_index.get() as usize]
                             .contains(&ambiguous_tracker.data.import_ref)
                         {
+                            // One frame per nested alternative; the chain can be as
+                            // long as the input likes.
+                            if !bun_core::StackCheck::init().is_safe_to_recurse() {
+                                result = MatchImport {
+                                    kind: MatchImportKind::StackOverflow,
+                                    ..Default::default()
+                                };
+                                break 'loop_;
+                            }
                             let ambig =
                                 self.match_import_with_export(ambiguous_tracker.data, re_exports);
+                            if ambig.kind == MatchImportKind::StackOverflow {
+                                result = ambig;
+                                break 'loop_;
+                            }
                             ambiguous_results.push(ambig);
                         } else {
                             ambiguous_results.push(MatchImport {
@@ -3802,6 +3823,11 @@ impl<'a> LinkerContext<'a> {
         // Spec `defer`: restore cycle_detector to its entry length now that the
         // loop is done. All remaining exit paths are below this point.
         self.cycle_detector.truncate(cycle_detector_top);
+
+        // Not every alternative was traced, so there is nothing to compare.
+        if result.kind == MatchImportKind::StackOverflow {
+            return result;
+        }
 
         // If there is a potential ambiguity, all results must be the same
         for ambig in &ambiguous_results {
@@ -3936,7 +3962,7 @@ impl<'a> LinkerContext<'a> {
                             ..Default::default()
                         }));
                 }
-                MatchImportKind::Cycle => {
+                MatchImportKind::Cycle | MatchImportKind::StackOverflow => {
                     let source = self.get_source(source_index);
                     let r = lex::range_of_identifier(source, named_import.alias_loc);
                     // SAFETY: arena `*const [u8]` valid for the link pass.
@@ -3944,13 +3970,19 @@ impl<'a> LinkerContext<'a> {
                         .alias
                         .expect("infallible: alias present")
                         .slice();
+                    let what = if result.kind == MatchImportKind::Cycle {
+                        "Detected cycle"
+                    } else {
+                        "Maximum call stack size exceeded"
+                    };
                     // Split-borrow with `named_import` — `log_disjoint` returns
                     // the disjoint `Transpiler.log` backref.
                     self.log_disjoint().add_range_error_fmt(
                         Some(source),
                         r,
                         format_args!(
-                            "Detected cycle while resolving import \"{}\"",
+                            "{} while resolving import \"{}\"",
+                            what,
                             bstr::BStr::new(alias),
                         ),
                     );

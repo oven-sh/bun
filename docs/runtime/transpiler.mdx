@@ -207,13 +207,19 @@ interface TranspilerOptions {
 
   // Specify a set of exports to eliminate
   // Or rename certain exports
+  // Enables treeShaking by default, so code only used by an eliminated export is removed too
   exports?: {
       eliminate?: string[];
       replace?: Record<string, string>;
   },
 
+  // Whether to remove top-level declarations (without side effects) that nothing
+  // exported or executed in the file refers to, and the imports they used
+  // Default: false, or true when exports has entries
+  treeShaking?: boolean,
+
   // Whether to remove unused imports from transpiled file
-  // Default: false
+  // Default: the value of treeShaking
   trimUnusedImports?: boolean,
 
   // Whether to enable a set of JSX optimizations

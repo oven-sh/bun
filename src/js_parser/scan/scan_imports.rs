@@ -265,11 +265,14 @@ impl<'a> ImportScanner<'a> {
                         // e.g. `import 'fancy-stylesheet-thing/style.css';`
                         // This is a breaking change though. We can make it an option with some guardrail
                         // so maybe if it errors, it shows a suggestion "retry without trimming unused imports"
+                        // Eliminated exports and removed declarations still count in ts_use_counts.
+                        let removes_code = p.options.features.remove_unused_declarations
+                            || p.options.features.replace_exports.count() > 0;
                         if (is_typescript_enabled
                             && found_imports
                             && is_unused_in_typescript
                             && !p.options.preserve_unused_imports_ts)
-                            || (!is_typescript_enabled
+                            || ((!is_typescript_enabled || removes_code)
                                 && p.options.features.trim_unused_imports
                                 && found_imports
                                 && st.star_name_loc.is_empty()

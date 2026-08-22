@@ -669,7 +669,12 @@ fn append_tail(
         s.client
     };
     if !client.is_empty() && room != 0 {
-        otlp::write_str_kv_small(out, f::ATTRIBUTES, "client.address", client);
+        otlp::write_str_kv_small(
+            out,
+            f::ATTRIBUTES,
+            "client.address",
+            otlp::truncate_utf8(client, max),
+        );
         room -= 1;
     }
     if !encoded.is_empty() {

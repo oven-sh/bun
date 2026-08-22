@@ -104,18 +104,25 @@ impl SideEffects {
     }
 
     pub(crate) fn is_primitive_to_reorder(data: &ExprData) -> bool {
-        matches!(
-            data,
+        match data {
             ExprData::ENull(_)
-                | ExprData::EUndefined(_)
-                | ExprData::EString(_)
-                | ExprData::EBoolean(_)
-                | ExprData::EBranchBoolean(_)
-                | ExprData::ENumber(_)
-                | ExprData::EBigInt(_)
-                | ExprData::EInlinedEnum(_)
-                | ExprData::ERequireMain
-        )
+            | ExprData::EUndefined(_)
+            | ExprData::EString(_)
+            | ExprData::EBoolean(_)
+            | ExprData::EBranchBoolean(_)
+            | ExprData::ENumber(_)
+            | ExprData::EBigInt(_)
+            | ExprData::EInlinedEnum(_)
+            | ExprData::ERequireMain => true,
+            // `print_number` spells an infinite number as `1 / 0` (`Infinity` may be shadowed) and
+            // only minify_syntax folds that back, so it has to count as the literal it stands for:
+            // otherwise `"a" != Infinity` transpiles to `"a" != 1 / 0`, and that to `1 / 0 != "a"`.
+            ExprData::EBinary(e) if e.op == Op::Code::BinDiv => {
+                Expr::extract_numeric_values(&e.left.data, &e.right.data)
+                    .is_some_and(|[dividend, divisor]| (dividend / divisor).is_infinite())
+            }
+            _ => false,
+        }
     }
 
     pub(crate) fn simplify_unused_expr<'a, const TS: bool, const SCAN: bool>(

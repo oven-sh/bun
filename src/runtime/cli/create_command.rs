@@ -1,5 +1,5 @@
 use bun_collections::VecExt;
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::cell::Cell;
 use std::io::Write as _;
 
@@ -88,8 +88,14 @@ fn exec_task(task_: &[u8], cwd: &[u8], _path: &[u8], npm_client: Option<NPMClien
     debug_assert_eq!(argv.len(), total);
 
     let mut argv: &[&[u8]] = &argv;
-    if npm_client.is_some() && strings::starts_with(task, b"bun ") {
-        argv = &argv[2..];
+    // `bun `-prefixed tasks run with bun itself; posix spawn does no PATH
+    // lookup, so exec the absolute self path (the printed argv keeps `bun`).
+    let mut exec_argv0: Option<&[u8]> = None;
+    if strings::starts_with(task, b"bun ") {
+        if npm_client.is_some() {
+            argv = &argv[2..];
+        }
+        exec_argv0 = bun_core::self_exe_path().ok().map(bun_core::ZStr::as_bytes);
     }
 
     pretty!("\n<r><d>$<b>");
@@ -106,8 +112,14 @@ fn exec_task(task_: &[u8], cwd: &[u8], _path: &[u8], npm_client: Option<NPMClien
 
     let _unbuffered = Output::disable_buffering_scope();
 
-    let _ = spawn_sync::spawn(&spawn_sync::Options {
-        argv: argv.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
+    let spawn_argv: Vec<Box<[u8]>> = argv
+        .iter()
+        .enumerate()
+        .map(|(i, s)| Box::<[u8]>::from(if i == 0 { exec_argv0.unwrap_or(s) } else { *s }))
+        .collect();
+
+    let result = spawn_sync::spawn(&spawn_sync::Options {
+        argv: spawn_argv,
         envp: None,
         cwd: Box::from(cwd),
         stderr: spawn_sync::SyncStdio::Inherit,
@@ -126,6 +138,16 @@ fn exec_task(task_: &[u8], cwd: &[u8], _path: &[u8], npm_client: Option<NPMClien
         windows: (),
         ..Default::default()
     });
+
+    match result {
+        Ok(Ok(_)) => {}
+        Ok(Err(err)) => {
+            bun_core::pretty_errorln!("<r><red>error<r><d>:<r> failed to run task: {}", err);
+        }
+        Err(err) => {
+            bun_core::pretty_errorln!("<r><red>error<r><d>:<r> failed to run task: {}", err);
+        }
+    }
 }
 
 // We don't want to allocate memory each time
@@ -1082,13 +1104,15 @@ impl CreateCommand {
             if !create_options.skip_install {
                 GitHandler::spawn(destination, path_env, create_options.verbose);
             } else {
-                if create_options.verbose {
-                    create_options.skip_git =
-                        GitHandler::run::<true>(destination, path_env).unwrap_or(false);
+                let created = if create_options.verbose {
+                    GitHandler::run::<true>(destination, path_env).unwrap_or(false)
                 } else {
-                    create_options.skip_git =
-                        GitHandler::run::<false>(destination, path_env).unwrap_or(false);
+                    GitHandler::run::<false>(destination, path_env).unwrap_or(false)
+                };
+                if created {
+                    GitHandler::print_timing();
                 }
+                create_options.skip_git = !created;
             }
         }
 
@@ -2371,6 +2395,7 @@ impl CreateListExamplesCommand {
 struct GitHandler;
 
 static SUCCESS: AtomicU32 = AtomicU32::new(0);
+static GIT_ELAPSED_NS: AtomicU64 = AtomicU64::new(0);
 // bun_threading has no top-level Thread wrapper yet,
 // so use std::thread::JoinHandle directly (CLI-only, no JSC interaction).
 // PORTING.md §Global mutable state: written in `spawn`, taken in `wait`, both
@@ -2420,7 +2445,19 @@ impl GitHandler {
         let outcome = SUCCESS.load(Ordering::Acquire) == 1;
         // SAFETY: THREAD set in spawn() on this same thread before wait() called
         let _ = unsafe { (*THREAD.get()).take() }.unwrap().join();
+        if outcome {
+            Self::print_timing();
+        }
         outcome
+    }
+
+    // Always called from the main thread so the timing line cannot
+    // interleave with postinstall output.
+    fn print_timing() {
+        bun_core::pretty_error!("\n");
+        Output::print_start_end(0, GIT_ELAPSED_NS.load(Ordering::Acquire) as i128);
+        bun_core::pretty_error!(" <d>git<r>\n");
+        Output::flush();
     }
 
     fn run<const VERBOSE: bool>(destination: &[u8], path: &[u8]) -> crate::Result<bool> {
@@ -2493,9 +2530,10 @@ impl GitHandler {
                 })?;
             }
 
-            bun_core::pretty_error!("\n");
-            Output::print_start_end(git_start, bun_core::time::nano_timestamp());
-            bun_core::pretty_error!(" <d>git<r>\n");
+            GIT_ELAPSED_NS.store(
+                (bun_core::time::nano_timestamp() - git_start) as u64,
+                Ordering::Release,
+            );
             return Ok(true);
         }
 

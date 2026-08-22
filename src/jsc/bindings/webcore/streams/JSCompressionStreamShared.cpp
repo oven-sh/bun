@@ -52,45 +52,40 @@ std::optional<CompressionFormat> parseCompressionFormat(JSGlobalObject* globalOb
 // node:zlib stream adapter (src/js/internal/streams/iter/transform.ts).
 static constexpr double kDefaultCodecHighWaterMark = 64 * 1024;
 
-size_t parseCodecHighWaterMark(JSGlobalObject* globalObject, JSValue strategy)
+CodecOptions parseCodecOptions(JSGlobalObject* globalObject, JSValue strategy, std::optional<CompressionFormat> levelFormat)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    CodecOptions result { static_cast<size_t>(kDefaultCodecHighWaterMark), std::nullopt };
     QueuingStrategyDict dict = convertQueuingStrategyDict(globalObject, strategy);
-    RETURN_IF_EXCEPTION(scope, 0);
+    RETURN_IF_EXCEPTION(scope, result);
     double highWaterMark = extractHighWaterMark(globalObject, dict, kDefaultCodecHighWaterMark);
-    RETURN_IF_EXCEPTION(scope, 0);
+    RETURN_IF_EXCEPTION(scope, result);
     // +Infinity (spec-legal) means "never split a chunk's output"; the coder floors at one byte.
-    if (highWaterMark >= static_cast<double>(std::numeric_limits<size_t>::max()))
-        return std::numeric_limits<size_t>::max();
-    return static_cast<size_t>(highWaterMark);
-}
+    result.highWaterMark = highWaterMark >= static_cast<double>(std::numeric_limits<size_t>::max())
+        ? std::numeric_limits<size_t>::max()
+        : static_cast<size_t>(highWaterMark);
 
-std::optional<int32_t> parseCompressionLevel(JSGlobalObject* globalObject, JSValue strategy, CompressionFormat format)
-{
-    auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    // parseCodecHighWaterMark already rejected a non-object, non-undefined argument.
-    if (!strategy.isObject())
-        return std::nullopt;
+    if (!levelFormat || !strategy.isObject())
+        return result;
     JSValue levelValue = asObject(strategy)->get(globalObject, Identifier::fromString(vm, "level"_s));
-    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    RETURN_IF_EXCEPTION(scope, result);
     if (levelValue.isUndefined())
-        return std::nullopt;
+        return result;
     double level = levelValue.toNumber(globalObject);
-    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    RETURN_IF_EXCEPTION(scope, result);
 
     int32_t min = 0;
     int32_t max = 0;
     ASCIILiteral name;
-    switch (format) {
+    switch (*levelFormat) {
     case CompressionFormat::Deflate:
     case CompressionFormat::DeflateRaw:
     case CompressionFormat::Gzip:
         // zlib compression levels.
         min = 0;
         max = 9;
-        name = format == CompressionFormat::Gzip ? "gzip"_s : (format == CompressionFormat::DeflateRaw ? "deflate-raw"_s : "deflate"_s);
+        name = *levelFormat == CompressionFormat::Gzip ? "gzip"_s : (*levelFormat == CompressionFormat::DeflateRaw ? "deflate-raw"_s : "deflate"_s);
         break;
     case CompressionFormat::Brotli:
         // BROTLI_MIN_QUALITY .. BROTLI_MAX_QUALITY.
@@ -108,9 +103,10 @@ std::optional<int32_t> parseCompressionLevel(JSGlobalObject* globalObject, JSVal
     // !(>= && <=) also rejects NaN.
     if (!(level >= min && level <= max) || level != std::trunc(level)) {
         throwRangeError(globalObject, scope, makeString("The compression level must be an integer between "_s, min, " and "_s, max, " for "_s, name));
-        return std::nullopt;
+        return result;
     }
-    return static_cast<int32_t>(level);
+    result.level = static_cast<int32_t>(level);
+    return result;
 }
 
 // BufferSource → (ptr, len). `scratch` owns the bytes when `chunk` is a string

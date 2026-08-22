@@ -1,9 +1,11 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import * as utils from "../test-utils";
 import { ConnectionType, createClient, ctx, isEnabled } from "../test-utils";
 
 describe.skipIf(!isEnabled)("Valkey: OpenTelemetry", () => {
   const spans: any[] = [];
+  // The pipeline is process-global; leave nothing behind for later files.
+  afterAll(() => Bun.otel.shutdown());
   beforeEach(() => {
     if (ctx.redis?.connected) ctx.redis.close?.();
     ctx.redis = createClient(ConnectionType.TCP);

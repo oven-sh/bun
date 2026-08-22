@@ -412,7 +412,8 @@ class TraceState {
     const next = new TraceState();
     const m = new Map<string, string>();
     m.set(key, value); // a modified key moves to the front
-    for (const [k, v] of this.#entries()) if (k !== key) m.set(k, v);
+    // W3C: at most 32 members; the oldest fall off (as @opentelemetry/api does).
+    for (const [k, v] of this.#entries()) if (k !== key && m.size < 32) m.set(k, v);
     next.#map = m;
     return next;
   }

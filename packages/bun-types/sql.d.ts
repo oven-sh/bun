@@ -189,14 +189,16 @@ declare module "bun" {
       filename?: URL | ":memory:" | (string & {}) | undefined;
 
       /**
-       * Called when a connection attempt completes.
-       * Receives an `Error` on failure, or `null` on success.
+       * SQLite: called once opening the database has been attempted, with
+       * `null` when it opened or with the `Error` that prevented it from
+       * opening (for example `SQLITE_CANTOPEN`).
        */
       onconnect?: ((err: Error | null) => void) | undefined;
 
       /**
-       * Called when a connection is closed.
-       * Receives the closing `Error`, or `null`.
+       * SQLite: called when the database is closed with {@link SQL.close}.
+       * Passes an `Error` (message `"Connection closed"`) rather than `null`,
+       * even though the close was requested.
        */
       onclose?: ((err: Error | null) => void) | undefined;
     }
@@ -367,14 +369,21 @@ declare module "bun" {
       path?: string | undefined;
 
       /**
-       * Called when a connection attempt completes.
-       * Receives an `Error` on failure, or `null` on success.
+       * PostgreSQL and MySQL: called once for each connection the pool
+       * establishes, always with `null`. A connection attempt that fails is
+       * reported to {@link onclose} instead; `onconnect` is not called for it.
        */
       onconnect?: ((err: Error | null) => void) | undefined;
 
       /**
-       * Called when a connection is closed.
-       * Receives the closing `Error`, or `null`.
+       * PostgreSQL and MySQL: called once for each pooled connection that
+       * closes or fails to connect, with the `Error` describing why. Closing
+       * on purpose also passes an error rather than `null`: {@link SQL.close}
+       * passes `ERR_POSTGRES_CONNECTION_CLOSED` / `ERR_MYSQL_CONNECTION_CLOSED`,
+       * and {@link idleTimeout} passes `ERR_POSTGRES_IDLE_TIMEOUT` /
+       * `ERR_MYSQL_IDLE_TIMEOUT`. A failed connection attempt passes its
+       * error, for example `ERR_POSTGRES_CONNECTION_REFUSED` or the server's
+       * authentication error.
        */
       onclose?: ((err: Error | null) => void) | undefined;
 

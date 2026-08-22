@@ -282,14 +282,14 @@ where
 // touching `bun_uws_sys`. Only the surface `prepare_js_request_context_for`
 // actually needs is exposed.
 trait ReqLike {
-    fn header(&mut self, name: &[u8]) -> Option<&[u8]>;
+    fn header(&self, name: &[u8]) -> Option<&[u8]>;
     fn method(&mut self) -> &[u8];
-    fn url(&mut self) -> &[u8];
+    fn url(&self) -> &[u8];
     fn set_yield(&mut self, y: bool);
 }
 impl ReqLike for uws_sys::Request {
     #[inline]
-    fn header(&mut self, name: &[u8]) -> Option<&[u8]> {
+    fn header(&self, name: &[u8]) -> Option<&[u8]> {
         uws_sys::Request::header(self, name)
     }
     #[inline]
@@ -297,7 +297,7 @@ impl ReqLike for uws_sys::Request {
         uws_sys::Request::method(self)
     }
     #[inline]
-    fn url(&mut self) -> &[u8] {
+    fn url(&self) -> &[u8] {
         uws_sys::Request::url(self)
     }
     #[inline]
@@ -307,7 +307,7 @@ impl ReqLike for uws_sys::Request {
 }
 impl ReqLike for uws_sys::h3::Request {
     #[inline]
-    fn header(&mut self, name: &[u8]) -> Option<&[u8]> {
+    fn header(&self, name: &[u8]) -> Option<&[u8]> {
         uws_sys::h3::Request::header(self, name)
     }
     #[inline]
@@ -315,7 +315,7 @@ impl ReqLike for uws_sys::h3::Request {
         uws_sys::h3::Request::method(self)
     }
     #[inline]
-    fn url(&mut self) -> &[u8] {
+    fn url(&self) -> &[u8] {
         uws_sys::h3::Request::url(self)
     }
     #[inline]
@@ -3235,33 +3235,7 @@ where
                     std::ptr::from_mut(req).cast::<c_void>(),
                 ))
             }));
-            // NOTE: `ReqLike::{url,header}` both borrow `&mut req`; the
-            // returned slices alias the same uWS-owned header buffer. Format
-            // the `https://{host}` prefix while `host` is borrowed so the
-            // second `&mut req` borrow for `url` is unconflicted.
-            let prefix: Option<Vec<u8>> = ReqLike::header(req, b"host")
-                .filter(|host| Request::is_valid_host_header(host))
-                .map(|host| {
-                    let fmt = bun_fmt::HostFormatter {
-                        is_https: true,
-                        host,
-                        port: None,
-                    };
-                    let mut s = Vec::new();
-                    let _ = write!(&mut s, "https://{}", fmt);
-                    s
-                });
-            let path = ReqLike::url(req);
-            if !path.is_empty() && path[0] == b'/' {
-                if let Some(mut s) = prefix {
-                    s.extend_from_slice(path);
-                    request_object.url.set(BunString::clone_utf8(&s));
-                } else {
-                    request_object.url.set(BunString::clone_utf8(path));
-                }
-            } else {
-                request_object.url.set(BunString::clone_utf8(path));
-            }
+            request_object.set_synthesized_url(ReqLike::header(req, b"host"), ReqLike::url(req));
             ctx.clear_req();
         }
 

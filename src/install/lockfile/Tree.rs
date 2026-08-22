@@ -812,10 +812,28 @@ impl Tree {
                         }
                         tree_id = tree.parent;
                     }
-                    break 'hoisted HoistDependencyResult::Placement(Placement {
-                        id: next_id,
-                        bundled: false,
-                    });
+                    // A peer still dedupes against a copy placed above it; anything else only against its own node.
+                    let search_root = if dependency.behavior.is_peer() {
+                        hoist_root_id
+                    } else {
+                        next_id
+                    };
+                    break 'hoisted match Tree::hoist_dependency::<true, METHOD>(
+                        next_id,
+                        search_root,
+                        pkg_id,
+                        dep_id,
+                        resolution_list,
+                        builder,
+                    ) {
+                        HoistDependencyResult::Placement(_) => {
+                            HoistDependencyResult::Placement(Placement {
+                                id: next_id,
+                                bundled: false,
+                            })
+                        }
+                        result => result,
+                    };
                 }
 
                 Tree::hoist_dependency::<true, METHOD>(

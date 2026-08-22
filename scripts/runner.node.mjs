@@ -2296,6 +2296,8 @@ function isNodeTest(path) {
   return (
     unixPath.includes("js/node/test/parallel/") ||
     unixPath.includes("js/node/test/sequential/") ||
+    unixPath.includes("js/node/test/es-module/") ||
+    unixPath.includes("js/node/test/module-hooks/") ||
     unixPath.includes("js/bun/test/parallel/")
   );
 }

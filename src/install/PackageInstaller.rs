@@ -5,7 +5,9 @@ use bun_core::fmt::PathSep;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_paths::resolve_path::{dirname, join_abs_string_z, join_z_buf};
-use bun_paths::{AbsPath, AutoAbsPath, MAX_PATH_BYTES, PathBuffer, SEP, platform};
+use bun_paths::{
+    AbsPath, AutoAbsPath, AutoAbsPathChecked, MAX_PATH_BYTES, PathBuffer, SEP, platform,
+};
 use bun_semver::String;
 use bun_sys::{self as Syscall, Dir, Fd};
 
@@ -548,10 +550,14 @@ impl<'a> PackageInstaller<'a> {
         let pkg_resolutions_lists = pkgs.items_resolutions();
         let pkg_resolutions_buffer = lockfile.buffers.resolutions.as_slice();
         let pkg_names = pkgs.items_name();
+        let pkg_resolutions = pkgs.items_resolution();
 
         let completed_trees = &self.completed_trees;
         let tree = &mut self.trees[tree_id as usize];
         let mut deferred: Vec<DependencyID> = Vec::new();
+
+        let mut real_folder_buf = bun_paths::path_buffer_pool::get();
+        let mut real_cache_dir: Option<AbsPath> = None;
 
         while let Some(dep_id) = tree.binaries.remove_or_null() {
             debug_assert!((dep_id as usize) < lockfile.buffers.dependencies.as_slice().len());
@@ -565,6 +571,7 @@ impl<'a> PackageInstaller<'a> {
                 .slice(string_buf);
             let package_name_ = strings::StringOrTinyString::init(alias);
             let mut target_package_name = package_name_;
+            let mut target_package_id = package_id;
             let mut can_retry_without_native_binlink_optimization = false;
             let mut target_node_modules_path_opt: Option<AbsPath> = None;
             let mut defer_this_bin = false;
@@ -630,6 +637,7 @@ impl<'a> PackageInstaller<'a> {
                                     pkg_names[replacement_pkg_id as usize].slice(string_buf);
                                 target_package_name =
                                     strings::StringOrTinyString::init(replacement_name);
+                                target_package_id = replacement_pkg_id;
                                 can_retry_without_native_binlink_optimization = true;
                             }
                         }
@@ -657,6 +665,29 @@ impl<'a> PackageInstaller<'a> {
             };
 
             loop {
+                let installed_from: Option<&[u8]> = {
+                    let target_resolution = &pkg_resolutions[target_package_id as usize];
+                    if target_resolution.tag == resolution::Tag::Folder {
+                        // Folders with bins are root- or workspace-declared, hence root-relative.
+                        let mut folder = AutoAbsPathChecked::init_top_level_dir();
+                        match folder.join(&[target_resolution.folder().slice(string_buf)]) {
+                            Ok(()) => {
+                                Syscall::realpath(folder.slice_z(), &mut real_folder_buf).ok()
+                            }
+                            Err(_) => None,
+                        }
+                    } else if target_resolution.tag.can_enqueue_install_task() {
+                        if real_cache_dir.is_none() {
+                            real_cache_dir =
+                                AbsPath::init_fd_path(manager.get_cache_directory()).ok();
+                        }
+                        real_cache_dir.as_ref().map(AbsPath::slice)
+                    } else {
+                        // Directory-symlinked packages: never chmod through their own links.
+                        None
+                    }
+                };
+
                 // `node_modules_path` (mut) and `target_node_modules_path`
                 // (read-only) refer to the same buffer when no replacement is
                 // set. Derive both from a single `*mut` so the read pointer
@@ -685,6 +716,7 @@ impl<'a> PackageInstaller<'a> {
                     abs_target_buf: link_target_buf,
                     abs_dest_buf: link_dest_buf,
                     rel_buf: link_rel_buf,
+                    installed_from,
                     err: None,
                     skipped_due_to_missing_bin: false,
                 };
@@ -703,6 +735,7 @@ impl<'a> PackageInstaller<'a> {
                         );
                     }
                     target_package_name = package_name_;
+                    target_package_id = package_id;
                     target_node_modules_path_opt = None;
                     continue;
                 }

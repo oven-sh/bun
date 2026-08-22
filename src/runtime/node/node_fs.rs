@@ -165,7 +165,7 @@ pub use super::types::{Flavor, PathOrFileDescriptor};
 /// Local alias for the many `node::foo` call sites below, routing to `super::*`.
 mod node {
     pub(super) use super::super::statfs::StatFS;
-    pub(super) use super::super::time_like::from_js as time_like_from_js;
+    pub(super) use super::super::time_like::from_js_required as time_like_from_js_required;
     pub(super) use super::super::types::SliceWithUnderlyingString;
     pub(super) use super::super::{gid_t, uid_t};
 
@@ -2871,28 +2871,12 @@ pub mod args {
     impl Lutimes {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Lutimes> {
             // `Drop for PathLike` covers the
-            // `time_like_from_js` throws below.
+            // `time_like_from_js_required` throws below.
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
-            let atime = node::time_like_from_js(
-                ctx,
-                arguments.next().ok_or_else(|| {
-                    ctx.throw_invalid_arguments(format_args!("atime is required"))
-                })?,
-            )?
-            .ok_or_else(|| {
-                ctx.throw_invalid_arguments(format_args!("atime must be a number or a Date"))
-            })?;
-            arguments.eat();
-            let mtime = node::time_like_from_js(
-                ctx,
-                arguments.next().ok_or_else(|| {
-                    ctx.throw_invalid_arguments(format_args!("mtime is required"))
-                })?,
-            )?
-            .ok_or_else(|| {
-                ctx.throw_invalid_arguments(format_args!("mtime must be a number or a Date"))
-            })?;
-            arguments.eat();
+            // Node's utimes/lutimes report both timestamps as "time"; only
+            // futimes names them "atime"/"mtime".
+            let atime = node::time_like_from_js_required(ctx, arguments, "time")?;
+            let mtime = node::time_like_from_js_required(ctx, arguments, "time")?;
             Ok(Lutimes { path, atime, mtime })
         }
     }
@@ -3512,26 +3496,8 @@ pub mod args {
         pub(crate) fn to_thread_safe(&self) {}
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Futimes> {
             let fd = FD::from_js_required(ctx, arguments)?;
-            let atime = node::time_like_from_js(
-                ctx,
-                arguments.next().ok_or_else(|| {
-                    ctx.throw_invalid_arguments(format_args!("atime is required"))
-                })?,
-            )?
-            .ok_or_else(|| {
-                ctx.throw_invalid_arguments(format_args!("atime must be a number or a Date"))
-            })?;
-            arguments.eat();
-            let mtime = node::time_like_from_js(
-                ctx,
-                arguments.next().ok_or_else(|| {
-                    ctx.throw_invalid_arguments(format_args!("mtime is required"))
-                })?,
-            )?
-            .ok_or_else(|| {
-                ctx.throw_invalid_arguments(format_args!("mtime must be a number or a Date"))
-            })?;
-            arguments.eat();
+            let atime = node::time_like_from_js_required(ctx, arguments, "atime")?;
+            let mtime = node::time_like_from_js_required(ctx, arguments, "mtime")?;
             Ok(Futimes { fd, atime, mtime })
         }
     }

@@ -317,12 +317,14 @@ impl Options {
             return Credentials {
                 token: &scope.token,
                 auth: &scope.auth,
+                scope: scope.url.href(),
             };
         }
         if let Some(found) = self.npmrc_credential_for(url) {
             return Credentials {
                 token: found.token,
                 auth: found.auth,
+                scope: found.scope,
             };
         }
         Credentials::NONE
@@ -400,6 +402,25 @@ impl Options {
     }
 }
 
+/// The redirect rules every package-manager request carries: a hop may not
+/// leave `install.allowedHosts`, and the `Authorization` header issued for
+/// `credentials.scope` is dropped as soon as a hop is no longer under it.
+pub fn redirect_policy(credentials: Credentials<'_>) -> bun_http::RedirectPolicy {
+    fn target_allowed(url: &[u8]) -> bool {
+        // Read-only after init; the HTTP thread may call this.
+        crate::PackageManager::get().options.is_host_allowed(url)
+    }
+    bun_http::RedirectPolicy {
+        target_allowed,
+        keep_authorization: url_under,
+        // SAFETY: lifetime extension only — every `Credentials::scope` is a
+        // leaked `'static` config string, a registry scope URL owned by the
+        // process-lifetime `Options`, or a slice of the requesting
+        // `NetworkTask`'s `url_buf`, which outlives its request.
+        authorization_scope: unsafe { bun_ptr::detach_lifetime(credentials.scope) },
+    }
+}
+
 /// One `install.allowedHosts` entry: a hostname, optionally pinned to a port.
 #[derive(Clone, Copy, Debug)]
 pub struct AllowedHost {
@@ -432,13 +453,22 @@ impl AllowedHost {
 pub struct Credentials<'a> {
     pub token: &'a [u8],
     pub auth: &'a [u8],
+    /// The URL prefix these credentials were issued for; a redirect hop keeps
+    /// them only while its target is still under it (`url_under`).
+    pub scope: &'a [u8],
 }
 
 impl Credentials<'_> {
     pub const NONE: Credentials<'static> = Credentials {
         token: b"",
         auth: b"",
+        scope: b"",
     };
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.token.is_empty() && self.auth.is_empty()
+    }
 }
 
 /// One `.npmrc` `//host[:port]/path/:<credential>` group, resolved to the
@@ -449,6 +479,9 @@ pub struct PathCredential {
     /// Only set when the `.npmrc` key spelled out a port.
     pub port: Option<u16>,
     pub pathname: &'static [u8],
+    /// `https://host[:port]/path/` — what a redirect target must stay under to
+    /// keep these credentials (see `Credentials::scope`).
+    pub scope: &'static [u8],
     pub token: &'static [u8],
     pub auth: &'static [u8],
 }
@@ -860,10 +893,14 @@ impl Options {
                     let Some(host) = AllowedHost::parse(&url[..slash]) else {
                         continue;
                     };
+                    let mut scope_url = Vec::with_capacity(b"https://".len() + url.len());
+                    scope_url.extend_from_slice(b"https://");
+                    scope_url.extend_from_slice(url);
                     creds.push(PathCredential {
                         hostname: host.hostname,
                         port: host.port,
                         pathname: &url[slash..],
+                        scope: bun_core::heap::release(scope_url.into_boxed_slice()),
                         token: leak_static(&scope.token),
                         auth: leak_static(&scope.auth),
                     });

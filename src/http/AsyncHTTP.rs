@@ -166,6 +166,7 @@ fn make_client<'a>(
         // Note: DEFAULT_REDIRECT_COUNT (= 127) is crate-private in lib.rs;
         // duplicated as a literal here.
         remaining_redirect_count: 127,
+        redirect_policy: None,
         allow_retry: false,
         h2_retries: 0,
         redirect_type,

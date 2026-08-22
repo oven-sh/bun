@@ -43,6 +43,7 @@ impl<'a> fmt::Display for DiffFormatter<'a> {
                 add_newline: false,
                 flush: false,
                 quote_strings: true,
+                ordered_collections: true,
             };
             let _ = JestPrettyFormat::format(
                 MessageLevel::Debug,

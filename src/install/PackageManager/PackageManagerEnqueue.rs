@@ -717,10 +717,15 @@ pub fn enqueue_network_task_for_retry(
         attempt,
         retry_after_secs,
     );
-    let not_before = (bun_core::time::milli_timestamp().max(0) as u64).saturating_add(delay);
-    this.retry_queue.push((not_before, task));
-    // make sure the install loop wakes up for it even if no other I/O completes
-    crate::package_manager_real::retry_timer::arm(this, not_before);
+    let not_before = crate::package_manager_real::retry_timer::now_ms().saturating_add(delay);
+    // make sure the install loop wakes up for it even if no other I/O completes; if no
+    // timer thread can be started (resource exhaustion), retry right away instead of
+    // parking a deadline nothing would wake up for
+    if crate::package_manager_real::retry_timer::arm(this, not_before) {
+        this.retry_queue.push((not_before, task));
+    } else {
+        enqueue_network_task(this, task);
+    }
 }
 
 /// Move retries whose backoff elapsed into the network fifo. Entries still backing
@@ -730,7 +735,7 @@ pub fn flush_due_retries(this: &mut PackageManager) {
     if this.retry_queue.is_empty() {
         return;
     }
-    let now = bun_core::time::milli_timestamp().max(0) as u64;
+    let now = crate::package_manager_real::retry_timer::now_ms();
     let mut i = 0;
     while i < this.retry_queue.len() {
         if this.retry_queue[i].0 <= now {
@@ -753,7 +758,8 @@ pub fn flush_due_retries(this: &mut PackageManager) {
         .filter(|t| *t > now)
         .min()
     {
-        crate::package_manager_real::retry_timer::arm(this, next);
+        // the thread exists by now (it was started when the entry was queued)
+        let _ = crate::package_manager_real::retry_timer::arm(this, next);
     }
 }
 

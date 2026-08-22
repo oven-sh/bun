@@ -385,7 +385,7 @@ thread_local! {
 // ──────────────────────────────────────────────────────────────────────────
 // Open stream/process handles on this thread — Bun's HandleWrap list.
 //
-// Every `uv_pipe_t`, `uv_tty_t` (except the process-static stdin tty) and
+// Every `uv_pipe_t`, `uv_tty_t` (the shared stdin one via `add_stdin_tty`) and
 // `uv_process_t` this thread initialises is listed here from `init`/`spawn`
 // until the `uv_close` for it is issued (`UvHandle::close`,
 // `Pipe::close_and_destroy`). Whoever currently drives the handle records
@@ -1384,9 +1384,7 @@ impl Tty {
         let uv_ptr = core::ptr::from_mut(self).cast::<uv_tty_t>();
         // SAFETY: `uv` is the first `#[repr(C)]` field, sized for uv_tty_t.
         let rc = unsafe { uv_tty_init(loop_, uv_ptr, file, 0) };
-        // fd 0 is the process-static stdin tty (never freed, shared across
-        // threads by design); everything else is a heap tty owned by this thread.
-        if rc.0 == 0 && file != 0 {
+        if rc.0 == 0 {
             open_handles::add_tty(uv_ptr);
         }
         rc

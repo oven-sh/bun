@@ -327,6 +327,8 @@ bun_dispatch::link_interface! {
             ctx: Option<core::ptr::NonNull<core::ffi::c_void>>,
         );
         fn pipe_read_scratch() -> *const PipeReadScratch;
+        // Null when the context has none (mini loop, POSIX).
+        fn stdin_tty() -> *mut StdinTty;
     }
 }
 
@@ -471,6 +473,11 @@ pub use pipe_read_scratch::{PipeReadScratch, PipeReadScratchGuard};
 #[cfg(windows)]
 #[path = "source.rs"]
 pub mod source;
+#[cfg(windows)]
+pub use source::StdinTty;
+/// Never exists on POSIX: [`EventLoopCtx::stdin_tty`] returns null there.
+#[cfg(not(windows))]
+pub enum StdinTty {}
 #[path = "write.rs"]
 pub mod write;
 

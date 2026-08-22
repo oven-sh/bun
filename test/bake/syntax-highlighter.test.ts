@@ -2,12 +2,11 @@ import { expect, test } from "bun:test";
 import { syntaxHighlight } from "../../src/runtime/bake/client/JavaScriptSyntaxHighlighter";
 
 // The dev server error overlay runs each source line of a code preview through
-// syntaxHighlight() on its own. The result is the line's tokens wrapped in
-// spans, with every token body HTML-escaped. Undoing that gives back the
-// source text the overlay shows for the line.
-function sourceText(html: string): string {
-  return html
-    .replace(/<\/?span[^>]*>/g, "")
+// syntaxHighlight() on its own. The result is a run of <span class="...">
+// elements, one per colored token, with bare text for whitespace. Every token
+// body is HTML-escaped.
+function unescapeHtml(text: string): string {
+  return text
     .replace(/&quot;/g, '"')
     .replace(/&#039;/g, "'")
     .replace(/&lt;/g, "<")
@@ -15,35 +14,174 @@ function sourceText(html: string): string {
     .replace(/&amp;/g, "&");
 }
 
-test("syntaxHighlight tokenizes a template literal with an interpolation", () => {
-  expect(syntaxHighlight("let a = `x${1}y`;")).toMatchInlineSnapshot(
-    `"<span class="syntax-pink">let</span> <span class="syntax-fg">a</span> <span class="syntax-pink">=</span> <span class="syntax-yellow">\`x</span><span class="syntax-pink">\${</span><span class="syntax-purple">1</span><span class="syntax-pink">}</span><span class="syntax-yellow">y\`</span><span class="syntax-pink">;</span>"`,
-  );
-});
+// [class, text] per token. Bare text has the class "".
+function tokens(html: string): [string, string][] {
+  const out: [string, string][] = [];
+  for (const m of html.matchAll(/<span class="([^"]*)">([^<]*)<\/span>|([^<]+)/g)) {
+    out.push(m[3] === undefined ? [m[1], unescapeHtml(m[2])] : ["", unescapeHtml(m[3])]);
+  }
+  return out;
+}
 
-test("syntaxHighlight tokenizes a nested template literal", () => {
-  expect(syntaxHighlight("`a${`b${c}d`}e`")).toMatchInlineSnapshot(
-    `"<span class="syntax-yellow">\`a</span><span class="syntax-pink">\${</span><span class="syntax-yellow">\`b</span><span class="syntax-pink">\${</span><span class="syntax-fg">c</span><span class="syntax-pink">}</span><span class="syntax-yellow">d\`</span><span class="syntax-pink">}</span><span class="syntax-yellow">e\`</span>"`,
-  );
+function sourceText(html: string): string {
+  return tokens(html)
+    .map(([, text]) => text)
+    .join("");
+}
+
+test.each<[string, [string, string][]]>([
+  [
+    "let a = `x${1}y`;",
+    [
+      ["syntax-pink", "let"],
+      ["", " "],
+      ["syntax-fg", "a"],
+      ["", " "],
+      ["syntax-pink", "="],
+      ["", " "],
+      ["syntax-yellow", "`x"],
+      ["syntax-pink", "${"],
+      ["syntax-purple", "1"],
+      ["syntax-pink", "}"],
+      ["syntax-yellow", "y`"],
+      ["syntax-pink", ";"],
+    ],
+  ],
+  [
+    // a nested template literal
+    "`a${`b${c}d`}e`",
+    [
+      ["syntax-yellow", "`a"],
+      ["syntax-pink", "${"],
+      ["syntax-yellow", "`b"],
+      ["syntax-pink", "${"],
+      ["syntax-fg", "c"],
+      ["syntax-pink", "}"],
+      ["syntax-yellow", "d`"],
+      ["syntax-pink", "}"],
+      ["syntax-yellow", "e`"],
+    ],
+  ],
+  [
+    // braces inside the interpolation do not close it
+    "`${ {a: 1}.a }`",
+    [
+      ["syntax-yellow", "`"],
+      ["syntax-pink", "${"],
+      ["", " "],
+      ["syntax-pink", "{"],
+      ["syntax-fg", "a"],
+      ["syntax-pink", ":"],
+      ["", " "],
+      ["syntax-purple", "1"],
+      ["syntax-pink", "}"],
+      ["syntax-pink", "."],
+      ["syntax-fg", "a"],
+      ["", " "],
+      ["syntax-pink", "}"],
+      ["syntax-yellow", "`"],
+    ],
+  ],
+  [
+    "`${f({x})}`",
+    [
+      ["syntax-yellow", "`"],
+      ["syntax-pink", "${"],
+      ["syntax-green", "f"],
+      ["syntax-pink", "("],
+      ["syntax-pink", "{"],
+      ["syntax-fg", "x"],
+      ["syntax-pink", "}"],
+      ["syntax-pink", ")"],
+      ["syntax-pink", "}"],
+      ["syntax-yellow", "`"],
+    ],
+  ],
+  [
+    // a brace inside a string inside the interpolation is part of the string
+    '`a${ "}" }b`',
+    [
+      ["syntax-yellow", "`a"],
+      ["syntax-pink", "${"],
+      ["", " "],
+      ["syntax-yellow", '"}"'],
+      ["", " "],
+      ["syntax-pink", "}"],
+      ["syntax-yellow", "b`"],
+    ],
+  ],
+  [
+    // \` and \${ are literal text
+    "`a\\`b${c}\\${d}`",
+    [
+      ["syntax-yellow", "`a\\`b"],
+      ["syntax-pink", "${"],
+      ["syntax-fg", "c"],
+      ["syntax-pink", "}"],
+      ["syntax-yellow", "\\${d}`"],
+    ],
+  ],
+  [
+    // \\ is one escape, so the backtick after it closes the literal
+    "`a\\\\`+b",
+    [
+      ["syntax-yellow", "`a\\\\`"],
+      ["syntax-pink", "+"],
+      ["syntax-fg", "b"],
+    ],
+  ],
+  [
+    // \\ is one escape, so the ${ after it starts an interpolation
+    "`\\\\${a}`",
+    [
+      ["syntax-yellow", "`\\\\"],
+      ["syntax-pink", "${"],
+      ["syntax-fg", "a"],
+      ["syntax-pink", "}"],
+      ["syntax-yellow", "`"],
+    ],
+  ],
+  [
+    // the first line of a template literal that spans several lines
+    "const q = `first line of a",
+    [
+      ["syntax-pink", "const"],
+      ["", " "],
+      ["syntax-fg", "q"],
+      ["", " "],
+      ["syntax-pink", "="],
+      ["", " "],
+      ["syntax-yellow", "`first line of a"],
+    ],
+  ],
+  [
+    // a line that ends inside an interpolation
+    "`a${b",
+    [
+      ["syntax-yellow", "`a"],
+      ["syntax-pink", "${"],
+      ["syntax-fg", "b"],
+    ],
+  ],
+])("syntaxHighlight tokenizes %s", (line, expected) => {
+  expect(tokens(syntaxHighlight(line))).toEqual(expected);
 });
 
 test.each([
-  // interpolations
   "let a = `x${1}y`;",
   "`${a}`",
+  "`${a}${b}`",
   "f(`a${b}c${d}e`)",
   "`${ {a: 1}.a }`",
   "`a${`b${c}d`}e`",
   '`a${ "}" }b`',
-  // escapes
   "`a\\`b${c}\\${d}`",
   "`a\\\\`+b",
-  // one line of a template literal that spans several lines
+  "`\\\\${a}`",
   "const q = `first line of a",
   "  second line`;",
   "`a${b",
   "`a${b}c",
-  // no template literal
   'const s = "plain";',
   "`no interp`",
 ])("syntaxHighlight keeps the source text of %s", line => {

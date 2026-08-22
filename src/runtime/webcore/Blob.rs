@@ -2522,6 +2522,9 @@ impl BlobExt for Blob {
     }
 
     fn set_is_ascii_flag(&self, is_all_ascii: bool) {
+        // The callers scanned the bytes after a stripped UTF-8 BOM, which is itself non-ASCII.
+        let is_all_ascii =
+            is_all_ascii && !self.shared_view().starts_with(&strings::BOM::UTF8_BYTES);
         self.charset
             .set(strings::AsciiStatus::from_bool(Some(is_all_ascii)));
         // if this Blob represents the entire binary data
@@ -2532,7 +2535,9 @@ impl BlobExt for Blob {
                 // SAFETY: `store` is live (we hold a `StoreRef`); single-threaded
                 // JS execution means no concurrent &Store borrow is outstanding.
                 unsafe {
-                    if matches!((*store).data, store::Data::Bytes(_)) {
+                    if let store::Data::Bytes(bytes) = &(*store).data
+                        && self.size.get() >= bytes.len()
+                    {
                         (*store).is_all_ascii = Some(is_all_ascii);
                     }
                 }

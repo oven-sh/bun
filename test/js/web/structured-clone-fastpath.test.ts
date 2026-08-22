@@ -1,7 +1,145 @@
+import { deserialize, serialize } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { isASAN, rss } from "harness";
 
 describe("Structured Clone Fast Path", () => {
+  // === Primitive fast path tests ===
+
+  describe("bare primitive values", () => {
+    const cases: Array<[string, unknown]> = [
+      ["int32", 42],
+      ["int32 negative", -17],
+      ["int32 zero", 0],
+      ["int32 max", 2147483647],
+      ["int32 min", -2147483648],
+      ["double", 3.14159],
+      ["double -0", -0],
+      ["double NaN", NaN],
+      ["double Infinity", Infinity],
+      ["double -Infinity", -Infinity],
+      ["double max safe int", Number.MAX_SAFE_INTEGER],
+      ["double int32 max + 1", 2147483648],
+      ["true", true],
+      ["false", false],
+      ["null", null],
+      ["undefined", undefined],
+      ["BigInt 0n", 0n],
+      ["BigInt 1n", 1n],
+      ["BigInt int32 max", 2147483647n],
+      ["BigInt int32 min", -2147483648n],
+      ["BigInt heap", 2n ** 80n],
+      ["BigInt heap negative", -(2n ** 80n)],
+    ];
+
+    test.each(cases)("structuredClone(%s) round-trips", (_, value) => {
+      const cloned = structuredClone(value);
+      if (typeof value === "number" && Number.isNaN(value)) {
+        expect(cloned).toBeNaN();
+      } else if (Object.is(value, -0)) {
+        expect(Object.is(cloned, -0)).toBe(true);
+      } else {
+        expect(cloned).toBe(value);
+      }
+    });
+
+    test.each(cases)("postMessage(%s) round-trips via MessageChannel", async (_, value) => {
+      const { port1, port2 } = new MessageChannel();
+      try {
+        const { promise, resolve, reject } = Promise.withResolvers();
+        port2.onmessage = (e: MessageEvent) => resolve(e.data);
+        port2.onmessageerror = reject;
+        port1.postMessage(value);
+        const result = await promise;
+        if (typeof value === "number" && Number.isNaN(value)) {
+          expect(result).toBeNaN();
+        } else if (Object.is(value, -0)) {
+          expect(Object.is(result, -0)).toBe(true);
+        } else {
+          expect(result).toBe(value);
+        }
+      } finally {
+        port1.close();
+        port2.close();
+      }
+    });
+
+    test("bun:jsc serialize() still produces real bytes for primitives", () => {
+      // SerializationForStorage::Yes must bypass every fast path and emit wire bytes.
+      for (const [, value] of cases) {
+        const buf = serialize(value);
+        expect(buf.byteLength).toBeGreaterThan(0);
+        const back = deserialize(buf);
+        if (typeof value === "number" && Number.isNaN(value)) {
+          expect(back).toBeNaN();
+        } else if (Object.is(value, -0)) {
+          expect(Object.is(back, -0)).toBe(true);
+        } else {
+          expect(back).toBe(value);
+        }
+      }
+    });
+
+    test("postMessage of primitives round-trips across a Worker thread", async () => {
+      const url = URL.createObjectURL(
+        new Blob([`self.onmessage = e => self.postMessage(e.data);`], { type: "application/javascript" }),
+      );
+      const worker = new Worker(url);
+      try {
+        for (const [, value] of cases) {
+          const { promise, resolve, reject } = Promise.withResolvers();
+          worker.onmessage = (e: MessageEvent) => resolve(e.data);
+          worker.onmessageerror = reject;
+          worker.onerror = reject;
+          worker.postMessage(value);
+          const result = await promise;
+          if (typeof value === "number" && Number.isNaN(value)) {
+            expect(result).toBeNaN();
+          } else if (Object.is(value, -0)) {
+            expect(Object.is(result, -0)).toBe(true);
+          } else {
+            expect(result).toBe(value);
+          }
+        }
+      } finally {
+        worker.terminate();
+        URL.revokeObjectURL(url);
+      }
+    });
+
+    test("structuredClone(primitive, {transfer: [buffer]}) still detaches the buffer", () => {
+      const buf = new ArrayBuffer(8);
+      const cloned = structuredClone(42, { transfer: [buf] });
+      expect(cloned).toBe(42);
+      expect(buf.byteLength).toBe(0);
+    });
+
+    test("structuredClone of bare primitive skips the CloneSerializer", () => {
+      // An empty Map has no fast path and always pays the full CloneSerializer cost.
+      // A fast-pathed primitive must cost an order of magnitude less than that; off
+      // the fast path it runs at roughly half the Map cost.
+      const N = 2_000;
+      for (let i = 0; i < 500; i++) {
+        structuredClone(42);
+        structuredClone(new Map());
+      }
+
+      // Take the best of three runs for each to reduce scheduler/GC noise.
+      let primTime = Infinity;
+      let mapTime = Infinity;
+      for (let trial = 0; trial < 3; trial++) {
+        let t0 = performance.now();
+        for (let i = 0; i < N; i++) structuredClone(42);
+        primTime = Math.min(primTime, performance.now() - t0);
+
+        t0 = performance.now();
+        for (let i = 0; i < N; i++) structuredClone(new Map());
+        mapTime = Math.min(mapTime, performance.now() - t0);
+      }
+
+      expect(primTime).toBeLessThan(mapTime * 0.25);
+    });
+  });
+
   test("structuredClone should work with empty object", () => {
     const object = {};
     const cloned = structuredClone(object);

@@ -914,6 +914,7 @@ describe.concurrent("--isolate experimental global reuse", () => {
           expect((globalThis as any).__hookRan).toBe(1);
           jest.spyOn(console, "warn").mockImplementation(() => {});
           jest.spyOn(globalThis, "queueMicrotask");
+          jest.useFakeTimers();
           jest.setSystemTime(1234);
           process.nextTick(() => {});
         });
@@ -925,6 +926,9 @@ describe.concurrent("--isolate experimental global reuse", () => {
           expect(String(console.warn)).toContain("native code");
           expect(String(queueMicrotask)).toContain("native code");
           expect(Date.now()).toBeGreaterThan(1e12);
+          // The 'clock' marker steers testing-library to jest.advanceTimersByTime;
+          // the boundary reset must remove it with the fake clock itself.
+          expect(Object.hasOwnProperty.call(setTimeout, "clock")).toBe(false);
           expect(process.listenerCount("unhandledRejection")).toBe(1);
         });
       `,

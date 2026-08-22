@@ -982,6 +982,17 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let server = unsafe { &*this };
         let _entered = server.vm().enter_event_loop_scope_without_checkpoint();
         let global = server.global_this();
+        // A deferred (saved) request resumes later: make its span active again
+        // for the handler, as `prepare_js_request_context` did the first time.
+        let _otel_reentered = if prepared.otel.is_none() {
+            // SAFETY: `ctx` is the live request context for this dispatch.
+            let span = unsafe { &*ctx }.otel_span.get();
+            span.is_some().then(|| {
+                crate::telemetry::Entered::new(global, crate::telemetry::native_context_value(span))
+            })
+        } else {
+            None
+        };
         let response_value = match callback.call(global, server_js, &args) {
             Ok(v) => v,
             Err(err) => global.take_exception(err),

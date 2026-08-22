@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import http from "node:http";
+import { context as apiContext, propagation as apiPropagation, ROOT_CONTEXT as API_ROOT } from "@opentelemetry/api";
 
 const spans: any[] = [];
 function restore() {
@@ -606,6 +607,30 @@ describe("http.request.method", () => {
     expect([res.status, await res.text()]).toEqual([555, "handled"]);
     const [srv] = byName(await collect(), "bun.http.server");
     expect(srv.attributes["http.response.status_code"]).toBe(555);
+  });
+});
+
+describe("baggage propagation", () => {
+  test("fetch sends baggage from the active context even with the trace-context propagator off", async () => {
+    const seen: (string | null)[][] = [];
+    using upstream = Bun.serve({
+      port: 0,
+      fetch(req) {
+        seen.push([req.headers.get("traceparent"), req.headers.get("baggage")]);
+        return new Response("x");
+      },
+    });
+    Bun.otel.start({
+      exporters: [{ export: (b: any[]) => spans.push(...b) }],
+      instrumentations: { fetch: true },
+      propagators: ["baggage"],
+    });
+    await apiContext.with(
+      apiPropagation.setBaggage(API_ROOT, apiPropagation.createBaggage({ t: { value: "1" } })),
+      () => fetch(upstream.url).then(r => r.text()),
+    );
+    expect(seen).toEqual([[null, "t=1"]]);
+    await collect();
   });
 });
 

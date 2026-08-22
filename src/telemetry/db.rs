@@ -183,7 +183,8 @@ pub fn sql_operation(sql: &[u8]) -> Option<&'static str> {
         while i < sql.len() && matches!(sql[i], b' ' | b'\t' | b'\n' | b'\r' | b'(') {
             i += 1;
         }
-        if sql[i..].starts_with(b"--") {
+        // `--` (and MySQL's `#`) line comments
+        if sql[i..].starts_with(b"--") || sql.get(i) == Some(&b'#') {
             while i < sql.len() && sql[i] != b'\n' {
                 i += 1;
             }
@@ -301,6 +302,7 @@ mod tests {
             ("(select 1) union (select 2)", Some("SELECT")),
             ("((with x as (select 1) select * from x", Some("WITH")),
             ("-- comment\nUPDATE t SET a=1", Some("UPDATE")),
+            ("# mysql comment\n  DELETE FROM t", Some("DELETE")),
             ("-- comment without newline", None),
             ("/* hi */ delete from t", Some("DELETE")),
             ("/* unterminated select 1", None),

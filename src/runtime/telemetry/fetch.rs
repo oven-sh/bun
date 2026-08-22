@@ -30,21 +30,27 @@ pub fn begin(global: &JSGlobalObject, headers: &mut Headers) -> SpanStub {
         bun_telemetry::clock::now_unix_nanos(),
     );
     drop(l);
-    if st.propagate_trace_context && headers.get(b"traceparent").is_none() {
+    let inject_traceparent = st.propagate_trace_context && headers.get(b"traceparent").is_none();
+    if inject_traceparent {
         let mut tp = [0u8; propagation::TRACEPARENT_LEN];
         propagation::format_traceparent(&stub.ctx, &mut tp);
         headers.append(b"traceparent", &tp);
-        if parent_ctx.is_some() {
-            super::with_active_propagation(global, |trace_state, baggage| {
-                if !trace_state.is_empty() && headers.get(b"tracestate").is_none() {
-                    headers.append(b"tracestate", trace_state);
-                }
-                if st.propagate_baggage && !baggage.is_empty() && headers.get(b"baggage").is_none()
-                {
-                    headers.append(b"baggage", baggage);
-                }
-            });
-        }
+    }
+    // tracestate rides with the traceparent; baggage is its own propagator
+    // (it can be active with no span, or with trace context off).
+    if (inject_traceparent && parent_ctx.is_some()) || st.propagate_baggage {
+        super::with_active_propagation(global, |trace_state, baggage| {
+            if inject_traceparent
+                && parent_ctx.is_some()
+                && !trace_state.is_empty()
+                && headers.get(b"tracestate").is_none()
+            {
+                headers.append(b"tracestate", trace_state);
+            }
+            if st.propagate_baggage && !baggage.is_empty() && headers.get(b"baggage").is_none() {
+                headers.append(b"baggage", baggage);
+            }
+        });
     }
     stub
 }

@@ -64,7 +64,6 @@ const SymbolDispose = Symbol.dispose;
 const SymbolAsyncDispose = Symbol.asyncDispose;
 const ObjectDefineProperty = Object.defineProperty;
 const FunctionPrototypeBind = Function.prototype.bind;
-const permission = require("internal/permission");
 
 // Mirrors Node's SystemError shape for ERR_SOCKET_BUFFER_SIZE: name
 // "SystemError", an enumerable `info` object, errno/syscall accessors that
@@ -536,17 +535,6 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
 
   state.bindState = BIND_STATE_BINDING;
 
-  if (permission.enabled && !permission.has("net")) {
-    // udp_wrap.cc Bind returns the ERR_ACCESS_DENIED object, which lib/dgram.js
-    // delivers through the 'error' event.
-    state.bindState = BIND_STATE_UNBOUND;
-    const self = this;
-    process.nextTick(function emitAccessDenied() {
-      self.emit("error", permission.accessDeniedError("net"));
-    });
-    return this;
-  }
-
   const cb = arguments.length && arguments[arguments.length - 1];
   if (typeof cb === "function") {
     function removeListeners() {
@@ -805,11 +793,6 @@ function startBunSocket(self, state, createOptions, sharedHandle?) {
 }
 
 Socket.prototype.connect = function (port, address, callback) {
-  if (permission.enabled && !permission.has("net")) {
-    // udp_wrap.cc DoConnect/DoSend throw synchronously.
-    throw permission.accessDeniedError("net");
-  }
-
   port = validatePort(port, "Port", false);
   if (typeof address === "function") {
     callback = address;
@@ -981,11 +964,6 @@ function clearQueue() {
 // send(bufferOrList, callback)
 // send(bufferOrList)
 Socket.prototype.send = function (buffer, offset, length, port, address, callback) {
-  if (permission.enabled && !permission.has("net")) {
-    // udp_wrap.cc DoConnect/DoSend throw synchronously.
-    throw permission.accessDeniedError("net");
-  }
-
   let list;
   const state = this[kStateSymbol];
   const connected = state.connectState === CONNECT_STATE_CONNECTED;

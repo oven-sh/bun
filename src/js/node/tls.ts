@@ -64,64 +64,70 @@ function getValidCiphersSet() {
 }
 
 // OpenSSL cipher-list selector keywords that are not literal suite names.
-const CIPHER_LIST_SELECTORS = new Set([
-  "DEFAULT",
-  "ALL",
-  "COMPLEMENTOFDEFAULT",
-  "COMPLEMENTOFALL",
-  "HIGH",
-  "MEDIUM",
-  "LOW",
-  "PSK",
-  "aNULL",
-  "eNULL",
-  "NULL",
-  "EXPORT",
-  "EXP",
-  "kRSA",
-  "aRSA",
-  "RSA",
-  "kDHE",
-  "kEDH",
-  "DH",
-  "DHE",
-  "EDH",
-  "kECDHE",
-  "kEECDH",
-  "ECDHE",
-  "EECDH",
-  "ECDH",
-  "aECDSA",
-  "ECDSA",
-  "aDSS",
-  "DSS",
-  "kPSK",
-  "aPSK",
-  "AES",
-  "AES128",
-  "AES256",
-  "AESGCM",
-  "AESCCM",
-  "CHACHA20",
-  "3DES",
-  "DES",
-  "RC4",
-  "RC2",
-  "MD5",
-  "SHA",
-  "SHA1",
-  "SHA256",
-  "SHA384",
-  "CAMELLIA",
-  "ARIA",
-  "SRP",
-  "TLSv1",
-  "TLSv1.0",
-  "TLSv1.2",
-  "TLSv1.3",
-  "SSLv3",
-  "FIPS",
-]);
+let _CIPHER_LIST_SELECTORS: Set<string> | undefined;
+function getCipherListSelectors() {
+  if (!_CIPHER_LIST_SELECTORS) {
+    _CIPHER_LIST_SELECTORS = new Set([
+      "DEFAULT",
+      "ALL",
+      "COMPLEMENTOFDEFAULT",
+      "COMPLEMENTOFALL",
+      "HIGH",
+      "MEDIUM",
+      "LOW",
+      "PSK",
+      "aNULL",
+      "eNULL",
+      "NULL",
+      "EXPORT",
+      "EXP",
+      "kRSA",
+      "aRSA",
+      "RSA",
+      "kDHE",
+      "kEDH",
+      "DH",
+      "DHE",
+      "EDH",
+      "kECDHE",
+      "kEECDH",
+      "ECDHE",
+      "EECDH",
+      "ECDH",
+      "aECDSA",
+      "ECDSA",
+      "aDSS",
+      "DSS",
+      "kPSK",
+      "aPSK",
+      "AES",
+      "AES128",
+      "AES256",
+      "AESGCM",
+      "AESCCM",
+      "CHACHA20",
+      "3DES",
+      "DES",
+      "RC4",
+      "RC2",
+      "MD5",
+      "SHA",
+      "SHA1",
+      "SHA256",
+      "SHA384",
+      "CAMELLIA",
+      "ARIA",
+      "SRP",
+      "TLSv1",
+      "TLSv1.0",
+      "TLSv1.2",
+      "TLSv1.3",
+      "SSLv3",
+      "FIPS",
+    ]);
+  }
+  return _CIPHER_LIST_SELECTORS;
+}
 
 function validateCiphers(ciphers: string, name: string = "options") {
   // Set the cipher list and cipher suite before anything else because
@@ -167,7 +173,7 @@ function validateCiphers(ciphers: string, name: string = "options") {
         first === 0x2b /* + */ ||
         first === 0x40 /* @ */ ||
         StringPrototypeIncludes.$call(r, "+") ||
-        CIPHER_LIST_SELECTORS.has(r) ||
+        getCipherListSelectors().has(r) ||
         ciphersSet.has(r)
       ) {
         sawUsableEntry = true;
@@ -200,13 +206,10 @@ const SUPPORTED_ECDH_GROUPS = new Set([
 function validateSecureContextOptions(options) {
   const {
     ciphers,
-    key,
     passphrase,
     ecdhCurve,
     minVersion,
     maxVersion,
-    privateKeyIdentifier,
-    privateKeyEngine,
     sessionTimeout,
     sigalgs,
     ticketKeys,
@@ -220,30 +223,6 @@ function validateSecureContextOptions(options) {
   if (sigalgs !== undefined && sigalgs !== null) {
     validateString(sigalgs, "options.sigalgs");
     if (sigalgs === "") throw $ERR_INVALID_ARG_VALUE("options.sigalgs", sigalgs);
-  }
-  // BoringSSL has no OpenSSL ENGINE support, so engine-backed keys fail like Node's
-  // no-engine builds; validation ordering matches Node:
-  // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/internal/tls/secure-context.js#L221
-  if (privateKeyIdentifier !== undefined && privateKeyIdentifier !== null) {
-    if (privateKeyEngine === undefined || privateKeyEngine === null) {
-      // Engine is required when privateKeyIdentifier is present
-      throw $ERR_INVALID_ARG_VALUE("options.privateKeyEngine", privateKeyEngine);
-    }
-    if (key) {
-      // Both data key and engine key can't be set at the same time
-      throw $ERR_INVALID_ARG_VALUE("options.privateKeyIdentifier", privateKeyIdentifier);
-    }
-    if (typeof privateKeyIdentifier === "string" && typeof privateKeyEngine === "string") {
-      throw $ERR_CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED("Custom engines not supported by this OpenSSL");
-    } else if (typeof privateKeyIdentifier !== "string") {
-      throw $ERR_INVALID_ARG_TYPE(
-        "options.privateKeyIdentifier",
-        ["string", "null", "undefined"],
-        privateKeyIdentifier,
-      );
-    } else {
-      throw $ERR_INVALID_ARG_TYPE("options.privateKeyEngine", ["string", "null", "undefined"], privateKeyEngine);
-    }
   }
   if (ecdhCurve !== undefined) {
     validateString(ecdhCurve, "options.ecdhCurve");

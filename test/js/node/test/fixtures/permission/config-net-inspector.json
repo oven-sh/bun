@@ -1,6 +1,0 @@
-{
-    "permission": {
-        "allow-net": true,
-        "allow-inspector": true
-    }
-}

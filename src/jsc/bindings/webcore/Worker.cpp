@@ -220,23 +220,23 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
         return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "The \"port\" argument must be a MessagePort instance"_s);
     }
 
-    // node: `undefined` when the queue is empty, otherwise `{ message }` — built
-    // here so a posted `undefined`/falsy value is distinguishable from "empty".
-    bool hadMessage = false;
-    JSValue message;
     if (auto* messagePort = dynamicDowncast<JSMessagePort>(port)) {
-        message = messagePort->wrapped().tryTakeMessage(lexicalGlobalObject, hadMessage);
-    } else if (auto* broadcastChannel = dynamicDowncast<JSBroadcastChannel>(port)) {
-        message = broadcastChannel->wrapped().tryTakeMessage(lexicalGlobalObject, hadMessage);
-    } else {
-        return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "The \"port\" argument must be a MessagePort instance"_s);
-    }
-    RETURN_IF_EXCEPTION(scope, {});
-    if (!hadMessage)
+        // node: `undefined` when the queue is empty, otherwise `{ message }` — built
+        // here so a posted `undefined`/falsy value is distinguishable from "empty".
+        bool hadMessage = false;
+        JSValue message = messagePort->wrapped().tryTakeMessage(lexicalGlobalObject, hadMessage);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!hadMessage)
+            return JSC::JSValue::encode(jsUndefined());
+        auto* result = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), 1);
+        result->putDirect(vm, JSC::Identifier::fromString(vm, "message"_s), message);
+        return JSC::JSValue::encode(result);
+    } else if (dynamicDowncast<JSBroadcastChannel>(port)) {
+        // TODO: support broadcast channels
         return JSC::JSValue::encode(jsUndefined());
-    auto* result = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), 1);
-    result->putDirect(vm, JSC::Identifier::fromString(vm, "message"_s), message);
-    return JSC::JSValue::encode(result);
+    }
+
+    return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "The \"port\" argument must be a MessagePort instance"_s);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsMessagePortIsActive, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -250,28 +250,18 @@ JSC_DEFINE_HOST_FUNCTION(jsMessagePortIsActive, (JSGlobalObject * lexicalGlobalO
     return JSC::JSValue::encode(jsBoolean(false));
 }
 
-// markAsUncloneable/markAsUntransferable tag objects with a DontEnum JSC private name
-// (node uses a v8 Private): invisible to and unforgeable from user JS, and not removable,
-// so marking cannot be undone. Primitives are a documented no-op.
-static void markObjectWithPrivateName(JSC::VM& vm, JSC::JSValue value, const JSC::Identifier& privateName)
-{
-    JSC::JSObject* object = value.getObject();
-    if (!object || object->getDirect(vm, privateName))
-        return;
-    object->putDirect(vm, privateName, JSC::jsBoolean(true), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
-}
-
+// Primitives are a documented no-op for both.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionMarkAsUncloneable, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    auto& vm = lexicalGlobalObject->vm();
-    markObjectWithPrivateName(vm, callFrame->argument(0), builtinNames(vm).isUncloneablePrivateName());
+    if (auto* object = callFrame->argument(0).getObject())
+        markAsUncloneable(lexicalGlobalObject->vm(), *object);
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionMarkAsUntransferable, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    auto& vm = lexicalGlobalObject->vm();
-    markObjectWithPrivateName(vm, callFrame->argument(0), builtinNames(vm).isUntransferablePrivateName());
+    if (auto* object = callFrame->argument(0).getObject())
+        markAsUntransferable(lexicalGlobalObject->vm(), *object);
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 

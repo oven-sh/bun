@@ -292,14 +292,6 @@ impl ThreadPool {
     }
 }
 
-impl Default for ThreadPool {
-    /// Default-initialised pool with zero `max_threads` (`init()` clamps to
-    /// ≥1 when actually started).
-    fn default() -> Self {
-        Self::init(Config::default())
-    }
-}
-
 /// Shut down the thread pool and stop the worker threads.
 impl Drop for ThreadPool {
     fn drop(&mut self) {

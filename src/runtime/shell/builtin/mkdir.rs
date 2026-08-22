@@ -457,7 +457,7 @@ impl FlagParser for Opts {
         None
     }
 
-    fn parse_short(&mut self, ch: u8, smallflags: &[u8], i: usize) -> Option<ParseFlagResult> {
+    fn parse_short(&mut self, ch: u8) -> Option<ParseFlagResult> {
         match ch {
             b'm' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-m "))),
             b'p' => {
@@ -468,9 +468,7 @@ impl FlagParser for Opts {
                 self.verbose = true;
                 None
             }
-            _ => Some(ParseFlagResult::IllegalOption(
-                &raw const smallflags[1 + i..],
-            )),
+            _ => Some(ParseFlagResult::IllegalOption(ch)),
         }
     }
 }

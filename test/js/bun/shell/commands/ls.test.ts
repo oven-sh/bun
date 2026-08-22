@@ -288,17 +288,11 @@ describe.concurrent("bunshell ls", () => {
     });
 
     test("invalid flag", async () => {
-      await TestBuilder.command`ls -z`
-        .exitCode(1)
-        .stderr(s => expect(s).toContain("illegal option"))
-        .run();
+      await TestBuilder.command`ls -z`.exitCode(1).stderr("ls: illegal option -- z\n").run();
     });
 
     test("invalid combined flags", async () => {
-      await TestBuilder.command`ls -az`
-        .exitCode(1)
-        .stderr(s => expect(s).toContain("illegal option"))
-        .run();
+      await TestBuilder.command`ls -az`.exitCode(1).stderr("ls: illegal option -- z\n").run();
     });
 
     test.if(isPosix)("permission denied directory", async () => {

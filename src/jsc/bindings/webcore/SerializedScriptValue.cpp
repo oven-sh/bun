@@ -44,7 +44,6 @@
 #include "JSDOMConvertBufferSource.h"
 #include "JSDOMException.h"
 #include "JSDOMGlobalObject.h"
-#include "JSMessageChannel.h"
 #include "JSMessagePort.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
@@ -1112,14 +1111,7 @@ private:
         }
 
         if (value.isSymbol()) {
-            VM& vm = m_lexicalGlobalObject->vm();
-            auto scope = DECLARE_THROW_SCOPE(vm);
-            // node (V8) names the failing value: `Symbol(foo) could not be cloned.`
-            auto descriptionExpected = asSymbol(value)->tryGetDescriptiveString();
-            String description = descriptionExpected ? descriptionExpected.value() : String("Symbol()"_s);
-            WebCore::propagateException(*m_lexicalGlobalObject, scope,
-                Exception { DataCloneError, makeString(description, " could not be cloned."_s) });
-            code = SerializationReturnCode::ExistingExceptionError;
+            code = SerializationReturnCode::DataCloneError;
             return true;
         }
 
@@ -2092,33 +2084,8 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             // All supported objects other than plain Object have been handled; throw
             // DataCloneError otherwise. NapiPrototype, ObjectPrototype, and process.env
             // are allowed (Node supports structuredClone(process.env) as a plain object).
-            if (inObject->classInfo() != JSFinalObject::info() && inObject->classInfo() != Zig::NapiPrototype::info() && inObject->classInfo() != JSC::ObjectPrototype::info() && !Bun::isProcessEnvClassInfo(inObject->classInfo())) {
-                // node reports this error for a MessageChannel found in a message
-                // (its ports would need transferring).
-                if (inObject->inherits<JSMessageChannel>()) {
-                    WebCore::propagateException(*m_lexicalGlobalObject, scope,
-                        Exception { DataCloneError, "Object that needs transfer was found in message but not listed in transferList"_s });
-                    return SerializationReturnCode::ExistingExceptionError;
-                }
-                // node (V8) renders a rejected callable with its source text
-                // (`function foo() {} could not be cloned.`); any other
-                // unsupported object is reported as a host object.
-                if (auto* function = dynamicDowncast<JSC::JSFunction>(inObject)) {
-                    JSString* sourceString = function->toString(m_lexicalGlobalObject);
-                    RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
-                    String source = sourceString->value(m_lexicalGlobalObject);
-                    RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
-                    WebCore::propagateException(*m_lexicalGlobalObject, scope,
-                        Exception { DataCloneError, makeString(source, " could not be cloned."_s) });
-                } else if (inObject->isCallable()) {
-                    WebCore::propagateException(*m_lexicalGlobalObject, scope,
-                        Exception { DataCloneError, makeString("function "_s, inObject->classInfo()->className, "() { [native code] } could not be cloned."_s) });
-                } else {
-                    WebCore::propagateException(*m_lexicalGlobalObject, scope,
-                        Exception { DataCloneError, "Cannot clone object of unsupported type."_s });
-                }
-                return SerializationReturnCode::ExistingExceptionError;
-            }
+            if (inObject->classInfo() != JSFinalObject::info() && inObject->classInfo() != Zig::NapiPrototype::info() && inObject->classInfo() != JSC::ObjectPrototype::info() && !Bun::isProcessEnvClassInfo(inObject->classInfo()))
+                return SerializationReturnCode::DataCloneError;
             inputObjectStack.append(inObject);
             indexStack.append(0);
             propertyStack.append(PropertyNameArrayBuilder(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude));
@@ -4337,6 +4304,23 @@ size_t SerializedScriptValue::computeMemoryCost() const
     }
 
     return cost;
+}
+
+static void markObjectWithPrivateName(VM& vm, JSObject& object, const Identifier& privateName)
+{
+    if (object.getDirect(vm, privateName))
+        return;
+    object.putDirect(vm, privateName, jsBoolean(true), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | 0);
+}
+
+void markAsUncloneable(VM& vm, JSObject& object)
+{
+    markObjectWithPrivateName(vm, object, builtinNames(vm).isUncloneablePrivateName());
+}
+
+void markAsUntransferable(VM& vm, JSObject& object)
+{
+    markObjectWithPrivateName(vm, object, builtinNames(vm).isUntransferablePrivateName());
 }
 
 static ExceptionOr<std::unique_ptr<ArrayBufferContentsArray>> transferArrayBuffers(VM& vm, const Vector<RefPtr<JSC::ArrayBuffer>>& arrayBuffers)

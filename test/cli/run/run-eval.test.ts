@@ -180,6 +180,34 @@ describe("--print for cjs/esm", () => {
     expect(stdout.toString()).toBe("true\n");
     expect(exitCode).toBe(0);
   });
+
+  // The hoist patterns in [install] are regexes. Compiling them while
+  // bunfig.toml loaded initialized JSC before `bun -p` could turn on eval
+  // mode, so the script's completion value was dropped and every --print
+  // printed undefined.
+  describe.each(["hoistPattern", "publicHoistPattern"])("with install.%s in bunfig.toml", key => {
+    test.concurrent.each([
+      { expr: "Math.max(1, 9)", expected: "9" },
+      { expr: "[1, 2].map(x => x * 2)", expected: "[ 2, 4 ]" },
+      { expr: "1 + 1", expected: "2" },
+      { expr: "(await 1) + 1", expected: "2" },
+    ])("bun -p $expr", async ({ expr, expected }) => {
+      using dir = tempDir("eval-install-pattern", {
+        "bunfig.toml": `[install]\n${key} = ["*eslint*", "!eslint-plugin-*"]\n`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-p", expr],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(`${expected}\n`);
+      expect(exitCode).toBe(0);
+    });
+  });
 });
 
 function group(run: (code: string) => SyncSubprocess<"pipe", "inherit">) {
@@ -433,35 +461,32 @@ describe("node-style CLI errors", () => {
     expect(exitCode).toBe(9);
   });
 
-  test.each(["--allow-fs-read=*", "--allow-fs-write=*", "--allow-child-process", "--allow-net"])(
-    "%s without --permission is rejected",
-    async flag => {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), flag, "-e", "1"],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-      expect(stdout).toBe("");
-      expect(stderr).toContain("--permission is required");
-      expect(exitCode).toBe(1);
-    },
-  );
-
-  test("--permission enables the model and defines process.permission", async () => {
+  test.each(["--allow-fs-read=*", "--allow-fs-write=*"])("%s without --permission is rejected", async flag => {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "--permission", "-e", "process.stdout.write(String(typeof process.permission.has))"],
+      cmd: [bunExe(), flag, "-e", "1"],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toBe("");
-    expect(stdout).toBe("function");
-    expect(exitCode).toBe(0);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("--permission is required");
+    expect(exitCode).toBe(1);
+  });
+
+  test("--permission is rejected rather than silently ignored", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--permission", "-e", "1"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("");
+    expect(stderr).toContain("--permission is not supported by Bun");
+    expect(exitCode).toBe(1);
   });
 });
 

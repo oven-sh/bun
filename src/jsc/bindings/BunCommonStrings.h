@@ -16,7 +16,6 @@
     macro(httpCHECKOUT, "CHECKOUT") \
     macro(httpCONNECT, "CONNECT") \
     macro(httpCOPY, "COPY") \
-    macro(ConnectionWasClosed, "The connection was closed.") \
     macro(httpDELETE, "DELETE") \
     macro(httpGET, "GET") \
     macro(httpHEAD, "HEAD") \
@@ -63,8 +62,6 @@
     macro(binaryTypeNodeBuffer, "nodebuffer") \
     macro(binaryTypeUint8Array, "uint8array") \
     macro(buffer, "buffer") \
-    macro(ec, "ec") \
-    macro(ed25519, "ed25519") \
     macro(fetchCors, "cors") \
     macro(fetchError, "error") \
     macro(fetchFollow, "follow") \
@@ -84,18 +81,14 @@
     macro(latin1, "latin1") \
     macro(lax, "lax") \
     macro(none, "none") \
-    macro(rsa, "rsa") \
-    macro(rsaPss, "rsa-pss") \
     macro(s3Error, "S3Error") \
     macro(strict, "strict") \
     macro(jwkCrv, "crv") \
     macro(jwkD, "d") \
     macro(jwkDp, "dp") \
     macro(jwkDq, "dq") \
-    macro(jwkDsa, "DSA") \
     macro(jwkE, "e") \
     macro(jwkEc, "EC") \
-    macro(jwkG, "g") \
     macro(jwkK, "k") \
     macro(jwkP, "p") \
     macro(jwkQ, "q") \
@@ -107,11 +100,9 @@
     macro(jwkRsa, "RSA") \
     macro(jwkX, "x") \
     macro(jwkY, "y") \
-    macro(systemError, "SystemError") \
     macro(ucs2, "ucs2") \
     macro(utf16le, "utf16le") \
-    macro(utf8, "utf8") \
-    macro(x25519, "x25519")
+    macro(utf8, "utf8")
 
 // clang-format on
 

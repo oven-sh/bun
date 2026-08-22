@@ -16,26 +16,20 @@
 //! synchronously re-enters this struct through the `ctx` backref via
 //! `on_open`/`on_data`/`on_handshake`/`on_close`/`write_encrypted`.
 //!
-//! To stay sound under Stacked Borrows:
-//! - Driving entries take `*mut Self` and project to `wrapper` via
-//!   `ptr::addr_of_mut!` so the `&mut` covers only that field's bytes.
-//! - Callbacks **never** form `&Self`/`&mut Self` (whole-struct) and **never** read
-//!   `(*ctx).wrapper` — either would touch `wrapper`'s bytes through the
-//!   Box-provenance `ctx` and alias the caller's shared `&SslWrapper` (harmless — no Unique tag to pop, since every `SslWrapper` method is `&self`).
-//!   They access only disjoint fields (`ref_count`, `ssl`, `sni_hostname`,
-//!   `write_buffer`, `socket`, `upgrade_client`, `connected_websocket`) via
-//!   `(*ctx).field` raw projections.
-//! - The `*mut SSL` needed by `on_handshake` is snapshotted into `self.ssl` in
-//!   `start()` so it can be read without going through `wrapper`.
+//! All state mutated after construction lives in `Cell`/`JsCell` fields, and
+//! `wrapper` is a write-once `OnceCell` set in `start()` before it is first
+//! driven, so every access — from a driving entry or from a re-entered
+//! callback — is a short shared borrow; no `&mut Self` is ever formed.
 //!
 //! `*WebSocketProxyTunnel` is freely aliased across callbacks.
 
-use core::cell::Cell;
+use core::cell::{Cell, OnceCell};
 use core::ptr;
 use core::ptr::NonNull;
 
 use bun_boringssl as boringssl;
 use bun_io::StreamBuffer;
+use bun_ptr::{JsCell, ThisPtr};
 use bun_uws::ssl_wrapper::{Handlers as SslHandlers, SslWrapper};
 use bun_uws::{NewSocketHandler, us_bun_verify_error_t};
 
@@ -61,46 +55,42 @@ pub(crate) enum UpgradeClientUnion {
 }
 
 impl UpgradeClientUnion {
-    fn handle_decrypted_data(&self, data: &[u8]) {
+    fn dispatch(
+        self,
+        http: impl FnOnce(ThisPtr<HttpUpgradeClient>),
+        https: impl FnOnce(ThisPtr<HttpsUpgradeClient>),
+    ) {
+        // The upgrade client resets this to `None` (`detach_upgrade_client`,
+        // from `clear_data`) before it can be freed, so a non-`None` variant
+        // points at a live client for the duration of this call.
         match self {
-            // SAFETY: BACKREF — caller (WebSocketUpgradeClient) outlives the tunnel during handshake phase
-            UpgradeClientUnion::Http(client) => unsafe {
-                HttpUpgradeClient::handle_decrypted_data(*client, data)
-            },
-            // SAFETY: BACKREF — caller (WebSocketUpgradeClient) outlives the tunnel during handshake phase
-            UpgradeClientUnion::Https(client) => unsafe {
-                HttpsUpgradeClient::handle_decrypted_data(*client, data)
-            },
+            // SAFETY: see above.
+            UpgradeClientUnion::Http(client) => http(unsafe { ThisPtr::new(client) }),
+            // SAFETY: see above.
+            UpgradeClientUnion::Https(client) => https(unsafe { ThisPtr::new(client) }),
             UpgradeClientUnion::None => {}
         }
     }
 
-    fn terminate(&self, code: ErrorCode) {
-        match self {
-            // SAFETY: BACKREF — caller (WebSocketUpgradeClient) outlives the tunnel during handshake phase
-            UpgradeClientUnion::Http(client) => unsafe {
-                HttpUpgradeClient::terminate(*client, code)
-            },
-            // SAFETY: BACKREF — caller (WebSocketUpgradeClient) outlives the tunnel during handshake phase
-            UpgradeClientUnion::Https(client) => unsafe {
-                HttpsUpgradeClient::terminate(*client, code)
-            },
-            UpgradeClientUnion::None => {}
-        }
+    fn handle_decrypted_data(self, data: &[u8]) {
+        self.dispatch(
+            |c| HttpUpgradeClient::handle_decrypted_data(c, data),
+            |c| HttpsUpgradeClient::handle_decrypted_data(c, data),
+        );
     }
 
-    fn on_proxy_tls_handshake_complete(&self) {
-        match self {
-            // SAFETY: BACKREF — caller (WebSocketUpgradeClient) outlives the tunnel during handshake phase
-            UpgradeClientUnion::Http(client) => unsafe {
-                HttpUpgradeClient::on_proxy_tls_handshake_complete(*client)
-            },
-            // SAFETY: BACKREF — caller (WebSocketUpgradeClient) outlives the tunnel during handshake phase
-            UpgradeClientUnion::Https(client) => unsafe {
-                HttpsUpgradeClient::on_proxy_tls_handshake_complete(*client)
-            },
-            UpgradeClientUnion::None => {}
-        }
+    fn terminate(self, code: ErrorCode) {
+        self.dispatch(
+            |c| HttpUpgradeClient::terminate(c, code),
+            |c| HttpsUpgradeClient::terminate(c, code),
+        );
+    }
+
+    fn on_proxy_tls_handshake_complete(self) {
+        self.dispatch(
+            HttpUpgradeClient::on_proxy_tls_handshake_complete,
+            HttpsUpgradeClient::on_proxy_tls_handshake_complete,
+        );
     }
 
     fn is_none(&self) -> bool {
@@ -114,23 +104,15 @@ type WebSocketClient = crate::websocket_client::WebSocket<false>;
 pub struct WebSocketProxyTunnel {
     ref_count: Cell<u32>,
     /// Reference to the upgrade client (WebSocketUpgradeClient) - used during handshake phase
-    upgrade_client: UpgradeClientUnion,
+    upgrade_client: Cell<UpgradeClientUnion>,
     /// Reference to the connected WebSocket client - used after successful upgrade
-    connected_websocket: *mut WebSocketClient,
-    /// SSL wrapper for TLS inside tunnel
-    wrapper: Option<SslWrapperType>,
+    connected_websocket: Cell<*mut WebSocketClient>,
+    /// SSL wrapper for TLS inside tunnel; set once in `start()`.
+    wrapper: OnceCell<SslWrapperType>,
     /// Socket reference (the proxy connection)
     socket: SocketUnion,
     /// Write buffer for encrypted data (maintains TLS record ordering)
-    write_buffer: StreamBuffer,
-    /// Snapshot of `wrapper.ssl` taken in `start()`.
-    ///
-    /// Callbacks fired from inside `SslWrapper::{start,receive_data,...}` run while
-    /// the caller holds a live `&SslWrapper` (all its methods are `&self`, so a
-    /// shared read of `wrapper` is harmless; only a whole-struct `&mut *ctx` in a
-    /// callback would overlap it). Snapshotting the `*mut SSL` here — the field is a
-    /// `Cell` — lets `on_handshake` read it without touching `wrapper` at all.
-    ssl: Option<NonNull<boringssl::c::SSL>>,
+    write_buffer: JsCell<StreamBuffer>,
     /// Hostname for SNI (Server Name Indication)
     sni_hostname: Option<Box<[u8]>>,
     /// Whether to reject unauthorized certificates
@@ -144,7 +126,7 @@ type SslWrapperType = SslWrapper<*mut WebSocketProxyTunnel>;
 impl WebSocketProxyTunnel {
     /// Initialize a new proxy tunnel with all required parameters
     pub(crate) fn init<const SSL: bool>(
-        upgrade_client: *mut NewHttpUpgradeClient<SSL>,
+        upgrade_client: ThisPtr<NewHttpUpgradeClient<SSL>>,
         socket: NewSocketHandler<SSL>,
         sni_hostname: &[u8],
         reject_unauthorized: bool,
@@ -155,24 +137,23 @@ impl WebSocketProxyTunnel {
         // `InternalSocket` so no `unsafe` is needed.
         let (upgrade_client, socket) = if SSL {
             (
-                UpgradeClientUnion::Https(upgrade_client.cast::<HttpsUpgradeClient>()),
+                UpgradeClientUnion::Https(upgrade_client.as_ptr().cast::<HttpsUpgradeClient>()),
                 SocketUnion::Ssl(socket.assume_ssl()),
             )
         } else {
             (
-                UpgradeClientUnion::Http(upgrade_client.cast::<HttpUpgradeClient>()),
+                UpgradeClientUnion::Http(upgrade_client.as_ptr().cast::<HttpUpgradeClient>()),
                 SocketUnion::Tcp(socket.assume_tcp()),
             )
         };
 
         let boxed = Box::new(WebSocketProxyTunnel {
             ref_count: Cell::new(1),
-            upgrade_client,
-            connected_websocket: ptr::null_mut(),
-            wrapper: None,
+            upgrade_client: Cell::new(upgrade_client),
+            connected_websocket: Cell::new(ptr::null_mut()),
+            wrapper: OnceCell::new(),
             socket,
-            write_buffer: StreamBuffer::default(),
-            ssl: None,
+            write_buffer: JsCell::new(StreamBuffer::default()),
             sni_hostname: Some(Box::<[u8]>::from(sni_hostname)),
             reject_unauthorized,
         });
@@ -184,13 +165,11 @@ impl WebSocketProxyTunnel {
     /// Start TLS handshake inside the tunnel
     /// The ssl_options should contain all TLS configuration including CA certificates.
     ///
-    /// # Safety
-    /// `this` must be the Box-provenance pointer returned from `init` /
-    /// `IntrusiveRc::as_ptr` and must be live for the duration of the call.
-    /// `start*()` synchronously invokes `on_open(ctx)`, so this function must
-    /// not hold a `&mut Self` across that call.
-    pub(crate) unsafe fn start(
-        this: *mut Self,
+    /// Takes `ThisPtr<Self>` because `start*()` synchronously invokes
+    /// `on_open(ctx)` / `on_handshake(ctx)`, which may terminate the upgrade
+    /// client.
+    pub(crate) fn start(
+        this: ThisPtr<Self>,
         ssl_options: &SslConfig,
         initial_data: &[u8],
     ) -> crate::Result<()> {
@@ -208,7 +187,7 @@ impl WebSocketProxyTunnel {
             SslHandlers {
                 // Store the Box-provenance pointer directly so callback derefs
                 // remain valid regardless of intervening reborrows.
-                ctx: this,
+                ctx: this.as_ptr(),
                 on_open: Self::on_open,
                 on_data: Self::on_data,
                 on_handshake: Self::on_handshake,
@@ -222,26 +201,20 @@ impl WebSocketProxyTunnel {
         )
         .map_err(|_| crate::Error::InvalidOptions)?;
 
+        debug_assert!(this.wrapper.get().is_none(), "start() called twice");
+        let wrapper = this.wrapper.get_or_init(|| wrapper);
         let ssl = wrapper.ssl.get();
-
-        // SAFETY: caller contract — `this` is live. Short-lived raw derefs to assign
-        // fields; no `&mut Self` is bound across the re-entrant `start*()` below.
-        unsafe {
-            (*this).ssl = ssl;
-            (*this).wrapper = Some(wrapper);
-        }
 
         // Configure SNI with hostname.
         //
         // This could live inside `onOpen`, which `SslWrapper::start()`
-        // invokes immediately before `handle_traffic()`. We hoist it here because
-        // `start()` holds `&SslWrapper` across the `on_open` dispatch, and any
-        // read of `(*ctx).wrapper` from inside the callback would invalidate that
-        // borrow under Stacked Borrows. The observable order vs BoringSSL is
-        // identical: SNI is set on the `SSL*` before the handshake is driven.
+        // invokes immediately before `handle_traffic()`. We hoist it here so
+        // the callback never has to read `wrapper` while `start()` holds
+        // `&SslWrapper` across the `on_open` dispatch. The observable order vs
+        // BoringSSL is identical: SNI is set on the `SSL*` before the handshake
+        // is driven.
         if let Some(ssl_ptr) = ssl {
-            // SAFETY: `this` is live; field projection covers only `sni_hostname`.
-            if let Some(hostname) = unsafe { (*this).sni_hostname.as_deref() } {
+            if let Some(hostname) = this.sni_hostname.as_deref() {
                 if !bun_core::ip_address::is_ip_address(hostname) {
                     // Set SNI hostname
                     let hostname_z = bun_core::ZBox::from_vec_with_nul(hostname.to_vec());
@@ -261,23 +234,12 @@ impl WebSocketProxyTunnel {
             }
         }
 
-        // SAFETY: raw field projection; `start*()` synchronously fires `on_open(ctx)`
-        // / `write_encrypted(ctx)` / etc. Those callbacks touch only fields disjoint
-        // from `wrapper` (`ref_count`, `ssl`, `sni_hostname`, `write_buffer`,
-        // `socket`, …), so the `&SslWrapper` formed here — which covers only
-        // the `wrapper` field bytes — is never aliased.
-        let wrapper_ptr = unsafe { ptr::addr_of_mut!((*this).wrapper) };
+        // `start*()` synchronously fires `on_open(ctx)` / `write_encrypted(ctx)`
+        // / etc.; those callbacks mutate only `Cell`/`JsCell` fields.
         if !initial_data.is_empty() {
-            // SAFETY: deref of field projection; `this` is live.
-            unsafe {
-                (*wrapper_ptr)
-                    .as_ref()
-                    .unwrap()
-                    .start_with_payload(initial_data)
-            };
+            wrapper.start_with_payload(initial_data);
         } else {
-            // SAFETY: deref of field projection; `this` is live.
-            unsafe { (*wrapper_ptr).as_ref().unwrap().start() };
+            wrapper.start();
         }
         Ok(())
     }
@@ -285,19 +247,17 @@ impl WebSocketProxyTunnel {
     /// SSLWrapper callback: Called before TLS handshake starts
     fn on_open(this: *mut WebSocketProxyTunnel) {
         // SAFETY: ctx pointer set in `start`; SSLWrapper guarantees it is live during callbacks.
-        let _guard = unsafe { bun_ptr::ScopedRef::new(this) };
+        let this = unsafe { ThisPtr::new(this) };
+        let _guard = this.ref_guard();
         bun_core::scoped_log!(WebSocketProxyTunnel, "onOpen");
-        // SNI configuration is done in `start()` before the wrapper is driven;
-        // see the note there. This callback intentionally does not touch
-        // `(*this).wrapper` — the caller (`SslWrapper::start`) holds `&self`
-        // over those bytes.
-        let _ = this;
+        // SNI configuration is done in `start()` before the wrapper is driven.
     }
 
     /// SSLWrapper callback: Called with decrypted data from the network
     fn on_data(this: *mut WebSocketProxyTunnel, decrypted_data: &[u8]) {
         // SAFETY: ctx pointer set in `start`; SSLWrapper guarantees it is live during callbacks.
-        let _guard = unsafe { bun_ptr::ScopedRef::new(this) };
+        let this = unsafe { ThisPtr::new(this) };
+        let _guard = this.ref_guard();
 
         bun_core::scoped_log!(
             WebSocketProxyTunnel,
@@ -308,12 +268,11 @@ impl WebSocketProxyTunnel {
             return;
         }
 
-        // Snapshot backref pointers via short raw-ptr reads; the dispatch below may
-        // re-enter `tunnel.write/shutdown/clear_connected_web_socket/detach_upgrade_client`,
-        // so no `&Self`/`&mut Self` may be live across it.
-        // SAFETY: ScopedRef guard holds a ref; `this` is live. Reads of `Copy` fields.
+        // Snapshot backref pointers; the dispatch below may re-enter
+        // `tunnel.write/shutdown/clear_connected_web_socket/detach_upgrade_client`,
+        // so no borrow of `*this` may be live across it.
         let (connected_websocket, upgrade_client) =
-            unsafe { ((*this).connected_websocket, (*this).upgrade_client) };
+            (this.connected_websocket.get(), this.upgrade_client.get());
 
         // If we have a connected WebSocket client, forward data to it
         if !connected_websocket.is_null() {
@@ -334,16 +293,16 @@ impl WebSocketProxyTunnel {
         ssl_error: us_bun_verify_error_t,
     ) {
         // SAFETY: ctx pointer set in `start`; SSLWrapper guarantees it is live during callbacks.
-        let _guard = unsafe { bun_ptr::ScopedRef::new(this) };
+        let this = unsafe { ThisPtr::new(this) };
+        let _guard = this.ref_guard();
 
         bun_core::scoped_log!(WebSocketProxyTunnel, "onHandshake: success={}", success);
 
         // Snapshot the fields we need; `terminate()` / `on_proxy_tls_handshake_complete()`
         // re-enter `tunnel.detach_upgrade_client()` / `tunnel.write()`, so no borrow of
         // `*this` may span the dispatch.
-        // SAFETY: ScopedRef guard holds a ref; `this` is live. Reads of `Copy` fields.
         let (upgrade_client, reject_unauthorized) =
-            unsafe { ((*this).upgrade_client, (*this).reject_unauthorized) };
+            (this.upgrade_client.get(), this.reject_unauthorized);
 
         if upgrade_client.is_none() {
             return;
@@ -361,22 +320,15 @@ impl WebSocketProxyTunnel {
                 return;
             }
 
-            // Verify server identity. Read the `ssl` snapshot + `sni_hostname` via
-            // raw field projections; a shared read overlapping `wrapper` would be
-            // harmless (the `receive_data()` frame holds only `&SslWrapper`), but
-            // this path deliberately touches neither `wrapper` nor a whole-struct
-            // borrow, so no exclusive access is ever formed under that frame.
-            // SAFETY: ScopedRef guard holds a ref; `this` is live. `ssl` is `Copy`;
-            // `sni_hostname` autoref covers only that field's bytes.
-            let failed_identity = unsafe {
-                match ((*this).ssl, (*this).sni_hostname.as_deref()) {
-                    (Some(ssl_ptr), Some(hostname)) => {
-                        // SAFETY: ssl_ptr is a live `*mut SSL` owned by the wrapper
-                        // (heap-allocated by BoringSSL; disjoint from the tunnel struct).
-                        !boringssl::check_server_identity(&mut *ssl_ptr.as_ptr(), hostname)
-                    }
-                    _ => false,
+            // Verify server identity.
+            let ssl = this.wrapper.get().and_then(|w| w.ssl.get());
+            let failed_identity = match (ssl, this.sni_hostname.as_deref()) {
+                (Some(ssl_ptr), Some(hostname)) => {
+                    // SAFETY: ssl_ptr is a live `*mut SSL` owned by the wrapper
+                    // (heap-allocated by BoringSSL; disjoint from the tunnel struct).
+                    !boringssl::check_server_identity(unsafe { &mut *ssl_ptr.as_ptr() }, hostname)
                 }
+                _ => false,
             };
             if failed_identity {
                 upgrade_client.terminate(ErrorCode::TlsHandshakeFailed);
@@ -391,16 +343,16 @@ impl WebSocketProxyTunnel {
     /// SSLWrapper callback: Called when connection is closing
     fn on_close(this: *mut WebSocketProxyTunnel) {
         // SAFETY: ctx pointer set in `start`; SSLWrapper guarantees it is live during callbacks.
-        let _guard = unsafe { bun_ptr::ScopedRef::new(this) };
+        let this = unsafe { ThisPtr::new(this) };
+        let _guard = this.ref_guard();
 
         bun_core::scoped_log!(WebSocketProxyTunnel, "onClose");
 
         // Snapshot backref pointers; `fail()`/`terminate()` re-enter
         // `tunnel.clear_connected_web_socket()` / `tunnel.shutdown()` /
         // `tunnel.detach_upgrade_client()`, so no borrow of `*this` may span them.
-        // SAFETY: ScopedRef guard holds a ref; `this` is live. Reads of `Copy` fields.
         let (connected_websocket, upgrade_client) =
-            unsafe { ((*this).connected_websocket, (*this).upgrade_client) };
+            (this.connected_websocket.get(), this.upgrade_client.get());
 
         // If we have a connected WebSocket client, notify it of the close
         if !connected_websocket.is_null() {
@@ -425,39 +377,23 @@ impl WebSocketProxyTunnel {
     /// a clean close so the tunnel's onClose callback doesn't dispatch a spurious
     /// abrupt close (1006) after the WebSocket has already sent a clean close frame.
     ///
-    /// # Safety
-    /// `this` must point to a live tunnel. Takes `*mut Self` (not `&mut self`)
-    /// because it can be reached from inside an SSLWrapper callback while the
-    /// driving frame holds `&SslWrapper`; the raw write covers only this field.
-    pub(crate) unsafe fn clear_connected_web_socket(this: *mut Self) {
-        // SAFETY: caller contract — `this` is live; raw place write, field-scoped.
-        unsafe { (*this).connected_websocket = ptr::null_mut() };
+    /// Can be reached from inside an SSLWrapper callback while the driving
+    /// frame holds `&SslWrapper`; the `Cell` write covers only this field.
+    pub(crate) fn clear_connected_web_socket(&self) {
+        self.connected_websocket.set(ptr::null_mut());
     }
 
     /// Clear the upgrade client reference. Called before tunnel shutdown during
     /// cleanup so that the SSLWrapper's synchronous onHandshake/onClose callbacks
     /// do not re-enter the upgrade client's terminate/clearData path.
-    ///
-    /// # Safety
-    /// Same contract as [`Self::clear_connected_web_socket`].
-    pub(crate) unsafe fn detach_upgrade_client(this: *mut Self) {
-        // SAFETY: caller contract — `this` is live; raw place write, field-scoped.
-        unsafe { (*this).upgrade_client = UpgradeClientUnion::None };
+    pub(crate) fn detach_upgrade_client(&self) {
+        self.upgrade_client.set(UpgradeClientUnion::None);
     }
 
     /// SSLWrapper callback: Called with encrypted data to send to network
     fn write_encrypted(this: *mut WebSocketProxyTunnel, encrypted_data: &[u8]) {
-        // SAFETY: ctx pointer set in `start`; SSLWrapper guarantees it is live during
-        // callbacks. The driving frame (`receive`/`on_writable`/`write`/`shutdown`/
-        // `start`) holds a live `&SslWrapper` derived from `(*this).wrapper`, so
-        // a whole-struct `&mut *this` here would alias it (Stacked Borrows UB).
-        // Project to the disjoint `write_buffer`/`socket` fields only.
-        let (write_buffer, socket) = unsafe {
-            (
-                &mut *ptr::addr_of_mut!((*this).write_buffer),
-                &*ptr::addr_of!((*this).socket),
-            )
-        };
+        // SAFETY: ctx pointer set in `start`; SSLWrapper guarantees it is live during callbacks.
+        let this = unsafe { ThisPtr::new(this) };
         bun_core::scoped_log!(
             WebSocketProxyTunnel,
             "writeEncrypted: {} bytes",
@@ -465,75 +401,72 @@ impl WebSocketProxyTunnel {
         );
 
         // If data is already buffered, queue this to maintain TLS record ordering
-        if write_buffer.is_not_empty() {
-            bun_core::handle_oom(write_buffer.write(encrypted_data));
+        if this.write_buffer.get().is_not_empty() {
+            bun_core::handle_oom(this.write_buffer.with_mut(|b| b.write(encrypted_data)));
             return;
         }
 
         // Try direct write to socket
-        let written = socket.write(encrypted_data);
+        let written = this.socket.write(encrypted_data);
         if written < 0 {
             // Write failed - buffer data for retry when socket becomes writable
-            bun_core::handle_oom(write_buffer.write(encrypted_data));
+            bun_core::handle_oom(this.write_buffer.with_mut(|b| b.write(encrypted_data)));
             return;
         }
 
         // Buffer remaining data
         let written_usize = usize::try_from(written).expect("int cast");
         if written_usize < encrypted_data.len() {
-            bun_core::handle_oom(write_buffer.write(&encrypted_data[written_usize..]));
+            bun_core::handle_oom(
+                this.write_buffer
+                    .with_mut(|b| b.write(&encrypted_data[written_usize..])),
+            );
         }
     }
 
     /// Called when the socket becomes writable - flush buffered encrypted data
     ///
-    /// # Safety
-    /// `this` must point to a live tunnel. `flush()` fires `write_encrypted(ctx)`
-    /// and `handle_tunnel_writable()` re-enters `tunnel.write()`, so this function
-    /// operates on `*mut Self` end-to-end and never binds a whole-struct `&mut`.
-    pub(crate) unsafe fn on_writable(this: *mut Self) {
-        // SAFETY: caller contract — `this` is live.
-        let _guard = unsafe { bun_ptr::ScopedRef::new(this) };
+    /// Takes `ThisPtr<Self>` because `flush()` fires `write_encrypted(ctx)` and
+    /// `handle_tunnel_writable()` re-enters `tunnel.write()`, either of which
+    /// can reach a close path that drops a ref on the tunnel.
+    pub(crate) fn on_writable(this: ThisPtr<Self>) {
+        let _guard = this.ref_guard();
 
-        // Flush the SSL state machine via raw field projection so no `&mut Self`
-        // spans the synchronous `write_encrypted` re-entry.
-        // SAFETY: `this` is live; projection covers only `wrapper`.
-        let wrapper_ptr = unsafe { ptr::addr_of_mut!((*this).wrapper) };
-        // SAFETY: deref of field projection; `write_encrypted`'s `&mut *ctx` derives
-        // from the Box-provenance `ctx`, not from this borrow.
-        if let Some(w) = unsafe { (*wrapper_ptr).as_ref() } {
+        // Flush the SSL state machine; no borrow of `*this` other than
+        // `wrapper` spans the synchronous `write_encrypted` re-entry.
+        if let Some(w) = this.wrapper.get() {
             let _ = w.flush();
         }
 
-        // Send buffered encrypted data. Fresh raw-ptr field accesses — `write_encrypted`
-        // above may have mutated `write_buffer`, so we must not reuse any earlier borrow.
-        // SAFETY: `this` is live; short-lived borrows that do not span re-entrant calls
-        // (`socket.write` is a uws send, `write_buffer` ops are local).
-        unsafe {
-            let to_send = (*this).write_buffer.slice();
-            if !to_send.is_empty() {
-                // reshaped for borrowck — capture len before re-borrowing write_buffer
-                let to_send_len = to_send.len();
-                let written = (*this).socket.write(to_send);
-                if written < 0 {
-                    return;
-                }
-
-                let written_usize = usize::try_from(written).expect("int cast");
-                if written_usize == to_send_len {
-                    (*this).write_buffer.reset();
-                } else {
-                    (*this).write_buffer.cursor += written_usize;
-                    return; // still have backpressure
-                }
+        // Send buffered encrypted data (`write_encrypted` above may have
+        // appended to it). A raw uws socket write does not re-enter the tunnel.
+        let still_backpressured = this.write_buffer.with_mut(|buf| {
+            let to_send = buf.slice();
+            if to_send.is_empty() {
+                return false;
             }
+            let to_send_len = to_send.len();
+            let written = this.socket.write(to_send);
+            if written < 0 {
+                return true;
+            }
+            let written = usize::try_from(written).expect("int cast");
+            if written == to_send_len {
+                buf.reset();
+                false
+            } else {
+                buf.wrote(written);
+                true
+            }
+        });
+        if still_backpressured {
+            return;
         }
 
         // Tunnel drained - let the connected WebSocket flush its send_buffer.
         // `handle_tunnel_writable()` re-enters `tunnel.write()`; snapshot the pointer
-        // into a local so no `&Self` borrow is active across the dispatch.
-        // SAFETY: `this` is live; read of `Copy` field.
-        let connected_websocket = unsafe { (*this).connected_websocket };
+        // into a local so no borrow of `*this` is active across the dispatch.
+        let connected_websocket = this.connected_websocket.get();
         if !connected_websocket.is_null() {
             // SAFETY: BACKREF — WebSocket owns tunnel via ref(); cleared before WebSocket frees.
             // No `&`/`&mut WebSocket` is live in this frame across the call.
@@ -543,36 +476,26 @@ impl WebSocketProxyTunnel {
 
     /// Feed encrypted data from the network to the SSL wrapper for decryption
     ///
-    /// # Safety
-    /// `this` must point to a live tunnel. `receive_data()` synchronously dispatches
-    /// `on_data`/`on_handshake`/`on_close`/`write_encrypted`, each of which derefs
-    /// `ctx` back into this allocation; this function therefore never holds a
-    /// `&mut Self` across the call.
-    pub(crate) unsafe fn receive(this: *mut Self, data: &[u8]) {
-        // SAFETY: caller contract — `this` is live.
-        let _guard = unsafe { bun_ptr::ScopedRef::new(this) };
+    /// Takes `ThisPtr<Self>` because `receive_data()` synchronously dispatches
+    /// `on_data`/`on_handshake`/`on_close`/`write_encrypted`, which can reach a
+    /// close path that drops a ref on the tunnel.
+    pub(crate) fn receive(this: ThisPtr<Self>, data: &[u8]) {
+        let _guard = this.ref_guard();
 
-        // SAFETY: raw field projection; the `&mut Option<SslWrapper>` covers only
-        // `wrapper`, and the re-entrant callbacks access tunnel fields via the
-        // Box-provenance `ctx`, not through this borrow.
-        let wrapper_ptr = unsafe { ptr::addr_of_mut!((*this).wrapper) };
-        // SAFETY: deref of field projection; `this` is live.
-        if let Some(w) = unsafe { (*wrapper_ptr).as_ref() } {
+        if let Some(w) = this.wrapper.get() {
             w.receive_data(data);
         }
     }
 
     /// Write application data through the tunnel (will be encrypted)
     ///
-    /// # Safety
-    /// `this` must point to a live tunnel. `write_data()` fires `write_encrypted(ctx)`
-    /// which forms `&mut *ctx`; this function therefore accesses `wrapper` via raw
-    /// projection and never holds a `&mut Self` across the call.
-    pub(crate) unsafe fn write(this: *mut Self, data: &[u8]) -> crate::Result<usize> {
-        // SAFETY: caller contract — `this` is live; projection covers only `wrapper`.
-        let wrapper_ptr = unsafe { ptr::addr_of_mut!((*this).wrapper) };
-        // SAFETY: deref of field projection; `this` is live.
-        if let Some(w) = unsafe { (*wrapper_ptr).as_ref() } {
+    /// Takes `ThisPtr<Self>` because `write_data()` fires `write_encrypted(ctx)`
+    /// and may fire `on_handshake(ctx)`/`on_close(ctx)`.
+    pub(crate) fn write(this: ThisPtr<Self>, data: &[u8]) -> crate::Result<usize> {
+        // The caller's ref (the client's `proxy`/`proxy_tunnel` field) can be
+        // released from inside `write_data` via `on_close`; keep `w` alive.
+        let _guard = this.ref_guard();
+        if let Some(w) = this.wrapper.get() {
             return w
                 .write_data(data)
                 .map_err(|_| crate::Error::ConnectionClosed);
@@ -582,28 +505,24 @@ impl WebSocketProxyTunnel {
 
     /// Gracefully shutdown the TLS connection
     ///
-    /// # Safety
-    /// `this` must point to a live tunnel. `shutdown()` may fire
-    /// `on_close(ctx)`/`write_encrypted(ctx)`; this function therefore accesses
-    /// `wrapper` via raw projection and never holds a `&mut Self` across the call.
-    pub(crate) unsafe fn shutdown(this: *mut Self) {
-        // SAFETY: caller contract — `this` is live; projection covers only `wrapper`.
-        let wrapper_ptr = unsafe { ptr::addr_of_mut!((*this).wrapper) };
-        // SAFETY: deref of field projection; `this` is live.
-        if let Some(w) = unsafe { (*wrapper_ptr).as_ref() } {
+    /// Takes `ThisPtr<Self>` because `shutdown()` may fire
+    /// `on_close(ctx)`/`write_encrypted(ctx)`.
+    pub(crate) fn shutdown(this: ThisPtr<Self>) {
+        let _guard = this.ref_guard();
+        if let Some(w) = this.wrapper.get() {
             let _ = w.shutdown(true); // Fast shutdown
         }
     }
 
     /// Check if the tunnel has backpressure
     pub(crate) fn has_backpressure(&self) -> bool {
-        self.write_buffer.is_not_empty()
+        self.write_buffer.get().is_not_empty()
     }
 }
 
 impl Drop for WebSocketProxyTunnel {
     fn drop(&mut self) {
-        // Field cleanup is automatic: wrapper (Option<SslWrapper>), write_buffer (StreamBuffer),
+        // Field cleanup is automatic: wrapper (OnceCell<SslWrapper>), write_buffer (StreamBuffer),
         // sni_hostname (Option<Box<[u8]>>) all impl Drop. Deallocation
         // is handled by IntrusiveRc / `deref()` via heap::take.
     }
@@ -619,11 +538,9 @@ extern "C" fn WebSocketProxyTunnel__setConnectedWebSocket(
     ws: *mut WebSocketClient,
 ) {
     bun_core::scoped_log!(WebSocketProxyTunnel, "setConnectedWebSocket");
-    // SAFETY: C++ guarantees a live, non-null tunnel pointer; raw field-scoped
-    // writes, nothing re-enters.
-    unsafe {
-        (*tunnel).connected_websocket = ws;
-        // Clear the upgrade client reference since we're now in connected phase
-        (*tunnel).upgrade_client = UpgradeClientUnion::None;
-    }
+    // SAFETY: C++ guarantees a live, non-null tunnel pointer.
+    let tunnel = unsafe { ThisPtr::new(tunnel) };
+    tunnel.connected_websocket.set(ws);
+    // Clear the upgrade client reference since we're now in connected phase
+    tunnel.upgrade_client.set(UpgradeClientUnion::None);
 }

@@ -436,7 +436,7 @@ type ServerH3RequestContext<const SSL: bool, const DEBUG: bool> =
 // `generate()` builds the JSON AST by hand: an `E.Object` with
 // `bun_version` (string) + `platform` (nested `E.Object` of `os`/`arch`/
 // `version`, enums emitted as `@tagName` strings).
-pub mod BunInfo {
+pub(crate) mod BunInfo {
     use bun_analytics::generate_header::generate_platform;
     use bun_analytics::{OperatingSystem, Platform};
     use bun_ast::Loc;
@@ -525,9 +525,7 @@ pub mod BunInfo {
 }
 
 // ─── AnyRoute ────────────────────────────────────────────────────────────────
-// NOTE: enum + `memory_cost`/`set_server`/`ref_`/`deref_` live in
-// `super` (mod.rs). The `impl` block below adds the JS-facing constructors
-// (`from_js`/`from_options`/…) on the same type — same crate, split by file.
+// The enum itself lives in mod.rs; this block adds the JS-facing constructors.
 pub(super) use super::AnyRoute;
 
 impl AnyRoute {
@@ -896,7 +894,7 @@ pub struct ServePlugins {
 // Reference count is incremented while there are other objects waiting on plugin loads.
 // Maps to bun_ptr::IntrusiveRc<ServePlugins> — *ServePlugins crosses FFI as promise context ptr.
 
-pub enum ServePluginsState {
+pub(crate) enum ServePluginsState {
     Unqueued(Box<[Box<[u8]>]>),
     Pending {
         /// Promise may be empty if the plugin load finishes synchronously.
@@ -1311,7 +1309,7 @@ pub(super) use super::{
 /// `super::PreparedRequest<SSL,DEBUG>` is the HTTP/1-concrete instantiation
 /// used by the bake/saved-request path; the generic form here is only reached
 /// from the `_for<Ctx>` dispatch helpers below.
-pub struct PreparedRequestFor<Ctx> {
+pub(crate) struct PreparedRequestFor<Ctx> {
     pub(crate) js_request: JSValue,
     pub(crate) request_object: *mut Request,
     pub ctx: *mut Ctx,
@@ -2192,6 +2190,10 @@ where
         resp.clear_on_writable();
         resp.clear_timeout();
 
+        // The upgrade detaches the response and disarms onAborted, so neither
+        // on_abort nor an end path can reclaim a parked handler promise's
+        // claim later. Reclaim it here.
+        upgrader.reclaim_promise_cell();
         upgrader.deref();
 
         resp.upgrade(
@@ -2947,6 +2949,7 @@ where
             return;
         };
 
+        let _entered = server_ref.vm().enter_event_loop_scope_without_checkpoint();
         let server_request_list = Self::js_route_list_get_cached(server_js).unwrap();
         let call_route = if Ctx::IS_H3 {
             Bun__ServerRouteList__callRouteH3
@@ -3045,6 +3048,7 @@ where
         // SAFETY: `self_ptr` is `self`, live for this frame. Shared — the
         // handler call below re-enters JS, so no `&mut` may span it.
         let server = unsafe { &*self_ptr };
+        let _entered = server.vm().enter_event_loop_scope_without_checkpoint();
         let on_request_fn = server.config.on_request;
         debug_assert!(!on_request_fn.is_empty());
 
@@ -3359,6 +3363,7 @@ where
                 .upgrade_context
                 .set(UpgradeState::Pending(NonNull::from(upgrade_ctx)))
         };
+        let _entered = server_ref.vm().enter_event_loop_scope_without_checkpoint();
         let server_request_list = Self::js_route_list_get_cached(server_js).unwrap();
         // S008: `JSGlobalObject` is an `opaque_ffi!` ZST — safe deref.
         let global = bun_opaque::opaque_deref(server_ref.global_this);
@@ -3441,6 +3446,7 @@ where
             resp.end_without_body(true);
             return;
         }
+        let _entered = this.vm().enter_event_loop_scope_without_checkpoint();
         this.on_pending_request();
         req.set_yield(false);
         // SAFETY: `request_pool` is non-null while the server is alive; `claim()`

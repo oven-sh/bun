@@ -2572,6 +2572,10 @@ describe.each(["tls", "net"])("%s server socket whose peer resets the connection
     t.peer.terminate();
     await t.settled;
     expect(t.events).toEqual(["error ECONNRESET", "close hadError=true"]);
+    // The data queued ahead of the reset was read off the socket before it closed
+    // (kept in the paused stream's buffer), not discarded with the fd. Windows
+    // discards the receive queue on a reset.
+    if (!isWindows) expect(t.socket.bytesRead).toBe(64 * 1024);
   });
 
   it("delivers the data queued ahead of the reset and then reports ECONNRESET, not 'end'", async () => {

@@ -1490,6 +1490,10 @@ pub(crate) mod __gated_printer {
         pub(crate) was_lazy_export: bool,
         // Always carried; gated at call sites with MAY_HAVE_MODULE_INFO.
         pub(crate) module_info: Option<&'a mut analyze_transpiled_module::ModuleInfo>,
+        /// Number of function (or arrow) bodies currently being printed. An
+        /// `await` printed at depth 0 is a top-level await of the module,
+        /// which `module_info` records; see `record_top_level_await`.
+        pub(crate) fn_depth: u32,
 
         /// Arena for transient allocations during printing (rope flattening,
         /// UTF-16→UTF-8 transcoding).
@@ -1553,6 +1557,23 @@ pub(crate) mod __gated_printer {
                 return None;
             }
             self.module_info.as_deref_mut()
+        }
+
+        /// Called wherever an `await` is printed (`await x`, `for await`,
+        /// `await using`). Outside of every function body it marks the module
+        /// record as having top-level await, which decides whether JSC evaluates
+        /// code it never parses itself (bytecode builds, the isolation source
+        /// cache) as an async module. This is derived from the printed output
+        /// rather than the parser's `top_level_await_keyword` so that it also
+        /// holds when the only `await` was eliminated as dead code, and so that
+        /// the `await init_foo()` the bundler synthesizes is counted.
+        #[inline]
+        fn record_top_level_await(&mut self) {
+            if self.fn_depth == 0 {
+                if let Some(mi) = self.module_info() {
+                    mi.flags.has_tla = true;
+                }
+            }
         }
 
         // BinaryExpressionVisitor::checkAndPrepare
@@ -2264,6 +2285,7 @@ pub(crate) mod __gated_printer {
         }
 
         pub(crate) fn print_func(&mut self, func: &G::Fn) {
+            self.fn_depth += 1;
             self.print_fn_args(
                 Some(func.open_parens_loc),
                 slice_of(func.args),
@@ -2272,6 +2294,7 @@ pub(crate) mod __gated_printer {
             );
             self.print_space();
             self.print_block(func.body.loc, slice_of(func.body.stmts), None);
+            self.fn_depth -= 1;
         }
 
         pub(crate) fn print_class(&mut self, class: &G::Class) {
@@ -3532,6 +3555,7 @@ pub(crate) mod __gated_printer {
                         self.print_space();
                     }
 
+                    self.fn_depth += 1;
                     self.print_fn_args(
                         if e.is_async { None } else { Some(expr.loc) },
                         &e.args,
@@ -3554,6 +3578,7 @@ pub(crate) mod __gated_printer {
                     if !was_printed {
                         self.print_block(e.body.loc, slice_of(e.body.stmts), None);
                     }
+                    self.fn_depth -= 1;
 
                     if wrap {
                         self.print(b")");
@@ -4101,6 +4126,7 @@ pub(crate) mod __gated_printer {
 
                     self.print_space_before_identifier();
                     self.add_source_mapping(expr.loc);
+                    self.record_top_level_await();
                     self.print(b"await");
                     self.print_space();
                     self.print_expr(e.value, Level::Prefix.sub(1), ExprFlag::none());
@@ -5474,6 +5500,7 @@ pub(crate) mod __gated_printer {
                             self.print_decl_stmt(s.is_export, b"using", s.decls.slice())
                         }
                         S::Kind::KAwaitUsing => {
+                            self.record_top_level_await();
                             self.print_decl_stmt(s.is_export, b"await using", s.decls.slice())
                         }
                     }
@@ -5536,6 +5563,7 @@ pub(crate) mod __gated_printer {
                     self.add_source_mapping(stmt.loc);
                     self.print(b"for");
                     if s.is_await {
+                        self.record_top_level_await();
                         self.print(b" await");
                     }
                     self.print_space();
@@ -6199,12 +6227,15 @@ pub(crate) mod __gated_printer {
                             flags,
                             TopLevelAndIsExport::default(),
                         ),
-                        S::Kind::KAwaitUsing => self.print_decls(
-                            b"await using",
-                            s.decls.slice(),
-                            flags,
-                            TopLevelAndIsExport::default(),
-                        ),
+                        S::Kind::KAwaitUsing => {
+                            self.record_top_level_await();
+                            self.print_decls(
+                                b"await using",
+                                s.decls.slice(),
+                                flags,
+                                TopLevelAndIsExport::default(),
+                            )
+                        }
                     }
                 }
                 // for(;)
@@ -6597,6 +6628,7 @@ pub(crate) mod __gated_printer {
                 stack_overflowed: false,
                 was_lazy_export: false,
                 module_info: None,
+                fn_depth: 0,
             }
         }
 

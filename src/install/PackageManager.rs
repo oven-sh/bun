@@ -1407,6 +1407,9 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
         hoist_pattern,
         hoist,
         offline,
+        allowed_hosts,
+        url_rewrites,
+        npmrc_credentials,
     } = bunfig;
 
     if let Some(registry) = default_registry {
@@ -1462,6 +1465,9 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
         hoist_pattern,
         hoist,
         offline,
+        allowed_hosts,
+        url_rewrites,
+        npmrc_credentials,
     );
 }
 
@@ -1957,6 +1963,7 @@ pub fn init(
 
         ini::apply_registry_auth(&mut bunfig_install, &registry_auth);
         overlay_bunfig_install(&mut install, bunfig_install);
+        install.npmrc_credentials = ini::collect_registry_auth(&registry_auth);
         ctx.install = Some(Box::new(install));
     }
     let cpu_count: u32 = u32::from(bun_core::get_thread_count());

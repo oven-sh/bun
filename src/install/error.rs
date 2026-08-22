@@ -150,6 +150,8 @@ pub enum Error {
     IntegrityCheckFailed,
     #[error("RepositoryNotFound")]
     RepositoryNotFound,
+    #[error("HostNotAllowed")]
+    HostNotAllowed,
     #[error("DebugTextLockfileRoundTrip")]
     DebugTextLockfileRoundTrip,
     #[error("NoPackage")]
@@ -320,6 +322,7 @@ impl Error {
             Self::Fail => "Fail",
             Self::IntegrityCheckFailed => "IntegrityCheckFailed",
             Self::RepositoryNotFound => "RepositoryNotFound",
+            Self::HostNotAllowed => "HostNotAllowed",
             Self::DebugTextLockfileRoundTrip => "DebugTextLockfileRoundTrip",
             Self::NoPackage => "NoPackage",
             Self::WriteFailed => "WriteFailed",

@@ -1,6 +1,6 @@
 use crate::bun_schema::api as Api;
 use bun_core::ZStr;
-use bun_core::{Output, env_var};
+use bun_core::{Output, env_var, strings};
 use bun_paths::PathBuffer;
 
 use super::Subcommand;
@@ -113,6 +113,18 @@ pub struct Options {
     pub os: Npm::OperatingSystem,
 
     pub(crate) config_version: Option<ConfigVersion>,
+
+    /// `install.allowedHosts`: when `Some`, network requests (manifests,
+    /// tarballs, git) are refused unless the host is one of these or the host
+    /// of a configured registry. `None` (the default) allows any host.
+    pub allowed_hosts: Option<&'static [AllowedHost]>,
+    /// `install.rewrite`: `(from, to)` URL prefix rewrites applied at fetch time,
+    /// sorted longest `from` first so the most specific rule wins.
+    pub url_rewrites: &'static [(&'static [u8], &'static [u8])],
+    /// `.npmrc` `//host/path/:_authToken`-style credentials, longest path first.
+    /// Consulted for request URLs that the package's registry credentials do
+    /// not cover (see `credentials_for`).
+    pub npmrc_credentials: &'static [PathCredential],
 }
 
 impl Default for Options {
@@ -180,6 +192,9 @@ impl Default for Options {
             cpu: Npm::Architecture::CURRENT,
             os: Npm::OperatingSystem::CURRENT,
             config_version: None,
+            allowed_hosts: None,
+            url_rewrites: &[],
+            npmrc_credentials: &[],
         }
     }
 }
@@ -276,6 +291,214 @@ impl Options {
             _ => &self.scope,
         }
     }
+
+    /// Every configured registry: the default one plus each `@scope` registry.
+    pub fn registry_scopes(&self) -> impl Iterator<Item = &Npm::registry::Scope> + '_ {
+        core::iter::once(&self.scope).chain(self.registries.values())
+    }
+
+    /// Which credentials, if any, should accompany a registry request to `url`
+    /// made on behalf of a package whose registry is `scope`?
+    ///
+    /// Credentials are path-scoped: `scope`'s token / `_auth` /
+    /// username+password are used only when `url` is under the registry URL
+    /// they were configured for — same origin *and* path prefix
+    /// ([`url_under`]) — so a token for `https://host/npm/team-a/` is never
+    /// sent to `https://host/npm/team-b/`, nor to wherever else a manifest's
+    /// `dist.tarball` points. Failing that, an `.npmrc` `//host/path/:_authToken`
+    /// (or `_auth` / `username`+`_password`) entry whose `//host/path/` covers
+    /// `url` is used, longest path first, the way npm scopes such entries.
+    pub fn credentials_for<'a>(
+        &'a self,
+        scope: &'a Npm::registry::Scope,
+        url: &[u8],
+    ) -> Credentials<'a> {
+        if url_under(url, scope.url.href()) && (!scope.token.is_empty() || !scope.auth.is_empty()) {
+            return Credentials {
+                token: &scope.token,
+                auth: &scope.auth,
+            };
+        }
+        if !self.npmrc_credentials.is_empty() {
+            let parsed = bun_url::URL::parse(url);
+            if let Some(found) = self.npmrc_credentials.iter().find(|c| c.covers(&parsed)) {
+                return Credentials {
+                    token: found.token,
+                    auth: found.auth,
+                };
+            }
+        }
+        Credentials::NONE
+    }
+
+    /// `install.allowedHosts`: may bun connect to the host of `url` at all?
+    /// Always `true` when no allow-list is configured.
+    pub fn is_host_allowed(&self, url: &[u8]) -> bool {
+        let Some(allowed) = self.allowed_hosts else {
+            return true;
+        };
+        let url = bun_url::URL::parse(url);
+        if url.hostname.is_empty() {
+            return false;
+        }
+        // `get_port_auto` only knows http/https; give git's other transports
+        // their real defaults so `host:22`-style entries match ssh remotes.
+        let port = url.get_port().unwrap_or_else(|| {
+            let scheme = strings::trim_prefix(url.protocol, b"git+");
+            if scheme.eq_ignore_ascii_case(b"ssh") {
+                22
+            } else if scheme.eq_ignore_ascii_case(b"git") {
+                9418
+            } else {
+                url.get_port_auto()
+            }
+        });
+        allowed
+            .iter()
+            .any(|entry| entry.matches(url.hostname, port))
+            || self.registry_scopes().any(|scope| {
+                let registry = scope.url.url();
+                !registry.hostname.is_empty()
+                    && registry.hostname.eq_ignore_ascii_case(url.hostname)
+                    && registry.get_port_auto() == port
+            })
+    }
+
+    /// Apply `install.rewrite` prefix rules to a request URL (longest matching
+    /// `from` wins). Fetch-time only: the lockfile keeps the canonical URL.
+    pub fn rewrite_url<'a>(&self, url: &'a [u8]) -> std::borrow::Cow<'a, [u8]> {
+        for (from, to) in self.url_rewrites {
+            if url.starts_with(from) {
+                let mut out = Vec::with_capacity(to.len() + url.len() - from.len());
+                out.extend_from_slice(to);
+                out.extend_from_slice(&url[from.len()..]);
+                return std::borrow::Cow::Owned(out);
+            }
+        }
+        std::borrow::Cow::Borrowed(url)
+    }
+}
+
+/// One `install.allowedHosts` entry: a hostname, optionally pinned to a port.
+#[derive(Clone, Copy, Debug)]
+pub struct AllowedHost {
+    pub hostname: &'static [u8],
+    pub port: Option<u16>,
+}
+
+impl AllowedHost {
+    pub fn parse(entry: &'static [u8]) -> Option<AllowedHost> {
+        let (hostname, port) = bun_bunfig::bunfig::split_host_port(entry);
+        if hostname.is_empty() {
+            return None;
+        }
+        let port = match port {
+            None => None,
+            Some(p) => Some(bun_core::fmt::parse_int::<u16>(p, 10).ok()?),
+        };
+        Some(AllowedHost { hostname, port })
+    }
+
+    #[inline]
+    pub fn matches(&self, hostname: &[u8], port: u16) -> bool {
+        self.hostname.eq_ignore_ascii_case(hostname) && self.port.is_none_or(|p| p == port)
+    }
+}
+
+/// The `Authorization` material for one request: a bearer `token`, or basic
+/// `auth` (`base64(user:pass)`); both empty means send nothing.
+#[derive(Clone, Copy)]
+pub struct Credentials<'a> {
+    pub token: &'a [u8],
+    pub auth: &'a [u8],
+}
+
+impl Credentials<'_> {
+    pub const NONE: Credentials<'static> = Credentials {
+        token: b"",
+        auth: b"",
+    };
+}
+
+/// One `.npmrc` `//host[:port]/path/:<credential>` group, resolved to the
+/// token / basic-auth value it yields.
+#[derive(Clone, Copy)]
+pub struct PathCredential {
+    pub hostname: &'static [u8],
+    /// Only set when the `.npmrc` key spelled out a port.
+    pub port: Option<u16>,
+    pub pathname: &'static [u8],
+    pub token: &'static [u8],
+    pub auth: &'static [u8],
+}
+
+impl PathCredential {
+    /// Does this entry's `//host[:port]/path/` cover `url`? Host must match; an
+    /// entry written without a port only covers URLs on their scheme's default
+    /// port (npm derives the key from the parsed URL, which drops default
+    /// ports); the path must be a segment-wise prefix with no dot-segments.
+    pub fn covers(&self, url: &bun_url::URL<'_>) -> bool {
+        if url.hostname.is_empty() || !self.hostname.eq_ignore_ascii_case(url.hostname) {
+            return false;
+        }
+        let port_ok = match self.port {
+            Some(port) => url.get_port_auto() == port,
+            None => url
+                .get_port()
+                .is_none_or(|p| p == if url.is_https() { 443 } else { 80 }),
+        };
+        port_ok && path_under(url.pathname, self.pathname)
+    }
+}
+
+/// Is `url` at or under `base`? Same scheme, host (case-insensitive) and
+/// effective port, and `url`'s path starts with `base`'s path compared
+/// segment by segment (so `/npm/team-ab/x` is not under `/npm/team-a/`, and a
+/// trailing slash on `base` is optional). A `url` whose path contains `.` /
+/// `..` segments (plain or percent-encoded) or a backslash is never "under"
+/// anything: the server would resolve it somewhere we did not check.
+///
+/// This is the single predicate behind path-scoped registry credentials
+/// (`Options::credentials_for`); plain `starts_with` on the URL bytes would
+/// let `https://registry.example.com.evil.test/` pass for
+/// `https://registry.example.com` and `/npm/a/../b/` escape `/npm/a/`.
+pub fn url_under(url: &[u8], base: &[u8]) -> bool {
+    let url = bun_url::URL::parse(url);
+    let base = bun_url::URL::parse(base);
+    if base.hostname.is_empty()
+        || url.hostname.is_empty()
+        || !url.protocol.eq_ignore_ascii_case(base.protocol)
+        || !url.hostname.eq_ignore_ascii_case(base.hostname)
+        || url.get_port_auto() != base.get_port_auto()
+    {
+        return false;
+    }
+    path_under(url.pathname, base.pathname)
+}
+
+/// The path half of [`url_under`]: `path` starts with `base` segment-wise and
+/// carries no `.` / `..` (plain or percent-encoded) segment or backslash.
+pub fn path_under(path: &[u8], base: &[u8]) -> bool {
+    if strings::contains_char(path, b'\\') {
+        return false;
+    }
+    let mut segments = strings::tokenize(path, b"/");
+    for expected in strings::tokenize(base, b"/") {
+        match segments.next() {
+            Some(segment) if segment == expected && !is_dot_segment(segment) => {}
+            _ => return false,
+        }
+    }
+    segments.all(|segment| !is_dot_segment(segment))
+}
+
+/// WHATWG "single-dot" / "double-dot" path segments, including the
+/// percent-encoded spellings a server would normalize.
+fn is_dot_segment(segment: &[u8]) -> bool {
+    const DOT_SEGMENTS: [&[u8]; 6] = [b".", b"..", b"%2e", b"%2e.", b".%2e", b"%2e%2e"];
+    DOT_SEGMENTS
+        .iter()
+        .any(|dot| segment.eq_ignore_ascii_case(dot))
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Default, Debug)]
@@ -588,6 +811,54 @@ impl Options {
                 // equivalent), same as `leak_static` above.
                 self.minimum_release_age_excludes =
                     Some(&*bun_core::heap::release(leaked.into_boxed_slice()));
+            }
+
+            if let Some(hosts) = &config.allowed_hosts {
+                // Entries were validated by the bunfig parser; anything that
+                // still fails to parse is dropped rather than widening the list.
+                let parsed: Vec<AllowedHost> = hosts
+                    .iter()
+                    .filter_map(|h| AllowedHost::parse(leak_static(h)))
+                    .collect();
+                self.allowed_hosts = Some(&*bun_core::heap::release(parsed.into_boxed_slice()));
+            }
+
+            if let Some(entries) = &config.npmrc_credentials {
+                let mut creds: Vec<PathCredential> = Vec::with_capacity(entries.len());
+                for entry in entries {
+                    // `entry.url` is `host[:port]/path/` (no scheme). Reuse the
+                    // registry-scope conversion for `$ENV` expansion and
+                    // username:password → basic auth.
+                    let scope = Npm::registry::Scope::from_api(b"", entry.clone(), env)?;
+                    if scope.token.is_empty() && scope.auth.is_empty() {
+                        continue;
+                    }
+                    let url = leak_static(&entry.url);
+                    let slash = strings::index_of_char(url, b'/').map_or(url.len(), |i| i as usize);
+                    let Some(host) = AllowedHost::parse(&url[..slash]) else {
+                        continue;
+                    };
+                    creds.push(PathCredential {
+                        hostname: host.hostname,
+                        port: host.port,
+                        pathname: &url[slash..],
+                        token: leak_static(&scope.token),
+                        auth: leak_static(&scope.auth),
+                    });
+                }
+                // Longest (most specific) path first.
+                creds.sort_by_key(|c| core::cmp::Reverse(c.pathname.len()));
+                self.npmrc_credentials = &*bun_core::heap::release(creds.into_boxed_slice());
+            }
+
+            if let Some(rewrites) = &config.url_rewrites {
+                let mut leaked: Vec<(&'static [u8], &'static [u8])> = rewrites
+                    .iter()
+                    .map(|(from, to)| (leak_static(from), leak_static(to)))
+                    .collect();
+                // Longest `from` first so the most specific prefix wins.
+                leaked.sort_by_key(|rule| core::cmp::Reverse(rule.0.len()));
+                self.url_rewrites = &*bun_core::heap::release(leaked.into_boxed_slice());
             }
 
             // `PnpmMatcher` is move-only; `config` is `&` here so the matchers

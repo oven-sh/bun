@@ -422,8 +422,11 @@ impl<'a> Task<'a> {
                                 Ok(d) => break 'brk Some(d),
                                 Err(err) => {
                                     // Exit early if git checked and could
-                                    // not find the repository, skip ssh
-                                    if err == crate::Error::RepositoryNotFound {
+                                    // not find the repository (or the host is
+                                    // not in `install.allowedHosts`), skip ssh
+                                    if err == crate::Error::RepositoryNotFound
+                                        || err == crate::Error::HostNotAllowed
+                                    {
                                         this.err = Some(err);
                                         this.status = Status::Fail;
                                         this.data = Data {

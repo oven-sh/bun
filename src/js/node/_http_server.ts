@@ -15,6 +15,7 @@ const {
   validateBoolean,
   validateInteger,
   validateFunction,
+  validateNumber,
   validateOneOf,
 } = require("internal/validators");
 const { ConnResetException, hasObserver, startPerf, stopPerf, kInternalSendOptions } = require("internal/shared");
@@ -70,6 +71,7 @@ const { kIncomingMessage } = require("node:_http_common");
 let http1Fallback;
 const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
 const kTrackedConnections = Symbol("http.server.trackedConnections");
+const kHandshakeTimer = Symbol("http.server.tlsHandshakeTimer");
 const kHttpAllowHalfOpen = Symbol("http.server.httpAllowHalfOpen");
 
 // node.http trace events ('http.server.request' b/e). The agent module is
@@ -382,6 +384,18 @@ function Server(options, callback): void {
       });
     } else {
       this[tlsSymbol] = null;
+    }
+
+    if (this[isTlsSymbol]) {
+      // tls.Server's handshake deadline; a raw client that never handshakes
+      // is cut off and reported through 'tlsClientError'.
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1386-L1391
+      this._handshakeTimeout = options.handshakeTimeout || 120 * 1000;
+      validateNumber(this._handshakeTimeout, "options.handshakeTimeout");
+      // Node's https.Server re-emits 'tlsClientError' as 'clientError' and
+      // destroys the connection when nothing handles it.
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/https.js#L107-L110
+      this.addListener("tlsClientError", serverTlsClientErrorListener);
     }
   }
 
@@ -1142,15 +1156,26 @@ function defineHttpAllowHalfOpen(server: Server) {
   });
 }
 
-// Native callback fired when the server accepts a connection (for TLS, when
-// its handshake completes), before any request bytes - like Node.js's
-// net.Server 'connection' / tls.Server 'secureConnection' events.
+// Native callback fired when the server accepts a connection and, for TLS,
+// again when its handshake completes - before any request bytes, like
+// Node.js's net.Server 'connection' / tls.Server 'secureConnection' events.
 function onServerConnection(this: Server, socketHandle) {
-  if (socketHandle.duplex) {
-    // Already wrapped (shouldn't happen for a brand-new connection).
+  const isTLS = !!this[tlsSymbol];
+  const { duplex } = socketHandle;
+  if (duplex) {
+    // Second notification for a TLS connection surfaced at accept time: the
+    // handshake has completed on the already-wrapped socket.
+    if (isTLS && !duplex._secureEstablished && socketHandle.secureEstablished) {
+      duplex._secureEstablished = true;
+      clearNodeHTTPHandshakeTimer(duplex);
+      // Node's connectionListener runs on 'secureConnection': only now does
+      // server.timeout start counting (the handshake is handshakeTimeout's).
+      const serverTimeout = this.timeout;
+      if (serverTimeout) duplex.setTimeout(serverTimeout);
+      this.emit("secureConnection", duplex);
+    }
     return;
   }
-  const isTLS = !!this[tlsSymbol];
   const socket = new (getNodeHTTPServerSocket())(this, socketHandle, isTLS);
 
   // Node's net.Server accept path refuses at maxConnections and emits 'drop'; the native
@@ -1176,10 +1201,45 @@ function onServerConnection(this: Server, socketHandle) {
   // Node's connectionListener attaches the HTTPParser (socket.parser) before
   // emitting 'connection'; expose the shim here so listeners see it populated.
   socket.parser = createServerParserShim(socket);
+  if (isTLS && !socketHandle.secureEstablished) {
+    armNodeHTTPHandshakeTimer(this, socket);
+  }
   this.emit("connection", socket);
   if (isTLS && socketHandle.secureEstablished) {
     this.emit("secureConnection", socket);
   }
+}
+
+// Node's https.Server 'tlsClientError' listener (lib/https.js).
+function serverTlsClientErrorListener(this: Server, err, conn) {
+  if (!this.emit("clientError", err, conn)) conn.destroy(err);
+}
+
+function onNodeHTTPHandshakeDeadline(socket, server) {
+  socket[kHandshakeTimer] = undefined;
+  if (socket.destroyed || socket._secureEstablished) return;
+  // Node routes this via TLSSocket._emitTLSError → server 'tlsClientError'.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1105-L1110
+  server.emit("tlsClientError", $ERR_TLS_HANDSHAKE_TIMEOUT(), socket);
+}
+
+function clearNodeHTTPHandshakeTimer(socket) {
+  const timer = socket[kHandshakeTimer];
+  if (timer) {
+    socket[kHandshakeTimer] = undefined;
+    clearTimeout(timer);
+  }
+}
+
+function armNodeHTTPHandshakeTimer(server: Server, socket) {
+  const handshakeTimeout = server._handshakeTimeout;
+  if (!(handshakeTimeout > 0)) return;
+  // Unref'd like node's handshake timer: a fully-unref'd server must not be
+  // held open by a client that stalls mid-handshake.
+  const timer = setTimeout(onNodeHTTPHandshakeDeadline, handshakeTimeout, socket, server);
+  timer.unref?.();
+  socket[kHandshakeTimer] = timer;
+  socket.once("close", clearNodeHTTPHandshakeTimer.bind(undefined, socket));
 }
 
 // Like Node.js: server.setTimeout only records the per-socket inactivity
@@ -1437,6 +1497,14 @@ function socketOnError(this: any, err) {
 }
 function noopOnError() {}
 
+function clearSocketTimeoutTimer(socket) {
+  const timer = socket[kSocketTimeoutTimer];
+  if (timer !== undefined) {
+    clearTimeout(timer);
+    socket[kSocketTimeoutTimer] = undefined;
+  }
+}
+
 function onSocketTimeoutTimerExpired(socket) {
   // The keep-alive idle timer is left armed across the request to avoid a
   // clear + setTimeout cycle per request. A fire while a request is in
@@ -1538,9 +1606,11 @@ function getNodeHTTPServerSocket() {
       this.on("error", socketOnError);
       server[kTrackedConnections]?.add(this);
       // Like Node.js's connectionListener: server.setTimeout's per-socket
-      // inactivity timeout is armed when the connection is established.
+      // inactivity timeout is armed when the connection is established. A TLS
+      // connection wrapped at accept time gets it from onServerConnection once
+      // its handshake completes.
       const serverTimeout = server.timeout;
-      if (serverTimeout) {
+      if (serverTimeout && (!encrypted || this._secureEstablished)) {
         this.setTimeout(serverTimeout);
       }
     }
@@ -1627,11 +1697,7 @@ function getNodeHTTPServerSocket() {
       releaseServerParserShim(this);
       this[kHandle] = null;
       this.server?.[kTrackedConnections]?.delete(this);
-      const timer = this[kSocketTimeoutTimer];
-      if (timer) {
-        clearTimeout(timer);
-        this[kSocketTimeoutTimer] = undefined;
-      }
+      clearSocketTimeoutTimer(this);
 
       // Node.js's `socketOnClose` → `abortIncoming()` only destroys requests
       // that are still in `state.incoming` — i.e. requests whose response has
@@ -1754,6 +1820,9 @@ function getNodeHTTPServerSocket() {
     }
 
     _destroy(err, callback) {
+      // Like net.Socket._destroy: the native close that clears the timer in
+      // #onClose is delivered a loop turn later, after due timers have fired.
+      clearSocketTimeoutTimer(this);
       const handle = this[kHandle];
       if (!handle) {
         if ($isCallable(callback)) callback(err);

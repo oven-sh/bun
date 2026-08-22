@@ -3531,6 +3531,9 @@ fn throw_ssl_error_if_necessary(global: &JSGlobalObject) -> bool {
 // field/method surface the per-request state machine needs without naming
 // `NewServer` (avoids a generic-parameter cycle).
 pub trait ServerLike {
+    /// Whether the listen socket is TLS; the accept thunk in `handle!` needs it to
+    /// tell the handshake-complete notification apart from the accept.
+    const SSL_ENABLED: bool;
     fn global_this(&self) -> &jsc::JSGlobalObject;
     fn vm(&self) -> &jsc::VirtualMachine;
     fn config(&self) -> &ServerConfig;
@@ -3547,6 +3550,7 @@ pub trait ServerLike {
 }
 
 impl<const SSL: bool, const DEBUG: bool> ServerLike for NewServer<SSL, DEBUG> {
+    const SSL_ENABLED: bool = SSL;
     // These trait-method forwards are on the per-request hot path (called via
     // `RequestContext::server.vm()` etc.). Without `#[inline]` a generic trait
     // impl is not eligible for cross-crate inlining at all, so each accessor

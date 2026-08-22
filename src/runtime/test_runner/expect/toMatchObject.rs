@@ -30,7 +30,7 @@ pub(crate) fn to_match_object(
 
     let property_matchers = args[0];
 
-    let mut pass = received_object.jest_deep_match(property_matchers, global, true)?;
+    let mut pass = received_object.jest_deep_match(property_matchers, global)?;
 
     if not {
         pass = !pass;

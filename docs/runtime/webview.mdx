@@ -182,6 +182,18 @@ new Bun.WebView({
 
 The `"webkit"` backend accepts the same `stdout`/`stderr` options.
 
+#### Detaching the subprocess
+
+Some endpoint-protection software writes directly to the controlling terminal (`/dev/tty`) when it blocks a browser binary, which `stdout`/`stderr: "ignore"` cannot silence. `detached: true` spawns the browser in its own session (`setsid()`; a detached process without a console on Windows, as with `Bun.spawn`), so it has no terminal to write to:
+
+```ts
+new Bun.WebView({
+  backend: { type: "chrome", detached: true },
+});
+```
+
+The browser is spawned once per process, so only the first `Bun.WebView` decides this. Both backends accept it.
+
 ---
 
 ## Navigation
@@ -560,14 +572,15 @@ Operations on **different views** are fully independent and run in parallel — 
 
 #### `backend` object form
 
-| Option   | Type                      | Description                                                                                                                                            |
-| -------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `type`   | `"chrome"` \| `"webkit"`  | **Required.** Which engine to use.                                                                                                                     |
-| `path`   | `string`                  | (`chrome` only) Path to the Chrome/Chromium executable. Forces spawn mode.                                                                             |
-| `argv`   | `string[]`                | (`chrome` only) Extra launch flags, appended after the defaults. Forces spawn mode.                                                                    |
-| `url`    | `string` \| `false`       | (`chrome` only) `ws://` URL of an existing Chrome's DevTools endpoint, or `false` to skip auto-detect and always spawn. See [above](#existing-chrome). |
-| `stdout` | `"inherit"` \| `"ignore"` | Route the subprocess's stdout to Bun's. Default `"ignore"`.                                                                                            |
-| `stderr` | `"inherit"` \| `"ignore"` | Route the subprocess's stderr to Bun's. Default `"ignore"`.                                                                                            |
+| Option     | Type                      | Description                                                                                                                                            |
+| ---------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `type`     | `"chrome"` \| `"webkit"`  | **Required.** Which engine to use.                                                                                                                     |
+| `path`     | `string`                  | (`chrome` only) Path to the Chrome/Chromium executable. Forces spawn mode.                                                                             |
+| `argv`     | `string[]`                | (`chrome` only) Extra launch flags, appended after the defaults. Forces spawn mode.                                                                    |
+| `url`      | `string` \| `false`       | (`chrome` only) `ws://` URL of an existing Chrome's DevTools endpoint, or `false` to skip auto-detect and always spawn. See [above](#existing-chrome). |
+| `stdout`   | `"inherit"` \| `"ignore"` | Route the subprocess's stdout to Bun's. Default `"ignore"`.                                                                                            |
+| `stderr`   | `"inherit"` \| `"ignore"` | Route the subprocess's stderr to Bun's. Default `"ignore"`.                                                                                            |
+| `detached` | `boolean`                 | Spawn the subprocess in its own session, with no controlling terminal. See [above](#detaching-the-subprocess). Default `false`.                        |
 
 ### Instance properties
 

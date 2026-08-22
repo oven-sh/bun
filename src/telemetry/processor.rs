@@ -122,6 +122,11 @@ pub struct Processor {
     scope_names: RwLock<Vec<Box<[u8]>>>,
     pub config: RwLock<BatchConfig>,
     inflight: AtomicUsize,
+    /// Non-zero while `export()` is dispatching: a synchronous exporter
+    /// completing inside it requests the next batch via `chain_requested`
+    /// instead of recursing into `export()`.
+    dispatching: AtomicUsize,
+    chain_requested: core::sync::atomic::AtomicBool,
     idle: Condvar,
     idle_lock: Guarded<()>,
     pub stats: Stats,
@@ -176,6 +181,8 @@ impl Processor {
             scope_names: RwLock::new(names),
             config: RwLock::new(BatchConfig::default()),
             inflight: AtomicUsize::new(0),
+            dispatching: AtomicUsize::new(0),
+            chain_requested: core::sync::atomic::AtomicBool::new(false),
             idle: Condvar::new(),
             idle_lock: Guarded::new(()),
             stats: Stats::default(),
@@ -419,15 +426,40 @@ impl Processor {
                 .fetch_add(payload.span_count as u64, Ordering::Relaxed);
             return false;
         }
-        self.stats
-            .last_export_ns
-            .store(clock::now_unix_nanos(), Ordering::Relaxed);
-        self.inflight.fetch_add(exporters.len(), Ordering::AcqRel);
-        payload.expect(exporters.len());
-        for e in exporters {
-            e.export(self, Arc::clone(&payload), 0);
+        // A synchronous exporter (console) completes inside `e.export()`; if a
+        // full batch is waiting by then, `finish_one` sets `chain_requested`
+        // rather than re-entering, and this loop dispatches it.
+        self.dispatching.fetch_add(1, Ordering::AcqRel);
+        let mut payload = payload;
+        let mut exporters = exporters;
+        loop {
+            self.stats
+                .last_export_ns
+                .store(clock::now_unix_nanos(), Ordering::Relaxed);
+            self.inflight.fetch_add(exporters.len(), Ordering::AcqRel);
+            payload.expect(exporters.len());
+            for e in exporters {
+                e.export(self, Arc::clone(&payload), 0);
+            }
+            // Only the outermost dispatcher chains; and only if asked to.
+            if self.dispatching.fetch_sub(1, Ordering::AcqRel) != 1
+                || !self.chain_requested.swap(false, Ordering::AcqRel)
+            {
+                return true;
+            }
+            let Some(next) = self.take_payload() else {
+                return true;
+            };
+            exporters = self.exporters.read().clone();
+            if exporters.is_empty() {
+                self.stats
+                    .spans_dropped
+                    .fetch_add(next.span_count as u64, Ordering::Relaxed);
+                return true;
+            }
+            payload = next;
+            self.dispatching.fetch_add(1, Ordering::AcqRel);
         }
-        true
     }
 
     /// One exporter's verdict on `payload`. `exports_*` count per exporter;
@@ -486,7 +518,11 @@ impl Processor {
             // A full batch accumulated while this export was running: chain.
             let cfg = *self.config.read();
             if self.pending_count() >= cfg.max_export_batch_size {
-                if let Some(p) = global() {
+                if self.dispatching.load(Ordering::Acquire) != 0 {
+                    // Inside export()'s dispatch (synchronous exporter): let
+                    // its loop run the next batch instead of recursing.
+                    self.chain_requested.store(true, Ordering::Release);
+                } else if let Some(p) = global() {
                     p.export();
                 }
             }

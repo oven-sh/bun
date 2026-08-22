@@ -110,9 +110,15 @@ pub fn end(
                     if v == 0 { "1.0" } else { "1.1" },
                 );
             }
-            w.http_client_status(status);
             if let Some((code, message)) = error {
+                // The transport error is the outcome; a status that arrived
+                // before it is recorded without its own error.type/status.
+                if status != 0 {
+                    w.attr("http.response.status_code", status);
+                }
                 w.fail(code, message);
+            } else {
+                w.http_client_status(status);
             }
         },
     );

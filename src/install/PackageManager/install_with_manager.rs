@@ -233,6 +233,17 @@ pub fn install_with_manager(
                 };
 
                 had_any_diffs = manager.summary.has_diffs();
+                // Which workspaces asked for a self-contained node_modules is a property
+                // of their manifests, not of the dependency graph: mirror the freshly
+                // parsed manifests whether or not anything else changed, so the copy
+                // loaded from bun.lock never goes stale.
+                manager
+                    .lockfile
+                    .self_contained_workspaces
+                    .clear_retaining_capacity();
+                for key in lockfile.self_contained_workspaces.keys() {
+                    manager.lockfile.self_contained_workspaces.put(*key, ())?;
+                }
                 if manager.subcommand == Subcommand::Dedupe {
                     crate::dedupe::dedupe_after_differ(manager);
                 }
@@ -417,7 +428,6 @@ pub fn install_with_manager(
                             lf.workspace_versions.insert(*key, version);
                         }
                     }
-
                     // Update patched dependencies
                     {
                         for (key, value) in lockfile.patched_dependencies.iter() {

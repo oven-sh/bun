@@ -1029,3 +1029,77 @@ describe("pending cache", () => {
     expect(results).toEqual(Array(8).fill({ address: "127.0.0.1", family: 4 }));
   });
 });
+
+// https://github.com/oven-sh/bun/issues/32164
+describe("Resolver with a nameserver that nothing is listening on", () => {
+  // A query sent to a loopback UDP port with no listener comes back as an ICMP
+  // port unreachable, which the kernel reports on the next recv() of the query
+  // socket. c-ares has to see that error to give up on the server; until it
+  // does, the query sits there for the full `timeout`.
+  async function closedUdpPort() {
+    const socket = dgram.createSocket("udp4");
+    socket.bind(0, "127.0.0.1");
+    await once(socket, "listening");
+    const { port } = socket.address();
+    await new Promise(resolve => socket.close(resolve));
+    return `127.0.0.1:${port}`;
+  }
+
+  // Answers every query with a single A record, 10.20.0.1.
+  async function liveServer() {
+    const socket = dgram.createSocket("udp4");
+    socket.on("message", (query, rinfo) => {
+      let off = 12;
+      while (off < query.length && query[off] !== 0) off += query[off] + 1;
+      off += 1 + 2 + 2;
+      const question = query.subarray(12, off);
+      const header = Buffer.from([query[0], query[1], 0x81, 0x80, 0, 1, 0, 1, 0, 0, 0, 0]);
+      const answer = Buffer.from([0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, 10, 20, 0, 1]);
+      socket.send(Buffer.concat([header, question, answer]), rinfo.port, rinfo.address);
+    });
+    socket.bind(0, "127.0.0.1");
+    await once(socket, "listening");
+    return {
+      address: `127.0.0.1:${socket.address().port}`,
+      [Symbol.dispose]: () => socket.close(),
+    };
+  }
+
+  it("dns.promises.Resolver rejects with ECONNREFUSED instead of ETIMEOUT", async () => {
+    const resolver = new dns_promises.Resolver({ timeout: 1000, tries: 1 });
+    resolver.setServers([await closedUdpPort()]);
+    const err = await resolver.resolve4("refused.example.test").then(
+      () => {
+        throw new Error("expected resolve4 to reject");
+      },
+      e => e,
+    );
+    expect({ code: err.code, syscall: err.syscall, message: err.message }).toEqual({
+      code: "ECONNREFUSED",
+      syscall: "queryA",
+      message: "queryA ECONNREFUSED refused.example.test",
+    });
+  });
+
+  it("dns.Resolver (callback API) errors with ECONNREFUSED instead of ETIMEOUT", async () => {
+    const resolver = new dns.Resolver({ timeout: 1000, tries: 1 });
+    resolver.setServers([await closedUdpPort()]);
+    const { promise, resolve } = Promise.withResolvers();
+    resolver.resolve4("refused.example.test", (err, addresses) => resolve({ code: err?.code, addresses }));
+    expect(await promise).toEqual({ code: "ECONNREFUSED", addresses: undefined });
+  });
+
+  it("falls over to the next server without waiting out the timeout", async () => {
+    using live = await liveServer();
+    const timeout = 3000;
+    const resolver = new dns_promises.Resolver({ timeout, tries: 1 });
+    resolver.setServers([await closedUdpPort(), await closedUdpPort(), live.address]);
+    const start = performance.now();
+    const addresses = await resolver.resolve4("failover.example.test");
+    const elapsed = performance.now() - start;
+    expect(addresses).toEqual(["10.20.0.1"]);
+    // Without the fix each dead server is only abandoned once its `timeout`
+    // expires, so this takes at least 2 * timeout.
+    expect(elapsed).toBeLessThan(timeout);
+  });
+});

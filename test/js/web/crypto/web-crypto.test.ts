@@ -1195,6 +1195,209 @@ describe("OKP spki/pkcs8 cross-curve import", () => {
       ecdsaPkcs8: "DataError: Invalid key type",
     });
   });
+
+  it("RSA/EC keys imported as Ed25519 report 'Invalid key type'", async () => {
+    const rsa = await crypto.subtle.generateKey(
+      { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+      true,
+      ["sign", "verify"],
+    );
+    const ec = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
+    const importAsEd25519 = async (format: "pkcs8" | "spki", key: CryptoKey) =>
+      rejection(
+        crypto.subtle.importKey(format, await crypto.subtle.exportKey(format, key), "Ed25519", true, [
+          format === "pkcs8" ? "sign" : "verify",
+        ]),
+      );
+    expect({
+      rsaPkcs8: await importAsEd25519("pkcs8", rsa.privateKey),
+      rsaSpki: await importAsEd25519("spki", rsa.publicKey),
+      ecPkcs8: await importAsEd25519("pkcs8", ec.privateKey),
+      ecSpki: await importAsEd25519("spki", ec.publicKey),
+    }).toEqual({
+      rsaPkcs8: "DataError: Invalid key type",
+      rsaSpki: "DataError: Invalid key type",
+      ecPkcs8: "DataError: Invalid key type",
+      ecSpki: "DataError: Invalid key type",
+    });
+  });
+
+  it("rejects an Ed25519 spki with trailing bytes", async () => {
+    const ed = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
+    const spki = new Uint8Array(await crypto.subtle.exportKey("spki", ed.publicKey));
+    const withTrailing = new Uint8Array([...spki, 0xff]);
+    expect(await rejection(crypto.subtle.importKey("spki", withTrailing, "Ed25519", true, ["verify"]))).toBe(
+      "DataError: Invalid keyData",
+    );
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/35432 — the OKP pkcs8 importer used a
+// hand-rolled DER walker that mishandled RFC 5958 v2 OneAsymmetricKey; it now
+// goes through BoringSSL's PKCS8_PRIV_KEY_INFO template (oven-sh/boringssl#10).
+describe("OKP pkcs8 import of RFC 5958 v2 OneAsymmetricKey", () => {
+  const fromHex = (hex: string) => Uint8Array.from(Buffer.from(hex, "hex"));
+  const der = (...parts: string[]) => {
+    const body = parts.join("");
+    const length = body.length / 2;
+    if (length > 0xff) throw new Error("der helper only encodes lengths up to 0xff");
+    const lengthHex = length < 0x80 ? length.toString(16).padStart(2, "0") : "81" + length.toString(16);
+    return fromHex("30" + lengthHex + body);
+  };
+
+  // RFC 8032 section 7.1 test vector 1
+  const edSeed = "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60";
+  const edPub = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a";
+  const edAlgorithm = "300506032b6570";
+  // RFC 7748 section 6.1
+  const xAlicePriv = "77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a";
+  const xAlicePub = "8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a";
+  const xBobPub = "de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f";
+  const xShared = "4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742";
+  const xAlgorithm = "300506032b656e";
+
+  const version2 = "020101";
+  const emptyAttributes = "a000";
+  const wrapSeed = (seed: string) => "04220420" + seed;
+  const publicKeyField = (pub: string) => "812100" + pub;
+
+  const signsAndVerifies = async (pkcs8: Uint8Array) => {
+    const privateKey = await crypto.subtle.importKey("pkcs8", pkcs8, "Ed25519", false, ["sign"]);
+    const publicKey = await crypto.subtle.importKey("raw", fromHex(edPub), "Ed25519", false, ["verify"]);
+    const message = new TextEncoder().encode("RFC 5958 OneAsymmetricKey");
+    const signature = await crypto.subtle.sign("Ed25519", privateKey, message);
+    return crypto.subtle.verify("Ed25519", publicKey, signature, message);
+  };
+
+  it("Ed25519 with attributes [0] and publicKey [1]", async () => {
+    const pkcs8 = der(version2, edAlgorithm, wrapSeed(edSeed), emptyAttributes, publicKeyField(edPub));
+    expect(await signsAndVerifies(pkcs8)).toBe(true);
+  });
+
+  it("Ed25519 with only publicKey [1]", async () => {
+    expect(await signsAndVerifies(der(version2, edAlgorithm, wrapSeed(edSeed), publicKeyField(edPub)))).toBe(true);
+  });
+
+  it("Ed25519 v1 with only attributes [0]", async () => {
+    expect(await signsAndVerifies(der("020100", edAlgorithm, wrapSeed(edSeed), emptyAttributes))).toBe(true);
+  });
+
+  it("Ed25519 v2 with only attributes [0]", async () => {
+    // non-conformant (v2 without publicKey) but tolerated, matching Node
+    expect(await signsAndVerifies(der(version2, edAlgorithm, wrapSeed(edSeed), emptyAttributes))).toBe(true);
+  });
+
+  it("Ed25519 with a localKeyId attribute", async () => {
+    // Attribute ::= SEQUENCE { localKeyId OID, SET { OCTET STRING } }
+    const attributes = "a014" + "3012" + "06092a864886f70d010915" + "3105" + "0403aabbcc";
+    expect(
+      await signsAndVerifies(der(version2, edAlgorithm, wrapSeed(edSeed), attributes, publicKeyField(edPub))),
+    ).toBe(true);
+  });
+
+  it("X25519 with attributes [0] and publicKey [1]", async () => {
+    const pkcs8 = der(version2, xAlgorithm, wrapSeed(xAlicePriv), emptyAttributes, publicKeyField(xAlicePub));
+    const privateKey = await crypto.subtle.importKey("pkcs8", pkcs8, "X25519", false, ["deriveBits"]);
+    const bobKey = await crypto.subtle.importKey("raw", fromHex(xBobPub), "X25519", false, []);
+    const shared = await crypto.subtle.deriveBits({ name: "X25519", public: bobKey }, privateKey, 256);
+    expect(Buffer.from(shared).toString("hex")).toBe(xShared);
+  });
+
+  it("rejects a CurvePrivateKey that does not fill the privateKey OCTET STRING", async () => {
+    // inner OCTET STRING claims 32 bytes but the outer one only carries 16
+    const truncated = der(version2, edAlgorithm, "04120420" + edSeed.slice(0, 32));
+    await expect(crypto.subtle.importKey("pkcs8", truncated, "Ed25519", false, ["sign"])).rejects.toThrow(
+      "Invalid keyData",
+    );
+  });
+
+  const expectRejected = async (pkcs8: Uint8Array) => {
+    await expect(crypto.subtle.importKey("pkcs8", pkcs8, "Ed25519", false, ["sign"])).rejects.toThrow(
+      "Invalid keyData",
+    );
+  };
+  const version1 = "020100";
+
+  it("rejects bytes outside the declared outer SEQUENCE", async () => {
+    // the trailing ff is past the 0x2e-byte SEQUENCE
+    await expectRejected(fromHex("302e" + version1 + edAlgorithm + wrapSeed(edSeed) + "ff"));
+  });
+
+  it("rejects a truncated optional field", async () => {
+    // attributes [0] header claims one content byte that is not present
+    await expectRejected(der(version1, edAlgorithm, wrapSeed(edSeed), "a001"));
+  });
+
+  it("rejects an unknown trailing field", async () => {
+    await expectRejected(der(version2, edAlgorithm, wrapSeed(edSeed), "8200"));
+  });
+
+  it("rejects publicKey [1] before attributes [0]", async () => {
+    await expectRejected(der(version2, edAlgorithm, wrapSeed(edSeed), publicKeyField(edPub), emptyAttributes));
+  });
+
+  it("rejects duplicate attributes [0]", async () => {
+    await expectRejected(der(version2, edAlgorithm, wrapSeed(edSeed), emptyAttributes, emptyAttributes));
+  });
+
+  it("rejects duplicate publicKey [1]", async () => {
+    await expectRejected(der(version2, edAlgorithm, wrapSeed(edSeed), publicKeyField(edPub), publicKeyField(edPub)));
+  });
+
+  it("rejects attributes [0] that are not a SET OF Attribute", async () => {
+    await expectRejected(der(version2, edAlgorithm, wrapSeed(edSeed), "a001ff", publicKeyField(edPub)));
+  });
+
+  it("rejects an Attribute missing its type and values", async () => {
+    await expectRejected(der(version2, edAlgorithm, wrapSeed(edSeed), "a0023000", publicKeyField(edPub)));
+  });
+
+  it("rejects a publicKey [1] BIT STRING without the unused-bits octet", async () => {
+    await expectRejected(der(version2, edAlgorithm, wrapSeed(edSeed), "8100"));
+  });
+
+  it("rejects a v1 key carrying publicKey [1]", async () => {
+    await expectRejected(der(version1, edAlgorithm, wrapSeed(edSeed), publicKeyField(edPub)));
+  });
+
+  it("rejects versions above v2", async () => {
+    await expectRejected(der("020102", edAlgorithm, wrapSeed(edSeed), publicKeyField(edPub)));
+  });
+
+  it("rejects AlgorithmIdentifier parameters", async () => {
+    // RFC 8410: parameters MUST be absent; this one carries a NULL
+    await expectRejected(der(version1, "300706032b65700500", wrapSeed(edSeed)));
+  });
+
+  it("accepts long-form lengths on the SEQUENCE and attributes [0]", async () => {
+    // one localKeyId attribute with a 120-byte value pushes both lengths into two-byte form
+    const bigAttributes =
+      "a0818a" + "308187" + "06092a864886f70d010915" + "317a" + "0478" + Buffer.alloc(120).toString("hex");
+    const pkcs8 = der(version2, edAlgorithm, wrapSeed(edSeed), bigAttributes, publicKeyField(edPub));
+    expect(pkcs8[1]).toBe(0x81); // outer SEQUENCE length is long-form
+    expect(await signsAndVerifies(pkcs8)).toBe(true);
+  });
+
+  // Strict DER, like Deno and bun's own node:crypto (and unlike Node's
+  // BER-tolerant OpenSSL): non-minimal lengths and nonzero padding bits
+  // reject, while the publicKey [1] contents stay uninterpreted.
+  it("rejects a non-minimal outer SEQUENCE length", async () => {
+    await expectRejected(fromHex("30812e" + version1 + edAlgorithm + wrapSeed(edSeed)));
+  });
+
+  it("rejects a non-minimal privateKey OCTET STRING length", async () => {
+    await expectRejected(fromHex("302f" + version1 + edAlgorithm + "0481220420" + edSeed));
+  });
+
+  it("rejects a publicKey [1] with nonzero padding bits", async () => {
+    await expectRejected(der(version2, edAlgorithm, wrapSeed(edSeed), "81020101"));
+  });
+
+  it("accepts a publicKey [1] whose contents are not a 32-byte key", async () => {
+    // the field is stored, not interpreted, matching Node and Deno
+    const pkcs8 = der(version2, edAlgorithm, wrapSeed(edSeed), "810b00" + Buffer.alloc(10).toString("hex"));
+    expect(await signsAndVerifies(pkcs8)).toBe(true);
+  });
 });
 
 // importKey's empty-usages guard got Node's message; the same predicate in

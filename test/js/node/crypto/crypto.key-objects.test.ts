@@ -1828,6 +1828,60 @@ function randomProp() {
   return "prop" + crypto.randomUUID().replace(/-/g, "");
 }
 
+// https://github.com/oven-sh/bun/issues/35432 — BoringSSL rejected v2
+// OneAsymmetricKey (publicKey [1] / version 1) on both its template and CBS
+// parsers; oven-sh/boringssl#10 makes both tolerate it, matching OpenSSL.
+describe("createPrivateKey with RFC 5958 v2 OneAsymmetricKey", () => {
+  // RFC 8032 section 7.1 test vector 1
+  const seed = "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60";
+  const pub = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a";
+  const pubField = "812100" + pub;
+  const spki = Buffer.from("302a300506032b6570032100" + pub, "hex");
+  const der = (version: number, tail: string) => {
+    const body = "0201" + version.toString(16).padStart(2, "0") + "300506032b657004220420" + seed + tail;
+    return Buffer.from("30" + (body.length / 2).toString(16).padStart(2, "0") + body, "hex");
+  };
+
+  const accepts: [string, Buffer][] = [
+    ["v2 with attributes and publicKey", der(1, "a000" + pubField)],
+    ["v2 with publicKey only", der(1, pubField)],
+    ["v2 with attributes only", der(1, "a000")],
+    ["v2 with neither optional field", der(1, "")],
+    ["v1", der(0, "")],
+    // the publicKey contents are stored, not interpreted, so any width parses
+    ["v2 with an empty publicKey BIT STRING", der(1, "810100")],
+    ["v2 with a 10-byte publicKey", der(1, "810b00" + Buffer.alloc(10).toString("hex"))],
+  ];
+  it.each(accepts)("accepts %s", (_name, key) => {
+    const privateKey = createPrivateKey({ key, format: "der", type: "pkcs8" });
+    expect(privateKey.asymmetricKeyType).toBe("ed25519");
+    const sig = sign(null, Buffer.from("OneAsymmetricKey"), privateKey);
+    expect(
+      verify(null, Buffer.from("OneAsymmetricKey"), createPublicKey({ key: spki, format: "der", type: "spki" }), sig),
+    ).toBe(true);
+  });
+
+  const rejects: [string, Buffer, string][] = [
+    ["v1 with publicKey", der(0, pubField), "ERR_OSSL_DECODE_ERROR"],
+    ["version > v2", der(2, pubField), "ERR_OSSL_DECODE_ERROR"],
+    ["empty publicKey BIT STRING", der(1, "8100"), "ERR_OSSL_ASN1_STRING_TOO_SHORT"],
+    ["publicKey BIT STRING with bad padding octet", der(1, "810108"), "ERR_OSSL_ASN1_INVALID_BIT_STRING_BITS_LEFT"],
+    ["duplicate publicKey", der(1, "a000" + "810100" + "810100"), "ERR_OSSL_ASN1_SEQUENCE_LENGTH_MISMATCH"],
+    ["publicKey before attributes", der(1, "810100" + "a000"), "ERR_OSSL_ASN1_SEQUENCE_LENGTH_MISMATCH"],
+    ["unknown trailing [2]", der(1, "a000" + "810100" + "820100"), "ERR_OSSL_ASN1_SEQUENCE_LENGTH_MISMATCH"],
+    ["malformed attribute body", der(1, "a001ff"), "ERR_OSSL_ASN1_DECODE_ERROR"],
+  ];
+  it.each(rejects)("rejects %s", (_name, key, code) => {
+    let error: any;
+    try {
+      createPrivateKey({ key, format: "der", type: "pkcs8" });
+    } catch (e) {
+      error = e;
+    }
+    expect(error?.code).toBe(code);
+  });
+});
+
 test("generateKeyPair passes the thrown Error to the callback when key export fails", async () => {
   const { promise, resolve } = Promise.withResolvers<Error & { code?: string }>();
   // P-224 keygen succeeds, JWK export does not, driving the caught-exception

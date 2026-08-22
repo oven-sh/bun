@@ -819,6 +819,46 @@ describe("bundler", () => {
     },
     compile: true,
   });
+  // A "./" specifier imported at runtime from an embedded module is first
+  // joined onto /$bunfs/root/ and looked up in the standalone module graph.
+  // That join used to write into a fixed PATH_MAX-sized buffer unchecked, so a
+  // specifier longer than PATH_MAX (1024 on macOS, 4096 on Linux, 98302 on
+  // Windows) aborted the whole binary. Specifiers longer than 1.5x PATH_MAX are
+  // rejected before resolution even starts, so the lengths below sit between
+  // the two bounds. Both probes must report "not found" exactly like a
+  // non-compiled `bun run` does, and the graph must still serve a "./"
+  // specifier of normal length afterwards.
+  itBundled("compile/RelativeSpecifierLongerThanPathMax", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        const req = (x) => require(x);
+        const imp = (x) => import(x);
+        const len = process.platform === "win32" ? 100_000 : process.platform === "linux" ? 5000 : 1200;
+        const tooLong = "./" + Buffer.alloc(len, "w").toString();
+        const out = [];
+        try { req(tooLong); out.push("require resolved"); } catch (e) { out.push("require: " + e.code); }
+        try { await imp(tooLong); out.push("import resolved"); } catch (e) { out.push("import: " + e.code); }
+        out.push(req("./embedded-sibling.js").value);
+        out.push((await imp("./embedded-sibling.js")).value);
+        console.log(out.join("\\n"));
+      `,
+      "/embedded-sibling.ts": /* js */ `
+        export const value = "embedded sibling resolved from the graph";
+      `,
+    },
+    entryPointsRaw: ["./entry.ts", "./embedded-sibling.ts"],
+    outfile: "dist/out",
+    run: {
+      file: "dist/out",
+      stdout: [
+        "require: MODULE_NOT_FOUND",
+        "import: ERR_MODULE_NOT_FOUND",
+        "embedded sibling resolved from the graph",
+        "embedded sibling resolved from the graph",
+      ].join("\n"),
+    },
+  });
   for (const minify of [true, false] as const) {
     itBundled("compile/platform-specific-binary" + (minify ? "-minify" : ""), {
       minifySyntax: minify,

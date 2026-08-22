@@ -1545,6 +1545,7 @@ impl MySQLConnection {
                         statement.columns = columns;
                         statement.columns_received = 0;
                         statement.cached_structure = Default::default();
+                        statement.cached_statement_js.deinit();
                         statement.fields_flags = Default::default();
                     }
                     statement
@@ -1559,12 +1560,15 @@ impl MySQLConnection {
                         &mut reader,
                         self.mariadb_capabilities.MARIADB_CLIENT_EXTENDED_TYPE_INFO,
                     )?;
-                    if changed {
+                    if changed.structure {
                         statement.cached_structure = Default::default();
                         statement.fields_flags = Default::default();
                         statement
                             .execution_flags
                             .insert(mysql_statement::ExecutionFlags::NEEDS_DUPLICATE_CHECK);
+                    }
+                    if changed.metadata {
+                        statement.cached_statement_js.deinit();
                     }
                     statement.columns_received += 1;
                 } else {

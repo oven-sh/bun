@@ -90,6 +90,76 @@ describe("randomBytes", () => {
   });
 });
 
+// DEP0115 (crypto.pseudoRandomBytes / prng / rng) is documentation-only in
+// node: the aliases are randomBytes itself unless --pending-deprecation (or
+// NODE_PENDING_DEPRECATION=1) is set. Verified against node v26.3.0.
+describe.concurrent("randomBytes aliases (DEP0115)", () => {
+  const aliases = ["pseudoRandomBytes", "prng", "rng"];
+  const script = `
+    const crypto = require("crypto");
+    const warnings = [];
+    process.on("warning", w => warnings.push(w.code));
+    const aliases = ${JSON.stringify(aliases)};
+    const lengths = aliases.map(name => crypto[name](4).length);
+    const sameAsRandomBytes = aliases.map(name => crypto[name] === crypto.randomBytes);
+    const descriptors = aliases.map(name => {
+      const { writable, enumerable, configurable } = Object.getOwnPropertyDescriptor(crypto, name);
+      return { writable, enumerable, configurable };
+    });
+    process.on("exit", () => {
+      console.log(JSON.stringify({ warnings, lengths, sameAsRandomBytes, descriptors }));
+    });
+  `;
+  // The outer environment must not decide whether the warning fires.
+  const env = {
+    ...bunEnv,
+    NODE_NO_WARNINGS: undefined,
+    NODE_OPTIONS: undefined,
+    NODE_PENDING_DEPRECATION: undefined,
+  };
+
+  async function run(args: string[], extraEnv: Record<string, string> = {}) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args, "-e", script],
+      env: { ...env, ...extraEnv },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    return { ...JSON.parse(stdout), stderr };
+  }
+
+  it("are randomBytes and do not warn by default", async () => {
+    expect(await run([])).toEqual({
+      warnings: [],
+      lengths: [4, 4, 4],
+      sameAsRandomBytes: [true, true, true],
+      descriptors: aliases.map(() => ({ writable: true, enumerable: false, configurable: true })),
+      stderr: "",
+    });
+  });
+
+  it("warn once under --pending-deprecation", async () => {
+    const { stderr, ...result } = await run(["--pending-deprecation"]);
+    expect(result).toEqual({
+      warnings: ["DEP0115"],
+      lengths: [4, 4, 4],
+      sameAsRandomBytes: [false, false, false],
+      descriptors: aliases.map(() => ({ writable: true, enumerable: false, configurable: true })),
+    });
+    expect(stderr).toContain("[DEP0115] DeprecationWarning: crypto.pseudoRandomBytes is deprecated.");
+  });
+
+  it("warn under NODE_PENDING_DEPRECATION=1", async () => {
+    const { warnings, sameAsRandomBytes } = await run([], { NODE_PENDING_DEPRECATION: "1" });
+    expect({ warnings, sameAsRandomBytes }).toEqual({
+      warnings: ["DEP0115"],
+      sameAsRandomBytes: [false, false, false],
+    });
+  });
+});
+
 describe("randomFill bounds checking", () => {
   // f32 can only represent integers exactly up to 2**24 (16777216). Previously the
   // bounds check in assertSize cast the u32 offset to f32 before adding, so an offset

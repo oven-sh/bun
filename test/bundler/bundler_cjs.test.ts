@@ -597,4 +597,184 @@ describe("bundler", () => {
       stdout: "loaded ok",
     },
   });
+
+  // ============================================================================
+  // Direct eval inside a wrapped CommonJS module must see `require`.
+  // protobufjs (used by @grpc/proto-loader and every @google-cloud/* gRPC
+  // client) hides its Buffer probe from bundlers via
+  // `eval("require")("buffer")`, and falls back to Uint8Array when that throws,
+  // which breaks grpc-js. https://github.com/oven-sh/bun/issues/9367
+  // ============================================================================
+
+  // This is @protobufjs/inquire verbatim.
+  const inquireCjs = /* js */ `
+    function inquire(moduleName) {
+      try {
+        var mod = eval("quire".replace(/^/, "re"))(moduleName);
+        if (mod && (mod.length || Object.keys(mod).length))
+          return mod;
+      } catch (e) {}
+      return null;
+    }
+    module.exports = inquire;
+  `;
+  const printInquiredBuffer = /* js */ `
+    const buffer = inquire("buffer");
+    if (!buffer) throw new Error("buffer module not found");
+    const b = buffer.Buffer.from([1, 2, 3]);
+    console.log(b.constructor.name);
+    console.log(Buffer.isBuffer(b));
+  `;
+  const inquireFiles = {
+    "/entry.js": `const inquire = require("./inquire.cjs");\n${printInquiredBuffer}`,
+    "/inquire.cjs": inquireCjs,
+  };
+  // IIFE output never calls a CommonJS entry point, so this variant imports the dep instead.
+  const inquireFilesEsmEntry = {
+    "/entry.js": `import inquire from "./inquire.cjs";\n${printInquiredBuffer}`,
+    "/inquire.cjs": inquireCjs,
+  };
+  const requireDecl = /\bvar require = __require;/;
+
+  itBundled("cjs/DirectEvalSeesRequireBun", {
+    files: inquireFiles,
+    target: "bun",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toMatch(requireDecl);
+      api.expectFile("/out.js").toContain("var __require = import.meta.require;");
+    },
+    run: { stdout: "Buffer\ntrue" },
+  });
+
+  itBundled("cjs/DirectEvalSeesRequireBunMinified", {
+    files: inquireFiles,
+    target: "bun",
+    minifyIdentifiers: true,
+    minifySyntax: true,
+    minifyWhitespace: true,
+    run: { stdout: "Buffer\ntrue" },
+  });
+
+  itBundled("cjs/DirectEvalSeesRequireNodeESM", {
+    files: inquireFiles,
+    target: "node",
+    format: "esm",
+    outfile: "/out.mjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.mjs").toMatch(requireDecl);
+      api.expectFile("/out.mjs").toContain("createRequire(import.meta.url)");
+    },
+    run: { runtime: "node", stdout: "Buffer\ntrue" },
+  });
+
+  // There is no usable __require in IIFE output (the node flavor imports
+  // node:module), so nothing is injected and the eval keeps resolving the
+  // `require` of the CommonJS file Node loads the bundle as.
+  itBundled("cjs/DirectEvalSeesRequireNodeIIFE", {
+    files: inquireFilesEsmEntry,
+    target: "node",
+    format: "iife",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toMatch(requireDecl);
+      api.expectFile("/out.js").not.toContain("__require");
+    },
+    run: { runtime: "node", stdout: "Buffer\ntrue" },
+  });
+
+  // The file declares its own `require`, so there is nothing to inject.
+  itBundled("cjs/DirectEvalWithShadowedRequire", {
+    files: {
+      "/entry.js": /* js */ `
+        import value from "./shadow.cjs";
+        console.log(value);
+      `,
+      "/shadow.cjs": /* js */ `
+        var require = () => "shadowed";
+        eval("0");
+        module.exports = require("anything");
+      `,
+    },
+    target: "bun",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toMatch(requireDecl);
+      api.expectFile("/out.js").not.toContain("__require");
+    },
+    run: { stdout: "shadowed" },
+  });
+
+  // Same file mixes a dynamic require() (which rewrites to the chunk-level
+  // __require) with direct eval; the injected declaration must still be
+  // named `require`.
+  const dynamicRequireFiles = {
+    "/entry.js": /* js */ `
+      console.log(require("./mod.cjs"));
+    `,
+    "/mod.cjs": /* js */ `
+      var name = "buffer";
+      var Buf = require(name).Buffer;
+      module.exports = eval("req" + "uire")("buffer").Buffer === Buf;
+    `,
+  };
+
+  itBundled("cjs/DirectEvalWithDynamicRequireBun", {
+    files: dynamicRequireFiles,
+    target: "bun",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toMatch(requireDecl);
+    },
+    run: { stdout: "true" },
+  });
+
+  itBundled("cjs/DirectEvalWithDynamicRequireNodeESM", {
+    files: dynamicRequireFiles,
+    target: "node",
+    format: "esm",
+    outfile: "/out.mjs",
+    run: { runtime: "node", stdout: "true" },
+  });
+
+  itBundled("cjs/DirectEvalSeesRequireCompile", {
+    files: inquireFiles,
+    target: "bun",
+    compile: true,
+    run: { stdout: "Buffer\ntrue" },
+  });
+
+  itBundled("cjs/DirectEvalRequireShapeBun", {
+    files: {
+      "/entry.js": /* js */ `
+        const probe = require("./probe.cjs");
+        console.log(JSON.stringify(probe));
+      `,
+      "/probe.cjs": /* js */ `
+        const req = eval("req" + "uire");
+        module.exports = {
+          type: typeof req,
+          resolve: typeof req.resolve,
+          assert: req("assert").strictEqual === require("assert").strictEqual,
+        };
+      `,
+    },
+    target: "bun",
+    run: { stdout: '{"type":"function","resolve":"function","assert":true}' },
+  });
+
+  // No direct eval: nothing is injected and __require stays tree-shaken.
+  itBundled("cjs/NoRequireDeclWithoutDirectEval", {
+    files: {
+      "/entry.js": /* js */ `
+        const x = require("./mod.cjs");
+        console.log(x);
+      `,
+      "/mod.cjs": /* js */ `
+        module.exports = typeof require;
+      `,
+    },
+    target: "bun",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toMatch(requireDecl);
+      api.expectFile("/out.js").not.toContain("__require");
+    },
+    run: { stdout: "function" },
+  });
 });

@@ -314,6 +314,70 @@ it("import override to bun:test", async () => {
   expect(await import("#bun_test")).toBeDefined();
 });
 
+// Node.js v25.4.0 / v24.14.0 started accepting subpath imports that begin
+// with "#/" (previously rejected by spec). Only the exact specifiers "#" and
+// "#/" remain invalid.
+it("package.json imports with '#/'-prefixed keys resolve", async () => {
+  using dir = tempDir("hashslash-imports", {
+    "package.json": JSON.stringify({
+      name: "app",
+      type: "module",
+      imports: {
+        "#/config": "./src/config.mjs",
+        "#/lib/*": "./src/lib/*.mjs",
+        "#plain": "./src/plain.mjs",
+      },
+    }),
+    "src/config.mjs": `export default "src/config.mjs";`,
+    "src/lib/util.mjs": `export default "src/lib/util.mjs";`,
+    "src/plain.mjs": `export default "src/plain.mjs";`,
+    "probe.mjs": `
+      import { createRequire } from "node:module";
+      const req = createRequire(import.meta.url);
+      const out = {};
+      async function cell(id, fn) {
+        try {
+          const v = await fn();
+          out[id] = (v && v.default) || v;
+        } catch (e) {
+          out[id] = "ERR:" + (e.code || e.name);
+        }
+      }
+      await cell("import #/config", () => import("#/config"));
+      await cell("require #/config", () => req("#/config"));
+      await cell("import #/lib/util", () => import("#/lib/util"));
+      await cell("import #plain", () => import("#plain"));
+      // Exactly "#/" must still be rejected.
+      let bareHashSlash = "rejected";
+      try {
+        await import("#/");
+        bareHashSlash = "resolved";
+      } catch {}
+      out["import #/"] = bareHashSlash;
+      console.log(JSON.stringify(out));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "probe.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    "import #/config": "src/config.mjs",
+    "require #/config": "src/config.mjs",
+    "import #/lib/util": "src/lib/util.mjs",
+    "import #plain": "src/plain.mjs",
+    "import #/": "rejected",
+  });
+  expect(exitCode).toBe(0);
+});
+
 it.if(isWindows)("directory cache key computation", () => {
   expect(import(`${process.cwd()}\\\\doesnotexist.ts`)).rejects.toThrow();
   expect(import(`${process.cwd()}\\\\\\doesnotexist.ts`)).rejects.toThrow();

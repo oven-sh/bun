@@ -1855,11 +1855,12 @@ describe("Bun.serve WebTransport", () => {
   });
 
   test("close() cuts an over-long reason at a UTF-8 boundary", async () => {
-    // 1023 ASCII bytes then a three-byte character, so the sequence straddles
-    // the 1024-byte cap at bytes 1023..1025. Cutting flat at 1024 would put
-    // half a character on the wire, and a peer that fails the session over a
+    // A three-byte character straddling the 1024-byte cap at bytes 1023..1025,
+    // so the cut has to fall back to 1023. Cutting flat at 1024 would put half
+    // a character on the wire, and a peer that fails the session over a
     // malformed reason never reports the code it was closed with.
-    const reason = "a".repeat(1023) + "\u20ac" + "b".repeat(64);
+    const kept = "a".repeat(1023);
+    const reason = kept + "\u20ac" + "b".repeat(64);
     await using server = Bun.serve({
       port: 0,
       tls,
@@ -1875,15 +1876,18 @@ describe("Bun.serve WebTransport", () => {
     const wt = await webTransportSession(server.port);
     try {
       wt.send("close me");
-      // 2 type + 2 length + 4 code + 1023 reason.
-      expect(await wt.until(() => wt.inbound.length >= 1031, 3000)).toBe(true);
+      // 2 type + 2 length + 4 code, then the reason.
+      const header = 8;
+      expect(await wt.until(() => wt.inbound.length >= header + kept.length, 3000)).toBe(true);
       const bytes = Uint8Array.from(wt.inbound);
       // varint(0x2843), then 4 + 1023 as a two-byte varint, then the code.
-      expect(Array.from(bytes.subarray(0, 8))).toEqual([0x68, 0x43, 0x44, 0x03, 0x00, 0x00, 0x00, 0x07]);
-      const got = bytes.subarray(8, 8 + 1023);
+      // Hand-computed rather than derived: a wire test that builds its own
+      // expectation from the same arithmetic the code uses proves nothing.
+      expect(Array.from(bytes.subarray(0, header))).toEqual([0x68, 0x43, 0x44, 0x03, 0x00, 0x00, 0x00, 0x07]);
+      const got = bytes.subarray(header, header + kept.length);
       // The whole character is dropped rather than half-written, so the
-      // reason is 1023 bytes and still decodes.
-      expect(new TextDecoder("utf-8", { fatal: true }).decode(got)).toBe("a".repeat(1023));
+      // reason is the ASCII run alone and still decodes.
+      expect(new TextDecoder("utf-8", { fatal: true }).decode(got)).toBe(kept);
     } finally {
       await wt.close();
     }

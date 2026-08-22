@@ -328,13 +328,11 @@ impl FilePoll {
         FileType::Pipe
     }
 
-    /// Whether `fd` is a named pipe (see `fifo_select`). Decided by `fstat` when
-    /// a readable registration starts (not on its re-arms) and then kept in
-    /// `Flags::NamedFifo`.
+    /// `fstat` once per readable registration (not per re-arm), kept in `Flags::NamedFifo`.
     #[cfg(target_os = "macos")]
     fn is_named_fifo(&mut self, fd: Fd) -> bool {
         if !self.flags.contains(Flags::NamedFifo) && !self.flags.contains(Flags::PollReadable) {
-            // pipe(2) pipes are S_IFIFO with st_dev == 0 (XNU pipe_stat).
+            // pipe(2) pipes are S_IFIFO with st_dev == 0.
             let named = sys::fstat(fd)
                 .is_ok_and(|stat| sys::S::ISFIFO(stat.st_mode as _) && stat.st_dev != 0);
             if named {
@@ -1013,8 +1011,6 @@ impl FilePoll {
 
             let named_fifo = flag == Flags::Readable && self.flags.contains(Flags::NamedFifo);
             if named_fifo {
-                // Before the owner closes the fd, and before the knote delete
-                // below: a delivery that raced this is what the delete removes.
                 crate::fifo_select::disarm(Fd::from_native(watcher_fd), fd);
             }
 
@@ -1235,8 +1231,7 @@ pub enum Flags {
 
     // What is the type of file descriptor?
     Fifo,
-    /// macOS: a named pipe, whose readiness comes from `fifo_select` instead
-    /// of an `EVFILT_READ` knote (kqueue never reports its EOF).
+    /// macOS: readable waits go through `fifo_select`, not a knote.
     NamedFifo,
 
     OneShot,
@@ -1287,7 +1282,6 @@ impl Flags {
             if kqueue_event.filter == EVFILT::MEMORYSTATUS {
                 flags.insert(Flags::MemoryPressure);
             }
-            // `fifo_select` reports a named pipe's readiness (data or EOF) this way.
             #[cfg(target_os = "macos")]
             if kqueue_event.filter == EVFILT::USER
                 && kqueue_event.fflags & crate::fifo_select::NOTE_FIFO_READABLE != 0

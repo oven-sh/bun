@@ -7444,15 +7444,13 @@ pub fn kevent(
     }
 }
 
-/// `select(2)` for readability, with no timeout (macOS only). `readfds` is a
-/// bitmap of the descriptors to wait on, 32 per word; the kernel leaves only
-/// the ready ones set. Returns how many are ready. `EINTR` is returned, not
-/// retried: the caller's set may be stale by then.
+/// `select(2)` with no timeout on a read set of `readfds.len() * 32` fds (macOS
+/// only). The kernel leaves only the ready bits set. `EINTR` is not retried.
 #[cfg(target_os = "macos")]
 pub fn select_readable(readfds: &mut [u32]) -> Maybe<usize> {
     let nfds = c_int::try_from(readfds.len() * 32).expect("int cast");
-    // SAFETY: `readfds` holds the `nfds / 32` words the kernel reads and writes
-    // back; the write and error sets and the timeout may be null.
+    // SAFETY: `readfds` holds the `nfds / 32` words the kernel reads and writes;
+    // the other sets and the timeout may be null.
     let rc = unsafe {
         nocancel::select(
             nfds,

@@ -782,26 +782,26 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapStatisticsBod
         double capacity = static_cast<double>(wvm.heap.capacity());
         double extra = static_cast<double>(wvm.heap.extraMemorySize());
         ScriptExecutionContext::postTaskTo(parentId, parentLoopKind, [reqId, protectedProxy = WTF::move(protectedProxy), heapSize, capacity, extra](ScriptExecutionContext& parentCtx) { resolveCrossVMRequest(protectedProxy.get(), reqId, parentCtx, [&](VM& pvm, JSGlobalObject* go) -> JSValue {
-                                                                                                                                                                             JSObject* o = constructEmptyObject(go);
-                                                                                                                                                                             auto set = [&](ASCIILiteral k, double v) { o->putDirect(pvm, Identifier::fromString(pvm, k), jsNumber(v)); };
-                                                                                                                                                                             double avail = capacity > heapSize ? capacity - heapSize : 0;
-                                                                                                                                                                             set("total_heap_size"_s, heapSize);
-                                                                                                                                                                             set("total_heap_size_executable"_s, heapSize / 2.0);
-                                                                                                                                                                             set("total_physical_size"_s, capacity);
-                                                                                                                                                                             set("total_available_size"_s, avail);
-                                                                                                                                                                             set("used_heap_size"_s, heapSize);
-                                                                                                                                                                             set("heap_size_limit"_s, capacity * 10.0);
-                                                                                                                                                                             set("malloced_memory"_s, heapSize);
-                                                                                                                                                                             set("peak_malloced_memory"_s, capacity);
-                                                                                                                                                                             o->putDirect(pvm, Identifier::fromString(pvm, "does_zap_garbage"_s), jsBoolean(false));
-                                                                                                                                                                             set("number_of_native_contexts"_s, 1);
-                                                                                                                                                                             set("number_of_detached_contexts"_s, 0);
-                                                                                                                                                                             set("total_global_handles_size"_s, 8192);
-                                                                                                                                                                             set("used_global_handles_size"_s, 2208);
-                                                                                                                                                                             set("external_memory"_s, extra);
-                                                                                                                                                                             set("total_allocated_bytes"_s, heapSize);
-                                                                                                                                                                             return o;
-                                                                                                                                                                         }); });
+                                                                                                                                                                                             JSObject* o = constructEmptyObject(go);
+                                                                                                                                                                                             auto set = [&](ASCIILiteral k, double v) { o->putDirect(pvm, Identifier::fromString(pvm, k), jsNumber(v)); };
+                                                                                                                                                                                             double avail = capacity > heapSize ? capacity - heapSize : 0;
+                                                                                                                                                                                             set("total_heap_size"_s, heapSize);
+                                                                                                                                                                                             set("total_heap_size_executable"_s, heapSize / 2.0);
+                                                                                                                                                                                             set("total_physical_size"_s, capacity);
+                                                                                                                                                                                             set("total_available_size"_s, avail);
+                                                                                                                                                                                             set("used_heap_size"_s, heapSize);
+                                                                                                                                                                                             set("heap_size_limit"_s, capacity * 10.0);
+                                                                                                                                                                                             set("malloced_memory"_s, heapSize);
+                                                                                                                                                                                             set("peak_malloced_memory"_s, capacity);
+                                                                                                                                                                                             o->putDirect(pvm, Identifier::fromString(pvm, "does_zap_garbage"_s), jsBoolean(false));
+                                                                                                                                                                                             set("number_of_native_contexts"_s, 1);
+                                                                                                                                                                                             set("number_of_detached_contexts"_s, 0);
+                                                                                                                                                                                             set("total_global_handles_size"_s, 8192);
+                                                                                                                                                                                             set("used_global_handles_size"_s, 2208);
+                                                                                                                                                                                             set("external_memory"_s, extra);
+                                                                                                                                                                                             set("total_allocated_bytes"_s, heapSize);
+                                                                                                                                                                                             return o;
+                                                                                                                                                                                         }); });
     });
     if (!accepted) {
         worker.contextProxy().takeCrossVMRequest(reqId);
@@ -900,11 +900,11 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_cpuUsageInternalBody
         sys = static_cast<double>(ru.ru_stime.tv_sec) * 1e6 + static_cast<double>(ru.ru_stime.tv_usec);
 #endif
         ScriptExecutionContext::postTaskTo(parentId, parentLoopKind, [reqId, protectedProxy = WTF::move(protectedProxy), user, sys](ScriptExecutionContext& parentCtx) { resolveCrossVMRequest(protectedProxy.get(), reqId, parentCtx, [&](VM& pvm, JSGlobalObject* go) -> JSValue {
-                                                                                                                                                             JSObject* o = constructEmptyObject(go);
-                                                                                                                                                             o->putDirect(pvm, Identifier::fromString(pvm, "user"_s), jsNumber(user));
-                                                                                                                                                             o->putDirect(pvm, Identifier::fromString(pvm, "system"_s), jsNumber(sys));
-                                                                                                                                                             return o;
-                                                                                                                                                         }); });
+                                                                                                                                                                             JSObject* o = constructEmptyObject(go);
+                                                                                                                                                                             o->putDirect(pvm, Identifier::fromString(pvm, "user"_s), jsNumber(user));
+                                                                                                                                                                             o->putDirect(pvm, Identifier::fromString(pvm, "system"_s), jsNumber(sys));
+                                                                                                                                                                             return o;
+                                                                                                                                                                         }); });
     });
     if (!accepted) {
         worker.contextProxy().takeCrossVMRequest(reqId);

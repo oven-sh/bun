@@ -270,8 +270,7 @@ declare module "bun" {
     /**
      * Number of parts to upload in parallel for multipart uploads.
      * - Default: 5
-     * - Minimum: 1
-     * - Maximum: 255 (larger values are clamped to 255)
+     * - Maximum: 255
      *
      * Increasing this value can improve upload speeds for large files
      * but uses more memory.
@@ -281,7 +280,6 @@ declare module "bun" {
     /**
      * Number of retry attempts for failed uploads.
      * - Default: 3
-     * - Minimum: 0
      * - Maximum: 255
      *
      * @example

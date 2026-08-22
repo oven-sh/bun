@@ -25,7 +25,8 @@ enum ReservedConnectionState {
 
 interface TransactionState {
   connectionState: ReservedConnectionState;
-  reject: (err: Error) => void;
+  /// null once resolved: the rejecter retains the promise, whose value is the reserved client.
+  reject: ((err: Error) => void) | null;
   storedError?: Error | null | undefined;
   queries: Set<Query<any, any>>;
 }
@@ -39,15 +40,64 @@ interface ReserveAbortState {
   onAbort: (() => void) | null;
 }
 
+/// `_client` is bound only to keep the client out of reservationRegistry's reach until the transaction settles.
 function settleReservedTransaction(
   reservedTransaction: Set<Promise<void>>,
   finished: { promise: Promise<void>; resolve: () => void },
   settle: (value: any) => void,
+  _client: unknown,
   value: any,
 ) {
   reservedTransaction.delete(finished.promise);
   finished.resolve();
   settle(value);
+}
+
+function onTransactionDisconnected(this: TransactionState, err: Error) {
+  const reject = this.reject;
+  this.connectionState |= ReservedConnectionState.closed;
+
+  for (const query of this.queries) {
+    query.reject(err);
+  }
+
+  if (err && reject !== null) {
+    return reject(err);
+  }
+}
+
+/// Retained by the pooled connection and reservationRegistry: must not reference the client.
+interface Reservation {
+  pool: ReturnType<typeof adapterFromOptions>;
+  pooledConnection: any;
+  state: TransactionState;
+  onClose: ((err: Error) => void) | null;
+}
+
+function releaseReservation(reservation: Reservation) {
+  const state = reservation.state;
+  if (state.connectionState & ReservedConnectionState.released) return;
+  state.connectionState |= ReservedConnectionState.released;
+  reservation.pool.release(reservation.pooledConnection);
+}
+
+function onReservedConnectionClosed(this: Reservation, err: Error) {
+  onTransactionDisconnected.$call(this.state, err);
+  releaseReservation(this);
+}
+
+/// Releases clients that were garbage collected without release()/close().
+let reservationRegistry: FinalizationRegistry<Reservation> | undefined;
+function onReservationCollected(reservation: Reservation) {
+  const { pool, pooledConnection, state } = reservation;
+  // closed: close() is tearing the connection down and its close handler releases the slot.
+  if (state.connectionState & (ReservedConnectionState.closed | ReservedConnectionState.released)) return;
+  state.connectionState |= ReservedConnectionState.closed;
+  state.connectionState &= ~ReservedConnectionState.acceptQueries;
+  if (pool.detachConnectionCloseHandler) {
+    pool.detachConnectionCloseHandler(pooledConnection, reservation.onClose!);
+  }
+  releaseReservation(reservation);
 }
 
 function adapterFromOptions(options: Bun.SQL.__internal.DefinedOptions) {
@@ -247,19 +297,6 @@ const SQL: typeof Bun.SQL = function SQL(
     }
   }
 
-  function onTransactionDisconnected(this: TransactionState, err: Error) {
-    const reject = this.reject;
-    this.connectionState |= ReservedConnectionState.closed;
-
-    for (const query of this.queries) {
-      query.reject(err);
-    }
-
-    if (err) {
-      return reject(err);
-    }
-  }
-
   const listenable = "listen" in pool ? pool : null;
   function validateChannel(channel: unknown): asserts channel is string {
     if (typeof channel !== "string" || channel.length === 0) {
@@ -299,6 +336,7 @@ const SQL: typeof Bun.SQL = function SQL(
 
   // Never attach a handler to the caller's promise: it changes which rejections are reported as unhandled.
   function runReservedTransaction(
+    client: unknown,
     reservedTransaction: Set<Promise<void>>,
     pooledConnection,
     callback: TransactionCallback,
@@ -312,8 +350,8 @@ const SQL: typeof Bun.SQL = function SQL(
     onTransactionConnected(
       callback,
       options,
-      settleReservedTransaction.bind(null, reservedTransaction, finished, resolve),
-      settleReservedTransaction.bind(null, reservedTransaction, finished, reject),
+      settleReservedTransaction.bind(null, reservedTransaction, finished, resolve, client),
+      settleReservedTransaction.bind(null, reservedTransaction, finished, reject, client),
       true,
       distributed,
       null,
@@ -338,19 +376,10 @@ const SQL: typeof Bun.SQL = function SQL(
       queries: new Set(),
     };
 
-    function releaseReservation() {
-      if (state.connectionState & ReservedConnectionState.released) return;
-      state.connectionState |= ReservedConnectionState.released;
-      pool.release(pooledConnection);
-    }
-
-    const onDisconnected = onTransactionDisconnected.bind(state);
-    function onClose(err: Error) {
-      onDisconnected(err);
-      releaseReservation();
-    }
+    const reservation: Reservation = { pool, pooledConnection, state, onClose: null };
+    reservation.onClose = onReservedConnectionClosed.bind(reservation);
     if (pooledConnection.onClose) {
-      pooledConnection.onClose(onClose);
+      pooledConnection.onClose(reservation.onClose);
     }
 
     function reserved_sql(strings: string | TemplateStringsArray | SQLHelper<any> | Query<any, any>, ...values: any[]) {
@@ -428,7 +457,7 @@ const SQL: typeof Bun.SQL = function SQL(
       if (!$isCallable(callback)) {
         return Promise.$reject($ERR_INVALID_ARG_VALUE("fn", callback, "must be a function"));
       }
-      return runReservedTransaction(reservedTransaction, pooledConnection, callback, name, true);
+      return runReservedTransaction(reserved_sql, reservedTransaction, pooledConnection, callback, name, true);
     };
     reserved_sql.begin = (options_or_fn: string | TransactionCallback, fn?: TransactionCallback) => {
       // begin is allowed the difference is that we need to make sure to use the same connection and never release it
@@ -449,7 +478,7 @@ const SQL: typeof Bun.SQL = function SQL(
       if (!$isCallable(callback)) {
         return Promise.$reject($ERR_INVALID_ARG_VALUE("fn", callback, "must be a function"));
       }
-      return runReservedTransaction(reservedTransaction, pooledConnection, callback, options, false);
+      return runReservedTransaction(reserved_sql, reservedTransaction, pooledConnection, callback, options, false);
     };
 
     reserved_sql.flush = () => {
@@ -516,11 +545,12 @@ const SQL: typeof Bun.SQL = function SQL(
       // just release the connection back to the pool
       state.connectionState |= ReservedConnectionState.closed;
       state.connectionState &= ~ReservedConnectionState.acceptQueries;
+      reservationRegistry!.unregister(state);
       // Use adapter method to detach connection close handler
       if (pool.detachConnectionCloseHandler) {
-        pool.detachConnectionCloseHandler(pooledConnection, onClose);
+        pool.detachConnectionCloseHandler(pooledConnection, reservation.onClose!);
       }
-      releaseReservation();
+      releaseReservation(reservation);
       return Promise.$resolve(undefined);
     };
     // this dont need to be async dispose only disposable but we keep compatibility with other types of sql functions
@@ -532,6 +562,12 @@ const SQL: typeof Bun.SQL = function SQL(
     reserved_sql.distributed = reserved_sql.beginDistributed;
     reserved_sql.end = reserved_sql.close;
     resolve(reserved_sql);
+    state.reject = null;
+    (reservationRegistry ??= new FinalizationRegistry(onReservationCollected)).register(
+      reserved_sql,
+      reservation,
+      state,
+    );
   }
 
   function onReserveConnectedWithSignal(this: ReserveAbortState, err: Error | null, pooledConnection) {
@@ -888,6 +924,8 @@ const SQL: typeof Bun.SQL = function SQL(
       if (pool.detachConnectionCloseHandler) {
         pool.detachConnectionCloseHandler(pooledConnection, onClose);
       }
+      // a kept `tx` keeps this scope alive; resolve/reject pin a reserved client (see settleReservedTransaction)
+      state.reject = callback = resolve = reject = null;
       if (!dontRelease) {
         pool.release(pooledConnection);
       }

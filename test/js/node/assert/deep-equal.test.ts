@@ -37,6 +37,13 @@ class WithPrototypeGetter {
   }
 }
 
+class WithValue {
+  a = 1;
+}
+
+const sharedConstructor = function sharedConstructor() {};
+const sharedPrototype = { p: 1 };
+
 function anonymousClassInstance() {
   return new (class {
     a = 1;
@@ -260,6 +267,73 @@ const cases: Case[] = [
     b: () => Object.create(Array.prototype),
     strict: false,
     loose: false,
+  },
+  // Strict mode compares the inherited constructor, not the [[Prototype]]
+  // itself: an object with a plain-object prototype chain still equals {}.
+  {
+    name: "Object.create({ x: 1 }) and {}",
+    a: () => Object.create({ x: 1 }),
+    b: () => ({}),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "{} and Object.create({ x: 1 })",
+    a: () => ({}),
+    b: () => Object.create({ x: 1 }),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "two objects with different non-null prototypes",
+    a: () => Object.create({ x: 1 }),
+    b: () => Object.create({ z: 2 }),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "nested objects whose prototypes differ",
+    a: () => ({ a: { ns: Object.create({ inherited: 1 }) } }),
+    b: () => ({ a: { ns: {} } }),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "a class instance and an object inheriting the same prototype",
+    a: () => new WithValue(),
+    b: () => Object.assign(Object.create(WithValue.prototype), { a: 1 }),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "a Map subclass instance and a Map",
+    a: () => new (class extends Map {})(),
+    b: () => new Map(),
+    strict: false,
+    loose: true,
+  },
+  // An own "constructor" property only short-circuits the prototype
+  // comparison when its value is a well-known built-in constructor.
+  {
+    name: "own constructor: Object on objects with different prototypes",
+    a: () => Object.create({ q: 1 }, { constructor: { value: Object } }),
+    b: () => Object.create({ w: 2 }, { constructor: { value: Object } }),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "own constructor: a user function on objects with different prototypes",
+    a: () => Object.create({ q: 1 }, { constructor: { value: sharedConstructor } }),
+    b: () => Object.create({ w: 2 }, { constructor: { value: sharedConstructor } }),
+    strict: false,
+    loose: true,
+  },
+  {
+    name: "own constructor: a user function on objects with the same prototype",
+    a: () => Object.create(sharedPrototype, { constructor: { value: sharedConstructor } }),
+    b: () => Object.create(sharedPrototype, { constructor: { value: sharedConstructor } }),
+    strict: true,
+    loose: true,
   },
 
   // Symbol keys: compared in strict mode, ignored in loose mode.

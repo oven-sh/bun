@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { AsyncLocalStorage } from "node:async_hooks";
 
 // One process-wide pipeline: every test in this file shares the collector.
@@ -16,6 +16,8 @@ Bun.otel.start({
   // Keep the built-in integrations quiet so only user spans show up here.
   instrumentations: [],
 });
+// The pipeline is process-global; leave nothing behind for later files.
+afterAll(() => Bun.otel.shutdown());
 
 const tracer = Bun.otel.tracer("test-tracer", "1.2.3");
 

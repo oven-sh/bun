@@ -585,3 +585,5 @@ declare function $telemetryAddLink(
   traceFlags: number,
   flatAttributes: unknown[] | null,
 ): void;
+/** TelemetrySpan.ts addOneLink builtin (shared by addLink/addLinks). */
+declare function $telemetryAddOneLink(span: unknown, state: number, link: unknown): void;

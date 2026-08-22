@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import fs from "node:fs";
 import net from "node:net";
@@ -12,6 +12,8 @@ beforeEach(async () => {
   restore();
   await collect();
 });
+// The pipeline is process-global; leave nothing behind for later files.
+afterAll(() => Bun.otel.shutdown());
 const tracer = Bun.otel.tracer("test");
 
 async function collect(scope?: string): Promise<any[]> {

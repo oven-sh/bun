@@ -227,6 +227,7 @@ extern "C" fn on_vm_exit(ctx: *mut c_void) {
     s.disarm_timer();
     bun_telemetry::batch::flush_local(&mut s.local.borrow_mut().batch);
     let global = s.global();
+    exporter::JsExporter::settle_stranded_for_vm(s);
     // JS exporters belonging to this VM get their final batch synchronously.
     if global.bun_vm().worker_ref().is_none() {
         processor().shutdown_blocking();

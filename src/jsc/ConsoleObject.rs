@@ -1886,6 +1886,7 @@ pub mod formatter {
         NativeCode,
 
         JSX,
+        DOMNode,
         Event,
 
         GetterSetter,
@@ -1922,6 +1923,7 @@ pub mod formatter {
                     | Tag::Error
                     | Tag::Class
                     | Tag::Event
+                    | Tag::DOMNode
             )
         }
     }
@@ -1956,6 +1958,7 @@ pub mod formatter {
         ToJSON,
         NativeCode,
         JSX,
+        DOMNode,
         Event,
         GetterSetter,
         CustomGetterSetter,
@@ -1996,6 +1999,7 @@ pub mod formatter {
                 TagPayload::ToJSON => Tag::ToJSON,
                 TagPayload::NativeCode => Tag::NativeCode,
                 TagPayload::JSX => Tag::JSX,
+                TagPayload::DOMNode => Tag::DOMNode,
                 TagPayload::Event => Tag::Event,
                 TagPayload::GetterSetter => Tag::GetterSetter,
                 TagPayload::CustomGetterSetter => Tag::CustomGetterSetter,
@@ -2041,6 +2045,7 @@ pub mod formatter {
                 Tag::ToJSON => TagPayload::ToJSON,
                 Tag::NativeCode => TagPayload::NativeCode,
                 Tag::JSX => TagPayload::JSX,
+                Tag::DOMNode => TagPayload::DOMNode,
                 Tag::Event => TagPayload::Event,
                 Tag::GetterSetter => TagPayload::GetterSetter,
                 Tag::CustomGetterSetter => TagPayload::CustomGetterSetter,
@@ -2234,6 +2239,16 @@ pub mod formatter {
                         });
                     }
                 }
+            }
+
+            // Is this a DOM node (jsdom / happy-dom)?
+            if matches!(js_type, jsc::JSType::Object | jsc::JSType::FinalObject)
+                && is_dom_node(global_this, value)?
+            {
+                return Ok(TagResult {
+                    tag: TagPayload::DOMNode,
+                    cell: js_type,
+                });
             }
 
             use jsc::JSType as T;
@@ -3207,6 +3222,86 @@ pub mod formatter {
         Ok(None)
     }
 
+    pub const DOM_ELEMENT_NODE: i32 = 1;
+    pub const DOM_TEXT_NODE: i32 = 3;
+    pub const DOM_COMMENT_NODE: i32 = 8;
+    pub const DOM_FRAGMENT_NODE: i32 = 11;
+
+    /// Constructor name → expected `nodeType` (pretty-format `DOMElement` plugin rule).
+    pub fn dom_node_type_for_class_name(name: &[u8]) -> Option<i32> {
+        use bun_core::strings;
+        // /^((HTML|SVG)\w*)?Element$/
+        if strings::has_suffix_comptime(name, b"Element")
+            && (name.len() == b"Element".len()
+                || strings::has_prefix_comptime(name, b"HTML")
+                || strings::has_prefix_comptime(name, b"SVG"))
+        {
+            return Some(DOM_ELEMENT_NODE);
+        }
+        match name {
+            b"Text" => Some(DOM_TEXT_NODE),
+            b"Comment" => Some(DOM_COMMENT_NODE),
+            b"DocumentFragment" => Some(DOM_FRAGMENT_NODE),
+            _ => None,
+        }
+    }
+
+    /// True when `value` duck-types as a jsdom/happy-dom node. `#[inline(never)]` keeps `Tag::get` frames small.
+    #[inline(never)]
+    pub fn is_dom_node(global_this: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
+        // DOM nodes inherit through `Node`→`EventTarget`; a null grand-proto means plain `{}`.
+        let proto = value.get_prototype(global_this);
+        if proto.is_empty_or_undefined_or_null()
+            || !proto.is_cell()
+            || proto.js_type() == jsc::JSType::ProxyObject
+        {
+            return Ok(false);
+        }
+        let grand = proto.get_prototype(global_this);
+        if grand.is_empty_or_undefined_or_null() {
+            return Ok(false);
+        }
+
+        let mut name_str = ZigString::init(b"");
+        value.get_class_name(global_this, &mut name_str)?;
+        let name_slice = name_str.to_slice();
+        let expected = match dom_node_type_for_class_name(name_slice.slice()) {
+            Some(e) => e,
+            // Custom elements: walk up until an `*Element` ancestor is found.
+            None => 'walk: {
+                let mut cur = grand;
+                for _ in 0..8 {
+                    if !cur.is_cell() || cur.js_type() == jsc::JSType::ProxyObject {
+                        return Ok(false);
+                    }
+                    let next = cur.get_prototype(global_this);
+                    if next.is_empty_or_undefined_or_null() {
+                        return Ok(false);
+                    }
+                    let mut proto_name = ZigString::init(b"");
+                    cur.get_class_name(global_this, &mut proto_name)?;
+                    let proto_slice = proto_name.to_slice();
+                    if let Some(DOM_ELEMENT_NODE) =
+                        dom_node_type_for_class_name(proto_slice.slice())
+                    {
+                        break 'walk DOM_ELEMENT_NODE;
+                    }
+                    cur = next;
+                }
+                return Ok(false);
+            }
+        };
+        let confirmed = match value.get(global_this, "nodeType") {
+            Ok(Some(n)) if n.is_int32() => n.to_int32() == expected,
+            Ok(_) => false,
+            Err(_) => {
+                global_this.clear_exception_except_termination();
+                false
+            }
+        };
+        Ok(confirmed)
+    }
+
     // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle; remaining
     // params are by-value `JSValue`/scalars → `safe fn`.
     unsafe extern "C" {
@@ -3373,6 +3468,7 @@ pub mod formatter {
                     &mut remove_before_recurse,
                 ),
                 Tag::JSX => self.print_jsx::<ENABLE_ANSI_COLORS>(writer_, value),
+                Tag::DOMNode => self.print_dom_node::<ENABLE_ANSI_COLORS>(writer_, value),
                 Tag::Object => self.print_object::<ENABLE_ANSI_COLORS>(writer_, value, js_type),
                 Tag::TypedArray => {
                     self.print_typed_array::<ENABLE_ANSI_COLORS>(writer_, value, js_type)
@@ -5341,6 +5437,211 @@ pub mod formatter {
             if writer.failed {
                 self.failed = true;
             }
+            Ok(())
+        }
+
+        /// Prints a jsdom/happy-dom node as markup (`<button id="x">…</button>`).
+        #[inline(never)]
+        fn print_dom_node<const C: bool>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+        ) -> JsResult<()> {
+            macro_rules! pf {
+                ($s:literal) => {
+                    pfmt!($s, C)
+                };
+            }
+            macro_rules! get_swallow {
+                ($v:expr, $name:literal) => {
+                    match $v.get(self.global_this, $name) {
+                        Ok(v) => v,
+                        Err(_) => {
+                            self.global_this.clear_exception_except_termination();
+                            None
+                        }
+                    }
+                };
+            }
+
+            let node_type = get_swallow!(value, "nodeType")
+                .filter(|v| v.is_int32())
+                .map(|v| v.to_int32())
+                .unwrap_or(0);
+
+            if matches!(node_type, DOM_TEXT_NODE | DOM_COMMENT_NODE) {
+                let data = get_swallow!(value, "data");
+                let text = match data {
+                    Some(v) if v.is_string() => {
+                        bun_core::OwnedString::new(v.to_bun_string(self.global_this)?)
+                    }
+                    _ => bun_core::OwnedString::new(bun_core::String::empty()),
+                };
+                if node_type == DOM_COMMENT_NODE {
+                    let _ = write!(writer_, "{}<!--{}-->{}", pf!("<r><d>"), text, pf!("<r>"));
+                } else {
+                    let _ = write!(writer_, "{}", text);
+                }
+                return Ok(());
+            }
+
+            let (tag_utf8, is_fragment) = if node_type == DOM_FRAGMENT_NODE {
+                (
+                    bun_core::ZigStringSlice::from_utf8_never_free(b"DocumentFragment"),
+                    true,
+                )
+            } else {
+                let tag_name = get_swallow!(value, "tagName");
+                match tag_name {
+                    Some(v) if v.is_string() => {
+                        let s = v.get_zig_string(self.global_this)?;
+                        let slice = s.to_slice();
+                        let mut owned = slice.slice().to_vec();
+                        owned.make_ascii_lowercase();
+                        (bun_core::ZigStringSlice::init_owned(owned), false)
+                    }
+                    _ => (
+                        bun_core::ZigStringSlice::from_utf8_never_free(b"unknown"),
+                        false,
+                    ),
+                }
+            };
+            let tag_bytes = tag_utf8.slice();
+
+            if self.depth >= self.max_depth {
+                let _ = write!(
+                    writer_,
+                    "{}<{}{} \u{2026} {}/>{}",
+                    pf!("<r><green>"),
+                    bstr::BStr::new(tag_bytes),
+                    pf!("<r>"),
+                    pf!("<green>"),
+                    pf!("<r>"),
+                );
+                return Ok(());
+            }
+
+            let _ = writer_.write_all(pf!("<r><green>").as_bytes());
+            let _ = writer_.write_all(b"<");
+            let _ = writer_.write_all(tag_bytes);
+            let _ = writer_.write_all(pf!("<r>").as_bytes());
+
+            let mut attrs_multiline = false;
+            if !is_fragment {
+                if let Some(attrs) = get_swallow!(value, "attributes") {
+                    if attrs.is_cell() && attrs.is_object() {
+                        if let Some(len_v) = get_swallow!(attrs, "length") {
+                            if len_v.is_int32() {
+                                let n = len_v.to_int32().max(0) as u32;
+                                let mut pairs: Vec<(Vec<u8>, Vec<u8>)> =
+                                    Vec::with_capacity(n.min(64) as usize);
+                                for i in 0..n {
+                                    let Ok(attr) = attrs.get_index(self.global_this, i) else {
+                                        self.global_this.clear_exception_except_termination();
+                                        continue;
+                                    };
+                                    if !attr.is_cell() || !attr.is_object() {
+                                        continue;
+                                    }
+                                    let Some(name) = get_swallow!(attr, "name") else {
+                                        continue;
+                                    };
+                                    if !name.is_string() {
+                                        continue;
+                                    }
+                                    let name_s = name.get_zig_string(self.global_this)?;
+                                    let name_owned = name_s.to_slice().slice().to_vec();
+                                    let val = match get_swallow!(attr, "value") {
+                                        Some(v) if v.is_string() => v
+                                            .get_zig_string(self.global_this)?
+                                            .to_slice()
+                                            .slice()
+                                            .to_vec(),
+                                        _ => Vec::new(),
+                                    };
+                                    pairs.push((name_owned, val));
+                                }
+                                pairs.sort_by(|a, b| a.0.cmp(&b.0));
+                                attrs_multiline = !self.single_line && pairs.len() > 1;
+                                for (name, val) in &pairs {
+                                    if attrs_multiline {
+                                        let _ = writer_.write_all(b"\n");
+                                        let _ = write_indent_n(self.indent + 1, writer_);
+                                    } else {
+                                        let _ = writer_.write_all(b" ");
+                                    }
+                                    let _ = write!(
+                                        writer_,
+                                        "{}{}{}={}{}{}",
+                                        pf!("<blue>"),
+                                        bstr::BStr::new(name),
+                                        pf!("<r><d>"),
+                                        pf!("<r><green>"),
+                                        bun_core::fmt::quote(val),
+                                        pf!("<r>"),
+                                    );
+                                }
+                                if attrs_multiline {
+                                    let _ = writer_.write_all(b"\n");
+                                    let _ = write_indent_n(self.indent, writer_);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            let children =
+                get_swallow!(value, "childNodes").filter(|v| v.is_cell() && v.is_object());
+            let child_len = children
+                .and_then(|c| get_swallow!(c, "length"))
+                .filter(|v| v.is_int32())
+                .map(|v| v.to_int32().max(0) as u32)
+                .unwrap_or(0);
+
+            if child_len == 0 {
+                if attrs_multiline {
+                    let _ = write!(writer_, "{}/>{}", pf!("<green>"), pf!("<r>"));
+                } else {
+                    let _ = write!(writer_, "{} />{}", pf!("<green>"), pf!("<r>"));
+                }
+                return Ok(());
+            }
+
+            let _ = write!(writer_, "{}>{}", pf!("<green>"), pf!("<r>"));
+            {
+                self.indent += 1;
+                self.depth += 1;
+                let _ind = defer_decrement!(self.indent);
+                let _dep = defer_decrement!(self.depth);
+                let children = children.expect("child_len > 0 implies Some");
+                for i in 0..child_len {
+                    if !self.single_line {
+                        let _ = writer_.write_all(b"\n");
+                        let _ = write_indent_n(self.indent, writer_);
+                    }
+                    let Ok(child) = children.get_index(self.global_this, i) else {
+                        self.global_this.clear_exception_except_termination();
+                        continue;
+                    };
+                    if !child.is_cell() {
+                        continue;
+                    }
+                    let tag = Tag::get_advanced(child, self.global_this, self.tag_opts())?;
+                    self.format::<C>(tag, writer_, child, self.global_this)?;
+                }
+            }
+            if !self.single_line {
+                let _ = writer_.write_all(b"\n");
+                let _ = write_indent_n(self.indent, writer_);
+            }
+            let _ = write!(
+                writer_,
+                "{}</{}>{}",
+                pf!("<green>"),
+                bstr::BStr::new(tag_bytes),
+                pf!("<r>"),
+            );
             Ok(())
         }
 

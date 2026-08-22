@@ -268,14 +268,9 @@ impl<'a> GlobPattern<'a> {
 }
 
 impl WhyCommand {
-    fn print_usage() {
-        bun_core::prettyln!(
-            concat!("<r><b>bun why<r> <d>v", "{}", "<r>"),
-            Global::package_json_version_with_sha
-        );
-
-        bun_core::pretty!(
-            "Explain why a package is installed\n\
+    /// The usage text goes to stderr in json mode, so stdout stays machine readable.
+    fn print_usage(json_output: bool) {
+        const USAGE: &str = "Explain why a package is installed\n\
 \n\
 <b>Arguments:<r>\n\
   <blue>\\<package\\><r>     <d>The package name to explain (supports glob patterns like '@org/*')<r>\n\
@@ -290,8 +285,20 @@ impl WhyCommand {
   <d>$<r> <b><green>bun why<r> <blue>\"@types/*\"<r> <cyan>--depth<r> <blue>2<r>\n\
   <d>$<r> <b><green>bun why<r> <blue>\"*-lodash\"<r> <cyan>--top<r>\n\
   <d>$<r> <b><green>bun why<r> <blue>react<r> <cyan>--json<r>\n\
-"
+";
+        let header = format_args!(
+            concat!("<r><b>bun why<r> <d>v", "{}", "<r>\n"),
+            Global::package_json_version_with_sha
         );
+        #[allow(clippy::disallowed_methods)]
+        // the usage text contains <tag> markup that must be tag-walked
+        if json_output {
+            Output::pretty_errorln(header);
+            Output::pretty_errorln(format_args!("{}", USAGE));
+        } else {
+            Output::pretty(header);
+            Output::pretty(format_args!("{}", USAGE));
+        }
         Output::flush();
     }
 
@@ -304,13 +311,13 @@ impl WhyCommand {
         let (pm, _cwd) = package_manager::init(&mut *ctx, cli, Subcommand::Why)?;
 
         if positionals.is_empty() {
-            Self::print_usage();
+            Self::print_usage(pm.options.json_output);
             Global::exit(1);
         }
 
         if positionals[0] == b"why" {
             if positionals.len() < 2 {
-                Self::print_usage();
+                Self::print_usage(pm.options.json_output);
                 Global::exit(1);
             }
             return Self::exec_with_manager(ctx, pm, positionals[1], top_only);
@@ -325,7 +332,7 @@ impl WhyCommand {
         positionals: &[&[u8]],
     ) -> Result<(), crate::Error> {
         if positionals.len() < 2 {
-            Self::print_usage();
+            Self::print_usage(pm.options.json_output);
             Global::exit(1);
         }
 

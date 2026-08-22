@@ -756,6 +756,14 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
       expect(exitCode).toBe(0);
     });
 
+    it("prints the usage on stderr when the package argument is missing", async () => {
+      using dir = tempDir(`why-json-${i++}`, files);
+      const { stdout, stderr, exitCode } = await whyJson(String(dir));
+      expect(stdout).toBe("");
+      expect(stderr).toContain("Explain why a package is installed");
+      expect(exitCode).toBe(1);
+    });
+
     it("prints [] and reports the error on stderr when nothing matches", async () => {
       using dir = tempDir(`why-json-${i++}`, files);
       const { stdout, stderr, exitCode } = await whyJson(String(dir), "missing");

@@ -2258,7 +2258,7 @@ describe("--json", () => {
 
     const { stdout, stderr, exitCode } = await dedupe(packageDir, "--check", "--json");
     expect(parseDocument(stdout)).toEqual(rangeDuplicate());
-    expect(stdout).toMatchInlineSnapshot(`
+    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
       "{
         "removed": [
           {
@@ -2272,8 +2272,7 @@ describe("--json", () => {
         "checked": 4,
         "installed": null,
         "failed": null
-      }
-      "
+      }"
     `);
     expect(stderr).toBe("");
     expect(exitCode).toBe(1);

@@ -597,7 +597,7 @@ One object per package the text output lists, in the same order:
 
 - `name`: the package name from the lockfile (for an `npm:` alias, the name of the aliased package)
 - `version`: the resolved version, as the text output prints it after the `@`
-- `path`: the folder the package is installed in, relative to the project root, as the text output prints it after `./`
+- `path`: the folder the package is installed in, relative to the project root, always with forward slashes (the text output prints it after `./`)
 - `scripts`: the blocked lifecycle scripts, keyed by hook name in `preinstall`, `install`, `postinstall`, `preprepare`, `prepare`, `postprepare` order. Only the hooks the package defines are present.
 
 The array is `[]` when nothing is blocked. A missing lockfile is still reported on stderr with exit code `1`.

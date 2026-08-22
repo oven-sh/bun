@@ -487,13 +487,15 @@ impl List {
             "{}",
             resolution.fmt(resolution_buf, PathSep::Posix)
         );
-        let path = self
+        let mut path: Vec<u8> = self
             .folder_in_node_modules()
-            .unwrap_or_else(|| strings::without_trailing_slash(self.cwd.as_bytes()));
+            .unwrap_or_else(|| strings::without_trailing_slash(self.cwd.as_bytes()))
+            .to_vec();
+        bun_paths::resolve_path::platform_to_posix_in_place(&mut path[..]);
 
         let _ = write!(out, "{{\n    \"name\": {},", json_str(name));
         let _ = write!(out, "\n    \"version\": {},", json_str(&version));
-        let _ = write!(out, "\n    \"path\": {},", json_str(path));
+        let _ = write!(out, "\n    \"path\": {},", json_str(&path));
         out.extend_from_slice(b"\n    \"scripts\": {");
         let mut written: usize = 0;
         for (script_index, maybe_script) in self.items.iter().enumerate() {

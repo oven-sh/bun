@@ -2427,7 +2427,13 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     if opt_dry_run(ctx.manager) {
         // don't create the tarball, but run scripts if they exist
 
-        let pack_list = dry_run_pack_list(ctx, &root_dir, &mut pack_queue, &bins);
+        let pack_list = dry_run_pack_list(
+            ctx,
+            &root_dir,
+            &mut pack_queue,
+            &bins,
+            edited_package_json.len(),
+        );
 
         if !json_output {
             print_archived_files_and_packages(ctx, &pack_list);
@@ -3872,6 +3878,7 @@ fn dry_run_pack_list(
     root_dir: &Dir,
     pack_queue: &mut PackQueue,
     bins: &[BinInfo],
+    package_json_len: usize,
 ) -> PackList {
     let root_dir = Fd::from_std_dir(root_dir);
     let mut pack_list: PackList = Vec::with_capacity(pack_queue.count() + 1);
@@ -3887,11 +3894,10 @@ fn dry_run_pack_list(
             Global::crash();
         }
     };
-    let package_json_size = usize::try_from(package_json_stat.st_size).expect("int cast");
-    ctx.stats.unpacked_size += package_json_size;
+    ctx.stats.unpacked_size += package_json_len;
     pack_list.push(PackListEntry {
         subpath: Box::from(&b"package.json"[..]),
-        size: package_json_size,
+        size: package_json_len,
         mode: tar_entry_perm(package_json_stat.st_mode as bun_sys::Mode, false),
     });
 

@@ -4063,7 +4063,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           {
             name: "uses-what-bin",
             version: "1.0.0",
-            path: join("node_modules", "uses-what-bin"),
+            path: "node_modules/uses-what-bin",
             scripts: {
               install: "what-bin",
             },

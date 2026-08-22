@@ -375,7 +375,6 @@ pub mod registry {
                 'outer: {
                     if registry.password.is_empty() {
                         let mut pathname: &[u8] = url.pathname;
-                        // defer { url.pathname = pathname; url.path = pathname; } — applied below
                         let mut needs_to_check_slash = true;
                         while let Some(colon) = strings::last_index_of_char(pathname, b':') {
                             let mut segment = &pathname[colon + 1..];
@@ -1507,6 +1506,16 @@ pub struct FindResult<'a> {
     pub(crate) package: &'a PackageVersion,
 }
 
+impl FindResult<'_> {
+    /// The tarball URL the registry advertised for this version (empty when the manifest omitted it).
+    pub fn tarball_url(&self, manifest: &PackageManifest) -> Vec<u8> {
+        self.package
+            .tarball_url
+            .slice(&manifest.string_buf)
+            .to_vec()
+    }
+}
+
 impl PackageManifest {
     pub(crate) fn find_by_version(&self, version: Semver::Version) -> Option<FindResult<'_>> {
         let list = if !version.tag.has_pre() {
@@ -1523,6 +1532,23 @@ impl PackageManifest {
             version: keys[index as usize],
             package: &values[index as usize],
         })
+    }
+
+    /// Published release versions, oldest first (prereleases excluded), as sorted at serialization time.
+    pub fn release_versions(&self) -> &[Semver::Version] {
+        self.pkg.releases.keys.get(&self.versions)
+    }
+
+    /// `(tag, version)` pairs of the dist-tags.
+    pub fn dist_tags(&self) -> impl Iterator<Item = (&[u8], Semver::Version)> + '_ {
+        let versions = self.pkg.dist_tags.versions.get(&self.versions);
+        self.pkg
+            .dist_tags
+            .tags
+            .get(&self.external_strings)
+            .iter()
+            .zip(versions)
+            .map(|(t, &v)| (t.slice(&self.string_buf), v))
     }
 
     pub fn find_by_dist_tag(&self, tag: &[u8]) -> Option<FindResult<'_>> {

@@ -487,3 +487,310 @@ describe.concurrent("fetch() receive backpressure — streaming consumer shapes"
     }
   });
 });
+
+// A body stream that exists but that nothing reads: `res.body` was touched, or its reader
+// was released. Before, the first chunk delivered to such a stream switched the fetch over
+// to buffering the rest of the body in memory, with no bound, and kept the process alive
+// while it did. The transport has to stay paused instead (the bytes have nowhere to go),
+// the stream has to stay readable, and the paused body must not hold an idle process.
+
+const BIG = 16384; // 1 GiB, as in the "server stops writing" tests above
+const BODY = BIG * CHUNK;
+
+// Writes the body as fast as the socket takes it; `sent()` is how far it got. A paused
+// client stops it at the socket buffers (up to a few hundred MiB on some hosts), a client
+// that drains lets it write all of BODY.
+async function serveUntilBlocked() {
+  let sent = 0;
+  let closed = 0;
+  const payload = Buffer.alloc(CHUNK, 65);
+  const srv = createServer((_req, res) => {
+    res.on("error", () => {});
+    res.on("close", () => closed++);
+    res.flushHeaders();
+    let i = 0;
+    const push = () => {
+      while (i < BIG && !res.destroyed) {
+        i++;
+        sent += CHUNK;
+        if (!res.write(payload)) return void res.once("drain", push);
+      }
+      if (!res.destroyed) res.end();
+    };
+    push();
+  });
+  srv.listen(0);
+  await once(srv, "listening");
+  const { port } = srv.address() as import("node:net").AddressInfo;
+  return {
+    url: `http://127.0.0.1:${port}/`,
+    sent: () => sent,
+    // Resolves with `sent()` once it has not moved for 100ms.
+    async settled() {
+      let last = -1;
+      for (let stable = 0; stable < 5; ) {
+        await Bun.sleep(20);
+        stable = sent === last ? stable + 1 : 0;
+        last = sent;
+      }
+      return sent;
+    },
+    async untilClosed() {
+      while (closed === 0) await Bun.sleep(5);
+    },
+    [Symbol.asyncDispose]: () => {
+      srv.closeAllConnections();
+      return new Promise(r => srv.close(() => r(undefined)));
+    },
+  };
+}
+
+// Sends the headers and one chunk; the test writes the rest through `response`.
+async function serveByHand() {
+  let respond!: (res: import("node:http").ServerResponse) => void;
+  const response = new Promise<import("node:http").ServerResponse>(resolve => (respond = resolve));
+  const srv = createServer((_req, res) => {
+    res.on("error", () => {});
+    res.flushHeaders();
+    res.write(Buffer.alloc(CHUNK, 65));
+    respond(res);
+  });
+  srv.listen(0);
+  await once(srv, "listening");
+  const { port } = srv.address() as import("node:net").AddressInfo;
+  return {
+    url: `http://127.0.0.1:${port}/`,
+    response,
+    [Symbol.asyncDispose]: () => {
+      srv.closeAllConnections();
+      return new Promise(r => srv.close(() => r(undefined)));
+    },
+  };
+}
+
+// Sequential on purpose: each test watches one server's write progress, and a sibling
+// test draining a body on the same HTTP thread would blur that signal.
+describe("fetch() receive backpressure — body stream nothing is reading", () => {
+  const shapes: [string, (res: Response) => Promise<ReadableStream<Uint8Array>>][] = [
+    ["res.body read by nothing", async res => res.body!],
+    [
+      "one read(), then releaseLock()",
+      async res => {
+        const reader = res.body!.getReader();
+        await reader.read();
+        reader.releaseLock();
+        return res.body!;
+      },
+    ],
+  ];
+
+  for (const [name, shape] of shapes) {
+    test(`${name}: the server blocks, and a later reader resumes the body`, async () => {
+      await using server = await serveUntilBlocked();
+      const body = await shape(await fetch(server.url));
+
+      expect(await server.settled()).toBeLessThan(BODY);
+
+      const reader = body.getReader();
+      let got = 0;
+      while (got < 16 * CHUNK) got += (await reader.read()).value!.byteLength;
+
+      await reader.cancel();
+      await server.untilClosed();
+    }, 60_000);
+  }
+
+  // The other half of the rule: a small body nobody reads is still taken off the socket, so
+  // the keep-alive connection goes back to the pool instead of staying pinned under it.
+  test("small unread bodies complete and their connection is reused", async () => {
+    // The body trails the headers in several packets, so it reaches a stream nothing reads
+    // chunk by chunk; the client has to keep taking it (it is under the high-water mark) for
+    // the response to finish and the connection to go back to the pool. A client that parks
+    // on the first unread chunk needs a new connection for every request here.
+    const PART = 32 * 1024;
+    const PARTS = 4;
+    let connections = 0;
+    let finished = Promise.resolve();
+    const srv = createServer(async (_req, res) => {
+      finished = new Promise(r => res.on("finish", () => r()));
+      res.setHeader("content-length", String(PART * PARTS));
+      res.flushHeaders();
+      for (let i = 0; i < PARTS; i++) {
+        await new Promise(r => setTimeout(r, 2));
+        res.write(Buffer.alloc(PART, 65));
+      }
+      res.end();
+    }).on("connection", () => connections++);
+    srv.listen(0);
+    await once(srv, "listening");
+    try {
+      const url = `http://127.0.0.1:${(srv.address() as import("node:net").AddressInfo).port}/`;
+      const N = 10;
+      for (let i = 0; i < N; i++) {
+        const res = await fetch(url);
+        expect(res.status).toBe(200);
+        void res.body;
+        await finished;
+      }
+      // Not exactly 1: a request can start before the previous body's last packet was taken.
+      expect(connections).toBeLessThan(N / 2);
+    } finally {
+      srv.closeAllConnections();
+      await new Promise(r => srv.close(() => r(undefined)));
+    }
+  });
+
+  // The other ways back to a parked body: a buffered read and a native sink both have to
+  // pick the transport up again and see the whole body.
+  for (const [name, drain] of [
+    ["res.text()", (res: Response) => res.text().then(t => t.length)],
+    [
+      "HTMLRewriter.transform(res)",
+      (res: Response) =>
+        new HTMLRewriter()
+          .on("x", {})
+          .transform(res)
+          .arrayBuffer()
+          .then(b => b.byteLength),
+    ],
+  ] as const) {
+    test(`res.body read by nothing, then ${name} drains the whole body`, async () => {
+      await using server = await serve("h1");
+      const res = await fetch(server.url);
+      void res.body;
+      // Let the client park (16 MiB body, 256 KiB mark): wait until bytes stop moving. How far
+      // the server got is not asserted; loopback buffers on some hosts can take the whole body.
+      let last = -1;
+      for (let stable = 0; stable < 3; ) {
+        await Bun.sleep(20);
+        stable = server.sent() === last ? stable + 1 : 0;
+        last = server.sent();
+      }
+      expect(await drain(res)).toBe(TOTAL);
+    });
+  }
+});
+
+describe.concurrent("fetch() receive backpressure — a body nothing waits for does not hold the process", () => {
+  // The client keeps the unread body reachable and has nothing else to do: it has to exit
+  // on its own. Before, it stayed alive draining the body into memory, or, when the pause
+  // won the race at start, stayed alive holding the paused body.
+  const idleClients = [
+    ["the Response, body touched", /* js */ `globalThis.keep = res; void res.body;`],
+    [
+      "the stream, reader released",
+      /* js */ `const reader = res.body.getReader(); await reader.read(); reader.releaseLock(); globalThis.keep = res.body;`,
+    ],
+    ["an idle reader", /* js */ `const reader = res.body.getReader(); await reader.read(); globalThis.keep = reader;`],
+  ] as const;
+
+  // If the process is still around after 6 s, say what it is holding (an unref'd timer, so it
+  // cannot itself be the reason), then how much a late reader finds buffered and whether more
+  // follows. Only ever printed by a failing run.
+  const diagnose = /* js */ `
+    setTimeout(async () => {
+      const { getEventLoopStats } = require("bun:internal-for-testing");
+      const stats = getEventLoopStats();
+      const reader = (globalThis.keep instanceof Response ? globalThis.keep.body : globalThis.keep instanceof ReadableStream ? globalThis.keep : null)?.getReader() ?? globalThis.keep;
+      const reads = [];
+      for (let i = 0; i < 6; i++) {
+        const r = await Promise.race([reader.read(), Bun.sleep(300).then(() => null)]);
+        reads.push(r === null ? "pending" : r.done ? "done" : r.value.byteLength);
+        if (r === null) break;
+      }
+      console.error("still alive: " + JSON.stringify({ stats, reads, after: getEventLoopStats() }));
+    }, 6000).unref();
+  `;
+
+  for (const [holding, script] of idleClients) {
+    test(`a process holding ${holding} exits on its own`, async () => {
+      await using server = await serveUntilBlocked();
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", `const res = await fetch(${JSON.stringify(server.url)}); ${script} ${diagnose}`],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const stderr = proc.stderr.text();
+      const exited = proc.exited.then(exitCode => ({ exitCode }));
+      const deadline = performance.now() + 10_000;
+      let outcome: { exitCode: number } | { stillAlive: true; serverSentKiB: number } | undefined;
+      while (outcome === undefined) {
+        outcome = await Promise.race([exited, Bun.sleep(20).then(() => undefined)]);
+        // Took the whole body: it is draining. Took little and is still around: it is
+        // holding the paused body. Neither exited.
+        if (outcome === undefined && (server.sent() >= BODY || performance.now() >= deadline)) {
+          outcome = { stillAlive: true, serverSentKiB: server.sent() >> 10 };
+          proc.kill();
+        }
+      }
+      expect({ outcome, stderr: await stderr }).toEqual({ outcome: { exitCode: 0 }, stderr: "" });
+    }, 20_000);
+  }
+
+  // The other half of the rule: a consumer that does wait for bytes keeps the process
+  // alive, including one that picks the body up again after a release (the chunk that
+  // arrives while the body is released is what lets go of the loop).
+  const waitingClients = [
+    [
+      "read() pending on a reader",
+      /* js */ `
+        const reader = res.body.getReader();
+        let total = (await reader.read()).value.byteLength;
+        console.log("waiting");
+        for (let r; !(r = await reader.read()).done; ) total += r.value.byteLength;
+        console.log("total " + total);
+      `,
+      2,
+    ],
+    [
+      "read() pending on a reader acquired after a release",
+      /* js */ `
+        let reader = res.body.getReader();
+        let total = (await reader.read()).value.byteLength;
+        reader.releaseLock();
+        console.log("released");
+        // Lets the chunk the test writes on "released" arrive while nothing reads the body.
+        // A slow machine only narrows what this exercises; the assertions do not depend on it.
+        await Bun.sleep(50);
+        reader = res.body.getReader();
+        const next = reader.read();
+        console.log("waiting");
+        for (let r = await next; !r.done; r = await reader.read()) total += r.value.byteLength;
+        console.log("total " + total);
+      `,
+      3,
+    ],
+  ] as const;
+
+  for (const [name, script, chunks] of waitingClients) {
+    test(`a process with a ${name} stays alive until the body ends`, async () => {
+      await using server = await serveByHand();
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", `const res = await fetch(${JSON.stringify(server.url)}); ${script}`],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const stderr = proc.stderr.text();
+      const upstream = await server.response;
+      const lines: string[] = [];
+      let pending = "";
+      for await (const text of proc.stdout.pipeThrough(new TextDecoderStream())) {
+        pending += text;
+        for (let nl; (nl = pending.indexOf("\n")) !== -1; ) {
+          const line = pending.slice(0, nl);
+          pending = pending.slice(nl + 1);
+          lines.push(line);
+          if (line === "released") upstream.write(Buffer.alloc(CHUNK, 66));
+          if (line === "waiting") upstream.end(Buffer.alloc(CHUNK, 67));
+        }
+      }
+      expect({ lines: lines.slice(-2), stderr: await stderr, exitCode: await proc.exited }).toEqual({
+        lines: ["waiting", `total ${chunks * CHUNK}`],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  }
+});

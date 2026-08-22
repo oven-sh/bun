@@ -138,15 +138,6 @@ pub struct CommonJSNamedExport {
     pub needs_decl: bool,
 }
 
-impl Default for CommonJSNamedExport {
-    fn default() -> Self {
-        Self {
-            loc_ref: LocRef::default(),
-            needs_decl: true,
-        }
-    }
-}
-
 // `Ast` is held in arena-allocated structures whose `Drop` never runs (the
 // `BabyList` pattern — bulk-freed on `ASTMemoryAllocator` / `store_ast_alloc_heap`
 // reset). Any `Vec`/`Box` field that defaults to the global allocator therefore

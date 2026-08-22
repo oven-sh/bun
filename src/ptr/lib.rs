@@ -22,6 +22,8 @@
 // `cow_slice::CowSlice<u8>`.
 #[path = "CowSlice.rs"]
 pub mod cow_slice;
+mod js_cell;
+pub use js_cell::JsCell;
 
 // FFI-crossing externally-ref-counted pointer (e.g., WTFStringImpl). Canonical
 // impl moved down to `bun_core::external_shared` (cycle-break for the

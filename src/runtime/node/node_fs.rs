@@ -2901,14 +2901,6 @@ pub mod args {
         pub path: PathLike,
         pub(crate) mode: Mode,
     }
-    impl Default for Chmod {
-        fn default() -> Self {
-            Self {
-                path: PathLike::default(),
-                mode: 0x777,
-            }
-        }
-    }
     fs_args_path_forwarders!(Chmod; path);
     impl Chmod {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Chmod> {
@@ -2935,14 +2927,6 @@ pub mod args {
     pub struct FChmod {
         pub(crate) fd: FD,
         pub(crate) mode: Mode,
-    }
-    impl Default for FChmod {
-        fn default() -> Self {
-            Self {
-                fd: FD::INVALID,
-                mode: 0x777,
-            }
-        }
     }
     impl FChmod {
         pub(crate) fn to_thread_safe(&self) {}
@@ -2996,15 +2980,6 @@ pub mod args {
         pub path: PathLike,
         pub(crate) big_int: bool,
         pub(crate) throw_if_no_entry: bool,
-    }
-    impl Default for Stat {
-        fn default() -> Self {
-            Self {
-                path: PathLike::default(),
-                big_int: false,
-                throw_if_no_entry: true,
-            }
-        }
     }
     fs_args_path_forwarders!(Stat; path);
     impl Stat {
@@ -3263,17 +3238,6 @@ pub mod args {
         pub(crate) recursive: bool,
         pub(crate) retry_delay: c_uint,
     }
-    impl Default for RmDir {
-        fn default() -> Self {
-            Self {
-                path: PathLike::default(),
-                force: false,
-                max_retries: 0,
-                recursive: false,
-                retry_delay: 100,
-            }
-        }
-    }
     fs_args_path_forwarders!(RmDir; path);
     impl RmDir {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<RmDir> {
@@ -3418,18 +3382,6 @@ pub mod args {
         pub(crate) prefix: PathLike,
         pub(crate) encoding: Encoding,
     }
-    impl Default for MkdirTemp {
-        fn default() -> Self {
-            Self {
-                prefix: PathLike::Buffer(Buffer {
-                    buffer: bun_jsc::ArrayBuffer::EMPTY,
-                    owns_buffer: false,
-                    pinned: false,
-                }),
-                encoding: Encoding::Utf8,
-            }
-        }
-    }
     fs_args_path_forwarders!(MkdirTemp; prefix);
     impl MkdirTemp {
         pub fn from_js(
@@ -3518,15 +3470,6 @@ pub mod args {
         pub path: PathLike,
         pub(crate) flags: FileSystemFlags,
         pub(crate) mode: Mode,
-    }
-    impl Default for Open {
-        fn default() -> Self {
-            Self {
-                path: PathLike::default(),
-                flags: FileSystemFlags::R,
-                mode: DEFAULT_PERMISSION,
-            }
-        }
     }
     fs_args_path_forwarders!(Open; path);
     impl Open {
@@ -4432,11 +4375,6 @@ impl StringOrUndefined {
 
 /// For use in `Return`'s definitions to act as `void` while returning `null` to JavaScript
 pub struct Null;
-impl Null {
-    pub fn to_js(&self, _: &JSGlobalObject) -> JSValue {
-        JSValue::NULL
-    }
-}
 
 pub mod ret {
     use super::*;
@@ -6437,6 +6375,11 @@ impl NodeFS {
         Ok(())
     }
 
+    /// Gone or not enterable since the parent listed it. Reading a gone directory gives ENOENT too.
+    fn readdir_skips_subdir(errno: E) -> bool {
+        matches!(errno, E::ENOENT | E::ENOTDIR | E::EPERM)
+    }
+
     pub(crate) fn readdir_with_entries_recursive_async<T: ReaddirEntry>(
         buf: &mut PathBuffer,
         async_task: &mut AsyncReaddirRecursiveTask,
@@ -6478,13 +6421,8 @@ impl NodeFS {
         let fd = match open_res {
             Err(err) => {
                 if !is_root {
-                    match err.get_errno() {
-                        // These things can happen and there's nothing we can do about it.
-                        //
-                        // This is different than what Node does, at the time of writing.
-                        // Node doesn't gracefully handle errors like these. It fails the entire operation.
-                        E::ENOENT | E::ENOTDIR | E::EPERM => return Ok(()),
-                        _ => {}
+                    if Self::readdir_skips_subdir(err.get_errno()) {
+                        return Ok(());
                     }
                     if root_basename.len() + 1 + basename.as_bytes().len() + 1
                         < paths::MAX_PATH_BYTES
@@ -6517,6 +6455,9 @@ impl NodeFS {
 
         loop {
             let current = match iterator.next() {
+                Ok(Some(ent)) => ent,
+                Ok(None) => break,
+                Err(err) if !is_root && Self::readdir_skips_subdir(err.get_errno()) => break,
                 Err(err) => {
                     dirent_path_prev.deref();
                     if !is_root
@@ -6531,8 +6472,6 @@ impl NodeFS {
                     }
                     return Err(err.with_path(root_basename));
                 }
-                Ok(None) => break,
-                Ok(Some(ent)) => ent,
             };
             let utf8_name = current.name.slice();
 
@@ -6685,11 +6624,7 @@ impl NodeFS {
                         return Err(err.with_path(args.path.slice()));
                     }
                     match err.get_errno() {
-                        // These things can happen and there's nothing we can do about it.
-                        //
-                        // This is different than what Node does, at the time of writing.
-                        // Node doesn't gracefully handle errors like these. It fails the entire operation.
-                        E::ENOENT | E::ENOTDIR | E::EPERM => continue,
+                        errno if Self::readdir_skips_subdir(errno) => continue,
                         _ => {
                             // TODO: propagate file path (removed previously because it leaked the path)
                             return Err(err);
@@ -6712,12 +6647,13 @@ impl NodeFS {
 
             loop {
                 let current = match iterator.next() {
+                    Ok(Some(ent)) => ent,
+                    Ok(None) => break,
+                    Err(err) if !is_root && Self::readdir_skips_subdir(err.get_errno()) => break,
                     Err(err) => {
                         dirent_path_prev.deref();
                         return Err(err.with_path(args.path.slice()));
                     }
-                    Ok(None) => break,
-                    Ok(Some(ent)) => ent,
                 };
                 let utf8_name = current.name.slice();
 

@@ -53,6 +53,33 @@ fn js_loop_ctx() -> bun_io::EventLoopCtx {
     bun_io::posix_event_loop::get_vm_ctx(bun_io::posix_event_loop::AllocatorType::Js)
 }
 
+/// The error behind a close that the event loop initiated: the `recv()`
+/// failure or `SO_ERROR` that uSockets closed the socket with (`> 2`, see
+/// `on_close`). uSockets reports it in the platform's own numbering: an errno
+/// on POSIX, a WSA code (`WSAECONNRESET` = 10054) on Windows. `sys::Error`
+/// stores `SystemErrno` discriminants, so the WSA code has to be mapped first
+/// or the error reaches JS with no `code` at all.
+fn read_error_from_close_code(code: c_int) -> sys::Error {
+    #[cfg(not(windows))]
+    {
+        sys::Error::from_code_int(code, sys::Tag::read)
+    }
+    #[cfg(windows)]
+    {
+        // Winsock reports a reset as WSAECONNRESET or, once the local stack
+        // has torn the connection down, WSAECONNABORTED. libuv reports both
+        // as ECONNRESET on the read path (uv__process_tcp_read_req), so Node
+        // sees one code on every platform; same here. A code the table does
+        // not name still closed the connection, so it is reported the same way
+        // rather than as a code-less error.
+        let errno = match sys::SystemErrno::init(code.unsigned_abs()) {
+            Some(errno) if errno != sys::SystemErrno::ECONNABORTED => errno,
+            _ => sys::SystemErrno::ECONNRESET,
+        };
+        sys::Error::new(errno, sys::Tag::read)
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports
 // ──────────────────────────────────────────────────────────────────────────
@@ -2109,18 +2136,16 @@ impl<const SSL: bool> NewSocket<SSL> {
         let mut js_error: JSValue = JSValue::UNDEFINED;
         // `err` is overloaded: when WE closed the socket it's a libus
         // CloseCode enum (0=clean, 1=failure/RST, 2=fast-shutdown); when the
-        // close was driven by a recv() failure (loop.c:664) or a poll error
-        // (loop.c's EPOLLERR/EV_ERROR branch, which reports SO_ERROR) it's the
-        // actual errno. Neither producer can yield EPERM(1)/ENOENT(2) — recv
+        // close was driven by a recv() failure or a poll error (loop.c's
+        // EPOLLERR/EV_ERROR branch, which reports SO_ERROR) it's the actual
+        // error code. Neither producer can yield EPERM(1)/ENOENT(2) — recv
         // never returns them and the poll-error branch clamps them away — so
-        // values >2 are real read errnos and 0/1/2 are self-initiated closes
+        // values >2 are real read errors and 0/1/2 are self-initiated closes
         // that must not surface as a JS read error (matching Node's
         // onStreamRead, which only sees errors that came from uv_read_cb).
         if err > 2 {
-            js_error = <sys::Error as jsc::SysErrorJsc>::to_js(
-                &sys::Error::from_code_int(err, sys::Tag::read),
-                &global,
-            );
+            js_error =
+                <sys::Error as jsc::SysErrorJsc>::to_js(&read_error_from_close_code(err), &global);
         }
 
         if let Err(e) = callback.call(&global, this_value, &[this_value, js_error]) {
@@ -3139,8 +3164,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         // detach + unref immediately below, orphaning the `us_socket_t`). NOT `.failure`:
         // that arms SO_LINGER{1,0} → RST and drops any data still in the kernel send
         // buffer, which `destroy()` after `write()` must not do. The SSL layer may
-        // briefly defer this close behind its own ciphertext write spill
-        // (`ssl_close_after_spill`); that waits only on our fd, not the peer.
+        // defer this close behind its own ciphertext write spill
+        // (`ssl_close_after_spill`) until the kernel takes the spill or the peer's
+        // FIN arrives, with no timeout; a peer that stopped reading holds it open.
         socket.close(uws::CloseCode::FastShutdown);
         this.socket.set(SocketHandler::<SSL>::DETACHED);
         let _ = global;
@@ -4219,41 +4245,41 @@ impl bun_event_loop::Taskable for DuplexUpgradeContext {
     /// free the context.
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract; the single queue entry for `this`.
-        unsafe {
-            (*this).queued = false;
-            if let Some(tls) = (*this).tls.take() {
-                let socket = Self::duplex_socket(this);
-                // `Err` is left pending for the release dispatcher's fold.
-                let _ = TLSSocket::on_close(tls.into_this_ptr(), socket, 0, None);
-            }
-            Self::deinit(this);
+        let ctx = unsafe { bun_ptr::ThisPtr::new(this) };
+        ctx.queued.set(false);
+        if let Some(tls) = ctx.tls.replace(None) {
+            let socket = ctx.duplex_socket();
+            // `Err` is left pending for the release dispatcher's fold.
+            let _ = TLSSocket::on_close(tls.into_this_ptr(), socket, 0, None);
         }
+        // SAFETY: fn contract; nothing else frees the context and no borrow of it is live.
+        unsafe { Self::deinit(this) };
     }
 }
 
 pub(crate) struct DuplexUpgradeContext {
     pub upgrade: UpgradedDuplex,
     // We only us a tls and not a raw socket when upgrading a Duplex, Duplex dont support socketpairs
-    pub tls: Option<IntrusiveRc<TLSSocket>>,
+    pub tls: JsCell<Option<IntrusiveRc<TLSSocket>>>,
     // task used to deinit the context in the next tick, vm is used to enqueue the task
     /// JSC_BORROW: process-lifetime per-thread VM (immortal). Stored as
     /// `&'static` so [`enqueue_self_task`](Self::enqueue_self_task) routes
     /// through the safe `event_loop_mut()` accessor instead of a raw deref.
     pub vm: &'static VirtualMachine,
-    pub(in crate::socket) task_event: EventState,
+    pub(in crate::socket) task_event: Cell<EventState>,
     /// A `task_event` hop is in the VM's queue. The context is enqueued by
     /// pointer, so at most one entry may exist: a second request while queued
     /// (the stop phase closing a duplex whose StartTLS has not run) only
     /// updates `task_event`, which the pending entry reads when it runs.
-    queued: bool,
+    queued: Cell<bool>,
     /// Config to build a fresh `SSL_CTX` from (legacy `{ca,cert,key}` callers).
     /// Mutually exclusive with `owned_ctx` — `runEvent` prefers `owned_ctx`.
-    pub ssl_config: Option<SSLConfig>,
+    pub ssl_config: JsCell<Option<SSLConfig>>,
     /// One ref on a prebuilt `SSL_CTX` (from `opts.tls.secureContext` — the
     /// memoised `tls.createSecureContext` path). Adopted by `start_tls_with_ctx`
     /// on success, freed in `deinit` if Close races ahead of StartTLS.
-    pub owned_ctx: Option<*mut SSL_CTX>,
-    pub is_open: bool,
+    pub owned_ctx: Cell<Option<*mut SSL_CTX>>,
+    pub is_open: Cell<bool>,
     /// Server-side `requestCert`/`rejectUnauthorized`, applied to the `SSL*`
     /// when `StartTLS` builds it. Unused for client upgrades.
     pub server_verify: crate::socket::upgraded_duplex::ServerVerify,
@@ -4269,166 +4295,123 @@ pub(super) enum EventState {
 
 impl DuplexUpgradeContext {
     #[inline(always)]
-    // The `on_*` callbacks take `*mut Self`, not `&mut self`: they are
+    // The `on_*` callbacks take `ThisPtr<Self>`, not `&mut self`: they are
     // dispatched from `UpgradedDuplex`'s engine (`start_tls` fires `on_open`
-    // synchronously), and `start_tls`'s `&(*this).upgrade` receiver is live
-    // across that call. A `&mut DuplexUpgradeContext` here would cover the
-    // `upgrade` field and pop that protected borrow (Stacked Borrows); scoped
-    // raw writes touch only the disjoint `is_open`/`tls` fields instead.
-    //
-    // # Safety (shared by all `on_*` / `duplex_socket`)
-    // `this` is the live heap `DuplexUpgradeContext` registered as the
-    // engine's `ctx`; each field access is scoped to its own statement.
-    unsafe fn duplex_socket(this: *mut Self) -> SocketHandler<true> {
-        SocketHandler::<true>::from_any(uws::InternalSocket::UpgradedDuplex(
-            // SAFETY: fn contract; a raw field projection, no borrow of `*this`.
-            unsafe { (&raw mut (*this).upgrade).cast() },
-        ))
+    // synchronously) while `run_event`'s borrow of `upgrade` is live across
+    // that call. Mutable state lives in `Cell`/`JsCell` fields so every
+    // access is a short shared borrow.
+    fn duplex_socket(&self) -> SocketHandler<true> {
+        from_duplex::<true>(&self.upgrade)
     }
 
     #[inline]
-    unsafe fn tls_this_ptr(this: *mut Self) -> Option<bun_ptr::ThisPtr<TLSSocket>> {
-        // SAFETY: fn contract; borrow ends at `;`.
-        unsafe { (*this).tls.as_ref().map(|t| t.this_ptr()) }
+    fn tls_this_ptr(&self) -> Option<bun_ptr::ThisPtr<TLSSocket>> {
+        self.tls.get().as_ref().map(|t| t.this_ptr())
     }
 
-    unsafe fn on_open(this: *mut Self) {
-        // SAFETY: fn contract — `this` is the live ctx; all accesses are
-        // scoped raw place reads/writes to disjoint fields.
-        unsafe {
-            (*this).is_open = true;
-            let socket = Self::duplex_socket(this);
-            if let Some(tls) = Self::tls_this_ptr(this) {
-                crate::dispatch::fold(TLSSocket::on_open(tls, socket));
-            }
+    fn on_open(this: bun_ptr::ThisPtr<Self>) {
+        this.is_open.set(true);
+        let socket = this.duplex_socket();
+        if let Some(tls) = this.tls_this_ptr() {
+            crate::dispatch::fold(TLSSocket::on_open(tls, socket));
         }
     }
 
-    unsafe fn on_data(this: *mut Self, decoded_data: &[u8]) {
-        // SAFETY: fn contract — `this` is the live ctx; all accesses are
-        // scoped raw place reads/writes to disjoint fields.
-        unsafe {
-            let socket = Self::duplex_socket(this);
-            if let Some(tls) = Self::tls_this_ptr(this) {
-                crate::dispatch::fold(TLSSocket::on_data(tls, socket, decoded_data));
-            }
+    fn on_data(this: bun_ptr::ThisPtr<Self>, decoded_data: &[u8]) {
+        let socket = this.duplex_socket();
+        if let Some(tls) = this.tls_this_ptr() {
+            crate::dispatch::fold(TLSSocket::on_data(tls, socket, decoded_data));
         }
     }
 
-    unsafe fn on_session(this: *mut Self, session: &[u8]) {
-        // SAFETY: fn contract — `this` is the live ctx; all accesses are
-        // scoped raw place reads/writes to disjoint fields.
-        if let Some(tls) = unsafe { Self::tls_this_ptr(this) } {
+    fn on_session(this: bun_ptr::ThisPtr<Self>, session: &[u8]) {
+        if let Some(tls) = this.tls_this_ptr() {
             crate::dispatch::fold(TLSSocket::on_session(tls, session));
         }
     }
 
-    unsafe fn on_keylog(this: *mut Self, line: &[u8]) {
-        // SAFETY: fn contract — `this` is the live ctx; all accesses are
-        // scoped raw place reads/writes to disjoint fields.
-        if let Some(tls) = unsafe { Self::tls_this_ptr(this) } {
+    fn on_keylog(this: bun_ptr::ThisPtr<Self>, line: &[u8]) {
+        if let Some(tls) = this.tls_this_ptr() {
             crate::dispatch::fold(TLSSocket::on_keylog(tls, line));
         }
     }
 
-    unsafe fn on_handshake(this: *mut Self, success: bool, ssl_error: uws::us_bun_verify_error_t) {
-        // SAFETY: fn contract — `this` is the live ctx; all accesses are
-        // scoped raw place reads/writes to disjoint fields.
-        unsafe {
-            let socket = Self::duplex_socket(this);
-            if let Some(tls) = Self::tls_this_ptr(this) {
-                crate::dispatch::fold(TLSSocket::on_handshake(
-                    tls,
-                    socket,
-                    success as i32,
-                    ssl_error,
-                ));
-            }
+    fn on_handshake(
+        this: bun_ptr::ThisPtr<Self>,
+        success: bool,
+        ssl_error: uws::us_bun_verify_error_t,
+    ) {
+        let socket = this.duplex_socket();
+        if let Some(tls) = this.tls_this_ptr() {
+            crate::dispatch::fold(TLSSocket::on_handshake(
+                tls,
+                socket,
+                success as i32,
+                ssl_error,
+            ));
         }
     }
 
-    unsafe fn on_end(this: *mut Self) {
-        // SAFETY: fn contract — `this` is the live ctx; all accesses are
-        // scoped raw place reads/writes to disjoint fields.
-        unsafe {
-            let socket = Self::duplex_socket(this);
-            if let Some(tls) = Self::tls_this_ptr(this) {
-                crate::dispatch::fold(TLSSocket::on_end(tls, socket));
-            }
+    fn on_end(this: bun_ptr::ThisPtr<Self>) {
+        let socket = this.duplex_socket();
+        if let Some(tls) = this.tls_this_ptr() {
+            crate::dispatch::fold(TLSSocket::on_end(tls, socket));
         }
     }
 
-    unsafe fn on_writable(this: *mut Self) {
-        // SAFETY: fn contract — `this` is the live ctx; all accesses are
-        // scoped raw place reads/writes to disjoint fields.
-        unsafe {
-            let socket = Self::duplex_socket(this);
-            if let Some(tls) = Self::tls_this_ptr(this) {
-                crate::dispatch::fold(TLSSocket::on_writable(tls, socket));
-            }
+    fn on_writable(this: bun_ptr::ThisPtr<Self>) {
+        let socket = this.duplex_socket();
+        if let Some(tls) = this.tls_this_ptr() {
+            crate::dispatch::fold(TLSSocket::on_writable(tls, socket));
         }
     }
 
-    unsafe fn on_error(this: *mut Self, err_value: JSValue) {
-        // SAFETY: fn contract; borrow ends at `;`.
-        if unsafe { (*this).is_open } {
-            // SAFETY: fn contract; `handle_error(&self)` takes `this_ptr` copied
-            // out, so no borrow of `*this` spans the JS call.
-            if let Some(tls) = unsafe { Self::tls_this_ptr(this) } {
+    fn on_error(this: bun_ptr::ThisPtr<Self>, err_value: JSValue) {
+        if this.is_open.get() {
+            if let Some(tls) = this.tls_this_ptr() {
                 crate::dispatch::fold(tls.handle_error(err_value));
             }
-        } else {
-            // SAFETY: fn contract; take the tls out (disjoint field).
-            if let Some(tls) = unsafe { (*this).tls.take() } {
-                // Pre-open error (e.g. the duplex emitted non-Buffer data
-                // before the queued `.StartTLS` task ran). `handle_connect_error`
-                // → `mark_inactive` releases `tls.handlers`; null `tls` so the
-                // still-queued `.StartTLS` → `onOpen` — and any further
-                // duplex events — skip the TLSSocket instead of hitting
-                // `has_handlers() == false` in `onOpen`.
-                //
-                // Refcount: `tls.socket` is `InternalSocket::UpgradedDuplex`
-                // here (assigned in `js_upgrade_duplex_to_tls` *before*
-                // `start_tls()` enqueues anything and before any duplex
-                // callback can dispatch), so `handle_connect_error`'s
-                // `needs_deref = !is_detached()` is `true` and it consumes
-                // the owner's +1 we hold. Do NOT let `IntrusiveRc::Drop`
-                // fire on top of that (over-deref → UAF on the JS wrapper's
-                // pointee).
-                //
-                // Neuter the JS listener thunks now, while the wrapper is still
-                // strongly held, so the later `StartTLS` → `deinit` → `Drop`
-                // teardown (after `handle_connect_error` downgrades it) is a
-                // no-op on already-cleared shadows.
-                // SAFETY: fn contract; `teardown(&self)` on the disjoint
-                // `upgrade` field, borrow ends at `;`.
-                unsafe { (*this).upgrade.teardown() };
-                let p = tls.into_this_ptr();
-                crate::dispatch::fold(TLSSocket::handle_connect_error(
-                    p,
-                    sys::SystemErrno::ECONNREFUSED as c_int,
-                    0,
-                ));
-            }
+        } else if let Some(tls) = this.tls.replace(None) {
+            // Pre-open error (e.g. the duplex emitted non-Buffer data
+            // before the queued `.StartTLS` task ran). `handle_connect_error`
+            // → `mark_inactive` releases `tls.handlers`; null `tls` so the
+            // still-queued `.StartTLS` → `onOpen` — and any further
+            // duplex events — skip the TLSSocket instead of hitting
+            // `has_handlers() == false` in `onOpen`.
+            //
+            // Refcount: `tls.socket` is `InternalSocket::UpgradedDuplex`
+            // here (assigned in `js_upgrade_duplex_to_tls` *before*
+            // `start_tls()` enqueues anything and before any duplex
+            // callback can dispatch), so `handle_connect_error`'s
+            // `needs_deref = !is_detached()` is `true` and it consumes
+            // the owner's +1 we hold. Do NOT let `IntrusiveRc::Drop`
+            // fire on top of that (over-deref → UAF on the JS wrapper's
+            // pointee).
+            //
+            // Neuter the JS listener thunks now, while the wrapper is still
+            // strongly held, so the later `StartTLS` → `deinit` → `Drop`
+            // teardown (after `handle_connect_error` downgrades it) is a
+            // no-op on already-cleared shadows.
+            this.upgrade.teardown();
+            let p = tls.into_this_ptr();
+            crate::dispatch::fold(TLSSocket::handle_connect_error(
+                p,
+                sys::SystemErrno::ECONNREFUSED as c_int,
+                0,
+            ));
         }
     }
 
-    unsafe fn on_timeout(this: *mut Self) {
-        // SAFETY: fn contract — `this` is the live ctx; all accesses are
-        // scoped raw place reads/writes to disjoint fields.
-        unsafe {
-            let socket = Self::duplex_socket(this);
-            if let Some(tls) = Self::tls_this_ptr(this) {
-                crate::dispatch::fold(TLSSocket::on_timeout(tls, socket));
-            }
+    fn on_timeout(this: bun_ptr::ThisPtr<Self>) {
+        let socket = this.duplex_socket();
+        if let Some(tls) = this.tls_this_ptr() {
+            crate::dispatch::fold(TLSSocket::on_timeout(tls, socket));
         }
     }
 
-    unsafe fn on_close(this: *mut Self) {
-        // SAFETY: fn contract; raw field projection, no borrow of `*this`.
-        let socket = unsafe { Self::duplex_socket(this) };
-        // SAFETY: fn contract; take the tls out (disjoint field).
-        if let Some(tls) = unsafe { (*this).tls.take() } {
+    fn on_close(this: bun_ptr::ThisPtr<Self>) {
+        let socket = this.duplex_socket();
+        if let Some(tls) = this.tls.replace(None) {
             // `TLSSocket::on_close` consumes the +1 we hold (its scope-exit deref
             // is the ext-slot/owner pin). Null our pointer first so the
             // `deinit_in_next_tick` → `deinit` path doesn't deref it a second
@@ -4442,20 +4425,14 @@ impl DuplexUpgradeContext {
             crate::dispatch::fold(TLSSocket::on_close(p, socket, 0, None));
         }
 
-        // SAFETY: fn contract; may enqueue this ctx for deinit.
-        unsafe { Self::deinit_in_next_tick(this) };
+        Self::deinit_in_next_tick(this);
     }
 
-    /// # Safety
-    /// `this` must be the live heap allocation produced in
-    /// `js_upgrade_duplex_to_tls`. May free `this` (via [`Self::deinit`]);
-    /// callers must not hold a `&`/`&mut Self` across the call — pass the raw
-    /// pointer directly so no Stacked Borrows protector spans the dealloc.
-    pub(crate) unsafe fn run_event(this: *mut Self) {
-        // SAFETY: `this` is live; disjoint field write.
-        unsafe { (*this).queued = false };
-        // SAFETY: `this` is live; copy of a `Copy` field.
-        match unsafe { (*this).task_event } {
+    /// Takes `ThisPtr<Self>` because it may free `this` (via
+    /// [`Self::deinit`]); nothing touches `this` after that call.
+    pub(crate) fn run_event(this: bun_ptr::ThisPtr<Self>) {
+        this.queued.set(false);
+        match this.task_event.get() {
             EventState::StartTLS => {
                 // A pre-open error (onError's `!is_open` branch) may have
                 // already fired the connect-error callback, freed
@@ -4466,43 +4443,35 @@ impl DuplexUpgradeContext {
                 // created — so tear everything down here instead of
                 // spinning up a wrapper that would dispatch `onOpen` into
                 // the dead socket.
-                //
-                // SAFETY: `this` is live; short-lived `&` for the null-check.
-                if unsafe { (*this).tls.is_none() } {
-                    // SAFETY: per fn contract; no `&Self` live across this.
-                    unsafe { Self::deinit(this) };
+                if this.tls.get().is_none() {
+                    // SAFETY: `this` is the task's live context; no borrow of `*this` is live.
+                    unsafe { Self::deinit(this.as_ptr()) };
                     return;
                 }
-                // SAFETY: `this` is live. Each access is a scoped raw place
-                // expression, and the `on_*` callbacks the re-entrant
-                // `start_tls*` calls dispatch are themselves `*mut Self` with
-                // scoped disjoint-field writes — so no `&`/`&mut Self` (nor a
-                // `&(*this).upgrade` receiver) is popped by the re-entry, and
-                // nothing spans the `Self::deinit` call below.
-                let started: crate::Result<()> = unsafe {
-                    log!(
-                        "DuplexUpgradeContext.startTLS mode={}",
-                        <&'static str>::from((*this).mode)
-                    );
-                    let is_client = (*this).mode == SocketMode::Client;
-                    let verify = (*this).server_verify;
-                    if let Some(ctx) = (*this).owned_ctx.take() {
-                        // Transfer the ref into SSLWrapper; null first so the
-                        // failure path / deinit don't double-free it.
-                        (*this).upgrade.start_tls_with_ctx(ctx, is_client, verify)
-                    } else if let Some(config) = &(*this).ssl_config {
-                        (*this).upgrade.start_tls(config, is_client, verify)
-                    } else {
-                        Ok(())
-                    }
+                log!(
+                    "DuplexUpgradeContext.startTLS mode={}",
+                    <&'static str>::from(this.mode)
+                );
+                let is_client = this.mode == SocketMode::Client;
+                let verify = this.server_verify;
+                let started: crate::Result<()> = if let Some(ctx) = this.owned_ctx.take() {
+                    // Transfer the ref into SSLWrapper; null first so the
+                    // failure path / deinit don't double-free it.
+                    this.upgrade.start_tls_with_ctx(ctx, is_client, verify)
+                } else if let Some(config) = this.ssl_config.replace(None) {
+                    // Lent out of the cell: `start_tls` dispatches `on_open` synchronously.
+                    let result = this.upgrade.start_tls(&config, is_client, verify);
+                    this.ssl_config.set(Some(config));
+                    result
+                } else {
+                    Ok(())
                 };
                 if let Err(err) = started {
                     if matches!(err, crate::Error::Alloc(_)) {
                         bun_core::out_of_memory();
                     }
                     let errno = sys::SystemErrno::ECONNREFUSED as c_int;
-                    // SAFETY: `this` is live; short-lived `&mut` for `take`.
-                    if let Some(tls) = unsafe { (*this).tls.take() } {
+                    if let Some(tls) = this.tls.replace(None) {
                         // `handle_connect_error` consumes our +1 — `tls.socket`
                         // is `InternalSocket::UpgradedDuplex` (set before
                         // `start_tls()` was queued), so `needs_deref =
@@ -4512,8 +4481,7 @@ impl DuplexUpgradeContext {
                         // Neuter the JS listener thunks now, while the wrapper
                         // is still strongly held, so the `deinit` → `Drop`
                         // teardown below is a no-op on already-cleared shadows.
-                        // SAFETY: `this` is live; `&mut` ends before `deinit`.
-                        unsafe { (*this).upgrade.teardown() };
+                        this.upgrade.teardown();
                         let p = tls.into_this_ptr();
                         crate::dispatch::fold(TLSSocket::handle_connect_error(p, errno, 0));
                     }
@@ -4522,12 +4490,11 @@ impl DuplexUpgradeContext {
                     // was never registered and nothing will schedule
                     // `.Close`. Same as the `tls == null` early-return
                     // above: tear down here.
-                    // SAFETY: per fn contract; no `&Self` live across this.
-                    unsafe { Self::deinit(this) };
+                    // SAFETY: `this` is the task's live context; no borrow of `*this` is live.
+                    unsafe { Self::deinit(this.as_ptr()) };
                     return;
                 }
-                // SAFETY: `this` is live; short-lived `&mut` for the field write.
-                unsafe { (*this).ssl_config = None }; // Drop frees.
+                this.ssl_config.set(None); // Drop frees.
                 // Bytes the peer sent while this task was still queued were
                 // staged by `UpgradedDuplex::on_internal_receive_data` (the
                 // engine did not exist yet to receive them). Feed them now
@@ -4536,65 +4503,48 @@ impl DuplexUpgradeContext {
                 // the bytes are dropped and the handshake never advances -
                 // e.g. both ends of a `duplexPair()` wrapped in-process, where
                 // the peer's ClientHello lands before this side starts.
-                // SAFETY: `this` is live; `&mut` scoped to this call, and
-                // `drain_pending` does not free the allocation (close only
-                // schedules `deinit` for the next tick).
-                unsafe { (*this).upgrade.drain_pending() };
+                this.upgrade.drain_pending();
             }
             // Previously this only called `upgrade.close()` and never `deinit`,
             // leaking the SSLWrapper, the strong refs, and this struct itself
             // for every duplex-upgraded TLS socket.
-            // SAFETY: per fn contract; no `&Self` live across this.
-            EventState::Close => unsafe { Self::deinit(this) },
+            // SAFETY: `this` is the task's live context; no borrow of `*this` is live.
+            EventState::Close => unsafe { Self::deinit(this.as_ptr()) },
         }
     }
 
     /// process-lifetime per-thread singleton stored at construction
-    /// (`js_upgrade_duplex_to_tls`); `event_loop_mut()` is the safe accessor
+    /// (`js_upgrade_duplex_to_tls`); `event_loop_mut()` is the safe accessor.
+    /// Takes `ThisPtr<Self>` so the queued task carries the allocation's root
+    /// pointer (the task's `run_event` may free it).
     #[inline]
-    /// # Safety
-    /// `this` is the live heap `DuplexUpgradeContext`.
-    unsafe fn enqueue_self_task(this: *mut Self) {
-        // SAFETY: fn contract; `vm` is process-lifetime, borrow ends at `;`.
-        unsafe {
-            if core::mem::replace(&mut (*this).queued, true) {
-                // Already in the queue: that entry runs the updated `task_event`.
-                return;
-            }
-            (*this)
-                .vm
-                .event_loop_mut()
-                .enqueue_task(jsc::Task::init(this))
-        };
+    fn enqueue_self_task(this: bun_ptr::ThisPtr<Self>) {
+        if this.queued.replace(true) {
+            // Already in the queue: that entry runs the updated `task_event`.
+            return;
+        }
+        this.vm
+            .event_loop_mut()
+            .enqueue_task(jsc::Task::init(this.as_ptr()));
     }
 
-    /// # Safety
-    /// `this` is the live heap `DuplexUpgradeContext`.
-    unsafe fn deinit_in_next_tick(this: *mut Self) {
-        // SAFETY: fn contract; disjoint field write.
-        unsafe { (*this).task_event = EventState::Close };
-        // SAFETY: fn contract.
-        unsafe { Self::enqueue_self_task(this) };
+    fn deinit_in_next_tick(this: bun_ptr::ThisPtr<Self>) {
+        this.task_event.set(EventState::Close);
+        Self::enqueue_self_task(this);
     }
 
-    /// # Safety
-    /// `this` is the live heap `DuplexUpgradeContext`.
-    unsafe fn start_tls(this: *mut Self) {
-        // SAFETY: fn contract; disjoint field write.
-        unsafe { (*this).task_event = EventState::StartTLS };
-        // SAFETY: fn contract.
-        unsafe { Self::enqueue_self_task(this) };
+    fn start_tls(this: bun_ptr::ThisPtr<Self>) {
+        this.task_event.set(EventState::StartTLS);
+        Self::enqueue_self_task(this);
     }
 
     /// VM stop phase: close the upgraded duplex natively, so the TLS wrapper's
     /// GC finalizer finds a closed socket and dispatches nothing.
     ///
-    /// # Safety
-    /// `this` is a registered live context (see `js_upgrade_duplex_to_tls`).
-    pub(crate) unsafe fn stop_for_vm_teardown(this: *mut Self) {
-        // SAFETY: fn contract; `close` may re-enter and free `this` through
-        // the normal on_close → deinit path, so nothing is touched afterwards.
-        unsafe { (*this).upgrade.close() };
+    /// `close` may re-enter (`on_close`) and schedule the free of `this` through
+    /// the normal on_close → deinit path, so nothing is touched afterwards.
+    pub(crate) fn stop_for_vm_teardown(this: bun_ptr::ThisPtr<Self>) {
+        this.upgrade.close();
     }
 
     /// # Safety
@@ -4610,19 +4560,17 @@ impl DuplexUpgradeContext {
         })
         .unregister();
         {
-            // SAFETY: `this` is live; each field access is scoped to its own
-            // statement, so nothing spans the `heap::take` free below.
-            unsafe {
-                if let Some(tls) = (*this).tls.take() {
-                    // Release the owner's +1.
-                    tls.deref();
-                }
-                // Close raced ahead of StartTLS — drop the unconsumed config.
-                (*this).ssl_config = None;
-                if let Some(ctx) = (*this).owned_ctx.take() {
-                    // SAFETY: BoringSSL FFI; we hold one owned ref.
-                    boringssl_sys::SSL_CTX_free(ctx);
-                }
+            // SAFETY: `this` is live; this borrow ends with the block, before the `heap::take` free below.
+            let ctx = unsafe { &*this };
+            if let Some(tls) = ctx.tls.replace(None) {
+                // Release the owner's +1.
+                tls.deref();
+            }
+            // Close raced ahead of StartTLS — drop the unconsumed config.
+            ctx.ssl_config.set(None);
+            if let Some(ssl_ctx) = ctx.owned_ctx.take() {
+                // SAFETY: BoringSSL FFI; we hold one owned ref.
+                unsafe { boringssl_sys::SSL_CTX_free(ssl_ctx) };
             }
         }
         // `UpgradedDuplex` cleanup
@@ -4825,21 +4773,24 @@ pub fn js_upgrade_duplex_to_tls(
     // SAFETY: fresh heap allocation; every field is `ptr::write`-initialized
     // below before any read or `&mut DuplexUpgradeContext` is formed.
     unsafe {
-        ptr::addr_of_mut!((*duplex_context).tls).write(Some(IntrusiveRc::from_raw(tls.as_ptr())));
+        ptr::addr_of_mut!((*duplex_context).tls)
+            .write(JsCell::new(Some(IntrusiveRc::from_raw(tls.as_ptr()))));
         ptr::addr_of_mut!((*duplex_context).vm).write(VirtualMachine::get());
-        ptr::addr_of_mut!((*duplex_context).task_event).write(EventState::StartTLS);
-        ptr::addr_of_mut!((*duplex_context).queued).write(false);
+        ptr::addr_of_mut!((*duplex_context).task_event).write(Cell::new(EventState::StartTLS));
+        ptr::addr_of_mut!((*duplex_context).queued).write(Cell::new(false));
         // When `owned_ctx` is set, `runEvent` builds from it and ignores
         // `ssl_config` for SSL_CTX construction; servername/ALPN already
         // copied onto `tls` above so the config's only remaining use is the
         // legacy build path.
-        ptr::addr_of_mut!((*duplex_context).ssl_config).write(if owned_ctx_taken.is_none() {
-            ssl_opts.take()
-        } else {
-            None
-        });
-        ptr::addr_of_mut!((*duplex_context).owned_ctx).write(owned_ctx_taken);
-        ptr::addr_of_mut!((*duplex_context).is_open).write(false);
+        ptr::addr_of_mut!((*duplex_context).ssl_config).write(JsCell::new(
+            if owned_ctx_taken.is_none() {
+                ssl_opts.take()
+            } else {
+                None
+            },
+        ));
+        ptr::addr_of_mut!((*duplex_context).owned_ctx).write(Cell::new(owned_ctx_taken));
+        ptr::addr_of_mut!((*duplex_context).is_open).write(Cell::new(false));
         ptr::addr_of_mut!((*duplex_context).server_verify).write(server_verify);
         ptr::addr_of_mut!((*duplex_context).mode).write(if is_server {
             SocketMode::DuplexServer
@@ -4853,41 +4804,41 @@ pub fn js_upgrade_duplex_to_tls(
             UpgradedDuplexHandlers {
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_open: |c: *mut ()| {
-                    DuplexUpgradeContext::on_open(c.cast::<DuplexUpgradeContext>())
+                    DuplexUpgradeContext::on_open(bun_ptr::ThisPtr::new(c.cast()))
                 },
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_data: |c: *mut (), d| {
-                    DuplexUpgradeContext::on_data(c.cast::<DuplexUpgradeContext>(), d)
+                    DuplexUpgradeContext::on_data(bun_ptr::ThisPtr::new(c.cast()), d)
                 },
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_handshake: |c: *mut (), ok, err| {
-                    DuplexUpgradeContext::on_handshake(c.cast::<DuplexUpgradeContext>(), ok, err)
+                    DuplexUpgradeContext::on_handshake(bun_ptr::ThisPtr::new(c.cast()), ok, err)
                 },
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_close: |c: *mut ()| {
-                    DuplexUpgradeContext::on_close(c.cast::<DuplexUpgradeContext>())
+                    DuplexUpgradeContext::on_close(bun_ptr::ThisPtr::new(c.cast()))
                 },
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
-                on_end: |c: *mut ()| DuplexUpgradeContext::on_end(c.cast::<DuplexUpgradeContext>()),
+                on_end: |c: *mut ()| DuplexUpgradeContext::on_end(bun_ptr::ThisPtr::new(c.cast())),
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_writable: |c: *mut ()| {
-                    DuplexUpgradeContext::on_writable(c.cast::<DuplexUpgradeContext>())
+                    DuplexUpgradeContext::on_writable(bun_ptr::ThisPtr::new(c.cast()))
                 },
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_error: |c: *mut (), e| {
-                    DuplexUpgradeContext::on_error(c.cast::<DuplexUpgradeContext>(), e)
+                    DuplexUpgradeContext::on_error(bun_ptr::ThisPtr::new(c.cast()), e)
                 },
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_timeout: |c: *mut ()| {
-                    DuplexUpgradeContext::on_timeout(c.cast::<DuplexUpgradeContext>())
+                    DuplexUpgradeContext::on_timeout(bun_ptr::ThisPtr::new(c.cast()))
                 },
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_session: |c: *mut (), s| {
-                    DuplexUpgradeContext::on_session(c.cast::<DuplexUpgradeContext>(), s)
+                    DuplexUpgradeContext::on_session(bun_ptr::ThisPtr::new(c.cast()), s)
                 },
                 // SAFETY: `c` is `ctx` below — the live `DuplexUpgradeContext` heap allocation.
                 on_keylog: |c: *mut (), l| {
-                    DuplexUpgradeContext::on_keylog(c.cast::<DuplexUpgradeContext>(), l)
+                    DuplexUpgradeContext::on_keylog(bun_ptr::ThisPtr::new(c.cast()), l)
                 },
                 ctx: duplex_context.cast::<()>(),
             },
@@ -4895,8 +4846,9 @@ pub fn js_upgrade_duplex_to_tls(
     }
     // ssl_opts is moved into duplexContext.ssl_config when owned_ctx == null;
     // otherwise it was only used for protos/server_name and is freed here.
-    // SAFETY: every field initialized above; scoped read.
-    if unsafe { (*duplex_context).ssl_config.is_none() } {
+    // SAFETY: every field initialized above; nothing frees the context before this fn returns.
+    let duplex_context_ref = unsafe { bun_ptr::ThisPtr::new(duplex_context) };
+    if duplex_context_ref.ssl_config.get().is_none() {
         drop(ssl_opts.take());
     }
     // Disarm the guard — either moved into duplexContext or just
@@ -4905,10 +4857,7 @@ pub fn js_upgrade_duplex_to_tls(
     let _ = ssl_opts;
     tls_ref.ref_();
 
-    // SAFETY: `duplex_context` is live; shared borrow scoped to this call.
-    tls_ref
-        .socket
-        .set(from_duplex::<true>(unsafe { &(*duplex_context).upgrade }));
+    tls_ref.socket.set(duplex_context_ref.duplex_socket());
     tls_ref.mark_active();
     // Unlike a real socket, a TLS engine over a JS stream has no I/O of its
     // own to wait for - it is driven entirely by the stream's events - so it
@@ -4925,16 +4874,16 @@ pub fn js_upgrade_duplex_to_tls(
         core::ptr::NonNull::new_unchecked(duplex_context)
     })
     .register();
-    // SAFETY: `duplex_context` is the freshly built live allocation.
-    unsafe { DuplexUpgradeContext::start_tls(duplex_context) };
+    DuplexUpgradeContext::start_tls(duplex_context_ref);
 
     let array = JSValue::create_empty_array(global, 2)?;
     array.put_index(global, 0, tls_js_value)?;
     // data, end, drain and close events must be reported
-    // SAFETY: `duplex_context` is live; shared borrow scoped to this call.
-    array.put_index(global, 1, unsafe {
-        (*duplex_context).upgrade.get_js_handlers(global)?
-    })?;
+    array.put_index(
+        global,
+        1,
+        duplex_context_ref.upgrade.get_js_handlers(global)?,
+    )?;
 
     Ok(array)
 }
@@ -5089,6 +5038,21 @@ pub mod testing_apis {
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
         Ok(JSValue::from(cfg!(socket_fault_injection)))
+    }
+
+    /// Live `WindowsNamedPipeContext`s (one per connected or accepted socket
+    /// over a Windows named pipe); always 0 elsewhere.
+    #[bun_jsc::host_fn]
+    pub(crate) fn js_named_pipe_context_live_count(
+        _global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        #[cfg(windows)]
+        let count = crate::socket::windows_named_pipe_context::LIVE_COUNT
+            .load(core::sync::atomic::Ordering::Relaxed);
+        #[cfg(not(windows))]
+        let count = 0usize;
+        Ok(JSValue::js_number(count as f64))
     }
 
     #[bun_jsc::host_fn]

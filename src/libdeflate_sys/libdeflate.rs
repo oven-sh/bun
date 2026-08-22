@@ -530,14 +530,6 @@ pub enum Status {
 }
 
 unsafe extern "C" {
-    pub fn libdeflate_deflate_decompress(
-        decompressor: *mut Decompressor,
-        in_: *const c_void,
-        in_nbytes: usize,
-        out: *mut c_void,
-        out_nbytes_avail: usize,
-        actual_out_nbytes_ret: *mut usize,
-    ) -> Status;
     pub(crate) fn libdeflate_deflate_decompress_ex(
         decompressor: *mut Decompressor,
         in_: *const c_void,

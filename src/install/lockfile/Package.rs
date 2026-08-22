@@ -703,7 +703,6 @@ impl Package<u64> {
         string_builder.count(manifest.str(&package_version_ptr.tarball_url));
 
         string_builder.allocate()?;
-        // defer string_builder.clamp(); — handled at end of scope
         let extern_strings_list = &mut lockfile.buffers.extern_strings;
         let dependencies_list = &mut lockfile.buffers.dependencies;
         let resolutions_list = &mut lockfile.buffers.resolutions;
@@ -1416,7 +1415,6 @@ impl Diff {
                 }
                 continue;
             }
-            // defer to_i += 1; — applied at end of iteration body
             let cur_to_i = to_i;
             to_i += 1;
 
@@ -1458,7 +1456,6 @@ impl Diff {
                         };
 
                         let mut package_json_path: AutoAbsPath = AutoAbsPath::init_top_level_dir();
-                        // defer package_json_path.deinit(); — Drop handles it
 
                         let _ = package_json_path.append(
                             workspace_path.slice(to_lockfile.buffers.string_bytes.as_slice()),
@@ -2215,11 +2212,13 @@ impl Package<u64> {
             }
         }
 
-        if let Some(patched_deps) = json.as_property(b"patchedDependencies") {
-            if let Some(rows) = JsonObjectStringRows::new(&patched_deps.expr, &bump) {
-                for (_, value, _) in rows {
-                    if let Some(value) = value {
-                        string_builder.count(value);
+        if FEATURES.patched_dependencies {
+            if let Some(patched_deps) = json.as_property(b"patchedDependencies") {
+                if let Some(rows) = JsonObjectStringRows::new(&patched_deps.expr, &bump) {
+                    for (_, value, _) in rows {
+                        if let Some(value) = value {
+                            string_builder.count(value);
+                        }
                     }
                 }
             }
@@ -2289,7 +2288,6 @@ impl Package<u64> {
         };
 
         let mut workspace_names = workspace_map::WorkspaceMap::init();
-        // defer workspace_names.deinit(); — Drop handles it
 
         // pnpm/yarn synthesise an implicit `"*"` optional peer for entries
         // that appear in `peerDependenciesMeta` but not in
@@ -2301,7 +2299,6 @@ impl Package<u64> {
             &[u8],
             bun_collections::identity_context::U64,
         > = ArrayHashMap::default();
-        // defer optional_peer_dependencies.deinit(); — Drop handles it
 
         if FEATURES.peer_dependencies {
             if let Some(peer_dependencies_meta) = json.as_property(b"peerDependenciesMeta") {
@@ -2578,28 +2575,30 @@ impl Package<u64> {
             self.resolution = Resolution::<u64>::init(TaggedValue::Root);
         }
 
-        if let Some(patched_deps) = json.as_property(b"patchedDependencies") {
-            if let Some(rows) = JsonObjectStringRows::new(&patched_deps.expr, &bump) {
-                lockfile
-                    .patched_dependencies
-                    .ensure_total_capacity(rows.len())
-                    .expect("unreachable");
-                for (key, value, _) in rows {
-                    let Some(value) = value else {
-                        continue;
-                    };
-                    let keyhash = semver::string::Builder::string_hash(key);
-                    let patch_path = string_builder.append::<String>(value);
+        if FEATURES.patched_dependencies {
+            if let Some(patched_deps) = json.as_property(b"patchedDependencies") {
+                if let Some(rows) = JsonObjectStringRows::new(&patched_deps.expr, &bump) {
                     lockfile
                         .patched_dependencies
-                        .put(
-                            keyhash,
-                            PatchedDep {
-                                path: patch_path,
-                                ..Default::default()
-                            },
-                        )
+                        .ensure_total_capacity(rows.len())
                         .expect("unreachable");
+                    for (key, value, _) in rows {
+                        let Some(value) = value else {
+                            continue;
+                        };
+                        let keyhash = semver::string::Builder::string_hash(key);
+                        let patch_path = string_builder.append::<String>(value);
+                        lockfile
+                            .patched_dependencies
+                            .put(
+                                keyhash,
+                                PatchedDep {
+                                    path: patch_path,
+                                    ..Default::default()
+                                },
+                            )
+                            .expect("unreachable");
+                    }
                 }
             }
         }
@@ -2711,7 +2710,6 @@ impl Package<u64> {
         }
 
         let mut bundled_deps = StringSet::init();
-        // defer bundled_deps.deinit(); — Drop handles it
         let mut bundle_all_deps = false;
         if !resolver.is_void() && resolver.check_bundled_dependencies() {
             if let Some(bundled_deps_expr) = json
@@ -2745,7 +2743,6 @@ impl Package<u64> {
                     (),
                     ArrayIdentityContext,
                 > = ArrayHashMap::default();
-                // defer seen_workspace_names.deinit(allocator); — Drop handles it
                 for (entry, path_) in workspace_names
                     .values()
                     .iter()
@@ -3227,7 +3224,6 @@ pub mod serializer {
         if migrate_from_v2 {
             type OldPackageV2 = Package<u32>;
             let mut list_for_migrating_from_v2 = <List<u32>>::default();
-            // defer list_for_migrating_from_v2.deinit(allocator); — Drop handles it
 
             list_for_migrating_from_v2.ensure_total_capacity(list_len as usize)?;
             // SAFETY: capacity reserved above; `load_fields` writes every column.

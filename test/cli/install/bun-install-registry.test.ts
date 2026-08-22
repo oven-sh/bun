@@ -2,12 +2,13 @@ import { file, spawn, write } from "bun";
 import { install_test_helpers, npm_manifest_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { copyFileSync, mkdirSync } from "fs";
-import { cp, exists, lstat, mkdir, readlink, rm, writeFile } from "fs/promises";
+import { cp, exists, lstat, mkdir, readlink, rename, rm, writeFile } from "fs/promises";
 import {
   assertManifestsPopulated,
   bunExe,
   bunEnv as env,
   isFlaky,
+  isLinux,
   isMacOS,
   isWindows,
   mergeWindowEnvs,
@@ -3255,6 +3256,112 @@ describe("binaries", () => {
     expect(err).toBeEmpty();
     expect(await result.exited).toBe(0);
   }
+
+  // Before it appends a bin name, the bin linker writes `<node_modules>/<package>/` and
+  // `<node_modules>/.bin/` into two path buffers of MAX_PATH_BYTES (4096 bytes on Linux, 1024 on
+  // macOS). A project deep enough for one of them not to fit has to fail like a bin name that does
+  // not fit. Windows is left out: its buffer holds more than any path the OS accepts.
+  describe.skipIf(isWindows)("directories longer than the path buffer", () => {
+    const maxPathBytes = isLinux ? 4096 : 1024;
+
+    // Writes `<dir>/<name>`, a package whose bin is named after it.
+    const writeBinPackage = (dir: string, name: string) =>
+      Promise.all([
+        write(
+          join(dir, name, "package.json"),
+          JSON.stringify({ name, version: "1.0.0", bin: { [name]: `${name}.js` } }),
+        ),
+        write(join(dir, name, `${name}.js`), `#!/usr/bin/env node\nconsole.log("${name}")`),
+      ]);
+
+    // Directory names of at most 200 bytes which bring `base` to exactly `length` bytes.
+    function componentsUpTo(base: string, length: number) {
+      const components: string[] = [];
+      let remaining = length - Buffer.byteLength(base);
+      while (remaining > 0) {
+        let len = Math.min(200, remaining - "/".length);
+        // Never leave exactly one byte: it would have to be a separator with no name after it.
+        if (remaining - "/".length - len === 1) len -= 1;
+        components.push(Buffer.alloc(len, "d").toString());
+        remaining -= "/".length + len;
+      }
+      return components;
+    }
+
+    // Creates, under `base`, a directory whose `<dir>/<subpath>` is exactly maxPathBytes long. The
+    // directory itself fits, so it can be created. Whatever bun creates below `<dir>/<subpath>` does
+    // not, so `shorten()` renames the first directory name to one byte before those paths are used.
+    function directoryFilledBy(base: string, subpath: string) {
+      const components = componentsUpTo(base, maxPathBytes - Buffer.byteLength("/" + subpath));
+      const dir = join(base, ...components);
+      expect(Buffer.byteLength(join(dir, subpath))).toBe(maxPathBytes);
+      mkdirSync(dir, { recursive: true });
+      const shorten = async () => {
+        await rename(join(base, components[0]), join(base, "x"));
+        return join(base, "x", ...components.slice(1));
+      };
+      return { dir, shorten };
+    }
+
+    async function run(args: string[], cwd: string, runEnv: NodeJS.Dict<string>) {
+      await using proc = spawn({
+        cmd: [bunExe(), ...args],
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: runEnv,
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { out, err, exitCode };
+    }
+
+    // With `has-bin`, `<project>/node_modules/has-bin/` is one byte too long for the buffer. With
+    // `a`, the package directory fits and `<project>/node_modules/.bin/` is one byte too long.
+    test.each([
+      ["package directory", "has-bin", join("node_modules", "has-bin")],
+      [".bin directory", "a", join("node_modules", ".bin")],
+    ])("install reports a %s that does not fit as ENAMETOOLONG", async (_, name, subpath) => {
+      await writeBinPackage(packageDir, name);
+      const { dir: project, shorten } = directoryFilledBy(packageDir, subpath);
+      await write(
+        join(project, "package.json"),
+        JSON.stringify({ name: "foo", dependencies: { [name]: `file:${join(packageDir, name)}` } }),
+      );
+
+      const { out, err, exitCode } = await run(["install"], project, env);
+      const shortened = await shorten();
+
+      expect(err).toContain(`error: Failed to link ${name}: ENAMETOOLONG`);
+      expect(out).not.toContain("installed");
+      // The package itself was installed. Only its bin is missing.
+      expect(await exists(join(shortened, "node_modules", name, "package.json"))).toBeTrue();
+      expect(await exists(join(shortened, "node_modules", ".bin", name))).toBeFalse();
+      expect(exitCode).toBe(1);
+    });
+
+    // `bun link` symlinks the package into the global directory's node_modules and links its bins
+    // from there, into the global bin directory.
+    test("bun link reports a global package directory that does not fit as ENAMETOOLONG", async () => {
+      await writeBinPackage(packageDir, "has-bin");
+      const { dir: globalDir, shorten } = directoryFilledBy(packageDir, join("node_modules", "has-bin"));
+      const globalBinDir = join(packageDir, "global-bin-dir");
+
+      const { out, err, exitCode } = await run(["link"], join(packageDir, "has-bin"), {
+        ...env,
+        BUN_INSTALL: join(packageDir, "global-install-dir"),
+        BUN_INSTALL_GLOBAL_DIR: globalDir,
+        BUN_INSTALL_BIN: globalBinDir,
+      });
+      const shortened = await shorten();
+
+      expect(err).toContain("error: failed to link bin due to error ENAMETOOLONG");
+      expect(out).not.toContain("Success!");
+      // The package itself was registered. Only its bin is missing.
+      expect(await exists(join(shortened, "node_modules", "has-bin", "package.json"))).toBeTrue();
+      expect(await exists(join(globalBinDir, "has-bin"))).toBeFalse();
+      expect(exitCode).toBe(1);
+    });
+  });
 
   test("it will skip (without errors) if a folder from `directories.bin` does not exist", async () => {
     await Promise.all([

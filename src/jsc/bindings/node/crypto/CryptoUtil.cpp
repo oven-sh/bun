@@ -11,6 +11,7 @@
 #include "CryptoKeyRSA.h"
 #include "JSVerify.h"
 #include <JavaScriptCore/ArrayBuffer.h>
+#include <JavaScriptCore/MathCommon.h>
 #include "CryptoKeyRaw.h"
 #include "JSKeyObject.h"
 
@@ -149,7 +150,9 @@ EncodedJSValue encode(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, st
             return {};
         }
 
-        memcpy(buffer->data(), bytes.data(), bytes.size());
+        if (bytes.size()) {
+            memcpy(buffer->data(), bytes.data(), bytes.size());
+        }
 
         return JSValue::encode(JSC::JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTF::move(buffer), 0, bytes.size()));
     }
@@ -518,12 +521,18 @@ std::optional<int32_t> getIntOption(JSC::JSGlobalObject* globalObject, ThrowScop
     if (value.isUndefined())
         return std::nullopt;
 
-    if (!value.isInt32()) {
-        Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, makeString("options."_s, name), value);
-        return std::nullopt;
+    // Node accepts `value === value >> 0`: any number whose value is an int32, -0 included.
+    // An integral number is not always an int32 JSValue (an element of a JSON array that also
+    // holds 1e10 is stored as a double), so decide by value, not by representation.
+    if (value.isNumber()) {
+        double number = value.asNumber();
+        int32_t integer = JSC::toInt32(number);
+        if (static_cast<double>(integer) == number)
+            return integer;
     }
 
-    return value.asInt32();
+    Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, makeString("options."_s, name), value);
+    return std::nullopt;
 }
 
 int32_t getPadding(JSC::JSGlobalObject* globalObject, ThrowScope& scope, JSValue options, const ncrypto::EVPKeyPointer& pkey)

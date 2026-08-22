@@ -810,7 +810,6 @@ impl NetworkTask {
         tarball_: ExtractTarball,
         scope: &npm::registry::Scope,
         authorization: Authorization,
-        is_required: bool,
     ) -> Result<(), ForTarballError> {
         let pm = self.pm_mut();
 
@@ -873,31 +872,20 @@ impl NetworkTask {
         // connect* is concerned; with `install.allowedHosts` set, refuse hosts
         // the project did not opt into before any request is made. (Checked
         // after the userinfo split so the message never echoes credentials.)
-        // An optional dependency is skipped with a warning, like one whose
-        // download failed; a required one fails the install.
+        // This fails the install even for an optional dependency: the allow-
+        // list is a policy, and quietly producing a different tree is not what
+        // it asks for (nor can the install phase, which sees one tree slot per
+        // package, tell an optional edge from a required one).
         if !pm.options.is_host_allowed(&self.url_buf) {
-            let log = pm.log_mut();
-            if is_required {
-                log.add_error_fmt(
-                    None,
-                    bun_ast::Loc::EMPTY,
-                    format_args!(
-                        "Refusing to download {} for package {}: host is not in install.allowedHosts",
-                        quote(&self.url_buf),
-                        quote(tarball.name.slice()),
-                    ),
-                );
-            } else {
-                log.add_warning_fmt(
-                    None,
-                    bun_ast::Loc::EMPTY,
-                    format_args!(
-                        "Skipping optional package {}: {} is not in install.allowedHosts",
-                        quote(tarball.name.slice()),
-                        quote(&self.url_buf),
-                    ),
-                );
-            }
+            pm.log_mut().add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "Refusing to download {} for package {}: host is not in install.allowedHosts",
+                    quote(&self.url_buf),
+                    quote(tarball.name.slice()),
+                ),
+            );
             return Err(ForTarballError::InvalidURL);
         }
 

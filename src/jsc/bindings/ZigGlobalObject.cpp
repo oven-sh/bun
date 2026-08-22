@@ -781,9 +781,10 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryDelete, (JSC::JSGlobalObject * globa
     // any other missing key. Evicting the entry mid-load would make the next
     // import() of the key build a second record for the same module while the
     // loader's [[LoadedModules]] caches and pending microtasks hold the first.
-    // removeEntry() drops every (key, type) variant, so check each of them.
+    // removeEntry() drops every (key, type) variant with a full scan of the
+    // map, so check each variant the same way.
     for (auto& [mapKey, entry] : moduleLoader->moduleMap()) {
-        if (mapKey.first == key.impl() && !isModuleLoadSettled(entry.get()))
+        if (mapKey.first == key.impl() && entry && !isModuleLoadSettled(entry.get()))
             return JSValue::encode(jsBoolean(false));
     }
     // JSModuleLoader::visitChildrenImpl iterates these maps on the GC thread

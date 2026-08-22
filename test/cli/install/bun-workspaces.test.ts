@@ -7,6 +7,7 @@ import {
   assertManifestsPopulated,
   bunEnv as baseEnv,
   bunExe,
+  isWindows,
   readdirSorted,
   runBunInstall,
   toMatchNodeModulesAt,
@@ -2668,5 +2669,40 @@ describe("packages whose version label is longer than 512 bytes", () => {
     expect(await file(join(packageDir, "node_modules", "baz", "index.js")).text()).toBe(
       '#! /usr/bin/env node\n\nconsole.log("patched baz");\n',
     );
+  });
+});
+
+// The hoisted installer links a workspace package into node_modules under its name. A name
+// too long for the buffer that symlink is given used to abort the whole install instead of
+// failing that one package with ENAMETOOLONG. On POSIX that buffer held 512 bytes. On
+// Windows the name is appended to the absolute node_modules path in a 98302 byte buffer
+// (bun refuses names of 98302 bytes and up), so the name has to come within a node_modules
+// path (`\\?\C:\x\node_modules\` at the very least) of that size to overflow it.
+describe("workspace packages whose name is too long to link", () => {
+  const longName = Buffer.alloc(isWindows ? 98302 - 20 : 600, "a").toString();
+
+  // A scoped package is linked inside a separately opened `node_modules/@scope` directory.
+  test.concurrent.each([
+    ["unscoped", longName],
+    ["scoped", `@scope/${longName}`],
+  ])("%s name fails with ENAMETOOLONG", async (_, name) => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson } = ctx;
+    await Promise.all([
+      write(packageJson, JSON.stringify({ name: "foo", workspaces: ["pkgs/*"] })),
+      write(join(packageDir, "pkgs", "pkg1", "package.json"), JSON.stringify({ name, version: "1.0.0" })),
+    ]);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--linker", "hoisted"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: ctx.env,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).toContain(`ENAMETOOLONG: failed linking dependency/workspace to node_modules for package ${name}`);
+    expect(out).toContain("Failed to install 1 package");
+    expect(exitCode).toBe(1);
   });
 });

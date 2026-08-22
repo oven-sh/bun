@@ -2350,6 +2350,27 @@ impl<AtRule> StyleSheet<AtRule> {
     }
 }
 
+/// Longest input `parse_with` / `StyleAttribute::parse` accept.
+///
+/// Byte offsets into the input are stored as `i32` (`bun_ast::Loc` in import
+/// records, CSS-module symbols, `composes` and `PropertyUsage`), and the line
+/// and column numbers derived from them are stored as `i32` too
+/// (`bun_ast::Location` in errors and warnings). The largest such value is
+/// `len + 1`: the column of, or the 1-based line count at, the end of input.
+/// Columns count UTF-16 units, never more than one per byte. Bounding the
+/// length once here is what makes every one of those conversions infallible.
+pub(crate) const MAX_INPUT_LEN: usize = i32::MAX as usize - 1;
+
+fn check_input_len(code: &[u8]) -> Maybe<(), Err<ParserError>> {
+    if code.len() > MAX_INPUT_LEN {
+        return Err(Err {
+            kind: ParserError::input_too_large,
+            loc: None,
+        });
+    }
+    Ok(())
+}
+
 // ── StyleSheet behavior (parse/minify/to_css) ────────────────────────────────
 mod stylesheet_impl {
     use super::*;
@@ -2584,6 +2605,7 @@ mod stylesheet_impl {
             // returned `StyleSheet`.
             // TODO(refactor): re-thread the lifetime through `CssRuleList<'bump, R>`
             // and drop the `'static` bound on `arena`.
+            check_input_len(code)?;
             let mut composes = ComposesMap::default();
             let mut parser_extra = ParserExtra {
                 local_scope: LocalScope::default(),
@@ -2684,6 +2706,7 @@ mod stylesheet_impl {
             // TODO: 'bump lifetime threading — `DeclarationBlock<'static>` in
             // `StyleAttribute` vs `Parser<'a>` here; `arena: &'static Bump`
             // matches the crate-wide erasure (see `parse_with`).
+            check_input_len(code)?;
             let mut parser_extra = ParserExtra {
                 local_scope: LocalScope::default(),
                 symbols: SymbolList::default(),

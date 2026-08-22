@@ -461,9 +461,15 @@ void us_loop_run(struct us_loop_t *loop) {
     }
 }
 
+extern void Bun__JSC_onLoopTick(void * _Nonnull jsc_vm);
 extern void Bun__JSC_onBeforeWait(void * _Nonnull jsc_vm, uint64_t now_ns);
 
 void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout, uint64_t now_ns) {
+    /* Every tick, whether or not this one parks (Bun__JSC_onBeforeWait below is
+     * only for the ones that do) or even has anything to poll. */
+    if (loop->data.jsc_vm)
+        Bun__JSC_onLoopTick(loop->data.jsc_vm);
+
     if (loop->num_polls == 0)
         return;
 

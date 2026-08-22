@@ -286,7 +286,13 @@ void us_internal_poll_set_type(struct us_poll_t *p, int poll_type) {
 
 LIBUS_SOCKET_DESCRIPTOR us_poll_fd(struct us_poll_t *p) { return p->fd; }
 
+extern void Bun__JSC_onLoopTick(void *jsc_vm);
+extern void Bun__JSC_onBeforeWait(void *jsc_vm, uint64_t now_ns);
+
 void us_loop_pump(struct us_loop_t *loop) {
+  if (loop->data.jsc_vm)
+    Bun__JSC_onLoopTick(loop->data.jsc_vm);
+
   /* POSIX parity: us_loop_run_bun_tick polls epoll/kqueue and dispatches
    * regardless of ref state (it only early-outs on num_polls == 0). libuv's
    * uv_run() skips its body when uv__loop_alive() is 0, so IOCP completions
@@ -359,8 +365,6 @@ void us_loop_free(struct us_loop_t *loop) {
   us_free(loop);
 }
 
-extern void Bun__JSC_onBeforeWait(void *jsc_vm, uint64_t now_ns);
-
 void us_loop_run(struct us_loop_t *loop) {
   us_loop_integrate(loop);
   uv_update_time(loop->uv_loop);
@@ -369,6 +373,7 @@ void us_loop_run(struct us_loop_t *loop) {
    * first), making this the JS thread's park hook, the counterpart of
    * us_loop_run_bun_tick's. jsc_vm is only set on the JS thread's loop. */
   if (loop->data.jsc_vm) {
+    Bun__JSC_onLoopTick(loop->data.jsc_vm);
     /* uv_update_time() above just refreshed libuv's cached monotonic clock, so
      * uv_now() reads that cache rather than taking the clock again. */
     Bun__JSC_onBeforeWait(loop->data.jsc_vm, (uint64_t) uv_now(loop->uv_loop) * 1000000ULL);

@@ -231,6 +231,10 @@ function emitListeningNextTick(self, hostname, port) {
   }
 }
 
+function emitListenErrorNextTick(self, err) {
+  self.emit("error", err);
+}
+
 // Node.js only requests a client certificate when `requestCert: true`.
 // The uSockets SSL context treats `ca` alone as "verify peer", so without
 // these two flags an `https.Server({ ca })` would reject every client that
@@ -609,7 +613,7 @@ Server.prototype.listen = function () {
 
     server[kRealListen](tls, port, host, socketPath, true, onListen);
   } catch (err) {
-    setTimeout(() => server.emit("error", err), 1);
+    process.nextTick(emitListenErrorNextTick, server, err);
   }
 
   return this;
@@ -1064,7 +1068,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       this.once("listening", onListen);
     }
 
-    setTimeout(emitListeningNextTick, 1, this, this[serverSymbol]?.hostname, this[serverSymbol]?.port);
+    // A tick, not a timer, as in node: a timer never fires on its own under jest.useFakeTimers().
+    process.nextTick(emitListeningNextTick, this, this[serverSymbol]?.hostname, this[serverSymbol]?.port);
   }
 };
 

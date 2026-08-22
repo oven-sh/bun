@@ -5,11 +5,31 @@
 // Protocol WebSocket server with breakpoint pausing.
 const { hideFromStack } = require("internal/shared");
 const { validateString, validateFunction } = require("internal/validators");
-const { SafeSet } = require("internal/primordials");
+const { SafeSet, SafeMap } = require("internal/primordials");
 const EventEmitter = require("node:events");
 const { pathToFileURL } = require("node:url");
 const { isAbsolute } = require("node:path");
+const types = require("node:util/types");
 const DateNow = Date.now;
+const PerformanceNow = performance.now.bind(performance);
+const ObjectKeys = Object.keys;
+const ObjectIs = Object.is;
+const ObjectGetPrototypeOf = Object.getPrototypeOf;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectPrototypeToString = Object.prototype.toString;
+const ArrayPrototypeSlice = Array.prototype.slice;
+const FunctionPrototypeToString = Function.prototype.toString;
+const DatePrototypeToString = Date.prototype.toString;
+const RegExpPrototypeToString = RegExp.prototype.toString;
+const ErrorPrototypeToString = Error.prototype.toString;
+const MapPrototypeGetSize = ObjectGetOwnPropertyDescriptor(Map.prototype, "size")!.get!;
+const SetPrototypeGetSize = ObjectGetOwnPropertyDescriptor(Set.prototype, "size")!.get!;
+const MapPrototypeEntries = Map.prototype.entries;
+const SetPrototypeValues = Set.prototype.values;
+const TypedArrayPrototype = ObjectGetPrototypeOf(Uint8Array.prototype);
+const TypedArrayPrototypeGetLength = ObjectGetOwnPropertyDescriptor(TypedArrayPrototype, "length")!.get!;
+const TypedArrayPrototypeGetToStringTag = ObjectGetOwnPropertyDescriptor(TypedArrayPrototype, Symbol.toStringTag)!.get!;
+const ErrorCaptureStackTrace = Error.captureStackTrace;
 
 // #handleMethod return marker for inspector-protocol errors: the callback
 // receives the plain `{ code, message }` object (Node delivers protocol
@@ -129,13 +149,14 @@ function waitForDebugger() {
 
 // Sessions with Runtime enabled receive Runtime.consoleAPICalled for console
 // calls. This monkey-patches globalThis.console (not JSC's ConsoleClient as
-// cdp.ts does), so pre-captured refs bypass it and no stackTrace is emitted.
+// cdp.ts does), so pre-captured refs bypass it.
 // SafeSet iteration is tamper-proof (own frozen Symbol.iterator), so a hostile
 // Set.prototype[Symbol.iterator] cannot make console.log itself throw from
 // inside the hook's for-of loop head.
 const runtimeEnabledSessions: Set<Session> = new SafeSet();
 const hookedConsoleMethods: Array<[string, Function, Function]> = [];
 
+// Methods whose arguments are forwarded verbatim as the event args.
 const CONSOLE_API_TYPES: Record<string, string> = {
   __proto__: null,
   log: "log",
@@ -145,18 +166,251 @@ const CONSOLE_API_TYPES: Record<string, string> = {
   debug: "debug",
   trace: "trace",
   dir: "dir",
+  dirxml: "dirxml",
   table: "table",
+  clear: "clear",
   group: "startGroup",
   groupCollapsed: "startGroupCollapsed",
   groupEnd: "endGroup",
 };
+
+// Methods whose event args are derived (not the raw JS args) and so need bespoke hooks below.
+const CONSOLE_API_SPECIAL = ["assert", "count", "countReset", "time", "timeLog", "timeEnd"];
+
+const PREVIEW_MAX_PROPERTIES = 5;
+const MAX_DESCRIPTION_LENGTH = 100;
+
+// Synthetic objectId for shape parity with V8; there is no Runtime.getProperties backend to dereference it.
+let nextRemoteObjectId = 1;
+
+function constructorName(value: object): string | undefined {
+  try {
+    let proto: object | null = value;
+    // Bounded: a Proxy getPrototypeOf trap may return itself (legal ES), which would loop forever.
+    for (let i = 0; proto !== null && i < 100; i++) {
+      const descriptor = ObjectGetOwnPropertyDescriptor(proto, "constructor");
+      if (descriptor !== undefined) {
+        const ctor = descriptor.value;
+        if ($isCallable(ctor)) {
+          const name = ctor.name;
+          if (typeof name === "string" && name.length > 0) return name;
+        }
+      }
+      proto = ObjectGetPrototypeOf(proto);
+    }
+  } catch {}
+  return undefined;
+}
+
+function truncate(text: string): string {
+  if (text.length <= MAX_DESCRIPTION_LENGTH) return text;
+  let end = MAX_DESCRIPTION_LENGTH;
+  const code = text.charCodeAt(end - 1);
+  if (code >= 0xd800 && code <= 0xdbff) end--;
+  return text.slice(0, end) + "…";
+}
+
+function classifyObject(value: object): { subtype?: string; className: string; description: string } {
+  if ($isProxyObject(value)) {
+    const className = constructorName(value) ?? "Object";
+    return { subtype: "proxy", className, description: `Proxy(${className})` };
+  }
+  if ($isJSArray(value) || $isArray(value)) {
+    const className = constructorName(value) ?? "Array";
+    return { subtype: "array", className, description: `${className}(${(value as unknown[]).length})` };
+  }
+  if (types.isNativeError(value)) {
+    let description;
+    try {
+      const stack = (value as Error).stack;
+      description = typeof stack === "string" && stack.length > 0 ? stack : ErrorPrototypeToString.$call(value);
+    } catch {
+      description = "Error";
+    }
+    return { subtype: "error", className: constructorName(value) ?? "Error", description };
+  }
+  if ($isRegExpObject(value)) {
+    let description;
+    try {
+      description = RegExpPrototypeToString.$call(value);
+    } catch {
+      description = "RegExp";
+    }
+    return { subtype: "regexp", className: constructorName(value) ?? "RegExp", description };
+  }
+  if (types.isDate(value)) {
+    let description;
+    try {
+      description = DatePrototypeToString.$call(value);
+    } catch {
+      description = "Date";
+    }
+    return { subtype: "date", className: constructorName(value) ?? "Date", description };
+  }
+  if ($isMap(value)) {
+    const className = constructorName(value) ?? "Map";
+    return { subtype: "map", className, description: `${className}(${MapPrototypeGetSize.$call(value)})` };
+  }
+  if ($isSet(value)) {
+    const className = constructorName(value) ?? "Set";
+    return { subtype: "set", className, description: `${className}(${SetPrototypeGetSize.$call(value)})` };
+  }
+  if (types.isWeakMap(value))
+    return { subtype: "weakmap", className: constructorName(value) ?? "WeakMap", description: "WeakMap" };
+  if (types.isWeakSet(value))
+    return { subtype: "weakset", className: constructorName(value) ?? "WeakSet", description: "WeakSet" };
+  if ($isPromise(value))
+    return { subtype: "promise", className: constructorName(value) ?? "Promise", description: "Promise" };
+  if (types.isTypedArray(value)) {
+    const className = TypedArrayPrototypeGetToStringTag.$call(value) ?? constructorName(value) ?? "TypedArray";
+    return {
+      subtype: "typedarray",
+      className,
+      description: `${className}(${TypedArrayPrototypeGetLength.$call(value)})`,
+    };
+  }
+  if (types.isDataView(value))
+    return {
+      subtype: "dataview",
+      className: constructorName(value) ?? "DataView",
+      description: `DataView(${(value as DataView).byteLength})`,
+    };
+  if (types.isArrayBuffer(value))
+    return {
+      subtype: "arraybuffer",
+      className: constructorName(value) ?? "ArrayBuffer",
+      description: `ArrayBuffer(${(value as ArrayBuffer).byteLength})`,
+    };
+  if (types.isSharedArrayBuffer(value))
+    return {
+      subtype: "arraybuffer",
+      className: constructorName(value) ?? "SharedArrayBuffer",
+      description: `SharedArrayBuffer(${(value as SharedArrayBuffer).byteLength})`,
+    };
+  if (types.isGeneratorObject(value)) {
+    const className = constructorName(value) ?? "Generator";
+    return { subtype: "generator", className, description: className };
+  }
+  if (types.isMapIterator(value) || types.isSetIterator(value)) {
+    const className = constructorName(value) ?? "Iterator";
+    return { subtype: "iterator", className, description: className };
+  }
+  const className = constructorName(value) ?? "Object";
+  return { className, description: className };
+}
+
+function previewValue(value: unknown): { type: string; value: string; subtype?: string } {
+  switch (typeof value) {
+    case "string":
+      return { type: "string", value: truncate(value) };
+    case "number":
+      return { type: "number", value: ObjectIs(value, -0) ? "-0" : `${value}` };
+    case "boolean":
+      return { type: "boolean", value: `${value}` };
+    case "undefined":
+      return { type: "undefined", value: "undefined" };
+    case "bigint":
+      return { type: "bigint", value: `${value}n` };
+    case "symbol":
+      return { type: "symbol", value: String(value) };
+    case "function":
+      return { type: "function", value: "" };
+    default: {
+      if (value === null) return { type: "object", subtype: "null", value: "null" };
+      let info;
+      try {
+        info = classifyObject(value);
+      } catch {
+        return { type: "object", value: "Object" };
+      }
+      const { subtype, description } = info;
+      const entry: { type: string; value: string; subtype?: string } = {
+        type: "object",
+        value: truncate(description),
+      };
+      if (subtype !== undefined) entry.subtype = subtype;
+      return entry;
+    }
+  }
+}
+
+function entryPreview(value: unknown): object {
+  const { type, value: description, subtype } = previewValue(value);
+  const out: AnyRecord = { type, description, overflow: false, properties: [] };
+  if (subtype !== undefined) out.subtype = subtype;
+  return out;
+}
+
+type AnyRecord = Record<string, any>;
+
+function buildPreview(value: object, subtype: string | undefined, description: string): object {
+  const preview: AnyRecord = { type: "object", description, overflow: false, properties: [] };
+  if (subtype !== undefined) preview.subtype = subtype;
+  const properties: AnyRecord[] = preview.properties;
+
+  try {
+    if (subtype === "array" || subtype === "typedarray") {
+      const length = subtype === "typedarray" ? TypedArrayPrototypeGetLength.$call(value) : (value as unknown[]).length;
+      const shown = length > PREVIEW_MAX_PROPERTIES ? PREVIEW_MAX_PROPERTIES : length;
+      for (let i = 0; i < shown; i++) properties.push({ name: `${i}`, ...previewValue((value as any)[i]) });
+      if (length > shown) preview.overflow = true;
+    } else if (subtype === "map") {
+      const entries: AnyRecord[] = [];
+      let count = 0;
+      for (const [k, v] of MapPrototypeEntries.$call(value)) {
+        if (count >= PREVIEW_MAX_PROPERTIES) {
+          preview.overflow = true;
+          break;
+        }
+        entries.push({ key: entryPreview(k), value: entryPreview(v) });
+        count++;
+      }
+      preview.entries = entries;
+    } else if (subtype === "set") {
+      const entries: AnyRecord[] = [];
+      let count = 0;
+      for (const v of SetPrototypeValues.$call(value)) {
+        if (count >= PREVIEW_MAX_PROPERTIES) {
+          preview.overflow = true;
+          break;
+        }
+        entries.push({ value: entryPreview(v) });
+        count++;
+      }
+      preview.entries = entries;
+    } else if (subtype === "error") {
+      const message = (value as Error).message;
+      const stack = (value as Error).stack;
+      if (typeof stack === "string") properties.push({ name: "stack", type: "string", value: truncate(stack) });
+      if (typeof message === "string") properties.push({ name: "message", type: "string", value: truncate(message) });
+    } else if (
+      subtype === "regexp" ||
+      subtype === "date" ||
+      subtype === "weakmap" ||
+      subtype === "weakset" ||
+      subtype === "promise" ||
+      subtype === "proxy"
+    ) {
+      // No property preview for these subtypes.
+    } else {
+      const keys = ObjectKeys(value);
+      const shown = keys.length > PREVIEW_MAX_PROPERTIES ? PREVIEW_MAX_PROPERTIES : keys.length;
+      for (let i = 0; i < shown; i++) {
+        const name = keys[i];
+        properties.push({ name, ...previewValue((value as AnyRecord)[name]) });
+      }
+      if (keys.length > shown) preview.overflow = true;
+    }
+  } catch {}
+  return preview;
+}
 
 function toRemoteObject(arg: unknown): object {
   switch (typeof arg) {
     case "string":
       return { type: "string", value: arg };
     case "number":
-      if (Object.is(arg, -0)) return { type: "number", unserializableValue: "-0", description: "-0" };
+      if (ObjectIs(arg, -0)) return { type: "number", unserializableValue: "-0", description: "-0" };
       return Number.isFinite(arg)
         ? { type: "number", value: arg, description: String(arg) }
         : {
@@ -176,18 +430,91 @@ function toRemoteObject(arg: unknown): object {
       };
     case "symbol":
       return { type: "symbol", description: String(arg) };
-    case "function":
+    case "function": {
+      let description;
+      try {
+        description = FunctionPrototypeToString.$call(arg);
+      } catch {
+        description = "function () {}";
+      }
       return {
         type: "function",
-        description: Function.prototype.toString.$call(arg),
+        className: constructorName(arg as object) ?? "Function",
+        description,
+        objectId: `bun.1.${nextRemoteObjectId++}`,
       };
-    default:
+    }
+    default: {
       if (arg === null) return { type: "object", subtype: "null", value: null };
-      return {
+      let info: { subtype?: string; className: string; description: string };
+      try {
+        info = classifyObject(arg);
+      } catch {
+        info = { className: "Object", description: ObjectPrototypeToString.$call(arg) };
+      }
+      const { subtype, className, description } = info;
+      const remote: AnyRecord = {
         type: "object",
-        description: Object.prototype.toString.$call(arg),
+        className,
+        description,
+        objectId: `bun.1.${nextRemoteObjectId++}`,
+        preview: buildPreview(arg, subtype, description),
       };
+      if (subtype !== undefined) remote.subtype = subtype;
+      return remote;
+    }
   }
+}
+
+function prepareCDPCallFrames(_err: unknown, callSites: any[]): object[] {
+  const frames: object[] = [];
+  for (let i = 0; i < callSites.length; i++) {
+    const site = callSites[i];
+    const line = site.getLineNumber();
+    const column = site.getColumnNumber();
+    const url = site.getFileName() ?? "";
+    frames.push({
+      functionName: site.getFunctionName() ?? "",
+      scriptId: `${site.getScriptId() ?? ""}`,
+      url: typeof url === "string" && isAbsolute(url) ? pathToFileURL(url).href : url,
+      // CDP positions are 0-based; CallSite line numbers are 1-based.
+      lineNumber: typeof line === "number" && line > 0 ? line - 1 : 0,
+      columnNumber: typeof column === "number" && column >= 0 ? column : 0,
+    });
+  }
+  return frames;
+}
+
+const CONSOLE_STACK_TRACE_LIMIT = 30;
+
+function captureCDPStackTrace(skipAbove: Function): object[] | undefined {
+  // Every Error.* touch is guarded so hostile getters/setters/freeze cannot make console.* itself throw.
+  const target: { stack?: object[] } = {};
+  let savedPrepare: unknown;
+  let savedLimit: unknown;
+  try {
+    savedPrepare = Error.prepareStackTrace;
+    savedLimit = Error.stackTraceLimit;
+  } catch {
+    return undefined;
+  }
+  try {
+    Error.prepareStackTrace = prepareCDPCallFrames;
+    try {
+      Error.stackTraceLimit = CONSOLE_STACK_TRACE_LIMIT;
+    } catch {}
+    ErrorCaptureStackTrace(target, skipAbove);
+  } catch {
+  } finally {
+    try {
+      Error.prepareStackTrace = savedPrepare as any;
+    } catch {}
+    try {
+      Error.stackTraceLimit = savedLimit as number;
+    } catch {}
+  }
+  const callFrames = target.stack;
+  return $isArray(callFrames) ? callFrames : undefined;
 }
 
 // Node delivers consoleAPICalled through V8's message pump, so a listener
@@ -196,28 +523,32 @@ function toRemoteObject(arg: unknown): object {
 // original method but are not re-emitted.
 let emittingConsoleAPI = false;
 
-function emitConsoleAPICalled(type: string, args: unknown[]) {
+function emitConsoleAPICalled(type: string, args: unknown[], hook: Function) {
   if (emittingConsoleAPI) return;
   emittingConsoleAPI = true;
   try {
     const timestamp = DateNow();
+    const callFrames = captureCDPStackTrace(hook);
     for (const session of runtimeEnabledSessions) {
       // Neither a throwing listener nor a throwing argument serialization
-      // (toRemoteObject reads user-controlled toString) may make the console
+      // (toRemoteObject reads user-controlled getters) may make the console
       // call itself throw, suppress the underlying output, or starve later
       // sessions; Node surfaces listener exceptions as process warnings.
       try {
         // A fresh message per session: a listener that mutates its payload
         // must not contaminate what the next session receives.
-        const message = {
-          method: "Runtime.consoleAPICalled",
-          params: {
-            type,
-            args: args.map(toRemoteObject),
-            executionContextId: 1,
-            timestamp,
-          },
+        const params: AnyRecord = {
+          type,
+          args: args.map(toRemoteObject),
+          executionContextId: 1,
+          timestamp,
         };
+        if (callFrames !== undefined) {
+          const frames: object[] = [];
+          for (let i = 0; i < callFrames.length; i++) frames.push({ ...(callFrames[i] as AnyRecord) });
+          params.stackTrace = { callFrames: frames };
+        }
+        const message = { method: "Runtime.consoleAPICalled", params };
         // Node's Session#onMessage emits the method-specific event first,
         // then the generic "inspectorNotification".
         session.emit("Runtime.consoleAPICalled", message);
@@ -240,11 +571,86 @@ function emitConsoleAPICalled(type: string, args: unknown[]) {
   }
 }
 
+// Shadow counters/timers parallel to Bun's native C++ console state, which is not readable from JS.
+const consoleCounts: Map<string, number> = new SafeMap();
+const consoleTimers: Map<string, number> = new SafeMap();
+
+function toLabel(label: unknown): string {
+  return label === undefined ? "default" : `${label}`;
+}
+
 function makeConsoleHook(type: string, original: Function): Function {
-  return function (this: unknown, ...args: unknown[]) {
-    emitConsoleAPICalled(type, args);
+  const hook = function (this: unknown, ...args: unknown[]) {
+    emitConsoleAPICalled(type, args, hook);
     return original.$apply(this, args);
   };
+  return hook;
+}
+
+function makeSpecialConsoleHook(method: string, original: Function): Function {
+  switch (method) {
+    case "assert": {
+      const hook = function (this: unknown, ...args: unknown[]) {
+        if (!args[0]) {
+          const rest = ArrayPrototypeSlice.$call(args, 1);
+          emitConsoleAPICalled("assert", rest.length > 0 ? rest : ["console.assert"], hook);
+        }
+        return original.$apply(this, args);
+      };
+      return hook;
+    }
+    case "count": {
+      const hook = function (this: unknown, label?: unknown) {
+        const key = toLabel(label);
+        const next = (consoleCounts.get(key) ?? 0) + 1;
+        consoleCounts.set(key, next);
+        emitConsoleAPICalled("count", [`${key}: ${next}`], hook);
+        return original.$call(this, key);
+      };
+      return hook;
+    }
+    case "countReset":
+      return function (this: unknown, label?: unknown) {
+        const key = toLabel(label);
+        consoleCounts.delete(key);
+        return original.$call(this, key);
+      };
+    case "time":
+      return function (this: unknown, label?: unknown) {
+        const key = toLabel(label);
+        if (!consoleTimers.has(key)) consoleTimers.set(key, PerformanceNow());
+        return original.$call(this, key);
+      };
+    case "timeLog": {
+      const hook = function (this: unknown) {
+        const forward = ArrayPrototypeSlice.$call(arguments);
+        const key = toLabel(forward[0]);
+        forward[0] = key;
+        const start = consoleTimers.get(key);
+        if (start !== undefined) {
+          const emitArgs = ArrayPrototypeSlice.$call(forward);
+          emitArgs[0] = `${key}: ${PerformanceNow() - start} ms`;
+          emitConsoleAPICalled("log", emitArgs, hook);
+        }
+        return original.$apply(this, forward);
+      };
+      return hook;
+    }
+    case "timeEnd": {
+      const hook = function (this: unknown, label?: unknown) {
+        const key = toLabel(label);
+        const start = consoleTimers.get(key);
+        if (start !== undefined) {
+          consoleTimers.delete(key);
+          emitConsoleAPICalled("timeEnd", [`${key}: ${PerformanceNow() - start} ms`], hook);
+        }
+        return original.$call(this, key);
+      };
+      return hook;
+    }
+    default:
+      return original;
+  }
 }
 
 function installConsoleHooks() {
@@ -254,6 +660,14 @@ function installConsoleHooks() {
     const original = consoleObject[method];
     if (typeof original !== "function") continue;
     const hook = makeConsoleHook(CONSOLE_API_TYPES[method], original);
+    hookedConsoleMethods.push([method, original, hook]);
+    consoleObject[method] = hook;
+  }
+  for (let i = 0; i < CONSOLE_API_SPECIAL.length; i++) {
+    const method = CONSOLE_API_SPECIAL[i];
+    const original = consoleObject[method];
+    if (typeof original !== "function") continue;
+    const hook = makeSpecialConsoleHook(method, original);
     hookedConsoleMethods.push([method, original, hook]);
     consoleObject[method] = hook;
   }

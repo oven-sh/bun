@@ -739,14 +739,14 @@ test("Object.prototype pollution does not cause Runtime.enable to hook extra con
   const session = new inspector.Session();
   session.connect();
   // @ts-expect-error deliberate prototype pollution
-  Object.prototype.count = "log";
-  const savedCount = console.count;
+  Object.prototype.profile = "log";
+  const savedProfile = console.profile;
   try {
     session.post("Runtime.enable");
-    expect(console.count).toBe(savedCount);
+    expect(console.profile).toBe(savedProfile);
   } finally {
     // @ts-expect-error cleanup
-    delete Object.prototype.count;
+    delete Object.prototype.profile;
     session.disconnect();
   }
 });
@@ -754,16 +754,22 @@ test("Object.prototype pollution does not cause Runtime.enable to hook extra con
 test("a console argument whose toString throws does not break console.log", async () => {
   const session = new inspector.Session();
   session.connect();
+  const events: any[] = [];
   const warnings: Error[] = [];
   const onWarning = (w: Error) => warnings.push(w);
   process.on("warning", onWarning);
+  session.on("Runtime.consoleAPICalled", m => events.push(m.params));
   try {
     session.post("Runtime.enable");
     const { proxy, revoke } = Proxy.revocable({}, {});
     revoke();
     expect(() => console.log(proxy)).not.toThrow();
     await new Promise(resolve => setImmediate(resolve));
-    expect(warnings).toHaveLength(1);
+    // The RemoteObject builder handles revoked proxies, so the event is
+    // delivered with a proxy-subtype arg and no warning is emitted.
+    expect(warnings).toHaveLength(0);
+    expect(events).toHaveLength(1);
+    expect(events[0].args[0]).toMatchObject({ type: "object", subtype: "proxy" });
   } finally {
     process.off("warning", onWarning);
     session.disconnect();

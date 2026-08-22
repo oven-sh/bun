@@ -6343,6 +6343,8 @@ impl VirtualMachine {
 
         if is_error_instance {
             let mut saw_cause = false;
+            let mut saw_error = false;
+            let mut saw_suppressed = false;
             // SAFETY: `is_error_instance` ⇒ object.
             let error_obj = unsafe { error_instance.get_object().unwrap_unchecked() };
             let mut iterator = crate::JSPropertyIterator::init(
@@ -6369,12 +6371,16 @@ impl VirtualMachine {
                 if field.eql_comptime(b"code") && code.is_some() {
                     continue;
                 }
+                if field.eql_comptime(b"cause") {
+                    saw_cause = true;
+                } else if field.eql_comptime(b"error") {
+                    saw_error = true;
+                } else if field.eql_comptime(b"suppressed") {
+                    saw_suppressed = true;
+                }
 
                 let kind = value.js_type();
                 if kind == JSType::ErrorInstance && !prev_had_errors {
-                    if field.eql_comptime(b"cause") {
-                        saw_cause = true;
-                    }
                     value.protect();
                     errors_to_append.push(value);
                 } else if kind.is_object()
@@ -6464,7 +6470,25 @@ impl VirtualMachine {
                 writer.write_all(b"\n")?;
             }
 
-            // "cause" is not enumerable, so the above loop won't see it.
+            // "error"/"suppressed"/"cause" are non-enumerable, so the loop above won't see them.
+            if !saw_error {
+                let key = bun_core::String::static_(b"error");
+                if let Some(inner) = error_instance.get_own(global_ref, &key)? {
+                    if !inner.is_undefined() {
+                        inner.protect();
+                        errors_to_append.push(inner);
+                    }
+                }
+            }
+            if !saw_suppressed {
+                let key = bun_core::String::static_(b"suppressed");
+                if let Some(inner) = error_instance.get_own(global_ref, &key)? {
+                    if !inner.is_undefined() {
+                        inner.protect();
+                        errors_to_append.push(inner);
+                    }
+                }
+            }
             if !saw_cause {
                 let key = bun_core::String::static_(b"cause");
                 if let Some(cause) = error_instance.get_own(global_ref, &key)? {
@@ -6513,11 +6537,15 @@ impl VirtualMachine {
                 formatter.map_node = Some(node);
             }
 
-            let entry = formatter.map.get_or_put(err).expect("unreachable");
-            if entry.found_existing {
-                writer.write_all(b"\n")?;
-                pretty_write!(writer, "<r><cyan>[Circular]<r>")?;
-                continue;
+            // Only Errors recurse here; non-Errors use `formatter.map` for their own cycle check.
+            let track = err.is_cell() && err.js_type() == JSType::ErrorInstance;
+            if track {
+                let entry = formatter.map.get_or_put(err).expect("unreachable");
+                if entry.found_existing {
+                    writer.write_all(b"\n")?;
+                    pretty_write!(writer, "<r><cyan>[Circular]<r>")?;
+                    continue;
+                }
             }
 
             writer.write_all(b"\n")?;
@@ -6529,7 +6557,9 @@ impl VirtualMachine {
                 allow_ansi_color,
                 allow_side_effects,
             )?;
-            let _ = formatter.map.remove(&err);
+            if track {
+                let _ = formatter.map.remove(&err);
+            }
         }
 
         Ok(())

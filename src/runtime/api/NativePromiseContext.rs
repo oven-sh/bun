@@ -255,16 +255,16 @@ impl DeferredDerefTaskUpper {
 impl DeferredDerefTask {
     const TAG_MASK: usize = 0b111;
 
+    /// From a cell's destructor (and `RewriterPipe::deref_outside_caller`).
     pub(crate) fn schedule(ctx: *mut c_void, tag: Tag) {
         // SAFETY: called from the JS thread (GC sweep → C++ destructor); the
         // thread-local VM is alive for the duration of this call.
-        let vm = VirtualMachine::get();
-        if vm.event_loop_ref().is_closed_for_tasks() {
+        if VirtualMachine::get().event_loop_ref().is_closed_for_tasks() {
             // Teardown has forbidden script and released the queue; from here on only GC destructors
             // (possibly mid-sweep in `~VM`) reach this, and theirs is the last use of `ctx` in that
             // frame. A worker's HTMLRewriter pipe would outlive it, so those refs are released now,
             // sweep-safe; a RequestContext's or an S3 wrapper's release is not sweep-safe and dies
-            // with the VM instead (the stop phase reclaimed every S3 claim it found before this).
+            // with the VM instead.
             match tag {
                 // SAFETY: the destroyed context held the suspension's ref on this live pipe.
                 Tag::HTMLRewriterSuspension => unsafe {
@@ -283,7 +283,17 @@ impl DeferredDerefTask {
             }
             return;
         }
+        Self::enqueue(ctx, tag);
+    }
 
+    /// For JS-thread code that owns a ref on `ctx` but must not release it in the
+    /// current frame (a frame of `ctx`'s own may be below it): the release runs on the
+    /// next tick, or at once if teardown has closed the queue, when no such frame exists.
+    pub(crate) fn schedule_outside_caller(ctx: *mut c_void, tag: Tag) {
+        Self::enqueue(ctx, tag);
+    }
+
+    fn enqueue(ctx: *mut c_void, tag: Tag) {
         let addr = ctx as usize;
         debug_assert!(addr & Self::TAG_MASK == 0);
 
@@ -299,9 +309,10 @@ impl DeferredDerefTask {
         // `Task` is a plain `{ tag, ptr }` pair (no bitfield packing), so
         // build it directly — dispatch unpacks via `task.ptr as usize`.
         let task = Task::new(task_tag, (addr | low_bits) as *mut ());
-        // SAFETY: event_loop() returns the VM's owned EventLoop; we are the
-        // sole mutator on the JS thread here.
-        vm.event_loop_ref().enqueue_task(task);
+        // A closed queue releases the task on arrival (`release_unrun` below runs it).
+        // SAFETY: JS thread; event_loop() returns the VM's owned EventLoop; we are the
+        // sole mutator here.
+        VirtualMachine::get().event_loop_ref().enqueue_task(task);
     }
 
     pub(crate) fn run_from_js_thread(packed_ptr: usize) {
@@ -347,9 +358,7 @@ impl DeferredDerefTask {
                     );
                 }
                 Tag::S3UploadStreamWrapper => {
-                    S3UploadStreamWrapper::release_collected_pump_claim(
-                        ctx.cast::<S3UploadStreamWrapper>(),
-                    );
+                    S3UploadStreamWrapper::release_pump_claim(ctx.cast::<S3UploadStreamWrapper>());
                 }
             }
         }

@@ -230,8 +230,10 @@ impl ActiveHandle {
             // A live VM cannot cancel a build: hop tasks it already queued would
             // still be dispatched against the finished pass.
             ActiveHandle::Bundle(_) => true,
-            // SAFETY: registered ⇒ live (it unregisters in `on_response`).
-            ActiveHandle::S3Request(t) => unsafe { t.as_ref() }.outlives_test_isolation,
+            // SAFETY: registered ⇒ live (it unregisters in `on_response`). A field
+            // read through the raw place: the HTTP thread may be writing the task's
+            // other fields, so no `&` to the whole task is formed.
+            ActiveHandle::S3Request(t) => unsafe { (*t.as_ptr()).outlives_test_isolation },
             _ => false,
         }
     }

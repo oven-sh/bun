@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, readFileSync, statSync, utimesSync } from "fs";
+import { existsSync, readdirSync, readFileSync, statSync, utimesSync } from "fs";
 import { mkdir, rm, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env } from "harness";
 import { join } from "path";
@@ -205,6 +205,40 @@ describe.each(["hoisted", "isolated"] as const)("install state (%s)", linker => 
     expect(r.code).toBe(0);
     expect(existsSync(join(package_dir, "node_modules", "bar", "package.json"))).toBeTrue();
     expect(existsSync(join(package_dir, ".cache", ".install-state"))).toBeFalse();
+  });
+
+  it("removing a scoped package is noticed (only the @scope directory's mtime changes)", async () => {
+    setHandler(dummyRegistry(urls, { "0.0.2": {}, "0.0.3": {}, "0.0.5": {}, "0.1.0": {} }));
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "root",
+        workspaces: ["packages/*"],
+        dependencies: { "@barn/moo": "0.1.0", bar: "0.0.2" },
+      }),
+    );
+    let r = await install(package_dir);
+    expect(r.err).not.toContain("error:");
+    expect(r.code).toBe(0);
+    r = await install(package_dir);
+    expect(r.out).toMatch(noChanges);
+
+    // find where @barn/moo actually lives (root node_modules for hoisted; the store entry's
+    // node_modules for isolated) and remove it: only `@barn`'s mtime changes
+    const candidates = [join(package_dir, "node_modules", "@barn", "moo")];
+    const store = join(package_dir, "node_modules", ".bun");
+    if (existsSync(store)) {
+      for (const e of readdirSync(store)) candidates.push(join(store, e, "node_modules", "@barn", "moo"));
+    }
+    const victim = candidates.find(p => existsSync(join(p, "package.json")));
+    expect(victim).toBeDefined();
+    await rm(victim!, { recursive: true, force: true });
+    // (a full pass that only re-links prints the same summary as the fast path, so assert
+    // on the effect: the fast path would have left the package missing)
+    r = await install(package_dir);
+    expect(r.err).not.toContain("error:");
+    expect(r.code).toBe(0);
+    expect(existsSync(join(victim!, "package.json"))).toBeTrue();
   });
 
   it("local file: dependencies: untouched is a no-op, an edited source re-installs", async () => {

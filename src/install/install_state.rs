@@ -218,11 +218,15 @@ fn env_and_argv_hash(manager: &PackageManager) -> u64 {
     // argv[0] is the executable; the subcommand token (`install`/`i`) is skipped so both
     // spellings share the fast path (the subcommand itself is part of `applicable()`).
     // BUN_OPTIONS tokens are spliced into argv and are also covered by the env hash.
-    for a in bun_core::argv()
-        .into_iter()
-        .skip(1)
-        .filter(|a| !matches!(&a[..], b"install" | b"i" | b"ci"))
-    {
+    let mut skipped_subcommand = false;
+    for a in bun_core::argv().into_iter().skip(1).filter(|a| {
+        if !skipped_subcommand && matches!(&a[..], b"install" | b"i" | b"ci") {
+            skipped_subcommand = true;
+            false
+        } else {
+            true
+        }
+    }) {
         acc.extend_from_slice(a);
         acc.push(0);
     }
@@ -619,20 +623,21 @@ pub fn save(manager: &mut PackageManager, root_dir: &[u8], entries: u64, package
                 continue;
             }
             let dir = join(root_dir, nm.relative_path.as_bytes());
-            for d in [dir.clone(), join(&dir, b".bin")] {
-                match lstat_stamp_strict(&d) {
-                    Stamp::At(stamp) => {
-                        let _ = write!(out, "l {stamp:016x} ");
-                        out.extend_from_slice(&d);
-                        out.push(b'\n');
-                    }
-                    Stamp::Absent => {
-                        let _ = write!(out, "n {:016x} ", 0);
-                        out.extend_from_slice(&d);
-                        out.push(b'\n');
-                    }
-                    Stamp::Unreadable => unreadable = true,
+            if !stamp_dir_and_scopes(&mut out, &dir, true) {
+                unreadable = true;
+            }
+            match lstat_stamp_strict(&join(&dir, b".bin")) {
+                Stamp::At(stamp) => {
+                    let _ = write!(out, "l {stamp:016x} ");
+                    out.extend_from_slice(&join(&dir, b".bin"));
+                    out.push(b'\n');
                 }
+                Stamp::Absent => {
+                    let _ = write!(out, "n {:016x} ", 0);
+                    out.extend_from_slice(&join(&dir, b".bin"));
+                    out.push(b'\n');
+                }
+                Stamp::Unreadable => unreadable = true,
             }
         }
         let store = join(&join(root_dir, b"node_modules"), b".bun");
@@ -650,14 +655,8 @@ pub fn save(manager: &mut PackageManager, root_dir: &[u8], entries: u64, package
                     } else {
                         join(&join(&store, &name), b"node_modules")
                     };
-                    match lstat_stamp_strict(&dir) {
-                        Stamp::At(stamp) => {
-                            let _ = write!(out, "l {stamp:016x} ");
-                            out.extend_from_slice(&dir);
-                            out.push(b'\n');
-                        }
-                        Stamp::Absent => {}
-                        Stamp::Unreadable => unreadable = true,
+                    if !stamp_dir_and_scopes(&mut out, &dir, false) {
+                        unreadable = true;
                     }
                 }
             }
@@ -811,6 +810,49 @@ fn collect_dirs(dir: &[u8], depth: usize, out: &mut Vec<Vec<u8>>, budget: &mut u
 
 /// Recursively record `l` stamps for a local-source directory (skipping node_modules
 /// and VCS dirs). Returns false if the walk exceeded `budget` entries or failed.
+/// `l`/`n`-stamp a nested or store `node_modules` directory, plus each `@scope`
+/// directory directly inside it (removing `@scope/pkg` only touches `@scope`'s mtime).
+/// Returns false when something that exists could not be read.
+fn stamp_dir_and_scopes(out: &mut Vec<u8>, dir: &[u8], record_absent: bool) -> bool {
+    match lstat_stamp_strict(dir) {
+        Stamp::At(stamp) => {
+            let _ = write!(out, "l {stamp:016x} ");
+            out.extend_from_slice(dir);
+            out.push(b'\n');
+        }
+        Stamp::Absent => {
+            if record_absent {
+                let _ = write!(out, "n {:016x} ", 0);
+                out.extend_from_slice(dir);
+                out.push(b'\n');
+            }
+            return true;
+        }
+        Stamp::Unreadable => return false,
+    }
+    match read_dir(dir) {
+        DirList::Absent => true,
+        DirList::Unreadable => false,
+        DirList::Entries(entries) => {
+            for (name, is_dir) in entries {
+                if is_dir && name.first() == Some(&b'@') {
+                    let scope = join(dir, &name);
+                    match lstat_stamp_strict(&scope) {
+                        Stamp::At(stamp) => {
+                            let _ = write!(out, "l {stamp:016x} ");
+                            out.extend_from_slice(&scope);
+                            out.push(b'\n');
+                        }
+                        Stamp::Absent => {}
+                        Stamp::Unreadable => return false,
+                    }
+                }
+            }
+            true
+        }
+    }
+}
+
 fn stamp_source_tree(out: &mut Vec<u8>, dir: &[u8], budget: &mut usize) -> bool {
     // a symlinked source (or entry inside it) would be walked through the link while only
     // the link's own mtime is recorded: not trackable

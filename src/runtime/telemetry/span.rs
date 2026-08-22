@@ -15,6 +15,7 @@ use super::local;
 
 unsafe extern "C" {
     safe fn Bun__Telemetry__activeSpanStub(global: &JSGlobalObject) -> *const SpanStub;
+    safe fn Bun__Telemetry__activeExtrasBaggage(global: &JSGlobalObject) -> JsString;
     safe fn Bun__Telemetry__activeSpanCell(global: &JSGlobalObject) -> JSValue;
     safe fn Bun__Telemetry__enter(global: &JSGlobalObject, span: JSValue) -> JSValue;
     safe fn Bun__Telemetry__exit(global: &JSGlobalObject, prev: JSValue);
@@ -97,6 +98,10 @@ pub fn with_active_propagation<R>(global: &JSGlobalObject, f: impl FnOnce(&[u8],
                 })
             })
             .unwrap_or_default();
+        if owned[1].is_empty() {
+            let extras = bun_core::OwnedString::new(Bun__Telemetry__activeExtrasBaggage(global));
+            return f(&owned[0], extras.to_utf8().slice());
+        }
         return f(&owned[0], &owned[1]);
     }
     // JS-owned spans keep the inherited headers in their TraceState/Baggage fields.
@@ -106,6 +111,11 @@ pub fn with_active_propagation<R>(global: &JSGlobalObject, f: impl FnOnce(&[u8],
         Bun__TelemetrySpan__baggage(cell),
     );
     let (ts, bg) = (ts.to_utf8_without_ref(), bg.to_utf8_without_ref());
+    if bg.slice().is_empty() {
+        // Baggage carried by the api Context (propagation.extract / setBaggage).
+        let extras = bun_core::OwnedString::new(Bun__Telemetry__activeExtrasBaggage(global));
+        return f(ts.slice(), extras.to_utf8().slice());
+    }
     f(ts.slice(), bg.slice())
 }
 

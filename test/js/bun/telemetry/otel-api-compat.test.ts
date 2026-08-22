@@ -149,6 +149,63 @@ describe("@opentelemetry/api", () => {
     await collect();
   });
 
+  test("baggage from propagation.extract()/setBaggage in the active Context is sent by fetch and node:http", async () => {
+    const seen: (string | null)[] = [];
+    using upstream = Bun.serve({
+      port: 0,
+      fetch(req) {
+        seen.push(req.headers.get("baggage"));
+        return new Response("u");
+      },
+    });
+    const ctx = propagation.extract(ROOT_CONTEXT, {
+      traceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+      baggage: "tenant=acme",
+    });
+    await context.with(ctx, () => fetch(`http://127.0.0.1:${upstream.port}/a`).then(r => r.text()));
+    await context.with(
+      propagation.setBaggage(ROOT_CONTEXT, propagation.createBaggage({ k: { value: "v" } })),
+      () =>
+        new Promise<void>((resolve, reject) => {
+          const http = require("node:http");
+          http
+            .get(`http://127.0.0.1:${upstream.port}/b`, (res: any) => {
+              res.resume();
+              res.on("end", resolve);
+            })
+            .on("error", reject);
+        }),
+    );
+    // inside a request handler (native active span) too
+    using front = Bun.serve({
+      port: 0,
+      async fetch() {
+        await context.with(
+          propagation.setBaggage(context.active(), propagation.createBaggage({ h: { value: "1" } })),
+          () => fetch(`http://127.0.0.1:${upstream.port}/c`).then(r => r.text()),
+        );
+        return new Response("f");
+      },
+    });
+    await (await fetch(`http://127.0.0.1:${front.port}/`)).text();
+    expect(seen).toEqual(["tenant=acme", "k=v", "h=1"]);
+    await collect();
+  });
+
+  test("startActiveSpan restores the context when the callback throws after mutating an AsyncLocalStorage store", () => {
+    const { AsyncLocalStorage } = require("node:async_hooks");
+    const als = new AsyncLocalStorage();
+    const tracer = trace.getTracer("compat");
+    expect(() =>
+      tracer.startActiveSpan("throws", () => {
+        als.enterWith("x");
+        throw new Error("boom");
+      }),
+    ).toThrow("boom");
+    expect(trace.getActiveSpan()).toBeUndefined();
+    expect(als.getStore()).toBe("x");
+  });
+
   test("ambient baggage survives activating a span (startActiveSpan / with / using), and an explicit Context replaces it", async () => {
     const tracer = trace.getTracer("compat");
     const withBag = propagation.setBaggage(ROOT_CONTEXT, propagation.createBaggage({ user: { value: "1" } }));

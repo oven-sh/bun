@@ -25,6 +25,7 @@ void Bun__Telemetry__exit(Zig::GlobalObject*, JSC::EncodedJSValue prev);
 // The active span as a cell (materializing one for a pooled span), or undefined.
 JSC::EncodedJSValue Bun__Telemetry__activeSpanCell(Zig::GlobalObject*);
 JSC::EncodedJSValue Bun__Telemetry__activeExtras(Zig::GlobalObject*);
+BunString Bun__Telemetry__activeExtrasBaggage(Zig::GlobalObject*);
 const Bun::TelemetrySpanStub* Bun__Telemetry__activeSpanStub(Zig::GlobalObject*);
 // Pool handle of the active span if it is native-owned, else 0.
 uint64_t Bun__Telemetry__activeNativeHandle(Zig::GlobalObject*);

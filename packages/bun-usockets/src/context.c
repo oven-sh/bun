@@ -113,7 +113,7 @@ void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_list
              * the natural failure path would have, which detaches the
              * wrapper. The handler then closes; if it doesn't, the
              * force-drain below catches it. */
-            us_dispatch_connect_error(s, ECONNABORTED);
+            us_dispatch_connect_error(s, LIBUS_ECONNABORTED);
             if (!us_socket_is_closed(s)) {
                 us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, 0);
             }
@@ -550,8 +550,8 @@ static inline void us_internal_init_connect_socket(struct us_socket_t *s,
 
 struct us_socket_t *us_socket_group_connect_resolved_dns(struct us_socket_group_t *group,
         unsigned char kind, struct ssl_ctx_st *ssl_ctx,
-        struct sockaddr_storage *addr, struct sockaddr_storage *local_addr, int options, int socket_ext_size) {
-    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(addr, local_addr, options);
+        struct sockaddr_storage *addr, struct sockaddr_storage *local_addr, int options, int socket_ext_size, int *error) {
+    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(addr, local_addr, options, error);
     if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
         return NULL;
     }
@@ -561,10 +561,9 @@ struct us_socket_t *us_socket_group_connect_resolved_dns(struct us_socket_group_
     struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
     us_poll_init(p, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
     if (us_poll_start_rc(p, group->loop, LIBUS_SOCKET_WRITABLE) != 0) {
-        int saved_errno = errno;
+        *error = bsd_last_error_or_refused();
         bsd_close_socket(connect_socket_fd);
         us_poll_free(p, group->loop);
-        errno = saved_errno;
         return NULL;
     }
 
@@ -601,7 +600,7 @@ static bool try_parse_ip(const char *ip_str, int port, struct sockaddr_storage *
 void *us_socket_group_connect(struct us_socket_group_t *group, unsigned char kind,
         struct ssl_ctx_st *ssl_ctx, const char *host, int port,
         const char *local_host, int local_port, int options,
-        int socket_ext_size, int *has_dns_resolved) {
+        int socket_ext_size, int *has_dns_resolved, int *error) {
     struct us_loop_t *loop = group->loop;
 
     /* The local address is always a literal IP (Node validates it as one). */
@@ -614,7 +613,7 @@ void *us_socket_group_connect(struct us_socket_group_t *group, unsigned char kin
     struct sockaddr_storage addr;
     if (try_parse_ip(host, port, &addr)) {
         *has_dns_resolved = 1;
-        return us_socket_group_connect_resolved_dns(group, kind, ssl_ctx, &addr, local_addr, options, socket_ext_size);
+        return us_socket_group_connect_resolved_dns(group, kind, ssl_ctx, &addr, local_addr, options, socket_ext_size, error);
     }
 
     struct addrinfo_request *ai_req;
@@ -631,7 +630,7 @@ void *us_socket_group_connect(struct us_socket_group_t *group, unsigned char kin
                 struct sockaddr_storage a;
                 init_addr_with_port(&entries->info, port, &a);
                 *has_dns_resolved = 1;
-                struct us_socket_t *s = us_socket_group_connect_resolved_dns(group, kind, ssl_ctx, &a, local_addr, options, socket_ext_size);
+                struct us_socket_t *s = us_socket_group_connect_resolved_dns(group, kind, ssl_ctx, &a, local_addr, options, socket_ext_size, error);
                 Bun__addrinfo_freeRequest(ai_req, s == NULL);
                 return s;
             }
@@ -669,8 +668,8 @@ void *us_socket_group_connect(struct us_socket_group_t *group, unsigned char kin
 
 struct us_socket_t *us_socket_group_connect_unix(struct us_socket_group_t *group,
         unsigned char kind, struct ssl_ctx_st *ssl_ctx,
-        const char *server_path, size_t pathlen, int options, int socket_ext_size) {
-    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket_unix(server_path, pathlen, options);
+        const char *server_path, size_t pathlen, int options, int socket_ext_size, int *error) {
+    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket_unix(server_path, pathlen, options, error);
     if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
         return 0;
     }
@@ -678,10 +677,9 @@ struct us_socket_t *us_socket_group_connect_unix(struct us_socket_group_t *group
     struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
     us_poll_init(p, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
     if (us_poll_start_rc(p, group->loop, LIBUS_SOCKET_WRITABLE) != 0) {
-        int saved_errno = errno;
+        *error = bsd_last_error_or_refused();
         bsd_close_socket(connect_socket_fd);
         us_poll_free(p, group->loop);
-        errno = saved_errno;
         return 0;
     }
 
@@ -703,9 +701,14 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
     for (; c->addrinfo_head != NULL && opened < count; c->addrinfo_head = c->addrinfo_head->ai_next) {
         struct sockaddr_storage addr;
         init_addr_with_port(c->addrinfo_head, c->port, &addr);
-        /* The deferred-DNS path does not carry a local binding. */
-        LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(&addr, NULL, c->options);
+        /* The deferred-DNS path does not carry a local binding. The dial goes
+         * on with the next address; the error is kept for the case none
+         * connects. Read from the out-param, not LIBUS_ERR after the call: the
+         * failed socket has been closed by then. */
+        int candidate_error = 0;
+        LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(&addr, NULL, c->options, &candidate_error);
         if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
+            c->last_candidate_error = candidate_error;
             continue;
         }
         bsd_socket_nodelay(connect_socket_fd, 1);
@@ -713,6 +716,7 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         struct us_poll_t *poll = &s->p;
         us_poll_init(poll, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
         if (us_poll_start_rc(poll, loop, LIBUS_SOCKET_WRITABLE) != 0) {
+            c->last_candidate_error = bsd_last_error_or_refused();
             bsd_close_socket(connect_socket_fd);
             us_poll_free(poll, loop);
             continue;
@@ -772,8 +776,9 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
     int opened = start_connections(c, CONCURRENT_CONNECTIONS);
     if (opened == 0) {
         /* Same as the exhausted path in us_internal_socket_after_open: a
-         * real connect failure must not be reported as a caller abort. */
-        c->error = ECONNREFUSED;
+         * real connect failure must not be reported as a caller abort, and
+         * the last address's own error beats a blanket LIBUS_ECONNREFUSED. */
+        c->error = c->last_candidate_error ? c->last_candidate_error : LIBUS_ECONNREFUSED;
         us_connecting_socket_close(c);
     }
 }
@@ -791,6 +796,17 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
                     break;
                 }
                 default: {
+                    /* The probe only says the socket never connected
+                     * (WSAENOTCONN); why the connect failed (WSAECONNREFUSED,
+                     * WSAETIMEDOUT, ...) is in SO_ERROR. A probe error other
+                     * than WSAENOTCONN (WSAECONNRESET, WSAEADDRINUSE) is the
+                     * reason itself. */
+                    int connect_error = us_socket_get_error(s);
+                    if (connect_error != 0) {
+                        error = connect_error;
+                    } else if (error == WSAENOTCONN) {
+                        error = LIBUS_ECONNREFUSED;
+                    }
                     break;
                 }
             }
@@ -799,6 +815,7 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
     #endif
     if (error) {
         if (c) {
+            c->last_candidate_error = error;
             for (struct us_socket_t **next = &c->connecting_head; *next; next = &(*next)->connect_next) {
                 if (*next == s) {
                     *next = s->connect_next;
@@ -813,8 +830,10 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
                     /* Every resolved address failed to connect. Without this,
                      * us_connecting_socket_close defaults c->error to
                      * ECONNABORTED (caller abort) and never invalidates the
-                     * DNS cache entry for the dead host. */
-                    c->error = ECONNREFUSED;
+                     * DNS cache entry for the dead host. The last address's
+                     * own error is reported; several addresses failing
+                     * differently is last-wins. */
+                    c->error = c->last_candidate_error ? c->last_candidate_error : LIBUS_ECONNREFUSED;
                     us_connecting_socket_close(c);
                 }
             }

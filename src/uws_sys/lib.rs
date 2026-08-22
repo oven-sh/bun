@@ -433,6 +433,9 @@ pub mod fault_inject {
     pub const RECVMSG: c_int = 4;
     pub const CONNECT: c_int = 5;
     pub const ACCEPT: c_int = 6;
+    /// Runs after the real close in `bsd_close_socket`; only `ACTION_ERRNO`
+    /// applies, and it sets errno the way a failed close would.
+    pub const CLOSE: c_int = 8;
     pub const SHUTDOWN: c_int = 9;
     /// Not a syscall: the per-loop TLS plaintext buffer allocation in
     /// `us_internal_init_loop_ssl_data`.

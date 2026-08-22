@@ -782,7 +782,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         // which would hand the trampoline `1` instead of the owner pointer.
         let ext_size = size_of::<Option<NonNull<Owner>>>() as c_int;
         match g.connect(kind, ssl_ctx, host_z, port, None, opts, ext_size) {
-            ConnectResult::Failed => Err(ConnectError::FailedToOpenSocket),
+            ConnectResult::Failed { errno } => Err(ConnectError::FailedToOpenSocket { errno }),
             ConnectResult::Socket(s) => {
                 *sock(s).ext::<Option<NonNull<Owner>>>() = NonNull::new(owner);
                 Ok(Self {
@@ -813,10 +813,9 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         };
         // See connect_group above for the ext-slot layout rationale.
         let ext_size = size_of::<Option<NonNull<Owner>>>() as c_int;
-        let s = g.connect_unix(kind, ssl_ctx, path, opts, ext_size);
-        if s.is_null() {
-            return Err(ConnectError::FailedToOpenSocket);
-        }
+        let s = g
+            .connect_unix(kind, ssl_ctx, path, opts, ext_size)
+            .map_err(|errno| ConnectError::FailedToOpenSocket { errno })?;
         *sock(s).ext::<Option<NonNull<Owner>>>() = NonNull::new(owner);
         Ok(Self {
             socket: InternalSocket::Connected(s),
@@ -886,7 +885,10 @@ mod sock_c {
 
 #[derive(strum::IntoStaticStr, Debug)]
 pub enum ConnectError {
-    FailedToOpenSocket,
+    /// The dial failed before uSockets had a socket to report on; `errno` is
+    /// the error of the call that failed, as for [`ConnectResult::Failed`],
+    /// e.g. `ENOENT` for a missing unix socket path.
+    FailedToOpenSocket { errno: bun_errno::SystemErrno },
 }
 impl From<ConnectError> for crate::Error {
     fn from(_: ConnectError) -> Self {

@@ -746,6 +746,12 @@ void bsd_close_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
 #else
     close(fd);
 #endif
+    /* After the real close (no fd leak): an armed "close" rule leaves errno,
+     * and WSAGetLastError on Windows, set the way a failed close would, so a
+     * caller that reads them after its cleanup is caught. */
+    ssize_t injected = 0; int unused = 0;
+    (void)US_FAULT_CHECK(US_FAULT_CLOSE, fd, injected, unused);
+    (void)injected; (void)unused;
 }
 
 void bsd_shutdown_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
@@ -1974,9 +1980,16 @@ static int is_loopback(struct sockaddr_storage *sockaddr) {
 }
 #endif
 
-LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr, struct sockaddr_storage *local_addr, int options) {
-    LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_socket(addr->ss_family, SOCK_STREAM, 0, NULL);
+int bsd_last_error_or_refused(void) {
+    int err = LIBUS_ERR;
+    return err ? err : LIBUS_ECONNREFUSED;
+}
+
+LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr, struct sockaddr_storage *local_addr, int options, int *error) {
+    int socket_error = 0;
+    LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_socket(addr->ss_family, SOCK_STREAM, 0, &socket_error);
     if (fd == LIBUS_SOCKET_ERROR) {
+        *error = socket_error ? socket_error : LIBUS_ECONNREFUSED;
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -1994,15 +2007,8 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr,
 #endif
         socklen_t local_len = local_addr->ss_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
         if (bind(fd, (struct sockaddr *) local_addr, local_len)) {
-#ifdef _WIN32
-            int bind_err = WSAGetLastError();
+            *error = bsd_last_error_or_refused();
             bsd_close_socket(fd);
-            WSASetLastError(bind_err);
-#else
-            int bind_err = errno;
-            bsd_close_socket(fd);
-            errno = bind_err;
-#endif
             return LIBUS_SOCKET_ERROR;
         }
     }
@@ -2042,22 +2048,20 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr,
     int rc = bsd_do_connect_raw(fd, (struct sockaddr*) addr, addr->ss_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6));
 
     if (rc != 0) {
+        /* The connect error itself, not what closing the socket leaves behind. */
+        *error = rc;
         bsd_close_socket(fd);
-#ifdef _WIN32
-        /* bsd_do_connect_raw returned the WSA error; re-arm it so the Rust
-         * caller's WSAGetLastError() observes the connect failure rather than
-         * whatever closesocket() left behind. */
-        WSASetLastError(rc);
-#endif
         return LIBUS_SOCKET_ERROR;
     }
     return fd;
 }
 
-static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_connect_socket_unix(const char *server_path, size_t len, int options, struct sockaddr_un* server_address, const size_t addrlen) {
-    LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_socket(AF_UNIX, SOCK_STREAM, 0, NULL);
+static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_connect_socket_unix(const char *server_path, size_t len, int options, struct sockaddr_un* server_address, const size_t addrlen, int *error) {
+    int socket_error = 0;
+    LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_socket(AF_UNIX, SOCK_STREAM, 0, &socket_error);
 
     if (fd == LIBUS_SOCKET_ERROR) {
+        *error = socket_error ? socket_error : LIBUS_ECONNREFUSED;
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -2065,21 +2069,22 @@ static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_connect_socket_unix(const cha
 
     int rc = bsd_do_connect_raw(fd, (struct sockaddr *)server_address, addrlen);
     if (rc != 0) {
+        *error = rc;
         bsd_close_socket(fd);
-#ifdef _WIN32
-        WSASetLastError(rc);
-#endif
         return LIBUS_SOCKET_ERROR;
     }
 
     return fd;
 }
 
-LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket_unix(const char *server_path, size_t len, int options) {
+LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket_unix(const char *server_path, size_t len, int options, int *error) {
     struct sockaddr_un server_address;
     size_t addrlen = 0;
     int dirfd_workaround_for_unix_path_len = -1;
     if (bsd_create_unix_socket_address(server_path, len, &dirfd_workaround_for_unix_path_len, &server_address, &addrlen)) {
+        /* ENOENT for an empty path (ERROR_PATH_NOT_FOUND on Windows),
+         * ENAMETOOLONG for one sun_path cannot hold. */
+        *error = bsd_last_error_or_refused();
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -2087,20 +2092,18 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket_unix(const char *server_path, 
     if (dirfd_workaround_for_unix_path_len != -1) {
         if (__pthread_fchdir(dirfd_workaround_for_unix_path_len) != 0) {
             close(dirfd_workaround_for_unix_path_len);
-            errno = ENAMETOOLONG;
+            *error = ENAMETOOLONG;
             return LIBUS_SOCKET_ERROR;
         }
     }
 #endif
 
-    LIBUS_SOCKET_DESCRIPTOR fd = internal_bsd_create_connect_socket_unix(server_path, len, options, &server_address, addrlen);
+    LIBUS_SOCKET_DESCRIPTOR fd = internal_bsd_create_connect_socket_unix(server_path, len, options, &server_address, addrlen, error);
 
 #if defined(__APPLE__)
     if (dirfd_workaround_for_unix_path_len != -1) {
-        int saved_errno = errno;
         __pthread_fchdir(-1);
         close(dirfd_workaround_for_unix_path_len);
-        errno = saved_errno;
     }
 #elif defined(__linux__)
     if (dirfd_workaround_for_unix_path_len != -1) {

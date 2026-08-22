@@ -84,11 +84,18 @@ extern void __attribute__((__noreturn__)) Bun__outOfMemory(void);
 #define IS_EINTR(rc) (rc == SOCKET_ERROR && WSAGetLastError() == WSAEINTR)
 #define LIBUS_ERR WSAGetLastError()
 #define LIBUS_ECONNRESET WSAECONNRESET
+/* The codes uSockets fills in itself for a connect it ended or gave up on,
+ * in that same numbering, so a caller can treat every connect error code
+ * alike. */
+#define LIBUS_ECONNABORTED WSAECONNABORTED
+#define LIBUS_ECONNREFUSED WSAECONNREFUSED
 #else
 #include <errno.h>
 #define IS_EINTR(rc) (rc == -1 && errno == EINTR)
 #define LIBUS_ERR errno
 #define LIBUS_ECONNRESET ECONNRESET
+#define LIBUS_ECONNABORTED ECONNABORTED
+#define LIBUS_ECONNREFUSED ECONNREFUSED
 #endif
 #include <stdbool.h>
 /* Poll type and what it polls for */
@@ -380,6 +387,11 @@ struct us_connecting_socket_t {
     unsigned char kind;
     uint16_t port;
     int error;
+    /* The error of the last address that failed (the out-param of a dial
+     * that failed outright, or the SO_ERROR reported through after_open).
+     * When every address is exhausted this is what `error` becomes, in
+     * place of a blanket LIBUS_ECONNREFUSED. */
+    int last_candidate_error;
     struct addrinfo *addrinfo_head;
     // this is used to track pending connecting sockets in the context
     struct us_connecting_socket_t* next_pending;

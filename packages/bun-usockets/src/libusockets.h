@@ -444,16 +444,19 @@ void us_socket_on_server_name(us_socket_r s, us_socket_server_name_cb cb);
 /* ── Connect ──────────────────────────────────────────────────────────────
  * Returns either us_socket_t* (fast path, *is_connecting=1) or
  * us_connecting_socket_t* (DNS / happy-eyeballs in flight, *is_connecting=0).
- * ssl_ctx may be NULL for plain TCP. */
+ * ssl_ctx may be NULL for plain TCP. NULL when the dial failed outright, with
+ * the OS error (errno, or the WSA/Win32 code on Windows) in *error; a dial
+ * that fails later reports through the connect error callback instead. */
 void *us_socket_group_connect(us_socket_group_r group, unsigned char kind,
     struct ssl_ctx_st *ssl_ctx, const char *host, int port,
     const char *local_host, int local_port, int options,
-    int socket_ext_size, int *is_connecting)
-    __attribute__((nonnull(1, 4, 10)));  /* ssl_ctx, local_host nullable */
+    int socket_ext_size, int *is_connecting, int *error)
+    __attribute__((nonnull(1, 4, 10, 11)));  /* ssl_ctx, local_host nullable */
 struct us_socket_t *us_socket_group_connect_unix(us_socket_group_r group,
     unsigned char kind, struct ssl_ctx_st *ssl_ctx,
-    const char *server_path, size_t pathlen, int options, int socket_ext_size)
-    __attribute__((nonnull(1, 4)));  /* ssl_ctx nullable */
+    const char *server_path, size_t pathlen, int options, int socket_ext_size,
+    int *error)
+    __attribute__((nonnull(1, 4, 8)));  /* ssl_ctx nullable */
 
 int us_socket_is_established(us_socket_r s) nonnull_fn_decl;
 void us_connecting_socket_free(struct us_connecting_socket_t *c) nonnull_fn_decl;

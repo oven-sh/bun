@@ -8900,6 +8900,22 @@ pub fn renameat_concurrently_a(
 pub fn iterate_dir(dir: Fd) -> dir_iterator::WrappedIterator {
     dir_iterator::iterate(dir)
 }
+/// `errno` (`SystemErrno` numbering) is what a `connect(2)` to the unix socket
+/// `path` failed with, as node reports it. Winsock reports `WSAECONNREFUSED`
+/// for an AF_UNIX path that does not exist; node checks the path and reports
+/// `ENOENT` for it, and so does this (every other OS reports `ENOENT` itself).
+/// A path `sun_path` cannot hold is `ENAMETOOLONG` from the OS and `EINVAL`
+/// from libuv.
+pub fn unix_connect_errno(errno: core::ffi::c_int, path: &[u8]) -> core::ffi::c_int {
+    if cfg!(windows) && errno == SystemErrno::ECONNREFUSED as core::ffi::c_int && !exists(path) {
+        return SystemErrno::ENOENT as core::ffi::c_int;
+    }
+    if errno == SystemErrno::ENAMETOOLONG as core::ffi::c_int {
+        return SystemErrno::EINVAL as core::ffi::c_int;
+    }
+    errno
+}
+
 /// `bun.sys.exists`. Non-NUL-terminated convenience over
 /// [`exists_z`]: copies into a stack `PathBuffer`, NUL-terminates, then
 /// `access(path, F_OK)` (POSIX) / `GetFileAttributesW` (Windows).

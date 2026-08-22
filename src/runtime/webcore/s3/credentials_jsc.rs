@@ -211,7 +211,8 @@ pub(crate) fn get_credentials_with_options(
                 new_credentials.changed_credentials = true;
             }
 
-            // `pageSize` is the deprecated alias; `partSize` wins when both are set.
+            // `pageSize` is the deprecated alias. Both are validated when both
+            // are set, and the `partSize` value is the one that is kept.
             for name in [b"pageSize".as_slice(), b"partSize".as_slice()] {
                 if let Some(part_size) = get_optional_int_in_range(
                     opts,

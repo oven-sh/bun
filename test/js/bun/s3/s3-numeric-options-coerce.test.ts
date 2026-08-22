@@ -143,7 +143,14 @@ describe("S3Client upload options coercion", () => {
     expect(rangeErrorMessage({ queueSize: 0.5 })).toBe(
       'The value of "queueSize" is out of range. It must be >= 1. Received 0.5',
     );
+    expect(rangeErrorMessage({ queueSize: -0.5 })).toContain("Received -0.5");
     expect(rangeErrorMessage({ queueSize: -Infinity })).toContain("Received -Infinity");
+  });
+
+  test("pageSize and partSize are both validated, and partSize is kept", () => {
+    expect(Bun.inspect(make({ pageSize: 10485760, partSize: 20971520 }))).toContain("partSize: 20971520");
+    expect(Bun.inspect(make({ pageSize: 20971520, partSize: 10485760 }))).toContain("partSize: 10485760");
+    expect(rangeErrorMessage({ pageSize: 1024, partSize: 10485760 })).toContain('"pageSize"');
   });
 
   test("queueSize above 255 still clamps to 255", () => {

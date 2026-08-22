@@ -567,6 +567,12 @@ fn create_links(staging: &[u8], links: &mut Vec<(Vec<u8>, Vec<u8>)>) -> std::io:
         return Err(traverses(rel));
     }
     let created: Vec<(Vec<u8>, Vec<u8>)> = std::mem::take(links);
+    // bun's tarball extraction does not create package symlinks on Windows (cache entries
+    // never contain them there), so neither does unpack: records were validated above and
+    // are otherwise skipped
+    if cfg!(windows) {
+        return Ok(());
+    }
     for (rel, target) in &created {
         let comps: Vec<&[u8]> = components(rel).collect();
         let mut p = staging.to_vec();
@@ -614,7 +620,7 @@ fn safe_folder_name(name: &[u8]) -> bool {
         return false;
     }
     let slashes = strings::count_char(name, b'/');
-    slashes == 0 || (slashes == 1 && name[0] == b'@' && !name.ends_with(b"/"))
+    slashes == 0 || (slashes == 1 && name[0] == b'@')
 }
 
 /// Restore missing cache folders from a pack. Existing folders are left untouched
@@ -793,12 +799,7 @@ fn unpack_impl(cache_dir: &[u8], pack_path: &[u8]) -> std::io::Result<UnpackSumm
                         if !symlink_target_stays_inside(&path, &target) {
                             return Err(bad("unsafe symlink target in pack", record_no));
                         }
-                        // bun's tarball extraction does not create package symlinks on
-                        // Windows (cache entries never contain them there), so neither
-                        // does unpack; the record is validated and skipped
-                        if !cfg!(windows) {
-                            pending_links.push((path.clone(), target));
-                        }
+                        pending_links.push((path.clone(), target));
                     }
                     _ => {
                         if let Some(parent) = parent(&dest) {

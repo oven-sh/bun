@@ -22,7 +22,7 @@ impl Replacer {
         if replacer.is_callable() {
             return Ok(Some(Self::Function(replacer)));
         }
-        if !replacer.is_array() {
+        if !replacer.is_array_including_proxy(global)? {
             return Ok(None);
         }
 

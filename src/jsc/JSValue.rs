@@ -284,6 +284,10 @@ impl JSValue {
     pub fn is_array(self) -> bool {
         self.is_cell() && self.js_type().is_array()
     }
+    /// ECMA-262 `IsArray`: [`Self::is_array`], or a `Proxy` of an array. Throws for a revoked `Proxy`.
+    pub fn is_array_including_proxy(self, global: &JSGlobalObject) -> JsResult<bool> {
+        crate::cpp::JSC__JSValue__isArrayIncludingProxy(self, global)
+    }
     #[inline]
     pub fn is_date(self) -> bool {
         self.is_cell() && self.js_type() == JSType::JSDate

@@ -971,6 +971,23 @@ describe("stringify", () => {
     test("works together with space", () => {
       expect(JSON5.stringify({ a: 1, b: 2 }, ["b"], 2)).toBe("{\n  b: 2,\n}");
     });
+
+    test("a Proxy of an array is a list too, read through its traps", () => {
+      const input = { a: 1, b: 2, c: 3 };
+      expect(JSON5.stringify(input, new Proxy(["b"], {}))).toBe("{b:2}");
+
+      const trapped = new Proxy(["a"], {
+        get(target, key, receiver) {
+          return key === "length" ? 2 : key === "1" ? "c" : Reflect.get(target, key, receiver);
+        },
+      });
+      expect(JSON5.stringify(input, trapped)).toBe("{a:1,c:3}");
+      expect(JSON.stringify(input, trapped)).toBe('{"a":1,"c":3}');
+
+      const { proxy, revoke } = Proxy.revocable(["a"], {});
+      revoke();
+      expect(() => JSON5.stringify(input, proxy)).toThrow(TypeError);
+    });
   });
 
   test("a replacer that is neither callable nor an array is ignored, as JSON.stringify ignores it", () => {

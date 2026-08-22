@@ -182,7 +182,7 @@ impl Category {
 }
 
 impl Category {
-    pub(crate) fn init(str: &[u8]) -> Category {
+    pub fn init(str: &[u8]) -> Category {
         if let Some(slash) = strings::index_of_char(str, b'/') {
             let category = &str[0..slash as usize];
             let mut after_slash: &[u8] = if str.len() > slash as usize + 1 {

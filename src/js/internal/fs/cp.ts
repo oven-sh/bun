@@ -12,28 +12,21 @@ const {
   fsEisdirError,
   areIdentical,
   isSrcSubdir,
+  joinDirEntry,
+  pathToString,
+  kReaddirBufferOpts,
+  kReadlinkOpts,
+  copiedLinkTarget,
 } = require("internal/fs/cp-sync");
 
-const {
-  chmod,
-  copyFile,
-  lstat,
-  mkdir,
-  opendir,
-  readdir,
-  readlink,
-  stat,
-  symlink,
-  unlink,
-  utimes,
-} = require("node:fs/promises");
-const { dirname, isAbsolute, join, parse, resolve } = require("node:path");
+const { chmod, copyFile, lstat, mkdir, readdir, readlink, stat, symlink, unlink, utimes } = require("node:fs/promises");
+const { dirname, parse, resolve } = require("node:path");
 
 const PromisePrototypeThen = $Promise.prototype.$then;
 const PromiseReject = Promise.$reject;
 
 async function checkPaths(src, dest, opts) {
-  if (opts.filter && !(await opts.filter(src, dest))) {
+  if (opts.filter && !(await opts.filter(pathToString(src), pathToString(dest)))) {
     return { __proto__: null, skipped: true };
   }
   const { 0: srcStat, 1: destStat } = await getStats(src, dest, opts);
@@ -132,14 +125,14 @@ async function treeContainsOnlyFilesAndDirs(root) {
     const dir = stack.pop();
     let entries;
     try {
-      entries = await readdir(dir, { withFileTypes: true });
+      entries = await readdir(dir, kReaddirBufferOpts);
     } catch {
       return false;
     }
     for (let i = 0; i < entries.length; i++) {
       const entry = entries[i];
       if (entry.isDirectory()) {
-        stack.push(join(dir, entry.name));
+        stack.push(joinDirEntry(dir, entry.name));
       } else if (!entry.isFile()) {
         return false;
       }
@@ -335,27 +328,22 @@ async function mkDirAndCopy(srcMode, src, dest, opts) {
 }
 
 async function copyDir(src, dest, opts) {
-  const dir = await opendir(src);
-
-  for await (const { name } of dir) {
-    const srcItem = join(src, name);
-    const destItem = join(dest, name);
+  for (const { name } of await readdir(src, kReaddirBufferOpts)) {
+    const srcItem = joinDirEntry(src, name);
+    const destItem = joinDirEntry(dest, name);
     const { destStat, skipped } = await checkPaths(srcItem, destItem, opts);
     if (!skipped) await getStatsForCopy(destStat, srcItem, destItem, opts);
   }
 }
 
 async function onLink(destStat, src, dest, opts) {
-  let resolvedSrc = await readlink(src);
-  if (!opts.verbatimSymlinks && !isAbsolute(resolvedSrc)) {
-    resolvedSrc = resolve(dirname(src), resolvedSrc);
-  }
+  const resolvedSrc = copiedLinkTarget(src, await readlink(src, kReadlinkOpts), opts.verbatimSymlinks);
   if (!destStat) {
     return symlink(resolvedSrc, dest);
   }
   let resolvedDest;
   try {
-    resolvedDest = await readlink(dest);
+    resolvedDest = await readlink(dest, kReadlinkOpts);
   } catch (err: any) {
     // Dest exists and is a regular file or directory,
     // Windows may throw UNKNOWN error. If dest already exists,
@@ -365,9 +353,7 @@ async function onLink(destStat, src, dest, opts) {
     }
     throw err;
   }
-  if (!isAbsolute(resolvedDest)) {
-    resolvedDest = resolve(dirname(dest), resolvedDest);
-  }
+  resolvedDest = copiedLinkTarget(dest, resolvedDest, false);
   // stat(src) follows the link; a dangling src symlink throws ENOENT here,
   // same as before (both gated checks below only apply to directories).
   const srcStat = await stat(src);

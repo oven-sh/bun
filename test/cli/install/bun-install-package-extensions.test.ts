@@ -273,6 +273,7 @@ test("malformed package.json packageExtensions entries warn and are skipped", as
         "a-dep": { dependencies: { "no-deps": 1 } },
         "no-deps": "not an object",
         "a-dep@not a range": { dependencies: { "no-deps": "1.0.0" } },
+        "a-dep@": { dependencies: { "no-deps": "1.0.1" } },
       },
     }),
   );
@@ -284,11 +285,14 @@ test("malformed package.json packageExtensions entries warn and are skipped", as
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [_, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(err).toContain("warn: Expected a version range string");
   expect(err).toContain("warn: Expected an object with");
-  expect(err).toContain('warn: Expected a semver range after "@" in the package name');
+  expect(err.match(/warn: Expected a semver range after "@" in the package name/g)).toHaveLength(2);
   expect(err).not.toContain("error:");
+  // only a-dep itself: every extension entry was rejected
+  expect(out).toContain("+ a-dep@1.0.7");
+  expect(out).toContain("1 package installed");
   expect(exitCode).toBe(0);
   expect(await lockfileEntry(packageDir, "a-dep")).toEqual({});
 });
@@ -337,7 +341,8 @@ test("malformed bunfig.toml packageExtensions is a config error", async () => {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [_, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(err).toContain(`Expected "packageExtensions" to be an object`);
+  expect(out).not.toContain("installed");
   expect(exitCode).not.toBe(0);
 });

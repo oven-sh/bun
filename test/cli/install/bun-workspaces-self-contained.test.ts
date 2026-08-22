@@ -38,7 +38,15 @@ beforeEach(async () => {
 afterEach(dummyAfterEach);
 
 async function install(cwd: string, args: string[] = []) {
-  await using proc = spawn({ cmd: [bunExe(), "install", ...args], cwd, env, stdout: "pipe", stderr: "pipe" });
+  // --backend=hardlink so the "physical copy" assertions are meaningful on macOS too
+  // (its default, clonefile, also yields nlink 1)
+  await using proc = spawn({
+    cmd: [bunExe(), "install", "--backend=hardlink", ...args],
+    cwd,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { out, err, code };
 }
@@ -106,6 +114,8 @@ describe.each([
       expect(lstatSync(join(desktopNm, "bar")).isSymbolicLink()).toBeFalse();
       expect(lstatSync(join(desktopNm, "bar", "package.json")).isSymbolicLink()).toBeFalse();
       expect(statSync(join(desktopNm, "bar", "package.json")).nlink).toBe(1);
+      // control: the root's copy of the same package *is* hardlinked from the cache
+      expect(statSync(join(package_dir, "node_modules", "bar", "package.json")).nlink).toBeGreaterThan(1);
     }
     // even though `bar` also exists at the root for the root package / other workspaces
     expect(existsSync(join(package_dir, "node_modules", "bar", "package.json"))).toBeTrue();

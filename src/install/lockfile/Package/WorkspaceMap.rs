@@ -47,19 +47,27 @@ impl WorkspaceMap {
     }
 
     /// Mark the workspaces listed in the root manifest's `workspaces.selfContained`
-    /// (by relative path or by package name) as self-contained.
-    pub(crate) fn mark_self_contained(&mut self, list: &[&[u8]]) {
+    /// (by relative path or by package name) as self-contained. Returns the entries
+    /// that matched no workspace, for the caller to warn about.
+    pub(crate) fn mark_self_contained<'l>(&mut self, list: &[&'l [u8]]) -> Vec<&'l [u8]> {
         let keys: Vec<Box<[u8]>> = self.map.keys().to_vec();
+        let mut matched = vec![false; list.len()];
         for (i, entry) in self.map.values_mut().iter_mut().enumerate() {
             let path = strings::without_trailing_slash(&keys[i]);
-            if list.iter().any(|item| {
+            for (j, item) in list.iter().enumerate() {
                 let item = strings::without_trailing_slash(item);
                 let item = item.strip_prefix(b"./").unwrap_or(item);
-                item == path || item == &*entry.name
-            }) {
-                entry.hoisting_limits = true;
+                if item == path || item == &*entry.name {
+                    entry.hoisting_limits = true;
+                    matched[j] = true;
+                }
             }
         }
+        list.iter()
+            .zip(matched)
+            .filter(|(_, m)| !m)
+            .map(|(item, _)| *item)
+            .collect()
     }
 
     pub(crate) fn count(&self) -> usize {

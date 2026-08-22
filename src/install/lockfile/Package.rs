@@ -2431,13 +2431,30 @@ impl Package<u64> {
                                 let mut owned: Vec<Vec<u8>> = Vec::new();
                                 if let Some(mut items) = q.expr.as_array() {
                                     while let Some(item) = items.next() {
-                                        if let Some(s) = item.as_string(&bump) {
-                                            owned.push(s.to_vec());
-                                        }
+                                        let Some(s) = item.as_string(&bump) else {
+                                            let _ = log.add_error_fmt(
+                                                source,
+                                                item.loc,
+                                                format_args!(
+                                                    "\"workspaces.selfContained\" entries must be strings (workspace paths or names)"
+                                                ),
+                                            );
+                                            return Err(crate::Error::InvalidPackageJSON);
+                                        };
+                                        owned.push(s.to_vec());
                                     }
                                 }
                                 let list: Vec<&[u8]> = owned.iter().map(|v| v.as_slice()).collect();
-                                workspace_names.mark_self_contained(&list);
+                                for unmatched in workspace_names.mark_self_contained(&list) {
+                                    log.add_warning_fmt(
+                                        Some(source),
+                                        q.expr.loc,
+                                        format_args!(
+                                            "\"workspaces.selfContained\": \"{}\" does not match any workspace path or name",
+                                            bstr::BStr::new(unmatched)
+                                        ),
+                                    );
+                                }
                             }
 
                             break 'brk;

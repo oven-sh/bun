@@ -280,6 +280,8 @@ extern "C" long Bun__crashHandlerFromJSCFrame(void*, void*, void*, void*);
 // bun_icu_default_locale.cpp
 extern "C" void Bun__ensureICUDefaultLocale();
 
+extern "C" size_t Bun__Node__MaxOldSpaceSizeBytes;
+
 extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup, bool shortLivedGlobals)
 {
     static std::once_flag jsc_init_flag;
@@ -327,6 +329,11 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             // it off in Bun while upstream stabilises it.
             // BUN_JSC_useWasmMemory64=1 re-enables it for opt-in testing.
             JSC::Options::useWasmMemory64() = false;
+            // --max-old-space-size: size the GC heuristics to the requested
+            // cap so collection ramps up before the limit is reached, like V8.
+            // A BUN_JSC_forceRAMSize env override below still wins.
+            if (size_t heapLimit = Bun__Node__MaxOldSpaceSizeBytes)
+                JSC::Options::forceRAMSize() = heapLimit;
             JSC::dangerouslyOverrideJSCBytecodeCacheVersion(getWebKitBytecodeCacheVersion());
 
 #ifdef BUN_DEBUG
@@ -466,9 +473,9 @@ void Zig::GlobalObject::resetOnEachMicrotaskTick()
 
 extern "C" size_t Bun__reported_memory_size;
 
-// executionContextId: -1 for main thread
+// executionContextId: 1 for the main thread (see VirtualMachine::init)
 // executionContextId: maxInt32 for macros
-// executionContextId: >-1 for workers
+// executionContextId: >1 for workers
 extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, int32_t executionContextId, bool miniMode, bool evalMode, void* worker_ptr)
 {
     auto heapSize = miniMode ? JSC::HeapType::Small : JSC::HeapType::Large;
@@ -486,8 +493,10 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
         const char* disable_stop_if_necessary_timer = getenv("BUN_DISABLE_STOP_IF_NECESSARY_TIMER");
         // Keep stopIfNecessaryTimer enabled by default when either:
         // - `--smol` is passed
+        // - `--max-old-space-size` is set (the mutator must not outrun the
+        //   collector, or the heap blows through the limit between full GCs)
         // - The machine has less than 4GB of RAM
-        bool shouldDisableStopIfNecessaryTimer = !miniMode;
+        bool shouldDisableStopIfNecessaryTimer = !miniMode && !Bun__Node__MaxOldSpaceSizeBytes;
 
         if (disable_stop_if_necessary_timer) {
             const char value = disable_stop_if_necessary_timer[0];
@@ -513,6 +522,15 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     ASSERT(vmPtr->runLoop().kind() == WTF::RunLoop::Kind::Bun);
 
     WebCore::JSVMClientData::create(&vm, Bun__getVM(), static_cast<WebCore::WorkerMessagingProxy*>(worker_ptr));
+
+    // Only the main thread VM (context id 1, see VirtualMachine::init)
+    // enforces --max-old-space-size. Node terminates an over-limit worker
+    // without killing the process (resourceLimits), so a worker heap OOM
+    // must not _exit the whole process from here.
+    if (executionContextId == 1) {
+        if (size_t heapLimit = Bun__Node__MaxOldSpaceSizeBytes)
+            WebCore::clientData(vm)->enforceMaxOldSpaceSize(vm, heapLimit);
+    }
 
     const auto createGlobalObject = [&]() -> Zig::GlobalObject* {
         if (executionContextId == std::numeric_limits<int32_t>::max() || executionContextId > 1) [[unlikely]] {

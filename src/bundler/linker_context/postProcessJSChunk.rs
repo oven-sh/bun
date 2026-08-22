@@ -317,16 +317,17 @@ pub(crate) fn post_process_js_chunk(
                 break 'brk (source_hashbang.slice(), c.options.banner);
             }
 
-            // Otherwise check if banner starts with hashbang
+            // Otherwise check if banner starts with hashbang. As in the lexer, the
+            // hashbang ends at the first '\r' or '\n', so a CRLF banner does not
+            // leave a '\r' on it that advance() would count as its own line break.
             if !c.options.banner.is_empty() && c.options.banner.starts_with(b"#!") {
-                let newline_pos = strings::index_of_char(c.options.banner, b'\n')
-                    .map(|n| n as usize)
+                let hashbang_end = strings::index_of_any(c.options.banner, b"\r\n")
                     .unwrap_or(c.options.banner.len());
-                let banner_hashbang = &c.options.banner[..newline_pos];
+                let banner_hashbang = &c.options.banner[..hashbang_end];
 
                 break 'brk (
                     banner_hashbang,
-                    strings::trim_left(&c.options.banner[newline_pos..], b"\r\n"),
+                    strings::trim_left(&c.options.banner[hashbang_end..], b"\r\n"),
                 );
             }
 
@@ -374,9 +375,16 @@ pub(crate) fn post_process_js_chunk(
     if !banner.is_empty() {
         j.push_static(banner);
         line_offset.advance(banner);
-        if !strings::ends_with_char(banner, b'\n') {
-            j.push_static(b"\n");
-            line_offset.advance(b"\n");
+        match banner[banner.len() - 1] {
+            b'\n' => {}
+            // advance() already counted a trailing bare '\r' as a line break. The
+            // '\n' pushed here merges with it into a single CRLF in the output,
+            // so counting it too would shift every mapping down by one line.
+            b'\r' => j.push_static(b"\n"),
+            _ => {
+                j.push_static(b"\n");
+                line_offset.advance(b"\n");
+            }
         }
         newline_before_comment = true;
     }

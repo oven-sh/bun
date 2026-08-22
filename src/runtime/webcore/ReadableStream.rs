@@ -210,6 +210,13 @@ impl ReadableStream {
                 let blobby = self.ptr.file().expect("matched File");
                 if let webcore::file_reader::Lazy::Blob(store) = blobby.lazy.get() {
                     let blob = Blob::init_with_store(store.clone(), global_this);
+                    // The window `from_blob_copy_ref` moved onto the reader.
+                    if let Some(offset) = blobby.start_offset {
+                        blob.offset.set(offset as webcore::blob::SizeType);
+                    }
+                    if let Some(size) = blobby.max_size {
+                        blob.size.set(size as webcore::blob::SizeType);
+                    }
                     // it should be lazy, file shouldn't have opened yet.
                     debug_assert!(!blobby.started.get());
                     self.done();

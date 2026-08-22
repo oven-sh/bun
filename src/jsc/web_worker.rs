@@ -64,6 +64,11 @@ pub struct WebWorker {
     parent: *mut VirtualMachine,
     /// The parent's `--hot` / `--watch` mode, inherited by the worker VM.
     hot_reload: crate::virtual_machine::HotReload,
+    /// The process-lifetime `--watch` import watcher (leaked by
+    /// `enable_hot_module_reloading`), installed into the worker VM so the
+    /// modules it loads restart the process too; null under `--hot` or when
+    /// not watching.
+    watch_watcher: *mut crate::hot_reloader::ImportWatcher,
     /// Whether the worker VM arms `bun_jsc::vm_handle`'s test gate (debug
     /// builds, `BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE`, first-level workers only:
     /// a nested worker parked on a post to its worker parent would keep that
@@ -355,6 +360,21 @@ impl WebWorker {
         // SAFETY: `parent` is the calling thread's live VM.
         let parent_ref = unsafe { &*parent };
         let store_fd = parent_ref.transpiler.resolver.store_fd;
+        // `--watch` restarts the whole process, so share the process-lifetime
+        // watcher with worker VMs (`add_file` is watcher-mutex serialized).
+        // `--hot` reloads in-place on the main thread only; workers stay out.
+        let parent_watcher = parent_ref.bun_watcher;
+        let watch_watcher = if !parent_watcher.is_null()
+            && matches!(
+                // SAFETY: set once during main-VM startup before any worker
+                // can spawn; points at the leaked process-lifetime watcher.
+                unsafe { &*parent_watcher },
+                crate::hot_reloader::ImportWatcher::Watch(_)
+            ) {
+            parent_watcher
+        } else {
+            core::ptr::null_mut()
+        };
         let mut transform_options = (*parent_ref.transpiler.options.transform_options).clone();
         if !inherit_exec_argv {
             let hooks = runtime_hooks().expect("RuntimeHooks not installed");
@@ -399,6 +419,7 @@ impl WebWorker {
             messaging_proxy: proxy,
             parent,
             hot_reload: parent_ref.hot_reload,
+            watch_watcher,
             arm_test_gate: cfg!(debug_assertions)
                 && parent_ref.is_main_thread()
                 && bun_core::env_var::feature_flag::BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE::get()
@@ -746,6 +767,10 @@ impl WebWorker {
             vm_ref.is_main_thread = false;
             VirtualMachine::set_is_main_thread_vm(false);
             vm_ref.on_unhandled_rejection = on_unhandled_rejection;
+
+            if !self.watch_watcher.is_null() {
+                vm_ref.bun_watcher = self.watch_watcher;
+            }
 
             // `--heap-prof` via execArgv: `vm.on_exit()` (worker thread,
             // `shutdown()`) writes the profile from this config.

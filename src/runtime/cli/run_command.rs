@@ -1404,6 +1404,28 @@ impl Run<'_> {
                 bun_jsc::posix_signal_handle::enable_watch_mode_signals(
                     ctx.debug.watch_kill_signal,
                 );
+                bun_jsc::hot_reloader::set_watch_command_display(entry, &vm.argv);
+
+                // `--watch-path`: register the extra paths with the watcher.
+                if !ctx.debug.watch_paths.is_empty() {
+                    // SAFETY: `vm.transpiler.fs` is the process-static
+                    // `FileSystem` singleton (set in `Transpiler::init`).
+                    let cwd = unsafe { (*vm.transpiler.fs).top_level_dir };
+                    // SAFETY: `bun_watcher` was just installed above and is
+                    // the process-lifetime leaked watcher.
+                    let watcher = unsafe { &mut *vm.bun_watcher_ptr() };
+                    for path in &ctx.debug.watch_paths {
+                        let abs = if bun_paths::is_absolute(path) {
+                            path.to_vec()
+                        } else {
+                            bun_paths::resolve_path::join::<
+                                bun_paths::resolve_path::platform::Auto,
+                            >(&[cwd, path])
+                            .to_vec()
+                        };
+                        let _ = watcher.add_file_by_path_slow(&abs);
+                    }
+                }
             }
             _ => {}
         }
@@ -1511,6 +1533,10 @@ impl Run<'_> {
         // ── core run-loop ──────────────────────────────────────────────────
         if vm.is_watcher_enabled() {
             vm.report_exception_in_hot_reloaded_module_if_needed();
+            // node's watcher prints `Completed running`/`Failed running` when
+            // the watched child exits; the equivalent moment here is the event
+            // loop draining. Once per process: a reload execve()s.
+            let mut printed_watch_idle = false;
             loop {
                 while vm.is_event_loop_alive() {
                     vm.tick();
@@ -1519,6 +1545,18 @@ impl Run<'_> {
                 }
                 vm.on_before_exit();
                 vm.report_exception_in_hot_reloaded_module_if_needed();
+                if !printed_watch_idle && !vm.is_event_loop_alive() {
+                    // Report last-turn rejections now so they decide Failed vs
+                    // Completed (node's child exits 1 on unhandled rejection). If a
+                    // listener schedules work the loop is alive again; print waits.
+                    let _ = vm.global().handle_rejected_promises();
+                    if !vm.is_event_loop_alive() {
+                        printed_watch_idle = true;
+                        bun_jsc::hot_reloader::print_watch_idle_message(
+                            vm.exit_handler.exit_code != 0 || vm.unhandled_error_counter > 0,
+                        );
+                    }
+                }
                 // SAFETY: `event_loop` is a self-pointer into this VM; uniquely
                 // accessed here. Watcher arm keeps the process alive across
                 // reloads.

@@ -247,7 +247,7 @@ impl MacroContext {
                 log.add_error_fmt(
                     Some(source),
                     caller.loc,
-                    format_args!("{}", failure.message),
+                    format_args!("{}", bstr::BStr::new(&failure.message)),
                 );
                 Err(crate::Error::MacroFailed)
             }
@@ -364,11 +364,11 @@ pub enum MacroValue {
 
 pub struct MacroFailure {
     /// Attributed to the call site by the caller.
-    message: String,
+    message: Vec<u8>,
 }
 
 impl MacroFailure {
-    fn text(message: impl Into<String>) -> MacroFailure {
+    fn text(message: impl Into<Vec<u8>>) -> MacroFailure {
         MacroFailure {
             message: message.into(),
         }
@@ -759,8 +759,8 @@ fn host_thread_main(
     vm.event_loop_mut().ensure_waker();
 
     let global = vm.global();
-    // Held for the thread's whole life and abandoned with the VM, like a worker.
-    core::mem::forget(global.vm().get_api_lock());
+    // Held for the thread's whole life and destroyed with the VM, like a worker.
+    global.vm().hold_api_lock_for_thread();
     // So another thread may `request_termination()` at process exit (a VM
     // creates the cell lazily, on its own thread).
     let _ = global.vm().termination_exception();
@@ -1069,16 +1069,14 @@ impl HostState {
                 }
             }
         }
+        use std::io::Write as _;
         let name = exception.name.to_owned_slice();
-        let message = exception.message.to_owned_slice();
-        let mut text = String::new();
+        let mut text = exception.message.to_owned_slice();
         if !name.is_empty() && name != b"Error" {
-            text.push_str(&String::from_utf8_lossy(&name));
-            text.push_str(": ");
+            text.splice(0..0, [name, b": ".to_vec()].concat());
         }
-        text.push_str(&String::from_utf8_lossy(&message));
         if text.is_empty() {
-            text.push_str("macro threw a value with no message");
+            text.extend_from_slice(b"macro threw a value with no message");
         }
         for frame in exception.stack.frames() {
             let function = frame.function_name.to_owned_slice();
@@ -1088,22 +1086,24 @@ impl HostState {
             }
             let line = frame.position.line.one_based();
             let column = frame.position.column.one_based();
-            if function.is_empty() {
-                text.push_str(&format!(
+            let _ = if function.is_empty() {
+                write!(
+                    text,
                     "\n    at {}:{}:{}",
-                    String::from_utf8_lossy(&file),
+                    bstr::BStr::new(&file),
                     line,
                     column
-                ));
+                )
             } else {
-                text.push_str(&format!(
+                write!(
+                    text,
                     "\n    at {} ({}:{}:{})",
-                    String::from_utf8_lossy(&function),
-                    String::from_utf8_lossy(&file),
+                    bstr::BStr::new(&function),
+                    bstr::BStr::new(&file),
                     line,
                     column
-                ));
-            }
+                )
+            };
         }
         MacroFailure { message: text }
     }

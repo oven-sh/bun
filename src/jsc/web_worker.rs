@@ -173,9 +173,6 @@ unsafe extern "C" {
         err: JSValue,
     );
     safe fn Bun__freeSharedHeaderBufferForThreadExit();
-    // Raw FFI (no RAII guard) so `thread_main` can take the API lock and abandon
-    // it with the VM — see the note there.
-    safe fn JSC__VM__getAPILock(vm: &jsc::VM);
 }
 
 /// Node's `stop_sub_worker_contexts()`: the calling thread is exiting and its
@@ -661,7 +658,7 @@ impl WebWorker {
         // Take the API lock for the thread's whole life and abandon it with the
         // VM (`shutdown()` destroys the `JSC::VM`; there is nothing to unlock).
         // Raw FFI rather than the RAII guard, whose `&VM` would dangle.
-        JSC__VM__getAPILock(global.vm());
+        global.vm().hold_api_lock_for_thread();
         self.spin();
     }
 

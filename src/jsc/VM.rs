@@ -66,6 +66,13 @@ impl VM {
         Lock { vm: self }
     }
 
+    /// Take the API lock with nothing to release it: for a thread that owns this
+    /// VM and holds the lock until the VM is destroyed with it (a worker, the
+    /// macro host).
+    pub fn hold_api_lock_for_thread(&self) {
+        JSC__VM__getAPILock(self);
+    }
+
     // Note: `JSC__VM__deferGC` was removed from bindings.cpp in the
     // WebKit-bump that introduced `JSC::DeferGC` RAII. Callers should use
     // `holdAPILock`/`DeferGC` on the C++ side instead.

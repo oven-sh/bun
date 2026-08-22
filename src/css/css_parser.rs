@@ -8,7 +8,6 @@ use core::fmt;
 
 use bun_alloc::Arena as Bump;
 use bun_ast::Log;
-use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
 use bun_collections::{ArrayHashMap, StringArrayHashMap, VecExt};
 use bun_core::strings;
 
@@ -1018,6 +1017,9 @@ pub enum ComposesState {
 pub trait ComposesCtx {
     fn composes_state(&self) -> ComposesState;
     fn record_composes(&mut self, composes: &mut Composes);
+    /// Records a declaration other than `composes` of a class whose state is
+    /// `ComposesState::Allow`, for the bundler's composes conflict check.
+    fn record_property(&mut self, property: &Property);
 }
 /// Unit `ComposesCtx` for callers that don't track `composes:`.
 pub struct NoComposesCtx;
@@ -1028,6 +1030,8 @@ impl ComposesCtx for NoComposesCtx {
     }
     #[inline]
     fn record_composes(&mut self, _: &mut Composes) {}
+    #[inline]
+    fn record_property(&mut self, _: &Property) {}
 }
 
 pub struct NestedRuleParser<'a, T: CustomAtRuleParser> {
@@ -1067,9 +1071,12 @@ impl<'a, T: CustomAtRuleParser> NestedRuleParser<'a, T> {
 
 pub trait DeclarationParser {
     type Declaration;
+    /// `start` is the state at the declaration's property name; `input` is
+    /// positioned after the colon.
     fn parse_value(
         this: &mut Self,
         name: &[u8],
+        start: &ParserState,
         input: &mut Parser,
     ) -> CssResult<Self::Declaration>;
 }
@@ -1157,13 +1164,16 @@ mod rule_parsers {
 
     // The borrow checker forbids passing `&mut *this` while also borrowing
     // `this.declarations` / `this.important_declarations`, so split-borrow the
-    // three composes fields into a small adaptor that implements the
-    // `ComposesCtx` dispatch trait.
+    // composes fields into a small adaptor that implements the `ComposesCtx`
+    // dispatch trait.
     struct NestedComposesCtx<'a> {
         state: ComposesState,
+        /// The property name of the declaration being parsed.
+        name_range: bun_ast::Range,
         arena: &'a Bump,
         composes: &'a mut ComposesMap,
         composes_refs: &'a mut SmallList<ast::Ref, 2>,
+        local_properties: &'a mut LocalPropertyUsage,
     }
     impl<'a> ComposesCtx for NestedComposesCtx<'a> {
         #[inline]
@@ -1174,6 +1184,14 @@ mod rule_parsers {
             for ref_ in self.composes_refs.slice() {
                 let entry = self.composes.entry(*ref_).or_default();
                 entry.composes.push(composes.deep_clone(self.arena));
+            }
+        }
+        fn record_property(&mut self, property: &Property) {
+            for ref_ in self.composes_refs.slice() {
+                self.local_properties
+                    .entry(*ref_)
+                    .or_default()
+                    .push(DeclaredProperty::new(property, self.name_range));
             }
         }
     }
@@ -2054,35 +2072,10 @@ mod rule_parsers {
                     });
                 }
             }
-            let location = input.position();
+            // While `composes_state` is `Allow`, the declarations of the block are
+            // recorded in `local_properties` as they are parsed (see
+            // `NestedComposesCtx::record_property`).
             let (declarations, rules) = this.parse_nested(input, true)?;
-
-            // We parsed a style rule with the `composes` property. Track which
-            // properties it used so we can validate it later.
-            if matches!(this.composes_state, ComposesState::Allow(_)) {
-                let len = input.position() - location;
-                let mut usage = PropertyBitset::init_empty();
-                let mut custom_properties: Vec<&'static [u8]> = Vec::new();
-                fill_property_bit_set(&mut usage, &declarations, &mut custom_properties);
-
-                let custom_properties_slice = custom_properties.slice();
-
-                for ref_ in this.composes_refs.slice() {
-                    let entry =
-                        this.local_properties
-                            .entry(*ref_)
-                            .or_insert_with(|| PropertyUsage {
-                                range: bun_ast::Range {
-                                    loc: bun_ast::Loc {
-                                        start: i32::try_from(location).expect("int cast"),
-                                    },
-                                    len: i32::try_from(len).expect("int cast"),
-                                },
-                                ..Default::default()
-                            });
-                    entry.fill(&usage, custom_properties_slice);
-                }
-            }
 
             this.rules.v.push(CssRule::Style(StyleRule {
                 selectors,
@@ -2108,7 +2101,12 @@ mod rule_parsers {
     impl<'a, T: CustomAtRuleParser> DeclarationParser for NestedRuleParser<'a, T> {
         type Declaration = ();
 
-        fn parse_value(this: &mut Self, name: &[u8], input: &mut Parser) -> CssResult<()> {
+        fn parse_value(
+            this: &mut Self,
+            name: &[u8],
+            start: &ParserState,
+            input: &mut Parser,
+        ) -> CssResult<()> {
             // Note: split-borrow — see `NestedComposesCtx` above.
             // SAFETY: `input.arena()` re-borrows the parser arena through `&self`;
             // detach that borrow so `input` can be re-borrowed mutably below. The
@@ -2116,9 +2114,16 @@ mod rule_parsers {
             let arena: &Bump = unsafe { bun_ptr::detach_lifetime_ref(input.arena()) };
             let mut ctx = NestedComposesCtx {
                 state: this.composes_state,
+                name_range: bun_ast::Range {
+                    loc: bun_ast::Loc {
+                        start: i32::try_from(start.position).expect("int cast"),
+                    },
+                    len: i32::try_from(name.len()).expect("int cast"),
+                },
                 arena,
                 composes: &mut *this.composes,
                 composes_refs: &mut *this.composes_refs,
+                local_properties: &mut *this.local_properties,
             };
             declaration::parse_declaration_impl(
                 name,
@@ -2230,7 +2235,10 @@ pub type LocalScope = StringArrayHashMap<LocalEntry>;
 pub type LocalsResultsMap = ast::MangledProps;
 /// Using `compose` and having conflicting properties is undefined behavior
 /// according to the css modules spec. We should warn the user about this.
-pub type LocalPropertyUsage = ArrayHashMap<bun_ast::Ref, PropertyUsage>;
+///
+/// Maps each class that may use `composes` (see `ComposesState::Allow`) to the
+/// declarations of all of its style rules, in source order.
+pub type LocalPropertyUsage = ArrayHashMap<bun_ast::Ref, Vec<DeclaredProperty>>;
 pub type ComposesMap = ArrayHashMap<bun_ast::Ref, ComposesEntry>;
 
 #[derive(Default)]
@@ -2238,75 +2246,28 @@ pub struct ComposesEntry {
     pub composes: Vec<Composes>,
 }
 
-pub struct PropertyUsage {
-    pub bitset: PropertyBitset,
-    pub custom_properties: Box<[&'static [u8]]>, // TODO: lifetime — arena slices
+/// One declaration of a class tracked in `LocalPropertyUsage`.
+pub struct DeclaredProperty {
+    /// The name the bundler compares declarations by: the unprefixed name of a
+    /// known property, or the name as written of a custom or unknown one (an
+    /// arena slice with the lifetime erased, like `Token` payloads; see
+    /// `src_str`).
+    pub name: &'static [u8],
+    /// The property name in the source, where the bundler reports a conflict
+    /// with a composed class.
     pub range: bun_ast::Range,
 }
 
-impl Default for PropertyUsage {
-    fn default() -> Self {
-        Self {
-            bitset: PropertyBitset::init_empty(),
-            custom_properties: Box::default(),
-            range: bun_ast::Range::default(),
-        }
-    }
-}
-
-impl PropertyUsage {
-    #[inline]
-    pub(crate) fn fill(&mut self, used: &PropertyBitset, custom_properties: &[&'static [u8]]) {
-        self.bitset.set_union(used);
-        // TODO: lifetime — box for now.
-        self.custom_properties = custom_properties.to_vec().into_boxed_slice();
-    }
-}
-
-// `PropertyIdTag` is a dense `repr(u16)` enum with no
-// explicit discriminants whose last variant is `Custom`, so the variant count
-// is `Custom + 1`.
-pub const PROPERTY_BITSET_BITS: usize = (PropertyIdTag::Custom as usize + 1).next_power_of_two();
-pub type PropertyBitset =
-    ArrayBitSet<PROPERTY_BITSET_BITS, { num_masks_for(PROPERTY_BITSET_BITS) }>;
-
-pub(crate) fn fill_property_bit_set(
-    bitset: &mut PropertyBitset,
-    block: &DeclarationBlock<'_>,
-    custom_properties: &mut Vec<&'static [u8]>,
-) {
-    for prop in block.declarations.iter() {
-        let tag = match prop {
-            Property::Custom(c) => {
-                // SAFETY: `'bump`-erasure — `CustomPropertyName` stores an
-                // arena-owned `*const [u8]`; detach from `block`'s borrow so
-                // callers can move `block` afterwards. Re-thread once
-                // `PropertyUsage` carries the arena lifetime (TODO at field def).
-                let name: &'static [u8] = unsafe { src_str(c.name.as_str()) };
-                custom_properties.push(name);
-                continue;
-            }
-            Property::Unparsed(u) => u.property_id.tag(),
-            Property::Composes(_) => continue,
-            _ => prop.property_id().tag(),
+impl DeclaredProperty {
+    pub(crate) fn new(property: &Property, range: bun_ast::Range) -> DeclaredProperty {
+        let name: &'static [u8] = match property {
+            // SAFETY: `CustomPropertyName` points into the parser source or
+            // arena, which outlive the style sheet the entry is stored in (see
+            // `src_str`).
+            Property::Custom(c) => unsafe { src_str(c.name.as_str()) },
+            _ => property.property_id().tag().name(),
         };
-        let int: u16 = tag as u16;
-        bitset.set(int as usize);
-    }
-    for prop in block.important_declarations.iter() {
-        let tag = match prop {
-            Property::Custom(c) => {
-                // SAFETY: see above.
-                let name: &'static [u8] = unsafe { src_str(c.name.as_str()) };
-                custom_properties.push(name);
-                continue;
-            }
-            Property::Unparsed(u) => u.property_id.tag(),
-            Property::Composes(_) => continue,
-            _ => prop.property_id().tag(),
-        };
-        let int: u16 = tag as u16;
-        bitset.set(int as usize);
+        DeclaredProperty { name, range }
     }
 }
 
@@ -2860,10 +2821,10 @@ where
                                 self.input,
                                 Delimiters::SEMICOLON,
                                 error_behavior,
-                                (&mut *self.parser, name),
-                                |(parser, name), input| {
+                                (&mut *self.parser, name, &start),
+                                |(parser, name, start), input| {
                                     input.expect_colon()?;
-                                    P::parse_value(parser, name, input)
+                                    P::parse_value(parser, name, start, input)
                                 },
                             )
                         };

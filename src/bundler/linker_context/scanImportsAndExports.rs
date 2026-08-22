@@ -1367,8 +1367,8 @@ impl<'a> ExportStarContext<'a> {
 // ──────────────────────────────────────────────────────────────────────────
 mod __css_validation {
     use super::*;
+    use crate::bun_css::BundlerStyleSheet;
     use crate::bun_css::css_properties::css_modules::Specifier;
-    use crate::bun_css::{BundlerStyleSheet, PropertyIdTag};
     use bun_ast::Log;
     use bun_collections::{ArrayHashMap, StringArrayHashMap};
 
@@ -1446,8 +1446,9 @@ mod __css_validation {
     ///
     /// Specfically, composing two classes that both define the same property is undefined behavior.
     ///
-    /// We check this by recording, at parse time, properties that classes use in the `PropertyUsage` struct.
-    /// Then here, we compare the properties of the two classes to ensure that there are no conflicts.
+    /// We check this by recording, at parse time, the declarations of each class in `local_properties`
+    /// (see `bun_css::DeclaredProperty`). Then here, we compare the properties of the two classes to
+    /// ensure that there are no conflicts, reporting a conflict at the declarations involved.
     ///
     /// There is one case we skip, which is checking the properties of composing from the global scope (`composes: X from global`).
     ///
@@ -1532,7 +1533,7 @@ mod __css_validation {
                                 ),
                                 entry.value_ptr.range,
                                 bun_ast::alloc_print(format_args!(
-                                    "The first definition of {} is in this style rule:",
+                                    "The first definition of {} is here:",
                                     bstr::BStr::new(property_name)
                                 )),
                             ),
@@ -1624,36 +1625,12 @@ mod __css_validation {
                     }
                 }
 
-                let Some(property_usage) = ast.local_properties.get(&r#ref) else {
+                let Some(declarations) = ast.local_properties.get(&r#ref) else {
                     return;
                 };
                 // Warn about cross-file composition with the same CSS properties
-                let mut iter = property_usage.bitset.iter_set();
-                while let Some(property_tag) = iter.next() {
-                    let property_id_tag: PropertyIdTag =
-                        // SAFETY: `PropertyBitset` is only ever populated via
-                        // `bitset.set(tag as u16 as usize)` where `tag: PropertyIdTag`
-                        // (see `bun_css::fill_property_bit_set`), so every set index is a
-                        // valid `#[repr(u16)]` discriminant. `PropertyIdTag` lives in
-                        // `bun_css` (generated) and exposes no `from_repr`; once it does,
-                        // replace this transmute with that accessor.
-                        unsafe {
-                            core::mem::transmute::<u16, PropertyIdTag>(
-                                u16::try_from(property_tag).expect("int cast"),
-                            )
-                        };
-                    debug_assert!(property_id_tag != PropertyIdTag::Custom);
-                    debug_assert!(property_id_tag != PropertyIdTag::Unparsed);
-                    self.add_property_or_warn(
-                        r#ref,
-                        property_id_tag.name(),
-                        idx,
-                        property_usage.range,
-                    );
-                }
-
-                for property in property_usage.custom_properties.iter() {
-                    self.add_property_or_warn(r#ref, property, idx, property_usage.range);
+                for declaration in declarations.iter() {
+                    self.add_property_or_warn(r#ref, declaration.name, idx, declaration.range);
                 }
             }
         }

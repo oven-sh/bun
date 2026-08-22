@@ -1,3 +1,6 @@
+import { describe, expect, test } from "bun:test";
+import { tempDir } from "harness";
+import { basename, join } from "node:path";
 import { itBundled } from "../expectBundled";
 
 describe("css", () => {
@@ -211,5 +214,174 @@ describe("css", () => {
       const betaOwn = beta![1].split(" ").find(name => name.startsWith("betaGamma_"))!;
       expect(css).toContain(`.${betaOwn}`);
     },
+  });
+
+  // Composing a class from another file that declares one of the composing
+  // class's properties is reported at the two declarations of that property
+  // (like esbuild), whichever rule of either class declares it.
+  describe("composes conflict locations", () => {
+    function where(position: BuildMessage["position"]) {
+      const { file, line, column, length, lineText } = position!;
+      return { file: basename(file), line, column, length, lineText };
+    }
+
+    async function composesConflicts(styles: string[], other: string[]) {
+      using dir = tempDir("css-modules-composes-conflict", {
+        "entry.js": `import styles from "./styles.module.css"; console.log(styles);`,
+        "styles.module.css": styles.join("\n"),
+        "other.module.css": other.join("\n"),
+      });
+      const build = await Bun.build({ entrypoints: [join(String(dir), "entry.js")], throw: false });
+      return build.logs.map(log => {
+        const [firstDefinition] = (log as BuildMessage & { notes: BuildMessage[] }).notes;
+        return {
+          message: log.message,
+          at: where(log.position),
+          note: firstDefinition.message,
+          noteAt: where(firstDefinition.position),
+        };
+      });
+    }
+
+    test.concurrent("custom property declared by a later rule of the composing class", async () => {
+      expect(
+        await composesConflicts(
+          [`.button { composes: other from "./other.module.css" }`, `.button { --x: 3 }`],
+          [`.other { --x: 1 }`],
+        ),
+      ).toEqual([
+        {
+          message: "The value of --x in the class button is undefined.",
+          at: { file: "styles.module.css", line: 2, column: 11, length: 3, lineText: ".button { --x: 3 }" },
+          note: "The first definition of --x is here:",
+          noteAt: { file: "other.module.css", line: 1, column: 10, length: 3, lineText: ".other { --x: 1 }" },
+        },
+      ]);
+    });
+
+    test.concurrent("known property declared by a later rule of the composing class", async () => {
+      expect(
+        await composesConflicts(
+          [`.button { composes: other from "./other.module.css" }`, `.button { color: red }`],
+          [`.other { color: blue }`],
+        ),
+      ).toEqual([
+        {
+          message: "The value of color in the class button is undefined.",
+          at: { file: "styles.module.css", line: 2, column: 11, length: 5, lineText: ".button { color: red }" },
+          note: "The first definition of color is here:",
+          noteAt: { file: "other.module.css", line: 1, column: 10, length: 5, lineText: ".other { color: blue }" },
+        },
+      ]);
+    });
+
+    test.concurrent("!important declarations", async () => {
+      expect(
+        await composesConflicts(
+          [`.button { composes: other from "./other.module.css" }`, `.button { color: red !important }`],
+          [`.other { color: blue !important }`],
+        ),
+      ).toEqual([
+        {
+          message: "The value of color in the class button is undefined.",
+          at: {
+            file: "styles.module.css",
+            line: 2,
+            column: 11,
+            length: 5,
+            lineText: ".button { color: red !important }",
+          },
+          note: "The first definition of color is here:",
+          noteAt: {
+            file: "other.module.css",
+            line: 1,
+            column: 10,
+            length: 5,
+            lineText: ".other { color: blue !important }",
+          },
+        },
+      ]);
+    });
+
+    test.concurrent("the declaration's own line inside a multi-line rule", async () => {
+      expect(
+        await composesConflicts(
+          [`.button {`, `  composes: other from "./other.module.css";`, `  margin: 0;`, `  --x: 3;`, `}`],
+          [`.other {`, `  color: red;`, `  --x: 1;`, `}`],
+        ),
+      ).toEqual([
+        {
+          message: "The value of --x in the class button is undefined.",
+          at: { file: "styles.module.css", line: 4, column: 3, length: 3, lineText: "  --x: 3;" },
+          note: "The first definition of --x is here:",
+          noteAt: { file: "other.module.css", line: 3, column: 3, length: 3, lineText: "  --x: 1;" },
+        },
+      ]);
+    });
+
+    test.concurrent("the note points at the rule of the composed class that declares the property", async () => {
+      expect(
+        await composesConflicts(
+          [`.button { --x: 3; composes: other from "./other.module.css" }`],
+          [`.other { color: red }`, `.other { --x: 1 }`],
+        ),
+      ).toEqual([
+        {
+          message: "The value of --x in the class button is undefined.",
+          at: {
+            file: "styles.module.css",
+            line: 1,
+            column: 11,
+            length: 3,
+            lineText: `.button { --x: 3; composes: other from "./other.module.css" }`,
+          },
+          note: "The first definition of --x is here:",
+          noteAt: { file: "other.module.css", line: 2, column: 10, length: 3, lineText: ".other { --x: 1 }" },
+        },
+      ]);
+    });
+
+    test.concurrent("each conflicting property is reported at its own declaration", async () => {
+      expect(
+        await composesConflicts(
+          [`.button { composes: other from "./other.module.css" }`, `.button { --x: 3 }`, `.button { color: red }`],
+          [`.other { --x: 1; color: blue }`],
+        ),
+      ).toEqual([
+        {
+          message: "The value of --x in the class button is undefined.",
+          at: { file: "styles.module.css", line: 2, column: 11, length: 3, lineText: ".button { --x: 3 }" },
+          note: "The first definition of --x is here:",
+          noteAt: {
+            file: "other.module.css",
+            line: 1,
+            column: 10,
+            length: 3,
+            lineText: ".other { --x: 1; color: blue }",
+          },
+        },
+        {
+          message: "The value of color in the class button is undefined.",
+          at: { file: "styles.module.css", line: 3, column: 11, length: 5, lineText: ".button { color: red }" },
+          note: "The first definition of color is here:",
+          noteAt: {
+            file: "other.module.css",
+            line: 1,
+            column: 18,
+            length: 5,
+            lineText: ".other { --x: 1; color: blue }",
+          },
+        },
+      ]);
+    });
+
+    test.concurrent("classes without a shared property", async () => {
+      expect(
+        await composesConflicts(
+          [`.button { composes: other from "./other.module.css" }`, `.button { --x: 3 }`],
+          [`.other { --y: 1 }`, `.other { color: red }`],
+        ),
+      ).toEqual([]);
+    });
   });
 });

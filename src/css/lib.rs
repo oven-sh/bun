@@ -204,8 +204,7 @@ pub use targets::{Browsers, Features, Targets};
 
 // Bundler-facing surface (`bun_bundler::Chunk` / `scanImportsAndExports`
 // reach for these via `bun_css::*`).
-pub use css_parser::BundlerStyleSheet;
-pub use properties::PropertyIdTag;
+pub use css_parser::{BundlerStyleSheet, DeclaredProperty};
 pub use rules::import::ImportConditions;
 
 // ───────────────────────────── VendorPrefix ─────────────────────────────

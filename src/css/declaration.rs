@@ -270,6 +270,7 @@ impl<'a, 'bump> css::DeclarationParser for PropertyDeclarationParser<'a, 'bump> 
     fn parse_value(
         this: &mut Self,
         name: &[u8],
+        _start: &css::ParserState,
         input: &mut css::Parser,
     ) -> Result<Self::Declaration> {
         parse_declaration(
@@ -375,6 +376,8 @@ where
                     );
                 }
             }
+        } else if let css::ComposesState::Allow(_) = composes_ctx.composes_state() {
+            composes_ctx.record_property(&property);
         }
     }
     if important {

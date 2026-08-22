@@ -202,6 +202,11 @@ test.each([
   ["<s>Fixes #1</s> Fixes #2", [2]],
   ["<s>old\n\nFixes #1", [1]],
   ["İİ notes. <s>old plan</s> Fixes #100", [100]],
+  ["Bump ~1.2 to ~1.3, fixes #1", [1]],
+  ["<section>Fixes #1</section>", [1]],
+  ["para\n    ```\nFixes #1\n```", [1]],
+  ["> quoted\n---\nFixes #1", [1]],
+  ["> quoted\n***\nFixes #1", [1]],
 ] as [string, (number | string)[]][])("finds %j", async (body, expected) => {
   expect(await refs(body)).toEqual(expected);
 });
@@ -310,6 +315,9 @@ test.each([
   "<DEL>Fixes #1</DEL>",
   "İİİİİİİİİİİİİ <s>Fixes #100</s>",
   "<strike>Fixes #1</strike>",
+  "~Fixes #1~",
+  '<del title="old plan">Fixes #1</del>',
+  "<s >Fixes #1</s>",
   "~~~ `sh`\nFixes #1\n~~~",
   // a list does not cross a paragraph break or continue without a separator
   "Closes:\n\n#1",

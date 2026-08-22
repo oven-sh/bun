@@ -83,7 +83,7 @@ use bun_url::PercentEncoding;
 use bun_url::URL as ZigURL;
 
 use self::fetch_tasklet::{FetchOptions, HTTPRequestBody};
-pub use self::fetch_tasklet::{FetchTasklet, FetchTaskletDeinitHop};
+pub use self::fetch_tasklet::{FetchTasklet, FetchTaskletDeinitHop, FetchTaskletDrainHop};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Local extension shims (upstream methods not yet ported / not in scope)

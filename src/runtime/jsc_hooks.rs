@@ -1812,6 +1812,10 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResu
                 crate::socket::WindowsNamedPipeContext::stop_for_vm_teardown(c.as_ptr())
             },
             // SAFETY: live until it unregisters in `deinit`.
+            ActiveHandle::Fetch(t) if reason == StopReason::TestIsolation => unsafe {
+                crate::webcore::fetch::FetchTasklet::abort_for_test_isolation(t.as_ptr())
+            },
+            // SAFETY: as above.
             ActiveHandle::Fetch(t) => unsafe {
                 crate::webcore::fetch::FetchTasklet::stop_for_vm_teardown(t.as_ptr())
             },

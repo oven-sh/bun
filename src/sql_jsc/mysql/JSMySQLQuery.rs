@@ -84,7 +84,11 @@ impl JSMySQLQuery {
         self.otel.end(
             self.global_object(),
             self.query.get().query_text(),
-            error_type.map(|ty| DbError { ty, message: b"" }),
+            error_type.map(|ty| DbError {
+                ty,
+                message: b"",
+                from_server: false,
+            }),
         );
     }
 

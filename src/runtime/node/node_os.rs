@@ -805,6 +805,14 @@ mod _impl {
     }
 
     pub(crate) fn hostname(global: &JSGlobalObject) -> JsResult<JSValue> {
+        let str = hostname_string();
+        let js = str.to_js(global);
+        str.deref();
+        js
+    }
+
+    /// `os.hostname()` as a string (`"unknown"` if the lookup fails).
+    pub(crate) fn hostname_string() -> BunString {
         #[cfg(windows)]
         {
             let mut name_buffer: [u16; 130] = [0; 130]; // [129:0]u16 → 130 u16s with NUL at [129]
@@ -812,23 +820,18 @@ mod _impl {
             unsafe { windows::libuv::uv__winsock_ensure() };
             // SAFETY: valid buffer
             if unsafe { windows::GetHostNameW(name_buffer.as_mut_ptr(), 129) } == 0 {
-                let str = BunString::clone_utf16(slice_to_nul_u16(&name_buffer));
-                let js = str.to_js(global);
-                str.deref();
-                return js;
+                return BunString::clone_utf16(slice_to_nul_u16(&name_buffer));
             }
-
-            return Ok(ZigString::init(b"unknown").with_encoding().to_js(global));
+            return BunString::static_(b"unknown");
         }
         #[cfg(not(windows))]
         {
             let mut name_buffer = [0u8; HOST_NAME_MAX];
-            let s: &[u8] = if bun_sys::posix::gethostname(&mut name_buffer).is_ok() {
-                bun_core::slice_to_nul(&name_buffer)
+            if bun_sys::posix::gethostname(&mut name_buffer).is_ok() {
+                BunString::clone_utf8(bun_core::slice_to_nul(&name_buffer))
             } else {
-                b"unknown"
-            };
-            return Ok(ZigString::init(s).with_encoding().to_js(global));
+                BunString::static_(b"unknown")
+            }
         }
     }
 

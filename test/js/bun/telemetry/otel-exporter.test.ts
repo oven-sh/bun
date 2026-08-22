@@ -90,6 +90,13 @@ describe.concurrent("OTLP/HTTP exporter", () => {
       team: "runtime",
       "telemetry.sdk.name": "bun",
       "process.runtime.name": "bun",
+      "process.executable.name": "bun",
+      "process.executable.path": expect.any(String),
+      "process.command": expect.stringMatching(/index\.js$/),
+      "host.name": require("node:os").hostname(),
+      "host.arch": expect.stringMatching(/^(amd64|arm64)$/),
+      "os.type": expect.stringMatching(/^(linux|darwin|windows|freebsd)$/),
+      "os.version": expect.any(String),
     });
     const names = c
       .spans()

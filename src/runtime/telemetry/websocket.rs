@@ -47,12 +47,13 @@ pub fn begin_message(
                 return;
             }
             let l = super::span::limits();
+            // No websocket semconv yet; these mirror dd-trace's ws plugin.
             s.push_attribute(
-                b"websocket.opcode",
+                b"websocket.message.type",
                 &Value::Str(if binary { b"binary" } else { b"text" }),
                 l,
             );
-            s.push_attribute(b"messaging.message.body.size", &Value::Int(size as i64), l);
+            s.push_attribute(b"websocket.message.length", &Value::Int(size as i64), l);
             if link.is_valid() {
                 s.add_link(link, &[], l);
             }
@@ -73,7 +74,7 @@ pub fn end_message(
 ) -> bun_jsc::JsResult<()> {
     // `to_error` unwraps a JSC::Exception to the thrown value.
     let r = if let Some(err) = result.to_error() {
-        record_exception_value(span, global, err)
+        super::span::record_exception(global, span, err)
     } else {
         if let Some(p) = result.as_any_promise() {
             if p.status() == bun_jsc::js_promise::Status::Rejected {
@@ -86,45 +87,4 @@ pub fn end_message(
     };
     super::end_native(global, span, 0, |_| {});
     r
-}
-
-/// Record a thrown JS value as an `exception` event and set Error status.
-pub fn record_exception_value(
-    span: NativeSpan,
-    global: &JSGlobalObject,
-    err: JSValue,
-) -> bun_jsc::JsResult<()> {
-    let mut ty_s = None;
-    let mut msg_s = None;
-    let mut stack_s = None;
-    // Describing the thrown value must not change what the application sees:
-    // a throwing getter on it is ignored here (the error is still delivered
-    // by the caller); only a pending termination is propagated.
-    let read = |v: bun_jsc::JsResult<Option<JSValue>>| -> bun_jsc::JsResult<Option<bun_core::ZigStringSlice>> {
-        match v {
-            Ok(Some(v)) if v.is_string() => v.to_slice(global).map(Some),
-            Ok(_) => Ok(None),
-            Err(_) if global.clear_exception_except_termination() => Ok(None),
-            Err(e) => Err(e),
-        }
-    };
-    if err.is_object() {
-        ty_s = read(err.get(global, "name"))?;
-        msg_s = read(err.get(global, "message"))?;
-        stack_s = read(err.get(global, "stack"))?;
-    } else if err.is_string() {
-        msg_s = read(Ok(Some(err)))?;
-    }
-    let ty = ty_s.as_ref().map(|s| s.slice()).unwrap_or(b"Error");
-    let msg = msg_s.as_ref().map(|s| s.slice()).unwrap_or(b"");
-    let stack = stack_s.as_ref().map(|s| s.slice()).unwrap_or(b"");
-    if let Some(mut l) = local(global) {
-        pool::with(&mut l.pool, span, |s| {
-            bun_telemetry::otlp::with_exception_attrs(ty, msg, stack, |attrs| {
-                s.add_event(b"exception", 0, attrs, super::span::limits())
-            });
-            s.set_status(StatusCode::Error, b"");
-        });
-    }
-    Ok(())
 }

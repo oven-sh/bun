@@ -3656,6 +3656,13 @@ where
         jsc::mark_binding!();
         if let Some(server) = self.server.get() {
             let server = &*server;
+            let span = self.otel_span.get();
+            if span.is_some()
+                && crate::telemetry::span::record_exception(server.global_this(), span, value)
+                    .is_err()
+            {
+                return; // terminating
+            }
             let on_error = server.config().on_error;
             if !on_error.is_empty() && !self.flags.has_called_error_handler() {
                 self.flags.set_has_called_error_handler(true);

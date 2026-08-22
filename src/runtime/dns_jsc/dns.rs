@@ -1759,7 +1759,7 @@ impl DNSLookup {
         }
     }
 
-    fn otel_end(&mut self, error: Option<&str>) {
+    fn otel_end(&mut self, error: Option<c_ares::Error>) {
         let stub = core::mem::replace(&mut self.otel, bun_telemetry::SpanStub::NONE);
         if !stub.is_recording() {
             return;
@@ -1776,7 +1776,7 @@ impl DNSLookup {
                     w.attr_opt("dns.question.name", n);
                 }
                 if let Some(e) = error {
-                    w.error(e.as_bytes(), e.as_bytes());
+                    w.fail(e.code().as_bytes(), e.label().as_bytes());
                 }
             },
         );
@@ -1803,7 +1803,7 @@ impl DNSLookup {
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
             if let Some(err) = c_ares::Error::init_eai(status) {
-                (*this).otel_end(Some(err.code()));
+                (*this).otel_end(Some(err));
                 error_to_deferred(err, b"getaddrinfo", None, &mut (*this).promise)
                     .reject_later((*this).global_this());
                 Self::destroy(this);
@@ -1835,7 +1835,7 @@ impl DNSLookup {
         unsafe {
             let global_this = (*this).global_this();
             if let Some(err) = err_ {
-                (*this).otel_end(Some(err.code()));
+                (*this).otel_end(Some(err));
                 error_to_deferred(err, b"getaddrinfo", None, &mut (*this).promise)
                     .reject_later(global_this);
                 Self::destroy(this);
@@ -1844,7 +1844,7 @@ impl DNSLookup {
 
             // `r` is the c-ares-allocated AddrInfo valid for the callback's duration.
             let Some(r) = result.filter(|r| !(**r).node.is_null()) else {
-                (*this).otel_end(Some(c_ares::Error::ENOTFOUND.code()));
+                (*this).otel_end(Some(c_ares::Error::ENOTFOUND));
                 error_to_deferred(
                     c_ares::Error::ENOTFOUND,
                     b"getaddrinfo",
@@ -1877,7 +1877,8 @@ impl DNSLookup {
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
             (*this).otel_end(match result {
-                Outcome::Error(_) => Some("lookup_failed"),
+                // Building the JS result failed (e.g. OOM), not the lookup.
+                Outcome::Error(_) => Some(c_ares::Error::ENOMEM),
                 _ => None,
             });
             let mut promise = core::mem::take(&mut (*this).promise);

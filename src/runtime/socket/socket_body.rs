@@ -1087,7 +1087,9 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     /// First call wins.
-    pub(crate) fn otel_connect_end(&self, error: Option<&str>) {
+    /// `error`: (`error.type`, message).
+    pub(crate) fn otel_connect_end(&self, error: Option<(&str, &str)>) {
+        use bun_telemetry::http_record::PeerIp;
         let stub = self.otel_connect.replace(bun_telemetry::SpanStub::NONE);
         if !stub.is_recording() {
             return;
@@ -1118,11 +1120,21 @@ impl<const SSL: bool> NewSocket<SSL> {
             |w| {
                 w.attr("network.transport", transport);
                 w.server(host, port);
-                if SSL {
-                    w.attr("tls.enabled", true);
+                if error.is_none() && !self.socket.get().is_detached() {
+                    let mut raw = [0u8; 16];
+                    let mut text = [0u8; 64];
+                    let peer = match self.socket.get().remote_address(&mut raw) {
+                        Some(b) if b.len() == 4 => PeerIp::V4(<[u8; 4]>::try_from(b).unwrap()),
+                        Some(b) if b.len() == 16 => PeerIp::V6(<[u8; 16]>::try_from(b).unwrap()),
+                        _ => PeerIp::None,
+                    };
+                    w.attr_opt("network.peer.address", peer.text(&mut text));
+                    if let Some(p) = self.socket.get().remote_port() {
+                        w.attr("network.peer.port", i64::from(p));
+                    }
                 }
-                if let Some(e) = error {
-                    w.error(e.as_bytes(), e.as_bytes());
+                if let Some((code, msg)) = error {
+                    w.fail(code.as_bytes(), msg.as_bytes());
                 }
             },
         );
@@ -1144,14 +1156,19 @@ impl<const SSL: bool> NewSocket<SSL> {
         dns_error: i32,
     ) -> JsResult<()> {
         if this.otel_connect.get().is_some() {
-            let name = if dns_error != 0 {
-                "DNS_ERROR"
+            let sys = if dns_error != 0 {
+                None
             } else {
                 bun_sys::SystemErrno::init((errno as i64).abs())
-                    .map(<&'static str>::from)
-                    .unwrap_or("ECONNREFUSED")
             };
-            this.otel_connect_end(Some(name));
+            this.otel_connect_end(Some(match sys {
+                Some(e) => (
+                    <&'static str>::from(e),
+                    bun_sys::coreutils_error_map::get(e).unwrap_or(""),
+                ),
+                None if dns_error != 0 => ("DNS_ENOTFOUND", "getaddrinfo failed"),
+                None => ("ECONNREFUSED", "Failed to connect"),
+            }));
         }
         let handlers = this.get_handlers();
         log!(
@@ -1386,7 +1403,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// not live in the ext slot so those are left for the caller's existing
     /// `debug_assert!` to catch.
     pub(crate) fn detach_for_reconnect(&self) {
-        self.otel_connect_end(Some("reconnect"));
+        self.otel_connect_end(Some(("reconnect", "socket replaced before connecting")));
         let old = self.socket.get();
         let Some(ext) = old.ext::<*mut c_void>() else {
             return;
@@ -1844,16 +1861,20 @@ impl<const SSL: bool> NewSocket<SSL> {
             this.otel_connect_end(if authorized && !verify_failed {
                 None
             } else if verify_failed {
-                Some(
+                Some((
                     core::str::from_utf8(ssl_error.code_bytes())
                         .ok()
                         .filter(|c| !c.is_empty())
                         .unwrap_or("handshake_failed"),
-                )
+                    core::str::from_utf8(ssl_error.reason_bytes()).unwrap_or(""),
+                ))
             } else if hostname_mismatch {
-                Some("ERR_TLS_CERT_ALTNAME_INVALID")
+                Some((
+                    "ERR_TLS_CERT_ALTNAME_INVALID",
+                    "Hostname/IP does not match certificate's altnames",
+                ))
             } else {
-                Some("handshake_failed")
+                Some(("handshake_failed", "TLS handshake failed"))
             });
         }
 
@@ -2143,7 +2164,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         reason: Option<*mut c_void>,
     ) -> JsResult<()> {
         jsc::mark_binding!();
-        this.otel_connect_end(Some("closed"));
+        this.otel_connect_end(Some(("closed", "closed before connecting")));
         // A late close on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
         // JS-side destroy on a TLS socket driven by an upgraded duplex. There

@@ -228,11 +228,8 @@ impl Promise {
             &bun_telemetry::db::ConnectionInfo {
                 host,
                 port,
-                namespace: if database == 0 {
-                    b""
-                } else {
-                    bun_core::fmt::itoa(&mut dbbuf, database)
-                },
+                // semconv redis: the SELECT index, 0 included.
+                namespace: bun_core::fmt::itoa(&mut dbbuf, database),
             },
         );
         if !span.is_some() {
@@ -310,6 +307,7 @@ impl Promise {
                 protocol::RESPValue::Error(e) => Some(bun_telemetry::db::DbError {
                     ty: &e[..bun_core::strings::index_of_char_usize(e, b' ').unwrap_or(e.len())],
                     message: e,
+                    from_server: true,
                 }),
                 _ => None,
             },
@@ -355,6 +353,7 @@ impl Promise {
                 Some(bun_telemetry::db::DbError {
                     ty: code.as_ref().map_or(b"_OTHER", |c| c.slice()),
                     message: b"",
+                    from_server: false,
                 }),
             );
         }

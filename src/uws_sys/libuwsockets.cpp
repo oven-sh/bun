@@ -1732,7 +1732,7 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
     size_t len;
   };
   struct uws_telemetry_headers_t {
-    struct uws_header_slice_t host, user_agent, traceparent, tracestate, baggage;
+    struct uws_header_slice_t host, user_agent, traceparent, tracestate, baggage, forwarded, x_forwarded_for;
     /* Length of the path part of the URL (up to '?'). */
     uint32_t path_len;
   };
@@ -1751,6 +1751,8 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
                else if (uws_header_is(k, "tracestate")) slot = &out->tracestate; break;
       case 11: if (uws_header_is(k, "traceparent")) slot = &out->traceparent; break;
       case 7: if (uws_header_is(k, "baggage")) slot = &out->baggage; break;
+      case 9: if (uws_header_is(k, "forwarded")) slot = &out->forwarded; break;
+      case 15: if (uws_header_is(k, "x-forwarded-for")) slot = &out->x_forwarded_for; break;
       default: break;
       }
       if (slot && !slot->ptr) {

@@ -104,6 +104,7 @@ describe("Bun.serve", () => {
       "url.full": `http://localhost:${server.port}/path/here?q=1`,
       "server.address": "localhost",
       "server.port": server.port,
+      "network.protocol.version": "1.1",
       "http.response.status_code": 201,
     });
     expect(srv.name).toBe("GET");
@@ -114,8 +115,11 @@ describe("Bun.serve", () => {
       "url.scheme": "http",
       "server.address": "localhost",
       "server.port": server.port,
+      "network.protocol.version": "1.1",
       "user_agent.original": "otel-test",
-      "client.address": expect.any(String),
+      "client.address": expect.stringMatching(/^(127\.0\.0\.1|::1)$/),
+      "network.peer.address": expect.stringMatching(/^(127\.0\.0\.1|::1)$/),
+      "network.peer.port": expect.any(Number),
       "http.response.status_code": 201,
     });
     expect(srv.status.code).toBe(0);

@@ -1268,7 +1268,7 @@ impl WriteFilePromise {
                     global_this,
                     bun_telemetry::Instrument::Fs,
                     &h.otel,
-                    b"Bun.write",
+                    b"fs.write",
                     bun_telemetry::SpanKind::Internal,
                     |w| {
                         if let Some(p) = &h.otel_path {

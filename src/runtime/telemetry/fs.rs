@@ -23,7 +23,7 @@ pub fn end(
                 w.attr_opt("file.path", p);
             }
             if let Some(e) = err {
-                w.error(e.name(), e.name());
+                w.fail(e.name(), e.msg().unwrap_or(b""));
             }
         },
     );

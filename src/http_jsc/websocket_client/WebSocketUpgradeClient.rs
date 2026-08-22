@@ -221,7 +221,7 @@ impl ConnectSpan {
                 url.extend_from_slice(&self.path);
                 w.attr("url.full", &url[..]);
                 if let Some(e) = error {
-                    w.error(e.as_bytes(), e.as_bytes());
+                    w.fail(e.as_bytes(), b"");
                 }
             },
         );

@@ -132,7 +132,7 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
                 global_this,
                 bun_telemetry::Instrument::Fs,
                 &otel,
-                b"Bun.file read",
+                b"fs.read",
                 bun_telemetry::SpanKind::Internal,
                 |w| {
                     if let Some(p) = &path {

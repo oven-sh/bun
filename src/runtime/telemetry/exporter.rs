@@ -696,14 +696,19 @@ impl Exporter for JsExporter {
                 ConcurrentTask::release_refused(ct);
                 Box::from_raw(task)
             };
+            // The owner VM is gone; like a task stranded at exit, not a failure.
             if task.exporter.take_queued() {
-                processor.export_done(&task.payload, ExportResult::Failure);
+                processor.export_abandoned();
             }
         }
     }
 
     fn export_blocking(&self, payload: &ExportPayload, _deadline_ns: u64) -> ExportResult {
         self.deliver(payload)
+    }
+
+    fn owner(&self) -> Option<usize> {
+        Some(self.owner as usize)
     }
 }
 

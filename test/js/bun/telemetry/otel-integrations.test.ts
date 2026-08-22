@@ -37,11 +37,11 @@ describe("bun:sqlite", () => {
     db.close();
     const got = await collect("bun.sqlite");
     expect(got.map(s => [s.name, s.kind, s.attributes["db.query.text"], s.status.code])).toEqual([
-      ["CREATE", 2, "CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)", 0],
-      ["INSERT", 2, "INSERT INTO t (name) VALUES (?)", 0],
-      ["SELECT", 2, "SELECT * FROM t WHERE id > ?", 0],
-      ["SELECT", 2, "select count(*) c from t", 0],
-      ["SELECT", 2, "SELECT * FROM missing", 2],
+      ["CREATE app.db", 2, "CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)", 0],
+      ["INSERT app.db", 2, "INSERT INTO t (name) VALUES (?)", 0],
+      ["SELECT app.db", 2, "SELECT * FROM t WHERE id > ?", 0],
+      ["SELECT app.db", 2, "select count(*) c from t", 0],
+      ["SELECT app.db", 2, "SELECT * FROM missing", 2],
     ]);
     expect(got[0].attributes).toMatchObject({
       "db.system.name": "sqlite",
@@ -49,6 +49,8 @@ describe("bun:sqlite", () => {
       "db.operation.name": "CREATE",
     });
     expect(got[4].attributes["error.type"]).toBe("SQLITE_ERROR");
+    expect(got[4].attributes["db.response.status_code"]).toBe("SQLITE_ERROR");
+    expect(got[4].events[0]).toMatchObject({ name: "exception", attributes: { "exception.type": "SQLITE_ERROR" } });
     expect(got[4].status.message).toContain("no such table");
   });
 
@@ -92,8 +94,8 @@ describe("node:fs / Bun.file / Bun.write", () => {
       ["fs.readFileSync", inFile, null],
       ["fs.statSync", missing, "ENOENT"],
       ["fs.writeFile", outFile, null],
-      ["Bun.write", outFile, null],
-      ["Bun.file read", outFile, null],
+      ["fs.write", outFile, null],
+      ["fs.read", outFile, null],
     ]);
     expect(got[2].status.code).toBe(2);
     expect(got.every(s => s.kind === 0)).toBe(true);
@@ -163,6 +165,15 @@ describe("net", () => {
       ["tcp.connect", 2, "127.0.0.1", deadPort, 2],
     ]);
     expect(got[2].attributes["error.type"]).toEqual(expect.stringMatching(/^E[A-Z]+$/));
+    // Failures carry an exception event and a human-readable status message.
+    expect(got[2].events[0]).toMatchObject({
+      name: "exception",
+      attributes: { "exception.type": got[2].attributes["error.type"] },
+    });
+    expect(got[2].status.message).not.toBe(got[2].attributes["error.type"]);
+    // Successful connects report the peer.
+    expect(got[0].attributes["network.peer.address"]).toBe("127.0.0.1");
+    expect(got[0].attributes["network.peer.port"]).toBe(listener.port);
   });
 });
 
@@ -210,7 +221,7 @@ describe("WebSocket", () => {
     expect(upgrade.attributes["http.response.status_code"]).toBe(101);
     expect(message).toMatchObject({
       kind: 1,
-      attributes: { "websocket.opcode": "text", "messaging.message.body.size": 2, "in.handler": true },
+      attributes: { "websocket.message.type": "text", "websocket.message.length": 2, "in.handler": true },
     });
     // linked, not parented, to the upgrade request
     expect(message.parentSpanId).toBeUndefined();

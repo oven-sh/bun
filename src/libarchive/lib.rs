@@ -105,6 +105,8 @@ pub mod lib {
         fn archive_write_new() -> *mut Archive;
         fn archive_write_free(a: *mut Archive) -> Result;
         fn archive_write_close(a: *mut Archive) -> Result;
+        fn archive_write_set_bytes_in_last_block(a: *mut Archive, bytes: c_int) -> Result;
+        fn archive_set_error(a: *mut Archive, err: c_int, fmt: *const c_char, ...);
         fn archive_write_set_format_pax_restricted(a: *mut Archive) -> Result;
         fn archive_write_add_filter_gzip(a: *mut Archive) -> Result;
         fn archive_write_set_filter_option(
@@ -114,7 +116,6 @@ pub mod lib {
             value: *const c_char,
         ) -> Result;
         fn archive_write_set_options(a: *mut Archive, opts: *const c_char) -> Result;
-        fn archive_write_open_filename(a: *mut Archive, filename: *const c_char) -> Result;
         fn archive_write_header(a: *mut Archive, entry: *mut Entry) -> Result;
         fn archive_write_data(a: *mut Archive, data: *const c_void, size: usize) -> la_ssize_t;
         fn archive_write_finish_entry(a: *mut Archive) -> Result;
@@ -370,13 +371,14 @@ pub mod lib {
             // SAFETY: FFI call with no preconditions.
             unsafe { archive_write_new() }
         }
-        pub fn write_free(&self) -> Result {
-            // SAFETY: self came from archive_write_new(); not used after this.
-            unsafe { archive_write_free(self.as_mut_ptr()) }
-        }
         pub fn write_close(&self) -> Result {
             // SAFETY: self valid.
             unsafe { archive_write_close(self.as_mut_ptr()) }
+        }
+        /// Padding unit for the last output block; the default pads it to 10 KiB, 1 disables padding.
+        pub fn write_set_bytes_in_last_block(&self, bytes: c_int) -> Result {
+            // SAFETY: self valid.
+            unsafe { archive_write_set_bytes_in_last_block(self.as_mut_ptr(), bytes) }
         }
         pub fn write_set_format_pax_restricted(&self) -> Result {
             // SAFETY: self valid.
@@ -405,10 +407,6 @@ pub mod lib {
         pub fn write_set_options(&self, opts: &ZStr) -> Result {
             // SAFETY: self valid; ZStr guarantees NUL-termination.
             unsafe { archive_write_set_options(self.as_mut_ptr(), opts.as_ptr().cast()) }
-        }
-        pub fn write_open_filename(&self, filename: &ZStr) -> Result {
-            // SAFETY: self valid; ZStr guarantees NUL-termination.
-            unsafe { archive_write_open_filename(self.as_mut_ptr(), filename.as_ptr().cast()) }
         }
         pub fn write_header(&self, entry: &Entry) -> Result {
             // SAFETY: self valid; entry came from Entry::new()/read_next_header().
@@ -847,7 +845,7 @@ pub mod lib {
         }
 
         pub unsafe extern "C" fn write_callback(
-            _a: *mut Archive,
+            a: *mut Archive,
             client_data: *mut c_void,
             buff: *const c_void,
             length: usize,
@@ -861,6 +859,10 @@ pub mod lib {
             let data = unsafe { core::slice::from_raw_parts(buff.cast::<u8>(), length) };
             if this.list.try_reserve(length).is_err() {
                 this.had_error = true;
+                // libarchive sets no error of its own for a failed client write.
+                // SAFETY: `a` is the archive this callback was invoked for; the
+                // format string has no conversions, so no varargs are read.
+                unsafe { archive_set_error(a, libc::ENOMEM, c"No memory".as_ptr()) };
                 return -1;
             }
             this.list.extend_from_slice(data);

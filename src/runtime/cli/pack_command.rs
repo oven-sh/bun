@@ -19,7 +19,10 @@ use bun_parsers::json as JSON;
 // lift via `bun_ast::Expr::from(t2_expr)` at the call site.
 use bun_ast::{E, Expr, ExprData};
 use bun_js_printer as js_printer;
-use bun_libarchive::lib::{Archive, Entry as ArchiveEntry, Result as ArchiveStatus};
+use bun_libarchive::lib::{
+    Archive, Entry as ArchiveEntry, GrowingBuffer, Result as ArchiveStatus, WriteArchive,
+    archive_write_open2,
+};
 use bun_paths::{self as path, PathBuffer, SEP_STR};
 // `bun.ptr.CowString = CowSlice(u8)` — the lifetime-free struct port (init_owned/
 // borrow_subslice/length live on `cow_slice::CowSliceZ`).
@@ -1691,18 +1694,6 @@ const fn zstr_lit(s: &'static [u8]) -> &'static ZStr {
 /// Extension trait wrapping `*mut Archive` so existing `archive.method()` call
 /// sites compile without per-call `unsafe { &* }`.
 trait ArchivePtrExt {
-    fn write_set_format_pax_restricted(self) -> ArchiveResult;
-    fn write_add_filter_gzip(self) -> ArchiveResult;
-    fn write_set_filter_option(
-        self,
-        module: Option<&ZStr>,
-        key: &ZStr,
-        value: &ZStr,
-    ) -> ArchiveResult;
-    fn write_set_options(self, opts: &ZStr) -> ArchiveResult;
-    fn write_open_filename(self, path: &ZStr) -> ArchiveResult;
-    fn write_close(self) -> ArchiveResult;
-    fn write_free(self) -> ArchiveResult;
     fn error_string(self) -> &'static [u8];
     fn read_support_format_tar(self) -> ArchiveResult;
     fn read_support_format_gnutar(self) -> ArchiveResult;
@@ -1716,43 +1707,10 @@ trait ArchivePtrExt {
 }
 impl ArchivePtrExt for *mut Archive {
     #[inline]
-    fn write_set_format_pax_restricted(self) -> ArchiveResult {
-        Archive::opaque_ref(self).write_set_format_pax_restricted()
-    }
-    #[inline]
-    fn write_add_filter_gzip(self) -> ArchiveResult {
-        Archive::opaque_ref(self).write_add_filter_gzip()
-    }
-    #[inline]
-    fn write_set_filter_option(
-        self,
-        module: Option<&ZStr>,
-        key: &ZStr,
-        value: &ZStr,
-    ) -> ArchiveResult {
-        Archive::opaque_ref(self).write_set_filter_option(module, key, value)
-    }
-    #[inline]
-    fn write_set_options(self, opts: &ZStr) -> ArchiveResult {
-        Archive::opaque_ref(self).write_set_options(opts)
-    }
-    #[inline]
-    fn write_open_filename(self, path: &ZStr) -> ArchiveResult {
-        Archive::opaque_ref(self).write_open_filename(path)
-    }
-    #[inline]
-    fn write_close(self) -> ArchiveResult {
-        Archive::opaque_ref(self).write_close()
-    }
-    #[inline]
-    fn write_free(self) -> ArchiveResult {
-        Archive::opaque_ref(self).write_free()
-    }
-    #[inline]
     fn error_string(self) -> &'static [u8] {
         // Every `ArchivePtrExt` call site holds a live `*mut Archive` from
-        // `archive_{read,write}_new()` (the trait exists precisely so those
-        // sites avoid per-call `unsafe { &* }`).
+        // `archive_read_new()` (the trait exists precisely so those sites
+        // avoid per-call `unsafe { &* }`).
         Archive::opaque_ref(self).error_string()
     }
     #[inline]
@@ -2442,15 +2400,6 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         }
 
         if FOR_PUBLISH {
-            let mut dest_buf = PathBuffer::uninit();
-            let (abs_tarball_dest, _) = tarball_destination(
-                opt_pack_destination(ctx.manager),
-                opt_pack_filename(ctx.manager),
-                abs_workspace_path,
-                package_name,
-                package_version,
-                &mut dest_buf[..],
-            );
             // Note: `manager`/`command_ctx` reborrowed via raw pointer —
             // both are process-lifetime
             // singletons (see `cli::command::GLOBAL_CLI_CTX`).
@@ -2464,7 +2413,6 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                 command_ctx: unsafe { &mut *std::ptr::from_mut(ctx.command_ctx) },
                 package_name: package_name.into(),
                 package_version: package_version.into(),
-                abs_tarball_path: ZStr::boxed(abs_tarball_dest.as_bytes()),
                 tarball_bytes: Box::new([]),
                 uses_workspaces: false,
                 publish_script,
@@ -2479,7 +2427,9 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
 
     let mut print_buf: Vec<u8> = Vec::new();
 
-    let archive = Archive::write_new();
+    // Must outlive `archive`, whose close (also run by its Drop) writes into it.
+    let mut tarball_buffer = GrowingBuffer::init();
+    let archive = WriteArchive::new();
 
     match archive.write_set_format_pax_restricted() {
         ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
@@ -2542,41 +2492,46 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         _ => {}
     }
 
-    let mut dest_buf = PathBuffer::uninit();
-    let (abs_tarball_dest, abs_tarball_dest_dir_end) = tarball_destination(
-        opt_pack_destination(ctx.manager),
-        opt_pack_filename(ctx.manager),
-        abs_workspace_path,
-        package_name,
-        package_version,
-        &mut dest_buf[..],
-    );
-    // Note: reshaped for borrowck — abs_tarball_dest borrows dest_buf
-    let abs_tarball_dest_len = abs_tarball_dest.as_bytes().len();
-
-    {
-        // create the directory if it doesn't exist
-        let most_likely_a_slash = dest_buf[abs_tarball_dest_dir_end];
-        dest_buf[abs_tarball_dest_dir_end] = 0;
-        // SAFETY: NUL written above
-        let abs_tarball_dest_dir = ZStr::from_buf(&dest_buf[..], abs_tarball_dest_dir_end);
-        let _ = bun_sys::Dir::cwd().make_path(abs_tarball_dest_dir.as_bytes());
-        dest_buf[abs_tarball_dest_dir_end] = most_likely_a_slash;
-    }
-
-    // SAFETY: dest_buf[abs_tarball_dest_len] == 0 (written by tarball_destination)
-    let abs_tarball_dest = ZStr::from_buf(&dest_buf[..], abs_tarball_dest_len);
-
-    // TODO: experiment with `archive.writeOpenMemory()`
-    match archive.write_open_filename(abs_tarball_dest) {
+    // Same as `archive_write_open_filename` set for a file, so the output stays byte-identical.
+    match archive.write_set_bytes_in_last_block(1) {
         ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
             Output::err_generic(
-                "failed to open tarball file destination: \"{}\"",
-                format_args!("{}", bstr::BStr::new(abs_tarball_dest.as_bytes())),
+                "failed to set archive block padding: {}",
+                format_args!("{}", bstr::BStr::new(archive.error_string())),
             );
             Global::crash();
         }
         _ => {}
+    }
+
+    // `bun publish` uploads the bytes from memory; only `bun pm pack` writes a file.
+    let mut dest_buf = PathBuffer::uninit();
+    let abs_tarball_dest: Option<&ZStr> = if FOR_PUBLISH {
+        None
+    } else {
+        Some(pack_destination(
+            ctx.manager,
+            abs_workspace_path,
+            package_name,
+            package_version,
+            &mut dest_buf,
+        ))
+    };
+
+    if archive_write_open2(
+        &archive,
+        (&raw mut tarball_buffer).cast(),
+        Some(GrowingBuffer::open_callback),
+        Some(GrowingBuffer::write_callback),
+        Some(GrowingBuffer::close_callback),
+        None,
+    ) != 0
+    {
+        Output::err_generic(
+            "failed to open archive for writing: {}",
+            format_args!("{}", bstr::BStr::new(archive.error_string())),
+        );
+        Global::crash();
     }
 
     // append removed items from `pack_queue` with their file size
@@ -2586,8 +2541,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     let mut file_reader: Box<BufferedFileReader> =
         new_boxed_buffered_file_reader(File::from_fd(Fd::invalid()));
 
-    // SAFETY: `archive` is the live `archive_write_new()` handle opened above.
-    let mut entry = ArchiveEntry::new2(unsafe { &*archive });
+    let mut entry = ArchiveEntry::new2(&archive);
 
     {
         let mut progress = Progress::Progress::default();
@@ -2603,15 +2557,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         // uses below, so call `complete_one()` explicitly at every loop-body
         // exit and `end()` once after the loops.
 
-        entry = archive_package_json(
-            ctx,
-            // SAFETY: `archive` is the non-null `*mut Archive` returned by
-            // `Archive::write_new()` above; only this thread accesses it.
-            unsafe { &mut *archive },
-            entry,
-            &root_dir,
-            &edited_package_json,
-        )?;
+        entry = archive_package_json(ctx, &archive, entry, &root_dir, &edited_package_json);
         if log_level.show_progress() {
             node.as_mut()
                 .expect("infallible: progress active")
@@ -2685,13 +2631,11 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                 &item.path,
                 &mut read_buf,
                 &mut file_reader,
-                // SAFETY: `archive` is the non-null `*mut Archive` returned by
-                // `Archive::write_new()` above; only this thread accesses it.
-                unsafe { &mut *archive },
+                &archive,
                 entry,
                 &mut print_buf,
                 &bins,
-            )?;
+            );
 
             if log_level.show_progress() {
                 node.as_mut()
@@ -2740,13 +2684,11 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                 &item.path,
                 &mut read_buf,
                 &mut file_reader,
-                // SAFETY: `archive` is the non-null `*mut Archive` returned by
-                // `Archive::write_new()` above; only this thread accesses it.
-                unsafe { &mut *archive },
+                &archive,
                 entry,
                 &mut print_buf,
                 &bins,
-            )?;
+            );
 
             if log_level.show_progress() {
                 node.as_mut()
@@ -2775,101 +2717,25 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         _ => {}
     }
 
-    match archive.write_free() {
-        ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
-            Output::err_generic(
-                "failed to free archive: {}",
-                format_args!("{}", bstr::BStr::new(archive.error_string())),
-            );
-            Global::crash();
-        }
-        _ => {}
-    }
+    drop(archive);
+    // Only fails after a write into the buffer failed, which crashed above.
+    let tarball_bytes = tarball_buffer.to_owned_slice()?;
 
     let mut shasum: [u8; sha::SHA1::DIGEST] = [0; sha::SHA1::DIGEST];
+    let mut sha1 = sha::SHA1::init();
+    sha1.update(&tarball_bytes);
+    sha1.r#final(&mut shasum);
+
     let mut integrity: [u8; sha::SHA512::DIGEST] = [0; sha::SHA512::DIGEST];
+    let mut sha512 = sha::SHA512::init();
+    sha512.update(&tarball_bytes);
+    sha512.r#final(&mut integrity);
 
-    let tarball_bytes: Option<Vec<u8>> = 'tarball_bytes: {
-        let tarball_file = match File::open(abs_tarball_dest, bun_sys::O::RDONLY, 0) {
-            Ok(f) => f,
-            Err(err) => {
-                Output::err(
-                    err,
-                    "failed to open tarball at: \"{}\"",
-                    format_args!("{}", bstr::BStr::new(abs_tarball_dest.as_bytes())),
-                );
-                Global::crash();
-            }
-        };
+    ctx.stats.packed_size = tarball_bytes.len();
 
-        let mut sha1 = sha::SHA1::init();
-        let mut sha512 = sha::SHA512::init();
-
-        if FOR_PUBLISH {
-            let bytes = match tarball_file.read_to_end() {
-                Ok(b) => b,
-                Err(err) => {
-                    Output::err(
-                        err,
-                        "failed to read tarball: \"{}\"",
-                        format_args!("{}", bstr::BStr::new(abs_tarball_dest.as_bytes())),
-                    );
-                    Global::crash();
-                }
-            };
-
-            sha1.update(&bytes);
-            sha512.update(&bytes);
-
-            sha1.r#final(&mut shasum);
-            sha512.r#final(&mut integrity);
-
-            ctx.stats.packed_size = bytes.len();
-
-            break 'tarball_bytes Some(bytes);
-        }
-
-        reset_buffered_file_reader(&mut file_reader, File::from_fd(tarball_file.into_raw()));
-
-        let mut size: usize = 0;
-        let mut read = match buffered_file_reader_read(&mut file_reader, &mut read_buf) {
-            Ok(n) => n,
-            Err(err) => {
-                Output::err(
-                    err,
-                    "failed to read tarball: \"{}\"",
-                    format_args!("{}", bstr::BStr::new(abs_tarball_dest.as_bytes())),
-                );
-                Global::crash();
-            }
-        };
-        while read > 0 {
-            sha1.update(&read_buf[..read]);
-            sha512.update(&read_buf[..read]);
-            size += read;
-            read = match buffered_file_reader_read(&mut file_reader, &mut read_buf) {
-                Ok(n) => n,
-                Err(err) => {
-                    Output::err(
-                        err,
-                        "failed to read tarball: \"{}\"",
-                        format_args!("{}", bstr::BStr::new(abs_tarball_dest.as_bytes())),
-                    );
-                    Global::crash();
-                }
-            };
-        }
-
-        sha1.r#final(&mut shasum);
-        sha512.r#final(&mut integrity);
-
-        ctx.stats.packed_size = size;
-        None
-    };
-    let _ = core::mem::replace(
-        &mut file_reader.unbuffered_reader,
-        File::from_fd(Fd::invalid()),
-    );
+    if let Some(abs_tarball_dest) = abs_tarball_dest {
+        write_tarball(abs_tarball_dest, &tarball_bytes);
+    }
 
     let normalized_pkg_info: Option<Box<[u8]>> = if FOR_PUBLISH {
         // The mutated tree is consumed inside `normalized_package` (it prints
@@ -2896,7 +2762,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         edited_package_json.len(),
     );
 
-    if !FOR_PUBLISH {
+    if let Some(abs_tarball_dest) = abs_tarball_dest {
         if opt_pack_destination(ctx.manager).is_empty() && opt_pack_filename(ctx.manager).is_empty()
         {
             Context::print_tarball_path(
@@ -2937,8 +2803,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
             command_ctx: unsafe { &mut *std::ptr::from_mut(ctx.command_ctx) },
             package_name: package_name.into(),
             package_version: package_version.into(),
-            abs_tarball_path: ZStr::boxed(abs_tarball_dest.as_bytes()),
-            tarball_bytes: tarball_bytes.unwrap_or_default().into_boxed_slice(),
+            tarball_bytes: tarball_bytes.into_boxed_slice(),
             uses_workspaces: false,
             publish_script,
             postpublish_script,
@@ -3145,13 +3010,83 @@ impl<'a> fmt::Display for TarballNameFormatter<'a> {
     }
 }
 
+/// Resolves where `bun pm pack` writes the tarball and creates that directory.
+fn pack_destination<'a>(
+    manager: &PackageManager,
+    abs_workspace_path: &[u8],
+    package_name: &[u8],
+    package_version: &[u8],
+    buf: &'a mut PathBuffer,
+) -> &'a ZStr {
+    let (abs_tarball_dest, dir_end) = tarball_destination(
+        opt_pack_destination(manager),
+        opt_pack_filename(manager),
+        abs_workspace_path,
+        package_name,
+        package_version,
+        &mut buf[..],
+    );
+    let len = abs_tarball_dest.as_bytes().len();
+    let _ = bun_sys::Dir::cwd().make_path(&buf[..dir_end]);
+    // SAFETY: buf[len] == 0 (written by tarball_destination)
+    ZStr::from_buf(&buf[..], len)
+}
+
+/// The only write to disk, and so the only failure that has a partial file to remove.
+fn write_tarball(abs_tarball_dest: &ZStr, tarball_bytes: &[u8]) {
+    let file = match File::create(Fd::cwd(), abs_tarball_dest, true) {
+        Ok(file) => file,
+        Err(err) => {
+            Output::err(
+                err,
+                "failed to open tarball file destination: \"{}\"",
+                format_args!("{}", bstr::BStr::new(abs_tarball_dest.as_bytes())),
+            );
+            Global::crash();
+        }
+    };
+    if let Err(err) = file.write_all(tarball_bytes) {
+        Output::err(
+            err,
+            "failed to write tarball: \"{}\"",
+            format_args!("{}", bstr::BStr::new(abs_tarball_dest.as_bytes())),
+        );
+        // Windows cannot delete the file while it is open.
+        drop(file);
+        // A `--filename` that is a symlink or a device is not ours to delete.
+        if let Ok(stat) = bun_sys::lstat(abs_tarball_dest) {
+            if bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode) == bun_sys::FileKind::File {
+                let _ = bun_sys::unlink(abs_tarball_dest);
+            }
+        }
+        Global::crash();
+    }
+}
+
+/// Returns the number of bytes libarchive accepted for the current entry.
+fn write_entry_data(archive: &Archive, pathname: &[u8], data: &[u8]) -> usize {
+    match usize::try_from(archive.write_data(data)) {
+        Ok(written) => written,
+        Err(_) => {
+            Output::err_generic(
+                "failed to write \"{}\" to tarball: {}",
+                (
+                    bstr::BStr::new(pathname),
+                    bstr::BStr::new(archive.error_string()),
+                ),
+            );
+            Global::crash();
+        }
+    }
+}
+
 fn archive_package_json(
     ctx: &mut Context<'_>,
-    archive: &mut Archive,
+    archive: &Archive,
     entry: *mut ArchiveEntry,
     root_dir: &Dir,
     edited_package_json: &[u8],
-) -> Result<*mut ArchiveEntry, AllocError> {
+) -> *mut ArchiveEntry {
     // `entry` is the same pointer after `.clear()`.
     let entry = ArchiveEntry::opaque_ref(entry);
     let stat = match bun_sys::fstatat(Fd::from_std_dir(root_dir), bun_core::zstr!("package.json")) {
@@ -3179,20 +3114,16 @@ fn archive_package_json(
         ArchiveStatus::Failed | ArchiveStatus::Fatal | ArchiveStatus::Warn => {
             Output::err_generic(
                 "failed to write tarball header: {}",
-                format_args!(
-                    "{}",
-                    bstr::BStr::new(std::ptr::from_mut::<Archive>(archive).error_string())
-                ),
+                format_args!("{}", bstr::BStr::new(archive.error_string())),
             );
             Global::crash();
         }
         _ => {}
     }
 
-    ctx.stats.unpacked_size +=
-        usize::try_from(archive.write_data(edited_package_json)).expect("int cast");
+    ctx.stats.unpacked_size += write_entry_data(archive, b"package.json", edited_package_json);
 
-    Ok(entry.clear())
+    entry.clear()
 }
 
 fn add_archive_entry(
@@ -3202,11 +3133,11 @@ fn add_archive_entry(
     filename: &ZStr,
     read_buf: &mut [u8],
     file_reader: &mut BufferedFileReader,
-    archive: &mut Archive,
+    archive: &Archive,
     entry: *mut ArchiveEntry,
     print_buf: &mut Vec<u8>,
     bins: &[BinInfo],
-) -> Result<*mut ArchiveEntry, AllocError> {
+) -> *mut ArchiveEntry {
     // `entry` is the same pointer after `.clear()`.
     let entry = ArchiveEntry::opaque_ref(entry);
     write!(
@@ -3245,10 +3176,7 @@ fn add_archive_entry(
         ArchiveStatus::Failed | ArchiveStatus::Fatal => {
             Output::err_generic(
                 "failed to write tarball header: {}",
-                format_args!(
-                    "{}",
-                    bstr::BStr::new(std::ptr::from_mut::<Archive>(archive).error_string())
-                ),
+                format_args!("{}", bstr::BStr::new(archive.error_string())),
             );
             Global::crash();
         }
@@ -3270,7 +3198,7 @@ fn add_archive_entry(
     };
     while read > 0 {
         ctx.stats.unpacked_size +=
-            usize::try_from(archive.write_data(&read_buf[..read])).expect("int cast");
+            write_entry_data(archive, filename.as_bytes(), &read_buf[..read]);
         read = match buffered_file_reader_read(file_reader, read_buf) {
             Ok(n) => n,
             Err(err) => {
@@ -3290,7 +3218,7 @@ fn add_archive_entry(
     // close a fd we don't own.
     reset_buffered_file_reader(file_reader, File::from_fd(Fd::invalid()));
 
-    Ok(entry.clear())
+    entry.clear()
 }
 
 /// Strips workspace and catalog protocols from dependency versions then

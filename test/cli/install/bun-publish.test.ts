@@ -765,6 +765,27 @@ describe("--dry-run", async () => {
 
     expect(await exists(join(registry.packagesPath, "dry-run-1"))).toBeFalse();
   });
+  // Publishing from a directory used to unlink `<name>-<version>.tgz` in the package directory
+  // (where it packed to), also with --dry-run, where nothing had been packed and the file was
+  // whatever the user had put there.
+  test("leaves a tarball that is already in the package directory alone", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    const bunfig = await registry.authBunfig("dryrunexisting");
+    await Promise.all([
+      rm(join(registry.packagesPath, "dry-run-3"), { recursive: true, force: true }),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+      write(packageJson, JSON.stringify({ name: "dry-run-3", version: "3.3.3" })),
+    ]);
+    await pack(packageDir, env);
+    const tarball = join(packageDir, "dry-run-3-3.3.3.tgz");
+    const packed = await file(tarball).bytes();
+
+    const { exitCode } = await publish(env, packageDir, "--dry-run");
+
+    expect({ exitCode, tarballExists: await exists(tarball) }).toEqual({ exitCode: 0, tarballExists: true });
+    expect(await file(tarball).bytes()).toEqual(packed);
+    expect(await exists(join(registry.packagesPath, "dry-run-3"))).toBeFalse();
+  });
   test("does not publish from tarball path", async () => {
     const { packageDir, packageJson } = await registry.createTestDir();
     const bunfig = await registry.authBunfig("dryruntarball");
@@ -1077,6 +1098,32 @@ test("attempting to publish a private package should fail", async () => {
   expect(exitCode).toBe(1);
   expect(err).toContain("error: attempted to publish a private package");
   expect(await exists(join(packageDir, "publish-pkg-6-6.6.6.tgz"))).toBeTrue();
+});
+
+// Publishing from a directory used to pack into that directory and delete the file again after
+// publishing, so any failure in between (here: postpack) left the tarball behind.
+test("a failed publish does not leave a tarball in the package directory", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "publish-postpack-failed",
+        version: "1.0.0",
+        scripts: { postpack: "exit 3" },
+      }),
+    ),
+    write(join(packageDir, "index.js"), "module.exports = 1;"),
+    write(join(packageDir, "bunfig.toml"), await registry.authBunfig("postpackfailed")),
+  ]);
+
+  const { err, exitCode } = await publish(env, packageDir);
+
+  expect(err).toContain('script "postpack" exited with code 3');
+  expect({ exitCode, tarballExists: await exists(join(packageDir, "publish-postpack-failed-1.0.0.tgz")) }).toEqual({
+    exitCode: 3,
+    tarballExists: false,
+  });
 });
 
 describe("access", async () => {

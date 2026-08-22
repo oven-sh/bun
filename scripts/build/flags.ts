@@ -384,9 +384,10 @@ export const globalFlags: Flag[] = [
     desc: "Keep frame pointers (for profiling and backtraces)",
   },
   {
-    flag: "/Oy-",
+    // clang-cl drops /Oy- on x64 and keeps only non-leaf frames on arm64
+    flag: ["/clang:-fno-omit-frame-pointer", "/clang:-mno-omit-leaf-frame-pointer"],
     when: c => c.windows,
-    desc: "Keep frame pointers",
+    desc: "Keep frame pointers (for profiling and backtraces)",
   },
 
   // ─── Visibility ───

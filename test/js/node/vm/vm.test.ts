@@ -1846,6 +1846,25 @@ test("a module whose evaluation times out is errored", async () => {
   expect(exitCode).toBe(0);
 }, 30_000);
 
+// The same timeout value reaches the native evaluate() either as an int32 or as a double (a
+// Float64Array element is always the latter). Only the value may decide whether the deadline is armed.
+test("SourceTextModule#evaluate() arms the timeout when the number is boxed as a double", async () => {
+  const code = `
+    const vm = require("node:vm");
+    const timeout = new Float64Array([20])[0];
+    // Spins far past the 20ms deadline, but not forever: without the deadline the body finishes
+    // and evaluate() resolves, so a timeout that is not armed fails this test instead of hanging it.
+    const m = new vm.SourceTextModule("for (const end = Date.now() + 2000; Date.now() < end;) {}", { context: vm.createContext({}) });
+    await m.link(() => { throw new Error("unreachable"); });
+    console.log(timeout === 20, await m.evaluate({ timeout }).then(() => "resolved", (e) => e.code), m.status);
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("true ERR_SCRIPT_EXECUTION_TIMEOUT errored\n");
+  expect(exitCode).toBe(0);
+});
+
 // A vm timeout that lands while a host function beneath the timed script is spinning a nested event-loop
 // wait (expect().resolves ticks the loop until its promise settles) must unwind to the run and surface as
 // ERR_SCRIPT_EXECUTION_TIMEOUT; the nested wait used to keep ticking over the pending termination (a hang).

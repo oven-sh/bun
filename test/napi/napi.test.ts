@@ -432,6 +432,60 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
   });
 
+  // The finalizer of an external buffer belongs to the env that created it, and that env's
+  // teardown frees the bytes, so the bytes must not be transferred to another thread.
+  describe("external buffers are untransferable", () => {
+    it("every transfer entry point throws DataCloneError and leaves the buffer intact", async () => {
+      const result = await checkSameOutput("test_external_buffer_untransferable", []);
+      const expected = (kind: string) =>
+        [
+          `${kind}: isMarkedAsUntransferable(created)=${kind === "arraybuffer"} isMarkedAsUntransferable(arrayBuffer)=true ownKeys=0`,
+          `${kind}: structuredClone: DataCloneError code=25`,
+          `${kind}: MessagePort.postMessage: DataCloneError code=25`,
+          `${kind}: new Worker transferList: DataCloneError code=25`,
+          `${kind}: structuredClone after a plain ArrayBuffer: DataCloneError code=25`,
+          `${kind}: byteLength=8 plain.byteLength=2`,
+          `${kind}: copy=[1,2,3,4,5,6,7,8] byteLength=8`,
+        ].join("\n");
+      const expectedEmpty = (kind: string) =>
+        [
+          `empty ${kind}: isMarkedAsUntransferable(arrayBuffer)=true`,
+          `empty ${kind}: structuredClone: DataCloneError code=25`,
+        ].join("\n");
+      expect(result).toBe(
+        [
+          expected("arraybuffer"),
+          expected("buffer"),
+          expectedEmpty("arraybuffer"),
+          expectedEmpty("buffer"),
+          'stats: {"finalized":0,"finalizedOffThread":0}',
+        ].join("\n"),
+      );
+    });
+
+    it("a worker's buffers reach the parent as copies and are finalized by the worker's env teardown", async () => {
+      const result = await checkSameOutput("test_external_buffer_worker_exit", []);
+      const message = JSON.stringify({
+        transfers: {
+          arraybuffer: "DataCloneError code=25",
+          arraybufferByteLength: 4,
+          buffer: "DataCloneError code=25",
+          bufferByteLength: 4,
+        },
+        copies: { arraybuffer: [1, 2, 3, 4], buffer: [1, 2, 3, 4] },
+        stats: { finalized: 0, finalizedOffThread: 0 },
+      });
+      expect(result).toBe(
+        [
+          "worker exited with 0",
+          `messages: [${message}]`,
+          'stats after exit: {"finalized":2,"finalizedOffThread":0}',
+          "resolved to undefined",
+        ].join("\n"),
+      );
+    });
+  });
+
   describe("pending-exception gate", () => {
     it("refuses and performs no side effects while a napi exception is pending", async () => {
       const result = await checkSameOutput("test_pending_exception_gate", []);

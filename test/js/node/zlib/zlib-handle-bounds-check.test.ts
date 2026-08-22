@@ -301,6 +301,18 @@ describe.concurrent("zlib native handle driven outside the zlib.ts lifecycle", (
        catch (e) { console.log("threw " + e.code + ": " + e.message); }`,
       "threw ERR_INVALID_STATE: Write already in progress",
     ],
+    // params() converts its arguments with ToInt32, which runs user code; a
+    // write started from there has to be caught by the same guard.
+    [
+      "zlib: params() whose argument coercion starts an async write throws",
+      `const C = zlib.createDeflate()._handle.constructor;
+       const h = new C(1);
+       h.init(15, 6, 8, 0, new Uint32Array(2), () => {}, undefined);
+       const level = { valueOf() { h.write(0, null, 0, 0, new Uint8Array(64), 0, 64); return 1; } };
+       try { h.params(level, 0); console.log("handled"); }
+       catch (e) { console.log("threw " + e.code + ": " + e.message); }`,
+      "threw ERR_INVALID_STATE: Write already in progress",
+    ],
     [
       "brotli: init() while an async write is in flight throws",
       `const C = zlib.createBrotliCompress()._handle.constructor;

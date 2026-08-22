@@ -26,6 +26,7 @@ const owner_symbol = Symbol("owner_symbol");
 const { checkRangesOrGetDefault, validateFunction, validateFiniteNumber } = require("internal/validators");
 
 const kFlushFlag = Symbol("kFlushFlag");
+const kAfterFlush = Symbol("kAfterFlush");
 const kError = Symbol("kError");
 
 const { zlib: constants } = process.binding("constants");
@@ -254,13 +255,11 @@ function maxFlush(a, b) {
 // Set up a list of 'special' buffers that can be written using .write()
 // from the .flush() code as a way of introducing flushing operations into the
 // write sequence.
+const dummyArrayBuffer = new ArrayBuffer();
 const kFlushBuffers: (typeof Buffer)[] = [];
-{
-  const dummyArrayBuffer = new ArrayBuffer();
-  for (const flushFlag of kFlushFlagList) {
-    kFlushBuffers[flushFlag] = Buffer.from(dummyArrayBuffer);
-    kFlushBuffers[flushFlag][kFlushFlag] = flushFlag;
-  }
+for (const flushFlag of kFlushFlagList) {
+  kFlushBuffers[flushFlag] = Buffer.from(dummyArrayBuffer);
+  kFlushBuffers[flushFlag][kFlushFlag] = flushFlag;
 }
 
 ZlibBase.prototype.flush = function (kind, callback) {
@@ -511,7 +510,10 @@ function processCallback() {
   }
 
   // Finished with the chunk.
+  const afterFlush = this.buffer[kAfterFlush];
   this.buffer = null;
+  // Runs while the handle is still idle; this.cb() hands the next buffered chunk to it (see paramsAfterFlushCallback).
+  if (afterFlush !== undefined) afterFlush();
   this.cb();
 }
 
@@ -584,8 +586,8 @@ function Zlib(opts, mode) {
 }
 $toClass(Zlib, "Zlib", ZlibBase);
 
-// This callback is used by `.params()` to wait until a full flush happened before adjusting the parameters.
-// In particular, the call to the native `params()` function should not happen while a write is currently in progress on the threadpool.
+// Invoked by processCallback() as the flush issued by .params() retires. Node runs this as the flush's write callback,
+// but write callbacks run after the next buffered chunk was handed to the handle, and native params() throws then.
 function paramsAfterFlushCallback(level, strategy, callback) {
   $assert(this._handle, "zlib binding closed");
   this._handle.params(level, strategy);
@@ -596,12 +598,25 @@ function paramsAfterFlushCallback(level, strategy, callback) {
   }
 }
 
+// The user's callback keeps node's timing: it is the flush's write callback (test-zlib-params.js depends on this).
+function paramsWriteCallback(callback) {
+  if (!this.destroyed) callback();
+}
+
 Zlib.prototype.params = function params(level, strategy, callback) {
   checkRangesOrGetDefault(level, "level", Z_MIN_LEVEL, Z_MAX_LEVEL);
   checkRangesOrGetDefault(strategy, "strategy", Z_DEFAULT_STRATEGY, Z_FIXED);
 
   if (this._level !== level || this._strategy !== strategy) {
-    this.flush(Z_SYNC_FLUSH, paramsAfterFlushCallback.bind(this, level, strategy, callback));
+    if (this.writableEnded) {
+      // 'finish' fires while the Z_FINISH chunk may still be in flight (see _final); the handle is idle again at 'end'.
+      this.once("end", paramsAfterFlushCallback.bind(this, level, strategy, callback));
+    } else {
+      const flush = Buffer.from(dummyArrayBuffer);
+      flush[kFlushFlag] = Z_SYNC_FLUSH;
+      flush[kAfterFlush] = paramsAfterFlushCallback.bind(this, level, strategy, undefined);
+      this.write(flush, "", callback && paramsWriteCallback.bind(this, callback));
+    }
   } else {
     process.nextTick(callback);
   }

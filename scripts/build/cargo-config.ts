@@ -10,9 +10,12 @@
  * lines from that discovered path rather than hardcoding one.
  *
  * For the `bun bd` / ninja build this file is purely advisory: `rust.ts`
- * passes `CARGO_TARGET_<TRIPLE>_LINKER = cfg.cxx` (plus `CC`/`CXX`/`AR`) and
- * `-Clink-arg=-fuse-ld=lld` directly on the cargo invocation's environment,
- * which override anything here. The file matters for a contributor running
+ * passes `CARGO_TARGET_<TRIPLE>_LINKER = cfg.cxx` (plus `CC`/`CXX`/`AR`) and,
+ * when `rustForcesFuseLdLld(cfg)` holds, `-Clink-arg=-fuse-ld=lld` directly on
+ * the cargo invocation's environment, which override anything here. (Darwin
+ * omits that flag unless cross-language LTO is on — macOS uses ld64 by
+ * default; see rust.ts. The darwin sections below skip the `-fuse-ld=lld`
+ * rustflag for the same reason.) The file matters for a contributor running
  * `cargo build` / `cargo check` directly, and for rust-analyzer.
  *
  * `writeIfChanged` semantics (precedent: `depVersionsHeader.ts`) so a
@@ -77,6 +80,10 @@ export function generateCargoConfig(cfg: Config): string {
     "# of which the default `cc` link handles cleanly. Paths come from the",
     "# toolchain `scripts/build/tools.ts` discovered (`cfg.hostCxx`), so this",
     "# file is correct on whatever machine ran configure.",
+    "#",
+    "# Darwin is the exception: its sections below omit -fuse-ld=lld and let",
+    "# clang++ use ld64 (macOS has no lld by default; Homebrew clang++ rejects",
+    "# the flag). See #30870 and `rustForcesFuseLdLld()` in rust.ts.",
   ];
 
   for (const triple of allRustTargets) {
@@ -84,19 +91,27 @@ export function generateCargoConfig(cfg: Config): string {
     lines.push("");
     lines.push(`[target.${triple}]${triple === host ? "  # host" : ""}`);
     lines.push(`linker = ${JSON.stringify(linkerFor(triple, cfg))}`);
-    // -Qunused-arguments: rustc passes link args that don't apply to every
-    // artifact kind (e.g. `-no-pie` when it links a target cdylib; none
-    // exists today, so this is defensive — same rationale as `emitRust` in
-    // rust.ts), and its `linker_messages` lint re-surfaces clang's "argument
-    // unused during compilation" complaint as a warning on every build-rust
-    // job.
-    // These config rustflags reach the cargo invocations that don't set
+    // -fuse-ld=lld forces clang++ to drive lld instead of its default linker.
+    // -Qunused-arguments + `-A linker_messages` quiet the `linker_messages`
+    // lint about link args that don't apply to every artifact kind (e.g.
+    // `-no-pie` when rustc links a target cdylib; none exists today, so this
+    // is defensive — same rationale as `emitRust` in rust.ts). These config
+    // rustflags reach the cargo invocations that don't set
     // CARGO_ENCODED_RUSTFLAGS themselves (the lolhtml dep edge, plain
     // `cargo build`/`cargo check`, rust-analyzer); real linker errors still
     // fail the link.
-    lines.push(
-      `rustflags = ["-C", "link-arg=-fuse-ld=lld", "-C", "link-arg=-Qunused-arguments", "-A", "linker_messages"]`,
-    );
+    //
+    // darwin omits `-fuse-ld=lld`: macOS uses `ld64` / the system linker, and
+    // a Homebrew `clang++` without the `lld` driver alias rejects it with
+    // "invalid linker name in argument '-fuse-ld=lld'", breaking plain
+    // `cargo check` / rust-analyzer on contributors' macs (#30870). The
+    // lint-quieting flags stay, matching `rustForcesFuseLdLld()` in rust.ts
+    // (which also keeps them on darwin while dropping the linker flag).
+    const rustflags =
+      tripleOs(triple) === "darwin"
+        ? ["-C", "link-arg=-Qunused-arguments", "-A", "linker_messages"]
+        : ["-C", "link-arg=-fuse-ld=lld", "-C", "link-arg=-Qunused-arguments", "-A", "linker_messages"];
+    lines.push(`rustflags = [${rustflags.map(f => JSON.stringify(f)).join(", ")}]`);
   }
   lines.push("");
 

@@ -626,6 +626,87 @@ describe("object loader with a throwing exports getter", () => {
   });
 });
 
+describe("object loader with a throwing getter on an export", () => {
+  // The "exports" object itself is fine; one of its own properties is a getter
+  // that throws while the exports are copied into the module namespace. The
+  // error must reach the importer as-is, not become an `undefined` export.
+  const throwingExportResult = `
+    const exported = { before: 1 };
+    Object.defineProperty(exported, "boom", {
+      enumerable: true,
+      get() {
+        throw globalThis.sentinel;
+      },
+    });
+    exported.after = 2;
+    return { exports: exported, loader: "object" };
+  `;
+
+  async function expectSentinel(code: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `globalThis.sentinel = new Error("export getter threw");\n${code}`],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("failed with sentinel\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  }
+
+  const report = `
+    catch (e) {
+      console.log(e === globalThis.sentinel ? "failed with sentinel" : "failed with " + e);
+    }
+  `;
+
+  it.concurrent("rejects import() of a build.module result", async () => {
+    await expectSentinel(`
+      Bun.plugin({
+        name: "virt",
+        setup(build) {
+          build.module("virt-mod", () => { ${throwingExportResult} });
+        },
+      });
+      try {
+        const ns = await import("virt-mod");
+        console.log("imported boom=" + ns.boom);
+      } ${report}
+    `);
+  });
+
+  it.concurrent("throws from require() of a build.module result", async () => {
+    await expectSentinel(`
+      Bun.plugin({
+        name: "virt",
+        setup(build) {
+          build.module("virt-mod", () => { ${throwingExportResult} });
+        },
+      });
+      try {
+        const ns = require("virt-mod");
+        console.log("required boom=" + ns.boom);
+      } ${report}
+    `);
+  });
+
+  it.concurrent("rejects import() of a build.onLoad result", async () => {
+    await expectSentinel(`
+      Bun.plugin({
+        name: "virt",
+        setup(build) {
+          build.onResolve({ filter: /.*/, namespace: "virtns" }, args => ({ path: args.path, namespace: "virtns" }));
+          build.onLoad({ filter: /.*/, namespace: "virtns" }, () => { ${throwingExportResult} });
+        },
+      });
+      try {
+        const ns = await import("virtns:mod");
+        console.log("imported boom=" + ns.boom);
+      } ${report}
+    `);
+  });
+});
+
 it("require(...).default without __esModule", () => {
   {
     const { default: mod } = require("my-virtual-module-with-default");

@@ -164,11 +164,6 @@ impl Drop for BodyAbortListener {
 
 // `jsc.Codegen.JSResponse` — the real bindings, emitted by
 // `js_class_module!` in `bun_jsc::generated`.
-//
-// IMPORTANT: do NOT re-introduce `crate::webcore::jsc::codegen::JSResponse`
-// here — that module is a placeholder stub whose `to_js_unchecked` returns
-// `JSValue::default()` and whose `from_js*` return `None`. Importing it
-// silently shadows the real C++ shims.
 pub mod js {
     pub use bun_jsc::generated::JSResponse::*;
 }

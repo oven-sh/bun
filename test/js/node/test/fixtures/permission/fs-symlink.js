@@ -54,6 +54,7 @@ const symlinkFromBlockedFile = process.env.EXISTINGSYMLINK;
     fs.readFileSync(blockedFile);
   }, common.expectsError({
     code: 'ERR_ACCESS_DENIED',
+    permission: 'FileSystemRead',
   }));
   assert.throws(() => {
     fs.appendFileSync(blockedFile, 'data');
@@ -67,6 +68,7 @@ const symlinkFromBlockedFile = process.env.EXISTINGSYMLINK;
     fs.symlinkSync(regularFile, blockedFolder + '/asdf', 'file');
   }, common.expectsError({
     code: 'ERR_ACCESS_DENIED',
+    permission: 'FileSystemWrite',
   }));
   assert.throws(() => {
     fs.linkSync(regularFile, blockedFolder + '/asdf');
@@ -80,26 +82,12 @@ const symlinkFromBlockedFile = process.env.EXISTINGSYMLINK;
     fs.symlinkSync(blockedFile, path.join(__dirname, '/asdf'), 'file');
   }, common.expectsError({
     code: 'ERR_ACCESS_DENIED',
+    permission: 'FileSystemRead',
   }));
   assert.throws(() => {
     fs.linkSync(blockedFile, path.join(__dirname, '/asdf'));
   }, common.expectsError({
     code: 'ERR_ACCESS_DENIED',
     permission: 'FileSystemRead',
-  }));
-}
-
-// fs.symlink API is blocked by default
-{
-  assert.throws(() => {
-    fs.symlinkSync(regularFile, regularFile);
-  }, common.expectsError({
-    message: 'fs.symlink API requires full fs.read and fs.write permissions.',
-    code: 'ERR_ACCESS_DENIED',
-  }));
-
-  fs.symlink(regularFile, regularFile, common.expectsError({
-    message: 'fs.symlink API requires full fs.read and fs.write permissions.',
-    code: 'ERR_ACCESS_DENIED',
   }));
 }

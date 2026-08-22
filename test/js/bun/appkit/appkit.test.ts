@@ -130,7 +130,7 @@ describe.skipIf(!isMacOS)("Bun.AppKit", () => {
         bunExe(),
         "-e",
         `const ns = await import("bun:appkit");
-         console.log(JSON.stringify({ same: Bun.AppKit.Window === ns.Window && Bun.AppKit.app === ns.app, keys: ["app","Window","VStack","Text","Button","TextField","Table","MetalView","gpu"].map(k => typeof ns[k]) }));`,
+         console.log(JSON.stringify({ same: Bun.AppKit.Window === ns.Window && Bun.AppKit.app === ns.app, keys: ["app","Window","VStack","Text","Button","TextField","Table","MetalView","gpu","objc"].map(k => typeof ns[k]) }));`,
       ],
       env: bunEnv,
       stdout: "pipe",
@@ -140,7 +140,18 @@ describe.skipIf(!isMacOS)("Bun.AppKit", () => {
     expect(stdout.trim(), stderr).toStartWith("{");
     expect(JSON.parse(stdout.trim())).toEqual({
       same: true,
-      keys: ["object", "function", "function", "function", "function", "function", "function", "function", "object"],
+      keys: [
+        "object",
+        "function",
+        "function",
+        "function",
+        "function",
+        "function",
+        "function",
+        "function",
+        "object",
+        "object",
+      ],
     });
     expect(exitCode).toBe(0);
   });
@@ -740,6 +751,244 @@ describe.skipIf(!isMacOS)("Bun.AppKit", () => {
     expect(r.exitCode).toBe(0);
   });
 
+  test.concurrent(
+    "objc: classes and selectors by name, conversion by type encoding, ownership, .native, and the errors",
+    async () => {
+      const r = await runFixture("objc-bridge.ts");
+      // The thread check comes first, so a Worker is refused even where the frameworks cannot load.
+      const refused = { threw: true, message: expect.stringMatching(/main thread/) };
+      expect(step(r, "worker"), r.stderr).toMatchObject({ lookup: refused, ns: refused, sel: { threw: false } });
+      if (r.skipped) return;
+      expect(step(r, "nsstring"), r.stderr).toEqual({
+        step: "nsstring",
+        length: 2,
+        utf8: "hi",
+        template: "hi",
+        string: "hi",
+        description: "hi",
+        js: "hi",
+        memoized: true,
+        tag: "[object ObjCObject]",
+        classTag: "[object ObjCClass]",
+        className: "NSString",
+        sameClass: true,
+        pointer: "bigint",
+        classPointer: "bigint",
+        isEqual: true,
+        hasPrefix: false,
+        unicode: "héllo",
+        unicodeLength: 5,
+        thenable: "undefined",
+        resolvesToItself: true,
+      });
+      expect(step(r, "array")).toEqual({
+        step: "array",
+        count: 2,
+        second: "there",
+        firstIsS: true,
+        addReturns: "undefined",
+        js: ["hi", "there"],
+        isKindOfArray: true,
+        isKindOfString: false,
+        classIsSubclass: true,
+        superclassShared: true,
+        respondsToCount: true,
+        respondsToSel: true,
+        respondsToNope: false,
+        instancesRespond: true,
+        selName: "terminate:",
+        selString: "terminate:",
+      });
+      expect(step(r, "processName")).toEqual({ step: "processName", type: "string", matchesExecutable: true });
+      expect(step(r, "conversion")).toEqual({
+        step: "conversion",
+        intValue: 3,
+        doubleValue: 2.5,
+        floatValue: 2.5,
+        boolValue: true,
+        longLong: -5,
+        unsignedLongLong: "18446744073709551615",
+        unsignedLongLongType: "bigint",
+        jsNumber: 3,
+        jsDouble: 2.5,
+        jsBool: true,
+        jsString: "s",
+        jsStrings: ["a", "b"],
+        jsNested: { a: 1, b: [true, null, "s"] },
+        jsPassthrough: [7, "x", null, true],
+        nsNull: null,
+        nsUndefined: null,
+        nsHandle: true,
+        nsArrayCount: 3,
+        nsDictLookup: "v",
+        nilReturn: null,
+        json: '{"s":"hi","strings":["a","b"],"n":4}',
+        jsonPlain: expect.stringMatching(/^<NSObject: 0x[0-9a-f]+>$/),
+        range: { location: 6, length: 5 },
+        notFound: "9223372036854775807",
+        notFoundType: "bigint",
+        substring: "hello",
+        bigRange: "9223372036854775807",
+        badRange: true,
+        loneSurrogate: true,
+        loneSurrogateLength: 3,
+        // A selector only fits a SEL argument; anywhere else it is refused like any other class instance.
+        selectorForId: { threw: true, isTypeError: true, message: expect.stringContaining("ObjCSelector") },
+        nsSelector: { threw: true, isTypeError: true, message: expect.stringContaining("ObjCSelector") },
+        classesProbes: { then: "undefined", string: "[objc.classes]", json: '{"c":"[objc.classes]"}', awaited: true },
+      });
+      // SEL arguments take a string or objc.sel(); SEL results are strings.
+      expect(step(r, "selectors")).toEqual({ step: "selectors", fromString: "terminate:", fromSel: "hide:" });
+      expect(step(r, "view")).toEqual({
+        step: "view",
+        frame: { origin: { x: 1, y: 2 }, size: { width: 30, height: 40 } },
+        flat: { origin: { x: 5, y: 6 }, size: { width: 70, height: 80 } },
+        moved: { origin: { x: 3, y: 4 }, size: { width: 50, height: 60 } },
+        identity: true,
+        isView: true,
+        isWindow: false,
+        vstackIsStackView: true,
+        tableOuter: "NSScrollView",
+        tableDocument: true,
+        scrollInsets: { top: 0, left: 0, bottom: 0, right: 0 },
+      });
+      // Changes made through the NSWindow show in the curated getters, which read the live object.
+      expect(step(r, "window")).toEqual({
+        step: "window",
+        titleBefore: "t",
+        titleAfter: "u",
+        isVisible: false,
+        frameKeys: ["origin", "size"],
+        frameWidth: 300,
+        frameAtLeastContentHeight: true,
+        widthAfterNested: 320,
+        widthAfterFlat: 340,
+        nativeFrameWidth: 340,
+        identity: true,
+        isWindow: true,
+        contentViewIsView: true,
+        sameThroughContentView: true,
+        samePointer: true,
+        sameDifferent: false,
+        sameNulls: false,
+        sameStrings: false,
+      });
+      const badState = { threw: true, isTypeError: false, code: "ERR_INVALID_STATE" };
+      expect(step(r, "native after close")).toMatchObject(badState);
+      expect(step(r, "native after close").message).toMatch(/closed/);
+      expect(step(r, "handle after close")).toEqual({ step: "handle after close", title: "u" });
+      const typeError = { threw: true, isTypeError: true };
+      expect(step(r, "unknown class")).toEqual({
+        step: "unknown class",
+        ...typeError,
+        message: 'objc: no class named "NSDefinitelyNotAClass"',
+      });
+      // Checked with respondsToSelector: before sending, so no NSException.
+      expect(step(r, "unrecognized selector")).toMatchObject(typeError);
+      expect(step(r, "unrecognized selector").message).toMatch(/definitelyNotASelector:\]: unrecognized selector/);
+      expect(step(r, "unrecognized class selector")).toMatchObject(typeError);
+      expect(step(r, "unrecognized class selector").message).toContain(
+        "+[NSString definitelyNot]: unrecognized selector",
+      );
+      expect(step(r, "wrong arg count")).toMatchObject(typeError);
+      expect(step(r, "wrong arg count").message).toMatch(/compare:.*"compare_".*1 argument.*0 were passed/);
+      expect(step(r, "wrong arg count extra")).toMatchObject(typeError);
+      expect(step(r, "wrong arg count extra").message).toMatch(/length\]: "length".*0 arguments.*1 was passed/);
+      expect(step(r, "wrong arg count msgSend")).toMatchObject(typeError);
+      expect(step(r, "wrong arg count msgSend").message).toContain("compare:");
+      expect(step(r, "msgSend works")).toEqual({ step: "msgSend works", threw: false, value: 0 });
+      expect(step(r, "block arg")).toMatchObject(typeError);
+      expect(step(r, "block arg").message).toMatch(/block.*not supported yet/i);
+      expect(step(r, "pointer arg")).toMatchObject(typeError);
+      expect(step(r, "pointer arg").message).toMatch(/pointer/i);
+      for (const name of ["fractional index", "negative unsigned", "string for number", "symbol for object"]) {
+        expect(step(r, name)).toMatchObject({ step: name, ...typeError });
+      }
+      expect(step(r, "fractional index").message).toContain("removeObjectAtIndex:");
+      expect(step(r, "bad struct")).toMatchObject(typeError);
+      expect(step(r, "bad struct").message).toMatch(/setFrame:.*(origin, size|\.y)/);
+      expect(step(r, "assign property")).toMatchObject(typeError);
+      expect(step(r, "bad msgSend selector")).toMatchObject(typeError);
+      expect(step(r, "bad sel")).toMatchObject(typeError);
+      for (const name of ["retainCount refused", "retain refused"]) {
+        expect(step(r, name)).toMatchObject({
+          step: name,
+          ...typeError,
+          message: expect.stringMatching(/release\(\)/),
+        });
+      }
+      for (const name of ["variadic format", "variadic objects", "variadic append", "variadic init"]) {
+        expect(step(r, name)).toMatchObject({ step: name, ...typeError, message: expect.stringMatching(/variadic/) });
+      }
+      expect(step(r, "va_list")).toMatchObject({ ...typeError, message: expect.stringMatching(/va_list/) });
+      expect(step(r, "object arguments:")).toEqual({ step: "object arguments:", threw: false, value: "sum:" });
+      expect(step(r, "non-variadic format")).toEqual({
+        step: "non-variadic format",
+        threw: false,
+        value: 'SELF == "a"',
+      });
+      for (const name of ["init on class", "init on class msgSend"]) {
+        expect(step(r, name)).toMatchObject({ step: name, ...typeError, message: expect.stringMatching(/alloc\(\)/) });
+      }
+      expect(step(r, "alloc then bad init")).toMatchObject(typeError);
+      expect(step(r, "alloc then bad init").message).toMatch(/-\[NSButton initWithFrame:\]: argument 0/);
+      expect(step(r, "alloc then wrong count")).toMatchObject(typeError);
+      expect(step(r, "alloc then wrong count").message).toContain("initWithFrame:");
+      const notInitialized = { ...typeError, message: expect.stringMatching(/came from alloc\(\).*init/) };
+      for (const name of ["alloc then not init", "alloc toString", "alloc json", "alloc as argument"]) {
+        expect(step(r, name)).toMatchObject({ step: name, ...notInitialized });
+      }
+      expect(step(r, "alloc")).toEqual({
+        step: "alloc",
+        pointer: "0",
+        sameAsItself: true,
+        sameAsOther: false,
+        thenInit: 0,
+        consumed: { threw: true, isTypeError: true, message: expect.stringMatching(/consumed by init/) },
+      });
+      // A View or Window where an object is expected names `.native`; other class instances are not dictionaries.
+      expect(step(r, "view for id")).toMatchObject({ ...typeError, message: expect.stringMatching(/view\.native/) });
+      expect(step(r, "window for id")).toMatchObject({
+        ...typeError,
+        message: expect.stringMatching(/window\.native/),
+      });
+      expect(step(r, "class instance for id")).toMatchObject({
+        ...typeError,
+        message: expect.stringMatching(/cannot convert an object/),
+      });
+      expect(step(r, "null-proto object for id")).toEqual({ step: "null-proto object for id", threw: false, value: 0 });
+      expect(step(r, "date for id")).toMatchObject(typeError);
+      for (const name of ["NUL in char*", "NUL in SEL"]) {
+        expect(step(r, name)).toMatchObject({ step: name, ...typeError, message: expect.stringMatching(/NUL/) });
+      }
+      expect(step(r, "2^60 for Q")).toMatchObject({ ...typeError, message: expect.stringMatching(/bigint/) });
+      // None of the refused calls above was sent.
+      expect(step(r, "still two")).toEqual({ step: "still two", count: 2 });
+      // alloc/new results are taken over, +0 returns retained once per handle, init consumes its receiver.
+      const ownership = step(r, "ownership");
+      expect(ownership).toEqual({
+        step: "ownership",
+        consumed: { threw: true, isTypeError: true, message: expect.stringMatching(/consumed by init/) },
+        owned: "x0",
+        heldBeforeRelease: true,
+        releasedNow: true,
+        useAfterRelease: {
+          threw: true,
+          isTypeError: false,
+          code: "ERR_INVALID_STATE",
+          message: expect.stringMatching(/released/),
+        },
+        // A released handle is still itself but no longer any object.
+        sameAfterRelease: [true, false],
+        stillInArray: "NSObject",
+        left: true,
+      });
+      expect(step(r, "done")).toEqual({ step: "done", length: 2, count: 2 });
+      expect(r.signal).toBeNull();
+      expect(r.exitCode).toBe(0);
+    },
+  );
+
   test.concurrent("bad prop values throw TypeErrors that name the prop; misuse of the tree throws", async () => {
     const r = await runFixture("errors.ts");
     if (r.skipped) return;
@@ -1196,6 +1445,25 @@ describe.skipIf(!isMacOS)("Bun.AppKit", () => {
       });
       expect(step(r, "toggle-visible")).toEqual({ step: "toggle-visible", errors: [], mainClosed: false });
       expect(step(r, "unmounted")).toEqual({ step: "unmounted", errors: [], windows: 0 });
+      expect(r.exitCode).toBe(0);
+    });
+
+    test.concurrent("react: .native of a view React deleted throws; a handle taken earlier keeps working", async () => {
+      const r = await runFixture("react-objc-native.tsx", { cwd: reactApp });
+      if (r.skipped) return;
+      expect(step(r, "released"), r.stderr).toEqual({
+        step: "released",
+        mounted: { isTextField: true, stringValue: "mounted", identity: true },
+        released: true,
+        native: { threw: true, code: "ERR_INVALID_STATE", message: "Invalid state: Text has been released" },
+        handleStillWorks: "mounted",
+        windowNative: { threw: false },
+      });
+      expect(step(r, "unmounted")).toEqual({
+        step: "unmounted",
+        windows: 0,
+        closedNative: { threw: true, code: "ERR_INVALID_STATE", message: "Invalid state: window is closed" },
+      });
       expect(r.exitCode).toBe(0);
     });
 

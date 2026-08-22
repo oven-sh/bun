@@ -633,6 +633,18 @@ declare module "bun:appkit" {
     readonly closed: boolean;
     /** Whether this is the key window (the one receiving keyboard input). */
     readonly key: boolean;
+    /**
+     * The `NSWindow` behind this window, for anything the properties above
+     * do not cover. See {@link objc}.
+     * @throws ERR_INVALID_STATE once the window is closed.
+     *
+     * @example
+     * ```ts
+     * win.native.setTitle_("Renamed"); // win.title reads "Renamed"
+     * win.native.frame();              // { origin: { x, y }, size: { width, height } }
+     * ```
+     */
+    readonly native: ObjCObject;
     /** Put the window on screen, make it key and bring the app to the front. */
     show(): void;
     /** Take the window off screen without closing it. */
@@ -791,6 +803,17 @@ declare module "bun:appkit" {
      * while the view is not in a window.
      */
     readonly frame: Rect;
+    /**
+     * The `NSView` behind this view, for anything the props do not cover.
+     * For {@link ScrollView}, {@link Table} and {@link TextEditor} this is the
+     * outer `NSScrollView`; `.documentView()` reaches the `NSTableView` /
+     * `NSTextView`. For {@link Group} it is the `NSBox`, whose children sit
+     * in an `NSStackView` inside its `contentView()`. For {@link MetalView} it
+     * is the `MTKView`, or a plain `NSView` when Metal is unavailable. See
+     * {@link objc}.
+     * @throws ERR_INVALID_STATE once the view is {@link View.released released}.
+     */
+    readonly native: ObjCObject;
     /** Remove the view from its parent (no-op when it has none). */
     remove(): void;
     /** PNG bytes of the view as currently drawn, or `null` before it has a size. */
@@ -2476,6 +2499,233 @@ declare module "bun:appkit" {
      */
     draw(): void;
   }
+
+  /**
+   * A selector made with {@link ObjC.sel `objc.sel()`}, for arguments whose
+   * Objective-C type is `SEL`. A plain string is accepted there too.
+   */
+  export interface ObjCSelector {
+    /** The selector as Objective-C spells it, e.g. `"setFrame:display:"`. */
+    readonly name: string;
+    toString(): string;
+  }
+
+  /**
+   * A handle on an Objective-C object (an `id`), from {@link objc} or from a
+   * {@link Window.native}/{@link View.native}. It keeps the object retained
+   * until it is garbage collected.
+   *
+   * Every property is a method that sends the selector of the same name,
+   * spelled PyObjC style: each `_` stands for a `:` and the call takes
+   * exactly that many arguments (`setFrame_display_(rect, true)` sends
+   * `setFrame:display:`; `length()` sends `length`). Leading underscores are
+   * kept as they are and `__` inside a name is a literal `_`. Reading the
+   * property does not send anything; calling it does.
+   *
+   * Arguments and results are converted by the method's Objective-C
+   * signature: see the table under `objc` in the `bun:appkit` documentation.
+   * Object results come back as `ObjCObject` (or `null` for `nil`), never
+   * unboxed; use `${object}`, {@link ObjC.js `objc.js()`} or the object's
+   * own methods (`UTF8String()`, `intValue()`) to get JavaScript values.
+   *
+   * @example
+   * ```ts
+   * const { NSMutableArray } = objc.classes;
+   * const list = NSMutableArray.new();
+   * list.addObject_("one");          // strings box to NSString
+   * list.count();                    // 1
+   * `${list.objectAtIndex_(0)}`;     // "one"
+   * ```
+   */
+  export interface ObjCObject {
+    /**
+     * Send `selector`, spelled the Objective-C way (`"setFrame:display:"`),
+     * with `args`; the escape hatch for names the property spelling cannot
+     * express.
+     * @throws TypeError if the object does not respond to `selector`, or the
+     * arguments do not fit its signature.
+     */
+    msgSend(selector: string, ...args: unknown[]): unknown;
+    /** `-description` as a JavaScript string; also what `${object}` and `String(object)` give. */
+    toString(): string;
+    /** What {@link ObjC.js `objc.js()`} gives for the object, or its `-description` when that is still an object. */
+    toJSON(): unknown;
+    /**
+     * Give up this handle's reference now instead of at garbage collection.
+     * Every later use of the handle throws `ERR_INVALID_STATE`. The
+     * `retain`/`release`/`autorelease` selectors themselves are refused:
+     * reference counting is the handle's job.
+     */
+    release(): void;
+    /** The object's address. */
+    readonly [objc.pointer]: bigint;
+    /**
+     * `object.someSelector_with_(a, b)` sends `someSelector:with:`. Every
+     * such property is a function; it is typed `any` so that calls type-check
+     * under `noUncheckedIndexedAccess`.
+     */
+    readonly [selector: string]: any;
+  }
+
+  /**
+   * A handle on an Objective-C class, from {@link ObjC.classes `objc.classes`}.
+   * Properties are class methods, spelled like {@link ObjCObject}'s.
+   *
+   * @example
+   * ```ts
+   * const { NSString } = objc.classes;
+   * const s = NSString.stringWithString_("hi");
+   * const owned = NSString.alloc().initWithUTF8String_("hi"); // alloc/init ownership is handled
+   * ```
+   */
+  export interface ObjCClass {
+    /** See {@link ObjCObject.msgSend}. */
+    msgSend(selector: string, ...args: unknown[]): unknown;
+    /** The class name. */
+    toString(): string;
+    toJSON(): unknown;
+    /**
+     * `+alloc`. The only thing to do with the result is send it an `init…`;
+     * the allocation itself happens then, so an `init…` that throws leaves
+     * nothing behind. Anything else on the result throws a `TypeError`.
+     */
+    readonly alloc: () => ObjCObject;
+    // A property, because `new(): T` in an interface would be a construct signature.
+    readonly new: () => ObjCObject;
+    readonly [objc.pointer]: bigint;
+    readonly [selector: string]: any;
+  }
+
+  /**
+   * Classes {@link ObjC.classes `objc.classes`} knows by name, so that
+   * destructuring them type-checks under `noUncheckedIndexedAccess`. Every
+   * other name is an {@link ObjCClass} too; this list only spares the `!`.
+   */
+  export interface ObjCKnownClasses {
+    readonly NSObject: ObjCClass;
+    readonly NSString: ObjCClass;
+    readonly NSMutableString: ObjCClass;
+    readonly NSAttributedString: ObjCClass;
+    readonly NSNumber: ObjCClass;
+    readonly NSValue: ObjCClass;
+    readonly NSData: ObjCClass;
+    readonly NSDate: ObjCClass;
+    readonly NSURL: ObjCClass;
+    readonly NSArray: ObjCClass;
+    readonly NSMutableArray: ObjCClass;
+    readonly NSDictionary: ObjCClass;
+    readonly NSMutableDictionary: ObjCClass;
+    readonly NSSet: ObjCClass;
+    readonly NSNull: ObjCClass;
+    readonly NSError: ObjCClass;
+    readonly NSBundle: ObjCClass;
+    readonly NSProcessInfo: ObjCClass;
+    readonly NSUserDefaults: ObjCClass;
+    readonly NSNotificationCenter: ObjCClass;
+    readonly NSFileManager: ObjCClass;
+    readonly NSRunLoop: ObjCClass;
+    readonly NSTimer: ObjCClass;
+    readonly NSApplication: ObjCClass;
+    readonly NSWindow: ObjCClass;
+    readonly NSView: ObjCClass;
+    readonly NSStackView: ObjCClass;
+    readonly NSScrollView: ObjCClass;
+    readonly NSTableView: ObjCClass;
+    readonly NSTextView: ObjCClass;
+    readonly NSTextField: ObjCClass;
+    readonly NSButton: ObjCClass;
+    readonly NSControl: ObjCClass;
+    readonly NSBox: ObjCClass;
+    readonly NSImage: ObjCClass;
+    readonly NSImageView: ObjCClass;
+    readonly NSColor: ObjCClass;
+    readonly NSFont: ObjCClass;
+    readonly NSMenu: ObjCClass;
+    readonly NSMenuItem: ObjCClass;
+    readonly NSScreen: ObjCClass;
+    readonly NSWorkspace: ObjCClass;
+    readonly NSPasteboard: ObjCClass;
+    readonly NSCursor: ObjCClass;
+    readonly NSEvent: ObjCClass;
+    readonly NSAlert: ObjCClass;
+    readonly NSOpenPanel: ObjCClass;
+    readonly NSSavePanel: ObjCClass;
+    readonly NSSound: ObjCClass;
+    readonly NSAnimationContext: ObjCClass;
+    readonly NSLayoutConstraint: ObjCClass;
+    readonly NSVisualEffectView: ObjCClass;
+    readonly CALayer: ObjCClass;
+    readonly MTKView: ObjCClass;
+  }
+
+  /** The {@link objc} export. */
+  export interface ObjC {
+    /**
+     * Any Objective-C class the loaded frameworks (Foundation, AppKit,
+     * QuartzCore, Metal) register, by name. Under `noUncheckedIndexedAccess`
+     * a name outside {@link ObjCKnownClasses} reads as possibly `undefined`
+     * to TypeScript; at run time it is a class or a `TypeError`, never
+     * `undefined`, so `objc.classes.NSRareThing!` is safe.
+     * @throws TypeError for a name that is not a registered class.
+     */
+    readonly classes: { readonly [name: string]: ObjCClass } & ObjCKnownClasses;
+    /** A selector value for a `SEL`-typed argument (a string works there too); a `TypeError` anywhere else. */
+    sel(name: string): ObjCSelector;
+    /**
+     * Convert Foundation values to JavaScript: `NSString` to string,
+     * `NSNumber` to number or boolean, `NSArray` to an array and
+     * `NSDictionary` to an object (converted element by element), `NSNull`
+     * and `nil` to `null`. Anything else comes back as the {@link ObjCObject}
+     * it was; JavaScript values pass through unchanged.
+     */
+    js(value: unknown): unknown;
+    /**
+     * The reverse of {@link ObjC.js}: string to `NSString`, number and
+     * boolean to `NSNumber`, array to `NSArray`, plain object to
+     * `NSDictionary`, `null`/`undefined` to `nil` (returned as `null`).
+     * An `ObjCObject` gives another handle on the same object.
+     */
+    ns(value: unknown): ObjCObject | null;
+    /**
+     * Whether two live handles refer to the same Objective-C object (`a == b`
+     * on the `id`s). A handle is also the same as itself; anything that is
+     * not a handle, including `null`, and a released handle compared with
+     * another, is not.
+     */
+    same(a: ObjCObject | ObjCClass | null | undefined, b: ObjCObject | ObjCClass | null | undefined): boolean;
+    /** The property key under which every {@link ObjCObject} and {@link ObjCClass} reports its address as a `bigint`. */
+    readonly pointer: unique symbol;
+  }
+
+  /**
+   * Direct access to the Objective-C runtime: every class and selector of the
+   * frameworks `bun:appkit` loads, under Apple's own names, for the cases the
+   * classes above do not cover. Main thread only, like the rest of the
+   * module; it does not need the app to be running.
+   *
+   * Not supported yet: block arguments, pointer arguments other than `null`
+   * (so no out-parameters such as `NSError **`; a pointer result is `null`
+   * for `NULL` and otherwise its address as a `bigint`, which nothing
+   * accepts back), structs other than
+   * `CGRect`/`CGPoint`/`CGSize`/`NSRange`/`NSEdgeInsets`/`CGAffineTransform`,
+   * defining subclasses, and variadic methods (`stringWithFormat:`,
+   * `arrayWithObjects:`, `dictionaryWithObjectsAndKeys:` and the like, which
+   * are recognised by name; use `stringWithString:`, `objc.ns([...])` or
+   * `predicateWithFormat:argumentArray:` instead); those throw a `TypeError`.
+   * An Objective-C exception raised by a method you call still ends the
+   * process.
+   *
+   * @example
+   * ```ts
+   * import { objc, Window } from "bun:appkit";
+   * const { NSProcessInfo } = objc.classes;
+   * console.log(`${NSProcessInfo.processInfo().operatingSystemVersionString()}`);
+   *
+   * const win = new Window({ title: "t", visible: false });
+   * win.native.setTitleVisibility_(1); // NSWindowTitleHidden
+   * ```
+   */
+  export const objc: ObjC;
 }
 
 /**

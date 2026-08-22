@@ -4,12 +4,16 @@
 
 use core::ptr;
 
-use super::{Bool, Id, Object, Ptr, objc_class, objc_global, objc_methods, rt};
+use super::{Bool, CChars, Id, Object, Ptr, Sel, objc_class, objc_global, objc_methods, rt};
 
 objc_class!(pub struct NSObject = "NSObject");
 objc_methods! { impl NSObject {
-    // pub(crate) fn responds_to_selector(&self, sel: super::Sel) -> bool = "respondsToSelector:";
+    pub(crate) fn responds_to_selector(&self, sel: Sel) -> bool = "respondsToSelector:";
+    /// nil for a selector the receiver does not implement or forward.
+    pub(crate) fn method_signature_for_selector(&self, sel: Sel) -> Option<NSMethodSignature> = "methodSignatureForSelector:";
     pub fn is_equal(&self, other: Option<&NSObject>) -> bool = "isEqual:";
+    /// Declared nonnull; nil from a misbehaving override reads as `None` rather than a crash.
+    pub fn description(&self) -> Option<NSString> = "description";
 }}
 
 impl NSObject {
@@ -175,11 +179,28 @@ impl NSArray {
     }
 }
 
-// objc_class!(pub struct NSMutableArray: NSArray = "NSMutableArray");
-// objc_methods! { impl NSMutableArray {
-// pub fn with_capacity(capacity: usize) -> NSMutableArray = "arrayWithCapacity:";
-// pub fn add(&self, object: &NSObject) = "addObject:";
-// }}
+objc_class!(pub struct NSMutableArray: NSArray = "NSMutableArray");
+objc_methods! { impl NSMutableArray {
+    pub fn with_capacity(capacity: usize) -> NSMutableArray = "arrayWithCapacity:";
+    pub fn add(&self, object: &NSObject) = "addObject:";
+}}
+
+objc_class!(pub struct NSDictionary: NSObject = "NSDictionary");
+objc_methods! { impl NSDictionary {
+    pub fn all_keys(&self) -> NSArray = "allKeys";
+    pub fn get(&self, key: &NSObject) -> Option<NSObject> = "objectForKey:";
+}}
+
+objc_class!(pub struct NSMutableDictionary: NSDictionary = "NSMutableDictionary");
+objc_methods! { impl NSMutableDictionary {
+    pub fn with_capacity(capacity: usize) -> NSMutableDictionary = "dictionaryWithCapacity:";
+    pub fn insert(&self, object: &NSObject, key: &NSObject) = "setObject:forKey:";
+}}
+
+objc_class!(pub struct NSNull: NSObject = "NSNull");
+objc_methods! { impl NSNull {
+    pub fn null() -> NSNull = "null";
+}}
 objc_global!(pub(crate) fn default_run_loop_mode() -> NSString = "NSDefaultRunLoopMode");
 objc_global!(pub(crate) fn common_run_loop_modes() -> NSString = "NSRunLoopCommonModes");
 
@@ -252,11 +273,37 @@ impl NSMutableIndexSet {
     }
 }
 
-// objc_class!(pub struct NSNumber: NSObject = "NSNumber");
-// objc_methods! { impl NSNumber {
-// pub fn with_f64(value: f64) -> NSNumber = "numberWithDouble:";
-// pub fn f64_value(&self) -> f64 = "doubleValue";
-// }}
+objc_class!(pub struct NSNumber: NSObject = "NSNumber");
+objc_methods! { impl NSNumber {
+    pub fn with_f64(value: f64) -> NSNumber = "numberWithDouble:";
+    pub fn with_i64(value: i64) -> NSNumber = "numberWithLongLong:";
+    /// The two results are the shared `kCFBooleanTrue` / `kCFBooleanFalse`.
+    pub fn with_bool(value: bool) -> NSNumber = "numberWithBool:";
+    pub fn f64_value(&self) -> f64 = "doubleValue";
+}}
+
+// ───────────────────────────── invocations ─────────────────────────────────
+
+objc_class!(pub struct NSMethodSignature: NSObject = "NSMethodSignature");
+objc_methods! { impl NSMethodSignature {
+    /// Counts `self` and `_cmd`.
+    pub fn number_of_arguments(&self) -> usize = "numberOfArguments";
+    /// Raises out of range; callers stay below `number_of_arguments`.
+    pub(crate) fn argument_type_at(&self, index: usize) -> CChars = "getArgumentTypeAtIndex:";
+    pub(crate) fn method_return_type(&self) -> CChars = "methodReturnType";
+    pub fn method_return_length(&self) -> usize = "methodReturnLength";
+}}
+
+objc_class!(pub struct NSInvocation: NSObject = "NSInvocation");
+objc_methods! { impl NSInvocation {
+    pub fn with_method_signature(signature: &NSMethodSignature) -> NSInvocation = "invocationWithMethodSignature:";
+    pub(crate) fn set_selector(&self, sel: Sel) = "setSelector:";
+    /// Copies the argument in from `location`, sized by the signature's type at `index`.
+    pub(super) fn set_argument_raw(&self, location: Ptr, index: isize) = "setArgument:atIndex:";
+    pub fn invoke_with_target(&self, target: &NSObject) = "invokeWithTarget:";
+    /// Writes `methodReturnLength` bytes to `location`.
+    pub(super) fn get_return_value_raw(&self, location: Ptr) = "getReturnValue:";
+}}
 objc_class!(pub struct NSProcessInfo: NSObject = "NSProcessInfo");
 objc_methods! { impl NSProcessInfo {
     pub fn process_info() -> NSProcessInfo = "processInfo";

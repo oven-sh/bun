@@ -299,6 +299,12 @@ impl AppKitWindow {
         })
     }
 
+    /// The `NSWindow` as an `ObjCObject`; a new wrapper on each read.
+    pub fn get_native(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        let object = conv::check(global, self.window.ns_window_object())?;
+        Ok(super::objc::ObjCObject::wrap(global, object))
+    }
+
     pub fn get_closed(&self, _global: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(JSValue::js_boolean(self.window.is_closed()))
     }

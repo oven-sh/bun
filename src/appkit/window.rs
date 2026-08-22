@@ -442,6 +442,11 @@ impl Window {
         }
     }
 
+    /// The `NSWindow`, for scripts that message it directly.
+    pub fn ns_window_object(&self) -> Result<crate::DynObject> {
+        Ok(crate::DynObject::from_object(self.live()?))
+    }
+
     pub fn set_title(&self, title: NsStr<'_>) -> Result<()> {
         let ns = self.live()?;
         let _pool = AutoreleasePool::new();

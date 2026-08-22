@@ -113,4 +113,41 @@ pub enum Error {
     /// The object is not in a state where this can be done now; `.0` says which and why.
     #[error("{0}")]
     InvalidState(&'static str),
+    /// `objc_getClass` knows no class by this name.
+    #[error("objc: no class named {0:?}")]
+    NoClass(String),
+    /// The receiver does not respond to `sel`; `class` names its class and
+    /// `instance` picks `-` over `+`.
+    #[error("{}[{class} {sel}]: unrecognized selector", if *.instance { '-' } else { '+' })]
+    Unrecognized {
+        class: String,
+        sel: String,
+        instance: bool,
+    },
+    /// `method` is the `-[Class selector]` form.
+    #[error("{method}: expected {expected} argument(s), got {got}")]
+    ArgCount {
+        method: String,
+        expected: usize,
+        got: usize,
+    },
+    /// Argument `index` (from 0) cannot be passed as the type the method declares.
+    #[error("{method}: argument {index} must be {expected}, got {got}")]
+    ArgType {
+        method: String,
+        index: usize,
+        expected: String,
+        got: String,
+    },
+    /// The method's signature uses something the dynamic bridge cannot marshal yet.
+    #[error("{method}: {what}")]
+    UnsupportedSignature { method: String, what: String },
+    /// An `init…` message took ownership of this object; only the object it returned is usable.
+    #[error("this object was consumed by init; use the object init returned")]
+    Consumed,
+    /// The handle is an `alloc()` result that has not been sent an `init…` yet.
+    #[error("this object came from alloc(); call an init… method on it first")]
+    NotInitialized,
+    #[error("ObjCObject has been released")]
+    ObjectReleased,
 }

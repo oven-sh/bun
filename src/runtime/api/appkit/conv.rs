@@ -1,13 +1,16 @@
 //! JavaScript values in, `bun_appkit` types out; `bun_appkit` errors in,
 //! JavaScript exceptions out.
 
+use bun_appkit::dynamic::{DynValue, Enc, Signature, StructKind};
 use bun_appkit::view::{Column, ImageScaling, ImageSource, TextAlign};
 use bun_appkit::{
-    ActivationPolicy, Color, Design, Font, Insets, Kind, Named, NsStr, Positive, Prop, SystemColor,
-    Weight,
+    ActivationPolicy, Color, Design, DynObject, Font, Insets, Kind, Named, NsStr, Point, Positive,
+    Prop, Rect, Size, SystemColor, Weight,
 };
 use bun_core::OwnedString;
-use bun_jsc::{ErrorCode, JSGlobalObject, JSValue, JsError, JsResult, StringJsc};
+use bun_jsc::{ErrorCode, JSBigInt, JSGlobalObject, JSType, JSValue, JsError, JsResult, StringJsc};
+
+use super::objc::{ObjCClass, ObjCObject, ObjCSelector};
 
 /// A JavaScript string held alive so AppKit can read its characters in place.
 pub(crate) struct JsStr(OwnedString);
@@ -46,10 +49,11 @@ impl JsStr {
 
     /// Transcodes once; a lone surrogate becomes U+FFFD.
     pub(crate) fn to_utf8(&self) -> Utf8 {
-        Utf8(
-            String::from_utf8(self.0.to_utf8_bytes())
-                .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
-        )
+        Utf8(match self.ns() {
+            NsStr::Utf16(w) => String::from_utf16_lossy(w),
+            NsStr::Latin1(b) => b.iter().map(|&c| char::from(c)).collect(),
+            NsStr::Utf8(s) => s.to_owned(),
+        })
     }
 }
 
@@ -94,6 +98,10 @@ impl core::fmt::Display for Utf8 {
 
 pub(crate) fn utf16_to_js(global: &JSGlobalObject, text: &[u16]) -> JsResult<JSValue> {
     bun_core::String::borrow_utf16(text).to_js(global)
+}
+
+pub(crate) fn str_to_js(global: &JSGlobalObject, text: &str) -> JsResult<JSValue> {
+    bun_core::String::borrow_utf8(text.as_bytes()).to_js(global)
 }
 
 /// `null` (JavaScript's "reset") reads as `None`.
@@ -864,13 +872,553 @@ pub(crate) fn throw(global: &JSGlobalObject, err: &bun_appkit::Error) -> JsError
         | E::InvalidState(_) => global
             .err(ErrorCode::INVALID_STATE, format_args!("{err}"))
             .throw(),
-        E::NoSuchFunction { .. } | E::Unsupported(_) => {
-            global.throw_type_error(format_args!("{err}"))
-        }
+        E::NoSuchFunction { .. }
+        | E::Unsupported(_)
+        | E::NoClass(_)
+        | E::Unrecognized { .. }
+        | E::ArgCount { .. }
+        | E::ArgType { .. }
+        | E::UnsupportedSignature { .. }
+        | E::Consumed
+        | E::NotInitialized => global.throw_type_error(format_args!("{err}")),
+        E::ObjectReleased => global
+            .err(ErrorCode::INVALID_STATE, format_args!("{err}"))
+            .throw(),
     }
 }
 
 /// `Ok` or the JavaScript exception for the error.
 pub(crate) fn check<T>(global: &JSGlobalObject, result: bun_appkit::Result<T>) -> JsResult<T> {
     result.map_err(|e| throw(global, &e))
+}
+
+// ─────────────────────── the dynamic Objective-C bridge ──────────────────────
+
+/// `value` itself, or the target of a `Proxy` (how `appkit.ts` dresses the
+/// wrappers up for property-style sends).
+fn through_proxy(value: JSValue) -> JSValue {
+    if value.js_type() == JSType::ProxyObject {
+        value.get_proxy_target()
+    } else {
+        value
+    }
+}
+
+/// The `ObjCObject` wrapper `value` is or proxies.
+pub(crate) fn objc_object<'a>(value: JSValue) -> Option<&'a ObjCObject> {
+    through_proxy(value).as_class_ref::<ObjCObject>()
+}
+
+/// The `ObjCClass` wrapper `value` is or proxies.
+pub(crate) fn objc_class<'a>(value: JSValue) -> Option<&'a ObjCClass> {
+    through_proxy(value).as_class_ref::<ObjCClass>()
+}
+
+fn objc_selector<'a>(value: JSValue) -> Option<&'a ObjCSelector> {
+    value.as_class_ref::<ObjCSelector>()
+}
+
+/// What kind of JavaScript value this is, for a message.
+fn js_kind(value: JSValue) -> &'static str {
+    if objc_object(value).is_some() {
+        "an ObjCObject"
+    } else if objc_class(value).is_some() {
+        "an ObjCClass"
+    } else if objc_selector(value).is_some() {
+        "an ObjCSelector"
+    } else if value.is_null() {
+        "null"
+    } else if value.is_undefined() {
+        "undefined"
+    } else if value.is_boolean() {
+        "a boolean"
+    } else if value.is_number() {
+        "a number"
+    } else if value.is_string() {
+        "a string"
+    } else if value.is_big_int() {
+        "a bigint"
+    } else if value.is_symbol() {
+        "a symbol"
+    } else if value.is_callable() {
+        "a function"
+    } else if value.is_array() {
+        "an array"
+    } else {
+        "an object"
+    }
+}
+
+/// A plain `{}`: an ordinary object whose prototype is `Object.prototype`
+/// or `null`, so class instances (a `View` passed where its `.native` was
+/// meant) are refused rather than read as dictionaries.
+fn is_plain_object(global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
+    if !matches!(value.js_type(), JSType::Object | JSType::FinalObject) {
+        return Ok(false);
+    }
+    let prototype = value.get_prototype(global)?;
+    Ok(prototype.is_null() || prototype == global.object_prototype())
+}
+
+/// 2^53: integers up to this magnitude are exact as JavaScript numbers.
+const SAFE_INTEGER_U64: u64 = 1 << 53;
+const SAFE_INTEGER: f64 = SAFE_INTEGER_U64 as f64;
+
+/// The Foundation object for a JavaScript value, the way `objc.ns()` and
+/// `id`-typed arguments box: strings, numbers, booleans, bigints, arrays and
+/// plain objects (recursively; `null` members become `NSNull`), wrappers as
+/// themselves. `None` for `null` / `undefined`.
+pub(crate) fn ns_value(
+    global: &JSGlobalObject,
+    value: JSValue,
+    what: core::fmt::Arguments<'_>,
+) -> JsResult<Option<DynObject>> {
+    ns_value_at(global, value, what, 0)
+}
+
+fn ns_value_at(
+    global: &JSGlobalObject,
+    value: JSValue,
+    what: core::fmt::Arguments<'_>,
+    depth: usize,
+) -> JsResult<Option<DynObject>> {
+    if depth > bun_appkit::dynamic::PLAIN_DEPTH {
+        return Err(global.throw_type_error(format_args!(
+            "{what}: nested too deeply (or cyclic) to convert to a Foundation object"
+        )));
+    }
+    if value.is_undefined_or_null() {
+        return Ok(None);
+    }
+    if let Some(o) = objc_object(value) {
+        return check(global, o.object().try_clone()).map(Some);
+    }
+    if let Some(c) = objc_class(value) {
+        return Ok(Some(c.class().to_object()));
+    }
+    let object = if value.is_string() {
+        let s = JsStr::new(global, value, what)?;
+        DynObject::string(s.ns())
+    } else if value.is_number() {
+        DynObject::number(value.as_number())
+    } else if value.is_boolean() {
+        DynObject::boolean(value.as_boolean())
+    } else if value.is_big_int() {
+        match JSBigInt::from_js(value) {
+            Some(big) if value.is_big_int_in_int64_range(i64::MIN, i64::MAX) => {
+                DynObject::integer(big.to_int64())
+            }
+            _ => {
+                return Err(global.throw_type_error(format_args!(
+                    "{what}: bigint does not fit a 64-bit NSNumber"
+                )));
+            }
+        }
+    } else if value.is_array() {
+        let mut items = Vec::new();
+        let mut iter = value.array_iterator(global)?;
+        while let Some(item) = iter.next()? {
+            items.push(match ns_value_at(global, item, what, depth + 1)? {
+                Some(o) => o,
+                None => check(global, DynObject::null())?,
+            });
+        }
+        DynObject::array(&items)
+    } else if is_plain_object(global, value)? {
+        let Some(object) = value.get_object() else {
+            return Ok(None);
+        };
+        let mut entries = Vec::new();
+        let mut iter = bun_jsc::JSPropertyIterator::init(
+            global,
+            object,
+            bun_jsc::PropertyIteratorOptions {
+                skip_empty_name: false,
+                include_value: true,
+            },
+        )?;
+        while let Some(key) = iter.next()? {
+            let key = JsStr(OwnedString::new(key));
+            let key = check(global, DynObject::string(key.ns()))?;
+            let value = match ns_value_at(global, iter.value, what, depth + 1)? {
+                Some(o) => o,
+                None => check(global, DynObject::null())?,
+            };
+            entries.push((key, value));
+        }
+        DynObject::dictionary(&entries)
+    } else {
+        return Err(global.throw_type_error(format_args!(
+            "{what}: cannot convert {} to a Foundation object",
+            js_kind(value)
+        )));
+    };
+    check(global, object).map(Some)
+}
+
+/// Converts argument `index` of the message `sig` describes, typed by the
+/// method's encoding `enc` (never by the JavaScript value).
+pub(crate) fn dyn_arg(
+    global: &JSGlobalObject,
+    sig: &Signature,
+    index: usize,
+    enc: &Enc,
+    value: JSValue,
+) -> JsResult<DynValue> {
+    let method = sig.method();
+    let mismatch = || {
+        throw(
+            global,
+            &bun_appkit::Error::ArgType {
+                method: method.to_owned(),
+                index,
+                expected: enc.to_string(),
+                got: js_kind(value).to_owned(),
+            },
+        )
+    };
+    let unsupported = |what: &str| {
+        throw(
+            global,
+            &bun_appkit::Error::UnsupportedSignature {
+                method: method.to_owned(),
+                what: what.to_owned(),
+            },
+        )
+    };
+    let nil = value.is_undefined_or_null();
+    Ok(match enc {
+        Enc::Object => {
+            if nil {
+                DynValue::Nil
+            } else if let Some(o) = objc_object(value) {
+                DynValue::Object(check(global, o.object().try_clone())?)
+            } else if let Some(c) = objc_class(value) {
+                DynValue::Class(c.class())
+            } else if value.is_string() {
+                let s = JsStr::new(global, value, format_args!("{method} argument {index}"))?;
+                DynValue::Object(check(global, DynObject::string(s.ns()))?)
+            } else if value.is_boolean() {
+                DynValue::Bool(value.as_boolean())
+            } else if value.is_number() {
+                DynValue::F64(value.as_number())
+            } else {
+                match ns_value(global, value, format_args!("{method} argument {index}"))? {
+                    Some(o) => DynValue::Object(o),
+                    None => DynValue::Nil,
+                }
+            }
+        }
+        Enc::Block if nil => DynValue::Nil,
+        Enc::Block => return Err(unsupported("block arguments are not supported yet")),
+        Enc::Class => {
+            if nil {
+                DynValue::Nil
+            } else if let Some(c) = objc_class(value) {
+                DynValue::Class(c.class())
+            } else if let Some(o) = objc_object(value)
+                && let Some(c) = o.object().as_class()
+            {
+                DynValue::Class(c)
+            } else {
+                return Err(mismatch());
+            }
+        }
+        Enc::Sel => {
+            if nil {
+                DynValue::Nil
+            } else if let Some(sel) = objc_selector(value) {
+                DynValue::Sel(sel.name().to_owned())
+            } else if value.is_string() {
+                DynValue::Sel(
+                    JsStr::new(global, value, format_args!("{method} argument {index}"))?
+                        .to_utf8()
+                        .into_string(),
+                )
+            } else {
+                return Err(mismatch());
+            }
+        }
+        Enc::Bool if value.is_boolean() => DynValue::Bool(value.as_boolean()),
+        Enc::Int { bits, signed } => {
+            let (min, max): (i128, i128) = if *signed {
+                (-(1i128 << (bits - 1)), (1i128 << (bits - 1)) - 1)
+            } else {
+                (0, (1i128 << bits) - 1)
+            };
+            let out_of_range = |got: &dyn core::fmt::Display| {
+                throw(
+                    global,
+                    &bun_appkit::Error::ArgType {
+                        method: method.to_owned(),
+                        index,
+                        expected: format!("{enc} from {min} to {max}"),
+                        got: got.to_string(),
+                    },
+                )
+            };
+            if value.is_number() {
+                let n = value.as_number();
+                if !n.is_finite() || n.fract() != 0.0 {
+                    return Err(throw(
+                        global,
+                        &bun_appkit::Error::ArgType {
+                            method: method.to_owned(),
+                            index,
+                            expected: enc.to_string(),
+                            got: format!("{n}"),
+                        },
+                    ));
+                }
+                if (n as i128) < min || (n as i128) > max {
+                    return Err(out_of_range(&n));
+                }
+                if n.abs() > SAFE_INTEGER {
+                    return Err(throw(
+                        global,
+                        &bun_appkit::Error::ArgType {
+                            method: method.to_owned(),
+                            index,
+                            expected: format!("{enc}; pass a bigint for values above 2^53"),
+                            got: format!("{n}"),
+                        },
+                    ));
+                }
+                if *signed {
+                    DynValue::I64(n as i64)
+                } else {
+                    DynValue::U64(n as u64)
+                }
+            } else if value.is_big_int() {
+                let Some(big) = JSBigInt::from_js(value) else {
+                    return Err(mismatch());
+                };
+                if *signed {
+                    if !value.is_big_int_in_int64_range(min as i64, max as i64) {
+                        return Err(out_of_range(&"a bigint outside it"));
+                    }
+                    DynValue::I64(big.to_int64())
+                } else {
+                    if !value.is_big_int_in_uint64_range(0, max as u64) {
+                        return Err(out_of_range(&"a bigint outside it"));
+                    }
+                    DynValue::U64(value.to_uint64_no_truncate())
+                }
+            } else {
+                return Err(mismatch());
+            }
+        }
+        Enc::F32 | Enc::F64 if value.is_number() => DynValue::F64(value.as_number()),
+        Enc::CString => {
+            if nil {
+                DynValue::Nil
+            } else if value.is_string() {
+                DynValue::Str(
+                    JsStr::new(global, value, format_args!("{method} argument {index}"))?
+                        .to_utf8()
+                        .into_string(),
+                )
+            } else {
+                return Err(mismatch());
+            }
+        }
+        Enc::Pointer if nil => DynValue::Nil,
+        Enc::Pointer => return Err(unsupported("pointer arguments are not supported yet")),
+        Enc::Struct(kind) if value.is_object() => {
+            let what = format_args!("{method} argument {index}");
+            let field = |name: &'static str| -> JsResult<f64> {
+                match value.get(global, name)? {
+                    Some(v) => number(global, v, format_args!("{what}.{name}")),
+                    None => Err(mismatch()),
+                }
+            };
+            match kind {
+                StructKind::Rect => {
+                    match (value.get(global, "origin")?, value.get(global, "size")?) {
+                        (Some(origin), Some(size)) if origin.is_object() && size.is_object() => {
+                            let sub = |obj: JSValue,
+                                       part: &'static str,
+                                       name: &'static str|
+                             -> JsResult<f64> {
+                                match obj.get(global, name)? {
+                                    Some(v) => {
+                                        number(global, v, format_args!("{what}.{part}.{name}"))
+                                    }
+                                    None => Err(mismatch()),
+                                }
+                            };
+                            DynValue::Rect(Rect {
+                                origin: Point {
+                                    x: sub(origin, "origin", "x")?,
+                                    y: sub(origin, "origin", "y")?,
+                                },
+                                size: Size {
+                                    width: sub(size, "size", "width")?,
+                                    height: sub(size, "size", "height")?,
+                                },
+                            })
+                        }
+                        _ => DynValue::Rect(Rect::new(
+                            field("x")?,
+                            field("y")?,
+                            field("width")?,
+                            field("height")?,
+                        )),
+                    }
+                }
+                StructKind::Point => DynValue::Point(Point {
+                    x: field("x")?,
+                    y: field("y")?,
+                }),
+                StructKind::Size => DynValue::Size(Size {
+                    width: field("width")?,
+                    height: field("height")?,
+                }),
+                StructKind::Insets => DynValue::Insets(Insets {
+                    top: field("top")?,
+                    left: field("left")?,
+                    bottom: field("bottom")?,
+                    right: field("right")?,
+                }),
+                StructKind::Affine => DynValue::Affine([
+                    field("a")?,
+                    field("b")?,
+                    field("c")?,
+                    field("d")?,
+                    field("tx")?,
+                    field("ty")?,
+                ]),
+                StructKind::Range => {
+                    let index = |name: &'static str| -> JsResult<usize> {
+                        let bad = |got: &dyn core::fmt::Display| {
+                            throw(
+                                global,
+                                &bun_appkit::Error::ArgType {
+                                    method: method.to_owned(),
+                                    index,
+                                    expected: format!(
+                                        "{enc} with {name} an integer from 0 to 2^53, or a bigint up to {}",
+                                        u64::MAX
+                                    ),
+                                    got: format!("{name} {got}"),
+                                },
+                            )
+                        };
+                        let Some(v) = value.get(global, name)? else {
+                            return Err(mismatch());
+                        };
+                        if v.is_big_int() {
+                            if !v.is_big_int_in_uint64_range(0, u64::MAX) {
+                                return Err(bad(&"a bigint outside that"));
+                            }
+                            return Ok(v.to_uint64_no_truncate() as usize);
+                        }
+                        let n = number(global, v, format_args!("{what}.{name}"))?;
+                        if n < 0.0 || n.fract() != 0.0 || n > SAFE_INTEGER {
+                            return Err(bad(&n));
+                        }
+                        Ok(n as usize)
+                    };
+                    DynValue::Range(bun_appkit::geometry::Range {
+                        location: index("location")?,
+                        length: index("length")?,
+                    })
+                }
+            }
+        }
+        Enc::Other(e) => {
+            return Err(unsupported(&format!(
+                "argument type {e} is not supported yet"
+            )));
+        }
+        _ => return Err(mismatch()),
+    })
+}
+
+/// A number when that is exact, else a bigint.
+fn i64_to_js(global: &JSGlobalObject, v: i64) -> JsResult<JSValue> {
+    if v.unsigned_abs() <= SAFE_INTEGER_U64 {
+        Ok(JSValue::js_number(v as f64))
+    } else {
+        JSValue::from_int64_no_truncate(global, v)
+    }
+}
+
+fn u64_to_js(global: &JSGlobalObject, v: u64) -> JsResult<JSValue> {
+    if v <= SAFE_INTEGER_U64 {
+        Ok(JSValue::js_number(v as f64))
+    } else {
+        JSValue::from_uint64_no_truncate(global, v)
+    }
+}
+
+fn fields_to_js(global: &JSGlobalObject, fields: &[(&[u8], f64)]) -> JSValue {
+    let object = JSValue::create_empty_object(global, fields.len());
+    for (name, v) in fields {
+        object.put(global, *name, JSValue::js_number(*v));
+    }
+    object
+}
+
+/// A message result for JavaScript. Objects are wrapped as they are; use
+/// `objc.js()` to unpack Foundation values.
+pub(crate) fn dyn_to_js(global: &JSGlobalObject, value: DynValue) -> JsResult<JSValue> {
+    Ok(match value {
+        DynValue::Nil => JSValue::NULL,
+        DynValue::Void => JSValue::UNDEFINED,
+        DynValue::Object(o) => ObjCObject::wrap(global, o),
+        DynValue::Class(c) => ObjCClass::wrap(global, c),
+        DynValue::Sel(name) | DynValue::Str(name) => str_to_js(global, &name)?,
+        DynValue::Bool(b) => JSValue::js_boolean(b),
+        DynValue::I64(v) => i64_to_js(global, v)?,
+        DynValue::U64(v) => u64_to_js(global, v)?,
+        DynValue::F64(v) => JSValue::js_number(v),
+        DynValue::Rect(r) => {
+            let object = JSValue::create_empty_object(global, 2);
+            object.put(
+                global,
+                b"origin",
+                fields_to_js(global, &[(b"x", r.origin.x), (b"y", r.origin.y)]),
+            );
+            object.put(
+                global,
+                b"size",
+                fields_to_js(
+                    global,
+                    &[(b"width", r.size.width), (b"height", r.size.height)],
+                ),
+            );
+            object
+        }
+        DynValue::Point(p) => fields_to_js(global, &[(b"x", p.x), (b"y", p.y)]),
+        DynValue::Size(s) => fields_to_js(global, &[(b"width", s.width), (b"height", s.height)]),
+        DynValue::Range(r) => {
+            let object = JSValue::create_empty_object(global, 2);
+            object.put(global, b"location", u64_to_js(global, r.location as u64)?);
+            object.put(global, b"length", u64_to_js(global, r.length as u64)?);
+            object
+        }
+        DynValue::Insets(i) => fields_to_js(
+            global,
+            &[
+                (b"top", i.top),
+                (b"left", i.left),
+                (b"bottom", i.bottom),
+                (b"right", i.right),
+            ],
+        ),
+        DynValue::Affine(m) => fields_to_js(
+            global,
+            &[
+                (b"a", m[0]),
+                (b"b", m[1]),
+                (b"c", m[2]),
+                (b"d", m[3]),
+                (b"tx", m[4]),
+                (b"ty", m[5]),
+            ],
+        ),
+        DynValue::Pointer(0) => JSValue::NULL,
+        DynValue::Pointer(p) => JSValue::from_uint64_no_truncate(global, p as u64)?,
+    })
 }

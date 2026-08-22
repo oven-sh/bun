@@ -318,6 +318,12 @@ impl AppKitView {
         Ok(object)
     }
 
+    /// The widget's `NSView` as an `ObjCObject`; a new wrapper on each read.
+    pub fn get_native(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        let object = self.native(global)?.ns_view_object();
+        Ok(super::objc::ObjCObject::wrap(global, object))
+    }
+
     pub fn get_frame(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         let frame = self.native(global)?.frame();
         let object = JSValue::create_empty_object(global, 4);

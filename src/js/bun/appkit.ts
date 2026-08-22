@@ -26,6 +26,32 @@ type NativeView = {
   onResize: Function | undefined;
   readonly drawableSize: { width: number; height: number } | null | undefined;
   draw(): void;
+  readonly native: NativeObjCObject;
+};
+
+type NativeObjCObject = {
+  msgSend(selector: string, ...args: unknown[]): unknown;
+  readonly className: string;
+  readonly isClass: boolean;
+  readonly address: bigint;
+  release(): void;
+  readonly released: boolean;
+  /** `-description`. */
+  toString(): string;
+};
+
+type NativeObjCClass = {
+  msgSend(selector: string, ...args: unknown[]): unknown;
+  readonly name: string;
+  readonly address: bigint;
+  toString(): string;
+};
+
+type NativeObjC = NativeObjCObject | NativeObjCClass;
+
+type NativeObjCSelector = {
+  readonly name: string;
+  toString(): string;
 };
 
 type NativeWindow = {
@@ -47,6 +73,7 @@ type NativeWindow = {
   onMove: Function | undefined;
   onFocus: Function | undefined;
   onBlur: Function | undefined;
+  readonly native: NativeObjCObject;
 };
 
 type NativeApp = {
@@ -100,6 +127,13 @@ type Binding = {
   GpuSampler: Function;
   GpuDepthStencil: Function;
   GpuFrame: { prototype: NativeFrame };
+  ObjCObject: { prototype: NativeObjCObject };
+  ObjCClass: { prototype: NativeObjCClass };
+  ObjCSelector: { new (name: string): NativeObjCSelector; prototype: NativeObjCSelector };
+  objcLookupClass(name: string): NativeObjCClass;
+  objcJs(value: unknown): unknown;
+  objcNs(value: unknown): NativeObjCObject | null;
+  objcSame(a: unknown, b: unknown): boolean;
 };
 
 const binding = $rust("appkit.rs", "createBinding") as Binding;
@@ -391,6 +425,7 @@ let kindOf: (view: View) => string;
 let propsOf: (view: View) => Record<string, unknown>;
 let setParentOf: (view: View, parent: Container | Window | null) => void;
 let rawParentOf: (view: View) => Container | Window | null;
+let forgetNativeObjectOf: (view: View) => void;
 
 // The props each View class accepts, keyed by prototype. defineProps and
 // defineEvent register here; applyProp rejects anything else.
@@ -414,6 +449,7 @@ class View {
   #parent: Container | Window | null = null;
   #props: Record<string, unknown> = {};
   #kind: string;
+  #nativeObject: object | undefined;
 
   static {
     nativeOf = view => view.#native;
@@ -423,6 +459,9 @@ class View {
       view.#parent = parent;
     };
     rawParentOf = view => view.#parent;
+    forgetNativeObjectOf = view => {
+      view.#nativeObject = undefined;
+    };
   }
 
   constructor(kind: string, props?: Record<string, unknown>) {
@@ -460,6 +499,12 @@ class View {
   /** Whether the native view has been freed (React unmounted it); reads keep answering, mutations throw. */
   get released(): boolean {
     return this.#native.released;
+  }
+
+  /** The widget's outer NSView (for Table, TextEditor and ScrollView that is the NSScrollView). */
+  get native(): object {
+    if (this.#native.released) throw $ERR_INVALID_STATE(`${this.#kind} has been released`);
+    return (this.#nativeObject = liveHandle(this.#nativeObject) ?? wrapObject(this.#native.native));
   }
 
   remove(): void {
@@ -1253,6 +1298,7 @@ function releaseView(view: View): void {
   // Handlers go (they hold closures); plain props stay so getters keep answering.
   const props = propsOf(view);
   for (const key of ObjectKeys(props)) if (typeof props[key] === "function") delete props[key];
+  forgetNativeObjectOf(view);
   native.release();
 }
 
@@ -1324,6 +1370,7 @@ class Window {
   #content: View | null = null;
   #props: Record<string, unknown> = {};
   #handlers: Record<string, Function | undefined> = {};
+  #nativeObject: object | undefined;
 
   static {
     windowNativeOf = window => window.#native;
@@ -1371,6 +1418,7 @@ class Window {
         setParentOf(content, null);
         self.#content = null;
       }
+      self.#nativeObject = undefined;
       const handler = self.#handlers.onClose;
       if (handler) dispatch(handler, []);
     };
@@ -1447,6 +1495,12 @@ class Window {
 
   get key(): boolean {
     return this.#native.key;
+  }
+
+  /** The NSWindow. */
+  get native(): object {
+    if (this.#native.closed) throw $ERR_INVALID_STATE("window is closed");
+    return (this.#nativeObject = liveHandle(this.#nativeObject) ?? wrapObject(this.#native.native));
   }
 
   show(): void {
@@ -1536,6 +1590,260 @@ for (const key of windowEvents) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// objc: any Objective-C class and selector by name, for what the classes
+// above do not cover. Natives (binding.ObjCObject / ObjCClass) are handed out
+// wrapped in a Proxy whose string properties are selectors. The proxy target
+// is the native itself: that keeps it (and the id it retains) alive, lets the
+// native side see through proxies passed back as arguments, and is what
+// console.log shows.
+
+const ObjCObject = binding.ObjCObject;
+const ObjCClass = binding.ObjCClass;
+const ObjCSelector = binding.ObjCSelector;
+const objcPointer = Symbol("objc.pointer");
+
+// The natives' own methods, taken once so that a script reaching the shared
+// prototype through Object.getPrototypeOf(handle) cannot reroute sends.
+const getter = (proto: object, name: string) => Object.getOwnPropertyDescriptor(proto, name)!.get!;
+const { msgSend: objectMsgSend, toString: objectToString, release: objectRelease } = ObjCObject.prototype;
+const objectClassName = getter(ObjCObject.prototype, "className");
+const objectIsClass = getter(ObjCObject.prototype, "isClass");
+const objectAddress = getter(ObjCObject.prototype, "address");
+const objectReleased = getter(ObjCObject.prototype, "released");
+const { msgSend: classMsgSend, toString: classToString } = ObjCClass.prototype;
+const className = getter(ObjCClass.prototype, "name");
+const classAddress = getter(ObjCClass.prototype, "address");
+
+const isClassNative = (native: NativeObjC): native is NativeObjCClass => native instanceof ObjCClass;
+const nativeToString = (native: NativeObjC): string =>
+  isClassNative(native) ? classToString.$call(native) : objectToString.$call(native);
+const nativeAddress = (native: NativeObjC): bigint =>
+  isClassNative(native) ? classAddress.$call(native) : objectAddress.$call(native);
+
+/** native wrapper -> its proxy, so one wrapper always surfaces as the same object. */
+const proxyOfNative = new WeakMap<object, object>();
+/** proxy -> native wrapper. */
+const nativeOfProxy = new WeakMap<object, NativeObjC>();
+/** Classes are immortal, so their proxies are shared by name. */
+const classProxies = new Map<string, object>();
+
+/**
+ * `setFrame_display_` -> `setFrame:display:` taking 2 arguments. Leading
+ * underscores are kept, an interior `__` is a literal `_`, and every other
+ * `_` is a `:`.
+ */
+function selectorFromProperty(property: string): { selector: string; colons: number } {
+  const length = property.length;
+  let lead = 0;
+  while (lead < length && property.charCodeAt(lead) === 95) lead++;
+  let end = length;
+  while (end > lead && property.charCodeAt(end - 1) === 95) end--;
+  const trailing = length - end;
+  let selector = property.slice(0, lead);
+  let colons = trailing;
+  for (let i = lead; i < end; i++) {
+    if (property.charCodeAt(i) !== 95) {
+      selector += property[i];
+    } else if (i + 1 < end && property.charCodeAt(i + 1) === 95) {
+      selector += "_";
+      i++;
+    } else {
+      selector += ":";
+      colons++;
+    }
+  }
+  for (let i = 0; i < trailing; i++) selector += ":";
+  return { selector, colons };
+}
+
+function receiverName(native: NativeObjC): string {
+  if (isClassNative(native)) return `+[${className.$call(native)}`;
+  return `${objectIsClass.$call(native) ? "+" : "-"}[${objectClassName.$call(native)}`;
+}
+
+/**
+ * Arguments go to the native side as they are, for it to convert by the
+ * method's signature or reject. A View or Window is caught here because the
+ * native side would only see an object it cannot convert; the likely intent
+ * was its `.native`.
+ */
+function argumentOf(value: unknown): unknown {
+  if (value instanceof View) {
+    throw typeError(`pass view.native (the NSView) rather than the ${kindOf(value)} itself`);
+  }
+  if (value instanceof Window) {
+    throw typeError("pass window.native (the NSWindow) rather than the Window itself");
+  }
+  return value;
+}
+
+/** Natives (at any depth of an array/object the native side built) become proxies, in place. */
+function fromNative(value: unknown): unknown {
+  if (typeof value !== "object" || value === null || nativeOfProxy.has(value)) return value;
+  if (value instanceof ObjCObject || value instanceof ObjCClass) return wrapObject(value);
+  if (ArrayIsArray(value)) {
+    for (let i = 0; i < value.length; i++) value[i] = fromNative(value[i]);
+    return value;
+  }
+  if (ObjectGetPrototypeOf(value) === Object.prototype) {
+    const record = value as Record<string, unknown>;
+    for (const key of ObjectKeys(record)) record[key] = fromNative(record[key]);
+  }
+  return value;
+}
+
+function send(native: NativeObjC, selector: string, args: ArrayLike<unknown>): unknown {
+  const argv: unknown[] = [selector];
+  for (let i = 0; i < args.length; i++) argv.push(argumentOf(args[i]));
+  return fromNative((isClassNative(native) ? classMsgSend : objectMsgSend).$apply(native, argv));
+}
+
+function selectorMethod(native: NativeObjC, property: string): Function {
+  const { selector, colons } = selectorFromProperty(property);
+  return function (...args: unknown[]) {
+    const { length } = args;
+    if (length !== colons) {
+      throw typeError(
+        `${receiverName(native)} ${selector}]: "${property}" stands for a selector taking ${colons} argument${colons === 1 ? "" : "s"}, but ${length} ${length === 1 ? "was" : "were"} passed`,
+      );
+    }
+    return send(native, selector, args);
+  };
+}
+
+/**
+ * The few string properties that are not selectors. `toJSON` matters:
+ * JSON.stringify would otherwise send `toJSON:`. `release` is the wrapper's:
+ * the native side refuses the reference-counting selectors.
+ */
+function reservedMethod(native: NativeObjC, property: string): Function | undefined {
+  switch (property) {
+    case "msgSend":
+      return function msgSend(selector: unknown, ...args: unknown[]) {
+        if (typeof selector !== "string" || selector.length === 0) {
+          throw typeError("msgSend(selector, ...args): selector must be a non-empty string");
+        }
+        return send(native, selector, args);
+      };
+    case "toString":
+      return function toString() {
+        return nativeToString(native);
+      };
+    case "toJSON":
+      return function toJSON() {
+        const converted = binding.objcJs(native);
+        return converted === native ? nativeToString(native) : fromNative(converted);
+      };
+    case "release":
+      if (!isClassNative(native)) {
+        return function release() {
+          objectRelease.$call(native);
+        };
+      }
+  }
+  return undefined;
+}
+
+function wrapObject(native: NativeObjC): object {
+  let proxy = proxyOfNative.get(native);
+  if (proxy !== undefined) return proxy;
+  const isClass = isClassNative(native);
+  if (isClass) {
+    proxy = classProxies.get(className.$call(native));
+    if (proxy !== undefined) return proxy;
+  }
+  const methods = new Map<string, Function>();
+  // `-description` for an object, the name for a class.
+  const toPrimitive = () => nativeToString(native);
+  proxy = new Proxy(native, {
+    get(_target, property) {
+      if (typeof property === "string") {
+        // Not a thenable: promises resolve with the object itself.
+        if (property === "then") return undefined;
+        let method = methods.get(property);
+        if (method === undefined) {
+          method = reservedMethod(native, property) ?? selectorMethod(native, property);
+          methods.set(property, method);
+        }
+        return method;
+      }
+      if (property === objcPointer) return nativeAddress(native);
+      if (property === Symbol.toPrimitive) return toPrimitive;
+      if (property === Symbol.toStringTag) return isClass ? "ObjCClass" : "ObjCObject";
+      return undefined;
+    },
+    set(_target, property) {
+      throw typeError(
+        `Cannot assign to ${String(property)} on an Objective-C object; call the setter, e.g. setTitle_(value)`,
+      );
+    },
+    defineProperty() {
+      throw typeError("Cannot define properties on an Objective-C object");
+    },
+    deleteProperty() {
+      throw typeError("Cannot delete properties of an Objective-C object");
+    },
+  });
+  proxyOfNative.set(native, proxy);
+  nativeOfProxy.set(proxy, native);
+  if (isClass) classProxies.set(className.$call(native), proxy);
+  return proxy;
+}
+
+/** The cached `.native` handle of a view or window, unless the script released it. */
+function liveHandle(handle: object | undefined): object | undefined {
+  return handle !== undefined && objectReleased.$call(nativeOfProxy.get(handle)) ? undefined : handle;
+}
+
+const objcClassesName = () => "[objc.classes]";
+const objcClasses = new Proxy(Object.create(null) as Record<string, object>, {
+  get(_target, name) {
+    // The names JavaScript itself probes (await, String(), JSON.stringify)
+    // are never class names.
+    if (name === "then") return undefined;
+    if (name === "toString" || name === "toJSON" || name === Symbol.toPrimitive) return objcClassesName;
+    if (typeof name !== "string") return undefined;
+    let proxy = classProxies.get(name);
+    if (proxy === undefined) {
+      proxy = wrapObject(binding.objcLookupClass(name));
+      classProxies.set(name, proxy);
+    }
+    return proxy;
+  },
+  set() {
+    throw typeError("objc.classes is read-only");
+  },
+  defineProperty() {
+    throw typeError("objc.classes is read-only");
+  },
+  deleteProperty() {
+    throw typeError("objc.classes is read-only");
+  },
+});
+
+const objc = {
+  classes: objcClasses,
+  pointer: objcPointer,
+  sel(name: string): NativeObjCSelector {
+    if (typeof name !== "string" || name.length === 0) {
+      throw typeError("objc.sel(name): name must be a non-empty string");
+    }
+    return new ObjCSelector(name);
+  },
+  js(value: unknown): unknown {
+    const converted = binding.objcJs(value);
+    return converted === value ? value : fromNative(converted);
+  },
+  ns(value: unknown): object | null {
+    return fromNative(binding.objcNs(argumentOf(value))) as object | null;
+  },
+  /** The same live `id`; a handle is also the same as itself, and nothing else compares. */
+  same(a: unknown, b: unknown): boolean {
+    return binding.objcSame(a, b) || (a === b && typeof a === "object" && a !== null && nativeOfProxy.has(a));
+  },
+};
+
 hooks.applyProp = applyProp;
 hooks.releaseView = releaseView;
 hooks.windowCreateOnly = windowCreateOnly;
@@ -1581,4 +1889,5 @@ export default {
   GpuFrame,
   GpuCompileError,
   GpuExecutionError,
+  objc,
 };

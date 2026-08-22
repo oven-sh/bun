@@ -8,6 +8,7 @@ import {
   HStack,
   Image,
   MetalView,
+  objc,
   Picker,
   Progress,
   ScrollView,
@@ -25,6 +26,9 @@ import {
   type GpuBuffer,
   type GpuFrame,
   type MenuSpec,
+  type ObjCClass,
+  type ObjCObject,
+  type ObjCSelector,
   type View,
 } from "bun:appkit";
 import * as React from "bun:appkit/react";
@@ -268,3 +272,37 @@ root.unmount();
 expectType(React.createRoot()).is<React.Root>();
 expectType(React.flushSync(() => 1)).is<number>();
 React.flushSync();
+
+// objc bridge
+{
+  // The common classes are listed by name; any other name reads as a class too (unknown ones throw at
+  // runtime), hence `| undefined` under noUncheckedIndexedAccess.
+  expectType(objc.classes.NSString).is<ObjCClass>();
+  expectType(objc.classes.NSRulerMarker).is<ObjCClass | undefined>();
+  const { NSString, NSMutableArray, NSProcessInfo } = objc.classes;
+  expectType(`${NSProcessInfo.processInfo().processName()}`).is<string>();
+  const s: ObjCObject = NSString.stringWithString_("hi");
+  expectType(s.msgSend("length")).is<unknown>();
+  expectType(s.length()).is<any>();
+  expectType(`${s}`).is<string>();
+  expectType(s.toString()).is<string>();
+  expectType(s[objc.pointer]).is<bigint>();
+  const list = NSMutableArray.new();
+  expectType(list).is<ObjCObject>();
+  list.addObject_(s);
+  expectType(NSMutableArray.alloc().init()).is<any>();
+  expectType(objc.sel("terminate:")).is<ObjCSelector>();
+  expectType(objc.sel("length").name).is<string>();
+  expectType(objc.js(list)).is<unknown>();
+  expectType(objc.ns({ a: 1, b: ["x", true] })).is<ObjCObject | null>();
+  expectType(objc.same(s, list)).is<boolean>();
+  objc.same(null, s);
+  // @ts-expect-error read-only
+  objc.classes.NSString = NSString;
+  const w = new Window({ visible: false });
+  expectType(w.native).is<ObjCObject>();
+  w.native.setFrame_display_({ origin: { x: 0, y: 0 }, size: { width: 300, height: 200 } }, true);
+  expectType(new VStack().native).is<ObjCObject>();
+  // @ts-expect-error read-only
+  w.native = s;
+}

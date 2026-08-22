@@ -31,7 +31,41 @@ const fn = (name: string, length: number) => ({ fn: name, length });
 const chained = (...entries: [string, number][]) =>
   Object.fromEntries(entries.map(([name, length]) => [name, fn(name, length)]));
 
+// The dynamic Objective-C bridge. Objects and classes come from message
+// sends, `objcLookupClass` and `.native` (their constructors throw);
+// `new ObjCSelector(name)` is `objc.sel()`.
+function objcClass(name: string, proto: Record<string, any>) {
+  return define({
+    name,
+    construct: true,
+    finalize: true,
+    configurable: false,
+    klass: {},
+    rustPath: `crate::api::appkit::${name}`,
+    proto,
+  });
+}
+
 export default [
+  objcClass("ObjCObject", {
+    msgSend: fn("msgSend", 1),
+    className: { getter: "getClassName" },
+    isClass: { getter: "getIsClass" },
+    address: { getter: "getAddress" },
+    release: fn("release", 0),
+    released: { getter: "getReleased" },
+    toString: fn("toString", 0),
+  }),
+  objcClass("ObjCClass", {
+    msgSend: fn("msgSend", 1),
+    name: { getter: "getName" },
+    address: { getter: "getAddress" },
+    toString: fn("toString", 0),
+  }),
+  objcClass("ObjCSelector", {
+    name: { getter: "getName" },
+    toString: fn("toString", 0),
+  }),
   define({
     name: "AppKitView",
     construct: true,
@@ -52,6 +86,7 @@ export default [
       drawableSize: { getter: "getDrawableSize" },
       release: { fn: "release", length: 0 },
       released: { getter: "getReleased" },
+      native: { getter: "getNative" },
       ...slots(
         "onAction",
         "onChange",
@@ -86,6 +121,7 @@ export default [
       closed: { getter: "getClosed" },
       visible: { getter: "getVisible" },
       key: { getter: "getKey" },
+      native: { getter: "getNative" },
       ...slots("onClose", "shouldClose", "onResize", "onMove", "onFocus", "onBlur"),
     },
   }),

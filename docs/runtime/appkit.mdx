@@ -440,10 +440,61 @@ Driving views inside the test process itself also works for quick checks; close 
 
 ---
 
+## Dropping down to Objective-C
+
+The classes above cover a curated slice of AppKit. For everything else, `objc` reaches any Objective-C class and selector by Apple's own names, so the module is never a dead end. It works on the main thread only, like the rest of `bun:appkit`, and does not need the app to be running (Foundation classes work in a plain script).
+
+```ts
+import { objc, VStack, Window } from "bun:appkit";
+
+const { NSString, NSMutableArray, NSProcessInfo } = objc.classes; // any class by name; an unknown name throws a TypeError
+const s = NSString.stringWithString_("hi"); // a JavaScript string is boxed to NSString where an object is expected
+s.length(); // 2
+s.UTF8String(); // "hi"
+const list = NSMutableArray.new();
+list.addObject_(s);
+list.count(); // 1
+`${NSProcessInfo.processInfo().processName()}`; // objects come back as handles; `${}` / String() gives -description
+
+const win = new Window({ title: "t", visible: false });
+win.native.setTitle_("u"); // .native is the NSWindow; win.title now reads "u"
+win.native.frame(); // { origin: { x, y }, size: { width, height } }
+win.native.setFrame_display_({ origin: { x: 0, y: 0 }, size: { width: 300, height: 200 } }, true);
+new VStack().native.isKindOfClass_(objc.classes.NSStackView); // true
+```
+
+Every property of such a handle is a method that sends the selector of the same name, spelled PyObjC style: each `_` stands for a `:`, and the call takes exactly as many arguments as there are colons (`setFrame_display_(rect, true)` sends `setFrame:display:`, `count()` sends `count`). Leading underscores are kept (`_isKeyWindow()`), and `__` inside a name is a literal `_`. Reading a property sends nothing; calling it does. `handle.msgSend("setFrame:display:", rect, true)` takes the selector spelled the Objective-C way instead. A selector the receiver does not respond to, a wrong argument count and a value that does not fit the argument's type are `TypeError`s; nothing is sent in those cases.
+
+Arguments and results are converted by the method's Objective-C type signature, never guessed from the JavaScript value:
+
+| Objective-C type                                                    | pass                                                                                                              | returns                                                                                                         |
+| ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `id`                                                                | a handle, `null`, or a string / number / boolean / array / plain object (boxed as `objc.ns()` does)               | a handle, or `null` for `nil` (never unboxed)                                                                   |
+| `Class`                                                             | `objc.classes.X`                                                                                                  | the same shared class handle                                                                                    |
+| `SEL`                                                               | `"terminate:"` or `objc.sel("terminate:")`                                                                        | a string                                                                                                        |
+| `BOOL`                                                              | boolean                                                                                                           | boolean                                                                                                         |
+| integers (`NSInteger`, `NSUInteger`, `int`, ...)                    | an integral number in range (also a `bigint` for 64-bit types)                                                    | a number, or a `bigint` above 2^53                                                                              |
+| `float`, `double`, `CGFloat`                                        | number                                                                                                            | number                                                                                                          |
+| `char *`                                                            | string (UTF-8, valid for the call)                                                                                | string or `null`                                                                                                |
+| `CGRect` / `NSRect`                                                 | `{ origin: { x, y }, size: { width, height } }` or `{ x, y, width, height }`                                      | `{ origin, size }`                                                                                              |
+| `CGPoint`, `CGSize`, `NSRange`, `NSEdgeInsets`, `CGAffineTransform` | `{ x, y }`, `{ width, height }`, `{ location, length }`, `{ top, left, bottom, right }`, `{ a, b, c, d, tx, ty }` | the same shape (`NSRange` fields above 2^53, such as `NSNotFound`, are `bigint`s and are accepted back as such) |
+| other pointers (`void *`, `NSZone *`, ...)                          | only `null`                                                                                                       | `null` for `NULL`, otherwise the address as a `bigint` that nothing accepts back                                |
+| `void`                                                              |                                                                                                                   | `undefined`                                                                                                     |
+
+`objc.js(handle)` converts Foundation values the other way (`NSString` to string, `NSNumber` to number or boolean, `NSArray` and `NSDictionary` element by element, `NSNull` to `null`; anything else stays a handle), `objc.ns(value)` boxes a JavaScript value, `objc.same(a, b)` tells whether two live handles are the same object (anything that is not a handle compares unequal), and `handle[objc.pointer]` is its address as a `bigint`. A `View` or `Window` is not a handle: pass its `.native`.
+
+Ownership follows Cocoa's rules for you: a handle keeps its object retained until it is garbage collected (or until you call `handle.release()`, after which the handle throws); results of `alloc`, `new`, `copy` and `mutableCopy` are taken over rather than retained again, and an `init…` consumes the `alloc()` handle it was called on (using that handle afterwards throws). The `alloc` itself is only sent when the `init…` is, so an `init…` whose arguments are wrong leaves nothing behind, and an `alloc()` result accepts nothing but an `init…`. `NSString.alloc().initWithUTF8String_("x")` therefore neither leaks nor over-releases. The `retain`, `release` and `autorelease` selectors themselves are refused.
+
+`window.native` is the `NSWindow` and `view.native` the widget's outer `NSView`: for `ScrollView`, `Table` and `TextEditor` that is the `NSScrollView` (`.documentView()` reaches the `NSTableView` or `NSTextView`); for `Group` it is the `NSBox`, whose children sit in an `NSStackView` inside its `contentView()`; for `MetalView` it is the `MTKView`, or a plain `NSView` when Metal is unavailable. Changes made through them show up in the curated properties that read the live object (`title`, `width`, `value`, `checked`, ...). A closed window's or a released view's `.native` throws `ERR_INVALID_STATE`.
+
+Not supported yet: block arguments, pointer arguments other than `null` (so no `NSError **` out-parameters), structs other than the ones in the table, defining your own subclasses or delegates, and variadic methods; those throw a `TypeError` naming the type. Variadic selectors (`stringWithFormat:`, `arrayWithObjects:`, `dictionaryWithObjectsAndKeys:`, anything taking a `va_list`) would read arguments the bridge has no way to pass, so they are refused by name; use `stringWithString:`, `objc.ns([...])`, `objc.ns({...})` or `predicateWithFormat:argumentArray:` instead. An exception raised inside a method you call still ends the process, as described under [Event loop](#event-loop).
+
+---
+
 ## Limitations
 
 - macOS only (arm64 and x64). On other platforms `Bun.AppKit` is `undefined` and `bun:appkit` is not a builtin module, so importing it fails to resolve.
 - Everything runs on the main thread; there is no separate UI thread. Using `bun:appkit` from a `Worker` throws.
 - Timers and I/O pause while a menu is open or a window is being live-resized, and a long synchronous callback stalls the UI as it would any other.
 - `bun --hot` is not supported; use `bun --watch`.
-- No modal APIs (`NSAlert`, open/save panels, sheets) yet, no drag and drop, no custom drawing other than through `MetalView`, and no `.app` bundling: the program is a normal `bun` process, so it has the generic executable icon in the Dock unless `activationPolicy` is `"accessory"`.
+- No curated modal APIs (`NSAlert`, open/save panels, sheets), drag and drop, or custom drawing other than through `MetalView` yet; `objc` reaches the underlying classes, within the limits listed above. No `.app` bundling: the program is a normal `bun` process, so it has the generic executable icon in the Dock unless `activationPolicy` is `"accessory"`.

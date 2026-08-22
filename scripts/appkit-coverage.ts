@@ -259,10 +259,10 @@ console.log(
   `- AppKit \`NSView\` subclasses reachable through them: **${boundViews.length} of ${viewClasses.length}** in the SDK (${boundViews.join(", ")}).`,
 );
 console.log(
-  `- Not yet reachable \`NSView\` subclasses: ${viewClasses.filter(n => !boundViews.includes(n)).join(", ")}.`,
+  `- \`NSView\` subclasses without a JavaScript element: ${viewClasses.filter(n => !boundViews.includes(n)).join(", ")}.`,
 );
 console.log(
-  `- No generic bridge: a class or selector not listed below is not reachable from JS yet; adding one is a binding line plus a prop.\n`,
+  `- Beyond this table, the \`objc\` export is a dynamic bridge: every class and selector of these frameworks is reachable from JS by name (\`objc.classes.NSAlert\`, \`view.native.setWantsLayer_(true)\`). The rows below count only the static bindings the curated layer compiles in; a curated prop is still a binding line plus a prop.\n`,
 );
 console.log("## By framework\n");
 console.log(

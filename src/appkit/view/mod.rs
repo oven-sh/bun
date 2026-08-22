@@ -875,6 +875,12 @@ impl View {
         self.inner.widget.borrow().view().clone()
     }
 
+    /// The widget's outer `NSView` (for ScrollView and Table, the
+    /// `NSScrollView`), for scripts that message it directly.
+    pub fn ns_view_object(&self) -> crate::DynObject {
+        crate::DynObject::from_object(&self.nsview())
+    }
+
     pub(crate) fn downgrade(&self) -> WeakView {
         WeakView(Rc::downgrade(&self.inner))
     }

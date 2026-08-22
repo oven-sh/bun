@@ -18,6 +18,10 @@
 //! from the headers but not needed yet are kept as `//` comments in place, so
 //! using one is a matter of uncommenting it.
 //!
+//! [`dynamic`] is the one place that does type a send at run time (from
+//! `NSMethodSignature`, through `NSInvocation`): it is the escape hatch
+//! scripts use to reach selectors this crate has no binding for.
+//!
 //! Nothing here is linked into `bun`: `otool -L` stays as it was.
 
 use core::cell::Cell;
@@ -31,12 +35,14 @@ use crate::error::{Error, Result};
 pub(crate) mod appkit;
 mod define;
 pub(crate) mod delegate;
+pub mod dynamic;
 pub(crate) mod foundation;
 pub(crate) mod metal;
 
 pub(crate) use define::Delegate;
 use define::{ClassBuilder, DelegateClass, This};
 pub(crate) use delegate::{AppEvents, ControlEvents, MetalViewEvents, WindowEvents};
+pub use dynamic::{DynClass, DynObject, DynValue};
 pub use foundation::NsStr;
 
 // ─────────────────────────────── raw types ─────────────────────────────────
@@ -721,6 +727,30 @@ unsafe impl Ret for Ptr {
     }
 }
 
+/// A `char *` return (`-methodReturnType`, `-UTF8String`): NUL-terminated
+/// and owned by the receiver or the current autorelease pool, so it is copied
+/// out at once. NULL becomes `None`.
+pub(crate) struct CChars(pub(crate) Option<String>);
+// SAFETY: `char *` return.
+unsafe impl Ret for CChars {
+    type Raw = *const c_char;
+    const ENCODING: &'static str = "*";
+    type Out = CChars;
+    #[inline]
+    unsafe fn from_raw(raw: *const c_char, _: &'static str) -> CChars {
+        if raw.is_null() {
+            return CChars(None);
+        }
+        // SAFETY: a non-NULL `char *` return is a NUL-terminated string that
+        // lives at least until the current pool drains.
+        CChars(Some(
+            unsafe { CStr::from_ptr(raw) }
+                .to_string_lossy()
+                .into_owned(),
+        ))
+    }
+}
+
 /// A `CGColorRef` this crate holds one reference to. `-[NSColor CGColor]`
 /// hands back an object owned by the current autorelease pool, so it is
 /// `CFRetain`ed on receipt and released on drop like the object wrappers.
@@ -841,6 +871,7 @@ pub(crate) struct Runtime {
     class_getSuperclass: unsafe extern "C" fn(Obj) -> Obj,
     class_getName: unsafe extern "C" fn(Obj) -> *const c_char,
     object_getClass: unsafe extern "C" fn(Obj) -> Obj,
+    object_isClass: unsafe extern "C" fn(Obj) -> Bool,
     ivar_getOffset: unsafe extern "C" fn(*mut c_void) -> isize,
     method_getTypeEncoding: unsafe extern "C" fn(*mut c_void) -> *const c_char,
     protocol_getMethodDescription: unsafe extern "C" fn(Obj, Sel, Bool, Bool) -> MethodDescription,
@@ -1098,6 +1129,7 @@ impl Runtime {
                 class_getSuperclass: sym!(objc, c"class_getSuperclass"),
                 class_getName: sym!(objc, c"class_getName"),
                 object_getClass: sym!(objc, c"object_getClass"),
+                object_isClass: sym!(objc, c"object_isClass"),
                 ivar_getOffset: sym!(objc, c"ivar_getOffset"),
                 method_getTypeEncoding: sym!(objc, c"method_getTypeEncoding"),
                 protocol_getMethodDescription: sym!(objc, c"protocol_getMethodDescription"),

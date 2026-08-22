@@ -12,6 +12,8 @@ mod conv;
 #[cfg(target_os = "macos")]
 mod gpu;
 #[cfg(target_os = "macos")]
+mod objc;
+#[cfg(target_os = "macos")]
 mod slots;
 #[cfg(target_os = "macos")]
 mod view;
@@ -24,18 +26,23 @@ pub use self::gpu::{
     GpuRenderPipeline, GpuSampler, GpuTexture,
 };
 #[cfg(target_os = "macos")]
+pub use self::objc::{ObjCClass, ObjCObject, ObjCSelector};
+#[cfg(target_os = "macos")]
 pub use self::{app::AppKitApp, view::AppKitView, window::AppKitWindow};
 #[cfg(not(target_os = "macos"))]
 pub use unsupported::{
     AppKitApp, AppKitGpu, AppKitView, AppKitWindow, GpuBuffer, GpuComputePipeline, GpuDepthStencil,
-    GpuFrame, GpuFunction, GpuLibrary, GpuRenderPipeline, GpuSampler, GpuTexture,
+    GpuFrame, GpuFunction, GpuLibrary, GpuRenderPipeline, GpuSampler, GpuTexture, ObjCClass,
+    ObjCObject, ObjCSelector,
 };
 
 use bun_jsc::{JSGlobalObject, JSValue};
 
-/// `$rust("appkit.rs", "createBinding")`: `{ AppKitView, AppKitWindow, app, gpu, Gpu* }`
-/// for `src/js/bun/appkit.ts`. Loads nothing; AppKit starts on `app.start()`
-/// and Metal on the first `gpu` call that needs the device.
+/// `$rust("appkit.rs", "createBinding")`: `{ AppKitView, AppKitWindow, app, gpu, Gpu*,
+/// ObjCObject, ObjCClass, ObjCSelector, objcLookupClass, objcJs, objcNs, objcSame }` for
+/// `src/js/bun/appkit.ts`. Loads nothing; AppKit starts on `app.start()`,
+/// Metal on the first `gpu` call that needs the device, and Foundation on the
+/// first `objc*` call.
 #[cfg(target_os = "macos")]
 pub fn create_binding(global: &JSGlobalObject) -> JSValue {
     use bun_jsc::JsClass as _;
@@ -69,6 +76,7 @@ pub fn create_binding(global: &JSGlobalObject) -> JSValue {
         GpuDepthStencil::get_constructor(global),
     );
     binding.put(global, b"GpuFrame", GpuFrame::get_constructor(global));
+    objc::install(global, binding);
     binding
 }
 
@@ -145,7 +153,8 @@ mod unsupported {
                 get_on_select,
                 get_on_activate,
                 get_on_frame,
-                get_on_resize
+                get_on_resize,
+                get_native
             ]
         }
     );
@@ -183,7 +192,8 @@ mod unsupported {
                 get_on_resize,
                 get_on_move,
                 get_on_focus,
-                get_on_blur
+                get_on_blur,
+                get_native
             ]
         }
     );
@@ -374,6 +384,30 @@ mod unsupported {
         }
     );
 
+    stub!(
+        #[bun_jsc::JsClass]
+        ObjCObject {
+            methods: [msg_send, release, to_string],
+            getters: [get_class_name, get_is_class, get_address, get_released]
+        }
+    );
+
+    stub!(
+        #[bun_jsc::JsClass]
+        ObjCClass {
+            methods: [msg_send, to_string],
+            getters: [get_name, get_address]
+        }
+    );
+
+    stub!(
+        #[bun_jsc::JsClass]
+        ObjCSelector {
+            methods: [to_string],
+            getters: [get_name]
+        }
+    );
+
     macro_rules! not_constructible {
         ($($name:ident),*) => {$(
             impl $name {
@@ -392,6 +426,9 @@ mod unsupported {
         GpuComputePipeline,
         GpuSampler,
         GpuDepthStencil,
-        GpuFrame
+        GpuFrame,
+        ObjCObject,
+        ObjCClass,
+        ObjCSelector
     );
 }

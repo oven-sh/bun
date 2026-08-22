@@ -52,6 +52,10 @@ pub use geometry::{Insets, Point, Positive, Rect, Size};
 pub use gpu::{Gpu, Storage};
 pub use menu::ActionSelector;
 pub use objc::NsStr;
+/// Run-time (selector-by-name) messaging: `objc.classes`, `msgSend` and
+/// `.native` in `bun:appkit`.
+pub use objc::dynamic;
+pub use objc::{DynClass, DynObject, DynValue};
 pub use view::{Event, Kind, Prop, View, ViewSink};
 pub use window::{SizeLimits, Window, WindowOptions, WindowSink};
 

@@ -10,7 +10,7 @@
 // Kept in its own file so the happy-path image.test.ts stays readable.
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { gcTick, isASAN, rss, tempDir } from "harness";
+import { bunEnv, bunExe, gcTick, isASAN, rss, tempDir } from "harness";
 import { join } from "node:path";
 import zlib from "node:zlib";
 
@@ -132,6 +132,48 @@ async function rgbaOf(bytes: Uint8Array): Promise<Uint8Array> {
 const tinyJpeg = await new Bun.Image(tinyPng).jpeg({ quality: 80 }).bytes();
 const tinyWebp = await new Bun.Image(tinyPng).webp({ quality: 80 }).bytes();
 const tinyWebpLossless = await new Bun.Image(tinyPng).webp({ lossless: true }).bytes();
+
+// 1×1 white pixel AVIF (libavif tests/data/white_1x1.avif). Not generated
+// on the fly — AVIF encode on Linux is dlopen-gated on libavif.so.16
+// having an AV1 encoder linked in, which a hermetic fuzz file can't assume.
+// Same bytes as in image.test.ts; kept here so this file stays standalone-
+// runnable.
+const tinyAvif = Buffer.from(
+  "AAAAIGZ0eXBhdmlmAAAAAGF2aWZtaWYxbWlhZk1BMUEAAADybWV0YQAAAAAAAAAoaGRs" +
+    "cgAAAAAAAAAAcGljdAAAAAAAAAAAAAAAAGxpYmF2aWYAAAAADnBpdG0AAAAAAAEAAAAe" +
+    "aWxvYwAAAABEAAABAAEAAAABAAABGgAAABcAAAAoaWluZgAAAAAAAQAAABppbmZlAgAA" +
+    "AAABAABhdjAxQ29sb3IAAAAAamlwcnAAAABLaXBjbwAAABRpc3BlAAAAAAAAAAEAAAAB" +
+    "AAAAEHBpeGkAAAAAAwgICAAAAAxhdjFDgSAAAAAAABNjb2xybmNseAABAA0ABoAAAAAX" +
+    "aXBtYQAAAAAAAAABAAEEAQKDBAAAAB9tZGF0EgAKBzgABhAQ0GkyCh/wP///xAAAr3A=",
+  "base64",
+);
+
+// libavif is dlopen'd at runtime (libavif.so.16). Where it's absent, flipping
+// bytes of an AVIF fixture only exercises the dlopen-miss rejection 305 times
+// — no AV1-parser hardening value, and the extra concurrent decode load
+// destabilises the timing-sensitive leak tests below. Probe once (same logic
+// as avifProbeAvailable in image.test.ts) and run the AVIF fuzz only where
+// libavif can actually decode.
+const avifFuzzAvailable =
+  process.platform === "linux" &&
+  (() => {
+    try {
+      const proc = Bun.spawnSync({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const b = Buffer.from(${JSON.stringify(tinyAvif.toString("base64"))}, "base64");` +
+            `new Bun.Image(b).metadata().then(() => process.exit(0), e => process.exit(e?.code === "ERR_IMAGE_FORMAT_UNSUPPORTED" ? 2 : 1));`,
+        ],
+        env: bunEnv,
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      return proc.exitCode !== 2;
+    } catch {
+      return false;
+    }
+  })();
 
 /** Assert the promise either rejects or resolves — never aborts/hangs. */
 async function survives(p: Promise<unknown>): Promise<"rejected" | "resolved"> {
@@ -764,17 +806,27 @@ describe("random-byte fuzz", () => {
 
   // Mutate one byte of each known-good fixture at every offset — catches
   // codec parsers that trust a length/type byte without bounds-checking.
-  for (const [name, fixture] of [
+  // AVIF is included only where libavif can decode (see avifFuzzAvailable):
+  // mac/win route these bytes through ImageIO/WIC, which this file doesn't
+  // target, and a libavif-less host would just re-test the dlopen-miss path.
+  const fuzzFormats: Array<readonly [string, Uint8Array]> = [
     ["png", tinyPng],
     ["jpeg", tinyJpeg],
     ["webp-lossless", tinyWebpLossless],
-  ] as const) {
+  ];
+  if (avifFuzzAvailable) fuzzFormats.push(["avif", tinyAvif]);
+  for (const [name, fixture] of fuzzFormats) {
     test.concurrent(`${name}: single-byte flip at every offset`, async () => {
+      // Each decode runs on the WorkPool, so fire all flips and await the
+      // batch — serial awaits made the AVIF variant (~40ms per surviving
+      // AV1 decode under ASAN) crawl past the default test budget.
+      const flips: Promise<unknown>[] = [];
       for (let off = 0; off < fixture.length; off++) {
         const mut = Buffer.from(fixture);
         mut[off] ^= 0xff;
-        await survives(new Bun.Image(mut).bytes());
+        flips.push(survives(new Bun.Image(mut).bytes()));
       }
+      await Promise.all(flips);
     });
   }
 });

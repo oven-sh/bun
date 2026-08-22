@@ -862,7 +862,6 @@ dependencies = [
  "bun_event_loop",
  "bun_js_parser",
  "bun_jsc",
- "bun_opaque",
  "bun_options_types",
  "bun_parsers",
  "bun_ptr",

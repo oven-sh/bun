@@ -145,7 +145,6 @@
 #include "JavaScriptCore/TestRunnerUtils.h"
 #include "JavaScriptCore/DateInstance.h"
 #include "JavaScriptCore/RegExpObject.h"
-#include "JavaScriptCore/RegExpConstructor.h"
 #include "JavaScriptCore/PropertyNameArray.h"
 #include "webcore/JSAbortSignal.h"
 #include "JSAbortAlgorithm.h"
@@ -4606,16 +4605,6 @@ JSC::EncodedJSValue JSC__JSValue__bigIntUnaryMinus(JSC::JSGlobalObject* globalOb
     return JSC::JSValue::encode(JSC::JSBigInt::unaryMinus(globalObject, x.asHeapBigInt()));
 }
 
-// `new RegExp(pattern, flags)` (UTF-8); throws SyntaxError on an invalid pattern or flags.
-JSC::EncodedJSValue JSC__JSValue__createRegExp(JSC::JSGlobalObject* globalObject, const uint8_t* pattern, size_t patternLen, const uint8_t* flags, size_t flagsLen)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::JSValue patternValue = JSC::jsString(vm, WTF::String::fromUTF8ReplacingInvalidSequences(std::span { pattern, patternLen }));
-    JSC::JSValue flagsValue = flagsLen ? JSC::JSValue(JSC::jsString(vm, WTF::String::fromUTF8ReplacingInvalidSequences(std::span { flags, flagsLen }))) : JSC::jsUndefined();
-    JSC::JSValue newTarget = globalObject->regExpConstructor();
-    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::regExpCreate(globalObject, newTarget, patternValue, flagsValue)));
-}
 
 uint64_t JSC__JSValue__toUInt64NoTruncate(JSC::EncodedJSValue val)
 {

@@ -95,12 +95,6 @@ fn data_to_js_with_check(
                 .and_then(|v| v.big_int_unary_minus(global))
                 .map_err(js_err)
         }
-        ExprData::ERegExp(e) => {
-            // `value` is the literal's full text: `/pattern/flags`.
-            let closing = bun_core::strings::last_index_of_char(&e.value, b'/').unwrap_or(0);
-            JSValue::create_reg_exp(global, &e.value[1..closing.max(1)], &e.value[closing + 1..])
-                .map_err(js_err)
-        }
         ExprData::EInlinedEnum(inlined) => {
             data_to_js_with_check(&inlined.value.data, global, stack_check)
         }

@@ -709,26 +709,6 @@ impl JSValue {
         debug_assert!(self.is_big_int());
         host_fn::from_js_host_call(global, || JSC__JSValue__bigIntUnaryMinus(global, self))
     }
-    /// `new RegExp(pattern, flags)`. Throws `SyntaxError` for an invalid
-    /// pattern or flags.
-    pub fn create_reg_exp(
-        global: &JSGlobalObject,
-        pattern: &[u8],
-        flags: &[u8],
-    ) -> JsResult<JSValue> {
-        host_fn::from_js_host_call(global, || {
-            // SAFETY: both slices are live for the duration of the call.
-            unsafe {
-                JSC__JSValue__createRegExp(
-                    global,
-                    pattern.as_ptr(),
-                    pattern.len(),
-                    flags.as_ptr(),
-                    flags.len(),
-                )
-            }
-        })
-    }
     /// `JSValue.fromEntries` — build a plain object from
     /// parallel `keys`/`values` `ZigString` arrays. When `clone` is true the
     /// C++ side copies the string bytes (caller may free `keys`/`values`).
@@ -2043,13 +2023,6 @@ unsafe extern "C" {
     ) -> JSValue;
     safe fn JSC__JSValue__bigIntSum(global: &JSGlobalObject, a: JSValue, b: JSValue) -> JSValue;
     safe fn JSC__JSValue__bigIntUnaryMinus(global: &JSGlobalObject, value: JSValue) -> JSValue;
-    fn JSC__JSValue__createRegExp(
-        global: &JSGlobalObject,
-        pattern: *const u8,
-        pattern_len: usize,
-        flags: *const u8,
-        flags_len: usize,
-    ) -> JSValue;
     fn JSC__JSValue__fromEntries(
         global: *const JSGlobalObject,
         keys: *mut bun_core::ZigString,

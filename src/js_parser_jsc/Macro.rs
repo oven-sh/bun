@@ -351,11 +351,6 @@ pub enum MacroValue {
         negative: bool,
         digits: Box<[u8]>,
     },
-    /// `/source/flags`, exactly as a literal would be written.
-    RegExp {
-        literal: Box<[u8]>,
-        flags_offset: Option<u16>,
-    },
     /// Always UTF-16 so the printer escapes it the same way regardless of the
     /// JS string's internal representation.
     String(Box<[u16]>),
@@ -482,19 +477,6 @@ fn materialize(value: &MacroValue, bump: &Arena, log: &mut Log, loc: Loc) -> cra
                     } else {
                         literal
                     }
-                }
-                MacroValue::RegExp {
-                    literal,
-                    flags_offset,
-                } => {
-                    let literal: &[u8] = self.bump.alloc_slice_copy(literal);
-                    Expr::init(
-                        E::RegExp {
-                            value: bun_ast::StoreStr::new(literal),
-                            flags_offset: *flags_offset,
-                        },
-                        loc,
-                    )
                 }
                 MacroValue::String(utf16) => {
                     let slice: &[u16] = self.bump.alloc_slice_copy(utf16);
@@ -681,6 +663,11 @@ pub struct MacroHost {
     /// How every other thread reaches the host VM: post a request, wake it.
     /// `Err` if the VM could not be created; every request then fails with it.
     handle: Result<VmHandle, Vec<u8>>,
+    /// Whether the host still takes requests. Cleared by the host thread, under
+    /// this lock, right before it releases whatever is queued; [`run`] posts
+    /// under it, so a request is either queued in time to be released or not
+    /// posted at all — never stranded.
+    accepting: bun_threading::Guarded<bool>,
     thread: bun_threading::Guarded<Option<std::thread::JoinHandle<()>>>,
 }
 
@@ -722,6 +709,7 @@ impl MacroHost {
             }
             MacroHost {
                 handle,
+                accepting: bun_threading::Guarded::new(true),
                 thread: bun_threading::Guarded::new(Some(thread)),
             }
         })
@@ -738,11 +726,14 @@ impl MacroHost {
         };
         let request_ptr: *mut MacroRequest<'_> = request;
         let task = NonNull::from(request.task.from(request_ptr, AutoDeinit::ManualDeinit));
-        match handle.post(task) {
-            bun_jsc::Posted::Queued => request.done.wait(),
-            // The host has already shut down (process exit is under way on
-            // another thread); `outcome` still holds its initial failure.
-            bun_jsc::Posted::Refused(_) => {}
+        let posted = {
+            let accepting = self.accepting.lock();
+            *accepting && matches!(handle.post(task), bun_jsc::Posted::Queued)
+        };
+        // Otherwise the host has shut down (process exit is under way on
+        // another thread); `outcome` still holds its initial failure.
+        if posted {
+            request.done.wait();
         }
     }
 
@@ -856,7 +847,9 @@ fn host_thread_main(seed: MacroHostSeed, ready: HostStartup) {
     vm.event_loop_mut().unref_keep_alive();
 
     // Requests whose promises never settled: their reactions will not run once
-    // script is forbidden, so answer them here.
+    // script is forbidden, so answer them here. Requests still queued are
+    // released (and so answered) now too, before teardown joins this VM's
+    // workers: a worker parked on one of them would never finish otherwise.
     for request in state.in_flight.take() {
         // SAFETY: an in-flight request's caller is parked until `done` is set.
         unsafe {
@@ -866,6 +859,10 @@ fn host_thread_main(seed: MacroHostSeed, ready: HostStartup) {
             (*request).done.set();
         }
     }
+    if let Some(host) = HOST.get() {
+        *host.accepting.lock() = false;
+    }
+    vm.release_queued_work();
     state.functions.borrow_mut().clear();
     HOST_STATE.set(core::ptr::null());
 
@@ -1260,19 +1257,9 @@ impl Convert<'_> {
         use ConsoleObject::formatter::Tag as T;
         let global = self.global;
         if value.js_type() == jsc::JSType::RegExpObject {
-            // `source` is already escaped so that `/source/flags` re-parses.
-            let source = value.get(global, "source")?.unwrap_or(JSValue::UNDEFINED);
-            let source = source.to_bun_string(global)?.to_owned_slice();
-            let flags = value.get(global, "flags")?.unwrap_or(JSValue::UNDEFINED);
-            let flags = flags.to_bun_string(global)?.to_owned_slice();
-            let literal = [b"/".as_slice(), &source, b"/", &flags].concat();
-            let flags_offset = u16::try_from(source.len() + 2).map_err(|_| {
-                ConvertError::Message("macro returned a RegExp too long to inline".into())
-            })?;
-            return Ok(MacroValue::RegExp {
-                flags_offset: (!flags.is_empty()).then_some(flags_offset),
-                literal: literal.into_boxed_slice(),
-            });
+            // The formatter tags these as strings; "/a/g" as a string literal
+            // is not what anyone returned.
+            return Err(self.cannot_coerce(value));
         }
         Ok(match T::get(value, global)?.tag.tag() {
             T::Undefined => MacroValue::Undefined,

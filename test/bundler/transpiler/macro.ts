@@ -24,10 +24,6 @@ export async function ireturnapromise() {
   return promise;
 }
 
-export function regexp(source: string, flags: string) {
-  return new RegExp(source, flags);
-}
-
 export function bigints() {
   return { big: 2n ** 64n + 1n, negative: -(2n ** 70n), zero: 0n, nested: [1n, { two: 2n }] };
 }

@@ -13,7 +13,6 @@ import defaultMacro, {
   identity as identity1,
   identity as identity2,
   ireturnapromise,
-  regexp,
 } from "./macro.ts" assert { type: "macro" };
 
 import * as macros from "./macro.ts" assert { type: "macro" };
@@ -38,18 +37,6 @@ test("type coercion", () => {
   expect(identity(1.5)).toBe(1.5);
   expect(identity(1)).toBe(1);
   expect(identity(true)).toBe(true);
-});
-
-test("RegExp return values become RegExp literals", () => {
-  const re = regexp("^a/b\\d+$", "gi");
-  expect(re).toBeInstanceOf(RegExp);
-  expect([re.source, re.flags]).toEqual(["^a\\/b\\d+$", "gi"]);
-  expect(re.test("A/B42")).toBe(true);
-  expect(regexp("", "").source).toBe("(?:)");
-  expect(identity({ inside: [regexp("x", "y")] }).inside[0].sticky).toBe(true);
-  // A literal is a fresh object per evaluation, unlike a shared constant.
-  const make = () => regexp("z", "g");
-  expect(make()).not.toBe(make());
 });
 
 test("BigInt return values become BigInt literals, and BigInt literals can be arguments", () => {
@@ -484,6 +471,23 @@ describe("the macro host", () => {
       lines: [`export const v = { hello: "world", nested: { list: [ 1, 2, 3 ] } };`],
       stderr: "",
     });
+    expect(exitCode).toBe(0);
+  });
+
+  // The worker is this VM's child, so exit joins it; it is busy, then transpiles a file that calls a
+  // macro — a request that reaches the host after it stopped. It must be answered, not stranded.
+  test.concurrent("exit does not hang on a Worker a macro started that is itself waiting on a macro", async () => {
+    const { lines, exitCode } = await run(
+      {
+        "inner.ts": `export function one() { return 1; }`,
+        "uses.ts": `import { one } from "./inner.ts" with { type: "macro" };\nexport const v = one();\n`,
+        "worker.ts": `const t = Date.now(); while (Date.now() - t < 300) {}\npostMessage(require("./uses.ts").v);\n`,
+        "m.ts": `export function spawn() { new Worker(new URL("./worker.ts", import.meta.url).href); return 1; }`,
+        "index.ts": `import { spawn } from "./m.ts" with { type: "macro" };\nconsole.log("value", spawn());\n`,
+      },
+      ["run", "index.ts"],
+    );
+    expect(lines).toEqual(["value 1"]);
     expect(exitCode).toBe(0);
   });
 

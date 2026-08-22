@@ -1751,7 +1751,14 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
     // test() prints these two lines when called; each hook prints a line when it
     // runs. createParentAndChildren() prints "finalize order: ..." from the
     // parent's napi_wrap finalizer.
-    const setupOutput = "Added hooks in order: 1, 2, 3\nThey should execute in reverse order: 3, 2, 1\n";
+    const setupLines = ["Added hooks in order: 1, 2, 3", "They should execute in reverse order: 3, 2, 1"];
+    const teardownLines = [
+      ...setupLines,
+      "hook3 executed at position 0",
+      "hook2 executed at position 1",
+      "hook1 executed at position 2",
+      "finalize order: 1 0",
+    ];
     const setup = `
       const hooks = require(${JSON.stringify(hooksAddon)});
       const wraps = require(${JSON.stringify(wrapsAddon)});
@@ -1759,6 +1766,9 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
       globalThis.keep = wraps.createParentAndChildren(1);
     `;
 
+    // Returns stdout as a sorted list of lines. The addons print with printf(),
+    // which on Windows ends lines with \r\n and buffers each addon's output in
+    // its own CRT until exit, so only the set of lines is stable there.
     async function run(code: string, env: Record<string, string>) {
       await using proc = spawn({
         cmd: [bunExe(), "-e", code],
@@ -1767,7 +1777,7 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      return { stdout, stderr, exitCode };
+      return { lines: stdout.split(/\r?\n/).filter(Boolean).sort(), stderr, exitCode };
     }
 
     it("process.exit() skips it, like Node", async () => {
@@ -1775,39 +1785,33 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
     });
 
     it("an uncaught exception while the entry point runs skips it", async () => {
-      const { stdout, stderr, exitCode } = await run(`${setup}; throw new Error("fatal");`, noDestruct);
+      const { lines, stderr, exitCode } = await run(`${setup}; throw new Error("fatal");`, noDestruct);
       expect(stderr).toContain("fatal");
-      expect(stdout).toBe(setupOutput);
+      expect(lines).toEqual(setupLines.toSorted());
       expect(exitCode).toBe(1);
     });
 
     it("an uncaught exception from the event loop skips it", async () => {
-      const { stdout, stderr, exitCode } = await run(
+      const { lines, stderr, exitCode } = await run(
         `${setup}; setTimeout(() => { throw new Error("fatal"); }, 1);`,
         noDestruct,
       );
       expect(stderr).toContain("fatal");
-      expect(stdout).toBe(setupOutput);
+      expect(lines).toEqual(setupLines.toSorted());
       expect(exitCode).toBe(1);
     });
 
     it("an event loop that runs dry tears it down", async () => {
-      const { stdout, stderr, exitCode } = await run(setup, noDestruct);
+      const { lines, stderr, exitCode } = await run(setup, noDestruct);
       expect(stderr).toBe("");
-      expect(stdout).toBe(
-        setupOutput +
-          "hook3 executed at position 0\nhook2 executed at position 1\nhook1 executed at position 2\nfinalize order: 1 0\n",
-      );
+      expect(lines).toEqual(teardownLines.toSorted());
       expect(exitCode).toBe(0);
     });
 
     it("process.exit() still tears it down when the VM is destroyed on exit", async () => {
-      const { stdout, stderr, exitCode } = await run(`${setup}; process.exit(0);`, { BUN_DESTRUCT_VM_ON_EXIT: "1" });
+      const { lines, stderr, exitCode } = await run(`${setup}; process.exit(0);`, { BUN_DESTRUCT_VM_ON_EXIT: "1" });
       expect(stderr).toBe("");
-      expect(stdout).toBe(
-        setupOutput +
-          "hook3 executed at position 0\nhook2 executed at position 1\nhook1 executed at position 2\nfinalize order: 1 0\n",
-      );
+      expect(lines).toEqual(teardownLines.toSorted());
       expect(exitCode).toBe(0);
     });
   });

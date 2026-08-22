@@ -764,3 +764,94 @@ describe("conversions between color spaces", () => {
     );
   });
 });
+
+// In the modern (space separated) syntax, the saturation and lightness of hsl()
+// and the whiteness and blackness of hwb() are <percentage> | <number> | none,
+// and the number is the percentage without its sign: hsl(120 50 40) is
+// hsl(120 50% 40%). The legacy comma syntax takes only percentages.
+// https://www.w3.org/TR/css-color-4/#the-hsl-notation
+// https://www.w3.org/TR/css-color-4/#the-hwb-notation
+describe("hsl() and hwb() number channels", () => {
+  // Every expected value is what the same color spelled with percentages gives,
+  // and what lightningcss 1.30 emits for the number spelling.
+  test.each([
+    ["hsl(120 50 40)", "#393"],
+    ["hsl(120 50 40%)", "#393"],
+    ["hsl(120 50% 40)", "#393"],
+    ["hsl(120deg 50 40)", "#393"],
+    ["hsla(120 50 40)", "#393"],
+    ["hsl(120 50 40 / 0.5)", "#33993380"],
+    ["hsl(120 50 40 / 50%)", "#33993380"],
+    ["hsla(120 50 40 / 0.5)", "#33993380"],
+    ["hsl(120 none 40)", "#666"],
+    ["hsl(120 50 none)", "#000"],
+    ["hsl(none 50 40)", "#933"],
+    ["hsl(120.5 50.5 40.5)", "#339b34"],
+    ["hsl(120 .5 40)", "#656765"],
+    ["hsl(120 1e1 40)", "#5c705c"],
+    ["hsl(120 calc(25 * 2) 40)", "#393"],
+    ["hsl(120 calc(25% * 2) 40)", "#393"],
+    ["hsl(120 50 calc(20 * 2))", "#393"],
+    ["hwb(120 20 30)", "#33b333"],
+    ["hwb(120 20 30%)", "#33b333"],
+    ["hwb(120 20% 30)", "#33b333"],
+    ["hwb(120deg 20 30)", "#33b333"],
+    ["hwb(120 20 30 / 0.5)", "#33b33380"],
+    ["hwb(120 none 30)", "#00b300"],
+    ["hwb(120 20 none)", "#3f3"],
+    ["hwb(120 0 0)", "#0f0"],
+    ["hwb(120 100 0)", "#fff"],
+    ["hwb(120 0 100)", "#000"],
+    ["hwb(120 calc(10 * 2) 30)", "#33b333"],
+    // Relative color syntax is the modern syntax, so it takes numbers too, as
+    // do the origin colors and the operands of color-mix().
+    ["hsl(from red h 50 l)", "#bf4040"],
+    ["hwb(from red h 20 b)", "#f33"],
+    ["hsl(from hsl(120 50 40) h s l)", "#393"],
+    ["hwb(from hwb(120 20 30) h w b)", "#33b333"],
+    ["rgb(from hsl(120 50 40) r g b)", "#393"],
+    ["color-mix(in hsl, hsl(120 50 40), hwb(120 20 30))", "#33a633"],
+  ])("%s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+
+  // Out-of-range numbers clamp exactly like the corresponding percentages:
+  // hsl() to 0..100, hwb() to 0..100 and then w + b is normalized to 100.
+  test.each([
+    ["hsl(120 150 40)", "hsl(120 150% 40%)", "#00cc00"],
+    ["hsl(120 -50 40)", "hsl(120 -50% 40%)", "#666666"],
+    ["hsl(120 50 140)", "hsl(120 50% 140%)", "#ffffff"],
+    ["hsl(120 50 -40)", "hsl(120 50% -40%)", "#000000"],
+    ["hwb(120 60 60)", "hwb(120 60% 60%)", "#808080"],
+    ["hwb(120 -20 30)", "hwb(120 -20% 30%)", "#00b300"],
+    ["hwb(120 20 130)", "hwb(120 20% 130%)", "#2a2a2a"],
+  ])("%s is %s", (numbers, percentages, expected) => {
+    expect(color(numbers, "hex")).toBe(expected);
+    expect(color(percentages, "hex")).toBe(expected);
+  });
+
+  test.each([
+    "hsl(120, 50, 40)",
+    "hsl(120, 50%, 40)",
+    "hsl(120, 50, 40%)",
+    "hsla(120, 50, 40, 0.5)",
+    // hwb() has no legacy syntax at all.
+    "hwb(120, 20, 30)",
+    "hwb(120, 20%, 30%)",
+    "hsl(120 50, 40)",
+    "hsl(120 50 40 60)",
+    // The legacy rgb() percentage form shares the percentage parser and still
+    // does not take numbers.
+    "rgb(10%, 20, 30)",
+  ])("%s is invalid", input => {
+    expect(color(input, "css")).toBeNull();
+  });
+
+  test.each([
+    ["hsl(120, 50%, 40%)", "#393"],
+    ["hsla(120, 50%, 40%, 0.5)", "#33993380"],
+    ["rgb(10%, 20%, 30%)", "#1a334d"],
+  ])("%s still parses", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+});

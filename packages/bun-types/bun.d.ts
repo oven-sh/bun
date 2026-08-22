@@ -8421,6 +8421,11 @@ declare module "bun" {
     readonly name: string;
     readonly kind: "exact" | "catch-all" | "optional-catch-all" | "dynamic";
     readonly src: string;
+    /**
+     * Legacy name for {@link MatchedRoute.src} (same value)
+     * @deprecated Use src instead
+     */
+    readonly scriptSrc: string;
   }
 
   /**

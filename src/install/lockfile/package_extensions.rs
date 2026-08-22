@@ -116,7 +116,9 @@ impl Lockfile {
         // Which edges to add: matching extensions, minus names the package (or
         // an earlier extension) already declares. `to_add` borrows from
         // `extensions`, not from `self`, so the lockfile can be mutated below.
-        let mut to_add: Vec<(&[u8], &[u8], Behavior)> = Vec::new();
+        let mut to_add: Vec<(&[u8], &[u8], Behavior, u64)> = Vec::new();
+        // For diagnostics; borrowed from the matching extension, not `self`.
+        let mut package_name: &[u8] = b"";
         {
             let buf = self.buffers.string_bytes.as_slice();
             let name = self.packages.items_name()[idx].slice(buf);
@@ -126,14 +128,15 @@ impl Lockfile {
                 if *extension.name != *name || !range_matches(&extension.range, version, buf) {
                     continue;
                 }
+                package_name = &extension.name;
                 for dep in &extension.dependencies {
                     let hash = semver::string::Builder::string_hash(&dep.name);
                     if existing.iter().any(|d| d.name_hash == hash)
-                        || to_add.iter().any(|(n, _, _)| *n == &*dep.name)
+                        || to_add.iter().any(|(_, _, _, h)| *h == hash)
                     {
                         continue;
                     }
-                    to_add.push((&dep.name, &dep.version, dep.behavior));
+                    to_add.push((&dep.name, &dep.version, dep.behavior, hash));
                 }
             }
         }
@@ -142,37 +145,54 @@ impl Lockfile {
         }
 
         // Strings first (count -> allocate -> append), then the `Dependency`
-        // values, parsed exactly like a manifest entry in `Package::from_npm`.
+        // values, parsed like a manifest entry in `Package::from_npm` (except
+        // that an unparseable version is warned about and the edge skipped).
         let mut new_deps: Vec<Dependency> = Vec::with_capacity(to_add.len());
         {
             let mut builder = crate::string_builder!(self);
-            for (name, version, _) in &to_add {
+            for (name, version, _, _) in &to_add {
                 builder.count(name);
                 builder.count(version);
             }
             builder.allocate()?;
-            for (name, version, behavior) in &to_add {
-                let name: ExternalString = builder.append::<ExternalString>(name);
-                let version: SemverString = builder.append::<SemverString>(version);
+            for (name_text, version_text, behavior, hash) in &to_add {
+                let name: ExternalString =
+                    builder.append_with_hash::<ExternalString>(name_text, *hash);
+                let version: SemverString = builder.append::<SemverString>(version_text);
                 let sliced = version.sliced(builder.string_bytes.as_slice());
+                let Some(version) = Dependency::parse(
+                    name.value,
+                    Some(name.hash),
+                    sliced.slice,
+                    &sliced,
+                    Some(&mut *log),
+                    Some(&mut *pm),
+                ) else {
+                    log.add_warning_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "packageExtensions: ignoring \"{}\": \"{}\" for {}, invalid dependency version",
+                            bstr::BStr::new(name_text),
+                            bstr::BStr::new(version_text),
+                            bstr::BStr::new(package_name),
+                        ),
+                    );
+                    continue;
+                };
                 let mut dependency = Dependency {
                     name: name.value,
                     name_hash: name.hash,
                     behavior: *behavior,
-                    version: Dependency::parse(
-                        name.value,
-                        Some(name.hash),
-                        sliced.slice,
-                        &sliced,
-                        Some(&mut *log),
-                        Some(&mut *pm),
-                    )
-                    .unwrap_or_default(),
+                    version,
                 };
                 lockfile::CatalogMap::strip_reference(&mut dependency);
                 new_deps.push(dependency);
             }
             builder.clamp();
+        }
+        if new_deps.is_empty() {
+            return Ok(0);
         }
 
         // Splice into the package's dependency slice. When the slice is the
@@ -233,16 +253,14 @@ impl Lockfile {
         self.packages.items_resolutions_mut()[idx] = PackageIDSlice::new(new_off, new_len);
 
         if let Some(ids) = added_ids {
-            let injected = |d: &Dependency| {
-                to_add
-                    .iter()
-                    .any(|(n, _, _)| semver::string::Builder::string_hash(n) == d.name_hash)
-            };
             for (i, dependency) in deps[new_off as usize..(new_off + new_len) as usize]
                 .iter()
                 .enumerate()
             {
-                if injected(dependency) {
+                if to_add
+                    .iter()
+                    .any(|(_, _, _, hash)| *hash == dependency.name_hash)
+                {
                     ids.push(new_off + u32::try_from(i).expect("int cast"));
                 }
             }

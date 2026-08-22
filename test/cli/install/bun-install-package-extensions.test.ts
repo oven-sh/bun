@@ -280,12 +280,41 @@ test("malformed package.json packageExtensions entries warn and are skipped", as
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [_, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(err).toContain("warn: Expected a version range string");
   expect(err).toContain("warn: Expected an object with");
   expect(err).not.toContain("error:");
-  expect(await lockfileEntry(packageDir, "a-dep")).toEqual({});
   expect(exitCode).toBe(0);
+  expect(await lockfileEntry(packageDir, "a-dep")).toEqual({});
+});
+
+test("the same name in several groups follows package.json rules", async () => {
+  // optionalDependencies overrides dependencies; a peerDependencies entry for a
+  // name that is already a (optional) dependency is ignored, optional or not.
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "hoisted" } });
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "app",
+      dependencies: { "a-dep": "1.0.9" },
+      packageExtensions: {
+        "a-dep": {
+          dependencies: { "no-deps": "1.0.0", "peer-no-deps": "1.0.0" },
+          optionalDependencies: { "no-deps": "1.0.1" },
+          peerDependencies: { "no-deps": "*", "peer-no-deps": "*" },
+          peerDependenciesMeta: { "peer-no-deps": { optional: true } },
+        },
+      },
+    }),
+  );
+
+  await runBunInstall(bunEnv, packageDir);
+  expect(await lockfileEntry(packageDir, "a-dep")).toEqual({
+    dependencies: { "peer-no-deps": "1.0.0" },
+    optionalDependencies: { "no-deps": "1.0.1" },
+  });
+  expect(await installedVersion(packageDir, "hoisted", "no-deps", "1.0.1")).toBe("1.0.1");
+  expect(await installedVersion(packageDir, "hoisted", "peer-no-deps", "1.0.0")).toBe("1.0.0");
 });
 
 test("malformed bunfig.toml packageExtensions is a config error", async () => {
@@ -303,7 +332,7 @@ test("malformed bunfig.toml packageExtensions is a config error", async () => {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [_, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(err).toContain(`Expected "packageExtensions" to be an object`);
   expect(exitCode).not.toBe(0);
 });

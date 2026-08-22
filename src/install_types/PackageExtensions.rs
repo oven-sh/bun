@@ -168,9 +168,13 @@ pub fn parse_from_expr(
                     };
                     // Same name in two groups: like a manifest,
                     // `optionalDependencies` overrides `dependencies` and a
-                    // duplicate `peerDependencies` entry is ignored.
+                    // duplicate `peerDependencies` entry (optional or not) is
+                    // ignored. (`is_optional()` is already false for optional
+                    // peers; the peer check just makes that explicit.)
                     match extension.dependencies.iter_mut().find(|d| *d.name == *dep_name) {
-                        Some(existing) if behavior.is_optional() => *existing = dependency,
+                        Some(existing) if behavior.is_optional() && !behavior.is_peer() => {
+                            *existing = dependency
+                        }
                         Some(_) => {}
                         None => extension.dependencies.push(dependency),
                     }

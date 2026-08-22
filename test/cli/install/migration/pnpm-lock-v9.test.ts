@@ -2805,6 +2805,7 @@ snapshots:
     expect(stderr).toContain("moved pnpm.packageExtensions to packageExtensions");
     expect(stderr).toContain("pnpm-workspace.yaml packageExtensions to packageExtensions");
     expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+    expect(exitCode).toBe(0);
     expect(await Bun.file(join(String(dir), "package.json")).json()).toStrictEqual({
       name: "package-extensions",
       dependencies: { "is-even": "1.0.0" },
@@ -2818,7 +2819,6 @@ snapshots:
       /"is-even": \["is-even@1\.0\.0", "[^"]*", \{ "dependencies": \{ "is-buffer": "1\.1\.6", "is-odd": "0\.1\.2" \} \}/,
     );
     expect(bunLock).toMatch(/"is-odd": \["is-odd@0\.1\.2", "[^"]*", \{ "peerDependencies": \{ "is-number": "\*" \} \}/);
-    expect(exitCode).toBe(0);
   });
 
   test.concurrent("link: version with a semver specifier resolves to the workspace (pnpm/pnpm#7712)", async () => {

@@ -1491,6 +1491,25 @@ it.if(isWindows)("throws a spawn error for a cwd longer than the maximum path le
   expect(exitCode).toBe(0);
 });
 
+// CreateProcess rejects a file that is not a PE image with a Win32 error libuv has
+// no errno for, so uv_spawn fails with UV_UNKNOWN (-4094), which libuv, node and
+// util.getSystemErrorName all name "UNKNOWN".
+it.if(isWindows)("spawn errors libuv reports as UV_UNKNOWN use node's UNKNOWN code", () => {
+  using dir = tempDir("spawn-unknown-error", { "bad.exe": "\x00\x01\x02garbage\n" });
+  const exe = join(String(dir), "bad.exe");
+  function thrownBy(fn: () => unknown) {
+    try {
+      fn();
+    } catch (e: any) {
+      return { code: e.code, errno: e.errno, message: e.message };
+    }
+    return "did not throw";
+  }
+  const expected = { code: "UNKNOWN", errno: -4094, message: "UNKNOWN: unknown error, uv_spawn" };
+  expect(thrownBy(() => spawnSync({ cmd: [exe] }))).toEqual(expected);
+  expect(thrownBy(() => spawn({ cmd: [exe] }))).toEqual(expected);
+});
+
 describe("onDisconnect", () => {
   it.todoIf(isWindows)("ipc delivers message", async () => {
     const msg = Promise.withResolvers<void>();

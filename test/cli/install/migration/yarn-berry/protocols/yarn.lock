@@ -17,7 +17,7 @@ __metadata:
   resolution: "berry-protocols@workspace:."
   dependencies:
     local-file: "file:./local-file"
-    local-link: "link:./local-link"
+    local-link: "link:local-link"
     local-portal: "portal:./local-portal"
   languageName: unknown
   linkType: soft
@@ -31,9 +31,9 @@ __metadata:
   languageName: node
   linkType: hard
 
-"local-link@link:./local-link::locator=berry-protocols%40workspace%3A.":
+"local-link@link:local-link::locator=berry-protocols%40workspace%3A.":
   version: 0.0.0-use.local
-  resolution: "local-link@link:./local-link::locator=berry-protocols%40workspace%3A."
+  resolution: "local-link@link:local-link::locator=berry-protocols%40workspace%3A."
   languageName: node
   linkType: soft
 

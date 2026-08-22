@@ -1,13 +1,15 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
 import { readdir } from "fs/promises";
-import { bunEnv, bunExe, nodeModulesPackages, VerdaccioRegistry } from "harness";
+import { bunEnv, bunExe, nodeModulesPackages, normalizeBunSnapshot, toBeValidBin, VerdaccioRegistry } from "harness";
 import { join } from "path";
 
 // Migration of yarn 2+ ("berry") lockfiles. Every fixture pins versions that are
 // NOT the newest ones the registry has for the requested ranges (e.g. no-deps@^1.0.0
 // is locked to 1.0.0 while 1.0.1 and 1.1.0 exist), so a test only passes if the
 // pins came from yarn.lock rather than from a fresh resolve.
+
+expect.extend({ toBeValidBin });
 
 const verdaccio = new VerdaccioRegistry();
 
@@ -92,7 +94,7 @@ describe("yarn berry migration", () => {
       node_modules/peer-deps-fixed/peer-deps-fixed@1.0.0
       node_modules/what-bin/what-bin@1.0.0"
     `);
-    expect(existsSync(join(dir, "node_modules", ".bin", "what-bin"))).toBeTrue();
+    expect(join(dir, "node_modules", ".bin", "what-bin")).toBeValidBin(join("..", "what-bin", "what-bin.js"));
 
     await expectFrozenInstall(dir);
     // nothing left to re-resolve: a plain install does not touch the lockfile
@@ -152,7 +154,7 @@ describe("yarn berry migration", () => {
     expect(exitCode).toBe(0);
 
     const bunLock = await bunLockOf(dir);
-    expect(bunLock).toMatchSnapshot();
+    expect(normalizeBunSnapshot(bunLock, dir)).toMatchSnapshot();
     expect(lockedVersions(bunLock)).toEqual([
       "@types/is-number@1.0.0",
       "a-dep@1.0.2",
@@ -258,13 +260,14 @@ describe("yarn berry migration", () => {
     expect(stderr).toContain("migrated lockfile from yarn.lock");
     // bun has no protocol for a symlinked folder outside `workspaces`, so these become copies
     expect(stderr).toContain(`"local-portal@portal:./local-portal" is migrated as "file:local-portal"`);
-    expect(stderr).toContain(`"local-link@link:./local-link" is migrated as "file:local-link"`);
+    // a bare `link:dir` (no `./`) is still yarn's folder link, not a `bun link` name
+    expect(stderr).toContain(`"local-link@link:local-link" is migrated as "file:local-link"`);
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
     expect((await Bun.file(join(dir, "package.json")).json()).dependencies).toEqual({
       "local-file": "file:./local-file",
-      "local-link": "file:./local-link",
+      "local-link": "file:local-link",
       "local-portal": "file:./local-portal",
     });
     const bunLock = await bunLockOf(dir);
@@ -360,7 +363,7 @@ describe("yarn berry migration", () => {
       files: {
         "package.json": JSON.stringify({
           name: "berry-registries",
-          dependencies: { "no-deps": "^1.0.0", "a-dep": "^1.0.1" },
+          dependencies: { "no-deps": "^1.0.0", "a-dep": "^1.0.1", "what-bin": "1.0.0" },
         }),
         ".yarnrc.yml": `npmRegistryServer: "${other}"\n`,
         "yarn.lock": `__metadata:
@@ -379,12 +382,21 @@ describe("yarn berry migration", () => {
   dependencies:
     a-dep: "npm:^1.0.1"
     no-deps: "npm:^1.0.0"
+    what-bin: "npm:1.0.0"
   languageName: unknown
   linkType: soft
 
 "no-deps@npm:^1.0.0":
   version: 1.0.0
   resolution: "no-deps@npm:1.0.0"
+  languageName: node
+  linkType: hard
+
+"what-bin@npm:1.0.0":
+  version: 1.0.0
+  resolution: "what-bin@npm:1.0.0::__archiveUrl=${encodeURIComponent(`${other}what-bin/-/what-bin-1.0.0.tgz`)}"
+  bin:
+    what-bin: what-bin.js
   languageName: node
   linkType: hard
 `,
@@ -396,6 +408,10 @@ describe("yarn berry migration", () => {
       `warn: fetching yarn.lock packages from ${other} (npmRegistryServer in .yarnrc.yml); add it to bunfig.toml or .npmrc if it needs authentication`,
     );
     expect(stderr.match(/npmRegistryServer/g)?.length).toBe(1);
+    // an `__archiveUrl` on another host than the manifest bun fetched cannot get that manifest's integrity
+    expect(stderr).toContain(
+      `warn: 1 package uses a tarball URL the registry manifest does not list (e.g. "what-bin@npm:1.0.0::__archiveUrl=${encodeURIComponent(`${other}what-bin/-/what-bin-1.0.0.tgz`)}"); it will be downloaded without an integrity check`,
+    );
     expect(stderr).toContain("migrated lockfile from yarn.lock");
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
@@ -403,10 +419,17 @@ describe("yarn berry migration", () => {
     const bunLock = await bunLockOf(dir);
     // no integrity: the manifest bun fetched is from another registry than the tarball
     expect(bunLock).toContain(`["no-deps@1.0.0", "http://127.0.0.1:1234/no-deps/-/no-deps-1.0.0.tgz", {}, ""]`);
-    expect(bunLock).toContain(`["a-dep@1.0.2", "http://localhost:1234/a-dep/-/a-dep-1.0.2.tgz", {}`);
+    // `__archiveUrl` under the configured registry: kept, with the manifest's integrity
+    expect(bunLock).toContain(
+      `["a-dep@1.0.2", "http://localhost:1234/a-dep/-/a-dep-1.0.2.tgz", {}, "sha512-786lp/Wqdz6jY9NOPFnU2OZAl/7wW/CWCHNn4I+0Or9NtA0F9I1TXtisuy8hMFw/6u6CYXwlzdwySiOdpJ94oQ=="]`,
+    );
+    expect(bunLock).toContain(
+      `["what-bin@1.0.0", "http://127.0.0.1:1234/what-bin/-/what-bin-1.0.0.tgz", { "bin": { "what-bin": "what-bin.js" } }, ""]`,
+    );
     expect(nodeModulesPackages(dir)).toMatchInlineSnapshot(`
       "node_modules/a-dep/a-dep@1.0.2
-      node_modules/no-deps/no-deps@1.0.0"
+      node_modules/no-deps/no-deps@1.0.0
+      node_modules/what-bin/what-bin@1.0.0"
     `);
 
     await expectFrozenInstall(dir);

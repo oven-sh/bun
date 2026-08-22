@@ -52,6 +52,5 @@ exports[`yarn berry migration workspaces and workspace: ranges 1`] = `
 
     "two-range-deps": ["two-range-deps@1.0.0", "http://localhost:1234/two-range-deps/-/two-range-deps-1.0.0.tgz", { "dependencies": { "@types/is-number": ">=1.0.0", "no-deps": "^1.0.0" } }, "sha512-N+6kPy/GxuMncNz/EKuIrwdoYbh1qmvHDnw1UbM3sQE184kBn+6qAQgtf1wgT9dJnt6X+tWcTzSmfDvtJikVBA=="],
   }
-}
-"
+}"
 `;

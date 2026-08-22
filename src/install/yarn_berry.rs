@@ -50,6 +50,7 @@ use crate::lockfile_real::package::value_loc_of;
 use crate::lockfile_real::package::workspace_map::{MissingWorkspace, NamesArray, WorkspaceMap};
 use crate::npm;
 use crate::package_manager_real::update_package_json_and_install::print_package_json_into_cache_entry;
+use crate::pnpm::e_object_mut;
 use crate::repository::Repository;
 use crate::resolution::{Resolution, TaggedValue};
 use crate::versioned_url::VersionedURLType;
@@ -509,6 +510,9 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
     let mut locator_to_entry: StringArrayHashMap<usize> = StringArrayHashMap::new();
     // workspace path in the lockfile -> entry
     let mut lockfile_workspaces: StringArrayHashMap<usize> = StringArrayHashMap::new();
+    // `name@link:path` descriptors (without `::locator=`): yarn's `link:` is a
+    // folder, unlike bun's
+    let mut yarn_links: StringArrayHashMap<()> = StringArrayHashMap::new();
 
     for prop in root_obj.properties.slice() {
         let (Some(key), Some(value)) = (&prop.key, &prop.value) else {
@@ -575,6 +579,12 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
                 continue;
             }
             descriptor_to_entry.put(desc, idx)?;
+            if reference.starts_with(b"link:") {
+                yarn_links.put(
+                    strings::split_once(desc, b"::").map_or(desc, |(bare, _)| bare),
+                    (),
+                )?;
+            }
             if let Some((bare, _)) = strings::split_once(desc, b"::") {
                 let e = bare_descriptor_to_entry.get_or_put(bare)?;
                 *e.value_ptr = if e.found_existing && *e.value_ptr != idx {
@@ -723,6 +733,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
             Some(&workspaces),
             &mut root_rewrites,
             &mut original_specs,
+            &yarn_links,
         )?;
         pkg.dependencies = ExternalSlice::new(off, len);
         pkg.resolutions = ExternalSlice::new(off, len);
@@ -765,6 +776,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
             None,
             &mut ws.rewrites,
             &mut original_specs,
+            &yarn_links,
         )?;
         pkg.dependencies = ExternalSlice::new(off, len);
         pkg.resolutions = ExternalSlice::new(off, len);
@@ -789,6 +801,8 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
 
     // -- 3. third-party packages -----------------------------------------------
     let mut warned_registries: StringArrayHashMap<()> = StringArrayHashMap::new();
+    // entries whose tarball lives outside the registry's conventional path
+    let mut archive_url_entries: Vec<usize> = Vec::new();
     let mut skipped: u32 = 0;
     for i in 0..entries.len() {
         if entries[i].kind != EntryKind::Package {
@@ -817,7 +831,10 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
             }
             let version = parsed.version.min();
             let url = match param(&params, b"__archiveUrl") {
-                Some(url) => sbuf!(this).append(url)?,
+                Some(url) => {
+                    archive_url_entries.push(i);
+                    sbuf!(this).append(url)?
+                }
                 None => {
                     let registry =
                         registry_for(manager, &yarnrc, name, &mut warned_registries, silent)?;
@@ -1116,6 +1133,36 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
     // bins yarn did not record (older lockfiles), os/cpu for lockfiles without
     // `conditions`, and tarball integrity, all from the registry manifests.
     this.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration::<true, true>(manager)?;
+    // An `__archiveUrl` the registry manifest does not vouch for (another host and
+    // not the manifest's own `dist.tarball`) is kept, but gets no integrity.
+    if !silent {
+        let unverified: Vec<usize> = archive_url_entries
+            .iter()
+            .copied()
+            .filter(|&i| {
+                let pid = entries[i].package_id;
+                pid != INVALID_PACKAGE_ID
+                    && !this.packages.items_meta()[pid as usize]
+                        .integrity
+                        .tag
+                        .is_supported()
+            })
+            .collect();
+        if let Some(&first) = unverified.first() {
+            bun_core::warn!(
+                "{} {} a tarball URL the registry manifest does not list (e.g. \"{}@{}\"); {} will be downloaded without an integrity check",
+                unverified.len(),
+                if unverified.len() == 1 {
+                    "package uses"
+                } else {
+                    "packages use"
+                },
+                bstr::BStr::new(entries[first].name),
+                bstr::BStr::new(entries[first].reference),
+                if unverified.len() == 1 { "it" } else { "they" },
+            );
+        }
+    }
 
     // -- 5. package.json edits ----------------------------------------------------
     // patches into the lockfile so this very install applies them
@@ -1448,6 +1495,7 @@ fn append_manifest_dependencies(
     root_workspaces: Option<&Vec<Workspace>>,
     rewrites: &mut Vec<ManifestRewrite>,
     original_specs: &mut OriginalSpecs,
+    yarn_links: &StringArrayHashMap<()>,
 ) -> Result<(u32, u32), Error> {
     let off = this.buffers.dependencies.len();
     let optional_peers = optional_names(manifest, b"peerDependenciesMeta");
@@ -1494,9 +1542,19 @@ fn append_manifest_dependencies(
             let rewritten: Option<Vec<u8>> = if spec.starts_with(b"patch:") {
                 Some(patch_inner_range(spec).to_vec())
             } else {
+                // `portal:` is always a path; a bare `link:name` could be a `bun link`
+                // registration, so `link:` needs to look like a path or be what yarn
+                // locked as one
                 spec.strip_prefix(b"portal:")
-                    .or_else(|| spec.strip_prefix(b"link:"))
-                    .filter(|p| p.starts_with(b".") || bun_paths::is_absolute(p))
+                    .or_else(|| {
+                        spec.strip_prefix(b"link:").filter(|p| {
+                            p.starts_with(b".")
+                                || bun_paths::is_absolute(p)
+                                || strings::contains_char(p, b'/')
+                                || yarn_links.contains(&[name, b"@", spec].concat())
+                        })
+                    })
+                    .filter(|p| !p.is_empty())
                     .map(|path| [b"file:".as_slice(), path].concat())
             };
             if let Some(new_spec) = rewritten {
@@ -1606,13 +1664,6 @@ fn sort_dependencies(this: &mut Lockfile, off: usize) {
     let mut appended = this.buffers.dependencies.split_off(off);
     bun_collections::index_sort::sort_vec_by(&mut appended, |a, b| Dependency::cmp(bytes, a, b));
     this.buffers.dependencies.append(&mut appended);
-}
-
-fn e_object_mut(expr: &mut Expr) -> &mut E::Object {
-    match &mut expr.data {
-        ExprData::EObject(o) => &mut **o,
-        _ => unreachable!("e_object_mut called on non-object"),
-    }
 }
 
 fn string_expr(s: &[u8]) -> Expr {

@@ -456,7 +456,7 @@ fn e_object(expr: &Expr) -> &E::Object {
     }
 }
 
-fn e_object_mut(expr: &mut Expr) -> &mut E::Object {
+pub(crate) fn e_object_mut(expr: &mut Expr) -> &mut E::Object {
     match &mut expr.data {
         ExprData::EObject(o) => &mut **o,
         _ => unreachable!("e_object_mut called on non-object"),

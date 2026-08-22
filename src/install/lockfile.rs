@@ -1562,8 +1562,9 @@ impl Lockfile {
                             pkg_meta.arch = pkg.package.cpu;
                         }
                     }
-                    // Only when the tarball comes from the registry the manifest was
-                    // fetched from; a fresh resolve records the same value.
+                    // Only when the tarball is the one the manifest describes: under the
+                    // registry it was fetched from, or its recorded `dist.tarball`. A
+                    // fresh resolve records the same value.
                     if FILL_INTEGRITY
                         && !pkg_meta.integrity.tag.is_supported()
                         && pkg.package.integrity.tag.is_supported()
@@ -1572,7 +1573,10 @@ impl Lockfile {
                             .npm()
                             .url
                             .slice(self.buffers.string_bytes.as_slice());
-                        if url.is_empty() || bun_lock::url_is_under_registry(url, scope.url.href())
+                        if url.is_empty()
+                            || bun_lock::url_is_under_registry(url, scope.url.href())
+                            || (!url.is_empty()
+                                && url == pkg.package.tarball_url.slice(&manifest.string_buf))
                         {
                             pkg_meta.integrity = pkg.package.integrity;
                         }

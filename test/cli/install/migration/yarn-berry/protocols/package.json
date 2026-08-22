@@ -2,7 +2,7 @@
   "name": "berry-protocols",
   "dependencies": {
     "local-file": "file:./local-file",
-    "local-link": "link:./local-link",
+    "local-link": "link:local-link",
     "local-portal": "portal:./local-portal"
   }
 }

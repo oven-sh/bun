@@ -6,6 +6,9 @@
 #include <wtf/WTFConfig.h>
 #include <sys/resource.h>
 #include <fcntl.h>
+#include <pthread.h>
+#include <algorithm>
+#include <iterator>
 #include <sys/stat.h>
 #include <signal.h>
 #include <unistd.h>
@@ -295,6 +298,25 @@ static void unset_cloexec(int fd)
     fcntl(fd, F_SETFD, flags);
 }
 
+static pthread_t reloading_thread;
+
+// The execve on reloading_thread makes clone() fail with EAGAIN on every other thread, and
+// WTF::Thread::create aborts on that. The thread parks here and the execve tears it down.
+static void park_thread_crashing_during_reload(int sig)
+{
+    if (pthread_equal(pthread_self(), reloading_thread)) {
+        struct sigaction dfl {};
+        dfl.sa_handler = SIG_DFL;
+        sigemptyset(&dfl.sa_mask);
+        sigaction(sig, &dfl, nullptr);
+        // Blocked until this handler returns, then delivered with the default action.
+        raise(sig);
+        return;
+    }
+    for (;;)
+        pause();
+}
+
 extern "C" void on_before_reload_process_posix()
 {
     unset_cloexec(STDIN_FILENO);
@@ -318,6 +340,15 @@ extern "C" void on_before_reload_process_posix()
             unset_cloexec(static_cast<int>(fd));
     }
 
+    // The crash handler's signals, minus SIGSEGV and SIGBUS, which JSC's handlers below keep.
+    static const int parked_crash_signals[] = { SIGABRT, SIGILL, SIGTRAP, SIGFPE };
+    reloading_thread = pthread_self();
+    struct sigaction park {};
+    park.sa_handler = park_thread_crashing_during_reload;
+    sigemptyset(&park.sa_mask);
+    for (int s : parked_crash_signals)
+        sigaction(s, &park, nullptr);
+
     // Reset caught dispositions so a SIGTERM arriving between here and execve isn't queued-then-
     // lost. Inherited SIG_IGN is left alone. SIGSEGV/SIGBUS/RT/sigThreadSuspendResume are left
     // for execve to reset atomically — resetting them here races JSC's sampler/GC threads fatally.
@@ -326,6 +357,8 @@ extern "C" void on_before_reload_process_posix()
     sigemptyset(&sa.sa_mask);
     for (int s = 1; s < NSIG; s++) {
         if (s == SIGKILL || s == SIGSTOP || s == SIGSEGV || s == SIGBUS)
+            continue;
+        if (std::find(std::begin(parked_crash_signals), std::end(parked_crash_signals), s) != std::end(parked_crash_signals))
             continue;
 #if OS(LINUX)
         if (s == g_wtfConfig.sigThreadSuspendResume)

@@ -65,6 +65,7 @@ pub use crate::rules::{
     import::{ImportConditions, ImportRule},
     layer::{LayerBlockRule, LayerName, LayerStatementRule},
     namespace::NamespaceRule,
+    nesting::NestedDeclarationsRule,
     style::StyleRule,
     supports::{SupportsCondition, SupportsRule},
     unknown::UnknownAtRule,
@@ -1054,7 +1055,14 @@ pub struct NestedRuleParser<'a, T: CustomAtRuleParser> {
 
 impl<'a, T: CustomAtRuleParser> NestedRuleParser<'a, T> {
     pub(crate) fn get_loc(&self, start: &ParserState) -> Location {
-        let loc = start.source_location();
+        self.loc_at(start.source_location())
+    }
+
+    pub(crate) fn current_loc(&self, input: &Parser) -> Location {
+        self.loc_at(input.current_source_location())
+    }
+
+    fn loc_at(&self, loc: SourceLocation) -> Location {
         Location {
             source_index: self.options.source_index,
             line: loc.line,
@@ -1503,32 +1511,15 @@ mod rule_parsers {
             &mut self,
             input: &mut Parser,
         ) -> CssResult<CssRuleList<T::AtRule>> {
-            let srcloc = input.current_source_location();
-            let loc = Location {
-                source_index: self.options.source_index,
-                line: srcloc.line,
-                column: srcloc.column,
-            };
+            let loc = self.current_loc(input);
 
-            // Declarations can be immediately within @media and @supports blocks
-            // that are nested within a parent style rule. These act the same way
-            // as if they were nested within a `& { ... }` block.
+            // Declarations directly inside a @media, @supports, ... block nested in a style rule.
             let (declarations, mut rules) = self.parse_nested(input, false)?;
 
             if declarations.len() > 0 {
                 rules.v.insert(
                     0,
-                    CssRule::Style(StyleRule {
-                        // Arena-backed: this StyleRule lands in arena AST; bulk-free won't run Drop.
-                        selectors: SelectorList::from_selector(Selector::from_component_in(
-                            Component::Nesting,
-                            bun_alloc::ArenaPtr::new(input.arena()),
-                        )),
-                        declarations,
-                        vendor_prefix: VendorPrefix::default(),
-                        rules: CssRuleList::default(),
-                        loc,
-                    }),
+                    CssRule::NestedDeclarations(NestedDeclarationsRule { declarations, loc }),
                 );
             }
 
@@ -2064,6 +2055,16 @@ mod rule_parsers {
                 let mut usage = PropertyBitset::init_empty();
                 let mut custom_properties: Vec<&'static [u8]> = Vec::new();
                 fill_property_bit_set(&mut usage, &declarations, &mut custom_properties);
+                // Declarations written after a nested rule are still this rule's own.
+                for rule in rules.v.iter() {
+                    if let CssRule::NestedDeclarations(nested) = rule {
+                        fill_property_bit_set(
+                            &mut usage,
+                            &nested.declarations,
+                            &mut custom_properties,
+                        );
+                    }
+                }
 
                 let custom_properties_slice = custom_properties.slice();
 
@@ -2109,25 +2110,54 @@ mod rule_parsers {
         type Declaration = ();
 
         fn parse_value(this: &mut Self, name: &[u8], input: &mut Parser) -> CssResult<()> {
-            // Note: split-borrow — see `NestedComposesCtx` above.
             // SAFETY: `input.arena()` re-borrows the parser arena through `&self`;
             // detach that borrow so `input` can be re-borrowed mutably below. The
             // arena outlives the parser (it owns all parsed allocations).
-            let arena: &Bump = unsafe { bun_ptr::detach_lifetime_ref(input.arena()) };
+            let arena: &'static Bump = unsafe { bun_ptr::detach_lifetime_ref(input.arena()) };
+
+            // Past a nested rule, declarations go into a `NestedDeclarationsRule` ending the list.
+            let mut nested = match this.rules.v.pop() {
+                None => None,
+                Some(CssRule::NestedDeclarations(nested)) => Some(nested),
+                Some(rule) => {
+                    this.rules.v.push(rule);
+                    Some(NestedDeclarationsRule {
+                        declarations: DeclarationBlock::new_in(arena),
+                        loc: this.current_loc(input),
+                    })
+                }
+            };
+            let (declarations, important_declarations) = match &mut nested {
+                Some(nested) => (
+                    &mut nested.declarations.declarations,
+                    &mut nested.declarations.important_declarations,
+                ),
+                None => (&mut this.declarations, &mut this.important_declarations),
+            };
+
+            // Note: split-borrow — see `NestedComposesCtx` above.
             let mut ctx = NestedComposesCtx {
                 state: this.composes_state,
                 arena,
                 composes: &mut *this.composes,
                 composes_refs: &mut *this.composes_refs,
             };
-            declaration::parse_declaration_impl(
+            let result = declaration::parse_declaration_impl(
                 name,
                 input,
-                &mut this.declarations,
-                &mut this.important_declarations,
+                declarations,
+                important_declarations,
                 this.options,
                 &mut ctx,
-            )
+            );
+
+            // A failed declaration is retried as a nested rule; leave no empty rule ahead of it.
+            if let Some(nested) = nested
+                && !nested.declarations.is_empty()
+            {
+                this.rules.v.push(CssRule::NestedDeclarations(nested));
+            }
+            result
         }
     }
 

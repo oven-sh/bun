@@ -18,8 +18,7 @@ pub struct MediaRule<R> {
 impl<R> MediaRule<R> {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         if dest.minify && self.query.always_matches() {
-            self.rules.to_css(dest)?;
-            return Ok(());
+            return self.rules.to_css_unwrapped(dest);
         }
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);

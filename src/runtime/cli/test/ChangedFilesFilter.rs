@@ -31,7 +31,7 @@ use bun_jsc::EventLoopHandle;
 use bun_jsc::virtual_machine::VirtualMachine;
 #[cfg(not(windows))]
 use bun_paths::SEP;
-use bun_paths::{self, PathBuffer, platform, resolve_path};
+use bun_paths::{PathBuffer, platform, resolve_path};
 use bun_ptr::Interned;
 #[cfg(not(windows))]
 use bun_resolver::fs::RealFS;
@@ -47,8 +47,8 @@ pub(crate) struct Result<'a> {
     /// The filtered list of test files. Slice of the original `test_files`
     /// allocation, owned by the caller.
     pub(crate) test_files: &'a mut [Interned],
-    /// Number of files git reported as changed.
-    pub(crate) changed_count: usize,
+    /// Number of source files used to seed the reverse import walk.
+    pub(crate) source_count: usize,
     /// Number of test files before filtering.
     pub(crate) total_tests: usize,
     /// Absolute paths of every local source file that participates in the
@@ -97,10 +97,48 @@ pub(crate) fn filter<'a>(
         }
     };
 
+    filter_source_files(ctx, vm, test_files, changed_files, "--changed")
+}
+
+/// Filter `test_files` to the entries related to explicitly supplied source
+/// paths. Relative paths are resolved from Bun's top-level working directory.
+pub(crate) fn filter_related<'a>(
+    ctx: &Command::Context,
+    vm: &mut VirtualMachine,
+    test_files: &'a mut [Interned],
+    related_files: &[Box<[u8]>],
+) -> core::result::Result<Result<'a>, crate::Error> {
+    let top_level_dir: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir;
+    let mut source_files = StringSet::new();
+
+    for path in related_files {
+        let absolute = resolve_path::join_abs::<platform::Auto>(top_level_dir, path);
+
+        if !sys::exists(absolute) {
+            Output::err_generic(
+                "<b>--find-related-tests<r>: source file not found: {s}",
+                (bun_fmt::quote(path),),
+            );
+            Global::exit(1);
+        }
+
+        let _ = source_files.insert(absolute);
+    }
+
+    filter_source_files(ctx, vm, test_files, source_files, "--find-related-tests")
+}
+
+fn filter_source_files<'a>(
+    ctx: &Command::Context,
+    vm: &mut VirtualMachine,
+    test_files: &'a mut [Interned],
+    source_files: StringSet,
+    option_name: &str,
+) -> core::result::Result<Result<'a>, crate::Error> {
     if test_files.is_empty() {
         return Ok(Result {
             test_files: &mut test_files[0..0],
-            changed_count: changed_files.count(),
+            source_count: source_files.count(),
             total_tests: 0,
             module_graph_files: Vec::new(),
         });
@@ -108,11 +146,11 @@ pub(crate) fn filter<'a>(
 
     // With a clean working tree and no --watch, nothing can be affected and
     // there is no watcher to seed, so skip the module-graph scan entirely.
-    if changed_files.count() == 0 && ctx.debug.hot_reload != HotReload::Watch {
+    if source_files.count() == 0 && ctx.debug.hot_reload != HotReload::Watch {
         let total = test_files.len();
         return Ok(Result {
             test_files: &mut test_files[0..0],
-            changed_count: 0,
+            source_count: 0,
             total_tests: total,
             module_graph_files: Vec::new(),
         });
@@ -137,8 +175,8 @@ pub(crate) fn filter<'a>(
             Ok(t) => t,
             Err(err) => {
                 Output::err_generic(
-                    "Failed to initialize module graph scanner for --changed: {s}",
-                    (err.name(),),
+                    "Failed to initialize module graph scanner for {s}: {s}",
+                    (option_name, err.name()),
                 );
                 Global::exit(1);
             }
@@ -176,14 +214,15 @@ pub(crate) fn filter<'a>(
         Err(err) => {
             // Fall back to running every test rather than aborting the run.
             bun_core::warn!(
-                "--changed: failed to build module graph ({}); running all tests",
+                "{}: failed to build module graph ({}); running all tests",
+                option_name,
                 err.name()
             );
             Output::flush();
             let total = test_files.len();
             return Ok(Result {
                 test_files,
-                changed_count: changed_files.count(),
+                source_count: source_files.count(),
                 total_tests: total,
                 module_graph_files: Vec::new(),
             });
@@ -257,8 +296,8 @@ pub(crate) fn filter<'a>(
     let mut queue: Vec<u32> = Vec::new();
 
     {
-        for changed_path in changed_files.keys() {
-            if let Some(&idx) = path_to_index.get(changed_path.as_ref()) {
+        for source_path in source_files.keys() {
+            if let Some(&idx) = path_to_index.get(source_path.as_ref()) {
                 if !affected.is_set(idx as usize) {
                     affected.set(idx as usize);
                     queue.push(idx);
@@ -287,7 +326,7 @@ pub(crate) fn filter<'a>(
     for i in 0..total {
         let tf = test_files[i];
         let maybe_source = slot_to_source[i];
-        let keep = changed_files.contains(tf.as_bytes())
+        let keep = source_files.contains(tf.as_bytes())
             || maybe_source.is_some_and(|src| affected.is_set(src as usize));
 
         if keep {
@@ -310,7 +349,7 @@ pub(crate) fn filter<'a>(
 
     Ok(Result {
         test_files: &mut test_files[0..write],
-        changed_count: changed_files.count(),
+        source_count: source_files.count(),
         total_tests: total,
         module_graph_files: graph_files,
     })

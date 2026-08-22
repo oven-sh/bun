@@ -237,6 +237,16 @@ Use the `--rerun-each` flag to run each test multiple times. This surfaces flaky
 bun test --rerun-each 100
 ```
 
+## Run tests related to source files
+
+Use `--find-related-tests` to run only test files that import one or more source files, directly or transitively. This is useful when a focused change should not run the entire test suite.
+
+```sh terminal icon="terminal"
+bun test --find-related-tests src/util.ts src/parser.ts
+```
+
+The Jest-compatible `--findRelatedTests` spelling is also supported. Package imports are treated as external, so the search follows local project files without scanning `node_modules`.
+
 ## Randomize test execution order
 
 Use the `--randomize` flag to run tests in a random order. This helps detect tests that depend on shared state or execution order.

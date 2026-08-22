@@ -181,6 +181,12 @@ test.each([
   ["> <!-- Please describe\n\nFixes #1234", [1234]],
   ["<!--\n```\n-->\nFixes #1", [1]],
   ["Intro <!-- note --> Fixes #1", [1]],
+  ["We have fixed #1.", [1]],
+  ["Repro from the log:\n\n    abc123 Fixes #1234: handle null\n\nFixes #5678", [5678]],
+  ["> quoted\n\nFixes #1", [1]],
+  ["> quoted\n- Fixes #1", [1]],
+  ["<s>Fixes #1</s> Fixes #2", [2]],
+  ["<s>old\n\nFixes #1", [1]],
 ] as [string, (number | string)[]][])("finds %j", async (body, expected) => {
   expect(await refs(body)).toEqual(expected);
 });
@@ -212,6 +218,11 @@ test.each([
   "This does not\nfix #1",
   "This may also\nfix #1",
   "partially\nfixes #1",
+  "This hasn't fixed #1 yet.",
+  "This PR neither fixes #1 nor closes #2.",
+  "That would have fixed #1, but it was reverted.",
+  "This may have fixed #1.",
+  "#100 has fixed #1.",
   // the keyword as an adjective or a noun
   "Supersedes the closed #26040.",
   "Flagged by a review comment on closed #35351 (duplicate of merged #35344).",
@@ -253,7 +264,13 @@ test.each([
   "<!-- Fixes #1 -->",
   "<!-- Fixes #1",
   "> Fixes #1",
+  "> does not\nfix #1",
+  "    Fixes #1",
+  "Log:\n\n    abc123 Fixes #1\n    def456 Fixes #2",
   "~~Fixes #1~~",
+  "<s>Fixes #1</s>",
+  "<DEL>Fixes #1</DEL>",
+  "<strike>Fixes #1</strike>",
   "~~~ `sh`\nFixes #1\n~~~",
   // a list does not cross a paragraph break or continue without a separator
   "Closes:\n\n#1",

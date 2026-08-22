@@ -208,6 +208,34 @@ it("should be able to grab the JSStreamSocket constructor", () => {
   expect(socket._handle._parentWrap).not.toBeNull();
   //@ts-ignore
   expect(socket._handle._parentWrap.constructor).toBeFunction();
+  socket.destroy();
+});
+
+// new tls.TLSSocket(rawSocket).destroy() before any connect: _handle is the
+// wrapped Duplex itself (no native handle yet). Node's JSStreamSocket close()
+// destroys that stream; the wrapper must too, and must not throw.
+describe.each([
+  ["net.Socket", () => new net.Socket()],
+  [
+    "Duplex",
+    () =>
+      new Duplex({
+        read() {},
+        write(_c, _e, cb) {
+          cb();
+        },
+      }),
+  ],
+])("new TLSSocket(%s).destroy() before connect", (_, makeRaw) => {
+  it("destroys both sockets and emits 'close'", async () => {
+    const raw = makeRaw();
+    const socket = new tls.TLSSocket(raw);
+    const tlsClose = once(socket, "close");
+    const rawClose = once(raw, "close");
+    socket.destroy();
+    await Promise.all([tlsClose, rawClose]);
+    expect({ tls: socket.destroyed, raw: raw.destroyed }).toEqual({ tls: true, raw: true });
+  });
 });
 for (const { name, connect } of tests) {
   describe(name, () => {
@@ -1356,14 +1384,13 @@ it("TLSSocket._requestCert follows Node's _init rule", () => {
   // Clients always request the peer certificate; servers only when asked.
   // Must be decided in the constructor, before a server wrap starts its
   // upgrade: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L845-L848
-  // Like the JSStreamSocket test above, the detached wrappers are not
-  // destroyed: tearing down a never-connected duplex wrap is its own quirk.
   const cases = [
     new TLSSocket(new stream.PassThrough()), // client
     new TLSSocket(new stream.PassThrough(), { isServer: true }),
     new TLSSocket(new stream.PassThrough(), { isServer: true, requestCert: true }),
   ];
   expect(cases.map(s => (s as any)._requestCert)).toEqual([true, false, true]);
+  for (const s of cases) s.destroy();
 });
 
 it("socket.ssl is assignable like Node's plain own property", async () => {

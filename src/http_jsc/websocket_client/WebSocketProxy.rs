@@ -1,5 +1,7 @@
 use core::ptr::NonNull;
 
+use bun_ptr::ThisPtr;
+
 use super::WebSocketProxyTunnel;
 
 /// WebSocketProxy encapsulates proxy state for WebSocket connections through HTTP/HTTPS proxies.
@@ -69,7 +71,7 @@ impl Drop for WebSocketProxy {
             // SAFETY: tunnel is a live intrusive-refcounted pointer; we hold one ref
             // until deref() below releases it.
             unsafe {
-                WebSocketProxyTunnel::shutdown(tunnel.as_ptr());
+                WebSocketProxyTunnel::shutdown(ThisPtr::new(tunnel.as_ptr()));
                 WebSocketProxyTunnel::deref(tunnel.as_ptr());
             }
         }

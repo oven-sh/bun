@@ -8,6 +8,20 @@ use super::command_line_arguments::{self, CommandLineArguments};
 use bun_dotenv::Loader as DotEnvLoader;
 use bun_install::{Features, Npm};
 
+/// Network policy for this install.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum OfflineMode {
+    /// Default: revalidate stale manifests, download what is missing.
+    #[default]
+    Online,
+    /// `--prefer-offline` / `install.prefer = "offline"`: a cached manifest of any age
+    /// satisfies resolution; only what is missing from the cache is fetched.
+    PreferOffline,
+    /// `--offline` / `install.offline = true`: never touch the network; anything not
+    /// in the cache is an error.
+    Offline,
+}
+
 // `string` fields are `[]const u8` borrowed from CLI args / bunfig config,
 // which live for the process lifetime. There is no `deinit` on Options. Mapped to
 // `&'static [u8]` per PORTING.md (no lifetime params on structs).
@@ -80,6 +94,9 @@ pub struct Options {
     /// Isolated linker: `false` skips the `node_modules/.bun/node_modules`
     /// fallback (pnpm's `hoist=false`); takes precedence over `hoist_pattern`.
     pub(crate) hoist: bool,
+
+    /// `--offline` / `--prefer-offline` (or `install.offline` / `install.prefer = "offline"`).
+    pub offline: OfflineMode,
 
     // Security scanner module path
     pub security_scanner: Option<&'static [u8]>,
@@ -156,6 +173,7 @@ impl Default for Options {
             public_hoist_pattern: None,
             hoist_pattern: None,
             hoist: true,
+            offline: OfflineMode::Online,
             security_scanner: None,
             minimum_release_age_ms: None,
             minimum_release_age_excludes: None,
@@ -473,6 +491,10 @@ impl Options {
 
             if let Some(hoist) = config.hoist {
                 self.hoist = hoist;
+            }
+
+            if config.offline == Some(true) {
+                self.offline = OfflineMode::Offline;
             }
 
             if let Some(security_scanner) = config.security_scanner.as_deref() {
@@ -805,6 +827,11 @@ impl Options {
             if cli.no_verify {
                 self.do_.set(Do::VERIFY_INTEGRITY, false);
             }
+            if cli.offline {
+                self.offline = OfflineMode::Offline;
+            } else if cli.prefer_offline && self.offline == OfflineMode::Online {
+                self.offline = OfflineMode::PreferOffline;
+            }
 
             if cli.yarn {
                 self.do_.set(Do::SAVE_YARN_LOCK, true);
@@ -908,6 +935,16 @@ impl Options {
         // moved from `defer { ... }` after scope assignment (see note above).
         self.did_override_default_scope = self.scope.url_hash != *Npm::registry::DEFAULT_URL_HASH;
 
+        // The manifest cache is the data source for --prefer-offline/--offline; keep it on
+        // even where it is otherwise bypassed (`bun update`, `--no-cache`, `--force`).
+        if self.offline != OfflineMode::Online {
+            self.enable.set(Enable::MANIFEST_CACHE, true);
+        }
+        // Prefetching resolved tarballs is a latency optimisation for downloads; under
+        // --offline there is nothing to download and the install phase reports misses.
+        if self.offline == OfflineMode::Offline {
+            self.do_.set(Do::PREFETCH_RESOLVED_TARBALLS, false);
+        }
         Ok(())
     }
 }

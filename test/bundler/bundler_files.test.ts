@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 describe("bundler files option", () => {
   test("basic in-memory file bundling", async () => {
@@ -600,5 +600,125 @@ describe("bundler files option", () => {
 
     const output = await result.outputs[0].text();
     expect(output).toContain("injected by plugin");
+  });
+
+  // `[dir]` in the output path is the entry's directory relative to `root`. An in-memory
+  // directory cannot be opened on disk, so it must come out the same as one that exists.
+  describe.concurrent("[dir] of an entry whose directory does not exist on disk", () => {
+    function outputPaths(result: Awaited<ReturnType<typeof Bun.build>>) {
+      expect(result.logs).toBeEmpty();
+      return result.outputs.map(output => output.path).sort();
+    }
+
+    test("absolute in-memory entries inside root", async () => {
+      using dir = tempDir("bundler-files-dir-placeholder", {
+        "src/.keep": "",
+      });
+
+      const result = await Bun.build({
+        root: String(dir),
+        entrypoints: [
+          `${dir}/src/on-disk-dir.js`,
+          `${dir}/missing/entry.js`,
+          `${dir}/missing/deeply/nested/entry.js`,
+          `${dir}/missing/../src/dot-dot.js`,
+        ],
+        files: {
+          [`${dir}/src/on-disk-dir.js`]: `console.log("a");`,
+          [`${dir}/missing/entry.js`]: `console.log("b");`,
+          [`${dir}/missing/deeply/nested/entry.js`]: `console.log("c");`,
+          [`${dir}/missing/../src/dot-dot.js`]: `console.log("d");`,
+        },
+      });
+
+      expect(outputPaths(result)).toEqual([
+        "missing/deeply/nested/entry.js",
+        "missing/entry.js",
+        "src/dot-dot.js",
+        "src/on-disk-dir.js",
+      ]);
+    });
+
+    test("absolute in-memory entries outside root", async () => {
+      using dir = tempDir("bundler-files-dir-placeholder-outside", {
+        "root/.keep": "",
+        "outside-on-disk/.keep": "",
+      });
+
+      const result = await Bun.build({
+        root: `${dir}/root`,
+        entrypoints: [`${dir}/outside-on-disk/entry.js`, `${dir}/outside-missing/entry.js`],
+        files: {
+          [`${dir}/outside-on-disk/entry.js`]: `console.log("a");`,
+          [`${dir}/outside-missing/entry.js`]: `console.log("b");`,
+        },
+      });
+
+      expect(outputPaths(result)).toEqual(["_.._/outside-missing/entry.js", "_.._/outside-on-disk/entry.js"]);
+    });
+
+    test("entries resolved by an onResolve plugin", async () => {
+      using dir = tempDir("bundler-files-dir-placeholder-plugin", {
+        "src/.keep": "",
+      });
+
+      const result = await Bun.build({
+        root: String(dir),
+        entrypoints: [`${dir}/src/on-disk-dir.js`, `${dir}/virtual/entry.js`],
+        plugins: [
+          {
+            name: "virtual-entries",
+            setup(build) {
+              build.onResolve({ filter: /\.js$/ }, args => ({ path: args.path, namespace: "virtual" }));
+              build.onLoad({ filter: /./, namespace: "virtual" }, args => ({
+                contents: `console.log(${JSON.stringify(args.path)});`,
+                loader: "js",
+              }));
+            },
+          },
+        ],
+      });
+
+      expect(outputPaths(result)).toEqual(["src/on-disk-dir.js", "virtual/entry.js"]);
+    });
+
+    // Relative entry names are relative to the cwd, so this one runs in a subprocess.
+    test("relative plugin-resolved entries that leave the cwd", async () => {
+      using dir = tempDir("bundler-files-dir-placeholder-relative", {
+        "sibling-on-disk/.keep": "",
+        "cwd/build.fixture.js": `
+          const result = await Bun.build({
+            root: ".",
+            entrypoints: ["../sibling-on-disk/entry.js", "../sibling-missing/entry.js"],
+            plugins: [
+              {
+                name: "virtual-entries",
+                setup(build) {
+                  build.onResolve({ filter: /\\.js$/ }, args => ({ path: args.path, namespace: "virtual" }));
+                  build.onLoad({ filter: /./, namespace: "virtual" }, args => ({
+                    contents: "console.log(" + JSON.stringify(args.path) + ");",
+                    loader: "js",
+                  }));
+                },
+              },
+            ],
+          });
+          console.log(JSON.stringify(result.outputs.map(output => output.path).sort()));
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build.fixture.js"],
+        cwd: `${dir}/cwd`,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual(["_.._/sibling-missing/entry.js", "_.._/sibling-on-disk/entry.js"]);
+      expect(exitCode).toBe(0);
+    });
   });
 });

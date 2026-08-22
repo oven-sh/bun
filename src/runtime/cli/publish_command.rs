@@ -777,14 +777,12 @@ impl PublishCommand {
         let mut auth_buf: Vec<u8> = Vec::new();
 
         if !registry.token.is_empty() {
-            if write!(&mut auth_buf, "Bearer {}", bstr::BStr::new(&registry.token)).is_err() {
-                return false;
-            }
+            auth_buf.extend_from_slice(b"Bearer ");
+            auth_buf.extend_from_slice(&registry.token);
             headers.count(b"authorization", &auth_buf);
         } else if !registry.auth.is_empty() {
-            if write!(&mut auth_buf, "Basic {}", bstr::BStr::new(&registry.auth)).is_err() {
-                return false;
-            }
+            auth_buf.extend_from_slice(b"Basic ");
+            auth_buf.extend_from_slice(&registry.auth);
             headers.count(b"authorization", &auth_buf);
         }
 
@@ -793,17 +791,7 @@ impl PublishCommand {
         }
         headers.append(b"accept", b"application/json");
 
-        if !registry.token.is_empty() {
-            auth_buf.clear();
-            if write!(&mut auth_buf, "Bearer {}", bstr::BStr::new(&registry.token)).is_err() {
-                return false;
-            }
-            headers.append(b"authorization", &auth_buf);
-        } else if !registry.auth.is_empty() {
-            auth_buf.clear();
-            if write!(&mut auth_buf, "Basic {}", bstr::BStr::new(&registry.auth)).is_err() {
-                return false;
-            }
+        if !auth_buf.is_empty() {
             headers.append(b"authorization", &auth_buf);
         }
 
@@ -1897,11 +1885,13 @@ impl PublishCommand {
             headers.count(b"accept-encoding", b"gzip,deflate");
 
             if !registry.token.is_empty() {
-                let _ = write!(print_buf, "Bearer {}", bstr::BStr::new(&registry.token));
+                print_buf.extend_from_slice(b"Bearer ");
+                print_buf.extend_from_slice(&registry.token);
                 headers.count(b"authorization", &**print_buf);
                 print_buf.clear();
             } else if !registry.auth.is_empty() {
-                let _ = write!(print_buf, "Basic {}", bstr::BStr::new(&registry.auth));
+                print_buf.extend_from_slice(b"Basic ");
+                print_buf.extend_from_slice(&registry.auth);
                 headers.count(b"authorization", &**print_buf);
                 print_buf.clear();
             }
@@ -1948,11 +1938,13 @@ impl PublishCommand {
             headers.append(b"accept-encoding", b"gzip,deflate");
 
             if !registry.token.is_empty() {
-                let _ = write!(print_buf, "Bearer {}", bstr::BStr::new(&registry.token));
+                print_buf.extend_from_slice(b"Bearer ");
+                print_buf.extend_from_slice(&registry.token);
                 headers.append(b"authorization", &**print_buf);
                 print_buf.clear();
             } else if !registry.auth.is_empty() {
-                let _ = write!(print_buf, "Basic {}", bstr::BStr::new(&registry.auth));
+                print_buf.extend_from_slice(b"Basic ");
+                print_buf.extend_from_slice(&registry.auth);
                 headers.append(b"authorization", &**print_buf);
                 print_buf.clear();
             }

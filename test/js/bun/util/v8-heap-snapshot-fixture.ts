@@ -103,6 +103,25 @@ switch (mode) {
     break;
   }
 
+  case "write-buffer": {
+    const ret = require("node:v8").writeHeapSnapshot(Buffer.from(pathArg));
+    result = {
+      returnedIsBuffer: Buffer.isBuffer(ret),
+      returnedString: Buffer.isBuffer(ret) ? ret.toString() : ret,
+      ...describeSnapshot(await Bun.file(pathArg).json()),
+    };
+    break;
+  }
+
+  case "write-url": {
+    const returnedPath = require("node:v8").writeHeapSnapshot(new URL(pathArg));
+    result = {
+      returnedPath,
+      ...describeSnapshot(await Bun.file(require("node:url").fileURLToPath(pathArg)).json()),
+    };
+    break;
+  }
+
   case "stream-edges": {
     // Build a graph touching the main Web Streams cell classes and keep every
     // handle live across the snapshot so analyzeHeap can see the edges.

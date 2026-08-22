@@ -443,12 +443,7 @@ impl DirEntry {
             return Ok(());
         }
 
-        // Lowercase the entry basename once. The same bytes drive the
-        // previous-generation case-insensitive probe, the new entry's
-        // lowercased key, *and* the insert into `self.data` — and the hash is
-        // computed once here (`name_hash`) rather than re-derived by the probe
-        // and again by the insert. The check above keeps the name inside the
-        // stack scratch (matches `DirEntry::get`).
+        // Lowercased and hashed once for the probe, the key and the insert below.
         let mut name_lc_buf = PathBuffer::uninit();
         let name_lc: &[u8] = strings::copy_lowercase_if_needed(name_slice, &mut name_lc_buf[..]);
         let name_hash = self.data.hash_key(name_lc);

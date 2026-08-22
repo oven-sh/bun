@@ -261,25 +261,9 @@ impl Routes {
         }
         let _ = redirect;
 
-        if path.is_empty() {
-            if let Some(index_ptr) = self.index {
-                // SAFETY: points into a Box<Route> owned by self.list; valid for &self.
-                let index = unsafe { index_ptr.as_ref() };
-                return Some(Match {
-                    params: std::ptr::from_mut(params),
-                    name: index.name,
-                    pathname: url_path.pathname,
-                    file_path: index.abs_path.as_bytes(),
-                    query_string: url_path.query_string,
-                });
-            }
-
-            return None;
-        }
-
         if let Some(route_ptr) = self.match_(path, params) {
-            // SAFETY: pointers from static_/dynamic alias Box<Route> stored in
-            // self.list, which outlives self.
+            // SAFETY: pointers from index/static_/dynamic alias Box<Route>
+            // stored in self.list, which outlives self.
             let route = unsafe { &*route_ptr };
             return Some(Match {
                 params: std::ptr::from_mut(params),
@@ -325,7 +309,11 @@ impl Routes {
         let pathname = strings::trim_left(pathname_, b"/");
 
         if pathname.is_empty() {
-            return self.index.map(|p| p.as_ptr().cast_const());
+            // Without an index.js, a root-level `[[...slug]].js` still serves "/".
+            if let Some(index) = self.index {
+                return Some(index.as_ptr().cast_const());
+            }
+            return self.match_dynamic(pathname, params);
         }
 
         self.static_
@@ -1154,13 +1142,27 @@ pub mod pattern {
     }
 
     impl Pattern {
-        /// Match a filesystem route pattern to a URL path.
+        /// Match a route pattern to a URL path; on `false`, `params` is as it was on entry.
         pub(crate) fn match_<'a, const ALLOW_OPTIONAL_CATCH_ALL: bool>(
             // `path` must be lowercased and have no leading slash
             path: &'a [u8],
             // case-sensitive, must not have a leading slash
             name: &'a [u8],
             // case-insensitive, must not have a leading slash
+            match_name: &[u8],
+            params: &mut route_param::List<'a>,
+        ) -> bool {
+            let params_len = params.len();
+            if Self::match_inner::<ALLOW_OPTIONAL_CATCH_ALL>(path, name, match_name, params) {
+                return true;
+            }
+            params.truncate(params_len);
+            false
+        }
+
+        fn match_inner<'a, const ALLOW_OPTIONAL_CATCH_ALL: bool>(
+            path: &'a [u8],
+            name: &'a [u8],
             match_name: &[u8],
             params: &mut route_param::List<'a>,
         ) -> bool {
@@ -1175,7 +1177,6 @@ pub mod pattern {
                         let segment = &path_
                             [0..strings::index_of_char_usize(path_, b'/').unwrap_or(path_.len())];
                         if !str_.eql_bytes(segment) {
-                            params.clear(); // shrinkRetainingCapacity(0)
                             return false;
                         }
 
@@ -1190,6 +1191,11 @@ pub mod pattern {
                         }
                     }
                     Value::Dynamic(dynamic) => {
+                        // `[x]` takes one non-empty segment: `docs/[x]` serves neither "docs" nor "docs//a".
+                        if path_.is_empty() || path_[0] == b'/' {
+                            return false;
+                        }
+
                         if let Some(i) = strings::index_of_char_usize(path_, b'/') {
                             params.push(Param {
                                 name: dynamic.str(name),
@@ -1198,7 +1204,6 @@ pub mod pattern {
                             path_ = &path_[i + 1..];
 
                             if pattern.is_end(name) {
-                                params.clear(); // shrinkRetainingCapacity(0)
                                 return false;
                             }
 
@@ -1222,7 +1227,6 @@ pub mod pattern {
                                 return true;
                             }
 
-                            params.clear(); // shrinkRetainingCapacity(0)
                             return false;
                         }
 
@@ -1695,8 +1699,17 @@ mod tests {
 
         let optional_catch_all: &[(&[u8], &[u8], &[Entry])] = &[
             (b"404", b"404", &[]),
+            (b"[[...slug]]", b"", &[]),
             (b"404/[[...slug]]", b"404", &[]),
             (b"404a/[[...slug]]", b"404a", &[]),
+            (
+                b"docs/[page]/[[...rest]]",
+                b"docs/intro",
+                &[Entry {
+                    name: b"page",
+                    value: b"intro",
+                }],
+            ),
             (
                 b"[teamSlug]/lemon/[project]/[[...slug]]",
                 b"team/lemon/lemon/slugggg",
@@ -1820,6 +1833,74 @@ mod tests {
         match catch_all.value {
             pattern::Value::CatchAll(p) => assert_eq!(p.str(pattern), b"catch_all"),
             _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn pattern_rejects_empty_dynamic_segment() {
+        let no_match: &[(&[u8], &[u8])] = &[
+            // the URL ends where the dynamic segment starts
+            (b"[teamSlug]", b""),
+            (b"[teamSlug]/[[...slug]]", b""),
+            (b"[...slug]", b""),
+            (b"hi/[teamSlug]", b"hi"),
+            (b"hi/[teamSlug]/[[...slug]]", b"hi"),
+            (b"[teamSlug]/hi/[project]", b"team/hi"),
+            // the URL has an empty segment where the dynamic segment is
+            (b"blog/[slug]/[id]", b"blog//42"),
+            (b"blog/[slug]/[[...rest]]", b"blog//42"),
+            (b"[teamSlug]/[project]", b"team//"),
+        ];
+        let mut params = route_param::List::default();
+        for (pattern, pathname) in no_match {
+            params.clear();
+            assert!(
+                !Pattern::match_::<true>(pathname, pattern, pattern, &mut params),
+                "Expected pattern \"{}\" not to match \"{}\"",
+                bstr::BStr::new(pattern),
+                bstr::BStr::new(pathname)
+            );
+            assert!(
+                params.is_empty(),
+                "Pattern \"{}\" left params behind after rejecting \"{}\"",
+                bstr::BStr::new(pattern),
+                bstr::BStr::new(pathname)
+            );
+        }
+    }
+
+    #[test]
+    fn pattern_no_match_truncates_params_to_entry_length() {
+        // Each pattern records a param and then fails through a different exit.
+        let no_match: &[(&[u8], &[u8])] = &[
+            // catch-all with nothing left to take
+            (b"[org]/settings/[...rest]", b"acme/settings"),
+            // pattern exhausted while the URL still has segments
+            (b"[user]/settings", b"alice/settings/extra"),
+            // dynamic segment exhausted while the URL still has segments
+            (b"[user]/[id]", b"alice/1/extra"),
+            // static segment mismatch
+            (b"[user]/settings", b"alice/profile"),
+        ];
+        let seeded = Param {
+            name: b"seeded",
+            value: b"kept",
+        };
+        for (pattern, pathname) in no_match {
+            let mut params: route_param::List<'static> = vec![seeded];
+            assert!(
+                !Pattern::match_::<true>(pathname, pattern, pattern, &mut params),
+                "Expected pattern \"{}\" not to match \"{}\"",
+                bstr::BStr::new(pattern),
+                bstr::BStr::new(pathname)
+            );
+            assert!(
+                params.len() == 1 && params[0].name == seeded.name,
+                "Pattern \"{}\" left {} param(s) after rejecting \"{}\"",
+                bstr::BStr::new(pattern),
+                params.len(),
+                bstr::BStr::new(pathname)
+            );
         }
     }
 }

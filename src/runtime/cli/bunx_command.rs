@@ -981,7 +981,7 @@ impl BunxCommand {
         // `path_buf` is a stack local so
         // `bun_which::which`'s returned slice can borrow it for the rest of exec().
         let mut path_buf = PathBuffer::uninit();
-        let top_level_dir: &[u8] = fs.top_level_dir;
+        let top_level_dir: &[u8] = fs.top_level_dir();
 
         let mut absolute_in_cache_dir_buf = PathBuffer::uninit();
         let buf_total = absolute_in_cache_dir_buf.len();

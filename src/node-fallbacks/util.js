@@ -84,7 +84,7 @@ export function deprecate(fn, msg) {
       }
       warned = true;
     }
-    return fn.apply(this, ...args);
+    return fn.apply(this, args);
   }
 
   return deprecated;
@@ -104,7 +104,7 @@ export const debuglog = /* @__PURE__ */ ((debugs = {}, debugEnvRegex = {}, debug
     if (!debugs[set]) {
       if (debugEnvRegex.test(set)) {
         debugs[set] = function (...args) {
-          console.error("%s: %s", set, pid, format.apply(null, ...args));
+          console.error("%s: %s", set, format(...args));
         };
       } else {
         debugs[set] = function () {};
@@ -498,9 +498,16 @@ export function isPrimitive(arg) {
   );
 }
 
-// Compatibility with the buffer polyfill:
+// There is no Buffer global in a browser. Detect the buffer polyfill by its
+// methods, the same way the npm `util` package does in its browser build.
 export function isBuffer(arg) {
-  return arg instanceof Buffer;
+  return (
+    typeof arg === "object" &&
+    arg !== null &&
+    typeof arg.copy === "function" &&
+    typeof arg.fill === "function" &&
+    typeof arg.readUInt8 === "function"
+  );
 }
 
 function objectToString(o) {
@@ -568,11 +575,13 @@ function hasOwnProperty(obj, prop) {
   return Object.prototype.hasOwnProperty.call(obj, prop);
 }
 
-export const promisify = /* @__PURE__ */ (x => ((x.custom = Symbol.for("nodejs.util.promisify.custom")), x))(
+const kCustomPromisifiedSymbol = Symbol.for("nodejs.util.promisify.custom");
+
+export const promisify = /* @__PURE__ */ (x => ((x.custom = kCustomPromisifiedSymbol), x))(
   function promisify(original) {
     if (typeof original !== "function") throw new TypeError('The "original" argument must be of type Function');
 
-    if (kCustomPromisifiedSymbol && original[kCustomPromisifiedSymbol]) {
+    if (original[kCustomPromisifiedSymbol]) {
       var fn = original[kCustomPromisifiedSymbol];
 
       if (typeof fn !== "function") {
@@ -614,13 +623,12 @@ export const promisify = /* @__PURE__ */ (x => ((x.custom = Symbol.for("nodejs.u
 
     Object.setPrototypeOf(fn, Object.getPrototypeOf(original));
 
-    if (kCustomPromisifiedSymbol)
-      Object.defineProperty(fn, kCustomPromisifiedSymbol, {
-        value: fn,
-        enumerable: false,
-        writable: false,
-        configurable: true,
-      });
+    Object.defineProperty(fn, kCustomPromisifiedSymbol, {
+      value: fn,
+      enumerable: false,
+      writable: false,
+      configurable: true,
+    });
     return Object.defineProperties(fn, Object.getOwnPropertyDescriptors(original));
   },
 );
@@ -653,16 +661,17 @@ export function callbackify(original) {
     }
     var self = this;
     var cb = function (...args) {
-      return maybeCb.apply(self, ...args);
+      return maybeCb.apply(self, args);
     };
-    // In true node style we process the callback on `nextTick` with all the
-    // implications (stack, `uncaughtException`, `async_hooks`)
+    // Node runs the callback on `nextTick` so that a throw inside it is an
+    // uncaught exception instead of a rejection of the promise. Browsers have
+    // no `process`, and `queueMicrotask` reports a throw the same way.
     original.apply(this, args).then(
       function (ret) {
-        process.nextTick(cb.bind(null, null, ret));
+        queueMicrotask(cb.bind(null, null, ret));
       },
       function (rej) {
-        process.nextTick(callbackifyOnRejected.bind(null, rej, cb));
+        queueMicrotask(callbackifyOnRejected.bind(null, rej, cb));
       },
     );
   }

@@ -108,6 +108,10 @@ describe.each([
     await writeProject(desktopExtra, workspacesExtra);
     const r = await install(package_dir);
     expect(r.err).not.toContain("error:");
+    if ("installConfig" in desktopExtra && (desktopExtra as any).installConfig.hoistingLimits !== "workspaces") {
+      // the unsupported value is reported (and otherwise ignored)
+      expect(r.err).toContain('installConfig.hoistingLimits "dependencies" is not supported');
+    }
     expect(r.code).toBe(0);
 
     const desktopNm = join(package_dir, "apps", "desktop", "node_modules");

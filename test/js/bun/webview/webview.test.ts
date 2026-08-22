@@ -557,17 +557,26 @@ itRendering("click(selector) waits for element to stop animating", async () => {
       encodeURIComponent(`
         <style>
           @keyframes slide { from { left: 0px; } to { left: 100px; } }
-          #mover { position: fixed; top: 50px; width: 60px; height: 60px;
-                   animation: slide 100ms linear forwards; }
+          #mover { position: fixed; top: 50px; left: 0; width: 60px; height: 60px; }
         </style>
-        <button id=mover onclick="window.__hit=this.getBoundingClientRect().left">mv</button>
+        <body style="margin:0" onclick="(window.__x ||= []).push(event.clientX)">
+          <div id=mover></div>
+        </body>
       `),
   );
-  // The stable-for-2-consecutive-frames check means we don't click until
-  // the animation stops. If we clicked mid-slide, __hit would be < 100.
-  await view.click("#mover");
-  const left = await view.evaluate("String(__hit)");
-  expect(Number(left)).toBe(100);
+  // Restart the animation immediately before each click(): the element reads
+  // left=0 both before the next render (no effect yet) and at t=0 of the
+  // animation, so a sync-then-rAF stability pair would match and click at
+  // the from-position. The loop covers frame-scheduling variance.
+  for (let i = 0; i < 5; i++) {
+    await view.evaluate(
+      `(m => { m.style.animation = 'none'; void m.offsetHeight; m.style.animation = 'slide 100ms linear forwards'; })(document.getElementById('mover'))`,
+    );
+    await view.click("#mover");
+  }
+  // The animation ends at left=100; the element is 60px wide, so every click
+  // lands at clientX=130 once the slide has settled.
+  expect(await view.evaluate("__x")).toEqual(Array(5).fill(130));
 });
 
 itRendering("click(selector) rejects on timeout when obscured", async () => {

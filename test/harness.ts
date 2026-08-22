@@ -2275,6 +2275,51 @@ export function compileFixture(sourcePath: string, options: { flags?: string[] }
   return outPath;
 }
 
+const dtUnknownReaddirMarker = "dt-unknown-readdir-shim: rewrote getdents64 d_type";
+let dtUnknownReaddirShim: Promise<string> | undefined;
+
+async function compileDtUnknownReaddirShim(): Promise<string> {
+  const cc = which("cc") || which("clang") || which("gcc");
+  if (!cc) throw new Error("dtUnknownReaddir: no C compiler (cc/clang/gcc) found in $PATH");
+  const shim = join(tmpdirSync("dt-unknown-readdir-"), "shim.so");
+  const source = join(import.meta.dir, "fixtures", "dt-unknown-readdir-shim.c");
+  const proc = Bun.spawn({
+    cmd: [cc, "-shared", "-fPIC", "-O2", `-DMARKER="${dtUnknownReaddirMarker}"`, "-o", shim, source, "-ldl"],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0)
+    throw new Error(`dtUnknownReaddir: compiling the shim failed (exit ${exitCode}):\n${stderr || stdout}`);
+  return shim;
+}
+
+/**
+ * Runs bun as if on a filesystem whose readdir does not report entry types
+ * (FUSE, some NFS servers, XFS formatted with `ftype=0`), without needing such a
+ * mount: `env()` preloads a shim that zeroes `d_type` in every `getdents64`
+ * record. The shim prints `marker` to stderr the first time it does so; assert
+ * on it, otherwise a test here passes vacuously if bun ever stops issuing
+ * `getdents64` through libc's `syscall()` wrapper, which is what the shim hooks.
+ */
+export const dtUnknownReaddir = {
+  /** Linux with a C compiler; `skipIf(!dtUnknownReaddir.available)`. */
+  get available(): boolean {
+    return isLinux && !!(which("cc") || which("clang") || which("gcc"));
+  },
+  marker: dtUnknownReaddirMarker,
+  /**
+   * Compiles the shim the first time it is called. Call it from `beforeAll`
+   * (the compiler can take several seconds on a loaded machine) and spawn bun
+   * with the returned env.
+   */
+  async env(): Promise<NodeJS.Dict<string>> {
+    const shim = await (dtUnknownReaddirShim ??= compileDtUnknownReaddirShim());
+    return { ...bunEnv, LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shim}:${bunEnv.LD_PRELOAD}` : shim };
+  },
+};
+
 export const rss: () => number =
   process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
     ? (Bun.unsafe.memoryFootprint as () => number)

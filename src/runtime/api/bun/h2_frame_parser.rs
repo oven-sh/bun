@@ -755,7 +755,6 @@ impl Handlers {
     }
 }
 
-pub use JSH2FrameParser::get_constructor as H2FrameParserConstructor;
 /// snake_case alias for the codegen'd `$rust(h2_frame_parser.rs, H2FrameParserConstructor)`
 /// thunk in `generated_js2native.rs` (the generator snake-cases the export name).
 pub use JSH2FrameParser::get_constructor as h2_frame_parser_constructor;
@@ -1559,7 +1558,6 @@ impl Stream {
             }
         };
 
-        // defer block from Zig (only when the full frame was flushed)
         if let Some(_frame) = owned_frame {
             // only call the callback + free the frame if we write to the socket the full frame
             client

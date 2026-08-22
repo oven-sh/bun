@@ -81,13 +81,15 @@ const bump = (k: string) => counts.set(k, (counts.get(k) ?? 0) + 1);
 
 const failures: string[] = [];
 
-// Launched up front so the ~1s idle-timeout waits overlap the batch loop.
+// Launched up front so the idle-timeout waits overlap the batch loop. The 1s
+// env override is padded for the 4s sweep tick, so on_timeout fires at ~4-8s;
+// the AbortSignal budget must be larger for that path to stay reachable.
 const stallJobs: Promise<void>[] = [];
 for (let i = 0; i < 3; i++) {
   stallJobs.push(
     fetch(`https://localhost:${stallPort}/`, {
       tls: { ca: validTls.cert },
-      signal: AbortSignal.timeout(1200),
+      signal: AbortSignal.timeout(10_000),
     }).then(
       res => {
         failures.push(`stalled handshake fetch resolved with status ${res.status}`);
@@ -104,7 +106,14 @@ for (let i = 0; i < 3; i++) {
   );
 }
 
-for (let batch = 0; batch < 8; batch++) {
+// Churn until the stalled handshakes settle (on_timeout at ~4-8s, or the 10s
+// AbortSignal) so their teardown lands while the HTTP thread is busy.
+let stallsSettled = false;
+Promise.all(stallJobs).then(() => {
+  stallsSettled = true;
+});
+
+for (let batch = 0; batch < 8 || !stallsSettled; batch++) {
   const jobs: Promise<void>[] = [];
 
   // Plain mismatched-cert fetches: must reject with the altname error.
@@ -181,9 +190,9 @@ for (let batch = 0; batch < 8; batch++) {
 }
 
 // Stalled handshakes run concurrently with the batches above (launched before
-// the loop, awaited here); BUN_CONFIG_HTTP_IDLE_TIMEOUT=1 fails each through
-// on_timeout mid-handshake, the AbortSignal keeps the fixture bounded either
-// way.
+// the loop, which churns until they settle); BUN_CONFIG_HTTP_IDLE_TIMEOUT=1
+// fails each through on_timeout mid-handshake, the AbortSignal keeps the
+// fixture bounded either way.
 await Promise.all(stallJobs);
 
 mismatchServer.close();

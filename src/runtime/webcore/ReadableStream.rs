@@ -492,7 +492,6 @@ impl ReadableStream {
         recommended_chunk_size: webcore::blob::SizeType,
     ) -> JsResult<JSValue> {
         let blob = Blob::init(bytes.into(), global_this);
-        // defer blob.deinit() → handled by Drop
         Self::from_blob_copy_ref(global_this, &blob, recommended_chunk_size)
     }
 
@@ -683,9 +682,6 @@ pub enum Source {
     /// but with a FileLoader
     /// we can skip the FileLoader and just use the underlying File
     File(*mut FileReader),
-    /// This is a direct readable stream
-    /// That means we can turn it into whatever we want
-    Direct,
     Bytes(*mut ByteStream),
 }
 

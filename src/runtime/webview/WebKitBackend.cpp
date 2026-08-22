@@ -44,7 +44,6 @@ extern "C" int32_t Bun__WebViewHost__ensure(Zig::GlobalObject*, bool stdoutInher
 extern "C" void* Blob__fromMmapWithType(JSC::JSGlobalObject*, uint8_t* ptr, size_t len, const char* mime);
 extern "C" JSC::EncodedJSValue SYSV_ABI Blob__create(Zig::GlobalObject*, void* impl);
 extern "C" JSC::EncodedJSValue JSBuffer__fromMmap(Zig::GlobalObject*, void* ptr, size_t length);
-extern "C" void Bun__VmHandle__refKeepAlive(const ::BunVmHandleRef*, int delta);
 // Bracket the whole onData batch. exit() drains microtasks when outermost,
 // so all the promise reactions from this batch run before we return to usockets.
 extern "C" void Bun__EventLoop__enter(Zig::GlobalObject*);
@@ -124,7 +123,7 @@ void HostClient::updateKeepAlive()
     if (want == sockRefd || !global) return;
     sockRefd = want;
     Bun__VmHandle__refKeepAlive(
-        WebCore::clientData(global->vm())->vmHandle, want ? 1 : -1);
+        WebCore::clientData(global->vm())->vmHandle, BunLoopKind::Regular, want ? 1 : -1);
 }
 
 bool HostClient::ensureSpawned(Zig::GlobalObject* zig, bool stdoutInherit, bool stderrInherit)

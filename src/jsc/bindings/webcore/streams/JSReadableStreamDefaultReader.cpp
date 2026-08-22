@@ -736,9 +736,14 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamDefaultReaderPrototypeFunction_read, (J
     auto* runtime = JSStreamsRuntime::from(lexicalGlobalObject);
     auto* promise = JSPromise::create(vm, lexicalGlobalObject->promiseStructure());
     auto* readRequest = JSReadRequest::create(vm, runtime->readRequestStructure(domGlobalObject), ReadRequestKind::Promise, promise);
-    readableStreamDefaultReaderRead(lexicalGlobalObject, reader, readRequest);
-    RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(promise);
+    // WebIDL: read() returns a promise, so a throw from the pull it triggers (a direct source's
+    // hooks) is a rejection, never a synchronous throw.
+    RELEASE_AND_RETURN(scope, JSValue::encode(promiseFromSteps(lexicalGlobalObject, [&] -> JSPromise* {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        readableStreamDefaultReaderRead(lexicalGlobalObject, reader, readRequest);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        return promise;
+    })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsReadableStreamDefaultReaderPrototypeFunction_readMany, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

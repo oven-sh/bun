@@ -391,7 +391,6 @@ pub use self::regular_expression::RegularExpression;
 pub use self::script_execution_status::ScriptExecutionStatus;
 pub use self::source_provider::SourceProvider;
 pub use self::url_search_params::URLSearchParams;
-pub use self::zig_error_type::ZigErrorType;
 pub use self::zig_stack_frame_code::ZigStackFrameCode;
 pub use self::zig_stack_frame_position::ZigStackFramePosition;
 
@@ -457,9 +456,7 @@ pub mod zig_exception;
 pub mod zig_stack_frame;
 #[path = "ZigStackTrace.rs"]
 pub mod zig_stack_trace;
-// `generated_classes_list.rs` is mounted by `bun_runtime` (see its lib.rs) —
-// every aliased type lives in api/webcore/test_runner/bake, so mounting it
-// here would create a `bun_jsc → bun_runtime` cycle.
+
 #[path = "AsyncModule.rs"]
 pub mod async_module;
 #[path = "bindgen.rs"]
@@ -1367,10 +1364,6 @@ pub(crate) fn mark_member_binding(class: &'static str, src: &core::panic::Locati
     }
 }
 
-// LAYERING: no `Subprocess` alias is exported here — that type lives in
-// `bun_runtime::api` (forward-dep); callers reference
-// `bun_runtime::api::Subprocess` directly.
-
 /// Generated classes — re-run generate-classes.ts with .rs output.
 pub mod codegen {
     // GENERATED: re-run src/codegen/generate-classes.ts with .rs output
@@ -1390,8 +1383,6 @@ pub mod codegen {
     }
 }
 pub use self::codegen as Codegen;
-// `GeneratedClassesList` lives in `bun_runtime::GeneratedClassesList`
-// (layering: every aliased type is defined above `bun_jsc`).
 
 /// Extension trait providing JSC-aware methods on `bun_core::String`.
 pub trait StringJsc {

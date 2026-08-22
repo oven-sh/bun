@@ -1,4 +1,4 @@
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
 import { itBundled } from "../expectBundled";
 
 // Tests ported from:
@@ -1122,6 +1122,53 @@ describe("bundler", () => {
     run: {
       file: "/test.js",
       stdout: '{"bar":"bar","foo":"foo"}',
+    },
+  });
+  // https://github.com/oven-sh/bun/issues/15997
+  itBundled("importstar/ReExportStarExternalNonEntryES6", {
+    files: {
+      "/entry.js": /* js */ `
+        import { foo, bar } from "./re-export.js";
+        console.log(foo, bar);
+      `,
+      "/re-export.js": `export * from "ext"`,
+    },
+    external: ["ext"],
+    format: "esm",
+    runtimeFiles: {
+      "/node_modules/ext/index.js": /* js */ `
+        export const foo = "foo";
+        export const bar = "bar";
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain(`import * as `);
+    },
+    run: {
+      stdout: "foo bar",
+    },
+  });
+  // https://github.com/oven-sh/bun/issues/15997
+  itBundled("importstar/ReExportStarExternalNonEntryWithNamedImportES6", {
+    files: {
+      "/entry.js": /* js */ `
+        import { createHash, convertPrivateKey } from "./crypto-node.js";
+        console.log(typeof createHash, typeof convertPrivateKey);
+      `,
+      "/crypto-node.js": /* js */ `
+        export * from "node:crypto";
+        import { createPrivateKey } from "node:crypto";
+        export function convertPrivateKey(pem) { return createPrivateKey(pem); }
+      `,
+    },
+    target: "bun",
+    format: "esm",
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toMatch(/import \* as \w+ from "(node:)?crypto"/);
+    },
+    run: {
+      stdout: "function function",
     },
   });
   itBundled("importstar/ImportDefaultNamespaceComboESBuildIssue446", {

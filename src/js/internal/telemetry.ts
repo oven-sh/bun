@@ -252,9 +252,12 @@ function parseBaggage(header: string): Baggage | undefined {
     const kv = semi === -1 ? part : part.slice(0, semi);
     const eq = kv.indexOf("=");
     if (eq <= 0) continue;
-    const key = kv.slice(0, eq).trim();
+    let key = kv.slice(0, eq).trim();
     let value = kv.slice(eq + 1).trim();
     if (!key) continue;
+    try {
+      key = decodeURIComponent(key);
+    } catch {}
     try {
       value = decodeURIComponent(value);
     } catch {}

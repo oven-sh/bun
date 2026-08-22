@@ -165,6 +165,8 @@ fn percent_decode(v: &[u8]) -> String {
 
 /// Read configuration from the environment via `get`.
 pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
+    // OTel SDK env spec: an empty value is the same as unset.
+    let get = |k: &str| get(k).filter(|v| !v.trim_ascii().is_empty());
     let mut c = Config::default();
     let mut warnings = Vec::new();
 
@@ -338,15 +340,9 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
             )),
         }
         let url = if let Some(v) = get("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") {
-            let v = s(&v);
-            if v.is_empty() { None } else { Some(v) }
+            Some(s(&v))
         } else if let Some(v) = get("OTEL_EXPORTER_OTLP_ENDPOINT") {
-            let v = s(&v);
-            if v.is_empty() {
-                None
-            } else {
-                Some(traces_endpoint(&v))
-            }
+            Some(traces_endpoint(&s(&v)))
         } else if let Some(v) = bunfig.and_then(|b| b.endpoint.as_deref()) {
             Some(traces_endpoint(v))
         } else if enabled {
@@ -498,6 +494,23 @@ mod tests {
         let r = from_env(&e);
         assert!(r.warnings.is_empty(), "{:?}", r.warnings);
         assert!(matches!(r.config.sampler, Sampler::TraceIdRatio(t) if t != u64::MAX && t != 0));
+    }
+
+    #[test]
+    fn empty_env_values_are_unset() {
+        let e = env(&[
+            ("BUN_OTEL", "1"),
+            ("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", ""),
+            ("OTEL_EXPORTER_OTLP_ENDPOINT", "  "),
+            ("OTEL_SERVICE_NAME", ""),
+        ]);
+        let r = from_env(&e);
+        assert_eq!(r.config.otlp_exporters.len(), 1);
+        assert_eq!(
+            r.config.otlp_exporters[0].url,
+            "http://localhost:4318/v1/traces"
+        );
+        assert!(r.warnings.is_empty(), "{:?}", r.warnings);
     }
 
     #[test]

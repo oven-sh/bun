@@ -148,6 +148,13 @@ describe("@opentelemetry/api", () => {
     const fwd: Record<string, string> = {};
     propagation.inject(propagation.extract(ROOT_CONTEXT, { ...incoming, tracestate: "vendor=abc" }), fwd);
     expect(fwd.tracestate).toBe("vendor=abc");
+    // keys are percent-decoded on extract as values are (round trip through inject)
+    const rt: Record<string, string> = {};
+    propagation.inject(
+      propagation.setBaggage(ROOT_CONTEXT, propagation.createBaggage({ "a+b": { value: "c d" } })),
+      rt,
+    );
+    expect(propagation.getBaggage(propagation.extract(ROOT_CONTEXT, rt))!.getEntry("a+b")?.value).toBe("c d");
     await collect();
   });
 

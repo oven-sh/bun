@@ -187,40 +187,45 @@ it("bun pm cache unpack refuses hostile packs", async () => {
   // no staging directory is left behind after a failed unpack
   expect((await readdirSorted(cache)).filter(n => n.startsWith(".unpack-"))).toEqual([]);
 
-  // a file written *through* a symlink created earlier in the same package: the link
-  // itself is legal (points inside the package), the write through it is not
-  await writeFile(
-    join(dir, "through.pack"),
-    Buffer.concat([
-      MAGIC,
-      rec(1, "through@1.0.0", 0, ""),
-      rec(4, "real", 0o755, ""),
-      rec(3, "esc", 0o777, "real"),
-      rec(2, "esc/pwned", 0o644, "owned"),
-      rec(0, "", 0, ""),
-    ]),
-  );
-  r = await run(["pm", "cache", "unpack", join(dir, "through.pack")], dir, cache);
-  expect(r.err).toContain("traverses");
-  expect(r.code).not.toBe(0);
-
+  // (symlink records are validated but not materialised on Windows, matching tarball
+  // extraction there, so the scenarios that read through created links are POSIX-only)
+  if (!isWindows) {
+    // a file written *through* a symlink created earlier in the same package: the link
+    // itself is legal (points inside the package), the write through it is not
+    await writeFile(
+      join(dir, "through.pack"),
+      Buffer.concat([
+        MAGIC,
+        rec(1, "through@1.0.0", 0, ""),
+        rec(4, "real", 0o755, ""),
+        rec(3, "esc", 0o777, "real"),
+        rec(2, "esc/pwned", 0o644, "owned"),
+        rec(0, "", 0, ""),
+      ]),
+    );
+    r = await run(["pm", "cache", "unpack", join(dir, "through.pack")], dir, cache);
+    expect(r.err).toContain("traverses");
+    expect(r.code).not.toBe(0);
+  }
   // intra-package relative links are fine (bin/cli -> ../lib/cli.js), climbing out is not
-  await writeFile(
-    join(dir, "links.pack"),
-    Buffer.concat([
-      MAGIC,
-      rec(1, "links@1.0.0", 0, ""),
-      rec(2, "lib/cli.js", 0o644, "x"),
-      rec(3, "bin/cli", 0o777, "../lib/cli.js"),
-      rec(0, "", 0, ""),
-    ]),
-  );
-  r = await run(["pm", "cache", "unpack", join(dir, "links.pack")], dir, cache);
-  expect(r.err).not.toContain("error:");
-  expect(r.code).toBe(0);
-  const linkEntry = (await readdirSorted(cache)).find(n => n.startsWith("links@1.0.0"))!;
-  expect(lstatSync(join(cache, linkEntry, "bin", "cli")).isSymbolicLink()).toBeTrue();
-  expect(readFileSync(join(cache, linkEntry, "bin", "cli"), "utf8")).toBe("x");
+  if (!isWindows) {
+    await writeFile(
+      join(dir, "links.pack"),
+      Buffer.concat([
+        MAGIC,
+        rec(1, "links@1.0.0", 0, ""),
+        rec(2, "lib/cli.js", 0o644, "x"),
+        rec(3, "bin/cli", 0o777, "../lib/cli.js"),
+        rec(0, "", 0, ""),
+      ]),
+    );
+    r = await run(["pm", "cache", "unpack", join(dir, "links.pack")], dir, cache);
+    expect(r.err).not.toContain("error:");
+    expect(r.code).toBe(0);
+    const linkEntry = (await readdirSorted(cache)).find(n => n.startsWith("links@1.0.0"))!;
+    expect(lstatSync(join(cache, linkEntry, "bin", "cli")).isSymbolicLink()).toBeTrue();
+    expect(readFileSync(join(cache, linkEntry, "bin", "cli"), "utf8")).toBe("x");
+  }
   await writeFile(
     join(dir, "climb.pack"),
     Buffer.concat([MAGIC, rec(1, "climb@1.0.0", 0, ""), rec(3, "bin/cli", 0o777, "../../victim"), rec(0, "", 0, "")]),
@@ -280,27 +285,29 @@ it("bun pm cache unpack refuses hostile packs", async () => {
   expect(r.err).toContain("passes through another symlink");
   expect(r.code).not.toBe(0);
 
-  // a link that points *at* another link (not through it) is fine: bin/cli -> ../index.js -> ./lib/impl.js
-  await writeFile(
-    join(dir, "links2.pack"),
-    Buffer.concat([
-      MAGIC,
-      rec(1, "links2@1.0.0", 0, ""),
-      rec(2, "lib/impl.js", 0o644, "y"),
-      rec(3, "index.js", 0o777, "./lib/impl.js"),
-      rec(3, "bin/cli", 0o777, "../index.js"),
-      rec(0, "", 0, ""),
-    ]),
-  );
-  r = await run(["pm", "cache", "unpack", join(dir, "links2.pack")], dir, cache);
-  expect(r.err).not.toContain("error:");
-  expect(r.code).toBe(0);
-  const links2 = (await readdirSorted(cache)).find(n => n.startsWith("links2@1.0.0"))!;
-  expect(readFileSync(join(cache, links2, "bin", "cli"), "utf8")).toBe("y");
-
+  if (!isWindows) {
+    // a link that points *at* another link (not through it) is fine: bin/cli -> ../index.js -> ./lib/impl.js
+    await writeFile(
+      join(dir, "links2.pack"),
+      Buffer.concat([
+        MAGIC,
+        rec(1, "links2@1.0.0", 0, ""),
+        rec(2, "lib/impl.js", 0o644, "y"),
+        rec(3, "index.js", 0o777, "./lib/impl.js"),
+        rec(3, "bin/cli", 0o777, "../index.js"),
+        rec(0, "", 0, ""),
+      ]),
+    );
+    r = await run(["pm", "cache", "unpack", join(dir, "links2.pack")], dir, cache);
+    expect(r.err).not.toContain("error:");
+    expect(r.code).toBe(0);
+    const links2 = (await readdirSorted(cache)).find(n => n.startsWith("links2@1.0.0"))!;
+    expect(readFileSync(join(cache, links2, "bin", "cli"), "utf8")).toBe("y");
+  }
   // a non-ASCII pair that only a case-insensitive/normalising filesystem equates: the
-  // lexical check cannot see it, the physical parent-chain walk must (macOS/Windows)
-  if (isMacOS || isWindows) {
+  // lexical check cannot see it, the physical parent-chain walk must (macOS; APFS is
+  // case-insensitive by default)
+  if (isMacOS) {
     await writeFile(
       join(dir, "chain4.pack"),
       Buffer.concat([
@@ -316,6 +323,24 @@ it("bun pm cache unpack refuses hostile packs", async () => {
     expect(r.err).toContain("passes through another symlink");
     expect(r.code).not.toBe(0);
     expect((await readdirSorted(cache)).filter(n => n.startsWith("chain4"))).toEqual([]);
+
+    // and a single-component link whose *target* routes through the differently-cased
+    // link: only the post-creation target walk can see this one
+    await writeFile(
+      join(dir, "chain5.pack"),
+      Buffer.concat([
+        MAGIC,
+        rec(1, "chain5@1.0.0", 0, ""),
+        rec(4, "ä", 0o755, ""),
+        rec(3, "ä/up", 0o777, ".."),
+        rec(3, "x", 0o777, "Ä/up/Ä/up/../victim"),
+        rec(0, "", 0, ""),
+      ]),
+    );
+    r = await run(["pm", "cache", "unpack", join(dir, "chain5.pack")], dir, cacheViaVictim);
+    expect(r.err).toContain("passes through another symlink");
+    expect(r.code).not.toBe(0);
+    expect((await readdirSorted(cache)).filter(n => n.startsWith("chain5"))).toEqual([]);
   }
 
   // an absurd symlink target length

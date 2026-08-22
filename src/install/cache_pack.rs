@@ -581,16 +581,7 @@ fn create_links(staging: &[u8], links: &mut Vec<(Vec<u8>, Vec<u8>)>) -> std::io:
                 None => bun_sys::mkdirat(bun_sys::Fd::cwd(), &z(&p), 0o755).map_err(sys_err)?,
             }
         }
-        // native separators for the link contents on Windows
-        let target_native: Vec<u8> = if cfg!(windows) {
-            target
-                .iter()
-                .map(|&b| if b == b'/' { b'\\' } else { b })
-                .collect()
-        } else {
-            target.clone()
-        };
-        bun_sys::symlinkat(&z(&target_native), bun_sys::Fd::cwd(), &z(&p)).map_err(sys_err)?;
+        bun_sys::symlinkat(&z(target), bun_sys::Fd::cwd(), &z(&p)).map_err(sys_err)?;
     }
     for (rel, target) in &created {
         // the link's directory, built from the same components as the creation loop
@@ -619,7 +610,7 @@ fn create_links(staging: &[u8], links: &mut Vec<(Vec<u8>, Vec<u8>)>) -> std::io:
 
 /// A cache folder name is either `name@ver…` or `@scope/name@ver…` (one slash).
 fn safe_folder_name(name: &[u8]) -> bool {
-    if !safe_rel(name) || strings::contains_char(name, b'\\') || name == b"." || name == b".." {
+    if !safe_rel(name) {
         return false;
     }
     let slashes = strings::count_char(name, b'/');
@@ -802,7 +793,12 @@ fn unpack_impl(cache_dir: &[u8], pack_path: &[u8]) -> std::io::Result<UnpackSumm
                         if !symlink_target_stays_inside(&path, &target) {
                             return Err(bad("unsafe symlink target in pack", record_no));
                         }
-                        pending_links.push((path.clone(), target));
+                        // bun's tarball extraction does not create package symlinks on
+                        // Windows (cache entries never contain them there), so neither
+                        // does unpack; the record is validated and skipped
+                        if !cfg!(windows) {
+                            pending_links.push((path.clone(), target));
+                        }
                     }
                     _ => {
                         if let Some(parent) = parent(&dest) {

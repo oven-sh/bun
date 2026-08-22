@@ -437,6 +437,12 @@ impl DirEntry {
             | DK::EventPort => return Ok(()),
         };
 
+        // Nothing can open an entry whose path does not fit a path buffer.
+        if strings::without_trailing_slash(self.dir).len() + 1 + name_slice.len() >= MAX_PATH_BYTES
+        {
+            return Ok(());
+        }
+
         // Lowercase the entry basename once. The same bytes drive the
         // previous-generation case-insensitive probe, the new entry's
         // lowercased key, *and* the insert into `self.data` — and the hash is

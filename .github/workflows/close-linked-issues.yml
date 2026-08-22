@@ -1,0 +1,50 @@
+name: Close issues linked from merged PRs
+
+# GitHub closes "Fixes #1" on merge, but only the first reference after each
+# keyword: "Fixes #1, #2" leaves #2 open, "Supersedes #3" links nothing, and a
+# pull request is never closed by a reference. This reads the merged PR's
+# description and closes the rest: issues as completed, pull requests as
+# superseded. See scripts/close-linked-issues.ts for what counts as a reference.
+#
+# pull_request_target runs with the base branch checked out, so the script that
+# runs is main's copy, never the PR's, and the token can write for fork PRs.
+
+permissions:
+  contents: read
+
+on:
+  pull_request_target:
+    types: [closed]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Merged PR whose description to read"
+        required: true
+        type: string
+
+jobs:
+  close-linked-issues:
+    if: >
+      github.repository == 'oven-sh/bun' &&
+      (github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+
+      - name: Close linked issues and pull requests
+        run: bun run scripts/close-linked-issues.ts
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}

@@ -10,16 +10,8 @@
 
 extern "C" {
 struct us_socket_stream_buffer_t {
-    char* list_ptr = nullptr;
-    size_t list_cap = 0;
-    size_t listLen = 0;
     size_t total_bytes_written = 0;
-    size_t cursor = 0;
 
-    size_t bufferedSize() const
-    {
-        return listLen - cursor;
-    }
     size_t totalBytesWritten() const
     {
         return total_bytes_written;
@@ -71,6 +63,8 @@ public:
     void close();
     bool isClosed() const;
     bool isAuthorized() const;
+    /* NodeHTTPResponse ctx of the in-flight response, or null. */
+    void* currentResponseCtx() const;
 
     /* SNI hostname the client sent in its ClientHello; null when the socket is
      * not TLS or the client sent no SNI. The pointer is owned by the SSL
@@ -107,6 +101,8 @@ public:
      * uWS's send buffer, a shutdown now would put the FIN ahead of them and
      * truncate the response. Returns true after handing the close to uWS. */
     bool shutdownAfterResponseDrains();
+    /* The shutdown half of socket.end(), once nothing is left to drain. */
+    JSC::EncodedJSValue shutdownNow(JSC::JSGlobalObject*);
 
     /* Switch the connection into CONNECT-style tunnel mode after an accepted
      * Upgrade: subsequent bytes bypass the HTTP parser and stream to the

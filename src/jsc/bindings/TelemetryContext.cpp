@@ -162,18 +162,3 @@ extern "C" JSC::EncodedJSValue Bun__Telemetry__activeExtras(Zig::GlobalObject* g
     return JSValue::encode(extras ? extras : jsUndefined());
 }
 
-/// The raw slot value, for capturing "the current context" to re-enter later
-/// (e.g. ServerWebSocket handlers run under the upgrade request's context).
-extern "C" JSC::EncodedJSValue Bun__Telemetry__currentContext(Zig::GlobalObject* globalObject)
-{
-    return JSValue::encode(globalObject->m_asyncContextData.get()->getInternalField(0));
-}
-
-/// Swap the whole slot (paired with `Bun__Telemetry__currentContext`).
-extern "C" JSC::EncodedJSValue Bun__Telemetry__swapContext(Zig::GlobalObject* globalObject, JSC::EncodedJSValue value)
-{
-    auto* data = globalObject->m_asyncContextData.get();
-    JSValue prev = data->getInternalField(0);
-    data->putInternalField(globalObject->vm(), 0, JSValue::decode(value));
-    return JSValue::encode(prev);
-}

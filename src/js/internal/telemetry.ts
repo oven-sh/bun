@@ -443,7 +443,10 @@ export default {
     if (spanOrContext && typeof spanOrContext.getValue === "function") {
       return runWithContext(spanOrContext, fn, thisArg, args);
     }
-    return withContext(toNativeSpan(spanOrContext), fn, thisArg, ...args);
+    const span = toNativeSpan(spanOrContext);
+    // No span: run with no active span (like ROOT_CONTEXT), keeping ALS stores.
+    if (span === undefined) return runWithContext(ROOT_CONTEXT, fn, thisArg, args);
+    return withContext(span, fn, thisArg, ...args);
   },
   forceFlush: () => nativeForceFlush(),
   shutdown,

@@ -29,8 +29,8 @@ pub mod websocket;
 
 pub use bun_telemetry::pool::{self, NativeSpan};
 pub use span::{
-    ContextScope, Entered, active, active_context, active_js, active_native, create_native_cell,
-    discard_native, end_native, end_native_with, native_context_value, with_active_propagation,
+    Entered, active, active_context, active_js, active_native, create_native_cell, discard_native,
+    end_native, end_native_with, native_context_value, with_active_propagation,
 };
 
 /// Process-wide, immutable after `configure()`. Read on hot paths without
@@ -700,10 +700,7 @@ fn read_exporter_extras(
     x: &mut OtlpExporterConfig,
 ) -> JsResult<()> {
     if let Some(h) = obj.get(global, "headers")? {
-        if h.is_object() {
-            let Some(o) = h.get_object() else {
-                return Ok(());
-            };
+        if let Some(o) = h.get_object() {
             let mut iter = bun_jsc::JSPropertyIterator::init(
                 global,
                 o,
@@ -857,8 +854,7 @@ pub fn active_span(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSVa
     }
 }
 
-/// `with(spanOrContextValue, fn, thisArg, ...args)` — run `fn` with the slot
-/// set to `spanOrContextValue` (a TelemetrySpan, or a raw captured slot value).
+/// `with(span, fn, thisArg, ...args)` — run `fn` with `span` active.
 #[bun_jsc::host_fn]
 pub fn with_context(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let value = frame.argument(0);
@@ -872,18 +868,11 @@ pub fn with_context(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
     for i in 3..n {
         args.push(frame.argument(i));
     }
-    if span::is_span(value) {
-        let _g = Entered::new(global, value);
-        return f.call(global, this, &args);
+    if !span::is_span(value) {
+        return Err(global.throw_invalid_arguments(format_args!("expected a Span")));
     }
-    let _g = ContextScope::enter(global, value);
+    let _g = Entered::new(global, value);
     f.call(global, this, &args)
-}
-
-/// `currentContext()` — opaque slot snapshot (for context.active()/bind()).
-#[bun_jsc::host_fn]
-pub fn current_context(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-    Ok(ContextScope::current(global))
 }
 
 /// `forceFlush()` → Promise<void> that resolves when everything queued so far

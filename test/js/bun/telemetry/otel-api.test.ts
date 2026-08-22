@@ -283,6 +283,19 @@ describe("context propagation", () => {
     expect(Bun.otel.activeSpan()).toBeUndefined();
     span.end();
   });
+
+  test("Bun.otel.with(undefined, fn) clears the active span but keeps AsyncLocalStorage stores", () => {
+    const { AsyncLocalStorage } = require("node:async_hooks");
+    const als = new AsyncLocalStorage();
+    const span = tracer.startSpan("outer");
+    const seen = als.run("store", () =>
+      Bun.otel.with(span, () =>
+        Bun.otel.with(undefined, () => [Bun.otel.activeSpan(), als.getStore()] as const),
+      ),
+    );
+    expect(seen).toEqual([undefined, "store"]);
+    span.end();
+  });
 });
 
 describe("encoding", () => {

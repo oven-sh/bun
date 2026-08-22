@@ -1,8 +1,11 @@
-//! `node:crypto` native binding — `pbkdf2`/`scrypt`/`random*`/`timingSafeEqual`
+//! `node:crypto` native binding — `pbkdf2`/`scrypt`/`argon2`/`random*`/`timingSafeEqual`
 //! plus the `ExternCryptoJob` / `CryptoJob<Ctx>` work-pool plumbing.
 
 use core::ffi::{c_char, c_void};
 
+// The `rust-argon2` package exports its lib as crate `argon2`, the same name as
+// the `argon2` host fn below.
+use ::argon2 as rust_argon2;
 use bun_boringssl as boringssl;
 use bun_collections::CaseInsensitiveAsciiStringArrayHashMap;
 use bun_jsc::{
@@ -765,6 +768,35 @@ pub(crate) struct Scrypt {
     keylen: u32,
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+// Argon2 (crypto.argon2 / crypto.argon2Sync)
+// ───────────────────────────────────────────────────────────────────────────
+
+/// One derivation for `crypto.argon2` / `crypto.argon2Sync`, computed by the
+/// vendored `rust-argon2` crate that `Bun.password` also uses (BoringSSL has
+/// no argon2). The inputs are copied out of JS when the call is made, so the
+/// work-pool half never reads JS memory; node's async job copies them too.
+pub(crate) struct Argon2 {
+    message: Box<[u8]>,
+    nonce: Box<[u8]>,
+    secret: Box<[u8]>,
+    associated_data: Box<[u8]>,
+    parallelism: u32,
+    tag_length: u32,
+    memory: u32,
+    passes: u32,
+    variant: rust_argon2::Variant,
+}
+
+impl Drop for Argon2 {
+    fn drop(&mut self) {
+        // The password and the pepper are secrets: zero them before the
+        // allocator reuses the memory, as `Bun.password` does.
+        bun_alloc::free_sensitive(core::mem::take(&mut self.message));
+        bun_alloc::free_sensitive(core::mem::take(&mut self.secret));
+    }
+}
+
 mod _impl {
     use super::*;
     use crate::node::util::validators;
@@ -1320,8 +1352,216 @@ mod _impl {
         Ok(buf)
     }
 
+    impl Argon2 {
+        /// The arguments arrive validated by `checkArgon2()` in crypto.ts. The
+        /// checks here only defend the binding itself.
+        fn from_js(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<(Self, JSValue)> {
+            fn copy_bytes(
+                global: &JSGlobalObject,
+                value: JSValue,
+                name: &str,
+            ) -> JsResult<Box<[u8]>> {
+                let Some(buffer) = value.as_array_buffer(global) else {
+                    return Err(global.throw_invalid_argument_type_value(
+                        name,
+                        "ArrayBuffer, Buffer, TypedArray, or DataView",
+                        value,
+                    ));
+                };
+                let bytes = buffer.byte_slice();
+                let mut copy = Vec::new();
+                if copy.try_reserve_exact(bytes.len()).is_err() {
+                    return Err(global.throw_out_of_memory());
+                }
+                copy.extend_from_slice(bytes);
+                Ok(copy.into_boxed_slice())
+            }
+
+            let [
+                message_value,
+                nonce_value,
+                parallelism_value,
+                tag_length_value,
+                memory_value,
+                passes_value,
+                secret_value,
+                associated_data_value,
+                type_value,
+                callback,
+            ] = call_frame.arguments_as_array::<10>();
+
+            let parallelism = validators::validate_uint32(
+                global,
+                parallelism_value,
+                format_args!("parameters.parallelism"),
+                true,
+            )?;
+            let tag_length = validators::validate_uint32(
+                global,
+                tag_length_value,
+                format_args!("parameters.tagLength"),
+                true,
+            )?;
+            let memory = validators::validate_uint32(
+                global,
+                memory_value,
+                format_args!("parameters.memory"),
+                true,
+            )?;
+            let passes = validators::validate_uint32(
+                global,
+                passes_value,
+                format_args!("parameters.passes"),
+                true,
+            )?;
+            let type_id =
+                validators::validate_uint32(global, type_value, format_args!("type"), false)?;
+            // The ids of `kArgon2Types` in crypto.ts.
+            let variant = match type_id {
+                0 => rust_argon2::Variant::Argon2d,
+                1 => rust_argon2::Variant::Argon2i,
+                2 => rust_argon2::Variant::Argon2id,
+                _ => {
+                    return Err(global.throw_invalid_argument_type_value(
+                        "type",
+                        "an argon2 type id",
+                        type_value,
+                    ));
+                }
+            };
+
+            let params = Argon2 {
+                message: copy_bytes(global, message_value, "message")?,
+                nonce: copy_bytes(global, nonce_value, "nonce")?,
+                secret: copy_bytes(global, secret_value, "secret")?,
+                associated_data: copy_bytes(global, associated_data_value, "associatedData")?,
+                parallelism,
+                tag_length,
+                memory,
+                passes,
+                variant,
+            };
+            Ok((params, callback))
+        }
+
+        /// The derived tag, or `None` when the derivation fails (node reports
+        /// this as "Argon2 derivation failed").
+        fn run(&self) -> Option<Vec<u8>> {
+            // rust-argon2 allocates the block matrix (`memory` KiB) and the tag
+            // infallibly, so a size the validators admit but the process cannot
+            // hold would abort. Apply the same limit scrypt applies to its output
+            // first, so such a request fails the derivation instead.
+            let limit = jsc::virtual_machine::synthetic_allocation_limit();
+            if (self.memory as usize).saturating_mul(1024) > limit
+                || self.tag_length as usize > limit
+            {
+                return None;
+            }
+
+            let config = rust_argon2::Config {
+                ad: &self.associated_data,
+                hash_length: self.tag_length,
+                lanes: self.parallelism,
+                mem_cost: self.memory,
+                secret: &self.secret,
+                // `parallelism` is the lane count, which is part of the
+                // function's definition; the thread count is not. Computing
+                // the lanes one after another on this thread gives the same
+                // tag node gets, as `Bun.password` does in pwhash.rs.
+                thread_mode: rust_argon2::ThreadMode::Sequential,
+                time_cost: self.passes,
+                variant: self.variant,
+                version: rust_argon2::Version::Version13,
+            };
+            rust_argon2::hash_raw(&self.message, &self.nonce, &config).ok()
+        }
+    }
+
+    fn argon2_failed(global: &JSGlobalObject) -> JSValue {
+        global.create_error_instance(format_args!("Argon2 derivation failed"))
+    }
+
+    /// `crypto.argon2` off the JS thread. The JS side is the user callback,
+    /// invoked as `(err)` or `(null, tag)`.
+    pub(crate) struct Argon2Job {
+        params: Argon2,
+        tag: Option<Vec<u8>>,
+    }
+
+    impl JobContext for Argon2Job {
+        type OffThread = Self;
+        type Js = Strong;
+
+        fn run(
+            this: &mut Self,
+            done: bun_jsc::Completion<Self>,
+        ) -> Option<bun_jsc::Completion<Self>> {
+            this.tag = this.params.run();
+            Some(done)
+        }
+
+        fn then(this: Self, callback: Strong, cx: &JsThread<'_>) -> JsResult<()> {
+            let global = cx.global();
+            let Argon2Job { params, tag } = this;
+            // The callback is user code and may never return (`process.exit()`):
+            // zero the secrets before it runs.
+            drop(params);
+
+            let event_loop = global.bun_vm().event_loop_mut();
+            let callback_fn = callback.get();
+            let Some(tag) = tag else {
+                event_loop.run_callback(
+                    callback_fn,
+                    global,
+                    JSValue::UNDEFINED,
+                    &[argon2_failed(global)],
+                );
+                return Ok(());
+            };
+            match JSValue::create_buffer_from_box(global, tag.into_boxed_slice()) {
+                Ok(buffer) => event_loop.run_callback(
+                    callback_fn,
+                    global,
+                    JSValue::UNDEFINED,
+                    &[JSValue::NULL, buffer],
+                ),
+                // The tag could not be wrapped (allocation failure): that is
+                // this derivation's error.
+                Err(err) => event_loop.run_callback(
+                    callback_fn,
+                    global,
+                    JSValue::UNDEFINED,
+                    &[global.take_error(err)],
+                ),
+            }
+            Ok(())
+        }
+    }
+
+    #[bun_jsc::host_fn]
+    fn argon2(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        let (params, callback) = Argon2::from_js(global, call_frame)?;
+        let callback = validators::validate_function(global, "callback", callback)?;
+        let cx = global.js_thread();
+        Job::<Argon2Job>::schedule(
+            &cx,
+            Argon2Job { params, tag: None },
+            Strong::create(callback.with_async_context_if_needed(global), global),
+        );
+        Ok(JSValue::UNDEFINED)
+    }
+
+    #[bun_jsc::host_fn]
+    fn argon2_sync(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        let (params, _) = Argon2::from_js(global, call_frame)?;
+        let Some(tag) = params.run() else {
+            return Err(global.throw_value(argon2_failed(global)));
+        };
+        JSValue::create_buffer_from_box(global, tag.into_boxed_slice())
+    }
+
     pub(crate) fn create_node_crypto_binding_zig(global: &JSGlobalObject) -> JSValue {
-        let crypto = JSValue::create_empty_object(global, 15);
+        let crypto = JSValue::create_empty_object(global, 18);
 
         // `#[bun_jsc::host_fn]` emits a `__jsc_host_{name}` shim with the raw `JSHostFn` ABI;
         // pass that (not the safe-Rust body) to `JSFunction::create`.
@@ -1489,6 +1729,23 @@ mod _impl {
                 "scryptSync",
                 __jsc_host_scrypt_sync,
                 4,
+                Default::default(),
+            ),
+        );
+
+        crypto.put(
+            global,
+            b"argon2",
+            JSFunction::create(global, "argon2", __jsc_host_argon2, 10, Default::default()),
+        );
+        crypto.put(
+            global,
+            b"argon2Sync",
+            JSFunction::create(
+                global,
+                "argon2Sync",
+                __jsc_host_argon2_sync,
+                9,
                 Default::default(),
             ),
         );

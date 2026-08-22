@@ -174,8 +174,10 @@ test("empty Transfer-Encoding with Content-Length frames the body like node", as
 // Boundary of the leniency: node errors once any non-whitespace value byte
 // arrives, even one that names no coding.
 test("comma-only Transfer-Encoding value still fires clientError like node", async () => {
-  const { promise, resolve } = Promise.withResolvers<any>();
+  const { promise, resolve, reject } = Promise.withResolvers<any>();
+  const urls: string[] = [];
   await using server = createServer((req, res) => {
+    urls.push(req.url!);
     req.resume();
     res.end("ok");
   });
@@ -186,13 +188,22 @@ test("comma-only Transfer-Encoding value still fires clientError like node", asy
   await once(server.listen(0, "127.0.0.1"), "listening");
   const { port } = server.address() as AddressInfo;
 
+  // Pipeline a follow-up with Connection: close so that, if the comma value
+  // were wrongly treated as absent, /b is served and the socket closes,
+  // rejecting below instead of idling on keep-alive until the test times out.
   const socket = connect(port, "127.0.0.1", () => {
-    socket.write("GET / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: ,\r\n\r\n");
+    socket.write(
+      "GET /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: ,\r\n\r\n" +
+        "GET /b HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+    );
   });
+  socket.resume();
   socket.on("error", () => {});
+  socket.on("close", () => reject(new Error(`socket closed without clientError, served: ${urls.join(",")}`)));
   const err = await promise;
   socket.destroy();
   expect(err.code).toBe("HPE_INVALID_TRANSFER_ENCODING");
+  expect(urls).toEqual(["/a"]);
 });
 
 // Value lengths landing parseTrailerFields' 8-byte field-value scan on the

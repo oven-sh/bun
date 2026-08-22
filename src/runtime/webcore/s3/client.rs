@@ -646,8 +646,8 @@ impl S3UploadStreamWrapper {
     /// Hands the +1 `take_pump_claim` took to `release_pump_claim`, a tick later: the
     /// release frees the sink, and `resolve` can be running inside the sink's own
     /// `write` or `end` (a request refused or failing to sign on the spot). A native
-    /// source is cleared now: still attached, it is what `end_from_stream` and the
-    /// attach code in `upload_stream` take the +1 to be theirs by.
+    /// source is cleared now: while one is attached, `end_from_stream` and the attach
+    /// code in `upload_stream` treat the +1 as theirs.
     fn release_pump_claim_later(&mut self) {
         if self.native_source_attached() {
             if let Some(sink) = self.sink_mut() {

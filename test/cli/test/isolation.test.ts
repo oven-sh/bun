@@ -1178,7 +1178,7 @@ test.concurrent.each(Object.keys(ROLLBACK_FEEDERS) as (keyof typeof ROLLBACK_FEE
         uploads: output.match(/^\\[s3multipartupload\\] deinit$/gm)?.length ?? 0,
         passed: /\\b2 pass\\b/.test(output) && !/\\b[1-9]\\d* fail\\b/.test(output),
         exitCode,
-        output: exitCode === 0 ? "" : output,
+        output,
       }));
     `,
     });
@@ -1193,7 +1193,7 @@ test.concurrent.each(Object.keys(ROLLBACK_FEEDERS) as (keyof typeof ROLLBACK_FEE
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({
+    const expected = {
       seen: [
         "POST /b/key?uploads=",
         "PUT /b/key?partNumber=1&uploadId=upload-1&x-id=UploadPart",
@@ -1204,7 +1204,11 @@ test.concurrent.each(Object.keys(ROLLBACK_FEEDERS) as (keyof typeof ROLLBACK_FEE
       passed: true,
       exitCode: 0,
       output: "",
-    });
+    };
+    const actual = JSON.parse(stdout);
+    // On a failure, everything the isolated run printed.
+    if (Bun.deepEquals({ ...actual, output: "" }, expected)) actual.output = "";
+    expect(actual).toEqual(expected);
     expect(exitCode).toBe(0);
   },
 );

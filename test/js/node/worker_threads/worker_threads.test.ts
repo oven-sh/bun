@@ -2636,13 +2636,13 @@ describe("VM teardown ordering", () => {
           file.write(new Response(new ReadableStream({ pull(c) { c.enqueue(new Uint8Array(64)); return globalThis.moreBytes.promise; } }))).catch(() => {});`,
         wrappers: 1,
       },
-      // Two collections: the first frees the Response, whose body holds a Strong on the stream,
-      // the second the stream and its pump. The turn of the loop after each runs what the
-      // collected pump's cell queued.
+      // At least two collections: the first frees the Response, whose body holds a Strong on
+      // the stream, the second the stream and its pump. The turn of the loop after each runs
+      // what the collected pump's cell queued. The extra rounds change nothing once it is gone.
       {
         name: "s3file.write(new Response(jsStream)) whose pump was collected while waiting for bytes, worker terminated",
         start: `file.write(new Response(new ReadableStream({ pull(c) { c.enqueue(new Uint8Array(64)); return new Promise(() => {}); } }))).catch(() => {});
-          for (let i = 0; i < 2; i++) { Bun.gc(true); await new Promise(resolve => setImmediate(resolve)); }`,
+          for (let i = 0; i < 4; i++) { Bun.gc(true); await new Promise(resolve => setImmediate(resolve)); }`,
         wrappers: 1,
         collected: 1,
       },

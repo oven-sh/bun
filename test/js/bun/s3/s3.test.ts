@@ -1803,6 +1803,16 @@ describe("s3 multipart upload id validation", () => {
 });
 
 describe("s3 upload stream body error", () => {
+  // The S3 client does not honor NO_PROXY; an inherited proxy would hijack the
+  // requests to a stand-in server.
+  const noProxyEnv = {
+    ...bunEnv,
+    HTTP_PROXY: undefined,
+    HTTPS_PROXY: undefined,
+    http_proxy: undefined,
+    https_proxy: undefined,
+  };
+
   // The readStreamIntoSink abrupt path dispatches a single-file PUT before
   // the pump promise rejects; the PUT's response callback must not read a
   // freed MultiPartUpload when fail() runs from the reject handler.
@@ -2001,20 +2011,13 @@ describe("s3 upload stream body error", () => {
   // returned, whenever that happens. Here it happens after the wrapper is gone,
   // so the shim must find nothing left to do (with the wrapper handed to it
   // directly, ASAN reports a use after free here).
-  it("a pump that settles after S3 failed the upload and freed its wrapper touches nothing", async () => {
+  it.concurrent("a pump that settles after S3 failed the upload and freed its wrapper touches nothing", async () => {
     const fixture = `
-      const initiate = Promise.withResolvers();
-      const initiateSeen = Promise.withResolvers();
       const standIn = Bun.serve({
         port: 0,
         async fetch(req) {
           await req.arrayBuffer();
-          if (req.method === "POST") {
-            initiateSeen.resolve();
-            await initiate.promise;
-            return new Response("<Error><Code>AccessDenied</Code><Message>no</Message></Error>", { status: 403 });
-          }
-          return new Response(undefined, { headers: { etag: '"part"' } });
+          return new Response("<Error><Code>AccessDenied</Code><Message>no</Message></Error>", { status: 403 });
         },
       });
       const client = new Bun.S3Client({ accessKeyId: "k", secretAccessKey: "s", bucket: "b", endpoint: standIn.url.href });
@@ -2026,8 +2029,6 @@ describe("s3 upload stream body error", () => {
           return pull.promise;
         },
       })));
-      await initiateSeen.promise;
-      initiate.resolve();
       console.log("write:", await written.then(() => "resolved", e => e.code));
       // The turn on which the wrapper is freed.
       await new Promise(resolve => setImmediate(resolve));
@@ -2039,8 +2040,7 @@ describe("s3 upload stream body error", () => {
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
-      // The S3 client does not honor NO_PROXY; an inherited proxy would hijack the requests.
-      env: { ...bunEnv, HTTP_PROXY: undefined, HTTPS_PROXY: undefined, http_proxy: undefined, https_proxy: undefined },
+      env: noProxyEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -2058,10 +2058,10 @@ describe("s3 upload stream body error", () => {
   // free on the way back out (ASAN); the upload must only reject the write.
   // Both feeders: a JS stream whose bytes arrive once the pump is waiting for
   // them, and a fetch body attached with a whole part already buffered, which the
-  // attach code writes into the sink itself (the body is bigger than a part so
-  // that what is buffered by the time the upstream has written it all is at
-  // least a part; if less arrived in time the upload fails a turn later, which
-  // is fine as well).
+  // attach code writes into the sink itself. The body is bigger than a part so
+  // that, by the time the upstream has written it all, at least a part of it has
+  // usually arrived; if less has, the upload fails a turn later, a path the
+  // other tests cover.
   const UNSIGNABLE_UPLOADS = {
     "a JS stream": `
       const chunk = Promise.withResolvers();
@@ -2091,7 +2091,7 @@ describe("s3 upload stream body error", () => {
       written.catch(() => {}).then(() => upstream.stop(true));
     `,
   };
-  it.each(Object.keys(UNSIGNABLE_UPLOADS) as (keyof typeof UNSIGNABLE_UPLOADS)[])(
+  it.concurrent.each(Object.keys(UNSIGNABLE_UPLOADS) as (keyof typeof UNSIGNABLE_UPLOADS)[])(
     "an upload from %s whose request fails before it is sent only rejects",
     async feeder => {
       const fixture = `
@@ -2105,7 +2105,7 @@ describe("s3 upload stream body error", () => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", fixture],
         env: {
-          ...bunEnv,
+          ...noProxyEnv,
           // No credentials from the environment either: signing must fail.
           S3_ACCESS_KEY_ID: undefined,
           S3_SECRET_ACCESS_KEY: undefined,
@@ -2113,10 +2113,6 @@ describe("s3 upload stream body error", () => {
           AWS_ACCESS_KEY_ID: undefined,
           AWS_SECRET_ACCESS_KEY: undefined,
           AWS_SESSION_TOKEN: undefined,
-          HTTP_PROXY: undefined,
-          HTTPS_PROXY: undefined,
-          http_proxy: undefined,
-          https_proxy: undefined,
         },
         stdout: "pipe",
         stderr: "pipe",

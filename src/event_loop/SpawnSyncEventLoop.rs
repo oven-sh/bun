@@ -288,8 +288,6 @@ impl Drop for SpawnSyncEventLoop {
 impl SpawnSyncEventLoop {
     /// Configure the event loop for a specific VM context
     pub fn prepare(&mut self, vm: *mut () /* SAFETY: erased *mut VirtualMachine */) {
-        // Each spawnSync releases its own polls before it returns, so a leftover
-        // count is a poll of another loop that was released against this one.
         #[cfg(unix)]
         debug_assert!(
             self.uws_loop().num_polls == 0 && self.uws_loop().active == 0,

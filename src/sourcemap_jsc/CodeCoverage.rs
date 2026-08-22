@@ -116,8 +116,7 @@ impl Report {
 // Bitset/Vec/Vec fields drop automatically.
 // Note: source_url is NOT freed (caller owns it).
 
-/// A module's path relative to `base_path`. A virtual module's id is not a path, so it
-/// is returned as it is: `relative` would copy it into a path buffer it can overflow.
+/// The name a module is reported under: its path relative to `base_path`, or its id as it is.
 pub fn file_name<'a>(source_url: &'a [u8], base_path: &[u8]) -> &'a [u8] {
     if base_path.is_empty() || !bun_paths::is_absolute(source_url) {
         return source_url;

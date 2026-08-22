@@ -44,23 +44,20 @@ impl<'a> fmt::Display for DiffFormatter<'a> {
                 flush: false,
                 quote_strings: true,
             };
-            let _ = JestPrettyFormat::format(
-                MessageLevel::Debug,
-                global_this,
-                core::slice::from_ref(&received),
-                1,
-                &mut received_buf,
-                fmt_options,
-            ); // TODO:
-
-            let _ = JestPrettyFormat::format(
-                MessageLevel::Debug,
-                global_this,
-                core::slice::from_ref(&expected),
-                1,
-                &mut expected_buf,
-                fmt_options,
-            ); // TODO:
+            for (value, buf) in [(received, &mut received_buf), (expected, &mut expected_buf)] {
+                if JestPrettyFormat::format(
+                    MessageLevel::Debug,
+                    global_this,
+                    core::slice::from_ref(&value),
+                    1,
+                    buf,
+                    fmt_options,
+                )
+                .is_err()
+                {
+                    let _ = global_this.clear_exception_except_termination();
+                }
+            }
         }
 
         let mut received_slice: &[u8] = received_buf.as_slice();

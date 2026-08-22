@@ -844,7 +844,10 @@ function getTestBunStep(platform, options, testOptions = {}) {
     depends_on: depends,
     agents: getTestAgent(platform, options),
 
-    retry: getRetry(),
+    // No automatic retry on the beta tier: agent loss would re-queue the
+    // job onto a single-box queue with nobody to take it, and a job that
+    // never starts is not something soft_fail can convert.
+    retry: platform.tier === "beta" ? { manual: { permit_on_passed: true }, automatic: false } : getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     // One beta box: one shard, and it cannot block a merge.
     parallelism: platform.tier === "beta" ? 1 : os === "darwin" ? 2 : os === "windows" ? 8 : 20,
@@ -1516,7 +1519,19 @@ async function darwinBetaQueueIdle() {
       return false;
     }
     const builds = await res.json();
-    const terminal = new Set(["passed", "failed", "canceled", "skipped", "timed_out", "expired", "broken", "finished"]);
+    const terminal = new Set([
+      "passed",
+      "failed",
+      "canceled",
+      "skipped",
+      "timed_out",
+      "expired",
+      "broken",
+      "finished",
+      "waiting_failed",
+      "blocked_failed",
+      "unblocked_failed",
+    ]);
     const busy = builds.some(({ jobs = [] }) =>
       jobs.some(
         ({ state, agent_query_rules = [] }) =>

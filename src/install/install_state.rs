@@ -115,6 +115,18 @@ enum DirList {
     Unreadable,
 }
 
+impl DirList {
+    /// The entries, or — when there is nothing to walk — whether the walk still counts
+    /// as complete (`true` for an absent directory, `false` for an unreadable one).
+    fn into_entries(self) -> Result<Vec<(Vec<u8>, bool)>, bool> {
+        match self {
+            DirList::Entries(e) => Ok(e),
+            DirList::Absent => Err(true),
+            DirList::Unreadable => Err(false),
+        }
+    }
+}
+
 /// Directory entries as (name, is_directory); `.`/`..` are never returned by the
 /// iterator. An error part-way through is `Unreadable`, never a partial list.
 fn read_dir(path: &[u8]) -> DirList {
@@ -674,10 +686,10 @@ fn stamp_tree(out: &mut Vec<u8>, dir: &[u8], depth: u8) -> bool {
     let _ = write!(out, "l {stamp:016x} ");
     out.extend_from_slice(dir);
     out.push(b'\n');
-    let rd = match read_dir(dir) {
-        DirList::Entries(rd) => rd,
-        DirList::Absent => return true,
-        DirList::Unreadable => return false,
+    let rd = match read_dir(dir).into_entries() {
+        Ok(rd) => rd,
+        // absent: nothing to stamp (fine); unreadable: refuse to record state
+        Err(complete) => return complete,
     };
     for (name, _) in &rd {
         let name = name.as_slice();
@@ -748,10 +760,10 @@ fn collect_dirs(dir: &[u8], depth: usize, out: &mut Vec<Vec<u8>>, budget: &mut u
     if depth == 0 {
         return true;
     }
-    let rd = match read_dir(dir) {
-        DirList::Entries(rd) => rd,
-        DirList::Absent => return true,
-        DirList::Unreadable => return false,
+    let rd = match read_dir(dir).into_entries() {
+        Ok(rd) => rd,
+        // absent: nothing to stamp (fine); unreadable: refuse to record state
+        Err(complete) => return complete,
     };
     for (name, is_dir) in &rd {
         if !is_dir {

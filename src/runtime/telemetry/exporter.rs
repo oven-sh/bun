@@ -122,9 +122,9 @@ impl OtlpHttpExporter {
         })
     }
 
-    fn options(&self) -> HttpOptions<'static> {
+    fn options(&self, timeout_seconds: u32) -> HttpOptions<'static> {
         HttpOptions {
-            idle_timeout_seconds: Some(self.timeout_seconds),
+            idle_timeout_seconds: Some(timeout_seconds),
             compress: match self.compression {
                 Compression::Gzip => Some(bun_http::compress_body::CompressOption {
                     encoding: bun_http::compress_body::CompressEncoding::Gzip,
@@ -137,7 +137,14 @@ impl OtlpHttpExporter {
         }
     }
 
-    fn request<'a>(&'a self, body: &'a [u8], callback: HTTPClientResultCallback) -> AsyncHTTP<'a> {
+    /// `timeout_seconds`: per-request idle timeout (the configured
+    /// `OTEL_EXPORTER_OTLP_TIMEOUT`, or what is left of an exit deadline).
+    fn request<'a>(
+        &'a self,
+        body: &'a [u8],
+        callback: HTTPClientResultCallback,
+        timeout_seconds: u32,
+    ) -> AsyncHTTP<'a> {
         AsyncHTTP::init(
             Method::POST,
             URL::parse(&self.url),
@@ -146,14 +153,19 @@ impl OtlpHttpExporter {
             body,
             callback,
             FetchRedirect::Follow,
-            self.options(),
+            self.options(timeout_seconds),
         )
     }
 
-    fn send_blocking(&self, payload: &ExportPayload) -> Result<(), SendError> {
+    fn send_blocking(&self, payload: &ExportPayload, deadline_ns: u64) -> Result<(), SendError> {
+        // Bound the request by whichever is sooner: the exporter timeout or the deadline.
+        let left =
+            deadline_ns.saturating_sub(bun_telemetry::clock::now_unix_nanos()) / 1_000_000_000;
+        let timeout = self.timeout_seconds.min((left as u32).max(1));
         let mut req = self.request(
             &payload.body,
             HTTPClientResultCallback::new::<()>(core::ptr::null_mut(), |_, _, _| {}),
+            timeout,
         );
         let mut response = MutableString::default();
         let meta = req.send_sync(&mut response).map_err(SendError::Transport)?;
@@ -288,6 +300,7 @@ impl Exporter for OtlpHttpExporter {
                     InflightExport::callback,
                     InflightExport::release_at_shutdown,
                 ),
+                me.timeout_seconds,
             );
             (*task).http.0.write(http);
             bun_http::http_thread::init(&Default::default());
@@ -301,7 +314,7 @@ impl Exporter for OtlpHttpExporter {
         if bun_telemetry::clock::now_unix_nanos() >= deadline_ns {
             return ExportResult::Failure;
         }
-        match self.send_blocking(payload) {
+        match self.send_blocking(payload, deadline_ns) {
             Ok(()) => ExportResult::Success,
             Err(err) => {
                 self.warn_once(payload, " at exit", &err);

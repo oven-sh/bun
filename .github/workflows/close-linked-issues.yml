@@ -258,7 +258,6 @@ jobs:
               let text = removeBlocks(body.replaceAll("\r\n", "\n"));
               text = removeSpans(text, "`");
               text = removeSpans(text, "~", 2, true);
-              text = removeSpans(text, "~", 1, true);
               for (const tag of ["s", "del", "strike"]) text = removeTagged(text, tag);
               return text;
             }
@@ -377,12 +376,12 @@ jobs:
               return n >= 4 || line[n] === "\t";
             }
 
-            // A heading, a list item or a thematic break ends a blockquote's lazy
-            // continuation. The marker needs a space after it ("#100" and "**bold**" are
-            // text), and an ordered item interrupts only when it starts at 1, as in
-            // CommonMark.
+            // A heading, a list item, a thematic break or an HTML comment ends a
+            // blockquote's lazy continuation. The marker needs a space after it ("#100"
+            // and "**bold**" are text), and an ordered item interrupts only when it
+            // starts at 1, as in CommonMark.
             function startsBlock(trimmed) {
-              if (isThematicBreak(trimmed)) return true;
+              if (isThematicBreak(trimmed) || trimmed.startsWith("<!--")) return true;
               const c = trimmed[0];
               if (c === "-" || c === "*" || c === "+") return isGap(trimmed[1]);
               if (c === "#") return isHeading(trimmed);
@@ -455,7 +454,7 @@ jobs:
                   i = startEnd + 1;
                   continue;
                 }
-                out += text.slice(i, start) + " ";
+                out += text.slice(i, start) + placeholder(text, start - 1, endEnd + 1);
                 i = endEnd + 1;
               }
               return out;
@@ -463,10 +462,10 @@ jobs:
 
             // Removes the text between a run of `marker` and the next run of the same
             // length in the same paragraph: `code spans` for "`", ~~struck-through
-            // text~~ and ~struck-through text~ for "~" with `runLength` 2 and 1. With
-            // `flanking`, the opening run must touch the text after it and the closing
-            // run the text before it, so "~1.2 to ~1.3" strikes nothing. A run with
-            // no closing run stays as it is.
+            // text~~ for "~" with `runLength` 2 (GitHub renders a single tilde as
+            // text). With `flanking`, the opening run must touch the text after it and
+            // the closing run the text before it, so "~~1.2 to ~~1.3" strikes nothing.
+            // A run with no closing run stays as it is.
             function removeSpans(text, marker, runLength, flanking = false) {
               let out = "";
               let i = 0;
@@ -498,10 +497,21 @@ jobs:
                   i += opening.length;
                   continue;
                 }
-                out += " ";
+                out += placeholder(text, i - 1, close + opening.length);
                 i = close + opening.length;
               }
               return out;
+            }
+
+            // What replaces a removed span. A space would read as a word boundary to
+            // the later passes: "~~Fixes #1 `x`~~" needs its closing run to touch text,
+            // and a line that was only a code span is not blank. A word keeps the
+            // sentence whole for the look-back ("the `rm` fix #1" stays a noun phrase),
+            // and a space is added only next to a word character.
+            function placeholder(text, before, after) {
+              const left = before >= 0 && isWordChar(text[before]) ? " " : "";
+              const right = after < text.length && isWordChar(text[after]) ? " " : "";
+              return `${left}code${right}`;
             }
 
             // The index of the first blank line after `from`, or the end of the text.

@@ -690,15 +690,25 @@ impl JSValue {
     /// `JSValue.fromEntries` — build a plain object from
     /// parallel `keys`/`values` `ZigString` arrays. When `clone` is true the
     /// C++ side copies the string bytes (caller may free `keys`/`values`).
+    ///
+    /// # Panics
+    /// If the two slices differ in length. The binding is only told
+    /// `keys.len()` and reads that many entries from both arrays, so a shorter
+    /// `values` would be read out of bounds.
     pub fn from_entries(
         global: &JSGlobalObject,
         keys: &mut [bun_core::ZigString],
         values: &mut [bun_core::ZigString],
         clone: bool,
     ) -> JSValue {
-        debug_assert_eq!(keys.len(), values.len());
-        // SAFETY: `global` is live; `keys`/`values` are valid for `keys.len()`
-        // elements; the C++ binding only reads (and optionally clones) them.
+        assert!(
+            keys.len() == values.len(),
+            "from_entries: keys.len() ({}) != values.len() ({})",
+            keys.len(),
+            values.len(),
+        );
+        // SAFETY: `global` is live; both slices hold `keys.len()` elements
+        // (asserted above); the C++ binding only reads (and optionally clones) them.
         unsafe {
             JSC__JSValue__fromEntries(
                 global,
@@ -2977,4 +2987,38 @@ unsafe extern "C" {
         other: JSValue,
     ) -> bool;
     safe fn JSC__JSValue__toMatch(this: JSValue, global: &JSGlobalObject, other: JSValue) -> bool;
+}
+
+// Run by test/internal/jsvalue-from-entries-length.test.ts under
+// `cargo miri test` with debug assertions disabled: reaching
+// `JSC__JSValue__fromEntries` fails the test there, so a length mismatch has
+// to be rejected before the call in a release build too. Equal lengths reach
+// C++ and are covered by the `FileSystemRouter#routes` tests in
+// test/js/bun/util/filesystem_router.test.ts.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bun_core::ZigString;
+
+    // `from_entries` must panic before it touches the global, so a dangling
+    // pointer to the zero-sized handle is all these tests need.
+    fn unused_global() -> &'static JSGlobalObject {
+        JSGlobalObject::opaque_ref(core::ptr::NonNull::<JSGlobalObject>::dangling().as_ptr())
+    }
+
+    #[test]
+    #[should_panic(expected = "from_entries: keys.len() (2) != values.len() (1)")]
+    fn from_entries_panics_when_values_is_shorter_than_keys() {
+        let mut keys = [ZigString::static_("a"), ZigString::static_("b")];
+        let mut values = [ZigString::static_("1")];
+        JSValue::from_entries(unused_global(), &mut keys, &mut values, true);
+    }
+
+    #[test]
+    #[should_panic(expected = "from_entries: keys.len() (1) != values.len() (2)")]
+    fn from_entries_panics_when_keys_is_shorter_than_values() {
+        let mut keys = [ZigString::static_("a")];
+        let mut values = [ZigString::static_("1"), ZigString::static_("2")];
+        JSValue::from_entries(unused_global(), &mut keys, &mut values, false);
+    }
 }

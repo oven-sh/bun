@@ -1901,8 +1901,9 @@ pub fn has_created_manifest_task(
 /// The caller of `has_created_manifest_task` resolved from the manifest cache
 /// instead of sending the request it was cleared to send. Forget that request;
 /// the entry stays as long as it records anything else (a request of the other
-/// kind that is in flight, or a failed extended request), otherwise a later
-/// dependency would request that document again or wait for it.
+/// kind that is in flight, a failed request, or a failed extended request),
+/// otherwise a later dependency would request that document again or wait for
+/// it.
 pub fn manifest_request_not_sent(
     this: &mut PackageManager,
     task_id: Task::Id,
@@ -1914,6 +1915,7 @@ pub fn manifest_request_not_sent(
     *entry.manifest_requested(needs_extended_manifest) = false;
     if !entry.is_extended_manifest
         && !entry.has_abbreviated_manifest_request
+        && !entry.failed
         && !entry.extended_manifest_failed
     {
         let _ = this.network_dedupe_map.remove(&task_id);

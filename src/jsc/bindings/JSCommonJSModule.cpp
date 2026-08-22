@@ -83,8 +83,6 @@
 #include "ErrorCode.h"
 #include "WebCoreJSBuiltins.h"
 
-extern "C" bool Bun__isBunMain(JSC::JSGlobalObject* global, const BunString*);
-
 namespace Bun {
 using namespace JSC;
 
@@ -140,7 +138,7 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         resolveFunction = JSC::JSBoundFunction::create(vm,
             globalObject,
             globalObject->requireResolveFunctionUnbound(),
-            moduleObject->filename(),
+            moduleObject,
             ArgList(), 1, globalObject->commonStrings().resolveString(globalObject), resolveSourceCode);
         RETURN_IF_EXCEPTION(scope, );
 
@@ -339,8 +337,11 @@ JSC_DEFINE_HOST_FUNCTION(requireResolvePathsFunction, (JSGlobalObject * globalOb
     if (!requireResolveBound) [[unlikely]] {
         return JSValue::encode(constructEmptyArray(globalObject, nullptr, 0));
     }
-    JSValue boundThis = requireResolveBound->boundThis();
-    JSString* filename = dynamicDowncast<JSString>(boundThis);
+    auto* boundModule = dynamicDowncast<Bun::JSCommonJSModule>(requireResolveBound->boundThis());
+    if (!boundModule) [[unlikely]] {
+        return JSValue::encode(constructEmptyArray(globalObject, nullptr, 0));
+    }
+    JSString* filename = dynamicDowncast<JSString>(boundModule->filename());
     if (!filename) [[unlikely]] {
         return JSValue::encode(constructEmptyArray(globalObject, nullptr, 0));
     }
@@ -1694,7 +1695,7 @@ JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* l
     JSFunction* resolveFunction = JSC::JSBoundFunction::create(vm,
         globalObject,
         globalObject->requireResolveFunctionUnbound(),
-        moduleObject->filename(),
+        moduleObject,
         ArgList(), 1, globalObject->commonStrings().resolveString(globalObject), resolveSourceCode);
     RETURN_IF_EXCEPTION(scope, nullptr);
 

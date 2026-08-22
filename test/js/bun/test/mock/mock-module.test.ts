@@ -587,16 +587,20 @@ test("jest.mock auto-mocks a plugin-provided module", () => {
     },
   });
 
-  expect(require("auto-mock-plugin-pkg").greet()).toBe("real-greet");
+  try {
+    expect(require("auto-mock-plugin-pkg").greet()).toBe("real-greet");
 
-  // jest.mock must be able to load the plugin-provided module to build the
-  // auto-mock (the plugin's entry lives only in the virtual module map, so
-  // removing it during the internal require() would break resolution).
-  jest.mock("auto-mock-plugin-pkg");
+    // jest.mock must be able to load the plugin-provided module to build the
+    // auto-mock (the plugin's entry lives only in the virtual module map, so
+    // removing it during the internal require() would break resolution).
+    jest.mock("auto-mock-plugin-pkg");
 
-  const mocked = require("auto-mock-plugin-pkg");
-  expect(mocked.greet.mock).toBeDefined();
-  expect(mocked.greet()).toBeUndefined();
+    const mocked = require("auto-mock-plugin-pkg");
+    expect(mocked.greet.mock).toBeDefined();
+    expect(mocked.greet()).toBeUndefined();
+  } finally {
+    Bun.plugin.clearAll();
+  }
 });
 
 test.concurrent(

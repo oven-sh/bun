@@ -604,6 +604,50 @@ describe("input forms", () => {
   });
 });
 
+// The docs promise null for anything that does not parse as a single color, so
+// a color followed by more input is not a color either. It used to return the
+// leading color, which let "red;background:url(...)" through anything that
+// used color() to validate a string before putting it in a stylesheet.
+describe("the whole string must be one color", () => {
+  test.each([
+    "red;background:url(//evil.example/x)",
+    "red}body{display:none",
+    "#ff0000;color:blue",
+    "rgb(255,0,0)}*{x:y",
+    "rgb(255, 0, 0) x",
+    "red blue",
+    "red, blue",
+    "red red",
+    "hsl(0 100% 50%);;",
+    "red!",
+    "red !important",
+    "#fff;",
+    "red)",
+    "red]",
+    "red{",
+    "red;",
+  ])("color(%j) is null", input => {
+    expect([
+      color(input),
+      color(input, "css"),
+      color(input, "hex"),
+      color(input, "{rgba}"),
+      color(input, "number"),
+    ]).toEqual([null, null, null, null, null]);
+  });
+
+  test.each([
+    "  red  ",
+    "\tred\n",
+    "/* leading */ red",
+    "red /* trailing */",
+    " rgb(255, 0, 0) ",
+    "rgb(255, 0, 0)/**/",
+  ])("color(%j) ignores surrounding whitespace and comments", input => {
+    expect(color(input, "css")).toBe("red");
+  });
+});
+
 // https://drafts.csswg.org/css-color-5/#color-mix — the grammar is
 // <percentage [0,100]>, so a value outside that range is a parse error.
 describe("color-mix() percentage range", () => {

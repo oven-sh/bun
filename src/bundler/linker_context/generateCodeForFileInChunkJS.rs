@@ -88,11 +88,19 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 }
             }
 
-            let main_stmts_len =
-                stmts.inside_wrapper_prefix.stmts.len() + stmts.inside_wrapper_suffix.len();
+            let directives = ast.directives.slice();
+            let main_stmts_len = directives.len()
+                + stmts.inside_wrapper_prefix.stmts.len()
+                + stmts.inside_wrapper_suffix.len();
             let all_stmts_len = main_stmts_len + stmts.outside_wrapper_prefix.len() + 1;
 
             stmts.all_stmts.reserve(all_stmts_len);
+            for directive in directives {
+                stmts.all_stmts.push(Stmt::alloc(
+                    S::Directive { value: *directive },
+                    bun_ast::Loc::EMPTY,
+                ));
+            }
             stmts
                 .all_stmts
                 .extend_from_slice(stmts.inside_wrapper_prefix.stmts.as_slice());
@@ -257,21 +265,21 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     // The top-level directive must come first (the non-wrapped case is handled
     // by the chunk generation code, although only for the entry point)
     if flags.wrap != WrapKind::None
-        && ast
-            .flags
-            .contains(AstFlags::HAS_EXPLICIT_USE_STRICT_DIRECTIVE)
-        && !chunk.is_entry_point()
-        && !output_format.is_always_strict_mode()
+        && !c.graph.files.items_entry_point_kind()[source_index].is_entry_point()
     {
-        stmts
-            .inside_wrapper_prefix
-            .append_non_dependency(Stmt::alloc(
-                S::Directive {
-                    value: bun_ast::StoreStr::new(b"use strict"),
-                },
-                bun_ast::Loc::EMPTY,
-            ))
-            .expect("unreachable");
+        for directive in ast.directives.slice() {
+            if directive.slice() == b"use strict" && output_format.is_always_strict_mode() {
+                continue;
+            }
+            stmts
+                .inside_wrapper_prefix
+                .append_non_dependency(Stmt::alloc(
+                    S::Directive { value: *directive },
+                    bun_ast::Loc::EMPTY,
+                ))
+                .expect("unreachable");
+            stmts.inside_wrapper_prefix.sync_dependencies_end += 1;
+        }
     }
 
     // `convert_stmts_for_chunk` takes `&mut c` inside the loop body, so capture
@@ -280,7 +288,6 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     let parts_live: bun_ptr::BackRef<bun_collections::AutoBitSet> =
         bun_ptr::BackRef::new(&c.graph.parts_live[source_index]);
 
-    // TODO: handle directive
     if namespace_export_part_index >= part_range.part_index_begin
         && namespace_export_part_index < part_range.part_index_end
         && parts_live.is_set(namespace_export_part_index as usize)

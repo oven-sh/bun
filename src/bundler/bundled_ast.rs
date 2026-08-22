@@ -31,7 +31,7 @@ use bun_ast::import_record;
 use bun_core::strings;
 
 use bun_ast::ast_result::Ast;
-use bun_ast::{CharFreq, ExportsKind, Ref, Scope, SlotCounts, StoreStr, TlaCheck};
+use bun_ast::{CharFreq, ExportsKind, Ref, Scope, SlotCounts, StoreSlice, StoreStr, TlaCheck};
 use bun_ast::{part, symbol};
 
 pub(crate) type CommonJSNamedExports = bun_ast::ast_result::CommonJSNamedExports;
@@ -58,6 +58,7 @@ pub struct BundledAst<'arena> {
     // Ast.hashbang is `StoreStr`; mirror it here so init/to_ast can
     // round-trip.
     pub(crate) hashbang: StoreStr,
+    pub(crate) directives: StoreSlice<StoreStr>,
     pub(crate) parts: part::List<'arena>,
     // See `CssAstRef` doc for the arena drop-order invariant that backs the
     // safe `Deref`.
@@ -105,6 +106,7 @@ bun_collections::multi_array_columns! {
         exports_kind: ExportsKind,
         import_records: import_record::List<'arena>,
         hashbang: StoreStr,
+        directives: StoreSlice<StoreStr>,
         parts: part::List<'arena>,
         css: CssCol,
         url_for_css: &'arena [u8],
@@ -143,9 +145,8 @@ bitflags::bitflags! {
         const FORCE_CJS_TO_ESM = 1 << 4;
         const HAS_LAZY_EXPORT = 1 << 5;
         const COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED = 1 << 6;
-        const HAS_EXPLICIT_USE_STRICT_DIRECTIVE = 1 << 7;
-        const HAS_IMPORT_META = 1 << 8;
-        // _padding: u7 fills the rest
+        const HAS_IMPORT_META = 1 << 7;
+        // _padding: u8 fills the rest
     }
 }
 
@@ -160,6 +161,7 @@ impl<'arena> BundledAst<'arena> {
             exports_kind: ExportsKind::None,
             import_records: import_record::List::new_in(arena),
             hashbang: StoreStr::EMPTY,
+            directives: StoreSlice::EMPTY,
             parts: part::List::new_in(arena),
             css: None,
             url_for_css: b"",
@@ -197,6 +199,7 @@ impl<'arena> BundledAst<'arena> {
             import_records: self.import_records,
 
             hashbang: self.hashbang,
+            directives: self.directives,
             parts: self.parts,
             // This list may be mutated later, so we should store the capacity
             symbols: self.symbols,
@@ -250,14 +253,6 @@ impl<'arena> BundledAst<'arena> {
             commonjs_module_exports_assigned_deoptimized: self
                 .flags
                 .contains(Flags::COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED),
-            directive: if self
-                .flags
-                .contains(Flags::HAS_EXPLICIT_USE_STRICT_DIRECTIVE)
-            {
-                Some(StoreStr::new(b"use strict"))
-            } else {
-                None
-            },
             has_import_meta: self.flags.contains(Flags::HAS_IMPORT_META),
             ..Ast::empty_in(arena)
         }
@@ -276,10 +271,6 @@ impl<'arena> BundledAst<'arena> {
             Flags::COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED,
             ast.commonjs_module_exports_assigned_deoptimized,
         );
-        flags.set(
-            Flags::HAS_EXPLICIT_USE_STRICT_DIRECTIVE,
-            ast.directive.is_some_and(|d| d == b"use strict"),
-        );
         flags.set(Flags::HAS_IMPORT_META, ast.has_import_meta);
 
         Self {
@@ -291,6 +282,7 @@ impl<'arena> BundledAst<'arena> {
             import_records: ast.import_records,
 
             hashbang: ast.hashbang,
+            directives: ast.directives,
             parts: ast.parts,
             css: None,
             url_for_css: b"",

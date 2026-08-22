@@ -1759,8 +1759,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             match stmt.data {
                 StmtData::SEmpty(_) => continue,
 
-                // skip directives for now
-                StmtData::SDirective(_) => continue,
+                StmtData::SDirective(_) => {
+                    output.push(stmt);
+                    continue;
+                }
 
                 StmtData::SLocal(local) => {
                     // Merge adjacent local statements

@@ -607,6 +607,233 @@ describe("bundler", () => {
       `,
     },
   });
+  // https://github.com/oven-sh/bun/issues/6854
+  itBundled("edgecase/DirectiveHoistedAboveJSXImport", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        "use client";
+        export function Button() { return <div>Click</div>; }
+      `,
+    },
+    external: ["react", "react-dom", "react/jsx-dev-runtime", "react/jsx-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toStartWith('"use client";\n');
+      // Only one copy of the directive should be emitted
+      expect([...out.matchAll(/"use client"/g)]).toHaveLength(1);
+    },
+  });
+  itBundled("edgecase/DirectiveAfterLegalCommentHoisted", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        /*! @license MIT */
+        "use client";
+        export function Button() { return <div>Click</div>; }
+      `,
+    },
+    external: ["react", "react-dom", "react/jsx-dev-runtime", "react/jsx-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // A preserved legal comment does not terminate the directive prologue
+      expect(out).toStartWith('"use client";\n');
+      expect(out).toContain("@license MIT");
+    },
+  });
+  itBundled("edgecase/DirectiveHoistedAboveRuntimeHelpers", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        "use client";
+        const mod = require("./cjs.cjs");
+        export function C() { return <div>{mod.x}</div>; }
+      `,
+      "/cjs.cjs": /* js */ `
+        module.exports = { x: 42 };
+      `,
+    },
+    external: ["react", "react-dom", "react/jsx-dev-runtime", "react/jsx-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // Must come before "var __commonJS = ..." runtime helpers
+      expect(out).toStartWith('"use client";\n');
+      expect(out.indexOf('"use client"')).toBeLessThan(out.indexOf("__commonJS"));
+    },
+  });
+  itBundled("edgecase/DirectiveInsideBakeDevModuleClosure", {
+    files: {
+      "/entry.js": /* js */ `
+        "use strict";
+        "use potato";
+        import { x } from "./dep.js";
+        console.log(x);
+      `,
+      "/dep.js": /* js */ `
+        "use tomato";
+        export const x = 1;
+        console.log("dep loaded");
+      `,
+    },
+    format: "internal_bake_dev",
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // Each module closure keeps its own directive prologue first; the chunk
+      // itself gets no top-level copy in this format.
+      expect(out).toMatch(/\{\s*"use strict";\s*"use potato";/);
+      expect(out).toMatch(/\{\s*"use tomato";/);
+      expect(out).not.toMatch(/^"use strict";/);
+    },
+  });
+  itBundled("edgecase/DirectiveFromEntryOnlyWhenBundling", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        "use client";
+        import { S } from "./dep.jsx";
+        export function M() { return <S />; }
+      `,
+      "/dep.jsx": /* jsx */ `
+        "use server";
+        export function S() { return <div />; }
+      `,
+    },
+    external: ["react", "react-dom", "react/jsx-dev-runtime", "react/jsx-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toStartWith('"use client";\n');
+      // The dep's directive is dropped once bundled into a flat ESM chunk
+      expect(out).not.toContain('"use server"');
+    },
+  });
+  itBundled("edgecase/DirectivePreservedUnderMinify", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        "use client";
+        export function Button() { return <div>Click</div>; }
+      `,
+    },
+    external: ["react", "react-dom", "react/jsx-dev-runtime", "react/jsx-runtime"],
+    minifySyntax: true,
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toStartWith('"use client";');
+    },
+  });
+  itBundled("edgecase/DirectiveFunctionBodyPreservedUnderMinify", {
+    files: {
+      "/entry.js": /* js */ `
+        export async function action() {
+          "use server";
+          return 1;
+        }
+      `,
+    },
+    minifySyntax: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toMatch(/(?:async\s+)?function\s+action\s*\(\)\s*\{\s*"use server";/);
+    },
+  });
+  itBundled("edgecase/DirectiveMultipleDedup", {
+    files: {
+      "/entry.js": /* js */ `
+        "use client";
+        "use potato";
+        "use client";
+        export const a = 1;
+      `,
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toStartWith('"use client";\n"use potato";\n');
+      expect([...out.matchAll(/"use client"/g)]).toHaveLength(1);
+    },
+  });
+  itBundled("edgecase/DirectiveWithBannerAndHashbang", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        "use client";
+        export function A() { return <div />; }
+      `,
+    },
+    external: ["react", "react-dom", "react/jsx-dev-runtime", "react/jsx-runtime"],
+    banner: "#!/usr/bin/env node\n/* banner */",
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toStartWith('#!/usr/bin/env node\n/* banner */\n"use client";\n');
+    },
+  });
+  itBundled("edgecase/DirectiveUseStrictKeptForCJS", {
+    files: {
+      "/entry.js": /* js */ `
+        "use strict";
+        "use client";
+        exports.a = 1;
+      `,
+    },
+    format: "cjs",
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toStartWith('"use strict";\n"use client";\n');
+    },
+  });
+  itBundled("edgecase/DirectiveHoistedCJSWrappedEntry", {
+    files: {
+      "/entry.js": /* js */ `
+        "use strict";
+        "use client";
+        console.log(this);
+      `,
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // CJS wrapping sinks the entry into a closure; the directive must still
+      // be hoisted above the "var __commonJS = ..." runtime helper.
+      expect(out).toStartWith('"use client";\n');
+      expect(out).toContain("__commonJS");
+    },
+  });
+  itBundled("edgecase/DirectiveInsideWrappedDep", {
+    files: {
+      "/entry.js": /* js */ `
+        const dep = require("./dep.js");
+        console.log(dep.a);
+      `,
+      "/dep.js": /* js */ `
+        "use strict";
+        exports.a = this;
+      `,
+    },
+    format: "cjs",
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // The wrapped dependency keeps its own "use strict" inside the closure:
+      // it must appear after the runtime helpers (not hoisted to the top) and
+      // as the first statement of the closure body.
+      expect(out.indexOf('"use strict"')).toBeGreaterThan(out.indexOf("require_dep"));
+      expect(out).toMatch(/\{\s*"use strict";\s*exports/);
+    },
+  });
+  itBundled("edgecase/DirectiveBeforeInitCallsInWrappedDep", {
+    files: {
+      "/entry.js": /* js */ `
+        const { a } = require("./a.js");
+        const { x } = require("./b.js");
+        console.log(a, x);
+      `,
+      "/a.js": /* js */ `
+        "use strict";
+        import { x } from "./b.js";
+        export const a = x;
+      `,
+      "/b.js": /* js */ `
+        export const x = 1;
+        console.log("b loaded");
+      `,
+    },
+    format: "cjs",
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // a.js's wrapper body must keep its directive prologue first: the
+      // injected init_b() dependency call goes after it, not before.
+      expect(out).toMatch(/__esm\(\(\) => \{\s*"use strict";\s*init_b\(\)/);
+    },
+  });
   itBundled("edgecase/DCEVarRedeclarationIssue2815", {
     todo: true,
     files: {

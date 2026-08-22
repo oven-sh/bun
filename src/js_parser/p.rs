@@ -7784,6 +7784,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         exports_kind: js_ast::ExportsKind,
         wrap_mode: WrapMode,
         hashbang: &'a [u8],
+        mut directives: bun_ast::StoreSlice<bun_ast::StoreStr>,
     ) -> Result<Box<js_ast::Ast<'a>>, crate::Error> {
         use crate::lower::lower_esm_exports_hmr::ConvertESMExportsForHmr;
         use crate::scan::scan_imports::ImportScanner;
@@ -8085,25 +8086,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 total_stmts_count += part.stmts.len();
             }
 
-            let preserve_strict_mode = self.module_scope().strict_mode
-                == js_ast::StrictModeKind::ExplicitStrictMode
-                && !(parts.len() > 0
-                    && parts[0].stmts.len() > 0
-                    && matches!(parts[0].stmts[0].data, js_ast::StmtData::SDirective(_)));
+            let prologue = directives.slice();
+            directives = bun_ast::StoreSlice::EMPTY;
 
-            total_stmts_count += usize::from(preserve_strict_mode);
+            total_stmts_count += prologue.len();
 
             // Stmt is not Default; fill with `Stmt::empty()`.
             let stmts_to_copy = arena.alloc_slice_fill_with(total_stmts_count, |_| Stmt::empty());
             {
                 let mut remaining_stmts = &mut stmts_to_copy[..];
-                if preserve_strict_mode {
-                    remaining_stmts[0] = self.s(
-                        S::Directive {
-                            value: b"use strict".into(),
-                        },
-                        self.module_scope_directive_loc,
-                    );
+                for directive in prologue {
+                    let loc = if directive.slice() == b"use strict" {
+                        self.module_scope_directive_loc
+                    } else {
+                        bun_ast::Loc::EMPTY
+                    };
+                    remaining_stmts[0] = self.s(S::Directive { value: *directive }, loc);
                     remaining_stmts = &mut remaining_stmts[1..];
                 }
 
@@ -8245,7 +8243,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let char_freq: Option<js_ast::CharFreq> = self.compute_character_frequency();
 
-        let module_scope_strict = self.module_scope().strict_mode;
         // Scope is not `Clone` (Vec/HashMap members), so move it out and leave
         // a default in `*self.module_scope`. `to_ast` is terminal — the parser
         // does not touch `module_scope` afterwards.
@@ -8303,11 +8300,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             export_keyword: self.esm_export_keyword,
             top_level_symbols_to_parts,
             char_freq,
-            directive: if module_scope_strict == js_ast::StrictModeKind::ExplicitStrictMode {
-                Some(bun_ast::StoreStr::new(b"use strict"))
-            } else {
-                None
-            },
+            directives,
             nested_scope_slot_counts,
 
             require_ref,

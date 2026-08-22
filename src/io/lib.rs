@@ -1131,8 +1131,6 @@ impl IoRequestLoop {
                         Action::Readable(readable) => {
                             #[cfg(target_os = "macos")]
                             if readable.poll.flags.contains(Flags::NamedFifo) {
-                                // kqueue never reports a named pipe's EOF; the
-                                // watcher delivers an EVFILT_USER event here instead.
                                 let udata =
                                     Pollable::init(readable.tag, &raw mut *readable.poll).ptr();
                                 match fifo_select::arm(self.pollfd(), readable.fd, udata, 0) {
@@ -1165,8 +1163,6 @@ impl IoRequestLoop {
                             if close.poll.flags.contains(Flags::NamedFifo)
                                 && close.poll.flags.contains(Flags::PollReadable)
                             {
-                                // Before `on_done` closes the fd; the EV_DELETE
-                                // below removes a delivery that raced this.
                                 fifo_select::disarm(self.pollfd(), close.fd);
                             }
                             if close.poll.flags.contains(Flags::PollReadable)
@@ -1510,9 +1506,7 @@ pub enum Flags {
 
     Registered,
 
-    /// macOS: the fd is a named pipe, so a readable wait goes through
-    /// `fifo_select` instead of an `EVFILT_READ` knote (kqueue never reports
-    /// its EOF). Set by the owner, which has the `fstat`.
+    /// macOS: readable waits go through `fifo_select`, not a knote.
     NamedFifo,
 }
 
@@ -1562,8 +1556,6 @@ impl Poll {
             ApplyAction::Writable => (libc::EVFILT_WRITE, libc::EV_ADD | one_shot_flag, owner),
             ApplyAction::Cancel => {
                 if poll.flags.contains(Flags::PollReadable) {
-                    // A named pipe's readable wait is an EVFILT_USER knote (see
-                    // `fifo_select`), keyed by the same ident.
                     let filter = if poll.flags.contains(Flags::NamedFifo) {
                         libc::EVFILT_USER
                     } else {

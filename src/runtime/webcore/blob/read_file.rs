@@ -713,8 +713,7 @@ impl ReadFile {
         }
 
         self.could_block = !bun_sys::is_regular_file(stat.st_mode as _);
-        // pipe(2) pipes are S_IFIFO with st_dev == 0 (XNU pipe_stat); kqueue
-        // reports their EOF, but not a named pipe's (see bun_io::fifo_select).
+        // pipe(2) pipes are S_IFIFO with st_dev == 0.
         #[cfg(target_os = "macos")]
         if bun_sys::S::ISFIFO(stat.st_mode as _) && stat.st_dev != 0 {
             self.io_poll.flags.insert(io::Flags::NamedFifo);

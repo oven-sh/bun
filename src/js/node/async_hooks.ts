@@ -44,16 +44,20 @@ function sameValue(a, b) {
 function assertValidAsyncContextArray(array: unknown): array is ReadonlyArray<any> | undefined {
   // undefined is OK
   if (array === undefined) return true;
-  // A bare telemetry span (no stores) is OK
-  if (!$isJSArray(array)) return true;
+  // A bare telemetry span header (a span cell or a pooled-span handle) is OK
+  const isSpanHeader = (v: unknown) => $isTelemetrySpan(v) || typeof v === "number";
+  if (!$isJSArray(array)) {
+    $assert(isSpanHeader(array), "AsyncContextData should be undefined, a span header or an array, got", array);
+    return true;
+  }
   // the array has to be even
   $assert(array.length % 2 === 0, "AsyncContextData should be even-length, got", Bun.inspect(array, { depth: 1 }));
   // if it is zero-length, use undefined instead
   $assert(array.length > 0, "AsyncContextData should be undefined if empty, got", Bun.inspect(array, { depth: 1 }));
   for (var i = 0; i < array.length; i += 2) {
     $assert(
-      array[i] instanceof AsyncLocalStorage || (i === 0 && !(array[i] instanceof AsyncLocalStorage)),
-      `Odd indexes in AsyncContextData should be an array of AsyncLocalStorage\nIndex %s was %s`,
+      array[i] instanceof AsyncLocalStorage || (i === 0 && isSpanHeader(array[i])),
+      `Even indexes in AsyncContextData should be AsyncLocalStorage (or a span header at 0)\nIndex %s was %s`,
       i,
       array[i],
     );

@@ -2028,6 +2028,22 @@ describe.concurrent("--interactive", () => {
     interactiveTimeout,
   );
 
+  // Like node, the builtin-module globals stay unloaded until used: node:wasi
+  // emits its ExperimentalWarning on load, so it must only show up once `wasi`
+  // is actually evaluated (and a plain REPL session keeps stderr silent).
+  test(
+    "does not load the builtin-module globals at startup",
+    async () => {
+      const [idle, touched] = await Promise.all([runInteractive([], ""), runInteractive([], "typeof wasi.WASI\n")]);
+      expect(idle.stderr).toBe("");
+      expect(idle.exitCode).toBe(0);
+      expect(touched.stdout).toContain("'function'");
+      expect(touched.stderr).toContain("ExperimentalWarning: WASI is an experimental feature");
+      expect(touched.exitCode).toBe(0);
+    },
+    interactiveTimeout,
+  );
+
   // `node -i -e 'code'`: -e runs as its own Script against globalThis, so
   // `var`/`function` declarations are visible from the REPL prompt.
   test(

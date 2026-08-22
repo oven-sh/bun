@@ -1654,6 +1654,7 @@ version = "0.0.0"
 dependencies = [
  "bstr",
  "bun_core",
+ "bun_http_types",
  "bun_threading",
  "bun_url",
 ]

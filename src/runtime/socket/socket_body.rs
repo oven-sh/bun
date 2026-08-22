@@ -1086,17 +1086,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
 
-    /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`:
-    /// `callback.call`/`reject` re-enter JS which can `connectInner()`/mutate
-    /// this socket via `m_ptr` (node:net `autoSelectFamily` retries inside the
-    /// `connectError` callback).
-    ///
-    /// `dns_error` is the raw `getaddrinfo(3)` return code when the name
-    /// lookup itself failed; 0 for a connect failure past name resolution
-    /// (then `errno` carries the connect error).
-    /// `Err` is what the `connectError`/`error` handler or a promise
-    /// rejection left pending; the socket is released either way (guards).
-    /// Finish the client `connect` span (first call wins).
+    /// First call wins.
     pub(crate) fn otel_connect_end(&self, error: Option<&str>) {
         let stub = self.otel_connect.replace(bun_telemetry::SpanStub::NONE);
         if !stub.is_recording() {
@@ -1135,13 +1125,22 @@ impl<const SSL: bool> NewSocket<SSL> {
                     w.attr("tls.enabled", true);
                 }
                 if let Some(e) = error {
-                    w.attr("error.type", e);
-                    w.status(bun_telemetry::StatusCode::Error, e.as_bytes());
+                    w.error(e.as_bytes(), e.as_bytes());
                 }
             },
         );
     }
 
+    /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`:
+    /// `callback.call`/`reject` re-enter JS which can `connectInner()`/mutate
+    /// this socket via `m_ptr` (node:net `autoSelectFamily` retries inside the
+    /// `connectError` callback).
+    ///
+    /// `dns_error` is the raw `getaddrinfo(3)` return code when the name
+    /// lookup itself failed; 0 for a connect failure past name resolution
+    /// (then `errno` carries the connect error).
+    /// `Err` is what the `connectError`/`error` handler or a promise
+    /// rejection left pending; the socket is released either way (guards).
     pub(crate) fn handle_connect_error(
         this: bun_ptr::ThisPtr<Self>,
         errno: c_int,

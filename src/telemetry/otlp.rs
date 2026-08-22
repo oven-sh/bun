@@ -11,6 +11,9 @@ use crate::proto::{
 };
 use crate::span::{SpanContext, SpanKind, SpanStub, StatusCode};
 
+/// Length bytes reserved after the `ScopeSpans.spans` tag by [`SpanWriter`].
+pub const SPAN_LEN_RESERVE: usize = 2;
+
 pub mod field {
     // ExportTraceServiceRequest / TracesData
     pub const RESOURCE_SPANS: u32 = 1;
@@ -27,6 +30,7 @@ pub mod field {
     // InstrumentationScope
     pub const SCOPE_NAME: u32 = 1;
     pub const SCOPE_VERSION: u32 = 2;
+    pub const SCOPE_ATTRIBUTES: u32 = 3;
     // Span
     pub const TRACE_ID: u32 = 1;
     pub const SPAN_ID: u32 = 2;
@@ -48,11 +52,13 @@ pub mod field {
     pub const EV_TIME: u32 = 1;
     pub const EV_NAME: u32 = 2;
     pub const EV_ATTRIBUTES: u32 = 3;
+    pub const EV_DROPPED_ATTRIBUTES: u32 = 4;
     // Link
     pub const LINK_TRACE_ID: u32 = 1;
     pub const LINK_SPAN_ID: u32 = 2;
     pub const LINK_TRACE_STATE: u32 = 3;
     pub const LINK_ATTRIBUTES: u32 = 4;
+    pub const LINK_DROPPED_ATTRIBUTES: u32 = 5;
     pub const LINK_FLAGS: u32 = 6;
     // Status
     pub const STATUS_MESSAGE: u32 = 2;
@@ -70,6 +76,8 @@ pub mod field {
     pub const AV_BYTES: u32 = 7;
     // ArrayValue
     pub const ARR_VALUES: u32 = 1;
+    // KeyValueList
+    pub const KVLIST_VALUES: u32 = 1;
 }
 use field as f;
 
@@ -210,6 +218,33 @@ pub fn write_key_value(out: &mut Vec<u8>, field: u32, key: &[u8], v: &Value<'_>)
     write_any_value_body(out, v);
 }
 
+/// [`write_key_value`] for a string value under a short literal key: with the
+/// key known at compile time the header and key become immediate stores,
+/// leaving one copy for the value.
+#[inline(always)]
+pub fn write_str_kv_small(out: &mut Vec<u8>, field: u32, key: &'static str, v: &[u8]) {
+    let key = key.as_bytes();
+    let kv = 2 + key.len() + 2 + 2 + v.len();
+    if kv >= 128 || field >= 16 {
+        return write_key_value(out, field, key, &Value::Str(v));
+    }
+    out.reserve(kv + 2);
+    out.extend_from_slice(&[
+        (field << 3 | 2) as u8,
+        kv as u8,
+        (f::KV_KEY << 3 | 2) as u8,
+        key.len() as u8,
+    ]);
+    out.extend_from_slice(key);
+    out.extend_from_slice(&[
+        (f::KV_VALUE << 3 | 2) as u8,
+        (2 + v.len()) as u8,
+        (f::AV_STRING << 3 | 2) as u8,
+        v.len() as u8,
+    ]);
+    out.extend_from_slice(v);
+}
+
 /// Longest prefix of `s` that is at most `max` bytes and does not split a
 /// UTF-8 sequence.
 #[inline]
@@ -255,7 +290,7 @@ pub fn find_attribute(attrs: &[u8], key: &[u8]) -> Option<(usize, usize)> {
 /// Streams one `Span` as a `ScopeSpans.spans` entry into `out`.
 pub struct SpanWriter<'a> {
     out: &'a mut Vec<u8>,
-    nested: Nested,
+    nested: Nested<SPAN_LEN_RESERVE>,
 }
 
 impl<'a> SpanWriter<'a> {
@@ -422,14 +457,24 @@ impl<'a> SpanWriter<'a> {
         self
     }
 
+    /// `error.type` attribute plus `Status{Error, message}`.
+    #[inline]
+    pub fn error(&mut self, ty: &[u8], message: &[u8]) -> &mut Self {
+        self.attr("error.type", ty);
+        self.status(StatusCode::Error, message)
+    }
+
     #[inline]
     pub fn finish(self) {
         self.nested.finish(self.out);
     }
 
-    /// Leave the length unpatched; the caller appends more fields and
-    /// patches it (http_record templating).
-    pub fn leak(self) {}
+    /// End without patching the span length: the caller appends more `Span`
+    /// fields and then runs `Nested::<SPAN_LEN_RESERVE>::at(len_at).finish()`
+    /// with the returned `len_at`.
+    pub fn finish_unpatched(self) -> usize {
+        self.nested.len_at()
+    }
 }
 
 fn attrs_len(field: u32, attrs: &[(&[u8], Value<'_>)]) -> usize {
@@ -463,7 +508,7 @@ pub fn encode_link(
     trace_state: &[u8],
     attrs: &[(&[u8], Value<'_>)],
 ) {
-    let flags = (ctx.flags.w3c() as u32) | 0x100 | if ctx.flags.remote() { 0x200 } else { 0 };
+    let flags = ctx.flags.otlp_with_remote(ctx.flags.remote());
     let body = len_field_len(f::LINK_TRACE_ID, 16)
         + len_field_len(f::LINK_SPAN_ID, 8)
         + if trace_state.is_empty() {
@@ -520,11 +565,11 @@ pub fn encode_request(resource: &[u8], scopes: &[ScopeChunk<'_>]) -> Vec<u8> {
             .map(|s| 13 + s.scope.len() + s.spans.len())
             .sum::<usize>();
     let mut out = Vec::with_capacity(total);
-    let rs = Padded::begin(&mut out, f::RESOURCE_SPANS);
+    let rs = Nested::<5>::begin(&mut out, f::RESOURCE_SPANS);
     write_len_prefix(&mut out, f::RS_RESOURCE, resource.len());
     out.extend_from_slice(resource);
     for s in scopes {
-        let ss = Padded::begin(&mut out, f::RS_SCOPE_SPANS);
+        let ss = Nested::<5>::begin(&mut out, f::RS_SCOPE_SPANS);
         write_len_prefix(&mut out, f::SS_SCOPE, s.scope.len());
         out.extend_from_slice(s.scope);
         out.extend_from_slice(s.spans);
@@ -532,39 +577,4 @@ pub fn encode_request(resource: &[u8], scopes: &[ScopeChunk<'_>]) -> Vec<u8> {
     }
     rs.finish(&mut out);
     out
-}
-
-/// A nested message with a 5-byte padded varint length (bodies up to 2^35).
-struct Padded {
-    len_at: usize,
-}
-
-impl Padded {
-    fn begin(out: &mut Vec<u8>, field: u32) -> Padded {
-        proto::write_tag(out, field, proto::WireType::Len);
-        let len_at = out.len();
-        out.extend_from_slice(&[0x80, 0x80, 0x80, 0x80, 0x00]);
-        Padded { len_at }
-    }
-    fn finish(self, out: &mut [u8]) {
-        let n = (out.len() - self.len_at - 5) as u64;
-        debug_assert!(n < (1 << 35));
-        out[self.len_at] = (n as u8 & 0x7f) | 0x80;
-        out[self.len_at + 1] = ((n >> 7) as u8 & 0x7f) | 0x80;
-        out[self.len_at + 2] = ((n >> 14) as u8 & 0x7f) | 0x80;
-        out[self.len_at + 3] = ((n >> 21) as u8 & 0x7f) | 0x80;
-        out[self.len_at + 4] = (n >> 28) as u8 & 0x7f;
-    }
-}
-
-/// Number of `spans` entries in a concatenated buffer (walks tags only).
-pub fn count_spans(spans: &[u8]) -> usize {
-    let mut n = 0;
-    let mut r = proto::Reader::new(spans);
-    while let Ok(Some((field, _))) = r.next() {
-        if field == f::SS_SPANS {
-            n += 1;
-        }
-    }
-    n
 }

@@ -8,7 +8,7 @@
 
 use crate::otlp::{self, SpanWriter, Value, field};
 use crate::span::{SpanKind, SpanStub, StatusCode};
-use crate::{Limits, Local, ScopeId, clock};
+use crate::{Limits, Local, ScopeId, clock, rt};
 
 /// `index | generation << 32`; 0 is the empty handle (generation starts at 1).
 /// The generation is kept below 2^21 so the handle round-trips through a JS
@@ -39,12 +39,25 @@ impl NativeSpan {
     }
 }
 
+/// The JS `Span` cell (an EncodedJSValue owned by the runtime) materialized
+/// for a pooled span; the runtime protects it while set and releases it when
+/// the span ends. `NONE` = no cell.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct JsCellRef(pub usize);
+
+impl JsCellRef {
+    pub const NONE: JsCellRef = JsCellRef(0);
+    #[inline]
+    pub fn is_some(self) -> bool {
+        self.0 != 0
+    }
+}
+
 pub struct Slot {
     generation: u32,
     live: bool,
-    /// EncodedJSValue of the JS cell materialized for this span (0 = none);
-    /// the runtime protects it while set and releases it at end.
-    pub js_cell: usize,
+    pub js_cell: JsCellRef,
     pub stub: SpanStub,
     pub scope: ScopeId,
     pub kind: SpanKind,
@@ -72,7 +85,7 @@ impl Slot {
         Slot {
             generation: 0,
             live: false,
-            js_cell: 0,
+            js_cell: JsCellRef::NONE,
             stub: SpanStub::NONE,
             scope: ScopeId(0),
             kind: SpanKind::Internal,
@@ -95,7 +108,7 @@ impl Slot {
 
     fn reset(&mut self) {
         self.live = false;
-        self.js_cell = 0;
+        self.js_cell = JsCellRef::NONE;
         self.status = StatusCode::Unset;
         self.n_attrs = 0;
         self.dropped_attrs = 0;
@@ -154,60 +167,6 @@ impl Slot {
             }
             _ => otlp::write_key_value(&mut self.attrs, field::ATTRIBUTES, key, v),
         }
-    }
-
-    /// `push_attribute` for a string value with a short literal key: the
-    /// header and key become inline stores, leaving one copy for the value.
-    #[inline(always)]
-    pub fn push_str(&mut self, key: &'static str, v: &[u8], limits: &Limits) {
-        let v = otlp::truncate_utf8(v, limits.attribute_value_length as usize);
-        if !v.is_ascii() && core::str::from_utf8(v).is_err() {
-            let lossy = bstr::ByteSlice::to_str_lossy(v);
-            return self.push_attribute(key.as_bytes(), &Value::Str(lossy.as_bytes()), limits);
-        }
-        let key = key.as_bytes();
-        let kv = 2 + key.len() + 2 + 2 + v.len();
-        if self.n_attrs >= limits.attributes || kv >= 128 {
-            return self.push_attribute(key, &Value::Str(v), limits);
-        }
-        self.n_attrs += 1;
-        let out = &mut self.attrs;
-        out.reserve(kv + 2);
-        out.extend_from_slice(&[
-            (field::ATTRIBUTES << 3 | 2) as u8,
-            kv as u8,
-            (1 << 3 | 2) as u8,
-            key.len() as u8,
-        ]);
-        out.extend_from_slice(key);
-        out.extend_from_slice(&[
-            (2 << 3 | 2) as u8,
-            (2 + v.len()) as u8,
-            (1 << 3 | 2) as u8,
-            v.len() as u8,
-        ]);
-        out.extend_from_slice(v);
-    }
-
-    /// `push_attribute` for a small non-negative integer with a literal key.
-    #[inline(always)]
-    pub fn push_uint(&mut self, key: &'static str, v: u64, limits: &Limits) {
-        let key = key.as_bytes();
-        if self.n_attrs >= limits.attributes || v >= 128 || key.len() > 100 {
-            return self.push_attribute(key, &Value::Int(v as i64), limits);
-        }
-        self.n_attrs += 1;
-        let kv = 2 + key.len() + 2 + 2;
-        let out = &mut self.attrs;
-        out.reserve(kv + 2);
-        out.extend_from_slice(&[
-            (field::ATTRIBUTES << 3 | 2) as u8,
-            kv as u8,
-            (1 << 3 | 2) as u8,
-            key.len() as u8,
-        ]);
-        out.extend_from_slice(key);
-        out.extend_from_slice(&[(2 << 3 | 2) as u8, 2, (3 << 3) as u8, v as u8]);
     }
 
     /// Last-write-wins variant for keys that may repeat (user code).
@@ -272,9 +231,6 @@ impl Slot {
         extra: &mut dyn FnMut(&mut SpanWriter<'_>),
     ) {
         if self.http.active {
-            let limits = crate::rt::hooks()
-                .map(|h| (h.limits)())
-                .unwrap_or(crate::data::DEFAULT_LIMITS);
             crate::http_record::encode(
                 templates,
                 out,
@@ -292,7 +248,7 @@ impl Slot {
                     status: self.status,
                     status_message: &self.status_message,
                 },
-                &limits,
+                &rt::limits(),
             );
             return;
         }
@@ -320,7 +276,6 @@ pub struct Pool {
     /// FIFO so a released slot (whose identity stale handles may still read)
     /// is reused as late as possible.
     free: std::collections::VecDeque<u32>,
-    live: u32,
 }
 
 impl Pool {
@@ -328,7 +283,6 @@ impl Pool {
         Pool {
             slots: Vec::new(),
             free: std::collections::VecDeque::new(),
-            live: 0,
         }
     }
 
@@ -347,7 +301,6 @@ impl Pool {
     fn release(&mut self, handle: NativeSpan) {
         self.slots[handle.index()].reset();
         self.free.push_back(handle.index() as u32);
-        self.live -= 1;
     }
 }
 
@@ -382,7 +335,6 @@ pub fn begin_with(
             p.slots.len() - 1
         }
     };
-    p.live += 1;
     let slot = &mut p.slots[index];
     slot.generation = (slot.generation.wrapping_add(1) & GENERATION_MASK).max(1);
     slot.live = true;
@@ -419,10 +371,10 @@ pub fn stub(p: &Pool, handle: NativeSpan) -> SpanStub {
 }
 
 /// Result of [`end`]: whether a span was recorded, and the JS cell that had
-/// been materialized for it (0 if none) so the caller can release it.
+/// been materialized for it so the caller can release it.
 pub struct Ended {
     pub recorded: bool,
-    pub js_cell: usize,
+    pub js_cell: JsCellRef,
 }
 
 /// End the span: encode it into the VM's batch (if recording) and release
@@ -480,9 +432,9 @@ pub fn end_with(
 
 /// Release without recording (e.g. the owner was torn down mid-flight and
 /// the integration has nothing truthful to say about the outcome).
-pub fn discard(p: &mut Pool, handle: NativeSpan) -> usize {
+pub fn discard(p: &mut Pool, handle: NativeSpan) -> JsCellRef {
     let Some(slot) = p.live_slot(handle) else {
-        return 0;
+        return JsCellRef::NONE;
     };
     let cell = slot.js_cell;
     p.release(handle);
@@ -505,9 +457,4 @@ pub fn stub_ptr(p: &Pool, handle: NativeSpan) -> *const SpanStub {
 /// Whether the span behind `handle` is still open.
 pub fn is_live(p: &Pool, handle: NativeSpan) -> bool {
     with_ref(p, handle, |_| ()).is_some()
-}
-
-/// Number of live native spans in this pool (stats / leak tests).
-pub fn live_count(p: &Pool) -> u32 {
-    p.live
 }

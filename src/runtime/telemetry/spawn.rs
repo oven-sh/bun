@@ -4,30 +4,41 @@ use core::ffi::{CStr, c_char};
 
 use bun_jsc::JSGlobalObject;
 use bun_telemetry::pool::{self, NativeSpan, Slot};
-use bun_telemetry::{DEFAULT_LIMITS, Instrument, ScopeId, SpanKind, SpanStub, StatusCode, Value};
+use bun_telemetry::{Instrument, ScopeId, SpanKind, SpanStub, Value};
 
+use crate::api::bun_process::Status;
+
+/// `argv` is the NUL-terminated array handed to `posix_spawn`. Only the
+/// executable's basename and the argument count are recorded: arguments
+/// routinely carry secrets.
 fn set_command_attrs(s: &mut Slot, argv: &[*const c_char]) {
-    let l = &DEFAULT_LIMITS;
-    let mut owned: Vec<&[u8]> = Vec::with_capacity(argv.len().min(32));
-    for (i, p) in argv.iter().enumerate() {
-        if p.is_null() || i >= 32 {
-            break;
-        }
-        // SAFETY: argv entries are NUL-terminated strings built by the caller.
-        owned.push(unsafe { CStr::from_ptr(*p) }.to_bytes());
-    }
-    let Some(exe) = owned.first() else { return };
-    let base = bun_paths::basename(exe);
+    let Some(&argv0) = argv.first().filter(|p| !p.is_null()) else {
+        return;
+    };
+    // SAFETY: argv entries are NUL-terminated strings built by the caller.
+    let exe = bun_paths::basename(unsafe { CStr::from_ptr(argv0) }.to_bytes());
+    let argc = argv.iter().take_while(|p| !p.is_null()).count();
+    let l = super::span::limits();
     s.name.clear();
     s.name.extend_from_slice(b"spawn ");
-    s.name.extend_from_slice(base);
-    s.push_attribute(b"process.executable.name", &Value::Str(base), l);
-    s.push_attribute(b"process.executable.path", &Value::Str(exe), l);
-    let vals: Vec<Value<'_>> = owned
-        .iter()
-        .map(|a| Value::Str(bun_telemetry::otlp::truncate_utf8(a, 256)))
-        .collect();
-    s.push_attribute(b"process.command_args", &Value::Array(&vals), l);
+    s.name.extend_from_slice(exe);
+    s.push_attribute(b"process.executable.name", &Value::Str(exe), l);
+    s.push_attribute(b"process.args_count", &Value::Int(argc as i64), l);
+}
+
+fn begin_span(
+    l: &mut bun_telemetry::Local,
+    stub: SpanStub,
+    attrs: impl FnOnce(&mut Slot),
+) -> NativeSpan {
+    pool::begin_with(
+        &mut l.pool,
+        stub,
+        ScopeId::from(Instrument::ChildProcess),
+        b"spawn",
+        SpanKind::Internal,
+        attrs,
+    )
 }
 
 /// Wrap the pre-spawn `stub` into a span once the child exists.
@@ -40,19 +51,12 @@ pub fn begin(
     let Some(mut l) = super::local(global) else {
         return NativeSpan::NONE;
     };
-    pool::begin_with(
-        &mut l.pool,
-        stub,
-        ScopeId::from(Instrument::ChildProcess),
-        b"spawn",
-        SpanKind::Internal,
-        |s| {
-            if stub.is_recording() {
-                set_command_attrs(s, argv);
-                s.push_attribute(b"process.pid", &Value::Int(pid), &DEFAULT_LIMITS);
-            }
-        },
-    )
+    begin_span(&mut l, stub, |s| {
+        if stub.is_recording() {
+            set_command_attrs(s, argv);
+            s.push_attribute(b"process.pid", &Value::Int(pid), super::span::limits());
+        }
+    })
 }
 
 /// The spawn itself failed.
@@ -63,47 +67,30 @@ pub fn failed(global: &JSGlobalObject, stub: &SpanStub, argv: &[*const c_char], 
     let Some(mut l) = super::local(global) else {
         return;
     };
-    let span = pool::begin_with(
-        &mut l.pool,
-        *stub,
-        ScopeId::from(Instrument::ChildProcess),
-        b"spawn",
-        SpanKind::Internal,
-        |s| set_command_attrs(s, argv),
-    );
+    let span = begin_span(&mut l, *stub, |s| set_command_attrs(s, argv));
     drop(l);
     super::end_native(global, span, 0, |w| {
-        w.attr("error.type", error);
-        w.status(StatusCode::Error, error);
+        w.error(error, error);
     });
 }
 
-/// The child exited. `signal` is the terminating signal number, if any.
-pub fn exited(
-    global: &JSGlobalObject,
-    span: NativeSpan,
-    exit_code: Option<i32>,
-    signal: Option<u8>,
-    error: Option<&str>,
-) {
-    super::end_native(global, span, 0, |w| {
-        if let Some(c) = exit_code {
-            w.attr("process.exit.code", c as i64);
-            if c != 0 {
+pub fn exited(global: &JSGlobalObject, span: NativeSpan, status: &Status) {
+    super::end_native(global, span, 0, |w| match status {
+        Status::Exited(e) => {
+            w.attr("process.exit.code", i64::from(e.code));
+            if e.code != 0 {
                 let mut buf = bun_core::fmt::ItoaBuf::new();
-                let s = bun_core::fmt::itoa(&mut buf, c);
-                w.attr("error.type", s);
-                w.status(StatusCode::Error, b"");
+                w.error(bun_core::fmt::itoa(&mut buf, e.code), b"");
             }
         }
-        if let Some(sig) = signal {
-            w.attr("process.exit.signal", sig as i64);
-            w.attr("error.type", "signal");
-            w.status(StatusCode::Error, b"");
+        Status::Signaled(sig) => {
+            w.attr("process.exit.signal", i64::from(*sig));
+            w.error(b"signal", b"");
         }
-        if let Some(e) = error {
-            w.attr("error.type", e);
-            w.status(StatusCode::Error, e.as_bytes());
+        Status::Err(err) => {
+            let e = <&'static str>::from(err.get_errno()).as_bytes();
+            w.error(e, e);
         }
+        Status::Running => {}
     });
 }

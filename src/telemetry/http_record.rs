@@ -4,10 +4,12 @@
 //! encoding of everything else is cached and a hit is one copy plus
 //! fixed-offset patches and a short per-request tail.
 
+use bun_http_types::Method::Method;
+
 use crate::StatusCode;
 use crate::data::Limits;
-use crate::otlp::{self, SpanWriter, Value, field as f};
-use crate::proto;
+use crate::otlp::{self, SPAN_LEN_RESERVE, SpanWriter, Value, field as f};
+use crate::proto::Nested;
 use crate::span::{SpanKind, SpanStub};
 
 pub const FLAG_HTTPS: u8 = 1;
@@ -15,26 +17,93 @@ pub const FLAG_ABORTED: u8 = 2;
 pub const FLAG_HANDLER_ERROR: u8 = 4;
 pub const FLAG_HAS_QUERY: u8 = 8;
 
-// Indexes into `Facts::lens` (strings live back-to-back in `Facts::raw`).
-pub const S_URL: usize = 0;
-pub const S_HOST: usize = 1;
-pub const S_UA: usize = 2;
-pub const S_ROUTE: usize = 3;
+/// `http.request.method`: the canonical token for known methods, `_OTHER`
+/// otherwise (semconv requires a bounded set).
+#[inline]
+pub const fn method_name(m: Method) -> &'static str {
+    match m {
+        Method::GET
+        | Method::HEAD
+        | Method::POST
+        | Method::PUT
+        | Method::DELETE
+        | Method::CONNECT
+        | Method::OPTIONS
+        | Method::TRACE
+        | Method::PATCH
+        | Method::QUERY => m.as_str(),
+        _ => "_OTHER",
+    }
+}
+
+/// The peer address as captured on the request path; formatted only when a
+/// span is encoded without a template hit.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PeerIp {
+    None,
+    V4([u8; 4]),
+    V6([u8; 16]),
+    /// Already text (HTTP/3 reports it that way).
+    Text {
+        len: u8,
+        buf: [u8; PeerIp::MAX_TEXT],
+    },
+}
+
+impl PeerIp {
+    pub const MAX_TEXT: usize = 45;
+
+    pub fn from_text(s: &[u8]) -> PeerIp {
+        if s.is_empty() || s.len() > Self::MAX_TEXT {
+            return PeerIp::None;
+        }
+        let mut buf = [0u8; Self::MAX_TEXT];
+        buf[..s.len()].copy_from_slice(s);
+        PeerIp::Text {
+            len: s.len() as u8,
+            buf,
+        }
+    }
+
+    /// Dotted quad / RFC 5952 (v4-mapped v6 as `::ffff:a.b.c.d`, matching
+    /// `requestIP()`).
+    fn text<'b>(&'b self, buf: &'b mut [u8; 64]) -> &'b [u8] {
+        use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+        let addr: SocketAddr = match self {
+            PeerIp::None => return b"",
+            PeerIp::Text { len, buf } => return &buf[..*len as usize],
+            PeerIp::V4(b) => SocketAddrV4::new(Ipv4Addr::from(*b), 0).into(),
+            PeerIp::V6(b) => SocketAddrV6::new(Ipv6Addr::from(*b), 0, 0, 0).into(),
+        };
+        match bun_core::fmt::format_ip(&addr, buf) {
+            Ok(s) => s,
+            Err(_) => b"",
+        }
+    }
+}
 
 /// Request facts captured at begin; lives in the pool slot.
 pub struct Facts {
-    /// url, host, user-agent, route back to back (see `lens`).
-    pub raw: Vec<u8>,
-    pub lens: [u32; 4],
+    /// url | host | user-agent | route, back to back (see `lens`).
+    raw: Vec<u8>,
+    lens: [u32; 4],
     /// Length of the path part of the url (`url.len()` if no query).
-    pub path_len: u32,
-    pub method: [u8; 8],
-    pub ip: [u8; 16],
-    pub ip_len: u8,
+    path_len: u32,
+    pub method: Method,
+    pub peer: PeerIp,
     pub flags: u8,
     pub status: u16,
     /// This slot holds an HTTP server span rather than a generic one.
     pub active: bool,
+}
+
+struct Strings<'a> {
+    url: &'a [u8],
+    /// host | user-agent | route (part of the template key).
+    after_url: &'a [u8],
+    host: &'a [u8],
+    user_agent: &'a [u8],
+    route: &'a [u8],
 }
 
 impl Facts {
@@ -43,9 +112,8 @@ impl Facts {
             raw: Vec::new(),
             lens: [0; 4],
             path_len: 0,
-            method: [0; 8],
-            ip: [0; 16],
-            ip_len: 0,
+            method: Method::GET,
+            peer: PeerIp::None,
             flags: 0,
             status: 0,
             active: false,
@@ -59,29 +127,10 @@ impl Facts {
         self.active = false;
         self.flags = 0;
         self.status = 0;
-        self.ip_len = 0;
-        self.ip = [0; 16];
+        self.peer = PeerIp::None;
         if self.raw.capacity() > 16 * 1024 {
             self.raw = Vec::new();
         }
-    }
-
-    #[inline]
-    pub fn set_method(&mut self, m: &[u8]) {
-        let n = m.len().min(7);
-        self.method = [0; 8];
-        self.method[0] = n as u8;
-        self.method[1..1 + n].copy_from_slice(&m[..n]);
-    }
-
-    #[inline]
-    fn method(&self) -> &[u8] {
-        &self.method[1..1 + (self.method[0].min(7) as usize)]
-    }
-
-    #[inline]
-    fn ip(&self) -> &[u8] {
-        &self.ip[..(self.ip_len as usize).min(16)]
     }
 
     /// Set the request strings in one go (must be called before `set_route`).
@@ -111,21 +160,26 @@ impl Facts {
         self.lens[3] = route.len() as u32;
     }
 
-    /// (url, everything after the url, host, ua, route)
     #[inline]
-    fn strings(&self) -> (&[u8], &[u8], &[u8], &[u8], &[u8]) {
+    fn strings(&self) -> Strings<'_> {
         let [a, b, c, d] = self.lens.map(|x| x as usize);
         let r = &self.raw[..];
         if r.len() < a + b + c + d {
-            return (b"", b"", b"", b"", b"");
+            return Strings {
+                url: b"",
+                after_url: b"",
+                host: b"",
+                user_agent: b"",
+                route: b"",
+            };
         }
-        (
-            &r[..a],
-            &r[a..],
-            &r[a..a + b],
-            &r[a + b..a + b + c],
-            &r[a + b + c..a + b + c + d],
-        )
+        Strings {
+            url: &r[..a],
+            after_url: &r[a..],
+            host: &r[a..a + b],
+            user_agent: &r[a + b..a + b + c],
+            route: &r[a + b + c..a + b + c + d],
+        }
     }
 }
 
@@ -147,11 +201,10 @@ pub struct SpanParts<'a> {
 struct Template {
     // Key.
     flags: u8,
-    status_code: u8,
+    status_code: StatusCode,
     has_parent: bool,
-    method: [u8; 8],
-    ip: [u8; 16],
-    ip_len: u8,
+    method: Method,
+    peer: PeerIp,
     status: u16,
     dropped: u16,
     dropped_events: u16,
@@ -175,11 +228,10 @@ impl Template {
     ) -> bool {
         if self.flags != facts.flags
             || self.status != facts.status
-            || self.status_code != p.status as u8
+            || self.status_code != p.status
             || self.has_parent != has_parent
             || self.method != facts.method
-            || self.ip_len != facts.ip_len
-            || self.ip != facts.ip
+            || self.peer != facts.peer
             || self.dropped != p.dropped_attrs
             || self.dropped_events != p.dropped_events
             || self.dropped_links != p.dropped_links
@@ -218,9 +270,10 @@ impl Cache {
     }
 }
 
-// Byte offsets inside an encoded span (see SpanWriter::begin): tag, two
-// length bytes, then the fixed-shape prefix.
-const OFF_TRACE_ID: usize = 3 + 2;
+// Byte offsets inside an encoded span (see SpanWriter::begin): tag, the
+// reserved length bytes, then the fixed-shape prefix.
+const OFF_LEN: usize = 1;
+const OFF_TRACE_ID: usize = OFF_LEN + SPAN_LEN_RESERVE + 2;
 const OFF_SPAN_ID: usize = OFF_TRACE_ID + 16 + 2;
 const OFF_PARENT: usize = OFF_SPAN_ID + 8 + 2;
 #[inline]
@@ -239,56 +292,51 @@ pub fn encode(c: &mut Cache, out: &mut Vec<u8>, facts: &Facts, p: &SpanParts<'_>
     if limits.attributes < 16 {
         return encode_untemplated(out, facts, p, limits);
     }
-    let (url, after_url, _, _, _) = facts.strings();
+    let s = facts.strings();
     let has_parent = p.stub.parent.is_valid();
     let pieces: [&[u8]; 6] = [
-        after_url,
+        s.after_url,
         p.attrs,
         p.extra,
         p.trace_state,
         p.name_override,
         p.status_message,
     ];
-    let hit = 'hit: {
-        let Some(i) = c
-            .entries
-            .iter()
-            .position(|t| t.matches(facts, p, has_parent, &pieces))
-        else {
-            break 'hit false;
-        };
-        if i != 0 {
-            c.entries.swap(0, i);
-        }
-        let t = &c.entries[0];
-        let s = out.len();
-        out.reserve(t.bytes.len() + 64 + url.len());
-        out.extend_from_slice(&t.bytes);
-        out[s + OFF_TRACE_ID..s + OFF_TRACE_ID + 16].copy_from_slice(&p.stub.ctx.trace_id.0);
-        out[s + OFF_SPAN_ID..s + OFF_SPAN_ID + 8].copy_from_slice(&p.stub.ctx.span_id.0);
-        if has_parent {
-            out[s + OFF_PARENT..s + OFF_PARENT + 8].copy_from_slice(&p.stub.parent.0);
-        }
-        let st = s + off_start(has_parent);
-        out[st..st + 8].copy_from_slice(&p.stub.start_ns.to_le_bytes());
-        out[st + 9..st + 17].copy_from_slice(&p.end_ns.to_le_bytes());
-        // flags: 2-byte tag then fixed32
-        out[st + 19..st + 23].copy_from_slice(&p.stub.ctx.flags.otlp().to_le_bytes());
-        append_tail(out, s, url, facts, limits);
-        true
+    let Some(i) = c
+        .entries
+        .iter()
+        .position(|t| t.matches(facts, p, has_parent, &pieces))
+    else {
+        return encode_miss(c, out, facts, p, limits, has_parent);
     };
-    if !hit {
-        encode_miss(c, out, facts, p, limits, has_parent);
+    if i != 0 {
+        c.entries.swap(0, i);
     }
+    let t = &c.entries[0];
+    let start = out.len();
+    out.reserve(t.bytes.len() + 64 + s.url.len());
+    out.extend_from_slice(&t.bytes);
+    out[start + OFF_TRACE_ID..start + OFF_TRACE_ID + 16].copy_from_slice(&p.stub.ctx.trace_id.0);
+    out[start + OFF_SPAN_ID..start + OFF_SPAN_ID + 8].copy_from_slice(&p.stub.ctx.span_id.0);
+    if has_parent {
+        out[start + OFF_PARENT..start + OFF_PARENT + 8].copy_from_slice(&p.stub.parent.0);
+    }
+    let st = start + off_start(has_parent);
+    out[st..st + 8].copy_from_slice(&p.stub.start_ns.to_le_bytes());
+    out[st + 9..st + 17].copy_from_slice(&p.end_ns.to_le_bytes());
+    // flags: 2-byte tag then fixed32
+    out[st + 19..st + 23].copy_from_slice(&p.stub.ctx.flags.otlp().to_le_bytes());
+    append_tail(out, start, s.url, facts, limits);
 }
 
 #[cold]
 #[inline(never)]
 fn encode_untemplated(out: &mut Vec<u8>, facts: &Facts, p: &SpanParts<'_>, limits: &Limits) {
-    let (url, _, host, ua, route) = facts.strings();
+    let s = facts.strings();
     let start = out.len();
-    encode_head(out, facts, p, host, ua, route, limits);
-    append_tail(out, start, url, facts, limits);
+    let len_at = encode_head(out, facts, p, &s, limits);
+    debug_assert_eq!(len_at, start + OFF_LEN);
+    append_tail(out, start, s.url, facts, limits);
 }
 
 #[cold]
@@ -301,9 +349,9 @@ fn encode_miss(
     limits: &Limits,
     has_parent: bool,
 ) {
-    let (url, after_url, host, ua, route) = facts.strings();
+    let s = facts.strings();
     let pieces: [&[u8]; 6] = [
-        after_url,
+        s.after_url,
         p.attrs,
         p.extra,
         p.trace_state,
@@ -311,7 +359,8 @@ fn encode_miss(
         p.status_message,
     ];
     let start = out.len();
-    encode_head(out, facts, p, host, ua, route, limits);
+    let len_at = encode_head(out, facts, p, &s, limits);
+    debug_assert_eq!(len_at, start + OFF_LEN);
     let bytes = out[start..].to_vec();
     debug_assert_eq!(
         &bytes[OFF_TRACE_ID..OFF_TRACE_ID + 16],
@@ -326,7 +375,7 @@ fn encode_miss(
         &bytes[off_start(has_parent) + 9..off_start(has_parent) + 17],
         &p.end_ns.to_le_bytes()
     );
-    append_tail(out, start, url, facts, limits);
+    append_tail(out, start, s.url, facts, limits);
     let mut piece_len = [0u32; 6];
     let mut all = Vec::with_capacity(pieces.iter().map(|x| x.len()).sum());
     for (i, piece) in pieces.iter().enumerate() {
@@ -335,11 +384,10 @@ fn encode_miss(
     }
     let t = Template {
         flags: facts.flags,
-        status_code: p.status as u8,
+        status_code: p.status,
         has_parent,
         method: facts.method,
-        ip: facts.ip,
-        ip_len: facts.ip_len,
+        peer: facts.peer,
         status: facts.status,
         dropped: p.dropped_attrs,
         dropped_events: p.dropped_events,
@@ -361,90 +409,34 @@ fn append_tail(out: &mut Vec<u8>, span_start: usize, url: &[u8], facts: &Facts, 
     let max = limits.attribute_value_length as usize;
     let pl = (facts.path_len as usize).min(url.len());
     let (path, query) = (&url[..pl], url.get(pl + 1..).unwrap_or(b""));
-    let path = otlp::truncate_utf8(path, max);
-    // url.path header and bytes in one reserve; url.query only when present.
-    if path.len() < 128 - 16 {
-        let kv = 2 + 8 + 2 + 2 + path.len();
-        let head: [u8; 16] = [
-            (f::ATTRIBUTES << 3 | 2) as u8,
-            kv as u8,
-            (f::KV_KEY << 3 | 2) as u8,
-            8,
-            b'u',
-            b'r',
-            b'l',
-            b'.',
-            b'p',
-            b'a',
-            b't',
-            b'h',
-            (f::KV_VALUE << 3 | 2) as u8,
-            (2 + path.len()) as u8,
-            (f::AV_STRING << 3 | 2) as u8,
-            path.len() as u8,
-        ];
-        out.reserve(16 + path.len() + 8);
-        out.extend_from_slice(&head);
-        out.extend_from_slice(path);
-    } else {
-        otlp::write_key_value(out, f::ATTRIBUTES, b"url.path", &Value::Str(path));
-    }
+    otlp::write_str_kv_small(
+        out,
+        f::ATTRIBUTES,
+        "url.path",
+        otlp::truncate_utf8(path, max),
+    );
     if !query.is_empty() {
-        push_str(out, b"url.query", otlp::truncate_utf8(query, max));
-    }
-    let body_len = out.len() - span_start - 3;
-    if body_len < (1 << 14) {
-        out[span_start + 1] = (body_len as u8 & 0x7f) | 0x80;
-        out[span_start + 2] = (body_len >> 7) as u8;
-    } else {
-        let need = proto::varint_len(body_len as u64);
-        let extra = need - 2;
-        let old_len = out.len();
-        out.resize(old_len + extra, 0);
-        out.copy_within(span_start + 3..old_len, span_start + 3 + extra);
-        proto::write_varint_into(
-            &mut out[span_start + 1..span_start + 1 + need],
-            body_len as u64,
+        otlp::write_str_kv_small(
+            out,
+            f::ATTRIBUTES,
+            "url.query",
+            otlp::truncate_utf8(query, max),
         );
     }
-}
-
-/// `KeyValue{key, AnyValue{string}}` with a short literal key.
-#[inline]
-fn push_str(out: &mut Vec<u8>, key: &[u8], v: &[u8]) {
-    let kv = 2 + key.len() + 2 + 2 + v.len();
-    if kv >= 128 {
-        return otlp::write_key_value(out, f::ATTRIBUTES, key, &Value::Str(v));
-    }
-    out.reserve(kv + 2);
-    out.extend_from_slice(&[
-        (f::ATTRIBUTES << 3 | 2) as u8,
-        kv as u8,
-        (f::KV_KEY << 3 | 2) as u8,
-        key.len() as u8,
-    ]);
-    out.extend_from_slice(key);
-    out.extend_from_slice(&[
-        (f::KV_VALUE << 3 | 2) as u8,
-        (2 + v.len()) as u8,
-        (f::AV_STRING << 3 | 2) as u8,
-        v.len() as u8,
-    ]);
-    out.extend_from_slice(v);
+    Nested::<SPAN_LEN_RESERVE>::at(span_start + OFF_LEN).finish(out);
 }
 
 /// Encode everything except the per-request tail, leaving the span length
-/// unpatched (append_tail patches it).
+/// unpatched (append_tail patches it). Returns where the length bytes are.
 fn encode_head(
     out: &mut Vec<u8>,
     facts: &Facts,
     p: &SpanParts<'_>,
-    host: &[u8],
-    ua: &[u8],
-    route: &[u8],
+    s: &Strings<'_>,
     limits: &Limits,
-) {
-    let method = facts.method();
+) -> usize {
+    let method = method_name(facts.method).as_bytes();
+    let (host, ua, route) = (s.host, s.user_agent, s.route);
     let flags = facts.flags;
     let status = facts.status;
     let mut name_buf = [0u8; 8 + 256];
@@ -503,11 +495,10 @@ fn encode_head(
     if !ua.is_empty() {
         a.put("user_agent.original", Value::Str(lim(ua)));
     }
-    let ip = facts.ip();
-    if ip.len() == 4 || ip.len() == 16 {
-        let mut buf = [0u8; 46];
-        let s = format_ip(ip, &mut buf);
-        a.put("client.address", Value::Str(s));
+    let mut ip_buf = [0u8; 64];
+    let ip = facts.peer.text(&mut ip_buf);
+    if !ip.is_empty() {
+        a.put("client.address", Value::Str(ip));
     }
     if !route.is_empty() {
         a.put("http.route", Value::Str(lim(route)));
@@ -520,12 +511,11 @@ fn encode_head(
     if status != 0 {
         a.put("http.response.status_code", Value::Int(status as i64));
         if status >= 500 {
-            let code = [
-                b'0' + ((status / 100) % 10) as u8,
-                b'0' + ((status / 10) % 10) as u8,
-                b'0' + (status % 10) as u8,
-            ];
-            a.put("error.type", Value::Str(&code));
+            let mut buf = bun_core::fmt::ItoaBuf::new();
+            a.put(
+                "error.type",
+                Value::Str(bun_core::fmt::itoa(&mut buf, status)),
+            );
             if span_status == StatusCode::Unset {
                 span_status = StatusCode::Error;
             }
@@ -559,133 +549,26 @@ fn encode_head(
         w.dropped_links(p.dropped_links as u32);
     }
     w.status(span_status, msg);
-    w.leak();
+    w.finish_unpatched()
 }
 
 /// Split `host[:port]` (Host header / URL authority).
 pub fn split_host_port(host: &[u8]) -> (&[u8], Option<u16>) {
+    let port = |s: &[u8]| bun_core::fmt::parse_unsigned::<u16>(s, 10).ok();
     if host.first() == Some(&b'[') {
-        if let Some(end) = bun_core::strings::index_of_char_usize(host, b']') {
-            let h = &host[..=end];
-            let rest = &host[end + 1..];
-            let port = rest.strip_prefix(b":").and_then(parse_port);
-            return (h, port);
-        }
-        return (host, None);
+        return match bun_core::strings::index_of_char_usize(host, b']') {
+            Some(end) => (
+                &host[..=end],
+                host[end + 1..].strip_prefix(b":").and_then(port),
+            ),
+            None => (host, None),
+        };
     }
-    // Only the last 6 bytes can hold ":65535".
-    let tail_start = host.len().saturating_sub(6);
-    match bun_core::strings::index_of_char_usize(&host[tail_start..], b':') {
-        Some(i) => {
-            let i = tail_start + i;
-            match parse_port(&host[i + 1..]) {
-                Some(p) => (&host[..i], Some(p)),
-                None => (host, None),
-            }
-        }
+    match bun_core::strings::last_index_of_char(host, b':') {
+        Some(i) => match port(&host[i + 1..]) {
+            Some(p) => (&host[..i], Some(p)),
+            None => (host, None),
+        },
         None => (host, None),
     }
-}
-
-fn parse_port(s: &[u8]) -> Option<u16> {
-    if s.is_empty() || s.len() > 5 {
-        return None;
-    }
-    let mut v: u32 = 0;
-    for &c in s {
-        if !c.is_ascii_digit() {
-            return None;
-        }
-        v = v * 10 + (c - b'0') as u32;
-    }
-    u16::try_from(v).ok()
-}
-
-/// Dotted-quad / RFC 5952 text for a raw address (v4-mapped v6 prints as
-/// `::ffff:a.b.c.d`, matching `requestIP()`).
-pub fn format_ip<'b>(ip: &[u8], buf: &'b mut [u8; 46]) -> &'b [u8] {
-    fn v4(a: &[u8], buf: &mut [u8], at: usize) -> usize {
-        let mut n = at;
-        for (i, &oct) in a.iter().enumerate() {
-            if i > 0 {
-                buf[n] = b'.';
-                n += 1;
-            }
-            if oct >= 100 {
-                buf[n] = b'0' + oct / 100;
-                n += 1;
-            }
-            if oct >= 10 {
-                buf[n] = b'0' + (oct / 10) % 10;
-                n += 1;
-            }
-            buf[n] = b'0' + oct % 10;
-            n += 1;
-        }
-        n
-    }
-    if ip.len() == 4 {
-        let n = v4(ip, buf, 0);
-        return &buf[..n];
-    }
-    if ip.len() != 16 {
-        return &buf[..0];
-    }
-    if ip[..10].iter().all(|&b| b == 0) && ip[10] == 0xff && ip[11] == 0xff {
-        buf[..7].copy_from_slice(b"::ffff:");
-        let n = v4(&ip[12..16], buf, 7);
-        return &buf[..n];
-    }
-    // RFC 5952: collapse the longest run (>= 2) of zero groups.
-    let mut g = [0u16; 8];
-    for i in 0..8 {
-        g[i] = u16::from_be_bytes([ip[2 * i], ip[2 * i + 1]]);
-    }
-    let (mut best_at, mut best_len, mut at, mut len) = (usize::MAX, 0usize, usize::MAX, 0usize);
-    for i in 0..8 {
-        if g[i] == 0 {
-            if at == usize::MAX {
-                at = i;
-                len = 0;
-            }
-            len += 1;
-            if len > best_len {
-                best_len = len;
-                best_at = at;
-            }
-        } else {
-            at = usize::MAX;
-        }
-    }
-    if best_len < 2 {
-        best_at = usize::MAX;
-    }
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut n = 0;
-    let mut i = 0;
-    while i < 8 {
-        if i == best_at {
-            buf[n] = b':';
-            buf[n + 1] = b':';
-            n += 2;
-            i += best_len;
-            continue;
-        }
-        if i > 0 && !(best_at != usize::MAX && i == best_at + best_len) {
-            buf[n] = b':';
-            n += 1;
-        }
-        let v = g[i];
-        let mut started = false;
-        for shift in [12u16, 8, 4, 0] {
-            let d = ((v >> shift) & 0xf) as usize;
-            if d != 0 || started || shift == 0 {
-                buf[n] = HEX[d];
-                n += 1;
-                started = true;
-            }
-        }
-        i += 1;
-    }
-    &buf[..n]
 }

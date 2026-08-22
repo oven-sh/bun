@@ -75,7 +75,16 @@ pub extern "C" fn Bun__Telemetry__sqliteEnd(
             // SAFETY: non-null `errmsg` is sqlite3_errmsg()'s NUL-terminated string.
             unsafe { core::ffi::CStr::from_ptr(errmsg) }.to_bytes()
         };
-        db::end(g, span, sql, None, Some((code.as_bytes(), msg)));
+        db::end(
+            g,
+            span,
+            sql,
+            None,
+            Some(db::DbError {
+                ty: code.as_bytes(),
+                message: msg,
+            }),
+        );
     }
 }
 

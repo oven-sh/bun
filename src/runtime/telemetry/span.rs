@@ -76,11 +76,11 @@ pub fn native_context_value(native: NativeSpan) -> JSValue {
 }
 
 /// Release the JS cell a pooled span materialized (see `pool::Ended`).
-pub(crate) fn release_cell(js_cell: usize) {
-    if js_cell == 0 {
+pub(crate) fn release_cell(js_cell: bun_telemetry::JsCellRef) {
+    if !js_cell.is_some() {
         return;
     }
-    let v = JSValue::from_encoded(js_cell);
+    let v = JSValue::from_encoded(js_cell.0);
     Bun__TelemetrySpan__nativeEnded(v);
     v.unprotect();
 }
@@ -138,7 +138,7 @@ pub fn create_native_cell(
     kind: SpanKind,
     native: NativeSpan,
 ) -> JSValue {
-    Bun__TelemetrySpan__createNative(global, stub, scope.0, kind as u8 - 1, native.0)
+    Bun__TelemetrySpan__createNative(global, stub, scope.0, kind.to_api(), native.0)
 }
 
 /// Is `value` a JSTelemetrySpan?
@@ -598,16 +598,6 @@ pub extern "C" fn Bun__Telemetry__userScope() -> u16 {
     ScopeId::from(bun_telemetry::Instrument::User).0
 }
 
-fn kind_from_u8(k: u8) -> SpanKind {
-    match k {
-        1 => SpanKind::Server,
-        2 => SpanKind::Client,
-        3 => SpanKind::Producer,
-        4 => SpanKind::Consumer,
-        _ => SpanKind::Internal,
-    }
-}
-
 fn status_from_u8(s: u8) -> StatusCode {
     match s {
         1 => StatusCode::Ok,
@@ -639,7 +629,8 @@ pub extern "C" fn Bun__Telemetry__encodeSpan(global: &JSGlobalObject, desc: &End
         let mut name_buf = core::mem::take(&mut sc[2]);
         let name = desc.name.utf8(&mut name_buf);
         batch::record(batch, scope, &mut |buf: &mut Vec<u8>| {
-            let mut w = SpanWriter::begin(buf, stub, name, kind_from_u8(desc.kind), desc.end_ns);
+            let mut w =
+                SpanWriter::begin(buf, stub, name, SpanKind::from_api(desc.kind), desc.end_ns);
             if desc.trace_state.len != 0 {
                 w.trace_state(&desc.trace_state.to_vec());
             }
@@ -798,13 +789,15 @@ pub extern "C" fn Bun__Telemetry__poolMaterialize(global: &JSGlobalObject, handl
     });
     if let Some((cell, stub, scope, kind)) = live {
         drop(l);
-        if cell != 0 {
-            return JSValue::from_encoded(cell);
+        if cell.is_some() {
+            return JSValue::from_encoded(cell.0);
         }
-        let v = Bun__TelemetrySpan__createNative(global, &stub, scope.0, kind as u8 - 1, native.0);
+        let v = Bun__TelemetrySpan__createNative(global, &stub, scope.0, kind.to_api(), native.0);
         v.protect();
         if let Some(mut l) = local(global) {
-            pool::with(&mut l.pool, native, |s| s.js_cell = v.0);
+            pool::with(&mut l.pool, native, |s| {
+                s.js_cell = bun_telemetry::JsCellRef(v.0)
+            });
         }
         return v;
     }
@@ -951,7 +944,7 @@ pub extern "C" fn Bun__Telemetry__startInstrumentSpan(
         return JSValue::UNDEFINED;
     }
     let n = name.to_vec();
-    let kind = kind_from_u8(kind);
+    let kind = SpanKind::from_api(kind);
     let native = with_active_propagation(global, |ts, bg| {
         let Some(mut l) = local(global) else {
             return NativeSpan::NONE;

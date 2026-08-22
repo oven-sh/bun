@@ -940,7 +940,7 @@ mod _async_tasks {
                     self.global_object(),
                     &self.otel,
                     F.otel_name(false),
-                    self.args.otel_path(),
+                    self.args.path(),
                     result.as_ref().err(),
                 );
             }
@@ -1014,74 +1014,11 @@ mod _async_tasks {
         fn signal(&self) -> Option<&AbortSignal> {
             None
         }
-        /// The primary path argument, for telemetry (`file.path`).
-        #[inline]
-        fn otel_path(&self) -> Option<&[u8]> {
+        /// The primary path argument (`file.path` on the span).
+        fn path(&self) -> Option<&[u8]> {
             None
         }
     }
-
-    /// `FsArgument::otel_path` for arg structs whose primary path lives in `$field`.
-    macro_rules! impl_fs_otel_path {
-        ( $( $ty:ty => $field:ident ),+ $(,)? ) => {
-            $( impl $ty {
-                #[inline]
-                pub(crate) fn otel_path_impl(&self) -> Option<&[u8]> { otel_path_of(&self.$field) }
-            } )+
-        };
-    }
-    pub(crate) trait OtelPathField {
-        fn otel_path_field(&self) -> Option<&[u8]>;
-    }
-    impl OtelPathField for PathLike {
-        #[inline]
-        fn otel_path_field(&self) -> Option<&[u8]> {
-            Some(self.slice())
-        }
-    }
-    impl OtelPathField for PathOrFileDescriptor {
-        #[inline]
-        fn otel_path_field(&self) -> Option<&[u8]> {
-            match self {
-                PathOrFileDescriptor::Path(p) => Some(p.slice()),
-                PathOrFileDescriptor::Fd(_) => None,
-            }
-        }
-    }
-    impl OtelPathField for Option<PathLike> {
-        #[inline]
-        fn otel_path_field(&self) -> Option<&[u8]> {
-            self.as_ref().map(|p| p.slice())
-        }
-    }
-    #[inline]
-    fn otel_path_of<T: OtelPathField>(f: &T) -> Option<&[u8]> {
-        f.otel_path_field()
-    }
-    impl_fs_otel_path!(
-        args::Rename => old_path,
-        args::Truncate => path,
-        args::Chown => path,
-        args::Lutimes => path,
-        args::Chmod => path,
-        args::StatFS => path,
-        args::Stat => path,
-        args::Link => old_path,
-        args::Symlink => target_path,
-        args::Readlink => path,
-        args::Realpath => path,
-        args::Unlink => path,
-        args::RmDir => path,
-        args::Mkdir => path,
-        args::MkdirTemp => prefix,
-        args::Readdir => path,
-        args::Open => path,
-        args::Exists => path,
-        args::Access => path,
-        args::CopyFile => src,
-        args::ReadFile => path,
-        args::WriteFile => file,
-    );
 
     /// Forward [`FsArgument`] to the inherent `from_js` / `to_thread_safe`
     /// methods each `args::*` struct already defines.
@@ -1097,7 +1034,7 @@ mod _async_tasks {
         $( impl FsArgument for $ty {
             #[inline] fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> { <$ty>::from_js(ctx, arguments) }
             #[inline] fn to_thread_safe(&mut self) { <$ty>::to_thread_safe(self) }
-            #[inline] fn otel_path(&self) -> Option<&[u8]> { self.otel_path_impl() }
+            #[inline] fn path(&self) -> Option<&[u8]> { self.path_slice() }
         } )+
     };
     // Fd-only types — `to_thread_safe` is a no-op (these hold only `FD`/scalars).
@@ -1111,23 +1048,10 @@ mod _async_tasks {
         } )+
     };
 }
-    impl_fs_argument!(args::FdVectorIo, args::FTruncate, args::Write, args::Read,);
-    impl FsArgument for args::Rm {
-        #[inline]
-        fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
-            args::Rm::from_js(ctx, arguments)
-        }
-        #[inline]
-        fn to_thread_safe(&mut self) {
-            args::Rm::to_thread_safe(self)
-        }
-        #[inline]
-        fn otel_path(&self) -> Option<&[u8]> {
-            Some(self.0.path.slice())
-        }
-    }
+    impl_fs_argument!(args::FdVectorIo, args::FTruncate, args::Write, args::Read);
     impl_fs_argument!(@path
         args::Rename,
+        args::Rm,
         args::Truncate,
         args::Chown,
         args::Lutimes,
@@ -1170,8 +1094,8 @@ mod _async_tasks {
             self.signal.as_deref()
         }
         #[inline]
-        fn otel_path(&self) -> Option<&[u8]> {
-            self.otel_path_impl()
+        fn path(&self) -> Option<&[u8]> {
+            self.path_slice()
         }
     }
     impl FsArgument for args::WriteFile {
@@ -1189,8 +1113,8 @@ mod _async_tasks {
             self.signal.as_deref()
         }
         #[inline]
-        fn otel_path(&self) -> Option<&[u8]> {
-            self.otel_path_impl()
+        fn path(&self) -> Option<&[u8]> {
+            self.path_slice()
         }
     }
     impl FsArgument for args::AppendFile {
@@ -1209,8 +1133,8 @@ mod _async_tasks {
             self.0.signal.as_deref()
         }
         #[inline]
-        fn otel_path(&self) -> Option<&[u8]> {
-            self.0.otel_path_impl()
+        fn path(&self) -> Option<&[u8]> {
+            self.0.path_slice()
         }
     }
 
@@ -1369,7 +1293,7 @@ mod _async_tasks {
                     global_object,
                     &this.otel,
                     F.otel_name(false),
-                    this.args.otel_path(),
+                    this.args.path(),
                     this.result.as_ref().err(),
                 );
             }
@@ -2746,14 +2670,34 @@ pub mod args {
     /// keep working unchanged. Structs with non-path JS state (`Read`, `Write`,
     /// `Writev`, `Readv`, `Exists`, `ReadFile`, `WriteFile`) keep bespoke impls.
     macro_rules! fs_args_path_forwarders {
-        ($ty:ident; $($field:ident),+ $(,)?) => {
+        ($ty:ident; $primary:ident $(, $field:ident)* $(,)?) => {
             impl Unprotect for $ty {
-                #[inline] fn unprotect(&mut self) { $( self.$field.unprotect(); )+ }
+                #[inline] fn unprotect(&mut self) { self.$primary.unprotect(); $( self.$field.unprotect(); )* }
             }
             impl $ty {
-                pub fn to_thread_safe(&mut self) { $( self.$field.to_thread_safe(); )+ }
+                pub fn to_thread_safe(&mut self) { self.$primary.to_thread_safe(); $( self.$field.to_thread_safe(); )* }
+                #[inline] pub fn path_slice(&self) -> Option<&[u8]> { PathSlice::path_slice(&self.$primary) }
             }
         };
+    }
+
+    pub(crate) trait PathSlice {
+        fn path_slice(&self) -> Option<&[u8]>;
+    }
+    impl PathSlice for PathLike {
+        #[inline]
+        fn path_slice(&self) -> Option<&[u8]> {
+            Some(self.slice())
+        }
+    }
+    impl PathSlice for PathOrFileDescriptor {
+        #[inline]
+        fn path_slice(&self) -> Option<&[u8]> {
+            match self {
+                PathOrFileDescriptor::Path(p) => Some(p.slice()),
+                PathOrFileDescriptor::Fd(_) => None,
+            }
+        }
     }
 
     pub struct Rename {
@@ -4113,6 +4057,9 @@ pub mod args {
         pub(crate) fn to_thread_safe(&mut self) {
             self.path.to_thread_safe();
         }
+        pub(crate) fn path_slice(&self) -> Option<&[u8]> {
+            self.path.path_slice()
+        }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<ReadFile> {
             // `Drop` on `path` covers every
             // `?`-propagated JsError below.
@@ -4190,6 +4137,9 @@ pub mod args {
     impl WriteFile {
         pub(crate) fn to_thread_safe(&mut self) {
             self.file.to_thread_safe();
+        }
+        pub(crate) fn path_slice(&self) -> Option<&[u8]> {
+            self.file.path_slice()
         }
     }
     impl Unprotect for WriteFile {
@@ -4316,6 +4266,9 @@ pub mod args {
             if let Some(p) = &mut self.path {
                 p.to_thread_safe();
             }
+        }
+        pub(crate) fn path_slice(&self) -> Option<&[u8]> {
+            self.path.as_ref().map(PathLike::slice)
         }
     }
     impl Unprotect for Exists {
@@ -10185,72 +10138,66 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
 // ──────────────────────────────────────────────────────────────────────────
 // NodeFSFunctionEnum — one variant per NodeFS method
 // ──────────────────────────────────────────────────────────────────────────
-#[derive(Copy, Clone, PartialEq, Eq, core::marker::ConstParamTy)]
-pub enum NodeFSFunctionEnum {
-    Access,
-    AppendFile,
-    Chmod,
-    Chown,
-    Close,
-    CopyFile,
-    Exists,
-    Fchmod,
-    Fchown,
-    Fdatasync,
-    Fstat,
-    Fsync,
-    Ftruncate,
-    Futimes,
-    Lchmod,
-    Lchown,
-    Link,
-    Lstat,
-    Lutimes,
-    Mkdir,
-    Mkdtemp,
-    Open,
-    Read,
-    Readdir,
-    ReadFile,
-    Readlink,
-    Readv,
-    Realpath,
-    RealpathNonNative,
-    Rename,
-    Rm,
-    Rmdir,
-    Stat,
-    Statfs,
-    Symlink,
-    Truncate,
-    Unlink,
-    Utimes,
-    Write,
-    WriteFile,
-    Writev,
+macro_rules! node_fs_functions {
+    ($($variant:ident => $js_name:literal),* $(,)?) => {
+        #[derive(Copy, Clone, PartialEq, Eq, core::marker::ConstParamTy)]
+        pub enum NodeFSFunctionEnum { $($variant,)* }
+
+        impl NodeFSFunctionEnum {
+            /// `fs.<name>` / `fs.<name>Sync`, for span names.
+            pub const fn otel_name(self, sync: bool) -> &'static str {
+                match self {
+                    $(Self::$variant => if sync { concat!("fs.", $js_name, "Sync") } else { concat!("fs.", $js_name) },)*
+                }
+            }
+        }
+    };
+}
+node_fs_functions! {
+    Access => "access",
+    AppendFile => "appendFile",
+    Chmod => "chmod",
+    Chown => "chown",
+    Close => "close",
+    CopyFile => "copyFile",
+    Exists => "exists",
+    Fchmod => "fchmod",
+    Fchown => "fchown",
+    Fdatasync => "fdatasync",
+    Fstat => "fstat",
+    Fsync => "fsync",
+    Ftruncate => "ftruncate",
+    Futimes => "futimes",
+    Lchmod => "lchmod",
+    Lchown => "lchown",
+    Link => "link",
+    Lstat => "lstat",
+    Lutimes => "lutimes",
+    Mkdir => "mkdir",
+    Mkdtemp => "mkdtemp",
+    Open => "open",
+    Read => "read",
+    Readdir => "readdir",
+    ReadFile => "readFile",
+    Readlink => "readlink",
+    Readv => "readv",
+    Realpath => "realpath",
+    RealpathNonNative => "realpath",
+    Rename => "rename",
+    Rm => "rm",
+    Rmdir => "rmdir",
+    Stat => "stat",
+    Statfs => "statfs",
+    Symlink => "symlink",
+    Truncate => "truncate",
+    Unlink => "unlink",
+    Utimes => "utimes",
+    Write => "write",
+    WriteFile => "writeFile",
+    Writev => "writev",
 }
 
 impl NodeFSFunctionEnum {
-    /// `fs.<name>` — the node:fs function this op implements, for span names.
-    pub const fn otel_name(self, sync: bool) -> &'static str {
-        macro_rules! names {
-            ($($v:ident => $n:literal),* $(,)?) => {
-                match (self, sync) {
-                    $( (NodeFSFunctionEnum::$v, false) => concat!("fs.", $n), (NodeFSFunctionEnum::$v, true) => concat!("fs.", $n, "Sync"), )*
-                }
-            };
-        }
-        names! {
-            Access => "access", AppendFile => "appendFile", Chmod => "chmod", Chown => "chown", Close => "close", CopyFile => "copyFile",
-            Exists => "exists", Fchmod => "fchmod", Fchown => "fchown", Fdatasync => "fdatasync", Fstat => "fstat", Fsync => "fsync",
-            Ftruncate => "ftruncate", Futimes => "futimes", Lchmod => "lchmod", Lchown => "lchown", Link => "link", Lstat => "lstat",
-            Lutimes => "lutimes", Mkdir => "mkdir", Mkdtemp => "mkdtemp", Open => "open", Read => "read", Readdir => "readdir",
-            ReadFile => "readFile", Readlink => "readlink", Readv => "readv", Realpath => "realpath", RealpathNonNative => "realpath",
-            Rename => "rename", Rm => "rm", Rmdir => "rmdir", Stat => "stat", Statfs => "statfs", Symlink => "symlink", Truncate => "truncate",
-            Unlink => "unlink", Utimes => "utimes", Write => "write", WriteFile => "writeFile", Writev => "writev",
-        }
-    }
-
     /// The event-loop [`TaskTag`] of the ops that are libuv requests on
     /// Windows (`UVFSRequest`) and so re-enter through the task queue; every
     /// other async op is a `bun_jsc::Job` and needs none.

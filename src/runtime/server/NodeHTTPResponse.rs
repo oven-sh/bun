@@ -1559,8 +1559,7 @@ fn node_http_request_on_reject(global_object: &JSGlobalObject, callframe: &CallF
             raw_response.clear_on_writable();
             raw_response.clear_timeout();
             if !raw_response.state().is_http_status_called() {
-                raw_response.write_status(b"500 Internal Server Error");
-                this.otel_status.set(500);
+                this.write_status(raw_response, 500);
             }
             this.otel_handler_error.set(true);
             raw_response.end_stream(raw_response.state().is_http_connection_close());
@@ -2563,6 +2562,15 @@ impl NodeHTTPResponse {
         // body delivery cannot read through a dead cell.
         self.armed_this_value.set(JSValue::ZERO);
         bun_ptr::finalize_js_box_noop(self);
+    }
+
+    /// A status line Bun writes on the handler's behalf (it never called `writeHead`).
+    pub(crate) fn write_status(&self, raw: uws::AnyResponse, status: u16) {
+        if !raw.state().is_http_status_called() {
+            self.otel_status.set(status);
+        }
+        let mut buf = [0u8; 16];
+        raw.write_status(crate::server::status_line(status, &mut buf));
     }
 
     pub(crate) fn otel_end(&self) {

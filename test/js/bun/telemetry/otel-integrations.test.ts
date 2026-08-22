@@ -110,7 +110,7 @@ describe("node:fs / Bun.file / Bun.write", () => {
 });
 
 describe("Bun.spawn", () => {
-  test("span covers spawn → exit with argv and exit code", async () => {
+  test("span covers spawn → exit with executable, arg count and exit code (argv itself is not recorded)", async () => {
     await Bun.spawn([process.execPath, "-e", "1"], { stdio: ["ignore", "ignore", "ignore"] }).exited;
     Bun.spawnSync([process.execPath, "-e", "process.exit(3)"]);
     const exe = path.basename(process.execPath);
@@ -119,7 +119,9 @@ describe("Bun.spawn", () => {
       [`spawn ${exe}`, 0, 0],
       [`spawn ${exe}`, 3, 2],
     ]);
-    expect(got[0].attributes["process.command_args"]).toEqual([process.execPath, "-e", "1"]);
+    expect(got[0].attributes["process.executable.name"]).toBe(exe);
+    expect(got[0].attributes["process.args_count"]).toBe(3);
+    expect(got[0].attributes["process.command_args"]).toBeUndefined();
     expect(got[0].attributes["process.pid"]).toEqual(expect.any(Number));
   });
 });

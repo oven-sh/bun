@@ -983,28 +983,7 @@ impl Subprocess<'_> {
         self.clear_abort_signal();
         let span = self.otel.replace(bun_telemetry::NativeSpan::NONE);
         if span.is_some() {
-            match status {
-                Status::Exited(e) => crate::telemetry::spawn::exited(
-                    global_this,
-                    span,
-                    Some(i32::from(e.code)),
-                    None,
-                    None,
-                ),
-                Status::Signaled(sig) => {
-                    crate::telemetry::spawn::exited(global_this, span, None, Some(*sig), None)
-                }
-                Status::Err(err) => crate::telemetry::spawn::exited(
-                    global_this,
-                    span,
-                    None,
-                    None,
-                    Some(<&'static str>::from(err.get_errno())),
-                ),
-                Status::Running => {
-                    crate::telemetry::spawn::exited(global_this, span, None, None, None)
-                }
-            }
+            crate::telemetry::spawn::exited(global_this, span, status);
         }
 
         // `deref()` and `disconnect_ipc(true)` run at the tail of this body.

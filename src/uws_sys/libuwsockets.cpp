@@ -1732,11 +1732,13 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
     return value.length();
   }
 
-  /* One pass over the header block for the headers telemetry needs:
-   * [0] host [1] user-agent [2] traceparent [3] tracestate [4] baggage. */
+  /* One pass over the header block for the headers telemetry needs. */
+  struct uws_header_slice_t {
+    const char *ptr;
+    size_t len;
+  };
   struct uws_telemetry_headers_t {
-    const char *ptr[5];
-    uint32_t len[5];
+    struct uws_header_slice_t host, user_agent, traceparent, tracestate, baggage;
     /* Length of the path part of the URL (up to '?'). */
     uint32_t path_len;
   };
@@ -1748,18 +1750,18 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
     for (auto header : *uwsReq)
     {
       std::string_view k = header.first;
-      int slot = -1;
+      struct uws_header_slice_t *slot = nullptr;
       switch (k.length()) {
-      case 4: if (uws_header_is(k, "host")) slot = 0; break;
-      case 10: if (uws_header_is(k, "user-agent")) slot = 1;
-               else if (uws_header_is(k, "tracestate")) slot = 3; break;
-      case 11: if (uws_header_is(k, "traceparent")) slot = 2; break;
-      case 7: if (uws_header_is(k, "baggage")) slot = 4; break;
+      case 4: if (uws_header_is(k, "host")) slot = &out->host; break;
+      case 10: if (uws_header_is(k, "user-agent")) slot = &out->user_agent;
+               else if (uws_header_is(k, "tracestate")) slot = &out->tracestate; break;
+      case 11: if (uws_header_is(k, "traceparent")) slot = &out->traceparent; break;
+      case 7: if (uws_header_is(k, "baggage")) slot = &out->baggage; break;
       default: break;
       }
-      if (slot >= 0 && !out->ptr[slot]) {
-        out->ptr[slot] = header.second.data();
-        out->len[slot] = (uint32_t)header.second.length();
+      if (slot && !slot->ptr) {
+        slot->ptr = header.second.data();
+        slot->len = header.second.length();
       }
     }
   }

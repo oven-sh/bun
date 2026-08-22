@@ -3,7 +3,7 @@
 use bun_jsc::{JSGlobalObject, JSValue};
 use bun_telemetry::pool::{self, NativeSpan};
 use bun_telemetry::{
-    DEFAULT_LIMITS, Instrument, ScopeId, SpanContext, SpanKind, SpanStub, StatusCode, Value, clock,
+    Instrument, ScopeId, SpanContext, SpanKind, SpanStub, StatusCode, Value, clock,
 };
 
 use super::{Entered, local, state};
@@ -46,7 +46,7 @@ pub fn begin_message(
             if !stub.is_recording() {
                 return;
             }
-            let l = &DEFAULT_LIMITS;
+            let l = super::span::limits();
             s.push_attribute(
                 b"websocket.opcode",
                 &Value::Str(if binary { b"binary" } else { b"text" }),

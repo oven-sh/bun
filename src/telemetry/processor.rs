@@ -45,7 +45,6 @@ pub trait Exporter: Send + Sync {
     /// Synchronously deliver parked retries at process exit (when there is a
     /// pending payload, `export_blocking` covers them).
     fn flush_parked_blocking(&self, _deadline_ns: u64) {}
-    fn name(&self) -> &str;
 }
 
 #[derive(Clone, Copy, Debug)]

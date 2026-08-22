@@ -7,25 +7,43 @@ use crate::processor::BatchConfig;
 use crate::{Instrument, Sampler};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Protocol {
-    HttpProtobuf,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Compression {
     None,
     Gzip,
 }
 
+/// An OTLP/HTTP (protobuf) traces exporter.
 #[derive(Clone, Debug)]
 pub struct OtlpExporterConfig {
-    /// Full URL of the traces endpoint (…/v1/traces already appended when
-    /// derived from `OTEL_EXPORTER_OTLP_ENDPOINT`).
+    /// Full URL of the traces endpoint (see [`traces_endpoint`]).
     pub url: String,
     pub headers: Vec<(String, String)>,
-    pub protocol: Protocol,
     pub compression: Compression,
     pub timeout_ms: u32,
+}
+
+impl OtlpExporterConfig {
+    pub fn new(url: String) -> OtlpExporterConfig {
+        OtlpExporterConfig {
+            url,
+            headers: Vec::new(),
+            compression: Compression::None,
+            timeout_ms: 10000,
+        }
+    }
+}
+
+/// The traces URL for an OTLP base endpoint (`OTEL_EXPORTER_OTLP_ENDPOINT`,
+/// bunfig `endpoint`, a preset's base URL): the spec appends `/v1/traces` to
+/// whatever path the base has. Idempotent, so a full traces URL passes through.
+/// Signal-specific URLs (`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) are not passed
+/// through here; they are used verbatim.
+pub fn traces_endpoint(base: &str) -> String {
+    let b = base.trim_end_matches('/');
+    if b.ends_with("/v1/traces") {
+        return b.to_string();
+    }
+    format!("{b}/v1/traces")
 }
 
 #[derive(Clone, Debug)]
@@ -110,11 +128,7 @@ pub struct EnvConfig {
 }
 
 fn truthy(v: &[u8]) -> bool {
-    let v = v.trim_ascii();
-    v == b"1"
-        || v.eq_ignore_ascii_case(b"true")
-        || v.eq_ignore_ascii_case(b"yes")
-        || v.eq_ignore_ascii_case(b"on")
+    bun_core::env_var::string_is_truthy(v.trim_ascii())
 }
 
 fn s(v: &[u8]) -> String {
@@ -147,11 +161,6 @@ fn percent_decode(v: &[u8]) -> String {
     // OTel spec: header values are percent-decoded; malformed escapes are kept verbatim.
     let _ = bun_url::PercentEncoding::decode_fault_tolerant::<_, true>(&mut out, v);
     bstr::ByteVec::into_string_lossy(out)
-}
-
-fn join_url(base: &str, path: &str) -> String {
-    let b = base.trim_end_matches('/');
-    format!("{b}{path}")
 }
 
 /// Read configuration from the environment via `get`.
@@ -309,28 +318,21 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
         }
     }
     if want_otlp {
-        let protocol = match get("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL")
+        match get("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL")
             .or_else(|| get("OTEL_EXPORTER_OTLP_PROTOCOL"))
             .as_deref()
-            .map(|v| v.trim_ascii().to_vec())
-            .as_deref()
+            .map(<[u8]>::trim_ascii)
         {
-            None | Some(b"" | b"http/protobuf") => Protocol::HttpProtobuf,
-            Some(v @ (b"http/json" | b"grpc")) => {
-                warnings.push(format!(
-                    "OTEL_EXPORTER_OTLP_PROTOCOL={} is not supported yet; using http/protobuf on the same endpoint",
-                    s(v)
-                ));
-                Protocol::HttpProtobuf
-            }
-            Some(other) => {
-                warnings.push(format!(
-                    "unknown OTEL_EXPORTER_OTLP_PROTOCOL {:?}; using http/protobuf",
-                    s(other)
-                ));
-                Protocol::HttpProtobuf
-            }
-        };
+            None | Some(b"" | b"http/protobuf") => {}
+            Some(v @ (b"http/json" | b"grpc")) => warnings.push(format!(
+                "OTEL_EXPORTER_OTLP_PROTOCOL={} is not supported yet; using http/protobuf on the same endpoint",
+                s(v)
+            )),
+            Some(other) => warnings.push(format!(
+                "unknown OTEL_EXPORTER_OTLP_PROTOCOL {:?}; using http/protobuf",
+                s(other)
+            )),
+        }
         let url = if let Some(v) = get("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") {
             let v = s(&v);
             if v.is_empty() { None } else { Some(v) }
@@ -339,10 +341,10 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
             if v.is_empty() {
                 None
             } else {
-                Some(join_url(&v, "/v1/traces"))
+                Some(traces_endpoint(&v))
             }
         } else if let Some(v) = bunfig.and_then(|b| b.endpoint.as_deref()) {
-            Some(join_url(v, "/v1/traces"))
+            Some(traces_endpoint(v))
         } else if enabled {
             Some("http://localhost:4318/v1/traces".to_string())
         } else {
@@ -366,8 +368,7 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
             let compression = match get("OTEL_EXPORTER_OTLP_TRACES_COMPRESSION")
                 .or_else(|| get("OTEL_EXPORTER_OTLP_COMPRESSION"))
                 .as_deref()
-                .map(|v| v.trim_ascii().to_vec())
-                .as_deref()
+                .map(<[u8]>::trim_ascii)
             {
                 Some(b"gzip") => Compression::Gzip,
                 None | Some(b"none") | Some(b"") => Compression::None,
@@ -385,7 +386,6 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
             c.otlp_exporters.push(OtlpExporterConfig {
                 url,
                 headers,
-                protocol,
                 compression,
                 timeout_ms,
             });

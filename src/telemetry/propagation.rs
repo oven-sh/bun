@@ -44,32 +44,22 @@ pub fn parse_traceparent(h: &[u8]) -> Option<SpanContext> {
 }
 
 pub fn format_traceparent(ctx: &SpanContext, out: &mut [u8; TRACEPARENT_LEN]) {
-    out[0] = b'0';
-    out[1] = b'0';
-    out[2] = b'-';
-    let mut t = [0u8; 32];
-    ctx.trace_id.to_hex(&mut t);
-    out[3..35].copy_from_slice(&t);
+    out[..3].copy_from_slice(b"00-");
+    bun_core::fmt::bytes_to_hex_lower(&ctx.trace_id.0, &mut out[3..35]);
     out[35] = b'-';
-    let mut s = [0u8; 16];
-    ctx.span_id.to_hex(&mut s);
-    out[36..52].copy_from_slice(&s);
+    bun_core::fmt::bytes_to_hex_lower(&ctx.span_id.0, &mut out[36..52]);
     out[52] = b'-';
-    let f = ctx.flags.w3c();
-    out[53] = b"0123456789abcdef"[(f >> 4) as usize];
-    out[54] = b"0123456789abcdef"[(f & 0xf) as usize];
+    bun_core::fmt::bytes_to_hex_lower(&[ctx.flags.w3c()], &mut out[53..55]);
 }
 
 #[inline]
 fn hex_byte(a: u8, b: u8) -> Option<u8> {
-    fn v(c: u8) -> Option<u8> {
-        match c {
-            b'0'..=b'9' => Some(c - b'0'),
-            b'a'..=b'f' => Some(c - b'a' + 10),
-            _ => None,
-        }
+    use bun_core::fmt::{HEX_DECODE_TABLE, HEX_INVALID};
+    let (a, b) = (HEX_DECODE_TABLE[a as usize], HEX_DECODE_TABLE[b as usize]);
+    if a == HEX_INVALID || b == HEX_INVALID {
+        return None;
     }
-    Some((v(a)? << 4) | v(b)?)
+    Some((a << 4) | b)
 }
 
 #[inline]

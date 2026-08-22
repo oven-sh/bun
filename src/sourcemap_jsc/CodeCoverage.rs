@@ -118,7 +118,9 @@ impl Report {
 
 /// The name a module is reported under: its path relative to `base_path`, or its id as it is.
 pub fn file_name<'a>(source_url: &'a [u8], base_path: &[u8]) -> &'a [u8] {
-    if base_path.is_empty() || !bun_paths::is_absolute(source_url) {
+    let is_path =
+        bun_paths::is_absolute(source_url) && source_url.len() < bun_paths::MAX_PATH_BYTES;
+    if base_path.is_empty() || !is_path {
         return source_url;
     }
     bun_paths::resolve_path::relative(base_path, source_url)

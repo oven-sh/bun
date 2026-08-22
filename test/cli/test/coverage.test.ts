@@ -734,31 +734,41 @@ test.concurrent("virtual modules are reported under their id and data: URL modul
   expect(exitCode).toBe(0);
 });
 
-test.concurrent("a virtual module id longer than a path buffer is reported as it is", async () => {
-  const virtualId = "virtual-" + Buffer.alloc(longerThanAPathBuffer, "x").toString();
-  using dir = tempDir(
-    "cov",
-    virtualModuleFixture(
-      `"virtual-" + Buffer.alloc(${longerThanAPathBuffer}, "x").toString()`,
-      `"data:text/javascript,export default 'data';"`,
-    ),
-  );
+// A plain id, and an id that looks like an absolute path but does not fit a path buffer.
+for (const prefix of ["virtual-", "/virtual/"]) {
+  test.concurrent(`a virtual module id longer than a path buffer is reported as it is (${prefix})`, async () => {
+    const virtualId = prefix + Buffer.alloc(longerThanAPathBuffer, "x").toString();
+    using dir = tempDir(
+      "cov",
+      virtualModuleFixture(
+        `${JSON.stringify(prefix)} + Buffer.alloc(${longerThanAPathBuffer}, "x").toString()`,
+        `"data:text/javascript,export default 'data';"`,
+      ),
+    );
 
-  const { stderr, exitCode } = await runCoverage(String(dir));
+    const { stderr, exitCode } = await runCoverage(String(dir));
 
-  // The id is too long to compare whole lines. Every table line is padded to its width.
-  const rows = stderr.split("\n").filter(line => line.includes(" | "));
-  expect(rows.map(line => line.replace(virtualId, "<id>"))).toEqual([
-    expect.stringMatching(/^File +\| % Funcs \| % Lines \| Uncovered Line #s$/),
-    expect.stringMatching(/^All files +\| {3}83\.33 \| {2}100\.00 \|$/),
-    expect.stringMatching(/^ helper\.ts +\| {2}100\.00 \| {2}100\.00 \| $/),
-    expect.stringMatching(/^ virtual\.test\.ts +\| {2}100\.00 \| {2}100\.00 \| $/),
-    " <id> |   50.00 |  100.00 | ",
-  ]);
-  expect(lcovSourceFiles(String(dir)).map(line => line.replace(virtualId, "<id>"))).toEqual([
-    "SF:helper.ts",
-    "SF:virtual.test.ts",
-    "SF:<id>",
-  ]);
-  expect(exitCode).toBe(0);
-});
+    // Every table line is padded to the width of the id, so compare the lines with the id and
+    // the padding taken out. The entries are sorted by their full name, which is platform specific.
+    const rows = stderr
+      .split("\n")
+      .filter(line => line.includes(" | "))
+      .map(line => line.replace(virtualId, "<id>").replace(/ {2,}/g, " "))
+      .sort();
+    expect(rows).toEqual(
+      [
+        "File | % Funcs | % Lines | Uncovered Line #s",
+        "All files | 83.33 | 100.00 |",
+        " helper.ts | 100.00 | 100.00 | ",
+        " virtual.test.ts | 100.00 | 100.00 | ",
+        " <id> | 50.00 | 100.00 | ",
+      ].sort(),
+    );
+    expect(
+      lcovSourceFiles(String(dir))
+        .map(line => line.replace(virtualId, "<id>"))
+        .sort(),
+    ).toEqual(["SF:<id>", "SF:helper.ts", "SF:virtual.test.ts"].sort());
+    expect(exitCode).toBe(0);
+  });
+}

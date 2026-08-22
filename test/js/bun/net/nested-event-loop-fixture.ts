@@ -3,6 +3,9 @@
 // synchronously, which is what nests event-loop ticks inside a socket's data
 // callback while the dispatch for that socket is still on the stack.
 import { expect, test } from "bun:test";
+import net from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 test("a socket closed inside its data callback survives nested event-loop ticks until the dispatch returns", async () => {
   using server = Bun.listen({
@@ -180,8 +183,7 @@ test("closing a pipe server from its connection handler while more accepts are p
   const name =
     process.platform === "win32"
       ? String.fromCharCode(92, 92, 46, 92) + "pipe" + String.fromCharCode(92) + "nested-close-" + process.pid
-      : require("path").join(require("os").tmpdir(), "nested-close-" + process.pid + ".sock");
-  const net = require("node:net");
+      : join(tmpdir(), "nested-close-" + process.pid + ".sock");
   let accepted = 0;
   const closed = Promise.withResolvers<void>();
   const server = net.createServer(c => {

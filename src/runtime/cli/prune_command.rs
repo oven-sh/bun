@@ -32,7 +32,7 @@ impl PruneCommand {
             Err(err) => return Err(err.into()),
         };
 
-        if manager.options.should_print_command_name() {
+        if manager.options.should_print_command_name() && !manager.options.json_output {
             bun_core::prettyln!(
                 "<r><b>bun prune <r><d>v{}<r>\n\n",
                 Global::package_json_version_with_sha,

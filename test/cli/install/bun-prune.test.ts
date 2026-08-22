@@ -1,5 +1,5 @@
 import { file, write } from "bun";
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, runBunInstall, tempDir, VerdaccioRegistry } from "harness";
 import {
   chmodSync,
@@ -3355,6 +3355,7 @@ test.concurrent("--help lists every flag; -F is --filter, -p is --production", a
       -p, --production      Also remove packages that are only needed by devDependencies (alias: --prod)
           --omit=<val>      Also remove packages that are only needed by the given dependency types
           --dry-run         Print what would be removed without deleting anything
+          --json            Output in JSON format
           --os=<val>        Prune for a different operating system than the current one
           --cpu=<val>       Prune for a different CPU architecture than the current one
           --linker=<val>    Prune a node_modules installed with the given linker (one of "isolated" or "hoisted")
@@ -3372,6 +3373,9 @@ test.concurrent("--help lists every flag; -F is --filter, -p is --production", a
 
       Show what would be removed without deleting anything
       bun prune --dry-run
+
+      Print what would be removed as JSON
+      bun prune --dry-run --json
 
       Only prune what the app workspace no longer needs
       bun prune --production --filter app
@@ -3456,3 +3460,216 @@ test.concurrent(
     expect(existsSync(fresh)).toBeFalse();
   },
 );
+
+describe("--json", () => {
+  test.concurrent("one object per removed entry: name, version or null, path from the project root", async () => {
+    const dir = await setup({
+      name: "foo",
+      dependencies: { "one-dep": "1.0.0", "no-deps": "2.0.0" },
+      devDependencies: { "what-bin": "1.0.0" },
+    });
+    const nm = join(dir, "node_modules");
+    const nested = plant(dir, "node_modules/one-dep/node_modules/junk");
+    const scoped = plant(dir, "node_modules/@scoped/junk");
+    expectBinInstalled(nm, "what-bin");
+
+    const { stdout, stderr, exitCode } = await prune(dir, "--production", "--json");
+    expect(stderr).toBe("");
+    expect(stdout).toEndWith("\n");
+    expect(JSON.parse(stdout)).toEqual({
+      removed: [
+        { name: "@scoped/junk", version: null, path: "node_modules/@scoped/junk" },
+        { name: "junk", version: null, path: "node_modules/one-dep/node_modules/junk" },
+        { name: "what-bin", version: "1.0.0", path: "node_modules/what-bin" },
+      ],
+      checked: 6,
+      failed: 0,
+    });
+    expect(exitCode).toBe(0);
+    expect(existsSync(nested)).toBeFalse();
+    expect(existsSync(scoped)).toBeFalse();
+    expect(existsSync(join(nm, "@scoped"))).toBeFalse();
+    expect(existsSync(join(nm, "what-bin"))).toBeFalse();
+    expectBinRemoved(nm, "what-bin");
+    expect(existsSync(join(nm, "one-dep", "node_modules", "no-deps", "package.json"))).toBeTrue();
+    expect(existsSync(join(nm, "no-deps", "package.json"))).toBeTrue();
+  });
+
+  test.concurrent(
+    "--dry-run prints the same document without deleting; a clean tree prints an empty list",
+    async () => {
+      const dir = await setup({
+        name: "foo",
+        dependencies: { "no-deps": "1.0.0" },
+        devDependencies: { "a-dep": "1.0.1" },
+      });
+      const junk = plant(dir, "node_modules/junk");
+      const aDep = join(dir, "node_modules", "a-dep");
+      const document = {
+        removed: [
+          { name: "a-dep", version: "1.0.1", path: "node_modules/a-dep" },
+          { name: "junk", version: null, path: "node_modules/junk" },
+        ],
+        checked: 3,
+        failed: 0,
+      };
+
+      const dryRun = await prune(dir, "--production", "--dry-run", "--json");
+      expect(dryRun.stderr).toBe("");
+      expect(dryRun.stdout).toEndWith("\n");
+      expect(JSON.parse(dryRun.stdout)).toEqual(document);
+      expect(dryRun.exitCode).toBe(0);
+      expect(existsSync(junk)).toBeTrue();
+      expect(existsSync(join(aDep, "package.json"))).toBeTrue();
+
+      // --silent keeps the warnings off stderr; the document is what was asked for.
+      const silent = await prune(dir, "--production", "--dry-run", "--json", "--silent");
+      expect(silent.stderr).toBe("");
+      expect(JSON.parse(silent.stdout)).toEqual(document);
+      expect(silent.exitCode).toBe(0);
+      expect(existsSync(junk)).toBeTrue();
+
+      const real = await prune(dir, "--production", "--json");
+      expect(real.stderr).toBe("");
+      expect(real.stdout).toEndWith("\n");
+      expect(JSON.parse(real.stdout)).toEqual(document);
+      expect(real.exitCode).toBe(0);
+      expect(existsSync(junk)).toBeFalse();
+      expect(() => lstatSync(aDep)).toThrow();
+      expect(existsSync(join(dir, "node_modules", "no-deps", "package.json"))).toBeTrue();
+
+      const clean = await prune(dir, "--production", "--json");
+      expect(clean.stderr).toBe("");
+      expect(clean.stdout).toEndWith("\n");
+      expect(JSON.parse(clean.stdout)).toEqual({ removed: [], checked: 1, failed: 0 });
+      expect(clean.exitCode).toBe(0);
+    },
+  );
+
+  test.concurrent("no node_modules folder: an empty list with nothing checked", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "no-deps": "1.0.0" } }));
+    await install(packageDir, "--lockfile-only");
+    const nm = join(packageDir, "node_modules");
+    rmSync(nm, { recursive: true, force: true });
+
+    const { stdout, stderr, exitCode } = await prune(packageDir, "--json");
+    expect(stderr).toBe("");
+    expect(stdout).toEndWith("\n");
+    expect(JSON.parse(stdout)).toEqual({ removed: [], checked: 0, failed: 0 });
+    expect(exitCode).toBe(0);
+    expect(existsSync(nm)).toBeFalse();
+  });
+
+  test.concurrent("isolated linker: store entries are named by package, the path is the store folder", async () => {
+    const dir = await setup(
+      { name: "foo", dependencies: { "no-deps": "1.0.0" }, devDependencies: { "one-dep": "1.0.0" } },
+      { linker: "isolated" },
+    );
+    const store = join(dir, "node_modules", ".bun");
+    const junk = plant(dir, "node_modules/.bun/junk@1.0.0/node_modules/junk");
+
+    const { stdout, stderr, exitCode } = await prune(dir, "--production", "--linker", "isolated", "--json");
+    expect(stderr).toBe("");
+    expect(stdout).toEndWith("\n");
+    expect(JSON.parse(stdout)).toEqual({
+      removed: [
+        { name: "junk", version: "1.0.0", path: "node_modules/.bun/junk@1.0.0" },
+        { name: "no-deps", version: "1.0.1", path: "node_modules/.bun/no-deps@1.0.1" },
+        { name: "one-dep", version: "1.0.0", path: "node_modules/.bun/one-dep@1.0.0" },
+      ],
+      checked: 6,
+      failed: 0,
+    });
+    expect(exitCode).toBe(0);
+    expect(existsSync(junk)).toBeFalse();
+    expect(existsSync(join(store, "one-dep@1.0.0"))).toBeFalse();
+    expect(() => lstatSync(join(dir, "node_modules", "one-dep"))).toThrow();
+    expect(existsSync(join(store, "no-deps@1.0.0"))).toBeTrue();
+    expect(existsSync(join(dir, "node_modules", "no-deps", "package.json"))).toBeTrue();
+  });
+
+  test.concurrent("--filter: a workspace folder's entries carry the workspace path", async () => {
+    const dir = await setupWorkspaces("hoisted", {
+      root: { dependencies: { "no-deps": "2.0.0" } },
+      packages: {
+        app: { dependencies: { "no-deps": "1.0.0" } },
+        lib: { dependencies: { "no-deps": "1.0.0" } },
+      },
+    });
+    const rootJunk = plant(dir, "node_modules/root-junk");
+    const appJunk = plant(dir, "packages/app/node_modules/app-junk");
+    const libJunk = plant(dir, "packages/lib/node_modules/lib-junk");
+
+    const { stdout, stderr, exitCode } = await prune(dir, "--filter", "app", "--linker", "hoisted", "--json");
+    expect(stderr).toBe("");
+    expect(stdout).toEndWith("\n");
+    expect(JSON.parse(stdout)).toEqual({
+      removed: [
+        { name: "app-junk", version: null, path: "node_modules/app/node_modules/app-junk" },
+        { name: "root-junk", version: null, path: "node_modules/root-junk" },
+      ],
+      checked: 6,
+      failed: 0,
+    });
+    expect(exitCode).toBe(0);
+    expect(existsSync(appJunk)).toBeFalse();
+    expect(existsSync(rootJunk)).toBeFalse();
+    expect(existsSync(libJunk)).toBeTrue();
+  });
+
+  test.concurrent.skipIf(isWindows || process.getuid?.() === 0)(
+    "a failed deletion is counted in failed and left out of removed; exit code 1",
+    async () => {
+      const dir = await setup({ name: "foo", dependencies: { "no-deps": "1.0.0" } });
+      const junkA = plant(dir, "node_modules/junk-a");
+      const inner = plant(dir, "node_modules/junk-b/inner");
+      const junkB = join(dir, "node_modules", "junk-b");
+      chmodSync(junkB, 0o555);
+      try {
+        const { stdout, stderr, exitCode } = await prune(dir, "--json");
+        expect(normalizeBunSnapshot(stderr)).toMatch(/^error: failed to remove node_modules\/junk-b: E[A-Z]+ \(.+\)$/);
+        expect(stdout).toEndWith("\n");
+        expect(JSON.parse(stdout)).toEqual({
+          removed: [{ name: "junk-a", version: null, path: "node_modules/junk-a" }],
+          checked: 3,
+          failed: 1,
+        });
+        expect(exitCode).toBe(1);
+        expect(existsSync(junkA)).toBeFalse();
+        expect(existsSync(inner)).toBeTrue();
+      } finally {
+        chmodSync(junkB, 0o755);
+      }
+    },
+  );
+
+  test.concurrent("errors keep stdout empty: no header, no document", async () => {
+    const [noLockDir, outOfSyncDir] = await Promise.all([
+      registry.createTestDir().then(async ({ packageDir, packageJson }) => {
+        await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "no-deps": "1.0.0" } }));
+        return packageDir;
+      }),
+      setup({ name: "foo", dependencies: { "no-deps": "1.0.0", "a-dep": "1.0.1" } }),
+    ]);
+    const junk = plant(noLockDir, "node_modules/junk");
+    await write(
+      join(outOfSyncDir, "package.json"),
+      JSON.stringify({ name: "foo", dependencies: { "no-deps": "1.0.0" } }),
+    );
+
+    const noLock = await prune(noLockDir, "--json");
+    expect(normalizeBunSnapshot(noLock.stderr)).toBe(
+      "error: missing lockfile, nothing to prune\nnote: run 'bun install' first",
+    );
+    expect(noLock.stdout).toBe("");
+    expect(noLock.exitCode).toBe(1);
+    expect(existsSync(junk)).toBeTrue();
+
+    const outOfSync = await prune(outOfSyncDir, "--json");
+    expect(normalizeBunSnapshot(outOfSync.stderr)).toBe(`${OUT_OF_SYNC}\n${OUT_OF_SYNC_NOTE}`);
+    expect(outOfSync.stdout).toBe("");
+    expect(outOfSync.exitCode).toBe(1);
+    expect(existsSync(join(outOfSyncDir, "node_modules", "a-dep", "package.json"))).toBeTrue();
+  });
+});

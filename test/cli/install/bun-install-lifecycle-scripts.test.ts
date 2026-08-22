@@ -4025,6 +4025,79 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       }
     });
 
+    describe("--json", () => {
+      async function untrustedJson(packageDir: string, env: Record<string, string>) {
+        const { stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "pm", "untrusted", "--json"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stderr: "pipe",
+          env,
+        });
+        const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+        return { out, err, exitCode };
+      }
+
+      test("bun pm untrusted --json lists blocked packages with their scripts", async () => {
+        using ctx = await setupTest();
+        const { packageDir, packageJson, env } = ctx;
+        const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
+        await writeFile(
+          packageJson,
+          JSON.stringify({
+            name: "foo",
+            dependencies: {
+              "no-deps": "1.0.0",
+              "uses-what-bin": "1.0.0",
+            },
+          }),
+        );
+
+        const { out: installOut } = await runBunInstall(testEnv, packageDir);
+        expect(installOut).toContain("Blocked 1 postinstall. Run `bun pm untrusted` for details.");
+
+        const { out, err, exitCode } = await untrustedJson(packageDir, testEnv);
+        expect(err).toBe("");
+        expect(JSON.parse(out)).toEqual([
+          {
+            name: "uses-what-bin",
+            version: "1.0.0",
+            path: "node_modules/uses-what-bin",
+            scripts: {
+              install: "what-bin",
+            },
+          },
+        ]);
+        expect(out).toEndWith("]\n");
+        expect(exitCode).toBe(0);
+      });
+
+      test("bun pm untrusted --json prints [] when nothing is blocked", async () => {
+        using ctx = await setupTest();
+        const { packageDir, packageJson, env } = ctx;
+        const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
+        await writeFile(
+          packageJson,
+          JSON.stringify({
+            name: "foo",
+            dependencies: {
+              "uses-what-bin": "1.0.0",
+            },
+            trustedDependencies: ["uses-what-bin"],
+          }),
+        );
+
+        await runBunInstall(testEnv, packageDir);
+
+        const { out, err, exitCode } = await untrustedJson(packageDir, testEnv);
+        expect(err).toBe("");
+        expect(out).toBe("[]\n");
+        expect(exitCode).toBe(0);
+      });
+    });
+
     describe.if(!forceWaiterThread || process.platform === "linux")("does not use 100% cpu", async () => {
       test("install", async () => {
         using ctx = await setupTest();

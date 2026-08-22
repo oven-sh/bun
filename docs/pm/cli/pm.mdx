@@ -5,6 +5,71 @@ description: "Package manager utilities"
 
 The `bun pm` command group is a set of utilities for working with Bun's package manager.
 
+## scan
+
+To run the configured [security scanner](/pm/security-scanner-api) over every package in the lockfile, without installing anything:
+
+```bash terminal icon="terminal"
+bun pm scan
+```
+
+```txt
+bun pm scan v1.3.0 (b8c4f9a2)
+
+  FATAL: lodash
+    via my-app › express › lodash
+    Prototype pollution vulnerability
+    https://example.com/advisory
+
+  WARNING: left-pad
+    via my-app › left-pad
+
+2 advisories (1 fatal, 1 warning)
+```
+
+The scanner is the one set under `[install.security]` in `bunfig.toml`. The command exits with `1` when no scanner is configured, when the lockfile is missing, when the scan fails, or when the scanner reports any advisory (fatal or warning), so it can gate a CI step. It exits with `0` and prints `No advisories found` when there are none.
+
+With `--json`, the advisories are printed as one JSON object and nothing else is written to stdout. Errors still go to stderr, and the exit codes are the same:
+
+```bash terminal icon="terminal"
+bun pm scan --json
+```
+
+```json
+{
+  "advisories": [
+    {
+      "level": "fatal",
+      "name": "lodash",
+      "version": "4.17.20",
+      "description": "Prototype pollution vulnerability",
+      "url": "https://example.com/advisory",
+      "path": ["my-app", "express", "lodash"]
+    },
+    {
+      "level": "warn",
+      "name": "left-pad",
+      "version": "1.3.0",
+      "description": null,
+      "url": null,
+      "path": ["my-app", "left-pad"]
+    }
+  ],
+  "fatal": 1,
+  "warnings": 1
+}
+```
+
+- `advisories`: one object per advisory, in the order the scanner returned them. `[]` when there are none.
+  - `level`: `"fatal"` or `"warn"`, the level the scanner reported
+  - `name`: the package name the scanner reported
+  - `version`: the installed version from the lockfile, or `null` when the name does not match a scanned package
+  - `description`, `url`: the strings the scanner reported, or `null` when it left them out
+  - `path`: the dependency chain the text output prints after `via`: the package names from the root (or workspace) package down to the package itself. `[]` when the name does not match a scanned package.
+- `fatal`, `warnings`: the counts from the summary line
+
+The scanner runs as a child process that shares stdout, so anything the scanner itself prints appears before the JSON document. Scanners should write their diagnostics to stderr.
+
 ## pack
 
 To create a tarball of the current workspace:
@@ -50,6 +115,7 @@ bun pm pack --destination ./dist
 - `--ignore-scripts`: Skip running pre/postpack and prepare scripts.
 - `--gzip-level <0-9>`: Set the gzip compression level, from 0 to 9 (default 9).
 - `--quiet`: Print only the tarball filename, suppressing the rest of the output. Useful in scripts.
+- `--json`: Print the result as a JSON array and nothing else. See [JSON output](#json-output).
 
 > **Note:** `--filename` and `--destination` cannot be used at the same time.
 
@@ -85,6 +151,54 @@ bun pm pack --quiet
 my-package-1.0.0.tgz
 ```
 
+**JSON output:**
+
+```bash terminal icon="terminal"
+bun pm pack --json
+```
+
+```json
+[
+  {
+    "id": "my-package@1.0.0",
+    "name": "my-package",
+    "version": "1.0.0",
+    "filename": "my-package-1.0.0.tgz",
+    "path": "/path/to/project/my-package-1.0.0.tgz",
+    "size": 249,
+    "unpackedSize": 171,
+    "shasum": "f2451d6eb1e818f500a791d9aace80b394258a90",
+    "integrity": "sha512-GZ3lB9E8837KFl0MAD7EA0WqjbXrXy1VCnwPgsCIPs0jQcUlOnhRtxZub7EZ71x0oxgOJ2cRxgoLXMME5GCUiQ==",
+    "entryCount": 2,
+    "files": [
+      { "path": "package.json", "size": 131, "mode": 420 },
+      { "path": "index.js", "size": 40, "mode": 420 }
+    ],
+    "bundled": []
+  }
+]
+```
+
+`--json` prints an array with one object, the same shape as `npm pack --json`. Bun writes nothing else to stdout, so with `--ignore-scripts` (or quiet lifecycle scripts) the output can be piped into `jq` or `JSON.parse`. Errors still go to stderr, and the exit code does not change.
+
+- `id`: `<name>@<version>`
+- `name`, `version`: the `name` and `version` fields of `package.json`
+- `filename`: the tarball name, `<name>-<version>.tgz`. A scope is folded into the name: `@scope/pkg` becomes `scope-pkg-1.0.0.tgz`.
+- `path`: the absolute path of the written tarball. `--destination` and `--filename` change it.
+- `size`: the size of the tarball in bytes
+- `unpackedSize`: the sum of the sizes of the files in the tarball, in bytes
+- `shasum`: the SHA-1 hash of the tarball, as lowercase hex
+- `integrity`: the SHA-512 hash of the tarball, as an SRI string (`sha512-<base64>`)
+- `entryCount`: the number of files in the tarball, bundled dependencies included
+- `files`: one object per file, in the order of the `packed` lines: `path` relative to the package root, `size` in bytes, and `mode`, the permission bits of the tar entry as a number (`420` is `0644`, `493` is `0755`, bins are always executable). The files of bundled dependencies are counted in `entryCount` but not listed.
+- `bundled`: the names of the bundled dependencies that were packed
+
+`--dry-run` builds no tarball, so `path`, `size`, `shasum` and `integrity` are `null`. `--json` takes precedence over `--quiet` and `--silent`. Lifecycle scripts (`prepack`, `prepare`, `postpack`) inherit stdout, so anything they print comes before the document. Pass `--ignore-scripts` to keep stdout to the document alone.
+
+```bash terminal icon="terminal"
+TARBALL=$(bun pm pack --json | jq -r '.[0].path')
+```
+
 ## bin
 
 To print the path to the `bin` directory for the local project:
@@ -105,6 +219,18 @@ bun pm bin -g
 
 ```txt
 <$HOME>/.bun/bin
+```
+
+With `--json`, `bun pm bin` and `bun pm bin -g` print the path as a JSON object and nothing else on stdout:
+
+```bash terminal icon="terminal"
+bun pm bin --json
+```
+
+```json
+{
+  "path": "/path/to/current/project/node_modules/.bin"
+}
 ```
 
 ## ls
@@ -162,6 +288,50 @@ bun list --trusted
 /path/to/project node_modules (135 installed)
 └── esbuild@0.21.5
 ```
+
+### JSON output
+
+Pass `--json` to get the list as JSON, for scripts and CI checks. The document has the shape of `pnpm ls --json`: an array whose only element is the root package, with its dependencies grouped by the `package.json` section they are declared in. Nothing else is written to stdout, so the output can be piped into `jq` or `JSON.parse`. `--json` combines with `--trusted`:
+
+```bash terminal icon="terminal"
+bun pm ls --json
+# or
+bun list --json
+```
+
+```json
+[
+  {
+    "name": "my-app",
+    "version": "1.0.0",
+    "private": true,
+    "path": "/path/to/project",
+    "dependencies": {
+      "react": { "from": "react", "version": "18.2.0", "path": "/path/to/project/node_modules/react" },
+      "react-17": { "from": "react", "version": "17.0.2", "path": "/path/to/project/node_modules/react-17" }
+    },
+    "devDependencies": {
+      "typescript": { "from": "typescript", "version": "5.0.4", "path": "/path/to/project/node_modules/typescript" }
+    },
+    "optionalDependencies": {},
+    "peerDependencies": {},
+    "workspaces": {
+      "ui": { "from": "ui", "version": "workspace:packages/ui", "path": "/path/to/project/packages/ui" }
+    }
+  }
+]
+```
+
+- `name`: the name of the root package, or `null` when `package.json` has none
+- `version`: the `version` field of the root `package.json`, or `null` when it has none
+- `private`: `true` when the root `package.json` sets `"private": true`
+- `path`: the absolute path of the project, as printed at the start of the text output
+- `dependencies`, `devDependencies`, `optionalDependencies`, `peerDependencies`: the root's dependencies from that `package.json` section, keyed by the name they are installed under. `workspaces` lists the workspace packages. All five groups are always present, `{}` when empty. A package the root declares in two sections is listed in both. Each entry has:
+  - `from`: the name of the installed package. For an `npm:` alias such as `"react-17": "npm:react@17"` the key is the alias and `from` is the real package name (`react`).
+  - `version`: the resolved version as the text output prints it after the `@`: a version for a registry package, `workspace:<path>` for a workspace, the folder path for a `file:` dependency
+  - `path`: the absolute path of the package: its folder under `node_modules`, or the workspace folder for a workspace package
+
+With `--trusted`, every group lists only the trusted packages. `--all` is not supported with `--json`: the command exits with `1` and an error on stderr. A missing lockfile is still reported on stderr with exit code `1`, and nothing is written to stdout.
 
 ## licenses
 
@@ -298,6 +468,18 @@ Print your npm username. Requires you to be logged in (`bunx npm login`) with cr
 bun pm whoami
 ```
 
+With `--json`, the username is printed as a JSON object. Errors still go to stderr and exit with code `1`:
+
+```bash terminal icon="terminal"
+bun pm whoami --json
+```
+
+```json
+{
+  "username": "alice"
+}
+```
+
 ## hash
 
 To generate and print the hash of the current lockfile:
@@ -318,12 +500,36 @@ To print the hash stored in the current lockfile:
 bun pm hash-print
 ```
 
+With `--json`, `bun pm hash` and `bun pm hash-print` print the hash as a JSON object:
+
+```bash terminal icon="terminal"
+bun pm hash --json
+```
+
+```json
+{
+  "hash": "489DDF3D3023F6B8-df70ea6557e96748-904B1FF3B0E87F8A-b7febd1f94845cec"
+}
+```
+
 ## cache
 
 To print the path to Bun's global module cache:
 
 ```bash terminal icon="terminal"
 bun pm cache
+```
+
+With `--json`, the path is printed as a JSON object:
+
+```bash terminal icon="terminal"
+bun pm cache --json
+```
+
+```json
+{
+  "path": "/home/me/.bun/install/cache"
+}
 ```
 
 To clear Bun's global module cache:
@@ -355,6 +561,34 @@ bun pm untrusted
 These dependencies had their lifecycle scripts blocked during install.
 ```
 
+Pass `--json` to get the same list as a JSON array. Nothing else is written to stdout:
+
+```bash terminal icon="terminal"
+bun pm untrusted --json
+```
+
+```json
+[
+  {
+    "name": "@biomejs/biome",
+    "version": "1.8.3",
+    "path": "node_modules/@biomejs/biome",
+    "scripts": {
+      "postinstall": "node scripts/postinstall.js"
+    }
+  }
+]
+```
+
+One object per package the text output lists, in the same order:
+
+- `name`: the package name from the lockfile (for an `npm:` alias, the name of the aliased package)
+- `version`: the resolved version, as the text output prints it after the `@`
+- `path`: the folder the package is installed in, relative to the project root, always with forward slashes (the text output prints it after `./`)
+- `scripts`: the blocked lifecycle scripts, keyed by hook name in `preinstall`, `install`, `postinstall`, `preprepare`, `prepare`, `postprepare` order. Only the hooks the package defines are present.
+
+The array is `[]` when nothing is blocked. A missing lockfile is still reported on stderr with exit code `1`.
+
 ## trust
 
 To run scripts for untrusted dependencies and add to `trustedDependencies`:
@@ -373,6 +607,16 @@ To print the default trusted dependencies list:
 
 ```bash terminal icon="terminal"
 bun pm default-trusted
+```
+
+With `--json`, the names are printed as a JSON array of strings, in the same order as the text output:
+
+```bash terminal icon="terminal"
+bun pm default-trusted --json
+```
+
+```json
+["@airbnb/node-memwatch", "@anthropic-ai/claude-code", "@apollo/protobufjs", "esbuild", "sharp"]
 ```
 
 See the [current list on GitHub](https://github.com/oven-sh/bun/blob/main/src/install/default-trusted-dependencies.txt).
@@ -424,6 +668,30 @@ v1.0.1
 ```
 
 Supports `patch`, `minor`, `major`, `premajor`, `preminor`, `prepatch`, `prerelease`, `from-git`, or specific versions like `1.2.3`. By default it creates a git commit and tag; pass `--no-git-tag-version` to skip them.
+
+### JSON output
+
+Pass `--json` to get the result as a JSON object, for release scripts. The `v1.0.1` line is not printed. The document is written once, after the version scripts and the git commit and tag have run:
+
+```bash terminal icon="terminal"
+bun pm version patch --json
+```
+
+```json
+{
+  "name": "my-pkg",
+  "version": "1.0.1",
+  "previousVersion": "1.0.0"
+}
+```
+
+- `name`: the `name` field of `package.json`, or `null` if it has none
+- `version`: the new version written to `package.json`
+- `previousVersion`: the version `package.json` had before the bump, or `null` if it had none
+
+Without an increment argument, `bun pm version --json` prints the same object for the current state instead of the help text: `version` is the current version (or `null`) and `previousVersion` is `null`. Nothing is changed.
+
+The `preversion`, `version` and `postversion` scripts still run with inherited stdio, so anything they print to stdout appears before the JSON document. Errors are still reported on stderr with exit code `1`.
 
 ## pkg
 

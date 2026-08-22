@@ -1,6 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { rmSync } from "fs";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import { join } from "path";
+import { startRegistry, stopRegistry } from "./simple-dummy-registry";
 
 describe("bun pm scan", () => {
   describe("configuration", () => {
@@ -674,6 +676,244 @@ describe("bun pm scan", () => {
       expect(stdout).not.toContain("Installation aborted");
       expect(stderr).not.toContain("installation aborted");
       expect(stderr).not.toContain("Installation aborted");
+    });
+  });
+
+  describe.concurrent("--json", () => {
+    let registryUrl: string;
+
+    beforeAll(async () => {
+      registryUrl = await startRegistry(false);
+    });
+
+    afterAll(() => {
+      stopRegistry();
+    });
+
+    function bunfig(scanner?: string) {
+      return Bun.TOML.stringify({
+        install: {
+          cache: { disable: true },
+          registry: `${registryUrl}/`,
+          ...(scanner ? { security: { scanner } } : {}),
+        },
+      });
+    }
+
+    // Installs first and configures the scanner afterwards, so the install
+    // itself is not aborted by the advisories the scanner reports.
+    async function installAndScan(prefix: string, scanner: string) {
+      await using dir = tempDir(prefix, {
+        "package.json": JSON.stringify({
+          name: "my-app",
+          dependencies: { "is-even": "1.0.0", "left-pad": "1.3.0" },
+        }),
+        "bunfig.toml": bunfig(),
+        "scanner.js": scanner,
+      });
+
+      await Bun.$`${bunExe()} install`.cwd(String(dir)).env(bunEnv).quiet();
+      await Bun.write(join(String(dir), "bunfig.toml"), bunfig("./scanner.js"));
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "pm", "scan", "--json"],
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+        env: bunEnv,
+      });
+
+      const result = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return result;
+    }
+
+    test("prints the advisory with its version and dependency path", async () => {
+      const [stdout, stderr, exitCode] = await installAndScan(
+        "scan-json-fatal",
+        `module.exports = {
+          scanner: {
+            version: "1",
+            scan: async () => [{
+              package: "left-pad",
+              level: "fatal",
+              description: "Prototype pollution vulnerability",
+              url: "https://example.com/CVE-2024-1234",
+            }],
+          },
+        };`,
+      );
+
+      expect(JSON.parse(stdout)).toEqual({
+        advisories: [
+          {
+            level: "fatal",
+            name: "left-pad",
+            version: "1.3.0",
+            description: "Prototype pollution vulnerability",
+            url: "https://example.com/CVE-2024-1234",
+            path: ["my-app", "left-pad"],
+          },
+        ],
+        fatal: 1,
+        warnings: 0,
+      });
+      expect(stdout).toEndWith("\n");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(1);
+    });
+
+    test("prints mixed advisories in scanner order with null fields", async () => {
+      const [stdout, stderr, exitCode] = await installAndScan(
+        "scan-json-mixed",
+        `module.exports = {
+          scanner: {
+            version: "1",
+            scan: async () => [
+              { package: "is-even", level: "fatal" },
+              { package: "is-odd", level: "warn", description: "Transitive issue", url: null },
+              { package: "not-in-lockfile", level: "warn", description: null, url: "https://example.com/x" },
+            ],
+          },
+        };`,
+      );
+
+      expect(JSON.parse(stdout)).toEqual({
+        advisories: [
+          {
+            level: "fatal",
+            name: "is-even",
+            version: "1.0.0",
+            description: null,
+            url: null,
+            path: ["my-app", "is-even"],
+          },
+          {
+            level: "warn",
+            name: "is-odd",
+            version: "1.0.0",
+            description: "Transitive issue",
+            url: null,
+            path: ["my-app", "is-even", "is-odd"],
+          },
+          {
+            level: "warn",
+            name: "not-in-lockfile",
+            version: null,
+            description: null,
+            url: "https://example.com/x",
+            path: [],
+          },
+        ],
+        fatal: 1,
+        warnings: 2,
+      });
+      expect(stdout).toEndWith("\n");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(1);
+    });
+
+    test("prints an empty document when there are no advisories", async () => {
+      const [stdout, stderr, exitCode] = await installAndScan(
+        "scan-json-none",
+        `module.exports = { scanner: { version: "1", scan: async () => [] } };`,
+      );
+
+      expect(JSON.parse(stdout)).toEqual({ advisories: [], fatal: 0, warnings: 0 });
+      expect(stdout).toEndWith("\n");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("keeps the scanner install status lines off stdout", async () => {
+      await using dir = tempDir("scan-json-install-scanner", {
+        "package.json": JSON.stringify({
+          name: "my-app",
+          dependencies: { "left-pad": "1.3.0" },
+          devDependencies: { "test-security-scanner": "1.0.0" },
+        }),
+        "bunfig.toml": bunfig(),
+      });
+
+      await Bun.$`${bunExe()} install`.cwd(String(dir)).env(bunEnv).quiet();
+      await Bun.write(join(String(dir), "bunfig.toml"), bunfig("test-security-scanner"));
+      // The scanner is in the lockfile but not in node_modules, so the scan installs it first.
+      rmSync(join(String(dir), "node_modules", "test-security-scanner"), { recursive: true });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "pm", "scan", "--json"],
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+        env: bunEnv,
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(JSON.parse(stdout)).toEqual({ advisories: [], fatal: 0, warnings: 0 });
+      expect(stdout).toEndWith("\n");
+      expect(stderr).toContain("Attempting to install security scanner from npm...");
+      expect(stderr).toContain("Security scanner installed successfully.");
+      expect(exitCode).toBe(0);
+    });
+
+    test("prints nothing on stdout when the scanner fails", async () => {
+      const [stdout, stderr, exitCode] = await installAndScan(
+        "scan-json-crash",
+        `module.exports = { scanner: { version: "1", scan: async () => { process.exit(42); } } };`,
+      );
+
+      expect(stdout).toBe("");
+      expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+        "error: Security scanner exited with code 42 without sending data
+        error: Could not perform security scan (NoSecurityScanData)"
+      `);
+      expect(exitCode).toBe(1);
+    });
+
+    test("prints nothing on stdout when no security scanner is configured", async () => {
+      await using dir = tempDir("scan-json-no-config", {
+        "package.json": JSON.stringify({ name: "my-app", dependencies: { "left-pad": "1.3.0" } }),
+        "bunfig.toml": bunfig(),
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "pm", "scan", "--json"],
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+        env: bunEnv,
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout).toBe("");
+      expect(stderr).toContain("error: no security scanner configured");
+      expect(stderr).toContain("To use 'bun pm scan', configure a security scanner in bunfig.toml:");
+      expect(exitCode).toBe(1);
+    });
+
+    test("prints nothing on stdout when the lockfile is missing", async () => {
+      await using dir = tempDir("scan-json-no-lockfile", {
+        "package.json": JSON.stringify({ name: "my-app", dependencies: {} }),
+        "bunfig.toml": bunfig("./scanner.js"),
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "pm", "scan", "--json"],
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+        env: bunEnv,
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout).toBe("");
+      expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+        "error: missing lockfile, nothing to scan
+        note: run 'bun install' first"
+      `);
+      expect(exitCode).toBe(1);
     });
   });
 });

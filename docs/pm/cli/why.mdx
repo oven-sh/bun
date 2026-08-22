@@ -19,6 +19,7 @@ bun why <package>
 
 - `--top`: Show only the top-level dependencies instead of the complete dependency tree.
 - `--depth <number>`: Maximum depth of the dependency tree to display.
+- `--json`: Print the same tree as JSON. See [JSON output](#json-output).
 
 ## Examples
 
@@ -82,3 +83,49 @@ The output shows:
 - The version requirement specified in each package's dependencies
 
 For nested dependencies, the command shows the complete dependency tree by default, with indentation indicating the relationship hierarchy.
+
+## JSON output
+
+Pass `--json` to get the tree as JSON, for scripts. Nothing else is written to stdout. The output is an array with one object per package that matches the pattern:
+
+```bash terminal icon="terminal"
+bun why body-parser --json
+```
+
+```json
+[
+  {
+    "name": "body-parser",
+    "version": "1.20.1",
+    "dependents": [
+      {
+        "name": "express",
+        "version": "4.18.2",
+        "type": "dependencies",
+        "optional": false,
+        "spec": "1.20.1",
+        "dependents": [
+          {
+            "name": "my-app",
+            "version": null,
+            "type": "dependencies",
+            "optional": false,
+            "spec": "^4.18.2",
+            "dependents": []
+          }
+        ]
+      }
+    ]
+  }
+]
+```
+
+Each entry in `dependents` is one line of the text output:
+
+- `name` and `version`: the package that depends on the parent entry. `version` is the resolution shown in the text output, for example `"4.18.2"` or `"workspace:packages/app"`. It is `null` for the root package.
+- `type`: the `package.json` section the dependency is declared in: `dependencies`, `devDependencies`, `peerDependencies` or `optionalDependencies`.
+- `optional`: `true` for an entry in `optionalDependencies` and for a peer dependency marked as optional in `peerDependenciesMeta`.
+- `spec`: the version range the package declares, shown as `requires` in the text output.
+- `dependents`: the packages that depend on this package, in the same order as the text output. It is `[]` when there are none. It is `null` where the text output stops: past `--depth` (or `--top`), or when the package is already listed further up in the same chain. In the second case the entry also has `"circular": true`.
+
+`--top` and `--depth` apply as in the text output. When no package matches the pattern, the command prints `[]`, reports the error on stderr and exits with code 1.

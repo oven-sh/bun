@@ -12,7 +12,8 @@ use bun_install::package_manager_real::{
     CommandLineArguments, Subcommand, fetch_cache_directory_path, get_cache_directory,
     package_manager_options::LogLevel, setup_global_dir,
 };
-use bun_install::{DependencyID, PackageID, PackageManager, migration};
+use bun_install::{Behavior, DependencyID, PackageID, PackageManager, ResolutionTag, migration};
+use bun_install_types::DependencyGroup;
 use bun_paths::{self as Path, PathBuffer};
 use bun_resolver::fs as Fs;
 use bun_sys::{self, Dir, Fd, File};
@@ -183,13 +184,19 @@ impl PackageManagerCommand {
   <d>├<r> <cyan>--filename<r>                the name of the tarball\n\
   <d>├<r> <cyan>--ignore-scripts<r>          don't run pre/postpack and prepare scripts\n\
   <d>├<r> <cyan>--gzip-level<r>              specify a custom compression level for gzip (0-9, default is 9)\n\
-  <d>└<r> <cyan>--quiet<r>                   only output the tarball filename\n\
+  <d>├<r> <cyan>--quiet<r>                   only output the tarball filename\n\
+  <d>└<r> <cyan>--json<r>                    output as JSON\n\
   <b><green>bun pm<r> <blue>bin<r>                  print the path to bin folder\n\
-  <d>└<r> <cyan>-g<r>                        print the <b>global<r> path to bin folder\n\
+  <d>├<r> <cyan>-g<r>                        print the <b>global<r> path to bin folder\n\
+  <d>└<r> <cyan>--json<r>                    output as JSON\n\
   <b><green>bun pm<r> <blue>ls<r>                   list the dependency tree according to the current lockfile\n\
   <d>├<r> <cyan>--all<r>                     list the entire dependency tree according to the current lockfile\n\
-  <d>└<r> <cyan>--trusted<r>                 list only trusted dependencies\n\
+  <d>├<r> <cyan>--trusted<r>                 list only trusted dependencies\n\
+  <d>└<r> <cyan>--json<r>                    output as JSON\n\
   <b><green>bun pm<r> <blue>why<r> <d>\\<pkg\\><r>            show dependency tree explaining why a package is installed\n\
+  <d>├<r> <cyan>--top<r>                     show only the first level of dependents\n\
+  <d>├<r> <cyan>--depth<r> <d>\\<n\\><r>               maximum depth of the tree to display\n\
+  <d>└<r> <cyan>--json<r>                    output as JSON\n\
   <b><green>bun pm<r> <blue>diff<r> <d>[a] [b]<r>           show what changed between two versions of a package (or vs a folder/tarball)\n\
   <d>├<r> <d>bun pm diff react<r>            installed version → latest\n\
   <d>├<r> <d>bun pm diff react@18.2.0 19.0.0<r>\n\
@@ -206,7 +213,8 @@ impl PackageManagerCommand {
   <b><green>bun pm<r> <blue>whoami<r>               print the current npm username\n\
   <b><green>bun pm<r> <blue>view<r> <d>name[@version]<r>  view package metadata from the registry <d>(use `bun info` instead)<r>\n\
   <b><green>bun pm<r> <blue>version<r> <d>[increment]<r>  bump the version in package.json and create a git tag\n\
-  <d>└<r> <cyan>increment<r>                 patch, minor, major, prepatch, preminor, premajor, prerelease, from-git, or a specific version\n\
+  <d>├<r> <cyan>increment<r>                 patch, minor, major, prepatch, preminor, premajor, prerelease, from-git, or a specific version\n\
+  <d>└<r> <cyan>--json<r>                    output as JSON\n\
   <b><green>bun pm<r> <blue>pkg<r>                  manage data in package.json\n\
   <d>├<r> <cyan>get<r> <d>[key ...]<r>\n\
   <d>├<r> <cyan>set<r> <d>key=value ...<r>\n\
@@ -222,6 +230,9 @@ impl PackageManagerCommand {
   <b><green>bun pm<r> <blue>trust<r> <d>names ...<r>      run scripts for untrusted dependencies and add to `trustedDependencies`\n\
   <d>└<r>  <cyan>--all<r>                    trust all untrusted dependencies\n\
   <b><green>bun pm<r> <blue>default-trusted<r>      print the default trusted dependencies list\n\
+\n\
+<b>Flags:<r>\n\
+  <cyan>--json<r>                         output as JSON (scan, pack, bin, ls, why, diff, licenses, whoami, view, version, hash, hash-print, cache, untrusted, default-trusted)\n\
 \n\
 Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
 
@@ -321,6 +332,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             PackCommand::exec_with_manager(ctx, pm)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"whoami") {
+            let json_output = pm.options.json_output;
             let username = match Npm::whoami(pm) {
                 Ok(u) => u,
                 Err(err) => {
@@ -342,7 +354,11 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                     Global::crash();
                 }
             };
-            Output::println(format_args!("{}", bstr::BStr::new(&username)));
+            if json_output {
+                print_json_string("username", &username);
+            } else {
+                Output::println(format_args!("{}", bstr::BStr::new(&username)));
+            }
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"view") {
             let property_path = if pm.options.positionals.len() > 2 {
@@ -367,9 +383,13 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 top_level_dir,
                 pm.options.bin_path.as_bytes(),
             );
-            bun_core::prettyln!("{}", bstr::BStr::new(output_path));
-            if Output::stdout_descriptor_type() == Output::OutputStreamDescriptor::Terminal {
-                bun_core::prettyln!("\n");
+            if pm.options.json_output {
+                print_json_string("path", output_path);
+            } else {
+                bun_core::prettyln!("{}", bstr::BStr::new(output_path));
+                if Output::stdout_descriptor_type() == Output::OutputStreamDescriptor::Terminal {
+                    bun_core::prettyln!("\n");
+                }
             }
 
             if pm.options.global {
@@ -396,6 +416,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             return Ok(());
         } else if strings::eql_comptime(subcommand, b"hash") {
             let log_level = pm.options.log_level;
+            let json_output = pm.options.json_output;
             let load_lockfile = pm.load_lockfile_from_cwd::<true>();
             Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "hash");
 
@@ -405,20 +426,15 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 .lockfile
                 .has_meta_hash_changed(false, pm.lockfile.packages.len())?;
 
-            Output::flush();
-            Output::disable_buffering();
-            Output::writer().print(format_args!("{}", pm.lockfile.fmt_meta_hash()))?;
-            Output::enable_buffering();
+            print_meta_hash(&pm.lockfile, json_output)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"hash-print") {
             let log_level = pm.options.log_level;
+            let json_output = pm.options.json_output;
             let load_lockfile = pm.load_lockfile_from_cwd::<true>();
             Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "hash");
 
-            Output::flush();
-            Output::disable_buffering();
-            Output::writer().print(format_args!("{}", pm.lockfile.fmt_meta_hash()))?;
-            Output::enable_buffering();
+            print_meta_hash(&pm.lockfile, json_output)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"hash-string") {
             let log_level = pm.options.log_level;
@@ -544,10 +560,14 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                     Global::crash();
                 }
             };
-            let _ = Output::writer().write_all(outpath);
+            if pm.options.json_output {
+                print_json_string("path", outpath);
+            } else {
+                let _ = Output::writer().write_all(outpath);
+            }
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"default-trusted") {
-            DefaultTrustedCommand::exec()?;
+            DefaultTrustedCommand::exec(pm)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"untrusted") {
             UntrustedCommand::exec(&mut *ctx, pm, args)?;
@@ -557,8 +577,20 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"ls") {
             let log_level = pm.options.log_level;
+            let json_output = pm.options.json_output;
+            let trusted_only = strings::left_has_any_in_right(args, &[b"--trusted"]);
+            let all = strings::left_has_any_in_right(args, &[b"-A", b"-a", b"--all"]);
+            if json_output && all {
+                Output::err_generic("--all cannot be combined with --json", ());
+                Global::exit(1);
+            }
             let load_lockfile = pm.load_lockfile_from_cwd::<true>();
             Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "list");
+
+            if json_output {
+                print_ls_json(pm, trusted_only);
+                Global::exit(0);
+            }
 
             Output::flush();
             Output::disable_buffering();
@@ -599,9 +631,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 more_packages[0] = true;
             }
 
-            let trusted_only = strings::left_has_any_in_right(args, &[b"--trusted"]);
-
-            if strings::left_has_any_in_right(args, &[b"-A", b"-a", b"--all"]) {
+            if all {
                 if trusted_only {
                     // Trust is by package name, not tree position, so a trusted
                     // package nested under an untrusted parent must still be
@@ -1051,6 +1081,219 @@ fn print_trusted_dependencies_flat(
             );
         }
     }
+}
+
+/// The `bun pm ls --json` groups, in output order.
+const LS_JSON_GROUPS: [DependencyGroup; 5] = [
+    DependencyGroup::DEPENDENCIES,
+    DependencyGroup::DEV,
+    DependencyGroup::OPTIONAL,
+    DependencyGroup::PEER,
+    DependencyGroup::WORKSPACES,
+];
+
+/// The package.json section a root dependency is declared in, or `workspaces` for a member.
+fn ls_json_group(behavior: Behavior) -> &'static [u8] {
+    if behavior.is_workspace() {
+        DependencyGroup::WORKSPACES.prop
+    } else {
+        DependencyGroup::prop_for_behavior(behavior)
+    }
+}
+
+/// `bun pm ls --json`: the `pnpm ls --json` document, an array with the root package.
+fn print_ls_json(pm: &PackageManager, trusted_only: bool) {
+    let lockfile: &Lockfile = &pm.lockfile;
+    let mut cwd_buf = PathBuffer::uninit();
+    let cwd = match bun_sys::getcwd(&mut cwd_buf[..]) {
+        Ok(len) => &cwd_buf[..len],
+        Err(_) => {
+            bun_core::pretty_errorln!("<r><red>error<r>: Could not get current working directory",);
+            Global::exit(1);
+        }
+    };
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+    let resolutions = lockfile.buffers.resolutions.as_slice();
+    let string_bytes = lockfile.buffers.string_bytes.as_slice();
+    let slice = lockfile.packages.slice();
+    let pkg_names = slice.items_name();
+    let pkg_resolutions = slice.items_resolution();
+    let root_deps = slice.items_dependencies()[0];
+
+    // Unlike the text output, each declaration of a name goes to its own group.
+    let mut sorted_dependencies: Vec<DependencyID> =
+        (root_deps.off..root_deps.off + root_deps.len).collect();
+    let by_name = ByName {
+        dependencies,
+        buf: string_bytes,
+    };
+    index_sort::sort_indices(&mut sorted_dependencies, &mut |a, b| by_name.cmp(a, b));
+    sorted_dependencies.retain(|&dep_id| {
+        let package_id = resolutions[dep_id as usize];
+        if package_id as usize >= lockfile.packages.len() {
+            return false;
+        }
+        if !trusted_only {
+            return true;
+        }
+        let alias = dependencies[dep_id as usize].name.slice(string_bytes);
+        let pkg_name = pkg_names[package_id as usize].slice(string_bytes);
+        lockfile.has_trusted_dependency(alias, pkg_name, &pkg_resolutions[package_id as usize])
+    });
+
+    let root = root_package_json(pm);
+    let mut path_buf = bun_paths::path_buffer_pool::get();
+
+    let mut out: Vec<u8> = Vec::new();
+    out.extend_from_slice(b"[\n  {");
+    for (key, value) in [(&b"name"[..], &root.name), (&b"version"[..], &root.version)] {
+        write_json_key(&mut out, 2, key);
+        match value {
+            Some(value) => {
+                let _ = write!(out, "{},", json_str(value));
+            }
+            None => out.extend_from_slice(b"null,"),
+        }
+    }
+    write_json_key(&mut out, 2, b"private");
+    let _ = write!(out, "{},", root.private);
+    write_json_key(&mut out, 2, b"path");
+    let _ = write!(out, "{}", json_str(cwd));
+
+    for group in LS_JSON_GROUPS {
+        out.push(b',');
+        write_json_key(&mut out, 2, group.prop);
+        out.push(b'{');
+        let mut written: usize = 0;
+        for &dep_id in &sorted_dependencies {
+            let dep = &dependencies[dep_id as usize];
+            if ls_json_group(dep.behavior) != group.prop {
+                continue;
+            }
+            if written > 0 {
+                out.push(b',');
+            }
+            written += 1;
+            write_json_key(&mut out, 3, dep.name.slice(string_bytes));
+            out.push(b'{');
+
+            let package_id = resolutions[dep_id as usize];
+            let resolution = &pkg_resolutions[package_id as usize];
+            let alias = dep.name.slice(string_bytes);
+            let mut version: Vec<u8> = Vec::new();
+            let _ = write!(version, "{}", resolution.fmt(string_bytes, PathSep::Posix));
+            // A workspace package's path is its own folder, not the link in node_modules.
+            let path = if resolution.tag == ResolutionTag::Workspace {
+                Path::resolve_path::join_string_buf::<Path::resolve_path::platform::Auto>(
+                    &mut path_buf[..],
+                    &[cwd, resolution.workspace().slice(string_bytes)],
+                )
+            } else {
+                Path::resolve_path::join_string_buf::<Path::resolve_path::platform::Auto>(
+                    &mut path_buf[..],
+                    &[cwd, b"node_modules", alias],
+                )
+            };
+
+            write_json_key(&mut out, 4, b"from");
+            let _ = write!(
+                out,
+                "{},",
+                json_str(pkg_names[package_id as usize].slice(string_bytes))
+            );
+            write_json_key(&mut out, 4, b"version");
+            let _ = write!(out, "{},", json_str(&version));
+            write_json_key(&mut out, 4, b"path");
+            let _ = write!(out, "{}", json_str(path));
+            out.push(b'\n');
+            write_json_indent(&mut out, 3);
+            out.push(b'}');
+        }
+        if written > 0 {
+            out.push(b'\n');
+            write_json_indent(&mut out, 2);
+        }
+        out.push(b'}');
+    }
+    out.extend_from_slice(b"\n  }\n]\n");
+
+    print_json_document(&out);
+}
+
+/// The root package.json fields the document prints, read from the file itself.
+#[derive(Default)]
+struct RootPackageJson {
+    name: Option<Vec<u8>>,
+    version: Option<Vec<u8>>,
+    private: bool,
+}
+
+fn root_package_json(pm: &PackageManager) -> RootPackageJson {
+    let path = pm.original_package_json_path.as_bytes();
+    let Ok(contents) = File::read_from(Fd::cwd(), path) else {
+        return RootPackageJson::default();
+    };
+    let source = bun_ast::Source::init_path_string(path, contents.as_slice());
+    let arena = bun_alloc::Arena::new();
+    let Ok(json) = bun_parsers::json::parse_package_json_utf8(&source, pm.log_mut(), &arena) else {
+        return RootPackageJson::default();
+    };
+    let string_field = |key: &[u8]| {
+        json.get(key)
+            .and_then(|value| value.as_utf8_string_literal().map(<[u8]>::to_vec))
+            .filter(|value| !value.is_empty())
+    };
+    RootPackageJson {
+        name: string_field(b"name"),
+        version: string_field(b"version"),
+        private: json.get(b"private").and_then(|private| private.as_bool()) == Some(true),
+    }
+}
+
+/// `bun pm hash` / `bun pm hash-print`: the lockfile hash as text or as `{ "hash": "..." }`.
+fn print_meta_hash(lockfile: &Lockfile, json_output: bool) -> crate::Result<()> {
+    if json_output {
+        let mut hash: Vec<u8> = Vec::new();
+        let _ = write!(hash, "{}", lockfile.fmt_meta_hash());
+        print_json_string("hash", &hash);
+        return Ok(());
+    }
+    Output::flush();
+    Output::disable_buffering();
+    Output::writer().print(format_args!("{}", lockfile.fmt_meta_hash()))?;
+    Output::enable_buffering();
+    Ok(())
+}
+
+/// `--json` for the commands that print one string: `{ "<key>": "<value>" }`.
+fn print_json_string(key: &str, value: &[u8]) {
+    let mut out: Vec<u8> = Vec::with_capacity(key.len() + value.len() + 16);
+    let _ = write!(out, "{{\n  \"{key}\": {}\n}}\n", json_str(value));
+    print_json_document(&out);
+}
+
+/// Writes a finished `--json` document to stdout, after anything the buffered printers queued.
+fn print_json_document(out: &[u8]) {
+    Output::flush();
+    let _ = Output::writer().write_all(out);
+    Output::flush();
+}
+
+fn json_str(s: &[u8]) -> bun_core::fmt::JSONFormatterUTF8<'_> {
+    bun_core::fmt::format_json_string_utf8(s, Default::default())
+}
+
+fn write_json_indent(out: &mut Vec<u8>, level: usize) {
+    for _ in 0..level {
+        out.extend_from_slice(b"  ");
+    }
+}
+
+/// Starts a new line at `level` and writes `"key": `.
+fn write_json_key(out: &mut Vec<u8>, level: usize, key: &[u8]) {
+    out.push(b'\n');
+    write_json_indent(out, level);
+    let _ = write!(out, "{}: ", json_str(key));
 }
 
 use bun_core::fmt::buf_print_infallible as buf_print;

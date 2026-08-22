@@ -337,7 +337,7 @@ static PATCH_COMMIT_PARAMS: &[ParamType] = concat_params![
 static OUTDATED_PARAMS: &[ParamType] = concat_params![
     SHARED_PARAMS,
     &[
-        // clap::param!("--json                                 Output outdated information in JSON format"),
+        clap::param!("--json                                 Output in JSON format"),
         clap::param!(
             "-F, --filter <STR>...                  Display outdated dependencies for each matching workspace"
         ),
@@ -385,6 +385,7 @@ static PACK_PARAMS: &[ParamType] = concat_params![
         clap::param!(
             "--gzip-level <STR>                     Specify a custom compression level for gzip. Default is 9."
         ),
+        clap::param!("--json                                 Output in JSON format"),
         clap::param!("<POS> ...                              "),
     ]
 ];
@@ -393,6 +394,7 @@ static PUBLISH_PARAMS: &[ParamType] = concat_params![
     SHARED_PARAMS,
     &[
         clap::param!("<POS> ...                              Package tarball to publish"),
+        clap::param!("--json                                 Output in JSON format"),
         clap::param!("--access <STR>                         Set access level for scoped packages"),
         clap::param!(
             "--tag <STR>                            Tag the release. Default is \"latest\""
@@ -424,6 +426,7 @@ static WHY_PARAMS: &[ParamType] = concat_params![
         clap::param!(
             "--depth <NUM>                          Maximum depth of the dependency tree to display"
         ),
+        clap::param!("--json                                 Output in JSON format"),
     ]
 ];
 
@@ -433,6 +436,7 @@ static DEDUPE_PARAMS: &[ParamType] = concat_params![
         clap::param!(
             "--check                                Exit with code 1 if the lockfile has duplicate versions that can be removed, without changing anything"
         ),
+        clap::param!("--json                                 Output in JSON format"),
         clap::param!("<POS> ...                              "),
     ]
 ];
@@ -444,6 +448,7 @@ const DEDUPE_HELP_PARAMS: &[ParamType] = &[
     clap::param!(
         "--dry-run                              Print the duplicate versions that would be removed without changing anything"
     ),
+    clap::param!("--json                                 Output in JSON format"),
     clap::param!("--lockfile-only                        Rewrite bun.lock without installing"),
     clap::param!(
         "--frozen-lockfile                      Fail instead of rewriting bun.lock when duplicate versions can be removed"
@@ -462,6 +467,7 @@ static PRUNE_PARAMS: &[ParamType] = concat_params![
         clap::param!(
             "-F, --filter <STR>...                  Only prune the node_modules folders of the matching workspaces"
         ),
+        clap::param!("--json                                 Output in JSON format"),
         clap::param!("<POS> ...                              "),
     ]
 ];
@@ -476,6 +482,7 @@ const PRUNE_HELP_PARAMS: &[ParamType] = &[
     clap::param!(
         "--dry-run                              Print what would be removed without deleting anything"
     ),
+    clap::param!("--json                                 Output in JSON format"),
     clap::param!(
         "--os <STR>...                          Prune for a different operating system than the current one"
     ),
@@ -1017,6 +1024,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/unlink<r>.
   <b><green>bun outdated<r> <blue>"is-*"<r>
   <b><green>bun outdated<r> <blue>"!is-even"<r>
 
+  <d>Print the outdated dependencies as JSON.<r>
+  <b><green>bun outdated<r> <cyan>--json<r>
+
 Full documentation is available at <magenta>https://bun.com/docs/cli/outdated<r>.
 "#;
 
@@ -1154,6 +1164,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/info<r>.
   <d>$<r> <b><green>bun why<r> <blue>react<r>
   <d>$<r> <b><green>bun why<r> <blue>"@types/*"<r> <cyan>--depth<r> <blue>2<r>
   <d>$<r> <b><green>bun why<r> <blue>"*-lodash"<r> <cyan>--top<r>
+  <d>$<r> <b><green>bun why<r> <blue>react<r> <cyan>--json<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>.
 "#;
@@ -1182,6 +1193,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>.
 
   <d>Show what would be removed without changing anything<r>
   <b><green>bun dedupe<r> <cyan>--dry-run<r>
+
+  <d>Print the removable duplicates as JSON without changing anything<r>
+  <b><green>bun dedupe<r> <cyan>--dry-run --json<r>
 
   <d>Rewrite bun.lock without installing<r>
   <b><green>bun dedupe<r> <cyan>--lockfile-only<r>
@@ -1213,6 +1227,9 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/dedupe<r
 
   <d>Show what would be removed without deleting anything<r>
   <b><green>bun prune<r> <cyan>--dry-run<r>
+
+  <d>Print what would be removed as JSON<r>
+  <b><green>bun prune<r> <cyan>--dry-run --json<r>
 
   <d>Only prune what the app workspace no longer needs<r>
   <b><green>bun prune<r> <cyan>--production --filter app<r>
@@ -1414,7 +1431,6 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             // fake --dry-run, we don't actually resolve+clean the lockfile
             cli.dry_run = true;
             cli.recursive = args.flag(b"--recursive");
-            // cli.json_output = args.flag(b"--json");
         }
 
         if subcommand == Subcommand::Dedupe && args.flag(b"--check") {

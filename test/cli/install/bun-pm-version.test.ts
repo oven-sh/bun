@@ -176,6 +176,106 @@ describe.concurrent("bun pm version", () => {
     });
   });
 
+  describe("--json", () => {
+    it("prints the new and previous version after a bump", async () => {
+      const testDir = setupTest();
+
+      const { output, error, code } = await runCommand(
+        [bunExe(), "pm", "version", "patch", "--no-git-tag-version", "--json"],
+        testDir,
+      );
+
+      expect(error).toBe("");
+      expect(JSON.parse(output)).toEqual({
+        name: "test-package",
+        version: "1.0.1",
+        previousVersion: "1.0.0",
+      });
+      expect(output).toEndWith("}\n");
+      expect(code).toBe(0);
+
+      const packageJson = await Bun.file(join(testDir, "package.json")).json();
+      expect(packageJson.version).toBe("1.0.1");
+    });
+
+    it("prints the current version and no help without an increment", async () => {
+      const testDir = setupTest();
+
+      const { output, error, code } = await runCommand([bunExe(), "pm", "version", "--json"], testDir);
+
+      expect(error).toBe("");
+      expect(JSON.parse(output)).toEqual({
+        name: "test-package",
+        version: "1.0.0",
+        previousVersion: null,
+      });
+      expect(output).toEndWith("}\n");
+      expect(code).toBe(0);
+
+      const packageJson = await Bun.file(join(testDir, "package.json")).json();
+      expect(packageJson.version).toBe("1.0.0");
+    });
+
+    it("prints null for a missing name or version", async () => {
+      await using noVersionDir = tempDir(`version-${i++}`, {
+        "package.json": JSON.stringify({ name: "test" }, null, 2),
+      });
+
+      const noVersion = await runCommand([bunExe(), "pm", "version", "--json"], noVersionDir);
+      expect(noVersion.error).toBe("");
+      expect(JSON.parse(noVersion.output)).toEqual({
+        name: "test",
+        version: null,
+        previousVersion: null,
+      });
+      expect(noVersion.code).toBe(0);
+
+      await using emptyDir = tempDir(`version-${i++}`, {
+        "package.json": "{}",
+      });
+
+      const bumped = await runCommand([bunExe(), "pm", "version", "patch", "--no-git-tag-version", "--json"], emptyDir);
+      expect(bumped.error).toBe("");
+      expect(JSON.parse(bumped.output)).toEqual({
+        name: null,
+        version: "0.0.1",
+        previousVersion: null,
+      });
+      expect(bumped.code).toBe(0);
+    });
+
+    it("supports --allow-same-version", async () => {
+      const testDir = setupTest();
+
+      const { output, error, code } = await runCommand(
+        [bunExe(), "pm", "version", "1.0.0", "--no-git-tag-version", "--allow-same-version", "--json"],
+        testDir,
+      );
+
+      expect(error).toBe("");
+      expect(JSON.parse(output)).toEqual({
+        name: "test-package",
+        version: "1.0.0",
+        previousVersion: "1.0.0",
+      });
+      expect(code).toBe(0);
+    });
+
+    it("keeps errors on stderr with nothing on stdout", async () => {
+      const testDir = setupTest();
+
+      const { output, error, code } = await runCommand(
+        [bunExe(), "pm", "version", "1.0.0", "--no-git-tag-version", "--json"],
+        testDir,
+        false,
+      );
+
+      expect(output).toBe("");
+      expect(error).toContain("Version not changed");
+      expect(code).toBe(1);
+    });
+  });
+
   describe("basic version incrementing", () => {
     it("should increment versions correctly", async () => {
       const testDir = setupTest();

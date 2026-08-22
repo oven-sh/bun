@@ -1,6 +1,7 @@
 import { file, spawn, write } from "bun";
+import { readTarball } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "fs";
 import { exists, rm } from "fs/promises";
 import {
   VerdaccioRegistry,
@@ -1431,5 +1432,243 @@ describe("--tolerate-republish", async () => {
     expect(exitCode).toBe(0);
     expect(err).toBe("warn: Registry already knows about version 1.0.0; skipping.\n");
     expect(err).not.toContain("error:");
+  });
+});
+
+describe.concurrent("--json", () => {
+  // Accepts every publish and keeps the parsed PUT bodies.
+  function registryMock() {
+    const bodies: any[] = [];
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        if (req.method === "PUT") bodies.push(await req.json());
+        return new Response("OK", { status: 200 });
+      },
+    });
+    return {
+      bodies,
+      port: server.port,
+      [Symbol.dispose]: () => server.stop(true),
+    };
+  }
+
+  // Permission bits as the tarball stores them.
+  const modeOf = (path: string) => statSync(path).mode & 0o7777;
+
+  const indexSrc = "console.log('hello ./index.js');";
+
+  test("prints one object after publishing", async () => {
+    using mock = registryMock();
+    // bun re-prints package.json with two space indentation, so writing it that way keeps the sizes equal.
+    const packageJson = JSON.stringify({ name: "publish-json-1", version: "1.0.0" }, null, 2);
+    using dir = tempDir("publish-json", { "package.json": packageJson, "index.js": indexSrc });
+
+    const { out, err, exitCode } = await publish(
+      env,
+      String(dir),
+      "--json",
+      "--registry",
+      `http://pubuser:hunter2@localhost:${mock.port}/`,
+    );
+
+    expect(mock.bodies).toHaveLength(1);
+    const [body] = mock.bodies;
+    expect(JSON.parse(out)).toEqual({
+      id: "publish-json-1@1.0.0",
+      name: "publish-json-1",
+      version: "1.0.0",
+      filename: "publish-json-1-1.0.0.tgz",
+      path: null,
+      size: body._attachments["publish-json-1-1.0.0.tgz"].length,
+      unpackedSize: Buffer.byteLength(packageJson) + Buffer.byteLength(indexSrc),
+      shasum: body.versions["1.0.0"].dist.shasum,
+      integrity: body.versions["1.0.0"].dist.integrity,
+      entryCount: 2,
+      files: [
+        { path: "package.json", size: Buffer.byteLength(packageJson), mode: modeOf(join(String(dir), "package.json")) },
+        { path: "index.js", size: Buffer.byteLength(indexSrc), mode: modeOf(join(String(dir), "index.js")) },
+      ],
+      bundled: [],
+      tag: "latest",
+      access: null,
+      registry: `http://localhost:${mock.port}/`,
+      dryRun: false,
+    });
+    expect(out).not.toContain("hunter2");
+    expect(out.endsWith("}\n")).toBe(true);
+    expect(await exists(join(String(dir), "publish-json-1-1.0.0.tgz"))).toBeFalse();
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("--dry-run: no request, null tarball fields, tag and access as configured", async () => {
+    const packageJson = JSON.stringify(
+      { name: "@publish-json/scoped", version: "2.0.0", publishConfig: { access: "public" } },
+      null,
+      2,
+    );
+    using dir = tempDir("publish-json-dry-run", { "package.json": packageJson, "index.js": indexSrc });
+
+    // Nothing connects to port 1: the userinfo satisfies the auth check and --dry-run stops before the request.
+    const { out, err, exitCode } = await publish(
+      { ...env, npm_config_registry: "http://someuser:hunter2@127.0.0.1:1/" },
+      String(dir),
+      "--json",
+      "--dry-run",
+      "--tag",
+      "beta",
+    );
+
+    expect(JSON.parse(out)).toEqual({
+      id: "@publish-json/scoped@2.0.0",
+      name: "@publish-json/scoped",
+      version: "2.0.0",
+      filename: "publish-json-scoped-2.0.0.tgz",
+      path: null,
+      size: null,
+      unpackedSize: Buffer.byteLength(packageJson) + Buffer.byteLength(indexSrc),
+      shasum: null,
+      integrity: null,
+      entryCount: 2,
+      files: [
+        { path: "package.json", size: Buffer.byteLength(packageJson), mode: modeOf(join(String(dir), "package.json")) },
+        { path: "index.js", size: Buffer.byteLength(indexSrc), mode: modeOf(join(String(dir), "index.js")) },
+      ],
+      bundled: [],
+      tag: "beta",
+      access: "public",
+      registry: "http://127.0.0.1:1/",
+      dryRun: true,
+    });
+    expect(out).not.toContain("hunter2");
+    expect(out.endsWith("}\n")).toBe(true);
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("tarball path: the document describes the tarball that was read", async () => {
+    using mock = registryMock();
+    const packageJson = JSON.stringify(
+      { name: "publish-json-3", version: "3.0.0", dependencies: { dep1: "1.0.0" }, bundledDependencies: ["dep1"] },
+      null,
+      2,
+    );
+    using dir = tempDir("publish-json-tarball", {
+      "package.json": packageJson,
+      "index.js": indexSrc,
+      // dep2 is a dependency of dep1: it travels in the tarball but is not a bundled dependency of the package.
+      node_modules: {
+        dep1: {
+          "package.json": JSON.stringify({ name: "dep1", version: "1.0.0", dependencies: { dep2: "1.0.0" } }),
+          node_modules: { dep2: { "package.json": JSON.stringify({ name: "dep2", version: "1.0.0" }) } },
+        },
+      },
+    });
+    await pack(String(dir), env);
+    const tarballPath = join(String(dir), "publish-json-3-3.0.0.tgz");
+    const tarball = readTarball(tarballPath);
+
+    const { out, err, exitCode } = await publish(
+      env,
+      String(dir),
+      "./publish-json-3-3.0.0.tgz",
+      "--json",
+      "--registry",
+      `http://pubuser:hunter2@localhost:${mock.port}/`,
+    );
+
+    expect(mock.bodies).toHaveLength(1);
+    expect(tarball.entries.map((e: { pathname: string }) => e.pathname).toSorted()).toEqual([
+      "package/index.js",
+      "package/node_modules/dep1/node_modules/dep2/package.json",
+      "package/node_modules/dep1/package.json",
+      "package/package.json",
+    ]);
+    const entry = (path: string) =>
+      tarball.entries.find((e: { pathname: string }) => e.pathname === `package/${path}`)!;
+    const [packageJsonEntry, indexEntry, depEntry, nestedDepEntry] = [
+      "package.json",
+      "index.js",
+      "node_modules/dep1/package.json",
+      "node_modules/dep1/node_modules/dep2/package.json",
+    ].map(entry);
+    expect(JSON.parse(out)).toEqual({
+      id: "publish-json-3@3.0.0",
+      name: "publish-json-3",
+      version: "3.0.0",
+      filename: "publish-json-3-3.0.0.tgz",
+      path: tarballPath,
+      size: tarball.size,
+      unpackedSize:
+        Buffer.byteLength(packageJson) +
+        Buffer.byteLength(indexSrc) +
+        Buffer.byteLength(depEntry.contents) +
+        Buffer.byteLength(nestedDepEntry.contents),
+      shasum: tarball.shasum,
+      integrity: `sha512-${tarball.integrity}`,
+      entryCount: 4,
+      // Every file in the archive is listed in archive order, bundled dependencies included.
+      files: tarball.entries.map((e: { pathname: string; contents: string; perm: number }) => ({
+        path: e.pathname.slice("package/".length),
+        size: Buffer.byteLength(e.contents),
+        mode: e.perm,
+      })),
+      // Only the top-level node_modules entries are bundled dependencies.
+      bundled: ["dep1"],
+      tag: "latest",
+      access: null,
+      registry: `http://localhost:${mock.port}/`,
+      dryRun: false,
+    });
+    expect(out.endsWith("}\n")).toBe(true);
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("the document comes after the publish and postpublish script output", async () => {
+    using mock = registryMock();
+    using dir = tempDir("publish-json-scripts", {
+      "package.json": JSON.stringify({
+        name: "publish-json-scripts",
+        version: "1.0.0",
+        scripts: { publish: "echo 1 $npm_lifecycle_event", postpublish: "echo 2 $npm_lifecycle_event" },
+      }),
+    });
+
+    const { out, err, exitCode } = await publish(
+      env,
+      String(dir),
+      "--json",
+      "--registry",
+      `http://pubuser:hunter2@localhost:${mock.port}/`,
+    );
+
+    expect(out.startsWith("1 publish\n2 postpublish\n{")).toBe(true);
+    expect(out.endsWith("}\n")).toBe(true);
+    expect(JSON.parse(out.slice(out.indexOf("{")))).toMatchObject({ name: "publish-json-scripts", dryRun: false });
+    expect(mock.bodies).toHaveLength(1);
+    expect(err).toBe("$ echo 1 $npm_lifecycle_event\n$ echo 2 $npm_lifecycle_event\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("errors stay on stderr and leave stdout empty", async () => {
+    using mock = registryMock();
+    using dir = tempDir("publish-json-error", {
+      "package.json": JSON.stringify({ name: "publish-json-error", version: "1.0.0" }),
+    });
+
+    const { out, err, exitCode } = await publish(
+      env,
+      String(dir),
+      "--json",
+      "--registry",
+      `http://localhost:${mock.port}/`,
+    );
+
+    expect(out).toBe("");
+    expect(err).toBe("error: missing authentication (run `bunx npm login`)\n");
+    expect(mock.bodies).toEqual([]);
+    expect(exitCode).toBe(1);
   });
 });

@@ -1,4 +1,5 @@
 use core::fmt::Write as _;
+use std::io::Write as _;
 
 use bstr::BStr;
 
@@ -8,23 +9,27 @@ use bun_core::{Global, Output};
 use bun_glob as glob;
 use bun_install::dependency::{self, Behavior};
 use bun_install::lockfile::package::PackageColumns as _;
-use bun_install::lockfile::{LoadResult, LoadStep};
+use bun_install::lockfile::{LoadResult, LoadStep, Lockfile};
 use bun_install::package_manager::{
     LogLevel, Subcommand, WorkspaceFilter, populate_manifest_cache,
 };
 use bun_install::{CommandLineArguments, DependencyID, PackageID, PackageManager, resolution};
+use bun_install_types::DependencyGroup;
 use bun_wyhash::hash;
 
 use crate::Command;
 
 pub(crate) struct OutdatedCommand;
 
-#[derive(Clone, Copy)]
 struct OutdatedInfo {
     package_id: PackageID,
     dep_id: DependencyID,
     workspace_pkg_id: PackageID,
     is_catalog: bool,
+    /// The version columns as text, for `--json`.
+    current: Box<[u8]>,
+    update: Box<[u8]>,
+    latest: Box<[u8]>,
 }
 
 struct GroupedOutdatedInfo {
@@ -54,13 +59,15 @@ impl<'a> FilterType<'a> {
 
 impl OutdatedCommand {
     pub(crate) fn exec(ctx: Command::Context) -> crate::Result<()> {
-        bun_core::prettyln!(
-            "<r><b>bun outdated <r><d>v{}<r>",
-            Global::package_json_version_with_sha,
-        );
-        Output::flush();
-
         let cli = CommandLineArguments::parse(Subcommand::Outdated)?;
+        if !cli.json_output {
+            bun_core::prettyln!(
+                "<r><b>bun outdated <r><d>v{}<r>",
+                Global::package_json_version_with_sha,
+            );
+            Output::flush();
+        }
+
         let silent = cli.log_level.is_silent();
 
         let (manager, original_cwd) =
@@ -177,6 +184,9 @@ impl OutdatedCommand {
                     .root_package_id
                     .get(&manager.lockfile, manager.workspace_name_hash);
                 if root_pkg_id == bun_install::INVALID_PACKAGE_ID {
+                    if manager.options.json_output {
+                        print_json(&manager.lockfile, &[]);
+                    }
                     return Ok(());
                 }
                 (vec![root_pkg_id], false)
@@ -304,6 +314,7 @@ impl OutdatedCommand {
         workspace_pkg_ids: &[PackageID],
         was_filtered: bool,
     ) -> crate::Result<()> {
+        let json_output = manager.options.json_output;
         let package_patterns: Option<Vec<FilterType<'_>>> = 'package_patterns: {
             let args = manager.options.positionals.get(1..).unwrap_or(&[]);
             if args.is_empty() {
@@ -328,6 +339,9 @@ impl OutdatedCommand {
 
             // nothing will match
             if !at_least_one_greater_than_zero {
+                if json_output {
+                    print_json(&manager.lockfile, &[]);
+                }
                 return Ok(());
             }
 
@@ -475,13 +489,14 @@ impl OutdatedCommand {
                 if version_buf.len() > max_current {
                     max_current = version_buf.len();
                 }
+                let current_text: Box<[u8]> = Box::from(version_buf.as_bytes());
 
                 version_buf.clear();
                 if let Some(uv) = update_version.unwrap() {
                     write!(version_buf, "{}", uv.version.fmt(&manifest.string_buf))
                         .expect("OOM writing version");
                 } else {
-                    write!(version_buf, "{}", current_version.fmt(&manifest.string_buf))
+                    write!(version_buf, "{}", current_version.fmt(string_buf))
                         .expect("OOM writing version");
                 }
                 let update_version_len =
@@ -489,13 +504,14 @@ impl OutdatedCommand {
                 if update_version_len > max_update {
                     max_update = update_version_len;
                 }
+                let update_text: Box<[u8]> = Box::from(version_buf.as_bytes());
 
                 version_buf.clear();
                 if let Some(lv) = latest.unwrap() {
                     write!(version_buf, "{}", lv.version.fmt(&manifest.string_buf))
                         .expect("OOM writing version");
                 } else {
-                    write!(version_buf, "{}", current_version.fmt(&manifest.string_buf))
+                    write!(version_buf, "{}", current_version.fmt(string_buf))
                         .expect("OOM writing version");
                 }
                 let latest_version_len =
@@ -503,6 +519,7 @@ impl OutdatedCommand {
                 if latest_version_len > max_latest {
                     max_latest = latest_version_len;
                 }
+                let latest_text: Box<[u8]> = Box::from(version_buf.as_bytes());
                 version_buf.clear();
 
                 let workspace_name = manager.lockfile.packages.items_name()
@@ -517,8 +534,16 @@ impl OutdatedCommand {
                     dep_id,
                     workspace_pkg_id,
                     is_catalog: dep.version.tag == dependency::Tag::Catalog,
+                    current: current_text,
+                    update: update_text,
+                    latest: latest_text,
                 });
             }
+        }
+
+        if json_output {
+            print_json(&manager.lockfile, &outdated_ids);
+            return Ok(());
         }
 
         if outdated_ids.is_empty() {
@@ -780,4 +805,67 @@ impl OutdatedCommand {
 
         Ok(())
     }
+}
+
+/// `--json`: one object per table row, in table order. Catalog rows are not folded.
+fn print_json(lockfile: &Lockfile, items: &[OutdatedInfo]) {
+    fn js(s: &[u8]) -> bun_core::fmt::JSONFormatterUTF8<'_> {
+        bun_core::fmt::format_json_string_utf8(s, Default::default())
+    }
+
+    let string_buf = lockfile.buffers.string_bytes.as_slice();
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+    let pkg_names = lockfile.packages.items_name();
+
+    let mut out: Vec<u8> = Vec::with_capacity(items.len() * 192 + 8);
+    out.push(b'[');
+    let mut written: usize = 0;
+    for group in [
+        DependencyGroup::DEPENDENCIES,
+        DependencyGroup::DEV,
+        DependencyGroup::PEER,
+        DependencyGroup::OPTIONAL,
+    ] {
+        for item in items {
+            let dep = &dependencies[item.dep_id as usize];
+            if DependencyGroup::prop_for_behavior(dep.behavior) != group.prop {
+                continue;
+            }
+            if written > 0 {
+                out.push(b',');
+            }
+            written += 1;
+
+            let workspace = pkg_names[item.workspace_pkg_id as usize].slice(string_buf);
+            let _ = write!(
+                out,
+                "\n  {{\n    \"name\": {},",
+                js(dep.name.slice(string_buf))
+            );
+            let _ = write!(out, "\n    \"current\": {},", js(&item.current));
+            let _ = write!(out, "\n    \"update\": {},", js(&item.update));
+            let _ = write!(out, "\n    \"latest\": {},", js(&item.latest));
+            let _ = write!(out, "\n    \"type\": \"{}\",", BStr::new(group.prop));
+            let _ = write!(out, "\n    \"workspace\": {},", js(workspace));
+            out.extend_from_slice(b"\n    \"catalog\": ");
+            if item.is_catalog {
+                match dep.version.catalog().slice(string_buf) {
+                    b"" => out.extend_from_slice(b"\"default\""),
+                    name => {
+                        let _ = write!(out, "{}", js(name));
+                    }
+                }
+            } else {
+                out.extend_from_slice(b"null");
+            }
+            out.extend_from_slice(b"\n  }");
+        }
+    }
+    if written > 0 {
+        out.push(b'\n');
+    }
+    out.extend_from_slice(b"]\n");
+
+    let _ = Output::writer().write_all(&out);
+    Output::flush();
 }

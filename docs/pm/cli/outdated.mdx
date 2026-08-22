@@ -172,6 +172,51 @@ bun outdated -r
 └────────────────────┴─────────┴─────────┴─────────┴────────────────────────────────┘
 ```
 
+### JSON Output
+
+Pass `--json` to get the same information as a JSON array, for scripts and CI checks. Nothing else is written to stdout, so the output can be piped straight into `jq` or `JSON.parse`:
+
+```sh terminal icon="terminal"
+bun outdated --json
+```
+
+```json
+[
+  {
+    "name": "@sinclair/typebox",
+    "current": "0.34.15",
+    "update": "0.34.16",
+    "latest": "0.34.16",
+    "type": "dependencies",
+    "workspace": "my-app",
+    "catalog": null
+  },
+  {
+    "name": "eslint",
+    "current": "8.57.1",
+    "update": "8.57.1",
+    "latest": "9.20.0",
+    "type": "devDependencies",
+    "workspace": "my-app",
+    "catalog": null
+  }
+]
+```
+
+Each object is one row of the table:
+
+- `name`: the dependency's name in `package.json`
+- `current`, `update`, `latest`: the three version columns, as strings. With `minimumReleaseAge` configured these are the versions the table shows, that is, versions that are too new are left out.
+- `type`: the `package.json` section the dependency is declared in: `dependencies`, `devDependencies`, `peerDependencies` or `optionalDependencies`
+- `workspace`: the name of the workspace package that declares the dependency
+- `catalog`: `null` for a normal dependency. For a [catalog](/pm/catalogs) dependency, the catalog's name, or `"default"` for the unnamed catalog. Unlike the table, a catalog entry used by several workspaces produces one object per workspace.
+
+Objects are grouped by `type` in the same order as the table. The array is empty (`[]`) when nothing is outdated. Dependency filters, `--filter` and `-r` work as usual. For example, to fail a CI step when a dependency can be updated without leaving its `package.json` range:
+
+```sh terminal icon="terminal"
+bun outdated --json -r | jq -e 'map(select(.current != .update)) == []'
+```
+
 ---
 
 <Outdated />

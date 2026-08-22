@@ -2209,11 +2209,13 @@ Explain why a package is installed
 <b>Options:<r>
   <cyan>--top<r>         <d>Show only the top dependency tree instead of nested ones<r>
   <cyan>--depth<r> <blue>\\<NUM\\><r> <d>Maximum depth of the dependency tree to display<r>
+  <cyan>--json<r>        <d>Output in JSON format<r>
 
 <b>Examples:<r>
   <d>$<r> <b><green>bun why<r> <blue>react<r>
   <d>$<r> <b><green>bun why<r> <blue>\"@types/*\"<r> <cyan>--depth<r> <blue>2<r>
   <d>$<r> <b><green>bun why<r> <blue>\"*-lodash\"<r> <cyan>--top<r>
+  <d>$<r> <b><green>bun why<r> <blue>react<r> <cyan>--json<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
 "

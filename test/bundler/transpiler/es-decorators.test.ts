@@ -982,6 +982,137 @@ describe("ES Decorators", () => {
     });
   });
 
+  describe("anonymous decorated class as a binding initializer", () => {
+    // The lowering rewrites the class to `_class = class {}`, so the name the
+    // binding would have given it has to be carried over explicitly, the same
+    // way it already is for `const K = class {}`. Expected values match node
+    // running the same code with the decorators removed.
+    test.concurrent("takes the parameter name in every kind of parameter list", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec() {}
+        function declaration(K = class { @dec m() {} }) { return K.name; }
+        const expression = function (K = class { @dec m() {} }) { return K.name; };
+        const arrow = (K = class { @dec m() {} }) => K.name;
+        function secondParameter(first, K = class { @dec m() {} }) { return K.name; }
+        class C {
+          constructor(K = class { @dec m() {} }) { this.fromConstructor = K.name; }
+          method(K = class { @dec m() {} }) { return K.name; }
+          static staticMethod(K = class { @dec m() {} }) { return K.name; }
+        }
+        const obj = {
+          method(K = class { @dec m() {} }) { return K.name; },
+          set setter(K = class { @dec m() {} }) { this.fromSetter = K.name; },
+        };
+        obj.setter = undefined;
+        function objectPattern({ K = class { @dec m() {} } } = {}) { return K.name; }
+        function arrayPattern([K = class { @dec m() {} }] = []) { return K.name; }
+        console.log(JSON.stringify({
+          declaration: declaration(),
+          expression: expression(),
+          arrow: arrow(),
+          secondParameter: secondParameter(1),
+          constructorParameter: new C().fromConstructor,
+          method: new C().method(),
+          staticMethod: C.staticMethod(),
+          objectMethod: obj.method(),
+          setter: obj.fromSetter,
+          objectPattern: objectPattern(),
+          arrayPattern: arrayPattern(),
+        }));
+      `);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        declaration: "K",
+        expression: "K",
+        arrow: "K",
+        secondParameter: "K",
+        constructorParameter: "K",
+        method: "K",
+        staticMethod: "K",
+        objectMethod: "K",
+        setter: "K",
+        objectPattern: "K",
+        arrayPattern: "K",
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("takes the variable name in a for loop declaration", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec() {}
+        const names = [];
+        for (const K = class { @dec m() {} }; names.length < 1; ) names.push(K.name);
+        for (let K = class { @dec m() {} }, L = class { accessor x; }; names.length < 3; ) names.push(K.name, L.name);
+        for (var V = class { @dec m() {} }; names.length < 4; ) names.push(V.name);
+        for (const [D = class { @dec m() {} }] = []; names.length < 5; ) names.push(D.name);
+        console.log(JSON.stringify(names));
+      `);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual(["K", "K", "L", "V", "D"]);
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("class decorator sees the parameter name as context.name", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(cls, ctx) { console.log("ctx.name:", JSON.stringify(ctx.name)); }
+        function f(K = @dec class {}) { return K.name; }
+        console.log(JSON.stringify(f()));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe('ctx.name: "K"\n"K"\n');
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("class with an accessor and no decorators is lowered too", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function f(K = class { accessor x = 1; }) { return [K.name, new K().x]; }
+        console.log(JSON.stringify(f()));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe('["K",1]\n');
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("parameter name does not override an explicit class name or reach a nested class", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec() {}
+        function named(K = class Named { @dec m() {} }) { return K.name; }
+        function nested(K = [class { @dec m() {} }][0]) { return K.name; }
+        function passed(K = class { @dec m() {} }) { return K.name; }
+        console.log(JSON.stringify([named(), nested(), passed(class Passed {})]));
+      `);
+      expect(stderr).toBe("");
+      const [named, nested, passed] = JSON.parse(stdout);
+      expect(named).toBe("Named");
+      expect(nested).not.toBe("K");
+      expect(passed).toBe("Passed");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("TypeScript constructor parameter property", async () => {
+      using dir = tempDir("es-dec-param-property", {
+        "tsconfig.json": JSON.stringify({ compilerOptions: {} }),
+        "test.ts": `
+          function dec(value: unknown, ctx: ClassMethodDecoratorContext) {}
+          class Holder {
+            constructor(public K = class { @dec m() {} }) {}
+          }
+          console.log(new Holder().K.name);
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(filterStderr(rawStderr)).toBe("");
+      expect(stdout).toBe("K\n");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("private member calls in lowered classes", () => {
     // When a class is lowered for standard decorators, `recv.#m(...)` becomes
     // `__privateGet(recv, _m).call(recv, ...)`. The receiver must be evaluated

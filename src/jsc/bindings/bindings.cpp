@@ -3452,15 +3452,19 @@ JSC::EncodedJSValue JSC__JSValue__fromEntries(JSC::JSGlobalObject* globalObject,
 
     if (!clone) {
         for (size_t i = 0; i < initialCapacity; ++i) {
+            auto* value = Zig::toJSStringGC(values[i], globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
             object->putDirect(
                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, Zig::toString(keys[i]))),
-                Zig::toJSStringGC(values[i], globalObject), 0);
+                value, 0);
             RETURN_IF_EXCEPTION(scope, {});
         }
     } else {
         for (size_t i = 0; i < initialCapacity; ++i) {
+            auto* value = Zig::toJSStringGC(values[i], globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
             object->putDirect(vm, JSC::PropertyName(Zig::toIdentifier(keys[i], globalObject)),
-                Zig::toJSStringGC(values[i], globalObject), 0);
+                value, 0);
             RETURN_IF_EXCEPTION(scope, {});
         }
     }
@@ -3793,7 +3797,7 @@ __attribute__((__always_inline__)) VirtualMachine* JSC__JSGlobalObject__bunVM(JS
 
 JSC::EncodedJSValue ZigString__toValueGC(const ZigString* arg0, JSC::JSGlobalObject* arg1)
 {
-    return JSC::JSValue::encode(JSC::jsString(arg1->vm(), Zig::toStringCopy(*arg0)));
+    return JSC::JSValue::encode(Zig::toJSStringGC(*arg0, arg1));
 }
 
 void JSC__JSValue__toZigString(JSC::EncodedJSValue JSValue0, ZigString* arg1, JSC::JSGlobalObject* arg2)

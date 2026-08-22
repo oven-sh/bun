@@ -6,6 +6,7 @@
 
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/Exception.h>
+#include <JavaScriptCore/ExceptionHelpers.h>
 #include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSString.h>
@@ -24,6 +25,13 @@ class GlobalObject;
 
 extern "C" size_t Bun__stringSyntheticAllocationLimit;
 extern "C" const char* Bun__errnoName(int);
+
+namespace Bun {
+namespace ERR {
+// Forward declaration: ErrorCode.h transitively includes this header.
+JSC::EncodedJSValue STRING_TOO_LONG(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject);
+}
+}
 
 namespace Zig {
 
@@ -221,6 +229,11 @@ static const WTF::String toStringCopy(ZigString str)
         return convertUTF8ToString(std::span { untag(str.ptr), str.len });
     }
 
+    // This will fail if the string is too long. Let's make it explicit instead of an ASSERT.
+    if (str.len > Bun__stringSyntheticAllocationLimit || str.len > WTF::String::MaxLength) [[unlikely]] {
+        return {};
+    }
+
     if (isTaggedUTF16Ptr(str.ptr)) {
         std::span<char16_t> out;
         auto impl = WTF::StringImpl::tryCreateUninitialized(str.len, out);
@@ -270,9 +283,28 @@ static const JSC::JSString* toJSString(ZigString str, JSC::JSGlobalObject* globa
     return JSC::jsOwnedString(global->vm(), toString(str));
 }
 
+// Copies `str` into a GC-managed JSString. Throws ERR_STRING_TOO_LONG (or an
+// out-of-memory error) and returns nullptr when the string cannot be created.
 static JSC::JSString* toJSStringGC(ZigString str, JSC::JSGlobalObject* global)
 {
-    return JSC::jsString(global->vm(), toStringCopy(str));
+    auto wtfString = toStringCopy(str);
+    if (wtfString.isNull() && str.len > 0) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(global->vm());
+        size_t maxLength = std::min(Bun__stringSyntheticAllocationLimit, static_cast<size_t>(WTF::String::MaxLength));
+        // For UTF-8 input `str.len` counts bytes, but the limit applies to the
+        // decoded UTF-16 length.
+        size_t decodedLength = str.len;
+        if (isTaggedUTF8Ptr(str.ptr) && str.len > maxLength) {
+            decodedLength = simdutf::utf16_length_from_utf8(reinterpret_cast<const char*>(untag(str.ptr)), str.len);
+        }
+        if (decodedLength > maxLength) {
+            Bun::ERR::STRING_TOO_LONG(scope, global);
+        } else {
+            JSC::throwOutOfMemoryError(global, scope);
+        }
+        return nullptr;
+    }
+    return JSC::jsString(global->vm(), WTF::move(wtfString));
 }
 
 static const ZigString ZigStringEmpty = ZigString { (unsigned char*)"", 0 };

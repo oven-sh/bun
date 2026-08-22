@@ -458,7 +458,7 @@ impl ShellLsTask {
 
         let fd = match shell_openat(this.cwd, this.path.as_zstr(), O::RDONLY | O::DIRECTORY, 0) {
             Err(open_err) => {
-                this.list_non_directory_operand(open_err);
+                this.list_non_directory_operand(&open_err);
                 return;
             }
             Ok(fd) => fd,
@@ -511,11 +511,11 @@ impl ShellLsTask {
     }
 
     /// coreutils operand rule: `stat`, and on ENOENT or ELOOP `lstat` so a symlink is itself.
-    fn list_non_directory_operand(&mut self, open_err: bun_sys::Error) {
+    fn list_non_directory_operand(&mut self, open_err: &bun_sys::Error) {
         match shell_statat(self.cwd, self.path.as_zstr()) {
             // A directory that would not open: report the open error.
             Ok(stat) if S::ISDIR(stat.st_mode as _) => {
-                self.err = Some(self.error_with_path(&open_err));
+                self.err = Some(self.error_with_path(open_err));
                 return;
             }
             Ok(_) => {}

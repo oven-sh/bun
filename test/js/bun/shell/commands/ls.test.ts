@@ -411,6 +411,12 @@ describe.concurrent("bunshell ls", () => {
         .stderr(notADirectory("f/x"))
         .setTempdir(String(tempdir))
         .run();
+      await TestBuilder.command`ls -d f/x`
+        .exitCode(1)
+        .stdout("")
+        .stderr(notADirectory("f/x"))
+        .setTempdir(String(tempdir))
+        .run();
       await TestBuilder.command`ls f/x/y/z`
         .exitCode(1)
         .stdout("")
@@ -421,6 +427,12 @@ describe.concurrent("bunshell ls", () => {
       await TestBuilder.command`ls sub f/x`
         .exitCode(1)
         .stdout(s => expect(sortedLsOutput(s)).toEqual(["a", "sub:"]))
+        .stderr(notADirectory("f/x"))
+        .setTempdir(String(tempdir))
+        .run();
+      await TestBuilder.command`ls f f/x`
+        .exitCode(1)
+        .stdout("f\n")
         .stderr(notADirectory("f/x"))
         .setTempdir(String(tempdir))
         .run();

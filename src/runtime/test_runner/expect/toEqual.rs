@@ -31,14 +31,7 @@ impl Expect {
         }
 
         // handle failure
-        let diff_formatter = DiffFormatter {
-            received: Some(value),
-            expected: Some(expected),
-            received_string: None,
-            expected_string: None,
-            global_this: Some(global),
-            not,
-        };
+        let diff_formatter = DiffFormatter::new(global, value, expected, not)?;
 
         if not {
             let signature: &str = Expect::get_signature("toEqual", "<green>expected<r>", true);

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isPosix } from "harness";
+import { bunEnv, bunExe, isPosix, tempDir } from "harness";
 import { join } from "node:path";
 import { createTestBuilder } from "./test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -24,17 +24,19 @@ describe.if(isPosix)("IOWriter epipe", () => {
 
 // The shell relays an external command's output to the process's stdout while
 // it captures it. Once nothing reads that stdout anymore, the relay fails with
-// EPIPE. The command must still finish: the shell closes its end of the
-// command's stdout, so the command's next write fails (the fixture's producer
-// reports that and exits), instead of the shell reading the output into its
-// capture buffer for as long as the command keeps writing. `$` used to never
-// settle for such a command (the modes are described in the fixture).
+// EPIPE. The command must still finish, the way it does under a real shell:
+// the shell closes its end of the command's stdout, the command's next write
+// fails (the fixture's producer reports that and exits 0), and the command
+// finishes with the child's exit, not by the shell killing it. `$` used to
+// never settle for such a command (the modes are described in the fixture).
 describe("relayed output after the stdout reader went away", () => {
   const fixture = join(import.meta.dir, "epipe-relay-fixture.ts");
 
   async function runFixture(mode: string) {
+    using dir = tempDir("shell-epipe-relay", {});
+    const reportPath = join(String(dir), "producer-report.txt");
     await using proc = Bun.spawn({
-      cmd: [bunExe(), fixture, mode],
+      cmd: [bunExe(), fixture, mode, reportPath],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -46,7 +48,13 @@ describe("relayed output after the stdout reader went away", () => {
     const lastLine = stderr.trim().split("\n").at(-1)!;
     // On a crash this shows the whole stderr instead of a JSON parse error.
     const report = lastLine.startsWith("{") ? JSON.parse(lastLine) : stderr;
-    expect(report).toEqual({ settled: true, exitCode: expect.any(Number) });
+    expect(report).toEqual({
+      settled: true,
+      exitCode: expect.any(Number),
+      // Written by the producer when its write failed (EPIPE, or ECONNRESET on
+      // Linux): the shell closed the pipe and let the child exit by itself.
+      producer: mode === "exits-by-itself" ? null : expect.stringContaining("stdout write failed: E"),
+    });
     // The producer itself exits 0: a failed relay fails the command. The exact
     // status (the errno today) is not pinned here.
     expect(report.exitCode).not.toBe(0);
@@ -61,6 +69,10 @@ describe("relayed output after the stdout reader went away", () => {
 
   test.concurrent("the child keeps writing, stdout is the only relayed stream", async () => {
     await runFixture("relay-only-stdout");
+  });
+
+  test.concurrent("the child keeps writing, its stderr shares the stdout pipe", async () => {
+    await runFixture("relay-stderr-to-stdout");
   });
 
   test.concurrent("the shell's writer is already dead when the child writes", async () => {

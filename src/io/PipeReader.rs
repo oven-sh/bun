@@ -1783,24 +1783,25 @@ impl WindowsBufferedReader {
     /// before Drop; both paths are idempotent over an already-taken source.
     pub fn deinit(&mut self) {
         MaxBuf::remove_from_pipereader(&mut self.maxbuf);
-        self._buffer = Vec::new();
-        let Some(source) = self.source.take() else {
-            return;
-        };
-        if !source.is_closed() {
-            // closeImpl will take care of freeing the source.
-            // Dropping the `Box<Pipe>` here would free a uv_pipe_t still
-            // linked into the loop's handle queue → UAF. Restore the source so
-            // close_impl can do the proper take + hand-off to libuv
-            // (into_raw + uv_close).
-            self.source = Some(source);
-            self.close_impl::<false>();
-        } else {
-            // Already closing/closed: a uv close callback may still be pending
-            // on this allocation; dropping the Box would free memory libuv
-            // still owns, so leak it instead.
-            core::mem::forget(source);
+        if let Some(source) = self.source.take() {
+            if !source.is_closed() {
+                // closeImpl will take care of freeing the source.
+                // Dropping the `Box<Pipe>` here would free a uv_pipe_t still
+                // linked into the loop's handle queue → UAF. Restore the source so
+                // close_impl can do the proper take + hand-off to libuv
+                // (into_raw + uv_close). It also moves `_buffer` to the File
+                // when a read is in flight (libuv still writes into it), so the
+                // buffer is released only after it.
+                self.source = Some(source);
+                self.close_impl::<false>();
+            } else {
+                // Already closing/closed: a uv close callback may still be pending
+                // on this allocation; dropping the Box would free memory libuv
+                // still owns, so leak it instead.
+                core::mem::forget(source);
+            }
         }
+        self._buffer = Vec::new();
     }
 
     #[cfg(windows)]

@@ -8,7 +8,7 @@ use crate::shell::ast;
 use crate::shell::builtin::{Builtin, Kind as BuiltinKind};
 use crate::shell::interpreter::{CowFd, Interpreter, Node, NodeId, ShellExecEnv, StateKind, log};
 use crate::shell::io::{IO, OutKind as IoOutKind};
-use crate::shell::shell_body::subproc::{Readable, ShellSubprocess, StdioKind};
+use crate::shell::shell_body::subproc::{CaptureError, Readable, ShellSubprocess, StdioKind};
 use crate::shell::states::assigns::{AssignCtx, Assigns};
 use crate::shell::states::base::Base;
 use crate::shell::states::expansion::Expansion;
@@ -68,6 +68,12 @@ impl Cmd {
 pub struct SubprocExec {
     pub(crate) child: *mut ShellSubprocess,
     pub(crate) buffered_closed: BufferedIoClosed,
+    /// Status the command gets once the child exits, set when relaying its
+    /// output to the shell's stdout/stderr failed while it was still running.
+    /// The shell closed its end of that pipe; the child goes on until its next
+    /// write fails or it finishes, like under a real shell, so the command
+    /// waits for its exit instead of killing it.
+    pub(crate) relay_status: Option<ExitCode>,
     /// NodeId-arena backrefs so the legacy `&mut self` subprocess callbacks
     /// (`buffered_output_close` / `on_exit`) can hand a [`Yield`] back to the
     /// trampoline. The `Cmd` lives inside `interp.nodes`, so we stash the
@@ -564,6 +570,7 @@ impl Cmd {
         interp.as_cmd_mut(this).exec = Exec::Subproc(Box::new(SubprocExec {
             child: core::ptr::null_mut(),
             buffered_closed,
+            relay_status: None,
             interp: core::ptr::null_mut(),
             this_id: this,
         }));
@@ -952,11 +959,12 @@ impl Cmd {
     pub(crate) fn buffered_output_close(
         &mut self,
         kind: OutKind,
-        err: Option<bun_sys::SystemError>,
+        err: Option<CaptureError>,
     ) -> Yield {
+        self.record_capture_error(err);
         match kind {
-            OutKind::Stdout => self.buffered_output_close_stdout(err),
-            OutKind::Stderr => self.buffered_output_close_stderr(err),
+            OutKind::Stdout => self.buffered_output_close_stdout(),
+            OutKind::Stderr => self.buffered_output_close_stderr(),
         }
         if self.has_finished() {
             // Set `state = Done` and hand the Yield back to the caller
@@ -981,12 +989,29 @@ impl Cmd {
         Yield::suspended()
     }
 
-    fn buffered_output_close_stdout(&mut self, err: Option<bun_sys::SystemError>) {
+    /// A read error ends the command now, whether or not the child has exited
+    /// (`deinit` then kills it). A relay error ends it with that status once
+    /// the child has exited: the shell closed its end of the pipe, the child
+    /// runs on until its next write fails or it finishes.
+    fn record_capture_error(&mut self, err: Option<CaptureError>) {
+        debug_assert!(matches!(self.exec, Exec::Subproc(_)));
+        let Some(err) = err else { return };
+        let status = err.errno().unsigned_abs() as ExitCode;
+        let Exec::Subproc(sub) = &mut self.exec else {
+            return;
+        };
+        // SAFETY: `child` is the live subprocess owned by this Cmd.
+        let exited = unsafe { (*sub.child).has_exited() };
+        match err {
+            CaptureError::Read(_) => self.exit_code = Some(status),
+            CaptureError::Relay(_) if exited => self.exit_code = Some(status),
+            CaptureError::Relay(_) => sub.relay_status = Some(status),
+        }
+    }
+
+    fn buffered_output_close_stdout(&mut self) {
         debug_assert!(matches!(self.exec, Exec::Subproc(_)));
         log!("cmd close buffered stdout");
-        if let Some(e) = err {
-            self.exit_code = Some(e.errno.unsigned_abs() as ExitCode);
-        }
         let redirect = self.ast_node().redirect;
         let Exec::Subproc(sub) = &mut self.exec else {
             return;
@@ -1017,12 +1042,9 @@ impl Cmd {
         child.close_io(StdioKind::Stdout);
     }
 
-    fn buffered_output_close_stderr(&mut self, err: Option<bun_sys::SystemError>) {
+    fn buffered_output_close_stderr(&mut self) {
         debug_assert!(matches!(self.exec, Exec::Subproc(_)));
         log!("cmd close buffered stderr");
-        if let Some(e) = err {
-            self.exit_code = Some(e.errno.unsigned_abs() as ExitCode);
-        }
         let redirect = self.ast_node().redirect;
         let Exec::Subproc(sub) = &mut self.exec else {
             return;
@@ -1053,7 +1075,11 @@ impl Cmd {
 
     /// Called by `ShellSubprocess::on_process_exit`.
     pub(crate) fn on_exit(&mut self, exit_code: ExitCode) {
-        self.exit_code = Some(exit_code);
+        let relay_status = match &mut self.exec {
+            Exec::Subproc(sub) => sub.relay_status.take(),
+            _ => None,
+        };
+        self.exit_code = Some(relay_status.unwrap_or(exit_code));
         let has_finished = self.has_finished();
         log!("cmd exit code={} has_finished={}", exit_code, has_finished);
         if has_finished {

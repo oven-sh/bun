@@ -1534,6 +1534,24 @@ pub enum PipeReaderState {
     Err(Option<Box<SystemError>>),
 }
 
+/// Why a `PipeReader` handed its `Cmd` an error.
+pub enum CaptureError {
+    /// Reading the child's pipe failed.
+    Read(SystemError),
+    /// Relaying the output to the shell's stdout/stderr failed. The child may
+    /// still be running with the shell's end of the pipe closed
+    /// (`PipeReader::on_capture_failed`).
+    Relay(SystemError),
+}
+
+impl CaptureError {
+    pub(crate) fn errno(&self) -> i32 {
+        match self {
+            CaptureError::Read(e) | CaptureError::Relay(e) => e.errno,
+        }
+    }
+}
+
 pub struct PipeReader {
     pub(crate) reader: IOReader,
     pub(crate) process: Option<*mut ShellSubprocess>,
@@ -1636,7 +1654,7 @@ impl Default for CapturedWriter {
     }
 }
 
-bun_core::impl_field_parent! { CapturedWriter => PipeReader.captured_writer; fn parent; fn mut parent_mut; }
+bun_core::impl_field_parent! { CapturedWriter => PipeReader.captured_writer; fn parent; }
 
 impl CapturedWriter {
     pub(crate) fn do_write(&mut self, chunk: &[u8]) {
@@ -1667,43 +1685,55 @@ impl CapturedWriter {
         PipeReader::run_yield_with(interp, y);
     }
 
-    pub(crate) fn on_iowriter_chunk(&mut self, amount: usize, err: Option<SystemError>) -> Yield {
-        let addr = std::ptr::from_mut(self) as usize;
-        let written = self.written + amount;
-        let parent = self.parent();
-        log!(
-            "CapturedWriter({:x}, {}) onWrite({}, has_err={}) total_written={} total_to_write={}",
-            addr,
-            out_kind_str(parent.out_type),
-            amount,
-            err.is_some(),
-            written,
-            parent.buffered_output.len()
-        );
-        let all_written = written >= parent.buffered_output.len()
-            && !matches!(parent.state, PipeReaderState::Pending);
-        self.written = written;
-        if let Some(e) = err {
+    /// The chunk completion from the shell's `IOWriter` (`WriterTag::Subproc`).
+    /// Raw `*mut Self` like the reader callbacks: the tail call can drop the
+    /// last `Arc` of the embedding `PipeReader` (`Cmd::buffered_output_close`
+    /// → `close_io` → `detach`), which frees `this`.
+    ///
+    /// # Safety
+    /// `this` must be the `CapturedWriter` of a live `PipeReader` (the pointer
+    /// `do_write` enqueued); no `&`/`&mut` to that `PipeReader` may be live.
+    pub(crate) unsafe fn on_iowriter_chunk(
+        this: *mut Self,
+        amount: usize,
+        err: Option<SystemError>,
+    ) -> Yield {
+        // SAFETY: caller contract; `this` is `PipeReader.captured_writer`, and
+        // every borrow below ends before the (maybe freeing) tail call.
+        unsafe {
+            let parent: *mut PipeReader =
+                bun_core::from_field_ptr!(PipeReader, captured_writer, this);
+            let written = (*this).written + amount;
             log!(
-                "CapturedWriter(0x{:x}, {}) onWrite errno={} errmsg={} errfd={:?} syscall={}",
-                addr,
-                out_kind_str(self.parent().out_type),
-                e.errno,
-                e.message,
-                e.fd,
-                e.syscall
+                "CapturedWriter({:x}, {}) onWrite({}, has_err={}) total_written={} total_to_write={}",
+                this as usize,
+                out_kind_str((*parent).out_type),
+                amount,
+                err.is_some(),
+                written,
+                (*parent).buffered_output.len()
             );
-            self.err = Some(e);
-            // SAFETY: `parent_mut` recovers the embedding `PipeReader`; raw-ptr
-            // form per `on_capture_failed` contract (no `&mut PipeReader` held
-            // across the Cmd re-entry). May free `self`; last use of it.
-            return unsafe { PipeReader::on_capture_failed(self.parent_mut()) };
+            let all_written = written >= (*parent).buffered_output.len()
+                && !matches!((*parent).state, PipeReaderState::Pending);
+            (*this).written = written;
+            if let Some(e) = err {
+                log!(
+                    "CapturedWriter(0x{:x}, {}) onWrite errno={} errmsg={} errfd={:?} syscall={}",
+                    this as usize,
+                    out_kind_str((*parent).out_type),
+                    e.errno,
+                    e.message,
+                    e.fd,
+                    e.syscall
+                );
+                (*this).err = Some(e);
+                return PipeReader::on_capture_failed(parent);
+            }
+            if !all_written {
+                return Yield::Suspended;
+            }
+            PipeReader::try_signal_done_to_cmd(parent)
         }
-        if !all_written {
-            return Yield::Suspended;
-        }
-        // SAFETY: as above, per `try_signal_done_to_cmd` contract.
-        unsafe { PipeReader::try_signal_done_to_cmd(self.parent_mut()) }
     }
 }
 
@@ -2042,7 +2072,7 @@ impl PipeReader {
             let cmd = unsafe { (*proc).cmd_parent.cmd_mut() };
             // SAFETY: caller contract — the `&mut` is scoped to this call and
             // ends *before* the `cmd` call below.
-            let e: Option<SystemError> = unsafe { (*this).take_captured_error() };
+            let e: Option<CaptureError> = unsafe { (*this).take_capture_error() };
             // No `&`/`&mut PipeReader` is live here; `buffered_output_close`
             // is free to deref the sibling `Arc<PipeReader>` in
             // `Readable::Pipe` for `pipe.slice()` / `close_io`.
@@ -2076,18 +2106,22 @@ impl PipeReader {
         }
     }
 
-    fn take_captured_error(&mut self) -> Option<SystemError> {
+    /// The error this reader ends with, if any. A read error (`state`) wins
+    /// over a relay error (`captured_writer.err`); both leave the state `Err`.
+    fn take_capture_error(&mut self) -> Option<CaptureError> {
         if let Some(e) = self.captured_writer.err.take() {
             match core::mem::replace(&mut self.state, PipeReaderState::Pending) {
                 PipeReaderState::Done(buf) => {
                     drop(buf);
-                    self.state = PipeReaderState::Err(Some(Box::new(e)));
+                    self.state = PipeReaderState::Err(None);
+                    return Some(CaptureError::Relay(e));
                 }
                 old @ PipeReaderState::Err(_) => {
                     self.state = old;
                 }
                 PipeReaderState::Pending => {
-                    self.state = PipeReaderState::Err(Some(Box::new(e)));
+                    self.state = PipeReaderState::Err(None);
+                    return Some(CaptureError::Relay(e));
                 }
             }
         }
@@ -2095,7 +2129,7 @@ impl PipeReader {
         // Move it out (the only reader of
         // `state.Err` after this point is `Drop`, which tolerates `None`).
         if let PipeReaderState::Err(slot) = &mut self.state {
-            slot.take().map(|b| *b)
+            slot.take().map(|b| CaptureError::Read(*b))
         } else {
             None
         }

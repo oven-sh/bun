@@ -5,9 +5,11 @@
 //
 // The command runs this same file in "produce" mode as an external command: a
 // child that writes to its stdout for as long as that works and exits 0 once a
-// write fails, which is what a real shell's SIGPIPE does to such a child.
+// write fails, which is what a real shell's SIGPIPE does to such a child. The
+// producer records the failed write in the file named by PRODUCER_REPORT (its
+// stderr is not relayed in every mode); the report ends up in the JSON line.
 import { $ } from "bun";
-import { writeSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, writeSync } from "node:fs";
 
 const mode = process.argv[2];
 
@@ -19,7 +21,9 @@ if (mode === "produce") {
     } catch (e: any) {
       // EPIPE, or ECONNRESET when the shell closed its end of the socket pair
       // while a chunk it had not read yet was still queued in it.
-      console.error(`producer: stdout write failed: ${e.code}`);
+      const report = `stdout write failed: ${e.code}`;
+      console.error(`producer: ${report}`);
+      writeFileSync(process.env.PRODUCER_REPORT!, report);
       process.exit(0);
     }
     Bun.sleepSync(1);
@@ -30,6 +34,9 @@ if (mode === "produce-once") {
   writeSync(1, "y\n");
   process.exit(0);
 }
+
+const reportPath = process.argv[3];
+process.env.PRODUCER_REPORT = reportPath;
 
 // Wait until nothing reads our stdout anymore, so the relay really fails.
 // Our stdout is a socket pair too (Bun.spawn), so the failure is EPIPE, or
@@ -53,10 +60,14 @@ switch (mode) {
   case "relay":
     result = await $`${producer}`.nothrow();
     break;
-  // Same failure, but stdout is the only piped stream, so the failure finishes
-  // the command on the spot and the shell kills the child.
+  // Same failure, but stdout is the only piped stream. The command still waits
+  // for the child to notice and exit instead of killing it.
   case "relay-only-stdout":
     result = await $`${producer} 2> /dev/null`.nothrow();
+    break;
+  // The child's stderr shares the failed stdout pipe.
+  case "relay-stderr-to-stdout":
+    result = await $`${producer} 2>&1`.nothrow();
     break;
   // `echo` already broke the shell's writer, so the child's first chunk is
   // rejected synchronously, from inside the read of that chunk.
@@ -73,4 +84,5 @@ switch (mode) {
   default:
     throw new Error(`unknown mode ${mode}`);
 }
-console.error(JSON.stringify({ settled: true, exitCode: result.exitCode }));
+const producerReport = existsSync(reportPath) ? readFileSync(reportPath, "utf8") : null;
+console.error(JSON.stringify({ settled: true, exitCode: result.exitCode, producer: producerReport }));

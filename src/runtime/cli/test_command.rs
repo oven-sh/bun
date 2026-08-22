@@ -2048,10 +2048,7 @@ extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: bun_core::Strin
     // so we skip the ascii check
     let slice: &[u8] = zig_slice.slice();
 
-    // The report names a module by its source URL. For a data: URL that is the
-    // module's own source text, and for a blob: URL a UUID of this run, so
-    // neither row tells the reader anything. A plugin's virtual module has a
-    // name and keeps its row.
+    // The report would name these rows by the source text itself or by a per-run UUID.
     if slice.starts_with(b"data:") || slice.starts_with(b"blob:") {
         return false;
     }

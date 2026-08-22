@@ -63,6 +63,7 @@ BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolveSoa);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolveNaptr);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolveMx);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolveCaa);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolveTlsa);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolveNs);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolvePtr);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolveCname);
@@ -404,6 +405,8 @@ static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
     dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveMx"_s), 2, Bun__DNS__resolveMx, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
     dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveCaa"_s), 2, Bun__DNS__resolveCaa, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveTlsa"_s), 2, Bun__DNS__resolveTlsa, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
     dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveNs"_s), 2, Bun__DNS__resolveNs, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);

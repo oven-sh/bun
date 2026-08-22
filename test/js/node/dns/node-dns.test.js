@@ -26,6 +26,7 @@ test("it exists", () => {
   expect(dns.resolveNaptr).toBeDefined();
   expect(dns.resolveMx).toBeDefined();
   expect(dns.resolveCaa).toBeDefined();
+  expect(dns.resolveTlsa).toBeDefined();
   expect(dns.resolveNs).toBeDefined();
   expect(dns.resolvePtr).toBeDefined();
   expect(dns.resolveCname).toBeDefined();
@@ -42,6 +43,7 @@ test("it exists", () => {
   expect(dns.promises.resolveNaptr).toBeDefined();
   expect(dns.promises.resolveMx).toBeDefined();
   expect(dns.promises.resolveCaa).toBeDefined();
+  expect(dns.promises.resolveTlsa).toBeDefined();
   expect(dns.promises.resolveNs).toBeDefined();
   expect(dns.promises.resolvePtr).toBeDefined();
   expect(dns.promises.resolveCname).toBeDefined();
@@ -58,6 +60,7 @@ test("it exists", () => {
   expect(dns_promises.resolveNaptr).toBeDefined();
   expect(dns_promises.resolveMx).toBeDefined();
   expect(dns_promises.resolveCaa).toBeDefined();
+  expect(dns_promises.resolveTlsa).toBeDefined();
   expect(dns_promises.resolveNs).toBeDefined();
   expect(dns_promises.resolvePtr).toBeDefined();
   expect(dns_promises.resolveCname).toBeDefined();
@@ -566,6 +569,7 @@ describe("test invalid arguments", () => {
     // TODO: dns.resolveAny is not implemented yet
     ["dns.resolveCname", dns.resolveCname],
     ["dns.resolveCaa", dns.resolveCaa],
+    ["dns.resolveTlsa", dns.resolveTlsa],
     ["dns.resolveMx", dns.resolveMx],
     ["dns.resolveNaptr", dns.resolveNaptr],
     ["dns.resolveNs", dns.resolveNs],
@@ -634,6 +638,7 @@ describe("a third argument shifts the callback", () => {
     ["dns.resolvePtr", dns.resolvePtr],
     ["dns.resolveSoa", dns.resolveSoa],
     ["dns.resolveSrv", dns.resolveSrv],
+    ["dns.resolveTlsa", dns.resolveTlsa],
     ["dns.resolveTxt", dns.resolveTxt],
     ["dns.reverse", dns.reverse],
   ];
@@ -760,6 +765,7 @@ describe("uses `dns.promises` implementations for `util.promisify` factory", () 
     "resolvePtr",
     "resolveSoa",
     "resolveSrv",
+    "resolveTlsa",
     "resolveTxt",
     "resolveNaptr",
   ])("%s", method => {

@@ -713,7 +713,7 @@ impl Options {
         }
 
         if let Some(check_bool) = env.get(b"BUN_CONFIG_NO_VERIFY") {
-            self.do_.set(Do::VERIFY_INTEGRITY, check_bool != b"0");
+            self.do_.set(Do::VERIFY_INTEGRITY, check_bool == b"0");
         }
 
         // Update should never read from manifest cache

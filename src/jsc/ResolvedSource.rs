@@ -88,10 +88,10 @@ impl Default for ResolvedSource {
 // the raw `ResolvedSource` for FFI is `into_ffi()` (consumes, forgets). If the
 // owner is dropped instead, every contained `BunString` is `deref()`d.
 //
-// The `module_info` pointer (a `Box<ModuleInfoDeserialized>` leaked via
-// `heap::into_raw`) is intentionally NOT freed here — its ownership protocol
-// is separate (C++ calls `Bun__free_module_info` on success; on Rust-side drop
-// it would still leak today, tracked separately).
+// `module_info` (a `Box<ModuleInfoDeserialized>` leaked via `heap::into_raw`)
+// follows the same rule: `into_ffi()` hands it to C++ (adopted by
+// `Zig::SourceProvider::create`, or freed by `ResolvedSourceCodeHolder`), and a
+// Rust-side drop frees it here.
 // ──────────────────────────────────────────────────────────────────────────
 #[repr(transparent)]
 #[derive(Default)]
@@ -142,5 +142,15 @@ impl Drop for OwnedResolvedSource {
         self.0.specifier.deref();
         self.0.source_url.deref();
         self.0.bytecode_origin_path.deref();
+        if !self.0.module_info.is_null() {
+            // SAFETY: non-null `module_info` is always the `heap::into_raw` of a
+            // `Box<ModuleInfoDeserialized>` that nothing else has adopted yet.
+            unsafe {
+                bun_bundler::analyze_transpiled_module::ModuleInfoDeserialized::deinit(
+                    self.0.module_info.cast(),
+                )
+            };
+            self.0.module_info = core::ptr::null_mut();
+        }
     }
 }

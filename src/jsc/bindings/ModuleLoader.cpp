@@ -12,6 +12,7 @@
 #include <JavaScriptCore/JSInternalFieldObjectImpl.h>
 
 #include "ZigSourceProvider.h"
+#include "BunAnalyzeTranspiledModule.h"
 
 #include <JavaScriptCore/JSSourceCode.h>
 #include <JavaScriptCore/JSString.h>
@@ -57,9 +58,18 @@ public:
 
     ~ResolvedSourceCodeHolder()
     {
-        if (res->success && res->result.value.source_code.tag == BunStringTag::WTFStringImpl && res->result.value.needsDeref) {
-            res->result.value.needsDeref = false;
-            res->result.value.source_code.impl.wtf->deref();
+        if (!res->success)
+            return;
+        auto& value = res->result.value;
+        if (value.source_code.tag == BunStringTag::WTFStringImpl && value.needsDeref) {
+            value.needsDeref = false;
+            value.source_code.impl.wtf->deref();
+        }
+        // Non-null only if no SourceProvider adopted it (early return before
+        // Zig::SourceProvider::create).
+        if (value.module_info) {
+            zig__ModuleInfoDeserialized__deinit(static_cast<bun_ModuleInfoDeserialized*>(value.module_info));
+            value.module_info = nullptr;
         }
     }
 

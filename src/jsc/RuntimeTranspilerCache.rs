@@ -51,7 +51,9 @@ bun_core::declare_scope!(cache, visible);
 /// Version 25: Every ModuleInfo record carries a trailing FetchParameters slot
 /// so ImportEntry/ExportEntry/StarExportEntry moduleRequestType matches JSC's
 /// after WebKit 90b2ecf79ae3 keyed m_loadedModules on (specifier, type).
-const EXPECTED_VERSION: u32 = 25;
+/// Version 26: ModuleInfo is written for every runtime ESM transpile, not only
+/// under --isolate; older entries have an empty esm_record (#7384).
+const EXPECTED_VERSION: u32 = 26;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a
@@ -939,6 +941,10 @@ impl RuntimeTranspilerCache {
 
         let mut features_hasher = Wyhash::init(SEED);
         parser_options.hash_for_runtime_transpiler(&mut features_hasher, used_jsx);
+        // Decides whether the entry carries an esm_record.
+        features_hasher.update(&[u8::from(
+            crate::virtual_machine::VirtualMachine::use_module_info_for_esm(),
+        )]);
         self.features_hash = Some(features_hasher.final_());
 
         self.entry = match Self::from_file(

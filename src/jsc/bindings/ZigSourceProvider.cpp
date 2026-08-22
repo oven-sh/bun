@@ -140,6 +140,9 @@ Ref<SourceProvider> SourceProvider::create(
     };
 
     auto provider = getProvider();
+    // The provider now owns module_info (freed in ~SourceProvider); clear the
+    // caller's copy so ResolvedSourceCodeHolder does not free it again.
+    resolvedSource.module_info = nullptr;
 
     if (shouldGenerateCodeCoverage) {
         ByteRangeMapping__generate(Bun::toString(provider->sourceURL()), Bun::toString(provider->source().toStringWithoutCopying()), provider->asID());

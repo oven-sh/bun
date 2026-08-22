@@ -2077,7 +2077,6 @@ impl CowFd {
 // Convenience re-exports for state modules
 // ────────────────────────────────────────────────────────────────────────────
 
-pub use crate::shell::builtin::Builtin;
 pub use crate::shell::io_reader::IOReader;
 pub use crate::shell::io_writer::IOWriter;
 pub use crate::shell::states::assigns::AssignCtx;

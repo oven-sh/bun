@@ -510,7 +510,7 @@ function getBuildCommand(target, options, mode) {
 }
 
 /**
- * deps + C++ + cargo + link on one agent; also uploads libbun-*.a, libbun_rust.a and the dep libs.
+ * deps + C++ + cargo + link on one agent; also uploads libbun-*.a, libbun_runtime.a and the dep libs.
  *
  * @param {Platform} platform
  * @param {PipelineOptions} options

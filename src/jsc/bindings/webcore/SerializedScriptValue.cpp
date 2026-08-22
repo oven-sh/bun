@@ -4339,6 +4339,23 @@ size_t SerializedScriptValue::computeMemoryCost() const
     return cost;
 }
 
+static void markObjectWithPrivateName(VM& vm, JSObject& object, const Identifier& privateName)
+{
+    if (object.getDirect(vm, privateName))
+        return;
+    object.putDirect(vm, privateName, jsBoolean(true), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | 0);
+}
+
+void markAsUncloneable(VM& vm, JSObject& object)
+{
+    markObjectWithPrivateName(vm, object, builtinNames(vm).isUncloneablePrivateName());
+}
+
+void markAsUntransferable(VM& vm, JSObject& object)
+{
+    markObjectWithPrivateName(vm, object, builtinNames(vm).isUntransferablePrivateName());
+}
+
 static ExceptionOr<std::unique_ptr<ArrayBufferContentsArray>> transferArrayBuffers(VM& vm, const Vector<RefPtr<JSC::ArrayBuffer>>& arrayBuffers)
 {
     if (arrayBuffers.isEmpty())

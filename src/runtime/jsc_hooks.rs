@@ -1770,6 +1770,11 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResu
             // `CURRENT_TIME` static.
             unsafe { (*all).fake_timers.reset_for_isolation(global) };
         }
+        if !all.is_null() {
+            // SAFETY: as above; `disable` borrows only `event_loop_delay` and
+            // reaches the heap through `timer_all()` (disjoint-field access).
+            unsafe { (*all).event_loop_delay.disable() };
+        }
     }
     // Entries that stay registered across a test-isolation swap.
     let mut kept: Vec<ActiveHandle> = Vec::new();
@@ -1796,10 +1801,11 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResu
                 // SAFETY: live until it unregisters in `on_close`.
                 crate::socket::udp_socket::UDPSocket::stop_for_vm_teardown(unsafe { u.as_ref() })
             }
-            // SAFETY: live until it unregisters in `deinit`.
-            ActiveHandle::DuplexUpgrade(c) => unsafe {
-                crate::socket::DuplexUpgradeContext::stop_for_vm_teardown(c.as_ptr())
-            },
+            ActiveHandle::DuplexUpgrade(c) => {
+                // SAFETY: live until it unregisters in `deinit`.
+                let c = unsafe { bun_ptr::ThisPtr::new(c.as_ptr()) };
+                crate::socket::DuplexUpgradeContext::stop_for_vm_teardown(c)
+            }
             // SAFETY: live until it unregisters when its deinit task runs.
             #[cfg(windows)]
             ActiveHandle::WindowsNamedPipe(c) => unsafe {

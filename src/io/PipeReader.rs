@@ -1163,8 +1163,11 @@ impl WindowsBufferedReader {
             self.flags.insert(WindowsFlags::RECEIVED_EOF);
         }
 
+        // The read that produced this chunk is complete; if the flag is set again
+        // below, a `start_reading` issued from the dispatch set it.
+        self.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);
+
         if !self.vtable.is_streaming_enabled() {
-            self.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);
             return true;
         }
         // `on_read_chunk` re-enters JS, which can reach this reader through its parent; go raw across the dispatch so nothing of `self` is cached over it.
@@ -1180,15 +1183,16 @@ impl WindowsBufferedReader {
             buffer.clear();
             // SAFETY: `this` is still live (see above).
             unsafe {
-                if (*this)._buffer.is_empty() {
+                // An in-flight read owns `_buffer`: libuv holds a pointer into it (#39890).
+                if !(*this).flags.contains(WindowsFlags::HAS_INFLIGHT_READ)
+                    && (*this)._buffer.is_empty()
+                {
                     (*this)._buffer = buffer;
                 }
             }
             result
         };
         core::hint::black_box(this);
-        // SAFETY: `this` is still live (see above).
-        unsafe { (*this).flags.remove(WindowsFlags::HAS_INFLIGHT_READ) };
         result
     }
 

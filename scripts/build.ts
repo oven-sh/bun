@@ -145,7 +145,7 @@ async function main(): Promise<void> {
         env: ninjaEnv(result.cfg, result.env),
       });
 
-    // rust-and-link: build libbun_rust.a first so cargo overlaps with the
+    // rust-and-link: build libbun_runtime.a first so cargo overlaps with the
     // sibling build-cpp job, THEN poll for build-cpp's outcome + download
     // its archive, THEN link. link-only skips straight to the full build
     // (its artifacts were downloaded above).

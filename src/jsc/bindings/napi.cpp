@@ -63,6 +63,7 @@
 #include <JavaScriptCore/StringObject.h>
 #include <JavaScriptCore/JSWeakMapInlines.h>
 #include "ScriptExecutionContext.h"
+#include "SerializedScriptValue.h"
 
 #include "../modules/ObjectModule.h"
 
@@ -2361,6 +2362,7 @@ extern "C" napi_status napi_create_buffer_copy(napi_env env, size_t length,
 // if the env is torn down first (a Worker exiting while the addon still holds the buffer) —
 // from NapiEnv::cleanup() together with the other bound finalizers, as Node's env teardown
 // finalizes every remaining reference (test_worker_buffer_callback/test-free-called).
+// Neither survives a transfer to another thread, hence the untransferable mark, as in Node: https://github.com/nodejs/node/blob/v26.3.0/src/node_buffer.cc#L484-L490
 class NapiExternalBufferDestructor final : public SharedTask<void(void*)> {
 public:
     NapiExternalBufferDestructor(WTF::Ref<NapiEnv>&& env, napi_finalize cb, void* hint)
@@ -2410,6 +2412,16 @@ private:
     bool m_finalized { false };
 };
 
+// Creates the `.buffer` wrapper (JSC would do so lazily) and marks it. The caller checks for an exception.
+static void markExternalBufferUntransferable(Zig::GlobalObject* globalObject, JSC::JSUint8Array* buffer)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* jsArrayBuffer = buffer->possiblySharedJSBuffer(globalObject);
+    RETURN_IF_EXCEPTION(scope, );
+    WebCore::markAsUntransferable(vm, *jsArrayBuffer);
+}
+
 extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
     void* data,
     napi_finalize finalize_cb,
@@ -2428,6 +2440,9 @@ extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
         // TODO: is there a way to create a detached uint8 array?
         auto arrayBuffer = JSC::ArrayBuffer::createUninitialized(0, 1);
         auto* buffer = JSC::JSUint8Array::create(globalObject, subclassStructure, WTF::move(arrayBuffer), 0, 0);
+        NAPI_RETURN_STATUS_IF_EXCEPTION(env, napi_generic_failure);
+        // Nothing here can cross a thread, but Node marks this buffer too (isMarkedAsUntransferable).
+        markExternalBufferUntransferable(globalObject, buffer);
         NAPI_RETURN_STATUS_IF_EXCEPTION(env, napi_generic_failure);
         buffer->existingBuffer()->detach(vm);
 
@@ -2450,7 +2465,10 @@ extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
     auto* buffer = JSC::JSUint8Array::create(globalObject, subclassStructure, WTF::move(arrayBuffer), 0, length);
     NAPI_RETURN_STATUS_IF_EXCEPTION(env, napi_generic_failure);
 
-    // Arm only after successful creation: if create threw, the destructor
+    markExternalBufferUntransferable(globalObject, buffer);
+    NAPI_RETURN_STATUS_IF_EXCEPTION(env, napi_generic_failure);
+
+    // Arm only after successful creation: if anything above threw, the destructor
     // runs disarmed and skips finalize_cb (caller retains ownership).
     destructorPtr->arm(data);
 
@@ -2482,6 +2500,8 @@ extern "C" napi_status napi_create_external_arraybuffer(napi_env env, void* exte
     auto arrayBuffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(external_data), byte_length }, WTF::move(destructor));
 
     auto* buffer = JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(ArrayBufferSharingMode::Default), WTF::move(arrayBuffer));
+    // See NapiExternalBufferDestructor.
+    WebCore::markAsUntransferable(vm, *buffer);
     // Arm only after successful creation so that if a future change makes
     // create() throw, the destructor runs disarmed and skips finalize_cb.
     destructorPtr->arm(external_data);

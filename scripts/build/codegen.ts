@@ -471,7 +471,9 @@ function emitRuntimeJs({ n, cfg, o, dirStamp }: Ctx): void {
   n.build({
     outputs: [out],
     rule: "esbuild",
-    inputs: [src],
+    // runtime.bun.js re-exports ./runtime; esbuild bundles both, so each is
+    // an input.
+    inputs: [src, resolve(cfg.cwd, "src", "runtime.js")],
     implicitInputs: [o.rootInstall],
     orderOnlyInputs: [dirStamp],
     vars: {

@@ -207,6 +207,7 @@ impl<'a> Options<'a> {
                 bundler_feature_flags: None,
                 repl_mode: f.repl_mode,
                 jsx_optimization_inline: f.jsx_optimization_inline,
+                zod_transform: f.zod_transform,
             },
             tree_shaking: self.tree_shaking,
             bundle: self.bundle,

@@ -205,6 +205,7 @@ impl BuildCommand {
         } else {
             bun_ast::runtime::ReactCompilerMode::Disabled
         };
+        this_transpiler.options.zod_compiler = ctx.bundler_options.zod_compiler;
         this_transpiler.options.inline_entrypoint_import_meta_main =
             ctx.bundler_options.inline_entrypoint_import_meta_main;
         this_transpiler.options.code_splitting = ctx.bundler_options.code_splitting;

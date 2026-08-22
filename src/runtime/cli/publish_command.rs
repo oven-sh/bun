@@ -11,8 +11,7 @@ use bun_core::{Environment, Global, Output};
 use bun_core::{ZStr, strings};
 use bun_dotenv as dotenv;
 use bun_http as http;
-use bun_install::lockfile::{LoadResult, LoadStep};
-use bun_install::{self as install, Lockfile, Npm, PackageManager, Subcommand};
+use bun_install::{self as install, Npm, PackageManager, Subcommand};
 use bun_libarchive::lib::{Archive, ArchiveIterator, IteratorResult as ArchiveIterResult};
 use bun_parsers::json as json_mod;
 use bun_paths::resolve_path::{join_abs_string_buf_z, normalize_buf, normalize_buf_z};
@@ -458,64 +457,14 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         ctx: Command::Context<'a>,
         manager: &'a mut PackageManager,
     ) -> Result<Context<'static, true>, FromWorkspaceError> {
-        let mut lockfile = Lockfile::default();
-        let manager_ptr: *mut PackageManager = manager;
-        let log: &mut bun_ast::Log = manager.log_mut();
-        // SAFETY: `manager_ptr` was just derived from `manager: &'a mut PackageManager`;
-        // `log` borrows the disjoint `.log` field, so the re-derived `&mut`
-        // never touches memory the live `log` borrow covers.
-        let load_from_disk_result =
-            lockfile.load_from_cwd::<false>(Some(unsafe { &mut *manager_ptr }), log);
-
-        let lockfile_ref: Option<&Lockfile> = match load_from_disk_result {
-            LoadResult::Ok(ok) => Some(&*ok.lockfile),
-            LoadResult::NotFound => None,
-            LoadResult::Err(cause) => 'err: {
-                match cause.step {
-                    LoadStep::OpenFile => {
-                        if cause.value == bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT) {
-                            break 'err None;
-                        }
-                        Output::err_generic("failed to open lockfile: {}", (cause.value.name(),));
-                    }
-                    LoadStep::ParseFile => {
-                        Output::err_generic("failed to parse lockfile: {}", (cause.value.name(),));
-                    }
-                    LoadStep::ReadFile => {
-                        Output::err_generic("failed to read lockfile: {}", (cause.value.name(),));
-                    }
-                    LoadStep::Migrating => {
-                        Output::err_generic(
-                            "failed to migrate lockfile: {}",
-                            (cause.value.name(),),
-                        );
-                    }
-                }
-
-                if log.has_errors() {
-                    let _ = log.print(std::ptr::from_mut(Output::error_writer()));
-                }
-
-                Global::crash();
-            }
-        };
-
         // Note: capture the package.json path before constructing
         // `pack::Context` so the `&mut PackageManager` borrow doesn't conflict.
-        // SAFETY: `manager_ptr` came from `&'a mut PackageManager`.
-        let abs_pkg_json = bun_core::ZBox::from_bytes(
-            unsafe { &*manager_ptr }
-                .original_package_json_path
-                .as_bytes(),
-        );
+        let abs_pkg_json =
+            bun_core::ZBox::from_bytes(manager.original_package_json_path.as_bytes());
 
         let mut pack_ctx = pack::Context {
-            // SAFETY: `manager_ptr` came from `&'a mut PackageManager`;
-            // `lockfile_ref` borrows the local `lockfile`, not the manager,
-            // so the re-derived `&mut` is the only live manager borrow.
-            manager: unsafe { &mut *manager_ptr },
+            manager,
             command_ctx: ctx,
-            lockfile: lockfile_ref,
             bundled_deps: Vec::new(),
             stats: pack::Stats::default(),
         };

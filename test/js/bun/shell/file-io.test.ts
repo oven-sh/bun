@@ -125,6 +125,96 @@ describe("IOWriter file output redirection", () => {
         fs.closeSync(holder);
       }
     });
+
+    // open(2) on a FIFO blocks until the other end is opened. The redirect
+    // target must not be opened on the event-loop thread, or the whole process
+    // freezes until some other process shows up. Each fixture opens the other
+    // end from its own event loop, which can only happen if that loop is
+    // still running while the shell waits for the partner.
+    describe.skipIf(!isPosix)("redirect to a FIFO does not block the event loop", () => {
+      const fixture = /* ts */ `
+        import { $ } from "bun";
+        import * as fs from "node:fs";
+        const fifo = process.env.FIFO!;
+        const mode = process.env.MODE!;
+        const echo = Bun.which("echo")!;
+        const cat = Bun.which("cat")!;
+        // .then() starts the shell; the redirect open now waits for a partner.
+        let result;
+        switch (mode) {
+          case "builtin >": {
+            const pending = $\`echo hello > \${fifo}\`.quiet().nothrow().then(r => r);
+            const text = await fs.promises.readFile(fifo, "utf8");
+            const r = await pending;
+            result = { text, exitCode: r.exitCode, stderr: r.stderr.toString() };
+            break;
+          }
+          case "external >": {
+            const pending = $\`\${echo} hello > \${fifo}\`.quiet().nothrow().then(r => r);
+            const text = await fs.promises.readFile(fifo, "utf8");
+            const r = await pending;
+            result = { text, exitCode: r.exitCode, stderr: r.stderr.toString() };
+            break;
+          }
+          case "builtin <": {
+            const pending = $\`cat < \${fifo}\`.quiet().nothrow().then(r => r);
+            await fs.promises.writeFile(fifo, "hello\\n");
+            const r = await pending;
+            result = { text: r.stdout.toString(), exitCode: r.exitCode, stderr: r.stderr.toString() };
+            break;
+          }
+          case "external <": {
+            const pending = $\`\${cat} < \${fifo}\`.quiet().nothrow().then(r => r);
+            await fs.promises.writeFile(fifo, "hello\\n");
+            const r = await pending;
+            result = { text: r.stdout.toString(), exitCode: r.exitCode, stderr: r.stderr.toString() };
+            break;
+          }
+        }
+        console.log(JSON.stringify(result));
+      `;
+
+      for (const mode of ["builtin >", "external >", "builtin <", "external <"]) {
+        test.concurrent(
+          mode,
+          async () => {
+            using dir = tempDir("shell-fifo-open", { "fixture.ts": fixture });
+            const fifo = join(String(dir), "target.fifo");
+            await using mk = Bun.spawn({ cmd: [Bun.which("mkfifo")!, fifo], env: bunEnv });
+            expect(await mk.exited).toBe(0);
+
+            await using proc = Bun.spawn({
+              cmd: [bunExe(), "fixture.ts"],
+              cwd: String(dir),
+              env: { ...bunEnv, FIFO: fifo, MODE: mode },
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+            // A blocked open never returns on its own: the child's main thread
+            // sits in open(2) and no partner ever arrives. Bound the wait.
+            const exited = await Promise.race([proc.exited, Bun.sleep(30_000).then(() => "hung" as const)]);
+            if (exited === "hung") {
+              proc.kill(9);
+              await proc.exited;
+            }
+            const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
+            let parsed: unknown;
+            try {
+              parsed = JSON.parse(stdout.trim().split("\n").pop() ?? "");
+            } catch {
+              parsed = stdout;
+            }
+            expect({ parsed, stderr, exited }).toEqual({
+              parsed: { text: "hello\n", exitCode: 0, stderr: "" },
+              stderr: expect.any(String),
+              exited: 0,
+            });
+          },
+          // Debug/ASAN child startup plus the 30s hang-detection race above.
+          60_000,
+        );
+      }
+    });
   });
 
   describe("writer queue and bump behavior", () => {

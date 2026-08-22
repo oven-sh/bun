@@ -1461,15 +1461,19 @@ async function getPipelineOptions() {
 /**
  * True when no running or scheduled job in the pipeline targets the darwin
  * beta queue, so one more PR can be given the beta lane without queueing
- * behind another. Needs a REST token (`BUILDKITE_API_TOKEN`); without one,
- * or on any error, the answer is false and the lane is simply not added.
+ * behind another. Reads the cluster secret `BUILDKITE_READ_TOKEN` (a REST
+ * token with read_builds only); without it, or on any error, the answer
+ * is false and the lane is simply not added.
  * Two uploads a few seconds apart can both see "idle"; a queue of two is
  * the worst case, never a backlog.
  * @returns {Promise<boolean>}
  */
 async function darwinBetaQueueIdle() {
-  const token = getEnv("BUILDKITE_API_TOKEN", false);
-  if (!token || !isBuildkite) {
+  if (!isBuildkite) {
+    return false;
+  }
+  const token = getSecret("BUILDKITE_READ_TOKEN", { required: false });
+  if (!token) {
     return false;
   }
   try {

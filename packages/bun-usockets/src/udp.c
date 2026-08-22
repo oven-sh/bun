@@ -116,7 +116,7 @@ void us_udp_socket_close(struct us_udp_socket_t *s) {
     struct us_loop_t *loop = s->loop;
     struct us_poll_t *p = (struct us_poll_t *) s;
     us_poll_stop(p, loop);
-    bsd_close_socket(us_poll_fd(p));
+    us_internal_poll_close_fd(p);
     s->closed = 1;
     s->next = loop->data.closed_udp_head;
     loop->data.closed_udp_head = s;

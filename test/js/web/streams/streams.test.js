@@ -2861,49 +2861,61 @@ describe("iterator result consumers", () => {
   });
 
   test("readMany() on a direct stream", async () => {
+    // The second write waits for the first readMany() to settle, so each call sees one chunk.
+    const secondWrite = Promise.withResolvers();
     const stream = new ReadableStream({
       type: "direct",
       async pull(c) {
         c.write("x");
-        await Bun.sleep(1);
+        await secondWrite.promise;
         c.write("y");
         c.close();
       },
     });
     const reader = stream.getReader();
     const first = await reader.readMany();
+    secondWrite.resolve();
     const second = await reader.readMany();
-    expect({ first: decode(first.value), firstDone: first.done, second: decode(second.value) }).toEqual({
+    const last = await reader.readMany();
+    expect({
+      first: decode(first.value),
+      firstDone: first.done,
+      second: decode(second.value),
+      secondDone: second.done,
+      last: { value: last.value, done: last.done },
+    }).toEqual({
       first: ["x"],
       firstDone: false,
       second: ["y"],
+      secondDone: false,
+      last: { value: [], done: true },
     });
   });
 
   test("readableStreamToArray over pending reads and over a direct stream", async () => {
-    let controller;
+    // Each pull() runs when the consumer's pending read drained the queue.
+    let pulls = 0;
     const queued = new ReadableStream({
-      start(c) {
-        controller = c;
+      pull(c) {
+        if (++pulls <= 2) c.enqueue(pulls);
+        else c.close();
       },
     });
-    const queuedPromise = readableStreamToArray(queued);
-    controller.enqueue(1);
-    await Bun.sleep(0);
-    controller.enqueue(2);
-    controller.close();
-
     const direct = new ReadableStream({
       type: "direct",
-      async pull(c) {
+      pull(c) {
         c.write("1");
-        await Bun.sleep(1);
         c.write("2");
         c.close();
       },
     });
-    expect({ queued: await queuedPromise, direct: decode(await readableStreamToArray(direct)) }).toEqual({
+    expect({
+      queued: await readableStreamToArray(queued),
+      pulls,
+      direct: decode(await readableStreamToArray(direct)),
+    }).toEqual({
       queued: [1, 2],
+      pulls: 3,
       direct: ["1", "2"],
     });
   });
@@ -2911,9 +2923,8 @@ describe("iterator result consumers", () => {
   test("readableStreamToText over a direct stream", async () => {
     const stream = new ReadableStream({
       type: "direct",
-      async pull(c) {
+      pull(c) {
         c.write("he");
-        await Bun.sleep(1);
         c.write("llo");
         c.close();
       },
@@ -3022,26 +3033,27 @@ describe("iterator result consumers", () => {
   });
 
   test("a ReadableStream response body is pumped into the HTTP sink", async () => {
+    // Each pull() runs when the sink drained the queue, so the body arrives in three batches.
+    let pulls = 0;
     using server = Bun.serve({
       port: 0,
       fetch() {
-        let controller;
         const stream = new ReadableStream({
           start(c) {
-            controller = c;
+            c.enqueue("part1-");
+          },
+          pull(c) {
+            if (++pulls === 1) {
+              c.enqueue("part2-");
+              c.enqueue("part3");
+            } else {
+              c.close();
+            }
           },
         });
-        (async () => {
-          controller.enqueue("part1-");
-          await Bun.sleep(1);
-          controller.enqueue("part2-");
-          controller.enqueue("part3");
-          await Bun.sleep(1);
-          controller.close();
-        })();
         return new Response(stream);
       },
     });
-    expect(await (await fetch(server.url)).text()).toBe("part1-part2-part3");
+    expect({ text: await (await fetch(server.url)).text(), pulls }).toEqual({ text: "part1-part2-part3", pulls: 2 });
   });
 });

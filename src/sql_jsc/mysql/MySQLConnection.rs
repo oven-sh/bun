@@ -218,6 +218,16 @@ impl MySQLConnection {
     }
 
     #[inline]
+    pub(crate) fn set_lifetime_exceeded(&mut self) {
+        self.flags.insert(ConnectionFlags::LIFETIME_EXCEEDED);
+    }
+
+    #[inline]
+    pub(crate) fn is_lifetime_exceeded(&self) -> bool {
+        self.flags.contains(ConnectionFlags::LIFETIME_EXCEEDED)
+    }
+
+    #[inline]
     pub(crate) fn enqueue_request(&mut self, request: *mut JSMySQLQuery) {
         self.queue.add(request);
     }

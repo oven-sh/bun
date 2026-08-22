@@ -1,6 +1,6 @@
 import { createSocketPair, fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isPosix, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isPosix, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { join } from "node:path";
 
@@ -462,6 +462,35 @@ if (isWindows) {
     );
   });
 }
+
+// On Windows the file write completes in a libuv callback, whose error used
+// to reach JS as code "UV_EBADF" with an "unknown error" message.
+it("writing to a read-only fd reports EBADF", async () => {
+  using dir = tempDir("filesink-ebadf", { "target.txt": "original" });
+  const target = join(String(dir), "target.txt");
+  const fd = fs.openSync(target, "r");
+  let caught: any;
+  try {
+    const sink = Bun.file(fd).writer();
+    sink.write("abc");
+    await sink.end();
+  } catch (e) {
+    caught = e;
+  } finally {
+    try {
+      fs.closeSync(fd);
+    } catch {}
+  }
+  expect(caught).toBeDefined();
+  const { code, errno, syscall, message } = caught;
+  expect({ code, errno, syscall, message }).toEqual({
+    code: "EBADF",
+    errno: isWindows ? -4083 : -9,
+    syscall: "write",
+    message: "EBADF: bad file descriptor, write",
+  });
+  expect(fs.readFileSync(target, "utf8")).toBe("original");
+});
 
 // When a write to a pollable fd returns `.pending`, FileSink takes a
 // `must_be_kept_alive_until_eof` ref on itself so it survives until the

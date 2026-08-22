@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { readdirSync, statSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 // https://github.com/oven-sh/bun/issues/40111
@@ -8,8 +8,9 @@ import { join } from "path";
 // mode 000. POSIX checks write permission at open(), so this worked on ext4,
 // but WSL2 DrvFS (9p) re-checks the file mode on ftruncate() and returned
 // EACCES, failing the build. The temp file must carry owner read/write
-// permission from creation.
-test.skipIf(isWindows)("compile temp file is not created with mode 000", async () => {
+// permission from creation. Skipped on macOS: the clonefile() fast path
+// copies the executable's 0755 mode and never reaches the open() under test.
+test.skipIf(isWindows || isMacOS)("compile temp file is not created with mode 000", async () => {
   using dir = tempDir("issue-40111", {
     "index.ts": `console.log("hello");`,
   });
@@ -29,6 +30,9 @@ test.skipIf(isWindows)("compile temp file is not created with mode 000", async (
   // creation through the copy of the whole bun executable and the ELF
   // rewrite, until it is renamed to the outfile.
   const observed: number[] = [];
+  // Drain the pipes while the loop runs so a full pipe cannot block the child.
+  const stdoutPromise = proc.stdout.text();
+  const stderrPromise = proc.stderr.text();
   let exited = false;
   const exitPromise = proc.exited.then(code => {
     exited = true;
@@ -47,7 +51,7 @@ test.skipIf(isWindows)("compile temp file is not created with mode 000", async (
     await Bun.sleep(1);
   }
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), exitPromise]);
+  const [stdout, stderr, exitCode] = await Promise.all([stdoutPromise, stderrPromise, exitPromise]);
 
   expect(observed.length).toBeGreaterThan(0);
   for (const mode of observed) {

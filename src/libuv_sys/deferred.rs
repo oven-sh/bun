@@ -28,8 +28,8 @@
 //! accumulates whatever else completed in its own state.
 
 use super::libuv::{
-    Handle, Loop, ReturnCode, addrinfo, fs_t, uv__queue, uv_close_cb, uv_connect_cb, uv_connect_t,
-    uv_fs_cb, uv_getaddrinfo_cb, uv_getaddrinfo_t, uv_req_t, uv_write_cb, uv_write_t,
+    Handle, Loop, ReturnCode, fs_t, uv__queue, uv_close_cb, uv_connect_cb, uv_connect_t, uv_fs_cb,
+    uv_req_t,
 };
 use core::ffi::{c_int, c_void};
 use core::mem::{offset_of, size_of};
@@ -67,8 +67,9 @@ impl Default for Deferred {
     }
 }
 
-/// The queue of `loop_`. Null for a loop not created through `us_create_loop`
-/// (nothing drains such a loop, so nothing may defer on it).
+/// The queue of `loop_`: the thread's own loop gets one in `Loop::get`, a loop
+/// `us_create_loop` made itself keeps it in `us_loop_t`. Null for any other
+/// loop (nothing drains such a loop, so nothing may defer on it).
 ///
 /// # Safety
 /// `loop_` is a live loop.
@@ -226,7 +227,7 @@ pub unsafe extern "C" fn Bun__uv_dispatch_deferred(loop_: *mut Loop) {
 // libuv itself never touches. That is exactly enough room for the completion
 // callback, a queue node and the completion status, so a request needs no
 // cooperation from its owner to be deferred: arm it with `fs_callback` /
-// `write_callback` / ... when issuing it (they return the libuv callback to
+// `connect_callback` (or `uv_write_t::write`) when issuing it (they return the libuv callback to
 // pass), and the owner's callback runs from the dispatch phase with the same
 // arguments libuv delivered. The request has to stay allocated until its
 // callback ran anyway, so the node is always valid while queued.
@@ -258,6 +259,13 @@ pub(crate) unsafe fn arm<R>(req: *mut R, cb: *mut c_void) {
     // SAFETY: caller passes a request it is about to hand to libuv.
     unsafe {
         let slots = req_slots(req);
+        // Re-issuing a request whose previous completion has not been dispatched
+        // yet would unlink nothing and corrupt the queue; owners issue the next
+        // operation from the completion callback, never before it.
+        debug_assert!(
+            !(*slots).node.is_queued(),
+            "libuv request re-issued before its completion was dispatched"
+        );
         (*slots).cb = cb;
         (*slots).node = Deferred::new();
         (*slots).status = 0;
@@ -289,36 +297,6 @@ pub unsafe fn fs_callback(req: *mut fs_t, cb: unsafe extern "C" fn(*mut fs_t)) -
     Some(trampoline)
 }
 
-/// As [`fs_callback`], for `uv_write` / `uv_write2`.
-///
-/// # Safety
-/// `req` is the request being issued and stays allocated until `cb` ran.
-pub unsafe fn write_callback(
-    req: *mut uv_write_t,
-    cb: unsafe extern "C" fn(*mut uv_write_t, ReturnCode),
-) -> uv_write_cb {
-    unsafe extern "C" fn trampoline(req: *mut uv_write_t, status: ReturnCode) {
-        unsafe fn run(node: *mut Deferred) {
-            // SAFETY: armed by `write_callback`; libuv is done with the request.
-            unsafe {
-                let req: *mut uv_write_t = req_from_node(node);
-                let slots = req_slots(req);
-                let cb: unsafe extern "C" fn(*mut uv_write_t, ReturnCode) =
-                    core::mem::transmute((*slots).cb);
-                cb(req, ReturnCode((*slots).status as c_int));
-            }
-        }
-        // SAFETY: `req` is the armed request libuv just completed.
-        unsafe {
-            (*req_slots(req)).status = status.0 as isize;
-            Deferred::enqueue((*(*req).handle).loop_, &raw mut (*req_slots(req)).node, run);
-        }
-    }
-    // SAFETY: per fn contract.
-    unsafe { arm(req, cb as *mut c_void) };
-    Some(trampoline)
-}
-
 /// As [`fs_callback`], for `uv_pipe_connect2` / `uv_tcp_connect`.
 ///
 /// # Safety
@@ -342,39 +320,6 @@ pub unsafe fn connect_callback(
         unsafe {
             (*req_slots(req)).status = status.0 as isize;
             Deferred::enqueue((*(*req).handle).loop_, &raw mut (*req_slots(req)).node, run);
-        }
-    }
-    // SAFETY: per fn contract.
-    unsafe { arm(req, cb as *mut c_void) };
-    Some(trampoline)
-}
-
-/// As [`fs_callback`], for `uv_getaddrinfo`. The result list is the request's
-/// own `addrinfo` field, which libuv leaves to `uv_freeaddrinfo`.
-///
-/// # Safety
-/// `req` is the request being issued and stays allocated until `cb` ran.
-pub unsafe fn getaddrinfo_callback(
-    req: *mut uv_getaddrinfo_t,
-    cb: unsafe extern "C" fn(*mut uv_getaddrinfo_t, c_int, *mut addrinfo),
-) -> uv_getaddrinfo_cb {
-    unsafe extern "C" fn trampoline(req: *mut uv_getaddrinfo_t, status: c_int, res: *mut addrinfo) {
-        unsafe fn run(node: *mut Deferred) {
-            // SAFETY: armed by `getaddrinfo_callback`; libuv is done with the request.
-            unsafe {
-                let req: *mut uv_getaddrinfo_t = req_from_node(node);
-                let slots = req_slots(req);
-                let cb: unsafe extern "C" fn(*mut uv_getaddrinfo_t, c_int, *mut addrinfo) =
-                    core::mem::transmute((*slots).cb);
-                cb(req, (*slots).status as c_int, (*req).addrinfo);
-            }
-        }
-        // SAFETY: `req` is the armed request libuv just completed; `res` is
-        // `req->addrinfo` (uv__getaddrinfo_done), read back from there in `run`.
-        unsafe {
-            debug_assert!(res == (*req).addrinfo);
-            (*req_slots(req)).status = status as isize;
-            Deferred::enqueue((*req).loop_, &raw mut (*req_slots(req)).node, run);
         }
     }
     // SAFETY: per fn contract.

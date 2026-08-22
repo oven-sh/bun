@@ -130,8 +130,10 @@ test.skipIf(process.platform !== "win32")(
   async () => {
     // Same shape as above with pipe reads instead of sockets: both children
     // answer at once, so one poll of the loop collects both stdout reads, and
-    // whichever is handled first waits (in a nested tick) for the other.
-    const child = `process.stdout.write("r"); process.stdin.on("data", () => { process.stdout.write("x"); });`;
+    // whichever is handled first waits (in a nested tick) for the other. The
+    // children exit right after answering, so their exits and pipe EOFs are
+    // dispatched inside that nested tick as well.
+    const child = `process.stdout.write("r"); process.stdin.on("data", () => { process.stdout.write("x", () => process.exit(0)); });`;
     const spawn = () =>
       Bun.spawn({ cmd: [process.execPath, "-e", child], stdin: "pipe", stdout: "pipe", stderr: "inherit" });
     await using a = spawn();
@@ -166,8 +168,7 @@ test.skipIf(process.platform !== "win32")(
     await done;
     const [first, second] = order[0] === "a:start" ? ["a", "b"] : ["b", "a"];
     expect(order).toEqual([first + ":start", second + ":start", second + ":end", first + ":end"]);
-    a.kill();
-    b.kill();
+    expect([await a.exited, await b.exited]).toEqual([0, 0]);
   },
 );
 

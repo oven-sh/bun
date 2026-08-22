@@ -84,3 +84,18 @@ const s4 = Bun.serve({
     },
   },
 });
+
+// In-memory Blobs and the Blobs of a compiled executable's embedded files are
+// route values, like Bun.file() of a file on disk.
+Bun.serve({
+  routes: {
+    "/on-disk.txt": Bun.file("on-disk.txt"),
+    "/in-memory.txt": new Blob(["in memory"], { type: "text/plain" }),
+  },
+});
+
+const embeddedRoutes: Record<string, Blob> = {};
+Bun.embeddedFiles.forEach((blob, i) => {
+  embeddedRoutes[`/embedded/${i}`] = blob;
+});
+Bun.serve({ routes: embeddedRoutes });

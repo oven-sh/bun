@@ -1,5 +1,5 @@
 //! StaticRoute stores and serves a static blob. This can be created out of a JS
-//! Response object, or from globally allocated bytes.
+//! Response object, an in-memory JS Blob, or from globally allocated bytes.
 
 use core::cell::Cell;
 use core::mem::size_of;
@@ -18,7 +18,7 @@ use crate::server::jsc::{JSGlobalObject, JSValue, JsResult};
 use crate::server::{AnyServer, HTTPStatusText, write_status};
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::headers_ref::any_blob_content_type;
-use crate::webcore::{AnyBlob, FetchHeaders, InternalBlob, Response};
+use crate::webcore::{AnyBlob, Blob, FetchHeaders, InternalBlob, Response};
 
 // bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) — single-thread refcount.
 // `*StaticRoute` is also passed as uws onAborted/
@@ -257,6 +257,25 @@ impl StaticRoute {
                 server: Cell::new(None),
                 status_code: response.status_code(),
             }))));
+        }
+
+        // `FileRoute::from_js` runs first and takes the blobs backed by a file
+        // on disk. The ones left are held in memory (`new Blob()`, a
+        // `Bun.file()` of a file embedded in a compiled executable, a
+        // `Bun.embeddedFiles` entry, a `BuildArtifact`), so they are served the
+        // same way as the body of `new Response(blob)`. An S3 blob has no bytes
+        // to snapshot either, so it stays rejected.
+        if let Some(blob) = argument.as_class_ref::<Blob>() {
+            if blob.needs_to_read_file() || blob.is_s3() {
+                return Ok(None);
+            }
+            let blob = blob.dupe();
+            blob.global_this
+                .set(std::ptr::from_ref::<JSGlobalObject>(global_this));
+            return Ok(Some(Self::init_from_any_blob(
+                AnyBlob::Blob(blob),
+                InitFromBytesOptions::default(),
+            )));
         }
 
         Ok(None)

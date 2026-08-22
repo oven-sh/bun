@@ -1,3 +1,4 @@
+import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
 import { isBroken, isMacOS, tempDir } from "harness";
 import { routes, static_responses } from "./bun-serve-static-helpers";
@@ -343,5 +344,187 @@ describe("static route preconditions (RFC 9110 §13.2.2)", () => {
     it("If-Match pass then If-None-Match match → 304", async () => {
       expect((await get("/s", { "If-Match": '"s1"', "If-None-Match": '"s1"' }, method)).status).toBe(304);
     });
+  });
+});
+
+// A Blob whose bytes are already in memory (new Blob(), Bun.file() of a file
+// embedded in a compiled executable, a Bun.embeddedFiles entry) is a static
+// route, served the way `new Response(blob)` would be. Bun.file() of a file on
+// disk keeps going through the file route.
+describe("Blob route values", () => {
+  const notFound = () => new Response("fallback", { status: 404 });
+
+  async function request(server: Server<undefined>, path: string, init?: RequestInit) {
+    const res = await fetch(new URL(path, server.url), init);
+    return {
+      status: res.status,
+      contentType: res.headers.get("content-type"),
+      contentLength: res.headers.get("content-length"),
+      etag: res.headers.get("etag"),
+      body: await res.text(),
+    };
+  }
+
+  test("serves the bytes and the type of the Blob", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/typed": new Blob(["<h1>hi</h1>"], { type: "text/html" }),
+        "/untyped": new Blob(["no type"]),
+        "/empty": new Blob([]),
+        "/named": new File(["named"], "named.bin", { type: "application/x-named" }),
+        "/slice": new Blob(["0123456789"], { type: "text/plain" }).slice(2, 6, "text/x-slice"),
+      },
+      fetch: notFound,
+    });
+
+    const etag = expect.stringMatching(/^"[0-9a-f]+"$/);
+    expect({
+      typed: await request(server, "/typed"),
+      untyped: await request(server, "/untyped"),
+      empty: await request(server, "/empty"),
+      named: await request(server, "/named"),
+      slice: await request(server, "/slice"),
+    }).toEqual({
+      typed: { status: 200, contentType: "text/html;charset=utf-8", contentLength: "11", etag, body: "<h1>hi</h1>" },
+      untyped: { status: 200, contentType: null, contentLength: "7", etag, body: "no type" },
+      empty: { status: 200, contentType: null, contentLength: "0", etag: null, body: "" },
+      named: { status: 200, contentType: "application/x-named", contentLength: "5", etag, body: "named" },
+      slice: { status: 200, contentType: "text/x-slice", contentLength: "4", etag, body: "2345" },
+    });
+  });
+
+  test("responds exactly like the same Blob wrapped in new Response()", async () => {
+    const typed = new Blob(["same bytes"], { type: "application/x-parity" });
+    const untyped = new Blob(["same bytes"]);
+    await using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/typed": typed,
+        "/typed/wrapped": new Response(typed),
+        "/untyped": untyped,
+        "/untyped/wrapped": new Response(untyped),
+      },
+      fetch: notFound,
+    });
+
+    for (const path of ["/typed", "/untyped"]) {
+      for (const method of ["GET", "HEAD"]) {
+        const bare = await request(server, path, { method });
+        expect(bare.status).toBe(200);
+        expect(bare).toEqual(await request(server, `${path}/wrapped`, { method }));
+      }
+    }
+  });
+
+  test("gets the static route cache headers", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: { "/b": new Blob(["cacheable"], { type: "text/plain" }) },
+      fetch: notFound,
+    });
+
+    const { etag } = await request(server, "/b");
+    expect(etag).toMatch(/^"[0-9a-f]+"$/);
+    expect(await request(server, "/b", { method: "HEAD" })).toEqual({
+      status: 200,
+      contentType: "text/plain;charset=utf-8",
+      contentLength: "9",
+      etag,
+      body: "",
+    });
+    expect(await request(server, "/b", { headers: { "If-None-Match": etag! } })).toMatchObject({
+      status: 304,
+      body: "",
+    });
+  });
+
+  test("is accepted under a method", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      routes: { "/m": { GET: new Blob(["GET only"], { type: "text/plain" }) } },
+      fetch: notFound,
+    });
+
+    expect({
+      get: (await request(server, "/m")).body,
+      post: await request(server, "/m", { method: "POST" }).then(r => [r.status, r.body]),
+    }).toEqual({ get: "GET only", post: [404, "fallback"] });
+  });
+
+  test("is accepted under the static option", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      static: { "/s": new Blob(["static option"], { type: "text/plain" }) },
+      fetch: notFound,
+    });
+
+    expect((await request(server, "/s")).body).toBe("static option");
+  });
+
+  test("does not consume the Blob, so it can be registered twice and again on reload()", async () => {
+    const blob = new Blob(["shared"], { type: "text/plain" });
+    await using server = Bun.serve({ port: 0, routes: { "/a": blob, "/b": blob }, fetch: notFound });
+    expect([(await request(server, "/a")).body, (await request(server, "/b")).body]).toEqual(["shared", "shared"]);
+
+    server.reload({ routes: { "/c": blob }, fetch: notFound });
+    expect((await request(server, "/c")).body).toBe("shared");
+    expect(await blob.text()).toBe("shared");
+  });
+
+  test("keeps the bytes alive after the Blob itself is garbage collected", async () => {
+    // The options literal is the only reference to the Blob.
+    await using server = Bun.serve({
+      port: 0,
+      routes: { "/gc": new Blob([Buffer.alloc(64 * 1024, "g")], { type: "text/plain" }) },
+      fetch: notFound,
+    });
+    Bun.gc(true);
+
+    const { status, contentLength, body } = await request(server, "/gc");
+    expect({ status, contentLength, body: body.length, allG: !/[^g]/.test(body) }).toEqual({
+      status: 200,
+      contentLength: String(64 * 1024),
+      body: 64 * 1024,
+      allG: true,
+    });
+  });
+
+  test("a BuildArtifact responds like new Response(artifact)", async () => {
+    using dir = tempDir("blob-route-artifact", { "entry.ts": "export const answer = 42;" });
+    const {
+      outputs: [artifact],
+    } = await Bun.build({ entrypoints: [`${dir}/entry.ts`] });
+    await using server = Bun.serve({
+      port: 0,
+      routes: { "/bare.js": artifact, "/wrapped.js": new Response(artifact) },
+      fetch: notFound,
+    });
+
+    const bare = await request(server, "/bare.js");
+    expect(bare.status).toBe(200);
+    expect(bare.body).toBe(await artifact.text());
+    expect(bare).toEqual(await request(server, "/wrapped.js"));
+  });
+
+  test("Bun.file() of a file on disk is still read on every request", async () => {
+    using dir = tempDir("blob-route-disk", { "a.txt": "before" });
+    await using server = Bun.serve({ port: 0, routes: { "/a.txt": Bun.file(`${dir}/a.txt`) }, fetch: notFound });
+
+    expect((await request(server, "/a.txt")).body).toBe("before");
+    await Bun.write(`${dir}/a.txt`, "after!");
+    expect((await request(server, "/a.txt")).body).toBe("after!");
+  });
+
+  test("an S3 file is still rejected", () => {
+    const s3 = Bun.s3.file("key", {
+      bucket: "bucket",
+      accessKeyId: "id",
+      secretAccessKey: "secret",
+      endpoint: "http://127.0.0.1:1",
+    });
+    expect(() => {
+      using _server = Bun.serve({ port: 0, routes: { "/s3": s3 }, fetch: notFound });
+    }).toThrow("'routes' expects a Record<string,");
   });
 });

@@ -65,6 +65,10 @@ RUST_READY="$RUST_HOME/BREW_SIGNED_OK"
 # V8 stub (Rust napi 引用的 V8 符号)
 SHIM_DIR="/data/storage/el2/base/tmp/icu-shim"
 
+# 已知的陈旧 libc++ ABI 命名空间 (mangled 前缀)。std 里没有以双下划线开头的
+# 公开实体, 该前缀只会来自内联 ABI 命名空间, 不会误伤正常符号。
+KNOWN_STALE_ABI_MARKERS="_ZNSt3__h"
+
 export TMPDIR=/data/storage/el2/base/tmp
 export SSL_CERT_FILE="$HOMEBREW_PREFIX/etc/ca-certificates/cert.pem"
 export CURL_CA_BUNDLE="$SSL_CERT_FILE"
@@ -370,6 +374,82 @@ CARGO
   ok "构建环境已设置 (CC=$CC, rustc=$("$RUST_HOME/bin/rustc" --version))"
 }
 
+# ─── 阶段6b: 扫描陈旧 ABI 对象 ────────────────────────────────────────────
+# 背景: 2026-08-22 发现 obj/ 里混有早期用 OHOS SDK libc++ 头文件编译的对象
+# (ABI 命名空间 std::__h), 与统一工具链 llvm@21 的 std::__n1 不一致, 且无任何
+# 输入库提供 __h 符号 → 链接出 undefined symbol、产物运行时 Error relocating。
+# ninja 因源文件未变不会重编这些坏对象。此处在每次构建启动时按 ABI 命名空间
+# 归档签名 (_ZNSt<长度>__<命名空间>) 全量比对, 删除任何"好/坏命名空间集之外"
+# 的对象迫使 ninja 重编。平台 grep 对二进制文件不可靠, 用 python3 读字节。
+phase_scan_stale_abi() {
+  local obj_dir="$OUTDIR/obj"
+  [ -d "$obj_dir" ] || { info "obj/ 不存在, 跳过陈旧 ABI 扫描"; return 0; }
+  command -v python3 >/dev/null || { warn "无 python3, 跳过陈旧 ABI 扫描"; return 0; }
+
+  # 从两份 libc++_static.a 提取各自的 ABI 命名空间集合。
+  # 统一工具链 (llvm@21) 的集合 = 好; SDK 有而 llvm@21 没有的 = 坏。
+  # 另外始终内置已知的历史坏命名空间 (_ZNSt3__h): 2026-08 中旬某套已更换的
+  # 工具链用 __h 编译过 vendor 对象导致链接失败; 当前 SDK/llvm@21/设备
+  # libc++_shared.so 已全部是 __n1, 推导法拿不到它, 必须硬编码兜底。
+  local good_ns bad_ns
+  good_ns=$(nm -o "$LLVM21/lib/aarch64-linux-ohos/libc++_static.a" 2>/dev/null \
+    | grep -oE '_ZNSt[0-9]+__[a-z0-9]+' | sort -u)
+  bad_ns=$(nm -o "$OHOS_SDK/native/llvm/lib/aarch64-linux-ohos/libc++_static.a" 2>/dev/null \
+    | grep -oE '_ZNSt[0-9]+__[a-z0-9]+' | sort -u \
+    | comm -23 - <(printf '%s\n' "$good_ns") || true)
+  # 合并硬编码兜底标记, 并校验格式 (只收 _ZNSt<长度>__<小写命名空间> 形式)
+  bad_ns="$(printf '%s\n' "$bad_ns" "$KNOWN_STALE_ABI_MARKERS" | grep -E '^_ZNSt[0-9]+__[a-z0-9]+$' | sort -u)"
+  if [ -z "$good_ns" ] || [ -z "$bad_ns" ]; then
+    info "未能确定 libc++ ABI 命名空间差异, 跳过陈旧 ABI 扫描"
+    return 0
+  fi
+
+  STALE_ABI_LIST="$(mktemp)"
+  if ! GOOD_NS="$good_ns" BAD_NS="$bad_ns" OBJ_DIR="$obj_dir" LIST="$STALE_ABI_LIST" python3 <<'PYEOF'
+import os
+bad_markers = [m.encode() for m in os.environ["BAD_NS"].split()]
+obj_dir = os.environ["OBJ_DIR"]
+count = 0
+with open(os.environ["LIST"], "w") as out:
+    for root, _, files in os.walk(obj_dir):
+        for f in files:
+            if not f.endswith(".o"):
+                continue
+            p = os.path.join(root, f)
+            with open(p, "rb") as fh:
+                data = fh.read()
+            if any(m in data for m in bad_markers):
+                out.write(p + "\n")
+                count += 1
+print(f"[INFO]  扫描完成: {count} 个对象引用非统一 ABI 命名空间")
+PYEOF
+  then
+    err "陈旧 ABI 扫描失败"
+    rm -f "$STALE_ABI_LIST"
+    return 1
+  fi
+
+  local n
+  n=$(wc -l < "$STALE_ABI_LIST")
+  if [ "$n" -eq 0 ]; then
+    ok "陈旧 ABI 扫描通过 (无混用对象)"
+    rm -f "$STALE_ABI_LIST"
+    return 0
+  fi
+
+  warn "发现 $n 个使用非统一工具链 ABI 命名空间的对象:"
+  sed 's|'"$REPO_ROOT"'|.|' "$STALE_ABI_LIST" | while read -r f; do warn "  $f"; done
+
+  if [ -n "$DRY_RUN" ]; then
+    warn "DRY_RUN=1, 不删除"
+    rm -f "$STALE_ABI_LIST"
+    return 0
+  fi
+  xargs rm -f < "$STALE_ABI_LIST"
+  rm -f "$STALE_ABI_LIST"
+  ok "已清除陈旧 ABI 对象, ninja 将用 llvm@21 重编它们"
+}
+
 # ─── 阶段7: 构建 Bun ───────────────────────────────────────────────────────
 phase_build() {
   info "=== 构建 Bun (scripts/build.ts) ==="
@@ -557,6 +637,7 @@ main() {
   phase_bun_install
   phase_esbuild_patch
   phase_set_env
+  phase_scan_stale_abi
   phase_build
   phase_icu_shim
   phase_relink

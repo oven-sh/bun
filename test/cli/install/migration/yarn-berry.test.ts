@@ -58,7 +58,7 @@ async function expectFrozenInstall(dir: string) {
 }
 
 describe("yarn berry migration", () => {
-  test("npm packages keep the versions yarn.lock pinned", async () => {
+  test.concurrent("npm packages keep the versions yarn.lock pinned", async () => {
     const dir = await fixture("basic");
 
     const { stderr, exitCode } = await run(dir, "install");
@@ -86,6 +86,9 @@ describe("yarn berry migration", () => {
     expect(bunLock).toContain(
       `"what-bin@1.0.0", "http://localhost:1234/what-bin/-/what-bin-1.0.0.tgz", { "bin": { "what-bin": "what-bin.js" } }`,
     );
+    // what-bin is in dependencies (^1.5.0) and optionalDependencies (^1.0.0): the optional entry wins, as in bun
+    expect(bunLock).not.toContain(`"what-bin": "^1.5.0"`);
+    expect(bunLock).toContain(`"what-bin": "^1.0.0"`);
     expect(nodeModulesPackages(dir)).toMatchInlineSnapshot(`
       "node_modules/@types/is-number/@types/is-number@1.0.0
       node_modules/a-dep/a-dep@1.0.3
@@ -104,7 +107,7 @@ describe("yarn berry migration", () => {
     expect(await bunLockOf(dir)).toBe(bunLock);
   });
 
-  test("bun pm migrate", async () => {
+  test.concurrent("bun pm migrate", async () => {
     const dir = await fixture("basic");
 
     const { stderr, exitCode } = await run(dir, "pm", "migrate");
@@ -123,7 +126,7 @@ describe("yarn berry migration", () => {
     await expectFrozenInstall(dir);
   });
 
-  test("npm: aliases", async () => {
+  test.concurrent("npm: aliases", async () => {
     const dir = await fixture("aliases");
 
     const { stderr, exitCode } = await run(dir, "install");
@@ -155,6 +158,7 @@ describe("yarn berry migration", () => {
     await expectFrozenInstall(dir);
   });
 
+  // not concurrent: file snapshot matchers are unsupported in concurrent tests
   test("workspaces and workspace: ranges", async () => {
     const dir = await fixture("workspaces");
 
@@ -185,11 +189,13 @@ describe("yarn berry migration", () => {
     await expectFrozenInstall(dir);
   });
 
-  test("patch: protocol becomes patchedDependencies", async () => {
+  test.concurrent("patch: protocol becomes patchedDependencies", async () => {
     const dir = await fixture("patch");
 
     const { stderr, exitCode } = await run(dir, "install");
     expect(stderr).toContain("migrated lockfile from yarn.lock");
+    // the builtin compat patch that wraps the user patch (listed first in the fixture) folds too
+    expect(stderr).not.toContain("skipped patch");
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
@@ -244,7 +250,7 @@ describe("yarn berry migration", () => {
     await expectFrozenInstall(dir);
   });
 
-  test("resolutions that rewrote a descriptor are followed", async () => {
+  test.concurrent("resolutions that rewrote a descriptor are followed", async () => {
     const dir = await fixture("resolutions");
 
     const { stderr, exitCode } = await run(dir, "install");
@@ -264,7 +270,7 @@ describe("yarn berry migration", () => {
     await expectFrozenInstall(dir);
   });
 
-  test("a parent/name resolution only rebinds that parent's edge", async () => {
+  test.concurrent("a parent/name resolution only rebinds that parent's edge", async () => {
     const { packageDir: dir } = await verdaccio.createTestDir({
       bunfigOpts: { linker: "hoisted" },
       files: {
@@ -345,7 +351,7 @@ describe("yarn berry migration", () => {
     await expectFrozenInstall(dir);
   });
 
-  test("file:, portal: and link: dependencies", async () => {
+  test.concurrent("file:, portal: and link: dependencies", async () => {
     const dir = await fixture("protocols");
 
     const { stderr, exitCode } = await run(dir, "install");
@@ -381,7 +387,7 @@ describe("yarn berry migration", () => {
     await expectFrozenInstall(dir);
   });
 
-  test("tarball URL and git resolutions", async () => {
+  test.concurrent("tarball URL and git resolutions", async () => {
     const registry = verdaccio.registryUrl();
     const { packageDir: dir } = await verdaccio.createTestDir({
       bunfigOpts: { linker: "hoisted" },
@@ -393,6 +399,8 @@ describe("yarn berry migration", () => {
             "pkg-a": "git+ssh://git@example.com/org/pkg-a.git#v1",
             hue: "github:org/hue#main",
           },
+          // pkg-a asks for pkg-b@^2.0.0; the resolution redirects it to a git commit
+          resolutions: { "pkg-b": "git+ssh://git@example.com/org/pkg-b.git#v2" },
         }),
         "yarn.lock": `__metadata:
   version: 8
@@ -425,6 +433,13 @@ describe("yarn berry migration", () => {
   resolution: "pkg-a@git+ssh://git@example.com/org/pkg-a.git#commit=0123456789abcdef0123456789abcdef01234567"
   dependencies:
     no-deps: "${registry}no-deps/-/no-deps-2.0.0.tgz"
+    pkg-b: "npm:^2.0.0"
+  languageName: node
+  linkType: hard
+
+"pkg-b@git+ssh://git@example.com/org/pkg-b.git#v2":
+  version: 2.0.0
+  resolution: "pkg-b@git+ssh://git@example.com/org/pkg-b.git#commit=89abcdef0123456789abcdef0123456789abcdef"
   languageName: node
   linkType: hard
 `,
@@ -434,20 +449,24 @@ describe("yarn berry migration", () => {
     // the git hosts do not exist, so only migrate
     const { stderr, exitCode } = await run(dir, "pm", "migrate");
     expect(stderr).toContain("migrated lockfile from yarn.lock");
+    expect(stderr).not.toContain("bun will resolve");
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
     const bunLock = await bunLockOf(dir);
     expect(bunLock).toContain(`"no-deps": ["no-deps@http://localhost:1234/no-deps/-/no-deps-2.0.0.tgz", {}]`);
     expect(bunLock).toContain(
-      `"pkg-a": ["pkg-a@git+ssh://git@example.com/org/pkg-a.git#0123456789abcdef0123456789abcdef01234567", { "dependencies": { "no-deps": "http://localhost:1234/no-deps/-/no-deps-2.0.0.tgz" } }, "0123456789abcdef0123456789abcdef01234567"]`,
+      `"pkg-a": ["pkg-a@git+ssh://git@example.com/org/pkg-a.git#0123456789abcdef0123456789abcdef01234567", { "dependencies": { "no-deps": "http://localhost:1234/no-deps/-/no-deps-2.0.0.tgz", "pkg-b": "^2.0.0" } }, "0123456789abcdef0123456789abcdef01234567"]`,
+    );
+    expect(bunLock).toContain(
+      `"pkg-b": ["pkg-b@git+ssh://git@example.com/org/pkg-b.git#89abcdef0123456789abcdef0123456789abcdef", {}, "89abcdef0123456789abcdef0123456789abcdef"]`,
     );
     expect(bunLock).toContain(
       `"hue": ["hue@git+https://github.com/org/hue.git#ec3d1d18f73ab023b1fa3e31e1f4316f476566a5", {}, "ec3d1d18f73ab023b1fa3e31e1f4316f476566a5"]`,
     );
   });
 
-  test("__archiveUrl and npmRegistryServer from .yarnrc.yml decide the tarball URL", async () => {
+  test.concurrent("__archiveUrl and npmRegistryServer from .yarnrc.yml decide the tarball URL", async () => {
     // same server, but not the URL bun is configured with, so it is "another registry"
     const other = `http://127.0.0.1:${verdaccio.port}/`;
     const { packageDir: dir } = await verdaccio.createTestDir({
@@ -527,7 +546,7 @@ describe("yarn berry migration", () => {
     await expectFrozenInstall(dir);
   });
 
-  test("yarn 3 lockfiles (bare ranges) and unsupported protocols", async () => {
+  test.concurrent("yarn 3 lockfiles (bare ranges) and unsupported protocols", async () => {
     const { packageDir: dir } = await verdaccio.createTestDir({
       bunfigOpts: { linker: "hoisted" },
       files: {
@@ -591,7 +610,7 @@ describe("yarn berry migration", () => {
     );
   });
 
-  test("an invalid berry lockfile is reported and bun resolves from package.json", async () => {
+  test.concurrent("an invalid berry lockfile is reported and bun resolves from package.json", async () => {
     const dir = await fixture("malformed");
 
     const { stderr, exitCode } = await run(dir, "install");
@@ -603,7 +622,7 @@ describe("yarn berry migration", () => {
     expect(nodeModulesPackages(dir)).toMatchInlineSnapshot(`"node_modules/no-deps/no-deps@1.1.0"`);
   });
 
-  test("catalog: ranges from .yarnrc.yml", async () => {
+  test.concurrent("catalog: ranges from .yarnrc.yml", async () => {
     const { packageDir: dir } = await verdaccio.createTestDir({
       bunfigOpts: { linker: "hoisted" },
       files: {

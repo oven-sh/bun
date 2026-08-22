@@ -1575,8 +1575,7 @@ impl Lockfile {
                             .slice(self.buffers.string_bytes.as_slice());
                         if url.is_empty()
                             || bun_lock::url_is_under_registry(url, scope.url.href())
-                            || (!url.is_empty()
-                                && url == pkg.package.tarball_url.slice(&manifest.string_buf))
+                            || url == pkg.package.tarball_url.slice(&manifest.string_buf)
                         {
                             pkg_meta.integrity = pkg.package.integrity;
                         }

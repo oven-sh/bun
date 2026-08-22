@@ -64,6 +64,12 @@ __metadata:
   languageName: node
   linkType: hard
 
+"no-deps@patch:no-deps@patch%3Ano-deps@npm%253A1.0.0%23~/.yarn/patches/no-deps-npm-1.0.0-d5a9b7e1c2.patch%3A%3Aversion=1.0.0&hash=1a2b3c#optional!builtin<compat/fsevents>":
+  version: 1.0.0
+  resolution: "no-deps@patch:no-deps@patch%3Ano-deps@npm%253A1.0.0%23~/.yarn/patches/no-deps-npm-1.0.0-d5a9b7e1c2.patch%3A%3Aversion=1.0.0&hash=1a2b3c#optional!builtin<compat/fsevents>::version=1.0.0&hash=9f8e7d"
+  languageName: node
+  linkType: hard
+
 "no-deps@patch:no-deps@npm%3A1.0.0#~/.yarn/patches/no-deps-npm-1.0.0-d5a9b7e1c2.patch":
   version: 1.0.0
   resolution: "no-deps@patch:no-deps@npm%3A1.0.0#~/.yarn/patches/no-deps-npm-1.0.0-d5a9b7e1c2.patch::version=1.0.0&hash=1a2b3c"

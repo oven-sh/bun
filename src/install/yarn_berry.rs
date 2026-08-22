@@ -159,10 +159,16 @@ fn param<'a>(params: &'a [(&[u8], Vec<u8>)], key: &[u8]) -> Option<&'a [u8]> {
         .map(|(_, v)| v.as_slice())
 }
 
-/// `alpha:` prefix (`npm:`, `workspace:`, `file:`, ...), not `@scope/x` or `1.2.3`.
+/// A `scheme:` prefix (`npm:`, `workspace:`, `file:`, `git+ssh:`, ...), not
+/// `@scope/x` or `1.2.3`; RFC 3986 scheme characters.
 fn has_protocol(spec: &[u8]) -> bool {
     match strings::index_of_char_usize(spec, b':') {
-        Some(i) if i > 0 => spec[..i].iter().all(|c| c.is_ascii_alphabetic()),
+        Some(i) if i > 0 => {
+            spec[0].is_ascii_alphabetic()
+                && spec[..i]
+                    .iter()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'+' | b'-' | b'.'))
+        }
         _ => false,
     }
 }
@@ -360,13 +366,14 @@ fn decode_patch_spec(rest: &[u8]) -> (PatchSpec, Vec<(&[u8], Vec<u8>)>) {
     )
 }
 
-/// `name@head` with any `::params` removed; the key of `locator_to_entry`.
+/// `name@head` with any `::params` removed and `head` percent-decoded; the key
+/// of `locator_to_entry` (a `patch:` of a `patch:` encodes its inner locator twice).
 fn locator_key(name: &[u8], reference: &[u8]) -> Vec<u8> {
     let (head, _) = split_reference_params(reference);
     let mut key = Vec::with_capacity(name.len() + 1 + head.len());
     key.extend_from_slice(name);
     key.push(b'@');
-    key.extend_from_slice(head);
+    key.extend_from_slice(&percent_decode(head));
     key
 }
 
@@ -594,12 +601,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
                 };
             }
         }
-        let (head, _) = split_reference_params(reference);
-        let mut loc = Vec::with_capacity(name.len() + 1 + head.len());
-        loc.extend_from_slice(name);
-        loc.push(b'@');
-        loc.extend_from_slice(&percent_decode(head));
-        locator_to_entry.put(&loc, idx)?;
+        locator_to_entry.put(&locator_key(name, reference), idx)?;
     }
 
     if lockfile_workspaces.get(b".").is_none() {
@@ -917,42 +919,57 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
         entries[i].package_id = this.append_package_dedupe(&mut pkg)?;
     }
 
-    // patch entries -> same package as the locator they patch (+ patchedDependencies)
+    // patch entries -> same package as the locator they patch (+ patchedDependencies).
+    // A patch can wrap another patch (yarn's builtin compat patch around a user
+    // patch), so repeat until every chain reached a package.
     let mut patched: Vec<(Vec<u8>, Vec<u8>)> = Vec::new(); // ("name@version", patch path)
-    for i in 0..entries.len() {
-        if entries[i].kind != EntryKind::Patch {
-            continue;
-        }
-        let name = entries[i].name;
-        let (spec, params) = decode_patch_spec(&entries[i].reference[b"patch:".len()..]);
-        // the inner locator may itself carry ::params
-        let inner_key = match split_locator(&spec.inner) {
-            Some((n, r)) => locator_key(n, r),
-            None => locator_key(name, &spec.inner),
-        };
-        let Some(&inner_idx) = locator_to_entry.get(&inner_key) else {
-            if !silent {
-                bun_core::warn!(
-                    "skipped patch \"{}\" from yarn.lock: it patches \"{}\", which is not in the lockfile",
-                    bstr::BStr::new(entries[i].reference),
-                    bstr::BStr::new(&inner_key),
-                );
+    let mut pending: Vec<usize> = (0..entries.len())
+        .filter(|&i| entries[i].kind == EntryKind::Patch)
+        .collect();
+    loop {
+        let before = pending.len();
+        let mut still_pending = Vec::new();
+        for &i in &pending {
+            let name = entries[i].name;
+            let (spec, params) = decode_patch_spec(&entries[i].reference[b"patch:".len()..]);
+            // the inner locator may itself carry ::params
+            let inner_key = match split_locator(&spec.inner) {
+                Some((n, r)) => locator_key(n, r),
+                None => locator_key(name, &spec.inner),
+            };
+            let Some(&inner_idx) = locator_to_entry.get(&inner_key) else {
+                if !silent {
+                    bun_core::warn!(
+                        "skipped patch \"{}\" from yarn.lock: it patches \"{}\", which is not in the lockfile",
+                        bstr::BStr::new(entries[i].reference),
+                        bstr::BStr::new(&inner_key),
+                    );
+                }
+                continue;
+            };
+            let pid = entries[inner_idx].package_id;
+            if pid == INVALID_PACKAGE_ID {
+                if entries[inner_idx].kind == EntryKind::Patch {
+                    still_pending.push(i);
+                }
+                continue;
             }
-            continue;
-        };
-        let pid = entries[inner_idx].package_id;
-        entries[i].package_id = pid;
-        if pid == INVALID_PACKAGE_ID {
-            continue;
-        }
-        if let Some(path) = project_patch_path(&spec.source, &params, &workspace_path_of_locator) {
-            if let Some(key) = name_at_version(this, entries[inner_idx].name, pid)? {
-                // several descriptors / `resolutions` selectors can point at one patch
-                if !patched.iter().any(|(k, _)| *k == key) {
-                    patched.push((key, path));
+            entries[i].package_id = pid;
+            if let Some(path) =
+                project_patch_path(&spec.source, &params, &workspace_path_of_locator)
+            {
+                if let Some(key) = name_at_version(this, entries[inner_idx].name, pid)? {
+                    // several descriptors / `resolutions` selectors can point at one patch
+                    if !patched.iter().any(|(k, _)| *k == key) {
+                        patched.push((key, path));
+                    }
                 }
             }
         }
+        if still_pending.is_empty() || still_pending.len() == before {
+            break;
+        }
+        pending = still_pending;
     }
 
     // -- 4. bind dependency edges ---------------------------------------------
@@ -1413,15 +1430,23 @@ fn resolution_target_entry(
     }
     key.extend_from_slice(name);
     key.push(b'@');
-    if !has_protocol(target) {
-        key.extend_from_slice(b"npm:");
-    }
     key.extend_from_slice(target);
     if let Some(&i) = descriptor_to_entry
         .get(&key)
         .or_else(|| locator_to_entry.get(&key))
     {
         return Some(i);
+    }
+    if !has_protocol(target) {
+        key.truncate(name.len() + 1);
+        key.extend_from_slice(b"npm:");
+        key.extend_from_slice(target);
+        if let Some(&i) = descriptor_to_entry
+            .get(&key)
+            .or_else(|| locator_to_entry.get(&key))
+        {
+            return Some(i);
+        }
     }
     // `npm:other@1.2.3` names the aliased package's locator
     if let Some(rest) = target.strip_prefix(b"npm:") {
@@ -1552,6 +1577,7 @@ fn append_manifest_dependencies(
             let Some(name) = as_str(k) else { continue };
             let mut spec = as_str(v).unwrap_or(b"");
             let mut behavior = behavior;
+            let mut replaces: Option<usize> = None;
             if behavior.is_peer() {
                 if optional_peers.contains(&name) {
                     behavior.insert(Behavior::OPTIONAL);
@@ -1559,14 +1585,15 @@ fn append_manifest_dependencies(
             } else {
                 let e = seen.get_or_put(name)?;
                 if e.found_existing {
-                    // optionalDependencies win over dependencies; a dev duplicate is dropped
-                    if behavior.is_optional() {
-                        let existing = *e.value_ptr;
-                        this.buffers.dependencies[existing].behavior = Behavior::OPTIONAL;
+                    // an optionalDependencies entry replaces the dependencies one (as in
+                    // `Package::parse`); a dev duplicate is dropped
+                    if !behavior.is_optional() {
+                        continue;
                     }
-                    continue;
+                    replaces = Some(*e.value_ptr);
+                } else {
+                    *e.value_ptr = this.buffers.dependencies.len();
                 }
-                *e.value_ptr = this.buffers.dependencies.len();
             }
             // Ranges only yarn understands: depend on what bun can read instead;
             // package.json is rewritten to match after migration.
@@ -1588,6 +1615,10 @@ fn append_manifest_dependencies(
                     .filter(|p| !p.is_empty())
                     .map(|path| [b"file:".as_slice(), path].concat())
             };
+            if !behavior.is_peer() {
+                // an earlier group's rewrite of this name no longer applies
+                originals.swap_remove(name);
+            }
             if let Some(new_spec) = rewritten {
                 if !behavior.is_peer() {
                     originals.put(name, spec)?;
@@ -1603,6 +1634,10 @@ fn append_manifest_dependencies(
                 spec = new_spec;
             }
             append_dependency(this, log, name, spec, behavior)?;
+            if let Some(existing) = replaces {
+                let dep = this.buffers.dependencies.pop().expect("just appended");
+                this.buffers.dependencies[existing] = dep;
+            }
         }
     }
     // peers listed only in peerDependenciesMeta

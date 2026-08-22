@@ -1,7 +1,9 @@
 import { $ } from "bun";
 import { shellInternals } from "bun:internal-for-testing";
-import { describe, expect } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, isMacOS, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { join, sep } from "node:path";
 import { bunExe, createTestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
 const { builtinDisabled } = shellInternals;
@@ -170,6 +172,132 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
       .fileEquals(TEST_COPY_TO_FOLDER_NEW_FILE, "Hello, World!")
       .testMini({ cwd: mini_tmpdir })
       .runAsTest("cp_recurse");
+  });
+});
+
+// These spawn a child with the builtin force-enabled so they also run on POSIX,
+// where `cp` otherwise falls through to the system binary.
+describe.concurrent("bunshell cp src/dest validation", () => {
+  async function cp(cwd: string, command: string) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const r = await Bun.$\`${command}\`.nothrow().quiet(); process.stdout.write(r.stderr); process.exit(r.exitCode);`,
+      ],
+      cwd,
+      env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    return { stderr, exitCode };
+  }
+
+  const tree = { d: { f: "hi", sub: {} }, e: { g: "there" }, file: "x" };
+  const list = (dir: string, sub: string) => readdirSync(join(dir, sub)).sort();
+
+  test("cp -R dir dir/sub is refused and creates nothing", async () => {
+    using dir = tempDir("cp-self", tree);
+    expect(await cp(String(dir), "cp -R d d/sub")).toEqual({
+      stderr: `cp: cannot copy a directory, 'd', into itself, 'd/sub${sep}d'\n`,
+      exitCode: 1,
+    });
+    expect(list(dir, "d/sub")).toEqual([]);
+  });
+
+  test("cp -R dir dir is refused", async () => {
+    using dir = tempDir("cp-self", tree);
+    expect(await cp(String(dir), "cp -R d d")).toEqual({
+      stderr: `cp: cannot copy a directory, 'd', into itself, 'd${sep}d'\n`,
+      exitCode: 1,
+    });
+    expect(list(dir, "d")).toEqual(["f", "sub"]);
+  });
+
+  test("cp -R dir dir/new is refused", async () => {
+    using dir = tempDir("cp-self", tree);
+    expect(await cp(String(dir), "cp -R d d/sub/new")).toEqual({
+      stderr: `cp: cannot copy a directory, 'd', into itself, 'd/sub/new'\n`,
+      exitCode: 1,
+    });
+    expect(list(dir, "d/sub")).toEqual([]);
+  });
+
+  test("cp -R dir . onto itself is refused", async () => {
+    using dir = tempDir("cp-self", tree);
+    expect(await cp(String(dir), "cp -R d .")).toEqual({
+      stderr: `cp: d and .${sep}d are identical (not copied)\n`,
+      exitCode: 1,
+    });
+    expect(list(dir, "d")).toEqual(["f", "sub"]);
+  });
+
+  // Directory symlinks need extra privileges on Windows.
+  test.skipIf(isWindows)("cp -R dir link-to-dir is refused", async () => {
+    using dir = tempDir("cp-self", tree);
+    symlinkSync("d", join(String(dir), "link"));
+    expect(await cp(String(dir), "cp -R d link")).toEqual({
+      stderr: `cp: cannot copy a directory, 'd', into itself, 'link/d'\n`,
+      exitCode: 1,
+    });
+    expect(list(dir, "d")).toEqual(["f", "sub"]);
+  });
+
+  test("other sources are still copied", async () => {
+    using dir = tempDir("cp-self", tree);
+    expect(await cp(String(dir), "cp -R e d d/sub")).toEqual({
+      stderr: `cp: cannot copy a directory, 'd', into itself, 'd/sub${sep}d'\n`,
+      exitCode: 1,
+    });
+    expect(list(dir, "d/sub")).toEqual(["e"]);
+    expect(list(dir, "d/sub/e")).toEqual(["g"]);
+  });
+
+  test("directory onto an existing non-directory is refused", async () => {
+    using dir = tempDir("cp-self", { ...tree, out: { d: "not a dir" } });
+    expect(await cp(String(dir), "cp -R d out")).toEqual({
+      stderr: `cp: cannot overwrite non-directory out${sep}d with directory d\n`,
+      exitCode: 1,
+    });
+    expect(readFileSync(join(String(dir), "out/d"), "utf8")).toBe("not a dir");
+  });
+
+  test("file onto an existing directory is refused", async () => {
+    using dir = tempDir("cp-self", { ...tree, out: { file: {} } });
+    expect(await cp(String(dir), "cp file out")).toEqual({
+      stderr: `cp: cannot overwrite directory out${sep}file with non-directory file\n`,
+      exitCode: 1,
+    });
+    expect(list(dir, "out/file")).toEqual([]);
+  });
+
+  test("a sibling whose name has the source as a prefix is not itself", async () => {
+    using dir = tempDir("cp-self", tree);
+    expect(await cp(String(dir), "cp -R d d2")).toEqual({ stderr: "", exitCode: 0 });
+    expect(list(dir, "d2")).toEqual(["f", "sub"]);
+  });
+
+  // Deeper than the pool thread's stack could take when the walk used a call
+  // frame per level. macOS cannot hold a path this long (PATH_MAX is 1024) and
+  // Windows fails to create it well before this depth.
+  test.skipIf(isMacOS || isWindows)("a very deep tree is copied", async () => {
+    const depth = 800;
+    using dir = tempDir("cp-self", {});
+    const levels = [""];
+    for (let i = 0; i < depth; i++) levels.push(join(levels[i], "a"));
+    const at = (root: string, level: number) => join(String(dir), root, levels[level]);
+    mkdirSync(at("deep", depth), { recursive: true });
+    writeFileSync(join(at("deep", depth), "leaf"), "leaf");
+    try {
+      expect(await cp(String(dir), "cp -R deep out")).toEqual({ stderr: "", exitCode: 0 });
+      expect(readFileSync(join(at("out", depth), "leaf"), "utf8")).toBe("leaf");
+    } finally {
+      // Bottom-up, so disposing `dir` does not have to walk chains this deep.
+      for (const root of ["deep", "out"]) {
+        for (let i = depth; i >= 0; i--) rmSync(at(root, i), { recursive: true, force: true });
+      }
+    }
   });
 });
 

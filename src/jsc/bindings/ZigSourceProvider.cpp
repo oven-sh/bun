@@ -110,13 +110,16 @@ Ref<SourceProvider> SourceProvider::create(
                 Bun::defaultAllocatorFree(const_cast<void*>(ptr));
             };
             const auto destructorNoOp = [](const void* ptr) {
-                // no-op, for bun build --compile.
+                // no-op, for borrowed bytecode (--compile embedded section, node compile cache).
             };
-            const auto destructor = resolvedSource.needsDeref ? destructorPtr : destructorNoOp;
+            // bytecode_cache_is_owned, not needsDeref: needsDeref tracks source_code and is already cleared by this point.
+            const auto destructor = resolvedSource.bytecode_cache_is_owned ? destructorPtr : destructorNoOp;
 
             auto origin = getSourceOrigin();
 
             Ref<JSC::CachedBytecode> bytecode = JSC::CachedBytecode::create(std::span<uint8_t>(resolvedSource.bytecode_cache, resolvedSource.bytecode_cache_size), destructor, {});
+            // Adopted: the CachedBytecode destructor frees it now, not ResolvedSourceCodeHolder.
+            resolvedSource.bytecode_cache_is_owned = false;
             auto provider = adoptRef(*new SourceProvider(
                 globalObject->bunVM(),
                 resolvedSource,

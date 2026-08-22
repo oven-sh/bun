@@ -1,5 +1,6 @@
 #include "root.h"
 
+#include "MimallocWTFMalloc.h"
 #include "headers-handwritten.h"
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "ModuleLoader.h"
@@ -48,25 +49,21 @@ using namespace JSC;
 using namespace Zig;
 using namespace WebCore;
 
-class ResolvedSourceCodeHolder {
-public:
-    ResolvedSourceCodeHolder(ErrorableResolvedSource* res_)
-        : res(res_)
-    {
-    }
-
-    ~ResolvedSourceCodeHolder()
-    {
-        if (res->success && res->result.value.source_code.tag == BunStringTag::WTFStringImpl && res->result.value.needsDeref) {
-            res->result.value.needsDeref = false;
-            res->result.value.source_code.impl.wtf->deref();
-        }
-    }
-
-    ErrorableResolvedSource* res;
-};
-
 extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, BunString* specifier);
+
+ResolvedSourceCodeHolder::~ResolvedSourceCodeHolder()
+{
+    if (res->success && res->result.value.source_code.tag == BunStringTag::WTFStringImpl && res->result.value.needsDeref) {
+        res->result.value.needsDeref = false;
+        res->result.value.source_code.impl.wtf->deref();
+    }
+    // Owned sidecar bytecode no consumer adopted (SourceProvider::create clears the flag when it adopts).
+    if (res->success && res->result.value.bytecode_cache_is_owned && res->result.value.bytecode_cache != nullptr) {
+        res->result.value.bytecode_cache_is_owned = false;
+        Bun::defaultAllocatorFree(res->result.value.bytecode_cache);
+        res->result.value.bytecode_cache = nullptr;
+    }
+}
 
 static JSC::JSPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
 {

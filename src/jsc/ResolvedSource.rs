@@ -45,6 +45,8 @@ pub struct ResolvedSource {
     // -- Bytecode cache fields --
     pub bytecode_cache: *mut u8,
     pub bytecode_cache_size: usize,
+    /// True when `bytecode_cache` is an `into_raw`'d `Box<[u8]>` the consumer must free; false for borrowed memory (`--compile` embedded section, node compile cache).
+    pub bytecode_cache_is_owned: bool,
     pub module_info: *mut c_void,
     /// The file path used as the source origin for bytecode cache validation.
     /// JSC validates bytecode by checking if the origin URL matches exactly what
@@ -68,6 +70,7 @@ impl Default for ResolvedSource {
             already_bundled: false,
             bytecode_cache: core::ptr::null_mut(),
             bytecode_cache_size: 0,
+            bytecode_cache_is_owned: false,
             module_info: core::ptr::null_mut(),
             bytecode_origin_path: BunString::empty(),
         }
@@ -142,5 +145,16 @@ impl Drop for OwnedResolvedSource {
         self.0.specifier.deref();
         self.0.source_url.deref();
         self.0.bytecode_origin_path.deref();
+        if self.0.bytecode_cache_is_owned && !self.0.bytecode_cache.is_null() {
+            // SAFETY: owned ⇒ `bytecode_cache`/`bytecode_cache_size` came from
+            // `heap::into_raw(Box<[u8]>)` and were not handed to C++ (that
+            // only happens via `into_ffi`, which skips this Drop).
+            drop(unsafe {
+                Box::from_raw(core::ptr::slice_from_raw_parts_mut(
+                    self.0.bytecode_cache,
+                    self.0.bytecode_cache_size,
+                ))
+            });
+        }
     }
 }

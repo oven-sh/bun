@@ -23,6 +23,19 @@ using namespace JSC;
 
 class JSCommonJSModule;
 
+// RAII for a stack ErrorableResolvedSource: derefs source_code and frees unadopted owned sidecar bytecode; destructor out-of-line in ModuleLoader.cpp (needs MimallocWTFMalloc.h).
+class ResolvedSourceCodeHolder {
+public:
+    ResolvedSourceCodeHolder(ErrorableResolvedSource* res_)
+        : res(res_)
+    {
+    }
+
+    ~ResolvedSourceCodeHolder();
+
+    ErrorableResolvedSource* res;
+};
+
 typedef uint8_t OnLoadResultType;
 const OnLoadResultType OnLoadResultTypeError = 0;
 const OnLoadResultType OnLoadResultTypeCode = 1;

@@ -32,6 +32,64 @@ beforeEach(() => {
 });
 
 describe("fs.watchFile", () => {
+  // Like node, a second argument that is not an object is the listener: a
+  // listener passed third is ignored, and a non-function one is a TypeError.
+  describe("non-object options argument is the listener", () => {
+    const cases: [label: string, options: unknown, received: string][] = [
+      ["null", null, "null"],
+      ["undefined", undefined, "undefined"],
+      ["a string", "x", "type string ('x')"],
+      ["a number", 5, "type number (5)"],
+      ["a boolean", true, "type boolean (true)"],
+      ["a symbol", Symbol("s"), "type symbol (Symbol(s))"],
+      ["a bigint", 10n, "type bigint (10n)"],
+    ];
+
+    for (const [label, options, received] of cases) {
+      test(`${label} throws ERR_INVALID_ARG_TYPE even when a listener is passed third`, () => {
+        const file = path.join(testDir, "watch.txt");
+        const expected = expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: `The "listener" argument must be of type function. Received ${received}`,
+        });
+        try {
+          expect(() => fs.watchFile(file, options as any, () => {})).toThrow(expected);
+          expect(() => fs.watchFile(file, options as any)).toThrow(expected);
+
+          // the rejected calls did not register anything for the file
+          expect(fs.watchFile(file, () => {}).listenerCount("change")).toBe(1);
+        } finally {
+          fs.unwatchFile(file);
+        }
+      });
+    }
+
+    test("an object, an array or a null-prototype object is the options and the third argument is the listener", () => {
+      const file = path.join(testDir, "watch.txt");
+      const listener = () => {};
+      try {
+        for (const options of [{}, [], Object.create(null)]) {
+          expect(fs.watchFile(file, options, listener).listeners("change")).toEqual([listener]);
+          fs.unwatchFile(file);
+        }
+      } finally {
+        fs.unwatchFile(file);
+      }
+    });
+
+    test("a function is the listener and the third argument is ignored", () => {
+      const file = path.join(testDir, "watch.txt");
+      const second = () => {};
+      const third = () => {};
+      try {
+        expect(fs.watchFile(file, second, third).listeners("change")).toEqual([second]);
+      } finally {
+        fs.unwatchFile(file);
+      }
+    });
+  });
+
   test("zeroed stats if does not exist", async () => {
     let entries: any = [];
     let { promise, resolve } = Promise.withResolvers<void>();

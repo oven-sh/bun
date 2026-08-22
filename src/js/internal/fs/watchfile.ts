@@ -58,7 +58,9 @@ const statWatchers = new Map();
 function watchFile(filename, options, listener) {
   filename = getValidatedPath(filename);
 
-  if (typeof options === "function") {
+  // Like node, any non-object second argument is the listener (so a third
+  // argument is ignored), and a non-function one fails the listener check below.
+  if (options === null || typeof options !== "object") {
     listener = options;
     options = {};
   }

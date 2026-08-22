@@ -1,6 +1,7 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { closeSync, mkdirSync, openSync, unlinkSync } from "fs";
 import fsPromises from "fs/promises";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 test("delete() and stat() should work with unicode paths", async () => {
@@ -108,6 +109,216 @@ test("Bun.file().arrayBuffer() errors include async stack frames", async () => {
   expect(caught).toBeDefined();
   expect(caught.code).toBe("ENOENT");
   expect(caught.stack).toContain("at async caller");
+});
+
+// A BunFile stats lazily. A stat that fails (the file does not exist yet) must
+// not be cached as "empty file" on the handle. exists() must stat every time it
+// is called, and must not turn the size it saw into a limit on later reads.
+describe.concurrent("BunFile does not cache a failed stat", () => {
+  test("exists() sees a file created after it answered false, and reads see the contents", async () => {
+    await using dir = tempDir("bun-file-created-later", {});
+    const path = join(dir, "f.txt");
+    const file = Bun.file(path);
+
+    expect(await file.exists()).toBe(false);
+
+    await Bun.write(path, "hello world");
+
+    expect(await file.exists()).toBe(true);
+    expect(await file.text()).toBe("hello world");
+    expect(await file.bytes()).toEqual(new TextEncoder().encode("hello world"));
+    expect(await new Response(file.stream()).text()).toBe("hello world");
+    expect(file.size).toBe(11);
+  });
+
+  test(".size of a missing file is 0 and does not cap reads once the file exists", async () => {
+    await using dir = tempDir("bun-file-size-before-create", {});
+    const path = join(dir, "f.txt");
+    const file = Bun.file(path);
+
+    expect(file.size).toBe(0);
+    expect(await file.exists()).toBe(false);
+    // A cached size of 0 used to turn this into an empty Blob with no file behind it.
+    const sliceBeforeCreate = file.slice(0, 5);
+
+    await Bun.write(path, "hello world");
+
+    expect(file.size).toBe(11);
+    expect(await file.text()).toBe("hello world");
+    expect(await file.slice(0, 5).text()).toBe("hello");
+    expect(await sliceBeforeCreate.text()).toBe("hello");
+  });
+
+  test("structuredClone() of a missing file does not empty the source handle or shrink a slice of it", async () => {
+    await using dir = tempDir("bun-file-clone-before-create", {});
+    const path = join(dir, "f.txt");
+    const whole = Bun.file(path);
+    const slice = Bun.file(path).slice(6, 11);
+
+    const clones = [structuredClone(whole), structuredClone(slice)];
+    expect([whole.size, slice.size]).toEqual([0, 5]);
+
+    await Bun.write(path, "hello world");
+
+    expect(await Promise.all([whole.text(), slice.text(), clones[0].text(), clones[1].text()])).toEqual([
+      "hello world",
+      "world",
+      "hello world",
+      "world",
+    ]);
+    expect([whole.size, slice.size]).toEqual([11, 5]);
+  });
+
+  // https://github.com/oven-sh/bun/issues/4930
+  test("exists() on the destination does not make Bun.write(destination, Bun.file(source)) copy 0 bytes", async () => {
+    await using dir = tempDir("bun-file-copy-after-exists", {
+      "source.txt": "copied through Bun.write",
+    });
+    const destinationPath = join(dir, "destination.txt");
+    const destination = Bun.file(destinationPath);
+
+    expect(await destination.exists()).toBe(false);
+    expect(destination.size).toBe(0);
+
+    // The resolved byte count is not checked: on Windows the file-to-file copy
+    // resolves with 0 whatever it copied. The content is what #4930 is about.
+    await Bun.write(destination, Bun.file(join(dir, "source.txt")));
+
+    expect(await Bun.file(destinationPath).text()).toBe("copied through Bun.write");
+    expect(await destination.text()).toBe("copied through Bun.write");
+    expect(await destination.exists()).toBe(true);
+  });
+
+  // https://github.com/oven-sh/bun/issues/22456: the same copy, with a
+  // destination that already exists and is shorter than the source.
+  test("exists() on a shorter existing destination does not cap Bun.write(destination, Bun.file(source)) at its old size", async () => {
+    await using dir = tempDir("bun-file-copy-over-shorter", {
+      "source.txt": "this is a long long long long line",
+      "destination.txt": "short line",
+    });
+    const destinationPath = join(dir, "destination.txt");
+    const destination = Bun.file(destinationPath);
+
+    expect(await destination.exists()).toBe(true);
+
+    await Bun.write(destination, Bun.file(join(dir, "source.txt")));
+
+    expect(await Bun.file(destinationPath).text()).toBe("this is a long long long long line");
+    expect(await destination.text()).toBe("this is a long long long long line");
+  });
+
+  // https://github.com/oven-sh/bun/issues/22484
+  test("exists() and lastModified follow the file through delete and create again", async () => {
+    await using dir = tempDir("bun-file-exists-live", { "f.txt": "first" });
+    const path = join(dir, "f.txt");
+    const file = Bun.file(path);
+    // At every step the old handle must answer like a handle created right now.
+    const observe = async () => ({
+      exists: await file.exists(),
+      lastModified: file.lastModified,
+      freshLastModified: Bun.file(path).lastModified,
+    });
+
+    const created = await observe();
+    unlinkSync(path);
+    const deleted = await observe();
+    // The failed stat also dropped the size exists() cached while the file was there.
+    const sizeWhileDeleted = file.size;
+    await Bun.write(path, "second");
+    const recreated = await observe();
+
+    expect([created.exists, deleted.exists, recreated.exists]).toEqual([true, false, true]);
+    expect(created.lastModified).toBe(created.freshLastModified);
+    expect(deleted.lastModified).toBe(deleted.freshLastModified);
+    expect(recreated.lastModified).toBe(recreated.freshLastModified);
+    expect({ sizeWhileDeleted, size: file.size, text: await file.text() }).toEqual({
+      sizeWhileDeleted: 0,
+      size: 6,
+      text: "second",
+    });
+  });
+
+  // A stat can fail for a reason other than ENOENT. That failure is not cached
+  // either: reads keep reporting the real error, and once the path is usable
+  // the same handle works.
+  test("a stat that fails with ENOTDIR is not cached on the handle", async () => {
+    await using dir = tempDir("bun-file-enotdir", { blocker: "not a directory" });
+    const blocker = join(dir, "blocker");
+    const path = join(blocker, "f.txt");
+    const file = Bun.file(path);
+
+    expect(file.size).toBe(0);
+    expect(await file.exists()).toBe(false);
+    const error = await file.text().catch(e => e);
+    // Windows reports a path through a regular file as ENOENT.
+    expect(error.code).toBe(isWindows ? "ENOENT" : "ENOTDIR");
+
+    unlinkSync(blocker);
+    mkdirSync(blocker);
+    await Bun.write(path, "hello world");
+
+    expect(await file.exists()).toBe(true);
+    expect(await file.text()).toBe("hello world");
+    expect(file.size).toBe(11);
+  });
+
+  // https://github.com/oven-sh/bun/issues/23902
+  test("exists() on an existing file does not cap later reads at the size the file had then", async () => {
+    await using dir = tempDir("bun-file-exists-then-grow", { "f.txt": "asdf" });
+    const file = Bun.file(join(dir, "f.txt"));
+
+    expect(await file.exists()).toBe(true);
+
+    const read: string[] = [];
+    for (const data of ["asdfasdf", "asdfasdfasdf", "as"]) {
+      await file.write(data);
+      read.push(await file.text());
+    }
+    expect(read).toEqual(["asdfasdf", "asdfasdfasdf", "as"]);
+  });
+
+  test("exists() on a slice stats the file and keeps the slice window", async () => {
+    await using dir = tempDir("bun-file-slice-exists", { "f.txt": "hello world", "empty.txt": "" });
+
+    expect(await Bun.file(join(dir, "f.txt")).slice(0, 5).exists()).toBe(true);
+    expect(await Bun.file(join(dir, "missing.txt")).slice(0, 5).exists()).toBe(false);
+
+    // The file is empty when exists() stats it, through the slice or through the
+    // handle it is taken from. Both slices still span 5 bytes once the file has them.
+    const emptyPath = join(dir, "empty.txt");
+    const slice = Bun.file(emptyPath).slice(0, 5);
+    expect(await slice.exists()).toBe(true);
+    const whole = Bun.file(emptyPath);
+    expect(await whole.exists()).toBe(true);
+    const sliceAfterExists = whole.slice(0, 5);
+    await Bun.write(emptyPath, "hello world");
+    expect({ size: slice.size, text: await slice.text(), viaWhole: await sliceAfterExists.text() }).toEqual({
+      size: 5,
+      text: "hello",
+      viaWhole: "hello",
+    });
+  });
+
+  // Bun.file(fd) goes through the same stat cache, with fstat in place of stat.
+  // Serial: a concurrent test could open a file and get the closed descriptor
+  // number back before this test stats it again.
+  test.serial.skipIf(isWindows)("Bun.file(fd) exists() follows the descriptor", async () => {
+    await using dir = tempDir("bun-file-fd-exists", { "f.txt": "hello" });
+    const path = join(dir, "f.txt");
+    const fd = openSync(path, "r");
+    const file = Bun.file(fd);
+    let whileOpen: { exists: boolean; lastModified: number };
+    try {
+      whileOpen = { exists: await file.exists(), lastModified: file.lastModified };
+    } finally {
+      closeSync(fd);
+    }
+    const existsAfterClose = file.exists();
+    const sizeAfterClose = file.size;
+
+    expect(whileOpen).toEqual({ exists: true, lastModified: Bun.file(path).lastModified });
+    expect({ exists: await existsAfterClose, size: sizeAfterClose }).toEqual({ exists: false, size: 0 });
+  });
 });
 
 test("Bun.file().json() with UTF-8 BOM does not free an interior pointer", async () => {

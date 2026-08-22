@@ -192,9 +192,10 @@ it(
   timeout,
 );
 
-// Regression test for the Windows watcher starting to record changes only once
-// its thread ran: the entry is one line so the write lands as early as possible,
-// and the children run at the same time so the thread start competes for CPU.
+// A write that lands right after the first evaluation must still reload. The
+// Windows watcher used to record changes only once its thread had run, and on a
+// loaded machine (CI) this catches that too, hence the one-line entry. On an
+// idle machine the thread usually wins the race and the old code passes as well.
 it("should hot reload a file written as soon as the entry point first runs", async () => {
   async function reloadOnce(i: number) {
     using dir = tempDir(`hot-first-write-${i}`, { "entry.js": `console.log("gen", 0);\n` });

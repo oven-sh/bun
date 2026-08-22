@@ -752,6 +752,7 @@ void Napi::executePendingNapiModule(Zig::GlobalObject* globalObject)
         RETURN_IF_EXCEPTION(scope, void());
 
         object = Bun::JSCommonJSModule::create(globalObject, keyStr, exportsObject, false, jsUndefined());
+        RETURN_IF_EXCEPTION(scope, void());
         strongExportsObject = { vm, exportsObject };
     } else {
         JSValue exportsObject = object->get(globalObject, WebCore::builtinNames(vm).exportsPublicName());

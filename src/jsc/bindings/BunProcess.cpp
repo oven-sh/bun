@@ -405,6 +405,16 @@ extern "C" void CrashHandler__setDlOpenAction(const char* action);
 extern "C" bool Bun__VM__allowAddons(void* vm);
 extern "C" int32_t Bun__addonNeedsGlibcOnMusl(const char* path, size_t len, char* soname_out, size_t soname_cap);
 
+// A library that registered modules on an earlier load stays loaded through that load's reference.
+static void closeDLHandle(Bun::DLHandleMap::DLHandle handle)
+{
+#if OS(WINDOWS)
+    FreeLibrary(handle);
+#else
+    dlclose(handle);
+#endif
+}
+
 JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((minsize)), (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(globalObject_);
@@ -593,7 +603,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
 
             // Save all V8 C++ module registrations
             for (auto* mod : pendingV8Modules) {
-                Bun::DLHandleMap::singleton().add(handle, mod);
+                Bun::DLHandleMap::singleton().add(handle, mod, vm);
             }
         }
 
@@ -636,13 +646,22 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
 
     // Module didn't self-register on this load. Check if we have cached registrations.
     if (auto cachedModules = Bun::DLHandleMap::singleton().get(handle)) {
+        if (!Bun::DLHandleMap::singleton().claimForVM(handle, vm)) {
+            closeDLHandle(handle);
+            globalObject->m_pendingNapiModuleAndExports[0].clear();
+            globalObject->m_pendingNapiModuleAndExports[1].clear();
+            // Node.js's error for this case: the addon's static constructor only registers once.
+            return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED,
+                makeString("Module did not self-register: '"_s, filename, "'."_s));
+        }
+
         // Replay all registrations from this handle
         // This will populate the vectors again via register functions
         for (auto& registration : *cachedModules) {
             std::visit([](auto&& mod) {
                 using T = std::decay_t<decltype(mod)>;
-                if constexpr (std::is_same_v<T, node::node_module*>) {
-                    node::node_module_register(mod);
+                if constexpr (std::is_same_v<T, Bun::V8ModuleRegistration>) {
+                    node::node_module_register(mod.module);
                 } else if constexpr (std::is_same_v<T, napi_module*>) {
                     napi_module_register(mod);
                 }
@@ -700,11 +719,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
 #endif
 
     if (!napi_register_module_v1) {
-#if OS(WINDOWS)
-        FreeLibrary(handle);
-#else
-        dlclose(handle);
-#endif
+        closeDLHandle(handle);
 
         if (!scope.exception()) [[likely]] {
             JSC::throwTypeError(globalObject, scope, "symbol 'napi_register_module_v1' not found in native module. Is this a Node API (napi) module?"_s);

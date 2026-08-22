@@ -239,13 +239,6 @@ export function createRequireCache() {
       const entry = $requireMap.$get(key);
       if (entry) return entry;
 
-      const namespace = $esmNamespaceForCjs(key);
-      if (namespace !== undefined) {
-        const mod = $createCommonJSModule(key, namespace, true, undefined);
-        $requireMap.$set(key, mod);
-        return mod;
-      }
-
       return inner[key];
     },
     set(_target, key: string, value) {
@@ -254,7 +247,7 @@ export function createRequireCache() {
     },
 
     has(_target, key: string) {
-      return $requireMap.$has(key) || $esmNamespaceForCjs(key) !== undefined;
+      return $requireMap.$has(key);
     },
 
     deleteProperty(_target, key: string) {
@@ -266,13 +259,7 @@ export function createRequireCache() {
     },
 
     ownKeys(_target) {
-      var array = [...$requireMap.$keys()];
-      for (const key of $esmRegistryEvaluatedKeys()) {
-        if (!array.includes(key)) {
-          $arrayPush(array, key);
-        }
-      }
-      return array;
+      return [...$requireMap.$keys()];
     },
 
     // In Node, require.cache has a null prototype
@@ -281,7 +268,7 @@ export function createRequireCache() {
     },
 
     getOwnPropertyDescriptor(_target, key: string) {
-      if ($requireMap.$has(key) || $esmNamespaceForCjs(key) !== undefined) {
+      if ($requireMap.$has(key)) {
         return {
           configurable: true,
           enumerable: true,

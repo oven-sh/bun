@@ -22,6 +22,8 @@ const VENDORED = new Set([
   'internal/fs/sync_write_stream',
   'internal/net',
   'internal/event_target',
+  'internal/modules/esm/assert',
+  'internal/modules/esm/get_format',
 ]);
 
 // ---------------- primordials emulator ----------------
@@ -436,7 +438,25 @@ function internalBinding(name) {
       secureHeapUsed: () => ({}),
     }, { get: (t, k) => (k in t ? t[k] : undefined), has: () => true });
   }
+  if (name === 'fs') {
+    // Only getFormatOfExtensionlessFile is destructured by vendored esm
+    // internals; nothing in the vendored tests reaches it.
+    return { getFormatOfExtensionlessFile: () => 0 };
+  }
+  if (name === 'contextify') {
+    return { containsModuleSyntax: () => false };
+  }
   realInternalBinding ??= require('internal/test/binding').internalBinding;
+  if (name === 'constants') {
+    // Augment the real binding with the `internal` group (EXTENSIONLESS_FORMAT
+    // values from node's src/node_constants.h) that vendored esm internals
+    // destructure; bun's constants binding lacks it.
+    const real = realInternalBinding(name);
+    if (real.internal === undefined) {
+      return { ...real, internal: { EXTENSIONLESS_FORMAT_JAVASCRIPT: 0, EXTENSIONLESS_FORMAT_WASM: 1 } };
+    }
+    return real;
+  }
   return realInternalBinding(name);
 }
 
@@ -535,8 +555,15 @@ function getOverrides() {
     ),
     'internal/url': {
       toPathIfFileURL: (p) => (p instanceof URL ? require('url').fileURLToPath(p) : p),
+      fileURLToPath: require('url').fileURLToPath,
+      pathToFileURL: require('url').pathToFileURL,
+      URL,
+      isURL: (v) => v instanceof URL,
     },
     'internal/options': { getOptionValue: () => undefined },
+    // internal/modules/esm/get_format destructures these at load; the vendored
+    // tests only exercise extname(), which never calls them.
+    'internal/modules/package_json_reader': {},
     'internal/v8/startup_snapshot': {
       namespace: { isBuildingSnapshot: () => false, addSerializeCallback: () => {} },
     },

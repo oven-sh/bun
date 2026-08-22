@@ -526,11 +526,10 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_main, (JSGlobalObject * lexica
     if (!thisObject) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
-    // Only Zig::GlobalObject creates ImportMetaObject structures (see createStructure). Its Bun.main and thread
-    // are the ones that matter, no matter which realm reads the property.
+    // Only Zig::GlobalObject creates ImportMetaObject structures (see createStructure). Its Bun.main is the
+    // one that matters, no matter which realm reads the property. Like node, a worker's entry module is
+    // main for that thread.
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(thisObject->globalObject());
-    if (!globalObject->scriptExecutionContext()->isMainThread())
-        return JSValue::encode(jsBoolean(false));
 
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);

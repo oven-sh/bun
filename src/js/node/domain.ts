@@ -83,6 +83,47 @@ domain.createDomain = domain.create = function () {
     domain.active = process.domain = stack.length ? stack[stack.length - 1] : null;
     return this;
   };
+  // Node's Domain.prototype._errorHandler (lib/domain.js); returns whether a handler caught it.
+  d._errorHandler = function (er) {
+    let caught = false;
+
+    if ((typeof er === "object" && er !== null) || typeof er === "function") {
+      ObjectDefineProperty(er, "domain", {
+        __proto__: null,
+        configurable: true,
+        enumerable: false,
+        value: d,
+        writable: true,
+      });
+      er.domainThrown = true;
+    }
+
+    if (stack.length === 1) {
+      if (d.listenerCount("error") > 0) {
+        caught = d.emit("error", er);
+      }
+    } else {
+      try {
+        caught = d.emit("error", er);
+      } catch (er2) {
+        // The domain error handler threw: see if an outer domain catches it.
+        stack.pop();
+        const { length } = stack;
+        if (length) {
+          domain.active = process.domain = stack[length - 1];
+          caught = process.domain._errorHandler(er2);
+        } else {
+          throw er2;
+        }
+      }
+    }
+
+    // An uncaught exception ends the tick, so no domain stays entered.
+    stack.length = 0;
+    domain.active = process.domain = null;
+
+    return caught;
+  };
   return d;
 };
 

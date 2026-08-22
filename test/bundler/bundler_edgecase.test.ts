@@ -1,6 +1,6 @@
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isBroken, isWindows, tempDir } from "harness";
-import { readdirSync, writeFileSync } from "node:fs";
+import { afterAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, bunRun, isASAN, isBroken, isDebug, isWindows, tempDir } from "harness";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { decodeSourceMappingsLine, itBundled } from "./expectBundled";
 
@@ -9,10 +9,24 @@ import { decodeSourceMappingsLine, itBundled } from "./expectBundled";
 const CDN_PUBLIC_PATH = "https://cdn.example/app/";
 const cdnUrls = (source: string) => [...source.matchAll(/"(https:\/\/cdn\.example\/[^"]+)"/g)].map(match => match[1]);
 
-describe("bundler", () => {
+// itBundled registers backend=api cases as it.serial, so only the backend=cli
+// cases and the plain test() cases below overlap. Each of them builds in its
+// own directory. The exception is todo cases, which itBundled registers with
+// a plain it.todo: adjacent api ones overlap in a `bun test --todo` run.
+describe.concurrent("bundler", () => {
   itBundled("edgecase/EmptyFile", {
     files: {
       "/entry.js": "",
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toMatchInlineSnapshot(`
+        "// entry.js
+        var entry_default = {};
+        export {
+          entry_default as default
+        };
+        "
+      `);
     },
   });
   itBundled("edgecase/EmptyCommonJSModule", {
@@ -202,6 +216,15 @@ describe("bundler", () => {
       `,
     },
     external: ["*"],
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toMatchInlineSnapshot(`
+        "// entry.js
+        import { foo } from "./foo";
+        import { bar } from "./bar";
+        console.log(foo);
+        "
+      `);
+    },
   });
   itBundled("edgecase/ImportNamespaceAndDefault", {
     files: {
@@ -273,6 +296,13 @@ describe("bundler", () => {
       // ".m": "binary",
       // ".n": "empty",
       // ".o": "copy",
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
+        "// entry.js
+        console.log(1);
+        "
+      `);
     },
   });
   itBundled("edgecase/InvalidLoaderSegfault", {
@@ -383,6 +413,13 @@ describe("bundler", () => {
       "/x.aaaa": `x`,
     },
     outdir: "/out",
+    // An unknown extension gets the file loader: the file is copied into the
+    // output directory and the require() evaluates to its path.
+    onAfterBundle(api) {
+      expect(readdirSync(api.outdir).sort()).toEqual(["entry.js", "x-4my6q98m.aaaa"]);
+      api.expectFile("/out/x-4my6q98m.aaaa").toBe("x");
+      api.expectFile("/out/entry.js").toContain('module.exports = "./x-4my6q98m.aaaa";');
+    },
   });
   itBundled("edgecase/PackageJSONDefaultConditionRequire", {
     files: {
@@ -743,6 +780,17 @@ describe("bundler", () => {
       `,
     },
     target: "bun",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toMatchInlineSnapshot(`
+        "// @bun
+        // entry.ts
+        var a = 1;
+        export {
+          a
+        };
+        "
+      `);
+    },
   });
   itBundled("edgecase/RuntimeExternalRequire", {
     files: {
@@ -1179,7 +1227,7 @@ describe("bundler", () => {
   itBundled("edgecase/YieldKeyword", {
     files: {
       "/entry.js": /* js */ `
-        function* foo() {
+        export function* foo() {
           yield 1;
           [yield];
           yield yield yield;
@@ -1190,6 +1238,28 @@ describe("bundler", () => {
           yield+1
         }
       `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toMatchInlineSnapshot(`
+        "// entry.js
+        function* foo() {
+          yield 1;
+          yield;
+          yield yield yield;
+          yield* 2;
+          yield yield;
+          {
+            x:
+              yield;
+          }
+          (yield).hello;
+          yield 1;
+        }
+        export {
+          foo
+        };
+        "
+      `);
     },
   });
   itBundled("edgecase/UsingWithSixImports", {
@@ -1209,6 +1279,18 @@ describe("bundler", () => {
       `,
     },
     target: "bun",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toMatchInlineSnapshot(`
+        "// @bun
+        // entry.js
+        import { Database } from "bun:sqlite";
+        using a = new Database;
+        export {
+          a
+        };
+        "
+      `);
+    },
   });
   itBundled("edgecase/EmitInvalidSourceMap1", {
     files: {
@@ -2744,90 +2826,130 @@ describe("bundler", () => {
       expect(out).not.toContain("na_ve");
     },
   });
-  // The bundler's per-edge graph walks (reachable files, tree-shaking /
-  // code-splitting liveness, chunk part ordering, CSS discovery, TLA
-  // validation, async propagation, dependency wrapping) used to recurse once
-  // per import-graph edge, overflowing the stack on long linear chains. 7000
-  // reliably crashed the old recursive form under debug+ASAN.
-  const deepChainDepth = 7000;
-  const deepChainFiles = {
-    ...Object.fromEntries(
-      Array.from({ length: deepChainDepth - 1 }, (_, i) => [
-        `/m${i}.js`,
-        `import { v${i + 1} } from "./m${i + 1}.js"; export const v${i} = v${i + 1} + 1;`,
-      ]),
-    ),
-    [`/m${deepChainDepth - 1}.js`]: `export const v${deepChainDepth - 1} = 1;`,
-  };
-  itBundled("edgecase/DeepImportChain", {
-    files: {
-      "/entry.js": `import { v0 } from "./m0.js"; console.log(v0);`,
-      ...deepChainFiles,
-    },
-    backend: "cli",
-    run: { stdout: String(deepChainDepth) },
-  });
-  // Top-level await in the entry makes `validate_tla` / `propagate_async` walk
-  // the chain; `await import()` of an ESM head without splitting wraps the
-  // whole chain, driving `DependencyWrapper::wrap` through it. The wrapped
-  // output initializes module N by calling module N+1's init, so running it
-  // would recurse at runtime; checking for the deepest wrapper is enough.
-  itBundled("edgecase/DeepImportChainWrappedTLA", {
-    files: {
-      "/entry.js": `await 0; const { v0 } = await import("./m0.js"); console.log(v0);`,
-      ...deepChainFiles,
-    },
-    backend: "cli",
-    onAfterBundle(api) {
-      const out = api.readFile("out.js");
-      expect(out).toContain(`init_m${deepChainDepth - 2}`);
-    },
-  });
+  // The three deep import graph cases below write their modules with plain fs
+  // calls because itBundled's fixture pipeline is too slow at this scale under
+  // debug+ASAN, and they spawn `bun build` so that a stack overflow or a build
+  // that no longer terminates fails the child, not the test runner. They
+  // overlap each other: the DAG case comes first because its fixture is the
+  // largest, so the chain cases write theirs while the DAG build runs.
+  //
+  // Only debug and ASAN builds can fail these cases at the full sizes. A
+  // release build from before #34554 and #35310 bundles all three graphs: its
+  // stack holds a chain of more than 10000 modules, and the O(V*E) walk took
+  // about 4.5s on the DAG, far below the build cap. Release builds therefore
+  // run the same shapes at a small size.
+  const deepGraphFullSize = isDebug || isASAN;
+  const deepBuildCapMs = 60_000;
+
+  /** Bundles `root/entry` into `root/outfile` and returns the outfile's absolute path. */
+  async function buildDeepGraph(root: string, entry: string, outfile: string, graph: string): Promise<string> {
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", entry, `--outfile=${outfile}`],
+      cwd: root,
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: deepBuildCapMs,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    if (build.signalCode !== null) {
+      throw new Error(
+        `bun build of the ${graph} was killed by ${build.signalCode} ` +
+          `(SIGTERM means it did not finish within ${deepBuildCapMs}ms)\nstdout:\n${stdout}\nstderr:\n${stderr}`,
+      );
+    }
+    if (exitCode !== 0 || stderr !== "") {
+      throw new Error(
+        `bun build of the ${graph} exited with ${exitCode} (expected 0 and an empty stderr)` +
+          `\nstdout:\n${stdout}\nstderr:\n${stderr}`,
+      );
+    }
+    return join(root, outfile);
+  }
+
   // Diamond-shaped DAG (half the modules have two importers). The code-
   // splitting reachability pass tracks min distance-from-entry for each file;
   // a LIFO walk with distance relaxation does O(V*E) re-visits here, so this
-  // guards that the pass stays O(V+E). Plain fs writes because itBundled's
-  // fixture pipeline is too slow at this scale under debug+ASAN.
+  // guards that the pass stays O(V+E). m[i] exports i plus the values of the
+  // modules it imports, so the value printed for m[0] covers every module.
   test.concurrent(
     "edgecase/DeepImportDiamondDAG",
     async () => {
-      const N = 20000;
+      const N = deepGraphFullSize ? 20000 : 1000;
       using dir = tempDir("deep-import-dag", {});
       const root = String(dir);
-      for (let i = 0; i < N; i++) {
-        const deps: number[] = [];
-        if (i + 1 < N) deps.push(i + 1);
-        if (2 * i + 3 < N) deps.push(2 * i + 3);
+      const values = new Array<number>(N);
+      for (let i = N - 1; i >= 0; i--) {
+        const deps = [i + 1, 2 * i + 3].filter(d => d < N);
+        values[i] = deps.reduce((sum, d) => sum + values[d], i);
         writeFileSync(
           join(root, `m${i}.js`),
           deps.map(d => `import { v as v${d} } from "./m${d}.js";`).join("\n") +
             `\nexport const v = ${i}${deps.map(d => ` + v${d}`).join("")};\n`,
         );
       }
-      writeFileSync(join(root, "entry.js"), `import { v } from "./m0.js"; console.log(typeof v);\n`);
+      writeFileSync(join(root, "entry.js"), `import { v } from "./m0.js"; console.log(v);\n`);
+      const outfile = await buildDeepGraph(root, "entry.js", "out.js", `${N} module DAG`);
+      expect(await bunRun(outfile)).toSpawn(String(values[0]));
+    },
+    120_000,
+  );
+  // The bundler's per-edge graph walks (reachable files, tree-shaking /
+  // code-splitting liveness, chunk part ordering, CSS discovery, TLA
+  // validation, async propagation, dependency wrapping) used to recurse once
+  // per import-graph edge, overflowing the stack on long linear chains. 7000
+  // reliably crashed the old recursive form under debug+ASAN.
+  //
+  // Both chain cases bundle the same modules, written once. They only read
+  // the directory, and each writes its own outfile.
+  const deepChainDepth = deepGraphFullSize ? 7000 : 500;
+  let deepChainDir: ReturnType<typeof tempDir> | undefined;
+  function deepChainRoot(): string {
+    if (!deepChainDir) {
+      const files: Record<string, string> = {
+        "chain.js": `import { v0 } from "./m0.js"; console.log(v0);`,
+        "tla.js": `await 0; const { v0 } = await import("./m0.js"); console.log(v0);`,
+        [`m${deepChainDepth - 1}.js`]: `export const v${deepChainDepth - 1} = 1;`,
+      };
+      for (let i = 0; i < deepChainDepth - 1; i++) {
+        files[`m${i}.js`] = `import { v${i + 1} } from "./m${i + 1}.js"; export const v${i} = v${i + 1} + 1;`;
+      }
+      deepChainDir = tempDir("deep-import-chain", files);
+    }
+    return String(deepChainDir);
+  }
+  afterAll(() => deepChainDir?.[Symbol.dispose]());
 
-      await using build = Bun.spawn({
-        cmd: [bunExe(), "build", "entry.js", "--outfile=out.js"],
-        cwd: root,
-        env: bunEnv,
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: 60_000,
-      });
-      const [, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
-      expect({ stderr, exitCode, signalCode: build.signalCode }).toEqual({ stderr: "", exitCode: 0, signalCode: null });
-
-      await using run = Bun.spawn({
-        cmd: [bunExe(), "out.js"],
-        cwd: root,
-        env: bunEnv,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      const [stdout, runStderr, runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
-      expect({ stdout, stderr: runStderr, exitCode: runExit }).toEqual({
-        stdout: "number\n",
-        stderr: "",
-        exitCode: 0,
-      });
+  test.concurrent(
+    "edgecase/DeepImportChain",
+    async () => {
+      const outfile = await buildDeepGraph(
+        deepChainRoot(),
+        "chain.js",
+        "chain.out.js",
+        `${deepChainDepth} module chain`,
+      );
+      expect(await bunRun(outfile)).toSpawn(String(deepChainDepth));
+    },
+    120_000,
+  );
+  // Top-level await in the entry makes `validate_tla` / `propagate_async` walk
+  // the chain; `await import()` of an ESM head without splitting wraps the
+  // whole chain, driving `DependencyWrapper::wrap` through it. The wrapped
+  // output initializes module N by calling module N+1's init, so running it
+  // would recurse at runtime; count the wrappers instead. The last module is
+  // a constant without imports, so it is the one module that gets no wrapper.
+  test.concurrent(
+    "edgecase/DeepImportChainWrappedTLA",
+    async () => {
+      const outfile = await buildDeepGraph(
+        deepChainRoot(),
+        "tla.js",
+        "tla.out.js",
+        `${deepChainDepth} module chain behind await import()`,
+      );
+      const out = readFileSync(outfile, "utf8");
+      expect(out.match(/^var init_m\d+ = __esm\(/gm)).toHaveLength(deepChainDepth - 1);
+      expect(out).toContain(`var init_m${deepChainDepth - 2} = __esm(`);
     },
     120_000,
   );

@@ -767,7 +767,6 @@ pub mod store {
     // ────────────────────────────────────────────────────────────────────
 
     /// A blob store referencing a file on disk.
-    #[derive(Clone)]
     pub struct File {
         pub pathlike: PathOrFileDescriptor,
         pub mime_type: MimeType,
@@ -775,8 +774,10 @@ pub mod store {
         pub mode: bun_sys::Mode,
         pub seekable: Option<bool>,
         pub max_size: SizeType,
-        /// Milliseconds since ECMAScript epoch.
-        pub last_modified: crate::JSTimeType,
+        /// Milliseconds since ECMAScript epoch. Atomic: worker-thread
+        /// `ReadFile` tasks write it while the JS thread reads it
+        /// (overlapping `file.bytes()` calls share one `Store`).
+        pub last_modified: core::sync::atomic::AtomicU64,
     }
 
     impl Default for File {
@@ -788,7 +789,26 @@ pub mod store {
                 mode: 0,
                 seekable: None,
                 max_size: MAX_SIZE,
-                last_modified: crate::INIT_TIMESTAMP,
+                last_modified: core::sync::atomic::AtomicU64::new(crate::INIT_TIMESTAMP),
+            }
+        }
+    }
+
+    impl Clone for File {
+        fn clone(&self) -> Self {
+            Self {
+                pathlike: self.pathlike.clone(),
+                mime_type: self.mime_type.clone(),
+                is_atty: self.is_atty,
+                mode: self.mode,
+                seekable: self.seekable,
+                max_size: self.max_size,
+                // Snapshot the atomic via `Relaxed`; `Clone` is a per-thread
+                // value copy, not a memory-ordering sync point.
+                last_modified: core::sync::atomic::AtomicU64::new(
+                    self.last_modified
+                        .load(core::sync::atomic::Ordering::Relaxed),
+                ),
             }
         }
     }
@@ -1037,15 +1057,21 @@ pub mod store {
             core::mem::ManuallyDrop::new(self).ptr.as_ptr()
         }
 
-        /// Mutable access to `data` through the shared handle. The caller
-        /// must ensure no
-        /// other `&mut` to the same `Store` is live (single-threaded JS
-        /// event-loop discipline).
+        /// Mutable access to `data` through the shared handle.
+        ///
+        /// # Safety
+        /// No other reference (`&Store`, `&mut Store`, `&Data`, `&mut Data`)
+        /// to the same pointee may be live for the duration of the returned
+        /// borrow — on this thread or any other. The same contract governs
+        /// the sibling `unsafe fn`s that mint `&mut Store` access:
+        /// `blob_store_mut`/`set_blob_content_type` in `webcore::body`, and
+        /// `BlobExt::shared_view_raw`/`set_is_ascii_flag` and the free
+        /// `resolve_file_stat` in `webcore::blob`.
         #[inline]
         #[allow(clippy::mut_from_ref)]
-        pub fn data_mut(&self) -> &mut Data {
-            // SAFETY: caller guarantees no other `&mut` to this `Store` is
-            // live; see doc comment.
+        pub unsafe fn data_mut(&self) -> &mut Data {
+            // SAFETY: precondition — no aliasing `&`/`&mut` to the pointee is
+            // live for the returned borrow's duration (see fn doc).
             unsafe { &mut (*self.as_ptr()).data }
         }
     }
@@ -1096,11 +1122,32 @@ pub mod store {
     }
     impl Eq for StoreRef {}
 
-    // SAFETY: `Store`'s refcount is atomic and its payload is either
-    // immutable-after-init or guarded by callers.
+    // SAFETY: `Store`'s refcount is atomic; the `Data` payload is mutated
+    // only under `data_mut`'s exclusivity precondition (move, don't share).
+    // CAVEAT — `Data::S3` holds `Rc<S3Credentials>` (non-atomic refcount,
+    // shared with JS-thread state via `Rc::clone(s3.get_credentials())` in
+    // `Blob.rs`), but worker-pool tasks only carry `Data::File`/`Data::Bytes`
+    // stores; S3 I/O stays on the JS thread. If an S3 store ever crosses
+    // threads, make that `Rc` an `Arc`.
     unsafe impl Send for StoreRef {}
-    // SAFETY: `Store::ref_count` is atomic and `&StoreRef` only derefs to
-    // `&Store`.
-    unsafe impl Sync for StoreRef {}
+    // Intentionally NOT `Sync`: two threads sharing `&StoreRef` could each
+    // mint `&mut Data` via `data_mut`. Dropping `Sync` closes that direct
+    // shape; cloned handles (`Send`) and `Blob: Sync` still route around
+    // it, so the load-bearing guard remains `data_mut`'s precondition,
+    // discharged in writing at every call site.
+
+    // Compile-time trip-wire: if `StoreRef` ever gains `Sync`, both blanket
+    // impls of `_NotSyncCheck` apply and `_NOT_SYNC` fails to compile with
+    // "conflicting impls" (same pattern as
+    // `src/runtime/shell/subproc.rs` `__pipe_reader_thread_confined`).
+    mod __store_ref_not_sync {
+        use super::StoreRef;
+        trait _NotSyncCheck<A> {
+            const OK: () = ();
+        }
+        impl<T: ?Sized> _NotSyncCheck<()> for T {}
+        impl<T: ?Sized + Sync> _NotSyncCheck<u8> for T {}
+        const _NOT_SYNC: () = <StoreRef as _NotSyncCheck<_>>::OK;
+    }
 }
 pub use store::{Store, StoreRef};

@@ -2656,7 +2656,6 @@ impl<'a> Transpiler<'a> {
         // snapshot entry points so the `&mut self` resolver call
         // does not conflict with the `&self.options` borrow.
         let entries: Vec<Box<[u8]>> = self.options.entry_points.to_vec();
-        let top_level_dir = self.fs().top_level_dir;
 
         for _entry in entries.iter() {
             let entry: &[u8] = if NORMALIZE_ENTRY_POINT {
@@ -2667,26 +2666,18 @@ impl<'a> Transpiler<'a> {
 
             let _reset = bun_ast::StoreResetGuard::new();
 
-            let result = match self.resolver.resolve(
-                top_level_dir,
-                entry,
-                bun_ast::ImportKind::EntryPointBuild,
-            ) {
-                Ok(r) => r,
-                Err(err) => {
-                    bun_core::pretty_error!(
-                        "Error resolving \"{}\": {}\n",
-                        bstr::BStr::new(entry),
-                        err.name(),
-                    );
-                    continue;
-                }
+            let Ok(result) = self.resolve_entry_point(entry) else {
+                continue;
             };
 
             if result.path_const().is_none() {
-                bun_core::pretty_error!(
-                    "\"{}\" is disabled due to \"browser\" field in package.json.\n",
-                    bstr::BStr::new(entry),
+                self.log_mut().add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "\"{}\" is disabled due to \"browser\" field in package.json (entry point)",
+                        bstr::BStr::new(entry),
+                    ),
                 );
                 continue;
             }

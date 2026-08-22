@@ -801,6 +801,40 @@ describe("fetch", () => {
     }),
   );
 
+  // RFC 9112 §6.3: only a HEAD response is terminated at the end of the header
+  // section. A TRACE response echoes the request as content (RFC 9110 §9.3.8).
+  it.concurrent("reads a TRACE response body", async () => {
+    const echo = "TRACE / HTTP/1.1\r\nhost: bun\r\n";
+    const head = (framing: string) =>
+      `HTTP/1.1 200 OK\r\nContent-Type: message/http\r\n${framing}Connection: close\r\n\r\n`;
+    await using server = net.createServer(socket => {
+      socket.once("data", data => {
+        const [method, path] = String(data).split(" ", 2);
+        if (method === "HEAD") {
+          socket.end(head(`Content-Length: ${echo.length}\r\n`));
+        } else if (path === "/chunked") {
+          socket.end(head("Transfer-Encoding: chunked\r\n") + `${echo.length.toString(16)}\r\n${echo}\r\n0\r\n\r\n`);
+        } else {
+          socket.end(head(`Content-Length: ${echo.length}\r\n`) + echo);
+        }
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const sized = await fetch(`http://127.0.0.1:${port}/`, { method: "TRACE" });
+    expect(sized.headers.get("content-length")).toBe(String(echo.length));
+    expect(await sized.text()).toBe(echo);
+
+    const chunked = await fetch(`http://127.0.0.1:${port}/chunked`, { method: "TRACE" });
+    expect(chunked.headers.get("transfer-encoding")).toBe("chunked");
+    expect(await chunked.text()).toBe(echo);
+
+    const bodiless = await fetch(`http://127.0.0.1:${port}/`, { method: "HEAD" });
+    expect(bodiless.headers.get("content-length")).toBe(String(echo.length));
+    expect(await bodiless.text()).toBe("");
+  });
+
   // WHATWG Fetch only forbids a body for GET and HEAD. OPTIONS with content is
   // legal HTTP (RFC 9110 §9.3.7) and must be sent, not rejected.
   it.concurrent("OPTIONS with body is sent and delivered", async () => {

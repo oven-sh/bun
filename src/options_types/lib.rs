@@ -8,6 +8,7 @@ pub mod compile_target;
 pub mod context;
 pub mod error;
 pub mod global_cache;
+pub mod install_cache_dir;
 pub mod jsx;
 pub mod offline_mode;
 pub mod schema;

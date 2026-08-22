@@ -977,7 +977,9 @@ pub(crate) fn to_bytes(
         };
 
         if Environment::IS_CANARY || Environment::IS_DEBUG {
-            if let Some(dump_code_dir) = bun_core::env_var::BUN_FEATURE_FLAG_DUMP_CODE.get() {
+            if let Some(dump_code_dir) =
+                bun_core::env_var::BUN_FEATURE_FLAG_DUMP_CODE.get_not_empty()
+            {
                 // `dest_path` keeps `..` for the embedded bunfs key below; neutralize
                 // every `..` segment here so the on-disk dump can't escape
                 // `dump_code_dir` (the join would otherwise normalize `..` above it).
@@ -985,10 +987,11 @@ pub(crate) fn to_bytes(
                 options::write_sanitized_parent_dirs(&mut dump_rel, dest_path)
                     .expect("write to Vec<u8>");
                 let mut path_buf = bun_paths::path_buffer_pool::get();
+                let parts: [&[u8]; 2] = [dump_code_dir, &dump_rel];
                 let dest_z = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
-                    dump_code_dir,
+                    bun_fs::FileSystem::instance().top_level_dir(),
                     &mut path_buf[..],
-                    &[&dump_rel],
+                    &parts,
                 );
 
                 // Scoped block to handle dump failures without skipping module emission

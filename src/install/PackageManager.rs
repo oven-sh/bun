@@ -1923,22 +1923,29 @@ pub fn init(
         let npmrc_local = ZBox::from_bytes(b".npmrc");
 
         let mut buf = PathBuffer::uninit();
-        let parts = [b"./.npmrc" as &[u8]];
+        // The process has since changed into the workspace root or, for `-g`, the global directory.
+        let started_in: &[u8] = ctx
+            .args
+            .absolute_working_dir
+            .as_deref()
+            .unwrap_or(&original_cwd_clone);
 
         // npm reads `$HOME/.npmrc` and ignores XDG_CONFIG_HOME; keep
         // `$XDG_CONFIG_HOME/.npmrc` only when that file actually exists.
         let mut global_len: usize = 0;
         if let Some(xdg_dir) = bun_core::env_var::XDG_CONFIG_HOME.get_not_empty() {
+            let parts: [&[u8]; 2] = [xdg_dir, b".npmrc"];
             let p =
-                resolve_path::join_abs_string_buf_z::<platform::Auto>(xdg_dir, &mut buf, &parts);
+                resolve_path::join_abs_string_buf_z::<platform::Auto>(started_in, &mut buf, &parts);
             if bun_sys::exists_z(p) {
                 global_len = p.len();
             }
         }
         if global_len == 0 {
             if let Some(home_dir) = bun_core::env_var::HOME.get_not_empty() {
+                let parts: [&[u8]; 2] = [home_dir, b".npmrc"];
                 global_len = resolve_path::join_abs_string_buf_z::<platform::Auto>(
-                    home_dir, &mut buf, &parts,
+                    started_in, &mut buf, &parts,
                 )
                 .len();
             }

@@ -8,7 +8,7 @@ use bun_bundler::options;
 use bun_core::ZStr;
 use bun_core::{self, Global, Output, env_var};
 use bun_options_types::command_tag::{ALWAYS_LOADS_CONFIG, Tag as CommandTag};
-use bun_options_types::context::Context;
+use bun_options_types::context::{Context, ContextData};
 use bun_paths::PathBuffer;
 use bun_paths::resolve_path::{self, platform};
 use bun_standalone_graph::StandaloneModuleGraph::StandaloneModuleGraph;
@@ -17,22 +17,24 @@ use crate::bunfig::Bunfig;
 
 // ─── bunfig loading ──────────────────────────────────────────────────────────
 
-fn get_home_config_path(buf: &mut PathBuffer) -> Option<&ZStr> {
-    let paths: [&[u8]; 1] = [b".bunfig.toml"];
+/// `$XDG_CONFIG_HOME/.bunfig.toml`, else `$HOME/.bunfig.toml`; a relative directory is resolved against `cwd`.
+fn get_home_config_path<'b>(cwd: &[u8], buf: &'b mut PathBuffer) -> Option<&'b ZStr> {
+    let config_dir = env_var::XDG_CONFIG_HOME
+        .get_not_empty()
+        .or_else(|| env_var::HOME.get_not_empty())?;
+    let parts: [&[u8]; 2] = [config_dir, b".bunfig.toml"];
+    let len = resolve_path::join_abs_string_buf_z::<platform::Auto>(cwd, &mut **buf, &parts).len();
+    Some(ZStr::from_buf(&buf[..], len))
+}
 
-    if let Some(data_dir) = env_var::XDG_CONFIG_HOME.get() {
-        return Some(resolve_path::join_abs_string_buf_z::<platform::Auto>(
-            data_dir, &mut **buf, &paths,
-        ));
+/// Recorded by `Arguments::parse` (after `--cwd`); callers that skip it get the live cwd.
+fn absolute_working_dir(ctx: &mut ContextData) -> Option<&[u8]> {
+    if ctx.args.absolute_working_dir.is_none() {
+        let mut buf = PathBuffer::uninit();
+        let len = bun_sys::getcwd(&mut *buf).ok()?;
+        ctx.args.absolute_working_dir = Some(Box::<[u8]>::from(&buf[..len]));
     }
-
-    if let Some(home_dir) = env_var::HOME.get() {
-        return Some(resolve_path::join_abs_string_buf_z::<platform::Auto>(
-            home_dir, &mut **buf, &paths,
-        ));
-    }
-
-    None
+    ctx.args.absolute_working_dir.as_deref()
 }
 
 fn load_bunfig(
@@ -87,7 +89,9 @@ fn load_global_bunfig(cmd: CommandTag, ctx: Context<'_>) -> Result<(), crate::Er
     ctx.has_loaded_global_config = true;
 
     let mut config_buf = PathBuffer::uninit();
-    if let Some(path) = get_home_config_path(&mut config_buf) {
+    if let Some(path) =
+        absolute_working_dir(ctx).and_then(|cwd| get_home_config_path(cwd, &mut config_buf))
+    {
         load_bunfig(cmd, true, path, ctx)?;
     }
     Ok(())
@@ -156,7 +160,9 @@ pub fn load_config(
         if !ctx.has_loaded_global_config {
             ctx.has_loaded_global_config = true;
 
-            if let Some(path) = get_home_config_path(&mut config_buf) {
+            if let Some(path) =
+                absolute_working_dir(ctx).and_then(|cwd| get_home_config_path(cwd, &mut config_buf))
+            {
                 if let Err(err) = load_config_path(cmd, true, path, ctx) {
                     report_bunfig_load_failure(ctx.log, err);
                 }
@@ -193,22 +199,15 @@ pub fn load_config(
         config_buf[config_path_.len()] = 0;
         config_path_len = config_path_.len();
     } else {
-        if ctx.args.absolute_working_dir.is_none() {
-            let mut secondbuf = PathBuffer::uninit();
-            let cwd_len = match bun_sys::getcwd(&mut *secondbuf) {
-                Ok(n) => n,
-                Err(_) => return Ok(()),
-            };
-            ctx.args.absolute_working_dir = Some(Box::<[u8]>::from(&secondbuf[..cwd_len]));
-        }
-
+        let Some(awd) = absolute_working_dir(ctx) else {
+            return Ok(());
+        };
         // Reshaped for borrowck: `join_abs_string_buf` ties the
-        // returned slice's lifetime to both `cwd` (borrowed from `ctx.args`)
+        // returned slice's lifetime to both `awd` (borrowed from `ctx.args`)
         // and `config_buf`. We only need the length to NUL-terminate and
         // re-wrap, so capture `joined.len()` and drop the `ctx` borrow before
         // the `&mut ctx` call below.
         config_path_len = {
-            let awd: &[u8] = ctx.args.absolute_working_dir.as_deref().unwrap();
             let parts: [&[u8]; 2] = [awd, config_path_];
             let joined =
                 resolve_path::join_abs_string_buf::<platform::Auto>(awd, &mut *config_buf, &parts);

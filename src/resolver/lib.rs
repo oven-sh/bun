@@ -62,6 +62,7 @@ pub use standalone_module_graph::StandaloneModuleGraph;
 /// in-tree types (`FileSystem`, `RealFS`, `Entry`, ...).
 pub mod fs {
     use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+    use std::borrow::Cow;
     use std::io::Write as _;
 
     use bun_core::ZStr;
@@ -1643,7 +1644,7 @@ pub mod fs {
             Some(unsafe { &mut *result_ptr })
         }
 
-        fn platform_temp_dir_compute() -> &'static [u8] {
+        fn platform_temp_dir_compute() -> Cow<'static, [u8]> {
             use bun_core::env_var;
             // Try TMPDIR, TMP, and TEMP in that order, matching Node.js.
             // https://github.com/nodejs/node/blob/e172be269890702bf2ad06252f2f152e7604d76c/src/node_credentials.cc#L132
@@ -1653,75 +1654,82 @@ pub mod fs {
                 .or_else(|| env_var::TEMP.get_not_empty())
             {
                 if dir.len() > 1 && dir[dir.len() - 1] == bun_paths::SEP {
-                    return &dir[0..dir.len() - 1];
+                    return Self::absolute_temp_dir(Cow::Borrowed(&dir[0..dir.len() - 1]));
                 }
-                return dir;
+                return Self::absolute_temp_dir(Cow::Borrowed(dir));
             }
 
             #[cfg(target_os = "windows")]
             {
                 // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppathw#remarks
-                // The computed path borrows env-var storage joined with a literal,
-                // so it must own its buffer. This runs once for the process via
-                // `bun_core::Once` in `platform_temp_dir()`; the `OnceLock` here is
-                // the allowed process-lifetime singleton (PORTING.md §Forbidden
-                // exception), not a per-call leak.
-                static OWNED: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
-                return OWNED
-                    .get_or_init(|| {
-                        if let Some(windir) =
-                            env_var::SYSTEMROOT.get().or_else(|| env_var::WINDIR.get())
-                        {
-                            let mut out =
-                                bun_core::strings::without_trailing_slash(windir).to_vec();
-                            out.extend_from_slice(b"\\Temp");
-                            return out;
-                        }
-                        if let Some(profile) = env_var::HOME.get() {
-                            let mut buf = bun_paths::PathBuffer::uninit();
-                            let parts: [&[u8]; 1] = [b"AppData\\Local\\Temp"];
-                            let out = bun_paths::resolve_path::join_abs_string_buf::<
-                                bun_paths::resolve_path::platform::Loose,
-                            >(profile, &mut buf[..], &parts);
-                            return out.to_vec();
-                        }
-                        let mut tmp_buf = bun_paths::PathBuffer::uninit();
-                        let cwd = match bun_sys::getcwd(&mut tmp_buf[..]) {
-                            Ok(len) => &tmp_buf[..len],
-                            Err(_) => panic!("Failed to get cwd for platformTempDir"),
-                        };
-                        let root = bun_paths::resolve_path::windows_filesystem_root(cwd);
-                        let mut out = bun_core::strings::without_trailing_slash(root).to_vec();
-                        out.extend_from_slice(b"\\Windows\\Temp");
-                        out
-                    })
-                    .as_slice();
+                if let Some(windir) = env_var::SYSTEMROOT
+                    .get_not_empty()
+                    .or_else(|| env_var::WINDIR.get_not_empty())
+                {
+                    let mut out = bun_core::strings::without_trailing_slash(windir).to_vec();
+                    out.extend_from_slice(b"\\Temp");
+                    return Self::absolute_temp_dir(Cow::Owned(out));
+                }
+                if let Some(profile) = env_var::HOME.get_not_empty() {
+                    let mut cwd_buf = bun_paths::path_buffer_pool::get();
+                    let cwd = bun_paths::resolve_path::working_dir(&mut cwd_buf);
+                    let parts: [&[u8]; 2] = [profile, b"AppData\\Local\\Temp"];
+                    let out = bun_paths::resolve_path::join_abs_string::<
+                        bun_paths::resolve_path::platform::Loose,
+                    >(cwd, &parts);
+                    return Cow::Owned(out.to_vec());
+                }
+                let mut tmp_buf = bun_paths::PathBuffer::uninit();
+                let cwd = match bun_sys::getcwd(&mut tmp_buf[..]) {
+                    Ok(len) => &tmp_buf[..len],
+                    Err(_) => panic!("Failed to get cwd for platformTempDir"),
+                };
+                let root = bun_paths::resolve_path::windows_filesystem_root(cwd);
+                let mut out = bun_core::strings::without_trailing_slash(root).to_vec();
+                out.extend_from_slice(b"\\Windows\\Temp");
+                return Cow::Owned(out);
             }
             #[cfg(target_os = "macos")]
             {
-                return b"/private/tmp";
+                return Cow::Borrowed(b"/private/tmp");
             }
             #[cfg(target_os = "android")]
             {
-                return b"/data/local/tmp";
+                return Cow::Borrowed(b"/data/local/tmp");
             }
             #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "android")))]
             {
-                b"/tmp"
+                Cow::Borrowed(b"/tmp")
             }
         }
 
-        /// Platform temp directory, computed once per process.
-        pub fn platform_temp_dir() -> &'static [u8] {
-            static ONCE: bun_core::Once<&'static [u8]> = bun_core::Once::new();
-            ONCE.call(Self::platform_temp_dir_compute)
+        /// `TMPDIR=reltmp` is resolved once, so the handle opened from it and the paths joined onto it name the same directory.
+        fn absolute_temp_dir(dir: Cow<'static, [u8]>) -> Cow<'static, [u8]> {
+            if bun_paths::is_absolute(&dir) {
+                return dir;
+            }
+            let mut cwd_buf = bun_paths::path_buffer_pool::get();
+            let cwd = bun_paths::resolve_path::working_dir(&mut cwd_buf);
+            let parts: [&[u8]; 1] = [&dir];
+            Cow::Owned(
+                bun_paths::resolve_path::join_abs_string::<bun_paths::platform::Auto>(cwd, &parts)
+                    .to_vec(),
+            )
         }
 
-        /// Non-empty `BUN_TMPDIR`, falling back to `platform_temp_dir`.
+        /// Platform temp directory, computed once per process. Always absolute.
+        pub fn platform_temp_dir() -> &'static [u8] {
+            static ONCE: bun_core::Once<Cow<'static, [u8]>> = bun_core::Once::new();
+            ONCE.get_or_init(Self::platform_temp_dir_compute)
+        }
+
+        /// Non-empty `BUN_TMPDIR`, falling back to `platform_temp_dir`; computed once per process, always absolute.
         pub fn tmpdir_path() -> &'static [u8] {
-            bun_core::env_var::BUN_TMPDIR
-                .get_not_empty()
-                .unwrap_or_else(Self::platform_temp_dir)
+            static ONCE: bun_core::Once<Cow<'static, [u8]>> = bun_core::Once::new();
+            ONCE.get_or_init(|| match bun_core::env_var::BUN_TMPDIR.get_not_empty() {
+                Some(dir) => Self::absolute_temp_dir(Cow::Borrowed(dir)),
+                None => Cow::Borrowed(Self::platform_temp_dir()),
+            })
         }
 
         pub fn get_default_temp_dir() -> &'static [u8] {

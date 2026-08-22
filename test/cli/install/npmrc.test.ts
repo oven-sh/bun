@@ -222,6 +222,47 @@ registry = http://localhost:${registry.port}/
       const result = await publishDryRun(String(dir), { XDG_CONFIG_HOME: "" });
       expect(result).toEqual(usesRegistry(1));
     });
+
+    // A relative directory variable used to be taken for a path under the filesystem
+    // root with its first byte dropped (`rel-xdg` -> `/el-xdg/.npmrc`). It resolves
+    // against the directory the command runs in, like every other relative path.
+    it.concurrent("resolves a relative $XDG_CONFIG_HOME against the cwd", async () => {
+      using dir = tempDir("npmrc-xdg-relative", {
+        ...pkg,
+        "home/.npmrc": npmrc(1),
+        "pkg/rel-xdg/.npmrc": npmrc(2),
+      });
+      const result = await publishDryRun(String(dir), { XDG_CONFIG_HOME: "rel-xdg" });
+      expect(result).toEqual(usesRegistry(2));
+    });
+
+    it.concurrent("resolves a relative $HOME against the cwd", async () => {
+      using dir = tempDir("npmrc-home-relative", { ...pkg, "pkg/rel-home/.npmrc": npmrc(2) });
+      const result = await publishDryRun(String(dir), { HOME: "rel-home", USERPROFILE: "rel-home" });
+      expect(result).toEqual(usesRegistry(2));
+    });
+
+    // The user-level bunfig.toml is looked up in the same directories. Its registry
+    // takes precedence over the one in $HOME/.npmrc, which shows that it was read.
+    it.concurrent("reads .bunfig.toml from a relative $XDG_CONFIG_HOME", async () => {
+      using dir = tempDir("bunfig-xdg-relative", {
+        ...pkg,
+        "home/.npmrc": npmrc(1),
+        "pkg/rel-xdg/.bunfig.toml": `[install]\nregistry = { url = "http://localhost:2/", token = "token" }\n`,
+      });
+      const result = await publishDryRun(String(dir), { XDG_CONFIG_HOME: "rel-xdg" });
+      expect(result).toEqual(usesRegistry(2));
+    });
+
+    it.concurrent("reads .bunfig.toml from a relative $HOME", async () => {
+      using dir = tempDir("bunfig-home-relative", {
+        ...pkg,
+        "pkg/rel-home/.npmrc": npmrc(1),
+        "pkg/rel-home/.bunfig.toml": `[install]\nregistry = { url = "http://localhost:2/", token = "token" }\n`,
+      });
+      const result = await publishDryRun(String(dir), { HOME: "rel-home", USERPROFILE: "rel-home" });
+      expect(result).toEqual(usesRegistry(2));
+    });
   });
 
   it("package config overrides home config", async () => {

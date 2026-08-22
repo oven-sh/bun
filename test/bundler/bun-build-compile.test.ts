@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isArm64, isLinux, isMacOS, isMusl, isPosix, isWindows, tempDir } from "harness";
-import { chmodSync, closeSync, cpSync, existsSync, openSync, readSync } from "node:fs";
+import { chmodSync, closeSync, cpSync, existsSync, openSync, readdirSync, readSync } from "node:fs";
 import { join } from "path";
 
 describe("Bun.build compile", () => {
@@ -761,6 +761,130 @@ describe("compiled binary in a deleted cwd", () => {
       expect(stdout).toBe("");
       expect(stderr).toContain("The current working directory was deleted");
       expect(exitCode).toBe(1);
+    },
+    60_000,
+  );
+});
+
+describe("compile target download cache", () => {
+  // Compiling for another platform downloads that platform's bun into the `bun install`
+  // cache. The location used to be derived from $HOME alone: $BUN_INSTALL was ignored and
+  // an empty $HOME put the cache at `/.bun/install/cache`. It now comes from the same
+  // lookup as `bun install` ($BUN_INSTALL_CACHE_DIR, $BUN_INSTALL, $XDG_CACHE_HOME, $HOME).
+  test("stores the downloaded executable under $BUN_INSTALL/install/cache", async () => {
+    const tarball = await new Bun.Archive({ "package/bin/bun": "not an executable\n" }, { compress: "gzip" }).bytes();
+    const requests: string[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        requests.push(new URL(req.url).pathname);
+        return new Response(tarball);
+      },
+    });
+
+    using dir = tempDir("build-compile-download-cache", {
+      "app.js": `console.log("hi");`,
+    });
+    const cwd = String(dir);
+    const env: NodeJS.Dict<string> = {
+      ...bunEnv,
+      HOME: join(cwd, "home"),
+      USERPROFILE: join(cwd, "home"),
+      BUN_INSTALL: join(cwd, "bun-install"),
+      BUN_COMPILE_TARGET_TARBALL_URL: `${server.url}bun.tgz`,
+    };
+    delete env.BUN_INSTALL_CACHE_DIR;
+    delete env.XDG_CACHE_HOME;
+
+    // Never the platform running the test, so that the download happens.
+    const target = isArm64 ? "bun-linux-x64" : "bun-linux-arm64";
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", `--target=${target}`, "app.js", "--outfile", "app"],
+      cwd,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // The build fails later, when the fake download is turned into a program. The
+    // download itself has to succeed and land in the cache.
+    expect(stderr).not.toMatch(/download|corrupted/i);
+    expect(requests).toEqual(["/bun.tgz"]);
+    expect(readdirSync(join(cwd, "bun-install", "install", "cache"))).toEqual([expect.stringMatching(/^bun-linux-/)]);
+    expect(existsSync(join(cwd, "home"))).toBe(false);
+  });
+});
+
+describe("embedded libraries with a relative temp directory", () => {
+  const cc = isLinux ? (Bun.which("cc") ?? Bun.which("gcc")) : null;
+
+  // A compiled program extracts an embedded library into the temp directory through a
+  // directory handle, and hands dlopen() the temp directory joined with the file name.
+  // With `TMPDIR=rel-tmp` the file used to be written to `./rel-tmp/` while dlopen() was
+  // given `/el-tmp/<name>` (the join took the first byte of the relative base for the
+  // root). The temp directory is resolved against the cwd once, so both agree.
+  test.skipIf(!isLinux || !cc)(
+    "a program extracts and loads an embedded library from a relative TMPDIR or BUN_TMPDIR",
+    async () => {
+      using dir = tempDir("build-compile-relative-tmpdir", {
+        "libhello.c": "int hello(void) { return 42; }\n",
+        "app.ts": `
+          import { dlopen, FFIType } from "bun:ffi";
+          import lib from "./libhello.so" with { type: "file" };
+          try {
+            const { symbols } = dlopen(lib, { hello: { args: [], returns: FFIType.i32 } });
+            console.log(symbols.hello());
+          } catch (e) {
+            console.log(String(e));
+          }
+        `,
+        "rel-tmp/.keep": "",
+        "rel-bun-tmp/.keep": "",
+      });
+      const cwd = String(dir);
+
+      {
+        await using proc = Bun.spawn({
+          cmd: [cc!, "-shared", "-fPIC", "-o", "libhello.so", "libhello.c"],
+          cwd,
+          env: bunEnv,
+        });
+        expect(await proc.exited).toBe(0);
+      }
+      {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "build", "--compile", "--outfile", "app", "app.ts"],
+          cwd,
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).not.toContain("error:");
+        expect(exitCode).toBe(0);
+      }
+
+      const extractedLibraries = (tmp: string) => readdirSync(join(cwd, tmp)).filter(name => name.endsWith(".so"));
+
+      // BUN_TMPDIR takes precedence over TMPDIR inside bun, and CI sets both.
+      const withTmpdir: NodeJS.Dict<string> = { ...bunEnv, TMPDIR: "rel-tmp" };
+      delete withTmpdir.BUN_TMPDIR;
+      const withBunTmpdir: NodeJS.Dict<string> = { ...bunEnv, BUN_TMPDIR: "rel-bun-tmp" };
+
+      for (const [env, tmp] of [
+        [withTmpdir, "rel-tmp"],
+        [withBunTmpdir, "rel-bun-tmp"],
+      ] as const) {
+        await using proc = Bun.spawn({ cmd: [join(cwd, "app")], cwd, env, stdout: "pipe", stderr: "pipe" });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout: stdout.trim(), stderr, exitCode, extracted: extractedLibraries(tmp).length }).toEqual({
+          stdout: "42",
+          stderr: expect.not.stringContaining("error"),
+          exitCode: 0,
+          extracted: 1,
+        });
+      }
     },
     60_000,
   );

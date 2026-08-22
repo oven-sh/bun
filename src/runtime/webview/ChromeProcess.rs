@@ -1056,9 +1056,13 @@ fn read_dev_tools_active_port(out_buf: &mut Vec<u8>) -> Option<()> {
     // names come from each browser's installer — hardcoded, not
     // discoverable. Edge uses the same CDP + file format as Chrome.
     #[cfg(windows)]
-    let root = getenv_z(zstr!("LOCALAPPDATA"))?;
+    let root: &[u8] = getenv_z(zstr!("LOCALAPPDATA"))?;
     #[cfg(not(windows))]
-    let root = getenv_z(zstr!("HOME"))?;
+    let root: &[u8] = getenv_z(zstr!("HOME"))?;
+    if root.is_empty() {
+        return None;
+    }
+    let top_level_dir = bun_paths::fs::FileSystem::instance().top_level_dir();
 
     #[cfg(target_os = "macos")]
     let candidates: &[&[u8]] = &[
@@ -1098,8 +1102,12 @@ fn read_dev_tools_active_port(out_buf: &mut Vec<u8>) -> Option<()> {
 
     let mut path_buf = path_buffer_pool::get();
     for rel in candidates {
-        let path =
-            resolve_path::join_abs_string_buf_z::<platform::Auto>(root, &mut path_buf[..], &[rel]);
+        let parts: [&[u8]; 2] = [root, rel];
+        let path = resolve_path::join_abs_string_buf_z::<platform::Auto>(
+            top_level_dir,
+            &mut path_buf[..],
+            &parts,
+        );
         let contents: Vec<u8> = match bun_sys::File::read_from(Fd::cwd(), path) {
             Err(_) => continue, // ENOENT or EACCES — try next
             Ok(c) => c,

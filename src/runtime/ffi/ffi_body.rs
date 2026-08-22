@@ -673,22 +673,25 @@ impl CompileC {
                         .unwrap_or(b""),
                 ];
 
+                let top_level_dir = Fs::FileSystem::get().top_level_dir();
                 for sdkroot in dirs_to_try {
                     if !sdkroot.is_empty() {
+                        let include_parts: [&[u8]; 3] = [sdkroot, b"usr", b"include"];
                         let include_dir = path::resolve_path::join_abs_string_buf_z::<
                             path::platform::Auto,
                         >(
-                            sdkroot, pathbuf.as_mut_slice(), &[b"usr", b"include"]
+                            top_level_dir, pathbuf.as_mut_slice(), &include_parts
                         );
                         if state.add_sys_include_path(include_dir).is_err() {
                             global_this.throw(format_args!("TinyCC failed to add sysinclude path"));
                             return Err(crate::Error::JSError);
                         }
 
+                        let lib_parts: [&[u8]; 3] = [sdkroot, b"usr", b"lib"];
                         let lib_dir = path::resolve_path::join_abs_string_buf_z::<
                             path::platform::Auto,
                         >(
-                            sdkroot, pathbuf.as_mut_slice(), &[b"usr", b"lib"]
+                            top_level_dir, pathbuf.as_mut_slice(), &lib_parts
                         );
                         if state.add_library_path(lib_dir).is_err() {
                             global_this.throw(format_args!("TinyCC failed to add library path"));

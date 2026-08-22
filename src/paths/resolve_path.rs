@@ -1392,7 +1392,7 @@ pub fn join_abs_string_spill<'a, P: PlatformT>(
     parts: &[&[u8]],
 ) -> &'a [u8] {
     debug_assert!(!matches!(P::P, Platform::Nt));
-    let needed = join_abs_needed(cwd.len(), parts);
+    let needed = join_abs_result_capacity::<P>(cwd, parts);
     if needed <= PARSER_JOIN_INPUT_BUFFER_LEN {
         return join_abs_string::<P>(cwd, parts);
     }
@@ -1634,6 +1634,17 @@ fn join_abs_needed(cwd_len: usize, parts: &[&[u8]]) -> usize {
     parts.iter().map(|p| p.len() + 1).sum::<usize>() + cwd_len + 2
 }
 
+/// `join_abs_needed`, plus the working directory (at most a `PathBuffer`) that an unanchored base gets prepended.
+#[inline]
+fn join_abs_result_capacity<P: PlatformT>(cwd: &[u8], parts: &[&[u8]]) -> usize {
+    let needed = join_abs_needed(cwd.len(), parts);
+    if P::P.is_absolute(cwd) && P::P.leading_separator_index::<u8>(cwd).is_some() {
+        needed
+    } else {
+        needed + MAX_PATH_BYTES
+    }
+}
+
 /// Scratch buffer for `_join_abs_string_buf`'s unnormalized concatenation.
 /// Draws from the
 /// thread-local `path_buffer_pool` for the common case and only heap-allocates
@@ -1685,7 +1696,7 @@ pub fn join_abs_string_buf_checked<'a, P: PlatformT>(
     debug_assert!(!matches!(P::P, Platform::Nt));
     // Fast path: size check only — don't allocate a JoinScratch here since the
     // inner join_abs_string_buf already has its own (avoids doubling stack usage).
-    let total = join_abs_needed(cwd.len(), parts);
+    let total = join_abs_result_capacity::<P>(cwd, parts);
     if total < buf.len() {
         return Some(join_abs_string_buf::<P>(cwd, buf, parts));
     }
@@ -1711,6 +1722,18 @@ pub fn join_abs_string_buf_z<'a, P: PlatformT>(
     let r = _join_abs_string_buf::<true, P>(cwd, buf, parts);
     // SAFETY: IS_SENTINEL=true wrote NUL at r.len()
     unsafe { ZStr::from_raw(r.as_ptr(), r.len()) }
+}
+
+/// What a non-absolute `join_abs*` base resolves against: the recorded top-level directory, else the cwd, else empty.
+pub fn working_dir(buf: &mut PathBuffer) -> &[u8] {
+    let top_level_dir = bun_core::top_level_dir();
+    if crate::is_absolute(top_level_dir) {
+        return top_level_dir;
+    }
+    match bun_core::getcwd(buf) {
+        Ok(cwd) => cwd.as_bytes(),
+        Err(_) => b"",
+    }
 }
 
 // We always return `&[u8]`; when `IS_SENTINEL` a NUL is written
@@ -1757,11 +1780,14 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
         return &buf[0..1];
     }
 
-    let mut cwd = if cfg!(windows) && _cwd.len() >= 3 && _cwd[1] == b':' {
+    let base: &[u8] = if cfg!(windows) && _cwd.len() >= 3 && _cwd[1] == b':' {
         &_cwd[2..]
     } else {
         _cwd
     };
+    let mut cwd = base;
+    // `is_absolute` accepts what `leading_separator_index` may not anchor (`c:/x` under `Loose`), so a promoted part can still be unanchored below.
+    let mut promoted = false;
 
     {
         let mut part_i: u16 = 0;
@@ -1770,6 +1796,7 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
         while part_i < part_len {
             if P::P.is_absolute(parts[part_i as usize]) {
                 cwd = parts[part_i as usize];
+                promoted = true;
                 parts = &parts[part_i as usize + 1..];
 
                 part_len = parts.len() as u16;
@@ -1780,18 +1807,39 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
         }
     }
 
-    let mut scratch = JoinScratch::init(cwd.len(), parts);
+    // An unanchored `cwd` (empty, relative) becomes the first segment under an anchored head instead of having a `/` invented over its first byte.
+    let mut working_dir_buf: Option<crate::path_buffer_pool::Guard> = None;
+    let (head, i, segment): (&[u8], usize, &[u8]) = match P::P.leading_separator_index::<u8>(cwd) {
+        Some(i) => (cwd, i, b""),
+        None => {
+            let mut anchor = None;
+            if promoted {
+                anchor = P::P.leading_separator_index::<u8>(base).map(|i| (base, i));
+            }
+            let (anchor, i) = match anchor {
+                Some(anchor) => anchor,
+                None => {
+                    let dir = working_dir(working_dir_buf.insert(crate::path_buffer_pool::get()));
+                    match P::P.leading_separator_index::<u8>(dir) {
+                        Some(i) => (dir, i),
+                        None => (b"/" as &[u8], 0),
+                    }
+                }
+            };
+            (anchor, i, cwd)
+        }
+    };
+
+    let mut scratch = JoinScratch::init(head.len() + segment.len() + 1, parts);
     let temp_buf = scratch.buf();
 
-    temp_buf[..cwd.len()].copy_from_slice(cwd);
-    let mut out: usize = cwd.len();
+    temp_buf[..head.len()].copy_from_slice(head);
+    let mut out: usize = head.len();
 
-    for &_part in parts {
-        if _part.is_empty() {
+    for part in core::iter::once(segment).chain(parts.iter().copied()) {
+        if part.is_empty() {
             continue;
         }
-
-        let part = _part;
 
         if out > 0 && temp_buf[out - 1] != P::P.separator() {
             temp_buf[out] = P::P.separator();
@@ -1806,17 +1854,13 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
     // [u8; 8] (max len: NT prefix `\\?\` = 4) so we don't hold a borrow into
     // temp_buf across the normalize call below.
     let mut leading_buf = [0u8; 8];
-    let leading_len: usize = if let Some(i) = P::P.leading_separator_index::<u8>(&temp_buf[0..out])
-    {
+    let leading_len: usize = {
         let outdir = &mut temp_buf[0..i + 1];
         if P::P == Platform::Loose {
             slashes_to_posix_in_place(outdir);
         }
         leading_buf[..i + 1].copy_from_slice(&temp_buf[0..i + 1]);
         i + 1
-    } else {
-        leading_buf[0] = b'/';
-        1
     };
     // Copy leading separator into buf (order-independent with normalize,
     // which writes into buf[leading_len..]).
@@ -1839,13 +1883,27 @@ fn join_abs_string_buf_windows<'a, const IS_SENTINEL: bool>(
     buf: &'a mut [u8],
     parts: &[&[u8]],
 ) -> &'a [u8] {
-    debug_assert!(crate::is_absolute_windows(cwd));
-
     if parts.is_empty() {
         if IS_SENTINEL {
             unreachable!();
         }
         return cwd;
+    }
+
+    if !crate::is_absolute_windows(cwd) {
+        // `cwd` becomes the first part under the working directory; that base passes the check above, so this recurses once.
+        let mut working_dir_buf = crate::path_buffer_pool::get();
+        let dir = working_dir(&mut working_dir_buf);
+        let dir: &[u8] = if crate::is_absolute_windows(dir) {
+            dir
+        } else {
+            b"\\"
+        };
+        let mut all_parts: Vec<&[u8]> = Vec::with_capacity(parts.len() + 1);
+        all_parts.push(cwd);
+        all_parts.extend_from_slice(parts);
+        let len = join_abs_string_buf_windows::<IS_SENTINEL>(dir, &mut *buf, &all_parts).len();
+        return &buf[..len];
     }
 
     // path.resolve is a bit different on Windows, as there are multiple possible filesystem roots.
@@ -2632,6 +2690,190 @@ mod tests {
         let mut spill = Vec::new();
         let out = join_abs_string_spill::<platform::Posix>(b"/work", &mut spill, &[&part]);
         assert_eq!(out, b"/work/sub");
+    }
+
+    /// `/work` is absolute under the POSIX rule and the Windows rule alike, so it serves the tests of both arms.
+    fn record_working_dir() {
+        bun_core::set_top_level_dir(b"/work");
+    }
+
+    #[test]
+    fn join_abs_resolves_a_relative_base_against_the_working_dir() {
+        record_working_dir();
+        assert_eq!(
+            join_abs_string::<platform::Posix>(b"rel", &[b"x"]),
+            b"/work/rel/x"
+        );
+        assert_eq!(
+            join_abs_string::<platform::Posix>(b"reltmp", &[b".bun-0.node"]),
+            b"/work/reltmp/.bun-0.node"
+        );
+        assert_eq!(
+            join_abs_string::<platform::Posix>(b".", &[b"./.npmrc"]),
+            b"/work/.npmrc"
+        );
+        assert_eq!(
+            join_abs_string::<platform::Posix>(b"a/..", &[b"b"]),
+            b"/work/b"
+        );
+        assert_eq!(
+            join_abs_string::<platform::Loose>(b"rel", &[b"x"]),
+            b"/work/rel/x"
+        );
+    }
+
+    #[test]
+    fn join_abs_resolves_an_empty_base_against_the_working_dir() {
+        record_working_dir();
+        assert_eq!(
+            join_abs_string::<platform::Posix>(b"", &[b"install", b"global"]),
+            b"/work/install/global"
+        );
+        assert_eq!(
+            join_abs_string::<platform::Posix>(b"", &[b".bunfig.toml"]),
+            b"/work/.bunfig.toml"
+        );
+        assert_eq!(join_abs_string::<platform::Posix>(b"", &[b""]), b"/work");
+    }
+
+    #[test]
+    fn join_abs_with_a_relative_base_still_lets_an_absolute_part_win() {
+        record_working_dir();
+        assert_eq!(
+            join_abs_string::<platform::Posix>(b"rel", &[b"/abs", b"y"]),
+            b"/abs/y"
+        );
+        assert_eq!(
+            join_abs_string::<platform::Posix>(b"", &[b"x", b"/abs"]),
+            b"/abs"
+        );
+    }
+
+    #[test]
+    fn join_abs_loose_keeps_a_part_that_is_absolute_but_not_anchored_under_its_base() {
+        record_working_dir();
+        // `Loose` calls `c:/cache` absolute, but only an upper-case drive anchors a path.
+        assert_eq!(
+            join_abs_string::<platform::Loose>(b"/project", &[b"c:/cache", b"pkg"]),
+            b"/project/c:/cache/pkg"
+        );
+        assert_eq!(
+            join_abs_string::<platform::Loose>(b"rel", &[b"c:/cache"]),
+            b"/work/c:/cache"
+        );
+        assert_eq!(
+            join_abs_string_z::<platform::Loose>(b"/project", &[b"1:\\x"]).as_bytes(),
+            b"/project/1:/x"
+        );
+        // `import(":://filesystem")` reaches the resolver's joins with this part.
+        assert_eq!(
+            join_abs_string::<platform::Loose>(b"/project", &[b":://filesystem"]),
+            b"/project/::/filesystem"
+        );
+        assert_eq!(
+            join_abs_string::<platform::Loose>(b"/project", &[b"C:/cache"]),
+            b"C:/cache"
+        );
+    }
+
+    #[test]
+    fn join_abs_z_with_a_relative_base_is_nul_terminated_in_the_buffer() {
+        record_working_dir();
+        let mut buf = [0xAAu8; 64];
+        let out = join_abs_string_buf_z::<platform::Posix>(b"rel", &mut buf, &[b"x"]);
+        assert_eq!(out.as_bytes(), b"/work/rel/x");
+        assert_eq!(buf[b"/work/rel/x".len()], 0);
+
+        let out = join_abs_string_z::<platform::Posix>(b"", &[b"install", b"cache"]);
+        assert_eq!(out.as_bytes(), b"/work/install/cache");
+    }
+
+    #[test]
+    fn join_abs_checked_and_spill_resolve_a_relative_base_too() {
+        record_working_dir();
+        let mut buf = [0u8; 64];
+        assert_eq!(
+            join_abs_string_buf_checked::<platform::Posix>(b"rel", &mut buf, &[b"x"]),
+            Some(&b"/work/rel/x"[..])
+        );
+        let mut spill = Vec::new();
+        assert_eq!(
+            join_abs_string_spill::<platform::Posix>(b"rel", &mut spill, &[b"x"]),
+            b"/work/rel/x"
+        );
+    }
+
+    #[test]
+    fn join_abs_checked_and_spill_account_for_the_working_dir_prefix() {
+        record_working_dir();
+
+        // `rel` plus the part fits the 64-byte buffer, `/work/rel/` plus the part does not.
+        let part = [b'a'; 56];
+        let mut buf = [0u8; 64];
+        assert_eq!(
+            join_abs_string_buf_checked::<platform::Posix>(b"rel", &mut buf, &[&part]),
+            None
+        );
+
+        // The part alone fits the thread-local buffer, the prefixed result does not.
+        let part = vec![b'a'; PARSER_JOIN_INPUT_BUFFER_LEN - 4];
+        let mut expected = b"/work/".to_vec();
+        expected.extend_from_slice(&part);
+        let mut spill = Vec::new();
+        assert_eq!(
+            join_abs_string_spill::<platform::Posix>(b"", &mut spill, &[&part]),
+            &expected[..]
+        );
+        assert!(!spill.is_empty());
+    }
+
+    #[test]
+    fn join_abs_windows_resolves_a_relative_or_empty_base_against_the_working_dir() {
+        record_working_dir();
+        assert_eq!(
+            join_abs_string::<platform::Windows>(b"rel", &[b"bin"]),
+            b"\\work\\rel\\bin"
+        );
+        assert_eq!(
+            join_abs_string::<platform::Windows>(b"", &[b"install", b"global"]),
+            b"\\work\\install\\global"
+        );
+        assert_eq!(
+            join_abs_string::<platform::Windows>(b"rel", &[b"C:\\abs", b"y"]),
+            b"C:\\abs\\y"
+        );
+        let mut buf = [0xAAu8; 64];
+        let out = join_abs_string_buf_z::<platform::Windows>(b"", &mut buf, &[b"bin"]);
+        assert_eq!(out.as_bytes(), b"\\work\\bin");
+        assert_eq!(buf[b"\\work\\bin".len()], 0);
+        assert_eq!(
+            join_abs_string::<platform::Nt>(b"rel", &[b"bin"]),
+            b"\\\\?\\\\work\\rel\\bin"
+        );
+    }
+
+    #[test]
+    fn join_abs_with_no_parts_returns_the_base_unchanged_on_both_arms() {
+        record_working_dir();
+        assert_eq!(join_abs_string::<platform::Posix>(b"rel", &[]), b"rel");
+        assert_eq!(join_abs_string::<platform::Windows>(b"rel", &[]), b"rel");
+    }
+
+    #[test]
+    fn join_abs_with_an_absolute_base_does_not_consult_the_working_dir() {
+        record_working_dir();
+        assert_eq!(
+            join_abs_string::<platform::Posix>(b"/home/u", &[b".bunfig.toml"]),
+            b"/home/u/.bunfig.toml"
+        );
+        assert_eq!(
+            join_abs_string::<platform::Loose>(b"C:/home/u", &[b"x"]),
+            b"C:/home/u/x"
+        );
+        assert_eq!(
+            join_abs_string::<platform::Windows>(b"C:\\home\\u", &[b"bin"]),
+            b"C:\\home\\u\\bin"
+        );
     }
 
     #[test]

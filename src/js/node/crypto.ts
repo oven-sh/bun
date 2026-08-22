@@ -133,23 +133,6 @@ crypto_exports.constants = $processBindingConstants.crypto;
 
 crypto_exports.KeyObject = KeyObject;
 
-crypto_exports.generateKey = generateKey;
-crypto_exports.generateKeySync = generateKeySync;
-defineCustomPromisifyArgs(generateKeyPair, ["publicKey", "privateKey"]);
-crypto_exports.generateKeyPair = generateKeyPair;
-crypto_exports.generateKeyPairSync = generateKeyPairSync;
-
-crypto_exports.createSecretKey = createSecretKey;
-crypto_exports.createPublicKey = createPublicKey;
-crypto_exports.createPrivateKey = createPrivateKey;
-
-var webcrypto = crypto;
-var _subtle = webcrypto.subtle;
-
-crypto_exports.hash = function hash(algorithm, input, outputEncoding = "hex") {
-  return CryptoHasher.hash(algorithm, input, outputEncoding);
-};
-
 // Like node's MakeCallback, the trailing callback runs inside the active domain.
 function wrapDomainCallbackLast(fn, name) {
   function wrapper() {
@@ -168,10 +151,27 @@ function wrapDomainCallbackLast(fn, name) {
   Object.defineProperty(wrapper, "length", { __proto__: null, value: fn.length, configurable: true });
   return wrapper;
 }
+crypto_exports.generateKey = wrapDomainCallbackLast(generateKey, "generateKey");
+crypto_exports.generateKeySync = generateKeySync;
+crypto_exports.generateKeyPair = wrapDomainCallbackLast(generateKeyPair, "generateKeyPair");
+defineCustomPromisifyArgs(crypto_exports.generateKeyPair, ["publicKey", "privateKey"]);
+crypto_exports.generateKeyPairSync = generateKeyPairSync;
+
+crypto_exports.createSecretKey = createSecretKey;
+crypto_exports.createPublicKey = createPublicKey;
+crypto_exports.createPrivateKey = createPrivateKey;
+
+var webcrypto = crypto;
+var _subtle = webcrypto.subtle;
+
+crypto_exports.hash = function hash(algorithm, input, outputEncoding = "hex") {
+  return CryptoHasher.hash(algorithm, input, outputEncoding);
+};
+
 crypto_exports.pbkdf2 = wrapDomainCallbackLast(pbkdf2, "pbkdf2");
 crypto_exports.pbkdf2Sync = pbkdf2Sync;
 
-crypto_exports.hkdf = hkdf;
+crypto_exports.hkdf = wrapDomainCallbackLast(hkdf, "hkdf");
 crypto_exports.hkdfSync = hkdfSync;
 
 crypto_exports.getCurves = getCurves;
@@ -386,7 +386,7 @@ function checkArgon2(algorithm, parameters) {
   return { message, nonce, secret, associatedData, tagLength, passes, parallelism, memory, type };
 }
 
-crypto_exports.argon2 = function argon2(algorithm, parameters, callback) {
+crypto_exports.argon2 = wrapDomainCallbackLast(function argon2(algorithm, parameters, callback) {
   parameters = checkArgon2(algorithm, parameters);
 
   validateFunction(callback, "callback");
@@ -406,7 +406,7 @@ crypto_exports.argon2 = function argon2(algorithm, parameters, callback) {
       callback(null, result);
     },
   );
-};
+}, "argon2");
 crypto_exports.argon2Sync = function argon2Sync(algorithm, parameters) {
   parameters = checkArgon2(algorithm, parameters);
 
@@ -423,9 +423,9 @@ crypto_exports.argon2Sync = function argon2Sync(algorithm, parameters) {
   );
 };
 
-crypto_exports.checkPrime = checkPrime;
+crypto_exports.checkPrime = wrapDomainCallbackLast(checkPrime, "checkPrime");
 crypto_exports.checkPrimeSync = checkPrimeSync;
-crypto_exports.generatePrime = generatePrime;
+crypto_exports.generatePrime = wrapDomainCallbackLast(generatePrime, "generatePrime");
 crypto_exports.generatePrimeSync = generatePrimeSync;
 
 crypto_exports.secureHeapUsed = secureHeapUsed;

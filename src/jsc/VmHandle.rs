@@ -75,24 +75,11 @@ enum State {
 /// one of these: its producers post through that loop's own [`JsPoster`].
 ///
 /// [`JsPoster`]: bun_event_loop::JsPoster
-#[repr(u8)]
+#[repr(u8)] // C++: `BunLoopKind` (BunLoopKind.h)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LoopKind {
     Regular = 0,
     Macro = 1,
-}
-
-impl LoopKind {
-    /// From C++'s `BunLoopKind`.
-    #[inline]
-    pub fn from_raw(raw: u8) -> LoopKind {
-        debug_assert!(raw <= LoopKind::Macro as u8);
-        if raw == LoopKind::Macro as u8 {
-            LoopKind::Macro
-        } else {
-            LoopKind::Regular
-        }
-    }
 }
 
 /// `state` (read by every native→JS entry on the JS thread) and `vm`, on
@@ -540,8 +527,8 @@ impl VirtualMachine {
 /// JS thread: [`VirtualMachine::current_loop_kind`] for C++ (`BunLoopKind`),
 /// captured by the initiator of work whose completion is posted weakly.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__VM__currentLoopKind(vm: &VirtualMachine) -> u8 {
-    vm.current_loop_kind() as u8
+pub extern "C" fn Bun__VM__currentLoopKind(vm: &VirtualMachine) -> LoopKind {
+    vm.current_loop_kind()
 }
 
 // ── Test suite only: deterministic late completions ───────────────────────
@@ -729,12 +716,12 @@ pub unsafe extern "C" fn Bun__VmHandle__release(r: *const Shared) {
 pub unsafe extern "C" fn Bun__VmHandle__postAndRelease(
     r: *const Shared,
     task: *mut crate::cpp_task::CppTask,
-    kind: u8,
+    kind: LoopKind,
 ) {
     // SAFETY: fn contract.
     let handle = unsafe { VmHandle::from_ref(r) };
     // SAFETY: fn contract.
-    unsafe { handle.post_cpp_task(LoopKind::from_raw(kind), task) };
+    unsafe { handle.post_cpp_task(kind, task) };
 }
 
 /// JS thread: adjust this VM's keep-alive directly.
@@ -755,11 +742,11 @@ pub extern "C" fn Bun__eventLoop__refKeepAlive(vm: &VirtualMachine, delta: core:
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Bun__VmHandle__refKeepAlive(
     r: *const Shared,
-    kind: u8,
+    kind: LoopKind,
     delta: core::ffi::c_int,
 ) {
     // SAFETY: fn contract.
-    unsafe { VmHandle::borrow_ref(r) }.add_keep_alive(LoopKind::from_raw(kind), delta.signum());
+    unsafe { VmHandle::borrow_ref(r) }.add_keep_alive(kind, delta.signum());
 }
 
 /// Any thread: Node's `can_call_into_js()`.

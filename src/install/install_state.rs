@@ -85,12 +85,28 @@ fn lstat_stamp(path: &[u8]) -> Option<u64> {
     bun_sys::lstat(&zpath(path)).ok().map(|st| mtime_ns(&st))
 }
 
+enum Stamp {
+    At(u64),
+    Absent,
+    Unreadable,
+}
+
+/// `lstat_stamp`, but an existing path whose metadata cannot be read (EACCES, EIO, …)
+/// is reported separately so callers can refuse to record state over it.
+fn lstat_stamp_strict(path: &[u8]) -> Stamp {
+    match bun_sys::lstat(&zpath(path)) {
+        Ok(st) => Stamp::At(mtime_ns(&st)),
+        Err(e) if matches!(e.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) => {
+            Stamp::Absent
+        }
+        Err(_) => Stamp::Unreadable,
+    }
+}
+
 fn is_directory(path: &[u8]) -> bool {
     matches!(bun_sys::stat(&zpath(path)), Ok(st) if bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode) == bun_sys::FileKind::Directory)
 }
 
-/// Directory entries as (name, is_directory); `.`/`..` are never returned by the
-/// iterator. None if the directory cannot be opened.
 enum DirList {
     Entries(Vec<(Vec<u8>, bool)>),
     /// ENOENT / ENOTDIR
@@ -160,6 +176,10 @@ fn env_and_argv_hash(manager: &PackageManager) -> u64 {
             k.starts_with(b"BUN_INSTALL")
                 || k.starts_with(b"BUN_CONFIG_")
                 || k.len() >= 11 && k[..11].eq_ignore_ascii_case(b"NPM_CONFIG_")
+                // where the global .npmrc / .bunfig.toml are looked up
+                || k == b"HOME"
+                || k == b"USERPROFILE"
+                || k == b"XDG_CONFIG_HOME"
         })
         .collect();
     keys.sort_unstable();
@@ -328,7 +348,14 @@ pub fn save(manager: &mut PackageManager, root_dir: &[u8], entries: u64, package
         let buf = manager.lockfile.buffers.string_bytes.as_slice();
         let mut budget: usize = 20_000;
         let mut ok = true;
-        for r in manager.lockfile.packages.slice().items_resolution().iter() {
+        for (i, r) in manager
+            .lockfile
+            .packages
+            .slice()
+            .items_resolution()
+            .iter()
+            .enumerate()
+        {
             match r.tag {
                 Tag::Folder | Tag::Symlink => {
                     let rel = if r.tag == Tag::Folder {
@@ -353,6 +380,12 @@ pub fn save(manager: &mut PackageManager, root_dir: &[u8], entries: u64, package
                 }
                 Tag::LocalTarball => {
                     let rel = r.local_tarball().slice(buf);
+                    // A relative tarball path is stored as declared, i.e. relative to the
+                    // *declaring* package; only the root's can be resolved from here.
+                    if !bun_paths::is_absolute(rel) && !declared_by_root(&manager.lockfile, i) {
+                        ok = false;
+                        break;
+                    }
                     let path = if bun_paths::is_absolute(rel) {
                         rel.to_vec()
                     } else {
@@ -409,11 +442,19 @@ pub fn save(manager: &mut PackageManager, root_dir: &[u8], entries: u64, package
     file(&mut out, join(root_dir, b".npmrc"));
     // `-c <path>` is loaded instead of ./bunfig.toml; cover it too (its argv position is
     // already part of the env+argv hash, its contents are not)
-    if let Some(cfg) = manager.options.explicit_config_path {
+    if let Some(cfg) = manager.options.explicit_config_path
+        && !cfg.is_empty()
+    {
+        // `load_config` resolves a relative --config against the process cwd
+        let mut cwd_buf = bun_paths::PathBuffer::uninit();
+        let base: &[u8] = match bun_sys::getcwd(&mut cwd_buf.0) {
+            Ok(n) => &cwd_buf.0[..n],
+            Err(_) => root_dir,
+        };
         if bun_paths::is_absolute(cfg) {
             file(&mut out, cfg.to_vec());
         } else {
-            file(&mut out, join(root_dir, cfg));
+            file(&mut out, join(base, cfg));
         }
     }
     // global config, with the same precedence the loaders use: $XDG_CONFIG_HOME first
@@ -428,6 +469,7 @@ pub fn save(manager: &mut PackageManager, root_dir: &[u8], entries: u64, package
     }
     // workspaces: manifest hash + parent dir stamp
     let buf = manager.lockfile.buffers.string_bytes.as_slice();
+    let mut globs_incomplete = false;
     let mut parents: Vec<Vec<u8>> = Vec::new();
     for ws in manager.lockfile.workspace_paths.values() {
         let rel = ws.slice(buf);
@@ -464,12 +506,13 @@ pub fn save(manager: &mut PackageManager, root_dir: &[u8], entries: u64, package
                 // workspaces too — stamp existing dirs down to the glob's depth (2 for **)
                 let rest = &g[literal_end..];
                 let extra_depth = if strings_contains(rest, b"**") {
-                    2
+                    usize::MAX
                 } else {
                     bun_core::strings::count_char(rest, b'/')
                 };
-                if extra_depth > 0 {
-                    collect_dirs(&abs, extra_depth, &mut parents, &mut 2000);
+                if extra_depth > 0 && !collect_dirs(&abs, extra_depth, &mut parents, &mut 4000) {
+                    // too many candidate directories to watch cheaply: no fast path
+                    globs_incomplete = true;
                 }
                 if !parents.contains(&abs) {
                     parents.push(abs);
@@ -558,21 +601,29 @@ pub fn save(manager: &mut PackageManager, root_dir: &[u8], entries: u64, package
             // an existing store we cannot enumerate makes the state unrecordable
             DirList::Unreadable => unreadable = true,
             DirList::Entries(entries) => {
-                for (name, is_dir) in entries {
-                    if !is_dir {
-                        continue;
-                    }
-                    let inner = join(&join(&store, &name), b"node_modules");
-                    if let Some(stamp) = lstat_stamp(&inner) {
-                        let _ = write!(out, "l {stamp:016x} ");
-                        out.extend_from_slice(&inner);
-                        out.push(b'\n');
+                for (name, _) in entries {
+                    // `.bun/node_modules` is the hidden hoist directory itself; every other
+                    // entry (a directory, or with a global store a symlink to one) holds
+                    // the package plus its dependency links under `<entry>/node_modules`
+                    let dir = if name == b"node_modules" {
+                        join(&store, &name)
+                    } else {
+                        join(&join(&store, &name), b"node_modules")
+                    };
+                    match lstat_stamp_strict(&dir) {
+                        Stamp::At(stamp) => {
+                            let _ = write!(out, "l {stamp:016x} ");
+                            out.extend_from_slice(&dir);
+                            out.push(b'\n');
+                        }
+                        Stamp::Absent => {}
+                        Stamp::Unreadable => unreadable = true,
                     }
                 }
             }
         }
     }
-    if unreadable {
+    if unreadable || globs_incomplete {
         return;
     }
     out.extend_from_slice(&local_lines);
@@ -608,8 +659,10 @@ fn manifest_stamp(pkg_dir: &[u8]) -> u64 {
 /// package.json stamp (`p`). Scope dirs are descended one level; bookkeeping dirs
 /// (`.bin`, `.bun`, …) get only the `l` stamp.
 fn stamp_tree(out: &mut Vec<u8>, dir: &[u8], depth: u8) -> bool {
-    let Some(stamp) = lstat_stamp(dir) else {
-        return true;
+    let stamp = match lstat_stamp_strict(dir) {
+        Stamp::At(s) => s,
+        Stamp::Absent => return true,
+        Stamp::Unreadable => return false,
     };
     let _ = write!(out, "l {stamp:016x} ");
     out.extend_from_slice(dir);
@@ -682,18 +735,20 @@ fn workspace_globs(json_bytes: &[u8]) -> Option<Vec<Vec<u8>>> {
 
 /// Collect existing subdirectories of `dir` up to `depth` levels (bounded), skipping
 /// node_modules / dot dirs, into `out`.
-fn collect_dirs(dir: &[u8], depth: usize, out: &mut Vec<Vec<u8>>, budget: &mut usize) {
-    if depth == 0 || *budget == 0 {
-        return;
+/// Collect the directories up to `depth` levels below `dir` (skipping node_modules and
+/// dot dirs). Returns false if the walk could not be completed within `budget` or a
+/// directory could not be read — the caller must then not record state, since a
+/// workspace could later appear in a directory that was never stamped.
+fn collect_dirs(dir: &[u8], depth: usize, out: &mut Vec<Vec<u8>>, budget: &mut usize) -> bool {
+    if depth == 0 {
+        return true;
     }
-    // best effort: this only widens the set of directories that get an mtime stamp
-    let DirList::Entries(rd) = read_dir(dir) else {
-        return;
+    let rd = match read_dir(dir) {
+        DirList::Entries(rd) => rd,
+        DirList::Absent => return true,
+        DirList::Unreadable => return false,
     };
     for (name, is_dir) in &rd {
-        if *budget == 0 {
-            return;
-        }
         if !is_dir {
             continue;
         }
@@ -701,13 +756,19 @@ fn collect_dirs(dir: &[u8], depth: usize, out: &mut Vec<Vec<u8>>, budget: &mut u
         if name == b"node_modules" || name.starts_with(b".") {
             continue;
         }
+        if *budget == 0 {
+            return false;
+        }
         *budget -= 1;
         let child = join(dir, name);
-        collect_dirs(&child, depth - 1, out, budget);
+        if !collect_dirs(&child, depth - 1, out, budget) {
+            return false;
+        }
         if !out.contains(&child) {
             out.push(child);
         }
     }
+    true
 }
 
 /// Recursively record `l` stamps for a local-source directory (skipping node_modules
@@ -743,6 +804,18 @@ fn stamp_source_tree(out: &mut Vec<u8>, dir: &[u8], budget: &mut usize) -> bool 
         }
     }
     true
+}
+
+/// Is package `pkg_id` a direct dependency of the root package? (Local paths are stored
+/// relative to the declaring package, so only those can be resolved from the root.)
+fn declared_by_root(lockfile: &crate::lockfile::Lockfile, pkg_id: usize) -> bool {
+    if lockfile.packages.len() == 0 {
+        return false;
+    }
+    let root_deps = lockfile.packages.items_dependencies()[0];
+    let resolutions = lockfile.buffers.resolutions.as_slice();
+    (root_deps.off as usize..(root_deps.off + root_deps.len) as usize)
+        .any(|dep_id| resolutions.get(dep_id).copied() == Some(pkg_id as crate::PackageID))
 }
 
 /// Remove the state file (called before any install that will do real work, so a

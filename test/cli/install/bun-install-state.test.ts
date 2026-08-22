@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, statSync, utimesSync } from "fs";
+import { existsSync, readFileSync, statSync, utimesSync } from "fs";
 import { mkdir, rm, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env } from "harness";
 import { join } from "path";
@@ -156,29 +156,30 @@ describe.each(["hoisted", "isolated"] as const)("install state (%s)", linker => 
           ...extra,
         },
       });
-    const stateMtime = () => statSync(stateFile).mtimeMs;
+    // the file's env+argv line and stamps change whenever a full pass rewrites it
+    const stateText = () => readFileSync(stateFile, "utf8");
     await writeFile(join(package_dir, "alt.toml"), altConfig({}));
     r = await install(package_dir, ["--config=alt.toml"]);
     expect(r.code).toBe(0);
-    let m = stateMtime();
+    let m = stateText();
     r = await install(package_dir, ["--config=alt.toml"]);
     expect(r.out).toMatch(noChanges);
     expect(r.code).toBe(0);
-    expect(stateMtime()).toBe(m);
+    expect(stateText()).toBe(m);
     await writeFile(join(package_dir, "alt.toml"), altConfig({ dev: false }));
     r = await install(package_dir, ["--config=alt.toml"]);
     expect(r.err).not.toContain("error:");
     expect(r.code).toBe(0);
-    expect(stateMtime()).not.toBe(m);
+    expect(stateText()).not.toBe(m);
 
     // 9. --dry-run does not touch node_modules, so it leaves the marker alone
-    m = stateMtime();
+    m = stateText();
     r = await install(package_dir, ["--config=alt.toml", "--dry-run"]);
     expect(r.code).toBe(0);
     r = await install(package_dir, ["--config=alt.toml"]);
     expect(r.out).toMatch(noChanges);
     expect(r.code).toBe(0);
-    expect(stateMtime()).toBe(m);
+    expect(stateText()).toBe(m);
 
     // 10. install.stateFile = false disables the fast path: no state is recorded, and the
     //    classic per-package verification still repairs node_modules

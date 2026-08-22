@@ -54,7 +54,7 @@ transpiler.transformSync("<div>hi!</div>", "tsx");
 
 `.transformSync` runs the transpiler in the same thread as the calling code.
 
-[Macros](/bundler/macros) run in the same thread as the transpiler, but in a separate event loop from the rest of your application. Macros and regular code share globals, so it is possible (but not recommended) to share state between them. Using AST nodes outside of a macro is undefined behavior.
+[Macros](/bundler/macros) run in a dedicated JavaScript VM on its own thread; the calling thread waits for the result. They do not share globals or module state with your application. The optional `context` object passed to `transformSync` reaches the macro as a structured clone, appended after the call's own arguments.
 
 </Accordion>
 
@@ -79,8 +79,6 @@ await transpiler.transform("<div>hi!</div>", "tsx");
 <Accordion title="Nitty gritty">
 
 The `.transform()` method runs the transpiler in Bun's worker threadpool, so running it 100 times spreads the work across `Math.floor($cpu_count * 0.8)` threads without blocking the main JavaScript thread.
-
-If your code uses a macro, the transpiler may spawn a new copy of Bun's JavaScript runtime environment in that new thread.
 
 </Accordion>
 

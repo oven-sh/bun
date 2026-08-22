@@ -2478,7 +2478,6 @@ pub(crate) struct ThreadSafeFunction {
     /// as they like (Node: calls after env cleanup get `napi_closing`), so it
     /// cannot be something the VM waits for.
     pub(crate) handle: bun_jsc::VmHandle,
-    pub(crate) loop_kind: bun_jsc::LoopKind,
     pub(crate) tracker: Debugger::AsyncTaskTracker,
 
     /// Dropped on the JS thread by `env_teardown`; `None` afterwards.
@@ -2929,9 +2928,7 @@ impl ThreadSafeFunction {
                     return;
                 }
                 let ct = ConcurrentTask::create_from(self_ptr);
-                if let bun_jsc::vm_handle::Posted::Refused(ct) =
-                    self.handle.post(self.loop_kind, ct)
-                {
+                if let bun_jsc::vm_handle::Posted::Refused(ct) = self.handle.post(ct) {
                     // VM closed before the env cleanup hook ran here: no
                     // dispatch will happen; the queued calls are released by the
                     // teardown path. Free the task and fall back to Idle.
@@ -3235,7 +3232,6 @@ extern "C" fn napi_create_threadsafe_function(
         // (via `env_teardown`) before the VirtualMachine holding it is freed.
         event_loop: Some(unsafe { bun_ptr::BackRef::from_raw_mut(vm.event_loop()) }),
         handle: vm.handle(),
-        loop_kind: vm.current_loop_kind(),
         // SAFETY: env is a live C++-owned napi_env.
         env: Some(unsafe { NapiEnvRef::clone_from_raw(env.as_mut_ptr()) }),
         callback,
@@ -5295,9 +5291,7 @@ impl NapiFinalizerTask {
             let handle = unsafe { &*self.finalizer.env.get() }.vm_handle().clone();
             let this = bun_core::heap::into_raw(self);
             let ct = ConcurrentTask::create(Task::init(this));
-            if let bun_jsc::vm_handle::Posted::Refused(ct) =
-                handle.post(bun_jsc::LoopKind::Regular, ct)
-            {
+            if let bun_jsc::vm_handle::Posted::Refused(ct) = handle.post(ct) {
                 // SAFETY: refused ⇒ we own both boxes.
                 unsafe {
                     drop(bun_core::heap::take(ct.as_ptr()));

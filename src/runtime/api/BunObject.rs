@@ -294,7 +294,6 @@ pub mod bun_object {
         BunObject_callback_listen => super::static_adapters::listener_listen,
         BunObject_callback_mmap => super::mmap_file,
         BunObject_callback_openInEditor => super::open_in_editor,
-        BunObject_callback_registerMacro => super::register_macro,
         BunObject_callback_resolve => super::resolve,
         BunObject_callback_resolveSync => super::resolve_sync,
         BunObject_callback_serve => super::serve,
@@ -771,42 +770,6 @@ fn get_inspect(global_object: &JSGlobalObject, _: &JSObject) -> JSValue {
         ),
     );
     fun
-}
-
-#[bun_jsc::host_fn]
-fn register_macro(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let arguments = callframe.arguments();
-    if arguments.len() < 2 || !arguments[0].is_number() {
-        return Err(global_object.throw_invalid_arguments(format_args!(
-            "Internal error registering macros: invalid args"
-        )));
-    }
-    let id = arguments[0].to_int32();
-    if id == -1 || id == 0 {
-        return Err(global_object.throw_invalid_arguments(format_args!(
-            "Internal error registering macros: invalid id"
-        )));
-    }
-
-    if !arguments[1].is_cell() || !arguments[1].is_callable() {
-        // TODO: add "toTypeOf" helper
-        return Err(global_object.throw(format_args!("Macro must be a function")));
-    }
-
-    // SAFETY: VirtualMachine::get() returns the live per-thread singleton.
-    let get_or_put_result = VirtualMachine::get()
-        .as_mut()
-        .macros
-        .get_or_put(id)
-        .expect("unreachable");
-    if get_or_put_result.found_existing {
-        get_or_put_result.value_ptr.unprotect();
-    }
-
-    arguments[1].protect();
-    *get_or_put_result.value_ptr = arguments[1];
-
-    Ok(JSValue::UNDEFINED)
 }
 
 fn get_cwd(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {

@@ -778,11 +778,8 @@ impl TranspilerJob {
         // this should be a cheap lookup because 24 bytes == 8 * 3 so it's read 3 machine words
         let is_node_override = strings::has_prefix_comptime(specifier, node_fallbacks::IMPORT_PATH);
 
-        // SAFETY: leaf scalar field reads on `*vm`; see `vm` note above.
-        let macro_remappings = if unsafe { (*vm).macro_mode }
-            || !unsafe { (*vm).has_any_macro_remappings }
-            || is_node_override
-        {
+        // SAFETY: leaf scalar field read on `*vm`; see `vm` note above.
+        let macro_remappings = if !unsafe { (*vm).has_any_macro_remappings } || is_node_override {
             MacroRemap::default()
         } else {
             // Note: `MacroRemap` (StringArrayHashMap of StringArrayHashMap)

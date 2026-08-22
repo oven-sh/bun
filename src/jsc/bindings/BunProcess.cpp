@@ -403,6 +403,7 @@ extern "C" size_t Bun__process_dlopen_count;
 
 extern "C" void CrashHandler__setDlOpenAction(const char* action);
 extern "C" bool Bun__VM__allowAddons(void* vm);
+extern "C" bool Bun__VM__isMacroVM(void* vm);
 extern "C" int32_t Bun__addonNeedsGlibcOnMusl(const char* path, size_t len, char* soname_out, size_t soname_cap);
 
 JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((minsize)), (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
@@ -855,6 +856,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExit, (JSC::JSGlobalObject * globalObje
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* zigGlobal = defaultGlobalObject(globalObject);
+    if (Bun__VM__isMacroVM(bunVM(zigGlobal))) [[unlikely]] {
+        // The macro VM serves every transpiling thread in the process; a macro exits by returning or throwing.
+        throwTypeError(globalObject, throwScope, "process.exit() cannot be called from a macro"_s);
+        return {};
+    }
     auto process = zigGlobal->processObject();
 
     auto code = callFrame->argument(0);
@@ -3660,6 +3666,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyExit, (JSGlobalObject * globalObj
 {
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
+    if (Bun__VM__isMacroVM(bunVM(defaultGlobalObject(globalObject)))) [[unlikely]] {
+        throwTypeError(globalObject, throwScope, "process.exit() cannot be called from a macro"_s);
+        return {};
+    }
     uint8_t exitCode = 0;
     JSValue arg0 = callFrame->argument(0);
     if (arg0.isAnyInt()) {

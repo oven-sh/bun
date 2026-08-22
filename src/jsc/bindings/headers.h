@@ -816,6 +816,10 @@ BUN_DECLARE_HOST_FUNCTION(Bun__S3UploadStream__onRejectStream);
 
 BUN_DECLARE_HOST_FUNCTION(Bun__HTMLRewriter__onResolveInputStream);
 BUN_DECLARE_HOST_FUNCTION(Bun__HTMLRewriter__onRejectInputStream);
+BUN_DECLARE_HOST_FUNCTION(Bun__Macro__onImportResolve);
+BUN_DECLARE_HOST_FUNCTION(Bun__Macro__onImportReject);
+BUN_DECLARE_HOST_FUNCTION(Bun__Macro__onResultResolve);
+BUN_DECLARE_HOST_FUNCTION(Bun__Macro__onResultReject);
 
 
 #endif

@@ -230,6 +230,14 @@ pub(crate) fn run_task(
                     .run_on_js_thread()
             })?;
         }
+        task_tag::MacroRequest => {
+            // SAFETY: tag identifies pointee — a request whose caller is parked
+            // until the macro host answers it.
+            bun_js_parser_jsc::Macro::MacroRequest::run_on_macro_host(
+                cast_ptr!(bun_js_parser_jsc::Macro::MacroRequest<'static>),
+                global,
+            );
+        }
         task_tag::BundleV2PluginLoad => {
             // As `BundleV2PluginResolve`.
             bun_jsc::call_check_slow(global, || {
@@ -589,7 +597,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 61,
+    task_tag::COUNT == 62,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1247,6 +1255,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             release!(crate::api::js_bundle_completion_task::JSBundleCompletionTask)
         }
         task_tag::JSCDeferredWorkTask => release!(JSCDeferredWorkTask),
+        task_tag::MacroRequest => release!(bun_js_parser_jsc::Macro::MacroRequest<'static>),
         task_tag::ManagedTask => release!(ManagedTask),
         task_tag::NapiAsyncWork => release!(napi_async_work),
         task_tag::NapiFinalizerTask => release!(NapiFinalizerTask),

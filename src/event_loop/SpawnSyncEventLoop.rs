@@ -54,8 +54,6 @@ unsafe extern "Rust" {
     safe fn __bun_spawn_sync_event_loop_tick_tasks_only(el: *mut ());
     safe fn __bun_spawn_sync_vm_get_event_loop_handle(vm: *mut ()) -> VmEventLoopHandle;
     safe fn __bun_spawn_sync_vm_set_event_loop_handle(vm: *mut (), h: VmEventLoopHandle);
-    /// `vm.event_loop = prev` (cleanup path).
-    safe fn __bun_spawn_sync_vm_set_event_loop(vm: *mut (), el: *mut ());
     /// Swap `vm.suppress_microtask_drain`, return previous.
     safe fn __bun_spawn_sync_vm_swap_suppress_microtask_drain(vm: *mut (), v: bool) -> bool;
 }
@@ -304,13 +302,8 @@ impl SpawnSyncEventLoop {
     }
 
     /// Restore the original event loop handle after spawnSync completes
-    pub fn cleanup(
-        &mut self,
-        vm: *mut (),              /* SAFETY: erased *mut VirtualMachine */
-        prev_event_loop: *mut (), /* SAFETY: erased *mut jsc::EventLoop */
-    ) {
+    pub fn cleanup(&mut self, vm: *mut () /* SAFETY: erased *mut VirtualMachine */) {
         __bun_spawn_sync_vm_set_event_loop_handle(vm, self.original_event_loop_handle);
-        __bun_spawn_sync_vm_set_event_loop(vm, prev_event_loop);
 
         #[cfg(windows)]
         {

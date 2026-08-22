@@ -1531,7 +1531,7 @@ mod _async_tasks {
             let task = Self::schedule_new(
                 JSPromiseStrong::init(global_object),
                 cp_args,
-                EventLoopHandle::init(vm.event_loop.cast()),
+                EventLoopHandle::init(vm.event_loop().cast()),
                 bun_jsc::ConcurrentPoster::Js(vm.ticket()),
                 tracker,
                 core::ptr::null_mut(),

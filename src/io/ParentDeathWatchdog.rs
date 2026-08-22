@@ -436,17 +436,18 @@ fn kill_descendants() {
     }
 }
 
-/// Linux-only: enumerate our direct children into `out`. Used by `spawnPosix`
-/// to snapshot pre-existing siblings before arming subreaper, so the post-wait
-/// `kill_subreaper_adoptees` can tell adopted orphans apart from `Bun.spawn`
-/// siblings (both have ppid==us). Returns the slice written; empty on
-/// non-Linux or enumeration failure.
+/// Enumerate our direct children (running or zombie) into `out`. Used by
+/// `spawnPosix` to snapshot pre-existing siblings before arming subreaper, so
+/// the post-wait `kill_subreaper_adoptees` can tell adopted orphans apart from
+/// `Bun.spawn` siblings (both have ppid==us), and by `--watch` startup to find
+/// the children inherited across the execve restart. Returns the slice
+/// written; empty on platforms without an enumeration or on failure.
 pub fn snapshot_children(out: &mut [libc::pid_t]) -> &[libc::pid_t] {
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    #[cfg(not(unix))]
     {
         return &out[..0];
     }
-    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cfg(unix)]
     {
         let self_pid = getpid();
         let n = list_child_pids(self_pid, out).unwrap_or(0);

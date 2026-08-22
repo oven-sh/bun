@@ -9,10 +9,19 @@
 //! untouched and behaves identically for the Mini and JS loops on every platform.
 
 use core::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
+use std::time::Instant;
 
 use bun_threading::{Condition, Guarded};
 
 use crate::PackageManager;
+
+/// Monotonic milliseconds (immune to wall-clock steps) used for every retry deadline.
+pub(crate) fn now_ms() -> u64 {
+    static START: OnceLock<Instant> = OnceLock::new();
+    let start = *START.get_or_init(Instant::now);
+    u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
 
 struct State {
     /// earliest not-before timestamp (ms since epoch) the loop must be woken for
@@ -25,8 +34,10 @@ static STATE: Guarded<State> = Guarded::new(State {
 static COND: Condition = Condition::new();
 static STARTED: AtomicBool = AtomicBool::new(false);
 
-/// Ask for the install loop to be woken no later than `deadline_ms`.
-pub(crate) fn arm(manager: *mut PackageManager, deadline_ms: u64) {
+/// Ask for the install loop to be woken no later than `deadline_ms` (a `now_ms()` value).
+/// Returns false if no timer thread could be started; the caller must then not rely
+/// on being woken (it retries immediately instead of backing off).
+pub(crate) fn arm(manager: *mut PackageManager, deadline_ms: u64) -> bool {
     {
         let mut st = STATE.lock();
         st.next_deadline_ms = Some(match st.next_deadline_ms {
@@ -41,17 +52,13 @@ pub(crate) fn arm(manager: *mut PackageManager, deadline_ms: u64) {
             .stack_size(256 * 1024)
             .spawn(move || run(pm as *mut PackageManager));
         if spawned.is_err() {
-            // Without the thread the loop still makes progress whenever any other
-            // I/O completes; fall back to that rather than failing the install.
             STARTED.store(false, Ordering::Release);
-            return;
+            STATE.lock().next_deadline_ms = None;
+            return false;
         }
     }
     COND.signal();
-}
-
-fn now_ms() -> u64 {
-    bun_core::time::milli_timestamp().max(0) as u64
+    true
 }
 
 fn run(manager: *mut PackageManager) {

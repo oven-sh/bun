@@ -1770,6 +1770,11 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResu
             // `CURRENT_TIME` static.
             unsafe { (*all).fake_timers.reset_for_isolation(global) };
         }
+        if !all.is_null() {
+            // SAFETY: as above; `disable` borrows only `event_loop_delay` and
+            // reaches the heap through `timer_all()` (disjoint-field access).
+            unsafe { (*all).event_loop_delay.disable() };
+        }
     }
     // Entries that stay registered across a test-isolation swap.
     let mut kept: Vec<ActiveHandle> = Vec::new();
@@ -1796,10 +1801,11 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResu
                 // SAFETY: live until it unregisters in `on_close`.
                 crate::socket::udp_socket::UDPSocket::stop_for_vm_teardown(unsafe { u.as_ref() })
             }
-            // SAFETY: live until it unregisters in `deinit`.
-            ActiveHandle::DuplexUpgrade(c) => unsafe {
-                crate::socket::DuplexUpgradeContext::stop_for_vm_teardown(c.as_ptr())
-            },
+            ActiveHandle::DuplexUpgrade(c) => {
+                // SAFETY: live until it unregisters in `deinit`.
+                let c = unsafe { bun_ptr::ThisPtr::new(c.as_ptr()) };
+                crate::socket::DuplexUpgradeContext::stop_for_vm_teardown(c)
+            }
             // SAFETY: live until it unregisters when its deinit task runs.
             #[cfg(windows)]
             ActiveHandle::WindowsNamedPipe(c) => unsafe {
@@ -2056,11 +2062,9 @@ fn console_print_runtime_object_inner<const C: bool>(
         if let Some(to_json_function) = value.get(formatter.global_this, "toJSON")? {
             formatter.add_for_new_line("Headers ".len());
             let _ = bun_io::Write::write_all(writer_, pf!("<r>Headers ").as_bytes());
+            let result = to_json_function.call(formatter.global_this, value, &[])?;
             let prev_quote_keys = formatter.quote_keys;
             formatter.quote_keys = true;
-            let result = to_json_function
-                .call(formatter.global_this, value, &[])
-                .unwrap_or_else(|err| formatter.global_this.take_exception(err));
             let mut w = AsFmt::new(writer_);
             // UFCS — `Formatter` has an inherent `print_as` (const-generic
             // `FORMAT`, `&mut dyn bun_io::Write`); we need the trait's
@@ -3848,17 +3852,6 @@ fn get_hardcoded_module(
                 }
             }
             Some(js_synthetic_module(b"internal:test/binding", specifier))
-        }
-        HardcodedModule::InternalWorkerIo => {
-            // Same `--expose-internals` gate as `internal/test/binding`.
-            if !bun_core::env::IS_DEBUG {
-                let allowed = bun_jsc::module_loader::IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS
-                    .load(core::sync::atomic::Ordering::Relaxed);
-                if !allowed {
-                    return None;
-                }
-            }
-            Some(js_synthetic_module(b"internal:worker/io", specifier))
         }
         HardcodedModule::BunWrap => {
             // `Runtime.Runtime.sourceCode()` — the bundler's CJS-interop

@@ -188,7 +188,8 @@ const testPlatforms = [
   // lanes — see buildPlatforms).
   // These three version-specific lanes run on main and on opt-in (see
   // darwinTestsEnabled). PR builds instead get one aarch64 lane that any mac
-  // agent can take (prDarwinTestPlatforms), so the whole arm64 pool serves PRs.
+  // agent of that arch can take (prDarwinTestPlatforms), so the whole arm64
+  // pool serves one PR lane and the whole x64 pool the other.
   { os: "darwin", arch: "aarch64", release: "26", tier: "latest" },
   { os: "darwin", arch: "aarch64", release: "14", tier: "previous" },
   { os: "darwin", arch: "x64", release: "14", tier: "latest" },
@@ -509,7 +510,7 @@ function getBuildCommand(target, options, mode) {
 }
 
 /**
- * deps + C++ + cargo + link on one agent; also uploads libbun-*.a, libbun_rust.a and the dep libs.
+ * deps + C++ + cargo + link on one agent; also uploads libbun-*.a, libbun_runtime.a and the dep libs.
  *
  * @param {Platform} platform
  * @param {PipelineOptions} options
@@ -1574,7 +1575,10 @@ async function getPipeline(options = {}) {
   // on main along with its build.
   // Untiered: any arm64 mac agent, whatever macOS it runs, can take it.
   /** @type {Platform[]} */
-  const prDarwinTestPlatforms = [{ os: "darwin", arch: "aarch64", release: "any" }];
+  const prDarwinTestPlatforms = [
+    { os: "darwin", arch: "aarch64", release: "any" },
+    { os: "darwin", arch: "x64", release: "any" },
+  ];
   const darwinTestsEnabled = isMainBranch() || isBuildManual() || /\[(macos|darwin) tests?\]/i.test(getCommitMessage());
   const relevantTestPlatforms = (
     includeASAN ? testPlatforms : testPlatforms.filter(({ profile }) => profile !== "asan")

@@ -1231,7 +1231,10 @@ describe("ServerWebSocket", () => {
           ws.cork(() => {
             throw new Error("boom");
           }),
-        ).toThrow();
+        ).toThrow("boom");
+        // A returned Error is a return value, not a throw.
+        const returned = new Error("returned");
+        expect(ws.cork(() => returned)).toBe(returned);
 
         setTimeout(() => {
           ws.cork(() => {
@@ -1996,5 +1999,194 @@ describe("server.upgrade() validates the opening handshake", () => {
     expect(v8.status).toBe(426);
     expect(v8.headers.toLowerCase()).toContain("sec-websocket-version: 13");
     expect(upgradeResult).toBe(false);
+  });
+});
+
+// server.upgrade() runs open() before it returns, and ws.close() runs close()
+// before it returns. A request handler (or a request's abort listener) that
+// calls one of them must still run to completion first: the nextTick and
+// promise callbacks it queued run once it has returned, as they do for a timer
+// or socket callback that does the same thing. They used to run inside the
+// upgrade()/close() call.
+describe.concurrent("request handlers run to completion before the callbacks they queued", () => {
+  function queueThen(order: string[], nativeCall: () => void) {
+    process.nextTick(() => order.push("nextTick"));
+    Promise.resolve().then(() => order.push("microtask"));
+    nativeCall();
+    order.push("rest of handler");
+  }
+
+  function wsUrl(server: Server, pathname: string) {
+    return new URL(pathname, server.url.href.replace(/^http/, "ws"));
+  }
+
+  // Resolves once the server has closed the socket (or the handshake failed).
+  function connectUntilClosed(server: Server, pathname: string) {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const ws = new WebSocket(wsUrl(server, pathname));
+    ws.onerror = () => resolve();
+    ws.onclose = () => resolve();
+    return promise;
+  }
+
+  const upgradeHandler = (order: string[]) => (req: Request, srv: Server) => {
+    queueThen(order, () => {
+      if (!srv.upgrade(req)) order.push("upgrade() failed");
+    });
+  };
+
+  const websocket = (order: string[], onOpen: (ws: ServerWebSocket<unknown>) => void) =>
+    ({
+      open(ws) {
+        onOpen(ws);
+      },
+      message() {},
+      close() {
+        order.push("close()");
+      },
+    }) satisfies WebSocketHandler<unknown>;
+
+  it("fetch() calling server.upgrade()", async () => {
+    const order: string[] = [];
+    using server = serve({
+      port: 0,
+      fetch: upgradeHandler(order),
+      websocket: websocket(order, ws => {
+        order.push("open()");
+        ws.close();
+      }),
+    });
+
+    await connectUntilClosed(server, "/");
+    expect(order).toEqual(["open()", "close()", "rest of handler", "nextTick", "microtask"]);
+  });
+
+  it("a route handler calling server.upgrade()", async () => {
+    const order: string[] = [];
+    using server = serve({
+      port: 0,
+      routes: { "/ws": upgradeHandler(order) },
+      websocket: websocket(order, ws => {
+        order.push("open()");
+        ws.close();
+      }),
+    });
+
+    await connectUntilClosed(server, "/ws");
+    expect(order).toEqual(["open()", "close()", "rest of handler", "nextTick", "microtask"]);
+  });
+
+  // Opens a websocket on `/ws` and hands back the server side of it.
+  async function openHeldSocket(server: Server, opened: Promise<ServerWebSocket<unknown>>) {
+    const closed = connectUntilClosed(server, "/ws");
+    const held = await opened;
+    return { held, closed };
+  }
+
+  it("fetch() closing an open ServerWebSocket", async () => {
+    const order: string[] = [];
+    const opened = Promise.withResolvers<ServerWebSocket<unknown>>();
+    let held: ServerWebSocket<unknown>;
+    using server = serve({
+      port: 0,
+      fetch(req, srv) {
+        if (new URL(req.url).pathname === "/ws") {
+          return srv.upgrade(req) ? undefined : new Response("upgrade() failed", { status: 500 });
+        }
+        queueThen(order, () => held.close());
+        return new Response("ok");
+      },
+      websocket: websocket(order, opened.resolve),
+    });
+
+    const sockets = await openHeldSocket(server, opened.promise);
+    held = sockets.held;
+    expect(await fetch(new URL("/close-it", server.url)).then(res => res.text())).toBe("ok");
+    await sockets.closed;
+    expect(order).toEqual(["close()", "rest of handler", "nextTick", "microtask"]);
+  });
+
+  it("a route handler closing an open ServerWebSocket", async () => {
+    const order: string[] = [];
+    const opened = Promise.withResolvers<ServerWebSocket<unknown>>();
+    let held: ServerWebSocket<unknown>;
+    using server = serve({
+      port: 0,
+      routes: {
+        "/ws": (req, srv) => (srv.upgrade(req) ? undefined : new Response("upgrade() failed", { status: 500 })),
+        "/close-it": () => {
+          queueThen(order, () => held.close());
+          return new Response("ok");
+        },
+      },
+      websocket: websocket(order, opened.resolve),
+    });
+
+    const sockets = await openHeldSocket(server, opened.promise);
+    held = sockets.held;
+    expect(await fetch(new URL("/close-it", server.url)).then(res => res.text())).toBe("ok");
+    await sockets.closed;
+    expect(order).toEqual(["close()", "rest of handler", "nextTick", "microtask"]);
+  });
+
+  it("a request's abort listener closing an open ServerWebSocket", async () => {
+    const order: string[] = [];
+    const opened = Promise.withResolvers<ServerWebSocket<unknown>>();
+    const reachedHandler = Promise.withResolvers<void>();
+    let held: ServerWebSocket<unknown>;
+    using server = serve({
+      port: 0,
+      fetch(req, srv) {
+        if (new URL(req.url).pathname === "/ws") {
+          return srv.upgrade(req) ? undefined : new Response("upgrade() failed", { status: 500 });
+        }
+        req.signal.addEventListener("abort", () => queueThen(order, () => held.close()));
+        reachedHandler.resolve();
+        // Never responds: the client aborts the request instead.
+        return new Promise<Response>(() => {});
+      },
+      websocket: websocket(order, opened.resolve),
+    });
+
+    const sockets = await openHeldSocket(server, opened.promise);
+    held = sockets.held;
+    const controller = new AbortController();
+    const aborted = fetch(new URL("/abort-me", server.url), { signal: controller.signal });
+    await reachedHandler.promise;
+    controller.abort();
+    await expect(aborted).rejects.toThrow();
+    await sockets.closed;
+    expect(order).toEqual(["close()", "rest of handler", "nextTick", "microtask"]);
+  });
+
+  // After an await, the rest of an async handler runs from the microtask
+  // checkpoint the server performs as soon as the handler returns its promise.
+  // Only a promise callback is queued here: a nextTick queued from inside a
+  // microtask is ordered differently from one queued by synchronous code, and
+  // that ordering is not what this test is about.
+  it("the continuation of an async fetch() closing an open ServerWebSocket", async () => {
+    const order: string[] = [];
+    const opened = Promise.withResolvers<ServerWebSocket<unknown>>();
+    let held: ServerWebSocket<unknown>;
+    using server = serve({
+      port: 0,
+      async fetch(req, srv) {
+        if (new URL(req.url).pathname === "/ws") {
+          return srv.upgrade(req) ? undefined : new Response("upgrade() failed", { status: 500 });
+        }
+        await Promise.resolve();
+        Promise.resolve().then(() => order.push("microtask"));
+        held.close();
+        order.push("rest of handler");
+        return new Response("ok");
+      },
+      websocket: websocket(order, opened.resolve),
+    });
+
+    const sockets = await openHeldSocket(server, opened.promise);
+    held = sockets.held;
+    expect(await fetch(new URL("/close-it", server.url)).then(res => res.text())).toBe("ok");
+    await sockets.closed;
+    expect(order).toEqual(["close()", "rest of handler", "microtask"]);
   });
 });

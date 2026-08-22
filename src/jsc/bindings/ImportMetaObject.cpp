@@ -40,7 +40,6 @@
 
 #include "JSDOMURL.h"
 #include <JavaScriptCore/JSNativeStdFunction.h>
-#include <JavaScriptCore/GetterSetter.h>
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
@@ -519,12 +518,38 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_env, (JSGlobalObject * jsGloba
     return JSValue::encode(globalObject->m_processEnvObject.getInitializedOnMainThread(globalObject));
 }
 
+extern "C" JSC::EncodedJSValue SYSV_ABI BunObject_getter_main(JSC::JSGlobalObject*);
+
+JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_main, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
+{
+    ImportMetaObject* thisObject = dynamicDowncast<ImportMetaObject>(JSValue::decode(thisValue));
+    if (!thisObject) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+
+    // Only Zig::GlobalObject creates ImportMetaObject structures (see createStructure). Its Bun.main is the
+    // one that matters, no matter which realm reads the property. Like node, a worker's entry module is
+    // main for that thread.
+    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(thisObject->globalObject());
+
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue path = thisObject->pathProperty.getInitializedOnMainThread(thisObject);
+    JSValue bunMain = JSValue::decode(BunObject_getter_main(globalObject));
+    RETURN_IF_EXCEPTION(scope, {});
+    bool isMain = JSValue::strictEqual(globalObject, path, bunMain);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    return JSValue::encode(jsBoolean(isMain));
+}
+
 static const HashTableValue ImportMetaObjectPrototypeValues[] = {
     { "dir"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_dir, 0 } },
     { "dirname"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_dir, 0 } },
     { "env"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_env, 0 } },
     { "file"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_file, 0 } },
     { "filename"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_path, 0 } },
+    { "main"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_main, 0 } },
     { "path"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_path, 0 } },
     { "require"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_require, jsImportMetaObjectSetter_require } },
     { "resolve"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, functionImportMeta__resolve, 0 } },
@@ -539,6 +564,7 @@ static const HashTableValue ImportMetaObjectBakePrototypeValues[] = {
     { "env"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_env, 0 } },
     { "file"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_file, 0 } },
     { "filename"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_path, 0 } },
+    { "main"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_main, 0 } },
     { "path"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_path, 0 } },
     { "require"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_require, jsImportMetaObjectSetter_require } },
     { "resolve"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, functionImportMeta__resolve, 0 } },
@@ -556,10 +582,10 @@ public:
         return Structure::create(vm, globalObject, globalObject->objectPrototype(), TypeInfo(ObjectType, StructureFlags), info());
     }
 
-    static ImportMetaObjectPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, bool isBake = false)
+    static ImportMetaObjectPrototype* create(JSC::VM& vm, JSC::Structure* structure, bool isBake = false)
     {
         ImportMetaObjectPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(ImportMetaObjectPrototype))) ImportMetaObjectPrototype(vm, structure);
-        prototype->finishCreation(vm, globalObject, isBake);
+        prototype->finishCreation(vm, isBake);
         return prototype;
     }
 
@@ -570,12 +596,9 @@ public:
         return &vm.plainObjectSpace();
     }
 
-    void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject, bool isBake)
+    void finishCreation(JSC::VM& vm, bool isBake)
     {
         Base::finishCreation(vm);
-
-        auto* clientData = WebCore::clientData(vm);
-        auto& builtinNames = clientData->builtinNames();
 
         // Use the appropriate prototype values based on whether this is a bake import meta object
         if (isBake) {
@@ -584,14 +607,6 @@ public:
             Bun::reifyStaticPropertyTable(vm, ImportMetaObject::info(), ImportMetaObjectPrototypeValues, *this);
         }
         Bun::putToStringTagWithoutTransition(vm, this, info());
-
-        auto mainGetter = JSFunction::create(vm, globalObject, importMetaObjectMainCodeGenerator(vm), globalObject);
-
-        this->putDirectAccessor(
-            this->globalObject(),
-            builtinNames.mainPublicName(),
-            GetterSetter::create(vm, globalObject, mainGetter, mainGetter),
-            JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | 0);
     }
 
     ImportMetaObjectPrototype(JSC::VM& vm, JSC::Structure* structure)
@@ -609,7 +624,6 @@ const ClassInfo ImportMetaObjectPrototype::s_info = {
 JSC::Structure* ImportMetaObject::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, bool isBake)
 {
     ImportMetaObjectPrototype* prototype = ImportMetaObjectPrototype::create(vm,
-        globalObject,
         ImportMetaObjectPrototype::createStructure(vm, globalObject),
         isBake);
 

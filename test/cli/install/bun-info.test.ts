@@ -1,6 +1,6 @@
 import { spawn } from "bun";
-import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, tempDirWithFiles } from "harness";
+import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
+import { bunEnv, bunExe, hasIPv6Loopback, isASAN, tempDirWithFiles } from "harness";
 import { join } from "node:path";
 
 describe.concurrent("bun info", () => {
@@ -431,3 +431,72 @@ test.skipIf(!isASAN)(
   },
   30_000,
 );
+
+describe.concurrent.skipIf(!hasIPv6Loopback())("NO_PROXY matches a registry on [::1] with or without brackets", () => {
+  // The package manager resolves the proxy for the registry URL as written in
+  // the config (Loader::get_http_proxy_for), a different entry point than
+  // fetch's. The proxy knows no packages, so `bun info` only succeeds when
+  // NO_PROXY sends the manifest request directly to the registry.
+  let registry: ReturnType<typeof Bun.serve>;
+  let proxy: ReturnType<typeof Bun.serve>;
+
+  beforeAll(() => {
+    const manifest = JSON.stringify({
+      name: "v6pkg",
+      "dist-tags": { latest: "0.0.1" },
+      versions: {
+        "0.0.1": {
+          name: "v6pkg",
+          version: "0.0.1",
+          dist: { tarball: "http://localhost/v6pkg-0.0.1.tgz", shasum: "0".repeat(40) },
+        },
+      },
+      time: { "0.0.1": "2020-01-01T00:00:00.000Z" },
+    });
+    registry = Bun.serve({
+      hostname: "::1",
+      port: 0,
+      fetch: () => new Response(manifest, { headers: { "content-type": "application/json" } }),
+    });
+    proxy = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response(null, { status: 404 }) });
+  });
+
+  afterAll(() => {
+    registry.stop(true);
+    proxy.stop(true);
+  });
+
+  const direct = { stdout: "v6pkg", stderr: "", exitCode: 0 };
+  const proxied = { stdout: "", stderr: expect.stringContaining("404 Not Found"), exitCode: 1 };
+
+  test.each([
+    ["::1", direct],
+    ["localhost,127.0.0.1,::1", direct],
+    ["[::1]", direct],
+    ["::2", proxied],
+  ])("NO_PROXY=%s", async (noProxy, expected) => {
+    const dir = tempDirWithFiles("bun-info-no-proxy-v6", {
+      "package.json": JSON.stringify({ name: "test", version: "1.0.0" }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: `http://[::1]:${registry.port}/` } }),
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "info", "v6pkg", "name"],
+      cwd: dir,
+      env: {
+        ...bunEnv,
+        BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache"),
+        HTTP_PROXY: undefined,
+        HTTPS_PROXY: undefined,
+        https_proxy: undefined,
+        no_proxy: undefined,
+        http_proxy: `http://127.0.0.1:${proxy.port}`,
+        NO_PROXY: noProxy,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual(expected);
+  });
+});

@@ -57,6 +57,7 @@ import fs, {
 } from "node:fs";
 import * as os from "node:os";
 import path, { dirname, relative, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { inspect, promisify } from "node:util";
 
 import _promises, { type FileHandle } from "node:fs/promises";
@@ -3021,6 +3022,47 @@ it("realpath async", async () => {
   });
   expect(await promise).toBe(realpathSync(import.meta.path));
 }, 30_000);
+
+// On Windows, realpath and realpathSync are JS ports of node's implementation and
+// handle the path argument themselves (elsewhere the native binding does). Like
+// node, null bytes are rejected before the path is resolved, so the error reports
+// the path exactly as it was passed (for a URL: what fileURLToPath made of it), and
+// a URL goes through the same path.resolve() as a string afterwards.
+describe.if(isWindows)("realpath handles the path argument like node", () => {
+  const reason = "The argument 'path' must be a string, Uint8Array, or URL without null bytes";
+  const nulUrl = new URL("file:///C:/foo%00bar");
+  const cases: [name: string, input: string | URL, received: string][] = [
+    ["relative path string", "foo\0bar", "foo\0bar"],
+    ["file: URL", nulUrl, fileURLToPath(nulUrl)],
+  ];
+
+  for (const [name, input, received] of cases) {
+    const expected = expect.objectContaining({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_VALUE",
+      message: `${reason}. Received ${inspect(received)}`,
+    });
+
+    it(`realpathSync rejects a ${name}`, () => {
+      expect(() => fs.realpathSync(input)).toThrow(expected);
+    });
+
+    it(`realpath rejects a ${name} synchronously`, () => {
+      const callback = () => {
+        throw new Error("callback must not be called");
+      };
+      expect(() => fs.realpath(input, callback)).toThrow(expected);
+    });
+  }
+
+  it("a file: URL with a trailing slash resolves to the path without it", async () => {
+    using dir = tempDir("fs-realpath-url", {});
+    const dirPath = fs.realpathSync(String(dir));
+    const trailingSlashUrl = new URL(pathToFileURL(dirPath).href + "/");
+    expect(fs.realpathSync(trailingSlashUrl)).toBe(dirPath);
+    expect(await promisify(fs.realpath)(trailingSlashUrl)).toBe(dirPath);
+  });
+});
 
 describe("stat", () => {
   it("file metadata is correct", () => {

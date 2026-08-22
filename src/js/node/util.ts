@@ -620,8 +620,10 @@ function convertProcessSignalToExitCode(signalCode) {
 
 let lazyAbortedRegistry: FinalizationRegistry<{
   ref: WeakRef<AbortSignal>;
-  unregisterToken: (...args: any[]) => void;
+  listener: (...args: any[]) => void;
 }>;
+// The promise is also the FinalizationRegistry unregister token: once the
+// signal aborts, the resource no longer needs its listener removed on GC.
 function onAbortedCallback(promise: Promise<void>) {
   lazyAbortedRegistry.unregister(promise);
 
@@ -642,19 +644,19 @@ function aborted(signal: AbortSignal, resource: object) {
   }
 
   const promise = $newPromise();
-  const unregisterToken = onAbortedCallback.bind(undefined, promise);
+  const listener = onAbortedCallback.bind(undefined, promise);
   signal.addEventListener(
     "abort",
     // Do not leak the current scope into the listener.
     // Instead, create a new function.
-    unregisterToken,
+    listener,
     resistStopPropagation({ __proto__: null, once: true }),
   );
 
   if (!lazyAbortedRegistry) {
-    lazyAbortedRegistry = new FinalizationRegistry(({ ref, unregisterToken }) => {
+    lazyAbortedRegistry = new FinalizationRegistry(({ ref, listener }) => {
       const signal = ref.deref();
-      if (signal) signal.removeEventListener("abort", unregisterToken);
+      if (signal) signal.removeEventListener("abort", listener);
     });
   }
 
@@ -665,9 +667,9 @@ function aborted(signal: AbortSignal, resource: object) {
     resource,
     {
       ref: new WeakRef(signal),
-      unregisterToken,
+      listener,
     },
-    unregisterToken,
+    promise,
   );
 
   return promise;

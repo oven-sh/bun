@@ -118,7 +118,11 @@ function serveFixture(dir: string, { http1 = true } = {}) {
       }
       if (url.pathname === "/spawn") {
         const p = Bun.spawn({
-          cmd: [bunExe(), "-e", "for(let i=0;i<40;i++)process.stdout.write('x'.repeat(1000)+String.fromCharCode(10))"],
+          cmd: [
+            bunExe(),
+            "-e",
+            "const line=Buffer.alloc(1000,'x').toString()+String.fromCharCode(10);for(let i=0;i<40;i++)process.stdout.write(line)",
+          ],
           env: bunEnv,
           stdout: "pipe",
         });

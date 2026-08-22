@@ -321,8 +321,8 @@ pub mod ast {
 
     pub struct Subshell<'arena> {
         pub script: Script<'arena>,
-        pub(crate) redirect: Option<Redirect<'arena>>,
-        pub(crate) redirect_flags: RedirectFlags,
+        pub redirect: Option<Redirect<'arena>>,
+        pub redirect_flags: RedirectFlags,
     }
 
     /// TODO: If we know cond/then/elif/else is just a single command we don't need to store the stmt
@@ -967,16 +967,8 @@ impl<'bump> Parser<'bump> {
     }
 
     fn parse_compound_cmd(&mut self) -> ParseResult<ast::Expr<'bump>> {
-        // Placeholder for when we fully support subshells
         if self.peek().tag() == TokenTag::OpenParen {
             let subshell = self.parse_subshell()?;
-            if !subshell.redirect_flags.is_empty() {
-                self.add_error(format_args!(
-                    "Subshells with redirections are currently not supported. Please open a GitHub issue."
-                ))?;
-                return Err(ParseError::Unsupported.into());
-            }
-
             return Ok(ast::Expr::Subshell(self.allocate(subshell)));
         }
 

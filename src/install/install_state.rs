@@ -200,6 +200,7 @@ fn env_and_argv_hash(manager: &PackageManager) -> u64 {
                 || k.starts_with(b"BUN_CONFIG_")
                 || k.len() >= 11 && k[..11].eq_ignore_ascii_case(b"NPM_CONFIG_")
                 // where the global .npmrc / .bunfig.toml are looked up
+                || k == b"BUN_OPTIONS"
                 || k == b"HOME"
                 || k == b"USERPROFILE"
                 || k == b"XDG_CONFIG_HOME"
@@ -213,9 +214,14 @@ fn env_and_argv_hash(manager: &PackageManager) -> u64 {
         acc.push(0);
     }
     acc.push(1);
-    // argv[0] is the executable and argv[1] the subcommand token (`install`/`i`; the
-    // subcommand itself is part of `applicable()`), so start at the flags
-    for a in bun_core::argv().into_iter().skip(2) {
+    // argv[0] is the executable; the subcommand token (`install`/`i`) is skipped so both
+    // spellings share the fast path (the subcommand itself is part of `applicable()`).
+    // BUN_OPTIONS tokens are spliced into argv and are also covered by the env hash.
+    for a in bun_core::argv()
+        .into_iter()
+        .skip(1)
+        .filter(|a| !matches!(&a[..], b"install" | b"i" | b"add" | b"remove" | b"update"))
+    {
         acc.extend_from_slice(a);
         acc.push(0);
     }
@@ -363,7 +369,7 @@ pub fn save(manager: &mut PackageManager, root_dir: &[u8], entries: u64, package
     if !applicable(manager) {
         return;
     }
-    // Local sources (`file:` folders and tarballs, `link:`) are inputs too: their
+    // Local sources (`file:` folders and tarballs; `link:` deps disable the fast path) are inputs too: their
     // *contents* decide what gets materialized. Stamp them (recursive mtimes for
     // folders, content hash for tarballs); a project with enormous local sources just
     // doesn't get a state file.
@@ -805,6 +811,17 @@ fn collect_dirs(dir: &[u8], depth: usize, out: &mut Vec<Vec<u8>>, budget: &mut u
 /// Recursively record `l` stamps for a local-source directory (skipping node_modules
 /// and VCS dirs). Returns false if the walk exceeded `budget` entries or failed.
 fn stamp_source_tree(out: &mut Vec<u8>, dir: &[u8], budget: &mut usize) -> bool {
+    // a symlinked source (or subdirectory) would be walked through the link while only the
+    // link's own mtime is recorded: not trackable
+    match bun_sys::lstat(&zpath(dir)) {
+        Ok(st)
+            if bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode)
+                == bun_sys::FileKind::SymLink =>
+        {
+            return false;
+        }
+        _ => {}
+    }
     let Some(stamp) = lstat_stamp(dir) else {
         return false;
     };

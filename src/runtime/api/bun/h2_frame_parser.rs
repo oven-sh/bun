@@ -12,7 +12,7 @@ use core::ptr::NonNull;
 use std::borrow::Cow;
 
 use crate::api::socket::{TCPSocket, TLSSocket};
-use crate::node::{Encoding, StringOrBuffer};
+use crate::node::{Encoding, Flavor, StringObjects, StringOrBuffer};
 use crate::socket::NativeCallbacks;
 use crate::webcore::AutoFlusher;
 use bstr::BStr;
@@ -5964,9 +5964,22 @@ impl H2FrameParser {
             }
         };
 
-        let buffer = match StringOrBuffer::from_js_with_encoding(global_object, data_arg, encoding)?
-        {
-            Some(b) => b,
+        // send_data can re-enter JS mid-payload (batch flushes, prior writes' callbacks): pin
+        // + protect ArrayBuffer payloads so they can't be detached under the borrowed slice.
+        // Strings are immutable (zero-copy path); ThreadSafe's Drop releases the pin/protect.
+        let pin_payload = if data_arg.is_cell() && data_arg.js_type().is_array_buffer_like() {
+            Flavor::Async
+        } else {
+            Flavor::Sync
+        };
+        let buffer = match StringOrBuffer::from_js_with_encoding_maybe_async(
+            global_object,
+            data_arg,
+            encoding,
+            pin_payload,
+            StringObjects::Allow,
+        )? {
+            Some(b) => bun_jsc::ThreadSafe::adopt(b),
             None => {
                 return Err(global_object.throw_invalid_argument_type_value(
                     b"write",
@@ -6416,6 +6429,8 @@ impl H2FrameParser {
         };
         let mut _count: u32 = 0;
         let mut it = StreamResumableIterator::init(this);
+        // The iterator's `*mut Stream`s stay live across the callbacks below.
+        let _dispatch = this.enter_dispatch();
         while let Some(stream) = it.next() {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
             let Some(value) = (unsafe { (*stream).js_context.get() }) else {

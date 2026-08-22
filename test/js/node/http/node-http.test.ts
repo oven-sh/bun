@@ -1479,6 +1479,74 @@ it("should propagate exception in async data handler", async () => {
   expect(exitCode).toBe(0);
 });
 
+// A failing 'request' listener must never look like a success on the wire: nothing written
+// yet => 500; headers/body already written => the framing is never completed, so clients,
+// caches and gateways cannot mistake the failure for a complete response.
+describe("a 'request' listener that fails", () => {
+  async function rawExchangeWithThrowingHandler(
+    handlerBody: string,
+    request = "GET / HTTP/1.1\\r\\nHost: a\\r\\nConnection: close\\r\\n\\r\\n",
+  ) {
+    const script = `
+      process.on("uncaughtException", () => {});
+      const http = require("node:http");
+      const net = require("node:net");
+      const server = http.createServer((req, res) => {
+        ${handlerBody}
+      });
+      server.listen(0, "127.0.0.1", () => {
+        const socket = net.connect(server.address().port, "127.0.0.1", () => {
+          socket.write("${request}");
+        });
+        let raw = "";
+        socket.setEncoding("latin1");
+        socket.on("data", c => (raw += c));
+        socket.on("error", () => {});
+        socket.on("close", () => {
+          console.log(JSON.stringify({ raw }));
+          server.close();
+        });
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // Drain stderr without asserting it is empty: debug/ASAN builds emit benign warnings there.
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout).raw as string;
+  }
+
+  it("throwing with nothing written responds 500, never an empty 200", async () => {
+    const raw = await rawExchangeWithThrowingHandler(`throw new Error("boom");`);
+    expect(raw).toStartWith("HTTP/1.1 500 ");
+    expect(raw).not.toContain("HTTP/1.1 200");
+  });
+
+  it("throwing after body bytes were written never completes or corrupts the chunked framing", async () => {
+    const raw = await rawExchangeWithThrowingHandler(
+      `
+        res.writeHead(200, { "Content-Type": "text/plain" });
+        res.write("partial");
+        res.flushHeaders();
+        throw new Error("boom");
+    `,
+      // keep-alive request: nothing but the handler failure may end this exchange
+      "GET / HTTP/1.1\\r\\nHost: a\\r\\n\\r\\n",
+    );
+    // RFC 9112 section 7: no terminating chunk may follow a failed handler, and nothing
+    // (like a stray Connection: close header) may be injected into the chunked body — a
+    // truncated body must never read as a complete or differently-framed response.
+    expect(raw).not.toContain("\r\n0\r\n\r\n");
+    const body = raw.split("\r\n\r\n").slice(1).join("\r\n\r\n");
+    const afterFirstChunk = body.replace(/^7\r\npartial\r\n/, "");
+    expect(afterFirstChunk === "" || /^[0-9a-fA-F]+[;\r]/.test(afterFirstChunk)).toBe(true);
+  });
+});
+
 // This test is disabled because it can OOM the CI
 it.skip("should be able to stream huge amounts of data", async () => {
   const buf = Buffer.alloc(1024 * 1024 * 256);

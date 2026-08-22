@@ -478,73 +478,66 @@ PathResolveModule getParent(VM& vm, JSGlobalObject* global, JSValue maybe_parent
 }
 
 #if OS(WINDOWS)
-static constexpr bool hostIsWindows = true;
+static constexpr bool isWindowsPath = true;
 #else
-static constexpr bool hostIsWindows = false;
+static constexpr bool isWindowsPath = false;
 #endif
 
-static JSValue pathResolve(JSGlobalObject* globalObject, JSValue arg0, JSValue arg1)
+static JSValue pathResolve(JSGlobalObject* globalObject, JSValue path0, JSValue path1)
 {
-    return JSValue::decode(Bun__Path__resolve2(globalObject, hostIsWindows, JSValue::encode(arg0), JSValue::encode(arg1)));
+    return JSValue::decode(Bun__Path__resolve2(globalObject, isWindowsPath, JSValue::encode(path0), JSValue::encode(path1)));
 }
 
-static JSValue pathResolve(JSGlobalObject* globalObject, JSValue arg0, JSValue arg1, JSValue arg2)
+static JSValue pathResolve(JSGlobalObject* globalObject, JSValue path0, JSValue path1, JSValue path2)
 {
-    return JSValue::decode(Bun__Path__resolve3(globalObject, hostIsWindows, JSValue::encode(arg0), JSValue::encode(arg1), JSValue::encode(arg2)));
+    return JSValue::decode(Bun__Path__resolve3(globalObject, isWindowsPath, JSValue::encode(path0), JSValue::encode(path1), JSValue::encode(path2)));
 }
 
-// Port of https://github.com/nodejs/node/blob/v24.0.0/lib/internal/modules/cjs/loader.js#L1997 (Bun's resolver does not read globalPaths).
-JSC_DEFINE_HOST_FUNCTION(jsFunctionInitPaths, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame*))
+// https://github.com/nodejs/node/blob/v24.0.0/lib/internal/modules/cjs/loader.js#L1997
+JSC_DEFINE_HOST_FUNCTION(jsFunctionInitPaths, (JSGlobalObject * lexicalGlobalObject, CallFrame*))
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    auto& vm = JSC::getVM(globalObject);
+    VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSObject* processObject = globalObject->processObject();
-    // Same sources as Node: the process.env property on Windows, safeGetenv() (the environment itself) elsewhere.
 #if OS(WINDOWS)
     JSValue env = processObject->get(globalObject, Identifier::fromString(vm, "env"_s));
     RETURN_IF_EXCEPTION(scope, {});
-    JSValue homeDir = env.get(globalObject, Identifier::fromString(vm, "USERPROFILE"_s));
-    RETURN_IF_EXCEPTION(scope, {});
-    JSValue nodePath = env.get(globalObject, Identifier::fromString(vm, "NODE_PATH"_s));
+    JSValue homeDirectory = env.get(globalObject, Identifier::fromString(vm, "USERPROFILE"_s));
     RETURN_IF_EXCEPTION(scope, {});
 #else
-    JSObject* env = globalObject->processEnvObject();
+    JSValue env = globalObject->processEnvObject();
     RETURN_IF_EXCEPTION(scope, {});
-    JSValue homeDir = env->get(globalObject, Identifier::fromString(vm, "HOME"_s));
-    RETURN_IF_EXCEPTION(scope, {});
-    JSValue nodePath = env->get(globalObject, Identifier::fromString(vm, "NODE_PATH"_s));
+    JSValue homeDirectory = env.get(globalObject, Identifier::fromString(vm, "HOME"_s));
     RETURN_IF_EXCEPTION(scope, {});
 #endif
+    JSValue nodePath = env.get(globalObject, Identifier::fromString(vm, "NODE_PATH"_s));
+    RETURN_IF_EXCEPTION(scope, {});
     JSValue execPath = processObject->get(globalObject, Identifier::fromString(vm, "execPath"_s));
     RETURN_IF_EXCEPTION(scope, {});
 
-    // Resolved in Node's order (prefix, home, NODE_PATH) so the same input throws first. Node unshifts, so the pushes below are reversed.
-    JSValue dotdot = jsNontrivialString(vm, ".."_s);
-    // process.execPath is $PREFIX/bin/node except on Windows where it is $PREFIX\node.exe.
+    // process.execPath is $PREFIX/bin/node, or $PREFIX\node.exe on Windows.
+    JSString* parentDirectory = jsString(vm, String(".."_s));
 #if OS(WINDOWS)
-    JSValue prefixDir = pathResolve(globalObject, execPath, dotdot);
+    JSValue prefixDirectory = pathResolve(globalObject, execPath, parentDirectory);
 #else
-    JSValue prefixDir = pathResolve(globalObject, execPath, dotdot, dotdot);
+    JSValue prefixDirectory = pathResolve(globalObject, execPath, parentDirectory, parentDirectory);
 #endif
     RETURN_IF_EXCEPTION(scope, {});
-    JSValue libNode = pathResolve(globalObject, prefixDir, jsNontrivialString(vm, "lib"_s), jsNontrivialString(vm, "node"_s));
+    JSValue libraryDirectory = pathResolve(globalObject, prefixDirectory, jsString(vm, String("lib"_s)), jsString(vm, String("node"_s)));
     RETURN_IF_EXCEPTION(scope, {});
 
-    bool hasHomeDir = homeDir.toBoolean(globalObject);
     JSValue nodeLibraries;
     JSValue nodeModules;
-    if (hasHomeDir) {
-        nodeLibraries = pathResolve(globalObject, homeDir, jsNontrivialString(vm, ".node_libraries"_s));
+    if (homeDirectory.toBoolean(globalObject)) {
+        nodeLibraries = pathResolve(globalObject, homeDirectory, jsString(vm, String(".node_libraries"_s)));
         RETURN_IF_EXCEPTION(scope, {});
-        nodeModules = pathResolve(globalObject, homeDir, jsNontrivialString(vm, ".node_modules"_s));
+        nodeModules = pathResolve(globalObject, homeDirectory, jsString(vm, String(".node_modules"_s)));
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    JSArray* paths = JSC::constructEmptyArray(globalObject, nullptr, 0);
-    RETURN_IF_EXCEPTION(scope, {});
-
+    MarkedArgumentBuffer paths;
     if (nodePath.toBoolean(globalObject)) {
         String nodePathString = nodePath.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
@@ -553,27 +546,24 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionInitPaths, (JSC::JSGlobalObject * lexicalGlob
 #else
         constexpr char16_t delimiter = ':';
 #endif
-        // split() drops empty entries, like the filter(Boolean) in Node.
-        for (auto entry : StringView(nodePathString).split(delimiter)) {
-            paths->push(globalObject, jsString(vm, entry.toString()));
-            RETURN_IF_EXCEPTION(scope, {});
-        }
+        for (auto entry : StringView(nodePathString).split(delimiter))
+            paths.append(jsString(vm, entry.toString()));
     }
-
-    if (hasHomeDir) {
-        paths->push(globalObject, nodeModules);
-        RETURN_IF_EXCEPTION(scope, {});
-        paths->push(globalObject, nodeLibraries);
-        RETURN_IF_EXCEPTION(scope, {});
+    if (nodeModules) {
+        paths.append(nodeModules);
+        paths.append(nodeLibraries);
     }
-
-    paths->push(globalObject, libNode);
+    paths.append(libraryDirectory);
+    if (paths.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+    JSArray* array = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), paths);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // A strict mode [[Set]], like the assignment in Node: a user-installed setter runs, a read-only property throws, attributes are kept.
     JSObject* moduleObject = globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject);
-    PutPropertySlot slot(moduleObject, /* isStrictMode */ true);
-    moduleObject->putInline(globalObject, Identifier::fromString(vm, "globalPaths"_s), paths, slot);
+    PutPropertySlot slot(moduleObject, true);
+    moduleObject->methodTable()->put(moduleObject, globalObject, Identifier::fromString(vm, "globalPaths"_s), array, slot);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }

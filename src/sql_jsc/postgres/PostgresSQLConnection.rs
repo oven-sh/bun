@@ -1598,7 +1598,7 @@ impl PostgresSQLConnection {
             .get()
             .unwrap_or(false)
         {
-            bun_core::hint::cold();
+            core::hint::cold_path();
             return false;
         }
 

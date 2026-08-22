@@ -5742,10 +5742,10 @@ impl DevServer {
     /// `Cell`-based, so a shared borrow suffices. JS-thread only.
     pub(crate) fn inspector(&self) -> Option<&BunFrontendDevServerAgent> {
         if let Some(debugger) = self.vm().debugger.as_ref() {
-            bun_core::hint::cold();
+            core::hint::cold_path();
             let agent = BunFrontendDevServerAgent::from_slot(&debugger.extension_agent);
             if agent.is_enabled() {
-                bun_core::hint::cold();
+                core::hint::cold_path();
                 return Some(agent);
             }
         }

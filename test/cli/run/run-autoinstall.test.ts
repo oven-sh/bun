@@ -38,10 +38,10 @@ describe("basic autoinstall", () => {
         });
 
         if (should_install) {
-          expect(stderr?.toString("utf8")).not.toContain("error: Cannot find package 'is-even'");
+          expect(stderr?.toString("utf8")).not.toContain("Cannot find package 'is-even'");
           expect(stdout?.toString("utf8")).toBe("true\n");
         } else {
-          expect(stderr?.toString("utf8")).toContain("error: Cannot find package 'is-even'");
+          expect(stderr?.toString("utf8")).toContain("Cannot find package 'is-even'");
         }
       });
     }
@@ -118,6 +118,6 @@ test("--install=fallback to install missing packages", async () => {
     stderr: "pipe",
   });
 
-  expect(stderr?.toString("utf8")).not.toContain("error: Cannot find package 'is-odd'");
+  expect(stderr?.toString("utf8")).not.toContain("Cannot find package 'is-odd'");
   expect(stdout?.toString("utf8")).toBe("true false\n");
 });

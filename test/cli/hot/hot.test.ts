@@ -31,7 +31,7 @@ async function driveErrorReloadCycle(
   for await (const chunk of runner.stderr) {
     str += new TextDecoder().decode(chunk);
     // Need at least one error line followed by a newline, then another line followed by a newline
-    if (!/error: .*[0-9]\n.*?\n/g.test(str)) continue;
+    if (!/Error: .*[0-9]\n.*?\n/g.test(str)) continue;
 
     const lines = str.split("\n");
     // Preserve trailing partial line for the next chunk
@@ -40,7 +40,7 @@ async function driveErrorReloadCycle(
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      if (!line.includes("error:")) {
+      if (!line.includes("Error:")) {
         // Don't silently swallow a watcher-thread death-rattle — surface it so the
         // post-loop "Expected 50, Received N" becomes an actionable failure.
         if (/Watcher crashed|panic:|oh no:/.test(line)) {
@@ -65,7 +65,7 @@ async function driveErrorReloadCycle(
       // If we see the previous error repeated, the pending reload hasn't
       // taken effect yet. Re-save the file and put remaining unprocessed
       // lines back into the buffer so they aren't lost.
-      if (line.includes(`error: ${reloadCounter - 1}`)) {
+      if (line.includes(`Error: ${reloadCounter - 1}`)) {
         const remaining = lines.slice(i + 1).join("\n");
         if (remaining) {
           str = `${remaining}\n${str}`;
@@ -75,7 +75,7 @@ async function driveErrorReloadCycle(
         break;
       }
 
-      expect(line).toContain(`error: ${reloadCounter}`);
+      expect(line).toContain(`Error: ${reloadCounter}`);
 
       const nextLine = lines[i + 1];
       if (verifyLine) {

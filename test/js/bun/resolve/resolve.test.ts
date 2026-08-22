@@ -703,7 +703,7 @@ describe("package.json exports target percent-encoding", () => {
 
     expect(Bun.resolveSync("test-pkg/ok", root)).toBe(join(root, "node_modules/test-pkg/lib/ok.js"));
     // lib/index.js exists; rejection must come from the directory-target check, not a missing file.
-    expect(resolveError("test-pkg/dir", root)).toEqual({ name: "ResolveMessage", code: "ERR_MODULE_NOT_FOUND" });
+    expect(resolveError("test-pkg/dir", root)).toEqual({ name: "Error", code: "ERR_MODULE_NOT_FOUND" });
   });
 
   it.concurrent("decodes a percent-encoded target and rejects encoded path separators", () => {
@@ -729,7 +729,7 @@ describe("package.json exports target percent-encoding", () => {
 
     expect(Bun.resolveSync("test-pkg/space", root)).toBe(join(root, "node_modules/test-pkg/lib/with space.js"));
     for (const sub of ["sep-2f", "sep-2F", "sep-5c", "sep-5C", "bad"]) {
-      expect(resolveError(`test-pkg/${sub}`, root)).toEqual({ name: "ResolveMessage", code: "ERR_MODULE_NOT_FOUND" });
+      expect(resolveError(`test-pkg/${sub}`, root)).toEqual({ name: "Error", code: "ERR_MODULE_NOT_FOUND" });
     }
   });
 });
@@ -1265,7 +1265,7 @@ describe("wildcard exports with extensionless target", () => {
 
     const result = await runWildcardScript(String(dir), "index.ts");
     expect(result.exitCode).not.toBe(0);
-    expect(result.stderr).toContain("Cannot find module");
+    expect(result.stderr).toMatch(/Cannot find (?:module|package) 'wildcard-pkg/);
   });
 
   test.concurrent("CJS require of extensionless wildcard target also resolves", async () => {
@@ -1304,7 +1304,7 @@ describe("wildcard exports with extensionless target", () => {
 
     const result = await runWildcardScript(String(dir), "index.ts");
     expect(result.exitCode).not.toBe(0);
-    expect(result.stderr).toContain("Cannot find module");
+    expect(result.stderr).toMatch(/Cannot find (?:module|package) 'explicit-pkg/);
   });
 
   test.concurrent("resolves sibling `.js` when a same-named directory exists", async () => {
@@ -1547,7 +1547,7 @@ it.skipIf(isWindows)("reports a resolution error for an absolute specifier of th
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).toBe("ResolveMessage ERR_MODULE_NOT_FOUND\n");
+  expect(stdout).toBe("Error ERR_MODULE_NOT_FOUND\n");
   expect(exitCode).toBe(0);
 });
 

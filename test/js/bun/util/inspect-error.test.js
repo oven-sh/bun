@@ -406,7 +406,7 @@ describe.concurrent("AggregateError whose errors cannot be walked", () => {
       "-e",
       'throw new AggregateError([new Error("first member"), new TypeError("second member")], "outer message");',
     ]);
-    expect(stderr).toContain("error: first member");
+    expect(stderr).toContain("Error: first member");
     expect(stderr).toContain("TypeError: second member");
     expect(stderr).not.toContain(header);
     expect(exitCode).toBe(1);

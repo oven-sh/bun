@@ -30,7 +30,9 @@ export default [
         writable: true,
       },
       name: {
-        value: "ResolveMessage",
+        getter: "getName",
+        cache: true,
+        writable: true,
       },
       level: {
         getter: "getLevel",

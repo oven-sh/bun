@@ -781,7 +781,7 @@ describe("sync pull() throw after status is written does not re-render error()",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain("error: boom");
+    expect(stderr).toContain("Error: boom");
     const { wire, errorHandlerCalls } = JSON.parse(stdout);
     // error() cannot replace a response whose status is committed; the
     // connection is force-closed so the client observes failure instead of
@@ -801,7 +801,7 @@ describe("sync pull() throw after status is written does not re-render error()",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain("error: boom");
+    expect(stderr).toContain("Error: boom");
     const { wire, errorHandlerCalls } = JSON.parse(stdout);
     // Status 200 was already written; the stream is ended empty. The error()
     // response's status (500), headers, and body must not appear on the wire.

@@ -2328,14 +2328,13 @@ fn get_or_put_resolved_package_with_find_result(
     )?)?;
 
     debug_assert!(package.meta.id != invalid_package_id);
-    // Record exact-version pins so `Lockfile::get_package_id`'s
-    // order-independence guard can tell them apart from range-resolved
-    // entries (which it treats as network-order artefacts).
-    if version.tag == dependency::version::Tag::Npm && version.npm().version.is_exact() {
-        // SAFETY: `this_ptr` is the sole live `&mut PackageManager` here;
-        // `lockfile.exact_pinned` is disjoint from `package` (returned
-        // by-value above).
-        unsafe { &mut *(*this_ptr).lockfile }.mark_exact_pin(package.meta.id);
+    // SAFETY: `this_ptr` is the sole live `&mut PackageManager` here and
+    // `package` was returned by value above, so nothing aliases the lockfile.
+    let lockfile = unsafe { &mut *(*this_ptr).lockfile };
+    if (version.tag == dependency::version::Tag::Npm && version.npm().version.is_exact())
+        || lockfile.is_workspace_dependency(dependency_id)
+    {
+        lockfile.mark_local_pin(package.meta.id);
     }
     // Use scopeguard so success_fn runs on every
     // return below (including the `?` paths). The guard owns the raw pointer so the

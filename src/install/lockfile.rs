@@ -209,14 +209,11 @@ pub struct Lockfile {
     /// Runtime-only — never serialised.
     pub(crate) loaded_package_count: PackageID,
 
-    /// `bit[id] == true` ⇔ package `id` was appended for a dependency whose
-    /// version range was an exact `=X.Y.Z` (i.e. the user — root or workspace
-    /// — pinned this exact version somewhere in the tree). `get_package_id`'s
-    /// order-independence guard never blocks deduping to one of these: an
-    /// exact pin is a deliberate choice, not an artifact of which manifest
-    /// happened to land first. Runtime-only — never serialised; sized lazily
-    /// in `mark_exact_pin`.
-    pub(crate) exact_pinned: DynamicBitSet,
+    /// Packages appended for a root/workspace package.json dependency or an
+    /// exact `=X.Y.Z` dependency; exempt from the guard in `get_package_id`.
+    ///
+    /// Runtime-only — never serialised.
+    pub(crate) local_pinned: DynamicBitSet,
 }
 
 pub(crate) type PackageList = self::package::List<u64>;
@@ -2049,7 +2046,7 @@ impl Lockfile {
             // session-appended, so the order-independence guard in
             // `get_package_id` applies from id 0.
             loaded_package_count: 0,
-            exact_pinned: DynamicBitSet::default(),
+            local_pinned: DynamicBitSet::default(),
         }
     }
 
@@ -2061,15 +2058,14 @@ impl Lockfile {
         self.loaded_package_count = self.packages.len() as PackageID;
     }
 
-    /// Record that package `id` was appended via an exact-version dependency
-    /// (`=X.Y.Z`). See the `exact_pinned` field doc.
+    /// See `local_pinned`.
     #[inline]
-    pub(crate) fn mark_exact_pin(&mut self, id: PackageID) {
+    pub(crate) fn mark_local_pin(&mut self, id: PackageID) {
         let i = id as usize;
-        if self.exact_pinned.bit_length() <= i {
-            bun_core::handle_oom(self.exact_pinned.resize(i + 1, false));
+        if self.local_pinned.bit_length() <= i {
+            bun_core::handle_oom(self.local_pinned.resize(i + 1, false));
         }
-        self.exact_pinned.set(i);
+        self.local_pinned.set(i);
     }
 
     pub(crate) fn get_package_id(
@@ -2108,7 +2104,7 @@ impl Lockfile {
         let buf = self.buffers.string_bytes.as_slice();
 
         let loaded_watermark = self.loaded_package_count;
-        let exact_pinned = &self.exact_pinned;
+        let local_pinned = &self.local_pinned;
         let try_satisfies_dedupe = |id: PackageID| -> bool {
             let existing = &resolutions[id as usize];
             if existing.tag != ResolutionTag::Npm {
@@ -2121,22 +2117,10 @@ impl Lockfile {
             if !npm_v.satisfies(existing_ver, buf, buf) {
                 return false;
             }
-            // Order-independence guard. We refuse to dedupe a wide range to a
-            // *lower* existing entry only when ALL of the following hold:
-            //   - the entry was appended in this resolve session
-            //     (lockfile-loaded entries are the user's existing pin),
-            //   - the entry was NOT appended for an exact-`=X.Y.Z` dependency
-            //     (an exact pin anywhere in the tree is a deliberate choice,
-            //     not a network-order artefact — `dragon test 2` /
-            //     "dependency from root satisfies range from dependency"),
-            //   - the manifest's best-match is a *different major* (within a
-            //     major, deduping to an older patch is the long-standing
-            //     behaviour and the worst case is still ^-compatible).
-            // What this leaves is exactly the cross-parent network-order
-            // flake: a wide range (`*`, `>=X`) collapsing onto a sibling's
-            // *range-resolved* lower major depending on whose manifest landed
-            // first ("text lockfile is hoisted").
-            if id >= loaded_watermark && !exact_pinned.is_set_allow_out_of_bound(id as usize, false)
+            // A wide range must not collapse onto a lower major that a sibling's
+            // manifest merely happened to append first. Lockfile-loaded and
+            // `local_pinned` entries do not depend on manifest order.
+            if id >= loaded_watermark && !local_pinned.is_set_allow_out_of_bound(id as usize, false)
             {
                 if let Some(floor) = resolved_npm_floor {
                     if existing_ver.order(floor, buf, buf) == Ordering::Less

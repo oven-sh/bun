@@ -78,7 +78,7 @@ jobs:
             // the keyword an adjective ("the closed #1", "a comment on closed #1").
             const DISQUALIFIERS = new Set([
               "not", "never", "neither", "nor", "without", "cannot", "can't", "doesn't", "don't", "won't", "didn't",
-              "isn't", "wasn't", "hasn't", "haven't", "hadn't",
+              "isn't", "wasn't", "hasn't", "haven't", "hadn't", "wouldn't", "couldn't", "shouldn't", "mightn't", "mustn't",
               "partially", "partly", "partial",
               "may", "might", "could", "would", "possibly", "probably", "potentially", "maybe", "hopefully", "likely", "unlikely",
               "the", "a", "an", "of", "on", "in", "by", "from", "with", "for", "than",
@@ -357,15 +357,14 @@ jobs:
               return n >= 4 || line[n] === "\t";
             }
 
-            // A heading, a list item or a fence ends a blockquote's lazy continuation.
-            // The marker needs a space after it: "#100" and "**bold**" are text.
+            // A heading or a list item ends a blockquote's lazy continuation. The marker
+            // needs a space after it ("#100" and "**bold**" are text), and an ordered
+            // item interrupts only when it starts at 1, as in CommonMark.
             function startsBlock(trimmed) {
               const c = trimmed[0];
               if (c === "-" || c === "*" || c === "+") return isGap(trimmed[1]);
               if (c === "#") return isHeading(trimmed);
-              let n = 0;
-              while (isDigit(trimmed[n])) n++;
-              return n > 0 && (trimmed[n] === "." || trimmed[n] === ")") && isGap(trimmed[n + 1]);
+              return c === "1" && (trimmed[1] === "." || trimmed[1] === ")") && isGap(trimmed[2]);
             }
 
             function isHeading(trimmed) {
@@ -392,18 +391,17 @@ jobs:
             // Removes "<tag>...</tag>" within a paragraph, for the HTML spellings of
             // strikethrough: <s>, <del>, <strike>.
             function removeTagged(text, tag) {
-              const lower = text.toLowerCase();
               const open = `<${tag}>`;
               const close = `</${tag}>`;
               let out = "";
               let i = 0;
               while (i < text.length) {
-                const start = lower.indexOf(open, i);
+                const start = indexOfTag(text, open, i);
                 if (start === -1) {
                   out += text.slice(i);
                   break;
                 }
-                const end = lower.indexOf(close, start + open.length);
+                const end = indexOfTag(text, close, start + open.length);
                 if (end === -1 || end >= nextBlankLine(text, start)) {
                   out += text.slice(i, start + open.length);
                   i = start + open.length;
@@ -423,6 +421,18 @@ jobs:
 
             function isRunOf(text, char) {
               return leadingRun(text, char).length === text.length;
+            }
+
+            // The index of `tag` in `text` from `from`, in any case. Only the candidate
+            // is lowercased: lowercasing the whole text can change its length ("İ"
+            // becomes two code units), and the indexes would no longer match.
+            function indexOfTag(text, tag, from) {
+              let at = text.indexOf("<", from);
+              while (at !== -1) {
+                if (text.slice(at, at + tag.length).toLowerCase() === tag) return at;
+                at = text.indexOf("<", at + 1);
+              }
+              return -1;
             }
 
             // Removes the text between a run of `marker` and the next run of the same

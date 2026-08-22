@@ -283,30 +283,34 @@ jobs:
             // Blanks fenced code blocks, indented code blocks, blockquotes and HTML
             // comments in one pass over the lines, so a marker inside one of them opens
             // nothing else: "<!--" in a fence is code, and "```" in a comment is
-            // comment. An unclosed comment runs to the end, as in CommonMark. A line
-            // after a quote line continues the quote until a blank line or a new block.
-            // An indented line opens a code block unless it continues a paragraph.
+            // comment. A comment that opens a line is an HTML block and runs to "-->"
+            // or to the end, as in CommonMark. A line after a quote line continues the
+            // quote until a blank line or a new block. An indented line opens a code
+            // block unless it continues a paragraph.
             function removeBlocks(text) {
               const kept = [];
+              const lastCloser = text.lastIndexOf("-->");
               let fence = null;
               let comment = false;
-              let quote = false;
-              let quotedFence = null;
+              // The open blockquote, see continueQuote(). null outside one.
+              let quote = null;
               let paragraph = false;
+              let offset = 0;
               for (const line of text.split("\n")) {
+                // Whether a "-->" follows on a later line.
+                const closesLater = lastCloser >= offset + line.length;
+                offset += line.length + 1;
                 if (comment) {
                   const end = line.indexOf("-->");
                   if (end === -1) {
-                    paragraph = false;
                     kept.push("");
                     continue;
                   }
                   // The line that closes the comment is the comment's last line: what
-                  // follows "-->" is text, not a fence, a quote or indented code, and
-                  // not a paragraph either.
-                  const tail = removeComments(line.slice(end + 3));
+                  // follows "-->" is text, not a fence, a quote or indented code. Whether
+                  // a paragraph is open is as it was before the comment.
+                  const tail = removeComments(line.slice(end + 3), false, closesLater);
                   comment = tail.open;
-                  paragraph = false;
                   kept.push(tail.prose);
                   continue;
                 }
@@ -319,8 +323,7 @@ jobs:
                   continue;
                 }
                 if (trimmed === "") {
-                  quote = false;
-                  quotedFence = null;
+                  quote = null;
                   paragraph = false;
                   kept.push("");
                   continue;
@@ -329,65 +332,79 @@ jobs:
                   kept.push("");
                   continue;
                 }
-                // An opening fence has at most three spaces of indentation.
-                if (!isIndentedCode(line) && isFenceOpening(trimmed)) {
+                // A fence, a quote marker, a heading, a rule and an HTML block have at
+                // most three spaces of indentation. Indented four columns, each of them
+                // is paragraph text (only a paragraph line gets this far indented).
+                const indented = isIndentedCode(line);
+                if (!indented && isFenceOpening(trimmed)) {
                   fence = fenceRun(trimmed);
-                  quote = false;
-                  quotedFence = null;
+                  quote = null;
                   paragraph = false;
                   kept.push("");
                   continue;
                 }
-                if (trimmed.startsWith(">")) {
-                  // Only a quoted paragraph continues onto the next unmarked line. After a
-                  // quoted heading (ATX, or a setext underline under a quoted paragraph),
-                  // rule or empty quote, or inside a quoted fence, the next line is outside.
-                  const quoted = trimmed.slice(1).trim();
-                  if (quotedFence !== null) {
-                    if (closesFence(quoted, quotedFence)) quotedFence = null;
-                    quote = false;
-                  } else if (isFenceOpening(quoted)) {
-                    quotedFence = fenceRun(quoted);
-                    quote = false;
-                  } else {
-                    const underline = quote && (isRunOf(quoted, "=") || isRunOf(quoted, "-"));
-                    quote = quoted !== "" && !underline && !isHeading(quoted) && !isThematicBreak(quoted);
-                  }
+                if (!indented && trimmed.startsWith(">")) {
+                  quote = continueQuote(quote ?? { paragraph: false, fence: null, comment: false }, trimmed.slice(1));
                   paragraph = false;
                   kept.push("");
                   continue;
                 }
-                // An indented line cannot start a block.
-                if (quote && (isIndentedCode(line) || !startsBlock(trimmed))) {
+                // Only a quoted paragraph continues onto an unmarked line, and an
+                // indented line cannot start a block.
+                if (quote?.paragraph && (indented || !startsBlock(trimmed))) {
                   paragraph = false;
                   kept.push("");
                   continue;
                 }
-                quote = false;
-                quotedFence = null;
-                // A heading, a rule or a setext underline ("===" or "--" under a
-                // paragraph) is not a paragraph line. Indented four columns, each of
-                // them is paragraph text (only a paragraph line gets this far indented).
-                if (!isIndentedCode(line)) {
+                quote = null;
+                const htmlBlock = !indented && trimmed.startsWith("<!--");
+                if (!indented) {
+                  // A heading, a rule, a setext underline ("===" or "--" under a
+                  // paragraph) or an HTML block is not a paragraph line.
                   const underline = paragraph && (isRunOf(trimmed, "=") || isRunOf(trimmed, "-"));
-                  paragraph = !underline && !isHeading(trimmed) && !isThematicBreak(trimmed);
+                  paragraph = !underline && !isHeading(trimmed) && !isThematicBreak(trimmed) && !htmlBlock;
                 }
-                const { prose, open } = removeComments(line);
+                const { prose, open } = removeComments(line, htmlBlock, closesLater);
                 comment = open;
-                // A line that starts with a comment is an HTML block, not a paragraph.
-                if (trimmed.startsWith("<!--")) paragraph = false;
                 kept.push(prose);
               }
               return kept.join("\n");
+            }
+
+            // The quote's state after one more quoted line, `inner` being the text after
+            // ">": { paragraph, fence, comment }, whether the quote's last leaf is a
+            // paragraph, and the fence or comment open inside it. Only a quoted paragraph
+            // continues onto the next unmarked line. After a quoted heading (ATX, or a
+            // setext underline under a quoted paragraph), rule or empty quote, and
+            // inside a quoted fence or comment, the next unmarked line is outside. As
+            // at the top level, a fence or a comment has at most three spaces of
+            // indentation after the marker's own space, and an indented line continues
+            // whatever came before it.
+            function continueQuote(quote, inner) {
+              const content = inner.startsWith(" ") ? inner.slice(1) : inner;
+              const quoted = content.trim();
+              const indented = isIndentedCode(content);
+              if (quote.comment) return { paragraph: false, fence: null, comment: !quoted.includes("-->") };
+              if (quote.fence !== null) {
+                const closes = !indented && closesFence(quoted, quote.fence);
+                return { paragraph: false, fence: closes ? null : quote.fence, comment: false };
+              }
+              if (indented) return quote;
+              if (isFenceOpening(quoted)) return { paragraph: false, fence: fenceRun(quoted), comment: false };
+              if (quoted.startsWith("<!--")) return { paragraph: false, fence: null, comment: quoted.indexOf("-->", 2) === -1 };
+              const underline = quote.paragraph && (isRunOf(quoted, "=") || isRunOf(quoted, "-"));
+              const paragraph = quoted !== "" && !underline && !isHeading(quoted) && !isThematicBreak(quoted);
+              return { paragraph, fence: null, comment: false };
             }
 
             // Removes the HTML comments that start on `line`: { prose, open }, where
             // `open` means the last comment does not end on the line. A "<!--" inside a
             // code span is code ("Handles `<!--`. Fixes #1"), so a line with "<!--"
             // loses its spans here, and only such a line: a span can cross a line
-            // break, and the pass over the whole text pairs those. A line that holds
-            // only comments becomes "".
-            function removeComments(line) {
+            // break, and the pass over the whole text pairs those. A "<!--" that no
+            // "-->" closes is text, unless the line is an HTML block (`block`), which
+            // runs to the end as in CommonMark. A line that holds only comments becomes "".
+            function removeComments(line, block, closesLater) {
               if (!line.includes("<!--")) return { prose: line, open: false };
               const spanless = removeSpans(line, "`");
               let out = "";
@@ -402,6 +419,11 @@ jobs:
                 if (start === -1) break;
                 // "<!-->" and "<!--->" are complete comments.
                 const end = spanless.indexOf("-->", start + 2);
+                if (end === -1 && !block && !closesLater) {
+                  out += spanless.slice(start);
+                  text = true;
+                  break;
+                }
                 out += placeholder(spanless, start - 1, end === -1 ? spanless.length : end + 3);
                 if (end === -1) {
                   open = true;

@@ -66,9 +66,16 @@ impl BuildCommand {
         // SAFETY: `ctx.log` is a long-lived `*mut Log` set up during CLI init
         // and never freed for the duration of the command body.
         let log_ref: &mut bun_ast::Log = unsafe { &mut *log };
-        let user_requested_browser_target =
-            ctx.args.target.is_some() && ctx.args.target.unwrap() == api::Target::Browser;
-        if ctx.bundler_options.compile || ctx.bundler_options.bytecode {
+        // Decided before `Transpiler::init`, which captures the target and defines.
+        let standalone_html = ctx.bundler_options.compile
+            && ctx.args.target == Some(api::Target::Browser)
+            && !ctx.args.entry_points.is_empty()
+            && ctx
+                .args
+                .entry_points
+                .iter()
+                .all(|entry_point| strings::has_suffix_comptime(entry_point, b".html"));
+        if (ctx.bundler_options.compile && !standalone_html) || ctx.bundler_options.bytecode {
             // set this early so that externals are set up correctly and define is right
             ctx.args.target = Some(api::Target::Bun);
         }
@@ -84,7 +91,7 @@ impl BuildCommand {
 
         let compile_target = &ctx.bundler_options.compile_target;
 
-        if ctx.bundler_options.compile {
+        if ctx.bundler_options.compile && !standalone_html {
             let compile_define_keys = compile_target.define_keys();
             let compile_define_values = compile_target.define_values();
 
@@ -205,8 +212,6 @@ impl BuildCommand {
         } else {
             bun_ast::runtime::ReactCompilerMode::Disabled
         };
-        this_transpiler.options.inline_entrypoint_import_meta_main =
-            ctx.bundler_options.inline_entrypoint_import_meta_main;
         this_transpiler.options.code_splitting = ctx.bundler_options.code_splitting;
         this_transpiler.options.minify_syntax = ctx.bundler_options.minify_syntax;
         this_transpiler.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
@@ -259,22 +264,7 @@ impl BuildCommand {
                 Global::exit(1);
             }
 
-            // Check if all entrypoints are HTML files for standalone HTML mode
-            let has_all_html_entrypoints = 'brk: {
-                if this_transpiler.options.entry_points.is_empty() {
-                    break 'brk false;
-                }
-                for entry_point in this_transpiler.options.entry_points.iter() {
-                    if !strings::has_suffix_comptime(entry_point, b".html") {
-                        break 'brk false;
-                    }
-                }
-                true
-            };
-
-            if user_requested_browser_target && has_all_html_entrypoints {
-                // --compile --target=browser with all HTML entrypoints: produce self-contained HTML
-                ctx.args.target = Some(api::Target::Browser);
+            if standalone_html {
                 if ctx.bundler_options.code_splitting {
                     bun_core::pretty_errorln!(
                         "<r><red>error<r><d>:<r> cannot use --compile --target browser with --splitting"
@@ -306,6 +296,8 @@ impl BuildCommand {
                     );
                     Global::exit(1);
                 }
+
+                this_transpiler.options.inline_entrypoint_import_meta_main = true;
 
                 // When compiling to an executable, only `external` sourcemaps
                 // work, as the runtime does not look at the source map

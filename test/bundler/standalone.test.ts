@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { SourceMapConsumer } from "source-map";
 
@@ -730,6 +730,172 @@ console.log(greet("world"));`,
       expect(html.match(/\/\/# debugId=/g)).toHaveLength(1);
       expect(html).toEndWith("</html>\n");
       await expectInlinedScriptToBeMapped(html, map);
+    });
+  });
+
+  // Standalone HTML is a browser build that happens to be spelled with
+  // --compile. The executable-only settings (target=bun, the compile target's
+  // process.platform/arch/versions.bun defines) must not leak into it, so its
+  // output has to match a plain --target=browser build of the same files.
+  describe.concurrent("executable-only settings", () => {
+    const builtinImportFixture = {
+      "index.html": `<!DOCTYPE html><html><body><script src="./app.js"></script></body></html>`,
+      "app.js": `import { Database } from "bun:sqlite";\nconsole.log(typeof Database);`,
+    };
+    // Everything here comes out differently from a bun-target build: node
+    // builtins are polyfilled (events) or stubbed (node:fs) instead of being
+    // left as imports, process.platform/arch/versions.bun are not inlined,
+    // process.browser is true, and CSS nesting is flattened because the default
+    // browser targets do not support it.
+    const browserCodeFixture = {
+      "index.html": `<!DOCTYPE html>
+<html><head><link rel="stylesheet" href="./style.css"></head>
+<body><script src="./app.js"></script></body></html>`,
+      "app.js": `import { EventEmitter } from "events";
+import * as fs from "node:fs";
+console.log(typeof EventEmitter, fs, process.platform, process.arch, process.versions.bun, process.browser);`,
+      "style.css": `.a { color: red; .b { color: blue; } }`,
+    };
+
+    function expectBrowserCode(script: string, style: string) {
+      expect(script).toContain(
+        `console.log(typeof EventEmitter, fs, process.platform, process.arch, process.versions.bun, true);`,
+      );
+      expect(script).not.toContain(`from "events"`);
+      expect(script).not.toContain(`from "node:fs"`);
+      expect(style).toContain(".a .b {");
+      expect(style).not.toContain("& .b");
+    }
+
+    function inlinedParts(html: string) {
+      const script = html.match(/<script type="module">([^]*?)<\/script>/);
+      const style = html.match(/<style>([^]*?)<\/style>/);
+      expect(script).not.toBeNull();
+      expect(style).not.toBeNull();
+      return { script: script![1], style: style![1] };
+    }
+
+    async function buildCli(dir: string, args: string[]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", ...args],
+        env: bunEnv,
+        cwd: dir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr: normalizeBunSnapshot(stderr, dir), exitCode };
+    }
+
+    test("CLI rejects a bun: builtin import exactly like a plain browser build", async () => {
+      using dir = tempDir("compile-browser-cli-builtin", builtinImportFixture);
+
+      const standalone = await buildCli(String(dir), [
+        "--compile",
+        "--target=browser",
+        "./index.html",
+        "--outdir",
+        "dist",
+      ]);
+      expect(standalone.stderr).toMatchInlineSnapshot(`
+        "1 | import { Database } from "bun:sqlite";
+                                     ^
+        error: Browser build cannot import Bun builtin: "bun:sqlite". When bundling for Bun, set target to 'bun'
+            at <dir>/app.js:1:26"
+      `);
+      expect(standalone.exitCode).toBe(1);
+      expect(existsSync(`${dir}/dist/index.html`)).toBe(false);
+
+      const plain = await buildCli(String(dir), ["--target=browser", "./index.html", "--outdir", "dist-plain"]);
+      expect(plain).toEqual({ stdout: standalone.stdout, stderr: standalone.stderr, exitCode: standalone.exitCode });
+    });
+
+    test("Bun.build() rejects a bun: builtin import", async () => {
+      using dir = tempDir("compile-browser-api-builtin", builtinImportFixture);
+
+      const result = await Bun.build({
+        entrypoints: [`${dir}/index.html`],
+        compile: true,
+        target: "browser",
+        throw: false,
+      });
+
+      expect(result.logs.map(log => log.message)).toEqual([
+        `Browser build cannot import Bun builtin: "bun:sqlite". When bundling for Bun, set target to 'bun'`,
+      ]);
+      expect(result.success).toBe(false);
+    });
+
+    test("CLI inlines exactly the JS and CSS a plain browser build emits", async () => {
+      using dir = tempDir("compile-browser-cli-browser-code", browserCodeFixture);
+
+      const standalone = await buildCli(String(dir), [
+        "--compile",
+        "--target=browser",
+        "./index.html",
+        "--outdir",
+        "dist",
+      ]);
+      expect(standalone.stderr).toBe("");
+      expect(standalone.exitCode).toBe(0);
+      const { script, style } = inlinedParts(await Bun.file(`${dir}/dist/index.html`).text());
+      expectBrowserCode(script, style);
+
+      const plain = await buildCli(String(dir), ["--target=browser", "./index.html", "--outdir", "dist-plain"]);
+      expect(plain.stderr).toBe("");
+      expect(plain.exitCode).toBe(0);
+      const [plainJs] = Array.from(new Bun.Glob("*.js").scanSync({ cwd: `${dir}/dist-plain` }));
+      const [plainCss] = Array.from(new Bun.Glob("*.css").scanSync({ cwd: `${dir}/dist-plain` }));
+      expect(script).toBe(await Bun.file(`${dir}/dist-plain/${plainJs}`).text());
+      expect(style).toBe(await Bun.file(`${dir}/dist-plain/${plainCss}`).text());
+    });
+
+    test("Bun.build() inlines exactly the JS and CSS a plain browser build emits", async () => {
+      using dir = tempDir("compile-browser-api-browser-code", browserCodeFixture);
+
+      const standalone = await Bun.build({
+        entrypoints: [`${dir}/index.html`],
+        compile: true,
+        target: "browser",
+      });
+      expect(standalone.outputs.map(output => output.loader)).toEqual(["html"]);
+      const { script, style } = inlinedParts(await standalone.outputs[0].text());
+      expectBrowserCode(script, style);
+
+      const plain = await Bun.build({
+        entrypoints: [`${dir}/index.html`],
+        target: "browser",
+      });
+      const plainJs = plain.outputs.find(output => output.path.endsWith(".js"))!;
+      const plainCss = plain.outputs.find(output => output.path.endsWith(".css"))!;
+      expect(script).toBe(await plainJs.text());
+      expect(style).toBe(await plainCss.text());
+    });
+
+    test("CLI still builds a bun executable with the compile defines when the entrypoint is not HTML", async () => {
+      using dir = tempDir("compile-browser-cli-executable", {
+        // bun:sqlite only resolves for target=bun; process.versions.bun is one
+        // of the compile defines, so the read is inlined and the runtime
+        // reassignment is not observed.
+        "app.js": `import { Database } from "bun:sqlite";
+process.versions.bun = "runtime";
+console.log(typeof Database, process.browser, process.versions.bun === "runtime");`,
+      });
+      const outfile = isWindows ? "app.exe" : "app";
+
+      const build = await buildCli(String(dir), ["--compile", "--target=browser", "./app.js", "--outfile", outfile]);
+      expect(build.stderr).not.toContain("error:");
+      expect(build.exitCode).toBe(0);
+
+      await using proc = Bun.spawn({
+        cmd: [`${dir}/${outfile}`],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "function false false\n", stderr: "", exitCode: 0 });
     });
   });
 });

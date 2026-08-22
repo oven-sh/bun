@@ -13,13 +13,21 @@
 // the wait, and the runtime names it on stderr. A row passes only if the named
 // line appeared (the work really was on another thread, really came back
 // during teardown, and — for ticketed work — was taken through the door at
-// the expected site) and the process exited cleanly; on the ASAN build the
-// release paths are also checked for use-after-free and leaks. Builds with
-// debug assertions only (debug, ASAN): the gate does not exist in release.
-import { describe, expect, test } from "bun:test";
+// the expected site) and the process exited cleanly; on the ASAN build a
+// release path that frees too much crashes the host, and one that frees too
+// little fails under the LeakSanitizer the host is run with here, whatever
+// environment the test runner supplies. Builds with debug assertions only
+// (debug, ASAN): the gate does not exist in release.
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isAndroid, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
 import fs from "node:fs";
 import path from "node:path";
+
+// Every test here starts a debug/ASAN bun plus a worker (the last one also
+// sits out the 2s outstanding-ticket report), and a failing row's leak report
+// takes LeakSanitizer seconds more to symbolize: none of that fits the 5s
+// default.
+setDefaultTimeout(90_000);
 
 type Row = {
   name: string;
@@ -147,7 +155,9 @@ const ROWS: Row[] = [
   },
   {
     // The builtin's pool task hands the copy to an fs.cp task carrying a
-    // clone of its poster; that task's last subtask posts the completion.
+    // clone of its poster; that task's last subtask posts the completion, so
+    // releasing it unrun has to free the builtin's task as well (it used to
+    // leak, which LeakSanitizer reports on this row).
     name: "$ cp -R",
     worker: `Bun.$\`cp -R \${workerData.dir}/src \${workerData.dir}/dst\`.quiet().catch(() => {});`,
     ticket: "cp.rs",
@@ -222,13 +232,22 @@ const ROWS: Row[] = [
 // the worker waits for (with the gate armed, a parent→worker post is itself a
 // cross-thread post that waits for the worker's teardown). Rows with a parent
 // side post in response to "armed".
+//
+// The work is started from an immediate, not from the module body: a `leak:`
+// suppression matches any frame of an allocation's recorded stack, and
+// test/leaksan.supp suppresses module evaluation (evaluateCommonJSModuleOnce),
+// which on the release ASAN build is still inside the 30 frames recorded for
+// what a row's work allocates. Started from the module body, a leaking
+// release path went unreported there.
 function host(row: Row, dir: string) {
   const worker = `
     const { parentPort, workerData } = require("node:worker_threads");
     parentPort.on("message", () => {});
-    ${row.worker}
-    parentPort.postMessage("armed");
-    setImmediate(() => setImmediate(() => process.exit(0)));
+    setImmediate(() => {
+      ${row.worker}
+      parentPort.postMessage("armed");
+      setImmediate(() => setImmediate(() => process.exit(0)));
+    });
   `;
   return `
     const { Worker, MessageChannel } = require("node:worker_threads");
@@ -242,13 +261,24 @@ function host(row: Row, dir: string) {
   `;
 }
 
+// LeakSanitizer on the host (ASAN build): a release path that leaks exits it
+// non-zero with the report on stderr. The main VM is destroyed at exit as well
+// (as under the CI runner), or whatever it still owned would be reported too.
+const leakCheckEnv = isASAN
+  ? {
+      BUN_DESTRUCT_VM_ON_EXIT: "1",
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+      LSAN_OPTIONS: `print_suppressions=0:suppressions=${path.join(import.meta.dirname, "../../../leaksan.supp")}`,
+    }
+  : {};
+
 describe.skipIf(!isDebug && !isASAN)("work that comes back after its worker began tearing down", () => {
   for (const row of ROWS) {
     test.concurrent.skipIf(!!row.skip)(row.name, async () => {
       using dir = tempDir("worker-late-completion", row.files ?? {});
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", host(row, String(dir))],
-        env: { ...bunEnv, ...row.env, BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE: "1" },
+        env: { ...bunEnv, ...leakCheckEnv, ...row.env, BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE: "1" },
         stdout: "pipe",
         stderr: "pipe",
       });

@@ -351,6 +351,82 @@ test("you can use --outfile=... and --sourcemap", async () => {
   `);
 });
 
+describe.concurrent("--sourcemap without --outdir or --outfile", () => {
+  // A linked map used to be written next to the entry point along with the
+  // bundle, which replaced `entry.js` itself and put a stray `entry.js` next
+  // to `entry.ts`.
+  const src = {
+    "dep.js": `module.exports = 1;\n`,
+    "entry.js": `const dep = require("./dep.js");\nmodule.exports = dep;\n`,
+    "entry.ts": `const dep: number = require("./dep.js");\nexport default dep;\n`,
+  };
+  const fixture = Object.fromEntries(Object.entries(src).map(([name, contents]) => [`src/${name}`, contents]));
+
+  function srcTree(dir: string) {
+    return Object.fromEntries(
+      fs
+        .readdirSync(join(dir, "src"))
+        .sort()
+        .map(name => [name, fs.readFileSync(join(dir, "src", name), "utf8")]),
+    );
+  }
+
+  async function build(dir: string, args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", ...args],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const linked = "error: cannot use a linked source map without --outdir or --outfile\n";
+  const external = "error: cannot use an external source map without --outdir\n";
+
+  test.each([
+    ["src/entry.js --sourcemap", linked],
+    ["src/entry.js --sourcemap=linked", linked],
+    ["src/entry.ts --sourcemap", linked],
+    ["--no-bundle src/entry.js --sourcemap", linked],
+    ["src/entry.js --sourcemap=external", external],
+  ])("bun build %s fails instead of writing next to the entry point", async (args, error) => {
+    using dir = tempDir("build-sourcemap-no-output", fixture);
+
+    expect(await build(String(dir), args.split(" "))).toEqual({ stdout: "", stderr: error, exitCode: 1 });
+
+    expect(srcTree(String(dir))).toEqual(src);
+    expect(fs.readdirSync(String(dir))).toEqual(["src"]);
+  });
+
+  test("--sourcemap=inline prints the bundle to stdout", async () => {
+    using dir = tempDir("build-sourcemap-inline-stdout", fixture);
+
+    const { stdout, stderr, exitCode } = await build(String(dir), ["src/entry.js", "--sourcemap=inline"]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("module.exports = 1;");
+    expect(stdout).toContain("//# sourceMappingURL=data:application/json;base64,");
+    expect(exitCode).toBe(0);
+
+    expect(srcTree(String(dir))).toEqual(src);
+    expect(fs.readdirSync(String(dir))).toEqual(["src"]);
+  });
+
+  test("--sourcemap with --outdir writes the bundle and its map there", async () => {
+    using dir = tempDir("build-sourcemap-outdir", fixture);
+
+    const { stdout, stderr, exitCode } = await build(String(dir), ["src/entry.js", "--sourcemap", "--outdir=dist"]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("entry.js.map");
+    expect(exitCode).toBe(0);
+
+    expect(fs.readdirSync(join(String(dir), "dist")).sort()).toEqual(["entry.js", "entry.js.map"]);
+    expect(srcTree(String(dir))).toEqual(src);
+  });
+});
+
 test("some log cases", async () => {
   const tmpdir = tmpdirSync();
   const inputFile = path.join(tmpdir, "input.js");

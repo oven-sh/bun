@@ -175,6 +175,17 @@ impl BuildCommand {
             && outfile.is_empty()
             && ctx.bundler_options.outdir.is_empty();
 
+        // Without this, the bundle and its .map are written next to the entry
+        // point, overwriting a .js entry.
+        if output_to_stdout
+            && this_transpiler.options.source_map == options::SourceMapOption::Linked
+        {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r><d>:<r> cannot use a linked source map without --outdir or --outfile"
+            );
+            Global::exit(1);
+        }
+
         this_transpiler.options.supports_multiple_outputs =
             !(output_to_stdout || !outfile.is_empty());
 

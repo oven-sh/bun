@@ -155,12 +155,12 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
         return;
 
     VM& vm = scriptExecutionContext.vm();
+    JSLockHolder lock(vm);
     // An earlier listener of this dispatch met a termination (a node:vm timeout keeps the VM's gate
     // open): it is unwinding, and nothing enters script on top of it.
     if (vm.hasPendingTerminationException()) [[unlikely]]
         return;
 
-    JSLockHolder lock(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     // See https://dom.spec.whatwg.org/#dispatching-events spec on calling handleEvent.

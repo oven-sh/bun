@@ -1108,11 +1108,12 @@ test(
   timeout,
 );
 
-// A worker in a microtask-only loop could not be terminated when the terminate() trap was serviced inside
-// native code that caught the TerminationException and dropped it, so the checkpoint never stopped, the
-// worker never returned to its event loop, and `await worker.terminate()` never settled:
+// A worker in a microtask-only loop could not be stopped (terminate(), or its own process.exit()) when
+// the termination trap was serviced inside native code that caught the TerminationException and dropped
+// it, so the checkpoint never stopped, the worker never returned to its event loop, and the worker never
+// exited:
 // - the BunPerformMicrotaskJob handler in JSC (the job for `queueMicrotask()` and for the C++ web
-//   streams' start/pull reactions) cleared it with a plain clearException() (oven-sh/WebKit#491);
+//   streams' start/pull/write reactions) cleared it with a plain clearException() (oven-sh/WebKit#491);
 // - JSEventListener::handleEvent and EventEmitter::innerInvokeEventListeners took it through the
 //   NakedPtr<Exception> overload of JSC::call(), which clears unconditionally, and then reported it to
 //   a reporter that ignores terminations.
@@ -1123,12 +1124,13 @@ test(
 // termination (a DeferTermination scope fires the trap again), so the loop starts from a timer; and a
 // drain started after a timer callback is refused at its entry once the VM is stopping, so the listener
 // shapes spin from their second call, inside the checkpoint the `await 0` continuation runs in. The
-// stream shapes are the reported ones; there the trap only sometimes lands inside the start reaction.
+// stream shapes are the reported ones; they post 'go' once the loop has run for a while, and there the
+// trap only sometimes lands inside the start reaction.
 test(
-  "terminate() while a microtask-only loop keeps entering native-dispatched callbacks",
+  "terminate() or process.exit() while a microtask-only loop keeps entering native-dispatched callbacks",
   async () => {
-    const rounds = 2;
-    const deadline = slow ? 30_000 : 10_000;
+    const roundsPerShape = 2;
+    const deadline = slow ? 20_000 : 6_000;
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -1139,8 +1141,8 @@ test(
         const spinOnSecondCall = "let n = 0; const L = () => { if (n++) { " + spin + " } };";
         const shapes = {
           queueMicrotask: { loop: "queueMicrotask(() => { " + spin + " });" },
-          read: { loop: "new Response('abc').body.getReader().read();", settle: true },
-          tee: { loop: "new Response('abc').body.tee();", settle: true },
+          read: { loop: "new Response('abc').body.getReader().read();", progress: true },
+          tee: { loop: "new Response('abc').body.tee();", progress: true },
           eventTarget: {
             setup: spinOnSecondCall + "const et = new EventTarget(); et.addEventListener('x', L);",
             loop: "et.dispatchEvent(new Event('x'));",
@@ -1150,26 +1152,37 @@ test(
             loop: "{ const ac = new AbortController(); ac.signal.addEventListener('abort', L); ac.abort(); }",
           },
           processEmit: { setup: spinOnSecondCall + "process.on('evt', L);", loop: "process.emit('evt');" },
+          // process.exit() inside the job: the worker exits on its own with that code, and runs nothing after.
+          exitInQueueMicrotask: { loop: "queueMicrotask(() => { process.exit(42); });", exit: 42 },
+          exitInWritableStreamWrite: {
+            loop: "new WritableStream({ write() { process.exit(42); } }).getWriter().write('x');",
+            exit: 42,
+          },
         };
         (async () => {
-          for (const [name, { setup, loop, settle }] of Object.entries(shapes)) {
-            for (let i = 0; i < ${rounds}; i++) {
+          for (const [name, { setup, loop, progress, exit }] of Object.entries(shapes)) {
+            for (let i = 0; i < ${roundsPerShape}; i++) {
               const src =
                 "const { parentPort } = require('worker_threads');" +
                 (setup ?? "") +
+                (progress ? "let k = 0;" : "") +
                 "setTimeout(() => {" +
-                (settle ? "parentPort.postMessage('go');" : "") +
-                "(async () => { for (;;) { " + loop + " await 0; } })();" +
+                "(async () => { for (;;) { " +
+                (progress ? "if (k++ === 50) parentPort.postMessage('go');" : "") +
+                loop + " await 0; } })();" +
                 "}, 0);";
               const w = new Worker(src, { eval: true });
-              await new Promise(r => w.once("message", r));
-              if (settle) await Bun.sleep(10);
-              const code = await Promise.race([
-                w.terminate(),
-                Bun.sleep(${deadline}).then(() => "HANG"),
-              ]);
-              if (code === "HANG") {
-                console.log("HANG " + name + " round " + i);
+              const exited = new Promise(r => w.once("exit", r));
+              const hang = Bun.sleep(${deadline}).then(() => "HANG");
+              let code;
+              if (exit !== undefined) {
+                code = await Promise.race([exited, hang]);
+              } else {
+                await new Promise(r => w.once("message", r));
+                code = await Promise.race([w.terminate(), hang]);
+              }
+              if (code === "HANG" || (exit !== undefined && code !== exit)) {
+                console.log((code === "HANG" ? "HANG " : "exit code " + code + " ") + name + " round " + i);
                 process.exit(2);
               }
             }

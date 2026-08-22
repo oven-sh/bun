@@ -1103,6 +1103,15 @@ impl EventLoop {
         self.vm_ref().as_mut().auto_tick();
     }
 
+    /// [`auto_tick`](Self::auto_tick) for a caller blocked until `promise`
+    /// settles. The immediates (and their microtasks) run before the poll may
+    /// be what settles it, and a settled promise wakes nothing: the tick then
+    /// polls without parking, since the caller returns as soon as it does.
+    #[inline]
+    pub fn auto_tick_waiting_on(&mut self, promise: jsc::AnyPromise) {
+        self.vm_ref().as_mut().auto_tick_waiting_on(Some(promise));
+    }
+
     /// `eventLoop().autoTickActive()` — like [`auto_tick`](Self::auto_tick) but
     /// only sleeps in the uSockets loop while it has active handles.
     /// Dispatches through
@@ -1135,7 +1144,7 @@ impl EventLoop {
             }
             self.tick();
             if promise.status() == PromiseStatus::Pending {
-                self.auto_tick();
+                self.auto_tick_waiting_on(promise);
             }
         }
         Ok(())
@@ -1360,7 +1369,7 @@ impl EventLoop {
                 // Nothing in flight can settle the load; let spin() decide.
                 break;
             }
-            self.auto_tick();
+            self.auto_tick_waiting_on(promise);
         }
     }
 }

@@ -116,6 +116,17 @@ impl Report {
 // Bitset/Vec/Vec fields drop automatically.
 // Note: source_url is NOT freed (caller owns it).
 
+/// The name a module is reported under: its path relative to `base_path`. A
+/// source URL that is not an absolute path (a plugin's virtual module id) is
+/// reported as it is. It has no location, and `resolve_path::relative` would
+/// copy it into a fixed path buffer, which an id of any length overflows.
+pub fn file_name<'a>(source_url: &'a [u8], base_path: &[u8]) -> &'a [u8] {
+    if base_path.is_empty() || !bun_paths::is_absolute(source_url) {
+        return source_url;
+    }
+    bun_paths::resolve_path::relative(base_path, source_url)
+}
+
 pub mod text {
     use super::*;
     // The `pretty_fmt!` macro only accepts literal `true`/`false` today,
@@ -202,10 +213,7 @@ pub mod text {
         let failed = fns < failing.functions || lines < failing.lines; // || stmts < failing.stmts;
         fraction.failing = failed;
 
-        let mut filename = report.source_url.slice();
-        if !base_path.is_empty() {
-            filename = bun_paths::resolve_path::relative(base_path, filename);
-        }
+        let filename = file_name(report.source_url.slice(), base_path);
 
         write_format_with_values::<ENABLE_COLORS>(
             filename,
@@ -293,10 +301,7 @@ pub mod lcov {
         base_path: &[u8],
         writer: &mut impl bun_io::Write,
     ) -> bun_io::Result<()> {
-        let mut filename = report.source_url.slice();
-        if !base_path.is_empty() {
-            filename = bun_paths::resolve_path::relative(base_path, filename);
-        }
+        let filename = file_name(report.source_url.slice(), base_path);
 
         // TN: test name
         // Empty value appears fine. For example, `TN:`.

@@ -486,6 +486,64 @@ describe("bundler", () => {
       },
     },
   });
+  // https://github.com/oven-sh/bun/issues/15981
+  itBundled("compile/WorkerImportMetaURLHref", {
+    backend: "cli",
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import {rmSync} from 'fs';
+        rmSync("./workers", {force: true, recursive: true});
+        console.log("Hello, world!");
+        const w = new Worker(new URL("./workers/worker.ts", import.meta.url).href);
+        w.addEventListener("error", (e) => { console.error(e.message); process.exit(1); });
+      `,
+      "/workers/worker.ts": /* js */ `
+        console.log("Worker loaded!");
+      `.trim(),
+    },
+    entryPointsRaw: ["./entry.ts", "./workers/worker.ts"],
+    outfile: "dist/out",
+    run: { stdout: "Hello, world!\nWorker loaded!\n", file: "dist/out", setCwd: true },
+  });
+  itBundled("compile/WorkerImportMetaURLObject", {
+    backend: "cli",
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import {rmSync} from 'fs';
+        rmSync("./worker.ts", {force: true});
+        console.log("Hello, world!");
+        const w = new Worker(new URL("./worker.ts", import.meta.url));
+        w.addEventListener("error", (e) => { console.error(e.message); process.exit(1); });
+      `,
+      "/worker.ts": /* js */ `
+        console.log("Worker loaded!");
+      `.trim(),
+    },
+    entryPointsRaw: ["./entry.ts", "./worker.ts"],
+    outfile: "dist/out",
+    run: { stdout: "Hello, world!\nWorker loaded!\n", file: "dist/out", setCwd: true },
+  });
+  itBundled("compile/WorkerImportMetaURLNoExtension", {
+    backend: "cli",
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import {rmSync} from 'fs';
+        rmSync("./worker.ts", {force: true});
+        console.log("Hello, world!");
+        const w = new Worker(new URL("./worker", import.meta.url).href);
+        w.addEventListener("error", (e) => { console.error(e.message); process.exit(1); });
+      `,
+      "/worker.ts": /* js */ `
+        console.log("Worker loaded!");
+      `.trim(),
+    },
+    entryPointsRaw: ["./entry.ts", "./worker.ts"],
+    outfile: "dist/out",
+    run: { stdout: "Hello, world!\nWorker loaded!\n", file: "dist/out", setCwd: true },
+  });
   itBundled("compile/Bun.embeddedFiles", {
     compile: true,
     // TODO: this shouldn't be necessary, or we should add a map aliasing files.

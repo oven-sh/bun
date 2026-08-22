@@ -483,6 +483,23 @@ fn is_valid_request_pseudo_header(name: &[u8]) -> bool {
     REQUEST_PSEUDO_HEADERS.contains(name)
 }
 
+bun_core::comptime_string_set! {
+    static PSEUDO_HEADERS = {
+        b":status",
+        b":path",
+        b":method",
+        b":scheme",
+        b":protocol",
+        b":authority",
+    };
+}
+
+/// Node's `kValidPseudoHeaders`: outbound requests accept every defined pseudo-header.
+#[inline]
+fn is_valid_pseudo_header(name: &[u8]) -> bool {
+    PSEUDO_HEADERS.contains(name)
+}
+
 #[inline]
 fn is_valid_header_value(value: &[u8]) -> bool {
     !strings::contains_any(value, b"\0\n\r")
@@ -6142,7 +6159,7 @@ impl H2FrameParser {
                     if ignore_pseudo_headers == 1 {
                         continue;
                     }
-                    if !is_valid_request_pseudo_header(validated_name) {
+                    if !is_valid_pseudo_header(validated_name) {
                         if !global_object.has_exception() {
                             return Err(global_object
                                 .err(
@@ -6613,7 +6630,7 @@ impl H2FrameParser {
                                 }
                                 return Ok(JSValue::ZERO);
                             }
-                        } else if !is_valid_request_pseudo_header(validated_name) {
+                        } else if !is_valid_pseudo_header(validated_name) {
                             if !global_object.has_exception() {
                                 return Err(global_object.err(JscErrorCode::HTTP2_INVALID_PSEUDOHEADER, format_args!("\"{}\" is an invalid pseudoheader or is used incorrectly", BStr::new(name))).throw());
                             }
@@ -6747,7 +6764,7 @@ impl H2FrameParser {
                             return Ok(JSValue::ZERO);
                         }
                     } else {
-                        if !is_valid_request_pseudo_header(validated_name) {
+                        if !is_valid_pseudo_header(validated_name) {
                             if !global_object.has_exception() {
                                 return Err(global_object.err(JscErrorCode::HTTP2_INVALID_PSEUDOHEADER, format_args!("\"{}\" is an invalid pseudoheader or is used incorrectly", BStr::new(name))).throw());
                             }

@@ -137,10 +137,13 @@ describe("yarn berry migration", () => {
     const bunLock = await bunLockOf(dir);
     expect(bunLock).toContain(`"aliased": "npm:no-deps@^1.0.0"`);
     expect(bunLock).toContain(`"aliased": ["no-deps@1.0.0", `);
-    // an alias whose target starts with `v` is still an alias, not a `v1.2.3` range
+    // targets starting with `v` or a digit are still aliases, not `v1.2.3` / `1.2.3` ranges
     expect(bunLock).toContain(`"v-alias": "npm:various-requires@^1.0.0"`);
     expect(bunLock).toContain(`"v-alias": ["various-requires@1.0.0", `);
+    expect(bunLock).toContain(`"seven": "npm:7-no-deps@^1.0.0"`);
+    expect(bunLock).toContain(`"seven": ["7-no-deps@1.0.0", `);
     expect(lockedVersions(bunLock)).toEqual([
+      "7-no-deps@1.0.0",
       "no-deps@1.0.0",
       "no-deps@1.0.1",
       "no-deps@2.0.0",
@@ -152,6 +155,7 @@ describe("yarn berry migration", () => {
       node_modules/no-deps/no-deps@2.0.0
       node_modules/one-dep/node_modules/no-deps/no-deps@1.0.1
       node_modules/one-dep/one-dep@1.0.0
+      node_modules/seven/7-no-deps@1.0.0
       node_modules/v-alias/various-requires@1.0.0"
     `);
 
@@ -283,9 +287,10 @@ describe("yarn berry migration", () => {
       files: {
         "package.json": JSON.stringify({
           name: "berry-scoped-resolution",
-          dependencies: { "@scoped/create-test-app": "^1.0.0", "one-fixed-dep": "^1.0.0" },
-          // both parents ask for no-deps@1.0.0; only create-test-app's copy is redirected
-          resolutions: { "@scoped/create-test-app@npm:^1.0.0/no-deps": "1.0.1" },
+          dependencies: { "@scoped/create-test-app": "^1.0.0", "one-fixed-dep": "^1.0.0", "one-range-dep": "^1.0.0" },
+          // create-test-app and one-fixed-dep ask for no-deps@1.0.0, one-range-dep for ^1.0.0 (which
+          // yarn had to rewrite for an unrelated reason); only create-test-app's copy is redirected
+          resolutions: { "@scoped/create-test-app@npm:^1.0.0/no-deps": "1.0.1", "no-deps@npm:^1.0.0": "1.0.0" },
         }),
         "yarn.lock": `__metadata:
   version: 8
@@ -307,6 +312,7 @@ describe("yarn berry migration", () => {
   dependencies:
     "@scoped/create-test-app": "npm:^1.0.0"
     one-fixed-dep: "npm:^1.0.0"
+    one-range-dep: "npm:^1.0.0"
   languageName: unknown
   linkType: soft
 
@@ -329,6 +335,14 @@ describe("yarn berry migration", () => {
     no-deps: "npm:1.0.0"
   languageName: node
   linkType: hard
+
+"one-range-dep@npm:^1.0.0":
+  version: 1.0.0
+  resolution: "one-range-dep@npm:1.0.0"
+  dependencies:
+    no-deps: "npm:^1.0.0"
+  languageName: node
+  linkType: hard
 `,
       },
     });
@@ -345,14 +359,21 @@ describe("yarn berry migration", () => {
     expect(lockedVersions(bunLock)).toEqual([
       "@scoped/create-test-app@1.0.0",
       "no-deps@1.0.0",
+      "no-deps@1.0.0",
       "no-deps@1.0.1",
       "one-fixed-dep@1.0.0",
+      "one-range-dep@1.0.0",
     ]);
+    expect(bunLock).toContain(`"one-range-dep/no-deps": ["no-deps@1.0.0", `);
+    // one-range-dep's `no-deps@^1.0.0` has no key of its own and goes through the unscoped
+    // resolution (1.0.0); the scoped one (1.0.1) is not considered for it
     expect(nodeModulesPackages(dir)).toMatchInlineSnapshot(`
       "node_modules/@scoped/create-test-app/@scoped/create-test-app@1.0.0
       node_modules/no-deps/no-deps@1.0.1
       node_modules/one-fixed-dep/node_modules/no-deps/no-deps@1.0.0
-      node_modules/one-fixed-dep/one-fixed-dep@1.0.0"
+      node_modules/one-fixed-dep/one-fixed-dep@1.0.0
+      node_modules/one-range-dep/node_modules/no-deps/no-deps@1.0.0
+      node_modules/one-range-dep/one-range-dep@1.0.0"
     `);
 
     await expectFrozenInstall(dir);

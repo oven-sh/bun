@@ -174,16 +174,13 @@ fn has_protocol(spec: &[u8]) -> bool {
 }
 
 /// `npm:^1.2.3` -> `^1.2.3`; `npm:other@^1` (an alias, which bun spells the
-/// same way) is kept whole.
+/// same way) is kept whole. A range never contains `@`, so `name@…` after the
+/// protocol (scope included) means an alias — also for names like `7zip-bin`.
 fn strip_npm_protocol(spec: &[u8]) -> &[u8] {
     let Some(rest) = spec.strip_prefix(b"npm:") else {
         return spec;
     };
-    let is_alias = split_locator(rest).is_some_and(|(n, _)| {
-        !n.is_empty()
-            && !n[0].is_ascii_digit()
-            && !matches!(n[0], b'^' | b'~' | b'>' | b'<' | b'=' | b'*')
-    });
+    let is_alias = split_locator(rest).is_some_and(|(n, _)| !n.is_empty());
     if is_alias { spec } else { rest }
 }
 
@@ -1099,18 +1096,17 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
             };
 
             let lookup = |key: &[u8]| -> Option<usize> { descriptor_to_entry.get(key).copied() };
-            // `this_parent`: only resolutions whose `parent[@range]/` prefix names the
-            // package being bound (`None`: any parent, or none)
+            // `this_parent`: `Some(pkg)` -> only `pkg[@range]/name` resolutions;
+            // `None` -> only resolutions without a parent
             let from_resolutions = |this_parent: Option<&[u8]>| -> Option<usize> {
                 resolutions
                     .iter()
                     .filter(|(parent, pattern, _)| {
-                        (this_parent.is_none() || parent.as_ref().map(|p| p.name) == this_parent)
+                        parent.as_ref().map(|p| p.name) == this_parent
                             && parent.as_ref().is_none_or(|p| {
                                 // `parent@range/name`: only the parent entries that range
                                 // was locked to (yarn matches the parent's descriptor)
-                                this_parent.is_none()
-                                    || p.range.is_empty()
+                                p.range.is_empty()
                                     || [b"@".as_slice(), b"@npm:"].iter().any(|sep| {
                                         descriptor_to_entry
                                             .get(
@@ -1200,7 +1196,8 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
                     }
                 }
             }
-            // 5. package.json `resolutions` that rewrote this descriptor
+            // 5. an unscoped package.json `resolutions` entry that rewrote this
+            //    descriptor (scoped ones only ever apply through step 0)
             if found.is_none() && !dep.behavior.is_workspace() {
                 found = from_resolutions(None);
             }

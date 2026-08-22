@@ -3,7 +3,6 @@
 use core::ffi::c_char;
 
 use bun_core::env_var;
-use bun_core::env_var::feature_flag;
 use bun_core::{self, Environment, Global};
 use bun_jsc::zig_string::ZigString;
 use bun_jsc::{JSGlobalObject, JSValue, ZigStringJsc as _};
@@ -85,6 +84,7 @@ pub(crate) extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
             bun_core::Output::flush();
             bun_core::reload_process(should_clear_terminal, false);
         }
+        vm.exit_handler.requested = true;
         // node prints the `--print` result from its 'exit' handler even when
         // the script calls `process.exit()` before a pending promise settles.
         vm.print_eval_result_if_needed();
@@ -133,16 +133,6 @@ pub(crate) extern "C" fn Bun__Node__getDisabledWarnings(
         }
     }
     disabled.len()
-}
-
-#[unsafe(no_mangle)]
-extern "C" fn Bun__suppressCrashOnProcessKillSelfIfDesired() {
-    if feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF
-        .get()
-        .unwrap_or(false)
-    {
-        bun_crash_handler::suppress_reporting();
-    }
 }
 
 // Raw-pointer statics are `!Sync`; wrap in a

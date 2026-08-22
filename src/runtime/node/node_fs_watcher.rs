@@ -219,7 +219,6 @@ impl FSWatchTaskPosix {
                     self.ctx().emit_if_aborted();
                     Ok(())
                 }
-                Event::Close => self.ctx().emit::<{ EventType::Close }>(b""),
             };
             // A filename that could not be built (allocation failure, or the
             // VM is stopping): the rest of the batch is dropped with the task.
@@ -348,7 +347,6 @@ pub enum Event {
     /// `Rename` when libuv could not convert a name to UTF-8 (Windows).
     NoFilename(WatchEventKind),
     Abort,
-    Close,
 }
 
 #[repr(u8)]
@@ -496,7 +494,6 @@ impl FSWatchTaskWindows {
                 ctx.emit_if_aborted();
                 Ok(())
             }
-            Event::Close => ctx.emit::<{ EventType::Close }>(b""),
         }
     }
 

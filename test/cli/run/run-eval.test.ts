@@ -180,6 +180,34 @@ describe("--print for cjs/esm", () => {
     expect(stdout.toString()).toBe("true\n");
     expect(exitCode).toBe(0);
   });
+
+  // The hoist patterns in [install] are regexes. Compiling them while
+  // bunfig.toml loaded initialized JSC before `bun -p` could turn on eval
+  // mode, so the script's completion value was dropped and every --print
+  // printed undefined.
+  describe.each(["hoistPattern", "publicHoistPattern"])("with install.%s in bunfig.toml", key => {
+    test.concurrent.each([
+      { expr: "Math.max(1, 9)", expected: "9" },
+      { expr: "[1, 2].map(x => x * 2)", expected: "[ 2, 4 ]" },
+      { expr: "1 + 1", expected: "2" },
+      { expr: "(await 1) + 1", expected: "2" },
+    ])("bun -p $expr", async ({ expr, expected }) => {
+      using dir = tempDir("eval-install-pattern", {
+        "bunfig.toml": `[install]\n${key} = ["*eslint*", "!eslint-plugin-*"]\n`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-p", expr],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(`${expected}\n`);
+      expect(exitCode).toBe(0);
+    });
+  });
 });
 
 function group(run: (code: string) => SyncSubprocess<"pipe", "inherit">) {

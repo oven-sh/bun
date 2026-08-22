@@ -26,18 +26,6 @@ pub struct CPUProfilerConfig {
     pub interval: u32,
 }
 
-impl Default for CPUProfilerConfig {
-    fn default() -> Self {
-        Self {
-            name: b"",
-            dir: b"",
-            md_format: false,
-            json_format: false,
-            interval: 1000,
-        }
-    }
-}
-
 // C++ function declarations
 unsafe extern "C" {
     /// `VM` is an opaque `UnsafeCell`-backed ZST handle; `&mut VM` is

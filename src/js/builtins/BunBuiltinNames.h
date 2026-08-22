@@ -193,6 +193,7 @@ using namespace JSC;
     macro(syscall) \
     macro(telemetryAddEvent) \
     macro(telemetryAddLink) \
+    macro(telemetryAddOneLink) \
     macro(telemetrySetAttribute) \
     macro(telemetrySetName) \
     macro(telemetrySetStatus) \

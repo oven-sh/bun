@@ -115,6 +115,26 @@ describe.concurrent("OTLP/HTTP exporter", () => {
     expect(c.spans().map((s: any) => s.name)).toEqual(["s"]);
   });
 
+  test("process.exit() with a JS-exporter export queued does not wait out the export timeout", async () => {
+    // A full batch schedules an async export task; exiting before it runs
+    // must not block in shutdown for OTEL_BSP_EXPORT_TIMEOUT.
+    const started = Date.now();
+    const { stdout, exitCode } = await run(
+      `
+        let n = 0;
+        Bun.otel.start({ exporters: [{ export(spans) { n += spans.length; } }], batch: { maxExportBatchSize: 8 } });
+        const t = Bun.otel.tracer("t");
+        for (let i = 0; i < 8; i++) t.startSpan("s" + i).end();
+        console.log("exiting");
+        process.exit(0);
+      `,
+      { OTEL_BSP_EXPORT_TIMEOUT: "20000" },
+    );
+    expect(stdout.trim()).toBe("exiting");
+    expect(Date.now() - started).toBeLessThan(10000);
+    expect(exitCode).toBe(0);
+  });
+
   test("a worker's function exporter is removed when the worker exits (no failed exports afterwards)", async () => {
     using dir = tempDir("otel-worker-exporter", {
       "worker.js": `

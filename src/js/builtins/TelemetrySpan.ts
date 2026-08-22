@@ -165,30 +165,41 @@ export function addEvent(this: unknown, name: unknown, a?: unknown, b?: unknown)
 
 export function recordException(this: any, exception: any, time?: unknown) {
   if (!$isTelemetrySpan(this)) throw new TypeError("not a Span");
-  if (exception == null) return this;
-  const attributes: Record<string, string> = {};
+  const state = $getInternalField(this, Field.State) as number;
+  if (!(state & State.Recording) || exception == null) return this;
+  const flat: unknown[] = [];
   if (typeof exception === "string") {
-    attributes["exception.message"] = exception;
+    $arrayPush(flat, "exception.message");
+    $arrayPush(flat, exception);
   } else {
     const code = exception.code;
     const name = exception.name;
     const message = exception.message;
     const stack = exception.stack;
-    if (code != null) attributes["exception.type"] = code + "";
-    else if (name) attributes["exception.type"] = name + "";
-    if (message) attributes["exception.message"] = message + "";
-    if (stack) attributes["exception.stack" + "trace"] = stack + "";
+    const type = code != null ? code + "" : name ? name + "" : undefined;
+    if (type !== undefined) {
+      $arrayPush(flat, "exception.type");
+      $arrayPush(flat, type);
+    }
+    if (message) {
+      $arrayPush(flat, "exception.message");
+      $arrayPush(flat, message + "");
+    }
+    if (stack) {
+      $arrayPush(flat, "exception.stacktrace");
+      $arrayPush(flat, stack + "");
+    }
   }
-  this.addEvent("exception", attributes, time);
+  $telemetryAddEvent(this, "exception", flat, time);
   return this;
 }
 
-export function addLink(this: unknown, link: any) {
-  if (!$isTelemetrySpan(this)) throw new TypeError("not a Span");
-  const state = $getInternalField(this, Field.State) as number;
-  if (!(state & State.Recording) || link == null || typeof link !== "object") return this;
+// One link onto `span` (shared by addLink/addLinks; not user-visible).
+$visibility = "Private";
+export function telemetryAddOneLink(span: unknown, state: number, link: any) {
+  if (link == null || typeof link !== "object") return;
   const ctx = link.context;
-  if (ctx == null || typeof ctx.traceId !== "string" || typeof ctx.spanId !== "string") return this;
+  if (ctx == null || typeof ctx.traceId !== "string" || typeof ctx.spanId !== "string") return;
   const traceId = ctx.traceId + "";
   const spanId = ctx.spanId + "";
   const traceFlags = ctx.traceFlags | 0;
@@ -206,27 +217,35 @@ export function addLink(this: unknown, link: any) {
     }
   }
   if (state & State.Native) {
-    $telemetryAddLink(this, traceId, spanId, traceFlags, flat);
-    return this;
+    $telemetryAddLink(span, traceId, spanId, traceFlags, flat);
+    return;
   }
-  let links = $getInternalField(this, Field.Links) as unknown[] | null;
+  let links = $getInternalField(span, Field.Links) as unknown[] | null;
   if (links === null) {
     links = [];
-    $putInternalField(this, Field.Links, links);
+    $putInternalField(span, Field.Links, links);
   } else if (links.length >= MaxBuffered.LinkValues) {
-    return this;
+    return;
   }
   $arrayPush(links, traceId);
   $arrayPush(links, spanId);
   $arrayPush(links, traceFlags);
   $arrayPush(links, flat);
+  return;
+}
+
+export function addLink(this: unknown, link: unknown) {
+  if (!$isTelemetrySpan(this)) throw new TypeError("not a Span");
+  const state = $getInternalField(this, Field.State) as number;
+  if (state & State.Recording) $telemetryAddOneLink(this, state, link);
   return this;
 }
 
-export function addLinks(this: any, links: unknown) {
+export function addLinks(this: unknown, links: unknown) {
   if (!$isTelemetrySpan(this)) throw new TypeError("not a Span");
-  if ($isJSArray(links)) {
-    for (let i = 0; i < links.length; i++) this.addLink(links[i]);
+  const state = $getInternalField(this, Field.State) as number;
+  if (state & State.Recording && $isJSArray(links)) {
+    for (let i = 0; i < links.length; i++) $telemetryAddOneLink(this, state, links[i]);
   }
   return this;
 }

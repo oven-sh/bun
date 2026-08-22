@@ -10,7 +10,7 @@ import {
   SpanStatusCode,
   trace,
 } from "@opentelemetry/api";
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 const spans: any[] = [];
@@ -19,6 +19,8 @@ Bun.otel.start({
   exporters: [{ export: (b: any[]) => spans.push(...b) }],
   instrumentations: { http: true, fetch: true },
 });
+// The pipeline is process-global; leave nothing behind for later files.
+afterAll(() => Bun.otel.shutdown());
 
 async function collect(): Promise<any[]> {
   await Bun.sleep(0);

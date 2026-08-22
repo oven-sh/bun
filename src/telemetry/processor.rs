@@ -425,6 +425,13 @@ impl Processor {
         self.finish_one();
     }
 
+    /// An export that was handed to an exporter can no longer complete (its
+    /// event loop is exiting): count it as failed and stop waiting for it.
+    pub fn export_abandoned(&self) {
+        self.stats.exports_failed.fetch_add(1, Ordering::Relaxed);
+        self.finish_one();
+    }
+
     fn finish_one(&self) {
         if self.inflight.fetch_sub(1, Ordering::AcqRel) == 1 {
             {

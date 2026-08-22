@@ -224,7 +224,7 @@ describe("SQLite Statement column types", () => {
     expect(stmt.declaredTypes).toEqual(["INTEGER", "ANY"]);
   });
 
-  it("throws an error when accessing columnTypes before statement execution", () => {
+  it("columnTypes and declaredTypes are available before statement execution", () => {
     const db = new Database(":memory:");
     db.run(`CREATE TABLE test (id INTEGER, name TEXT)`);
 
@@ -234,10 +234,8 @@ describe("SQLite Statement column types", () => {
     // Accessing columnTypes before executing is fine (implicitly executes the statement)
     expect(stmt.columnTypes).toBeArray();
 
-    // Accessing declaredTypes before executing should throw
-    expect(() => {
-      stmt.declaredTypes;
-    }).toThrow("Statement must be executed before accessing declaredTypes");
+    // declaredTypes reads schema metadata via sqlite3_column_decltype, which does not require a stepped row
+    expect(db.prepare("SELECT * FROM test").declaredTypes).toEqual(["INTEGER", "TEXT"]);
   });
 
   it("throws an error when accessing columnTypes on non-read-only statements", () => {

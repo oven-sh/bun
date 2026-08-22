@@ -113,6 +113,7 @@ interface CppSQLStatement {
   paramsCount: number;
   columnTypes: string[];
   declaredTypes: (string | null)[];
+  readonly: boolean;
   safeIntegers: boolean;
 }
 
@@ -587,7 +588,7 @@ class Database implements SqliteTypes.Database {
       exclusive: {
         value: wrapTransaction(fn, db, controller.exclusive),
       },
-      database: { value: this, enumerable: true },
+      database: { value: self ?? this, enumerable: true },
     };
 
     defineProperties(properties.default.value, properties);

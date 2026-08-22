@@ -1476,42 +1476,71 @@ mod _impl {
         }
     }
 
-    impl CryptoJobCtx for Argon2 {
-        fn init(&mut self, _global: &JSGlobalObject) -> JsResult<()> {
-            Ok(())
+    /// JS-thread state for the argon2 job: the user callback, invoked as
+    /// `(err)` or `(undefined, buffer)`.
+    #[derive(bun_jsc::JsAffine)]
+    pub(crate) struct Argon2Js {
+        callback: Strong,
+    }
+
+    /// `crypto.argon2` off the JS thread: `from_js` copied every input out of
+    /// JS, so the pool half owns plain memory and needs no `JsPtr`.
+    impl JobContext for Argon2 {
+        type OffThread = Self;
+        type Js = Argon2Js;
+
+        fn run(
+            this: &mut Self,
+            done: bun_jsc::Completion<Self>,
+        ) -> Option<bun_jsc::Completion<Self>> {
+            this.run();
+            Some(done)
         }
 
-        fn run_task(&mut self) {
-            self.run();
-        }
-
-        fn run_from_js(&mut self, global: &JSGlobalObject, callback: JSValue) {
+        fn then(mut this: Self, js: Argon2Js, cx: &JsThread<'_>) -> JsResult<()> {
+            let global = cx.global();
             let event_loop = global.bun_vm().event_loop_mut();
-            if self.failed {
+            let callback = js.callback.get();
+            if this.failed {
                 let exception =
                     global.create_error_instance(format_args!("Argon2 derivation failed"));
                 event_loop.run_callback(callback, global, JSValue::UNDEFINED, &[exception]);
-                return;
+                return Ok(());
             }
-            let output = core::mem::take(&mut self.output);
+            let output = core::mem::take(&mut this.output);
             // Ownership transfers to JSC (freed via MarkedArrayBuffer_deallocator).
-            let buf = JSValue::create_buffer(global, output.leak());
-            event_loop.run_callback(
-                callback,
-                global,
-                JSValue::UNDEFINED,
-                &[JSValue::UNDEFINED, buf],
-            );
+            match JSValue::create_buffer(global, output.leak()) {
+                Ok(buf) => event_loop.run_callback(
+                    callback,
+                    global,
+                    JSValue::UNDEFINED,
+                    &[JSValue::UNDEFINED, buf],
+                ),
+                // The result could not be built (allocation failure): that is
+                // this derivation's error.
+                Err(err) => event_loop.run_callback(
+                    callback,
+                    global,
+                    JSValue::UNDEFINED,
+                    &[global.take_error(err)],
+                ),
+            }
+            Ok(())
         }
-
-        fn deinit(&mut self) {}
     }
 
     #[bun_jsc::host_fn]
     fn argon2(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let (ctx, callback) = Argon2::from_js(global, call_frame)?;
         let _ = validators::validate_function(global, "callback", callback)?;
-        crypto_job_init_and_schedule(global, callback, ctx)?;
+        let cx = global.js_thread();
+        Job::<Argon2>::schedule(
+            &cx,
+            ctx,
+            Argon2Js {
+                callback: Strong::create(callback.with_async_context_if_needed(global), global),
+            },
+        );
         Ok(JSValue::UNDEFINED)
     }
 
@@ -1524,7 +1553,7 @@ mod _impl {
             return Err(global.throw_value(err));
         }
         // Ownership transfers to JSC (freed via MarkedArrayBuffer_deallocator).
-        Ok(JSValue::create_buffer(global, ctx.output.leak()))
+        JSValue::create_buffer(global, ctx.output.leak())
     }
 
     pub(crate) fn create_node_crypto_binding_zig(global: &JSGlobalObject) -> JSValue {

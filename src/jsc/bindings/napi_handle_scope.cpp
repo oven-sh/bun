@@ -2,21 +2,22 @@
 #include "napi.h"
 
 #include "ZigGlobalObject.h"
+#include "v8/shim/HandleScopeBuffer.h"
 
 namespace Bun {
 
 // for CREATE_METHOD_TABLE
 namespace JSCastingHelpers = JSC::JSCastingHelpers;
 
-const JSC::ClassInfo NapiHandleScopeImpl::s_info = {
-    "NapiHandleScopeImpl"_s,
+const JSC::ClassInfo HandleScopeImpl::s_info = {
+    "HandleScopeImpl"_s,
     nullptr,
     nullptr,
     nullptr,
-    CREATE_METHOD_TABLE(NapiHandleScopeImpl)
+    CREATE_METHOD_TABLE(HandleScopeImpl)
 };
 
-NapiHandleScopeImpl::NapiHandleScopeImpl(JSC::VM& vm, JSC::Structure* structure, NapiHandleScopeImpl* parent, bool escapable)
+HandleScopeImpl::HandleScopeImpl(JSC::VM& vm, JSC::Structure* structure, HandleScopeImpl* parent, bool escapable)
     : Base(vm, structure)
     , m_parent(parent)
     , m_escapeSlot(nullptr)
@@ -26,21 +27,23 @@ NapiHandleScopeImpl::NapiHandleScopeImpl(JSC::VM& vm, JSC::Structure* structure,
     }
 }
 
-NapiHandleScopeImpl* NapiHandleScopeImpl::create(JSC::VM& vm,
+HandleScopeImpl::~HandleScopeImpl() = default;
+
+HandleScopeImpl* HandleScopeImpl::create(JSC::VM& vm,
     JSC::Structure* structure,
-    NapiHandleScopeImpl* parent,
+    HandleScopeImpl* parent,
     bool escapable)
 {
-    NapiHandleScopeImpl* buffer = new (NotNull, JSC::allocateCell<NapiHandleScopeImpl>(vm))
-        NapiHandleScopeImpl(vm, structure, parent, escapable);
+    HandleScopeImpl* buffer = new (NotNull, JSC::allocateCell<HandleScopeImpl>(vm))
+        HandleScopeImpl(vm, structure, parent, escapable);
     buffer->finishCreation(vm);
     return buffer;
 }
 
 template<typename Visitor>
-void NapiHandleScopeImpl::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+void HandleScopeImpl::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    NapiHandleScopeImpl* thisObject = uncheckedDowncast<NapiHandleScopeImpl>(cell);
+    HandleScopeImpl* thisObject = uncheckedDowncast<HandleScopeImpl>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
@@ -50,20 +53,24 @@ void NapiHandleScopeImpl::visitChildrenImpl(JSCell* cell, Visitor& visitor)
         visitor.append(handle);
     }
 
+    if (auto* v8Handles = thisObject->m_v8Handles.get()) {
+        v8Handles->visitHandles(visitor);
+    }
+
     if (thisObject->m_parent) {
         visitor.appendUnbarriered(thisObject->m_parent);
     }
 }
 
-DEFINE_VISIT_CHILDREN(NapiHandleScopeImpl);
+DEFINE_VISIT_CHILDREN(HandleScopeImpl);
 
-void NapiHandleScopeImpl::append(JSC::JSValue val)
+void HandleScopeImpl::append(JSC::JSValue val)
 {
     WTF::Locker locker { cellLock() };
     m_storage.append(Slot(vm(), this, val));
 }
 
-bool NapiHandleScopeImpl::escape(JSC::JSValue val)
+bool HandleScopeImpl::escape(JSC::JSValue val)
 {
     if (!m_escapeSlot) {
         return false;
@@ -74,25 +81,44 @@ bool NapiHandleScopeImpl::escape(JSC::JSValue val)
     return true;
 }
 
-NapiHandleScopeImpl::Slot* NapiHandleScopeImpl::reserveSlot()
+HandleScopeImpl::Slot* HandleScopeImpl::reserveSlot()
 {
     WTF::Locker locker { cellLock() };
     m_storage.append(Slot());
     return &m_storage.last();
 }
 
-void NapiHandleScopeImpl::releaseHandles()
+v8::shim::HandleScopeBuffer& HandleScopeImpl::ensureV8Handles(v8::Isolate* isolate)
+{
+    if (m_v8Handles) {
+        return *m_v8Handles;
+    }
+    auto v8Handles = makeUnique<v8::shim::HandleScopeBuffer>(this, isolate);
+    WTF::Locker locker { cellLock() };
+    m_v8Handles = WTF::move(v8Handles);
+    return *m_v8Handles;
+}
+
+void HandleScopeImpl::releaseHandles()
 {
     // Match V8: closing a scope releases its handles immediately. Otherwise a
     // closed scope cell that stays live for any reason (e.g. a conservative-scan
     // pin) keeps marking every value it ever held, plus its whole parent chain.
-    WTF::Locker locker { cellLock() };
-    m_storage.clear();
-    m_escapeSlot = nullptr;
-    m_parent = nullptr;
+    if (m_v8Handles) {
+        // May move handles into m_parent, so it runs before the parent edge is dropped.
+        m_v8Handles->close(m_parent);
+    }
+    std::unique_ptr<v8::shim::HandleScopeBuffer> v8Handles;
+    {
+        WTF::Locker locker { cellLock() };
+        v8Handles = WTF::move(m_v8Handles);
+        m_storage.clear();
+        m_escapeSlot = nullptr;
+        m_parent = nullptr;
+    }
 }
 
-NapiHandleScopeImpl* NapiHandleScope::open(Zig::GlobalObject* globalObject, bool escapable)
+HandleScopeImpl* HandleScopeImpl::open(Zig::GlobalObject* globalObject, bool escapable)
 {
     auto& vm = JSC::getVM(globalObject);
     // Do not create a new handle scope while a finalizer is in progress
@@ -107,66 +133,66 @@ NapiHandleScopeImpl* NapiHandleScope::open(Zig::GlobalObject* globalObject, bool
         return nullptr;
     }
 
-    auto* impl = NapiHandleScopeImpl::create(vm,
-        globalObject->NapiHandleScopeImplStructure(),
-        globalObject->m_currentNapiHandleScopeImpl.get(),
+    auto* impl = HandleScopeImpl::create(vm,
+        globalObject->HandleScopeImplStructure(),
+        globalObject->m_currentHandleScopeImpl.get(),
         escapable);
-    globalObject->m_currentNapiHandleScopeImpl.set(vm, globalObject, impl);
+    globalObject->m_currentHandleScopeImpl.set(vm, globalObject, impl);
     return impl;
 }
 
-void NapiHandleScope::close(Zig::GlobalObject* globalObject, NapiHandleScopeImpl* current)
+void HandleScopeImpl::close(Zig::GlobalObject* globalObject, HandleScopeImpl* current)
 {
     NAPI_LOG_CURRENT_FUNCTION;
     // napi handle scopes may be null pointers if created inside a finalizer
     if (!current) {
         return;
     }
-    RELEASE_ASSERT_WITH_MESSAGE(current == globalObject->m_currentNapiHandleScopeImpl.get(),
-        "Unbalanced napi_handle_scope opens and closes");
+    RELEASE_ASSERT_WITH_MESSAGE(current == globalObject->m_currentHandleScopeImpl.get(),
+        "Unbalanced handle scope opens and closes");
     if (auto* parent = current->parent()) {
-        globalObject->m_currentNapiHandleScopeImpl.set(globalObject->vm(), globalObject, parent);
+        globalObject->m_currentHandleScopeImpl.set(globalObject->vm(), globalObject, parent);
     } else {
-        globalObject->m_currentNapiHandleScopeImpl.clear();
+        globalObject->m_currentHandleScopeImpl.clear();
     }
     current->releaseHandles();
 }
 
 NapiHandleScope::NapiHandleScope(Zig::GlobalObject* globalObject)
-    : m_globalObject(globalObject)
-    , m_impl(NapiHandleScope::open(globalObject, false))
+    : m_impl(HandleScopeImpl::open(globalObject, false))
+    , m_globalObject(globalObject)
 {
 }
 
 NapiHandleScope::~NapiHandleScope()
 {
-    NapiHandleScope::close(m_globalObject, m_impl);
+    HandleScopeImpl::close(m_globalObject, m_impl);
 }
 
-extern "C" NapiHandleScopeImpl* NapiHandleScope__open(napi_env env, bool escapable)
+extern "C" HandleScopeImpl* NapiHandleScope__open(napi_env env, bool escapable)
 {
-    return NapiHandleScope::open(env->globalObject(), escapable);
+    return HandleScopeImpl::open(env->globalObject(), escapable);
 }
 
-extern "C" void NapiHandleScope__close(napi_env env, NapiHandleScopeImpl* current)
+extern "C" void NapiHandleScope__close(napi_env env, HandleScopeImpl* current)
 {
-    return NapiHandleScope::close(env->globalObject(), current);
+    return HandleScopeImpl::close(env->globalObject(), current);
 }
 
 extern "C" void NapiHandleScope__append(napi_env env, JSC::EncodedJSValue value)
 {
     // Match toNapi() in napi.h: non-cell values need no rooting, and the
     // current handle scope is null when a finalizer runs immediately during
-    // sweep (NapiHandleScope::open returns nullptr while the mutator is
+    // sweep (HandleScopeImpl::open returns nullptr while the mutator is
     // sweeping).
     JSC::JSValue v = JSC::JSValue::decode(value);
     if (!v.isCell())
         return;
-    if (auto* scope = env->globalObject()->m_currentNapiHandleScopeImpl.get())
+    if (auto* scope = env->globalObject()->m_currentHandleScopeImpl.get())
         scope->append(v);
 }
 
-extern "C" bool NapiHandleScope__escape(NapiHandleScopeImpl* handleScope, JSC::EncodedJSValue value)
+extern "C" bool NapiHandleScope__escape(HandleScopeImpl* handleScope, JSC::EncodedJSValue value)
 {
     return handleScope->escape(JSC::JSValue::decode(value));
 }

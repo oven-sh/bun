@@ -73,7 +73,7 @@ exports[`bun <file.md> renders link with text + url pair fallback 1`] = `
 `;
 
 exports[`bun <file.md> renders images as alt text with link 1`] = `
-"\x1B[35m📷 an image\x1B[0m\x1B[0m
+"\x1B[35m📷 an image\x1B[0m\x1B[2m (https://bun.com/logo.png\x1B[2m)\x1B[39m\x1B[22m\x1B[0m
 "
 `;
 

@@ -1870,34 +1870,43 @@ impl<'a> AnsiRenderer<'a> {
             // formats (jpeg/gif/webp) don't map to a Kitty format code
             // for direct transmission, so fall through to alt text.
             if let Some(payload) = extract_png_data_url_base64(s) {
-                self.emit_kitty_image_direct(payload);
-                self.image_depth = saved_depth;
-                self.image_alt = alt;
-                self.image_src = src;
-                self.image_title = title;
-                return;
+                // Unparseable PNG → fall through to alt-text.
+                if let Some(dims) = parse_png_dims_from_base64(payload) {
+                    self.emit_kitty_image_direct(payload, dims.width_px);
+                    self.image_depth = saved_depth;
+                    self.image_alt = alt;
+                    self.image_src = src;
+                    self.image_title = title;
+                    return;
+                }
             }
-            // http(s) URL that the CLI pre-scan pass already downloaded
-            // to a temp file → send via Kitty's t=f against that path.
+            // http(s) URL the CLI pre-scan downloaded to a temp file.
+            // Non-PNG contents fall through to the URL-label fallback.
             if let Some(map) = self.theme.remote_image_paths {
-                if s.starts_with(b"http://") || s.starts_with(b"https://") {
+                if strings::starts_with_case_insensitive_ascii(s, b"http://")
+                    || strings::starts_with_case_insensitive_ascii(s, b"https://")
+                {
                     if let Some(local_path) = map.get(s) {
-                        self.emit_kitty_image_file(local_path);
-                        self.image_depth = saved_depth;
-                        self.image_alt = alt;
-                        self.image_src = src;
-                        self.image_title = title;
-                        return;
+                        if let Some(dims) = read_png_dims(local_path) {
+                            self.emit_kitty_image_file(local_path, dims.width_px);
+                            self.image_depth = saved_depth;
+                            self.image_alt = alt;
+                            self.image_src = src;
+                            self.image_title = title;
+                            return;
+                        }
                     }
                 }
             }
             if let Some(abs_path) = resolve_local_image_path(s, self.theme.image_base_dir) {
-                self.emit_kitty_image_file(&abs_path);
-                self.image_depth = saved_depth;
-                self.image_alt = alt;
-                self.image_src = src;
-                self.image_title = title;
-                return;
+                if let Some(dims) = read_png_dims(&abs_path) {
+                    self.emit_kitty_image_file(&abs_path, dims.width_px);
+                    self.image_depth = saved_depth;
+                    self.image_alt = alt;
+                    self.image_src = src;
+                    self.image_title = title;
+                    return;
+                }
             }
         }
 
@@ -1915,11 +1924,14 @@ impl<'a> AnsiRenderer<'a> {
         // Also skip when we're inside an enclosing link span
         // (`[![alt](img)](url)`) — emitting our own OSC 8 would overwrite
         // the outer link destination for subsequent text on that line.
+        // Scheme match is case-insensitive per RFC 3986 §3.1.
+        let is_data_url = has_src
+            && strings::starts_with_case_insensitive_ascii(src.as_deref().unwrap(), b"data:");
         let link_ok = self.theme.colors
             && self.theme.hyperlinks
             && has_src
             && self.link.is_none()
-            && !src.as_deref().unwrap().starts_with(b"data:");
+            && !is_data_url;
         if link_ok {
             self.write_raw_no_color(b"\x1b]8;;");
             self.write_raw_no_color(src.as_deref().unwrap());
@@ -1950,6 +1962,21 @@ impl<'a> AnsiRenderer<'a> {
         self.reapply_styles();
         if link_ok {
             self.write_raw_no_color(b"\x1b]8;;\x1b\\");
+        } else if has_src
+            && !is_data_url
+            && self.link.is_none()
+            && !self.in_cell
+            && self.heading_level == 0
+        {
+            // No OSC 8 → show the URL in dim parens (the same format as
+            // the link fallback). Skipped inside table cells / headings,
+            // whose width machinery would count the URL against the
+            // cell/underline size.
+            self.write_styled(ansi_b::DIM, b" (");
+            self.write_styled(b"", src.as_deref().unwrap());
+            self.write_styled(ansi_b::DIM, b")");
+            self.write_styled(b"\x1b[39m\x1b[22m", b"");
+            self.reapply_styles();
         }
 
         self.image_depth = saved_depth;
@@ -1958,11 +1985,10 @@ impl<'a> AnsiRenderer<'a> {
         self.image_title = title;
     }
 
-    /// Emit a Kitty Graphics Protocol transmit-and-display sequence for
-    /// the absolute file `path`. Uses `t=f` (transmission medium = regular
-    /// file by path) so the terminal reads the file directly. Terminals
-    /// that don't understand the APC sequence silently drop it.
-    fn emit_kitty_image_file(&mut self, path: &[u8]) {
+    /// Emit a Kitty Graphics transmit-and-display sequence for the
+    /// absolute file `path` via `t=f`. `width_px` is the PNG's IHDR
+    /// width, used for the scaling decision.
+    fn emit_kitty_image_file(&mut self, path: &[u8], width_px: u32) {
         // Base64-encode the file path (Kitty expects the payload to be b64).
         let encoded = {
             let encoded_len = bun_core::base64::encode_len(path);
@@ -1970,7 +1996,7 @@ impl<'a> AnsiRenderer<'a> {
             let _ = bun_core::base64::encode(&mut encoded, path);
             encoded
         };
-        self.write_raw_no_color(b"\x1b_Ga=T,t=f,f=100,q=2;");
+        self.write_kitty_apc_header(b"t=f", width_px);
         self.write_raw_no_color(&encoded);
         self.write_raw_no_color(b"\x1b\\");
         self.write_raw(b"\n");
@@ -1985,14 +2011,47 @@ impl<'a> AnsiRenderer<'a> {
     /// the PNG bytes encoded directly in the APC payload via `t=d`. The
     /// `base64_payload` is already the base64 body of a `data:image/png`
     /// URL, so we forward it as-is — no temp file, no re-encoding.
-    fn emit_kitty_image_direct(&mut self, base64_payload: &[u8]) {
-        self.write_raw_no_color(b"\x1b_Ga=T,t=d,f=100,q=2;");
+    fn emit_kitty_image_direct(&mut self, base64_payload: &[u8], width_px: u32) {
+        self.write_kitty_apc_header(b"t=d", width_px);
         self.write_raw_no_color(base64_payload);
         self.write_raw_no_color(b"\x1b\\");
         self.write_raw(b"\n");
         self.col = 0;
         self.last_was_newline = true;
         self.write_indent();
+    }
+
+    /// Terminal cells still available on the current line, used to cap
+    /// the Kitty display width. `max(col, indent)` scales an inline
+    /// image to the remaining line width rather than the full indent
+    /// budget. Returns 0 when wrapping is disabled (`columns == 0`).
+    fn kitty_column_budget(&self) -> u32 {
+        if self.theme.columns == 0 {
+            return 0;
+        }
+        let used = self.col.max(self.current_indent());
+        let budget = (self.theme.columns as u32).saturating_sub(used);
+        budget.max(1)
+    }
+
+    /// Write `ESC _ G a=T,<transmit>,f=100,q=2[,c=<cols>] ;`.
+    ///
+    /// Kitty's `c=<cols>` is the EXACT display width, not a max cap —
+    /// it upscales small images as readily as it shrinks large ones —
+    /// so `c=` is only emitted when the image would overflow the line
+    /// (`width_px > budget * ASSUMED_CELL_PX`).
+    fn write_kitty_apc_header(&mut self, transmit: &[u8], width_px: u32) {
+        self.write_raw_no_color(b"\x1b_Ga=T,");
+        self.write_raw_no_color(transmit);
+        self.write_raw_no_color(b",f=100,q=2");
+        let budget = self.kitty_column_budget();
+        // budget == 0: wrapping disabled, render at native size.
+        if budget > 0 && width_px > budget.saturating_mul(ASSUMED_CELL_PX) {
+            self.write_raw_no_color(b",c=");
+            let mut buf = bun_core::fmt::ItoaBuf::new();
+            self.write_raw_no_color(bun_core::fmt::itoa(&mut buf, budget));
+        }
+        self.write_raw_no_color(b";");
     }
 }
 
@@ -2671,11 +2730,13 @@ fn probe_kitty_graphics() -> bool {
 /// falling back to the process cwd. The returned slice is owned by the
 /// caller.
 fn resolve_local_image_path(src: &[u8], base_dir: Option<&[u8]>) -> Option<Box<[u8]>> {
-    // Reject remote schemes. A renderer-level prefetch pass can feed
-    // http(s) URLs into the renderer via a lookup table as local paths.
-    // data: URIs are handled separately in emitImage via direct Kitty
-    // transmission (t=d) to avoid creating temp files.
-    if src.starts_with(b"http://") || src.starts_with(b"https://") || src.starts_with(b"data:") {
+    // Reject remote schemes (http(s) goes through the prefetch table,
+    // data: through direct Kitty transmit). Schemes are case-insensitive
+    // per RFC 3986 §3.1.
+    if strings::starts_with_case_insensitive_ascii(src, b"http://")
+        || strings::starts_with_case_insensitive_ascii(src, b"https://")
+        || strings::starts_with_case_insensitive_ascii(src, b"data:")
+    {
         return None;
     }
 
@@ -2683,13 +2744,14 @@ fn resolve_local_image_path(src: &[u8], base_dir: Option<&[u8]>) -> Option<Box<[
     // percent-decode. RFC 8089 allows `file://localhost/path`
     // (equivalent to `file:///path`) and real-world file URLs
     // contain %XX escapes for spaces and other reserved chars.
+    // Scheme + authority are ASCII case-insensitive per RFC 3986 §3.1.
     let mut path: &[u8] = src;
-    if src.starts_with(b"file://") {
+    if strings::starts_with_case_insensitive_ascii(src, b"file://") {
         path = &src[b"file://".len()..];
         // Drop `localhost` authority — RFC 8089 treats it as identity.
-        if path.starts_with(b"localhost/") {
+        if strings::starts_with_case_insensitive_ascii(path, b"localhost/") {
             path = &path[b"localhost".len()..];
-        } else if path == b"localhost" {
+        } else if strings::eql_case_insensitive_ascii(path, b"localhost", true) {
             return None;
         }
     }
@@ -2697,11 +2759,9 @@ fn resolve_local_image_path(src: &[u8], base_dir: Option<&[u8]>) -> Option<Box<[
     // Percent-decode the path so file:///foo/bar%20baz works.
     let decoded = bun_url::PercentEncoding::decode_alloc(path).ok()?;
 
-    // Resolve to an absolute path. bun.path.joinAbsString returns a
-    // slice in a threadlocal buffer — dupe it before leaving this fn.
-    // Prefer the markdown file's directory when provided; otherwise fall
-    // back to cwd so `Bun.markdown.ansi()` callers without a source path
-    // still work.
+    // Resolve to an absolute path against the markdown file's directory
+    // when provided, else the process cwd. The join writes into a pooled
+    // scratch buffer, so dupe before returning.
     let mut cwd_buf = bun_paths::PathBuffer::uninit();
     let base: &[u8] = if let Some(d) = base_dir {
         d
@@ -2711,8 +2771,14 @@ fn resolve_local_image_path(src: &[u8], base_dir: Option<&[u8]>) -> Option<Box<[
             Err(_) => return None,
         }
     };
-    let joined =
-        bun_paths::resolve_path::join_abs_string::<bun_paths::platform::Auto>(base, &[&decoded]);
+    // Checked join: an over-long base + src falls back to alt-text
+    // instead of panicking on the fixed-size path buffer.
+    let mut join_buf = bun_paths::path_buffer_pool::get();
+    let joined = bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
+        base,
+        &mut join_buf[..],
+        &[&decoded],
+    )?;
     let abs = Box::<[u8]>::from(joined);
     // Stat instead of plain exists() so a directory like `./assets/` gets
     // rejected. bun.sys.exists wraps access(path, F_OK) which returns true
@@ -2742,18 +2808,116 @@ fn resolve_local_image_path(src: &[u8], base_dir: Option<&[u8]>) -> Option<Box<[
 /// Kitty's format codes (`f=100` PNG, `f=24` RGB, `f=32` RGBA) don't
 /// cover JPEG/GIF/WebP binary input.
 fn extract_png_data_url_base64(src: &[u8]) -> Option<&[u8]> {
-    if !src.starts_with(b"data:") {
+    // Scheme is case-insensitive per RFC 3986 §3.1.
+    if !strings::starts_with_case_insensitive_ascii(src, b"data:") {
         return None;
     }
     let comma = strings::index_of_char(src, b',')? as usize;
     let header = &src[0..comma];
     let payload = &src[comma + 1..];
-    if !header.ends_with(b";base64") {
+    // MIME type + parameters are case-insensitive per RFC 2045 §5.1.
+    if !ends_with_case_insensitive_ascii(header, b";base64") {
         return None;
     }
     // Only PNG is losslessly transmittable via t=d,f=100.
-    strings::index_of(header, b"image/png")?;
+    if !strings::contains_case_insensitive_ascii(header, b"image/png") {
+        return None;
+    }
+    // An empty payload would emit a malformed empty APC; route it to
+    // the alt-text fallback instead.
+    if payload.is_empty() {
+        return None;
+    }
     Some(payload)
+}
+
+/// ASCII case-insensitive `ends_with` (no `strings` helper exists).
+fn ends_with_case_insensitive_ascii(haystack: &[u8], suffix: &[u8]) -> bool {
+    if haystack.len() < suffix.len() {
+        return false;
+    }
+    let tail = &haystack[haystack.len() - suffix.len()..];
+    strings::eql_case_insensitive_ascii(tail, suffix, false)
+}
+
+/// Assumed terminal cell width in pixels. Real cells are 6-12 px; 16
+/// is a conservative upper bound so the Kitty `c=` hint only fires
+/// when the image is definitely too wide even on wide-cell fonts.
+const ASSUMED_CELL_PX: u32 = 16;
+
+/// PNG IHDR metadata for the Kitty scaling decision.
+#[derive(Copy, Clone)]
+struct PngDims {
+    width_px: u32,
+}
+
+/// Parse the PNG signature + IHDR width out of the first 24 bytes:
+/// 8-byte signature, 4-byte chunk length, "IHDR", then big-endian
+/// width and height at offsets 16 and 20.
+fn parse_png_dims(header_bytes: &[u8]) -> Option<PngDims> {
+    if header_bytes.len() < 24 {
+        return None;
+    }
+    const PNG_MAGIC: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+    if &header_bytes[0..8] != PNG_MAGIC {
+        return None;
+    }
+    if &header_bytes[12..16] != b"IHDR" {
+        return None;
+    }
+    let width = u32::from_be_bytes([
+        header_bytes[16],
+        header_bytes[17],
+        header_bytes[18],
+        header_bytes[19],
+    ]);
+    let height = u32::from_be_bytes([
+        header_bytes[20],
+        header_bytes[21],
+        header_bytes[22],
+        header_bytes[23],
+    ]);
+    // Zero-dimension PNGs are malformed.
+    if width == 0 || height == 0 {
+        return None;
+    }
+    Some(PngDims { width_px: width })
+}
+
+/// Read the PNG IHDR from `abs_path`. Returns None if the file doesn't
+/// exist, isn't a valid PNG, or is shorter than 24 bytes.
+fn read_png_dims(abs_path: &[u8]) -> Option<PngDims> {
+    if abs_path.is_empty() || abs_path.len() >= bun_paths::MAX_PATH_BYTES {
+        return None;
+    }
+    let mut zbuf = bun_paths::path_buffer_pool::get();
+    let path_z = bun_paths::resolve_path::z(abs_path, &mut zbuf);
+    let file = match bun_sys::File::open(path_z, bun_sys::O::RDONLY, 0) {
+        Ok(f) => f,
+        Err(_) => return None,
+    };
+    let mut buf = [0u8; 24];
+    // read_all loops over short reads (e.g. FUSE/network mounts).
+    // `file` closes on Drop.
+    match file.read_all(&mut buf) {
+        Ok(amt) if amt >= 24 => parse_png_dims(&buf),
+        _ => None,
+    }
+}
+
+/// Parse the PNG IHDR out of a base64 payload, decoding only the 32
+/// base64 chars that cover the first 24 raw bytes.
+fn parse_png_dims_from_base64(base64_payload: &[u8]) -> Option<PngDims> {
+    const NEED_B64: usize = 32;
+    if base64_payload.len() < NEED_B64 {
+        return None;
+    }
+    let mut decoded = [0u8; 24];
+    let result = bun_core::base64::decode(&mut decoded, &base64_payload[..NEED_B64]);
+    if result.fail || result.written < 24 {
+        return None;
+    }
+    parse_png_dims(&decoded)
 }
 
 impl RendererImpl for AnsiRenderer<'_> {

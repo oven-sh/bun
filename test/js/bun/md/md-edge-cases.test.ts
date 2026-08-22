@@ -703,7 +703,7 @@ describe("pathological bracket inputs", () => {
           console.log("OK " + name);
         }
         const ansi = Bun.markdown.ansi(fill(43000, "![") + fill(43000, "](u)"), { colors: false });
-        if (ansi !== "[img] (image)\\n") throw new Error("unexpected ansi output: " + JSON.stringify(ansi.slice(0, 200)));
+        if (ansi !== "[img] (image) (u)\\n") throw new Error("unexpected ansi output: " + JSON.stringify(ansi.slice(0, 200)));
         console.log("OK ansi nested images");
         console.log("DONE");
       `);
@@ -717,7 +717,7 @@ describe("pathological bracket inputs", () => {
     expect(Markdown.html(nest(2))).toBe('<p><img src="u" alt="x" /></p>\n');
     expect(Markdown.html(nest(40))).toBe('<p><img src="u" alt="x" /></p>\n');
     expect(Markdown.html(nest(20000))).toBe('<p><img src="u" alt="x" /></p>\n');
-    expect(Markdown.ansi(nest(5000), { colors: false })).toBe("[img] x\n");
+    expect(Markdown.ansi(nest(5000), { colors: false })).toBe("[img] x (u)\n");
     // Image inside a link, link inside an image alt: normal nesting depths.
     expect(Markdown.html("[![alt](i.png)](p)\n")).toBe('<p><a href="p"><img src="i.png" alt="alt" /></a></p>\n');
     expect(Markdown.html("![a ![b](u2) c](u1)\n")).toBe('<p><img src="u1" alt="a b c" /></p>\n');

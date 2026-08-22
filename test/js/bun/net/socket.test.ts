@@ -4479,9 +4479,8 @@ describe.concurrent("close() error after the peer resets the connection", () => 
   describe.each(["tcp", "tls"] as const)("%s", transport => {
     // The peer lives in a child process that is killed while data it never read sits
     // in its receive buffer: the kernel then closes its socket with an RST, and
-    // nothing (no FIN, and for TLS no close_notify) is queued ahead of the reset. An
-    // in-process terminate() is not usable for the TLS case: it writes a close_notify
-    // first, and on POSIX the reading side consumes that as a clean end.
+    // nothing (no FIN, and for TLS no close_notify) is queued ahead of the reset.
+    // The second test resets from inside this process with terminate() instead.
     const peerSource = `
       await Bun.connect({
         hostname: "127.0.0.1",
@@ -4545,45 +4544,56 @@ describe.concurrent("close() error after the peer resets the connection", () => 
 
       expect(closeErrorShape(await closedWith.promise)).toEqual(readReset);
     });
-  });
 
-  it("a connected socket reports the reset the same way (tcp)", async () => {
-    // Plain TCP terminate() queues nothing ahead of the RST, so the server side of
-    // the same process can reset the connection.
-    const accepted = Promise.withResolvers<Socket>();
-    using listener = Bun.listen({
-      hostname: "127.0.0.1",
-      port: 0,
-      socket: {
-        open(socket) {
-          accepted.resolve(socket);
-          socket.write("greeting");
+    it("a connected socket reports the accepted socket's terminate() the same way", async () => {
+      // terminate() queues nothing ahead of the RST. For tls that means no close_notify:
+      // a reading peer takes a close_notify as a clean end (close() without an error),
+      // and on POSIX the queued alert is delivered before the reset behind it.
+      const accepted = Promise.withResolvers<Socket>();
+      const greet = (socket: Socket) => {
+        accepted.resolve(socket);
+        socket.write("greeting");
+      };
+      using listener = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: transport === "tls" ? tls : undefined,
+        socket: {
+          open(socket) {
+            if (transport === "tcp") greet(socket);
+          },
+          handshake(socket, success, authorizationError) {
+            if (success) greet(socket);
+            else accepted.reject(authorizationError ?? new Error("server handshake failed"));
+          },
+          data() {},
+          close() {},
         },
-        data() {},
-        close() {},
-      },
-    });
+      });
 
-    const greeted = Promise.withResolvers<void>();
-    const closedWith = Promise.withResolvers<CloseError>();
-    await Bun.connect({
-      hostname: "127.0.0.1",
-      port: listener.port,
-      socket: {
-        data: () => greeted.resolve(),
-        connectError: (_socket, error) => greeted.reject(error),
-        close(_socket, error) {
-          greeted.reject(new Error("the connected socket closed before the greeting arrived"));
-          closedWith.resolve(error as CloseError);
+      const greeted = Promise.withResolvers<void>();
+      const closedWith = Promise.withResolvers<CloseError>();
+      await Bun.connect({
+        hostname: "127.0.0.1",
+        port: listener.port,
+        tls: transport === "tls" ? { ca: tls.cert } : undefined,
+        socket: {
+          data: () => greeted.resolve(),
+          error: (_socket, error) => greeted.reject(error),
+          connectError: (_socket, error) => greeted.reject(error),
+          close(_socket, error) {
+            greeted.reject(new Error("the connected socket closed before the greeting arrived"));
+            closedWith.resolve(error as CloseError);
+          },
         },
-      },
+      });
+
+      const server = await accepted.promise;
+      await greeted.promise;
+      server.terminate();
+
+      expect(closeErrorShape(await closedWith.promise)).toEqual(readReset);
     });
-
-    const server = await accepted.promise;
-    await greeted.promise;
-    server.terminate();
-
-    expect(closeErrorShape(await closedWith.promise)).toEqual(readReset);
   });
 });
 

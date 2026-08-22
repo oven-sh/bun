@@ -954,6 +954,19 @@ describe.concurrent("Bun REPL", () => {
       expect(stripAnsi(stdout)).toContain("test");
       expect(exitCode).toBe(0);
     });
+
+    // https://github.com/oven-sh/bun/issues/37257
+    test("string enum referencing an enum from a previous line gets no reverse mapping", async () => {
+      const { stdout, exitCode } = await runRepl([
+        'enum Enum1 { K1 = "V" }',
+        "enum Enum2 { K2 = Enum1.K1 }",
+        "console.log(JSON.stringify(Object.entries(Enum2)))",
+        ".exit",
+      ]);
+      expect(stripAnsi(stdout)).toContain('[["K2","V"]]');
+      expect(stripAnsi(stdout)).not.toContain('["V","K2"]');
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("welcome message", () => {

@@ -752,7 +752,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             // Attach the internal close listener after the user's "connect"
             // handler ran: Node.js hands the socket over with no listeners and
             // tests assert socket.listenerCount("close") === 0 there.
-            socket.once("close", () => $resolvePromise(promise, undefined));
+            socket.once("close", resolveHandoffPromise.bind(undefined, promise));
             return promise;
           } else {
             // Node.js will close the socket and will NOT respond with 400 Bad Request
@@ -992,7 +992,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           // machinery; hold the native callback open until the raw socket
           // closes.
           const upgradePromise = $newPromise();
-          socket.once("close", () => $resolvePromise(upgradePromise, undefined));
+          socket.once("close", resolveHandoffPromise.bind(undefined, upgradePromise));
           return upgradePromise;
         } else if (
           server.requireHostHeader &&
@@ -1327,6 +1327,11 @@ function detachSocketListenersForHandoff(socket) {
   socket.removeListener("error", socketOnError);
   socket.removeListener("timeout", onNodeHTTPServerSocketTimeout);
   socket.on("end", onReadableStreamEnd);
+}
+// 'close' listener for a handed-off CONNECT/Upgrade socket: settles the promise
+// that keeps the native request callback open.
+function resolveHandoffPromise(promise) {
+  $resolvePromise(promise, undefined);
 }
 const kSocketTimeoutTimer = Symbol("socketTimeoutTimer");
 const kStreamingEnabled = Symbol("kStreamingEnabled");

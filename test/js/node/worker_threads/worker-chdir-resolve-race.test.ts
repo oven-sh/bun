@@ -84,6 +84,7 @@ test("process.chdir in a Web Worker does not tear main-thread cwd readers", asyn
       let i = 0;
       const tick = () => {
         for (let k = 0; k < 200; k++) process.chdir(i++ & 1 ? A : B);
+        if (i === 200) postMessage("flipping");
         setImmediate(tick);
       };
       tick();
@@ -105,6 +106,13 @@ test("process.chdir in a Web Worker does not tear main-thread cwd readers", asyn
       const which = process.platform !== "win32";
       if (which) for (const d of [A, B]) fs.chmodSync(path.join(d, "rel", "tool"), 0o755);
       const workers = Array.from({ length: 4 }, () => new Worker(path.join(base, "flip.cjs")));
+      // Each worker posts "flipping" after its first chdir batch, so the read
+      // loop below always overlaps live churn instead of passing vacuously. A
+      // worker that fails to load rejects here (stderr + nonzero exit).
+      await Promise.all(workers.map(w => new Promise((res, rej) => {
+        w.onmessage = res;
+        w.onerror = e => rej(new Error("worker failed: " + e.message));
+      })));
       const bad = {};
       const check = v => { if (!ok.has(v)) bad[v] = (bad[v] || 0) + 1; };
       for (let i = 0; i < 2000; i++) {

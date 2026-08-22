@@ -3,7 +3,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test
 import { existsSync, lstatSync, readFileSync } from "fs";
 import { rm, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, isWindows, readdirSorted, tempDir } from "harness";
-import { basename, join } from "path";
+import { basename, dirname, join } from "path";
 import {
   dummyAfterAll,
   dummyAfterEach,
@@ -150,7 +150,10 @@ it("bun pm cache unpack refuses hostile packs", async () => {
   expect(existsSync(join(victim, "x"))).toBeFalse();
   expect((await readdirSorted(cache)).filter(n => !n.startsWith("."))).toEqual([]);
 
-  // a symlink out of the package followed by a file written through it
+  // a symlink out of the package followed by a file written through it (victim and the
+  // cache dir are siblings under the same temp root; the escape path relies on that)
+  expect(dirname(victim)).toBe(dirname(cache));
+  const cacheViaVictim = join(victim, "..", basename(cache));
   const rel = "./../../" + basename(victim);
   await writeFile(
     join(dir, "escape.pack"),
@@ -162,7 +165,7 @@ it("bun pm cache unpack refuses hostile packs", async () => {
       rec(0, "", 0, ""),
     ]),
   );
-  r = await run(["pm", "cache", "unpack", join(dir, "escape.pack")], dir, join(victim, "..", basename(cache)));
+  r = await run(["pm", "cache", "unpack", join(dir, "escape.pack")], dir, cacheViaVictim);
   expect(r.code).not.toBe(0);
   expect(r.err).toMatch(/unsafe|traverses/);
   expect(existsSync(join(victim, "pwned"))).toBeFalse();
@@ -223,10 +226,10 @@ it("bun pm cache unpack refuses hostile packs", async () => {
       rec(0, "", 0, ""),
     ]),
   );
-  r = await run(["pm", "cache", "unpack", join(dir, "chain.pack")], dir, join(victim, "..", basename(cache)));
+  r = await run(["pm", "cache", "unpack", join(dir, "chain.pack")], dir, cacheViaVictim);
   expect(r.err).toContain("passes through another symlink");
   expect(r.code).not.toBe(0);
-  expect((await readdirSorted(join(victim, "..", basename(cache)))).filter(n => n.startsWith("chain"))).toEqual([]);
+  expect((await readdirSorted(cache)).filter(n => n.startsWith("chain"))).toEqual([]);
 
   // an absurd symlink target length
   await writeFile(
@@ -234,10 +237,12 @@ it("bun pm cache unpack refuses hostile packs", async () => {
     Buffer.concat([MAGIC, rec(1, "x@1.0.0", 0, ""), rec(3, "l", 0o777, Buffer.alloc(10_000, "a")), rec(0, "", 0, "")]),
   );
   r = await run(["pm", "cache", "unpack", join(dir, "long.pack")], dir, cache);
+  expect(r.err).toContain("symlink target too long");
   expect(r.code).not.toBe(0);
 
   // not a pack at all
   await writeFile(join(dir, "junk.pack"), "hello");
   r = await run(["pm", "cache", "unpack", join(dir, "junk.pack")], dir, cache);
+  expect(r.err).toContain("not a bun cache pack");
   expect(r.code).not.toBe(0);
 });

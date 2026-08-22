@@ -213,12 +213,15 @@ pub fn cache_folder_names(pm: &mut PackageManager) -> Vec<(Vec<u8>, bool)> {
             _ => None,
         };
         if let Some(f) = folder {
-            if !f.is_empty() && !out.iter().any(|(e, _)| *e == f) {
+            if !f.is_empty() {
                 out.push((f, expected));
             }
         }
     }
-    out.sort_by(|a, b| a.0.cmp(&b.0));
+    // sorted for a deterministic pack; the same folder can back several lockfile
+    // entries (e.g. aliases), keep one — "expected" if any of them is
+    out.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)));
+    out.dedup_by(|a, b| a.0 == b.0);
     out
 }
 
@@ -270,8 +273,14 @@ fn pack_dir(
         match kind {
             bun_sys::FileKind::Directory => pack_dir(w, root, &child_rel, files, bytes)?,
             bun_sys::FileKind::SymLink => {
-                let mut buf = [0u8; 4096];
-                let n = bun_sys::readlink(&z(&abs), &mut buf).map_err(sys_err)?;
+                let mut buf = bun_paths::path_buffer_pool::get();
+                let n = bun_sys::readlink(&z(&abs), &mut buf[..]).map_err(sys_err)?;
+                if n >= buf.len() {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("symlink target of {} is too long", bstr::BStr::new(&abs)),
+                    ));
+                }
                 let target = &buf[..n];
                 // only links that stay inside the package can be restored; refuse to
                 // produce a pack that unpack would reject
@@ -522,9 +531,9 @@ fn unpack_impl(cache_dir: &[u8], pack_path: &[u8]) -> std::io::Result<UnpackSumm
     let file = bun_sys::File::openat(bun_sys::Fd::cwd(), pack_path, bun_sys::O::RDONLY, 0)
         .map_err(sys_err)?;
     let mut r = BufReader::with_capacity(1 << 20, FileReader(file));
-    let magic = read_exact_vec(&mut r, MAGIC.len())?;
-    if magic != MAGIC {
-        return Err(bad("not a bun cache pack (bad magic)"));
+    match read_exact_vec(&mut r, MAGIC.len()) {
+        Ok(magic) if magic == MAGIC => {}
+        _ => return Err(bad("not a bun cache pack (bad magic)")),
     }
     let mut record_no: u64 = 0;
     // errors name the record so a corrupt pack can be identified and regenerated

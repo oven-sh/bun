@@ -1767,6 +1767,99 @@ describe.skipIf(!isWindows)("Bun.connect named-pipe client Handlers lifecycle", 
       signalCode: null,
     });
   });
+
+  // libuv reports a missing pipe from the connect callback, not from
+  // uv_pipe_connect itself. On that path the pipe was never handed to the
+  // writer, so closing the writer reported no close, and the native context
+  // (which holds a ref on the TCPSocket/TLSSocket, and for TLS the SSL_CTX)
+  // stayed alive once per failed attempt.
+  it.concurrent.each([
+    ["plain", "", 0],
+    ["tls", "tls: true,", 1],
+  ])(
+    "a connect that fails asynchronously (%s) releases the native context",
+    async (_name, tlsOption, sslCtxPerAttempt) => {
+      const attempts = 8;
+      const pipePrefix = "\\\\.\\pipe\\bun-test-missing-" + Math.random().toString(36).slice(2) + "-";
+      const src = /* js */ `
+        const { namedPipeInternals, sslCtxLiveCount } = require("bun:internal-for-testing");
+        const contextsBefore = namedPipeInternals.liveCount();
+        const sslCtxBefore = sslCtxLiveCount();
+
+        let connectErrors = 0;
+        let closes = 0;
+        let firstAttempt = null;
+        const outcomes = new Set();
+
+        for (let i = 0; i < ${attempts}; i++) {
+          try {
+            await Bun.connect({
+              unix: ${JSON.stringify(pipePrefix)} + i,
+              ${tlsOption}
+              socket: {
+                data() {},
+                open() {},
+                close() { closes++; },
+                error() {},
+                connectError(_socket, err) {
+                  connectErrors++;
+                  outcomes.add("connectError:" + err.code);
+                  // This attempt's context is still alive while it reports the failure.
+                  firstAttempt ??= {
+                    contexts: namedPipeInternals.liveCount() - contextsBefore,
+                    sslCtx: sslCtxLiveCount() - sslCtxBefore,
+                  };
+                },
+              },
+            });
+            outcomes.add("resolved");
+          } catch (err) {
+            outcomes.add("rejected:" + err.code);
+          }
+        }
+
+        // Finalizing the wrappers must not touch a socket its context already released.
+        Bun.gc(true);
+        // A context frees itself from a task it queues when its last ref drops.
+        for (let i = 0; i < 100 && namedPipeInternals.liveCount() > contextsBefore; i++) {
+          await new Promise(resolve => setImmediate(resolve));
+        }
+
+        console.log(JSON.stringify({
+          connectErrors,
+          closes,
+          outcomes: [...outcomes].sort(),
+          firstAttempt,
+          leaked: {
+            contexts: namedPipeInternals.liveCount() - contextsBefore,
+            sslCtx: sslCtxLiveCount() - sslCtxBefore,
+          },
+        }));
+      `;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      // If the child died before reporting, the diff shows its raw output.
+      const result = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+      expect({ result, stderr, exitCode }).toEqual({
+        result: {
+          connectErrors: attempts,
+          closes: 0,
+          outcomes: ["connectError:ENOENT", "rejected:ENOENT"],
+          firstAttempt: { contexts: 1, sslCtx: sslCtxPerAttempt },
+          leaked: { contexts: 0, sslCtx: 0 },
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
 });
 
 // A socket over a Windows named pipe frees its native context from a task
@@ -4164,6 +4257,98 @@ describe("allowHalfOpen socket whose peer resets behind pending writes", () => {
     await closed.promise; // victim must tear down, not spin or strand
     expect(endCount).toBe(1);
   });
+});
+
+// A paused socket must not wake the event loop for data it is not going to read. epoll and
+// AFD do not report data without readable interest; kqueue keeps a read knote registered on a
+// non-reading socket so the peer's FIN/RST still arrive, and that knote used to fire once per
+// incoming segment. The paused socket lives in a child so nothing else turns its loop: it
+// samples the usockets loop iteration counter, we send SEGMENTS one-byte writes from here,
+// then it samples again. A loop that wakes per segment reports ~SEGMENTS iterations; one that
+// does not reports the handful caused by our two control lines.
+it("a paused socket does not wake the event loop for every segment its peer sends", async () => {
+  const SEGMENTS = 200;
+  await using child = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const { getEventLoopStats } = require("bun:internal-for-testing");
+      let socket;
+      const server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          open(s) {
+            socket = s;
+            s.pause();
+            process.stdout.write("port " + server.port + "\\n");
+          },
+          data() {
+            process.stdout.write("data while paused\\n");
+          },
+          close() {},
+          drain() {},
+        },
+      });
+      process.stdout.write("port " + server.port + "\\n");
+      let before;
+      for await (const line of console) {
+        if (line === "start") {
+          before = getEventLoopStats().iteration;
+          process.stdout.write("started\\n");
+        } else if (line === "stop") {
+          process.stdout.write("iterations " + (getEventLoopStats().iteration - before) + "\\n");
+          server.stop(true);
+          process.exit(0);
+        }
+      }
+      `,
+    ],
+    env: bunEnv,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const reader = child.stdout.getReader();
+  let buffered = "";
+  async function line() {
+    while (!buffered.includes("\n")) {
+      const { value, done } = await reader.read();
+      if (done) return buffered;
+      buffered += new TextDecoder().decode(value);
+    }
+    const i = buffered.indexOf("\n");
+    const out = buffered.slice(0, i);
+    buffered = buffered.slice(i + 1);
+    return out;
+  }
+  const port = Number((await line()).split(" ")[1]);
+  const peer = await Bun.connect({
+    hostname: "127.0.0.1",
+    port,
+    socket: { data() {}, open() {}, close() {}, drain() {} },
+  });
+  expect(await line()).toBe(`port ${port}`); // open() ran: the socket is paused
+  child.stdin.write("start\n");
+  await child.stdin.flush();
+  expect(await line()).toBe("started");
+  for (let i = 0; i < SEGMENTS; i++) {
+    peer.write("x");
+    peer.flush();
+    // Separate segments need separate event-loop turns on our side; this paces the sender,
+    // it is not waiting for a condition in the child.
+    await new Promise<void>(resolve => setTimeout(resolve, 1));
+  }
+  child.stdin.write("stop\n");
+  await child.stdin.flush();
+  const result = await line();
+  peer.end();
+  expect(result).toMatch(/^iterations \d+$/);
+  // Two stdin lines and process bookkeeping account for a few turns; per-segment wakeups
+  // would put this near SEGMENTS.
+  expect(Number(result.split(" ")[1])).toBeLessThan(SEGMENTS / 4);
+  expect(await child.exited).toBe(0);
 });
 
 // A paused socket polls for nothing, but a peer reset still reaches it (epoll reports EPOLLERR

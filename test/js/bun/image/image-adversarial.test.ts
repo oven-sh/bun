@@ -804,9 +804,11 @@ describe("JPEG with an invalid Huffman sequence", () => {
 
   test("full decode rejects the corrupt scan", async () => {
     Bun.Image.backend = "bun";
-    await expect(new Bun.Image(badHuffmanJpeg).png().bytes()).rejects.toThrow();
+    await expect(new Bun.Image(badHuffmanJpeg).png().bytes()).rejects.toThrow(/decode failed/);
     // The issue's shape: resize + re-encode must also surface the error.
-    await expect(new Bun.Image(badHuffmanJpeg).resize(1, 1, { fit: "inside" }).jpeg().bytes()).rejects.toThrow();
+    await expect(new Bun.Image(badHuffmanJpeg).resize(1, 1, { fit: "inside" }).jpeg().bytes()).rejects.toThrow(
+      /decode failed/,
+    );
   });
 
   test("restoring the flipped byte decodes cleanly", async () => {

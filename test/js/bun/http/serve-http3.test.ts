@@ -1,5 +1,5 @@
 import type { ServerWebSocket } from "bun";
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { createHash, createPrivateKey, randomBytes } from "crypto";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, tempDir, tls } from "harness";
@@ -26,9 +26,14 @@ const DEAD_PORT_ABORT_MS = 1000;
 // process leaves the client retransmitting until lsquic's idle timeout, and if
 // the OS reuses that ephemeral UDP port a later test's request gets matched
 // onto the dead conn. us_quic_listen_socket_close() flushes CONNECTION_CLOSE
-// synchronously during stop(true); the trailing setTimeout gives the kernel a
-// tick to deliver the loopback datagram before the process exits.
-const STOP_ON_STDIN_END = `process.stdin.on("end", () => { server.stop(true); setTimeout(() => process.exit(0), 100); });`;
+// synchronously during stop(true): the loopback datagram is queued on the
+// client's socket before stop(true) returns, so the process can exit at once.
+// (A fixture that is SIGKILLed instead makes a non-retryable POST to a
+// re-bound port time out every time; an immediate exit after stop(true) never
+// does.) The helpers below await that exit before the next case starts.
+const STOP_ON_STDIN_END = `process.stdin.on("end", () => { server.stop(true); process.exit(0); });`;
+
+const md5 = (b: Uint8Array | ArrayBuffer) => createHash("md5").update(Buffer.from(b)).digest("hex");
 
 const fixture = `
 import { serve } from "bun";
@@ -131,7 +136,9 @@ const server = serve({
       return new Response(url.searchParams.get("q") ?? "<none>");
     }
     if (url.pathname === "/slow") {
-      await new Promise(r => setTimeout(r, 50));
+      // Only the client-abort case requests this; its 10 ms abort timer must
+      // win even when the concurrent group keeps the test's event loop busy.
+      await new Promise(r => setTimeout(r, 500));
       return new Response("late");
     }
     if (url.pathname === "/stream") {
@@ -166,11 +173,12 @@ process.stdin.on("data", () => {});
 ${STOP_ON_STDIN_END}
 `;
 
-async function withServer(
-  fn: (port: number, dir: string) => Promise<void>,
-  env: Record<string, string> = {},
-): Promise<void> {
-  using dir = tempDir("serve-http3", {
+type Fixture = { port: number; dir: string; stop(): Promise<void> };
+
+/** Start the standard fixture above. stop() closes its stdin, awaits the exit
+ * and asserts that it wrote nothing to stderr but the port line. */
+async function startServer(env: Record<string, string> = {}): Promise<Fixture> {
+  const dir = tempDir("serve-http3", {
     "server.mjs": fixture,
     "big.bin": Buffer.alloc(200 * 1024, "FILEfile"),
     "huge.bin": Buffer.alloc(2 * 1024 * 1024, "0123456789abcdef"),
@@ -183,42 +191,78 @@ async function withServer(
     stderr: "pipe",
     stdin: "pipe",
   });
-  let port = 0;
-  const stderr = proc.stderr.getReader();
-  let buffered = "";
-  while (true) {
-    const { value, done } = await stderr.read();
-    if (done) break;
-    buffered += new TextDecoder().decode(value);
-    const m = buffered.match(/PORT=(\d+)/);
-    if (m) {
-      port = Number(m[1]);
-      break;
+  const listening = Promise.withResolvers<number>();
+  let stderr = "";
+  const decoder = new TextDecoder();
+  const stderrDone = (async () => {
+    for await (const chunk of proc.stderr) {
+      stderr += decoder.decode(chunk, { stream: true });
+      const m = stderr.match(/PORT=(\d+)\n/);
+      if (m) listening.resolve(Number(m[1]));
     }
-  }
-  stderr.releaseLock();
-  // drain remaining stderr in background so the pipe doesn't fill
-  (async () => {
-    for await (const _ of proc.stderr) {
-    }
+    listening.reject(new Error(`fixture exited before printing its port; stderr:\n${stderr}`));
   })();
-  expect(port).toBeGreaterThan(0);
+  let port: number;
   try {
-    await fn(port, String(dir));
-  } finally {
-    proc.stdin?.end();
-    await Promise.race([proc.exited, Bun.sleep(2000)]);
-    proc.kill();
-    await proc.exited;
+    port = await listening.promise;
+  } catch (e) {
+    dir[Symbol.dispose]();
+    throw e;
   }
+  return {
+    port,
+    dir: String(dir),
+    async stop() {
+      proc.stdin.end();
+      const exitCode = await proc.exited;
+      await stderrDone;
+      dir[Symbol.dispose]();
+      expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: `PORT=${port}\n` });
+    },
+  };
 }
 
-describe("Bun.serve HTTP/3", () => {
+// Cases that only send requests to the standard fixture share one fixture
+// process for the whole file. It starts on first use and stops in the afterAll
+// below, which also checks its exit code and stderr. A case that needs a
+// differently configured fixture (env) gets a process of its own.
+let shared: Promise<Fixture> | undefined;
+afterAll(async () => {
+  if (shared) await (await shared).stop();
+});
+
+async function withServer(
+  fn: (port: number, dir: string) => Promise<void>,
+  env: Record<string, string> = {},
+): Promise<void> {
+  if (Object.keys(env).length === 0) {
+    const { port, dir } = await (shared ??= startServer());
+    await fn(port, dir);
+    return;
+  }
+  const server = await startServer(env);
+  try {
+    await fn(server.port, server.dir);
+  } catch (e) {
+    // The case already failed: still let the fixture stop(true) and exit, so
+    // the client drops its session, but report the case's error, not stop()'s.
+    await server.stop().catch(() => {});
+    throw e;
+  }
+  await server.stop();
+}
+
+// Concurrent: these cases either share the fixture process (and multiplex their
+// requests over the client's one pooled QUIC connection) or spawn a process of
+// their own. The cases that probe a dead port are test.serial so that no other
+// fixture can bind that port while they probe it.
+describe.concurrent("Bun.serve HTTP/3", () => {
   test("basic GET", async () => {
     await withServer(async port => {
       const res = await fetchH3(port, "/hello");
       expect(res.status).toBe(200);
       expect(res.headers.get("x-proto")).toBe("h3");
+      expect(res.headers.get("content-type")).toBe("text/plain");
       expect(await res.text()).toBe("hello over h3");
     });
   });
@@ -256,11 +300,13 @@ describe("Bun.serve HTTP/3", () => {
 
   test("large response body crosses multiple QUIC packets", async () => {
     await withServer(async port => {
-      const raw = await fetchH3(port, "/big").then(r => r.bytes());
+      const res = await fetchH3(port, "/big");
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toBe("application/octet-stream");
+      expect(res.headers.get("content-length")).toBe("524288");
+      const raw = await res.bytes();
       expect(raw.length).toBe(512 * 1024);
-      // verify content integrity at both ends
-      expect(new TextDecoder().decode(raw.subarray(0, 16))).toBe("abcdefghijklmnop");
-      expect(new TextDecoder().decode(raw.subarray(-16))).toBe("abcdefghijklmnop");
+      expect(md5(raw)).toBe(md5(Buffer.alloc(512 * 1024, "abcdefghijklmnop")));
     });
   });
 
@@ -276,9 +322,13 @@ describe("Bun.serve HTTP/3", () => {
   test("client abort mid-response does not crash the server", async () => {
     await withServer(async port => {
       // First request: tiny timeout forces abort during /slow
-      await expect(fetchH3(port, "/slow", { signal: AbortSignal.timeout(10) })).rejects.toThrow();
+      await expect(fetchH3(port, "/slow", { signal: AbortSignal.timeout(10) })).rejects.toMatchObject({
+        name: "TimeoutError",
+      });
       // Server must still be alive for a follow-up
       const ok = await fetchH3(port, "/hello");
+      expect(ok.status).toBe(200);
+      expect(ok.headers.get("x-proto")).toBe("h3");
       expect(await ok.text()).toBe("hello over h3");
     });
   });
@@ -287,11 +337,13 @@ describe("Bun.serve HTTP/3", () => {
     await withServer(
       async port => {
         const h3 = await fetchH3(port, "/hello");
+        expect(h3.status).toBe(200);
+        expect(h3.headers.get("x-proto")).toBe("h3");
         expect(await h3.text()).toBe("hello over h3");
         // TCP listener should not be bound at all
         await expect(
           fetch(`https://127.0.0.1:${port}/hello`, { tls: { rejectUnauthorized: false } } as RequestInit),
-        ).rejects.toThrow();
+        ).rejects.toMatchObject({ code: "ConnectionRefused" });
       },
       { H3_ONLY: "1" },
     );
@@ -299,7 +351,7 @@ describe("Bun.serve HTTP/3", () => {
 
   // With http1:false the TCP listen socket is never created, so server.url /
   // server.address / server.stop() must consult the QUIC listener.
-  test("http1: false — url/address/stop see the QUIC listener", async () => {
+  test.serial("http1: false — url/address/stop see the QUIC listener", async () => {
     const script = `
       const tls = ${JSON.stringify(tls)};
       const server = Bun.serve({
@@ -362,6 +414,7 @@ describe("Bun.serve HTTP/3", () => {
         headers: { "content-type": "application/octet-stream" },
       });
       expect(res.status).toBe(413);
+      expect(await res.text()).toBe("");
     });
   });
 
@@ -385,9 +438,11 @@ describe("Bun.serve HTTP/3", () => {
   test("routes: per-method handler", async () => {
     await withServer(async port => {
       const post = await fetchH3(port, "/route-only", { method: "POST" });
+      expect(post.status).toBe(200);
       expect(await post.text()).toBe("posted");
       // GET falls through to fetch() since the route is POST-only
       const get = await fetchH3(port, "/route-only");
+      expect(get.status).toBe(404);
       expect(await get.text()).toBe("not found: /route-only");
     });
   });
@@ -415,16 +470,22 @@ describe("Bun.serve HTTP/3", () => {
 
   test("ReadableStream response body", async () => {
     await withServer(async port => {
-      expect(await fetchH3(port, "/stream").then(r => r.text())).toBe("one two three");
+      const res = await fetchH3(port, "/stream");
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toBe("text/plain");
+      expect(await res.text()).toBe("one two three");
     });
   });
 
   test("Bun.file response body", async () => {
     await withServer(async port => {
-      const raw = await fetchH3(port, "/file").then(r => r.bytes());
+      const res = await fetchH3(port, "/file");
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toBe("application/octet-stream");
+      expect(res.headers.get("content-length")).toBe("204800");
+      const raw = await res.bytes();
       expect(raw.length).toBe(200 * 1024);
-      expect(new TextDecoder().decode(raw.subarray(0, 8))).toBe("FILEfile");
-      expect(new TextDecoder().decode(raw.subarray(-8))).toBe("FILEfile");
+      expect(md5(raw)).toBe(md5(Buffer.alloc(200 * 1024, "FILEfile")));
     });
   });
 
@@ -446,20 +507,29 @@ describe("Bun.serve HTTP/3", () => {
       expect(res.status).toBe(200);
       expect(await res.text()).toBe("from-static-route");
       expect(res.headers.get("etag")).toBe('"v1"');
+      expect(res.headers.get("content-type")).toBe("text/plain");
       // If-None-Match -> 304 over H3
       const second = await fetchH3(port, "/static", { headers: { "if-none-match": '"v1"' } });
       expect(second.status).toBe(304);
+      expect(second.headers.get("etag")).toBe('"v1"');
+      expect(await second.text()).toBe("");
     });
   });
 
   test("file route (Bun.file value) streams over H3", async () => {
     await withServer(async port => {
-      const raw = await fetchH3(port, "/file-route").then(r => r.bytes());
+      const res = await fetchH3(port, "/file-route");
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toBe("application/octet-stream");
+      expect(res.headers.get("content-length")).toBe("204800");
+      const raw = await res.bytes();
       expect(raw.length).toBe(200 * 1024);
-      expect(Buffer.from(raw.subarray(0, 8)).toString()).toBe("FILEfile");
+      expect(md5(raw)).toBe(md5(Buffer.alloc(200 * 1024, "FILEfile")));
       // Range request over H3 hits the same FileResponseStream path
       const ranged = await fetchH3(port, "/file-route", { headers: { range: "bytes=4-11" } });
       expect(ranged.status).toBe(206);
+      expect(ranged.headers.get("content-range")).toBe("bytes 4-11/204800");
+      expect(ranged.headers.get("content-length")).toBe("8");
       expect(await ranged.text()).toBe("file" + "FILE");
     });
   });
@@ -497,11 +567,11 @@ describe("Bun.serve HTTP/3", () => {
   });
 });
 
-// Cases ported from h2o t/40http3 and aioquic interop. Each test gets its own
-// server (withServer) so they can run concurrently.
+// Cases ported from h2o t/40http3 and aioquic interop. They run one at a time
+// against the shared fixture: several of them flood the one pooled QUIC
+// connection on purpose (64 streams, an 8 MB body), and they should not
+// overlap.
 describe("Bun.serve HTTP/3 adversarial", () => {
-  const md5 = (b: Uint8Array | ArrayBuffer) => createHash("md5").update(Buffer.from(b)).digest("hex");
-
   test("64 concurrent streams on one connection", async () => {
     // h2o uses 1000; 64 stays inside lsquic's default initial-max-streams
     // and the debug-build 5s budget while still being 4× the existing
@@ -542,6 +612,8 @@ describe("Bun.serve HTTP/3 adversarial", () => {
         body: payload,
         headers: { "content-type": "application/octet-stream" },
       });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("x-len")).toBe(String(8 * 1024 * 1024));
       const raw = await res.bytes();
       expect(raw.length).toBe(payload.length);
       expect(md5(raw)).toBe(md5(payload));
@@ -582,6 +654,7 @@ describe("Bun.serve HTTP/3 adversarial", () => {
       const res = await fetchH3(port, "/big", { method: "HEAD" });
       expect(res.status).toBe(200);
       expect(res.headers.get("content-length")).toBe("524288");
+      expect(res.headers.get("content-type")).toBe("application/octet-stream");
       expect((await res.bytes()).length).toBe(0);
     });
   });
@@ -599,6 +672,8 @@ describe("Bun.serve HTTP/3 adversarial", () => {
         .then(r => r.text())
         .catch(() => {});
       const res = await fetchH3(port, "/hello");
+      expect(res.status).toBe(200);
+      expect(res.headers.get("x-proto")).toBe("h3");
       expect(await res.text()).toBe("hello over h3");
     });
   });
@@ -617,6 +692,8 @@ describe("Bun.serve HTTP/3 adversarial", () => {
       });
       await p.catch(() => {});
       const res = await fetchH3(port, "/hello");
+      expect(res.status).toBe(200);
+      expect(res.headers.get("x-proto")).toBe("h3");
       expect(await res.text()).toBe("hello over h3");
     });
   });
@@ -679,12 +756,13 @@ describe("Bun.serve HTTP/3 adversarial", () => {
 
   test("Response(subprocess.stdout) streams over H3", async () => {
     await withServer(async port => {
-      const raw = await fetchH3(port, "/spawn").then(r => r.bytes());
+      const res = await fetchH3(port, "/spawn");
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toBe("text/plain");
+      const raw = await res.bytes();
       expect(raw.length).toBe(40 * 1001);
-      const text = Buffer.from(raw).toString();
-      const lines = text.split("\n").filter(Boolean);
-      expect(lines.length).toBe(40);
-      expect(lines.every(l => l === Buffer.alloc(1000, "x").toString())).toBe(true);
+      const line = Buffer.alloc(1000, "x").toString() + "\n";
+      expect(Buffer.from(raw).toString()).toBe(Buffer.alloc(40 * 1001, line).toString());
     });
   });
 
@@ -742,11 +820,13 @@ describe("Bun.serve HTTP/3 adversarial", () => {
   });
 
   test("Response(Bun.file().stream()) goes through H3ResponseSink", async () => {
-    await withServer(async (port, dir) => {
-      const raw = await fetchH3(port, "/file-stream").then(r => r.bytes());
+    await withServer(async port => {
+      const res = await fetchH3(port, "/file-stream");
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-length")).toBe("204800");
+      const raw = await res.bytes();
       expect(raw.length).toBe(200 * 1024);
-      const onDisk = await Bun.file(join(dir, "big.bin")).bytes();
-      expect(md5(raw)).toBe(md5(onDisk));
+      expect(md5(raw)).toBe(md5(Buffer.alloc(200 * 1024, "FILEfile")));
     });
   });
 
@@ -754,7 +834,10 @@ describe("Bun.serve HTTP/3 adversarial", () => {
   // has no socket fd. A 2 MB file is over the 1 MiB sendfile threshold.
   test("Bun.file >=1 MiB takes the reader path, not sendfile", async () => {
     await withServer(async port => {
-      const raw = await fetchH3(port, "/huge-file").then(r => r.bytes());
+      const res = await fetchH3(port, "/huge-file");
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-length")).toBe("2097152");
+      const raw = await res.bytes();
       expect(raw.length).toBe(2 * 1024 * 1024);
       expect(md5(raw)).toBe(md5(Buffer.alloc(2 * 1024 * 1024, "0123456789abcdef")));
     });
@@ -847,19 +930,31 @@ async function withCustomServer(
   const send = (cmd: string) => proc.stdin!.write(cmd + "\n");
   try {
     await fn(port, send, waitForStderr);
-  } finally {
-    // Give the script a chance to server.stop(true) (CONNECTION_CLOSE) on
-    // stdin end before SIGKILL, so the client's pooled session is released
-    // and can't collide with a later test that reuses the same port.
-    proc.stdin?.end();
+  } catch (e) {
+    // The case already failed. Give the script a bounded chance to
+    // server.stop(true) (CONNECTION_CLOSE) on stdin end before SIGKILL, so the
+    // client's pooled session is released and can't collide with a later test
+    // that reuses the same port.
+    proc.stdin.end();
     await Promise.race([proc.exited, Bun.sleep(1000)]);
     proc.kill();
     await proc.exited;
     await drain.catch(() => {});
+    throw e;
   }
+  // Every script in this file stops its server and exits on stdin end, or has
+  // already exited on a command it was sent. Awaiting that exit, rather than
+  // racing it against a timer, keeps the next case from starting while this
+  // fixture still holds its port.
+  proc.stdin.end();
+  expect(await proc.exited).toBe(0);
+  await drain;
 }
 
-describe("Bun.serve HTTP/3 lifecycle", () => {
+// Concurrent: every case here has its own fixture process. The cases that probe
+// a dead port are test.serial so that no other fixture can bind that port while
+// they probe it.
+describe.concurrent("Bun.serve HTTP/3 lifecycle", () => {
   // bughunt #2: server.reload() must clear the H3 router so removed routes
   // fall through to the fetch handler instead of dereferencing freed pointers.
   test("server.reload() clears stale H3 routes", async () => {
@@ -969,7 +1064,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
   // bughunt #3: server.stop() must not leave the lsquic engine pointing at a
   // freed listen-socket. The follow-up GET should cleanly fail to connect,
   // and the process must still be alive to exit 0 on its own.
-  test("server.stop() with live H3 connections does not UAF", async () => {
+  test.serial("server.stop() with live H3 connections does not UAF", async () => {
     const script = `
       const tls = ${JSON.stringify(tls)};
       const server = Bun.serve({
@@ -1097,7 +1192,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
   // finish before the engine tears down. lsquic_engine_cooldown drops mini
   // (still-handshaking) conns immediately, so we wait until the server has
   // actually entered every handler before stopping — no arbitrary sleep.
-  test("graceful stop: in-flight H3 requests complete after server.stop()", async () => {
+  test.serial("graceful stop: in-flight H3 requests complete after server.stop()", async () => {
     const script = `
       const tls = ${JSON.stringify(tls)};
       let stopping = false, inflight = 0;
@@ -1189,7 +1284,8 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
         async fetch(req) {
           const url = new URL(req.url);
           if (url.pathname === "/hang") {
-            req.signal.addEventListener("abort", () => { aborted++; });
+            req.signal.addEventListener("abort", () => { aborted++; console.error("ABORTED"); });
+            console.error("HANGING");
             await new Promise(r => req.signal.addEventListener("abort", r));
             return new Response("never");
           }
@@ -1201,29 +1297,26 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
       process.stdin.on("data", () => {});
       ${STOP_ON_STDIN_END}
     `;
-    await withCustomServer(script, async port => {
-      // Warm the QUIC connection so the /hang stream is actually bound
-      // (qstream != null) before we abort — otherwise abort() is a no-op
-      // and the server never sees STOP_SENDING.
-      await fetchH3(port, "/aborted").then(r => r.text());
+    await withCustomServer(script, async (port, _send, waitForStderr) => {
       const ac = new AbortController();
       const p = fetchH3(port, "/hang", { signal: ac.signal });
-      await Bun.sleep(200);
+      // Abort only once the handler runs: the /hang stream is then bound
+      // (qstream != null), so abort() sends STOP_SENDING instead of being a
+      // no-op on a request that is still queued behind the handshake.
+      await waitForStderr(/HANGING/);
       ac.abort();
-      await expect(p).rejects.toThrow();
+      await expect(p).rejects.toMatchObject({ name: "AbortError" });
       // The signal fires from on_stream_close, which runs on the next
       // process_conns tick after the RST lands.
-      let count = "0";
-      for (let i = 0; i < 60 && count === "0"; i++) {
-        count = await fetchH3(port, "/aborted").then(r => r.text());
-        if (count === "0") await Bun.sleep(50);
-      }
-      expect(Number(count)).toBeGreaterThan(0);
+      await waitForStderr(/ABORTED/);
+      expect(await fetchH3(port, "/aborted").then(r => r.text())).toBe("1");
     });
   });
 });
 
-describe("Bun.serve HTTP/3 production", () => {
+// Concurrent: the two cases on the shared fixture only send requests, and the
+// third has its own fixture process.
+describe.concurrent("Bun.serve HTTP/3 production", () => {
   // RFC 9110 §6.6.1: an origin server with a clock MUST send Date.
   // H1 writes it via HttpResponse::writeMark(); H3 must too.
   test("Date header is sent on every response shape", async () => {
@@ -1265,9 +1358,9 @@ describe("Bun.serve HTTP/3 production", () => {
       // headers from a different place; all three must advertise h3.
       for (const path of ["/hello", "/static", "/file-route"]) {
         const res = await fetch(`https://127.0.0.1:${port}${path}`, { tls: { rejectUnauthorized: false } });
+        await res.arrayBuffer();
         expect(res.status).toBe(200);
-        const alt = res.headers.get("alt-svc") ?? "";
-        expect(alt).toContain('h3=":' + port + '"');
+        expect(res.headers.get("alt-svc")).toBe(`h3=":${port}"; ma=86400`);
       }
     });
   });
@@ -1296,6 +1389,7 @@ describe("Bun.serve HTTP/3 production", () => {
     `;
     await withCustomServer(script, async port => {
       const res = await fetchH3(port, "/");
+      expect(res.status).toBe(200);
       expect(await res.text()).toBe("upgrade=false");
     });
   });

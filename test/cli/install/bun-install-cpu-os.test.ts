@@ -658,13 +658,14 @@ describe("bun install --libc flag and the libc field", () => {
    */
   async function cachedManifestCount(atLeast: number) {
     const cacheDir = join(package_dir, ".bun-cache");
-    for (;;) {
-      const count = (await readdirSorted(cacheDir).catch(() => [] as string[])).filter(name =>
-        name.endsWith(".npm"),
-      ).length;
+    const deadline = performance.now() + 2_000;
+    let count = 0;
+    do {
+      count = (await readdirSorted(cacheDir).catch(() => [] as string[])).filter(name => name.endsWith(".npm")).length;
       if (count >= atLeast) return count;
       await Bun.sleep(5);
-    }
+    } while (performance.now() < deadline);
+    throw new Error(`expected ${atLeast} cached manifest(s) in ${cacheDir}, found ${count}`);
   }
 
   async function installWithEnv(env: typeof bunEnv, ...args: string[]) {

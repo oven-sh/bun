@@ -734,7 +734,7 @@ pub fn cached_tarball_folder_name_print<'a>(
     let mut w = ByteCursor::new(buf);
     w.put(b"@T@");
     w.put_u64_hex16::<true>(Semver::semver_string::Builder::string_hash(url));
-    w.put_cache_version(Some(CacheVersion::CURRENT));
+    w.put_cache_version(Some(CacheVersion::TARBALL));
     w.put_patch_hash(patch_hash);
     w.finish_z()
 }
@@ -1290,6 +1290,8 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
 pub(crate) struct CacheVersion;
 impl CacheVersion {
     pub(crate) const CURRENT: usize = 1;
+    /// 2: tarball entries carry `.bun-tag`.
+    pub(crate) const TARBALL: usize = 2;
 }
 
 // ────────────────────────────── helpers ───────────────────────────────────────

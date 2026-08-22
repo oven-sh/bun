@@ -1,6 +1,7 @@
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { rmSync } from "fs";
+import { cp, readdir } from "fs/promises";
 import {
   bunEnv,
   bunExe,
@@ -122,6 +123,66 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
       : (x: string) => x;
 
   const versions: [version: string, patchVersion?: string][] = [["1.0.0"]];
+
+  test("should patch a file: tarball dependency with bun patch --commit and skip it on the next install", async () => {
+    await using filedir = tempDir("patch-tarball", {
+      "package.json": JSON.stringify({ name: "bun-patch-test", dependencies: { baz: "file:baz.tgz" } }),
+      "bunfig.toml": '[install]\nlinker = "hoisted"\ncache = false\n',
+    });
+    await cp(join(import.meta.dir, "baz-0.0.3.tgz"), join(String(filedir), "baz.tgz"));
+    const installed = join(String(filedir), "node_modules", "baz");
+    const unpatchedIndex = '#! /usr/bin/env node\n\nconsole.log("run baz");\n';
+
+    const first = await $`${bunExe()} i`.env(bunEnv).cwd(filedir).quiet();
+    expect(first.stdout.toString()).toContain("1 package installed");
+    expect(await Bun.file(join(installed, "index.js")).text()).toBe(unpatchedIndex);
+    expect(await readdir(installed).then(f => f.sort())).toEqual([".bun-tag", "index.js", "package.json"]);
+
+    const prepare = await $`${bunExe()} patch baz`.env(bunEnv).cwd(filedir).quiet().nothrow();
+    expect(prepare.stderr.toString()).not.toContain("error");
+    expect(prepare.exitCode).toBe(0);
+    await Bun.write(join(installed, "index.js"), unpatchedIndex.replace("run baz", "run patched baz"));
+
+    // The cache entry and the edited copy both contain `.bun-tag`, so the diff is the edit alone.
+    const commit = await $`${bunExe()} patch --commit node_modules/baz`.env(bunEnv).cwd(filedir).quiet().nothrow();
+    expect(commit.stderr.toString()).not.toContain("error");
+    expect(commit.exitCode).toBe(0);
+    expect((await Bun.file(join(String(filedir), "package.json")).json()).patchedDependencies).toEqual({
+      "baz@baz.tgz": "patches/baz@baz.tgz.patch",
+    });
+    const patch = await Bun.file(join(String(filedir), "patches", "baz@baz.tgz.patch")).text();
+    expect(patch.match(/^diff --git .*$/gm)).toEqual(["diff --git a/index.js b/index.js"]);
+    expect(patch).toContain('-console.log("run baz");');
+    expect(patch).toContain('+console.log("run patched baz");');
+
+    // `--commit` reinstalls the package from the patched cache entry.
+    expect(await Bun.file(join(installed, "index.js")).text()).toContain("run patched baz");
+    const patchedFiles = await readdir(installed).then(f => f.sort());
+    expect(patchedFiles).toEqual([
+      ".bun-tag",
+      expect.stringMatching(/^\.bun-tag-[0-9a-f]+$/),
+      "index.js",
+      "package.json",
+    ]);
+
+    const second = await $`${bunExe()} i`.env(bunEnv).cwd(filedir).quiet();
+    expect(second.stdout.toString()).toContain("(no changes)");
+    expect(await Bun.file(join(installed, "index.js")).text()).toContain("run patched baz");
+    expect(await readdir(installed).then(f => f.sort())).toEqual(patchedFiles);
+
+    // Dropping the patch must reinstall the unpatched tarball.
+    await Bun.write(
+      join(String(filedir), "package.json"),
+      JSON.stringify({ name: "bun-patch-test", dependencies: { baz: "file:baz.tgz" } }),
+    );
+    const third = await $`${bunExe()} i`.env(bunEnv).cwd(filedir).quiet();
+    expect(third.stdout.toString()).toContain("1 package installed");
+    expect(await Bun.file(join(installed, "index.js")).text()).toBe(unpatchedIndex);
+    expect(await readdir(installed).then(f => f.sort())).toEqual([".bun-tag", "index.js", "package.json"]);
+
+    const fourth = await $`${bunExe()} i`.env(bunEnv).cwd(filedir).quiet();
+    expect(fourth.stdout.toString()).toContain("(no changes)");
+  });
 
   describe("should patch a dependency when its dependencies are not hoisted", async () => {
     // is-even depends on is-odd ^0.1.2 and we add is-odd 3.0.1, which should be hoisted

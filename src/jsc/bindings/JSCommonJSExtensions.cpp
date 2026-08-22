@@ -145,12 +145,15 @@ extern "C" void NodeModuleModule__onRequireExtensionModifyNonFunction(
     Zig::GlobalObject* globalObject,
     const BunString* key);
 
-void onAssign(Zig::GlobalObject* globalObject, JSC::PropertyName propertyName, JSC::JSValue value)
+static bool isExtensionName(JSC::PropertyName propertyName)
 {
-    if (propertyName.isSymbol()) return;
     auto* name = propertyName.publicName();
-    if (!name->startsWith('.')) return;
-    BunString ext = Bun::toString(name);
+    return name && name->startsWith('.');
+}
+
+static void onAssign(Zig::GlobalObject* globalObject, JSC::PropertyName propertyName, JSC::JSValue value)
+{
+    BunString ext = Bun::toString(propertyName.publicName());
     JSC::CallData callData = JSC::getCallData(value);
     if (callData.type == JSC::CallData::Type::None) {
         return NodeModuleModule__onRequireExtensionModifyNonFunction(globalObject, &ext);
@@ -172,33 +175,47 @@ void onAssign(Zig::GlobalObject* globalObject, JSC::PropertyName propertyName, J
     NodeModuleModule__onRequireExtensionModify(globalObject, &ext, loader, value);
 }
 
-bool JSCommonJSExtensions::defineOwnProperty(JSC::JSObject* object, JSC::JSGlobalObject* globalObject, JSC::PropertyName propertyName, const JSC::PropertyDescriptor& descriptor, bool shouldThrow)
+// require() dispatches on the native table, so the table mirrors this object's own
+// entries. The entry is read back once the base class has applied the operation: a
+// store the object refuses (frozen object, non-writable entry, non-extensible object)
+// or a define that only changes attributes (Object.freeze) leaves the entry as it was,
+// so it leaves the table alone too. That is what Node's require() observes as well,
+// since it reads Module._extensions directly.
+template<typename Operation>
+static bool mutateExtension(JSC::JSObject* object, JSC::JSGlobalObject* globalObject, JSC::PropertyName propertyName, Operation operation)
 {
     if (!isAllowedToMutateExtensions(globalObject)) return true;
-    JSValue value = descriptor.value();
-    if (value) {
-        onAssign(defaultGlobalObject(globalObject), propertyName, value);
-    } else {
-        onAssign(defaultGlobalObject(globalObject), propertyName, JSC::jsUndefined());
+    if (!isExtensionName(propertyName)) return operation();
+
+    JSC::VM& vm = JSC::getVM(globalObject);
+    JSC::JSValue before = object->getDirect(vm, propertyName);
+    if (!operation()) return false;
+    JSC::JSValue after = object->getDirect(vm, propertyName);
+    if (after != before) {
+        onAssign(defaultGlobalObject(globalObject), propertyName, after ? after : JSC::jsUndefined());
     }
-    return Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow);
+    return true;
+}
+
+bool JSCommonJSExtensions::defineOwnProperty(JSC::JSObject* object, JSC::JSGlobalObject* globalObject, JSC::PropertyName propertyName, const JSC::PropertyDescriptor& descriptor, bool shouldThrow)
+{
+    return mutateExtension(object, globalObject, propertyName, [&] {
+        return Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow);
+    });
 }
 
 bool JSCommonJSExtensions::put(JSC::JSCell* cell, JSC::JSGlobalObject* globalObject, JSC::PropertyName propertyName, JSC::JSValue value, JSC::PutPropertySlot& slot)
 {
-    if (!isAllowedToMutateExtensions(globalObject)) return true;
-    onAssign(defaultGlobalObject(globalObject), propertyName, value);
-    return Base::put(cell, globalObject, propertyName, value, slot);
+    return mutateExtension(uncheckedDowncast<JSCommonJSExtensions>(cell), globalObject, propertyName, [&] {
+        return Base::put(cell, globalObject, propertyName, value, slot);
+    });
 }
 
 bool JSCommonJSExtensions::deleteProperty(JSC::JSCell* cell, JSC::JSGlobalObject* globalObject, JSC::PropertyName propertyName, JSC::DeletePropertySlot& slot)
 {
-    if (!isAllowedToMutateExtensions(globalObject)) return true;
-    bool deleted = Base::deleteProperty(cell, globalObject, propertyName, slot);
-    if (deleted) {
-        onAssign(defaultGlobalObject(globalObject), propertyName, JSC::jsUndefined());
-    }
-    return deleted;
+    return mutateExtension(uncheckedDowncast<JSCommonJSExtensions>(cell), globalObject, propertyName, [&] {
+        return Base::deleteProperty(cell, globalObject, propertyName, slot);
+    });
 }
 
 extern "C" uint32_t JSCommonJSExtensions__appendFunction(Zig::GlobalObject* globalObject, JSC::JSValue value)

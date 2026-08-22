@@ -115,6 +115,23 @@ We do not currently collect telemetry; this setting only controls anonymous cras
 telemetry = false
 ```
 
+### `CA`
+
+Select which CA certificate store Bun uses for TLS verification in the runtime (equivalent to the `--use-system-ca`, `--use-openssl-ca`, and `--use-bundled-ca` CLI flags). Applies to `bun run`, `bun test`, and implicit `bun file.ts` invocations.
+
+```toml title="bunfig.toml" icon="settings"
+# one of "system", "openssl", "bundled"
+CA = "system"
+```
+
+| Value       | Source of trusted CAs                                                                                                             |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `"bundled"` | Bun's bundled Mozilla CA list (default).                                                                                          |
+| `"system"`  | Bundled CAs merged with the OS trust store (Keychain on macOS, Windows Certificate Store on Windows, system PEM bundle on Linux). |
+| `"openssl"` | OpenSSL's default CA store.                                                                                                       |
+
+Precedence: CLI flag > `NODE_USE_SYSTEM_CA` env var > `bunfig.toml` `CA` > `"bundled"` (default). This does not affect `bun install`'s registry client — for that, see [`install.ca` and `install.cafile`](#install-ca-and-install-cafile).
+
 ### `env`
 
 Configure automatic `.env` file loading. Bun loads `.env` files by default. To disable this behavior:

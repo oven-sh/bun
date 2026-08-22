@@ -314,6 +314,22 @@ describe.concurrent("OTLP/HTTP exporter", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("start() without exporters keeps the env-configured pipeline instead of duplicating it", async () => {
+    using c = collector();
+    const { exitCode, stderr } = await run(
+      `
+        Bun.otel.start({ serviceName: "renamed" }); // options only, no exporters
+        Bun.otel.tracer("t").startSpan("once").end();
+        await Bun.otel.forceFlush();
+      `,
+      { BUN_OTEL: "1", OTEL_EXPORTER_OTLP_ENDPOINT: c.url },
+    );
+    expect(stderr).toBe("");
+    expect(c.spans().map((s: any) => s.name)).toEqual(["once"]);
+    expect(c.received.length).toBe(1);
+    expect(exitCode).toBe(0);
+  });
+
   test("BUN_OTEL_EXPORTER preset from env (datadog via local Agent address, honeycomb needs a key)", async () => {
     using c = collector();
     const { exitCode, stderr } = await run(`Bun.otel.tracer("t").startSpan("s").end();`, {

@@ -257,13 +257,14 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryTracerStartActiveSpan, (JSGlobalObject * lex
     JSValue extras;
     auto* span = tracerStartSpan(globalObject, tracer, callFrame->argument(0), options, context, &extras);
     RETURN_IF_EXCEPTION(scope, {});
+    // `extras` is empty when no Context was passed (keep the ambient ones),
+    // else the Context's extras or null (replace them).
+    JSValue prev = JSValue::decode(Bun__Telemetry__enterWithExtras(globalObject, JSValue::encode(span), JSValue::encode(extras)));
     if (fn.isUndefined()) {
         // `using span = tracer.startActiveSpan(...)`
-        JSValue prev = JSValue::decode(Bun__Telemetry__enter(globalObject, JSValue::encode(span)));
         span->field(JSTelemetrySpan::Field::Restore).set(vm, span, prev ? prev : jsUndefined());
         return JSValue::encode(span);
     }
-    JSValue prev = JSValue::decode(Bun__Telemetry__enterWithExtras(globalObject, JSValue::encode(span), JSValue::encode(extras && extras.isCell() ? extras : JSValue())));
     MarkedArgumentBuffer args;
     args.append(span);
     JSValue result = call(globalObject, fn, jsUndefined(), args, "startActiveSpan"_s);

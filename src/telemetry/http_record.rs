@@ -565,10 +565,13 @@ pub fn split_host_port(host: &[u8]) -> (&[u8], Option<u16>) {
         };
     }
     match bun_core::strings::last_index_of_char(host, b':') {
-        Some(i) => match port(&host[i + 1..]) {
-            Some(p) => (&host[..i], Some(p)),
-            None => (host, None),
-        },
-        None => (host, None),
+        // A second ':' means an unbracketed IPv6 literal, which has no port.
+        Some(i) if !bun_core::strings::contains_char(&host[..i], b':') => {
+            match port(&host[i + 1..]) {
+                Some(p) => (&host[..i], Some(p)),
+                None => (host, None),
+            }
+        }
+        _ => (host, None),
     }
 }

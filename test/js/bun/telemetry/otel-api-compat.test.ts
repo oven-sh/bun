@@ -147,6 +147,43 @@ describe("@opentelemetry/api", () => {
     await collect();
   });
 
+  test("ambient baggage survives activating a span (startActiveSpan / with / using), and an explicit Context replaces it", async () => {
+    const tracer = trace.getTracer("compat");
+    const withBag = propagation.setBaggage(ROOT_CONTEXT, propagation.createBaggage({ user: { value: "1" } }));
+    const seen: Record<string, string | undefined> = {};
+    const bag = () => propagation.getActiveBaggage()?.getEntry("user")?.value;
+    context.with(withBag, () => {
+      seen.outer = bag();
+      tracer.startActiveSpan("cb", span => {
+        seen.callback = bag();
+        span.end();
+      });
+      {
+        using _s = Bun.otel.tracer("t").startActiveSpan("using");
+        seen.using = bag();
+      }
+      Bun.otel.with(Bun.otel.tracer("t").startSpan("with"), () => {
+        seen.with = bag();
+        const carrier: Record<string, string> = {};
+        propagation.inject(context.active(), carrier);
+        seen.injected = carrier.baggage;
+      });
+      // An explicit Context is complete: no baggage in it, none active inside.
+      context.with(trace.setSpan(ROOT_CONTEXT, tracer.startSpan("explicit")), () => {
+        seen.explicit = bag();
+      });
+    });
+    expect(seen).toEqual({
+      outer: "1",
+      callback: "1",
+      using: "1",
+      with: "1",
+      injected: "user=1",
+      explicit: undefined,
+    });
+    await collect();
+  });
+
   test("api spans inside Bun.serve parent under the request span; trace.getActiveSpan() is the server span", async () => {
     const tracer = trace.getTracer("compat");
     using server = Bun.serve({

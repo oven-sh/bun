@@ -61,7 +61,10 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryEnterContext, (JSGlobalObject * lexicalGloba
     JSValue prev = data->getInternalField(0);
     if (header)
         globalObject->setAsyncContextTrackingEnabled(true);
-    data->putInternalField(vm, 0, TelemetryContextSlot::build(globalObject, header, extras, TelemetryContextSlot::read(prev)));
+    auto stores = TelemetryContextSlot::read(prev);
+    if (header && extras.isUndefined())
+        extras = stores.extras; // a bare Span keeps the ambient extras
+    data->putInternalField(vm, 0, TelemetryContextSlot::build(globalObject, header, extras, stores));
     return JSValue::encode(prev);
 }
 
@@ -81,15 +84,26 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryActiveExtras, (JSGlobalObject * globalObject
 using namespace JSC;
 using Bun::TelemetryContextSlot;
 
+/// `extras`: a Map from an explicit api Context, null for a Context without
+/// extras, or empty/undefined to keep the ambient ones (baggage etc.) —
+/// `startActiveSpan(name)` is `context.with(setSpan(active(), span))`.
 extern "C" JSC::EncodedJSValue Bun__Telemetry__enterWithExtras(Zig::GlobalObject* globalObject, JSC::EncodedJSValue headerValue, JSC::EncodedJSValue extrasValue)
 {
     auto& vm = globalObject->vm();
     auto* data = globalObject->m_asyncContextData.get();
     JSValue prev = data->getInternalField(0);
     JSValue header = JSValue::decode(headerValue);
+    JSValue extras = JSValue::decode(extrasValue);
     ASSERT(TelemetryContextSlot::isHeader(header));
     globalObject->setAsyncContextTrackingEnabled(true);
-    data->putInternalField(vm, 0, TelemetryContextSlot::build(globalObject, header, JSValue::decode(extrasValue), TelemetryContextSlot::read(prev)));
+    if (prev.isUndefined() && !(extras && extras.isCell())) [[likely]] {
+        data->putInternalField(vm, 0, header);
+        return JSValue::encode(prev);
+    }
+    auto stores = TelemetryContextSlot::read(prev);
+    if (!extras || extras.isUndefined())
+        extras = stores.extras;
+    data->putInternalField(vm, 0, TelemetryContextSlot::build(globalObject, header, extras, stores));
     return JSValue::encode(prev);
 }
 

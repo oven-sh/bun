@@ -112,9 +112,11 @@ function activeContext(): BunContext {
   return new BunContext(span, extras);
 }
 
-/** Read (span, extras) out of any api Context implementation, not just ours. */
-function unpackContext(ctx: any): [any, Map<symbol, unknown> | undefined] {
-  if (ctx instanceof BunContext) return [ctx.span, ctx.extras];
+/** Read (span, extras) out of any api Context implementation, not just ours.
+ *  extras: a Map, `null` (a Context with none — replaces the ambient ones) or
+ *  `undefined` (not a Context — ambient extras are kept). */
+function unpackContext(ctx: any): [any, Map<symbol, unknown> | null | undefined] {
+  if (ctx instanceof BunContext) return [ctx.span, ctx.extras ?? null];
   if (ctx && typeof ctx.getValue === "function") {
     // Foreign Context (api's BaseContext keeps its values in `_currentContext`).
     const span = toNativeSpan(ctx.getValue(SPAN_KEY));
@@ -124,10 +126,10 @@ function unpackContext(ctx: any): [any, Map<symbol, unknown> | undefined] {
       for (const [k, v] of values) {
         if (k !== SPAN_KEY) (extras ??= new Map()).set(k, v);
       }
-      return [span, extras];
+      return [span, extras ?? null];
     }
     const bag = ctx.getValue(BAGGAGE_KEY);
-    return [span, bag === undefined ? undefined : new Map([[BAGGAGE_KEY, bag]])];
+    return [span, bag === undefined ? null : new Map([[BAGGAGE_KEY, bag]])];
   }
   return [undefined, undefined];
 }

@@ -1521,7 +1521,6 @@ impl Terminal {
                 "write() argument must be a string or ArrayBuffer"
             )));
         };
-        // defer string_or_buffer.deinit() — Drop handles it.
 
         let bytes = string_or_buffer.slice();
 

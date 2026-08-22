@@ -197,7 +197,6 @@ impl UpgradeCommand {
             },
         };
         header_entries.append(accept).expect("oom");
-        // defer if SILENT header_entries.deinit() — Drop handles this
 
         // Incase they're using a GitHub proxy in e.g. China
         let mut github_api_domain: &[u8] = b"api.github.com";

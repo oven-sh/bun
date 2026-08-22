@@ -1421,7 +1421,6 @@ pub(crate) fn inject<'a>(
 
         #[cfg(not(windows))]
         {
-            // defer self_fd.close()
             let _self_fd_guard = Syscall::CloseOnDrop::new(self_fd);
 
             if let Err(e) = bun_sys::copy_file(self_fd, fd) {
@@ -1816,7 +1815,6 @@ pub(crate) fn download_to_path(
         let mut tarball_bytes: Vec<u8> = Vec::new();
         {
             refresher.refresh();
-            // defer compressed_archive_bytes.list.deinit(allocator) — handled by Drop
 
             if compressed_archive_bytes.list.is_empty() {
                 // Return error without printing - let caller handle the messaging
@@ -1845,7 +1843,6 @@ pub(crate) fn download_to_path(
 
             {
                 refresher.start(b"Extracting", 0);
-                // defer node.end() — see explicit calls below
 
                 let mut tmpname_buf = [0u8; 1024];
                 let tempdir_name: &ZStr =

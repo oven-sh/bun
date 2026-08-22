@@ -1416,6 +1416,18 @@ nativeTests.test_cleanup_hook_order = () => {
   addon.test();
 };
 
+// Node tears an addon's env down (its cleanup hooks, then the finalizers of
+// whatever it still has alive) only when the main thread's event loop runs dry.
+// process.exit() skips all of it, so only the two lines printed by test() are
+// expected here: no "hookN executed" lines and no "finalize order" line.
+nativeTests.test_env_teardown_skipped_by_process_exit = () => {
+  const hooks = require("./build/Debug/test_cleanup_hook_order.node");
+  const wraps = require("./build/Debug/test_wrap_cleanup_order.node");
+  hooks.test();
+  globalThis.keep = wraps.createParentAndChildren(1);
+  process.exit(0);
+};
+
 nativeTests.test_cleanup_hook_remove_nonexistent = () => {
   const addon = require("./build/Debug/test_cleanup_hook_remove_nonexistent.node");
   addon.test();

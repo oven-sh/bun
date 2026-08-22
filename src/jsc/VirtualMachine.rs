@@ -1732,11 +1732,23 @@ impl VirtualMachine {
             || self.should_destruct_main_thread_on_exit()
     }
 
+    /// Whether an env's cleanup may turn the event loop to wait for the addon's
+    /// async cleanup hooks (`NapiEnv::drain`). Of the exits that tear the envs
+    /// down, only a requested main-thread exit under `BUN_DESTRUCT_VM_ON_EXIT`
+    /// may not: Node runs no cleanup hooks there at all, so nothing can depend
+    /// on the wait, and the exit stays immediate.
+    pub fn exit_waits_for_cleanup(&self) -> bool {
+        !self.is_main_thread() || !self.exit_handler.requested
+    }
+
     /// Drains `RareData::cleanup_hooks`, repeating while the hooks push more (an env's
     /// cleanup defers finalizers onto this list once shutdown has begun). The `Vec` is
-    /// taken out of `rare_data` before the hooks run: they re-enter the VM.
-    fn run_cleanup_hooks(&mut self) {
+    /// taken out of `rare_data` before the hooks run: they re-enter the VM. Also called
+    /// on each loop turn an env's cleanup makes while it waits for the addon's async
+    /// cleanup hooks (`napi_internal_tick_event_loop`).
+    pub fn run_cleanup_hooks(&mut self) {
         loop {
+            // The hooks re-enter the VM, so no borrow of `rare_data` is held while they run.
             let hooks = match self.rare_data.as_deref_mut() {
                 Some(rare) if !rare.cleanup_hooks.is_empty() => {
                     core::mem::take(&mut rare.cleanup_hooks)

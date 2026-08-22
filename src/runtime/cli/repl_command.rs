@@ -218,6 +218,7 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
                 vm.print_error_like_object_to_console(exception);
             }
             vm.exit_handler.exit_code = 1;
+            vm.exit_handler.requested = true;
             vm.on_exit();
             vm.global_exit();
         }

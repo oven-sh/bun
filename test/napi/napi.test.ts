@@ -2094,6 +2094,176 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
     });
   });
 
+  // test_async_cleanup_hook_wait.c registers an "early" hook that completes at
+  // once and a "late" hook that completes later, once env teardown is already
+  // waiting for it, and an instance data finalizer that reports what had
+  // completed when it ran. Teardown calls the whole batch (latest registered
+  // first), turns the event loop until every handle has been removed, and only
+  // then runs the finalizers, so the lines always come out in this order. A
+  // teardown that does not wait prints the finalizer line with "late done=0"
+  // right after "early: done".
+  describe.concurrent("async cleanup hooks", () => {
+    const hookLines = [
+      "late: hook",
+      "early: hook",
+      "early: done",
+      "late: done",
+      "instance data finalizer: early done=1 late done=1",
+    ];
+
+    it("env teardown waits for a hook that completes through the event loop", async () => {
+      // The late hook's thread reports back through a threadsafe function the
+      // hook created; the function's callback completes the hook.
+      const output = await checkSameOutput("test_async_cleanup_hook_wait", ["tsfn", "main"]);
+      // Pinned so matching Node on a shared failure cannot pass. printf() via
+      // the Windows CRT emits \r\n, so split on either ending.
+      expect(output.split(/\r?\n/)).toEqual(["armed: tsfn status=0", "resolved to undefined", ...hookLines]);
+    });
+
+    it("a Worker's env teardown waits the same way", async () => {
+      const output = await checkSameOutput("test_async_cleanup_hook_wait", ["tsfn", "worker"]);
+      expect(output.split(/\r?\n/)).toEqual([
+        "armed: tsfn status=0",
+        ...hookLines,
+        "worker exited with 0",
+        "resolved to undefined",
+      ]);
+    });
+
+    it("a Worker that calls process.exit() still waits", async () => {
+      const output = await checkSameOutput("test_async_cleanup_hook_wait", ["tsfn", "worker-exit"]);
+      expect(output.split(/\r?\n/)).toEqual([
+        "armed: tsfn status=0",
+        ...hookLines,
+        "worker exited with 0",
+        "resolved to undefined",
+      ]);
+    });
+
+    it("a Worker that its parent terminates still waits", async () => {
+      // Script is forbidden in the Worker by then; the completion is native.
+      const output = await checkSameOutput("test_async_cleanup_hook_wait", ["tsfn", "worker-terminate"]);
+      expect(output.split(/\r?\n/)).toEqual([
+        "armed: tsfn status=0",
+        ...hookLines,
+        "worker exited with 1",
+        "resolved to undefined",
+      ]);
+    });
+
+    // The two below complete the hook from another thread, which Node only
+    // supports by accident (its bookkeeping is not thread safe), so Bun's
+    // output is checked on its own instead of against Node. The wait parks in
+    // the loop's poll, so these also hang unless the completion wakes it.
+    it("a completion signalled from another thread ends the wait", async () => {
+      const output = await runOn(bunExe(), "test_async_cleanup_hook_wait", ["thread", "main"]);
+      expect(output.trim().split(/\r?\n/)).toEqual(["armed: thread status=0", "resolved to undefined", ...hookLines]);
+    });
+
+    it("a completion signalled from another thread ends a Worker's wait", async () => {
+      // The Worker frees its env as soon as the wait ends, while the other
+      // thread may still be inside napi_remove_async_cleanup_hook.
+      const output = await runOn(bunExe(), "test_async_cleanup_hook_wait", ["thread", "worker"]);
+      expect(output.trim().split(/\r?\n/)).toEqual([
+        "armed: thread status=0",
+        ...hookLines,
+        "worker exited with 0",
+        "resolved to undefined",
+      ]);
+    });
+
+    // Node runs no cleanup hooks at all when the main thread exits through
+    // process.exit() or a fatal error, and neither does Bun ("env teardown on
+    // the main thread" above). BUN_DESTRUCT_VM_ON_EXIT is the exception: the
+    // VM is destroyed like a worker's, so the envs are torn down first. Even
+    // then the exit does not wait for a hook: the late hook here never
+    // completes, so a wait would never end.
+    const destruct = { BUN_DESTRUCT_VM_ON_EXIT: "1" };
+    const unwaitedLines = [
+      "late: hook",
+      "early: hook",
+      "early: done",
+      "instance data finalizer: early done=1 late done=0",
+    ];
+
+    it("process.exit() on the main thread does not wait for the hooks when it tears the envs down", async () => {
+      const output = await runOn(bunExe(), "test_async_cleanup_hook_wait", ["never", "exit"], destruct);
+      expect(output.trim().split(/\r?\n/)).toEqual(["armed: never status=0", ...unwaitedLines]);
+    });
+
+    it("an uncaught exception on the main thread does not wait for the hooks when it tears the envs down", async () => {
+      await using proc = spawn({
+        cmd: [bunExe(), join(__dirname, "napi-app/main.js"), "test_async_cleanup_hook_wait", '["never", "uncaught"]'],
+        env: { ...bunEnv, ...destruct },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.trim().split(/\r?\n/)).toEqual([
+        "armed: never status=0",
+        "resolved to undefined",
+        ...unwaitedLines,
+      ]);
+      expect(stderr).toContain("uncaught, on purpose");
+      expect(exitCode).toBe(1);
+    });
+
+    // Turning the loop during teardown dispatches tasks that were queued for
+    // threadsafe functions whose env was torn down earlier. The function has
+    // to stay allocated for its task (ASAN catches a use after free here) and
+    // be freed once the task is gone.
+    it("dispatches the queued task of a threadsafe function an earlier env released at exit", async () => {
+      const output = await runOn(bunExe(), "test_tsfn_released_at_exit_then_wait", []);
+      expect(output.trim().split(/\r?\n/)).toEqual([
+        "started: release status=0",
+        "armed: tsfn status=0",
+        "released tsfn at exit: status=0",
+        "tsfn finalizer",
+        ...hookLines,
+      ]);
+    });
+
+    it("dispatches the queued task of the env's own threadsafe function in a second round of hooks", async () => {
+      const output = await runOn(bunExe(), "test_tsfn_released_at_exit_rearm", []);
+      expect(output.trim().split(/\r?\n/)).toEqual([
+        "started: rearm status=0",
+        "released tsfn at exit: status=0",
+        "tsfn finalizer: registered an async cleanup hook, status=0",
+        "async hook: called",
+        "async hook: done",
+      ]);
+    });
+
+    it("frees a threadsafe function whose task a Worker released unrun, or dispatched, exactly once", async () => {
+      const output = await runOn(bunExe(), "test_tsfn_released_at_exit_in_worker", []);
+      expect(output.trim().split(/\r?\n/)).toEqual([
+        "started: release status=0",
+        "released tsfn at exit: status=0",
+        "tsfn finalizer",
+        "started: release status=0",
+        "armed: tsfn status=0",
+        "released tsfn at exit: status=0",
+        "tsfn finalizer",
+        ...hookLines,
+        "released unrun: worker exited with 0, live=0",
+        "dispatched: worker exited with 0, live=0",
+        "resolved to undefined",
+      ]);
+    });
+
+    it("calls sync and async hooks from one queue in reverse registration order", async () => {
+      // Each async hook here removes its handle inside the hook itself, so the
+      // wait ends as soon as the batch has been called.
+      const output = await checkSameOutput("test_cleanup_hook_mixed_order", []);
+      expect(output.split(/\r?\n/).slice(-4)).toEqual([
+        "async_hook2 executed at position 0",
+        "regular_hook2 executed at position 1",
+        "async_hook1 executed at position 2",
+        "regular_hook1 executed at position 3",
+      ]);
+    });
+  });
+
   describe("error handling", () => {
     it("removing non-existent env cleanup hook should not crash", async () => {
       // Test that removing non-existent hooks doesn't crash the process
@@ -2108,7 +2278,10 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
     it("hook handle stays valid until the addon removes it (#37201)", async () => {
       // An async cleanup hook releases a threadsafe function whose finalizer
       // then calls napi_remove_async_cleanup_hook; the handle must not be
-      // freed when the hook returns.
+      // freed when the hook returns. That finalizer is also what completes the
+      // hook, and during shutdown finalizers are queued as VM cleanup hooks,
+      // not on the event loop: the wait for the hook has to run that queue,
+      // or this hangs.
       const output = await checkSameOutput("test_async_cleanup_hook_tsfn_release", []);
       // Pin the successful lifecycle, so matching Node on a shared failure
       // (non-zero status in both) cannot pass. printf() via the Windows CRT

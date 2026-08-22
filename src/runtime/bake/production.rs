@@ -226,6 +226,7 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
             if vm.exit_handler.exit_code == 0 {
                 vm.exit_handler.exit_code = 1;
             }
+            vm.exit_handler.requested = true;
             vm.on_exit();
             vm.global_exit();
         }

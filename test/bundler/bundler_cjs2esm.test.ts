@@ -572,6 +572,53 @@ describe("bundler", () => {
     onAfterBundle: noNestedExport,
     run: { stdout: "[1,2]" },
   });
+  itBundled("cjs2esm/DeleteBareNameErrorsWithEsmOutput", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./d.cjs";
+      `,
+      "/d.cjs": /* js */ `
+        var x = 1;
+        delete x;
+        console.log("del", typeof x);
+      `,
+    },
+    format: "esm",
+    bundleErrors: {
+      "/d.cjs": ['"delete" of a bare identifier cannot be used with the ESM output format due to strict mode'],
+    },
+  });
+  itBundled("cjs2esm/DeleteBareNameAllowedWithCjsOutput", {
+    files: {
+      "/entry.js": /* js */ `
+        require("./d.cjs");
+      `,
+      "/d.cjs": /* js */ `
+        var x = 1;
+        delete x;
+        console.log("del", typeof x);
+      `,
+    },
+    format: "cjs",
+    onAfterBundle: api => {
+      expect(api.readFile("out.js")).toContain("delete x");
+    },
+  });
+  itBundled("cjs2esm/DeletePropertyAllowedWithEsmOutput", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./d.cjs";
+      `,
+      "/d.cjs": /* js */ `
+        var o = { x: 1 };
+        delete o.x;
+        delete o["y"];
+        console.log("del", typeof o.x);
+      `,
+    },
+    format: "esm",
+    run: { stdout: "del undefined" },
+  });
   itBundled("cjs2esm/ExportsAssignTopLevelStillConverts", {
     files: {
       "/entry.js": /* js */ `

@@ -2668,7 +2668,10 @@ console.log(<div {...obj} key="after" />);`),
     });
 
     it("exponentiation", () => {
-      expectPrinted("(delete x) ** 0", "(delete x) ** 0");
+      // `delete x` is a strict-mode error; `expectPrinted` wraps the input in
+      // `export default (...)`, which makes it strict. Use the non-wrapping
+      // helper for the bare-identifier case.
+      expectPrinted_("(delete x) ** 0", "(delete x) ** 0");
       expectPrinted("(delete x.prop) ** 0", "(delete x.prop) ** 0");
       expectPrinted("(delete x[0]) ** 0", "(delete x[0]) ** 0");
 
@@ -2697,7 +2700,7 @@ console.log(<div {...obj} key="after" />);`),
       expectPrinted("(~1) ** 2", "(~1) ** 2");
       expectPrinted("(!1) ** 2", "false ** 2");
       expectPrinted("(void x) ** 2", "(void x) ** 2");
-      expectPrinted("(delete x) ** 2", "(delete x) ** 2");
+      expectPrinted_("(delete x) ** 2", "(delete x) ** 2");
       expectPrinted("(typeof x) ** 2", "(typeof x) ** 2");
       expectPrinted("undefined ** 2", "undefined ** 2");
 
@@ -3458,6 +3461,15 @@ console.log(resolve.length)
     expectPrinted_("delete foo.bar.baz", "delete foo.bar.baz");
     expectPrinted_("delete foo?.bar.baz", "delete foo?.bar.baz");
     expectPrinted_("delete foo?.bar?.baz", "delete foo?.bar?.baz");
+  });
+
+  it("delete bare identifier", () => {
+    expectPrinted_("delete x", "delete x");
+    expectPrinted_("var x; delete (x)", "var x;\ndelete x");
+    expectParseError("'use strict'; delete x", '"delete" of a bare identifier cannot be used in strict mode');
+    expectParseError("delete x; export {}", '"delete" of a bare identifier cannot be used in strict mode');
+    expectParseError("class C { f() { delete x } }", '"delete" of a bare identifier cannot be used in strict mode');
+    expectPrinted_("var o = {}; delete o.x; delete o['y']", 'var o = {};\ndelete o.x;\ndelete o["y"]');
   });
 
   it("useDefineForConst TypeScript class initialization", () => {

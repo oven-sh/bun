@@ -439,6 +439,16 @@ describe.concurrent("OTLP/HTTP exporter", () => {
     }
   });
 
+  test("Bun.otel.start() reports malformed OTEL_* env once, like BUN_OTEL=1 does", async () => {
+    using c = collector();
+    const { stderr, exitCode } = await run(
+      `Bun.otel.start({ endpoint: process.env.C }); Bun.otel.start({ endpoint: process.env.C });`,
+      { C: c.url, OTEL_TRACES_SAMPLER: "traceidratio", OTEL_TRACES_SAMPLER_ARG: "lots" },
+    );
+    expect(stderr.match(/OTEL_TRACES_SAMPLER_ARG/g)?.length).toBe(1);
+    expect(exitCode).toBe(0);
+  });
+
   test("start() without exporters keeps the env-configured pipeline instead of duplicating it", async () => {
     using c = collector();
     const { exitCode, stderr } = await run(

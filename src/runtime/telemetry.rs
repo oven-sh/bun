@@ -451,6 +451,12 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let opts = frame.argument(0);
     let vm = global.bun_vm();
     let env = read_env_config(vm);
+    if !configured() {
+        // (the BUN_OTEL=1 startup path printed them already otherwise)
+        for w in &env.warnings {
+            bun_core::warn!("[otel] {}", w);
+        }
+    }
     let mut cfg = env.config;
     let mut js_exporters: Vec<Arc<exporter::JsExporter>> = Vec::new();
     let mut replaces_exporters = false;

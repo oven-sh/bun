@@ -1,3 +1,5 @@
+import { bunEnv, bunExe } from "harness";
+
 test("simple usage", done => {
   const channel = new MessageChannel();
   const port1 = channel.port1;
@@ -9,6 +11,31 @@ test("simple usage", done => {
   };
 
   port1.postMessage("hello");
+});
+
+test("a message that fails to deserialize fires messageerror and later messages still arrive", async () => {
+  // Serializes fine but fails to deserialize: the DataView's offset is only in bounds
+  // after a getter resized the buffer, and the buffer was serialized before that.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { port1, port2 } = new MessageChannel();
+       const seen = [];
+       const record = s => { seen.push(s); if (seen.length === 2) { console.log(seen.join(",")); port1.close(); port2.close(); } };
+       port2.onmessageerror = e => record("messageerror:" + e.data);
+       port2.onmessage = e => record("message:" + e.data);
+       const ab = new ArrayBuffer(8, { maxByteLength: 65536 });
+       port1.postMessage({ ab, get grow() { ab.resize(65536); return 1; }, get view() { return new DataView(ab, 4096, 16); } });
+       port1.postMessage("after");`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("messageerror:null,message:after\n");
+  expect(exitCode).toBe(0);
 });
 
 test("transfer message port", done => {

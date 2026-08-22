@@ -320,6 +320,8 @@ static bool drainInbox(WorkerMessagingProxy::MessageInbox& inbox, Zig::GlobalObj
             auto message = batch.takeFirst();
             auto ports = MessagePort::entanglePorts(context, WTF::move(message.transferredPorts));
             auto event = MessageEvent::create(globalObject, message.message.releaseNonNull(), nullptr, WTF::move(ports));
+            if (globalObject.vm().hasPendingTerminationException()) [[unlikely]]
+                return false;
             dispatch(event.event);
             if (globalObject.drainMicrotasks())
                 return false; // termination pending

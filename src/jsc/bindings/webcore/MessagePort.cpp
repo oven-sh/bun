@@ -367,6 +367,10 @@ void MessagePort::dispatchOneMessage(ScriptExecutionContext& context, MessageWit
     }
 
     auto event = MessageEvent::create(*context.jsGlobalObject(), message.message.releaseNonNull(), {}, {}, {}, WTF::move(ports));
+    if (scope.exception()) [[unlikely]] {
+        RELEASE_ASSERT(vm->hasPendingTerminationException());
+        return;
+    }
     dispatchEvent(event.event);
 }
 

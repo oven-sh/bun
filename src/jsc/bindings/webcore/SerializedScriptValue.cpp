@@ -5096,7 +5096,7 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
     // Rethrow is a bit simpler here since we don't deal with return codes.
     RETURN_IF_EXCEPTION(scope, {});
 
-    return result.first;
+    return result.first ? result.first : jsNull();
 }
 
 } // namespace WebCore

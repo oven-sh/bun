@@ -581,6 +581,34 @@ describe("web worker", () => {
       expect(exitCode).toBe(0);
     });
   });
+
+  test("a message that fails to deserialize fires messageerror in the worker and later messages still arrive", async () => {
+    // Serializes fine but fails to deserialize: the DataView's offset is only in bounds
+    // after a getter resized the buffer, and the buffer was serialized before that.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const src = \`self.addEventListener("messageerror", e => postMessage("messageerror:" + e.data));
+                      self.onmessage = e => postMessage("message:" + e.data);\`;
+         const w = new Worker(URL.createObjectURL(new Blob([src])));
+         w.onerror = e => { console.log("error", e.message); process.exit(1); };
+         const seen = [];
+         w.onmessage = e => { seen.push(e.data); if (seen.length === 2) { console.log(seen.join(",")); w.terminate(); } };
+         w.addEventListener("open", () => {
+           const ab = new ArrayBuffer(8, { maxByteLength: 65536 });
+           w.postMessage({ ab, get grow() { ab.resize(65536); return 1; }, get view() { return new DataView(ab, 4096, 16); } });
+           w.postMessage("after");
+         });`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("messageerror:null,message:after\n");
+    expect(exitCode).toBe(0);
+  });
 });
 
 // TODO: move to node:worker_threads tests directory

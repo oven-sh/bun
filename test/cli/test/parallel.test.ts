@@ -596,29 +596,50 @@ test("--parallel --coverage merges LCOV across workers", async () => {
 
 test("--parallel --coverage prints merged text table", async () => {
   using dir = tempDir("parallel-coverage-text", {
+    // The default differs between debug and release builds.
+    "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\n`,
     "lib-a.js": `export function used() { return 1; }\nexport function unused() { return 2; }\n`,
     "lib-b.js": `export function go() { return 3; }\n`,
     "a.test.js": `import {test,expect} from "bun:test"; import {used} from "./lib-a.js"; test("a",()=>expect(used()).toBe(1));`,
     "b.test.js": `import {test,expect} from "bun:test"; import {go} from "./lib-b.js"; test("b",()=>expect(go()).toBe(3));`,
   });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", "--parallel=2", "--coverage", "--coverage-reporter=text"],
-    env: bunEnv,
-    cwd: String(dir),
-    stderr: "pipe",
-    stdout: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const run = async (...flags: string[]) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...flags, "--coverage", "--coverage-reporter=text"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Keep just the coverage table (top rule through bottom rule): under
+    // --parallel the per-file result lines before it arrive in completion order.
+    const lines = stderr.split("\n");
+    const top = lines.findIndex(line => line.startsWith("---"));
+    const bottom = lines.findLastIndex(line => line.startsWith("---"));
+    return { stdout, table: lines.slice(top, bottom + 1).join("\n"), exitCode };
+  };
 
-  expect(stdout).toContain("PARALLEL");
-  // Table header + both source files present with a numeric % Lines column.
-  expect(stderr).toContain("% Funcs");
-  expect(stderr).toContain("% Lines");
-  expect(stderr).toMatch(/lib-a\.js\s+\|\s+\d+\.\d+\s+\|\s+\d+\.\d+/);
-  expect(stderr).toMatch(/lib-b\.js\s+\|\s+\d+\.\d+\s+\|\s+\d+\.\d+/);
-  expect(stderr).toContain("All files");
-  expect(exitCode).toBe(0);
+  const [parallel, serial] = await Promise.all([run("--parallel=2"), run()]);
+
+  expect(parallel.stdout).toContain("PARALLEL");
+  expect(parallel.table).toMatchInlineSnapshot(`
+    "-----------|---------|---------|-------------------
+    File       | % Funcs | % Lines | Uncovered Line #s
+    -----------|---------|---------|-------------------
+    All files  |   75.00 |  100.00 |
+     lib-a.js  |   50.00 |  100.00 | 
+     lib-b.js  |  100.00 |  100.00 | 
+    -----------|---------|---------|-------------------"
+  `);
+  expect(parallel.exitCode).toBe(0);
+
+  // The merged table is laid out exactly like the one the serial runner prints
+  // (which is also what a --parallel run with a single file falls back to).
+  expect(serial.stdout).not.toContain("PARALLEL");
+  expect(parallel.table).toBe(serial.table);
+  expect(serial.exitCode).toBe(0);
 });
 
 test("--parallel --coverage enforces coverageThreshold with lcov-only reporter", async () => {

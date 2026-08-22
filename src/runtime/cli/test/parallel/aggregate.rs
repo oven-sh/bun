@@ -329,6 +329,11 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
         avg.stmts += frac.stmts;
         avg_n += 1.0;
     }
+    if avg_n > 0.0 {
+        avg.functions /= avg_n;
+        avg.lines /= avg_n;
+        avg.stmts /= avg_n;
+    }
     opts.fractions.failing = failing;
 
     if opts.reporters.text {
@@ -364,7 +369,20 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
         );
         sep::<ENABLE_COLORS>(console, max_len);
 
+        // Same row order as the serial reporter (test_command.rs
+        // print_code_coverage): the "All files" row, then one row per file.
         let mut body: Vec<u8> = Vec::new();
+        let _ = CoverageReportText::write_format_with_values::<ENABLE_COLORS>(
+            b"All files",
+            max_len,
+            avg,
+            base,
+            failing,
+            &mut body,
+            false,
+        );
+        let _ = body.write_all(Output::pretty_fmt::<ENABLE_COLORS>("<r><d> |<r>\n").as_ref());
+
         debug_assert_eq!(order.len(), fracs.len());
         for (&i, frac) in order.iter().zip(fracs.iter()) {
             let fc = &by_file.values()[i];
@@ -403,26 +421,7 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
             let _ = body.write_all(b"\n");
         }
 
-        if avg_n > 0.0 {
-            avg.functions /= avg_n;
-            avg.lines /= avg_n;
-            avg.stmts /= avg_n;
-        }
         let _ = console.write_all(&body);
-        // bun_core::io::Writer doesn't impl bun_io::Write — buffer
-        // through a Vec then write_all once.
-        let mut all_files: Vec<u8> = Vec::new();
-        let _ = CoverageReportText::write_format_with_values::<ENABLE_COLORS>(
-            b"All files",
-            max_len,
-            avg,
-            base,
-            failing,
-            &mut all_files,
-            false,
-        );
-        let _ = console.write_all(&all_files);
-        let _ = console.write_all(Output::pretty_fmt::<ENABLE_COLORS>("<r><d> |<r>\n").as_ref());
         sep::<ENABLE_COLORS>(console, max_len);
 
         Output::flush();

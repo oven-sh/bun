@@ -32,11 +32,13 @@ if (mode === "produce-once") {
 }
 
 // Wait until nothing reads our stdout anymore, so the relay really fails.
+// Our stdout is a socket pair too (Bun.spawn), so the failure is EPIPE, or
+// ECONNRESET when the test closed its end while a line was still unread.
 while (true) {
   try {
     writeSync(1, "still has a reader\n");
   } catch (e: any) {
-    if (e.code === "EPIPE") break;
+    if (e.code === "EPIPE" || e.code === "ECONNRESET") break;
     if (e.code !== "EAGAIN") throw e;
   }
   await Bun.sleep(1);

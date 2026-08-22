@@ -80,6 +80,14 @@ beforeAll(async () => {
         },
       }),
     });
+
+    // Makes the fixture a project `tsc -p .` can be pointed at (the tsc case below). skipLibCheck
+    // is off for the same reason as in diagnose(): the .d.ts files are what is under test. The
+    // typeTest cases build their options from sourceTsconfig in-process and never read this file.
+    const tsconfig = structuredClone(sourceTsconfig);
+    tsconfig.compilerOptions.skipLibCheck = false;
+    tsconfig.include = ["*.ts", "*.tsx"];
+    await Bun.write(join(BASE_FIXTURE_DIR, "tsconfig.json"), JSON.stringify(tsconfig, null, 2));
   } catch (e) {
     if (e instanceof Bun.$.ShellError) {
       console.log(e.stderr.toString());
@@ -120,7 +128,8 @@ async function createIsolatedFixture(packages?: string[]): Promise<string> {
 function typeTest(name: string, config: TypeTestConfig) {
   // This file only tests the bun-types .d.ts, not bun's own code. Driving the
   // TypeScript LanguageService in-process under a debug build is ~40x slower,
-  // so run the type-checking cases on release builds only.
+  // so run these cases on release builds only; on debug builds the fixture is
+  // still checked by the spawned tsc case below.
   test.skipIf(isDebug)(name, async () => {
     const fixtureDir = await createIsolatedFixture(config.packages);
     const { diagnostics, emptyInterfaces } = await diagnose(fixtureDir, {
@@ -305,10 +314,6 @@ afterAll(async () => {
   if (TEMP_DIR) {
     if (Bun.env.TYPES_INTEGRATION_TEST_KEEP_TEMP_DIR === "true") {
       console.log(`Keeping temp dir ${TEMP_DIR} for debugging`);
-      // Write tsconfig with skipLibCheck disabled for proper type checking
-      const tsconfig = structuredClone(sourceTsconfig);
-      tsconfig.compilerOptions.skipLibCheck = false;
-      await Bun.write(join(TEMP_DIR, "base-fixture", "tsconfig.json"), JSON.stringify(tsconfig, null, 2));
     } else {
       await rm(TEMP_DIR, { recursive: true, force: true });
     }
@@ -333,61 +338,20 @@ describe("@types/bun integration test", () => {
     });
   });
 
-  // TypeScript 7's native (Go-based) compiler does not expose a JS compiler API yet,
-  // so unlike the tests above we have to write a real tsconfig and spawn the CLI.
-  // https://devblogs.microsoft.com/typescript/announcing-typescript-7-0-beta/
-  describe("tsgo (TypeScript 7 native preview)", () => {
-    test.skipIf(isDebug)("checks without lib.dom.d.ts", async () => {
-      const fixtureDir = await createIsolatedFixture(["@typescript/native-preview"]);
-
-      const tsconfig = structuredClone(sourceTsconfig);
-      tsconfig.compilerOptions.skipLibCheck = false;
-      tsconfig.include = ["*.ts", "*.tsx"];
-      await Bun.write(join(fixtureDir, "tsconfig.json"), JSON.stringify(tsconfig, null, 2));
-
-      // Resolve the entrypoint from the package's own bin field; the nightly
-      // has renamed it before (bin/tsgo.js -> bin/tsgo).
-      const tsgoPkgDir = join(fixtureDir, "node_modules", "@typescript", "native-preview");
-      const tsgoPkg = await Bun.file(join(tsgoPkgDir, "package.json")).json();
-      const tsgo = join(tsgoPkgDir, typeof tsgoPkg.bin === "string" ? tsgoPkg.bin : tsgoPkg.bin.tsgo);
-
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), tsgo, "-p", "."],
-        env: bunEnv,
-        cwd: fixtureDir,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-      expect(stderr.trim()).toBe("");
-      expect(stdout.trim()).toBe("");
-      expect(exitCode).toBe(0);
-    });
-  });
-
-  // Runs on debug builds too: spawning tsc over a single file is cheap,
-  // unlike the in-process LanguageService runs above.
-  describe("Bun.mmap", () => {
-    test("MMapOptions accepts offset and size", async () => {
-      const checkDir = join(TEMP_DIR, "mmap-options-check");
-      const tsconfig = structuredClone(sourceTsconfig);
-      tsconfig.include = ["mmap-options.ts"];
-      tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
-      await mkdir(checkDir, { recursive: true });
-      await makeTree(checkDir, {
-        "tsconfig.json": JSON.stringify(tsconfig, null, 2),
-        "mmap-options.ts": `const view = Bun.mmap("./data.bin", { shared: true, sync: false, offset: 4096, size: 1024 });
-           view satisfies Uint8Array<ArrayBuffer>;
-           Bun.mmap("./data.bin", { offset: 4096 }) satisfies Uint8Array<ArrayBuffer>;
-           Bun.mmap("./data.bin", { size: 1024 }) satisfies Uint8Array<ArrayBuffer>;`,
-      });
-
+  // The same fixture checked by the typescript the fixture installs (`latest`, the native
+  // compiler since 7.0; it ships no JS compiler API, so unlike typeTest this has to spawn the
+  // CLI, and typeTest keeps using the typescript in test/node_modules). The check itself runs
+  // in the native binary, so this is as cheap under a debug build as under a release one and
+  // is not skipped there. Assertions for a .d.ts change go in fixture/*.ts, where this case
+  // and the typeTest cases check them; this is deliberately the only spawned compiler in the
+  // file (test/internal/source-lints/bun-types-test-spawn-sites.test.ts).
+  describe("tsc (the fixture's typescript dependency)", () => {
+    test("checks without lib.dom.d.ts", async () => {
+      // The tsconfig sets noEmit, so this leaves the shared fixture untouched.
       await using proc = Bun.spawn({
         cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
         env: bunEnv,
-        cwd: checkDir,
+        cwd: BASE_FIXTURE_DIR,
         stdout: "pipe",
         stderr: "pipe",
       });

@@ -149,33 +149,29 @@ jobs:
             }
 
             // Whether the keyword at `index` states that the PR closes what follows.
-            // Decided by what comes before it.
+            // Decided by the words before it, on this line or wrapped from the one
+            // before.
             function isClosingStatement(tokens, index, keyword) {
-              const k = skipInterveningBack(tokens, index - 1);
-              const before = tokens[k];
-              if (before === undefined) return true;
+              let k = skipInterveningBack(tokens, index - 1);
               // "#100 supersedes #1": another pull request is the subject. A line
               // break ends that reading: "Fixes #1\nFixes #2" is two statements.
               if (endsWithReference(tokens, k)) return false;
-              if (before.kind === "newline") {
-                // A word wrapped onto the previous line still applies: "does not\nfix #1",
-                // "unable to\nfix #1", "#100, which\nfixed #1". A line that starts with
-                // "Fix #1" after prose still counts.
+              const lineStart = tokens[k]?.kind === "newline";
+              if (lineStart) {
                 const w = skipInterveningBack(tokens, k - 1);
-                // "#100 has\nfixed #1": the reference is the subject when a word was skipped
-                // to reach it. With nothing between, "Fixes #1\nFixes #2" stays two statements.
+                // "#100 has\nfixed #1": a reference reached through a skipped word is the subject.
                 if (w < k - 1 && endsWithReference(tokens, w)) return false;
-                const wrapped = tokens[w];
-                if (wrapped?.kind !== "word") return true;
-                if (DISQUALIFIERS.has(wrapped.text) || isRelativeToReference(tokens, w)) return false;
-                return !(BASE_FORMS.has(keyword) && wrapped.text === "to");
+                k = w;
               }
-              if (before.kind !== "word") return true;
+              const before = tokens[k];
+              if (before === undefined || before.kind !== "word") return true;
               if (isRelativeToReference(tokens, k)) return false;
               if (DISQUALIFIERS.has(before.text)) return false;
-              const prev = tokens[skipInterveningBack(tokens, k - 1)];
+              const prev = tokens[skipBack(tokens, k - 1)];
               if (prev?.kind === "word" && SUBORDINATORS.has(prev.text)) return false;
-              return !BASE_FORMS.has(keyword) || VERB_MARKERS.has(before.text);
+              if (!BASE_FORMS.has(keyword)) return true;
+              // "Fix #1" at the start of a line is a statement, "unable to\nfix #1" is not.
+              return lineStart ? before.text !== "to" : VERB_MARKERS.has(before.text);
             }
 
             // "which" or "that" at `k` with a reference as its antecedent: "Reverts
@@ -200,12 +196,18 @@ jobs:
               if (!isPunct(token, ")")) return false;
               if (tokens[p - 1]?.kind === "ref" && isPunct(tokens[p - 2], "(")) return true;
               if (!isPunct(tokens[p - 2], "(") || !isPunct(tokens[p - 3], "]")) return false;
-              if (tokens[p - 1]?.kind === "ref") return true;
               return tokens[p - 4]?.kind === "ref" && isPunct(tokens[p - 5], "[");
             }
 
             function skipInterveningBack(tokens, k) {
               while (k >= 0 && tokens[k].kind === "word" && INTERVENING.has(tokens[k].text)) k--;
+              return k;
+            }
+
+            // The same, also past one line break: "If\nthis fixes #1".
+            function skipBack(tokens, k) {
+              k = skipInterveningBack(tokens, k);
+              if (tokens[k]?.kind === "newline") k = skipInterveningBack(tokens, k - 1);
               return k;
             }
 
@@ -305,7 +307,13 @@ jobs:
                 }
                 quote = false;
                 paragraph = !isHeading(trimmed);
+                if (!rest.includes("<!--")) {
+                  kept.push(rest);
+                  continue;
+                }
                 // A "<!--" inside a code span on this line is code: "Handles `<!--`. Fixes #1".
+                // Only such a line loses its spans here: a span can cross a line break,
+                // and the pass over the whole text pairs those.
                 const prose = removeSpans(rest, "`");
                 let out = "";
                 let i = 0;

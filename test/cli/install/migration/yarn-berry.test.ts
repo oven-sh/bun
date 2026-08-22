@@ -201,6 +201,10 @@ describe("yarn berry migration", () => {
     expect(stderr).not.toContain("bun will resolve");
     // the builtin compat patch that wraps the user patch (listed first in the fixture) folds too
     expect(stderr).not.toContain("skipped patch");
+    // a second, different patch for the same package: the first one wins
+    expect(stderr).toContain(
+      `warn: "no-deps@1.0.1" is patched by both ".yarn/patches/no-deps-npm-1.0.1-aa11bb22cc.patch" and ".yarn/patches/zz-second-no-deps.patch" in yarn.lock; bun applies one patch per package, so only the first is kept`,
+    );
     // two `&`-joined patch files for one package cannot become one patchedDependencies entry
     expect(stderr).toContain(
       `warn: "one-dep@1.0.0" has 2 patch files in yarn.lock (".yarn/patches/one-dep-a.patch", ...); bun applies one patch per package, so it is left unpatched`,
@@ -459,6 +463,59 @@ describe("yarn berry migration", () => {
     `);
 
     await expectFrozenInstall(dir);
+  });
+
+  test.concurrent("patch: on a portal: dependency", async () => {
+    const { packageDir: dir } = await verdaccio.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "berry-patched-portal",
+          dependencies: { local: "patch:local@portal%3A./local#./patches/local.patch" },
+        }),
+        "local/package.json": JSON.stringify({ name: "local", version: "1.0.0" }),
+        "patches/local.patch": "",
+        "yarn.lock": `__metadata:
+  version: 8
+  cacheKey: 10c0
+
+"berry-patched-portal@workspace:.":
+  version: 0.0.0-use.local
+  resolution: "berry-patched-portal@workspace:."
+  dependencies:
+    local: "patch:local@portal%3A./local#./patches/local.patch"
+  languageName: unknown
+  linkType: soft
+
+"local@patch:local@portal%3A./local#./patches/local.patch::locator=berry-patched-portal%40workspace%3A.":
+  version: 1.0.0
+  resolution: "local@patch:local@portal%3A./local%3A%3Alocator=berry-patched-portal%2540workspace%253A.#./patches/local.patch::version=1.0.0&hash=1f2e3d&locator=berry-patched-portal%40workspace%3A."
+  languageName: node
+  linkType: hard
+
+"local@portal:./local::locator=berry-patched-portal%40workspace%3A.":
+  version: 0.0.0-use.local
+  resolution: "local@portal:./local::locator=berry-patched-portal%40workspace%3A."
+  languageName: node
+  linkType: soft
+`,
+      },
+    });
+
+    const { stderr, exitCode } = await run(dir, "pm", "migrate");
+    // bun installs folders straight from the project and does not patch them
+    expect(stderr).toContain(
+      `warn: skipped patch "patches/local.patch" on "local" from yarn.lock: bun does not patch packages installed from a project folder`,
+    );
+    expect(stderr).toContain("migrated lockfile from yarn.lock");
+    expect(stderr).not.toContain("bun will resolve");
+    expect(exitCode).toBe(0);
+
+    // the range under the patch was yarn-only too, so both layers are rewritten
+    const manifest = await Bun.file(join(dir, "package.json")).json();
+    expect(manifest.dependencies).toEqual({ local: "file:./local" });
+    expect(manifest.patchedDependencies).toBeUndefined();
+    expect(lockedVersions(await bunLockOf(dir))).toEqual(["local@file:local"]);
   });
 
   test.concurrent("file:, portal: and link: dependencies", async () => {

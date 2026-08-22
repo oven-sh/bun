@@ -84,6 +84,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"no-deps@patch:no-deps@npm%3A1.0.1#~/.yarn/patches/zz-second-no-deps.patch::locator=berry-patch%40workspace%3A.":
+  version: 1.0.1
+  resolution: "no-deps@patch:no-deps@npm%3A1.0.1#~/.yarn/patches/zz-second-no-deps.patch::version=1.0.1&hash=0d0c0b&locator=berry-patch%40workspace%3A."
+  checksum: 10c0/0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f9
+  languageName: node
+  linkType: hard
+
 "one-dep@npm:1.0.0":
   version: 1.0.0
   resolution: "one-dep@npm:1.0.0"

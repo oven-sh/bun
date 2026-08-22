@@ -217,17 +217,19 @@ fn parse_conditions(cond: &[u8]) -> (npm::OperatingSystem, npm::Architecture) {
 }
 
 /// The `patchedDependencies` key bun looks a package's patch up by:
-/// `name@<resolution>` (`no-deps@1.0.0`, `x@github:o/r#sha`, `y@file:dir`).
-/// `None` for the root and workspaces, which bun does not patch.
+/// `name@<resolution>` (`no-deps@1.0.0`, `x@github:o/r#sha`, `y@https://…/y.tgz`).
+/// `None` for what bun installs straight from a project folder and does not
+/// patch: the root, workspaces, and `file:` / `link:` folders.
 fn patched_dependency_key(
     lockfile: &Lockfile,
     name: &[u8],
     package_id: PackageID,
 ) -> Result<Option<Vec<u8>>, AllocError> {
+    use crate::resolution::Tag;
     let res = lockfile.packages.items_resolution()[package_id as usize];
     if matches!(
         res.tag,
-        crate::resolution::Tag::Root | crate::resolution::Tag::Workspace
+        Tag::Root | Tag::Workspace | Tag::Folder | Tag::Symlink
     ) {
         return Ok(None);
     }
@@ -997,8 +999,9 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
             let Some(key) = patched_dependency_key(this, entries[inner_idx].name, pid)? else {
                 if !silent {
                     bun_core::warn!(
-                        "skipped patch \"{}\" from yarn.lock: bun does not patch workspace packages",
+                        "skipped patch \"{}\" on \"{}\" from yarn.lock: bun does not patch packages installed from a project folder",
                         bstr::BStr::new(&paths[0]),
+                        bstr::BStr::new(entries[inner_idx].name),
                     );
                 }
                 continue;
@@ -1015,9 +1018,22 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
                 }
                 continue;
             }
-            // several descriptors / `resolutions` selectors can point at one patch
-            if !patched.iter().any(|(k, _)| *k == key) {
-                patched.push((key, paths.swap_remove(0)));
+            // several descriptors / `resolutions` selectors can point at one patch entry;
+            // two different patch files for one package cannot both be kept
+            let path = paths.swap_remove(0);
+            match patched.iter().find(|(k, _)| *k == key) {
+                None => patched.push((key, path)),
+                Some((_, existing)) if *existing != path => {
+                    if !silent {
+                        bun_core::warn!(
+                            "\"{}\" is patched by both \"{}\" and \"{}\" in yarn.lock; bun applies one patch per package, so only the first is kept",
+                            bstr::BStr::new(&key),
+                            bstr::BStr::new(existing),
+                            bstr::BStr::new(&path),
+                        );
+                    }
+                }
+                Some(_) => {}
             }
         }
         if still_pending.is_empty() || still_pending.len() == before {
@@ -1771,7 +1787,11 @@ fn yarn_only_range_for_bun(
     yarn_links: &StringArrayHashMap<()>,
 ) -> Option<Vec<u8>> {
     if spec.starts_with(b"patch:") {
-        return Some(patch_inner_range(spec).to_vec());
+        // the patched range may itself be yarn-only (`patch:` of a `portal:` package)
+        let inner = patch_inner_range(spec);
+        return Some(
+            yarn_only_range_for_bun(name, inner, yarn_links).unwrap_or_else(|| inner.to_vec()),
+        );
     }
     // `portal:` is always a path; a bare `link:name` could be a `bun link`
     // registration, so `link:` needs to look like a path or be what yarn locked as one

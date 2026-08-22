@@ -3,7 +3,7 @@ import { once } from "events";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, invalidTls, tmpdirSync } from "harness";
 import type { AddressInfo } from "node:net";
-import type { Server, TLSSocket } from "node:tls";
+import type { Server, TlsOptions, TLSSocket } from "node:tls";
 import { join } from "path";
 import tls from "tls";
 const clientTls = {
@@ -726,5 +726,129 @@ describe("tls ciphers should work", () => {
     expect(tls.DEFAULT_CIPHERS).toBe(
       "TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-SHA384:HIGH:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!SRP:!CAMELLIA",
     );
+  });
+});
+
+// BoringSSL only runs its per-certificate extension checks on the untrusted
+// part of a chain, so a trust-store certificate (the anchor, or a self-signed
+// certificate pinned via `ca`) carrying a critical extension it does not
+// implement used to verify cleanly. OpenSSL checks the whole chain, so node
+// reports X509 error 34 ("unhandled critical extension", code UNSPECIFIED).
+//
+// Fixtures: one CA key behind two self-signed CA certificates with the same
+// subject, one carrying an extension nobody implements
+// (critical-ext-anchor-ca-cert) and one without it
+// (critical-ext-anchor-ca-plain-cert), plus a leaf for DNS:localhost issued
+// with that key. The same leaf therefore chains to either anchor and the
+// extension is the only difference between the cases. Regenerate with:
+//
+//   # ext.cnf: [req] distinguished_name=dn / prompt=no; [dn] CN=critical-ext-anchor test CA
+//   #   [ca] and [ca_plain]: basicConstraints=critical,CA:TRUE
+//   #                        keyUsage=critical,digitalSignature,keyCertSign
+//   #                        subjectAltName=DNS:localhost
+//   #   [ca] additionally:   1.2.3.4.5.6.7.99=critical,DER:0500
+//   #   [leaf]: basicConstraints=CA:FALSE keyUsage=critical,digitalSignature subjectAltName=DNS:localhost
+//   openssl ecparam -name prime256v1 -genkey -noout -out critical-ext-anchor-ca-key.pem
+//   openssl req -new -x509 -key critical-ext-anchor-ca-key.pem -config ext.cnf -extensions ca -days 36500 -out critical-ext-anchor-ca-cert.pem
+//   openssl req -new -x509 -key critical-ext-anchor-ca-key.pem -config ext.cnf -extensions ca_plain -days 36500 -out critical-ext-anchor-ca-plain-cert.pem
+//   openssl ecparam -name prime256v1 -genkey -noout -out critical-ext-anchor-leaf-key.pem
+//   openssl req -new -key critical-ext-anchor-leaf-key.pem -subj /CN=localhost -out leaf.csr
+//   openssl x509 -req -in leaf.csr -CA critical-ext-anchor-ca-plain-cert.pem -CAkey critical-ext-anchor-ca-key.pem \
+//     -set_serial 1 -days 36500 -extfile ext.cnf -extensions leaf -out critical-ext-anchor-leaf-cert.pem
+describe("trust anchor with an unimplemented critical extension", () => {
+  const fixture = (name: string) =>
+    readFileSync(join(import.meta.dir, "fixtures", `critical-ext-anchor-${name}.pem`), "utf8");
+  const anchorWithExtension = fixture("ca-cert");
+  const anchorKey = fixture("ca-key");
+  const anchorWithoutExtension = fixture("ca-plain-cert");
+  const leaf = { cert: fixture("leaf-cert"), key: fixture("leaf-key") };
+
+  type Verdict = { authorized: boolean; authorizationError: unknown };
+
+  async function withServer<T>(options: TlsOptions, run: (port: number, server: Server) => Promise<T>) {
+    const server = tls.createServer(options, socket => socket.end());
+    server.on("tlsClientError", () => {});
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      return await run((server.address() as AddressInfo).port, server);
+    } finally {
+      server.close();
+    }
+  }
+
+  function clientVerdict(port: number, ca: string): Promise<Verdict> {
+    const { promise, resolve, reject } = Promise.withResolvers<Verdict>();
+    const socket = tls.connect(
+      { port, host: "127.0.0.1", servername: "localhost", ca, rejectUnauthorized: false },
+      () => {
+        resolve({ authorized: socket.authorized, authorizationError: socket.authorizationError });
+        socket.end();
+      },
+    );
+    socket.on("error", reject);
+    return promise;
+  }
+
+  const rejected: Verdict = { authorized: false, authorizationError: "UNSPECIFIED" };
+  const accepted: Verdict = { authorized: true, authorizationError: null };
+
+  it("rejects a leaf issued by such an anchor, but accepts it under the same anchor without the extension", async () => {
+    await withServer(leaf, async port => {
+      expect(await clientVerdict(port, anchorWithExtension)).toEqual(rejected);
+      expect(await clientVerdict(port, anchorWithoutExtension)).toEqual(accepted);
+    });
+  });
+
+  it("rejects a pinned self-signed certificate carrying the extension", async () => {
+    await withServer({ cert: anchorWithExtension, key: anchorKey }, async port => {
+      expect(await clientVerdict(port, anchorWithExtension)).toEqual(rejected);
+    });
+    await withServer({ cert: anchorWithoutExtension, key: anchorKey }, async port => {
+      expect(await clientVerdict(port, anchorWithoutExtension)).toEqual(accepted);
+    });
+  });
+
+  it("fails the connection with node's error when rejectUnauthorized is on", async () => {
+    await withServer(leaf, async port => {
+      const { promise, resolve, reject } = Promise.withResolvers<NodeJS.ErrnoException>();
+      const socket = tls.connect({ port, host: "127.0.0.1", servername: "localhost", ca: anchorWithExtension }, () => {
+        socket.end();
+        reject(new Error("handshake succeeded"));
+      });
+      socket.on("error", resolve);
+      const error = await promise;
+      expect({ code: error.code, message: error.message }).toEqual({
+        code: "UNSPECIFIED",
+        message: "unhandled critical extension",
+      });
+    });
+  });
+
+  it("applies to the CA a server verifies client certificates against", async () => {
+    // The same leaf serves as the client certificate; only the server's `ca` differs.
+    async function serverVerdict(ca: string): Promise<Verdict> {
+      return withServer({ ...leaf, ca, requestCert: true, rejectUnauthorized: false }, async (port, server) => {
+        const verdict = once(server, "secureConnection").then(([socket]: [TLSSocket]) => ({
+          authorized: socket.authorized,
+          authorizationError: socket.authorizationError,
+        }));
+        const client = tls.connect({
+          port,
+          host: "127.0.0.1",
+          servername: "localhost",
+          ...leaf,
+          ca: anchorWithoutExtension,
+        });
+        const failed = once(client, "error").then(([error]) => Promise.reject(error));
+        try {
+          return await Promise.race([verdict, failed]);
+        } finally {
+          client.destroy();
+        }
+      });
+    }
+
+    expect(await serverVerdict(anchorWithExtension)).toEqual(rejected);
+    expect(await serverVerdict(anchorWithoutExtension)).toEqual(accepted);
   });
 });

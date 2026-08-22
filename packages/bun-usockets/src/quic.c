@@ -29,6 +29,7 @@ extern SSL_CTX *us_ssl_ctx_build_raw(
     enum create_bun_socket_error_t *err);
 extern X509_STORE *us_get_default_ca_store(void);
 extern struct us_bun_verify_error_t us_ssl_socket_verify_error_from_ssl(SSL *ssl);
+extern int us_internal_verify_cert_chain(X509_STORE_CTX *ctx);
 
 #define US_QUIC_READ_BUF (16 * 1024)
 
@@ -1157,9 +1158,10 @@ static enum ssl_verify_result_t us_quic_client_verify(SSL *ssl, uint8_t *out_ale
     if (!qs) return ssl_verify_invalid;
     if (!qs->reject_unauthorized) return ssl_verify_ok;
 
-    /* custom_verify bypasses BoringSSL's built-in chain check, so run
-     * X509_verify_cert against the SSL_CTX store ourselves, then match the
-     * leaf against the SNI hostname. */
+    /* custom_verify bypasses BoringSSL's built-in chain check (and with it the
+     * cert_verify_callback the TCP contexts use), so run the shared chain
+     * verifier against the SSL_CTX store ourselves, then match the leaf against
+     * the SNI hostname. */
     STACK_OF(X509) *chain = SSL_get_peer_full_cert_chain(ssl);
     if (!chain || sk_X509_num(chain) == 0) return ssl_verify_invalid;
     X509 *leaf = sk_X509_value(chain, 0);
@@ -1169,7 +1171,7 @@ static enum ssl_verify_result_t us_quic_client_verify(SSL *ssl, uint8_t *out_ale
     int ok = 0;
     if (X509_STORE_CTX_init(vctx, store, leaf, chain) == 1) {
         X509_STORE_CTX_set_default(vctx, "ssl_server");
-        ok = X509_verify_cert(vctx) == 1;
+        ok = us_internal_verify_cert_chain(vctx) == 1;
     }
     X509_STORE_CTX_free(vctx);
     if (!ok) return ssl_verify_invalid;

@@ -1,6 +1,7 @@
 import { gunzipSync, gzipSync, type Server } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir, tls } from "harness";
+import { join } from "node:path";
 
 // In-process server with `http1: false` so the build under test binds UDP only.
 // A fetch that silently fell back to HTTP/1.1 would get ECONNREFUSED, which
@@ -868,4 +869,44 @@ test("custom TLS trust options are rejected on protocol: http3 and excluded from
   expect(stdout).toMatch(/^first alt-svc=h3=":\d+"; ma=\d+ sessions=0\n/);
   expect(stdout).toMatch(/second status=200 sessions=0\n$/);
   expect(exitCode).toBe(0);
+});
+
+// The h3 client verifies against the process-wide store, so the anchor under
+// test is supplied through NODE_EXTRA_CA_CERTS. Fixtures are shared with
+// test/js/node/tls/node-tls-cert.test.ts: two anchors for the same CA key that
+// differ only in a critical extension BoringSSL does not implement, and a leaf
+// for DNS:localhost that chains to either.
+describe("trust anchor with an unimplemented critical extension", () => {
+  const fixturesDir = join(import.meta.dir, "..", "..", "node", "tls", "fixtures");
+  const fixture = `
+    using server = Bun.serve({
+      port: 0,
+      tls: {
+        cert: Bun.file(${JSON.stringify(join(fixturesDir, "critical-ext-anchor-leaf-cert.pem"))}),
+        key: Bun.file(${JSON.stringify(join(fixturesDir, "critical-ext-anchor-leaf-key.pem"))}),
+      },
+      http3: true,
+      http1: false,
+      fetch: () => new Response("ok"),
+    });
+    console.log(
+      await fetch("https://localhost:" + server.port + "/", { protocol: "http3" }).then(
+        response => "status=" + response.status,
+        error => "error=" + error.code,
+      ),
+    );
+  `;
+
+  test.concurrent.each([
+    ["critical-ext-anchor-ca-cert.pem", "error=HTTP3HandshakeFailed"],
+    ["critical-ext-anchor-ca-plain-cert.pem", "status=200"],
+  ])("NODE_EXTRA_CA_CERTS=%s: %s", async (anchor, expected) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, NODE_EXTRA_CA_CERTS: join(fixturesDir, anchor) },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: `${expected}\n`, stderr: "", exitCode: 0 });
+  });
 });

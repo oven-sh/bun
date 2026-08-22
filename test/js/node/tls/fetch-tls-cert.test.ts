@@ -395,3 +395,28 @@ it("fetch applies tls.sigalgs even when it is the only TLS option", async () => 
     tlsServer.close();
   }
 });
+
+// Same fixtures as node-tls-cert.test.ts: one CA key behind two anchors that
+// differ only in an unimplemented critical extension, and a leaf for
+// DNS:localhost that chains to either. The HTTP client builds its TLS contexts
+// separately from node:tls, so check that it enforces the anchor check too.
+it("fetch rejects a chain whose trust anchor carries an unimplemented critical extension", async () => {
+  const fixture = (name: string) =>
+    readFileSync(join(import.meta.dir, "fixtures", `critical-ext-anchor-${name}.pem`), "utf8");
+  using bunServer = Bun.serve({
+    port: 0,
+    tls: { cert: fixture("leaf-cert"), key: fixture("leaf-key") },
+    fetch: () => new Response("ok"),
+  });
+  const outcome = (ca: string) =>
+    fetch(`https://localhost:${bunServer.port}/`, { tls: { ca } }).then(
+      response => response.status,
+      (error: Error & { code?: string }) => ({ code: error.code, message: error.message }),
+    );
+
+  expect(await outcome(fixture("ca-cert"))).toEqual({
+    code: "UNHANDLED_CRITICAL_EXTENSION",
+    message: "unhandled critical extension",
+  });
+  expect(await outcome(fixture("ca-plain-cert"))).toBe(200);
+});

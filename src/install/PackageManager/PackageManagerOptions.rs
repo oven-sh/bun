@@ -104,8 +104,8 @@ pub struct Options {
     // Minimum release age in ms (security feature)
     // Only install packages published at least N ms ago
     pub minimum_release_age_ms: Option<f64>,
-    // Packages to exclude from minimum release age checking
-    pub minimum_release_age_excludes: Option<&'static [&'static [u8]]>,
+    // Packages and package versions to exclude from minimum release age checking
+    pub minimum_release_age_excludes: Option<&'static Npm::MinimumReleaseAgeExcludes>,
 
     /// Override CPU architecture for optional dependencies filtering
     pub cpu: Npm::Architecture,
@@ -586,8 +586,9 @@ impl Options {
                     exclusions.iter().map(|e| leak_static(e)).collect();
                 // Parked for the lifetime of the install command (config arena
                 // equivalent), same as `leak_static` above.
-                self.minimum_release_age_excludes =
-                    Some(&*bun_core::heap::release(leaked.into_boxed_slice()));
+                self.minimum_release_age_excludes = Some(&*bun_core::heap::release(Box::new(
+                    Npm::MinimumReleaseAgeExcludes::parse(&leaked, log),
+                )));
             }
 
             // `PnpmMatcher` is move-only; `config` is `&` here so the matchers

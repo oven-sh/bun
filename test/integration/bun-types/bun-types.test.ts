@@ -1,7 +1,7 @@
-import { $ as Shell, fileURLToPath } from "bun";
+import { fileURLToPath, $ as Shell } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, makeTree } from "harness";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
@@ -324,6 +324,32 @@ describe("@types/bun integration test", () => {
     const claude = Bun.file(join(BASE_FIXTURE_DIR, "node_modules", "bun-types", "CLAUDE.md"));
     expect(await claude.exists()).toBe(true);
     expect((await claude.text()).length).toBeGreaterThan(0);
+  });
+
+  // CLAUDE.md is the `bun init` agent rule, which locates the docs through a project's
+  // node_modules. The copy packed into this package has to point at the package's own
+  // docs/ directory instead, and what it points at has to cover every packed doc page.
+  test("packed CLAUDE.md points at the packed docs", async () => {
+    const packageDir = join(BASE_FIXTURE_DIR, "node_modules", "bun-types");
+    const claude = await Bun.file(join(packageDir, "CLAUDE.md")).text();
+
+    const docGlobs = Array.from(claude.matchAll(/`([^`]*\.mdx)`/g), m => m[1]);
+    expect(docGlobs.length).toBeGreaterThan(0);
+    expect(docGlobs.filter(glob => glob.includes("node_modules"))).toEqual([]);
+
+    const slash = (file: string) => file.replaceAll("\\", "/");
+    const hinted = new Set(
+      docGlobs.flatMap(glob => Array.from(new Bun.Glob(glob).scanSync({ cwd: packageDir }), slash)),
+    );
+    const packed = new Set(
+      readdirSync(join(packageDir, "docs"), { recursive: true, encoding: "utf8" })
+        .filter(file => file.endsWith(".mdx"))
+        .map(file => `docs/${slash(file)}`),
+    );
+
+    expect(packed.size).toBeGreaterThan(0);
+    expect(hinted.size).toBe(packed.size);
+    expect(hinted).toEqual(packed);
   });
 
   describe("basic type checks", () => {

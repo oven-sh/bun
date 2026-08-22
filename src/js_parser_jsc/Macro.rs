@@ -694,9 +694,10 @@ impl MacroHost {
         let Some(thread) = host.thread.lock().take() else {
             return;
         };
-        if std::thread::current().id() == thread.thread().id() {
-            // Exiting from the host thread itself (a crash handler, say):
-            // nothing to wait for.
+        // Exiting from the host thread itself: nothing to wait for. (A flag,
+        // not `std::thread::current()`: exit callbacks can run after the
+        // exiting thread's `std` thread-locals were destroyed.)
+        if ON_HOST_THREAD.get() {
             return;
         }
         STOP.store(true, core::sync::atomic::Ordering::Release);
@@ -715,6 +716,7 @@ fn host_thread_main(
     ready: std::sync::Arc<(bun_threading::Guarded<Option<VmHandle>>, ResetEvent)>,
 ) {
     Output::Source::configure_named_thread(bun_core::zstr!("Macros"));
+    ON_HOST_THREAD.set(true);
     jsc::mark_binding();
     // First JSC user in a `bun build` with no runtime VM; a no-op otherwise.
     jsc::initialize(jsc::InitializeOptions::default());
@@ -829,6 +831,8 @@ struct HostState {
 
 #[thread_local]
 static HOST_STATE: Cell<*const HostState> = Cell::new(core::ptr::null());
+#[thread_local]
+static ON_HOST_THREAD: Cell<bool> = Cell::new(false);
 
 impl HostState {
     fn with<R>(f: impl FnOnce(&HostState) -> R) -> R {

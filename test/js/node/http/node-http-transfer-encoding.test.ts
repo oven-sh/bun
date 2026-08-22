@@ -103,41 +103,39 @@ test("should not duplicate transfer-encoding header in response when explicitly 
 // value as if the header were absent: no clientError, Content-Length framing
 // applies. oven-sh/bun#40124: Bun served the request AND fired a spurious
 // clientError, so a typical handler destroyed the live connection.
-for (const [name, te] of [
+test.each([
   ["empty", ""],
   ["whitespace-only", "   "],
-] as const) {
-  test(`${name} Transfer-Encoding value is ignored like node, no clientError`, async () => {
-    const events: string[] = [];
-    await using server = createServer((req, res) => {
-      events.push(`request ${req.url}`);
-      res.end("ok");
-    });
-    server.on("clientError", (err: any, socket) => {
-      events.push(`clientError ${err.code}`);
-      socket.destroy();
-    });
-    await once(server.listen(0, "127.0.0.1"), "listening");
-    const { port } = server.address() as AddressInfo;
-
-    const { promise, resolve } = Promise.withResolvers<string>();
-    // Pipeline a second request: the spurious clientError kills the
-    // connection after the first response, so /b proves it survived.
-    const socket = connect(port, "127.0.0.1", () => {
-      socket.write(
-        `GET /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding:${te}\r\n\r\n` +
-          "GET /b HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
-      );
-    });
-    let raw = "";
-    socket.on("data", chunk => (raw += chunk.toString()));
-    socket.on("error", () => {});
-    socket.on("close", () => resolve(raw));
-    const response = await promise;
-    expect(events).toEqual(["request /a", "request /b"]);
-    expect(response.match(/HTTP\/1\.1 200/g)).toHaveLength(2);
+])("%s Transfer-Encoding value is ignored like node, no clientError", async (name, te) => {
+  const events: string[] = [];
+  await using server = createServer((req, res) => {
+    events.push(`request ${req.url}`);
+    res.end("ok");
   });
-}
+  server.on("clientError", (err: any, socket) => {
+    events.push(`clientError ${err.code}`);
+    socket.destroy();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const { promise, resolve } = Promise.withResolvers<string>();
+  // Pipeline a second request: the spurious clientError kills the
+  // connection after the first response, so /b proves it survived.
+  const socket = connect(port, "127.0.0.1", () => {
+    socket.write(
+      `GET /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding:${te}\r\n\r\n` +
+        "GET /b HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+    );
+  });
+  let raw = "";
+  socket.on("data", chunk => (raw += chunk.toString()));
+  socket.on("error", () => {});
+  socket.on("close", () => resolve(raw));
+  const response = await promise;
+  expect(events).toEqual(["request /a", "request /b"]);
+  expect(response.match(/HTTP\/1\.1 200/g)).toHaveLength(2);
+});
 
 test("empty Transfer-Encoding with Content-Length frames the body like node", async () => {
   const events: string[] = [];

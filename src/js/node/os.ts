@@ -24,6 +24,22 @@ var tmpdir = function () {
   return tmpdir();
 };
 
+// Node reads $HOME on every os.homedir() call, but POSIX process.env writes
+// never reach the C environ, so the live check must happen here in JS. The
+// native binding is the passwd fallback, which userInfo() also calls directly.
+function homedirFactory(bindingHomedir) {
+  if (process.platform === "win32") {
+    // uv_os_homedir already reads USERPROFILE live.
+    return bindingHomedir;
+  }
+  return function homedir() {
+    // Like libuv: HOME="" is returned verbatim; only absent HOME falls through.
+    const home = Bun.env["HOME"];
+    if (home !== undefined) return home;
+    return bindingHomedir();
+  };
+}
+
 // os.cpus() is super expensive
 // Specifically: getting the CPU speed on Linux is very expensive
 // Some packages like FastGlob only bother to read the length of the array
@@ -103,7 +119,7 @@ function bound(binding) {
     },
     freemem: binding.freemem,
     getPriority: binding.getPriority,
-    homedir: binding.homedir,
+    homedir: homedirFactory(binding.homedir),
     hostname: binding.hostname,
     loadavg: binding.loadavg,
     networkInterfaces: binding.networkInterfaces,

@@ -701,7 +701,9 @@ mod _impl {
     }
 
     pub(crate) fn homedir(global: &JSGlobalObject) -> JsResult<BunString> {
-        // In Node.js, this is a wrapper around uv_os_homedir.
+        // In Node.js, this is a wrapper around uv_os_homedir. The live HOME
+        // check lives in `src/js/node/os.ts`; this is the passwd fallback,
+        // which `userInfo()` also calls directly.
         #[cfg(windows)]
         {
             let mut out = PathBuffer::uninit();
@@ -716,14 +718,6 @@ mod _impl {
         }
         #[cfg(not(windows))]
         {
-            // The posix implementation of uv_os_homedir first checks the HOME
-            // environment variable, then falls back to reading the passwd entry.
-            if let Some(home) = env_var::HOME.get() {
-                if !home.is_empty() {
-                    return Ok(BunString::init(home));
-                }
-            }
-
             // From libuv:
             // > Calling sysconf(_SC_GETPW_R_SIZE_MAX) would get the suggested size, but it
             // > is frequently 1024 or 4096, so we can just use that directly. The pwent
@@ -740,6 +734,7 @@ mod _impl {
             let mut result: *mut libc::passwd = core::ptr::null_mut();
 
             let ret: c_int = loop {
+                // Effective uid: libuv's uv_os_get_passwd keys on geteuid().
                 // SAFETY: valid buffers and out-pointer
                 let ret = unsafe {
                     libc::getpwuid_r(

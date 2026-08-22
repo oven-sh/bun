@@ -1061,7 +1061,9 @@ class BunWebSocketMocked extends EventEmitter {
 
     const maxPayload = this.#maxPayload;
     if (maxPayload > 0) {
-      const byteLength = typeof message === "string" ? Buffer.byteLength(message) : message.byteLength;
+      // string (text frame), Buffer/ArrayBuffer (.byteLength) or Blob (.size), per binaryType.
+      const byteLength =
+        typeof message === "string" ? Buffer.byteLength(message) : (message.byteLength ?? message.size);
       if (byteLength > maxPayload) {
         this.#state = ReadyState_CLOSING;
         try {

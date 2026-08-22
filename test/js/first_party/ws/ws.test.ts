@@ -1504,6 +1504,35 @@ describe("WebSocketServer maxPayload", () => {
     }
   });
 
+  // The server socket's binaryType decides whether a binary frame arrives as a
+  // Buffer, an ArrayBuffer or a Blob; the size check must see all three.
+  for (const binaryType of ["nodebuffer", "arraybuffer", "blob"] as const) {
+    it.concurrent(`rejects an oversized binary message when binaryType is ${binaryType}`, async () => {
+      const wss = new WebSocketServer({ port: 0, maxPayload: SMALL });
+      const serverOutcome = Promise.withResolvers<{ type: string; code?: string }>();
+      const clientClose = Promise.withResolvers<number>();
+
+      wss.on("connection", serverWs => {
+        serverWs.binaryType = binaryType;
+        serverWs.on("message", m => serverOutcome.resolve({ type: "message:" + m.constructor.name }));
+        serverWs.on("error", (err: any) => serverOutcome.resolve({ type: err.constructor.name, code: err.code }));
+      });
+
+      const ws = new WebSocket("ws://127.0.0.1:" + (wss.address() as AddressInfo).port);
+      ws.on("open", () => ws.send(new Uint8Array(SMALL + 1)));
+      ws.on("close", code => clientClose.resolve(code));
+      ws.on("error", () => {});
+
+      try {
+        expect(await serverOutcome.promise).toEqual({ type: "RangeError", code: "WS_ERR_UNSUPPORTED_MESSAGE_LENGTH" });
+        expect(await clientClose.promise).toBe(1009);
+      } finally {
+        ws.close();
+        wss.close();
+      }
+    });
+  }
+
   // npm `ws` flips the socket to CLOSING before emitting 'error' (receiverOnError), so
   // close()/send() inside the handler are no-ops and the close code stays 1009. The
   // server-side surface is the same whether the frame is caught by the shim's own check

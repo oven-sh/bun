@@ -1485,10 +1485,13 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
         return {};
     }
 
-    Bun::UTF8View utf8 = Bun::UTF8View(jsSqlString->view(lexicalGlobalObject));
+    auto sqlStringView = jsSqlString->view(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    // NUL-terminated: lets sqlite3_prepare_v3 parse in place (no per-statement tail copy).
+    WTF::CString utf8 = sqlStringView->utf8();
 
-    const char* sqlStringHead = utf8.span().data();
-    const char* end = utf8.span().data() + utf8.span().size();
+    const char* sqlStringHead = utf8.data();
+    const char* end = utf8.data() + utf8.length(); // *end == '\0'
 
     bool didSetBindings = false;
     bool didExecuteAny = false;
@@ -1520,7 +1523,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
         ASSERT(end - sqlStringHead >= 0);
         ASSERT(end - sqlStringHead <= maxSqlStringBytes);
 
-        rc = sqlite3_prepare_v3(db, sqlStringHead, end - sqlStringHead, 0, &sql.stmt, &tail);
+        rc = sqlite3_prepare_v3(db, sqlStringHead, (end - sqlStringHead) + 1 /* include NUL: parse in place */, 0, &sql.stmt, &tail);
 
         if (rc != SQLITE_OK)
             break;

@@ -795,7 +795,7 @@ where
     pub(crate) fn should_render_missing(&self) -> bool {
         // If we did not respond yet, we should render missing
         // To allow this all the conditions above should be true:
-        // 1 - still has a response (not detached)
+        // 1 - still has a response (not detached, socket still open)
         // 2 - not aborted
         // 3 - not marked completed
         // 4 - not marked pending
@@ -841,7 +841,7 @@ where
                 "no sendfile context"
             },
         );
-        self.resp.get().is_some()
+        self.resp.get().is_some_and(|resp| !resp.is_closed())
             && !self.flags.aborted()
             && !self.flags.has_marked_complete()
             && !self.flags.has_marked_pending()

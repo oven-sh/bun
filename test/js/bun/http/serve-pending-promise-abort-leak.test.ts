@@ -610,11 +610,60 @@ test("413 on a chunked upload frees the context while the handler promise stays 
 });
 
 // A request subscribes to its connection's close only once its dispatch is
-// over (to_async). A synchronous wait on a promise runs the event loop from
-// inside the dispatch, and that nested run can dispatch the close itself, with
-// nobody subscribed. Before the fix the close was lost: request.signal never
-// fired, the context stayed pending, and a Promise<Response> settling later
-// rendered into the freed socket.
+// over (to_async). A close dispatched before that was lost: request.signal
+// never fired, the context stayed pending, and a Promise<Response> settling
+// later rendered into the freed socket.
+
+// server.stop(true) inside the handler closes the connection right there, with
+// no nested event loop involved. A request with its body in flight then went
+// async on the closed socket and was parked forever: no abort, a pending body
+// read that never settled, pendingRequests stuck at 1, and a stop() promise
+// that never resolved. A request without a body rendered a 204 into the closed
+// socket instead of aborting.
+const stoppedRequests: Array<[string, string, string[]]> = [
+  ["a GET", "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n", ["abort"]],
+  [
+    "a POST with its body in flight",
+    // Declares 1000 bytes and sends 10.
+    "POST / HTTP/1.1\r\nHost: example.com\r\nContent-Length: 1000\r\n\r\n0123456789",
+    ["abort", "text rejected: AbortError"],
+  ],
+];
+test.each(stoppedRequests)("server.stop(true) inside the handler of %s aborts it", async (_what, head, expected) => {
+  const events: string[] = [];
+  const { promise: reached, resolve: signalReached } = Promise.withResolvers<void>();
+  let stopped: Promise<void>;
+  const server = Bun.serve({
+    port: 0,
+    idleTimeout: 0,
+    fetch(req, srv) {
+      req.signal.addEventListener("abort", () => events.push("abort"), { once: true });
+      if (req.method === "POST") {
+        req.text().then(
+          () => events.push("text resolved"),
+          e => events.push(`text rejected: ${(e as Error).name}`),
+        );
+      }
+      stopped = srv.stop(true);
+      signalReached();
+      return new Promise<Response>(() => {});
+    },
+  });
+
+  const client = connect(Number(server.port), "127.0.0.1", () => client.write(head));
+  client.on("error", () => {});
+
+  await reached;
+  // The abort is delivered as the dispatch finishes; an immediate queued from
+  // inside it runs after that.
+  await new Promise(resolve => setImmediate(resolve));
+  expect(events).toEqual(expected);
+  expect(server.pendingRequests).toBe(0);
+  await stopped!;
+});
+
+// A synchronous wait on a promise runs the event loop from inside the
+// dispatch, and that nested run can dispatch the close itself.
 //
 // Windows: the libuv backend frees the closed socket inside the nested run, and
 // uWS's own request dispatch segfaults on it when the handler returns, with or

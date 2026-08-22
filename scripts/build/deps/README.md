@@ -69,7 +69,7 @@ commit if you want an identical baseline. Switching a dep between pinned and
 local moves its `-I` path, so the first build after the switch recompiles
 every TU that sees the dep's headers; after that, edits are picked up
 incrementally: `direct` deps through the compiler depfiles,
-`nested-cmake`/`cargo` deps by re-invoking their inner build every run. The
+`nested-cmake` deps by re-invoking their inner build every run. The
 build banner shows `local:<name>` while this is on. Don't edit
 `vendor/<name>/` in place instead — it is wiped whenever the pin or patches
 change. WebKit has its own switch (`--webkit=local`).

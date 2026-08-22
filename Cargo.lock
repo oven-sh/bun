@@ -218,22 +218,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_bin"
-version = "0.0.0"
-dependencies = [
- "bstr",
- "bun_alloc",
- "bun_core",
- "bun_crash_handler",
- "bun_io",
- "bun_mimalloc_sys",
- "bun_platform",
- "bun_runtime",
- "bun_sys",
- "libc",
-]
-
-[[package]]
 name = "bun_boringssl"
 version = "0.0.0"
 dependencies = [
@@ -1327,6 +1311,7 @@ dependencies = [
  "bun_patch_jsc",
  "bun_paths",
  "bun_picohttp",
+ "bun_platform",
  "bun_ptr",
  "bun_resolve_builtins",
  "bun_resolver",

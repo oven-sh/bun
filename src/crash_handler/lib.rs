@@ -1601,6 +1601,13 @@ mod draft {
     static SIGALTSTACK: bun_core::RacyCell<[u8; 512 * 1024]> =
         bun_core::RacyCell::new([0; 512 * 1024]);
 
+    /// `process.kill()` (BunProcess.cpp) gives a self-sent one of these its default action first.
+    #[cfg(unix)]
+    #[unsafe(no_mangle)]
+    extern "C" fn CrashHandler__isCrashSignal(signal: c_int) -> bool {
+        bun_core::CRASH_HANDLER_SIGNALS.contains(&signal)
+    }
+
     #[cfg(unix)]
     fn update_posix_segfault_handler(mut act: Option<&mut libc::sigaction>) -> crate::Result<()> {
         if let Some(act_) = act.as_deref_mut() {
@@ -1625,17 +1632,11 @@ mod draft {
         let act_ptr: *const libc::sigaction = act
             .map(|a| std::ptr::from_ref(a))
             .unwrap_or(core::ptr::null());
-        // SAFETY: valid sigaction pointer or null; null oldact is permitted.
-        unsafe {
-            libc::sigaction(libc::SIGSEGV, act_ptr, core::ptr::null_mut());
-            libc::sigaction(libc::SIGILL, act_ptr, core::ptr::null_mut());
-            libc::sigaction(libc::SIGBUS, act_ptr, core::ptr::null_mut());
-            libc::sigaction(libc::SIGFPE, act_ptr, core::ptr::null_mut());
-            // abort() (mimalloc/glibc heap corruption, std::terminate) and
-            // __builtin_trap()/WTF CRASH()/`brk` on aarch64 raise these; without
-            // handlers they bypass bun.report entirely.
-            libc::sigaction(libc::SIGABRT, act_ptr, core::ptr::null_mut());
-            libc::sigaction(libc::SIGTRAP, act_ptr, core::ptr::null_mut());
+        for signal in bun_core::CRASH_HANDLER_SIGNALS {
+            // SAFETY: valid sigaction pointer or null; null oldact is permitted.
+            unsafe {
+                libc::sigaction(signal, act_ptr, core::ptr::null_mut());
+            }
         }
         Ok(())
     }

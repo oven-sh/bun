@@ -74,7 +74,7 @@ function setTimeout(after = 1, value, options = {}) {
     : returnValue;
 }
 
-function setImmediate(value, options = {}) {
+function setImmediate(value?, options = {}) {
   try {
     validateObject(options, "options");
   } catch (error) {
@@ -231,12 +231,31 @@ function setInterval(after = 1, value, options = {}) {
   }
 }
 
+const kScheduler = Symbol("kScheduler");
+
+// Mirrors node's lib/timers/promises.js: the exported `scheduler` is the only instance.
+class Scheduler {
+  constructor() {
+    throw $ERR_ILLEGAL_CONSTRUCTOR();
+  }
+
+  yield() {
+    if (!this[kScheduler]) throw $ERR_INVALID_THIS("Scheduler");
+    return setImmediate();
+  }
+
+  wait(delay, options) {
+    if (!this[kScheduler]) throw $ERR_INVALID_THIS("Scheduler");
+    return setTimeout(delay, undefined, options);
+  }
+}
+
+const scheduler = Object.create(Scheduler.prototype);
+scheduler[kScheduler] = true;
+
 export default {
   setTimeout,
   setImmediate,
   setInterval,
-  scheduler: {
-    wait: (delay, options) => setTimeout(delay, undefined, options),
-    yield: setImmediate,
-  },
+  scheduler,
 };

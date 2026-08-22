@@ -1,6 +1,7 @@
 // Hardcoded module "node:crypto"
 const StringDecoder = require("node:string_decoder").StringDecoder;
 const LazyTransform = require("internal/streams/lazy_transform");
+const { guardCallback } = require("internal/shared");
 const { defineCustomPromisifyArgs } = require("internal/promisify");
 const Writable = require("internal/streams/writable");
 const { CryptoHasher } = Bun;
@@ -149,7 +150,26 @@ crypto_exports.hash = function hash(algorithm, input, outputEncoding = "hex") {
   return CryptoHasher.hash(algorithm, input, outputEncoding);
 };
 
-crypto_exports.pbkdf2 = pbkdf2;
+// Node's MakeCallback runs async crypto callbacks inside the active domain; bridge
+// the trailing callback through the domain-aware guard when one is active.
+function wrapDomainCallbackLast(fn, name) {
+  function wrapper() {
+    if (process.domain != null) {
+      const n = arguments.length;
+      if (n > 0 && typeof arguments[n - 1] === "function") {
+        const args = new Array(n);
+        for (let i = 0; i < n - 1; i++) args[i] = arguments[i];
+        args[n - 1] = guardCallback(arguments[n - 1]);
+        return fn.$apply(this, args);
+      }
+    }
+    return fn.$apply(this, arguments);
+  }
+  Object.defineProperty(wrapper, "name", { __proto__: null, value: name, configurable: true });
+  Object.defineProperty(wrapper, "length", { __proto__: null, value: fn.length, configurable: true });
+  return wrapper;
+}
+crypto_exports.pbkdf2 = wrapDomainCallbackLast(pbkdf2, "pbkdf2");
 crypto_exports.pbkdf2Sync = pbkdf2Sync;
 
 crypto_exports.hkdf = hkdf;
@@ -302,25 +322,6 @@ crypto_exports.createHmac = function createHmac(hmac, key, options) {
 
 crypto_exports.getHashes = getHashes;
 
-// Node's MakeCallback runs async crypto callbacks inside the active domain; bridge
-// the trailing callback through the domain-aware guard when one is active.
-function wrapDomainCallbackLast(fn, name) {
-  function wrapper() {
-    if (process.domain != null) {
-      const n = arguments.length;
-      if (n > 0 && typeof arguments[n - 1] === "function") {
-        const args = new Array(n);
-        for (let i = 0; i < n - 1; i++) args[i] = arguments[i];
-        args[n - 1] = guardCallback(arguments[n - 1]);
-        return fn.$apply(this, args);
-      }
-    }
-    return fn.$apply(this, arguments);
-  }
-  Object.defineProperty(wrapper, "name", { __proto__: null, value: name, configurable: true });
-  Object.defineProperty(wrapper, "length", { __proto__: null, value: fn.length, configurable: true });
-  return wrapper;
-}
 const domainAwareRandomBytes = wrapDomainCallbackLast(randomBytes, "randomBytes");
 
 crypto_exports.randomInt = wrapDomainCallbackLast(randomInt, "randomInt");
@@ -572,7 +573,7 @@ crypto_exports.createECDH = function createECDH(curve) {
   crypto_exports.getCiphers = getCiphers;
 }
 
-crypto_exports.scrypt = scrypt;
+crypto_exports.scrypt = wrapDomainCallbackLast(scrypt, "scrypt");
 crypto_exports.scryptSync = scryptSync;
 
 crypto_exports.publicEncrypt = publicEncrypt;

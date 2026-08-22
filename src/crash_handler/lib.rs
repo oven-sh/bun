@@ -20,6 +20,7 @@
 // builds only. Declaring the feature where neither is compiled (Windows
 // release) trips `unused_features`.
 #![cfg_attr(any(not(windows), debug_assertions), feature(core_intrinsics))]
+#![feature(alloc_error_hook)]
 #![allow(internal_features)]
 #![allow(nonstandard_style, static_mut_refs, unexpected_cfgs)]
 #![warn(unused_must_use)]
@@ -41,7 +42,9 @@ pub use error::{Error, Result};
 #[inline(never)]
 fn out_of_memory() -> ! {
     draft::crash_handler(
-        draft::CrashReason::OutOfMemory,
+        draft::CrashReason::OutOfMemory {
+            requested_bytes: None,
+        },
         draft::TraceSeed::BeginAddr(bun_core::return_address()),
     )
 }
@@ -641,7 +644,13 @@ mod draft {
         /// Either `main` returned an error, or somewhere else in the code a trace string is printed.
         ZigError(&'static [u8]),
 
-        OutOfMemory,
+        OutOfMemory {
+            /// Size of the allocation that failed. Known in `rust_alloc_error_hook`,
+            /// unknown to `bun_alloc::out_of_memory()` callers, which only have an
+            /// `AllocError`. Printed to stderr only: the trace string encodes every
+            /// OOM the same way.
+            requested_bytes: Option<usize>,
+        },
     }
 
     impl CrashReason {
@@ -664,7 +673,7 @@ mod draft {
                 | CrashReason::DatatypeMisalignment
                 | CrashReason::StackOverflow
                 | CrashReason::ZigError(_)
-                | CrashReason::OutOfMemory => libc::SIGABRT,
+                | CrashReason::OutOfMemory { .. } => libc::SIGABRT,
             }
         }
     }
@@ -693,7 +702,25 @@ mod draft {
                 CrashReason::ZigError(err_name) => {
                     write!(writer, "error.{}", bstr::BStr::new(err_name))
                 }
-                CrashReason::OutOfMemory => writer.write_str("Bun ran out of memory"),
+                CrashReason::OutOfMemory { requested_bytes } => write!(
+                    writer,
+                    "Bun ran out of memory{}",
+                    RequestedBytes(*requested_bytes)
+                ),
+            }
+        }
+    }
+
+    /// ` (failed to allocate N bytes)`, or nothing when the size is unknown.
+    /// Shared by the `CrashReason` `Display` impl and the release-mode
+    /// "oh no" message in `crash_handler`.
+    struct RequestedBytes(Option<usize>);
+
+    impl fmt::Display for RequestedBytes {
+        fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match self.0 {
+                Some(bytes) => write!(writer, " (failed to allocate {bytes} bytes)"),
+                None => Ok(()),
             }
         }
     }
@@ -925,7 +952,7 @@ mod draft {
                         }
                     }
 
-                    if !matches!(reason, CrashReason::OutOfMemory) || debug_trace {
+                    if !matches!(reason, CrashReason::OutOfMemory { .. }) || debug_trace {
                         if enable_ansi_colors_stderr() {
                             if writer
                                 .write_all(&Output::pretty_fmt::<true>("<red>"))
@@ -1120,10 +1147,16 @@ mod draft {
                                 {
                                     abort();
                                 }
-                            } else if matches!(reason, CrashReason::OutOfMemory) {
-                                if writer.write_all(
-                                b"Bun has run out of memory.\n\nTo send a redacted crash report to Bun's team,\nplease file a GitHub issue using the link below:\n\n",
-                            ).is_err() { abort(); }
+                            } else if let CrashReason::OutOfMemory { requested_bytes } = reason {
+                                if write!(
+                                    writer,
+                                    "Bun has run out of memory{}.\n\nTo send a redacted crash report to Bun's team,\nplease file a GitHub issue using the link below:\n\n",
+                                    RequestedBytes(requested_bytes)
+                                )
+                                .is_err()
+                                {
+                                    abort();
+                                }
                             } else {
                                 if writer.write_all(
                                 b"Bun has crashed. This indicates a bug in Bun, not your code.\n\nTo send a redacted crash report to Bun's team,\nplease file a GitHub issue using the link below:\n\n",
@@ -1732,6 +1765,34 @@ mod draft {
         // this hook, a bare `panic!` would print the std
         // default hook + unwind with no trace string and no upload.
         std::panic::set_hook(Box::new(rust_panic_hook));
+        std::alloc::set_alloc_error_hook(rust_alloc_error_hook);
+    }
+
+    /// `std::alloc` error hook: an infallible allocation (`Vec` growth,
+    /// `Box::new`, ...) got null from the global allocator.
+    ///
+    /// Without it std prints `memory allocation of N bytes failed` and calls
+    /// `abort()`. On POSIX the SIGABRT handler then reports `abort() called`
+    /// with the trace seeded inside libc's `abort`/`raise`, which have no
+    /// frame pointers, so the report has one unresolvable frame and neither
+    /// the reason nor the size. On Windows std aborts with `__fastfail`, which
+    /// no exception handler sees. Here the allocating frames are still on the
+    /// stack.
+    ///
+    /// A hook rather than a null check in `GlobalAlloc` because a null return
+    /// is also how `try_reserve` and the other fallible paths report failure.
+    ///
+    /// Must not allocate: a failure inside the report re-enters here and is
+    /// cut short by the `PANIC_STAGE` guard in `crash_handler`.
+    #[cold]
+    #[inline(never)]
+    fn rust_alloc_error_hook(layout: core::alloc::Layout) {
+        crash_handler(
+            CrashReason::OutOfMemory {
+                requested_bytes: Some(layout.size()),
+            },
+            TraceSeed::BeginAddr(debug::return_address()),
+        )
     }
 
     /// `std::panic` hook: emit the same trace-string + auto-report as the fatal
@@ -2722,7 +2783,7 @@ mod draft {
                 writer.write_all(err_name)?;
             }
 
-            CrashReason::OutOfMemory => writer.write_byte(b'9')?,
+            CrashReason::OutOfMemory { .. } => writer.write_byte(b'9')?,
 
             CrashReason::Abort => writer.write_byte(b'a')?,
             CrashReason::Trap(addr) => {

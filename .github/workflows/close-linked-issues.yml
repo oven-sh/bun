@@ -177,9 +177,11 @@ jobs:
               if (endsWithReference(tokens, k)) return false;
               const lineStart = tokens[k]?.kind === "newline";
               if (lineStart) {
-                const w = skipInterveningBack(tokens, k - 1);
-                // "#100 has\nfixed #1": a reference reached through a skipped word is the subject.
-                if (w < k - 1 && endsWithReference(tokens, w)) return false;
+                const e = skipEmphasisBack(tokens, k - 1);
+                const w = skipInterveningBack(tokens, e);
+                // "#100 has\nfixed #1": a reference reached through a skipped word is the
+                // subject. "**#100**\nfixes #1" is two statements, like "#100\nfixes #1".
+                if (w < e && endsWithReference(tokens, w)) return false;
                 k = w;
               }
               const before = tokens[k];
@@ -220,8 +222,7 @@ jobs:
             // Whether a reference ends at `k`: "#100", "(#100)", "**#100**", "<url>",
             // "[#100](url)" or "[text](issue url)".
             function endsWithReference(tokens, k) {
-              let p = k;
-              while (p >= 0 && tokens[p].kind === "punct" && (tokens[p].text === "*" || tokens[p].text === "_")) p--;
+              const p = skipEmphasisBack(tokens, k);
               const token = tokens[p];
               if (token === undefined) return false;
               if (token.kind === "ref") return true;
@@ -232,8 +233,18 @@ jobs:
               return tokens[p - 4]?.kind === "ref" && isPunct(tokens[p - 5], "[");
             }
 
+            // Steps back over the words in INTERVENING and over emphasis markers:
+            // "#100 **also** fixes #1", "does not *really* fix #1".
             function skipInterveningBack(tokens, k) {
-              while (k >= 0 && tokens[k].kind === "word" && INTERVENING.has(tokens[k].text)) k--;
+              for (;;) {
+                k = skipEmphasisBack(tokens, k);
+                if (k < 0 || tokens[k].kind !== "word" || !INTERVENING.has(tokens[k].text)) return k;
+                k--;
+              }
+            }
+
+            function skipEmphasisBack(tokens, k) {
+              while (k >= 0 && (isPunct(tokens[k], "*") || isPunct(tokens[k], "_"))) k--;
               return k;
             }
 
@@ -296,7 +307,6 @@ jobs:
             // block unless it continues a paragraph.
             function removeBlocks(text) {
               const kept = [];
-              const lastCloser = text.lastIndexOf("-->");
               let fence = null;
               let comment = false;
               // The open blockquote, see continueQuote(). null outside one.
@@ -304,8 +314,13 @@ jobs:
               let paragraph = false;
               let offset = 0;
               for (const line of text.split("\n")) {
-                // Whether a "-->" follows on a later line.
-                const closesLater = lastCloser >= offset + line.length;
+                // A "<!--" in the middle of a line is a comment only when a "-->" follows
+                // on a later line of the same paragraph.
+                let closesLater = false;
+                if (line.includes("<!--")) {
+                  const closer = text.indexOf("-->", offset + line.length);
+                  closesLater = closer !== -1 && closer < nextBlankLine(text, offset);
+                }
                 offset += line.length + 1;
                 if (comment) {
                   const end = line.indexOf("-->");
@@ -388,13 +403,13 @@ jobs:
             // continues onto the next unmarked line. After a quoted heading (ATX, or a
             // setext underline under a quoted paragraph), rule or empty quote, and
             // inside a quoted fence or comment, the next unmarked line is outside. As
-            // at the top level, a fence or a comment has at most three spaces of
+            // at the top level, a fence or a comment has at most three columns of
             // indentation after the marker's own space, and an indented line continues
             // whatever came before it.
             function continueQuote(quote, inner) {
-              const content = inner.startsWith(" ") ? inner.slice(1) : inner;
+              const { indent, content } = quoteIndent(inner);
               const quoted = content.trim();
-              const indented = isIndentedCode(content);
+              const indented = indent >= 5;
               if (quote.comment) return { paragraph: false, fence: null, comment: !quoted.includes("-->") };
               if (quote.fence !== null) {
                 const closes = !indented && closesFence(quoted, quote.fence);
@@ -406,6 +421,20 @@ jobs:
               const underline = quote.paragraph && (isRunOf(quoted, "=") || isRunOf(quoted, "-"));
               const paragraph = quoted !== "" && !underline && !isHeading(quoted) && !isThematicBreak(quoted);
               return { paragraph, fence: null, comment: false };
+            }
+
+            // The whitespace after ">" in columns, with tab stops of four counted from
+            // the marker, and the text after it. The marker's own space is one of the
+            // columns: ">\tfoo" has three, two of which indent "foo".
+            function quoteIndent(inner) {
+              let column = 1;
+              let i = 0;
+              for (; i < inner.length; i++) {
+                if (inner[i] === " ") column++;
+                else if (inner[i] === "\t") column += 4 - (column % 4);
+                else break;
+              }
+              return { indent: column - 1, content: inner.slice(i) };
             }
 
             // Removes the HTML comments that start on `line`: { prose, open }, where

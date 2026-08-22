@@ -1114,6 +1114,10 @@ fn run_tasks_erased(
 
                 manager.manifests.insert(name_hash, manifest)?;
 
+                if let Some(entry) = manager.network_dedupe_map.get_mut(&task.id) {
+                    entry.manifest_fetched = true;
+                }
+
                 if cb.manifests_only {
                     continue;
                 }

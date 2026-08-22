@@ -1634,3 +1634,357 @@ describe("peer dependencies", () => {
     });
   });
 });
+
+// A registry manifest is cached as fresh for 300 seconds. A version spec (or a
+// catalog entry) bumped to a version published inside that window used to fail
+// resolution without ever refetching the stale manifest, and a catalog entry
+// additionally reported "is not in the catalog".
+// https://github.com/oven-sh/bun/issues/39784
+describe("version published after the manifest was cached", () => {
+  function serveMutableRegistry(
+    packages: Record<string, string[]>,
+    options: {
+      // Mutable extra dist-tags per package, merged over `latest`.
+      tags?: Record<string, Record<string, string>>;
+      // Simulate a stale registry edge: answer 304 to every conditional
+      // request even though the content changed.
+      respond304ToConditional?: boolean;
+    } = {},
+  ) {
+    const manifestRequests: { name: string; ifNoneMatch: string | null }[] = [];
+    const server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const { origin, pathname } = new URL(request.url);
+        const tarball = pathname.match(/^\/(.+)-(\d+\.\d+\.\d+)\.tgz$/);
+        if (tarball) {
+          const [, name, version] = tarball;
+          const archive = new Bun.Archive(
+            { "package/package.json": JSON.stringify({ name, version }) },
+            { compress: "gzip" },
+          );
+          return new Response(await archive.bytes());
+        }
+        const name = pathname.slice(1);
+        const versionList = packages[name];
+        if (!versionList) return new Response("not found", { status: 404 });
+        const ifNoneMatch = request.headers.get("if-none-match");
+        manifestRequests.push({ name, ifNoneMatch });
+        const etag = `"v${versionList.length}"`;
+        if (options.respond304ToConditional && ifNoneMatch !== null) {
+          return new Response(null, { status: 304, headers: { etag } });
+        }
+        const versions: Record<string, unknown> = {};
+        for (const version of versionList) {
+          versions[version] = { name, version, dist: { tarball: `${origin}/${name}-${version}.tgz` } };
+        }
+        return Response.json(
+          { name, versions, "dist-tags": { latest: versionList.at(-1), ...options.tags?.[name] } },
+          { headers: { etag } },
+        );
+      },
+    });
+    return { server, manifestRequests };
+  }
+
+  async function install(cwd: string, ...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", ...args],
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      // The environment's cache dir takes precedence over bunfig. These
+      // concurrent tests need a manifest cache of their own per project: they
+      // reuse one package name across different registries and version sets.
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out, err, exitCode };
+  }
+
+  test.concurrent("a catalog bump to the new version installs it", async () => {
+    const versions = ["1.0.0"];
+    const { server, manifestRequests } = serveMutableRegistry({ "fresh-pkg": versions });
+    await using _server = server;
+    using dir = writeRegistryProject(
+      {
+        "package.json": JSON.stringify({
+          name: "root",
+          workspaces: { packages: ["packages/*"], catalog: { "fresh-pkg": "1.0.0" } },
+        }),
+        "packages/pkg1/package.json": JSON.stringify({ name: "pkg1", dependencies: { "fresh-pkg": "catalog:" } }),
+      },
+      server.url.href,
+    );
+
+    const installedVersion = async () => {
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", "console.log(require('fresh-pkg/package.json').version)"],
+        cwd: join(String(dir), "packages", "pkg1"),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ err, exitCode }).toEqual({ err: "", exitCode: 0 });
+      return out.trim();
+    };
+
+    const first = await install(String(dir));
+    expect(first.err).not.toContain("error:");
+    expect(first.exitCode).toBe(0);
+    expect(await installedVersion()).toBe("1.0.0");
+
+    // publish 1.0.1 and bump the catalog entry while the cached manifest is still fresh
+    versions.push("1.0.1");
+    await write(
+      join(String(dir), "package.json"),
+      JSON.stringify({
+        name: "root",
+        workspaces: { packages: ["packages/*"], catalog: { "fresh-pkg": "1.0.1" } },
+      }),
+    );
+
+    const requestsBefore = manifestRequests.length;
+    const second = await install(String(dir));
+    expect(second.err).not.toContain("is not in the catalog");
+    expect(second.err).not.toContain("error:");
+    expect(second.exitCode).toBe(0);
+    expect(await installedVersion()).toBe("1.0.1");
+
+    // the refetch is unconditional so a stale 304 cannot re-stamp the old manifest
+    expect(manifestRequests.slice(requestsBefore)).toEqual([{ name: "fresh-pkg", ifNoneMatch: null }]);
+  });
+
+  test.concurrent("a catalog bump to a version that does not exist reports the version, not the catalog", async () => {
+    const versions = ["1.0.0"];
+    const { server, manifestRequests } = serveMutableRegistry({ "fresh-pkg": versions });
+    await using _server = server;
+    using dir = writeRegistryProject(
+      {
+        "package.json": JSON.stringify({
+          name: "root",
+          workspaces: { packages: ["packages/*"], catalog: { "fresh-pkg": "1.0.0" } },
+        }),
+        "packages/pkg1/package.json": JSON.stringify({ name: "pkg1", dependencies: { "fresh-pkg": "catalog:" } }),
+      },
+      server.url.href,
+    );
+
+    const first = await install(String(dir));
+    expect(first.err).not.toContain("error:");
+    expect(first.exitCode).toBe(0);
+
+    await write(
+      join(String(dir), "package.json"),
+      JSON.stringify({
+        name: "root",
+        workspaces: { packages: ["packages/*"], catalog: { "fresh-pkg": "9.9.9" } },
+      }),
+    );
+
+    const requestsBefore = manifestRequests.length;
+    const second = await install(String(dir));
+    expect(second.err).toContain('No version matching "9.9.9" found for specifier "fresh-pkg"');
+    expect(second.err).toContain("fresh-pkg@catalog: failed to resolve");
+    expect(second.err).not.toContain("is not in the catalog");
+    expect(second.exitCode).not.toBe(0);
+
+    // exactly one refetch, then the missing version is authoritative
+    expect(manifestRequests.slice(requestsBefore)).toEqual([{ name: "fresh-pkg", ifNoneMatch: null }]);
+  });
+
+  test.concurrent("a plain dependency bump to the new version installs it", async () => {
+    const versions = ["1.0.0"];
+    const { server, manifestRequests } = serveMutableRegistry({ "fresh-pkg": versions });
+    await using _server = server;
+    using dir = writeRegistryProject(
+      { "package.json": JSON.stringify({ name: "root", dependencies: { "fresh-pkg": "1.0.0" } }) },
+      server.url.href,
+    );
+
+    const first = await install(String(dir));
+    expect(first.err).not.toContain("error:");
+    expect(first.exitCode).toBe(0);
+
+    versions.push("1.0.1");
+    await write(
+      join(String(dir), "package.json"),
+      JSON.stringify({ name: "root", dependencies: { "fresh-pkg": "1.0.1" } }),
+    );
+
+    const requestsBefore = manifestRequests.length;
+    const second = await install(String(dir));
+    expect(second.err).not.toContain("error:");
+    expect(second.exitCode).toBe(0);
+    expect((await file(join(String(dir), "node_modules", "fresh-pkg", "package.json")).json()).version).toBe("1.0.1");
+    expect(manifestRequests.slice(requestsBefore)).toEqual([{ name: "fresh-pkg", ifNoneMatch: null }]);
+  });
+
+  test.concurrent("a bump to a dist-tag published after the manifest was cached installs it", async () => {
+    const versions = ["1.0.0"];
+    const tags: Record<string, string> = {};
+    const { server, manifestRequests } = serveMutableRegistry(
+      { "fresh-pkg": versions },
+      { tags: { "fresh-pkg": tags } },
+    );
+    await using _server = server;
+    using dir = writeRegistryProject(
+      { "package.json": JSON.stringify({ name: "root", dependencies: { "fresh-pkg": "1.0.0" } }) },
+      server.url.href,
+    );
+
+    const first = await install(String(dir));
+    expect(first.err).not.toContain("error:");
+    expect(first.exitCode).toBe(0);
+
+    versions.push("1.0.1");
+    tags.beta = "1.0.1";
+    await write(
+      join(String(dir), "package.json"),
+      JSON.stringify({ name: "root", dependencies: { "fresh-pkg": "beta" } }),
+    );
+
+    const requestsBefore = manifestRequests.length;
+    const second = await install(String(dir));
+    expect(second.err).not.toContain("error:");
+    expect(second.exitCode).toBe(0);
+    expect((await file(join(String(dir), "node_modules", "fresh-pkg", "package.json")).json()).version).toBe("1.0.1");
+    expect(manifestRequests.slice(requestsBefore)).toEqual([{ name: "fresh-pkg", ifNoneMatch: null }]);
+  });
+
+  test.concurrent("a dist-tag that does not exist reports the tag after one refetch", async () => {
+    const versions = ["1.0.0"];
+    const { server, manifestRequests } = serveMutableRegistry({ "fresh-pkg": versions });
+    await using _server = server;
+    using dir = writeRegistryProject(
+      { "package.json": JSON.stringify({ name: "root", dependencies: { "fresh-pkg": "1.0.0" } }) },
+      server.url.href,
+    );
+
+    const first = await install(String(dir));
+    expect(first.err).not.toContain("error:");
+    expect(first.exitCode).toBe(0);
+
+    await write(
+      join(String(dir), "package.json"),
+      JSON.stringify({ name: "root", dependencies: { "fresh-pkg": "nope" } }),
+    );
+
+    const requestsBefore = manifestRequests.length;
+    const second = await install(String(dir));
+    expect(second.err).toContain('Package "fresh-pkg" with tag "nope" not found');
+    expect(second.exitCode).not.toBe(0);
+    expect(manifestRequests.slice(requestsBefore)).toEqual([{ name: "fresh-pkg", ifNoneMatch: null }]);
+  });
+
+  test.concurrent("one refetch serves every workspace that needs the new version", async () => {
+    const versions = ["1.0.0"];
+    const { server, manifestRequests } = serveMutableRegistry({ "fresh-pkg": versions });
+    await using _server = server;
+    const workspacePackageJson = (catalogVersion: string) =>
+      JSON.stringify({
+        name: "root",
+        workspaces: { packages: ["packages/*"], catalog: { "fresh-pkg": catalogVersion } },
+      });
+    using dir = writeRegistryProject(
+      {
+        "package.json": workspacePackageJson("1.0.0"),
+        "packages/pkg1/package.json": JSON.stringify({ name: "pkg1", dependencies: { "fresh-pkg": "catalog:" } }),
+        "packages/pkg2/package.json": JSON.stringify({ name: "pkg2", dependencies: { "fresh-pkg": "catalog:" } }),
+      },
+      server.url.href,
+    );
+
+    const first = await install(String(dir));
+    expect(first.err).not.toContain("error:");
+    expect(first.exitCode).toBe(0);
+
+    versions.push("1.0.1");
+    await write(join(String(dir), "package.json"), workspacePackageJson("1.0.1"));
+
+    const requestsBefore = manifestRequests.length;
+    const second = await install(String(dir));
+    expect(second.err).not.toContain("error:");
+    expect(second.exitCode).toBe(0);
+    // Both workspaces wait on one in-flight refetch instead of forcing two.
+    expect(manifestRequests.slice(requestsBefore)).toEqual([{ name: "fresh-pkg", ifNoneMatch: null }]);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", "console.log(require('fresh-pkg/package.json').version)"],
+      cwd: join(String(dir), "packages", "pkg2"),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ err, exitCode }).toEqual({ err: "", exitCode: 0 });
+    expect(out.trim()).toBe("1.0.1");
+  });
+
+  test.concurrent("one refetch resolves one workspace and authoritatively fails the other", async () => {
+    const versions = ["1.0.0"];
+    const { server, manifestRequests } = serveMutableRegistry({ "fresh-pkg": versions });
+    await using _server = server;
+    const pkgJson = (name: string, spec: string) => JSON.stringify({ name, dependencies: { "fresh-pkg": spec } });
+    using dir = writeRegistryProject(
+      {
+        "package.json": JSON.stringify({ name: "root", workspaces: { packages: ["packages/*"] } }),
+        "packages/pkg1/package.json": pkgJson("pkg1", "1.0.0"),
+        "packages/pkg2/package.json": pkgJson("pkg2", "1.0.0"),
+      },
+      server.url.href,
+    );
+
+    const first = await install(String(dir));
+    expect(first.err).not.toContain("error:");
+    expect(first.exitCode).toBe(0);
+
+    versions.push("1.0.1");
+    await write(join(String(dir), "packages", "pkg1", "package.json"), pkgJson("pkg1", "1.0.1"));
+    await write(join(String(dir), "packages", "pkg2", "package.json"), pkgJson("pkg2", "9.9.9"));
+
+    const requestsBefore = manifestRequests.length;
+    const second = await install(String(dir));
+    expect(second.err).toContain('No version matching "9.9.9" found for specifier "fresh-pkg"');
+    expect(second.exitCode).not.toBe(0);
+    // The missing version is authoritative after the one shared refetch.
+    expect(manifestRequests.slice(requestsBefore)).toEqual([{ name: "fresh-pkg", ifNoneMatch: null }]);
+  });
+
+  test.concurrent("a stale 304 to the revalidation does not mask the new version", async () => {
+    const versions = ["1.0.0"];
+    const { server, manifestRequests } = serveMutableRegistry(
+      { "fresh-pkg": versions },
+      { respond304ToConditional: true },
+    );
+    await using _server = server;
+    using dir = writeRegistryProject(
+      { "package.json": JSON.stringify({ name: "root", dependencies: { "fresh-pkg": "1.0.0" } }) },
+      server.url.href,
+    );
+
+    const first = await install(String(dir));
+    expect(first.err).not.toContain("error:");
+    expect(first.exitCode).toBe(0);
+
+    versions.push("1.0.1");
+    await write(
+      join(String(dir), "package.json"),
+      JSON.stringify({ name: "root", dependencies: { "fresh-pkg": "1.0.1" } }),
+    );
+
+    // --force disables the freshness window but keeps the manifest cache, so
+    // the install revalidates with If-None-Match. The stale edge answers 304,
+    // then the refetch goes out without conditional headers.
+    const requestsBefore = manifestRequests.length;
+    const second = await install(String(dir), "--force");
+    expect(second.err).not.toContain("error:");
+    expect(second.exitCode).toBe(0);
+    expect((await file(join(String(dir), "node_modules", "fresh-pkg", "package.json")).json()).version).toBe("1.0.1");
+    expect(manifestRequests.slice(requestsBefore)).toEqual([
+      { name: "fresh-pkg", ifNoneMatch: '"v1"' },
+      { name: "fresh-pkg", ifNoneMatch: null },
+    ]);
+  });
+});

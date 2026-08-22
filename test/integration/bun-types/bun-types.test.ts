@@ -400,6 +400,79 @@ describe("@types/bun integration test", () => {
     });
   });
 
+  describe("BunLockFile", () => {
+    test("accepts lockfileVersion 3 and the object form of overrides", async () => {
+      const checkDir = join(TEMP_DIR, "bun-lock-check");
+      const tsconfig = structuredClone(sourceTsconfig);
+      tsconfig.include = ["bun-lock.ts"];
+      tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
+      await mkdir(checkDir, { recursive: true });
+      await makeTree(checkDir, {
+        "tsconfig.json": JSON.stringify(tsconfig, null, 2),
+        // The overrides are what bun install writes for nested and version-scoped rules
+        // (test/cli/install/nested-overrides.test.ts). No bun.lock exists in checkDir: the
+        // import is typed by the "*/bun.lock" module declaration in extensions.d.ts.
+        "bun-lock.ts": `import type { BunLockFile, BunLockFileScopedOverrides } from "bun";
+           import imported from "./bun.lock";
+
+           ({
+             lockfileVersion: 3,
+             workspaces: { "": { name: "app", dependencies: { "one-dep": "1.0.0" } } },
+             overrides: {
+               "no-deps": "1.0.0",
+               "no-deps@1": { ".": "1.1.0" },
+               "one-dep": { "no-deps": "2.0.0" },
+               "one-range-dep": { "no-deps": "1.0.1", "no-deps@1": "2.0.0" },
+             },
+             packages: {},
+           }) satisfies BunLockFile;
+
+           ({ ".": "1.1.0", "no-deps@1": "2.0.0" }) satisfies BunLockFileScopedOverrides;
+
+           declare const parsed: BunLockFile;
+           if (parsed.lockfileVersion === 3) parsed.lockfileVersion satisfies 3;
+           if (imported.lockfileVersion === 3) imported.lockfileVersion satisfies 3;
+
+           for (const rule of Object.values(parsed.overrides ?? {})) {
+             if (typeof rule === "string") continue;
+             rule satisfies BunLockFileScopedOverrides;
+             for (const specifier of Object.values(rule)) specifier satisfies string;
+           }
+
+           ({
+             lockfileVersion: 3,
+             workspaces: {},
+             overrides: {
+               // @ts-expect-error rules nest one level deep only
+               "one-dep": { "no-deps": { ".": "2.0.0" } },
+             },
+             packages: {},
+           }) satisfies BunLockFile;
+
+           ({
+             // @ts-expect-error lockfileVersion is a closed set of known versions, not number
+             lockfileVersion: 4,
+             workspaces: {},
+             packages: {},
+           }) satisfies BunLockFile;`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
+        env: bunEnv,
+        cwd: checkDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr.trim()).toBe("");
+      expect(stdout.trim()).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("Test Globals", () => {
     const code = `
       const test_shouldBeAFunction: Function = test;

@@ -9808,12 +9808,26 @@ declare module "bun" {
    * The structure of Bun's lockfile, `bun.lock`
    */
   type BunLockFile = {
-    lockfileVersion: 0 | 1 | 2;
+    /**
+     * Version of the file format. A release of Bun that does not know a lockfile's version cannot read it.
+     *
+     * - `0`: workspace entries in {@link BunLockFile.packages} carry a trailing object with the workspace's dependencies.
+     * - `1`: workspace entries are `["name@workspace:path"]` only.
+     * - `2`: same content as `1`. Bun reads it more strictly, for example an npm package resolved to a tarball
+     *   outside the configured registry must carry an integrity hash.
+     * - `3`: {@link BunLockFile.overrides} holds nested or version-scoped rules, see {@link BunLockFileScopedOverrides}.
+     */
+    lockfileVersion: 0 | 1 | 2 | 3;
     workspaces: {
       [workspace: string]: BunLockFileWorkspacePackage;
     };
-    /** @see https://bun.com/docs/install/overrides */
-    overrides?: Record<string, string>;
+    /**
+     * A string value applies to every dependency on the package named by the key.
+     * An object value holds the rules scoped to the package selected by the key, see {@link BunLockFileScopedOverrides}.
+     *
+     * @see https://bun.com/docs/install/overrides
+     */
+    overrides?: Record<string, string | BunLockFileScopedOverrides>;
     /** @see https://bun.com/docs/install/patch */
     patchedDependencies?: Record<string, string>;
     /** @see https://bun.com/docs/install/lifecycle#trusteddependencies */
@@ -9852,6 +9866,28 @@ declare module "bun" {
       [pkg: string]: BunLockFilePackageArray;
     };
   };
+
+  /**
+   * The object form of a {@link BunLockFile.overrides} value. Bun writes it for the nested
+   * (`"parent": { "child": "1.0.0" }`, `"parent>child"`) and version-scoped (`"pkg@1"`) rules of
+   * `package.json`.
+   *
+   * The key in `overrides` selects the package these rules are scoped to, as `name` or `name@range`.
+   * Inside the object, `"."` is the rule for the selected package itself and every other key, again
+   * `name` or `name@range`, is the rule for that dependency of the selected package. Every value is a
+   * dependency specifier: rules nest one level deep only.
+   *
+   * @example
+   * ```jsonc
+   * "overrides": {
+   *   "no-deps": "1.0.0",
+   *   "no-deps@1": { ".": "1.1.0" },
+   *   "one-dep": { "no-deps": "2.0.0" },
+   *   "one-range-dep": { "no-deps": "1.0.1", "no-deps@1": "2.0.0" },
+   * }
+   * ```
+   */
+  type BunLockFileScopedOverrides = Record<string, string>;
 
   type BunLockFileBasePackageInfo = {
     dependencies?: Record<string, string>;

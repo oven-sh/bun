@@ -1559,14 +1559,14 @@ folded: >
           expect(() => YAML.parse("&a\n&b\n&c d: 1\n")).toThrow("Multiple anchors");
         });
 
-        test.todo("two tags before e-node `:` — [200]/[193] line split (tag analogue)", () => {
-          // The MappingValue arm clears has_anchor/has_mapping_anchor but not
-          // has_mapping_tag, so the post-loop guard over-rejects the valid
-          // 2-tag case. set_tag also lacks the has_mapping_tag.is_some()
-          // overflow guard that set_anchor has, so a 3rd tag on a 3rd line
-          // silently overwrites instead of erroring.
+        test("two tags before e-node `:` — [200]/[193] line split (tag analogue)", () => {
+          // The outer tag is the [200] block collection's, the inner one the
+          // implicit first key's, so the inner one must share the key's line.
           expect(YAML.parse("!!map\n!!str : x\n")).toEqual({ "": "x" });
+          expect(YAML.parse("!!map\n!!str a: x\n")).toEqual({ a: "x" });
           expect(() => YAML.parse("!!a\n!!b\n!!c d: 1\n")).toThrow("Multiple tags");
+          expect(() => YAML.parse("- !!a\n  !!b\n  a: 1\n")).toThrow("Multiple tags");
+          expect(() => YAML.parse("!!a\n!!b\nx\n")).toThrow("Multiple tags");
         });
       });
 
@@ -5072,6 +5072,401 @@ describe("plain scalar whitespace handling", () => {
 
   test("bare dash after a mapping key is a block-sequence indicator, not a plain scalar", () => {
     expect(() => YAML.parse("g: -")).toThrow(SyntaxError);
+  });
+});
+
+describe("parse with the tags option", () => {
+  const upper = { "!upper": (value: string) => value.toUpperCase() };
+  const wrap = { "!wrap": (value: unknown) => ({ wrapped: value }) };
+
+  describe("scalars", () => {
+    test("the handler receives the scalar's text and its result replaces the node", () => {
+      expect(YAML.parse("a: !upper hi\nb: hi\n", { tags: upper })).toEqual({ a: "HI", b: "hi" });
+      expect(YAML.parse("- !upper hi\n- hi\n", { tags: upper })).toEqual(["HI", "hi"]);
+      expect(YAML.parse("!upper hi\n", { tags: upper })).toBe("HI");
+      expect(YAML.parse("[!upper a, {b: !upper c}]\n", { tags: upper })).toEqual(["A", { b: "C" }]);
+    });
+
+    test("plain scalars are not resolved by the core schema first", () => {
+      const seen: unknown[] = [];
+      const tags = {
+        "!raw": (value: unknown) => {
+          seen.push(value);
+          return value;
+        },
+      };
+      expect(YAML.parse("- !raw 123\n- !raw true\n- !raw ~\n- !raw null\n- !raw 0x10\n- 123\n", { tags })).toEqual([
+        "123",
+        "true",
+        "~",
+        "null",
+        "0x10",
+        123,
+      ]);
+      expect(seen).toEqual(["123", "true", "~", "null", "0x10"]);
+    });
+
+    test("quoted and block scalars", () => {
+      expect(YAML.parse('a: !upper "hi there"\nb: !upper |\n  line one\n  line two\n', { tags: upper })).toEqual({
+        a: "HI THERE",
+        b: "LINE ONE\nLINE TWO\n",
+      });
+    });
+
+    test("a tag with no content is the empty scalar", () => {
+      const tags = { "!empty": (value: unknown) => ({ got: value }) };
+      expect(YAML.parse("a: !empty\nb: 1\n", { tags })).toEqual({ a: { got: "" }, b: 1 });
+      expect(YAML.parse("[!empty , !empty ]\n", { tags })).toEqual([{ got: "" }, { got: "" }]);
+      expect(YAML.parse("!empty\n", { tags })).toEqual({ got: "" });
+      expect(YAML.parse("- !empty\n- 1\n", { tags })).toEqual([{ got: "" }, 1]);
+    });
+
+    test("a tagged value that is abandoned to the parent does not affect the next key", () => {
+      expect(YAML.parse("a: !upper\n0xFF: c\n", { tags: upper })).toEqual({ a: "", 255: "c" });
+    });
+
+    test("a tagged implicit key", () => {
+      expect(YAML.parse("!upper a: 1\nb: 2\n", { tags: upper })).toEqual({ A: 1, b: 2 });
+      expect(YAML.parse("{!upper a: 1}\n", { tags: upper })).toEqual({ A: 1 });
+      expect(YAML.parse("? !upper a\n: 1\n", { tags: upper })).toEqual({ A: 1 });
+    });
+
+    test("registering a core tag hands the handler the raw text", () => {
+      const tags = { "!!int": (value: string) => BigInt(value) };
+      expect(YAML.parse("a: !!int 9007199254740993\nb: 2\n", { tags })).toEqual({ a: 9007199254740993n, b: 2 });
+    });
+  });
+
+  describe("collections", () => {
+    test("flow and block sequences", () => {
+      expect(YAML.parse("a: !wrap [1, 2]\n", { tags: wrap })).toEqual({ a: { wrapped: [1, 2] } });
+      expect(YAML.parse("a: !wrap\n  - 1\n  - 2\n", { tags: wrap })).toEqual({ a: { wrapped: [1, 2] } });
+      expect(YAML.parse("!wrap\n- 1\n- 2\n", { tags: wrap })).toEqual({ wrapped: [1, 2] });
+      expect(YAML.parse("- !wrap [1]\n- [1]\n", { tags: wrap })).toEqual([{ wrapped: [1] }, [1]]);
+    });
+
+    test("flow and block mappings", () => {
+      expect(YAML.parse("a: !wrap {b: 1}\n", { tags: wrap })).toEqual({ a: { wrapped: { b: 1 } } });
+      expect(YAML.parse("a: !wrap\n  b: 1\n  c: 2\n", { tags: wrap })).toEqual({ a: { wrapped: { b: 1, c: 2 } } });
+      expect(YAML.parse("!wrap\nb: 1\nc: 2\n", { tags: wrap })).toEqual({ wrapped: { b: 1, c: 2 } });
+      expect(YAML.parse("- !wrap\n  b: 1\n- b: 1\n", { tags: wrap })).toEqual([{ wrapped: { b: 1 } }, { b: 1 }]);
+      expect(YAML.parse("!wrap\n? b\n: 1\n", { tags: wrap })).toEqual({ wrapped: { b: 1 } });
+      expect(YAML.parse("a: !wrap\n  : 1\n", { tags: wrap })).toEqual({ a: { wrapped: { null: 1 } } });
+    });
+
+    test("a tag on the first key's line belongs to the key, on its own line to the mapping", () => {
+      const tags = { ...upper, ...wrap };
+      expect(YAML.parse("!upper a: 1\n", { tags })).toEqual({ A: 1 });
+      expect(YAML.parse("!wrap\na: 1\n", { tags })).toEqual({ wrapped: { a: 1 } });
+      expect(YAML.parse("!wrap\n!upper a: 1\n", { tags })).toEqual({ wrapped: { A: 1 } });
+      expect(YAML.parse("!wrap\n!upper : 1\n", { tags })).toEqual({ wrapped: { "": 1 } });
+      expect(YAML.parse("!wrap\n!wrap [a]: 1\n", { tags })).toEqual({ wrapped: { "[object Object]": 1 } });
+      expect(YAML.parse("!wrap\n!wrap {}: 1\n", { tags })).toEqual({ wrapped: { "[object Object]": 1 } });
+    });
+
+    test("nested tags are applied inside out", () => {
+      const tags = { ...upper, ...wrap };
+      expect(YAML.parse("!wrap\na: !wrap [!upper x]\nb: !upper y\n", { tags })).toEqual({
+        wrapped: { a: { wrapped: ["X"] }, b: "Y" },
+      });
+    });
+
+    test("handlers see the values other handlers produced", () => {
+      const tags = {
+        "!date": (value: string) => new Date(value),
+        "!range": ([from, to]: [Date, Date]) => to.getTime() - from.getTime(),
+      };
+      expect(YAML.parse("!range [!date 2001-01-01T00:00:00Z, !date 2001-01-02T00:00:00Z]\n", { tags })).toBe(
+        86_400_000,
+      );
+    });
+
+    test("a custom-tagged value under a merge key is an ordinary property", () => {
+      const input = "base: &base {x: 1}\na:\n  <<: *base\n  y: 2\nb:\n  <<: !wrap {x: 1}\n  y: 2\n";
+      expect(YAML.parse(input, { tags: wrap })).toEqual({
+        base: { x: 1 },
+        a: { x: 1, y: 2 },
+        b: { "<<": { wrapped: { x: 1 } }, y: 2 },
+      });
+    });
+  });
+
+  describe("handler calls", () => {
+    test("receives the tag as written and is called with an undefined this", () => {
+      const calls: unknown[] = [];
+      const tags = {
+        "!a": function (this: unknown, value: unknown, tag: string) {
+          calls.push([this, value, tag]);
+          return 1;
+        },
+        "!!b": (value: unknown, tag: string) => {
+          calls.push([value, tag]);
+          return 2;
+        },
+      };
+      expect(YAML.parse("- !a x\n- !!b y\n- !<tag:yaml.org,2002:b> z\n", { tags })).toEqual([1, 2, 2]);
+      expect(calls).toEqual([
+        [undefined, "x", "!a"],
+        ["y", "!!b"],
+        ["z", "!!b"],
+      ]);
+    });
+
+    test("any return value is used, including undefined and null", () => {
+      const tags = {
+        "!undef": () => undefined,
+        "!nil": () => null,
+        "!fn": () => Math.max,
+      };
+      const parsed = YAML.parse("a: !undef x\nb: !nil x\nc: !fn x\nd: [!undef x]\n", { tags });
+      expect(parsed).toEqual({ a: undefined, b: null, c: Math.max, d: [undefined] });
+      expect(Object.keys(parsed)).toEqual(["a", "b", "c", "d"]);
+    });
+
+    test("an exception thrown by a handler propagates", () => {
+      const error = new Error("from the handler");
+      const tags = {
+        "!boom": () => {
+          throw error;
+        },
+      };
+      expect(() => YAML.parse("a: 1\nb: !boom x\n", { tags })).toThrow(error);
+    });
+
+    test("a handler may call parse itself", () => {
+      const tags = { "!yaml": (value: string) => YAML.parse(value, { tags }) };
+      expect(YAML.parse("outer: !yaml |\n  inner: !yaml |\n    x: [1, 2]\n", { tags })).toEqual({
+        outer: { inner: { x: [1, 2] } },
+      });
+    });
+
+    test("works with a Buffer input", () => {
+      expect(YAML.parse(Buffer.from("a: !upper hi\n"), { tags: upper })).toEqual({ a: "HI" });
+    });
+
+    test("applies to every document of a stream", () => {
+      expect(YAML.parse("!upper a\n---\n!upper b\n", { tags: upper })).toEqual(["A", "B"]);
+    });
+  });
+
+  describe("anchors and aliases", () => {
+    test("an alias to a tagged scalar shares the handler's one result", () => {
+      let calls = 0;
+      const tags = {
+        "!obj": (value: string) => {
+          calls++;
+          return { value };
+        },
+      };
+      const parsed = YAML.parse("a: &x !obj hi\nb: *x\n", { tags });
+      expect(parsed).toEqual({ a: { value: "hi" }, b: { value: "hi" } });
+      expect(parsed.a).toBe(parsed.b);
+      expect(calls).toBe(1);
+    });
+
+    test("an alias to a tagged collection shares the handler's one result", () => {
+      let calls = 0;
+      const tags = {
+        "!wrap": (value: unknown) => {
+          calls++;
+          return { wrapped: value };
+        },
+      };
+      for (const input of [
+        "a: &x !wrap [1]\nb: *x\n",
+        "a: !wrap &x [1]\nb: *x\n",
+        "a: &x !wrap\n  - 1\nb: *x\n",
+        "a: &x !wrap {c: 1}\nb: *x\n",
+        "a: &x !wrap\n  c: 1\nb: *x\n",
+        "a: &x\n  !wrap\n  c: 1\nb: *x\n",
+      ]) {
+        calls = 0;
+        const parsed = YAML.parse(input, { tags });
+        expect(parsed.a, input).toBe(parsed.b);
+        expect(parsed.a.wrapped, input).toBeDefined();
+        expect(calls, input).toBe(1);
+      }
+    });
+
+    test("an alias from inside a tagged collection refers to the untagged collection", () => {
+      const parsed = YAML.parse("&x !wrap [*x]\n", { tags: wrap });
+      expect(parsed.wrapped[0]).toBe(parsed.wrapped);
+    });
+
+    test("merge keys still expand alongside tags", () => {
+      expect(YAML.parse("base: &b {x: !upper a}\nd:\n  <<: *b\n  y: 1\n", { tags: upper })).toEqual({
+        base: { x: "A" },
+        d: { x: "A", y: 1 },
+      });
+    });
+  });
+
+  describe("tag names", () => {
+    test("a !! key matches the yaml.org tag in shorthand and verbatim form", () => {
+      const tags = { "!!timestamp": (value: string) => new Date(value) };
+      const date = new Date("2001-12-14T00:00:00Z");
+      expect(YAML.parse("- !!timestamp 2001-12-14\n- !<tag:yaml.org,2002:timestamp> 2001-12-14\n", { tags })).toEqual([
+        date,
+        date,
+      ]);
+      expect(YAML.parse("a: !timestamp 2001-12-14\n", { tags })).toEqual({ a: "2001-12-14" });
+    });
+
+    test("a tag URI key matches verbatim tags and %TAG handles", () => {
+      const tags = { "tag:example.com,2000:app/foo": (value: string) => ({ foo: value }) };
+      expect(YAML.parse("!<tag:example.com,2000:app/foo> x\n", { tags })).toEqual({ foo: "x" });
+      expect(YAML.parse("%TAG !e! tag:example.com,2000:app/\n---\n!e!foo x\n", { tags })).toEqual({ foo: "x" });
+      expect(YAML.parse("%TAG ! tag:example.com,2000:app/\n---\n!foo x\n", { tags })).toEqual({ foo: "x" });
+      expect(YAML.parse("%TAG !! tag:example.com,2000:app/\n---\n!!foo x\n", { tags })).toEqual({ foo: "x" });
+    });
+
+    test("a remapped handle no longer produces the local tag", () => {
+      const tags = { "!foo": () => "local" };
+      expect(YAML.parse("!foo x\n", { tags })).toBe("local");
+      expect(YAML.parse("!<!foo> x\n", { tags })).toBe("local");
+      expect(YAML.parse("%TAG ! tag:example.com,2000:app/\n---\n!foo x\n", { tags })).toBe("x");
+    });
+
+    test("a %TAG directive only applies to its own document", () => {
+      const tags = { "!foo": () => "local", "tag:example.com,2000:app/foo": () => "global" };
+      expect(YAML.parse("%TAG ! tag:example.com,2000:app/\n---\n!foo x\n---\n!foo x\n", { tags })).toEqual([
+        "global",
+        "local",
+      ]);
+      expect(YAML.parse("%TAG !e! tag:example.com,2000:app/\n---\n!e!foo x\n---\n!foo x\n", { tags })).toEqual([
+        "global",
+        "local",
+      ]);
+    });
+
+    test("a local tag prefix in %TAG", () => {
+      const tags = { "!my-light": (value: string) => `light:${value}` };
+      expect(YAML.parse("%TAG !m! !my-\n---\n!m!light green\n", { tags })).toBe("light:green");
+    });
+
+    test("unregistered tags behave as without the option", () => {
+      const input = "- !foo 1\n- !!str 1\n- !!int '1'\n- !bar [1]\n- !!map {a: 1}\n- !<tag:example.com,2000:x> 1\n";
+      expect(YAML.parse(input, { tags: upper })).toEqual(YAML.parse(input));
+      expect(YAML.parse(input, { tags: upper })).toEqual(["1", "1", "1", [1], { a: 1 }, "1"]);
+    });
+  });
+
+  describe("option validation", () => {
+    test("accepts a missing, undefined or null options argument", () => {
+      expect(YAML.parse("a: !upper b\n")).toEqual({ a: "b" });
+      expect(YAML.parse("a: !upper b\n", undefined)).toEqual({ a: "b" });
+      expect(YAML.parse("a: !upper b\n", null as any)).toEqual({ a: "b" });
+      expect(YAML.parse("a: !upper b\n", {})).toEqual({ a: "b" });
+      expect(YAML.parse("a: !upper b\n", { tags: undefined })).toEqual({ a: "b" });
+      expect(YAML.parse("a: !upper b\n", { tags: null as any })).toEqual({ a: "b" });
+      expect(YAML.parse("a: !upper b\n", { tags: {} })).toEqual({ a: "b" });
+    });
+
+    test("rejects options that are not an object", () => {
+      expect(() => YAML.parse("a: 1", "tags" as any)).toThrow(TypeError);
+      expect(() => YAML.parse("a: 1", 1 as any)).toThrow(TypeError);
+    });
+
+    test("rejects tags that are not an object", () => {
+      expect(() => YAML.parse("a: 1", { tags: "!upper" as any })).toThrow(TypeError);
+      expect(() => YAML.parse("a: 1", { tags: true as any })).toThrow(TypeError);
+    });
+
+    test("rejects a handler that is not a function", () => {
+      expect(() => YAML.parse("a: 1", { tags: { "!upper": "x" as any } })).toThrow(
+        'The "!upper" property must be of type function. Received string',
+      );
+      expect(() => YAML.parse("a: 1", { tags: { "!upper": undefined as any } })).toThrow(TypeError);
+    });
+
+    test("rejects a key that cannot name a tag", () => {
+      for (const key of ["upper", "!", "!!"]) {
+        expect(() => YAML.parse("a: 1", { tags: { [key]: () => 1 } }), key).toThrow(
+          `YAML tag "${key}" must be a local tag ("!name"), a "!!name" tag, or a tag URI`,
+        );
+      }
+    });
+
+    test("validates the options before parsing", () => {
+      expect(() => YAML.parse("a: [", { tags: { "!x": 1 as any } })).toThrow(TypeError);
+    });
+
+    test("getters on the options run once", () => {
+      let reads = 0;
+      const options = {
+        get tags() {
+          reads++;
+          return upper;
+        },
+      };
+      expect(YAML.parse("!upper a\n", options)).toBe("A");
+      expect(reads).toBe(1);
+    });
+  });
+
+  describe("YAML.tags", () => {
+    const name = "BUN_YAML_TEST_ENV_TAG";
+
+    test("!env reads process.env at parse time", () => {
+      delete process.env[name];
+      try {
+        expect(YAML.parse(`a: !env ${name}\n`, { tags: YAML.tags })).toEqual({ a: undefined });
+        process.env[name] = "set";
+        expect(YAML.parse(`a: !env ${name}\n`, { tags: YAML.tags })).toEqual({ a: "set" });
+        expect(YAML.parse(`a: !env "${name}"\n`, { tags: YAML.tags })).toEqual({ a: "set" });
+        process.env[name] = "";
+        expect(YAML.parse(`a: !env ${name}\n`, { tags: YAML.tags })).toEqual({ a: "" });
+      } finally {
+        delete process.env[name];
+      }
+    });
+
+    test("!env [name, fallback] uses the fallback when the variable is not set", () => {
+      delete process.env[name];
+      try {
+        expect(YAML.parse(`a: !env [${name}, 3000]\n`, { tags: YAML.tags })).toEqual({ a: 3000 });
+        expect(YAML.parse(`a: !env [${name}, {b: 1}]\n`, { tags: YAML.tags })).toEqual({ a: { b: 1 } });
+        expect(YAML.parse(`a: !env [${name}]\n`, { tags: YAML.tags })).toEqual({ a: undefined });
+        expect(YAML.parse(`a: !env\n  - ${name}\n  - fallback\n`, { tags: YAML.tags })).toEqual({ a: "fallback" });
+        process.env[name] = "4000";
+        expect(YAML.parse(`a: !env [${name}, 3000]\n`, { tags: YAML.tags })).toEqual({ a: "4000" });
+      } finally {
+        delete process.env[name];
+      }
+    });
+
+    test("!env does not read inherited properties", () => {
+      expect(YAML.parse("a: !env toString\nb: !env __proto__\n", { tags: YAML.tags })).toEqual({
+        a: undefined,
+        b: undefined,
+      });
+    });
+
+    test("!env rejects a mapping", () => {
+      expect(() => YAML.parse("a: !env {b: 1}\n", { tags: YAML.tags })).toThrow(
+        "!env expects a variable name or [name, fallback]",
+      );
+    });
+
+    test("the built-in handlers combine with custom ones", () => {
+      process.env[name] = "value";
+      try {
+        const tags = { ...YAML.tags, ...upper };
+        expect(YAML.parse(`a: !env ${name}\nb: !upper ${name}\n`, { tags })).toEqual({
+          a: "value",
+          b: name,
+        });
+        expect(YAML.parse(`!upper ${name}\n`, { tags: { "!upper": YAML.tags["!env"] } })).toBe("value");
+      } finally {
+        delete process.env[name];
+      }
+    });
+
+    test("is a plain object of functions", () => {
+      expect(Object.keys(YAML.tags)).toEqual(["!env"]);
+      expect(typeof YAML.tags["!env"]).toBe("function");
+      expect(YAML.tags["!env"].name).toBe("!env");
+    });
   });
 });
 

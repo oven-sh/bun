@@ -238,6 +238,8 @@ test.each([
   "If this fixes #1, the crash goes away.",
   "Unless we replace #1, keep the shim.",
   "When they have fixed #1 this will work.",
+  "Once we\nfix #1, this can land.",
+  "If\nthis fixes #1, the crash goes away.",
   // the keyword as an adjective or a noun
   "Supersedes the closed #26040.",
   "Flagged by a review comment on closed #35351 (duplicate of merged #35344).",
@@ -289,6 +291,7 @@ test.each([
   "> quoted\n**Fixes #1**",
   "~~Fixes #1~~",
   "<s>Fixes #1</s>",
+  "See `note\nFixes #1234` and `done",
   "<DEL>Fixes #1</DEL>",
   "<strike>Fixes #1</strike>",
   "~~~ `sh`\nFixes #1\n~~~",

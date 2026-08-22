@@ -812,9 +812,10 @@ it.if(!isWindows)("spawnSync correctly reports signal codes", () => {
     process.kill(process.pid, "SIGTRAP");
   `;
 
-  const { signal } = spawnSync(bunExe(), ["-e", trapCode], {
-    // @ts-expect-error
-    env: { ...bunEnv, BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF: "1" },
+  // The child dies via SIG_DFL, which dumps core; the coredump upload CI lane
+  // flags a leftover core file as a failure, so turn it off in a shell wrapper.
+  const { signal } = spawnSync("/bin/sh", ["-c", `ulimit -c 0 && exec "$@"`, "--", bunExe(), "-e", trapCode], {
+    env: bunEnv,
   });
 
   expect(signal).toBe("SIGTRAP");

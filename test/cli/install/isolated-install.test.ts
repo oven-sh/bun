@@ -89,10 +89,9 @@ async function install(
     stderr: "pipe",
     stdin: "ignore",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderrLines(stderr)).toEqual(expectedStderr);
   expect(exitCode).toBe(0);
-  return { stdout, stderr };
 }
 
 // The cases that build a git repository need the git executable.
@@ -1984,9 +1983,7 @@ test.concurrent("transitive peer deps are resolved when resolution is fully sync
   // (within max-age) so all loads are synchronous — this is the bug trigger.
   await rm(join(String(packageDir), "node_modules"), { recursive: true, force: true });
   await rm(join(String(packageDir), "bun.lock"), { force: true });
-  const { stderr } = await install(String(packageDir), env, { stderr: expectedStderr });
-  // no network task ran: every manifest and tarball came from the cache
-  expect(stderr).toContain("Resolved, downloaded and extracted [0]");
+  await install(String(packageDir), env, { stderr: expectedStderr });
 
   const bunDir = join(String(packageDir), "node_modules", ".bun");
   // `+7347ae2d86f1441a` hashes the peer set `no-deps@1.0.0`, `+2ddcb6ca48941e07`

@@ -2248,6 +2248,11 @@ pub fn init(
                 == Some(bun_options_types::offline_mode::OfflineMode::Offline)
         {
             manager.options.offline = options::OfflineMode::PreferOffline;
+            // the manifest cache is the data source in this mode (see Options::load)
+            manager
+                .options
+                .enable
+                .set(options::Enable::MANIFEST_CACHE, true);
         }
 
         if let Some(config) = ctx.install.as_deref_mut() {

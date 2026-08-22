@@ -302,9 +302,53 @@ pub fn enqueue_git_for_checkout(
         }
 
         let dep = this.lockfile.buffers.dependencies[dependency_id as usize].clone();
+        if offline_git_miss(this, clone_id, alias, dep.behavior.is_required()) {
+            return;
+        }
         let task = enqueue_git_clone(this, clone_id, alias, &repository, &dep, resolution, None);
         this.task_batch.push(ThreadPool::Batch::from(task));
     }
+}
+
+/// Under `--offline`, a git dependency whose clone is not already in the cache cannot
+/// be installed: report it (once, and only if some edge requires it) instead of
+/// spawning `git`. Returns true when the clone must not be enqueued.
+fn offline_git_miss(
+    this: &mut PackageManager,
+    clone_id: Task::Id,
+    name: &[u8],
+    is_required: bool,
+) -> bool {
+    if this.options.offline != crate::package_manager_real::options::OfflineMode::Offline {
+        return false;
+    }
+    let mut folder = Vec::with_capacity(24);
+    {
+        use std::io::Write;
+        let _ = write!(
+            folder,
+            "{}.git",
+            bun_core::fmt::hex_int_lower::<16>(clone_id.get())
+        );
+    }
+    let cache_dir = package_manager_real::get_cache_directory(this);
+    let cached = bun_sys::directory_exists_at(cache_dir, &bun_core::ZBox::from_bytes(&folder))
+        .unwrap_or(false);
+    if cached {
+        return false;
+    }
+    if is_required {
+        this.mark_network_task_failed(clone_id);
+        let _ = this.log_mut().add_error_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "--offline: git repository for \"{}\" is not in the cache",
+                bstr::BStr::new(name)
+            ),
+        );
+    }
+    true
 }
 
 /// # Safety
@@ -1146,10 +1190,13 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 if this.options.offline
                                     == crate::package_manager_real::options::OfflineMode::Offline
                                 {
-                                    // Keep the dedupe reservation so later edges to the same
-                                    // package do not report it again; optional/peer deps are
-                                    // skipped like any other unavailable optional dependency.
+                                    // Optional/peer edges are skipped like any other unavailable
+                                    // optional dependency (and release the reservation so a later
+                                    // *required* edge on the same package still reports it); a
+                                    // required edge reports once and marks the task failed so
+                                    // later dependents take the already-failed path.
                                     if dependency.behavior.is_required() {
+                                        this.mark_network_task_failed(task_id);
                                         let _ = this.log_mut().add_error_fmt(
                                             None,
                                             bun_ast::Loc::EMPTY,
@@ -1158,6 +1205,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                 bstr::BStr::new(&name_str),
                                             ),
                                         );
+                                    } else {
+                                        let _ = this.network_dedupe_map.remove(&task_id);
                                     }
                                     return Ok(());
                                 }
@@ -1342,6 +1391,9 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 }
 
                 if this.has_created_network_task(clone_id, dependency.behavior.is_required()) {
+                    return Ok(());
+                }
+                if offline_git_miss(this, clone_id, alias, dependency.behavior.is_required()) {
                     return Ok(());
                 }
 

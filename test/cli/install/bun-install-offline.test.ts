@@ -197,6 +197,26 @@ it("--offline refuses an uncached git dependency without running git", async () 
   expect(r.err).toContain("--offline");
   expect(r.err).not.toContain('"git clone"');
   expect(r.code).not.toBe(0);
+
+  // …but an *optional* uncached git dependency is just skipped
+  const dir2 = mkdtemp();
+  await writeFile(
+    join(dir2, "bunfig.toml"),
+    Bun.TOML.stringify({
+      install: { cache: { dir: cache_dir }, registry: root_url + "/", saveTextLockfile: true, linker: "hoisted" },
+    }),
+  );
+  await writeFile(
+    join(dir2, "package.json"),
+    JSON.stringify({
+      name: "app",
+      version: "1.0.0",
+      optionalDependencies: { dep: "git+https://127.0.0.1:1/nobody/nothing.git#deadbeef" },
+    }),
+  );
+  const r2 = await install(dir2, ["--offline"]);
+  expect(r2.err).not.toContain("error:");
+  expect(r2.code).toBe(0);
 });
 
 it('install.prefer = "offline" and install.offline = true in bunfig.toml behave like the flags', async () => {

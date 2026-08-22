@@ -1897,6 +1897,8 @@ pub fn generate_network_task_for_tarball<'a>(
     // requires it — and let the caller treat it like an already-failed download.
     if this.options.offline == crate::package_manager_real::options::OfflineMode::Offline {
         if is_required {
+            // reported once; later dependents see the failed dedupe entry
+            mark_network_task_failed(this, task_id);
             let name = this.lockfile.str(&package.name).to_vec();
             this.log_mut().add_error_fmt(
                 None,
@@ -1906,6 +1908,9 @@ pub fn generate_network_task_for_tarball<'a>(
                     bstr::BStr::new(&name)
                 ),
             );
+        } else {
+            // let a later required edge on the same package report it
+            let _ = this.network_dedupe_map.remove(&task_id);
         }
         return Err(ForTarballError::Offline);
     }

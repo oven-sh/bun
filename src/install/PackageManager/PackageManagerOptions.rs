@@ -940,6 +940,11 @@ impl Options {
         if self.offline != OfflineMode::Online {
             self.enable.set(Enable::MANIFEST_CACHE, true);
         }
+        // Prefetching resolved tarballs is a latency optimisation for downloads; under
+        // --offline there is nothing to download and the install phase reports misses.
+        if self.offline == OfflineMode::Offline {
+            self.do_.set(Do::PREFETCH_RESOLVED_TARBALLS, false);
+        }
         Ok(())
     }
 }

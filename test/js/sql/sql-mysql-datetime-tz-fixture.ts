@@ -82,6 +82,26 @@ for (const [protocol, rows] of [
   }
 }
 
+// ALLOW_INVALID_DATES stores day 1..31 regardless of month length. The binary
+// protocol returns those components as-is; GregorianDateTime normalizes them
+// like Date.UTC does, so the decoder must produce a valid Date.
+await sql`SET SESSION sql_mode='ALLOW_INVALID_DATES'`.simple();
+const it = "dt_invalid_" + randomUUIDv7("hex").replaceAll("-", "");
+await sql`CREATE TEMPORARY TABLE ${sql(it)} (id INT PRIMARY KEY, dt DATETIME)`.simple();
+await sql.unsafe(`INSERT INTO ${it} (id, dt) VALUES (1, '2024-02-30 12:00:00'), (2, '2024-04-31 12:00:00')`);
+{
+  const rows = await sql`SELECT id, dt FROM ${sql(it)} ORDER BY id`;
+  const want = [Date.UTC(2024, 1, 30, 12, 0, 0), Date.UTC(2024, 3, 31, 12, 0, 0)];
+  for (let i = 0; i < want.length; i++) {
+    const got: Date = rows[i].dt;
+    if (!(got instanceof Date) || got.getTime() !== want[i]) {
+      failures.push(
+        `binary ALLOW_INVALID_DATES id=${i + 1}: expected ${new Date(want[i]).toISOString()}, got ${String(got)}`,
+      );
+    }
+  }
+}
+
 if (failures.length) {
   console.error(`FAIL TZ=${process.env.TZ} offsetMin=${new Date().getTimezoneOffset()}`);
   for (const f of failures) console.error("  " + f);

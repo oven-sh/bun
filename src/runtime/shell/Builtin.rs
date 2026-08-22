@@ -107,7 +107,7 @@ macro_rules! shell_builtins {
             }
 
             /// argv[0] → `Kind`, no POSIX gating.
-            fn from_argv0_raw(s: &[u8]) -> Option<Kind> {
+            pub(crate) fn from_argv0_raw(s: &[u8]) -> Option<Kind> {
                 $( if s == $u_name.as_bytes() { return Some(Kind::$UV); } )*
                 $( if s == $i_name.as_bytes() { return Some(Kind::$IV); } )*
                 $( if s == $b_name.as_bytes() { return Some(Kind::$BV); } )*
@@ -203,14 +203,20 @@ impl Kind {
             .unwrap_or(false)
     }
 
+    /// The only gate between argv[0] naming a builtin and the shell running it;
+    /// `shellInternals.builtinDisabled` reports this same answer to tests.
+    pub(crate) fn disabled_on_this_platform(self) -> bool {
+        if cfg!(windows) || Self::force_enable_on_posix() {
+            return false;
+        }
+        Self::DISABLED_ON_POSIX.contains(&self)
+    }
+
     /// Maps argv[0] to a builtin kind, or `None` to fall through to
     /// subprocess spawn.
     pub(crate) fn from_argv0(s: &[u8]) -> Option<Kind> {
         let result = Self::from_argv0_raw(s)?;
-        if cfg!(windows) || Self::force_enable_on_posix() {
-            return Some(result);
-        }
-        if Self::DISABLED_ON_POSIX.contains(&result) {
+        if result.disabled_on_this_platform() {
             return None;
         }
         Some(result)

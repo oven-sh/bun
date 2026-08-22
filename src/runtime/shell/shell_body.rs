@@ -746,43 +746,33 @@ impl<'a> ShellSrcBuilder<'a> {
 /// Used in JS tests, see `internal-for-testing.ts` and shell tests.
 pub mod testing_apis {
     use super::*;
+    use crate::shell::builtin::Kind;
 
+    /// `shellInternals.builtinDisabled(name)`: true when `name` is a builtin
+    /// that `Kind::from_argv0` would not dispatch in this process.
     #[bun_jsc::host_fn]
     pub(crate) fn disabled_on_this_platform(
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        #[cfg(windows)]
-        {
-            let _ = (global, callframe);
-            return Ok(JSValue::FALSE);
-        }
-        #[cfg(not(windows))]
-        {
-            // SAFETY: bun_vm() is non-null for a Bun-owned global.
-            let vm = global.bun_vm();
-            let mut arguments = jsc::ArgumentsSlice::init(vm, callframe.arguments());
-            let string: JSValue = match arguments.next_eat() {
-                Some(s) => s,
-                None => {
-                    return Err(global.throw(format_args!(
-                        "shellInternals.disabledOnPosix: expected 1 arguments, got 0"
-                    )));
-                }
-            };
-
-            let bunstr = OwnedString::new(string.to_bun_string(global)?);
-            let utf8str = bunstr.to_utf8();
-
-            for disabled in crate::shell::builtin::Kind::DISABLED_ON_POSIX {
-                // `strum::IntoStaticStr` would yield the PascalCase variant name
-                // ("Cp"), so use `Kind::as_str` for the lowercase name.
-                if utf8str.slice() == disabled.as_str().as_bytes() {
-                    return Ok(JSValue::TRUE);
-                }
+        // SAFETY: bun_vm() is non-null for a Bun-owned global.
+        let vm = global.bun_vm();
+        let mut arguments = jsc::ArgumentsSlice::init(vm, callframe.arguments());
+        let string: JSValue = match arguments.next_eat() {
+            Some(s) => s,
+            None => {
+                return Err(global.throw(format_args!(
+                    "shellInternals.builtinDisabled: expected 1 arguments, got 0"
+                )));
             }
-            Ok(JSValue::FALSE)
-        }
+        };
+
+        let bunstr = OwnedString::new(string.to_bun_string(global)?);
+        let utf8str = bunstr.to_utf8();
+
+        let disabled =
+            Kind::from_argv0_raw(utf8str.slice()).is_some_and(Kind::disabled_on_this_platform);
+        Ok(JSValue::js_boolean(disabled))
     }
 
     /// Codegen (`generated_js2native.rs`) wraps this with `host_fn_result`, so we

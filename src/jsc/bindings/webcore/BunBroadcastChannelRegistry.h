@@ -9,7 +9,6 @@
 #pragma once
 
 #include "ScriptExecutionContext.h"
-#include <wtf/Deque.h>
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
@@ -27,12 +26,9 @@ class BunBroadcastChannelRegistry {
 public:
     static BunBroadcastChannelRegistry& singleton();
 
-    void subscribe(const String& name, ScriptExecutionContextIdentifier, BroadcastChannel&);
+    void subscribe(const String& name, ScriptExecutionContext&, BroadcastChannel&);
     void unsubscribe(const String& name, BroadcastChannel&);
     void post(const String& name, BroadcastChannel& source, Ref<SerializedScriptValue>&&);
-    // Synchronous single pop of a delivered-but-not-yet-dispatched message,
-    // for node:worker_threads receiveMessageOnPort(broadcastChannel).
-    RefPtr<SerializedScriptValue> takePending(const String& name, BroadcastChannel&);
 
 private:
     friend class WTF::NeverDestroyed<BunBroadcastChannelRegistry>;
@@ -40,14 +36,12 @@ private:
 
     struct Subscriber {
         ScriptExecutionContextIdentifier ctxId;
+        // The loop `ctxId` was running when the channel was created there; deliveries are posted to it.
+        BunLoopKind ctxLoopKind;
         ThreadSafeWeakPtr<BroadcastChannel> channel;
         // Raw pointer used only for identity comparison under the lock;
         // never dereferenced.
         BroadcastChannel* identity;
-        // Messages posted but not yet dispatched (or synchronously consumed
-        // via takePending). Kept in the registry rather than the channel so
-        // the posting thread never needs a strong channel ref.
-        Deque<Ref<SerializedScriptValue>> pending;
     };
 
     WTF::Lock m_lock;

@@ -1,7 +1,0 @@
-{
-    "permission": {
-        "allow-fs-read": [
-            "*"
-        ]
-    }
-}

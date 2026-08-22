@@ -328,10 +328,11 @@ impl FilePoll {
         FileType::Pipe
     }
 
-    /// `fstat` once per readable registration (not per re-arm), kept in `Flags::NamedFifo`.
+    /// One `fstat` per poll; the answer is kept in `Flags::NamedFifo`.
     #[cfg(target_os = "macos")]
     fn is_named_fifo(&mut self, fd: Fd) -> bool {
-        if !self.flags.contains(Flags::NamedFifo) && !self.flags.contains(Flags::PollReadable) {
+        if !self.flags.contains(Flags::NamedFifoChecked) {
+            self.flags.insert(Flags::NamedFifoChecked);
             // pipe(2) pipes are S_IFIFO with st_dev == 0.
             let named = sys::fstat(fd)
                 .is_ok_and(|stat| sys::S::ISFIFO(stat.st_mode as _) && stat.st_dev != 0);
@@ -1233,6 +1234,7 @@ pub enum Flags {
     Fifo,
     /// macOS: readable waits go through `fifo_select`, not a knote.
     NamedFifo,
+    NamedFifoChecked,
 
     OneShot,
     NeedsRearm,

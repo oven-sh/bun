@@ -5326,12 +5326,12 @@ pub mod formatter {
                                     writer.write_all(pf!("<r>").as_bytes());
                                 }
                                 writer.write_all(b">");
-                            }
 
-                            if writer.failed {
-                                self.failed = true;
+                                if writer.failed {
+                                    self.failed = true;
+                                }
+                                return Ok(());
                             }
-                            return Ok(());
                         }
                     }
                 }

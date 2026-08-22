@@ -10,7 +10,7 @@ use bun_install::lockfile::{LoadResult, LoadStep, Lockfile, package::PackageColu
 use bun_install::npm as Npm;
 use bun_install::package_manager_real::{
     CommandLineArguments, Subcommand, fetch_cache_directory_path, get_cache_directory,
-    package_manager_options::LogLevel, setup_global_dir,
+    package_json_write_back, package_manager_options::LogLevel, setup_global_dir,
 };
 use bun_install::{DependencyID, PackageID, PackageManager, migration};
 use bun_paths::{self as Path, PathBuffer};
@@ -757,6 +757,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             unsafe {
                 (*lf).save_to_disk(&load_lockfile, &(*pm_raw).options);
             }
+            package_json_write_back::write_migrated_root(pm);
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"version") {
             let positionals: &[&[u8]] = pm.options.positionals;

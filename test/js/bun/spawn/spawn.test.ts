@@ -1472,6 +1472,24 @@ it.if(isWindows)("handles duplicated for Bun.file(fd).stream() are not inherited
   }
 });
 
+// posix_spawn failures name the command in err.path and in the message. On
+// Windows, uv_spawn failures (anything CreateProcess refuses, here a file
+// that is not a valid executable) used to carry neither.
+it.if(isWindows)("uv_spawn failure names the command in err.path", () => {
+  using dir = tempDir("spawn-uv-spawn-path", { "bad.exe": Buffer.from("\x00\x01\x02garbage\n", "latin1") });
+  const exe = join(String(dir), "bad.exe");
+  for (const start of [() => spawnSync({ cmd: [exe] }), () => spawn({ cmd: [exe] })]) {
+    let thrown: any;
+    try {
+      start();
+    } catch (e) {
+      thrown = e;
+    }
+    expect({ syscall: thrown?.syscall, path: thrown?.path }).toEqual({ syscall: "uv_spawn", path: exe });
+    expect(thrown.message).toEndWith(`uv_spawn '${exe}'`);
+  }
+});
+
 it.if(isWindows)("throws a spawn error for a cwd longer than the maximum path length", async () => {
   const fixture = `
     try {
@@ -1695,6 +1713,20 @@ describe("uid/gid", () => {
       thrown = e;
     }
     expect(thrown?.code).toBe("EPERM");
+  });
+
+  // libuv rejects uid/gid on Windows. The error names the command as it was
+  // given (not the resolved cmd.exe path), like a posix_spawn failure does.
+  it.if(isWindows)("throws ENOTSUP naming the command for uid/gid on Windows", () => {
+    for (const ids of [{ uid: 0 }, { gid: 0 }]) {
+      let thrown: any;
+      try {
+        spawnSync({ cmd: ["cmd.exe", "/c", "exit 0"], ...ids });
+      } catch (e) {
+        thrown = e;
+      }
+      expect({ code: thrown?.code, path: thrown?.path }).toEqual({ code: "ENOTSUP", path: "cmd.exe" });
+    }
   });
 });
 

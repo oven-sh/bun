@@ -704,8 +704,386 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// Re-read `value` without re-running side effects: identifiers and
+    /// `this` are repeated directly (class bodies are strict mode code, so
+    /// no `with` scope can turn an identifier read into a getter call);
+    /// anything else is captured in a temporary that is declared by
+    /// `declare_capture_temps_in_fn_body` (temps created inside a rewritten
+    /// function body) or `drain_capture_temp_decls` (everything else).
+    /// Returns the expression to evaluate in place of `value` plus the
+    /// side-effect-free re-read.
+    fn capture_expr_for_reuse(&mut self, value: Expr, l: bun_ast::Loc) -> (Expr, Expr) {
+        match value.data {
+            js_ast::ExprData::EIdentifier(id) => (value, self.use_ref(id.ref_, l)),
+            js_ast::ExprData::EThis(_) => (value, self.new_expr(E::This {}, l)),
+            _ => {
+                let tmp_ref = self.generate_temp_ref(Some(b"_chain"));
+                let write = self.assign_to(tmp_ref, value, l);
+                let read = self.use_ref(tmp_ref, l);
+                (write, read)
+            }
+        }
+    }
+
+    fn lowered_private_index_info(
+        expr: &Expr,
+        map: &PrivateLoweredMap,
+    ) -> Option<PrivateLoweredInfo> {
+        if let js_ast::ExprData::EIndex(e) = &expr.data
+            && let js_ast::ExprData::EPrivateIdentifier(pi) = &e.index.data
+        {
+            return map.get(&pi.ref_.inner_index()).copied();
+        }
+        None
+    }
+
+    /// Whether `expr`, the outermost link of an optional chain, needs the
+    /// chain flattened because a private access that is being lowered
+    /// participates in it. Only this segment is examined (the links up to and
+    /// including the one flagged `Start`); a chain in the segment's base is a
+    /// separate segment that the rewrite inspects when it recurses into it.
+    fn optional_chain_needs_private_lowering(expr: &Expr, map: &PrivateLoweredMap) -> bool {
+        let mut cur = *expr;
+        loop {
+            match &cur.data {
+                js_ast::ExprData::EIndex(e) if e.optional_chain.is_some() => {
+                    if Self::lowered_private_index_info(&cur, map).is_some() {
+                        return true;
+                    }
+                    if e.optional_chain == Some(js_ast::OptionalChain::Start) {
+                        return false;
+                    }
+                    cur = e.target;
+                }
+                js_ast::ExprData::EDot(e) if e.optional_chain.is_some() => {
+                    if e.optional_chain == Some(js_ast::OptionalChain::Start) {
+                        return false;
+                    }
+                    cur = e.target;
+                }
+                js_ast::ExprData::ECall(e) if e.optional_chain.is_some() => {
+                    if e.optional_chain == Some(js_ast::OptionalChain::Start) {
+                        // `callee?.()` where the callee ends in a lowered
+                        // private access: rewriting the callee into a
+                        // `__privateGet(..)` helper call would otherwise
+                        // swallow the nullish test on the callee value.
+                        if Self::lowered_private_index_info(&e.target, map).is_some() {
+                            return true;
+                        }
+                        // `o?.#f.b?.()`: the callee is a chain segment with a
+                        // lowered private deeper in. Flattening it in place
+                        // would turn the callee into a ternary value and drop
+                        // the call's `this`; route the call through the
+                        // flattener so the receiver is captured instead.
+                        return e.target.is_optional_chain()
+                            && Self::optional_chain_needs_private_lowering(&e.target, map);
+                    }
+                    cur = e.target;
+                }
+                _ => return false,
+            }
+        }
+    }
+
+    /// Point `call` at `callee.call(this_read, ...original args)`, rewriting
+    /// the original arguments in place as they move.
+    fn retarget_call_through_dot_call(
+        &mut self,
+        mut call: js_ast::StoreRef<E::Call>,
+        callee: Expr,
+        this_read: Expr,
+        map: &PrivateLoweredMap,
+        l: bun_ast::Loc,
+    ) {
+        let call_target = self.new_expr(
+            E::Dot {
+                target: callee,
+                name: b"call".into(),
+                name_loc: l,
+                ..Default::default()
+            },
+            l,
+        );
+        let bump = self.arena;
+        let orig_args = call.args.slice_mut();
+        let mut new_args = BumpVec::with_capacity_in(1 + orig_args.len(), bump);
+        new_args.push(this_read);
+        for arg in orig_args.iter_mut() {
+            self.rewrite_private_accesses_in_expr(arg, map);
+            new_args.push(*arg);
+        }
+        call.target = call_target;
+        call.args = ExprNodeList::from_bump_vec(new_args);
+        call.optional_chain = None;
+    }
+
+    /// Rewrite the callee of an optional call (`callee?.(...)`) whose segment
+    /// is being flattened. Returns the expression producing the callee value
+    /// and, when the callee is a member access, a side-effect-free re-read of
+    /// its receiver for use as the call's `this`.
+    fn rewrite_optional_callee(
+        &mut self,
+        callee: Expr,
+        map: &PrivateLoweredMap,
+    ) -> (Expr, Option<Expr>) {
+        let l = callee.loc;
+        if callee.is_optional_chain() {
+            // `o?.a.#m?.()` / `o?.a.b?.()`: flatten the callee's own segment
+            // to surface both its nullish tests and its `this` value.
+            return self.lower_optional_chain_with_private(callee, map, true);
+        }
+        // `o.#m?.()`: the callee itself is a lowered private access.
+        if let Some(info) = Self::lowered_private_index_info(&callee, map) {
+            let js_ast::ExprData::EIndex(e) = callee.data else {
+                unreachable!()
+            };
+            let mut recv = e.target;
+            self.rewrite_private_accesses_in_expr(&mut recv, map);
+            let (recv_write, recv_read) = self.capture_expr_for_reuse(recv, l);
+            return (self.private_get_expr(recv_write, &info, l), Some(recv_read));
+        }
+        match callee.data {
+            // `o.x?.()` (with a lowered private elsewhere in the segment):
+            // capture the receiver so `.call(...)` re-reads it without side
+            // effects.
+            js_ast::ExprData::EDot(mut e) => {
+                // `super.m?.()`: bare `super` is not an expression, so it
+                // cannot be captured; per MakeSuperPropertyReference the
+                // call's `this` value is the current `this`.
+                if matches!(e.target.data, js_ast::ExprData::ESuper(_)) {
+                    return (callee, Some(self.new_expr(E::This {}, l)));
+                }
+                let mut target = e.target;
+                self.rewrite_private_accesses_in_expr(&mut target, map);
+                let (recv_write, recv_read) = self.capture_expr_for_reuse(target, l);
+                e.target = recv_write;
+                (callee, Some(recv_read))
+            }
+            js_ast::ExprData::EIndex(mut e) => {
+                let mut idx = e.index;
+                self.rewrite_private_accesses_in_expr(&mut idx, map);
+                e.index = idx;
+                // `super[k]?.()`: same as `super.m?.()` above.
+                if matches!(e.target.data, js_ast::ExprData::ESuper(_)) {
+                    return (callee, Some(self.new_expr(E::This {}, l)));
+                }
+                let mut target = e.target;
+                self.rewrite_private_accesses_in_expr(&mut target, map);
+                let (recv_write, recv_read) = self.capture_expr_for_reuse(target, l);
+                e.target = recv_write;
+                (callee, Some(recv_read))
+            }
+            // Not a member access: the call's `this` is undefined.
+            _ => {
+                let mut c = callee;
+                self.rewrite_private_accesses_in_expr(&mut c, map);
+                (c, None)
+            }
+        }
+    }
+
+    /// Flatten one optional-chain segment so its `?.` nullish tests survive
+    /// the private-access rewrite: `o?.a.#m()` becomes
+    /// `o == null ? void 0 : __privateGet(_a = o.a, _m).call(_a)`.
+    ///
+    /// When `want_this_value` is set the caller is about to `.call()` the
+    /// result (`o?.a.#m?.()`), and the second return value re-reads the
+    /// receiver of the segment's final member access without side effects
+    /// (`None` when the segment ends in a call, whose result is then called
+    /// with an undefined `this`).
+    fn lower_optional_chain_with_private(
+        &mut self,
+        expr: Expr,
+        map: &PrivateLoweredMap,
+        want_this_value: bool,
+    ) -> (Expr, Option<Expr>) {
+        let l = expr.loc;
+        let bump = self.arena;
+
+        // Collect the segment's links from the outside in; the link flagged
+        // `Start` carries the `?.` and its target is the segment's base.
+        let mut links = BumpVec::<Expr>::new_in(bump);
+        let mut cur = expr;
+        let base = loop {
+            links.push(cur);
+            let (oc, target) = match &cur.data {
+                js_ast::ExprData::EDot(e) => (e.optional_chain, e.target),
+                js_ast::ExprData::EIndex(e) => (e.optional_chain, e.target),
+                js_ast::ExprData::ECall(e) => (e.optional_chain, e.target),
+                _ => unreachable!("optional chain links are EDot/EIndex/ECall"),
+            };
+            if oc == Some(js_ast::OptionalChain::Start) {
+                break target;
+            }
+            debug_assert_eq!(oc, Some(js_ast::OptionalChain::Continuation));
+            cur = target;
+        };
+
+        let mut tail_this: Option<Expr> = None;
+        let start_link = links[links.len() - 1];
+
+        // Hoist the segment's nullish test into `test_expr` and rebuild the
+        // links bottom-up on `acc` (as plain, non-optional accesses).
+        let (test_expr, mut acc, mut i) = if matches!(&start_link.data, js_ast::ExprData::ECall(_))
+        {
+            // The segment starts with `callee?.(...)`: the callee value is
+            // what gets nullish-tested, and calling it through `.call(...)`
+            // keeps the `this` binding its member structure would have
+            // provided.
+            let (callee_value, this_value) = self.rewrite_optional_callee(base, map);
+            let (test_expr, callee_read) = self.capture_expr_for_reuse(callee_value, l);
+            let js_ast::ExprData::ECall(mut ce) = start_link.data else {
+                unreachable!()
+            };
+            if let Some(this_read) = this_value {
+                self.retarget_call_through_dot_call(ce, callee_read, this_read, map, l);
+            } else {
+                ce.target = callee_read;
+                ce.optional_chain = None;
+                for arg in ce.args.slice_mut() {
+                    self.rewrite_private_accesses_in_expr(arg, map);
+                }
+            }
+            (test_expr, start_link, links.len() as isize - 2)
+        } else {
+            let mut base = base;
+            if base.is_optional_chain() && Self::optional_chain_needs_private_lowering(&base, map) {
+                let (lowered, _) = self.lower_optional_chain_with_private(base, map, false);
+                base = lowered;
+            } else {
+                self.rewrite_private_accesses_in_expr(&mut base, map);
+            }
+            let (test_expr, base_read) = self.capture_expr_for_reuse(base, l);
+            (test_expr, base_read, links.len() as isize - 1)
+        };
+
+        while i >= 0 {
+            let link = links[i as usize];
+            let capture_tail_this = i == 0 && want_this_value;
+            match link.data {
+                js_ast::ExprData::EIndex(mut e) => {
+                    if let Some(info) = Self::lowered_private_index_info(&link, map) {
+                        // `...#m(...)`: pair the private access with the call
+                        // link right above it so the receiver can be passed to
+                        // `.call(...)`, evaluated once.
+                        if i > 0
+                            && let js_ast::ExprData::ECall(ce) = links[(i - 1) as usize].data
+                        {
+                            let (recv_write, recv_read) = self.capture_expr_for_reuse(acc, l);
+                            let private_access = self.private_get_expr(recv_write, &info, l);
+                            self.retarget_call_through_dot_call(
+                                ce,
+                                private_access,
+                                recv_read,
+                                map,
+                                l,
+                            );
+                            acc = links[(i - 1) as usize];
+                            i -= 2;
+                            continue;
+                        }
+                        let obj = if capture_tail_this {
+                            let (recv_write, recv_read) = self.capture_expr_for_reuse(acc, l);
+                            tail_this = Some(recv_read);
+                            recv_write
+                        } else {
+                            acc
+                        };
+                        acc = self.private_get_expr(obj, &info, l);
+                        i -= 1;
+                        continue;
+                    }
+                    let mut idx = e.index;
+                    self.rewrite_private_accesses_in_expr(&mut idx, map);
+                    e.index = idx;
+                    e.target = if capture_tail_this {
+                        let (recv_write, recv_read) = self.capture_expr_for_reuse(acc, l);
+                        tail_this = Some(recv_read);
+                        recv_write
+                    } else {
+                        acc
+                    };
+                    e.optional_chain = None;
+                    acc = link;
+                    i -= 1;
+                }
+                js_ast::ExprData::EDot(mut e) => {
+                    e.target = if capture_tail_this {
+                        let (recv_write, recv_read) = self.capture_expr_for_reuse(acc, l);
+                        tail_this = Some(recv_read);
+                        recv_write
+                    } else {
+                        acc
+                    };
+                    e.optional_chain = None;
+                    acc = link;
+                    i -= 1;
+                }
+                js_ast::ExprData::ECall(mut e) => {
+                    // A plain call continuing the chain (`o?.a.b(...)`): the
+                    // rebuilt member target supplies its `this`.
+                    e.target = acc;
+                    e.optional_chain = None;
+                    for arg in e.args.slice_mut() {
+                        self.rewrite_private_accesses_in_expr(arg, map);
+                    }
+                    acc = link;
+                    i -= 1;
+                }
+                _ => unreachable!("optional chain links are EDot/EIndex/ECall"),
+            }
+        }
+
+        let null = self.new_expr(E::Null {}, l);
+        let test_ = self.new_expr(
+            E::Binary {
+                op: js_ast::OpCode::BinLooseEq,
+                left: test_expr,
+                right: null,
+            },
+            l,
+        );
+        let yes = self.new_expr(E::Undefined {}, l);
+        let result = self.new_expr(
+            E::If {
+                test_,
+                yes,
+                no: acc,
+            },
+            l,
+        );
+        (result, tail_this)
+    }
+
     fn rewrite_private_accesses_in_expr(&mut self, expr: &mut Expr, map: &PrivateLoweredMap) {
         let expr_loc = expr.loc;
+        // `delete o?.#f.x`: a flattened chain is a ternary value, and
+        // `delete` of a non-reference is a silent no-op. Push the `delete`
+        // into the non-null branch (`o == null ? true : delete
+        // __privateGet(o, _f).x`) so it still removes the property, and
+        // yield `true` when the chain short-circuits, matching the spec.
+        if let js_ast::ExprData::EUnary(mut ue) = expr.data
+            && ue.op == js_ast::OpCode::UnDelete
+            && ue.value.is_optional_chain()
+            && Self::optional_chain_needs_private_lowering(&ue.value, map)
+        {
+            let (lowered, _) = self.lower_optional_chain_with_private(ue.value, map, false);
+            let js_ast::ExprData::EIf(mut ie) = lowered.data else {
+                unreachable!()
+            };
+            ue.value = ie.no;
+            ie.yes = self.new_expr(E::Boolean { value: true }, expr_loc);
+            ie.no = *expr;
+            *expr = lowered;
+            return;
+        }
+        // Rewriting a private access inside an optional chain must not lose
+        // the chain's short-circuiting: hoist the nullish tests out first.
+        if expr.is_optional_chain() && Self::optional_chain_needs_private_lowering(expr, map) {
+            let (lowered, _) = self.lower_optional_chain_with_private(*expr, map, false);
+            *expr = lowered;
+            return;
+        }
         match &mut expr.data {
             js_ast::ExprData::EIndex(e) => {
                 let mut tgt = e.target;
@@ -767,21 +1145,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // temporary so its side effects run once and nested private
                             // calls don't duplicate the whole subtree (the duplication is
                             // exponential in the length of a chain like `o.#m().#m().#m()`).
-                            let (get_obj, this_arg) = match &obj_expr.data {
-                                js_ast::ExprData::EIdentifier(id) => {
-                                    let obj_ref = id.ref_;
-                                    (obj_expr, self.use_ref(obj_ref, obj_expr.loc))
-                                }
-                                js_ast::ExprData::EThis(_) => {
-                                    (obj_expr, self.new_expr(E::This {}, obj_expr.loc))
-                                }
-                                _ => {
-                                    let tmp_ref = self.generate_temp_ref(Some(b"_obj"));
-                                    let write = self.assign_to(tmp_ref, obj_expr, expr_loc);
-                                    let read = self.use_ref(tmp_ref, expr_loc);
-                                    (write, read)
-                                }
-                            };
+                            let (get_obj, this_arg) =
+                                self.capture_expr_for_reuse(obj_expr, expr_loc);
                             let private_access = self.private_get_expr(get_obj, &info, expr_loc);
                             let call_target = self.new_expr(
                                 E::Dot {

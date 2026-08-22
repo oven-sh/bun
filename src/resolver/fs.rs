@@ -437,29 +437,15 @@ impl DirEntry {
             | DK::EventPort => return Ok(()),
         };
 
-        // Lowercase the entry basename once. The same bytes drive the
-        // previous-generation case-insensitive probe, the new entry's
-        // lowercased key, *and* the insert into `self.data` — and the hash is
-        // computed once here (`name_hash`) rather than re-derived by the probe
-        // and again by the insert. A stack scratch covers the common short
-        // case (matches `DirEntry::get`); only a basename longer than
-        // `MAX_PATH_BYTES` — which `getdents`/`FindNextFile` can't produce —
-        // would touch the heap.
+        // Nothing can open an entry whose path does not fit a path buffer.
+        if strings::without_trailing_slash(self.dir).len() + 1 + name_slice.len() >= MAX_PATH_BYTES
+        {
+            return Ok(());
+        }
+
+        // Lowercased and hashed once for the probe, the key and the insert below.
         let mut name_lc_buf = PathBuffer::uninit();
-        let name_lc_heap: Option<bun_collections::StringHashMapContext::PrehashedCaseInsensitive> =
-            if name_slice.len() <= MAX_PATH_BYTES {
-                None
-            } else {
-                Some(
-                    bun_collections::StringHashMapContext::PrehashedCaseInsensitive::init(
-                        name_slice,
-                    ),
-                )
-            };
-        let name_lc: &[u8] = match &name_lc_heap {
-            Some(p) => &p.input[..],
-            None => strings::copy_lowercase_if_needed(name_slice, &mut name_lc_buf[..]),
-        };
+        let name_lc: &[u8] = strings::copy_lowercase_if_needed(name_slice, &mut name_lc_buf[..]);
         let name_hash = self.data.hash_key(name_lc);
 
         let stored: *mut Entry = 'brk: {

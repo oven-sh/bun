@@ -3832,6 +3832,62 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionResourceUsage, (JSC::JSGlobalObject * g
     return JSValue::encode(result);
 }
 
+// Results of cpuUsage()/threadCpuUsage() share cpuUsageStructure: user is at
+// offset 0 and system at offset 1.
+static JSValue getPrevCpuUsageField(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSObject* prevValue, Structure* cpuUsageStructure, PropertyOffset offset, ASCIILiteral name)
+{
+    JSValue value;
+    if (prevValue->structureID() == cpuUsageStructure->id()) [[likely]] {
+        value = prevValue->getDirect(offset);
+    } else {
+        value = prevValue->getIfPropertyExists(globalObject, JSC::Identifier::fromString(JSC::getVM(globalObject), name));
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
+    return value.isEmpty() ? jsUndefined() : value;
+}
+
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/process/per_thread.js#L209-L213
+static bool isValidPrevCpuUsageField(JSValue value)
+{
+    return value.isNumber() && value.asNumber() >= 0 && value.asNumber() <= JSC::maxSafeInteger();
+}
+
+// Same check order as Node: prevValue.user is read before prevValue itself is
+// validated, so an array or function is only rejected as "prevValue" when its
+// user field is unusable, and system is not read until user has passed.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/process/per_thread.js#L129-L143
+static void getPrevCpuUsage(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSValue prevValue, Structure* cpuUsageStructure, double* user, double* system)
+{
+    JSC::JSObject* prevObject = prevValue.getObject();
+    if (!prevObject) [[unlikely]] {
+        Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "prevValue"_s, "object"_s, prevValue);
+        return;
+    }
+
+    JSValue userValue = getPrevCpuUsageField(throwScope, globalObject, prevObject, cpuUsageStructure, 0, "user"_s);
+    RETURN_IF_EXCEPTION(throwScope, );
+    if (!isValidPrevCpuUsageField(userValue)) [[unlikely]] {
+        Bun::V::validateObject(throwScope, globalObject, prevValue, "prevValue"_s);
+        RETURN_IF_EXCEPTION(throwScope, );
+        Bun::V::validateNumber(throwScope, globalObject, userValue, "prevValue.user"_s, jsUndefined(), jsUndefined());
+        RETURN_IF_EXCEPTION(throwScope, );
+        Bun::ERR::INVALID_ARG_VALUE_RangeError(throwScope, globalObject, "prevValue.user"_s, userValue);
+        return;
+    }
+
+    JSValue systemValue = getPrevCpuUsageField(throwScope, globalObject, prevObject, cpuUsageStructure, 1, "system"_s);
+    RETURN_IF_EXCEPTION(throwScope, );
+    if (!isValidPrevCpuUsageField(systemValue)) [[unlikely]] {
+        Bun::V::validateNumber(throwScope, globalObject, systemValue, "prevValue.system"_s, jsUndefined(), jsUndefined());
+        RETURN_IF_EXCEPTION(throwScope, );
+        Bun::ERR::INVALID_ARG_VALUE_RangeError(throwScope, globalObject, "prevValue.system"_s, systemValue);
+        return;
+    }
+
+    *user = userValue.asNumber();
+    *system = systemValue.asNumber();
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -3861,45 +3917,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage, (JSC::JSGlobalObject * global
     if (callFrame->argumentCount() > 0) {
         JSValue comparatorValue = callFrame->argument(0);
         if (!comparatorValue.isUndefined()) {
-            JSC::JSObject* comparator = comparatorValue.getObject();
-            if (!comparator) [[unlikely]] {
-                return Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "prevValue"_s, "object"_s, comparatorValue);
-            }
-
-            JSValue userValue;
-            JSValue systemValue;
-
-            if (comparator->structureID() == cpuUsageStructure->id()) [[likely]] {
-                userValue = comparator->getDirect(0);
-                systemValue = comparator->getDirect(1);
-            } else {
-                userValue = comparator->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "user"_s));
-                RETURN_IF_EXCEPTION(throwScope, {});
-                if (userValue.isEmpty()) userValue = jsUndefined();
-
-                systemValue = comparator->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "system"_s));
-                RETURN_IF_EXCEPTION(throwScope, {});
-                if (systemValue.isEmpty()) systemValue = jsUndefined();
-            }
-
-            Bun::V::validateNumber(throwScope, globalObject, userValue, "prevValue.user"_s, jsUndefined(), jsUndefined());
+            double userComparator = 0;
+            double systemComparator = 0;
+            getPrevCpuUsage(throwScope, globalObject, comparatorValue, cpuUsageStructure, &userComparator, &systemComparator);
             RETURN_IF_EXCEPTION(throwScope, {});
-
-            Bun::V::validateNumber(throwScope, globalObject, systemValue, "prevValue.system"_s, jsUndefined(), jsUndefined());
-            RETURN_IF_EXCEPTION(throwScope, {});
-
-            double userComparator = userValue.toNumber(globalObject);
-            RETURN_IF_EXCEPTION(throwScope, {});
-            double systemComparator = systemValue.toNumber(globalObject);
-            RETURN_IF_EXCEPTION(throwScope, {});
-
-            if (!(userComparator >= 0 && userComparator <= JSC::maxSafeInteger())) {
-                return Bun::ERR::INVALID_ARG_VALUE_RangeError(throwScope, globalObject, "prevValue.user"_s, userValue, "is invalid"_s);
-            }
-
-            if (!(systemComparator >= 0 && systemComparator <= JSC::maxSafeInteger())) {
-                return Bun::ERR::INVALID_ARG_VALUE_RangeError(throwScope, globalObject, "prevValue.system"_s, systemValue, "is invalid"_s);
-            }
 
             user -= userComparator;
             system -= systemComparator;
@@ -3920,33 +3941,15 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionThreadCpuUsage, (JSC::JSGlobalObject * 
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
+    auto* process = getProcessObject(globalObject, callFrame->thisValue());
+    Structure* cpuUsageStructure = process->cpuUsageStructure();
+
     double userComparator = 0;
     double systemComparator = 0;
     JSValue prevValue = callFrame->argument(0);
     if (!prevValue.isUndefined()) {
-        Bun::V::validateObject(throwScope, globalObject, prevValue, "prevValue"_s);
+        getPrevCpuUsage(throwScope, globalObject, prevValue, cpuUsageStructure, &userComparator, &systemComparator);
         RETURN_IF_EXCEPTION(throwScope, {});
-        JSC::JSObject* comparator = prevValue.getObject();
-
-        JSValue userValue = comparator->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "user"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-        if (userValue.isEmpty()) userValue = jsUndefined();
-        JSValue systemValue = comparator->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "system"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-        if (systemValue.isEmpty()) systemValue = jsUndefined();
-
-        if (!(userValue.isNumber() && userValue.asNumber() >= 0 && userValue.asNumber() <= JSC::maxSafeInteger())) {
-            if (!userValue.isNumber())
-                return Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "prevValue.user"_s, "number"_s, userValue);
-            return Bun::ERR::INVALID_ARG_VALUE_RangeError(throwScope, globalObject, "prevValue.user"_s, userValue, "is invalid"_s);
-        }
-        if (!(systemValue.isNumber() && systemValue.asNumber() >= 0 && systemValue.asNumber() <= JSC::maxSafeInteger())) {
-            if (!systemValue.isNumber())
-                return Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "prevValue.system"_s, "number"_s, systemValue);
-            return Bun::ERR::INVALID_ARG_VALUE_RangeError(throwScope, globalObject, "prevValue.system"_s, systemValue, "is invalid"_s);
-        }
-        userComparator = userValue.asNumber();
-        systemComparator = systemValue.asNumber();
     }
 
     double user = 0;
@@ -3988,8 +3991,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionThreadCpuUsage, (JSC::JSGlobalObject * 
     user -= userComparator;
     system -= systemComparator;
 
-    auto* process = getProcessObject(globalObject, callFrame->thisValue());
-    Structure* cpuUsageStructure = process->cpuUsageStructure();
     JSC::JSObject* result = JSC::constructEmptyObject(vm, cpuUsageStructure);
     RETURN_IF_EXCEPTION(throwScope, {});
     result->putDirectOffset(vm, 0, JSC::jsNumber(user));

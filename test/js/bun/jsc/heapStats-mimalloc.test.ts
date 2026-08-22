@@ -82,9 +82,9 @@ describe("heapStats() mimalloc integration", () => {
            mach_vm_region: { args: ["u32", "ptr", "ptr", "i32", "ptr", "ptr", "ptr"], returns: "i32" },
          }).symbols;
          const task = task_self_trap();
+         const VM_REGION_EXTENDED_INFO = 13, VM_REGION_EXTENDED_INFO_COUNT = 9; // sizeof(vm_region_extended_info_data_t) / 4
          const address = new BigUint64Array(1), size = new BigUint64Array(1);
-         const info = new Uint32Array(16), count = new Uint32Array(1), object = new Uint32Array(1);
-         const VM_REGION_EXTENDED_INFO = 13, VM_REGION_EXTENDED_INFO_COUNT = 10;
+         const info = new Uint32Array(VM_REGION_EXTENDED_INFO_COUNT), count = new Uint32Array(1), object = new Uint32Array(1);
          const bytesByTag = new Map();
          for (;;) {
            count[0] = VM_REGION_EXTENDED_INFO_COUNT;

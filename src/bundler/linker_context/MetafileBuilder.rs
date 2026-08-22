@@ -201,7 +201,7 @@ pub(crate) fn generate_chunk_json(
 
 /// Assembles the final metafile JSON from pre-built chunk fragments.
 /// Called after all chunks have been generated in parallel.
-/// Chunk references (unique_keys) are resolved to their final output paths.
+/// Chunk references (unique_keys) left in the output are resolved to their final output paths.
 /// The caller is responsible for freeing the returned slice.
 pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Result<Box<[u8]>> {
     // Use StringJoiner so we can use breakOutputIntoPieces to resolve chunk references
@@ -220,12 +220,18 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
     // Iterate through all files in chunks to collect unique source indices
     let mut seen_sources = DynamicBitSet::init_empty(sources.len())?;
 
+    let mut entry_point_by_chunk_key: StringHashMap<u32> = StringHashMap::default();
+
     // Mark all files that appear in chunks
     for chunk in chunks.iter() {
         for &source_index in chunk.files_with_parts_in_chunk.keys() {
             if (source_index as usize) < sources.len() {
                 seen_sources.set(source_index as usize);
             }
+        }
+        if chunk.entry_point.is_entry_point() && !chunk.unique_key.is_empty() {
+            entry_point_by_chunk_key
+                .put_static_key(chunk.unique_key, chunk.entry_point.source_index())?;
         }
     }
 
@@ -292,17 +298,21 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
                 }
                 first_import = false;
 
+                let target_source_index: Option<u32> = if record.source_index.is_valid() {
+                    Some(record.source_index.get())
+                } else {
+                    // A chunk's unique key, see `compute_cross_chunk_dependencies`.
+                    entry_point_by_chunk_key.get(record.path.text).copied()
+                };
+
                 j.push_static(b"\n        {\n          \"path\": ");
                 // Bundled imports use the target source's pretty path (same string as the
                 // "inputs" key). `record.path.text` is unreliable here: dedup can set
                 // `source_index` without rewriting the path. Externals/chunk refs fall through.
                 let import_path: &[u8] = 'path: {
-                    if record.source_index.is_valid()
-                        && record.source_index.get() != Index::RUNTIME.get()
-                    {
-                        let idx = record.source_index.get() as usize;
-                        if idx < sources.len() {
-                            let pretty = sources[idx].path.pretty;
+                    if let Some(idx) = target_source_index {
+                        if idx != Index::RUNTIME.get() && (idx as usize) < sources.len() {
+                            let pretty = sources[idx as usize].path.pretty;
                             if !pretty.is_empty() {
                                 break 'path pretty;
                             }
@@ -339,16 +349,15 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
                 if record
                     .flags
                     .contains(ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS)
-                    || !record.source_index.is_valid()
+                    || target_source_index.is_none()
                 {
                     j.push_static(b",\n          \"external\": true");
                 }
 
                 // Add "with" for import attributes (json, toml, text loaders)
-                if record.source_index.is_valid()
-                    && (record.source_index.get() as usize) < loaders.len()
+                if let Some(loader) =
+                    target_source_index.and_then(|idx| loaders.get(idx as usize).copied())
                 {
-                    let loader = loaders[record.source_index.get() as usize];
                     let with_type: Option<&'static [u8]> = match loader {
                         Loader::Json => Some(b"json"),
                         Loader::Toml => Some(b"toml"),

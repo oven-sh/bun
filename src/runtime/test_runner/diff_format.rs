@@ -101,7 +101,6 @@ extern "C" fn zig__renderDiff(
     expected_len: usize,
     received_ptr: *const core::ffi::c_char,
     received_len: usize,
-    _global_this: &JSGlobalObject,
 ) {
     // SAFETY: caller (BunAnalyzeTranspiledModule.cpp) passes a valid UTF-8 buffer
     // of length `expected_len` that outlives this call.

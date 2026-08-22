@@ -12,6 +12,14 @@ pub use crate::tsconfig_json::options::jsx;
 pub(crate) use bun_ast::Target;
 pub use bun_options_types::bundle_enums::ModuleType;
 
+// Byte view of the canonical `Target::MAIN_FIELD_NAMES`; `PackageJSON::parse` reads the whole union.
+pub const ALL_DEFAULT_MAIN_FIELD_NAMES: [&[u8]; 4] = [
+    Target::MAIN_FIELD_NAMES[0].as_bytes(),
+    Target::MAIN_FIELD_NAMES[1].as_bytes(),
+    Target::MAIN_FIELD_NAMES[2].as_bytes(),
+    Target::MAIN_FIELD_NAMES[3].as_bytes(),
+];
+
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum Packages {
     #[default]

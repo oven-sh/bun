@@ -146,15 +146,18 @@ impl SpawnSyncEventLoop {
     // below, so `Self` MUST NOT move after `init` returns (no-move invariant
     // upheld by the caller). The caller provides uninitialized storage, hence
     // `MaybeUninit<Self>` (out-param ctor exception).
+    //
+    // Returns `false` when the isolated event loop cannot be created
+    // (uv_loop_init / epoll_create1 / kqueue failure under resource
+    // exhaustion). `this` is left uninitialized on failure.
     pub fn init(
         this: &mut core::mem::MaybeUninit<Self>,
         vm: *mut (), /* SAFETY: erased *mut VirtualMachine */
-    ) {
+    ) -> bool {
         // `uws::Loop::create` takes a `LoopHandler` impl with associated-const fn ptrs.
-        let loop_ = uws::Loop::create::<handler::Handler>();
-
-        let loop_ =
-            NonNull::new(loop_).expect("uws::Loop::create never returns null (asserts on OOM)");
+        let Some(loop_) = uws::Loop::create::<handler::Handler>() else {
+            return false;
+        };
 
         // Initialize the JSC EventLoop with empty state.
         // CRITICAL: On Windows, the impl stores our isolated loop pointer in `uws_loop`.
@@ -182,6 +185,7 @@ impl SpawnSyncEventLoop {
         let loop_data = &mut this.uws_loop_mut().internal_loop_data;
         loop_data.set_parent_raw(tag, ptr);
         loop_data.jsc_vm = core::ptr::null();
+        true
     }
 
     /// Erased `*mut bun_jsc::event_loop::EventLoop` (heap-owned via
@@ -200,8 +204,9 @@ impl SpawnSyncEventLoop {
     /// Shared borrow of the isolated `uws::Loop`.
     ///
     /// # Safety (invariant)
-    /// `uws_loop` is created in `init` via `uws::Loop::create` (asserts
-    /// non-null) and freed only in `Drop`, so it is valid for all of `self`'s
+    /// `uws_loop` is created in `init` via `uws::Loop::create`; `init` returns
+    /// `false` on `None`, so `Self` is never constructed with a null loop. It
+    /// is freed only in `Drop`, so it is valid for all of `self`'s
     /// lifetime. The loop is only mutated through `&mut self` paths
     /// (`uws_loop_mut`), so a shared borrow tied to `&self` cannot overlap a
     /// unique borrow.

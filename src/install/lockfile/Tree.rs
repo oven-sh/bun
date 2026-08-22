@@ -370,7 +370,7 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
             if !folder_name_is_safe(name) {
                 Output::err_generic(
                     "Lockfile is malformed (dependency name \"{}\" is not a valid folder name)",
-                    (bstr::BStr::new(name),),
+                    (bun_core::fmt::escape_control_chars(name),),
                 );
                 bun_core::Global::crash();
             }
@@ -757,17 +757,18 @@ impl Tree {
             // don't treat it as unsafe — match the lockfile parser and isolated
             // installer (`bun.lock.rs`, `isolated_install.rs`) which guard
             // `!name.is_empty()` here rather than failing the whole install.
+            // Neither does an unresolved dependency, and if its name is why it
+            // did not resolve, enqueue already reported it.
             let dependency_name = dependency
                 .name
                 .slice(lockfile.buffers.string_bytes.as_slice());
-            if !dependency_name.is_empty()
+            if pkg_id != invalid_package_id
+                && !dependency_name.is_empty()
                 && !crate::dependency::is_safe_install_folder_name(dependency_name)
             {
                 builder.maybe_report_error(format_args!(
                     "Invalid dependency name \"{}\"",
-                    dependency
-                        .name
-                        .fmt(lockfile.buffers.string_bytes.as_slice()),
+                    bun_core::fmt::escape_control_chars(dependency_name),
                 ));
                 continue 'dep;
             }

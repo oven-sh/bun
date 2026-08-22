@@ -348,8 +348,11 @@ impl PackageManager {
                         Output::flush();
                     }
                     if failed_dep.version.tag == dependency::Tag::Catalog {
-                        let name = bstr::BStr::new(failed_dep.name.slice(string_buf));
-                        let literal = failed_dep.version.literal.fmt(string_buf);
+                        let name =
+                            bun_core::fmt::escape_control_chars(failed_dep.name.slice(string_buf));
+                        let literal = bun_core::fmt::escape_control_chars(
+                            failed_dep.version.literal.slice(string_buf),
+                        );
                         let catalog_name = failed_dep.version.catalog().slice(string_buf);
                         let is_default = catalog_name.is_empty() || catalog_name == b"default";
                         let catalog_exists = is_default
@@ -359,25 +362,26 @@ impl PackageManager {
                                 .keys()
                                 .iter()
                                 .any(|k| k.slice(string_buf) == catalog_name);
+                        let catalog_name = bun_core::fmt::escape_control_chars(catalog_name);
                         if !catalog_exists {
                             Output::err_generic(
                                 "<b>{}@{}<r>: there is no catalog named \"{}\" in the root package.json",
-                                (name, literal, bstr::BStr::new(catalog_name)),
+                                (&name, &literal, &catalog_name),
                             );
                         } else if is_default {
                             Output::err_generic(
                                 "<b>{}@{}<r> is not in the catalog",
-                                (name, literal),
+                                (&name, &literal),
                             );
                             bun_core::pretty_errorln!("  bun add --catalog {}", name);
                         } else {
                             Output::err_generic(
                                 "<b>{}@{}<r> is not in catalog \"{}\"",
-                                (name, literal, bstr::BStr::new(catalog_name)),
+                                (&name, &literal, &catalog_name),
                             );
                             bun_core::pretty_errorln!(
                                 "  bun add --catalog={} {}",
-                                bstr::BStr::new(catalog_name),
+                                catalog_name,
                                 name
                             );
                         }
@@ -390,14 +394,20 @@ impl PackageManager {
                     {
                         Output::err_generic(
                             "<b>{}<r><d> failed to resolve<r>",
-                            (failed_dep.version.literal.fmt(string_buf),),
+                            (bun_core::fmt::escape_control_chars(
+                                failed_dep.version.literal.slice(string_buf),
+                            ),),
                         );
                     } else {
                         Output::err_generic(
                             "<b>{}<r><d>@<b>{}<r><d> failed to resolve<r>",
                             (
-                                bstr::BStr::new(failed_dep.name.slice(string_buf)),
-                                failed_dep.version.literal.fmt(string_buf),
+                                bun_core::fmt::escape_control_chars(
+                                    failed_dep.name.slice(string_buf),
+                                ),
+                                bun_core::fmt::escape_control_chars(
+                                    failed_dep.version.literal.slice(string_buf),
+                                ),
                             ),
                         );
                     }

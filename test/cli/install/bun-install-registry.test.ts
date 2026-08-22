@@ -9478,8 +9478,10 @@ test("rejects npm aliases whose manifest URL resolves to a different host than t
   const err = await stderr.text();
   await stdout.text();
 
-  // The manifest request must be refused with a clear error...
-  expect(err).toContain("is not on registry");
+  // The manifest request must be refused with a clear error (today the name is
+  // already refused while resolving, before a URL is built; the URL check stays
+  // behind it as a second line of defense)...
+  expect(err).toMatch(/Invalid dependency name|is not on registry/);
   // ...and no request (carrying the registry Authorization header) may reach
   // a host other than the configured registry.
   expect(received).toEqual([]);

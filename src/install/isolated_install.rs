@@ -2138,7 +2138,7 @@ pub(crate) fn install_isolated_packages(
                 if let Some(name) = unsafe_folder_name {
                     Output::err_generic(
                         "\"{}\" is not a valid install folder name",
-                        (BStr::new(name),),
+                        (bun_core::fmt::escape_control_chars(name),),
                     );
                     Output::flush();
                     Global::exit(1);

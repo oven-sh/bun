@@ -887,6 +887,55 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         version_was_replaced = false;
         break 'version dependency.version.clone();
     };
+
+    // Refuse an unsafe alias (the future `node_modules/` folder) or registry
+    // name (the request and the package name) here, before either is fetched
+    // or printed. Empty names are tolerated, as in the tree builder.
+    let invalid_name = {
+        let alias = this.lockfile.str(&dependency.name);
+        let alias_is_safe = if alias == this.lockfile.str(&dependency.version.literal) {
+            // `bun add <specifier>` uses the specifier as the alias until
+            // `assign_resolution` names it: never a folder, but still printed.
+            !dependency::contains_control_character(alias)
+        } else {
+            alias.is_empty() || dependency::is_safe_install_folder_name(alias)
+        };
+        if !alias_is_safe {
+            Some(alias)
+        } else {
+            match version.tag {
+                dependency::version::Tag::Npm | dependency::version::Tag::DistTag => {
+                    let registry_name = this.lockfile.str(&name);
+                    (!registry_name.is_empty()
+                        && !dependency::is_safe_install_folder_name(registry_name))
+                    .then_some(registry_name)
+                }
+                _ => None,
+            }
+        }
+    };
+    if let Some(invalid_name) = invalid_name {
+        if let Some(fail) = fail_fn {
+            fail(this, dependency, id, crate::Error::InvalidDependencyName);
+            return Ok(());
+        }
+        let name = bun_fmt::escape_control_chars(invalid_name);
+        if dependency.behavior.is_required() {
+            this.log_mut().add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!("Invalid dependency name \"{name}\""),
+            );
+        } else {
+            this.log_mut().add_warning_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!("Invalid dependency name \"{name}\""),
+            );
+        }
+        return Ok(());
+    }
+
     let mut loaded_manifest: Option<Npm::PackageManifest> = None;
 
     match version.tag {

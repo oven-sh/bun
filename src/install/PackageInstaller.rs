@@ -364,24 +364,15 @@ fn abs_node_modules_path(
     abs
 }
 
-/// A dependency alias becomes the install destination inside `node_modules`
-/// (the existing entry is renamed aside, deleted, and re-created). Reject
-/// anything that could escape `node_modules`: empty names, `.`/`..`
-/// components, absolute paths, drive letters, backslashes, NUL bytes, and any
-/// separator other than the single `/` in a scoped name (`@scope/name`).
+/// The alias is the install destination inside `node_modules` (renamed aside,
+/// deleted and re-created), so on top of `is_safe_install_folder_name` it must
+/// be a single path component, or two for a scoped name.
 pub(crate) fn alias_is_safe_install_target(alias: &[u8]) -> bool {
-    if alias.is_empty() || alias.len() >= MAX_PATH_BYTES || strings::contains_any(alias, b"\\:\0") {
+    if alias.len() >= MAX_PATH_BYTES || !crate::dependency::is_safe_install_folder_name(alias) {
         return false;
     }
 
-    let mut component_count = 0usize;
-    for component in strings::split(alias, b"/") {
-        component_count += 1;
-        if component.is_empty() || component == b"." || component == b".." {
-            return false;
-        }
-    }
-
+    let component_count = strings::split(alias, b"/").count();
     component_count == 1 || (component_count == 2 && alias[0] == b'@')
 }
 
@@ -1258,7 +1249,7 @@ impl<'a> PackageInstaller<'a> {
             if log_level != Options::LogLevel::Silent {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r>: refusing to install dependency with unsafe name <b>{}<r>",
-                    bstr::BStr::new(alias.slice(string_buf!())),
+                    bun_core::fmt::escape_control_chars(alias.slice(string_buf!())),
                 );
             }
             self.summary.fail += 1;

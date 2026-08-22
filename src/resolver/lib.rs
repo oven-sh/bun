@@ -20,6 +20,7 @@ pub mod error;
 #[path = "fs.rs"]
 mod fs_full;
 pub mod node_fallbacks;
+pub mod node_module_error;
 pub mod package_json;
 pub mod tsconfig_json;
 
@@ -38,8 +39,10 @@ pub use data_url::DataURL;
 /// Re-export real `DirInfo`.
 pub use dir_info::DirInfo;
 pub use dir_info::DirInfoRef;
+
 /// Re-export real filesystem `Path`.
 pub use fs::Path;
+pub use node_module_error::{NodeModuleError, NodeModuleErrorKind};
 /// Re-export real `PackageJSON`.
 pub use package_json::PackageJSON;
 /// Re-export real `TSConfigJSON`.

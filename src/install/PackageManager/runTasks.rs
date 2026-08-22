@@ -34,7 +34,7 @@ use bun_install::package_manager_task as Task;
 // Import the *module* under the `Options` name so `Options::LogLevel` resolves as a path
 // (matches the `Task` module-alias pattern above and `CommandLineArguments.rs`).
 use super::package_manager_options as Options;
-use super::package_manager_options::{Do, Enable};
+use super::package_manager_options::{Do, Enable, RequestKind};
 use crate::isolated_install::store as Store;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -587,23 +587,32 @@ fn run_tasks_erased(
                         continue;
                     }
 
+                    let note = http_status_note(
+                        manager,
+                        response.status_code,
+                        name,
+                        &task.url_buf,
+                        RequestKind::Manifest,
+                    );
                     if manager.is_network_task_required(task.task_id) {
                         bun_ast::add_error_pretty!(
                             manager.log_mut(),
                             None,
                             bun_ast::Loc::EMPTY,
-                            "<r><red><b>GET<r><red> {}<d> - {}<r>",
+                            "<r><red><b>GET<r><red> {}<d> - {}<r>{}",
                             bstr::BStr::new(metadata.url.slice()),
                             response.status_code,
+                            bstr::BStr::new(&note),
                         );
                     } else {
                         bun_ast::add_warning_pretty!(
                             manager.log_mut(),
                             None,
                             bun_ast::Loc::EMPTY,
-                            "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>",
+                            "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>{}",
                             bstr::BStr::new(metadata.url.slice()),
                             response.status_code,
+                            bstr::BStr::new(&note),
                         );
                     }
                     if manager.subcommand != Subcommand::Remove {
@@ -938,23 +947,35 @@ fn run_tasks_erased(
                         continue;
                     }
 
+                    let note = http_status_note(
+                        manager,
+                        response.status_code,
+                        extract.name.slice(),
+                        &task.url_buf,
+                        RequestKind::Tarball {
+                            authorization: task.authorization,
+                            sent_authorization: task.sent_authorization,
+                        },
+                    );
                     if is_required {
                         bun_ast::add_error_pretty!(
                             manager.log_mut(),
                             None,
                             bun_ast::Loc::EMPTY,
-                            "<r><red><b>GET<r><red> {}<d> - {}<r>",
+                            "<r><red><b>GET<r><red> {}<d> - {}<r>{}",
                             bstr::BStr::new(metadata.url.slice()),
                             response.status_code,
+                            bstr::BStr::new(&note),
                         );
                     } else {
                         bun_ast::add_warning_pretty!(
                             manager.log_mut(),
                             None,
                             bun_ast::Loc::EMPTY,
-                            "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>",
+                            "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>{}",
                             bstr::BStr::new(metadata.url.slice()),
                             response.status_code,
+                            bstr::BStr::new(&note),
                         );
                     }
                     if manager.subcommand != Subcommand::Remove {
@@ -1674,6 +1695,24 @@ fn run_tasks_erased(
     }
 
     Ok(())
+}
+
+/// Extra line for the `GET <url> - <status>` message: on 401/403, what the
+/// user can configure to authenticate the request (see
+/// `Options::missing_credentials_note`); empty for every other status.
+fn http_status_note(
+    manager: &PackageManager,
+    status_code: u32,
+    package_name: &[u8],
+    url: &[u8],
+    request: RequestKind,
+) -> Vec<u8> {
+    match status_code {
+        401 | 403 => manager
+            .options
+            .missing_credentials_note(package_name, url, request),
+        _ => Vec::new(),
+    }
 }
 
 #[inline]

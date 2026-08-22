@@ -306,9 +306,8 @@ void MessagePortPipe::close(uint8_t side, CloseKind kind, ScriptExecutionContext
         Deque<MessageWithMessagePorts> dropped;
         {
             Locker locker { s.lock };
-            // A Collected side keeps its owning context id so a later attach()/
-            // registerCloseContext() on the peer can tell same-context (keep the
-            // hold, node parity) from cross-context (release; nothing else will).
+            // A Collected side keeps its context id so peerRequiresCloseNotification()
+            // can tell a same-context peer (keeps its hold) from a cross-context one.
             s.ctxId = sdKind == CloseKind::Collected ? closingCtx : 0;
             s.port = nullptr;
             // Closed is terminal; queued messages are dropped.
@@ -330,15 +329,9 @@ void MessagePortPipe::close(uint8_t side, CloseKind kind, ScriptExecutionContext
         // outside the lock; they may hold the last ref to pipes whose
         // destructors also take locks.
 
-        // Notify each explicitly-closed pipe's entangled peer so it can fire
-        // 'close' and release its event-loop ref — including nested in-transit
-        // ports drained from the worklist, not just the originally-closed side.
-        // A Collected close notifies only a cross-context peer (the CloseKind
-        // comment in the header has the full rationale): notifying a
-        // same-context peer made the canonical "port1.on('message', ...);
-        // port2.postMessage(...)" pattern exit at GC timing while node stays
-        // alive, but a cross-context peer left unnotified is stranded forever
-        // once the collected port's context dies with nothing to tear down.
+        // Notify the entangled peer so it can fire 'close' and release its
+        // event-loop ref — nested in-transit ports from the worklist too. A
+        // Collected close notifies only a cross-context peer (see CloseKind).
         bool notify = sdKind == CloseKind::Explicit;
         if (!notify && closingCtx) {
             auto& peer = pipe->m_sides[1 - sd];

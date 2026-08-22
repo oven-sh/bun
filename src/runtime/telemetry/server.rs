@@ -154,7 +154,7 @@ pub fn begin(
 }
 
 /// Refine the span name to `METHOD /route` once the matched route is known.
-pub fn set_route(global: &JSGlobalObject, span: NativeSpan, _method: Method, route: &[u8]) {
+pub fn set_route(global: &JSGlobalObject, span: NativeSpan, route: &[u8]) {
     if route.is_empty() {
         return;
     }

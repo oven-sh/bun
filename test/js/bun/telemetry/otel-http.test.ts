@@ -323,7 +323,7 @@ describe("Bun.serve", () => {
 
 describe("fetch", () => {
   test("network error produces an error span", async () => {
-    using server = Bun.serve({ port: 0, fetch: () => new Response("x") });
+    const server = Bun.serve({ port: 0, fetch: () => new Response("x") });
     const port = server.port;
     server.stop(true);
     await fetch(`http://localhost:${port}/`).then(

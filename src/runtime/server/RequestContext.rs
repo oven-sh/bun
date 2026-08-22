@@ -1410,12 +1410,7 @@ where
     pub(crate) fn otel_set_route(&self, route: &[u8]) {
         let span = self.otel_span.get();
         if span.is_some() {
-            crate::telemetry::server::set_route(
-                self.server().global_this(),
-                span,
-                self.method,
-                route,
-            );
+            crate::telemetry::server::set_route(self.server().global_this(), span, route);
         }
     }
 

@@ -286,11 +286,20 @@ describe.concurrent("OTLP/HTTP exporter", () => {
   });
 
   test("unreachable collector: retried export does not stall process exit", async () => {
-    // Nothing listens on this port: the export fails (retryable) and is parked;
-    // exit must not wait out OTEL_BSP_EXPORT_TIMEOUT for it.
-    const dead = Bun.serve({ port: 0, fetch: () => new Response("x") });
+    // A collector that drops every connection: the export fails (retryable)
+    // and is parked; exit must not wait out OTEL_BSP_EXPORT_TIMEOUT for it.
+    // (Held open so no concurrent test can be handed this port.)
+    using dead = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(s) {
+          s.end();
+        },
+        data() {},
+      },
+    });
     const port = dead.port;
-    dead.stop(true);
     const started = performance.now();
     const { exitCode, stderr } = await run(
       `

@@ -152,7 +152,7 @@ describe("net", () => {
     const sock = await Bun.connect({ hostname: "127.0.0.1", port: listener.port, socket: { data() {}, open() {} } });
     sock.end();
     // A port nobody listens on.
-    using dead = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+    const dead = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
     const deadPort = dead.port;
     dead.stop(true);
     await Bun.connect({ hostname: "127.0.0.1", port: deadPort, socket: { data() {} } }).catch(() => {});
@@ -265,7 +265,7 @@ describe("WebSocket", () => {
   });
 
   test("failed connect", async () => {
-    using dead = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+    const dead = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
     const port = dead.port;
     dead.stop(true);
     const ws = new WebSocket(`ws://127.0.0.1:${port}/`);

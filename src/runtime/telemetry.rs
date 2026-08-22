@@ -709,7 +709,8 @@ fn read_exporter_extras(
         }
     }
     match opt_str(global, obj, "compression")?.as_deref() {
-        None | Some("none") => {}
+        None => {}
+        Some("none") => x.compression = Compression::None,
         Some("gzip") => x.compression = Compression::Gzip,
         Some(other) => {
             return Err(global.throw_invalid_arguments(format_args!(

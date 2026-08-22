@@ -233,6 +233,13 @@ impl Watcher {
 
     pub fn start(&mut self) -> Result<(), crate::Error> {
         debug_assert!(!self.watchloop_handle.load());
+        // inotify and kqueue register each watch synchronously in `add_file`,
+        // so the kernel queues changes before the thread below runs. Windows
+        // only records changes after the first `ReadDirectoryChangesW` on the
+        // directory handle: issue it now, or an edit made while the new thread
+        // waits for a CPU (`--hot` under load) is never reported.
+        #[cfg(windows)]
+        self.platform.arm()?;
         self.watchloop_handle.store(true);
         // Watcher must be Send across the spawned thread boundary; we pass a
         // raw pointer (as usize) and uphold the safety contract manually.

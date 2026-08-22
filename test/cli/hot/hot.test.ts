@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { beforeEach, expect, it } from "bun:test";
 import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug, isWindows, tmpdirSync, waitForFileToExist } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -775,4 +775,48 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
     // TODO: bun has a memory leak when --hot is used on very large files
   },
   longTimeout,
+);
+
+// Windows reports a directory's changes only from the first ReadDirectoryChangesW
+// on its handle. Bun issued that call from the watcher thread, so an edit made
+// while the new thread still waited for a CPU was never reported and --hot did
+// not reload. inotify and kqueue register each watch synchronously in add_file,
+// so the race is Windows only. Several children at once make their watcher
+// threads compete for CPUs the way the parallel CI batch does.
+it.skipIf(!isWindows)(
+  "should hot reload an edit made right after the first output",
+  async () => {
+    const children = Array.from({ length: 8 }, async (_, i) => {
+      using dir = tempDir(`hot-first-edit-${i}`, {
+        "entry.js": `console.write("GEN 0\\n");\n`,
+      });
+      const entry = join(String(dir), "entry.js");
+      await using runner = spawn({
+        cmd: [bunExe(), "--hot", "run", entry],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "inherit",
+        stdin: "ignore",
+      });
+      const reader = runner.stdout.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      const waitForLine = async (needle: string) => {
+        while (!buf.includes(needle)) {
+          const { value, done } = await reader.read();
+          if (done) {
+            throw new Error(`child ${i} exited before printing ${JSON.stringify(needle)}; got ${JSON.stringify(buf)}`);
+          }
+          buf += dec.decode(value, { stream: true });
+        }
+      };
+      await waitForLine("GEN 0\n");
+      writeFileSync(entry, `console.write("GEN 1\\n");\n`);
+      await waitForLine("GEN 1\n");
+      reader.releaseLock();
+    });
+    await Promise.all(children);
+  },
+  timeout,
 );

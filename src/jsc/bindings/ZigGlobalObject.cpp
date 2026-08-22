@@ -995,9 +995,27 @@ extern "C" bool Zig__GlobalObject__tryResetForTestIsolation(Zig::GlobalObject* g
     globalObject->mockModule.activeMocks.clear();
     // The listener half of the swap path's prepareForDestruction(); the context itself stays live.
     globalObject->scriptExecutionContext()->removeAllEventListeners();
+    // A fresh global starts with empty user-timing and resource-timing buffers.
+    if (auto* performance = globalObject->existingPerformance()) {
+        performance->clearMarks(String());
+        performance->clearMeasures(String());
+        performance->clearResourceTimings();
+    }
     // A rejection queued by cleanup-phase JS (a socket close callback) belongs to the finished file; the swap path drops it with the old global.
     globalObject->clearAboutToBeNotifiedRejectedPromises();
     globalObject->overridenDateNow = JSC::PNaN;
+    // The boundary deleted the fake-timer marker before the spy restore could put a marked native setTimeout back into the slot.
+    {
+        JSC::JSValue setTimeoutValue = globalObject->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "setTimeout"_s));
+        if (scope.exception()) [[unlikely]]
+            scope.clearException();
+        else if (setTimeoutValue && setTimeoutValue.isObject()) {
+            JSC::DeletePropertySlot slot;
+            JSC::JSCell::deleteProperty(setTimeoutValue.getObject(), globalObject, JSC::Identifier::fromString(vm, "clock"_s), slot);
+            if (scope.exception()) [[unlikely]]
+                scope.clearException();
+        }
+    }
     globalObject->onLoadPlugins.clear();
     globalObject->onResolvePlugins.clear();
     if (globalObject->hasProcessObject()) {

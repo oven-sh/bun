@@ -993,6 +993,73 @@ describe.concurrent("--isolate experimental global reuse", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("a fake-timer marker on a spied setTimeout is removed at the boundary", async () => {
+    using dir = tempDir("isolate-reuse-spied-clock", {
+      "a.test.ts": `
+        import { test, jest } from "bun:test";
+        test("a", () => {
+          // This order puts the marker on the native setTimeout before the spy
+          // replaces the slot; the spy restore puts the marked native back.
+          jest.useFakeTimers();
+          jest.spyOn(globalThis, "setTimeout");
+        });
+      `,
+      "b.test.ts": `
+        import { test, expect } from "bun:test";
+        import { testIsolationResetStats } from "bun:internal-for-testing";
+        test("b", () => {
+          console.log("RESET_STATS=" + JSON.stringify(testIsolationResetStats()));
+          expect(Object.hasOwnProperty.call(setTimeout, "clock")).toBe(false);
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "./a.test.ts", "./b.test.ts"],
+      env: { ...bunEnv, ...REUSE_ENV },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const m = stdout.match(/RESET_STATS=(\{.*?\})/);
+    expect(m && JSON.parse(m[1])).toEqual({ reuse: 1, swap: 0 });
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+    expect(exitCode).toBe(0);
+  });
+
+  test("performance marks from the finished file are not visible in the next file", async () => {
+    using dir = tempDir("isolate-reuse-perf-marks", {
+      "a.test.ts": `
+        import { test, expect } from "bun:test";
+        test("a", () => {
+          performance.mark("mark-from-a");
+          expect(performance.getEntriesByType("mark")).toHaveLength(1);
+        });
+      `,
+      "b.test.ts": `
+        import { test, expect } from "bun:test";
+        import { testIsolationResetStats } from "bun:internal-for-testing";
+        test("b", () => {
+          console.log("RESET_STATS=" + JSON.stringify(testIsolationResetStats()));
+          // A fresh global starts with an empty user-timing buffer.
+          expect(performance.getEntriesByType("mark")).toHaveLength(0);
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "./a.test.ts", "./b.test.ts"],
+      env: { ...bunEnv, ...REUSE_ENV },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const m = stdout.match(/RESET_STATS=(\{.*?\})/);
+    expect(m && JSON.parse(m[1])).toEqual({ reuse: 1, swap: 0 });
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+    expect(exitCode).toBe(0);
+  });
+
   test("a rejection fired by the finished file's cleanup is not reported in the next file", async () => {
     using dir = tempDir("isolate-reuse-cleanup-rejection", {
       "a.test.ts": `

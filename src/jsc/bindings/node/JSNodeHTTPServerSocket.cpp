@@ -68,8 +68,8 @@ static void flushPartialResponseBeforeClose(us_socket_t* socket)
     // Only flush when an in-flight response wrote part of its body but never
     // ended: Node has already handed those res.write() bytes to the kernel by
     // the time destroy() runs, so they reach the client there. Ended
-    // responses (including the synthetic terminator written by abort()) keep
-    // the old behavior of being discarded with the close.
+    // responses (res.destroy() marks its response as ended via uws_res_abandon)
+    // keep the old behavior of being discarded with the close.
     if ((httpResponseData->state & uWS::HttpResponseData<SSL>::HTTP_WRITE_CALLED)
         && !(httpResponseData->state & uWS::HttpResponseData<SSL>::HTTP_END_CALLED)) {
         reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->uncork();

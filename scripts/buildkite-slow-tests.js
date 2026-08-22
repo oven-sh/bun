@@ -5,42 +5,68 @@ import { readFileSync } from "fs";
 function parseLogFile(filename) {
   const testDetails = new Map(); // Track individual attempts and total for each test
   let currentTest = null;
+  let currentAttempt = 1;
   let startTime = null;
+  let lastTs = null;
 
-  // Pattern to match test group start: --- [90m[N/TOTAL][0m test/path
-  // Note: there are escape sequences before _bk
-  const startPattern = /_bk;t=(\d+).*?--- .*?\[90m\[(\d+)\/(\d+)\].*?\[0m (.+)/;
+  const content = readFileSync(filename, "utf-8").replace(/\x1b\[[0-9;]*m/g, "");
 
-  const content = readFileSync(filename, "utf-8");
-  const lines = content.split("\n");
+  const record = (name, attempt, duration) => {
+    const cleanName = name.replace(/\\/g, "/");
+    if (!testDetails.has(cleanName)) testDetails.set(cleanName, { total: 0, attempts: [] });
+    const testInfo = testDetails.get(cleanName);
+    testInfo.total += duration;
+    testInfo.attempts.push({ attempt, duration });
+  };
+  const close = ts => {
+    if (currentTest === null || startTime === null) return;
+    record(currentTest, currentAttempt, ts - startTime);
+    currentTest = null;
+    startTime = null;
+  };
 
-  for (const line of lines) {
-    const match = line.match(startPattern);
-    if (match) {
-      // If we have a previous test, calculate its duration
-      if (currentTest && startTime) {
-        const endTime = parseInt(match[1]);
-        const duration = endTime - startTime;
+  for (const raw of content.split("\n")) {
+    const line = raw.replace(/\r+$/, "");
+    const m = /^\x1b?_bk;t=(\d+)\x07(.*)$/.exec(line);
+    if (!m) continue;
+    const ts = (lastTs = parseInt(m[1], 10));
+    const body = m[2];
 
-        // Extract attempt info - match the actual ANSI pattern
-        const attemptMatch = currentTest.match(/\s+\x1b\[90m\[attempt #(\d+)\]\x1b\[0m$/);
-        const cleanName = currentTest.replace(/\s+\x1b\[90m\[attempt #\d+\]\x1b\[0m$/, "").trim();
-        const attemptNum = attemptMatch ? parseInt(attemptMatch[1]) : 1;
-
-        if (!testDetails.has(cleanName)) {
-          testDetails.set(cleanName, { total: 0, attempts: [] });
-        }
-
-        const testInfo = testDetails.get(cleanName);
-        testInfo.total += duration;
-        testInfo.attempts.push({ attempt: attemptNum, duration });
-      }
-
-      // Start new test
-      startTime = parseInt(match[1]);
-      currentTest = match[4].trim();
+    const hdr = /^--- \[\d+\/\d+\] (.+)$/.exec(body);
+    if (hdr) {
+      close(ts);
+      const attemptMatch = hdr[1].match(/\s+\[attempt #(\d+)\]\s*$/);
+      const title = hdr[1].replace(/\s+\[attempt #\d+\]\s*$/, "").trim();
+      // Retry/error headers (`title - code 1`) close the run but do not start one.
+      if (!/\.(?:[cm]?[jt]sx?|json)$/.test(title)) continue;
+      currentTest = title;
+      currentAttempt = attemptMatch ? parseInt(attemptMatch[1], 10) : 1;
+      startTime = ts;
+      continue;
+    }
+    // Parallel-bucket summary lines carry their own wall-clock.
+    const timed = /^\[\d+\/\d+\] (.+\.(?:[cm]?[jt]sx?|json)) \((\d+(?:\.\d+)?)s\)$/.exec(body);
+    if (timed) {
+      close(ts);
+      record(timed[1].trim(), 1, Math.round(parseFloat(timed[2]) * 1000));
+      continue;
+    }
+    // Non-[N/M] phase headers (napi prebuild, `[A-B/M] K files in parallel`,
+    // `Running N parallel-safe ...`, End) close the open timer so the
+    // preceding serial test is not charged for the batch that follows.
+    // Limited to the titles runner.node.mjs actually emits so a stray
+    // `--- a/<file>` diff line in test stdout does not truncate a span.
+    if (
+      /^--- (?:\[\d+-\d+\/\d+\]|napi prebuild:|Running \d+ parallel-safe|End\b|Summary\b|Received \w+, exiting)/.test(
+        body,
+      )
+    ) {
+      close(ts);
     }
   }
+  // A truncated log (job killed / timed out mid-run) has no `--- End`; charge
+  // the open span to the last timestamp seen so the culprit is not dropped.
+  if (lastTs !== null) close(lastTs);
 
   // Convert to array and sort by total duration
   const testGroups = Array.from(testDetails.entries())

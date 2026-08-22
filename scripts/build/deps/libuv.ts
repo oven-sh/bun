@@ -60,7 +60,16 @@ export const libuv: Dependency = {
   // an in-process loopback fetch().abort() can fall into. To upstream:
   // send to libuv/libuv with the wepoll/ReactOS references in the patch
   // comment as the rationale.
-  patches: ["patches/libuv/win-poll-rearm-before-callback.patch", "patches/libuv/win-poll-abort-with-disconnect.patch"],
+  //
+  // win-poll-no-endgame-after-close: a poll_cb that re-enters uv_run (Bun's
+  // waitForPromise) can complete the handle's own close endgame before it
+  // returns; the post-callback check must not queue a closed handle for a
+  // second endgame. Bun-specific (upstream does not support nested uv_run).
+  patches: [
+    "patches/libuv/win-poll-rearm-before-callback.patch",
+    "patches/libuv/win-poll-abort-with-disconnect.patch",
+    "patches/libuv/win-poll-no-endgame-after-close.patch",
+  ],
 
   build: () => ({
     kind: "direct",

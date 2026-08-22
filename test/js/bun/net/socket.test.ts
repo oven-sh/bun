@@ -4662,3 +4662,85 @@ describe.concurrent("a socket closed by data() while its peer's reset is being d
     expect(exitCode).toBe(0);
   });
 });
+
+// A synchronous `expect(promise).resolves` matcher blocks in waitForPromise,
+// which runs the event loop from inside the callback that called it: a nested
+// tick. usockets frees closed sockets from its loop-post hook, and the
+// epoll/kqueue backend defers that to the outermost tick (tick_depth) because
+// the outer dispatch still reads the socket after data() returns. The libuv
+// backend did not maintain tick_depth, so on Windows a nested tick inside
+// data() freed the socket and its uv_poll_t while both were still in use;
+// libuv then re-queued the freed uv_poll_t for its close endgame and the next
+// endgame pass read garbage (Segmentation fault at 0xFFFFFFFFFFFFFFFF).
+describe.concurrent("a socket closed and then nested-ticked from inside a callback", () => {
+  // `trigger` is where the socket is torn down and the loop re-entered: "data"
+  // from the socket's own data() callback (the outer dispatch still holds the
+  // socket), "timer" from a setTimeout callback (nothing else holds it, but the
+  // nested tick completes the uv_poll_t's close before the outer loop-post
+  // hook gets to free the socket).
+  function fixture(trigger: "data" | "timer") {
+    return /* js */ `
+      import { expect } from "bun:test";
+
+      // Blocks until the promise settles; the event loop runs nested in here.
+      function closeAndSpinEventLoop(socket) {
+        socket.terminate();
+        expect(Bun.sleep(5)).resolves.toBeUndefined();
+      }
+
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          open(socket) { socket.write("x"); },
+          data() {},
+          error() {},
+        },
+      });
+
+      for (let i = 0; i < 8; i++) {
+        const clientClosed = Promise.withResolvers();
+        // Settled once the callback that spun the loop has returned, so the
+        // next iteration starts from the outermost tick again.
+        const unwound = Promise.withResolvers();
+        const client = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          socket: {
+            data(socket) {
+              ${trigger === "data" ? "closeAndSpinEventLoop(socket); unwound.resolve();" : ""}
+            },
+            close() { clientClosed.resolve(); },
+            error() {},
+          },
+        });
+        ${trigger === "timer" ? "setTimeout(() => { closeAndSpinEventLoop(client); unwound.resolve(); }, 1);" : ""}
+        await clientClosed.promise;
+        await unwound.promise;
+      }
+      console.log("OK");
+    `;
+  }
+
+  it.each(["data", "timer"] as const)("%s handler", async trigger => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture(trigger)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({
+      stdout: stdout.trim(),
+      stderr: stderr.trim(),
+      exitCode,
+      signalCode: proc.signalCode ?? null,
+    }).toMatchObject({
+      stdout: "OK",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+});

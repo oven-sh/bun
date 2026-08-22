@@ -139,6 +139,11 @@ static void check_cb(uv_check_t *p) {
 /* Not used for polls, since polls need two frees */
 static void close_cb_free(uv_handle_t *h) { us_free(h->data); }
 
+/* A closed uv_poll_t whose us_poll_t is still alive: us_poll_stop nulled data
+ * and the close callback already ran, so no callback is left to free either
+ * block. us_poll_free frees both itself when it sees this. */
+#define US_POLL_CLOSE_CB_RAN(uv_p) ((uv_p)->data == (void *)(uv_p))
+
 /* This one is different for polls, since we need two frees here */
 static void close_cb_free_poll(uv_handle_t *h) {
   /* It is only in case we called us_poll_stop then quickly us_poll_free that we
@@ -146,6 +151,12 @@ static void close_cb_free_poll(uv_handle_t *h) {
   if (h->data) {
     us_free(h->data);
     us_free(h);
+  } else {
+    /* us_poll_free has not run yet (us_internal_loop_post defers it to the
+     * outermost tick, and a nested tick can drive the endgame first). Leave
+     * a marker so us_poll_free frees both blocks instead of handing them to
+     * a close callback that has already fired. */
+    h->data = h;
   }
 }
 
@@ -178,8 +189,14 @@ void us_poll_free(struct us_poll_t *p, struct us_loop_t *loop) {
    * with does nothing, since us_poll_stop should not really free the poll.
    * HOWEVER, if we then call us_poll_free while still closing the uv-poll, we
    * simply change back the data to point to our structure so that we actually
-   * do free it like we should. */
-  if (uv_is_closing((uv_handle_t *)p->uv_p)) {
+   * do free it like we should. If the close callback has already run (it
+   * marks the handle, see close_cb_free_poll), nothing else will free these
+   * blocks, so free them here. uv_is_closing() alone cannot tell the two
+   * apart: it is true for a closed handle too. */
+  if (US_POLL_CLOSE_CB_RAN(p->uv_p)) {
+    us_free(p->uv_p);
+    us_free(p);
+  } else if (uv_is_closing((uv_handle_t *)p->uv_p)) {
     p->uv_p->data = p;
   } else {
     us_free(p->uv_p);
@@ -295,7 +312,9 @@ void us_loop_pump(struct us_loop_t *loop) {
    * bun:test) supply their own keep-going predicate, so force exactly one
    * non-blocking iteration; UV_RUN_NOWAIT keeps the poll timeout at 0. */
   loop->uv_loop->active_handles++;
+  loop->data.tick_depth++;
   uv_run(loop->uv_loop, UV_RUN_NOWAIT);
+  loop->data.tick_depth--;
   loop->uv_loop->active_handles--;
 }
 
@@ -374,7 +393,15 @@ void us_loop_run(struct us_loop_t *loop) {
     Bun__JSC_onBeforeWait(loop->data.jsc_vm, (uint64_t) uv_now(loop->uv_loop) * 1000000ULL);
   }
 
+  /* Same reentrancy accounting as the epoll/kqueue us_loop_run: a poll
+   * callback that re-enters the loop (expect().resolves -> waitForPromise ->
+   * uv_run) must not free closed sockets from check_cb, because the outer
+   * us_internal_dispatch_ready_poll and libuv's uv__fast_poll_process_poll_req
+   * still hold the us_socket_t / uv_poll_t after the callback returns.
+   * us_internal_loop_post only frees when tick_depth <= 1. */
+  loop->data.tick_depth++;
   uv_run(loop->uv_loop, UV_RUN_ONCE);
+  loop->data.tick_depth--;
 }
 
 struct us_poll_t *us_create_poll(struct us_loop_t *loop, int fallthrough,

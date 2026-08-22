@@ -540,13 +540,7 @@ impl ByteVecExt for Vec<u8> {
     }
     fn write_utf16(&mut self, str: &[u16]) -> Result<u32, AllocError> {
         let initial = self.len();
-        let estimate = if (self.capacity() - self.len()) <= (str.len() * 3 + 2) {
-            bun_simdutf_sys::simdutf::length::utf8::from::utf16::le(str)
-        } else {
-            str.len()
-        };
-        self.reserve(estimate);
-        strings::convert_utf16_to_utf8_append(self, str);
+        strings::try_convert_utf16_to_utf8_append(self, str)?;
         Ok((self.len() - initial) as u32)
     }
     #[inline]

@@ -694,12 +694,7 @@ impl<'a> ShellSrcBuilder<'a> {
     }
 
     pub(crate) fn append_utf16_impl(&mut self, utf16: &[u16]) -> Result<(), bun_alloc::AllocError> {
-        let size = simdutf::length::utf8::from::utf16::le(utf16);
-        self.outbuf.reserve(size);
-        strings::convert_utf16_to_utf8_append(self.outbuf, utf16);
-        // Infallible: invalid UTF-16 takes the WTF-8 fallback inside the
-        // conversion, and Rust aborts on OOM.
-        Ok(())
+        strings::try_convert_utf16_to_utf8_append(self.outbuf, utf16)
     }
 
     pub(crate) fn append_utf8_impl(&mut self, utf8: &[u8]) -> Result<(), bun_alloc::AllocError> {

@@ -97,8 +97,11 @@ fn encode16_impl(global_this: &JSGlobalObject, slice: &[u16]) -> JSValue {
         return JSValue::ZERO;
     };
     debug_assert!(array_buffer.len == need);
-    let result =
-        strings::copy_utf16_into_utf8_with_utf8_len(array_buffer.byte_slice_mut(), slice, need);
+    // SAFETY: `need` is `element_length_utf16_into_utf8(slice)`, computed above
+    // from the same `slice`.
+    let result = unsafe {
+        strings::copy_utf16_into_utf8_with_utf8_len(array_buffer.byte_slice_mut(), slice, need)
+    };
     if result.written as usize == need && result.read as usize == slice.len() {
         return uint8array;
     }

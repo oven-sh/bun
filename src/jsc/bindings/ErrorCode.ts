@@ -75,6 +75,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_FS_CP_SOCKET", Error],
   ["ERR_FS_CP_UNKNOWN", Error],
   ["ERR_FS_EISDIR", Error],
+  ["ERR_FS_WATCH_QUEUE_OVERFLOW", Error],
   ["ERR_HTTP_BODY_NOT_ALLOWED", Error],
   ["ERR_HTTP_HEADERS_SENT", Error],
   ["ERR_HTTP_CONTENT_LENGTH_MISMATCH", Error],

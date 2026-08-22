@@ -403,41 +403,40 @@ describe.concurrent("OTLP/HTTP exporter", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("Bun.otel.start() with no exporter configured anywhere targets the local collector default", async () => {
-    // Hold 127.0.0.1:4318 with a listener that drops connections so the export
-    // fails deterministically (and no span reaches a real local collector).
-    // If something else owns the port on this machine, the test cannot be
-    // made hermetic and is skipped.
-    let held: ReturnType<typeof Bun.listen> | undefined;
-    try {
-      held = Bun.listen({
-        hostname: "127.0.0.1",
-        port: 4318,
-        socket: {
-          open(s) {
-            s.end();
-          },
-          data() {},
+  // Hold 127.0.0.1:4318 with a listener that drops connections so the export
+  // fails deterministically (and no span reaches a real local collector).
+  let held4318: ReturnType<typeof Bun.listen> | undefined;
+  try {
+    held4318 = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 4318,
+      socket: {
+        open(s) {
+          s.end();
         },
-      });
-    } catch {
-      return; // port 4318 is in use here
-    }
-    try {
-      const { stderr, exitCode } = await run(
-        `
+        data() {},
+      },
+    });
+  } catch {}
+  test.skipIf(!held4318)(
+    "Bun.otel.start() with no exporter configured anywhere targets the local collector default (skipped when :4318 is taken)",
+    async () => {
+      try {
+        const { stderr, exitCode } = await run(
+          `
           Bun.otel.start();
           Bun.otel.tracer("t").startSpan("s").end();
           await Bun.otel.forceFlush();
         `,
-        { OTEL_BSP_EXPORT_TIMEOUT: "2000", OTEL_EXPORTER_OTLP_TIMEOUT: "2000" },
-      );
-      expect(stderr).toContain("http://localhost:4318/v1/traces");
-      expect(exitCode).toBe(0);
-    } finally {
-      held.stop(true);
-    }
-  });
+          { OTEL_BSP_EXPORT_TIMEOUT: "2000", OTEL_EXPORTER_OTLP_TIMEOUT: "2000" },
+        );
+        expect(stderr).toContain("http://localhost:4318/v1/traces");
+        expect(exitCode).toBe(0);
+      } finally {
+        held4318!.stop(true);
+      }
+    },
+  );
 
   test("Bun.otel.start() reports malformed OTEL_* env once, like BUN_OTEL=1 does", async () => {
     using c = collector();

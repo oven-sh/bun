@@ -36,7 +36,7 @@ import {
  * @typedef {"aarch64" | "x64"} Arch
  * @typedef {"musl" | "android"} Abi
  * @typedef {"debian" | "ubuntu" | "alpine" | "amazonlinux"} Distro
- * @typedef {"latest" | "previous" | "oldest" | "eol"} Tier
+ * @typedef {"latest" | "previous" | "oldest" | "eol" | "beta"} Tier
  * @typedef {"release" | "assert" | "debug" | "asan"} Profile
  */
 
@@ -1455,17 +1455,14 @@ async function getPipelineOptions() {
 }
 
 /**
- * @param {PipelineOptions} [options]
- * @returns {Promise<Pipeline | undefined>}
- */
-/**
- * True when no running or scheduled job in the pipeline targets the darwin
- * beta queue, so one more PR can be given the beta lane without queueing
- * behind another. Reads the cluster secret `CI_QUEUE_PROBE_TOKEN` (a REST
- * token with read_builds only); without it, or on any error, the answer
- * is false and the lane is simply not added.
- * Two uploads a few seconds apart can both see "idle"; a queue of two is
- * the worst case, never a backlog.
+ * True when the darwin beta queue can take one more job right now: an
+ * agent is connected to it, and no live build has a job targeting it in
+ * any non-terminal state (`waiting` counts: the beta test step waits on
+ * the darwin build for tens of minutes before it is ever `scheduled`).
+ * Reads the cluster secret `CI_QUEUE_PROBE_TOKEN` (a REST token with
+ * read_builds and read_agents only); without it, or on any error, the
+ * answer is false and the lane is simply not added. Two uploads a few
+ * seconds apart can both see "idle"; a queue of two is the worst case.
  * @returns {Promise<boolean>}
  */
 async function darwinBetaQueueIdle() {
@@ -1479,19 +1476,34 @@ async function darwinBetaQueueIdle() {
     if (!token) {
       return false;
     }
-    const res = await fetch(
-      "https://api.buildkite.com/v2/organizations/bun/pipelines/bun/builds?state%5B%5D=running&state%5B%5D=scheduled&per_page=100",
-      { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10_000) },
-    );
-    if (!res.ok) {
+    const api = async path => {
+      const res = await fetch(`https://api.buildkite.com/v2/organizations/bun/${path}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(10_000),
+      });
+      return res.ok ? res.json() : undefined;
+    };
+
+    // No connected agent: a step added now would sit `scheduled` until
+    // the box comes back, and soft_fail does nothing for a job that
+    // never starts.
+    const agents = await api("agents?per_page=100");
+    if (!agents?.some(({ meta_data = [] }) => meta_data.includes(`queue=${darwinBetaQueue}`))) {
       return false;
     }
-    const builds = await res.json();
+
+    // Builds in `failing` and `canceling` still carry live jobs.
+    const builds = await api(
+      "pipelines/bun/builds?state%5B%5D=running&state%5B%5D=scheduled&state%5B%5D=failing&state%5B%5D=canceling&per_page=100",
+    );
+    if (!builds) {
+      return false;
+    }
+    const terminal = new Set(["passed", "failed", "canceled", "skipped", "timed_out", "expired", "broken", "finished"]);
     const busy = builds.some(({ jobs = [] }) =>
       jobs.some(
         ({ state, agent_query_rules = [] }) =>
-          (state === "running" || state === "scheduled" || state === "assigned" || state === "accepted") &&
-          agent_query_rules.includes(`queue=${darwinBetaQueue}`),
+          !terminal.has(state) && agent_query_rules.includes(`queue=${darwinBetaQueue}`),
       ),
     );
     return !busy;
@@ -1502,6 +1514,10 @@ async function darwinBetaQueueIdle() {
 
 const darwinBetaQueue = "test-darwin-beta";
 
+/**
+ * @param {PipelineOptions} [options]
+ * @returns {Promise<Pipeline | undefined>}
+ */
 async function getPipeline(options = {}) {
   const priority = getPriority();
 
@@ -1631,9 +1647,12 @@ async function getPipeline(options = {}) {
   // its own queue, soft-fail. PR builds get it only when that queue is
   // idle at upload time, so it is always busy while PRs flow and never
   // has a backlog: a PR that misses it loses nothing.
-  const betaDarwinTestPlatforms = (await darwinBetaQueueIdle())
-    ? [{ os: "darwin", arch: "aarch64", release: "27", tier: "beta" }]
-    : [];
+  // Never on the merge queue: a step that cannot start (box offline) would
+  // hold the required check open and stall the queue.
+  const betaDarwinTestPlatforms =
+    !darwinTestsEnabled && !isMergeQueue() && (await darwinBetaQueueIdle())
+      ? [{ os: "darwin", arch: "aarch64", release: "27", tier: "beta" }]
+      : [];
   const relevantTestPlatforms = (
     includeASAN ? testPlatforms : testPlatforms.filter(({ profile }) => profile !== "asan")
   )

@@ -232,6 +232,40 @@ describe("css tests", () => {
     ); // ideally -400% - 8vh + 3ic
     minify_test(`a { top: calc(100% - 1 * 2 - 8 * 2); }`, `a{top:calc(100% - 2 - 16)}`); // ideally 100% - 18
   });
+  describe("math functions with mixed length units", () => {
+    // Operands with different absolute units are both converted to px before the
+    // function is evaluated. Expected values match lightningcss. 1in = 96px, 1pc = 16px.
+    minify_test(`a { width: round(1in, 10px) }`, `a{width:100px}`);
+    minify_test(`a { width: round(10px, 1in) }`, `a{width:0}`);
+    minify_test(`a { width: round(1pc, 1in) }`, `a{width:0}`);
+    minify_test(`a { width: round(up, 1in, 50px) }`, `a{width:100px}`);
+    minify_test(`a { width: round(down, 1in, 50px) }`, `a{width:50px}`);
+    minify_test(`a { width: round(to-zero, 100px, 1in) }`, `a{width:96px}`);
+    minify_test(`a { width: rem(1in, 10px) }`, `a{width:6px}`);
+    minify_test(`a { width: rem(10px, 1in) }`, `a{width:10px}`);
+    minify_test(`a { width: mod(1in, 10px) }`, `a{width:6px}`);
+    minify_test(`a { width: mod(10px, 1in) }`, `a{width:10px}`);
+    minify_test(`a { width: mod(1in, 25px) }`, `a{width:21px}`);
+    minify_test(`a { width: hypot(1in, 10px) }`, `a{width:96.5194px}`);
+    minify_test(`a { width: hypot(1in, 1pc) }`, `a{width:97.3242px}`);
+    // <length> (not <length-percentage>) properties go through the same conversion.
+    minify_test(`a { border-spacing: round(1in, 10px) }`, `a{border-spacing:100px}`);
+    minify_test(`a { border-spacing: rem(1in, 10px) mod(1in, 10px) }`, `a{border-spacing:6px}`);
+    minify_test(`a { border-spacing: hypot(1in, 10px) }`, `a{border-spacing:96.5194px}`);
+    // atan2() of two lengths converts both to px too. (The angle is printed in
+    // whichever of deg/rad is shorter; 1.467rad is 84.0531deg.)
+    minify_test(`a { transform: rotate(atan2(1in, 0px)) }`, `a{transform:rotate(90deg)}`);
+    minify_test(`a { transform: rotate(atan2(0px, -1in)) }`, `a{transform:rotate(180deg)}`);
+    minify_test(`a { transform: rotate(atan2(1in, 10px)) }`, `a{transform:rotate(1.467rad)}`);
+    // A second operand in a unit that cannot be converted to px (em) leaves the
+    // function unevaluated, the same as when the first operand cannot be converted.
+    minify_test(`a { width: round(1in, 1em) }`, `a{width:round(1in,1em)}`);
+    minify_test(`a { width: round(1em, 1in) }`, `a{width:round(1em,1in)}`);
+    minify_test(`a { width: rem(1in, 1em) }`, `a{width:rem(1in,1em)}`);
+    minify_test(`a { width: mod(1in, 1em) }`, `a{width:mod(1in,1em)}`);
+    minify_test(`a { width: hypot(1in, 1em) }`, `a{width:hypot(1in,1em)}`);
+    minify_test(`a { transform: rotate(atan2(1in, 1em)) }`, `a{transform:rotate(atan2(1in,1em))}`);
+  });
   describe("border_spacing", () => {
     minify_test(
       `

@@ -1189,9 +1189,7 @@ impl<'a> Resolver<'a> {
                             .to_vec(),
                     );
                 }
-                let _ = self.flush_debug_logs(FlushMode::Success);
-                self.extension_order = original_order;
-                return ResultUnion::Success(Result {
+                let mut result = Result {
                     import_kind: kind,
                     path_pair: res.path_pair,
                     package_json: res.package_json,
@@ -1199,7 +1197,14 @@ impl<'a> Resolver<'a> {
                     file_fd: res.file_fd,
                     jsx: self.opts.jsx.clone(),
                     ..Default::default()
-                });
+                };
+                if let Err(err) = self.finalize_result(&mut result, kind) {
+                    self.extension_order = original_order;
+                    return ResultUnion::Failure(err);
+                }
+                let _ = self.flush_debug_logs(FlushMode::Success);
+                self.extension_order = original_order;
+                return ResultUnion::Success(result);
             }
         }
 

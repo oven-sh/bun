@@ -1,35 +1,26 @@
 // Test SSG pages router functionality
+//
+// Each devTest boots a dev server (bundler + react framework install), which
+// dominates wall time, so related routes share one server. Route variations
+// are asserted on the server-rendered HTML via fetch; hydration is still
+// covered by a happy-dom client per distinct page shape.
 import { expect } from "bun:test";
-import { devTest } from "../bake-harness";
+import { devTest, type Dev } from "../bake-harness";
 
-devTest("SSG pages router - multiple static pages", {
+async function fetchHtml(dev: Dev, url: string): Promise<string> {
+  const res = await dev.fetch(url);
+  expect(res.status).toBe(200);
+  return await res.text();
+}
+
+devTest("SSG pages router - static, dynamic, nested, and async pages with hot reload", {
   framework: "react",
   files: {
-    "pages/about.tsx": `
-      export default function AboutPage() {
-        return <h1>About Page</h1>;
+    "pages/index.tsx": `
+      export default function IndexPage() {
+        return <h1>Welcome to SSG</h1>;
       }
     `,
-    "pages/contact.tsx": `
-      export default function ContactPage() {
-        return <h1>Contact Page</h1>;
-      }
-    `,
-  },
-  async test(dev) {
-    // Test about page
-    await using c2 = await dev.client("/about");
-    expect(await c2.elemText("h1")).toBe("About Page");
-
-    // Test contact page
-    await using c3 = await dev.client("/contact");
-    expect(await c3.elemText("h1")).toBe("Contact Page");
-  },
-});
-
-devTest("SSG pages router - dynamic routes with [slug]", {
-  framework: "react",
-  files: {
     "pages/[slug].tsx": `
       type Props = Bun.SSGProps;
 
@@ -54,24 +45,41 @@ devTest("SSG pages router - dynamic routes with [slug]", {
         };
       };
     `,
-  },
-  async test(dev) {
-    // Test dynamic routes
-    await using c1 = await dev.client("/first-post");
-    expect(await c1.elemText("h1")).toBe("Dynamic Page: <!-- -->first-post");
-    expect(await c1.elemText("p")).toBe("Slug value: <!-- -->first-post");
+    "pages/about.tsx": `
+      export default function AboutPage() {
+        return <h1>About Page</h1>;
+      }
+    `,
+    "pages/contact.tsx": `
+      export default function ContactPage() {
+        return <h1>Contact Page</h1>;
+      }
+    `,
+    "pages/data.tsx": `
+      async function fetchData() {
+        // Simulate API call
+        return new Promise(resolve => {
+          setTimeout(() => {
+            resolve({ message: "Data from API", items: ["Item 1", "Item 2", "Item 3"] });
+          }, 10);
+        });
+      }
 
-    await using c2 = await dev.client("/second-post");
-    expect(await c2.elemText("h1")).toBe("Dynamic Page: <!-- -->second-post");
+      export default async function DataPage() {
+        const data = await fetchData();
 
-    await using c3 = await dev.client("/third-post");
-    expect(await c3.elemText("h1")).toBe("Dynamic Page: <!-- -->third-post");
-  },
-});
-
-devTest("SSG pages router - nested routes", {
-  framework: "react",
-  files: {
+        return (
+          <div>
+            <h1>{data.message}</h1>
+            <ul>
+              {data.items.map((item, index) => (
+                <li key={index}>{item}</li>
+              ))}
+            </ul>
+          </div>
+        );
+      }
+    `,
     "pages/blog/index.tsx": `
       export default function BlogIndex() {
         return <h1>Blog Index</h1>;
@@ -111,40 +119,58 @@ devTest("SSG pages router - nested routes", {
     `,
   },
   async test(dev) {
-    // Test blog index
-    await using c1 = await dev.client("/blog");
-    expect(await c1.elemText("h1")).toBe("Blog Index");
+    // This client stays open so the hot reload step at the end can observe
+    // the update; every other client is scoped to its own block.
+    await using indexClient = await dev.client("/");
+    expect(await indexClient.elemText("h1")).toBe("Welcome to SSG");
 
-    // Test blog posts
-    await using c2 = await dev.client("/blog/1");
-    expect(await c2.elemText("h1")).toBe("Blog Post <!-- -->1");
+    // Multiple static pages, server-rendered. These also assert that static
+    // routes win over the sibling [slug] pattern.
+    expect(await fetchHtml(dev, "/about")).toContain("<h1>About Page</h1>");
+    expect(await fetchHtml(dev, "/contact")).toContain("<h1>Contact Page</h1>");
 
-    await using c3 = await dev.client("/blog/2");
-    expect(await c3.elemText("h1")).toBe("Blog Post <!-- -->2");
+    // Dynamic [slug] route with params
+    {
+      await using c = await dev.client("/first-post");
+      expect(await c.elemText("h1")).toBe("Dynamic Page: <!-- -->first-post");
+      expect(await c.elemText("p")).toBe("Slug value: <!-- -->first-post");
+    }
+    expect(await fetchHtml(dev, "/second-post")).toContain("<h1>Dynamic Page: <!-- -->second-post</h1>");
+    const third = await fetchHtml(dev, "/third-post");
+    expect(third).toContain("<h1>Dynamic Page: <!-- -->third-post</h1>");
+    expect(third).toContain("<p>Slug value: <!-- -->third-post</p>");
 
-    // Test categories
-    await using c4 = await dev.client("/blog/categories/tech");
-    expect(await c4.elemText("h1")).toBe("Category: <!-- -->tech");
+    // In dev, getStaticPaths does not restrict rendering: params that are not
+    // in the returned list still render on demand.
+    expect(await fetchHtml(dev, "/not-in-static-paths")).toContain(
+      "<h1>Dynamic Page: <!-- -->not-in-static-paths</h1>",
+    );
 
-    await using c5 = await dev.client("/blog/categories/lifestyle");
-    expect(await c5.elemText("h1")).toBe("Category: <!-- -->lifestyle");
-  },
-});
+    // Nested routes: static index + dynamic siblings
+    {
+      await using c = await dev.client("/blog/1");
+      expect(await c.elemText("h1")).toBe("Blog Post <!-- -->1");
+    }
+    expect(await fetchHtml(dev, "/blog")).toContain("<h1>Blog Index</h1>");
+    expect(await fetchHtml(dev, "/blog/2")).toContain("<h1>Blog Post <!-- -->2</h1>");
+    expect(await fetchHtml(dev, "/blog/categories/tech")).toContain("<h1>Category: <!-- -->tech</h1>");
+    expect(await fetchHtml(dev, "/blog/categories/lifestyle")).toContain("<h1>Category: <!-- -->lifestyle</h1>");
+    // The categories/ directory has no index page, so /blog/categories falls
+    // back to the [id] sibling (Next.js parity)
+    expect(await fetchHtml(dev, "/blog/categories")).toContain("<h1>Blog Post <!-- -->categories</h1>");
 
-devTest("SSG pages router - hot reload on page changes", {
-  framework: "react",
-  files: {
-    "pages/index.tsx": `
-      export default function IndexPage() {
-        return <h1>Welcome to SSG</h1>;
-      }
-    `,
-  },
-  async test(dev) {
-    await using c = await dev.client("/");
-    expect(await c.elemText("h1")).toBe("Welcome to SSG");
+    // Async page components can await data before rendering
+    {
+      await using c = await dev.client("/data");
+      expect(await c.elemText("h1")).toBe("Data from API");
+      expect(await c.elemsText("li")).toEqual(["Item 1", "Item 2", "Item 3"]);
+    }
 
-    // Update the page
+    // Paths that match no route return 404
+    await dev.fetch("/two/segments").expect404();
+    await dev.fetch("/blog/categories/tech/extra").expect404();
+
+    // Hot reload: update the index page while its client is connected
     await dev.write(
       "pages/index.tsx",
       `
@@ -156,49 +182,15 @@ devTest("SSG pages router - hot reload on page changes", {
     );
 
     // this %c%s%c is a react devtools thing and I don't know how to turn it off
-    await c.expectMessage("%c%s%c updated load");
-    expect(await c.elemText("h1")).toBe("Updated Content");
+    await indexClient.expectMessage("%c%s%c updated load");
+    expect(await indexClient.elemText("h1")).toBe("Updated Content");
   },
 });
 
-devTest("SSG pages router - data fetching with async components", {
-  framework: "react",
-  files: {
-    "pages/data.tsx": `
-      async function fetchData() {
-        // Simulate API call
-        return new Promise(resolve => {
-          setTimeout(() => {
-            resolve({ message: "Data from API", items: ["Item 1", "Item 2", "Item 3"] });
-          }, 10);
-        });
-      }
-
-      export default async function DataPage() {
-        const data = await fetchData();
-
-        return (
-          <div>
-            <h1>{data.message}</h1>
-            <ul>
-              {data.items.map((item, index) => (
-                <li key={index}>{item}</li>
-              ))}
-            </ul>
-          </div>
-        );
-      }
-    `,
-  },
-  async test(dev) {
-    await using c = await dev.client("/data");
-    expect(await c.elemText("h1")).toBe("Data from API");
-
-    const items = await c.elemsText("li");
-    expect(items).toEqual(["Item 1", "Item 2", "Item 3"]);
-  },
-});
-
+// [category]/[year]/[slug] and [...slug] stay in separate dev servers (and
+// apart from the [slug] tree above): overlapping dynamic patterns at the same
+// level resolve by insertion order, so sharing a tree would change what each
+// test matches.
 devTest("SSG pages router - multiple dynamic segments", {
   framework: "react",
   files: {
@@ -227,27 +219,54 @@ devTest("SSG pages router - multiple dynamic segments", {
     `,
   },
   async test(dev) {
-    // Test first path
-    await using c1 = await dev.client("/tech/2024/bun-release");
-    expect(await c1.elemText("h1")).toBe("bun-release");
-    expect(await c1.elemsText("p")).toEqual(["Category: <!-- -->tech", "Year: <!-- -->2024"]);
+    {
+      await using c = await dev.client("/tech/2024/bun-release");
+      expect(await c.elemText("h1")).toBe("bun-release");
+      expect(await c.elemsText("p")).toEqual(["Category: <!-- -->tech", "Year: <!-- -->2024"]);
+    }
+    const news = await fetchHtml(dev, "/news/2024/breaking-story");
+    expect(news).toContain("<h1>breaking-story</h1>");
+    expect(news).toContain("<p>Category: <!-- -->news</p>");
+    expect(news).toContain("<p>Year: <!-- -->2024</p>");
+    const review = await fetchHtml(dev, "/tech/2023/year-review");
+    expect(review).toContain("<h1>year-review</h1>");
+    expect(review).toContain("<p>Category: <!-- -->tech</p>");
+    expect(review).toContain("<p>Year: <!-- -->2023</p>");
 
-    // Test second path
-    await using c2 = await dev.client("/news/2024/breaking-story");
-    expect(await c2.elemText("h1")).toBe("breaking-story");
-    expect(await c2.elemsText("p")).toEqual(["Category: <!-- -->news", "Year: <!-- -->2024"]);
-
-    // Test third path
-    await using c3 = await dev.client("/tech/2023/year-review");
-    expect(await c3.elemText("h1")).toBe("year-review");
-    expect(await c3.elemsText("p")).toEqual(["Category: <!-- -->tech", "Year: <!-- -->2023"]);
+    // Four segments do not match the three-segment pattern
+    await dev.fetch("/a/b/c/d").expect404();
   },
 });
 
-devTest("SSG pages router - file loading with Bun.file", {
+devTest("SSG pages router - Bun.file data loading and named import edge case", {
   framework: "react",
-  fixture: "ssg-pages-router",
   files: {
+    "pages/index.tsx": `
+      import Markdoc, * as md from '../src/ooga'
+
+      console.log(md);
+
+      export default function IndexPage() {
+        const bindings =
+          typeof Markdoc === "function" && md.default === Markdoc && typeof Markdoc().parse === "function"
+            ? "bindings agree"
+            : "bindings broken";
+        return (
+          <div>
+            <h1>Welcome to SSG</h1>
+            <p id="bindings">{bindings}</p>
+          </div>
+        );
+      }
+    `,
+    "src/ooga.ts": `var Markdoc = function () {
+  return {
+    parse: () => {},
+    transform: () => {},
+  };
+};
+
+export { Markdoc as default };`,
     "pages/[slug].tsx": `
       import { join } from "path";
 
@@ -282,46 +301,23 @@ devTest("SSG pages router - file loading with Bun.file", {
     "posts/second-post.txt": "This is the second post content",
   },
   async test(dev) {
-    // Test first post
-    await using c1 = await dev.client("/hello-world");
-    expect(await c1.elemText("h1")).toBe("hello-world");
-    expect(await c1.elemText("div div")).toBe("This is the content of hello world post");
+    // Mixed default + namespace import of the same module: both bindings must
+    // resolve to the same working function
+    {
+      await using c = await dev.client("/");
+      expect(await c.elemText("h1")).toBe("Welcome to SSG");
+      expect(await c.elemText("#bindings")).toBe("bindings agree");
+    }
 
-    // Test second post
-    await using c2 = await dev.client("/second-post");
-    expect(await c2.elemText("h1")).toBe("second-post");
-    expect(await c2.elemText("div div")).toBe("This is the second post content");
-  },
-});
-
-devTest("SSG pages router - named import edge case", {
-  framework: "react",
-  fixture: "ssg-pages-router",
-  files: {
-    "pages/index.tsx": `
-      import Markdoc, * as md from '../src/ooga'
-
-      console.log(md);
-
-      export default function IndexPage() {
-        return <h1>Welcome to SSG</h1>;
-      }
-    `,
-    "src/ooga.ts": `var Markdoc = function () {
-  return {
-    parse: () => {},
-    transform: () => {},
-  };
-};
-
-export { Markdoc as default };`,
-    "posts/hello-world.txt": "This is the content of hello world post",
-    "posts/second-post.txt": "This is the second post content",
-  },
-  async test(dev) {
-    // Should not error
-    await using c1 = await dev.client("/");
-    expect(await c1.elemText("h1")).toBe("Welcome to SSG");
+    // Page content loaded from disk with Bun.file during render
+    {
+      await using c = await dev.client("/hello-world");
+      expect(await c.elemText("h1")).toBe("hello-world");
+      expect(await c.elemText("div div")).toBe("This is the content of hello world post");
+    }
+    const second = await fetchHtml(dev, "/second-post");
+    expect(second).toContain("<h1>second-post</h1>");
+    expect(second).toContain("<div>This is the second post content</div>");
   },
 });
 
@@ -362,28 +358,28 @@ devTest("SSG pages router - catch-all routes [...slug]", {
     `,
   },
   async test(dev) {
-    // Test single segment
-    await using c1 = await dev.client("/docs");
-    expect(await c1.elemText("h1")).toBe("Catch-all Route");
-    expect(await c1.elemText("#params")).toBe('{"slug":"docs"}');
-    expect(await c1.elemsText("li")).toEqual(["No slug array"]);
+    // Two segments arrive as an array
+    {
+      await using c = await dev.client("/docs/getting-started");
+      expect(await c.elemText("h1")).toBe("Catch-all Route");
+      expect(await c.elemText("#params")).toBe('{"slug":["docs","getting-started"]}');
+      expect(await c.elemsText("li")).toEqual(["docs", "getting-started"]);
+    }
 
-    // Test two segments
-    await using c2 = await dev.client("/docs/getting-started");
-    expect(await c2.elemText("h1")).toBe("Catch-all Route");
-    expect(await c2.elemText("#params")).toBe('{"slug":["docs","getting-started"]}');
-    expect(await c2.elemsText("li")).toEqual(["docs", "getting-started"]);
+    // A single segment is passed as a string, not a one-element array
+    const single = await fetchHtml(dev, "/docs");
+    expect(single).toContain("<h1>Catch-all Route</h1>");
+    expect(single).toContain("{&quot;slug&quot;:&quot;docs&quot;}");
+    expect(single).toContain("<ul><li>No slug array</li></ul>");
 
-    // Test three segments
-    await using c3 = await dev.client("/docs/api/reference");
-    expect(await c3.elemText("h1")).toBe("Catch-all Route");
-    expect(await c3.elemText("#params")).toBe('{"slug":["docs","api","reference"]}');
-    expect(await c3.elemsText("li")).toEqual(["docs", "api", "reference"]);
+    const three = await fetchHtml(dev, "/docs/api/reference");
+    expect(three).toContain("{&quot;slug&quot;:[&quot;docs&quot;,&quot;api&quot;,&quot;reference&quot;]}");
+    expect(three).toContain("<ul><li>docs</li><li>api</li><li>reference</li></ul>");
 
-    // Test four segments
-    await using c4 = await dev.client("/blog/2024/january/new-features");
-    expect(await c4.elemText("h1")).toBe("Catch-all Route");
-    expect(await c4.elemText("#params")).toBe('{"slug":["blog","2024","january","new-features"]}');
-    expect(await c4.elemsText("li")).toEqual(["blog", "2024", "january", "new-features"]);
+    const four = await fetchHtml(dev, "/blog/2024/january/new-features");
+    expect(four).toContain(
+      "{&quot;slug&quot;:[&quot;blog&quot;,&quot;2024&quot;,&quot;january&quot;,&quot;new-features&quot;]}",
+    );
+    expect(four).toContain("<ul><li>blog</li><li>2024</li><li>january</li><li>new-features</li></ul>");
   },
 });

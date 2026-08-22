@@ -205,6 +205,17 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     /* Current state (content-length sent, status sent, write called, etc */
     uint32_t state = 0;
     uint8_t idleTimeout = 10; // default HTTP_TIMEOUT 10 seconds
+    /* Peer address, fetched once per connection (getpeername) on first use.
+     * remoteAddressLength: 0 = not fetched, 4/16 = IPv4/IPv6, 0xff = unavailable. */
+    uint8_t remoteAddressLength = 0;
+    uint16_t remotePort = 0;
+    uint8_t remoteAddress[16];
+    /* Telemetry's encoded per-connection peer attributes (opaque to uWS),
+     * filled on the connection's first traced request; 0 = not yet.
+     * Size = bun_telemetry::http_record::PEER_ATTRS_MAX (a unit test there
+     * pins the two together). */
+    uint8_t peerAttrsLength = 0;
+    uint8_t peerAttrs[100];
     /* The parser writes this through a bool& (getHeaders / consumePostPadded),
      * so it cannot live in `state`. */
     bool isConnectRequest = false;

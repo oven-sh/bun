@@ -163,6 +163,8 @@ pub struct Subprocess<'a> {
     pub(crate) stdout_maxbuf: Cell<Option<NonNull<MaxBuf::MaxBuf>>>,
     pub(crate) stderr_maxbuf: Cell<Option<NonNull<MaxBuf::MaxBuf>>>,
     pub(crate) exited_due_to_maxbuf: Cell<Option<MaxBuf::Kind>>,
+    /// Native OpenTelemetry span covering the child's lifetime; `None` when off.
+    pub(crate) otel: Cell<bun_telemetry::NativeSpan>,
 }
 
 bun_event_loop::impl_timer_owner!(Subprocess<'_>; from_timer_ptr => event_loop_timer);
@@ -979,6 +981,10 @@ impl Subprocess<'_> {
         self.pid_rusage.set(Some(*rusage));
         let is_sync = self.flags.get().contains(Flags::IS_SYNC);
         self.clear_abort_signal();
+        let span = self.otel.replace(bun_telemetry::NativeSpan::NONE);
+        if span.is_some() {
+            crate::telemetry::spawn::exited(global_this, span, status);
+        }
 
         // `deref()` and `disconnect_ipc(true)` run at the tail of this body.
         // R-2: now that both take `&self`, scopeguard would no longer alias —

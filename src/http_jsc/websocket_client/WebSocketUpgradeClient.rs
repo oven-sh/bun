@@ -173,6 +173,59 @@ pub struct HTTPClient<const SSL: bool> {
     /// with a `Sec-WebSocket-Extensions` header anyway, `processResponse`
     /// fails the handshake per RFC 6455 §9.1 — matching upstream `ws`.
     offered_permessage_deflate: bool,
+
+    /// The `websocket.connect` span; ended on upgrade success or failure.
+    otel: Cell<Option<Box<ConnectSpan>>>,
+}
+
+struct ConnectSpan {
+    stub: bun_telemetry::SpanStub,
+    host: Box<[u8]>,
+    port: u16,
+    path: Box<[u8]>,
+    secure: bool,
+    unix_socket: Option<Box<[u8]>>,
+}
+
+impl ConnectSpan {
+    fn end(self, error: Option<&str>) {
+        bun_telemetry::rt::end_leaf(
+            bun_jsc::virtual_machine::VirtualMachine::get()
+                .global()
+                .as_ptr()
+                .cast(),
+            bun_telemetry::Instrument::WebSocket,
+            &self.stub,
+            b"websocket.connect",
+            bun_telemetry::SpanKind::Client,
+            |w| {
+                if let Some(path) = &self.unix_socket {
+                    // semconv: for a unix socket the address is the socket path.
+                    w.attr("network.transport", "unix");
+                    w.attr("server.address", &path[..]);
+                } else {
+                    w.server(&self.host, self.port);
+                }
+                use std::io::Write as _;
+                let mut url = Vec::with_capacity(8 + self.host.len() + 6 + self.path.len());
+                let _ = write!(
+                    url,
+                    "{}{}",
+                    if self.secure { "wss://" } else { "ws://" },
+                    HostFormatter {
+                        host: &self.host,
+                        port: Some(self.port).filter(|p| *p != 0),
+                        is_https: self.secure
+                    },
+                );
+                url.extend_from_slice(&self.path);
+                w.attr("url.full", &url[..]);
+                if let Some(e) = error {
+                    w.fail(e.as_bytes(), b"");
+                }
+            },
+        );
+    }
 }
 
 // Handler set referenced by the dispatch table (kind = `.ws_client_upgrade[_tls]`).
@@ -437,6 +490,24 @@ impl<const SSL: bool> HTTPClient<SSL> {
             None
         };
 
+        let otel = bun_telemetry::rt::start_leaf(
+            global.as_ptr().cast(),
+            bun_telemetry::Instrument::WebSocket,
+        );
+        let otel = otel.is_recording().then(|| {
+            Box::new(ConnectSpan {
+                stub: otel,
+                host: host_slice.slice().into(),
+                port,
+                path: pathname_slice.slice().into(),
+                secure: target_is_secure,
+                unix_socket: unix_socket_path_slice
+                    .as_ref()
+                    .map(|p| p.slice())
+                    .filter(|p| !p.is_empty())
+                    .map(Into::into),
+            })
+        });
         let client: *mut Self = bun_core::heap::into_raw(Box::new(HTTPClient::<SSL> {
             ref_count: Cell::new(1),
             tcp: Cell::new(Socket::<SSL>::detached()),
@@ -454,6 +525,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             expected_accept: request_result.expected_accept,
             offered_permessage_deflate: offer_permessage_deflate,
             subprotocols: JsCell::new(subprotocols),
+            otel: Cell::new(otel),
         }));
         bun_core::scoped_log!(alloc, "new({}) = {:p}", Self::TYPE_NAME, client);
         // SAFETY: `client` was just allocated above (live, refcount == 1).
@@ -610,6 +682,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// `handle_close` from the socket userdata pointer, and the trailing
     /// `deref` may free `this`.
     pub(crate) fn cancel(this: ThisPtr<Self>) {
+        this.otel_end(Some(<&'static str>::from(ErrorCode::Cancel)));
         this.clear_data();
 
         // Either of the below two operations - closing the TCP socket or clearing the C++ reference could trigger a deref
@@ -669,10 +742,18 @@ impl<const SSL: bool> HTTPClient<SSL> {
         tcp.close(uws::CloseCode::Normal);
     }
 
+    /// First call wins.
+    fn otel_end(&self, error: Option<&str>) {
+        if let Some(span) = self.otel.take() {
+            span.end(error);
+        }
+    }
+
     /// Takes `ThisPtr<Self>` because `did_abrupt_close` runs JS error
     /// handlers and may re-enter via C++ `cancel()`, and the trailing `deref`
     /// may free `this`.
     fn dispatch_abrupt_close(this: ThisPtr<Self>, code: ErrorCode) {
+        this.otel_end(Some(<&'static str>::from(code)));
         let ws = this.outgoing_websocket.take();
         if let Some(ws) = ws {
             CppWebSocket::opaque_ref(ws).did_abrupt_close(code);
@@ -1439,6 +1520,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
             return;
         }
 
+        this.otel_end(None);
+
         // Ownership transfer: `overflow` is HANDED OFF across FFI —
         // `WebSocket__didConnect` → `Bun__WebSocketClient__init`/`_initWithTunnel`
         // adopts the raw `(ptr, len)` into an `InitialDataHandler` queued as a
@@ -1641,6 +1724,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         if this.state.get() == State::Reading {
             Self::terminate(this, ErrorCode::FailedToConnect);
         } else {
+            this.otel_end(Some(<&'static str>::from(ErrorCode::FailedToConnect)));
             this.state.set(State::Failed);
         }
 

@@ -45,11 +45,13 @@ using namespace JSC;
     macro(_store) \
     macro(abort) \
     macro(addAbortAlgorithmToSignal) \
+    macro(addLinks) \
     macro(arrayBuffer) \
     macro(asUint8Array) \
     macro(atimeMs) \
     macro(attributes) \
     macro(autoAllocateChunkSize) \
+    macro(baggageHeaderFromExtras) \
     macro(basename) \
     macro(birthtimeMs) \
     macro(blob) \
@@ -65,6 +67,7 @@ using namespace JSC;
     macro(createCommonJSModule) \
     macro(createFIFO) \
     macro(createInternalModuleById) \
+    macro(createSpan) \
     macro(createUninitializedArrayBuffer) \
     macro(ctimeMs) \
     macro(data) \
@@ -102,26 +105,31 @@ using namespace JSC;
     macro(ignoreBOM) \
     macro(importer) \
     macro(inherits) \
+    macro(installGlobal) \
     macro(internal) \
     macro(internalMessage) \
     macro(internalModuleRegistry) \
     macro(internalRequire) \
     macro(isAbortSignal) \
     macro(isAbsolute) \
+    macro(isRemote) \
     macro(isUncloneable) \
     macro(isUntransferable) \
     macro(join) \
     macro(json) \
     macro(kResistStopPropagation) \
     macro(key) \
+    macro(kind) \
     macro(lazy) \
     macro(lineText) \
+    macro(links) \
     macro(loadEsmIntoCjs) \
     macro(main) \
     macro(makeAbortError) \
     macro(makeDOMException) \
     macro(makeErrorWithCode) \
     macro(makeGetterTypeError) \
+    macro(makeTraceState) \
     macro(maxAge) \
     macro(metafileJson) \
     macro(method) \
@@ -137,6 +145,7 @@ using namespace JSC;
     macro(originalColumn) \
     macro(originalLine) \
     macro(overridableRequire) \
+    macro(parent) \
     macro(parse) \
     macro(partitioned) \
     macro(path) \
@@ -163,30 +172,49 @@ using namespace JSC;
     macro(requireMap) \
     macro(requireNativeModule) \
     macro(resolveSync) \
+    macro(root) \
     macro(sameSite) \
     macro(secure) \
     macro(self) \
+    macro(setAttributes) \
     macro(sharedFd) \
     macro(signal) \
     macro(size) \
+    macro(spanId) \
     macro(specifier) \
     macro(start) \
+    macro(startActiveSpan) \
+    macro(startSpan) \
+    macro(startTime) \
     macro(status) \
     macro(statusCode) \
     macro(statusMessage) \
     macro(statusText) \
     macro(stream) \
     macro(syscall) \
+    macro(telemetryAddEvent) \
+    macro(telemetryAddLink) \
+    macro(telemetryAddOneLink) \
+    macro(telemetryFlattenAttributes) \
+    macro(telemetrySetAttribute) \
+    macro(telemetrySetName) \
+    macro(telemetrySetStatus) \
     macro(text) \
     macro(textDecoderStreamDecoder) \
     macro(textEncoderStreamEncoder) \
     macro(toClass) \
     macro(toNamespacedPath) \
+    macro(toNativeSpan) \
+    macro(traceFlags) \
+    macro(traceId) \
+    macro(traceState) \
     macro(transform) \
     macro(type) \
+    macro(unpackContext) \
     macro(updateRef) \
     macro(url) \
     macro(validated) \
+    macro(version) \
     macro(vmErrorDecorated) \
     macro(warning) \
     macro(webStreamClosedPromise) \

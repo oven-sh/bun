@@ -55,6 +55,8 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForErrorCodeCache { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForBunInspectorConnection { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSNextTickQueue { nullptr };
+    GCClient::IsoSubspace* m_clientSubspaceForJSTelemetrySpan { nullptr };
+    GCClient::IsoSubspace* m_clientSubspaceForJSTelemetryTracer { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSSocketHandlers { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSDiffieHellman { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSDiffieHellmanGroup { nullptr };

@@ -61,6 +61,9 @@ pub struct ServerWebSocket {
     // with intrusive WebCore ref-counting (ref/unref) — never `Arc`. The init
     // caller transfers a +1 ref; `finalize`/`on_close` unref it.
     signal: Cell<Option<NonNull<AbortSignal>>>,
+    /// Trace context of the request that upgraded this socket; message spans
+    /// link to it (they are not its children — that trace would never end).
+    otel_link: bun_telemetry::SpanContext,
 }
 
 // We pack the per-socket data into this struct below:
@@ -372,6 +375,11 @@ impl ServerWebSocket {
             this_value: JsCell::new(JsRef::empty()),
             flags: Cell::new(Flags::default()),
             signal: Cell::new(signal),
+            otel_link: if bun_telemetry::enabled(bun_telemetry::Instrument::WebSocket) {
+                crate::telemetry::active_context(global_object).unwrap_or_default()
+            } else {
+                bun_telemetry::SpanContext::default()
+            },
         }));
         // Get a strong ref and downgrade when terminating/close and GC will be able to collect the newly created value
         // SAFETY: `this` was just `heap::alloc`'d; ownership transfers to the
@@ -531,10 +539,21 @@ impl ServerWebSocket {
             result: Ok(JSValue::ZERO),
         };
 
+        let otel = crate::telemetry::websocket::begin_message(
+            global_object,
+            &self.otel_link,
+            opcode == Opcode::Binary,
+            message.len(),
+            true,
+        );
         ws.cork(&mut corker, Corker::run);
         let result = corker
             .result
             .unwrap_or_else(|e| global_object.take_exception(e));
+        if let Some((span, entered)) = otel {
+            drop(entered);
+            crate::telemetry::websocket::end_message(span, global_object, result)?;
+        }
 
         if result.is_empty_or_undefined_or_null() {
             return Ok(());

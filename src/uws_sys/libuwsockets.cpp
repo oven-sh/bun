@@ -20,6 +20,43 @@ static inline std::string_view stringViewFromC(const char* message, size_t lengt
 using TLSWebSocket = uWS::WebSocket<true, true, void *>;
 using TCPWebSocket = uWS::WebSocket<false, true, void *>;
 
+/* Raw peer address (4 or 16 bytes into `out`), cached on the connection so
+ * only the first request pays for getpeername(). Returns 0 if unavailable. */
+template <bool SSL>
+static int uws_res_remote_address_raw(uWS::HttpResponse<SSL> *res, uint8_t *out, int *port) {
+    auto *data = res->getHttpResponseData();
+    if (data->remoteAddressLength == 0) {
+      char buf[16];
+      const char *unused;
+      int p = 0, ipv6 = 0;
+      unsigned len = us_get_remote_address_info(buf, (us_socket_t *)res, &unused, &p, &ipv6);
+      if (len == 4 || len == 16) {
+        memcpy(data->remoteAddress, buf, len);
+        data->remoteAddressLength = (uint8_t)len;
+        data->remotePort = (uint16_t)p;
+      } else {
+        data->remoteAddressLength = 0xff;
+      }
+    }
+    if (data->remoteAddressLength == 0xff) return 0;
+    memcpy(out, data->remoteAddress, data->remoteAddressLength);
+    *port = data->remotePort;
+    return data->remoteAddressLength;
+  }
+
+/* Header name equals a lowercase literal. Inline ASCII case-fold rather than
+ * strncasecmp: this runs for every header of every request and glibc's
+ * locale-aware strncasecmp measured ~160 instructions/request here. */
+template <size_t N>
+static inline bool uws_header_is(std::string_view k, const char (&lit)[N]) {
+  if (k.length() != N - 1) return false;
+  for (size_t i = 0; i < N - 1; i++) {
+    if ((static_cast<unsigned char>(k[i]) | 0x20) != static_cast<unsigned char>(lit[i])) return false;
+  }
+  return true;
+}
+
+
 extern "C"
 {
 
@@ -1230,6 +1267,26 @@ extern "C"
     }
   }
 
+  int uws_res_get_remote_address_raw(int ssl, uws_res_r res, uint8_t *out, int *port) {
+    if (ssl) return uws_res_remote_address_raw((uWS::HttpResponse<true> *)res, out, port);
+    return uws_res_remote_address_raw((uWS::HttpResponse<false> *)res, out, port);
+  }
+
+  /* Per-connection scratch for telemetry's encoded peer attributes.
+   * Returns the buffer and its capacity; **len is the filled length (0 = empty). */
+  uint8_t *uws_res_peer_attrs(int ssl, uws_res_r res, uint8_t **len, size_t *cap) {
+    if (ssl) {
+      auto *data = ((uWS::HttpResponse<true> *)res)->getHttpResponseData();
+      *len = &data->peerAttrsLength;
+      *cap = sizeof(data->peerAttrs);
+      return data->peerAttrs;
+    }
+    auto *data = ((uWS::HttpResponse<false> *)res)->getHttpResponseData();
+    *len = &data->peerAttrsLength;
+    *cap = sizeof(data->peerAttrs);
+    return data->peerAttrs;
+  }
+
   void uws_res_mark_wrote_content_length_header(int ssl, uws_res_r res) {
     if (ssl) {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
@@ -1688,6 +1745,42 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
         stringViewFromC(lower_case_header, lower_case_header_length));
     *dest = value.data();
     return value.length();
+  }
+
+  /* One pass over the header block for the headers telemetry needs. */
+  struct uws_header_slice_t {
+    const char *ptr;
+    size_t len;
+  };
+  struct uws_telemetry_headers_t {
+    struct uws_header_slice_t host, user_agent, traceparent, tracestate, baggage, forwarded, x_forwarded_for;
+    /* Length of the path part of the URL (up to '?'). */
+    uint32_t path_len;
+  };
+  void uws_req_telemetry_headers(uws_req_t *res, struct uws_telemetry_headers_t *out)
+  {
+    uWS::HttpRequest *uwsReq = (uWS::HttpRequest *)res;
+    memset(out, 0, sizeof(*out));
+    out->path_len = (uint32_t)uwsReq->getUrl().length();
+    for (auto header : *uwsReq)
+    {
+      std::string_view k = header.first;
+      struct uws_header_slice_t *slot = nullptr;
+      switch (k.length()) {
+      case 4: if (uws_header_is(k, "host")) slot = &out->host; break;
+      case 10: if (uws_header_is(k, "user-agent")) slot = &out->user_agent;
+               else if (uws_header_is(k, "tracestate")) slot = &out->tracestate; break;
+      case 11: if (uws_header_is(k, "traceparent")) slot = &out->traceparent; break;
+      case 7: if (uws_header_is(k, "baggage")) slot = &out->baggage; break;
+      case 9: if (uws_header_is(k, "forwarded")) slot = &out->forwarded; break;
+      case 15: if (uws_header_is(k, "x-forwarded-for")) slot = &out->x_forwarded_for; break;
+      default: break;
+      }
+      if (slot && !slot->ptr) {
+        slot->ptr = header.second.data();
+        slot->len = header.second.length();
+      }
+    }
   }
 
   void uws_req_for_each_header(uws_req_t *res, uws_get_headers_server_handler handler, void *user_data)

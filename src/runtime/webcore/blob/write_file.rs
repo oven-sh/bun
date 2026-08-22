@@ -1243,6 +1243,9 @@ mod windows_impl {
 pub struct WriteFilePromise {
     pub(crate) promise: jsc::JSPromiseStrong,
     pub global_this: *const JSGlobalObject,
+    pub(crate) otel: bun_telemetry::SpanStub,
+    /// Destination path for the span, captured at creation.
+    pub(crate) otel_path: Option<Box<[u8]>>,
 }
 
 impl WriteFilePromise {
@@ -1256,6 +1259,31 @@ impl WriteFilePromise {
             let h = &mut *handler;
             let promise = std::ptr::from_mut::<JSPromise>(h.promise.swap());
             let global_this = &*h.global_this;
+            if h.otel.is_some() {
+                let (code, msg): (&[u8], &[u8]) = match &count {
+                    WriteFileResultType::Err(e) => (e.code.byte_slice(), e.message.byte_slice()),
+                    WriteFileResultType::Result(_) => (b"", b""),
+                };
+                crate::telemetry::end_leaf(
+                    global_this,
+                    bun_telemetry::Instrument::Fs,
+                    &h.otel,
+                    b"fs.write",
+                    bun_telemetry::SpanKind::Internal,
+                    |w| {
+                        if let Some(p) = &h.otel_path {
+                            w.attr_opt("file.path", p);
+                        }
+                        if let WriteFileResultType::Result(n) = &count {
+                            w.attr("file.size", *n as i64);
+                        }
+                        if !code.is_empty() || !msg.is_empty() {
+                            w.attr_opt("error.type", code);
+                            w.status(bun_telemetry::StatusCode::Error, msg);
+                        }
+                    },
+                );
+            }
             drop(bun_core::heap::take(handler));
             (promise, global_this)
         };

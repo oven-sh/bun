@@ -132,6 +132,11 @@ pub struct FetchTasklet {
     /// sink that attaches unparks it.
     pub(crate) body_stream_parked: Cell<bool>,
     pub(crate) request_headers: Headers,
+    /// Native OpenTelemetry client span; `SpanStub::NONE` when telemetry is off.
+    pub(crate) otel: bun_telemetry::SpanStub,
+    /// Length of the URL prefix of `url_proxy_buffer` and the request method, for the span.
+    pub(crate) otel_url_len: u32,
+    pub(crate) otel_method: bun_http::Method,
     pub(crate) promise: jsc::JSPromiseStrong,
     pub(crate) concurrent_task: ConcurrentTask,
     /// `JsCell`: the ByteStream's drain signal reaches `on_stream_drained` through a shared ref.
@@ -471,8 +476,54 @@ impl FetchTasklet {
         }
     }
 
+    /// Finish the telemetry span (first call wins). Called when the response
+    /// is fully received, or from `clear_data` if the request never got there.
+    fn otel_end(&mut self) {
+        if !self.otel.is_some() {
+            return;
+        }
+        let stub = core::mem::replace(&mut self.otel, bun_telemetry::SpanStub::NONE);
+        let (status, minor_version) = self
+            .metadata
+            .as_ref()
+            .map(|m| {
+                (
+                    m.response.status_code as u16,
+                    Some(m.response.minor_version as u8),
+                )
+            })
+            .unwrap_or((0, None));
+        let error = match self.result.fail {
+            Some(e) => {
+                let e = fetch_error_strings(e, &BunString::EMPTY);
+                let (code, message) = (
+                    bun_core::OwnedString::new(e.code),
+                    bun_core::OwnedString::new(e.message),
+                );
+                Some((code.to_utf8_bytes(), message.to_utf8_bytes()))
+            }
+            None if self.abort_reason.has() => Some((
+                b"AbortError".to_vec(),
+                b"The operation was aborted.".to_vec(),
+            )),
+            None => None,
+        };
+        let url =
+            &self.url_proxy_buffer[..(self.otel_url_len as usize).min(self.url_proxy_buffer.len())];
+        crate::telemetry::fetch::end(
+            &self.global_this,
+            &stub,
+            self.otel_method,
+            url,
+            status,
+            minor_version,
+            error.as_ref().map(|(c, m)| (&c[..], &m[..])),
+        );
+    }
+
     fn clear_data(&mut self) {
         bun_output::scoped_log!(FetchTasklet, "clearData ");
+        self.otel_end();
         if !self.url_proxy_buffer.is_empty() {
             self.url_proxy_buffer = Box::default();
         }
@@ -935,6 +986,9 @@ impl FetchTasklet {
         self.mutex.lock();
         self.has_schedule_callback.store(false, Ordering::Relaxed);
         let is_done = !self.result.has_more;
+        if is_done {
+            self.otel_end();
+        }
 
         let vm = self.global_this.bun_vm();
         // teardown forbade script: we cannot touch JS
@@ -1373,234 +1427,7 @@ impl FetchTasklet {
             }
         }
 
-        let code = if fail == http::Error::ConnectionClosed {
-            BunString::static_("ECONNRESET")
-        } else {
-            BunString::static_(fail.name())
-        };
-
-        let message = match fail {
-            http::Error::ConnectionClosed => BunString::static_(
-                "The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()",
-            ),
-            http::Error::FailedToOpenSocket => {
-                BunString::static_("Was there a typo in the url or port?")
-            }
-            http::Error::TooManyRedirects => BunString::static_(
-                "The response redirected too many times. For more information, pass `verbose: true` in the second argument to fetch()",
-            ),
-            http::Error::ConnectionRefused => {
-                BunString::static_("Unable to connect. Is the computer able to access the url?")
-            }
-            http::Error::RedirectURLInvalid => {
-                BunString::static_("Redirect URL in Location header is invalid.")
-            }
-
-            http::Error::Cert(http::CertError::UNABLE_TO_GET_ISSUER_CERT) => {
-                BunString::static_("unable to get issuer certificate")
-            }
-            http::Error::Cert(http::CertError::UNABLE_TO_GET_CRL) => {
-                BunString::static_("unable to get certificate CRL")
-            }
-            http::Error::Cert(http::CertError::UNABLE_TO_DECRYPT_CERT_SIGNATURE) => {
-                BunString::static_("unable to decrypt certificate's signature")
-            }
-            http::Error::Cert(http::CertError::UNABLE_TO_DECRYPT_CRL_SIGNATURE) => {
-                BunString::static_("unable to decrypt CRL's signature")
-            }
-            http::Error::Cert(http::CertError::UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY) => {
-                BunString::static_("unable to decode issuer public key")
-            }
-            http::Error::Cert(http::CertError::CERT_SIGNATURE_FAILURE) => {
-                BunString::static_("certificate signature failure")
-            }
-            http::Error::Cert(http::CertError::CRL_SIGNATURE_FAILURE) => {
-                BunString::static_("CRL signature failure")
-            }
-            http::Error::Cert(http::CertError::CERT_NOT_YET_VALID) => {
-                BunString::static_("certificate is not yet valid")
-            }
-            http::Error::Cert(http::CertError::CRL_NOT_YET_VALID) => {
-                BunString::static_("CRL is not yet valid")
-            }
-            http::Error::Cert(http::CertError::CERT_HAS_EXPIRED) => {
-                BunString::static_("certificate has expired")
-            }
-            http::Error::Cert(http::CertError::CRL_HAS_EXPIRED) => {
-                BunString::static_("CRL has expired")
-            }
-            http::Error::Cert(http::CertError::ERROR_IN_CERT_NOT_BEFORE_FIELD) => {
-                BunString::static_("format error in certificate's notBefore field")
-            }
-            http::Error::Cert(http::CertError::ERROR_IN_CERT_NOT_AFTER_FIELD) => {
-                BunString::static_("format error in certificate's notAfter field")
-            }
-            http::Error::Cert(http::CertError::ERROR_IN_CRL_LAST_UPDATE_FIELD) => {
-                BunString::static_("format error in CRL's lastUpdate field")
-            }
-            http::Error::Cert(http::CertError::ERROR_IN_CRL_NEXT_UPDATE_FIELD) => {
-                BunString::static_("format error in CRL's nextUpdate field")
-            }
-            http::Error::Cert(http::CertError::OUT_OF_MEM) => BunString::static_("out of memory"),
-            http::Error::Cert(http::CertError::DEPTH_ZERO_SELF_SIGNED_CERT) => {
-                BunString::static_("self signed certificate")
-            }
-            http::Error::Cert(http::CertError::SELF_SIGNED_CERT_IN_CHAIN) => {
-                BunString::static_("self signed certificate in certificate chain")
-            }
-            http::Error::Cert(http::CertError::UNABLE_TO_GET_ISSUER_CERT_LOCALLY) => {
-                BunString::static_("unable to get local issuer certificate")
-            }
-            http::Error::Cert(http::CertError::UNABLE_TO_VERIFY_LEAF_SIGNATURE) => {
-                BunString::static_("unable to verify the first certificate")
-            }
-            http::Error::Cert(http::CertError::CERT_CHAIN_TOO_LONG) => {
-                BunString::static_("certificate chain too long")
-            }
-            http::Error::Cert(http::CertError::CERT_REVOKED) => {
-                BunString::static_("certificate revoked")
-            }
-            http::Error::Cert(http::CertError::INVALID_CA) => {
-                BunString::static_("invalid CA certificate")
-            }
-            http::Error::Cert(http::CertError::INVALID_NON_CA) => {
-                BunString::static_("invalid non-CA certificate (has CA markings)")
-            }
-            http::Error::Cert(http::CertError::PATH_LENGTH_EXCEEDED) => {
-                BunString::static_("path length constraint exceeded")
-            }
-            http::Error::Cert(http::CertError::PROXY_PATH_LENGTH_EXCEEDED) => {
-                BunString::static_("proxy path length constraint exceeded")
-            }
-            http::Error::Cert(http::CertError::PROXY_CERTIFICATES_NOT_ALLOWED) => {
-                BunString::static_(
-                    "proxy certificates not allowed, please set the appropriate flag",
-                )
-            }
-            http::Error::Cert(http::CertError::INVALID_PURPOSE) => {
-                BunString::static_("unsupported certificate purpose")
-            }
-            http::Error::Cert(http::CertError::CERT_UNTRUSTED) => {
-                BunString::static_("certificate not trusted")
-            }
-            http::Error::Cert(http::CertError::CERT_REJECTED) => {
-                BunString::static_("certificate rejected")
-            }
-            http::Error::Cert(http::CertError::APPLICATION_VERIFICATION) => {
-                BunString::static_("application verification failure")
-            }
-            http::Error::Cert(http::CertError::SUBJECT_ISSUER_MISMATCH) => {
-                BunString::static_("subject issuer mismatch")
-            }
-            http::Error::Cert(http::CertError::AKID_SKID_MISMATCH) => {
-                BunString::static_("authority and subject key identifier mismatch")
-            }
-            http::Error::Cert(http::CertError::AKID_ISSUER_SERIAL_MISMATCH) => {
-                BunString::static_("authority and issuer serial number mismatch")
-            }
-            http::Error::Cert(http::CertError::KEYUSAGE_NO_CERTSIGN) => {
-                BunString::static_("key usage does not include certificate signing")
-            }
-            http::Error::Cert(http::CertError::UNABLE_TO_GET_CRL_ISSUER) => {
-                BunString::static_("unable to get CRL issuer certificate")
-            }
-            http::Error::Cert(http::CertError::UNHANDLED_CRITICAL_EXTENSION) => {
-                BunString::static_("unhandled critical extension")
-            }
-            http::Error::Cert(http::CertError::KEYUSAGE_NO_CRL_SIGN) => {
-                BunString::static_("key usage does not include CRL signing")
-            }
-            http::Error::Cert(http::CertError::KEYUSAGE_NO_DIGITAL_SIGNATURE) => {
-                BunString::static_("key usage does not include digital signature")
-            }
-            http::Error::Cert(http::CertError::UNHANDLED_CRITICAL_CRL_EXTENSION) => {
-                BunString::static_("unhandled critical CRL extension")
-            }
-            http::Error::Cert(http::CertError::INVALID_EXTENSION) => {
-                BunString::static_("invalid or inconsistent certificate extension")
-            }
-            http::Error::Cert(http::CertError::INVALID_POLICY_EXTENSION) => {
-                BunString::static_("invalid or inconsistent certificate policy extension")
-            }
-            http::Error::Cert(http::CertError::NO_EXPLICIT_POLICY) => {
-                BunString::static_("no explicit policy")
-            }
-            http::Error::Cert(http::CertError::DIFFERENT_CRL_SCOPE) => {
-                BunString::static_("Different CRL scope")
-            }
-            http::Error::Cert(http::CertError::UNSUPPORTED_EXTENSION_FEATURE) => {
-                BunString::static_("Unsupported extension feature")
-            }
-            http::Error::Cert(http::CertError::UNNESTED_RESOURCE) => {
-                BunString::static_("RFC 3779 resource not subset of parent's resources")
-            }
-            http::Error::Cert(http::CertError::PERMITTED_VIOLATION) => {
-                BunString::static_("permitted subtree violation")
-            }
-            http::Error::Cert(http::CertError::EXCLUDED_VIOLATION) => {
-                BunString::static_("excluded subtree violation")
-            }
-            http::Error::Cert(http::CertError::SUBTREE_MINMAX) => {
-                BunString::static_("name constraints minimum and maximum not supported")
-            }
-            http::Error::Cert(http::CertError::UNSUPPORTED_CONSTRAINT_TYPE) => {
-                BunString::static_("unsupported name constraint type")
-            }
-            http::Error::Cert(http::CertError::UNSUPPORTED_CONSTRAINT_SYNTAX) => {
-                BunString::static_("unsupported or invalid name constraint syntax")
-            }
-            http::Error::Cert(http::CertError::UNSUPPORTED_NAME_SYNTAX) => {
-                BunString::static_("unsupported or invalid name syntax")
-            }
-            http::Error::Cert(http::CertError::CRL_PATH_VALIDATION_ERROR) => {
-                BunString::static_("CRL path validation error")
-            }
-            http::Error::Cert(http::CertError::SUITE_B_INVALID_VERSION) => {
-                BunString::static_("Suite B: certificate version invalid")
-            }
-            http::Error::Cert(http::CertError::SUITE_B_INVALID_ALGORITHM) => {
-                BunString::static_("Suite B: invalid public key algorithm")
-            }
-            http::Error::Cert(http::CertError::SUITE_B_INVALID_CURVE) => {
-                BunString::static_("Suite B: invalid ECC curve")
-            }
-            http::Error::Cert(http::CertError::SUITE_B_INVALID_SIGNATURE_ALGORITHM) => {
-                BunString::static_("Suite B: invalid signature algorithm")
-            }
-            http::Error::Cert(http::CertError::SUITE_B_LOS_NOT_ALLOWED) => {
-                BunString::static_("Suite B: curve not allowed for this LOS")
-            }
-            http::Error::Cert(http::CertError::SUITE_B_CANNOT_SIGN_P_384_WITH_P_256) => {
-                BunString::static_("Suite B: cannot sign P-384 with P-256")
-            }
-            http::Error::Cert(http::CertError::HOSTNAME_MISMATCH) => {
-                BunString::static_("Hostname mismatch")
-            }
-            http::Error::Cert(http::CertError::EMAIL_MISMATCH) => {
-                BunString::static_("Email address mismatch")
-            }
-            http::Error::Cert(http::CertError::IP_ADDRESS_MISMATCH) => {
-                BunString::static_("IP address mismatch")
-            }
-            http::Error::Cert(http::CertError::INVALID_CALL) => {
-                BunString::static_("Invalid certificate verification context")
-            }
-            http::Error::Cert(http::CertError::STORE_LOOKUP) => {
-                BunString::static_("Issuer certificate lookup error")
-            }
-            http::Error::Cert(http::CertError::NAME_CONSTRAINTS_WITHOUT_SANS) => {
-                BunString::static_("Issuer has name constraints but leaf has no SANs")
-            }
-            http::Error::Cert(http::CertError::UNKNOWN_CERTIFICATE_VERIFICATION_ERROR) => {
-                BunString::static_("unknown certificate verification error")
-            }
-
-            e => BunString::create_format(format_args!(
-                "{} fetching \"{}\". For more information, pass `verbose: true` in the second argument to fetch()",
-                e.name(),
-                path,
-            )),
-        };
+        let FetchErrorStrings { code, message } = fetch_error_strings(fail, &path);
 
         let fetch_error = jsc::SystemError {
             code: code.into(),
@@ -2028,6 +1855,9 @@ impl FetchTasklet {
             response_stream_source: Cell::new(None),
             body_stream_parked: Cell::new(false),
             request_headers: fetch_options.headers,
+            otel: bun_telemetry::SpanStub::NONE,
+            otel_url_len: fetch_options.url.href.len() as u32,
+            otel_method: fetch_options.method,
             promise,
             concurrent_task: ConcurrentTask::default(),
             poll_ref: JsCell::new(KeepAlive::default()),
@@ -2056,6 +1886,8 @@ impl FetchTasklet {
         fetch_tasklet.signals = fetch_tasklet.signal_store.to_with_backpressure();
 
         fetch_tasklet.tracker.did_schedule(global_this);
+        fetch_tasklet.otel =
+            crate::telemetry::fetch::begin(global_this, &mut fetch_tasklet.request_headers);
 
         // `body` is *moved* through `FetchOptions` into `request_body` (no
         // shallow alias, no post-queue detach), so the StoreRef already carries
@@ -2828,4 +2660,241 @@ impl bun_event_loop::Taskable for FetchTaskletPromiseSettle {
         // SAFETY: fn contract — the box the completion queued.
         drop(unsafe { bun_core::heap::take(this) });
     }
+}
+
+/// What a failed fetch rejects with (shared with telemetry so the span
+/// reports exactly what the caller sees). Both strings are +1.
+pub(crate) struct FetchErrorStrings {
+    pub code: BunString,
+    pub message: BunString,
+}
+
+pub(crate) fn fetch_error_strings(fail: http::Error, path: &BunString) -> FetchErrorStrings {
+    let code = if fail == http::Error::ConnectionClosed {
+        BunString::static_("ECONNRESET")
+    } else {
+        BunString::static_(fail.name())
+    };
+
+    let message = match fail {
+        http::Error::ConnectionClosed => BunString::static_(
+            "The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()",
+        ),
+        http::Error::FailedToOpenSocket => {
+            BunString::static_("Was there a typo in the url or port?")
+        }
+        http::Error::TooManyRedirects => BunString::static_(
+            "The response redirected too many times. For more information, pass `verbose: true` in the second argument to fetch()",
+        ),
+        http::Error::ConnectionRefused => {
+            BunString::static_("Unable to connect. Is the computer able to access the url?")
+        }
+        http::Error::RedirectURLInvalid => {
+            BunString::static_("Redirect URL in Location header is invalid.")
+        }
+
+        http::Error::Cert(http::CertError::UNABLE_TO_GET_ISSUER_CERT) => {
+            BunString::static_("unable to get issuer certificate")
+        }
+        http::Error::Cert(http::CertError::UNABLE_TO_GET_CRL) => {
+            BunString::static_("unable to get certificate CRL")
+        }
+        http::Error::Cert(http::CertError::UNABLE_TO_DECRYPT_CERT_SIGNATURE) => {
+            BunString::static_("unable to decrypt certificate's signature")
+        }
+        http::Error::Cert(http::CertError::UNABLE_TO_DECRYPT_CRL_SIGNATURE) => {
+            BunString::static_("unable to decrypt CRL's signature")
+        }
+        http::Error::Cert(http::CertError::UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY) => {
+            BunString::static_("unable to decode issuer public key")
+        }
+        http::Error::Cert(http::CertError::CERT_SIGNATURE_FAILURE) => {
+            BunString::static_("certificate signature failure")
+        }
+        http::Error::Cert(http::CertError::CRL_SIGNATURE_FAILURE) => {
+            BunString::static_("CRL signature failure")
+        }
+        http::Error::Cert(http::CertError::CERT_NOT_YET_VALID) => {
+            BunString::static_("certificate is not yet valid")
+        }
+        http::Error::Cert(http::CertError::CRL_NOT_YET_VALID) => {
+            BunString::static_("CRL is not yet valid")
+        }
+        http::Error::Cert(http::CertError::CERT_HAS_EXPIRED) => {
+            BunString::static_("certificate has expired")
+        }
+        http::Error::Cert(http::CertError::CRL_HAS_EXPIRED) => {
+            BunString::static_("CRL has expired")
+        }
+        http::Error::Cert(http::CertError::ERROR_IN_CERT_NOT_BEFORE_FIELD) => {
+            BunString::static_("format error in certificate's notBefore field")
+        }
+        http::Error::Cert(http::CertError::ERROR_IN_CERT_NOT_AFTER_FIELD) => {
+            BunString::static_("format error in certificate's notAfter field")
+        }
+        http::Error::Cert(http::CertError::ERROR_IN_CRL_LAST_UPDATE_FIELD) => {
+            BunString::static_("format error in CRL's lastUpdate field")
+        }
+        http::Error::Cert(http::CertError::ERROR_IN_CRL_NEXT_UPDATE_FIELD) => {
+            BunString::static_("format error in CRL's nextUpdate field")
+        }
+        http::Error::Cert(http::CertError::OUT_OF_MEM) => BunString::static_("out of memory"),
+        http::Error::Cert(http::CertError::DEPTH_ZERO_SELF_SIGNED_CERT) => {
+            BunString::static_("self signed certificate")
+        }
+        http::Error::Cert(http::CertError::SELF_SIGNED_CERT_IN_CHAIN) => {
+            BunString::static_("self signed certificate in certificate chain")
+        }
+        http::Error::Cert(http::CertError::UNABLE_TO_GET_ISSUER_CERT_LOCALLY) => {
+            BunString::static_("unable to get local issuer certificate")
+        }
+        http::Error::Cert(http::CertError::UNABLE_TO_VERIFY_LEAF_SIGNATURE) => {
+            BunString::static_("unable to verify the first certificate")
+        }
+        http::Error::Cert(http::CertError::CERT_CHAIN_TOO_LONG) => {
+            BunString::static_("certificate chain too long")
+        }
+        http::Error::Cert(http::CertError::CERT_REVOKED) => {
+            BunString::static_("certificate revoked")
+        }
+        http::Error::Cert(http::CertError::INVALID_CA) => {
+            BunString::static_("invalid CA certificate")
+        }
+        http::Error::Cert(http::CertError::INVALID_NON_CA) => {
+            BunString::static_("invalid non-CA certificate (has CA markings)")
+        }
+        http::Error::Cert(http::CertError::PATH_LENGTH_EXCEEDED) => {
+            BunString::static_("path length constraint exceeded")
+        }
+        http::Error::Cert(http::CertError::PROXY_PATH_LENGTH_EXCEEDED) => {
+            BunString::static_("proxy path length constraint exceeded")
+        }
+        http::Error::Cert(http::CertError::PROXY_CERTIFICATES_NOT_ALLOWED) => {
+            BunString::static_("proxy certificates not allowed, please set the appropriate flag")
+        }
+        http::Error::Cert(http::CertError::INVALID_PURPOSE) => {
+            BunString::static_("unsupported certificate purpose")
+        }
+        http::Error::Cert(http::CertError::CERT_UNTRUSTED) => {
+            BunString::static_("certificate not trusted")
+        }
+        http::Error::Cert(http::CertError::CERT_REJECTED) => {
+            BunString::static_("certificate rejected")
+        }
+        http::Error::Cert(http::CertError::APPLICATION_VERIFICATION) => {
+            BunString::static_("application verification failure")
+        }
+        http::Error::Cert(http::CertError::SUBJECT_ISSUER_MISMATCH) => {
+            BunString::static_("subject issuer mismatch")
+        }
+        http::Error::Cert(http::CertError::AKID_SKID_MISMATCH) => {
+            BunString::static_("authority and subject key identifier mismatch")
+        }
+        http::Error::Cert(http::CertError::AKID_ISSUER_SERIAL_MISMATCH) => {
+            BunString::static_("authority and issuer serial number mismatch")
+        }
+        http::Error::Cert(http::CertError::KEYUSAGE_NO_CERTSIGN) => {
+            BunString::static_("key usage does not include certificate signing")
+        }
+        http::Error::Cert(http::CertError::UNABLE_TO_GET_CRL_ISSUER) => {
+            BunString::static_("unable to get CRL issuer certificate")
+        }
+        http::Error::Cert(http::CertError::UNHANDLED_CRITICAL_EXTENSION) => {
+            BunString::static_("unhandled critical extension")
+        }
+        http::Error::Cert(http::CertError::KEYUSAGE_NO_CRL_SIGN) => {
+            BunString::static_("key usage does not include CRL signing")
+        }
+        http::Error::Cert(http::CertError::KEYUSAGE_NO_DIGITAL_SIGNATURE) => {
+            BunString::static_("key usage does not include digital signature")
+        }
+        http::Error::Cert(http::CertError::UNHANDLED_CRITICAL_CRL_EXTENSION) => {
+            BunString::static_("unhandled critical CRL extension")
+        }
+        http::Error::Cert(http::CertError::INVALID_EXTENSION) => {
+            BunString::static_("invalid or inconsistent certificate extension")
+        }
+        http::Error::Cert(http::CertError::INVALID_POLICY_EXTENSION) => {
+            BunString::static_("invalid or inconsistent certificate policy extension")
+        }
+        http::Error::Cert(http::CertError::NO_EXPLICIT_POLICY) => {
+            BunString::static_("no explicit policy")
+        }
+        http::Error::Cert(http::CertError::DIFFERENT_CRL_SCOPE) => {
+            BunString::static_("Different CRL scope")
+        }
+        http::Error::Cert(http::CertError::UNSUPPORTED_EXTENSION_FEATURE) => {
+            BunString::static_("Unsupported extension feature")
+        }
+        http::Error::Cert(http::CertError::UNNESTED_RESOURCE) => {
+            BunString::static_("RFC 3779 resource not subset of parent's resources")
+        }
+        http::Error::Cert(http::CertError::PERMITTED_VIOLATION) => {
+            BunString::static_("permitted subtree violation")
+        }
+        http::Error::Cert(http::CertError::EXCLUDED_VIOLATION) => {
+            BunString::static_("excluded subtree violation")
+        }
+        http::Error::Cert(http::CertError::SUBTREE_MINMAX) => {
+            BunString::static_("name constraints minimum and maximum not supported")
+        }
+        http::Error::Cert(http::CertError::UNSUPPORTED_CONSTRAINT_TYPE) => {
+            BunString::static_("unsupported name constraint type")
+        }
+        http::Error::Cert(http::CertError::UNSUPPORTED_CONSTRAINT_SYNTAX) => {
+            BunString::static_("unsupported or invalid name constraint syntax")
+        }
+        http::Error::Cert(http::CertError::UNSUPPORTED_NAME_SYNTAX) => {
+            BunString::static_("unsupported or invalid name syntax")
+        }
+        http::Error::Cert(http::CertError::CRL_PATH_VALIDATION_ERROR) => {
+            BunString::static_("CRL path validation error")
+        }
+        http::Error::Cert(http::CertError::SUITE_B_INVALID_VERSION) => {
+            BunString::static_("Suite B: certificate version invalid")
+        }
+        http::Error::Cert(http::CertError::SUITE_B_INVALID_ALGORITHM) => {
+            BunString::static_("Suite B: invalid public key algorithm")
+        }
+        http::Error::Cert(http::CertError::SUITE_B_INVALID_CURVE) => {
+            BunString::static_("Suite B: invalid ECC curve")
+        }
+        http::Error::Cert(http::CertError::SUITE_B_INVALID_SIGNATURE_ALGORITHM) => {
+            BunString::static_("Suite B: invalid signature algorithm")
+        }
+        http::Error::Cert(http::CertError::SUITE_B_LOS_NOT_ALLOWED) => {
+            BunString::static_("Suite B: curve not allowed for this LOS")
+        }
+        http::Error::Cert(http::CertError::SUITE_B_CANNOT_SIGN_P_384_WITH_P_256) => {
+            BunString::static_("Suite B: cannot sign P-384 with P-256")
+        }
+        http::Error::Cert(http::CertError::HOSTNAME_MISMATCH) => {
+            BunString::static_("Hostname mismatch")
+        }
+        http::Error::Cert(http::CertError::EMAIL_MISMATCH) => {
+            BunString::static_("Email address mismatch")
+        }
+        http::Error::Cert(http::CertError::IP_ADDRESS_MISMATCH) => {
+            BunString::static_("IP address mismatch")
+        }
+        http::Error::Cert(http::CertError::INVALID_CALL) => {
+            BunString::static_("Invalid certificate verification context")
+        }
+        http::Error::Cert(http::CertError::STORE_LOOKUP) => {
+            BunString::static_("Issuer certificate lookup error")
+        }
+        http::Error::Cert(http::CertError::NAME_CONSTRAINTS_WITHOUT_SANS) => {
+            BunString::static_("Issuer has name constraints but leaf has no SANs")
+        }
+        http::Error::Cert(http::CertError::UNKNOWN_CERTIFICATE_VERIFICATION_ERROR) => {
+            BunString::static_("unknown certificate verification error")
+        }
+
+        e => BunString::create_format(format_args!(
+            "{} fetching \"{}\". For more information, pass `verbose: true` in the second argument to fetch()",
+            e.name(),
+            path,
+        )),
+    };
+    FetchErrorStrings { code, message }
 }

@@ -208,6 +208,7 @@ pub enum Tag {
     EventLoopDelayMonitor,
     CronJob,
     GcRepeating,
+    TelemetryFlush,
     QuicEndpoint,
 }
 

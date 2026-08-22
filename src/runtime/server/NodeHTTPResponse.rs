@@ -61,6 +61,11 @@ pub struct NodeHTTPResponse {
     /// resolves through the socket's current response, which under pipelining is a different
     /// one; delivering through it loses the body. Kept alive by req[kHandle]; cleared on finalize.
     pub(crate) armed_this_value: Cell<JSValue>,
+    /// Native OpenTelemetry server span, ended in `on_request_complete`/`deinit`.
+    pub(crate) otel_span: Cell<bun_telemetry::NativeSpan>,
+    pub(crate) otel_status: Cell<u16>,
+    /// The handler threw / rejected: mark the span as an error even if a 2xx went out.
+    pub(crate) otel_handler_error: Cell<bool>,
     /// node:http: this request's header section captured at dispatch as
     /// [u32 nameLen][u32 valueLen][name][value]... so req.rawHeaders /
     /// req.headers materialize lazily (takeRawHeaders) instead of paying
@@ -995,6 +1000,8 @@ impl NodeHTTPResponse {
             }
         }
 
+        self.otel_status
+            .set(u16::try_from(status_code).unwrap_or(0));
         'do_it: {
             if status_message_bytes.is_empty() {
                 if let Some(status_message) =
@@ -1284,6 +1291,7 @@ impl NodeHTTPResponse {
 
         if EVENT == AbortEvent::Abort {
             self.update_flags(|f| f.insert(Flags::SOCKET_CLOSED));
+            self.otel_end();
         }
 
         self.ref_();
@@ -1467,6 +1475,7 @@ impl NodeHTTPResponse {
         }
         scoped_log!(NodeHTTPResponse, "onRequestComplete");
         self.update_flags(|f| f.insert(Flags::REQUEST_HAS_COMPLETED));
+        self.otel_end();
         self.poll_ref.with_mut(|r| r.unref(vm_get()));
 
         self.mark_request_as_done_if_necessary();
@@ -1550,7 +1559,14 @@ fn node_http_request_on_reject(global_object: &JSGlobalObject, callframe: &CallF
             raw_response.clear_on_writable();
             raw_response.clear_timeout();
             if !raw_response.state().is_http_status_called() {
-                raw_response.write_status(b"500 Internal Server Error");
+                this.write_status(raw_response, 500);
+            }
+            this.otel_handler_error.set(true);
+            let span = this.otel_span.get();
+            if span.is_some()
+                && crate::telemetry::span::record_exception(global_object, span, err).is_err()
+            {
+                return JSValue::ZERO; // terminating
             }
             raw_response.end_stream(raw_response.state().is_http_connection_close());
         }
@@ -2554,8 +2570,33 @@ impl NodeHTTPResponse {
         bun_ptr::finalize_js_box_noop(self);
     }
 
+    /// A status line Bun writes on the handler's behalf (it never called `writeHead`).
+    pub(crate) fn write_status(&self, raw: uws::AnyResponse, status: u16) {
+        if !raw.state().is_http_status_called() {
+            self.otel_status.set(status);
+        }
+        let mut buf = [0u8; 16];
+        raw.write_status(crate::server::status_line(status, &mut buf));
+    }
+
+    pub(crate) fn otel_end(&self) {
+        let span = self.otel_span.replace(bun_telemetry::NativeSpan::NONE);
+        if span.is_some() {
+            let flags = self.flags.get();
+            let aborted = flags.contains(Flags::SOCKET_CLOSED) && !flags.contains(Flags::ENDED);
+            crate::telemetry::server::end_with(
+                self.server.global_this(),
+                span,
+                self.otel_status.get(),
+                aborted,
+                self.otel_handler_error.get(),
+            );
+        }
+    }
+
     /// Called by intrusive RefCount when count reaches zero.
     fn deinit(&self) {
+        self.otel_end();
         debug_assert!(!self.body_read_ref.get().has);
         debug_assert!(!self.poll_ref.get().has);
         debug_assert!(!self.pending_pinned_write.get().is_some());
@@ -2723,6 +2764,9 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
         buffered_request_body_data_during_pause: JsCell::new(Vec::new()),
         request_trailers: JsCell::new(Vec::new()),
         armed_this_value: Cell::new(JSValue::ZERO),
+        otel_span: Cell::new(bun_telemetry::NativeSpan::NONE),
+        otel_status: Cell::new(0),
+        otel_handler_error: Cell::new(false),
         raw_request_headers: JsCell::new(Vec::new()),
         bytes_written: Cell::new(0),
         pending_pinned_write: Cell::new(PendingPinnedWrite::default()),

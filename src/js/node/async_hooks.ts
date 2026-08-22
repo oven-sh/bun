@@ -22,6 +22,13 @@
 // each key is an AsyncLocalStorage object and the value is the associated value. There are a ton of
 // calls to $assert which will verify this invariant (only during bun-debug)
 //
+// Native telemetry (Bun.otel) shares the slot: the active span is either the
+// slot value itself (a TelemetrySpan, when no store is set) or occupies
+// indices 0-1 of the array as [span, apiContextExtras|null]. Keys are matched
+// by identity, so that pair is invisible to getStore()/run(); the helpers
+// below only need to preserve it when building a fresh array. See
+// TelemetryContext.cpp.
+//
 const setAsyncHooksEnabled = $newCppFunction("NodeAsyncHooks.cpp", "jsSetAsyncHooksEnabled", 1);
 const cleanupLater = $newCppFunction("NodeAsyncHooks.cpp", "jsCleanupLater", 0);
 const { validateFunction, validateString, validateObject } = require("internal/validators");
@@ -37,20 +44,20 @@ function sameValue(a, b) {
 function assertValidAsyncContextArray(array: unknown): array is ReadonlyArray<any> | undefined {
   // undefined is OK
   if (array === undefined) return true;
-  // Otherwise, it must be an array
-  $assert(
-    Array.isArray(array),
-    "AsyncContextData must be an array or undefined, got",
-    Bun.inspect(array, { depth: 1 }),
-  );
+  // A bare telemetry span header (a span cell or a pooled-span handle) is OK
+  const isSpanHeader = (v: unknown) => $isTelemetrySpan(v) || typeof v === "number";
+  if (!$isJSArray(array)) {
+    $assert(isSpanHeader(array), "AsyncContextData should be undefined, a span header or an array, got", array);
+    return true;
+  }
   // the array has to be even
   $assert(array.length % 2 === 0, "AsyncContextData should be even-length, got", Bun.inspect(array, { depth: 1 }));
   // if it is zero-length, use undefined instead
   $assert(array.length > 0, "AsyncContextData should be undefined if empty, got", Bun.inspect(array, { depth: 1 }));
   for (var i = 0; i < array.length; i += 2) {
     $assert(
-      array[i] instanceof AsyncLocalStorage,
-      `Odd indexes in AsyncContextData should be an array of AsyncLocalStorage\nIndex %s was %s`,
+      array[i] instanceof AsyncLocalStorage || (i === 0 && isSpanHeader(array[i])),
+      `Even indexes in AsyncContextData should be AsyncLocalStorage (or a span header at 0)\nIndex %s was %s`,
       i,
       array[i],
     );
@@ -58,12 +65,27 @@ function assertValidAsyncContextArray(array: unknown): array is ReadonlyArray<an
   return true;
 }
 
+/** `[span, extras]` header carried over from a bare-span slot value, else a fresh array. */
+function arrayFromSlot(context: unknown): any[] {
+  return context === undefined ? [] : [context, null];
+}
+
+/** Inverse of arrayFromSlot once the last store is removed. */
+function collapse(context: any[]): any {
+  if (context.length === 0) return undefined;
+  if (context.length === 2 && !(context[0] instanceof AsyncLocalStorage))
+    return context[1] == null ? context[0] : context;
+  return context;
+}
+
 // Only run during debug
 function debugFormatContextValue(value: ReadonlyArray<any> | undefined) {
   if (value === undefined) return "undefined";
+  if (!$isJSArray(value)) return "{ <span> }";
   let str = "{\n";
   for (var i = 0; i < value.length; i += 2) {
-    str += `  ${value[i].__id__}: typeof = ${typeof value[i + 1]}\n`;
+    str +=
+      value[i] instanceof AsyncLocalStorage ? `  ${value[i].__id__}: typeof = ${typeof value[i + 1]}\n` : `  <span>\n`;
   }
   str += "}";
   return str;
@@ -157,8 +179,10 @@ class AsyncLocalStorage {
     // we must renable it when asyncLocalStorage.enterWith() is called https://nodejs.org/api/async_context.html#asynclocalstoragedisable
     this.#disabled = false;
     var context = get();
-    if (!context) {
-      set([this, store]);
+    if (!$isJSArray(context)) {
+      const fresh = arrayFromSlot(context);
+      fresh.push(this, store);
+      set(fresh);
       return;
     }
     var { length } = context;
@@ -198,11 +222,15 @@ class AsyncLocalStorage {
     var hasPrevious = false;
     var previous_value;
     var i = 0;
-    var contextWasAlreadyInit = !context;
+    var slotWasNotArray = !$isJSArray(context);
+    var initialSlot = context;
     // we must renable it when asyncLocalStorage.run() is called https://nodejs.org/api/async_context.html#asynclocalstoragedisable
     this.#disabled = false;
-    if (contextWasAlreadyInit) {
-      set((context = [this, store_value]));
+    if (slotWasNotArray) {
+      context = arrayFromSlot(context);
+      i = context.length;
+      context.push(this, store_value);
+      set(context);
     } else {
       // it's safe to mutate context now that it was cloned
       context = context!.slice();
@@ -240,9 +268,9 @@ class AsyncLocalStorage {
       // entering a disabled storage must not leave store_value installed after run().
       {
         var context2 = get()! as any[]; // we make sure to .slice() before mutating
-        if (context2 === context && contextWasAlreadyInit) {
-          $assert(context2.length === 2, "context was mutated without copy");
-          set(undefined);
+        if (context2 === context && slotWasNotArray) {
+          $assert(context2.length === i + 2, "context was mutated without copy");
+          set(initialSlot as any);
         } else {
           // The context array can change shape during the callback (disable()
           // splices storages out), so re-locate this storage by identity
@@ -250,7 +278,7 @@ class AsyncLocalStorage {
           // This mirrors node's run(), whose finally is enterWith(prior):
           // restore by value, re-adding the previous value even after a
           // disable() during the callback.
-          context2 = context2 ? context2.slice() : []; // array is cloned here
+          context2 = $isJSArray(context2) ? context2.slice() : arrayFromSlot(context2); // array is cloned here
           // Scan even (key) slots only — a value slot can hold this storage
           // when another ALS stored it via enterWith/run.
           let idx = -1;
@@ -267,7 +295,7 @@ class AsyncLocalStorage {
             } else {
               context2.splice(idx, 2);
               $assert(context2.length % 2 === 0);
-              set(context2.length ? context2 : undefined);
+              set(collapse(context2));
             }
           } else if (hasPrevious) {
             // disable() removed us mid-callback; node still restores the
@@ -299,12 +327,12 @@ class AsyncLocalStorage {
     if (this.#disabled) return;
     this.#disabled = true;
     var context = get() as any[];
-    if (context) {
+    if ($isJSArray(context)) {
       var { length } = context;
       for (var i = 0; i < length; i += 2) {
         if (context[i] === this) {
           context.splice(i, 2);
-          set(context.length ? context : undefined);
+          set(collapse(context));
           break;
         }
       }
@@ -322,7 +350,7 @@ class AsyncLocalStorage {
     // is `return this.#defaultValue`.
     if (this.#disabled) return this.#defaultValue;
     var context = get();
-    if (context) {
+    if ($isJSArray(context)) {
       var { length } = context;
       for (var i = 0; i < length; i += 2) {
         if (context[i] === this) return context[i + 1];

@@ -1,0 +1,321 @@
+//! Database client spans (PostgreSQL, MySQL, SQLite, Redis).
+//! https://opentelemetry.io/docs/specs/semconv/database/database-spans/
+
+use core::ffi::c_void;
+
+use crate::pool::{self, NativeSpan};
+use crate::{Instrument, ScopeId, SpanKind, Value, rt};
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum System {
+    Postgres,
+    MySql,
+    Sqlite,
+    Redis,
+}
+
+impl System {
+    pub const fn name(self) -> &'static str {
+        match self {
+            System::Postgres => "postgresql",
+            System::MySql => "mysql",
+            System::Sqlite => "sqlite",
+            System::Redis => "redis",
+        }
+    }
+    pub const fn instrument(self) -> Instrument {
+        match self {
+            System::Postgres | System::MySql => Instrument::Sql,
+            System::Sqlite => Instrument::Sqlite,
+            System::Redis => Instrument::Redis,
+        }
+    }
+    pub const fn default_port(self) -> u16 {
+        match self {
+            System::Postgres => 5432,
+            System::MySql => 3306,
+            System::Sqlite => 0,
+            System::Redis => 6379,
+        }
+    }
+}
+
+pub struct ConnectionInfo<'a> {
+    pub host: &'a [u8],
+    pub port: u16,
+    /// Database name (SQL), file (SQLite) or db index (Redis, as text).
+    pub namespace: &'a [u8],
+}
+
+/// Why a query failed: `ty` becomes `error.type` (and
+/// `db.response.status_code` when it looks like one), `message` the span
+/// status description.
+#[derive(Clone, Copy)]
+pub struct DbError<'a> {
+    /// `error.type`: SQLSTATE, driver error code, RESP error prefix, …
+    pub ty: &'a [u8],
+    pub message: &'a [u8],
+    /// `ty` is a status the database itself returned (`db.response.status_code`)
+    /// rather than a client-side condition (connection closed, …).
+    pub from_server: bool,
+}
+
+/// Start a CLIENT span for one query/command. `NativeSpan::NONE` when disabled.
+pub fn begin(global: *mut c_void, system: System, conn: &ConnectionInfo<'_>) -> NativeSpan {
+    let stub = rt::start_leaf(global, system.instrument());
+    if !stub.is_some() {
+        return NativeSpan::NONE;
+    }
+    let limits = rt::limits();
+    rt::with_local(global, |local| {
+        pool::begin_with(
+            &mut local.pool,
+            stub,
+            ScopeId::from(system.instrument()),
+            // semconv span name is `{operation} {target}`; the operation is
+            // prepended at end(). Target: namespace, else the system name.
+            if conn.namespace.is_empty() {
+                system.name().as_bytes()
+            } else {
+                conn.namespace
+            },
+            SpanKind::Client,
+            |s| {
+                if !stub.is_recording() {
+                    return;
+                }
+                let l = &limits;
+                s.push_attribute(b"db.system.name", &Value::Str(system.name().as_bytes()), l);
+                if !conn.namespace.is_empty() {
+                    s.push_attribute(b"db.namespace", &Value::Str(conn.namespace), l);
+                }
+                if !conn.host.is_empty() {
+                    s.push_attribute(b"server.address", &Value::Str(conn.host), l);
+                    if conn.port != 0 {
+                        s.push_attribute(b"server.port", &Value::Int(conn.port as i64), l);
+                    }
+                }
+            },
+        )
+    })
+    .unwrap_or(NativeSpan::NONE)
+}
+
+bun_core::comptime_string_map! {
+    /// Leading SQL verbs recognised for the span name / `db.operation.name`
+    /// (lower-case keys for `get_ascii_case_insensitive`; value = canonical).
+    static SQL_VERBS: &'static str = {
+        b"select" => "SELECT",
+        b"insert" => "INSERT",
+        b"update" => "UPDATE",
+        b"delete" => "DELETE",
+        b"with" => "WITH",
+        b"create" => "CREATE",
+        b"drop" => "DROP",
+        b"alter" => "ALTER",
+        b"begin" => "BEGIN",
+        b"commit" => "COMMIT",
+        b"rollback" => "ROLLBACK",
+        b"set" => "SET",
+        b"show" => "SHOW",
+        b"explain" => "EXPLAIN",
+        b"pragma" => "PRAGMA",
+        b"vacuum" => "VACUUM",
+        b"truncate" => "TRUNCATE",
+        b"merge" => "MERGE",
+        b"replace" => "REPLACE",
+        b"upsert" => "UPSERT",
+        b"call" => "CALL",
+        b"exec" => "EXEC",
+        b"execute" => "EXECUTE",
+        b"prepare" => "PREPARE",
+        b"deallocate" => "DEALLOCATE",
+        b"copy" => "COPY",
+        b"grant" => "GRANT",
+        b"revoke" => "REVOKE",
+        b"analyze" => "ANALYZE",
+        b"attach" => "ATTACH",
+        b"detach" => "DETACH",
+        b"listen" => "LISTEN",
+        b"notify" => "NOTIFY",
+        b"unlisten" => "UNLISTEN",
+        b"savepoint" => "SAVEPOINT",
+        b"release" => "RELEASE",
+        b"lock" => "LOCK",
+        b"unlock" => "UNLOCK",
+        b"use" => "USE",
+        b"describe" => "DESCRIBE",
+        b"desc" => "DESC",
+        b"start" => "START",
+        b"end" => "END",
+        b"reindex" => "REINDEX",
+        b"declare" => "DECLARE",
+        b"fetch" => "FETCH",
+        b"close" => "CLOSE",
+        b"move" => "MOVE",
+        b"do" => "DO",
+        b"values" => "VALUES",
+        b"table" => "TABLE",
+        b"refresh" => "REFRESH",
+        b"cluster" => "CLUSTER",
+        b"comment" => "COMMENT",
+        b"discard" => "DISCARD",
+        b"reset" => "RESET",
+        b"checkpoint" => "CHECKPOINT",
+        b"optimize" => "OPTIMIZE",
+        b"rename" => "RENAME",
+        b"kill" => "KILL",
+        b"flush" => "FLUSH",
+        b"load" => "LOAD",
+        b"handler" => "HANDLER",
+        b"import" => "IMPORT",
+        b"install" => "INSTALL",
+        b"uninstall" => "UNINSTALL",
+    };
+}
+
+/// The leading SQL verb (`SELECT`, `INSERT`, …) if the statement starts with
+/// one; used for the span name and `db.operation.name`.
+pub fn sql_operation(sql: &[u8]) -> Option<&'static str> {
+    let mut i = 0;
+    // Skip whitespace and `(`; skip `--` line and `/* */` block comments.
+    loop {
+        while i < sql.len() && matches!(sql[i], b' ' | b'\t' | b'\n' | b'\r' | b'(') {
+            i += 1;
+        }
+        if sql[i..].starts_with(b"--") {
+            while i < sql.len() && sql[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+        if sql[i..].starts_with(b"/*") {
+            i += bun_core::strings::index_of(&sql[i..], b"*/")? + 2;
+            continue;
+        }
+        break;
+    }
+    let start = i;
+    while i < sql.len() && sql[i].is_ascii_alphabetic() && i - start <= 10 {
+        i += 1;
+    }
+    let word = &sql[start..i];
+    if !(2..=10).contains(&word.len()) {
+        return None;
+    }
+    if i < sql.len() && !matches!(sql[i], b' ' | b'\t' | b'\n' | b'\r' | b';' | b'(') {
+        return None;
+    }
+    SQL_VERBS.get_ascii_case_insensitive(word).copied()
+}
+
+/// Drop a query span without recording it (the query never got a reply).
+pub fn discard(global: *mut c_void, span: NativeSpan) {
+    if !span.is_some() {
+        return;
+    }
+    let cell = rt::with_local(global, |local| pool::discard(&mut local.pool, span));
+    if let (Some(h), Some(cell)) = (rt::hooks(), cell) {
+        if cell.is_some() {
+            (h.release_cell)(cell);
+        }
+    }
+}
+
+/// Finish a query span. `statement` is recorded as `db.query.text` when
+/// statement capture is on.
+pub fn end(
+    global: *mut c_void,
+    span: NativeSpan,
+    statement: &[u8],
+    operation: Option<&[u8]>,
+    error: Option<DbError<'_>>,
+) {
+    if !span.is_some() {
+        return;
+    }
+    let op: Option<&[u8]> = operation.or_else(|| sql_operation(statement).map(str::as_bytes));
+    let capture = rt::capture_db_statement();
+    let ended = rt::with_local(global, |local| {
+        if let Some(o) = op {
+            pool::with(&mut local.pool, span, |s| {
+                // `{operation} {target}` when there is a namespace, else the operation.
+                let has_target = crate::otlp::find_attribute(&s.attrs, b"db.namespace").is_some();
+                let target = core::mem::take(&mut s.name);
+                s.name.reserve(o.len() + 1 + target.len());
+                s.name.extend_from_slice(o);
+                if has_target {
+                    s.name.push(b' ');
+                    s.name.extend_from_slice(&target);
+                }
+            });
+        }
+        pool::end(local, span, 0, |w| {
+            if let Some(o) = op {
+                w.attr("db.operation.name", o);
+            }
+            if capture && !statement.is_empty() {
+                // Cap very large statements; collectors reject multi-MB attributes.
+                w.attr(
+                    "db.query.text",
+                    crate::otlp::truncate_utf8(statement, 16 * 1024),
+                );
+            }
+            if let Some(DbError {
+                ty,
+                message,
+                from_server,
+            }) = error
+            {
+                if from_server {
+                    w.attr_opt("db.response.status_code", ty);
+                }
+                w.fail(if ty.is_empty() { b"_OTHER" } else { ty }, message);
+            }
+        })
+    })
+    .flatten();
+    if let (Some(h), Some(e)) = (rt::hooks(), &ended) {
+        if e.js_cell.is_some() {
+            (h.release_cell)(e.js_cell);
+        }
+        if e.recorded {
+            (h.after_record)(global);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sql_operation;
+
+    #[test]
+    fn leading_verb() {
+        let cases: &[(&str, Option<&str>)] = &[
+            ("", None),
+            ("   ", None),
+            ("SELECT 1", Some("SELECT")),
+            ("select * from t", Some("SELECT")),
+            ("  \n\tinsert into t values (1)", Some("INSERT")),
+            ("(select 1) union (select 2)", Some("SELECT")),
+            ("((with x as (select 1) select * from x", Some("WITH")),
+            ("-- comment\nUPDATE t SET a=1", Some("UPDATE")),
+            ("-- comment without newline", None),
+            ("/* hi */ delete from t", Some("DELETE")),
+            ("/* unterminated select 1", None),
+            ("/* a */ -- b\n /* c */ SELECT 1", Some("SELECT")),
+            ("SELECT;", Some("SELECT")),
+            ("SELECT(1)", Some("SELECT")),
+            ("SELECTX 1", None),
+            ("SELECT1", None),
+            ("S 1", None),
+            ("do", Some("DO")),
+            ("VERYLONGWORDHERE 1", None),
+            ("1 SELECT", None),
+            ("$1", None),
+        ];
+        for (sql, want) in cases {
+            assert_eq!(sql_operation(sql.as_bytes()), *want, "{sql:?}");
+        }
+    }
+}

@@ -5,6 +5,7 @@ use crate::error::ThrowSqlError;
 use crate::jsc::{
     CallFrame, JSGlobalObject, JSValue, JsError, JsRef, JsResult, VirtualMachineSqlExt as _,
 };
+use crate::shared::otel::{DbError, QuerySpan};
 use crate::shared::query_ctor_args::QueryCtorArgs;
 use bun_core::String as BunString;
 use bun_jsc::JsCell;
@@ -52,6 +53,8 @@ pub struct PostgresSQLQuery {
     ref_count: Cell<u32>,
 
     pub(crate) flags: Cell<Flags>,
+
+    pub(crate) otel: QuerySpan,
 }
 
 // On drop: deref the statement (if any), then deref query/cursor_name.
@@ -60,6 +63,9 @@ pub struct PostgresSQLQuery {
 // `destroy` is `heap::take` in `deref_`.
 impl Drop for PostgresSQLQuery {
     fn drop(&mut self) {
+        // Dropped without resolve/reject: the query never got a reply, so no span.
+        self.otel
+            .discard(bun_jsc::virtual_machine::VirtualMachine::get().global());
         self.release_statement();
         self.query.deref();
         self.cursor_name.deref();
@@ -76,6 +82,7 @@ impl Default for PostgresSQLQuery {
             status: Cell::new(Status::Pending),
             ref_count: Cell::new(1),
             flags: Cell::new(Flags::default()),
+            otel: QuerySpan::default(),
         }
     }
 }
@@ -198,12 +205,24 @@ impl PostgresSQLQuery {
         bun_ptr::finalize_js_box(self, |this| this.this_value.with_mut(|r| r.finalize()));
     }
 
+    pub(crate) fn otel_end(&self, global_object: &JSGlobalObject, error: Option<DbError<'_>>) {
+        self.otel.end(global_object, &self.query, error);
+    }
+
     pub(crate) fn on_write_fail(
         &self,
         err: AnyPostgresError,
         global_object: &JSGlobalObject,
         queries_array: JSValue,
     ) {
+        self.otel_end(
+            global_object,
+            Some(DbError {
+                ty: <&'static str>::from(err).as_bytes(),
+                message: b"",
+                from_server: false,
+            }),
+        );
         // R-2: every field touched below is `Cell`/`JsCell`-backed, so `&self`
         // is sufficient and `noalias` is suppressed. `ScopedRef` brackets the
         // JS-re-entrant `run_callback` so a re-entrant `deref()` cannot free
@@ -241,6 +260,7 @@ impl PostgresSQLQuery {
     }
 
     pub(crate) fn on_js_error(&self, err: JSValue, global_object: &JSGlobalObject) {
+        self.otel.end_with_js_error(global_object, &self.query, err);
         // R-2: see `on_write_fail` — `&self` + Cell/JsCell, ScopedRef brackets re-entry.
         let _deref = self.ref_guard();
         self.status.set(Status::Fail);
@@ -298,6 +318,9 @@ impl PostgresSQLQuery {
         connection: JSValue,
         is_last: bool,
     ) {
+        if is_last {
+            self.otel_end(global_object, None);
+        }
         // R-2: see `on_write_fail` — `&self` + Cell/JsCell, ScopedRef brackets re-entry.
         let _deref = self.ref_guard();
         self.status.set(if is_last {
@@ -470,6 +493,25 @@ impl PostgresSQLQuery {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let r = Self::do_run_inner(this, global_object, callframe);
+        if r.is_err() {
+            this.otel_end(
+                global_object,
+                Some(DbError {
+                    ty: b"_OTHER",
+                    message: b"failed to run query",
+                    from_server: false,
+                }),
+            );
+        }
+        r
+    }
+
+    fn do_run_inner(
+        this: &Self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         // R-2: `this` is the live m_ctx payload for `callframe.this()`; the JS
         // wrapper is on-stack so GC cannot finalize it. Every mutated field is
         // `Cell`/`JsCell`-backed, so `&Self` suffices. The pointer pushed into
@@ -499,6 +541,12 @@ impl PostgresSQLQuery {
         let this_value = callframe.this();
         let binding_value = js::binding_get_cached(this_value).unwrap_or_default();
         let query_str = this.query.to_utf8();
+        this.otel.begin(
+            global_object,
+            bun_telemetry::db::System::Postgres,
+            &connection.address,
+            connection.database_name(),
+        );
         // query_str: Utf8Slice<'_> — Drop frees.
         let writer = connection.writer();
         // We need a strong reference to the query so that it doesn't get GC'd

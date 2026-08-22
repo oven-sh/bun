@@ -186,6 +186,12 @@ pub struct RequestContext<
     /// field before the value can dangle. `on_abort` reclaims the ref through
     /// it so an aborted request is torn down without waiting for GC.
     promise_cell: Cell<JSValue>,
+
+    /// Native OpenTelemetry server span (`bun_telemetry::Span`), ended in
+    /// `finalize_without_deinit`. `None` when telemetry is off.
+    pub(crate) otel_span: Cell<bun_telemetry::NativeSpan>,
+    /// Status line written for this request, for the span.
+    pub(crate) otel_status: Cell<u16>,
     // TODO: support builtin compression
 }
 
@@ -1072,9 +1078,8 @@ where
         if let Some(resp) = ctx.resp.get() {
             if !DEBUG_MODE {
                 if !ctx.flags.has_written_status() {
-                    resp.write_status(b"204 No Content");
+                    ctx.write_status(204);
                 }
-                ctx.flags.set_has_written_status(true);
                 ctx.end(b"", ctx.should_close_connection());
                 return;
             }
@@ -1085,9 +1090,7 @@ where
             }
 
             if ctx.flags.is_web_browser_navigation() {
-                resp.write_status(b"200 OK");
-                ctx.flags.set_has_written_status(true);
-
+                ctx.write_status(200);
                 resp.write_header(b"content-type", &bun_http_types::MimeType::HTML.value);
                 resp.write_header(b"content-encoding", b"gzip");
                 resp.write_header_int(b"content-length", WELCOME_PAGE_HTML_GZ.len() as u64);
@@ -1100,10 +1103,9 @@ where
             }
             const MISSING_CONTENT: &[u8] =
                 b"Welcome to Bun! To get started, return a Response object.";
-            resp.write_status(b"200 OK");
+            ctx.write_status(200);
             resp.write_header(b"content-type", &bun_http_types::MimeType::TEXT.value);
             resp.write_header_int(b"content-length", MISSING_CONTENT.len() as u64);
-            ctx.flags.set_has_written_status(true);
             if ctx.method == Method::HEAD {
                 ctx.end_without_body(ctx.should_close_connection());
             } else {
@@ -1119,9 +1121,8 @@ where
         message: &[u8],
     ) {
         if !self.flags.has_written_status() {
-            self.flags.set_has_written_status(true);
+            self.write_status(500);
             if let Some(resp) = self.resp.get() {
-                resp.write_status(b"500 Internal Server Error");
                 resp.write_header(b"content-type", &bun_http_types::MimeType::HTML.value);
             }
         }
@@ -1374,10 +1375,45 @@ where
                 response_buf_owned: JsCell::new(Vec::new()),
                 additional_on_abort: JsCell::new(None),
                 promise_cell: Cell::new(JSValue::ZERO),
+                otel_span: Cell::new(bun_telemetry::NativeSpan::NONE),
+                otel_status: Cell::new(0),
             });
         }
 
         ctx_log!("create<d> ({:p})<r>", this.as_ptr());
+    }
+
+    /// Start the request's telemetry span (if enabled) and activate it. The
+    /// returned guard must live on the dispatching frame across the handler
+    /// call; the span itself is owned by this context and ended at finalize.
+    pub(crate) fn otel_begin(
+        &self,
+        global: &jsc::JSGlobalObject,
+    ) -> Option<crate::telemetry::Entered> {
+        if !bun_telemetry::enabled(bun_telemetry::Instrument::HttpServer) {
+            return None;
+        }
+        let (Some(req), Some(resp)) = (self.req.get(), self.resp.get()) else {
+            return None;
+        };
+        let any_req = Self::any_request(req);
+        let (span, entered) = crate::telemetry::server::begin(
+            global,
+            // `self.method` fell back to GET when the text was not a known method.
+            Method::find(any_req.method()),
+            &any_req,
+            resp,
+            SSL_ENABLED,
+        )?;
+        self.otel_span.set(span);
+        Some(entered)
+    }
+
+    pub(crate) fn otel_set_route(&self, route: &[u8]) {
+        let span = self.otel_span.get();
+        if span.is_some() {
+            crate::telemetry::server::set_route(self.server().global_this(), span, route);
+        }
     }
 
     fn on_abort(this: *mut Self, resp: uws::AnyResponse) {
@@ -1502,6 +1538,15 @@ where
     // so it's important that we can safely do that
     pub(crate) fn finalize_without_deinit(&self) {
         ctx_log!("finalizeWithoutDeinit<d> ({:p})<r>", self);
+        let span = self.otel_span.replace(bun_telemetry::NativeSpan::NONE);
+        if span.is_some() {
+            crate::telemetry::server::end(
+                self.server().global_this(),
+                span,
+                self.otel_status.get(),
+                self.flags.aborted(),
+            );
+        }
         self.blob.with_mut(|b| b.detach());
         debug_assert!(self.server.get().is_some());
         let global_this = self.server().global_this();
@@ -3020,9 +3065,8 @@ where
                     if !ended_response && server.dev_server().is_some() {
                         // Render the error fallback HTML page like renderDefaultError does
                         if !self.flags.has_written_status() {
-                            self.flags.set_has_written_status(true);
+                            self.write_status(500);
                             if let Some(resp) = self.resp.get() {
-                                resp.write_status(b"500 Internal Server Error");
                                 resp.write_header(
                                     b"content-type",
                                     &bun_http_types::MimeType::HTML.value,
@@ -3507,17 +3551,15 @@ where
             match status {
                 404 => {
                     if !self.flags.has_written_status() {
-                        resp.write_status(b"404 Not Found");
-                        self.flags.set_has_written_status(true);
+                        self.write_status(404);
                     }
                     self.end_without_body(self.should_close_connection());
                 }
                 _ => {
                     const BODY: &[u8] = b"Something went wrong!";
                     if !self.flags.has_written_status() {
-                        resp.write_status(b"500 Internal Server Error");
+                        self.write_status(500);
                         resp.write_header(b"content-type", b"text/plain");
-                        self.flags.set_has_written_status(true);
                     }
                     if self.method == Method::HEAD {
                         resp.write_header_int(b"content-length", BODY.len() as u64);
@@ -3611,6 +3653,13 @@ where
         jsc::mark_binding!();
         if let Some(server) = self.server.get() {
             let server = &*server;
+            let span = self.otel_span.get();
+            if span.is_some()
+                && crate::telemetry::span::record_exception(server.global_this(), span, value)
+                    .is_err()
+            {
+                return; // terminating
+            }
             let on_error = server.config().on_error;
             if !on_error.is_empty() && !self.flags.has_called_error_handler() {
                 self.flags.set_has_called_error_handler(true);
@@ -3887,18 +3936,15 @@ where
 
     fn do_write_status(&self, status: u16) {
         debug_assert!(!self.flags.has_written_status());
-        self.flags.set_has_written_status(true);
+        self.write_status(status);
+    }
 
-        // `AnyResponse` is a `Copy` handle; methods take `self` by value.
-        let Some(resp) = self.resp.get() else { return };
-        if let Some(text) = HTTPStatusText::get(status) {
-            resp.write_status(text);
-        } else {
-            let mut buf = [0u8; 48];
-            let mut w = &mut buf[..];
-            let _ = write!(w, "{} HM", status);
-            let written = 48 - w.len();
-            resp.write_status(&buf[..written]);
+    pub(crate) fn write_status(&self, status: u16) {
+        self.flags.set_has_written_status(true);
+        self.otel_status.set(status);
+        if let Some(resp) = self.resp.get() {
+            let mut buf = [0u8; 16];
+            resp.write_status(crate::server::status_line(status, &mut buf));
         }
     }
 
@@ -4084,9 +4130,7 @@ where
                 // SAFETY: FFI handle
                 if let Some(resp) = this.resp.get() {
                     if !resp.has_responded() {
-                        this.flags.set_has_written_status(true);
-                        // SAFETY: FFI handle
-                        resp.write_status(b"413 Payload Too Large");
+                        this.write_status(413);
                     }
                 }
                 this.end_without_body(!HTTP3);
@@ -4190,9 +4234,7 @@ where
                 // SAFETY: FFI handle
                 if let Some(resp) = this.resp.get() {
                     if !resp.has_responded() {
-                        this.flags.set_has_written_status(true);
-                        // SAFETY: FFI handle
-                        resp.write_status(b"413 Payload Too Large");
+                        this.write_status(413);
                     }
                 }
                 this.end_without_body(!HTTP3);

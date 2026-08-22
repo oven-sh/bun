@@ -29,11 +29,14 @@ const ObjectDefineProperty = Object.defineProperty;
 const ObjectKeys = Object.keys;
 const NumberIsFinite = Number.isFinite;
 const ArrayIsArray = Array.isArray;
+const ArrayPrototypeSlice = Array.prototype.slice;
+const StringPrototypeToLowerCase = String.prototype.toLowerCase;
 
 const onClientRequestCreatedChannel = dc.channel("http.client.request.created");
 const onClientRequestStartChannel = dc.channel("http.client.request.start");
 const onClientRequestErrorChannel = dc.channel("http.client.request.error");
 const onClientResponseFinishChannel = dc.channel("http.client.response.finish");
+const otelHttpClientEnabled = $newRustFunction("telemetry.rs", "httpClientEnabled", 0);
 
 function emitErrorEvent(request, error) {
   if (onClientRequestErrorChannel.hasSubscribers) {
@@ -45,6 +48,7 @@ function emitErrorEvent(request, error) {
   // Every request-error path funnels here (ECONNREFUSED, DNS, parse error,
   // reset): close the trace span; deduped by the per-request flag.
   traceClientResponseEnd(request);
+  otelClientRequestEnd(request, undefined, error);
   request.emit("error", error);
 }
 
@@ -158,6 +162,95 @@ function traceClientResponseEnd(req) {
     req[kTraceRequestActive] = false;
     traceEvents.emitEvent("e", kHttpTraceCat, "http.client.request");
   }
+}
+
+// `host[:port]` for the Host header / url.full: IPv6 addresses are enclosed in
+// square brackets (https://tools.ietf.org/html/rfc3986#section-3.2.2) and the
+// scheme's default port is omitted.
+function formatAuthority(host: string, port, defaultPort: number) {
+  let out = host;
+  const posColon = out.indexOf(":");
+  if (posColon !== -1 && out.includes(":", posColon + 1) && out.charCodeAt(0) !== 91 /* '[' */) {
+    out = `[${out}]`;
+  }
+  if (port && +port !== defaultPort) {
+    out += ":" + port;
+  }
+  return out;
+}
+
+// Native OpenTelemetry (Bun.otel): one CLIENT span per request, `traceparent`
+// injected before the header block is serialized. `otelHttpClientEnabled` is a
+// single native call that returns false unless tracing is on.
+const kOtelSpan = Symbol("kOtelSpan");
+let otel;
+// `arrayHeaders`: the request's headers were given as an array (flat or
+// [[k, v]]), which is serialized as-is instead of kOutHeaders; returns the
+// array to serialize (a copy with trace context appended when injected).
+function otelClientRequestStart(req, protocol, host, port, arrayHeaders?) {
+  otel ??= require("internal/telemetry");
+  const span = otel.startClientSpan(req.method);
+  if (!span) return arrayHeaders;
+  req[kOtelSpan] = span;
+  if (arrayHeaders !== undefined) {
+    const pairs = arrayHeaders.length && ArrayIsArray(arrayHeaders[0]);
+    const has = name => {
+      if (pairs) {
+        for (let i = 0; i < arrayHeaders.length; i++)
+          if (StringPrototypeToLowerCase.$call(arrayHeaders[i][0] + "") === name) return true;
+      } else {
+        for (let i = 0; i + 1 < arrayHeaders.length; i += 2)
+          if (StringPrototypeToLowerCase.$call(arrayHeaders[i] + "") === name) return true;
+      }
+      return false;
+    };
+    if (!has("traceparent")) {
+      const [traceparent, tracestate, baggage] = otel.propagationHeaders(span);
+      const add: [string, string][] = [];
+      if (traceparent) add.push(["traceparent", traceparent]);
+      if (tracestate && !has("tracestate")) add.push(["tracestate", tracestate]);
+      if (baggage && !has("baggage")) add.push(["baggage", baggage]);
+      if (add.length) {
+        arrayHeaders = ArrayPrototypeSlice.$call(arrayHeaders);
+        for (const [k, v] of add) {
+          if (pairs) arrayHeaders.push([k, v]);
+          else arrayHeaders.push(k, v);
+        }
+      }
+    }
+  } else if (!req.getHeader("traceparent")) {
+    const [traceparent, tracestate, baggage] = otel.propagationHeaders(span);
+    if (traceparent) req.setHeader("traceparent", traceparent);
+    if (tracestate && !req.getHeader("tracestate")) req.setHeader("tracestate", tracestate);
+    if (baggage && !req.getHeader("baggage")) req.setHeader("baggage", baggage);
+  }
+  if (span.isRecording()) {
+    const defaultPort = protocol === "https:" ? 443 : 80;
+    span.setAttributes({
+      "http.request.method": req.method,
+      "server.address": host,
+      "server.port": +port || defaultPort,
+      "url.full": protocol + "//" + formatAuthority(host, port, defaultPort) + req.path,
+    });
+  }
+  return arrayHeaders;
+}
+function otelClientRequestEnd(req, res, err) {
+  const span = req[kOtelSpan];
+  if (span === undefined) return;
+  req[kOtelSpan] = undefined;
+  if (res) {
+    const code = res.statusCode;
+    span.setAttribute("http.response.status_code", code);
+    if (code >= 400) {
+      span.setAttribute("error.type", String(code));
+      span.setStatus(2);
+    }
+  } else if (err) {
+    span.setAttribute("error.type", err?.code || err?.name || "Error");
+    span.setStatus(2, err?.message);
+  }
+  span.end();
 }
 
 function ClientRequest(input, options, cb) {
@@ -360,20 +453,7 @@ function ClientRequest(input, options, cb) {
     }
 
     if (host && !this.getHeader("host") && setHost) {
-      let hostHeader = host;
-
-      // For the Host header, ensure that IPv6 addresses are enclosed
-      // in square brackets, as defined by URI formatting
-      // https://tools.ietf.org/html/rfc3986#section-3.2.2
-      const posColon = hostHeader.indexOf(":");
-      if (posColon !== -1 && hostHeader.includes(":", posColon + 1) && hostHeader.charCodeAt(0) !== 91 /* '[' */) {
-        hostHeader = `[${hostHeader}]`;
-      }
-
-      if (port && +port !== defaultPort) {
-        hostHeader += ":" + port;
-      }
-      this.setHeader("Host", hostHeader);
+      this.setHeader("Host", formatAuthority(host, port, defaultPort));
     }
 
     const auth = options.auth;
@@ -381,19 +461,34 @@ function ClientRequest(input, options, cb) {
       this.setHeader("Authorization", "Basic " + Buffer.from(auth).toString("base64"));
     }
 
+    if (otelHttpClientEnabled()) otelClientRequestStart(this, protocol, host, port);
+
     if (this.getHeader("expect")) {
       if (this._header) {
         throw $ERR_HTTP_HEADERS_SENT("render");
       }
 
       rewriteForProxiedHttp(this, optsWithoutSignal);
-      this._storeHeader(this.method + " " + this.path + " HTTP/1.1\r\n", this[kOutHeaders]);
+      try {
+        this._storeHeader(this.method + " " + this.path + " HTTP/1.1\r\n", this[kOutHeaders]);
+      } catch (e) {
+        otelClientRequestEnd(this, undefined, e);
+        throw e;
+      }
     } else {
       rewriteForProxiedHttp(this, optsWithoutSignal);
     }
   } else {
+    let arrayHeaders = optionsHeaders;
+    if (otelHttpClientEnabled()) arrayHeaders = otelClientRequestStart(this, protocol, host, port, arrayHeaders);
     rewriteForProxiedHttp(this, optsWithoutSignal);
-    this._storeHeader(this.method + " " + this.path + " HTTP/1.1\r\n", optionsHeaders);
+    try {
+      this._storeHeader(this.method + " " + this.path + " HTTP/1.1\r\n", arrayHeaders);
+    } catch (e) {
+      // (invalid header name/value) the span was already started; finish it
+      otelClientRequestEnd(this, undefined, e);
+      throw e;
+    }
   }
 
   this[kUniqueHeaders] = parseUniqueHeadersOption(options.uniqueHeaders);
@@ -509,6 +604,7 @@ ClientRequest.prototype.destroy = function destroy(err) {
   // Close the http.client.request trace span if no response ever arrived
   // (req.destroy()/abort before headers); deduped by the per-request flag.
   traceClientResponseEnd(this);
+  otelClientRequestEnd(this, undefined, err ?? { code: "aborted" });
 
   // If we're aborting, we don't care about any more response data.
   const res = this.res;
@@ -556,6 +652,7 @@ function socketCloseListenerInner() {
   // Socket-level close without a response (connection reset, abort):
   // close the trace span so it doesn't stay open forever.
   traceClientResponseEnd(req);
+  otelClientRequestEnd(req, undefined, { code: "ECONNRESET" });
   if (res) {
     // Socket closed before we emitted 'end' below.
     if (!res.complete) {
@@ -838,6 +935,7 @@ function parserOnIncomingClient(res, shouldKeepAlive) {
   // The response arrived: close the 'http.client.request' span (Node ends it
   // here, in parserOnIncomingClient, before handing the response to the user).
   traceClientResponseEnd(req);
+  otelClientRequestEnd(req, res, undefined);
   req.res = res;
   res.req = req;
 

@@ -66,6 +66,42 @@ bun_opaque::opaque_ffi! {
     pub struct WebSocketUpgradeContext;
 }
 
+/// The connection's scratch for encoded peer attributes (lives in uWS's
+/// `HttpResponseData`, so it is valid while the request is being served).
+#[derive(Clone, Copy)]
+pub struct PeerAttrsCache {
+    buf: *mut u8,
+    len: *mut u8,
+    cap: usize,
+}
+
+impl PeerAttrsCache {
+    /// The cached bytes (empty until [`set`](Self::set)). The borrow is tied to
+    /// this handle, which callers hold only while dispatching the request.
+    pub fn get(&self) -> &[u8] {
+        // SAFETY: buf/len point into the live HttpResponseData (see type doc).
+        unsafe { core::slice::from_raw_parts(self.buf, *self.len as usize) }
+    }
+    /// Store `bytes` (ignored if they do not fit).
+    pub fn set(&self, bytes: &[u8]) {
+        if bytes.is_empty() || bytes.len() > self.cap || bytes.len() > u8::MAX as usize {
+            return;
+        }
+        // SAFETY: as above; `cap` is the buffer's size.
+        unsafe {
+            core::ptr::copy_nonoverlapping(bytes.as_ptr(), self.buf, bytes.len());
+            *self.len = bytes.len() as u8;
+        }
+    }
+}
+
+/// A peer address as raw network-order bytes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum RawIp {
+    V4([u8; 4]),
+    V6([u8; 16]),
+}
+
 /// Opaque handle for `uws::Response<SSL>`.
 ///
 /// The SSL flag is modeled as a `const SSL: bool` parameter on an opaque
@@ -356,6 +392,31 @@ impl<const SSL: bool> Response<SSL> {
                 .unwrap(),
             )
         }
+    }
+
+    /// The peer's IP (4 or 16 raw bytes) and port, cached per connection.
+    pub fn get_remote_address_raw(&mut self) -> Option<(RawIp, u16)> {
+        let mut out = [0u8; 16];
+        let mut port: i32 = 0;
+        match c::uws_res_get_remote_address_raw(
+            Self::ssl_flag(),
+            self.as_raw(),
+            &mut out,
+            &mut port,
+        ) {
+            4 => Some((RawIp::V4([out[0], out[1], out[2], out[3]]), port as u16)),
+            16 => Some((RawIp::V6(out), port as u16)),
+            _ => None,
+        }
+    }
+
+    /// Per-connection scratch where telemetry keeps the encoded peer
+    /// attributes: `(buffer, len)`; `*len == 0` until filled.
+    pub fn peer_attrs_cache(&mut self) -> PeerAttrsCache {
+        let mut len: *mut u8 = core::ptr::null_mut();
+        let mut cap = 0usize;
+        let buf = c::uws_res_peer_attrs(Self::ssl_flag(), self.as_raw(), &mut len, &mut cap);
+        PeerAttrsCache { buf, len, cap }
     }
 
     pub fn get_remote_socket_info(&mut self) -> Option<SocketAddress> {
@@ -770,6 +831,25 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.get_remote_socket_info())
     }
 
+    /// Peer IP/port for HTTP/1 responses, cached per connection. `None` for
+    /// HTTP/3, whose transport only reports the address as text
+    /// ([`Self::get_remote_socket_info`]).
+    pub fn get_remote_address_raw(self) -> Option<(RawIp, u16)> {
+        match self {
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).get_remote_address_raw(),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).get_remote_address_raw(),
+            AnyResponse::H3(_) => None,
+        }
+    }
+
+    pub fn peer_attrs_cache(self) -> Option<PeerAttrsCache> {
+        match self {
+            AnyResponse::SSL(ptr) => Some(TLSResponse::as_handle(ptr).peer_attrs_cache()),
+            AnyResponse::TCP(ptr) => Some(TCPResponse::as_handle(ptr).peer_attrs_cache()),
+            AnyResponse::H3(_) => None,
+        }
+    }
+
     pub fn flush_headers(self, flush_immediately: bool) {
         any_dispatch!(self, |r| r.flush_headers(flush_immediately))
     }
@@ -1109,6 +1189,18 @@ pub mod c {
             port: &mut i32,
             is_ipv6: &mut bool,
         ) -> usize;
+        pub(crate) safe fn uws_res_get_remote_address_raw(
+            ssl: i32,
+            res: &mut uws_res,
+            out: &mut [u8; 16],
+            port: &mut i32,
+        ) -> c_int;
+        pub(crate) safe fn uws_res_peer_attrs(
+            ssl: i32,
+            res: &mut uws_res,
+            len: &mut *mut u8,
+            cap: &mut usize,
+        ) -> *mut u8;
         pub(crate) safe fn uws_res_uncork(ssl: i32, res: &mut uws_res);
         pub(crate) fn uws_res_end(
             ssl: i32,

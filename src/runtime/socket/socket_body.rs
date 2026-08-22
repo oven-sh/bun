@@ -332,6 +332,8 @@ pub struct NewSocket<const SSL: bool> {
     /// keeps its verdict after detach (the live error borrows the `SSL`, and
     /// EPROTO reasons are stack-copied in uSockets).
     pub(crate) verify_error: JsCell<Option<StoredVerifyError>>,
+    /// Native OpenTelemetry `connect` span for client sockets.
+    pub(crate) otel_connect: Cell<bun_telemetry::SpanStub>,
 }
 
 /// Associated `Socket` handler type.
@@ -584,6 +586,14 @@ impl<const SSL: bool> NewSocket<SSL> {
         // SAFETY: `self` is live for this call and outlives the sockets below.
         let this = unsafe { bun_ptr::ThisPtr::new(self.as_ctx_ptr()) };
         let _guard = this.ref_guard();
+        if bun_telemetry::enabled(bun_telemetry::Instrument::Net) {
+            if let Some(h) = self.handlers.get().as_deref() {
+                self.otel_connect.set(crate::telemetry::start_leaf(
+                    &h.global_object,
+                    bun_telemetry::Instrument::Net,
+                ));
+            }
+        }
 
         // `VirtualMachine::get()` yields the canonical `*mut` (write
         // provenance) — never derive `&mut` from the `&'static` borrow stored
@@ -1076,6 +1086,60 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
 
+    /// First call wins.
+    /// `error`: (`error.type`, message).
+    pub(crate) fn otel_connect_end(&self, error: Option<(&str, &str)>) {
+        use bun_telemetry::http_record::PeerIp;
+        let stub = self.otel_connect.replace(bun_telemetry::SpanStub::NONE);
+        if !stub.is_recording() {
+            return;
+        }
+        use super::listener::UnixOrHost;
+        let conn = self.connection.get();
+        let (name, transport, host, port): (&[u8], &str, &[u8], u16) = match &conn {
+            Some(UnixOrHost::Unix(p)) => (
+                if SSL { b"tls.connect" } else { b"ipc.connect" },
+                "unix",
+                p,
+                0,
+            ),
+            Some(UnixOrHost::Host { host, port }) => (
+                if SSL { b"tls.connect" } else { b"tcp.connect" },
+                "tcp",
+                host,
+                *port,
+            ),
+            Some(UnixOrHost::Fd(_)) | None => (&b"socket.connect"[..], "tcp", &b""[..], 0),
+        };
+        crate::telemetry::end_leaf(
+            VirtualMachine::get().global(),
+            bun_telemetry::Instrument::Net,
+            &stub,
+            name,
+            bun_telemetry::SpanKind::Client,
+            |w| {
+                w.attr("network.transport", transport);
+                w.server(host, port);
+                if error.is_none() && !self.socket.get().is_detached() {
+                    let mut raw = [0u8; 16];
+                    let mut text = [0u8; 64];
+                    let peer = match self.socket.get().remote_address(&mut raw) {
+                        Some(b) if b.len() == 4 => PeerIp::V4(<[u8; 4]>::try_from(b).unwrap()),
+                        Some(b) if b.len() == 16 => PeerIp::V6(<[u8; 16]>::try_from(b).unwrap()),
+                        _ => PeerIp::None,
+                    };
+                    w.attr_opt("network.peer.address", peer.text(&mut text));
+                    if let Some(p) = self.socket.get().remote_port() {
+                        w.attr("network.peer.port", i64::from(p));
+                    }
+                }
+                if let Some((code, msg)) = error {
+                    w.fail(code.as_bytes(), msg.as_bytes());
+                }
+            },
+        );
+    }
+
     /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`:
     /// `callback.call`/`reject` re-enter JS which can `connectInner()`/mutate
     /// this socket via `m_ptr` (node:net `autoSelectFamily` retries inside the
@@ -1091,6 +1155,21 @@ impl<const SSL: bool> NewSocket<SSL> {
         errno: c_int,
         dns_error: i32,
     ) -> JsResult<()> {
+        if this.otel_connect.get().is_some() {
+            let sys = if dns_error != 0 {
+                None
+            } else {
+                bun_sys::SystemErrno::init((errno as i64).abs())
+            };
+            this.otel_connect_end(Some(match sys {
+                Some(e) => (
+                    <&'static str>::from(e),
+                    bun_sys::coreutils_error_map::get(e).unwrap_or(""),
+                ),
+                None if dns_error != 0 => ("DNS_ENOTFOUND", "getaddrinfo failed"),
+                None => ("ECONNREFUSED", "Failed to connect"),
+            }));
+        }
         let handlers = this.get_handlers();
         log!(
             "onConnectError {} ({}, {})",
@@ -1324,6 +1403,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// not live in the ext slot so those are left for the caller's existing
     /// `debug_assert!` to catch.
     pub(crate) fn detach_for_reconnect(&self) {
+        self.otel_connect_end(Some(("reconnect", "socket replaced before connecting")));
         let old = self.socket.get();
         let Some(ext) = old.ext::<*mut c_void>() else {
             return;
@@ -1403,6 +1483,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         socket: SocketHandler<SSL>,
     ) -> JsResult<()> {
         let this_ptr = this.as_ptr();
+        if !SSL || this.acts_as_tls_server() {
+            this.otel_connect_end(None);
+        }
         // A late event on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
         // JS-side destroy on a TLS socket driven by an upgraded duplex. There
@@ -1774,6 +1857,27 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         let verify_failed = SSL && ssl_error.error_no != 0;
 
+        if SSL && !this.acts_as_tls_server() && this.otel_connect.get().is_some() {
+            this.otel_connect_end(if authorized && !verify_failed {
+                None
+            } else if verify_failed {
+                Some((
+                    core::str::from_utf8(ssl_error.code_bytes())
+                        .ok()
+                        .filter(|c| !c.is_empty())
+                        .unwrap_or("handshake_failed"),
+                    core::str::from_utf8(ssl_error.reason_bytes()).unwrap_or(""),
+                ))
+            } else if hostname_mismatch {
+                Some((
+                    "ERR_TLS_CERT_ALTNAME_INVALID",
+                    "Hostname/IP does not match certificate's altnames",
+                ))
+            } else {
+                Some(("handshake_failed", "TLS handshake failed"))
+            });
+        }
+
         this.verify_error.set(if verify_failed {
             Some(StoredVerifyError {
                 code: Box::from(ssl_error.code_bytes()),
@@ -2060,6 +2164,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         reason: Option<*mut c_void>,
     ) -> JsResult<()> {
         jsc::mark_binding!();
+        this.otel_connect_end(Some(("closed", "closed before connecting")));
         // A late close on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
         // JS-side destroy on a TLS socket driven by an upgraded duplex. There
@@ -3601,6 +3706,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             native_callback: JsCell::new(NativeCallbacks::None),
             twin: JsCell::new(None),
             verify_error: JsCell::new(None),
+            otel_connect: Cell::new(bun_telemetry::SpanStub::NONE),
         });
         // Never shadow this with a long-lived borrow: it would alias the
         // reference dispatch materialises from the ext slot during
@@ -3708,6 +3814,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             native_callback: JsCell::new(NativeCallbacks::None),
             twin: JsCell::new(None),
             verify_error: JsCell::new(None),
+            otel_connect: Cell::new(bun_telemetry::SpanStub::NONE),
         });
         let raw_ref = raw;
         raw_ref.ref_();
@@ -4750,6 +4857,7 @@ pub fn js_upgrade_duplex_to_tls(
         native_callback: JsCell::new(NativeCallbacks::None),
         twin: JsCell::new(None),
         verify_error: JsCell::new(None),
+        otel_connect: Cell::new(bun_telemetry::SpanStub::NONE),
     });
     let tls_ref = tls;
     let tls_js_value = tls_ref.get_this_value(global);

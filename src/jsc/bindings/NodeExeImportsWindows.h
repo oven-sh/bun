@@ -48,6 +48,10 @@ public:
         wchar_t m_module[64] { 0 };
     };
 
+    // The caller unloads `module`: drop it from the once-per-module redirect set, since a later
+    // module can be mapped at the same base address.
+    static void forget(HMODULE module);
+
     // For a LoadLibraryExW that failed with ERROR_MOD_NOT_FOUND: whether the file has a load-time
     // (non-delay) import of node.exe, which the loader can only satisfy from a node.exe on the DLL
     // search path.

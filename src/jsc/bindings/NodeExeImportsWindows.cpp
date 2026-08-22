@@ -349,6 +349,13 @@ WTF::String NodeExeImports::Scope::unresolvedImportError(HMODULE loaded)
     return makeString(m_module[0] ? WTF::String(m_module) : "it"_s, " imports '"_s, WTF::String::fromLatin1(m_symbol), "' from node.exe, which Bun does not provide"_s);
 }
 
+void NodeExeImports::forget(HMODULE module)
+{
+    auto& processed = processedModules();
+    Locker locker { processed.lock };
+    processed.modules.remove(module);
+}
+
 bool NodeExeImports::fileHasLoadTimeNodeExeImport(const wchar_t* path)
 {
     HMODULE mapping = LoadLibraryExW(path, nullptr, LOAD_LIBRARY_AS_IMAGE_RESOURCE | LOAD_LIBRARY_AS_DATAFILE);

@@ -729,6 +729,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
 
     if (!napi_register_module_v1) {
 #if OS(WINDOWS)
+        Bun::NodeExeImports::forget(handle);
         FreeLibrary(handle);
 #else
         dlclose(handle);

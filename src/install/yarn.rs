@@ -43,6 +43,8 @@ pub(crate) struct YarnLock<'a> {
 
 pub struct Entry<'a> {
     pub(crate) specs: Vec<&'a [u8]>,
+    /// Name of the package the entry resolves to; see `package_name_of`.
+    pub(crate) name: &'a [u8],
     pub(crate) version: &'a [u8],
     // Usually borrows from the input; owned when `parse_git_url` rewrites a
     // `github:` spec to a `https://github.com/...` URL.
@@ -65,6 +67,7 @@ impl<'a> Default for Entry<'a> {
     fn default() -> Self {
         Self {
             specs: Vec::new(),
+            name: b"",
             version: b"",
             resolved: None,
             integrity: None,
@@ -93,10 +96,45 @@ pub(crate) struct ParsedGitUrl<'a> {
 }
 
 pub(crate) struct ParsedNpmAlias<'a> {
+    pub(crate) name: &'a [u8],
     pub(crate) version: &'a [u8],
 }
 
 impl<'a> Entry<'a> {
+    /// The alias spec may follow plain specs of the same package on yarn's shared key line.
+    pub(crate) fn package_name_of(specs: &[&'a [u8]]) -> &'a [u8] {
+        if let Some(name) = specs.iter().find_map(|spec| Self::npm_alias_target(spec)) {
+            return name;
+        }
+        match specs.first() {
+            Some(spec) => Self::get_name_from_spec(spec),
+            None => b"",
+        }
+    }
+
+    /// `alias@npm:<name>@<range>` -> `<name>`; `None` for every other kind of spec.
+    pub(crate) fn npm_alias_target(spec: &[u8]) -> Option<&[u8]> {
+        let alias_end = strings::index_of(spec, b"@npm:")?;
+        let name = Self::parse_npm_alias(&spec[alias_end + 1..]).name;
+        (!name.is_empty()).then_some(name)
+    }
+
+    /// Whether the dependency was declared as a tarball URL (`name@https://...`).
+    pub(crate) fn has_direct_url_spec(&self) -> bool {
+        self.specs.iter().any(|spec| {
+            strings::index_of(spec, b"@https://").is_some()
+                || strings::index_of(spec, b"@http://").is_some()
+        })
+    }
+
+    /// Identity shared by consolidation and the package-id pass; git entries go by repository.
+    pub(crate) fn dedupe_name(&self) -> &[u8] {
+        match &self.git_repo_name {
+            Some(repo_name) if !self.has_direct_url_spec() => repo_name,
+            _ => self.name,
+        }
+    }
+
     pub(crate) fn get_name_from_spec(spec: &[u8]) -> &[u8] {
         let unquoted = if spec[0] == b'"' && spec[spec.len() - 1] == b'"' {
             &spec[1..spec.len() - 1]
@@ -218,37 +256,22 @@ impl<'a> Entry<'a> {
         })
     }
 
+    /// Splits `npm:<name>@<range>`; the `@` of a scoped `<name>` is not the separator.
     pub(crate) fn parse_npm_alias(version: &[u8]) -> ParsedNpmAlias<'_> {
-        if version.len() <= 4 {
-            return ParsedNpmAlias { version: b"*" };
-        }
-
-        let npm_part = &version[4..];
-        if let Some(at_idx) = strings::index_of(npm_part, b"@") {
+        let target = version.strip_prefix(b"npm:").unwrap_or(version);
+        let scope_len = usize::from(target.starts_with(b"@"));
+        let Some(at_idx) = strings::index_of_char_usize(&target[scope_len..], b'@') else {
             return ParsedNpmAlias {
-                version: if at_idx + 1 < npm_part.len() {
-                    &npm_part[at_idx + 1..]
-                } else {
-                    b"*"
-                },
+                name: target,
+                version: b"*",
             };
+        };
+        let (name, range) = target.split_at(scope_len + at_idx);
+        let range = &range[b"@".len()..];
+        ParsedNpmAlias {
+            name,
+            version: if range.is_empty() { b"*" } else { range },
         }
-        ParsedNpmAlias { version: b"*" }
-    }
-
-    /// Registry tarball URLs look like `<registry>/<name>/-/<basename>-<version>.tgz`,
-    /// where `<name>` spans two path segments (`@scope/name`) for scoped packages.
-    pub(crate) fn get_package_name_from_resolved_url(url: &[u8]) -> Option<&[u8]> {
-        let path = &url[..strings::index_of(url, b"/-/")?];
-        let (prefix, name) = strings::rsplit_once_char(path, b'/')?;
-        if name.is_empty() {
-            return None;
-        }
-        let scope_start = strings::last_index_of_char(prefix, b'/').map_or(0, |slash| slash + 1);
-        if prefix[scope_start..].starts_with(b"@") {
-            return Some(&path[scope_start..]);
-        }
-        Some(name)
     }
 }
 
@@ -308,6 +331,7 @@ impl<'a> YarnLock<'a> {
 
                 let mut new_entry = Entry::<'a> {
                     specs: current_specs.clone(),
+                    name: Entry::package_name_of(&current_specs),
                     version: b"", // assigned below when "version" key is parsed
                     ..Default::default()
                 };
@@ -469,15 +493,12 @@ impl<'a> YarnLock<'a> {
         if new_entry.specs.is_empty() {
             return Ok(());
         }
-        let package_name = Entry::get_name_from_spec(new_entry.specs[0]);
+        let dedupe_name = new_entry.dedupe_name();
 
         for existing_entry in self.entries.iter_mut() {
-            if existing_entry.specs.is_empty() {
-                continue;
-            }
-            let existing_name = Entry::get_name_from_spec(existing_entry.specs[0]);
-
-            if package_name == existing_name && new_entry.version == existing_entry.version {
+            if dedupe_name == existing_entry.dedupe_name()
+                && new_entry.version == existing_entry.version
+            {
                 let old_len = existing_entry.specs.len();
                 let mut combined_specs: Vec<&'a [u8]> =
                     Vec::with_capacity(old_len + new_entry.specs.len());
@@ -811,31 +832,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     let mut next_package_id: PackageID = 1; // 0 is root
 
     for (yarn_idx, entry) in yarn_lock.entries.iter().enumerate() {
-        let mut is_npm_alias = false;
-        let mut is_direct_url = false;
-        for spec in entry.specs.iter() {
-            if strings::index_of(spec, b"@npm:").is_some() {
-                is_npm_alias = true;
-                break;
-            }
-            if strings::index_of(spec, b"@https://").is_some()
-                || strings::index_of(spec, b"@http://").is_some()
-            {
-                is_direct_url = true;
-            }
-        }
-
-        let name: &[u8] = if let (true, Some(resolved)) = (is_npm_alias, entry.resolved.as_deref())
-        {
-            Entry::get_package_name_from_resolved_url(resolved)
-                .unwrap_or_else(|| Entry::get_name_from_spec(entry.specs[0]))
-        } else if is_direct_url {
-            Entry::get_name_from_spec(entry.specs[0])
-        } else if let Some(repo_name) = &entry.git_repo_name {
-            repo_name
-        } else {
-            Entry::get_name_from_spec(entry.specs[0])
-        };
+        let name: &[u8] = entry.dedupe_name();
         let version = entry.version;
 
         if let Some(existing) = package_versions.get(name).cloned() {
@@ -904,31 +901,8 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     let _ = &created_packages; // never populated
 
     for (yarn_idx, entry) in yarn_lock.entries.iter().enumerate() {
-        let mut is_npm_alias = false;
-        for spec in entry.specs.iter() {
-            if strings::index_of(spec, b"@npm:").is_some() {
-                is_npm_alias = true;
-                break;
-            }
-        }
-
-        let mut is_direct_url_dep = false;
-        for spec in entry.specs.iter() {
-            if strings::index_of(spec, b"@https://").is_some()
-                || strings::index_of(spec, b"@http://").is_some()
-            {
-                is_direct_url_dep = true;
-                break;
-            }
-        }
-
-        let base_name: &[u8] =
-            if let (true, Some(resolved)) = (is_npm_alias, entry.resolved.as_deref()) {
-                Entry::get_package_name_from_resolved_url(resolved)
-                    .unwrap_or_else(|| Entry::get_name_from_spec(entry.specs[0]))
-            } else {
-                Entry::get_name_from_spec(entry.specs[0])
-            };
+        let is_direct_url_dep = entry.has_direct_url_spec();
+        let base_name: &[u8] = entry.name;
         let package_id = yarn_entry_to_package_id[yarn_idx];
 
         if (package_id as usize) < package_id_to_yarn_idx.len()
@@ -1584,16 +1558,12 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             continue;
         }
 
-        if let Some(resolved) = entry.resolved.as_deref() {
-            if let Some(real_name) = Entry::get_package_name_from_resolved_url(resolved) {
-                for spec in entry.specs.iter() {
-                    let alias_name = Entry::get_name_from_spec(spec);
+        for spec in entry.specs.iter() {
+            let alias_name = Entry::get_name_from_spec(spec);
 
-                    if alias_name != real_name {
-                        let alias_hash = string_hash(alias_name);
-                        this.get_or_put_id(package_id, alias_hash)?;
-                    }
-                }
+            if alias_name != entry.name {
+                let alias_hash = string_hash(alias_name);
+                this.get_or_put_id(package_id, alias_hash)?;
             }
         }
     }

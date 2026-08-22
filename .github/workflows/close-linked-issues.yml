@@ -72,15 +72,21 @@ jobs:
               "replace", "replaces", "replaced",
             ]);
 
+            // A hedge: the PR may or may not close the reference ("may fix #1",
+            // "partially fixes #1", "hopefully this fixes #1", "could this fix #1?").
+            const HEDGES = new Set([
+              "may", "might", "could", "would", "possibly", "probably", "potentially", "maybe", "hopefully", "likely", "unlikely",
+              "partially", "partly", "partial",
+            ]);
+
             // A keyword led by one of these does not state that the PR closes
-            // anything: a negation ("does not fix #1"), a hedge ("may fix #1",
-            // "partially fixes #1"), or a determiner or preposition that makes
-            // the keyword an adjective ("the closed #1", "a comment on closed #1").
+            // anything: a negation ("does not fix #1"), a hedge, or a determiner or
+            // preposition that makes the keyword an adjective ("the closed #1", "a
+            // comment on closed #1").
             const DISQUALIFIERS = new Set([
               "not", "never", "neither", "nor", "without", "cannot", "can't", "doesn't", "don't", "won't", "didn't",
               "isn't", "wasn't", "hasn't", "haven't", "hadn't", "wouldn't", "couldn't", "shouldn't", "mightn't", "mustn't",
-              "partially", "partly", "partial",
-              "may", "might", "could", "would", "possibly", "probably", "potentially", "maybe", "hopefully", "likely", "unlikely",
+              ...HEDGES,
               "the", "a", "an", "of", "on", "in", "by", "from", "with", "for", "than",
             ]);
 
@@ -98,11 +104,14 @@ jobs:
             const DETERMINERS = new Set(["this", "that", "the", "a", "an"]);
 
             // Words that can sit between the deciding word and the keyword without
-            // changing the reading: adverbs ("may also fix", "will fully fix") and the
-            // auxiliaries of the perfect ("would have fixed", "#100 has fixed").
+            // changing the reading: adverbs ("may also fix", "will fully fix"), the
+            // auxiliaries of the perfect ("would have fixed", "#100 has fixed") and the
+            // word that stands in for a removed span ("#100 ~~also~~ fixes #1", see
+            // placeholder()).
             const INTERVENING = new Set([
               "also", "fully", "completely", "entirely", "actually", "really", "yet", "directly", "properly",
               "have", "has", "had",
+              "code",
             ]);
 
             // Tokens: { kind: "word", text } (lowercased), { kind: "ref", repository, number, attached }
@@ -180,8 +189,11 @@ jobs:
               let p = skipBack(tokens, k - 1);
               // "If this PR fixes #1": the subject may be a determiner and a noun.
               if (tokens[p]?.kind === "word" && DETERMINERS.has(tokens[p].text)) p = skipBack(tokens, p - 1);
+              // "Hopefully, this fixes #1".
+              if (isPunct(tokens[p], ",")) p = skipBack(tokens, p - 1);
               const prev = tokens[p];
-              if (prev?.kind === "word" && SUBORDINATORS.has(prev.text)) return false;
+              // "once we fix #1", "hopefully this fixes #1", "could this fix #1?".
+              if (prev?.kind === "word" && (SUBORDINATORS.has(prev.text) || HEDGES.has(prev.text))) return false;
               if (!BASE_FORMS.has(keyword)) return true;
               // "Fix #1" at the start of a line is a statement, "unable to\nfix #1" is not.
               return lineStart ? before.text !== "to" : VERB_MARKERS.has(before.text);
@@ -198,7 +210,7 @@ jobs:
               return endsWithReference(tokens, p);
             }
 
-            // Whether a reference ends at `k`: "#100", "(#100)", "**#100**",
+            // Whether a reference ends at `k`: "#100", "(#100)", "**#100**", "<url>",
             // "[#100](url)" or "[text](issue url)".
             function endsWithReference(tokens, k) {
               let p = k;
@@ -206,6 +218,7 @@ jobs:
               const token = tokens[p];
               if (token === undefined) return false;
               if (token.kind === "ref") return true;
+              if (isPunct(token, ">")) return tokens[p - 1]?.kind === "ref" && isPunct(tokens[p - 2], "<");
               if (!isPunct(token, ")")) return false;
               if (tokens[p - 1]?.kind === "ref" && isPunct(tokens[p - 2], "(")) return true;
               if (!isPunct(tokens[p - 2], "(") || !isPunct(tokens[p - 3], "]")) return false;
@@ -232,12 +245,17 @@ jobs:
               return token !== undefined && token.kind === "word" && token.text === text;
             }
 
-            // A reference token, or a markdown link `[#1](url)` / `[text](issue url)`,
-            // at `index`: { token, end } or null.
+            // A reference token, an autolink `<issue url>`, or a markdown link
+            // `[#1](url)` / `[text](issue url)`, at `index`: { token, end } or null.
             function readReference(tokens, index) {
               const token = tokens[index];
               if (token === undefined) return null;
               if (token.kind === "ref") return token.attached ? null : { token, end: index + 1 };
+              if (isPunct(token, "<")) {
+                const target = tokens[index + 1];
+                if (target?.kind === "ref" && !target.attached && isPunct(tokens[index + 2], ">")) return { token: target, end: index + 3 };
+                return null;
+              }
               if (!isPunct(token, "[")) return null;
               let close = index + 1;
               while (close < tokens.length && close < index + 10 && !isPunct(tokens[close], "]")) {
@@ -344,24 +362,26 @@ jobs:
                 // and the pass over the whole text pairs those.
                 const prose = removeSpans(rest, "`");
                 let out = "";
+                let text = false;
                 let i = 0;
                 while (i < prose.length) {
                   const start = prose.indexOf("<!--", i);
-                  if (start === -1) {
-                    out += prose.slice(i);
-                    break;
-                  }
-                  out += prose.slice(i, start) + " ";
-                  const end = prose.indexOf("-->", start + 4);
+                  const between = prose.slice(i, start === -1 ? prose.length : start);
+                  if (between.trim() !== "") text = true;
+                  out += between;
+                  if (start === -1) break;
+                  // "<!-->" and "<!--->" are complete comments.
+                  const end = prose.indexOf("-->", start + 2);
+                  out += placeholder(prose, start - 1, end === -1 ? prose.length : end + 3);
                   if (end === -1) {
                     comment = true;
                     break;
                   }
                   i = end + 3;
                 }
-                // A line that was only a comment is not a paragraph.
-                if (out.trim() === "") paragraph = false;
-                kept.push(out);
+                // A line that was only a comment is blank, and not a paragraph.
+                if (!text) paragraph = false;
+                kept.push(text ? out : "");
               }
               return kept.join("\n");
             }
@@ -507,11 +527,13 @@ jobs:
               return out;
             }
 
-            // What replaces a removed span. A space would read as a word boundary to
-            // the later passes: "~~Fixes #1 `x`~~" needs its closing run to touch text,
-            // and a line that was only a code span is not blank. A word keeps the
-            // sentence whole for the look-back ("the `rm` fix #1" stays a noun phrase),
-            // and a space is added only next to a word character.
+            // What replaces a removed span or comment. A space would read as a word
+            // boundary to the later passes: "~~Fixes #1 `x`~~" (or a comment in place
+            // of the span) needs its closing run to touch text, and a line that was
+            // only a code span is not blank. A word keeps the sentence whole, and the
+            // look-back skips it (INTERVENING): "the `rm` fix #1" still shows its
+            // determiner and "#100 ~~also~~ fixes #1" its subject. A space is added
+            // only next to a word character.
             function placeholder(text, before, after) {
               const left = before >= 0 && isWordChar(text[before]) ? " " : "";
               const right = after < text.length && isWordChar(text[after]) ? " " : "";

@@ -606,8 +606,10 @@ impl Stringifier {
     fn append_double_quoted_string(&mut self, str: &BunString) {
         self.builder.append_lchar(b'"');
 
-        for i in 0..str.length() {
+        let mut i: usize = 0;
+        while i < str.length() {
             let c = str.char_at(i);
+            i += 1;
 
             match c {
                 0x00 => self.builder.append_latin1(b"\\0"),
@@ -650,13 +652,32 @@ impl Stringifier {
                 0x2028 => self.builder.append_latin1(b"\\L"), // line separator
                 0x2029 => self.builder.append_latin1(b"\\P"), // paragraph separator
 
+                // A surrogate pair is written as is. An unpaired surrogate is
+                // not a Unicode character, so it is written as `\uXXXX`, the
+                // way `JSON.stringify` writes it.
+                0xd800..=0xdbff
+                    if i < str.length() && bun_core::strings::u16_is_trail(str.char_at(i)) =>
+                {
+                    self.builder.append_uchar(c);
+                    self.builder.append_uchar(str.char_at(i));
+                    i += 1;
+                }
+                0xd800..=0xdfff => {
+                    self.builder.append_latin1(b"\\u");
+                    for shift in [12u8, 8, 4, 0] {
+                        self.builder
+                            .append_lchar(bun_core::fmt::hex_char_lower((c >> shift) as u8));
+                    }
+                }
+
                 0x20..=0x21
                 | 0x23..=0x5b
                 | 0x5d..=0x7e
                 | 0x80..=0x84
                 | 0x86..=0x9f
                 | 0xa1..=0x2027
-                | 0x202a..=u16::MAX => self.builder.append_uchar(c),
+                | 0x202a..=0xd7ff
+                | 0xe000..=u16::MAX => self.builder.append_uchar(c),
             }
         }
 
@@ -891,6 +912,17 @@ fn string_needs_quotes(str: &BunString) -> bool {
             | 0xa0
             | 0x2028
             | 0x2029 => return true,
+
+            // A surrogate pair is a printable character. An unpaired surrogate
+            // is not, and has to be written as a `\uXXXX` escape.
+            0xd800..=0xdbff => {
+                if i + 1 < str.length() && bun_core::strings::u16_is_trail(str.char_at(i + 1)) {
+                    i += 2;
+                } else {
+                    return true;
+                }
+            }
+            0xdc00..=0xdfff => return true,
 
             _ => {
                 i += 1;

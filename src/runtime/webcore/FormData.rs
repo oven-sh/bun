@@ -318,7 +318,8 @@ pub(crate) fn for_each_multipart_entry<C>(
                 while let Some(eql_start) = strings::index_of(value, b"=") {
                     let eql_key = strings::trim(&value[..eql_start], b" \t;");
                     value = &value[eql_start + 1..];
-                    if value.starts_with(b"\"") {
+                    let quoted = value.starts_with(b"\"");
+                    if quoted {
                         value = &value[1..];
                     }
 
@@ -328,6 +329,12 @@ pub(crate) fn for_each_multipart_entry<C>(
                         while i < field_value.len() {
                             match field_value[i] {
                                 b'"' => {
+                                    field_value = &field_value[..i];
+                                    i += 1;
+                                    break;
+                                }
+                                // Unquoted value is an RFC 2045 token; leave `;` for the outer loop.
+                                b';' if !quoted => {
                                     field_value = &field_value[..i];
                                     break;
                                 }
@@ -340,7 +347,7 @@ pub(crate) fn for_each_multipart_entry<C>(
                             }
                             i += 1;
                         }
-                        value = &value[(i + 1).min(value.len())..];
+                        value = &value[i.min(value.len())..];
                     }
 
                     if strings::eql_case_insensitive_ascii(eql_key, b"name", true) {

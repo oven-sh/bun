@@ -1654,6 +1654,70 @@ it("server.upgrade() does not blank the Request's url/headers read afterwards", 
   expect(captured!.headerCount).toBeGreaterThan(0);
 });
 
+it("ws.subscribe()/send() with an argument whose toPrimitive terminates the socket does not touch the dead socket", async () => {
+  await using proc = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const evil = (ws, value) =>
+          Object.assign(new String(value), { [Symbol.toPrimitive]() { ws.terminate(); return value; } });
+        const results = [];
+        const { promise, resolve } = Promise.withResolvers();
+        let pending = 5;
+        const server = Bun.serve({
+          port: 0,
+          fetch(req, srv) {
+            if (srv.upgrade(req, { data: new URL(req.url).pathname.slice(1) })) return;
+            return new Response("no");
+          },
+          websocket: {
+            open(ws) {
+              const which = ws.data;
+              let rc;
+              if (which === "subscribe") rc = ws.subscribe(evil(ws, "room"));
+              else if (which === "unsubscribe") { ws.subscribe("room"); rc = ws.unsubscribe(evil(ws, "room")); }
+              else if (which === "isSubscribed") { ws.subscribe("room"); rc = ws.isSubscribed(evil(ws, "room")); }
+              else if (which === "send") rc = ws.send(evil(ws, "hello"));
+              else if (which === "sendText") rc = ws.sendText(evil(ws, "hello"));
+              results.push(which + "=" + rc + " subscribed=" + ws.isSubscribed("room"));
+              if (--pending === 0) resolve();
+            },
+            message() {},
+            close() {},
+          },
+        });
+        for (const which of ["subscribe", "unsubscribe", "isSubscribed", "send", "sendText"]) {
+          new WebSocket("ws://127.0.0.1:" + server.port + "/" + which).onerror = () => {};
+        }
+        await promise;
+        results.sort();
+        for (const r of results) console.log(r);
+        console.log("publish=" + server.publish("room", "hello"));
+        server.stop(true);
+        process.exit(0);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe(
+    [
+      "isSubscribed=false subscribed=false",
+      "send=0 subscribed=false",
+      "sendText=0 subscribed=false",
+      "subscribe=false subscribed=false",
+      "unsubscribe=false subscribed=false",
+      "publish=0",
+      "",
+    ].join("\n"),
+  );
+  expect(exitCode).toBe(0);
+});
+
 // Regression: onUpgrade stored the ZigString returned by FetchHeaders.fastGet()
 // (which borrows directly from the header map entry's WTF::StringImpl) and then
 // called fastRemove(), which frees that StringImpl when the map holds the only

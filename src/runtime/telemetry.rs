@@ -657,8 +657,20 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         if let Some(s) = vm_state(global) {
             exporter::JsExporter::detach_all_for_vm(s);
         }
+    } else if configured() {
+        // No exporters given: keep the pipeline that env/bunfig/an earlier
+        // start() already set up rather than adding the env-derived ones again.
+        cfg.console_exporter = false;
     }
-    configure_with(global, &cfg, otlp);
+    configure_with(
+        global,
+        &cfg,
+        if replaces_exporters || !configured() {
+            otlp
+        } else {
+            Vec::new()
+        },
+    );
     if !js_exporters.is_empty() {
         let s = vm_state_or_init(global);
         for e in js_exporters {

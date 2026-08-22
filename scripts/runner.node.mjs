@@ -910,6 +910,10 @@ async function runTests() {
           // prettier-ignore
           env.LSAN_OPTIONS = `malloc_context_size=30:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
         }
+        // abort/ files deliberately process.abort() a child, and --coredump-upload
+        // reports any core written during a test as a crash. Upstream runs this
+        // suite with core files disabled as well (tools/test.py disable_core_files).
+        const disableCoreFiles = !isWindows && title.includes("js/node/test/abort/");
         return runTest(
           title,
           async index => {
@@ -921,6 +925,7 @@ async function runTests() {
                 ...(subcommand === "run" ? testFlags : []),
                 absoluteTestPath,
               ],
+              disableCoreFiles,
               timeout: getNodeParallelTestTimeout(title),
               env: {
                 ...env,
@@ -1771,7 +1776,10 @@ function getCombinedPath(execPath) {
  * @param {SpawnOptions} options
  * @returns {Promise<SpawnBunResult>}
  */
-async function spawnBun(execPath, { args, cwd, timeout, gracefulTimeout, idleTimeout, env, stdout, stderr }) {
+async function spawnBun(
+  execPath,
+  { args, cwd, timeout, gracefulTimeout, idleTimeout, env, stdout, stderr, disableCoreFiles },
+) {
   const path = getCombinedPath(execPath);
   const tmpdirPath = mkdtempSync(join(tmpdir(), "buntmp-"));
   const { username, homedir } = userInfo();
@@ -1822,8 +1830,9 @@ async function spawnBun(execPath, { args, cwd, timeout, gracefulTimeout, idleTim
   try {
     const existingCores = options["coredump-upload"] ? readdirSync(coresDir) : [];
     const result = await spawnSafe({
-      command: execPath,
-      args,
+      // exec keeps the pid, so the main-process core check below still applies.
+      command: disableCoreFiles ? "/bin/sh" : execPath,
+      args: disableCoreFiles ? ["-c", 'ulimit -c 0 && exec "$@"', "--", execPath, ...args] : args,
       cwd,
       timeout,
       gracefulTimeout,
@@ -2296,6 +2305,11 @@ function isNodeTest(path) {
   return (
     unixPath.includes("js/node/test/parallel/") ||
     unixPath.includes("js/node/test/sequential/") ||
+    unixPath.includes("js/node/test/abort/") ||
+    unixPath.includes("js/node/test/async-hooks/") ||
+    unixPath.includes("js/node/test/client-proxy/") ||
+    unixPath.includes("js/node/test/message/") ||
+    unixPath.includes("js/node/test/report/") ||
     unixPath.includes("js/bun/test/parallel/")
   );
 }

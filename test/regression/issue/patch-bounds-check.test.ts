@@ -44,7 +44,7 @@ test("patch application should handle out-of-bounds line numbers gracefully", as
   expect(exitCode).toBe(1);
   expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
     "Resolving dependencies
-    error: failed applying patch file: EINVAL: Invalid argument (stat())
+    error: failed applying patch file: EINVAL: index.js: Invalid argument (stat())
     error: failed to apply patchfile (patches/lodash+4.17.21.patch)"
   `);
   expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`"bun install <version> (<revision>)"`);

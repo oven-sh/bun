@@ -12,7 +12,7 @@ const { METHODS, STATUS_CODES, setMaxHTTPHeaderSize, getMaxHTTPHeaderSize } = re
 // node's lib/_http_client.js creates a debuglog('http'); the sensitive-data
 // warning fires the first time it logs. Bun's client uses $debug instead, so
 // force the emission once up front when NODE_DEBUG enables the http section.
-{
+if (process.env.NODE_DEBUG) {
   const debug = require("node:util").debuglog("http");
   if (debug.enabled) debug();
 }

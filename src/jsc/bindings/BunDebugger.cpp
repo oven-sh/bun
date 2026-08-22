@@ -126,7 +126,7 @@ public:
         this->status = ConnectionStatus::Connected;
         auto* globalObject = context.jsGlobalObject();
         if (this->unrefOnDisconnect) {
-            Bun__VmHandle__refKeepAlive(WebCore::clientData(JSC::getVM(globalObject))->vmHandle, 1);
+            Bun__VmHandle__refKeepAlive(WebCore::clientData(JSC::getVM(globalObject))->vmHandle, BunLoopKind::Regular, 1);
         }
         globalObject->setInspectable(true);
         auto& inspector = globalObject->inspectorDebuggable();
@@ -213,7 +213,7 @@ public:
 
             if (connection->unrefOnDisconnect) {
                 connection->unrefOnDisconnect = false;
-                Bun__VmHandle__refKeepAlive(WebCore::clientData(context.vm())->vmHandle, -1);
+                Bun__VmHandle__refKeepAlive(WebCore::clientData(context.vm())->vmHandle, BunLoopKind::Regular, -1);
             }
 
             {
@@ -476,7 +476,7 @@ public:
         notifyPausedThread();
 
         if (this->jsThreadMessageScheduledCount++ == 0) {
-            ScriptExecutionContext::postTaskTo(scriptExecutionContextIdentifier, [connection = Ref { *this }](ScriptExecutionContext& context) {
+            ScriptExecutionContext::postTaskTo(scriptExecutionContextIdentifier, BunLoopKind::Regular, [connection = Ref { *this }](ScriptExecutionContext& context) {
                 connection->receiveMessagesOnInspectorThread(context, static_cast<Zig::GlobalObject*>(context.jsGlobalObject()), true);
             });
         }
@@ -492,7 +492,7 @@ public:
         notifyPausedThread();
 
         if (this->jsThreadMessageScheduledCount++ == 0) {
-            ScriptExecutionContext::postTaskTo(scriptExecutionContextIdentifier, [connection = Ref { *this }](ScriptExecutionContext& context) {
+            ScriptExecutionContext::postTaskTo(scriptExecutionContextIdentifier, BunLoopKind::Regular, [connection = Ref { *this }](ScriptExecutionContext& context) {
                 connection->receiveMessagesOnInspectorThread(context, static_cast<Zig::GlobalObject*>(context.jsGlobalObject()), true);
             });
         }

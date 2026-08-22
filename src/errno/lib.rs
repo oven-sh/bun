@@ -17,7 +17,8 @@ macro_rules! impl_get_errno_libc {
                 // against the type's own all-ones value instead (== -1 for
                 // signed, == MAX for unsigned — both are libc's failure rc).
                 if self == !(0 as $t) {
-                    $crate::E::from_raw($crate::posix::errno() as u16)
+                    // An errno the enum does not declare collapses to EIO.
+                    $crate::from_errno($crate::posix::errno())
                 } else {
                     $crate::E::SUCCESS
                 }
@@ -276,22 +277,18 @@ pub fn e_from_negated(errno: core::ffi::c_int) -> E {
 }
 
 impl SystemErrno {
-    /// Unchecked discriminant cast.
+    /// Variant for a discriminant known to be declared; panics on any other.
     ///
-    /// On POSIX the enum is dense `0..MAX`, so we debug-assert `n < MAX`.
+    /// OS-reported codes go through [`from_errno`] / [`SystemErrno::init`] instead.
     /// On Windows the enum is **sparse** (dense `0..=137` plus isolated `UV_E*`
     /// discriminants in the ~3000-4095 range — see windows_errno.rs), so the
-    /// `< MAX` bound does not hold for valid tags and the assert is skipped.
+    /// check is `from_repr`'s match over the declared variants, not `n < MAX`.
     #[inline]
     pub const fn from_raw(n: u16) -> SystemErrno {
-        // `as usize` on both sides papers over per-OS `MAX` typing (POSIX `u16`
-        // vs Windows `usize`) without normalizing the constant itself.
-        #[cfg(not(windows))]
-        debug_assert!((n as usize) < (Self::MAX as usize));
-        // SAFETY: caller guarantees `n` is a declared `#[repr(u16)]` discriminant
-        // of `SystemErrno`. The enum is NOT
-        // contiguous on Windows; do not assume `n < MAX` implies validity there.
-        unsafe { core::mem::transmute::<u16, SystemErrno>(n) }
+        match Self::from_repr(n) {
+            Some(e) => e,
+            None => panic!("SystemErrno::from_raw: not a declared errno discriminant"),
+        }
     }
 }
 
@@ -480,6 +477,95 @@ mod errno_name_tests {
         assert_eq!(system_errno_name(106), Some("EQFULL"));
         #[cfg(target_os = "freebsd")]
         assert_eq!(system_errno_name(97), Some("EINTEGRITY"));
+    }
+
+    /// On POSIX the declared set being exactly `0..MAX` is what `init`'s range check relies on.
+    #[test]
+    fn from_raw_round_trips_every_declared_discriminant() {
+        use enum_map::Enum;
+        for i in 0..SystemErrno::LENGTH {
+            let e = SystemErrno::from_usize(i);
+            assert_eq!(SystemErrno::from_raw(e as u16), e);
+        }
+        #[cfg(not(windows))]
+        {
+            assert_eq!(SystemErrno::LENGTH, usize::from(SystemErrno::MAX));
+            for n in 0..SystemErrno::MAX {
+                assert!(SystemErrno::from_repr(n).is_some(), "hole at {n}");
+            }
+        }
+    }
+
+    /// One past the dense head is undeclared everywhere (the Windows `UV_*` tail starts near 3000).
+    #[test]
+    #[should_panic(expected = "not a declared errno discriminant")]
+    fn from_raw_rejects_one_past_the_dense_head() {
+        let _ = SystemErrno::from_raw(system_errno_max_dense() as u16);
+    }
+
+    #[test]
+    #[should_panic(expected = "not a declared errno discriminant")]
+    fn from_raw_rejects_u16_max() {
+        let _ = SystemErrno::from_raw(u16::MAX);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn get_errno_collapses_undeclared_libc_errno_to_eio() {
+        let set_errno = |value: core::ffi::c_int| {
+            // SAFETY: the calling thread's own errno slot, valid for the life of the thread.
+            unsafe { *bun_core::ffi::errno_ptr() = value };
+        };
+        set_errno(i32::from(SystemErrno::MAX));
+        assert_eq!(get_errno(-1i32), SystemErrno::EIO);
+        set_errno(libc::ENOENT);
+        assert_eq!(get_errno(-1i32), SystemErrno::ENOENT);
+        // A successful return never consults errno.
+        set_errno(i32::from(SystemErrno::MAX));
+        assert_eq!(get_errno(0i32), SystemErrno::SUCCESS);
+    }
+
+    /// The kernel reports `-errno` in the result itself, anywhere in `-4095..=-1`.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[test]
+    fn get_errno_collapses_undeclared_raw_syscall_errno_to_eio() {
+        let failed_with = |errno: isize| (-errno) as usize;
+        assert_eq!(
+            get_errno(failed_with(SystemErrno::MAX as isize)),
+            SystemErrno::EIO
+        );
+        assert_eq!(get_errno(failed_with(4095)), SystemErrno::EIO);
+        assert_eq!(
+            get_errno(failed_with(libc::ENOENT as isize)),
+            SystemErrno::ENOENT
+        );
+        // Anything outside that window is a successful result (a length, an address).
+        assert_eq!(get_errno(0usize), SystemErrno::SUCCESS);
+        assert_eq!(get_errno(42usize), SystemErrno::SUCCESS);
+        assert_eq!(get_errno(failed_with(4096)), SystemErrno::SUCCESS);
+    }
+
+    /// `to_e` and `bun_sys::Error::resolve_system_errno` convert between the enums by discriminant.
+    #[cfg(windows)]
+    #[test]
+    fn e_and_system_errno_declare_the_same_discriminants() {
+        use enum_map::Enum;
+        assert_eq!(E::LENGTH, SystemErrno::LENGTH);
+        for i in 0..SystemErrno::LENGTH {
+            let s = SystemErrno::from_usize(i);
+            assert_eq!(s.to_e() as u16, s as u16, "{s:?}");
+        }
+        for i in 0..E::LENGTH {
+            let e = E::from_usize(i);
+            assert_eq!(SystemErrno::from_raw(e as u16) as u16, e as u16, "{e:?}");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[should_panic(expected = "not a declared errno discriminant")]
+    fn e_from_raw_rejects_the_gap_before_the_uv_tail() {
+        let _ = E::from_raw(SystemErrno::MAX as u16);
     }
 
     /// `win32_errno_name` translation contract: known `GetLastError()` codes

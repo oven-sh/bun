@@ -1957,7 +1957,7 @@ mod spawn_process_body {
                     // SAFETY: `dup_fds` is a 2-element out-array; libuv writes both.
                     // `from_uv_rc` sets `from_libuv` so display goes through the
                     // checked uv→errno translator (raw codes are sparse on Windows;
-                    // an unchecked `E::from_raw` would be UB for unmapped values).
+                    // `E::from_raw` would panic on an unmapped one).
                     if let Some(err) = bun_sys::Error::from_uv_rc(
                         unsafe { uv::uv_pipe(&mut dup_fds, 0, 0) },
                         bun_sys::Tag::pipe,
@@ -2448,7 +2448,7 @@ mod spawn_process_body {
                     // Route through the libuv→errno translator: on Windows, raw
                     // libuv codes are sparse negatives (e.g. UV_EOF = -4095) and
                     // do **not** map 1:1 onto `bun_sys::E` discriminants, so an
-                    // unchecked `E::from_raw(err_enum())` would be UB for any
+                    // `E::from_raw(err_enum())` call would panic for any
                     // unmapped value.
                     let e = bun_sys::windows::translate_uv_error_to_e(nreads as core::ffi::c_int);
                     Self::on_error(this, e);

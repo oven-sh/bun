@@ -1334,8 +1334,7 @@ fn has_blob_url(blob_id: &[u8]) -> bool {
 /// `Request::get_blob_without_call_frame`. Downcasts
 /// `value` to a `Response`/`Request` (whose data shapes + `BodyMixin` impl live
 /// in this crate, above `bun_jsc` / `bun_js_parser_jsc`) and returns its body
-/// Blob wrapped in a resolved Promise; `Ok(None)` to fall through to the
-/// `Blob`/`BuildMessage`/`ResolveMessage` arms in `Macro::Run::coerce`.
+/// Blob as a Promise; `Ok(None)` if `value` is neither.
 fn body_mixin_get_blob(
     value: JSValue,
     global: &JSGlobalObject,

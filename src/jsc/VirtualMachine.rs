@@ -2009,9 +2009,8 @@ pub struct RuntimeHooks {
     /// `Response::get_blob_without_call_frame` /
     /// `Request::get_blob_without_call_frame`. If
     /// `value` downcasts to a `Response` or `Request` (both live in
-    /// `bun_runtime::webcore`), return its body Blob wrapped in a resolved
-    /// Promise; `Ok(None)` to fall through to the `Blob`/`BuildMessage`/
-    /// `ResolveMessage` arms in `Macro::Run::coerce`.
+    /// `bun_runtime::webcore`), return its body Blob as a Promise (the body may
+    /// still be arriving); `Ok(None)` if `value` is neither.
     pub body_mixin_get_blob:
         fn(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<JSValue>>,
     /// `process.exit(global, code)`. Main-thread is `noreturn`; in a worker

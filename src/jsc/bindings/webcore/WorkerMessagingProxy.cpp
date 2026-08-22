@@ -38,6 +38,7 @@
 #include "SerializedScriptValue.h"
 #include "Worker.h"
 #include "ZigGlobalObject.h"
+#include <JavaScriptCore/JSPromise.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {

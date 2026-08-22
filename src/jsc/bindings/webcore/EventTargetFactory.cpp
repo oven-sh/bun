@@ -45,6 +45,8 @@ JSC::JSValue toJS(JSC::JSGlobalObject* state, JSDOMGlobalObject* globalObject, E
         return toJS(state, globalObject, static_cast<BroadcastChannel&>(impl));
     case BunWebViewEventTargetInterfaceType:
         return Bun::toJS(state, globalObject, static_cast<Bun::WebViewEventTarget&>(impl));
+    case ClipboardEventTargetInterfaceType:
+        return toJS(state, globalObject, static_cast<Clipboard&>(impl));
     case DOMWindowEventTargetInterfaceType:
         return globalObject;
     case MessagePortEventTargetInterfaceType:

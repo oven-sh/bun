@@ -7,7 +7,6 @@ test/integration/vite-build/vite-build.test.ts
 test/js/bun/resolve/import-meta.test.js
 test/js/bun/resolve/resolve.test.ts
 test/js/bun/test/parallel/test-integration-rspack.ts
-test/js/bun/util/BunObject.test.ts
 test/js/bun/util/fuzzy-wuzzy.test.ts
 test/js/node/module/module-resolve-filename-paths.test.js
 test/js/node/module/node-module-module.test.js

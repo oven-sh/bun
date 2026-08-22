@@ -4282,6 +4282,56 @@ describe("hoisting", async () => {
     expect(await exists(join(packageDir, "node_modules", "peer-deps-fixed", "node_modules"))).toBeFalse();
   });
 
+  test("bun add exact version when root also has peerDependency on same name", async () => {
+    await writeFile(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        peerDependencies: { "no-deps": "^1" },
+      }),
+    );
+
+    let { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    expect(await exited).toBe(0);
+    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+      version: "1.1.0",
+    });
+
+    ({ stderr, exited } = spawn({
+      cmd: [bunExe(), "add", "no-deps@1.0.0"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    }));
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("incorrect peer dependency");
+    expect(await exited).toBe(0);
+    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+      version: "1.0.0",
+    });
+
+    // A plain install after the add must keep the pin.
+    ({ stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    }));
+    expect(await exited).toBe(0);
+    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+      version: "1.0.0",
+    });
+  });
+
   test("root workspace (other than root) dependency will not hoist incorrect peer", async () => {
     await Promise.all([
       write(

@@ -22,6 +22,8 @@ pub struct WindowsWatcher {
     pub(crate) watcher: DirWatcher,
     pub(crate) buf: PathBuffer,
     pub(crate) base_idx: usize,
+    /// A read is outstanding: the kernel may write into `watcher` until its packet is dequeued.
+    armed: bool,
 }
 
 impl Default for WindowsWatcher {
@@ -35,6 +37,7 @@ impl Default for WindowsWatcher {
             },
             buf: PathBuffer::uninit(),
             base_idx: 0,
+            armed: false,
         }
     }
 }
@@ -299,93 +302,153 @@ impl WindowsWatcher {
         Ok(())
     }
 
+    /// An outstanding read is reused, so `overlapped`/`buf` are never handed to two reads.
+    fn arm(&mut self) -> bun_sys::Result<()> {
+        if !self.armed {
+            self.watcher.prepare()?;
+            self.armed = true;
+        }
+        Ok(())
+    }
+
+    /// Every read started by `arm()` yields exactly one packet carrying `watcher.overlapped`.
+    fn dequeue(&mut self, timeout_ms: w::DWORD) -> Packet {
+        let mut nbytes: w::DWORD = 0;
+        let mut key: w::ULONG_PTR = 0;
+        let mut overlapped: *mut w::OVERLAPPED = ptr::null_mut();
+        // SAFETY: iocp is a valid IOCP handle; out-params are valid stack locals.
+        let rc = unsafe {
+            w::kernel32::GetQueuedCompletionStatus(
+                self.iocp,
+                &mut nbytes,
+                &mut key,
+                &mut overlapped,
+                timeout_ms,
+            )
+        };
+        let err = if rc == 0 {
+            w::Win32Error::get()
+        } else {
+            w::Win32Error::SUCCESS
+        };
+
+        if overlapped == &raw mut self.watcher.overlapped {
+            self.armed = false;
+            return Packet::Ours { nbytes, err };
+        }
+        if !overlapped.is_null() {
+            return Packet::Foreign;
+        }
+        if rc != 0 {
+            return Packet::Wake;
+        }
+        // `WAIT_TIMEOUT` (258) — not yet a named const on `bun_sys::windows::Win32Error`.
+        if err == w::Win32Error::TIMEOUT || err == w::Win32Error(258) {
+            return Packet::Timeout;
+        }
+        Packet::PortError(err)
+    }
+
     /// wait until new events are available
     fn next(&mut self, timeout: Timeout) -> bun_sys::Result<Option<EventIterator>> {
-        if let Err(err) = self.watcher.prepare() {
+        if let Err(err) = self.arm() {
             bun_core::scoped_log!(watcher, "prepare() returned error");
             return Err(err);
         }
 
-        let mut nbytes: w::DWORD = 0;
-        let mut key: w::ULONG_PTR = 0;
-        let mut overlapped: *mut w::OVERLAPPED = ptr::null_mut();
         loop {
-            // SAFETY: iocp is a valid IOCP handle; out-params are valid stack locals.
-            let rc = unsafe {
-                w::kernel32::GetQueuedCompletionStatus(
-                    self.iocp,
-                    &mut nbytes,
-                    &mut key,
-                    &mut overlapped,
-                    timeout as w::DWORD,
-                )
-            };
-            if rc == 0 {
-                let err = w::Win32Error::get();
-                // `WAIT_TIMEOUT` (258) — not yet a named const on `bun_sys::windows::Win32Error`.
-                if err == w::Win32Error::TIMEOUT || err == w::Win32Error(258) {
-                    return Ok(None);
-                } else {
+            match self.dequeue(timeout as w::DWORD) {
+                Packet::Timeout => return Ok(None),
+                // Posted by `wake()`; `watch_loop` re-checks `running`.
+                Packet::Wake => return Ok(None),
+                Packet::Foreign => continue,
+                Packet::PortError(err) => {
                     bun_core::scoped_log!(watcher, "GetQueuedCompletionStatus failed: {}", err.0);
-                    return Err(bun_sys::Error {
-                        errno: bun_sys::SystemErrno::init(err.0 as u32)
-                            .unwrap_or(bun_sys::SystemErrno::EINVAL)
-                            as _,
-                        syscall: bun_sys::Tag::watch,
-                        ..Default::default()
-                    });
+                    return Err(win32_watch_error(err));
                 }
-            }
-
-            if !overlapped.is_null() {
-                // ignore possible spurious events
-                if overlapped != &mut self.watcher.overlapped as *mut w::OVERLAPPED {
-                    continue;
+                Packet::Ours { err, .. } if err != w::Win32Error::SUCCESS => {
+                    bun_core::scoped_log!(watcher, "ReadDirectoryChangesW failed: {}", err.0);
+                    return Err(win32_watch_error(err));
                 }
-                if nbytes == 0 {
-                    // ReadDirectoryChangesW internal change-buffer overflow — too many
-                    // events arrived between drain and re-arm. This is NOT a shutdown
-                    // signal: stop() closes the dir handle, which surfaces as rc==0 /
-                    // ERROR_OPERATION_ABORTED above, never as rc!=0 && nbytes==0. Per
-                    // MSDN, the function returns zero bytes when its internal buffer
-                    // overflows. Drop the lost events, re-arm, and keep watching so
-                    // --hot picks up the next change. Returning ESHUTDOWN here kills
-                    // the watcher thread and the --hot child silently exits
-                    // (hot.test.ts "should work with sourcemap generation" flake).
+                Packet::Ours { nbytes: 0, .. } => {
+                    // Per MSDN a zero-byte success means the kernel's change buffer overflowed;
+                    // erroring out here made --hot exit silently (hot.test.ts sourcemap flake).
                     bun_core::scoped_log!(
                         watcher,
                         "ReadDirectoryChangesW buffer overflow (nbytes==0); re-arming"
                     );
-                    if let Err(err) = self.watcher.prepare() {
-                        return Err(err);
-                    }
+                    self.arm()?;
                     continue;
                 }
-                return Ok(Some(EventIterator {
-                    watcher: BackRef::new(&self.watcher),
-                    offset: 0,
-                    has_next: true,
-                }));
-            } else {
-                bun_core::scoped_log!(
-                    watcher,
-                    "GetQueuedCompletionStatus returned no overlapped event"
-                );
-                return Err(bun_sys::Error {
-                    errno: bun_sys::SystemErrno::EINVAL as _,
-                    syscall: bun_sys::Tag::watch,
-                    ..Default::default()
-                });
+                Packet::Ours { .. } => {
+                    return Ok(Some(EventIterator {
+                        watcher: BackRef::new(&self.watcher),
+                        offset: 0,
+                        has_next: true,
+                    }));
+                }
             }
         }
     }
 
     pub(crate) fn stop(&mut self) {
-        // SAFETY: handles were opened in init() and are valid until stop() is called once.
-        unsafe {
-            w::CloseHandle(self.watcher.dir_handle);
-            w::CloseHandle(self.iocp);
+        if self.armed {
+            // The caller frees `watcher` next; if `CancelIoEx` fails the packet is already queued.
+            // SAFETY: dir_handle is the open directory handle from init(); a
+            // null OVERLAPPED cancels all I/O issued on it.
+            let _ = unsafe { w::kernel32::CancelIoEx(self.watcher.dir_handle, ptr::null_mut()) };
+            while self.armed {
+                match self.dequeue(DRAIN_TIMEOUT_MS) {
+                    Packet::Ours { .. } | Packet::Foreign | Packet::Wake => {}
+                    Packet::Timeout | Packet::PortError(_) => break,
+                }
+            }
         }
+        if self.watcher.dir_handle != w::INVALID_HANDLE_VALUE {
+            // SAFETY: opened in init(); cleared below so this runs at most once.
+            let _ = unsafe { w::CloseHandle(self.watcher.dir_handle) };
+            self.watcher.dir_handle = w::INVALID_HANDLE_VALUE;
+        }
+        if self.iocp != w::INVALID_HANDLE_VALUE {
+            // SAFETY: created in init(); cleared below so this runs at most once.
+            let _ = unsafe { w::CloseHandle(self.iocp) };
+            self.iocp = w::INVALID_HANDLE_VALUE;
+        }
+    }
+
+    /// Runs under `Watcher.mutex`, which `thread_body` takes before `stop()`, so `iocp` is open.
+    pub(crate) fn wake(&self) {
+        // SAFETY: iocp is a live port; the packet carries no OVERLAPPED, which
+        // `dequeue` reports as `Packet::Wake`.
+        let _ =
+            unsafe { w::kernel32::PostQueuedCompletionStatus(self.iocp, 0, 0, ptr::null_mut()) };
+    }
+}
+
+/// Cancellation completes in microseconds; this only bounds the pathological case.
+const DRAIN_TIMEOUT_MS: w::DWORD = 1000;
+
+enum Packet {
+    /// `err` is `SUCCESS` unless the read failed or was cancelled.
+    Ours {
+        nbytes: w::DWORD,
+        err: w::Win32Error,
+    },
+    /// Carries an OVERLAPPED that is not ours.
+    Foreign,
+    /// Posted by `wake()`.
+    Wake,
+    Timeout,
+    /// `GetQueuedCompletionStatus` failed without dequeuing anything.
+    PortError(w::Win32Error),
+}
+
+fn win32_watch_error(err: w::Win32Error) -> bun_sys::Error {
+    bun_sys::Error {
+        errno: bun_sys::SystemErrno::init(err.0 as u32).unwrap_or(bun_sys::SystemErrno::EINVAL)
+            as _,
+        syscall: bun_sys::Tag::watch,
+        ..Default::default()
     }
 }
 

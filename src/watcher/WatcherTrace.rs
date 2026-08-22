@@ -6,9 +6,7 @@ use bun_threading::Guarded;
 
 use crate::watcher_impl::{ChangedFilePath, WatchEvent, WatchList};
 
-/// Optional trace file for debugging watcher events.
-// Wrapped in `bun_threading::Guarded` (cheap when
-// uncontended; only the watcher thread touches this after init).
+/// Shared by every watcher in the process; flushed on every write, so it stays open until exit.
 static TRACE_FILE: Guarded<Option<File>> = Guarded::new(None);
 
 /// Initialize trace file if BUN_WATCHER_TRACE env var is set.
@@ -171,11 +169,4 @@ pub(crate) fn write_events(
     if writer.write_all(b"}}\n").is_err() {
         return;
     }
-}
-
-/// Close the trace file if open
-// free-function `deinit` (no `self`), so this stays a plain fn
-// rather than `impl Drop`.
-pub(crate) fn deinit() {
-    let _ = TRACE_FILE.lock().take();
 }

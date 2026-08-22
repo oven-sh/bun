@@ -1951,7 +1951,15 @@ describe("node:vm lineOffset/columnOffset at the edge of int32", () => {
 // Node prints the same lines and exits 0 for each of these children.
 describe("an exception reported against a vm context reaches the process uncaughtException handlers", () => {
   const thrower = `vm.runInNewContext('(function () { throw new Error("thrown in vm context"); })')`;
+  const dispatchToListenerFromContext = `
+    const target = new EventTarget();
+    target.addEventListener("ping", ${thrower});
+    target.dispatchEvent(new Event("ping"));
+  `;
+  const listener = `process.on("uncaughtException", (err, origin) => console.log("uncaughtException:", err.message, origin));`;
 
+  // The monitor on the main thread's process doubles as the check that the worker children below do
+  // not report to the wrong thread.
   async function run(consumer: string, trigger: string) {
     const code = `
       const vm = require("node:vm");
@@ -1962,8 +1970,6 @@ describe("an exception reported against a vm context reaches the process uncaugh
     await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
     return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   }
-
-  const listener = `process.on("uncaughtException", (err, origin) => console.log("uncaughtException:", err.message, origin));`;
 
   test.concurrent.each([
     [
@@ -1983,14 +1989,7 @@ describe("an exception reported against a vm context reaches the process uncaugh
       `,
     ],
     ["a process 'exit' listener created in a context", `process.on("exit", ${thrower});`],
-    [
-      "an EventTarget listener created in a context",
-      `
-        const target = new EventTarget();
-        target.addEventListener("ping", ${thrower});
-        target.dispatchEvent(new Event("ping"));
-      `,
-    ],
+    ["an EventTarget listener created in a context", dispatchToListenerFromContext],
   ])("%s", async (_, trigger) => {
     const [stdout, stderr, exitCode] = await run(listener, trigger);
     expect(stderr).toBe("");
@@ -2003,14 +2002,42 @@ describe("an exception reported against a vm context reaches the process uncaugh
   test.concurrent("process.setUncaughtExceptionCaptureCallback() receives it too", async () => {
     const [stdout, stderr, exitCode] = await run(
       `process.setUncaughtExceptionCaptureCallback(err => console.log("captured:", err.message));`,
-      `
-        const target = new EventTarget();
-        target.addEventListener("ping", ${thrower});
-        target.dispatchEvent(new Event("ping"));
-      `,
+      dispatchToListenerFromContext,
     );
     expect(stderr).toBe("");
     expect(stdout).toBe("monitor: thrown in vm context uncaughtException\ncaptured: thrown in vm context\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // In a worker the exception belongs to the worker's process. Without a handler there it becomes the
+  // Worker's 'error' event, as in Node; that path used to crash on the context's global.
+  test.concurrent.each([
+    [
+      "the worker's uncaughtException handler",
+      `process.on("uncaughtException", (err, origin) => console.log("worker uncaughtException:", err.message, origin));`,
+      "worker uncaughtException: thrown in vm context uncaughtException\nworker exit: 0\n",
+    ],
+    [
+      "the Worker 'error' event when the worker has no handler",
+      "",
+      "worker error event: thrown in vm context\nworker exit: 1\n",
+    ],
+  ])("in a worker it reaches %s", async (_, workerConsumer, expected) => {
+    const [stdout, stderr, exitCode] = await run(
+      "",
+      `
+        const { Worker } = require("node:worker_threads");
+        const worker = new Worker(\`
+          const vm = require("node:vm");
+          ${workerConsumer}
+          ${dispatchToListenerFromContext}
+        \`, { eval: true });
+        worker.on("error", err => console.log("worker error event:", err.message));
+        worker.on("exit", code => console.log("worker exit:", code));
+      `,
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toBe(expected);
     expect(exitCode).toBe(0);
   });
 });

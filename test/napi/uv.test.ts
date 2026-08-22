@@ -183,4 +183,203 @@ describe.if(!isWindows)("uv stubs", () => {
     });
     expect(exitCode).toBe(0);
   });
+
+  // The loop-backed functions (uv_default_loop, uv_async_t, uv_queue_work) and
+  // the header-only ones around them run in a child process: the child's exit
+  // is part of what is tested (a ref'd handle or a queued request must keep it
+  // alive, an unref'd handle must not), and on a bun where these are still
+  // stubs the first call aborts the process. `script` sees `addon` and
+  // `report`, which prints one line per event the addon reports.
+  async function runInChild(script: string) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const addon = require(${JSON.stringify(addonPath)});
+          const report = (event, a, b) => console.log(event, a, b);
+          ${script}
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.concurrent("uv_version and uv_version_string", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(`
+      console.log(JSON.stringify({ ...addon.testVersion(), reported: process.versions.uv }));
+    `);
+    expect(stderr).toBe("");
+    const { version, versionString, reported } = JSON.parse(stdout);
+    expect(versionString).toMatch(/^\d+\.\d+\.\d+$/);
+    const [major, minor, patch] = versionString.split(".").map(Number);
+    expect(version).toBe((major << 16) | (minor << 8) | patch);
+    // process.versions.uv is read from the same place.
+    expect(reported).toBe(versionString);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("uv_handle_size, uv_req_size and the type names", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(`console.log(JSON.stringify(addon.testSizesAndNames()));`);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      asyncSizeMatches: true,
+      timerSizeMatches: true,
+      unknownHandleSizeIsMinusOne: true,
+      workSizeMatches: true,
+      unknownReqSizeIsMinusOne: true,
+      // sizeof(uv_async_t) on 64-bit unix; bun's private fields must fit in it.
+      asyncSize: 128,
+      asyncName: "async",
+      pipeName: "pipe",
+      workName: "work",
+      unknownHandleNameIsNull: true,
+      unknownReqNameIsNull: true,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("uv_get_osfhandle and uv_open_osfhandle", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(
+      `console.log(addon.testOsfhandle(2), addon.testOsfhandle(41));`,
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toBe("2 41\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("uv_default_loop is the main thread's napi_get_uv_event_loop", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(`console.log(JSON.stringify(addon.testLoops()));`);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      napiLoopIsSet: true,
+      napiLoopIsDefaultLoop: true,
+      defaultLoopIsSameFromThread: true,
+      loopDataRoundTrips: true,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("UV_EINVAL for a missing loop, a missing work_cb and a non-work request", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(`console.log(JSON.stringify(addon.testErrors()));`);
+    expect(stderr).toBe("");
+    const EINVAL = -constants.errno.EINVAL;
+    expect(JSON.parse(stdout)).toEqual([EINVAL, EINVAL, EINVAL]);
+    expect(exitCode).toBe(0);
+  });
+
+  // Three sends before the loop turns produce one callback; a send from inside
+  // the callback produces another; uv_close stops the handle at once and runs
+  // close_cb on a later turn. The script returns right after the call, so the
+  // ref'd handle is what keeps the process alive until the events happen.
+  const asyncEvents = ["async 1 1", "async 2 1", "closing 1 0", "close 1 1", ""].join("\n");
+
+  test.concurrent.each([
+    ["napi_get_uv_event_loop", "false"],
+    ["uv_default_loop", "true"],
+  ])("uv_async_t on the loop from %s, sent from the JS thread", async (_, useDefaultLoop) => {
+    const { stdout, stderr, exitCode } = await runInChild(`
+      const observed = addon.testAsync(${useDefaultLoop}, false, report);
+      console.log("after init", JSON.stringify(observed));
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("after init [1,0,1]\n" + asyncEvents);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("uv_async_t sent from another thread after the script has returned", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(`addon.testAsync(false, true, report);`);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(asyncEvents);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("uv_async_t in a Worker uses the Worker's own loop", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(`
+      const { Worker } = require("node:worker_threads");
+      const worker = new Worker(
+        \`
+          const { parentPort } = require("node:worker_threads");
+          const addon = require(${JSON.stringify(addonPath)});
+          parentPort.postMessage(JSON.stringify(addon.testLoops()));
+          addon.testAsync(false, true, (event, a, b) => parentPort.postMessage([event, a, b].join(" ")));
+        \`,
+        { eval: true },
+      );
+      worker.on("message", message => console.log(message));
+      worker.on("exit", code => console.log("worker exited", code));
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(
+      JSON.stringify({
+        napiLoopIsSet: true,
+        napiLoopIsDefaultLoop: false,
+        defaultLoopIsSameFromThread: true,
+        loopDataRoundTrips: true,
+      }) +
+        "\n" +
+        asyncEvents +
+        "worker exited 0\n",
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("200 rounds of send and callback with a thread, then a burst of sends racing uv_close", async () => {
+    // A lost wakeup makes the sender thread wait forever, so the child hangs
+    // and this times out. STRESS_ROUNDS + 1 callbacks: see uv_impl.c.
+    const { stdout, stderr, exitCode } = await runInChild(`addon.testAsyncStress(report);`);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("done 201 1\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("uv_close with a send pending: close_cb only; a later close or send does nothing", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(`
+      console.log("after close", JSON.stringify(addon.testAsyncCloseWithSendPending(report)));
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("after close [0,1,0]\nclose 1 1\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("uv_ref and uv_unref toggle uv_has_ref; an unref'd handle lets the process exit", async () => {
+    // The handle is left open and unref'd: the child hanging here is the failure.
+    const { stdout, stderr, exitCode } = await runInChild(`console.log(JSON.stringify(addon.testAsyncRef()));`);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([1, 0, 0, 1, 1, 0]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("an exception thrown by JS called from async_cb is uncaught", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(`
+      addon.testAsync(false, false, () => { throw new Error("thrown from inside async_cb"); });
+    `);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("thrown from inside async_cb");
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("uv_queue_work runs work_cb on the pool and after_work_cb on the loop thread", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(`addon.testQueueWork(report);`);
+    expect(stderr).toBe("");
+    // 127: every property work_test_after_work_cb in uv_impl.c checks held.
+    expect(stdout).toBe("after 0 127\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("uv_cancel", async () => {
+    const { stdout, stderr, exitCode } = await runInChild(`console.log("cancel", addon.testCancelWork(report));`);
+    expect(stderr).toBe("");
+    // Whether uv_cancel wins the race against the pool picking the request up
+    // is not deterministic, but both outcomes have exactly one shape. 124 is
+    // 127 without the two work_cb bits.
+    const cancelled = `cancel 0\nafter ${-constants.errno.ECANCELED} 124\n`;
+    const tooLate = `cancel ${-constants.errno.EBUSY}\nafter 0 127\n`;
+    expect([cancelled, tooLate]).toContain(stdout);
+    expect(exitCode).toBe(0);
+  });
 });

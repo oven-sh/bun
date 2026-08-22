@@ -102,6 +102,10 @@ pub(crate) struct RuntimeState {
     /// The resolver's PackageManager wake-handler context (module queue + VM
     /// handle); the resolver holds a raw pointer to it. Freed with the state.
     pub(crate) wake_ctx: Option<Box<bun_jsc::async_module::WakeContext>>,
+    /// The `uv_loop_t` addons get for this VM; they keep its address as long as
+    /// the VM lives, hence embedded.
+    #[cfg(unix)]
+    pub(crate) uv_loop: crate::napi::uv_posix::UvLoop,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -399,6 +403,13 @@ unsafe fn init_runtime_state(
         },
         active_handles: ActiveHandles::default(),
         wake_ctx: None,
+        // SAFETY: `vm` is the live VM being initialised; `handle` is one of
+        // the fields `VirtualMachine::init` wrote before calling this hook
+        // (the wake context below reads it the same way).
+        #[cfg(unix)]
+        uv_loop: unsafe {
+            crate::napi::uv_posix::UvLoop::new(ptr::NonNull::new_unchecked(vm), (*vm).handle())
+        },
     }));
     RUNTIME_STATE.with(|c| c.set(state));
 

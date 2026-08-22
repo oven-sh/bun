@@ -474,14 +474,7 @@ impl Snapshots {
                             },
                             format_args!(
                                 "Failed to update inline snapshot: Multiple inline snapshots on the same line must all have the same value:\n{}",
-                                DiffFormatter {
-                                    received_string: Some(&ils.value),
-                                    expected_string: Some(last_value),
-                                    global_this: Some(vm.global()),
-                                    received: None,
-                                    expected: None,
-                                    not: false,
-                                },
+                                DiffFormatter::from_strings(&ils.value, last_value, false),
                             ),
                         );
                     }

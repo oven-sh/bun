@@ -108,13 +108,11 @@
     },
     {
       // Browser polyfills that `bun build --target=browser` inlines into the
-      // user's bundle. They are plain JS, not JSC builtins: a `$intrinsic` or
-      // any other undeclared name is a ReferenceError in the browser.
-      // `process` is not a browser global either. The polyfills read it behind
-      // `typeof process !== "undefined"` guards, which no-undef cannot see.
+      // user's bundle. They are plain JS, not JSC builtins: a `$intrinsic`,
+      // a node global such as `process` or `Buffer`, or any other undeclared
+      // name is a ReferenceError in the browser. Read `globalThis.process`.
       "files": ["src/node-fallbacks/*.js"],
       "env": { "browser": true, "es2024": true },
-      "globals": { "process": "readonly" },
       "rules": {
         "no-undef": "error",
         "no-unused-vars": "off",

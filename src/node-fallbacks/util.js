@@ -68,16 +68,17 @@ export function format(f, ...args) {
 // Returns a modified function which warns once by default.
 // If --no-deprecation is set, then it is a no-op.
 export function deprecate(fn, msg) {
-  if (typeof process === "undefined" || process?.noDeprecation === true) {
+  var proc = globalThis.process;
+  if (proc == null || proc.noDeprecation === true) {
     return fn;
   }
 
   var warned = false;
   function deprecated(...args) {
     if (!warned) {
-      if (process.throwDeprecation) {
+      if (proc.throwDeprecation) {
         throw new Error(msg);
-      } else if (process.traceDeprecation) {
+      } else if (proc.traceDeprecation) {
         console.trace(msg);
       } else {
         console.error(msg);
@@ -91,18 +92,22 @@ export function deprecate(fn, msg) {
 }
 
 // This function has been edited to be tree-shakable and minifiable
-export const debuglog = /* @__PURE__ */ ((debugs = {}, debugEnvRegex = {}, debugEnv) => (
-  ((debugEnv = typeof process !== "undefined" && process.env.NODE_DEBUG) &&
-    (debugEnv = debugEnv
-      .replace(/[|\\{}()[\]^$+?.]/g, "\\$&")
-      .replace(/\*/g, ".*")
-      .replace(/,/g, "$|^")
-      .toUpperCase()),
-  (debugEnvRegex = new RegExp("^" + debugEnv + "$", "i"))),
+export const debuglog = /* @__PURE__ */ ((debugs = {}, debugEnvRegex, debugEnv) => (
+  (debugEnv = globalThis.process?.env?.NODE_DEBUG) &&
+    (debugEnvRegex = new RegExp(
+      "^" +
+        debugEnv
+          .replace(/[|\\{}()[\]^$+?.]/g, "\\$&")
+          .replace(/\*/g, ".*")
+          .replace(/,/g, "$|^")
+          .toUpperCase() +
+        "$",
+      "i",
+    )),
   set => {
     set = set.toUpperCase();
     if (!debugs[set]) {
-      if (debugEnvRegex.test(set)) {
+      if (debugEnvRegex?.test(set)) {
         debugs[set] = function (...args) {
           console.error("%s: %s", set, format(...args));
         };
@@ -682,12 +687,32 @@ export function callbackify(original) {
 export const TextEncoder = /* @__PURE__ */ globalThis.TextEncoder;
 export const TextDecoder = /* @__PURE__ */ globalThis.TextDecoder;
 export default {
-  TextEncoder,
-  TextDecoder,
-  promisify,
+  format,
+  deprecate,
+  debuglog,
+  inspect,
+  types,
+  isArray,
+  isBoolean,
+  isNull,
+  isNullOrUndefined,
+  isNumber,
+  isString,
+  isSymbol,
+  isUndefined,
+  isRegExp,
+  isObject,
+  isDate,
+  isError,
+  isFunction,
+  isPrimitive,
+  isBuffer,
   log,
   inherits,
   _extend,
+  promisify,
   callbackifyOnRejected,
   callbackify,
+  TextEncoder,
+  TextDecoder,
 };

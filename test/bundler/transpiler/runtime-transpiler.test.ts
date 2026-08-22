@@ -252,3 +252,107 @@ describe("unterminated string literals in large files", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+describe("class declaration TDZ is preserved", () => {
+  const probe =
+    `const t = (f) => { try { return f(); } catch (e) { return "THROW:" + e.constructor.name; } };\n` +
+    `console.log(JSON.stringify([t(() => typeof Pure), t(() => new Pure().m()), t(() => typeof WithBlock)]));\n`;
+
+  test.concurrent.each([
+    ["class", ""],
+    ["export class", "export "],
+  ])("runtime: %s stays in TDZ until its declaration", async (_, prefix) => {
+    using dir = tempDir("transpiler-class-tdz", {
+      "entry.mjs":
+        probe +
+        `${prefix}class Pure { m() { return "ok"; } f = 1; get g() { return 2; } static s = 3; }\n` +
+        `${prefix}class WithBlock { static { void 0; } }\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(["THROW:ReferenceError", "THROW:ReferenceError", "THROW:ReferenceError"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("runtime: export default class stays in TDZ until its declaration", async () => {
+    using dir = tempDir("transpiler-class-tdz-default", {
+      "entry.mjs":
+        `const t = (f) => { try { return f(); } catch (e) { return "THROW:" + e.constructor.name; } };\n` +
+        `console.log(JSON.stringify([t(() => typeof Named), t(() => new Named().m()), t(probe)]));\n` +
+        `export default class Named { m() { return "ok"; } static s = 3; }\n` +
+        `function probe() { return typeof Named; }\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(["THROW:ReferenceError", "THROW:ReferenceError", "THROW:ReferenceError"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("--no-bundle output keeps class declarations in source order", async () => {
+    using dir = tempDir("transpiler-class-tdz-print", {
+      "entry.mjs": `const marker = 1;\nclass Pure { m() { return "ok"; } static s = 3; }\nexport class Exported { static s = 3; }\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "--target=bun", "entry.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    const tokens = ["marker", "class Pure", "class Exported"];
+    const positions = tokens.map(t => [t, stdout.indexOf(t)] as const);
+    const order = [...positions].sort((a, b) => a[1] - b[1]).map(([t]) => t);
+    expect({ missing: positions.filter(([, i]) => i < 0).map(([t]) => t), order }).toEqual({
+      missing: [],
+      order: tokens,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("cyclic default-class imports still evaluate (luxon/kysely pattern)", async () => {
+    using dir = tempDir("transpiler-class-tdz-cycle", {
+      "entry.mjs": `import A from "./a.mjs";\nimport B from "./b.mjs";\nconsole.log(JSON.stringify([A.useB(), B.useA()]));\n`,
+      "a.mjs": `import B from "./b.mjs";\nexport default class A { static useB() { return B.name; } }\n`,
+      "b.mjs": `import A from "./a.mjs";\nexport default class B { static useA() { return A.name; } }\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(["B", "A"]);
+    expect(exitCode).toBe(0);
+  });
+});

@@ -233,13 +233,15 @@ impl QuicStream {
             let _ = s.set_http_prio(urgency, incremental);
         }
         for (bytes, count, eos) in self.pending_headers.with_mut(core::mem::take) {
-            self.wrote_to_lsquic.set(true);
-            if s.send_headers(&bytes, count, eos) == 0 && eos {
-                self.with_state(|st| {
-                    st.fin_sent = 1;
-                    st.write_ended = 1;
-                });
-                s.shutdown(1);
+            if s.send_headers(&bytes, count, eos) == 0 {
+                self.wrote_to_lsquic.set(true);
+                if eos {
+                    self.with_state(|st| {
+                        st.fin_sent = 1;
+                        st.write_ended = 1;
+                    });
+                    s.shutdown(1);
+                }
             }
         }
         if uni {

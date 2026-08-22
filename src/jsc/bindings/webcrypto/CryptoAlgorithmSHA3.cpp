@@ -57,12 +57,14 @@ static void dispatchDigest(PAL::CryptoDigest::Algorithm algorithm,
 
     workQueue.dispatch(context.globalObject(),
         [digest = WTF::move(digest), message = WTF::move(message),
-            callback = WTF::move(callback)]() mutable -> WorkQueue::Reply {
+            callback = WTF::move(callback),
+            contextIdentifier = context.identifier(), loopKind = context.currentLoopKind()]() mutable {
             digest->addBytes(message.begin(), message.size());
             auto result = digest->computeHash();
-            return [callback = WTF::move(callback), result = WTF::move(result)](auto&) {
-                callback(result);
-            };
+            ScriptExecutionContext::postTaskTo(contextIdentifier, loopKind,
+                [callback = WTF::move(callback), result = WTF::move(result)](auto&) {
+                    callback(result);
+                });
         });
 }
 

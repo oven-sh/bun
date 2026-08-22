@@ -2,9 +2,9 @@
 
 namespace Bun {
 
-extern "C" WebCore::EventLoopTask* Bun__EventLoopTaskNoContext__performTask(EventLoopTaskNoContext* task)
+extern "C" void Bun__EventLoopTaskNoContext__performTask(EventLoopTaskNoContext* task)
 {
-    return task->performTask();
+    task->performTask();
 }
 
 } // namespace Bun

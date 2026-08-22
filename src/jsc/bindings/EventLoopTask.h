@@ -1,5 +1,3 @@
-#pragma once
-
 #include "root.h"
 #include "ScriptExecutionContext.h"
 

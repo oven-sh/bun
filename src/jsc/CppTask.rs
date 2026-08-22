@@ -3,7 +3,7 @@ use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
 unsafe extern "C" {
-    fn Bun__EventLoopTaskNoContext__performTask(task: *mut EventLoopTaskNoContext) -> *mut CppTask;
+    fn Bun__EventLoopTaskNoContext__performTask(task: *mut EventLoopTaskNoContext);
 }
 
 bun_opaque::opaque_ffi! {
@@ -44,21 +44,16 @@ impl CppTask {
 bun_opaque::opaque_ffi! { pub struct EventLoopTaskNoContext; }
 
 impl EventLoopTaskNoContext {
-    /// Run and deallocate `this`; returns the `WebCore::EventLoopTask` the
-    /// work handed back for its JS thread, or null.
-    ///
-    /// # Safety
-    /// `this` is the live C++ task handed to `ConcurrentCppTask__createAndRun`.
-    pub unsafe fn run(this: *mut EventLoopTaskNoContext) -> *mut CppTask {
-        // SAFETY: fn contract; performTask consumes/frees it.
+    /// Deallocates `this`
+    pub unsafe fn run(this: *mut EventLoopTaskNoContext) {
+        // SAFETY: caller guarantees `this` is a valid C++ EventLoopTaskNoContext; performTask consumes/frees it.
         unsafe { Bun__EventLoopTaskNoContext__performTask(this) }
     }
 }
 
 /// A task created from C++ code that runs inside the workpool (WebCrypto's
 /// `PhonyWorkQueue`). Holds the creating VM's ticket: the C++ closure captures
-/// context-affine objects, and the reply it returns is posted through the
-/// ticket, to the loop that was current when the work was dispatched.
+/// context-affine objects and posts its result back by context id.
 #[repr(C)]
 pub struct ConcurrentCppTask {
     pub(crate) cpp_task: *mut EventLoopTaskNoContext,
@@ -76,12 +71,7 @@ impl ConcurrentCppTask {
         } = *self;
         // SAFETY: `cpp_task` is the valid C++ handle stored by `ConcurrentCppTask__createAndRun`;
         // `run` consumes it here.
-        let reply = unsafe { EventLoopTaskNoContext::run(cpp_task) };
-        if !reply.is_null() {
-            ticket.post(bun_event_loop::ConcurrentTask::ConcurrentTask::create(
-                bun_event_loop::Task::init(reply),
-            ));
-        }
+        unsafe { EventLoopTaskNoContext::run(cpp_task) };
         ticket.unref_keep_alive();
     }
 }

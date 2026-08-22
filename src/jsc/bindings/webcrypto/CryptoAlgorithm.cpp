@@ -119,15 +119,15 @@ template<typename ResultCallbackType, typename OperationType>
 static void dispatchAlgorithmOperation(WorkQueue& workQueue, ScriptExecutionContext& context, ResultCallbackType&& callback, CryptoAlgorithm::ExceptionCallback&& exceptionCallback, OperationType&& operation)
 {
     workQueue.dispatch(context.globalObject(),
-        [operation = WTF::move(operation), callback = WTF::move(callback), exceptionCallback = WTF::move(exceptionCallback)]() mutable -> WorkQueue::Reply {
+        [operation = WTF::move(operation), callback = WTF::move(callback), exceptionCallback = WTF::move(exceptionCallback), contextIdentifier = context.identifier(), loopKind = context.currentLoopKind()]() mutable {
             auto result = operation();
-            return [result = crossThreadCopy(WTF::move(result)), callback = WTF::move(callback), exceptionCallback = WTF::move(exceptionCallback)](auto& context) mutable {
+            ScriptExecutionContext::postTaskTo(contextIdentifier, loopKind, [result = crossThreadCopy(WTF::move(result)), callback = WTF::move(callback), exceptionCallback = WTF::move(exceptionCallback)](auto& context) mutable {
                 if (result.hasException()) {
                     exceptionCallback(result.releaseException().code(), ""_s);
                     return;
                 }
                 callback(result.releaseReturnValue());
-            };
+            });
         });
 }
 

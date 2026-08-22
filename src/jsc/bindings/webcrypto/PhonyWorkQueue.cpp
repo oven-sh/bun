@@ -13,7 +13,7 @@ Ref<PhonyWorkQueue> PhonyWorkQueue::create(WTF::ASCIILiteral name)
 
 extern "C" void ConcurrentCppTask__createAndRun(JSC::JSGlobalObject*, EventLoopTaskNoContext* task);
 
-void PhonyWorkQueue::dispatch(JSC::JSGlobalObject* globalObject, WTF::Function<Reply()>&& function)
+void PhonyWorkQueue::dispatch(JSC::JSGlobalObject* globalObject, WTF::Function<void()>&& function)
 {
     ConcurrentCppTask__createAndRun(globalObject, new EventLoopTaskNoContext(WTF::move(function)));
 }

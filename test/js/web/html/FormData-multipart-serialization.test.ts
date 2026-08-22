@@ -136,7 +136,9 @@ describe("multipart serialization (new Response(formData))", () => {
       ["dup", "first"],
       ["dup", "second"],
       ["unicode name ☺", "ünïcode välue 😊"],
-      ["blob", { file: true, name: undefined, type: "", text: "blob-bytes" }],
+      // The unnamed Blob serializes as filename="" (see the wire-format test
+      // above), which parses back into a File with an empty-string name.
+      ["blob", { file: true, name: "", type: "", text: "blob-bytes" }],
       ["file", { file: true, name: "日本語ファイル名.html", type: "text/html;charset=utf-8", text: "<p>hi</p>" }],
     ]);
   });

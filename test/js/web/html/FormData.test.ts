@@ -63,6 +63,54 @@ describe("FormData", () => {
     expect(b1.name).toBe("foo.txt");
   });
 
+  describe("multipart parse of a zero-byte file part", () => {
+    const headers = { "content-type": "multipart/form-data; boundary=B" };
+    const part = (body: string) =>
+      `--B\r\nContent-Disposition: form-data; name="f"; filename="empty.txt"\r\nContent-Type: text/plain\r\n\r\n${body}\r\n--B--\r\n`;
+
+    for (const C of [Response, Request] as const) {
+      it(`preserves filename with ${C.name}`, async () => {
+        const make = (body: string) =>
+          C === Response
+            ? new Response(body, { headers })
+            : new Request("http://x/", { method: "POST", headers, body });
+
+        const empty = (await make(part("")).formData()).get("f") as File;
+        expect(empty).toBeInstanceOf(File);
+        expect(empty.size).toBe(0);
+        expect(empty.name).toBe("empty.txt");
+        expect(await empty.text()).toBe("");
+
+        // control: a 1-byte body already worked
+        const nonEmpty = (await make(part("a")).formData()).get("f") as File;
+        expect(nonEmpty.name).toBe("empty.txt");
+      });
+    }
+
+    it("round-trips an empty File through Response.formData()", async () => {
+      const fd = new FormData();
+      fd.append("e", new File([], "empty.log", { type: "text/plain" }));
+
+      const serialized = await new Response(fd).text();
+      expect(serialized).toContain('filename="empty.log"');
+
+      const parsed = await new Response(fd).formData();
+      const e = parsed.get("e") as File;
+      expect(e).toBeInstanceOf(File);
+      expect(e.size).toBe(0);
+      expect(e.name).toBe("empty.log");
+    });
+
+    it("preserves the filename argument on an empty Blob entry", () => {
+      const fd = new FormData();
+      fd.append("f", new Blob([]), "empty.bin");
+      const f = fd.get("f") as File;
+      expect(f).toBeInstanceOf(File);
+      expect(f.size).toBe(0);
+      expect(f.name).toBe("empty.bin");
+    });
+  });
+
   const multipartFormDataFixturesRawBody = [
     {
       name: "simple",

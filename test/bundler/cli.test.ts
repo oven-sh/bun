@@ -186,34 +186,66 @@ console.log(utils());`,
       });
       const baseDir = baseDirPath + "";
 
-      const { exited } = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "build",
-          path.join(baseDir, "我/我.ts"),
-          "--compile",
-          "--outfile",
-          path.join(baseDir, "exe.exe"),
-        ],
-        env: bunEnv,
-        cwd: baseDir,
-        stdout: "inherit",
-        stderr: "inherit",
-      });
-      expect(await exited).toBe(0);
+      {
+        // Without --compile, __dirname / __filename are inlined as string literals
+        // containing the source path. This covers UTF-8 path encoding (issue #10474).
+        const build = Bun.spawn({
+          cmd: [bunExe(), "build", path.join(baseDir, "我/我.ts"), "--outfile", path.join(baseDir, "out.js")],
+          env: bunEnv,
+          cwd: baseDir,
+          stdout: "inherit",
+          stderr: "inherit",
+        });
+        expect(await build.exited).toBe(0);
 
-      await using proc = Bun.spawn({
-        cmd: [path.join(baseDir, "exe.exe")],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const text = await proc.stdout.text();
-      await proc.exited;
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), path.join(baseDir, "out.js")],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const text = await proc.stdout.text();
+        await proc.exited;
 
-      expect(text).toContain(path.join(baseDir, "我") + "\n");
-      expect(text).toContain(path.join(baseDir, "我", "我.ts") + "\n");
-    });
+        expect(text).toContain(path.join(baseDir, "我") + "\n");
+        expect(text).toContain(path.join(baseDir, "我", "我.ts") + "\n");
+      }
+
+      {
+        // With --compile, __dirname / __filename must not leak the build machine's
+        // path; they resolve to the virtual /$bunfs/root/... path of the chunk,
+        // consistent with import.meta.dir / import.meta.path.
+        const build = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "build",
+            path.join(baseDir, "我/我.ts"),
+            "--compile",
+            "--outfile",
+            path.join(baseDir, "exe.exe"),
+          ],
+          env: bunEnv,
+          cwd: baseDir,
+          stdout: "inherit",
+          stderr: "inherit",
+        });
+        expect(await build.exited).toBe(0);
+
+        await using proc = Bun.spawn({
+          cmd: [path.join(baseDir, "exe.exe")],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const text = await proc.stdout.text();
+        await proc.exited;
+
+        const dir = process.platform === "win32" ? "B:\\~BUN\\root" : "/$bunfs/root";
+        expect(text).toContain(dir + "\n");
+        expect(text).toContain(path.join(dir, "exe.exe") + "\n");
+        expect(text).not.toContain(baseDir);
+      }
+    }, 60_000);
 
     test.skipIf(!isWindows)("should be able to handle pretty path when using pnpm +  #14685", async () => {
       // this test code follows the same structure as and

@@ -1,7 +1,7 @@
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { existsSync, statSync } from "node:fs";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { existsSync, readdirSync, readlinkSync, rmSync, statSync } from "node:fs";
 import { builtinModules, isBuiltin } from "node:module";
 import path from "node:path";
 import { DatabaseSync, Session, StatementSync, backup, constants } from "node:sqlite";
@@ -104,6 +104,75 @@ describe("DatabaseSync", () => {
     expect(db.isOpen).toBe(true);
     expect(() => db.open()).toThrow(/database is already open/);
     db.close();
+  });
+
+  test("close() finalizes outstanding prepared statements and releases the file", () => {
+    using dir = tempDir("node-sqlite-close-finalize", {});
+    const dbPath = path.join(String(dir), "x.db");
+    const db = new DatabaseSync(dbPath);
+    db.exec("CREATE TABLE t (a INTEGER)");
+    const neverRun = db.prepare("INSERT INTO t VALUES (?)");
+    const ran = db.prepare("INSERT INTO t VALUES (?)");
+    ran.run(1);
+    db.close();
+
+    if (isLinux) {
+      // The connection must actually be closed: no fd may still point at
+      // the database file. (The references to the statements below keep
+      // their wrappers alive through this check, so GC cannot mask a
+      // zombified connection by finalizing them early.)
+      const stillOpen = readdirSync("/proc/self/fd").some(fd => {
+        try {
+          return readlinkSync(`/proc/self/fd/${fd}`) === dbPath;
+        } catch {
+          return false;
+        }
+      });
+      expect(stillOpen).toBe(false);
+    }
+    if (isWindows) {
+      // The reported symptom: an open handle blocks deletion on Windows.
+      expect(() => rmSync(dbPath)).not.toThrow();
+    }
+
+    expect(() => neverRun.run(1)).toThrow(/statement has been finalized/);
+    expect(() => ran.run(2)).toThrow(/statement has been finalized/);
+  });
+
+  test("sweeping statement wrappers after close() does not double-finalize", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE t (a INTEGER)");
+    {
+      let stmt: StatementSync | null = db.prepare("INSERT INTO t VALUES (?)");
+      stmt.run(1);
+      db.close();
+      stmt = null;
+    }
+    // Sweep the wrapper; a double sqlite3_finalize would crash ASAN builds.
+    Bun.gc(true);
+    expect(db.isOpen).toBe(false);
+  });
+
+  test("close() finalizes statements parked mid-aggregate", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE t (x INTEGER)");
+    db.exec("INSERT INTO t VALUES (1), (2), (3)");
+    db.aggregate("agg_sum", {
+      start: 0,
+      step: (a: number, x: number) => a + x,
+      inverse: (a: number, x: number) => a - x,
+      result: (a: number) => a,
+    });
+    // Park both iterators between rows so the finalize walk runs over
+    // statements with live aggregate state.
+    const grouped = db.prepare("SELECT agg_sum(x) AS v FROM t GROUP BY x").iterate();
+    const windowed = db.prepare("SELECT agg_sum(x) OVER (ORDER BY x) AS v FROM t").iterate();
+    expect(grouped.next().value).toEqual({ __proto__: null, v: 1 });
+    expect(windowed.next().value).toEqual({ __proto__: null, v: 1 });
+    db.close();
+    Bun.gc(true);
+    expect(db.isOpen).toBe(false);
+    expect(() => grouped.next()).toThrow(/statement has been finalized/);
   });
 
   test("Symbol.dispose swallows errors on closed databases", () => {

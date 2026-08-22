@@ -72,6 +72,18 @@ struct NodeSqliteSessionRecord : public WTF::RefCounted<NodeSqliteSessionRecord>
     bool inUse { false };
 };
 
+// Shared bookkeeping between a DatabaseSync and every StatementSync prepared
+// on one open()ed connection. An explicit close() finalizes all outstanding
+// sqlite3_stmts (a sqlite3_next_stmt walk) so sqlite3_close_v2 really closes
+// the file; an unfinalized statement zombifies the connection and the open
+// OS handle locks the database file on Windows. Statement wrappers are GC
+// cells whose sweep order relative to the database is undefined, so they
+// learn "close() already finalized my handle" through this refcounted
+// record instead of reaching back into the database cell.
+struct NodeSqliteConnectionRecord : public WTF::RefCounted<NodeSqliteConnectionRecord> {
+    bool statementsFinalized { false };
+};
+
 struct DatabaseSyncOpenConfiguration {
     bool readOnly = false;
     bool enableForeignKeyConstraints = true;
@@ -125,10 +137,16 @@ public:
     // Open the underlying connection. Throws on the scope if it fails or the
     // database is already open.
     bool open(JSC::JSGlobalObject*, JSC::ThrowScope&);
-    void closeInternal();
+    // Yes (the explicit close()/Symbol.dispose paths) finalizes every
+    // outstanding prepared statement so close_v2 actually closes the file.
+    // Finalizing a half-stepped statement can fire a user aggregate's
+    // xFinal (JS), so GC-destructor and VM-termination paths pass No.
+    enum class FinalizeStatements : bool { No, Yes };
+    void closeInternal(FinalizeStatements = FinalizeStatements::No);
 
     sqlite3* connection() const { return m_db; }
     bool isOpen() const { return m_db != nullptr; }
+    NodeSqliteConnectionRecord* connectionRecord() const { return m_connectionRecord.get(); }
     // Bumped on every successful open(). Statements/sessions capture this
     // at creation and compare instead of the raw sqlite3* — after
     // close()+open() the allocator may recycle the exact same address for
@@ -238,11 +256,20 @@ private:
     WTF::String m_location;
     DatabaseSyncOpenConfiguration m_config {};
     sqlite3* m_db = nullptr;
+    // One record per open()ed connection, shared with every StatementSync
+    // prepared on it; see NodeSqliteConnectionRecord.
+    RefPtr<NodeSqliteConnectionRecord> m_connectionRecord;
     // Handle whose sqlite3_close_v2 was deferred by a re-entrant close()
     // until the outermost BusyScope unwinds; see finishDeferredClose().
     sqlite3* m_deferredClose = nullptr;
     unsigned m_openGeneration = 0;
     unsigned m_busyDepth = 0;
+    // Non-zero while closeInternal()'s statement walk is on the C stack. An
+    // xFinal fired by the walk can re-enter open()+close() (or defer a close
+    // that finishes on BusyScope unwind); their teardown must not clear
+    // m_registeredCallbacks while it still roots the UDF contexts the rest
+    // of the outer walk invokes.
+    unsigned m_closeWalkDepth = 0;
     // Sessions must be deleted before sqlite3_close_v2() to avoid
     // use-after-free inside the preupdate hook; track them through shared
     // records (not JS objects) so close() can sweep regardless of GC
@@ -429,6 +456,10 @@ private:
     void finishCreation(JSC::VM& vm, JSDatabaseSync* db, sqlite3_stmt* stmt);
 
     sqlite3_stmt* m_stmt = nullptr;
+    // Record of the connection this statement was prepared on. When the
+    // record says statementsFinalized, close() already sqlite3_finalize'd
+    // m_stmt (it then dangles) and the destructor must not touch it.
+    RefPtr<NodeSqliteConnectionRecord> m_connectionRecord;
     JSC::WriteBarrier<JSC::Structure> m_rowStructure;
     WTF::Vector<int8_t> m_columnOffsets;
     // sqlite3_stmt native heap footprint reported to JSC's GC so

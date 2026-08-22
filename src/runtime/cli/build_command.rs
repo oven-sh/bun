@@ -1161,6 +1161,7 @@ impl BuildCommand {
 }
 
 fn exit_or_watch(code: u8, watch: bool) -> ! {
+    bun_js_parser_jsc::Macro::MacroHost::shutdown();
     if watch {
         // the watcher thread will exit the process. `std::thread::sleep`
         // accepts arbitrarily large Durations on every supported platform

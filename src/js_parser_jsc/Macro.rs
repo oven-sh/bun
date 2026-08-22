@@ -708,9 +708,6 @@ impl MacroHost {
                 .lock()
                 .take()
                 .expect("macro host reported before signalling ready");
-            if handle.is_ok() {
-                bun_core::add_exit_callback(shutdown_at_exit);
-            }
             MacroHost {
                 handle,
                 accepting: bun_threading::Guarded::new(true),
@@ -741,20 +738,16 @@ impl MacroHost {
         }
     }
 
-    /// Process exit: stop the host thread and tear its VM down. Requests still
-    /// queued or in flight are answered as failed so their callers wake. Waits
-    /// for the thread, so nothing of the host outlives this call.
+    /// Stop the host thread and tear its VM down, if one was started. Requests
+    /// still queued or in flight are answered as failed so their callers wake.
+    /// Waits for the thread, so nothing of the host outlives this call. Called
+    /// from the main `VirtualMachine`'s teardown alongside its workers, or by
+    /// `bun build` before it exits.
     pub fn shutdown() {
         let Some(host) = HOST.get() else { return };
         let Some(thread) = host.thread.lock().take() else {
             return;
         };
-        // Exiting from the host thread itself: nothing to wait for. (A flag,
-        // not `std::thread::current()`: exit callbacks can run after the
-        // exiting thread's `std` thread-locals were destroyed.)
-        if ON_HOST_THREAD.get() {
-            return;
-        }
         let Ok(handle) = &host.handle else { return };
         STOP.store(true, core::sync::atomic::Ordering::Release);
         // Also interrupts a macro that is stuck in synchronous JS.
@@ -763,13 +756,8 @@ impl MacroHost {
     }
 }
 
-extern "C" fn shutdown_at_exit() {
-    MacroHost::shutdown();
-}
-
 fn host_thread_main(seed: MacroHostSeed, ready: HostStartup) {
     Output::Source::configure_named_thread(bun_core::zstr!("Macros"));
-    ON_HOST_THREAD.set(true);
     jsc::mark_binding();
     // First JSC user in a `bun build` with no runtime VM; a no-op otherwise.
     jsc::initialize(jsc::InitializeOptions::default());
@@ -899,8 +887,6 @@ struct HostState {
 
 #[thread_local]
 static HOST_STATE: Cell<*const HostState> = Cell::new(core::ptr::null());
-#[thread_local]
-static ON_HOST_THREAD: Cell<bool> = Cell::new(false);
 
 impl HostState {
     fn with<R>(f: impl FnOnce(&HostState) -> R) -> R {

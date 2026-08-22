@@ -1703,6 +1703,14 @@ impl VirtualMachine {
             (*this).gc_controller.deinit();
             crate::web_worker::join_child_workers(&mut *this);
         }
+        // The macro VM is another thread with a VM of its own, like a child
+        // worker: it goes before this VM releases its work and parks the
+        // process-wide threads it may be using.
+        if matches!(kind, Teardown::MainThreadExit) {
+            if let Some(hooks) = runtime_hooks() {
+                (hooks.stop_macro_host)();
+            }
+        }
         // Children have closed their own; now this VM's sqlite connections
         // checkpoint and close, before finalizers could.
         vm.close_sqlite_databases_for_exit();
@@ -2104,6 +2112,9 @@ pub struct RuntimeHooks {
     pub stop_active_handles_for_vm_teardown: unsafe fn(vm: *mut VirtualMachine) -> SweepResult,
     /// Teardown only (never on a live VM): unlink every remaining EventLoopTimer.
     pub disarm_all_timers_for_vm_teardown: unsafe fn(vm: *mut VirtualMachine),
+    /// Main-thread teardown: stop the macro VM's thread and wait for it, if
+    /// one was started (`bun_js_parser_jsc::Macro::MacroHost::shutdown`).
+    pub stop_macro_host: fn(),
     /// Teardown-only, after ~VM (JSC's RunLoop timers use the heap until then):
     /// close the loop handles the timer heap embeds (Windows uv_timer/uv_idle)
     /// so the loop close unlinks them before the runtime state is freed.

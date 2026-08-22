@@ -1542,6 +1542,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     stop_dns_for_vm_teardown,
     stop_active_handles_for_vm_teardown: stop_active_handles_for_vm_teardown_hook,
     disarm_all_timers_for_vm_teardown,
+    stop_macro_host: bun_js_parser_jsc::Macro::MacroHost::shutdown,
     close_timer_loop_handles_after_vm_destroyed,
 };
 

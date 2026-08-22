@@ -534,6 +534,16 @@ pub(crate) fn js_file_generation(
     Ok(JSValue::from(generation))
 }
 
+/// Reached only from `node:test`: whether `bun test` was started with `--only`.
+pub(crate) fn js_node_test_only(
+    _global: &JSGlobalObject,
+    _callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    // SAFETY: same invariant as `runner()` — RUNNER is only read on the JS thread.
+    let only = Jest::runner_ptr().is_some_and(|p| unsafe { (*p.as_ptr()).test_options.only });
+    Ok(JSValue::from(only))
+}
+
 /// Reached only from `node:test` (`t.skip()` / `t.todo()` at runtime): overrides
 /// the running sequence's result so bun:test reports skip/todo instead of pass.
 /// `done`'s bound `DoneCallback.r#ref.phase` names the intended sequence so a

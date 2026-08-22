@@ -1836,9 +1836,9 @@ pub mod command {
                 "The \"react\" template has been deprecated.\n\
 It is recommended to use \"react-app\" or \"vite\" instead.\n\n\
 To create a project using Create React App, run\n\n\
-  <d>bun create react-app<r>\n\n\
+\x20 <d>bun create react-app<r>\n\n\
 To create a React project using Vite, run\n\n\
-  <d>bun create vite<r>\n\n\
+\x20 <d>bun create vite<r>\n\n\
 Then select \"React\" from the list of frameworks.\n"
             );
             Global::exit(1);
@@ -1849,7 +1849,7 @@ Then select \"React\" from the list of frameworks.\n"
             pretty_errorln!(
                 "<yellow>warn: No template <b>create-next<r> found.\n\
 To create a project with the official Next.js scaffolding tool, run\n\
-  <b>bun create next-app <cyan>[destination]<r>"
+\x20 <b>bun create next-app <cyan>[destination]<r>"
             );
             Global::exit(1);
         }
@@ -2175,27 +2175,7 @@ Execute a shell script directly from Bun.
                 pm_print_help(PmSubcommand::Prune);
             }
             Tag::InfoCommand => {
-                pretty!(
-                    "\
-<b>Usage<r>: <b><green>bun info<r> <cyan>[flags]<r> <blue>\\<package\\><r><d>\\<@version\\><r> <blue>[property path]<r>
-  Display package metadata from the registry.
-
-<b>Examples:<r>
-  <d>View basic information about a package<r>
-  <b><green>bun info<r> <blue>react<r>
-
-  <d>View specific version<r>
-  <b><green>bun info<r> <blue>react@18.0.0<r>
-
-  <d>View specific property<r>
-  <b><green>bun info<r> <blue>react<r> version
-  <b><green>bun info<r> <blue>react<r> dependencies
-  <b><green>bun info<r> <blue>react<r> versions
-
-Full documentation is available at <magenta>https://bun.com/docs/cli/info<r>
-"
-                );
-                Output::flush();
+                pm_print_help(PmSubcommand::Info);
             }
             Tag::WhyCommand => {
                 pretty!(
@@ -2253,23 +2233,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
                 Output::flush();
             }
             Tag::PackageManagerCommand => {
-                pretty!(
-                    "\
-<b>Usage<r>: <b><green>bun pm<r> <cyan>[flags]<r> <blue>[\\<command\\>]<r>
-  Run package manager utilities.
-
-<b>Commands:<r>
-  <b><green>bun pm<r> <blue>bin<r>              print the path to bin folder
-  <b><green>bun pm<r> <blue>ls<r>               list the dependency tree according to the current lockfile
-  <b><green>bun pm<r> <blue>whoami<r>           print the current npm username
-  <b><green>bun pm<r> <blue>hash<r>             generate & print the hash of the current lockfile
-  <b><green>bun pm<r> <blue>cache<r>            print the path to the cache folder
-  <b><green>bun pm<r> <blue>cache rm<r>         clear the cache
-
-Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>
-"
-                );
-                Output::flush();
+                pm_print_help(PmSubcommand::Pm);
             }
             _ => HelpCommand::print_with_reason(HelpCommand::Reason::Explicit, false),
         }

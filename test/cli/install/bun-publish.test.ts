@@ -1323,6 +1323,56 @@ describe("readme", () => {
   });
 });
 
+// The manifest "bin" that reaches the registry. Paths are resolved against the
+// package root the way npm does it ("../cli.js" is "cli.js"), a value that
+// resolves to the root itself is dropped, other values are kept as written (npm
+// keeps "lib/" as well), and "directories.bin" is expanded with the same rule
+// the tarball uses.
+describe("bin in the published manifest", () => {
+  test.each([
+    [{ bin: "cli.js" }, { "bin-pkg": "cli.js" }],
+    [{ bin: "../cli.js" }, { "bin-pkg": "cli.js" }],
+    [{ bin: "" }, {}],
+    [{ bin: "." }, {}],
+    [{ bin: { x: "lib/", y: "./cli.js", z: "", w: ".", v: "../../cli.js" } }, { x: "lib/", y: "cli.js", v: "cli.js" }],
+    [{ directories: { bin: "bins/" } }, { "a.js": "bins/a.js" }],
+    [{ directories: { bin: "" } }, undefined],
+    [{ directories: { bin: "." } }, undefined],
+  ])("%j", async (fields, expected) => {
+    let captured: any = null;
+    using mock = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        if (req.method === "PUT") captured = await req.json();
+        return new Response("OK", { status: 200 });
+      },
+    });
+
+    const packageDir = tmpdirSync();
+    await Promise.all([
+      write(
+        join(packageDir, "bunfig.toml"),
+        Bun.TOML.stringify({
+          install: {
+            cache: false,
+            registry: { url: `http://localhost:${mock.port}`, token: "unused" },
+          },
+        }),
+      ),
+      write(join(packageDir, "package.json"), JSON.stringify({ name: "bin-pkg", version: "1.0.0", ...fields })),
+      write(join(packageDir, "cli.js"), "#!/usr/bin/env node\n"),
+      write(join(packageDir, "lib", "a.js"), "module.exports = 1;"),
+      write(join(packageDir, "bins", "a.js"), "#!/usr/bin/env node\n"),
+    ]);
+
+    const { err, exitCode } = await publish(env, packageDir);
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    expect(captured.versions["1.0.0"].bin).toEqual(expected);
+  });
+});
+
 test("dist.tarball in the published manifest does not include userinfo from the registry url", async () => {
   let captured: any = null;
   using mock = Bun.serve({

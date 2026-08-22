@@ -619,6 +619,10 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       // napi_create_bigint_words > INT_MAX: napi_invalid_arg, no throw
       expect(result).toContain("napi_create_bigint_words(INT_MAX+1): status=1 pending=0");
 
+      // napi_create_bigint_words within the 1 << 30 bit cap round trips, past it throws
+      expect(result).toContain("napi_create_bigint_words(20000 words): status=0 pending=0 sign=0 count=20000 top=1");
+      expect(result).toContain("napi_create_bigint_words(past cap): status=10 pending=1");
+
       // napi_create_buffer / napi_create_buffer_copy: napi_generic_failure (9) on alloc failure
       expect(result).toContain("napi_create_buffer(SIZE_MAX): status=9 pending=1");
       expect(result).toContain("napi_create_buffer_copy(SIZE_MAX): status=9 pending=1");

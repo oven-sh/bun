@@ -3120,7 +3120,7 @@ extern "C" napi_status napi_create_bigint_words(napi_env env,
 
     // JSC::tryCreateFromWords reads words[n-1] before its length check, so throw
     // here first. Value mirrors JSBigInt::maxLength (maxLengthBits / digitBits).
-    constexpr size_t jscBigIntMaxWords = (1 << 20) / (CHAR_BIT * sizeof(uint64_t));
+    constexpr size_t jscBigIntMaxWords = (1 << 30) / (CHAR_BIT * sizeof(uint64_t));
     if (word_count > jscBigIntMaxWords) {
         JSC::throwOutOfMemoryError(globalObject, scope);
         RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));

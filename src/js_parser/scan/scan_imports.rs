@@ -418,6 +418,7 @@ impl<'a> ImportScanner<'a> {
                                     Some(bun_alloc::ast_box(G::NamespaceAlias {
                                         namespace_ref,
                                         alias: js_ast::StoreStr::new(*alias),
+                                        mangled_prop_ref: None,
                                         import_record_index: st.import_record_index,
                                         was_originally_property_access: !st
                                             .star_name_loc
@@ -539,6 +540,7 @@ impl<'a> ImportScanner<'a> {
                                     Some(bun_alloc::ast_box(G::NamespaceAlias {
                                         namespace_ref,
                                         alias: item.alias,
+                                        mangled_prop_ref: None,
                                         import_record_index: st.import_record_index,
                                         was_originally_property_access: !st
                                             .star_name_loc
@@ -558,6 +560,7 @@ impl<'a> ImportScanner<'a> {
                             symbol.namespace_alias = Some(bun_alloc::ast_box(G::NamespaceAlias {
                                 namespace_ref,
                                 alias: js_ast::StoreStr::EMPTY,
+                                mangled_prop_ref: None,
                                 import_record_index: st.import_record_index,
                                 was_originally_property_access: false,
                             }));

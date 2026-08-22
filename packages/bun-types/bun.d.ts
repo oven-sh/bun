@@ -3034,6 +3034,58 @@ declare module "bun" {
         };
 
     /**
+     * Rename properties whose names match this regular expression to shorter
+     * names, consistently across the whole build (`obj.foo_` becomes `obj.a`
+     * everywhere it is defined or accessed). Property accesses, object literal
+     * keys, class members, destructuring patterns, JSX attributes, TypeScript
+     * parameter properties, namespace exports and enum members are all
+     * renamed. Properties written as string literals (`obj["foo_"]`,
+     * `{ "foo_": 1 }`, `"foo_" in obj`) are left alone unless `mangleQuoted`
+     * is set, and a string literal preceded by a comment containing
+     * `@__KEY__` is always treated as a property name. `__proto__`,
+     * `constructor` and `prototype` are never renamed.
+     *
+     * Only rename properties that are used entirely within the code being
+     * built: names shared with other code (host APIs, external packages, JSON
+     * data, the exports of CommonJS modules) must not match the pattern.
+     *
+     * A name is renamed when `regexp.test(name)` would be true for a fresh copy
+     * of the regular expression, so all flags behave as usual.
+     *
+     * Equivalent to `--mangle-props` in `bun build`.
+     *
+     * @example
+     * ```ts
+     * await Bun.build({
+     *   entrypoints: ["./index.ts"],
+     *   mangleProps: /_$/, // rename every property whose name ends with "_"
+     * });
+     * ```
+     */
+    mangleProps?: RegExp;
+
+    /**
+     * Never rename properties whose names match this regular expression, even
+     * if they also match `mangleProps`. Only meaningful together with
+     * `mangleProps`.
+     *
+     * Equivalent to `--reserve-props` in `bun build`.
+     */
+    reserveProps?: RegExp;
+
+    /**
+     * Also rename properties matching `mangleProps` when they are written as
+     * string literals: `obj["foo_"]`, `{ "foo_": 1 }`, `"foo_" in obj`, and
+     * computed keys such as `{ ["foo_"]: 1 }`. Only meaningful together with
+     * `mangleProps`.
+     *
+     * Equivalent to `--mangle-quoted` in `bun build`.
+     *
+     * @default false
+     */
+    mangleQuoted?: boolean;
+
+    /**
      * Ignore dead code elimination/tree-shaking annotations such as @__PURE__ and package.json
      * "sideEffects" fields. This should only be used as a temporary workaround for incorrect
      * annotations in libraries.

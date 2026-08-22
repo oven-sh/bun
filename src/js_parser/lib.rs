@@ -23,6 +23,7 @@ pub mod lexer;
 
 pub(crate) mod fold;
 pub mod lower;
+pub(crate) mod mangle_props;
 pub mod p;
 pub mod parse;
 pub mod react_compiler_host;

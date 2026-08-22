@@ -68,49 +68,20 @@ pub mod npm {
 // `hoist-pattern`. Moved down from `bun_install` so the npmrc loader does not
 // depend on the full package manager.
 //
-// Calling `bun_jsc::RegularExpression` (tier-6) directly would invert the
-// layering; that edge is broken with link-time `extern "Rust"`
-// (`__bun_regex_*`) defined `#[no_mangle]` in `bun_jsc::regular_expression`.
+// Patterns are compiled through `crate::regex` (see its module docs).
 // ══════════════════════════════════════════════════════════════════════════
 
 use core::cell::OnceCell;
-use core::ptr::NonNull;
 
 use bun_alloc::Arena;
 use bun_ast as ast;
 use bun_core::escape_reg_exp::escape_reg_exp_for_package_name_matching;
-use bun_core::{String as BunString, strings};
-
-// LAYERING: `bun_jsc::RegularExpression` (Yarr FFI) lives in a higher tier.
-// The bodies are defined `#[no_mangle]` in
-// `bun_jsc::regular_expression`; declared here as `extern "Rust"` and
-// resolved at link time.
-unsafe extern "Rust" {
-    /// Compile `pattern` with no flags. `None` ⇔ the pattern does not compile.
-    /// Initializes JSC first (idempotent), so it must only run from
-    /// [`RegularExpression::matches`]; see the type's docs.
-    fn __bun_regex_compile(pattern: BunString) -> Option<NonNull<()>>;
-    fn __bun_regex_matches(regex: NonNull<()>, input: &BunString) -> bool;
-    fn __bun_regex_drop(regex: NonNull<()>);
-}
-
-/// Owned, type-erased compiled JSC regex; drops through the vtable.
-// FORWARD_DECL(b0): bun_jsc::RegularExpression — stored as raw NonNull<()>
-// (NOT Box<ZST>: a zero-sized opaque Box is a dangling sentinel that would
-// leak the real JSC allocation and skip its destructor).
-struct CompiledRegularExpression(NonNull<()>);
-
-impl Drop for CompiledRegularExpression {
-    fn drop(&mut self) {
-        // SAFETY: self.0 was produced by `__bun_regex_compile`; runs JSC destructor + free.
-        unsafe { __bun_regex_drop(self.0) }
-    }
-}
+use bun_core::strings;
 
 /// A package-name pattern, compiled on first use.
 ///
 /// Matchers are built while bunfig.toml / .npmrc load, before the command
-/// initializes JSC. `__bun_regex_compile` initializes JSC, and the first
+/// initializes JSC. Compiling a pattern initializes JSC, and the first
 /// `jsc::initialize` of the process fixes JSC's options, so compiling here
 /// would drop the options the command passes later (`bun -p` needs eval mode
 /// to keep the script's completion value, `bun test --isolate` its JIT
@@ -122,20 +93,16 @@ pub struct RegularExpression {
     /// `None` if the pattern failed to compile; it then never matches. The
     /// escaping in [`create_matcher`] leaves Yarr's pattern size limit as the
     /// only way to fail.
-    compiled: OnceCell<Option<CompiledRegularExpression>>,
+    compiled: OnceCell<Option<crate::regex::RegularExpression>>,
 }
 
 impl RegularExpression {
-    fn matches(&self, input: &BunString) -> bool {
-        let compiled = self.compiled.get_or_init(|| {
-            // SAFETY: link-time extern; pattern ownership transfers.
-            unsafe { __bun_regex_compile(BunString::clone_utf8(&self.source)) }
-                .map(CompiledRegularExpression)
-        });
+    fn matches(&self, input: &[u8]) -> bool {
+        let compiled = self
+            .compiled
+            .get_or_init(|| crate::regex::RegularExpression::compile(&self.source, b""));
         match compiled {
-            // SAFETY: `regex.0` was produced by `__bun_regex_compile` and stays
-            // live until `regex` drops.
-            Some(regex) => unsafe { __bun_regex_matches(regex.0, input) },
+            Some(regex) => regex.matches(input),
             None => false,
         }
     }
@@ -252,17 +219,13 @@ impl PnpmMatcher {
             return false;
         }
 
-        // Package names are ASCII, so
-        // `borrow_utf8` is a zero-copy borrow for the regex match.
-        let name_str = BunString::borrow_utf8(name);
-
         match self.behavior {
             Behavior::AllMatchersInclude => {
                 for matcher in self.matchers.iter() {
                     match &matcher.pattern {
                         Pattern::MatchAll => return true,
                         Pattern::Regex(regex) => {
-                            if regex.matches(&name_str) {
+                            if regex.matches(name) {
                                 return true;
                             }
                         }
@@ -275,7 +238,7 @@ impl PnpmMatcher {
                     match &matcher.pattern {
                         Pattern::MatchAll => return false,
                         Pattern::Regex(regex) => {
-                            if regex.matches(&name_str) {
+                            if regex.matches(name) {
                                 return false;
                             }
                         }
@@ -291,7 +254,7 @@ impl PnpmMatcher {
                             matches = !matcher.is_exclude;
                         }
                         Pattern::Regex(regex) => {
-                            if regex.matches(&name_str) {
+                            if regex.matches(name) {
                                 matches = !matcher.is_exclude;
                             }
                         }

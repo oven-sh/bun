@@ -62,7 +62,10 @@ use bun_sourcemap as SourceMap;
 pub mod renamer;
 use renamer as rename;
 
-/// Map of mangled property `Ref` → final mangled name bytes.
+pub mod mangle_props;
+
+/// Mangled property (or CSS module local) `Ref` → final name, read through
+/// `Printer::mangled_prop_name`.
 // PERF: `Box<[u8]>` values own their bytes —
 // revisit if profiling shows allocation pressure during link.
 pub type MangledProps = bun_collections::ArrayHashMap<Ref, Box<[u8]>>;
@@ -1752,15 +1755,25 @@ pub(crate) mod __gated_printer {
             }
         }
 
+        /// The name to print for an `E::NameOfSymbol`.
         pub(crate) fn mangled_prop_name(&mut self, ref_: Ref) -> &'a [u8] {
             let ref_ = self.symbols().follow(ref_);
-            // TODO: we don't support that
             if let Some(mangled_props) = self.options.mangled_props {
                 if let Some(name) = mangled_props.get(&ref_) {
                     return name;
                 }
             }
             self.name_for_symbol(ref_)
+        }
+
+        /// The property name a `Kind::MangledProp` symbol was created for.
+        pub(crate) fn original_name_of_mangled_prop(&mut self, ref_: Ref) -> &'a [u8] {
+            let ref_ = self.symbols().follow(ref_);
+            self.symbols()
+                .get_const(ref_)
+                .unwrap()
+                .original_name
+                .slice()
         }
 
         #[inline]
@@ -3459,6 +3472,15 @@ pub(crate) mod __gated_printer {
                                     return;
                                 }
                             }
+                        } else if let ExprData::ENameOfSymbol(name) = &e.index.data {
+                            // Enum members are recorded under their original names.
+                            let original_name = self.original_name_of_mangled_prop(name.ref_);
+                            if let Some(value) =
+                                self.try_to_get_imported_enum_value(e.target, original_name)
+                            {
+                                self.print_inlined_enum(value, original_name, level);
+                                return;
+                            }
                         }
                     } else {
                         if flags.contains(ExprFlag::HasNonOptionalChainParent) {
@@ -3485,6 +3507,22 @@ pub(crate) mod __gated_printer {
                             }
                             self.add_source_mapping(e.index.loc);
                             self.print_symbol(priv_.ref_);
+                        }
+                        // `a.foo_` became `a[<mangled prop>]` in the parser; print it
+                        // as a `.` access again now that the final name is known.
+                        ExprData::ENameOfSymbol(name)
+                            if lexer::is_identifier(self.mangled_prop_name(name.ref_)) =>
+                        {
+                            let name = self.mangled_prop_name(name.ref_);
+                            if !is_optional_chain_start {
+                                if self.prev_num_end == self.writer.written() {
+                                    // "1.toString" is a syntax error, so print "1 .toString" instead
+                                    self.print(b" ");
+                                }
+                                self.print(b".");
+                            }
+                            self.add_source_mapping(e.index.loc);
+                            self.print_identifier(name);
                         }
                         _ => {
                             self.print(b"[");
@@ -4069,7 +4107,10 @@ pub(crate) mod __gated_printer {
                             self.print_space_before_identifier();
                             self.add_source_mapping(expr.loc);
                             self.print_symbol(namespace.namespace_ref);
-                            let alias = namespace.alias.slice();
+                            let alias = match namespace.mangled_prop_ref {
+                                Some(mangled_prop_ref) => self.mangled_prop_name(mangled_prop_ref),
+                                None => namespace.alias.slice(),
+                            };
                             if lexer::is_identifier(alias) {
                                 self.print(b".");
                                 // TODO: addSourceMappingForName
@@ -4250,13 +4291,13 @@ pub(crate) mod __gated_printer {
                     let name = self.mangled_prop_name(e.ref_);
                     self.add_source_mapping_for_name(expr.loc, name, e.ref_);
 
-                    if !self.options.minify_whitespace && e.has_property_key_comment {
-                        self.print(b" /* @__KEY__ */");
+                    // Keep the annotation so that bundling this output again
+                    // still treats the string as a property name.
+                    if e.has_property_key_comment && !self.options.minify_whitespace {
+                        self.print(b"/* @__KEY__ */ ");
                     }
 
-                    self.print(b'"');
-                    self.print_string_characters_utf8(name, b'"');
-                    self.print(b'"');
+                    self.print_string_literal_utf8(name, false);
                 }
                 ExprData::EJsxElement(_) | ExprData::EPrivateIdentifier(_) => {
                     if cfg!(debug_assertions) {
@@ -4746,6 +4787,28 @@ pub(crate) mod __gated_printer {
                         self.print(c);
                     }
                 }
+                ExprData::ENameOfSymbol(mangled) if !IS_JSON => {
+                    let name = self.mangled_prop_name(mangled.ref_);
+                    self.add_source_mapping_for_name(key.loc, name, mangled.ref_);
+                    self.print_space_before_identifier();
+                    if lexer::is_identifier(name) {
+                        self.print_identifier(name);
+
+                        // Use a shorthand property if the names are the same
+                        if let Some(val) = &item.value {
+                            if let ExprData::EIdentifier(e) = &val.data {
+                                if name == self.name_for_symbol(e.ref_) {
+                                    if let Some(initial) = &item.initializer {
+                                        self.print_initializer(*initial);
+                                    }
+                                    return;
+                                }
+                            }
+                        }
+                    } else {
+                        self.print_string_literal_utf8(name, false);
+                    }
+                }
                 _ => {
                     if IS_JSON {
                         unreachable!();
@@ -4980,6 +5043,41 @@ pub(crate) mod __gated_printer {
                                                 Level::Lowest,
                                                 ExprFlag::none(),
                                             );
+                                        }
+                                    }
+                                    ExprData::ENameOfSymbol(mangled) => {
+                                        let name = self.mangled_prop_name(mangled.ref_);
+                                        self.add_source_mapping_for_name(
+                                            property.key.loc,
+                                            name,
+                                            mangled.ref_,
+                                        );
+                                        self.print_space_before_identifier();
+                                        if lexer::is_identifier(name) {
+                                            self.print_identifier(name);
+
+                                            // Use a shorthand property if the names are the same
+                                            if let BindingData::BIdentifier(id) =
+                                                &property.value.data
+                                            {
+                                                let id = id.get();
+                                                if name == self.name_for_symbol(id.r#ref) {
+                                                    if Self::MAY_HAVE_MODULE_INFO && tlm.is_export {
+                                                        if let Some(mi) = self.module_info() {
+                                                            let name_id = mi.str(name);
+                                                            mi.add_export_info_local(
+                                                                name_id, name_id,
+                                                            );
+                                                        }
+                                                    }
+                                                    self.maybe_print_default_binding_value(
+                                                        property,
+                                                    );
+                                                    continue;
+                                                }
+                                            }
+                                        } else {
+                                            self.print_string_literal_utf8(name, false);
                                         }
                                     }
                                     _ => {

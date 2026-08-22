@@ -2470,6 +2470,15 @@ pub mod parse_worker {
         opts.features.minify_identifiers = topts.minify_identifiers;
         opts.features.minify_keep_names = topts.keep_names;
         opts.features.minify_whitespace = topts.minify_whitespace;
+        // The runtime helpers are never mangled.
+        if !task.source_index.is_runtime() {
+            // SAFETY: ARENA — as for `allow_unresolved` above, `topts` belongs to
+            // the worker-owned `Transpiler` and outlives the parse.
+            opts.mangle_props = topts
+                .mangle_props
+                .as_ref()
+                .map(|mangler| unsafe { bun_collections::detach_ref(mangler) });
+        }
         opts.use_define_for_class_fields = task.use_define_for_class_fields;
         opts.features.emit_decorator_metadata = task.emit_decorator_metadata;
         // emitDecoratorMetadata implies legacy/experimental decorators, as it only

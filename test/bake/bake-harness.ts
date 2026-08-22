@@ -935,6 +935,7 @@ export class Client extends EventEmitter {
   /** The next `received-hmr-event` ack. Rejects if the client exits or the timeout passes first. */
   #nextAck(waitingFor: string, timeout = 2000 * WAIT_MULTIPLIER): Promise<void> {
     return new Promise<void>((resolve, reject) => {
+      if (this.exited) return reject(clientExitedWhile(waitingFor, this.exitCode ?? "unknown"));
       const cleanup = () => {
         clearTimeout(timer);
         this.off("received-hmr-event", onAck);
@@ -1042,6 +1043,7 @@ export class Client extends EventEmitter {
     if (activeClient === this) {
       activeClient = null;
     }
+    const wasRunning = this.#proc.exitCode === null && this.#proc.signalCode === null;
     try {
       this.#proc.send({ type: "exit" });
     } catch (e) {}
@@ -1049,7 +1051,7 @@ export class Client extends EventEmitter {
     // `exited` settles before `onExit` runs. Wait for it so `exitCode` is set
     // and the `exit` listeners have removed this client from `connectedClients`.
     if (!this.exited) await EventEmitter.once(this, "exit");
-    if (this.exitCode !== 0) {
+    if (this.exitCode !== 0 && !(await this.#abortedInTeardown(wasRunning))) {
       let code;
       if (exitCodeMapStrings[this.exitCode]) {
         code = ": " + JSON.stringify(exitCodeMapStrings[this.exitCode]);
@@ -1062,6 +1064,18 @@ export class Client extends EventEmitter {
       throw new Error(`Client sent ${this.messages.length} unread messages: ${JSON.stringify(this.messages, null, 2)}`);
     }
     this.output[Symbol.dispose]();
+  }
+
+  /**
+   * Node on Windows sometimes aborts inside its own teardown after the exit the
+   * harness requested (a `uv_async_send` on a closing handle). The fixture never
+   * exits with 3 or 9 itself, so that abort is a clean exit.
+   */
+  async #abortedInTeardown(exitWasRequested: boolean): Promise<boolean> {
+    if (!isWindows || !exitWasRequested || (this.exitCode !== 3 && this.exitCode !== 9)) return false;
+    // The assertion is on stderr; let both pipes drain before reading the lines.
+    if (this.output.closes < 2) await EventEmitter.once(this.output, "close");
+    return this.output.lines.some(line => line.includes("UV_HANDLE_CLOSING"));
   }
 
   expectReload(cb: () => Promise<void>) {
@@ -1172,7 +1186,8 @@ export class Client extends EventEmitter {
         // served HTML on a page load, or the "e" message that precedes the update
         // ack. Only a runtime error reaches the overlay later (after a report
         // round trip), so poll only while an expected error has not shown up yet.
-        for (let retries = 0; errors.length > 0 && !hasVisibleModal && retries < 5; retries++) {
+        const deadline = Date.now() + 1000 * WAIT_MULTIPLIER;
+        while (errors.length > 0 && !hasVisibleModal && Date.now() < deadline) {
           await Bun.sleep(200);
           hasVisibleModal = await this.#hasVisibleErrorOverlay();
         }

@@ -81,6 +81,7 @@ function createWindow(windowUrl) {
   };
   let pageLoadAcked = false;
   const ackPageLoad = () => {
+    if (pageLoadAcked) return;
     pageLoadAcked = true;
     ackToHarness();
   };
@@ -89,7 +90,9 @@ function createWindow(windowUrl) {
   // `window` inside happy-dom's script context) and passes its internal hooks.
   let hmrEventHookInstalled = false;
   let pendingBuildAcks = 0;
-  let hmrScriptQueued = false;
+  // The update frame whose handlers are running. The HMR runtime appends a
+  // frame's script synchronously from its handler, so the flag lands on it.
+  let currentFrame = null;
   const ackBuild = () => {
     if (pendingBuildAcks === 0) return;
     pendingBuildAcks--;
@@ -130,11 +133,11 @@ function createWindow(windowUrl) {
         if (hmrEventHookInstalled ? kind === "u" : kind === "e" || kind === "u") {
           // JS updates queue a script tag and ack via bun:afterUpdate once it
           // evals; everything else (CSS, reloads, route reloads) acks here on
-          // the next tick when no script was queued.
+          // the next tick when this frame queued no script.
           pendingBuildAcks++;
-          hmrScriptQueued = false;
+          const frame = (currentFrame = { scriptQueued: false });
           setImmediate(() => {
-            if (!hmrScriptQueued) ackBuild();
+            if (!frame.scriptQueued) ackBuild();
           });
         }
         if (!allowWebSocketMessages) {
@@ -187,7 +190,7 @@ function createWindow(windowUrl) {
     value: function (element) {
       if (element instanceof ScriptTag) {
         assert(element.src.startsWith("blob:"));
-        hmrScriptQueued = true;
+        if (currentFrame) currentFrame.scriptQueued = true;
         const blob = objectURLRegistry.get(element.src);
         assert(blob);
         // Capture the window this script was appended to. Rapid HMR reloads

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { gunzipSync } from "node:zlib";
 
@@ -418,6 +418,7 @@ describe.concurrent("OTLP/HTTP exporter", () => {
       },
     });
   } catch {}
+  afterAll(() => held4318?.stop(true));
   test.skipIf(!held4318)(
     "Bun.otel.start() with no exporter configured anywhere targets the local collector default (skipped when :4318 is taken)",
     async () => {
@@ -434,6 +435,7 @@ describe.concurrent("OTLP/HTTP exporter", () => {
         expect(exitCode).toBe(0);
       } finally {
         held4318!.stop(true);
+        held4318 = undefined;
       }
     },
   );

@@ -1603,14 +1603,21 @@ impl<'a> PackageInstaller<'a> {
                 };
                 match resolution.tag {
                     resolution::Tag::Git => {
-                        package_manager::enqueue_git_for_checkout(
+                        if package_manager::enqueue_git_for_checkout(
                             self.manager_mut(),
                             dependency_id,
                             alias.slice(string_buf!()),
                             resolution,
                             context,
                             download_patch_hash,
-                        );
+                        ) == package_manager::GitEnqueueResult::OfflineMiss
+                        {
+                            self.increment_tree_install_count(
+                                !is_pending_package_install,
+                                self.current_tree_id,
+                                log_level,
+                            );
+                        }
                     }
                     resolution::Tag::Github => {
                         let url = self.manager_mut().alloc_github_url(resolution.github());
@@ -1628,7 +1635,7 @@ impl<'a> PackageInstaller<'a> {
                             Err(ForTarballError::InvalidURL) => {
                                 self.fail_with_invalid_url(log_level, is_pending_package_install)
                             }
-                            Err(ForTarballError::AlreadyFailed) => self
+                            Err(ForTarballError::AlreadyFailed | ForTarballError::Offline) => self
                                 .increment_tree_install_count(
                                     !is_pending_package_install,
                                     self.current_tree_id,
@@ -1660,7 +1667,7 @@ impl<'a> PackageInstaller<'a> {
                             Err(ForTarballError::InvalidURL) => {
                                 self.fail_with_invalid_url(log_level, is_pending_package_install)
                             }
-                            Err(ForTarballError::AlreadyFailed) => self
+                            Err(ForTarballError::AlreadyFailed | ForTarballError::Offline) => self
                                 .increment_tree_install_count(
                                     !is_pending_package_install,
                                     self.current_tree_id,
@@ -1698,7 +1705,7 @@ impl<'a> PackageInstaller<'a> {
                             Err(ForTarballError::InvalidURL) => {
                                 self.fail_with_invalid_url(log_level, is_pending_package_install)
                             }
-                            Err(ForTarballError::AlreadyFailed) => self
+                            Err(ForTarballError::AlreadyFailed | ForTarballError::Offline) => self
                                 .increment_tree_install_count(
                                     !is_pending_package_install,
                                     self.current_tree_id,

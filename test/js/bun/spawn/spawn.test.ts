@@ -1613,6 +1613,39 @@ describe("argv0", () => {
   });
 });
 
+describe("cmd validation", () => {
+  for (const [label, fn] of [
+    ["spawn", spawn],
+    ["spawnSync", spawnSync],
+  ] as const) {
+    it(`${label}({ cmd: string }) throws instead of spreading the string into argv`, () => {
+      let thrown: any;
+      try {
+        // @ts-expect-error cmd must be an array
+        fn({ cmd: "definitely-not-a-real-binary" });
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown?.code).toBe("ERR_INVALID_ARG_TYPE");
+      expect(thrown?.message).toContain("cmd must be an array");
+    });
+
+    it(`${label}({ cmd: <non-array object> }) throws`, () => {
+      expect(() => {
+        // @ts-expect-error cmd must be an array
+        fn({ cmd: { 0: bunExe(), length: 1 } });
+      }).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    });
+
+    it(`${label}(string) throws (positional form, unchanged)`, () => {
+      expect(() => {
+        // @ts-expect-error cmd must be an array
+        fn("definitely-not-a-real-binary");
+      }).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    });
+  }
+});
+
 describe("option combinations", () => {
   it("detached + argv0 works together", async () => {
     await using proc = spawn({

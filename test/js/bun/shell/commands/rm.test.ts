@@ -114,6 +114,46 @@ foo/
     }
   });
 
+  test("--force is the long form of -f", async () => {
+    await using tempdir = tempDir("rmlongforce", {
+      "existent.txt": "",
+      "after-interactive.txt": "",
+      "dir/sub/file.txt": "",
+      "mixed/file.txt": "",
+      "kept.txt": "",
+    });
+    const run = async (cmd: $.ShellPromise) => {
+      const { stdout, stderr, exitCode } = await cmd.quiet();
+      return { stdout: stdout.toString(), stderr: stderr.toString(), exitCode };
+    };
+    const ok = { stdout: "", stderr: "", exitCode: 0 };
+
+    // Nonexistent operand: ignored, same as -f.
+    expect(await run($`rm --force ${tempdir}/non_existent.txt`)).toEqual(ok);
+
+    // Existing operand is still removed.
+    expect(await run($`rm --force ${tempdir}/existent.txt`)).toEqual(ok);
+    expect(existsSync(`${tempdir}/existent.txt`)).toBeFalse();
+
+    // Like -f, a later --force cancels an earlier -i (which is otherwise rejected).
+    expect(await run($`rm -i --force ${tempdir}/after-interactive.txt`)).toEqual(ok);
+    expect(existsSync(`${tempdir}/after-interactive.txt`)).toBeFalse();
+
+    // Combined with other long flags, in either order, with missing operands mixed in.
+    expect(await run($`rm --force --recursive ${tempdir}/dir ${tempdir}/non_existent_dir`)).toEqual(ok);
+    expect(existsSync(`${tempdir}/dir`)).toBeFalse();
+    expect(await run($`rm -r --force ${tempdir}/mixed`)).toEqual(ok);
+    expect(existsSync(`${tempdir}/mixed`)).toBeFalse();
+
+    // Only the exact spelling is accepted.
+    expect(await run($`rm --forc ${tempdir}/kept.txt`)).toEqual({
+      stdout: "",
+      stderr: "rm: illegal option -- -\n",
+      exitCode: 1,
+    });
+    expect(existsSync(`${tempdir}/kept.txt`)).toBeTrue();
+  });
+
   test("dir", async () => {
     const files = {
       "existent.txt": "",

@@ -1990,6 +1990,171 @@ describe("minimum-release-age", () => {
       const lockfile = await Bun.file(`${dir}/bun.lock`).text();
       expect(lockfile).toContain("regular-package@2.1.0");
     });
+
+    // https://github.com/oven-sh/bun/issues/40031
+    test("frozen lockfile installs a pinned too-recent version after a catalog: specifier swap", async () => {
+      using dir = tempDir("frozen-catalog-pin", {
+        // The lockfile is created while the dependency is a literal version
+        // (`bun add pkg@x.y.z` rewrites `catalog:` to the literal), then the
+        // user restores `catalog:` in package.json. The specifier mismatch
+        // forces a re-resolution on the next install.
+        "package.json": JSON.stringify({
+          name: "repro",
+          workspaces: { catalog: { "regular-package": "3.0.0" } },
+          dependencies: { "regular-package": "3.0.0" },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      let proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--no-verify"],
+        cwd: String(dir),
+        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: `${dir}/cache-first` },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(await proc.exited).toBe(0);
+      expect(await Bun.file(`${dir}/bun.lock`).text()).toContain("regular-package@3.0.0");
+
+      await Bun.write(
+        `${dir}/package.json`,
+        JSON.stringify({
+          name: "repro",
+          workspaces: { catalog: { "regular-package": "3.0.0" } },
+          dependencies: { "regular-package": "catalog:" },
+        }),
+      );
+
+      // A cold cache makes the re-resolution fetch the manifest with publish
+      // timestamps, so the age filter sees the pinned version.
+      proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "install",
+          "--frozen-lockfile",
+          "--minimum-release-age",
+          `${5 * SECONDS_PER_DAY}`,
+          "--no-verify",
+        ],
+        cwd: String(dir),
+        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: `${dir}/cache-second` },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const stderr = await proc.stderr.text();
+      expect(stderr).not.toContain("minimum-release-age");
+      expect(await proc.exited).toBe(0);
+      expect(await Bun.file(`${dir}/bun.lock`).text()).toContain("regular-package@3.0.0");
+    });
+
+    // https://github.com/oven-sh/bun/issues/40031
+    test("expired cached manifest keeps a pinned too-recent version installable", async () => {
+      using dir = tempDir("expired-manifest-pin", {
+        "package.json": JSON.stringify({
+          name: "repro",
+          workspaces: { catalog: { "regular-package": "3.0.0" } },
+          dependencies: { "regular-package": "3.0.0" },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      // A 1 second age gate filters nothing (every version is at least a day
+      // old) but caches the manifest with publish timestamps.
+      let proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", "1", "--no-verify"],
+        cwd: String(dir),
+        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: `${dir}/cache` },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(await proc.exited).toBe(0);
+      expect(await Bun.file(`${dir}/bun.lock`).text()).toContain("regular-package@3.0.0");
+
+      await Bun.write(
+        `${dir}/package.json`,
+        JSON.stringify({
+          name: "repro",
+          workspaces: { catalog: { "regular-package": "3.0.0" } },
+          dependencies: { "regular-package": "catalog:" },
+        }),
+      );
+
+      // --force disables manifest cache control, so the cached manifest loads
+      // as expired. That takes the exact-version fast path in
+      // enqueue_dependency instead of the manifest resolution path.
+      proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "install",
+          "--frozen-lockfile",
+          "--force",
+          "--minimum-release-age",
+          `${5 * SECONDS_PER_DAY}`,
+          "--no-verify",
+        ],
+        cwd: String(dir),
+        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: `${dir}/cache` },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const stderr = await proc.stderr.text();
+      expect(stderr).not.toContain("minimum release age");
+      expect(await proc.exited).toBe(0);
+      expect(await Bun.file(`${dir}/bun.lock`).text()).toContain("regular-package@3.0.0");
+    });
+
+    // https://github.com/oven-sh/bun/issues/40031
+    test("re-resolution keeps a pinned too-recent version when the range still allows it", async () => {
+      using dir = tempDir("range-catalog-pin", {
+        // Same catalog: specifier swap as above, but with a range. Every
+        // version the range accepts is too recent, and 3.0.0 is already
+        // pinned in the lockfile.
+        "package.json": JSON.stringify({
+          name: "repro",
+          workspaces: { catalog: { "regular-package": "^3.0.0" } },
+          dependencies: { "regular-package": "^3.0.0" },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      let proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--no-verify"],
+        cwd: String(dir),
+        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: `${dir}/cache-first` },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(await proc.exited).toBe(0);
+      expect(await Bun.file(`${dir}/bun.lock`).text()).toContain("regular-package@3.0.0");
+
+      await Bun.write(
+        `${dir}/package.json`,
+        JSON.stringify({
+          name: "repro",
+          workspaces: { catalog: { "regular-package": "^3.0.0" } },
+          dependencies: { "regular-package": "catalog:" },
+        }),
+      );
+
+      proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "install",
+          "--frozen-lockfile",
+          "--minimum-release-age",
+          `${5 * SECONDS_PER_DAY}`,
+          "--no-verify",
+        ],
+        cwd: String(dir),
+        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: `${dir}/cache-second` },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const stderr = await proc.stderr.text();
+      expect(stderr).not.toContain("minimum-release-age");
+      expect(await proc.exited).toBe(0);
+      expect(await Bun.file(`${dir}/bun.lock`).text()).toContain("regular-package@3.0.0");
+    });
   });
 
   describe("monorepo with linker modes", () => {

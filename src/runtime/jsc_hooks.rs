@@ -960,14 +960,14 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     let loop_ = unsafe { (*el).usockets_loop() };
 
     // ── tick_immediate_tasks ────────────────────────────────────────────
-    // After this call `immediate_tasks` reflects next-tick immediates, so
-    // the `has_pending_immediate` read below is correct.
+    // `has_pending_immediate` below is read after this, so it covers what the
+    // batch queued.
     // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
     unsafe { (*el).tick_immediate_tasks(vm) };
     // SAFETY: as above.
     let has_yielded_tasks = unsafe { (*el).promote_yield_tasks() };
     #[cfg(windows)]
-    if has_yielded_tasks || !unsafe { &*el }.immediate_tasks.is_empty() {
+    if has_yielded_tasks || unsafe { &*el }.has_pending_immediates() {
         // SAFETY: `el` is the live per-thread event loop.
         unsafe { (*el).wakeup() };
     }
@@ -1026,13 +1026,9 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     // due `WTFTimer` heap entries), so it must stay guarded by `is_active()`
     // rather than running unconditionally.
     {
-        // Read `immediate_tasks` AFTER
-        // `tickImmediateTasks` swaps `next_immediate_tasks` in, so this
-        // reflects next-tick immediates (queued during the drain above).
-        // SAFETY: `el` is the live per-thread event loop.
         // SAFETY: `el` is the live per-thread event loop.
         let has_pending_immediate = has_yielded_tasks
-            || !unsafe { &*el }.immediate_tasks.is_empty()
+            || unsafe { &*el }.has_pending_immediates()
             || unsafe { &*el }.has_pending_tasks();
         // Fold the QUIC deadline into the poll timeout.
         // SAFETY: `loop_` is the live per-thread uws loop.
@@ -1128,7 +1124,7 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
     // SAFETY: as above.
     let has_yielded_tasks = unsafe { (*el).promote_yield_tasks() };
     #[cfg(windows)]
-    if has_yielded_tasks || !unsafe { &*el }.immediate_tasks.is_empty() {
+    if has_yielded_tasks || unsafe { &*el }.has_pending_immediates() {
         // SAFETY: `el` is the live per-thread event loop.
         unsafe { (*el).wakeup() };
     }
@@ -1168,9 +1164,8 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
 
     {
         // SAFETY: `el` is the live per-thread event loop.
-        // SAFETY: `el` is the live per-thread event loop.
         let has_pending_immediate = has_yielded_tasks
-            || !unsafe { &*el }.immediate_tasks.is_empty()
+            || unsafe { &*el }.has_pending_immediates()
             || unsafe { &*el }.has_pending_tasks();
         // SAFETY: `loop_` is the live per-thread uws loop.
         let quic_next_tick_us = unsafe {

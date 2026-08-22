@@ -966,7 +966,7 @@ impl All {
     ///
     /// Note (b2): `vm` is erased per §Dispatch (the caller is in
     /// `bun_jsc::event_loop` which can't name `bun_runtime`). The two reads
-    /// it needs — `event_loop.immediate_tasks.len()` and the QUIC tick — are
+    /// it needs — `event_loop.has_pending_immediates()` and the QUIC tick — are
     /// passed in pre-computed until the cycle is broken.
     ///
     /// # Safety

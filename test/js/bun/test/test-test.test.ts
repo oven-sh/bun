@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from "bun:test";
 import { copyFileSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
 
@@ -748,4 +748,89 @@ test("my-test", () => {
       expect(output).toContain("Ran 1 test across 1 file");
     });
   }
+});
+
+// The matchers that wait for a promise do so by running the event loop from
+// inside the caller. Called from a setImmediate callback, they must still see
+// the callbacks queued in the same batch, which is what settles the promise.
+test("a matcher waiting on a promise inside setImmediate sees the sibling immediate that settles it", async () => {
+  const code = /*ts*/ `
+import { expect, test } from "bun:test";
+
+expect.extend({
+  async toEventuallyBe(received: Promise<unknown>, expected: unknown) {
+    const value = await received;
+    return { pass: value === expected, message: () => \`expected \${String(value)} to be \${String(expected)}\` };
+  },
+});
+
+// Queues two immediates in one batch: the first blocks on the matcher, the
+// second is the only thing that settles the promise the matcher waits for.
+// Resolves, once the matcher has returned, with the order the callbacks ran in.
+function matcherSettledBySiblingImmediate(
+  matcher: (promise: Promise<string>) => void,
+  settle: (p: PromiseWithResolvers<string>) => void,
+): Promise<string[]> {
+  const pending = Promise.withResolvers<string>();
+  const order: string[] = [];
+  return new Promise(finish => {
+    setImmediate(() => {
+      order.push("matcher:start");
+      matcher(pending.promise);
+      order.push("matcher:end");
+      finish(order);
+    });
+    setImmediate(() => {
+      order.push("sibling");
+      settle(pending);
+    });
+  });
+}
+
+const cases: Record<string, [(promise: Promise<string>) => void, (p: PromiseWithResolvers<string>) => void]> = {
+  ".resolves": [promise => expect(promise).resolves.toBe("x"), p => p.resolve("x")],
+  ".rejects": [promise => expect(promise).rejects.toThrow("nope"), p => p.reject(new Error("nope"))],
+  "toThrow() on a function returning a promise": [
+    promise => expect(() => promise).toThrow("nope"),
+    p => p.reject(new Error("nope")),
+  ],
+  "async expect.extend matcher": [promise => expect(promise).toEventuallyBe("x"), p => p.resolve("x")],
+  "expect.resolvesTo": [
+    promise => expect({ promise }).toEqual({ promise: expect.resolvesTo.stringContaining("x") }),
+    p => p.resolve("x"),
+  ],
+};
+
+for (const [name, [matcher, settle]] of Object.entries(cases)) {
+  test(name, async () => {
+    expect(await matcherSettledBySiblingImmediate(matcher, settle)).toEqual(["matcher:start", "sibling", "matcher:end"]);
+  });
+}
+`;
+  using dir = tempDir("matcher-inside-immediate", { "matchers.test.ts": code });
+  await using proc = spawn({
+    cmd: [bunExe(), "test", "matchers.test.ts"],
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+    // A broken build blocks inside the first callback of each test forever
+    // (the test's own timeout fires in there, but the matcher keeps waiting).
+    timeout: 30_000,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe(`bun test ${Bun.version_with_sha}\n`);
+  expect(
+    normalizeBunSnapshot(stderr)
+      .split("\n")
+      .filter(line => line.startsWith("(pass)") || line.startsWith("(fail)")),
+  ).toEqual([
+    "(pass) .resolves",
+    "(pass) .rejects",
+    "(pass) toThrow() on a function returning a promise",
+    "(pass) async expect.extend matcher",
+    "(pass) expect.resolvesTo",
+  ]);
+  expect(stderr).toContain("5 pass");
+  expect(exitCode).toBe(0);
 });

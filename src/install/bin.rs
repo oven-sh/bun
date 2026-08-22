@@ -753,7 +753,7 @@ fn normalized_bin_name(name: &[u8]) -> &[u8] {
 /// verbatim from package.json, so without this check a malicious package could
 /// point a bin link at (and chmod) an arbitrary file on disk (the bug class
 /// npm fixed as CVE-2019-16775).
-pub(crate) fn bin_target_escapes_package_dir(target: &[u8]) -> bool {
+pub fn bin_target_escapes_package_dir(target: &[u8]) -> bool {
     if path::is_absolute(target) {
         return true;
     }

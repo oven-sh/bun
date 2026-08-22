@@ -23,12 +23,12 @@ Bun v1.1 or later. The build uses Bun to run its own code generators.
 irm bun.sh/install.ps1 | iex
 ```
 
-[Visual Studio](https://visualstudio.microsoft.com) with the "Desktop Development with C++" workload. While installing, also install Git if Git for Windows is not already installed.
+[Visual Studio](https://visualstudio.microsoft.com) with the "Desktop Development with C++" workload, plus the "C++ ATL for latest build tools" component — `src/jsc/bindings/windows/rescle.cpp` needs `atlstr.h` to compile and `atls.lib` to link, and neither ships with the bare workload. While installing, also install Git if Git for Windows is not already installed.
 
 Install Visual Studio with the graphical wizard or through WinGet:
 
 ```ps1
-winget install "Visual Studio Community 2022" --override "--add Microsoft.VisualStudio.Workload.NativeDesktop Microsoft.VisualStudio.Component.Git " -s msstore
+winget install "Visual Studio Community 2022" --override "--add Microsoft.VisualStudio.Workload.NativeDesktop Microsoft.VisualStudio.Component.VC.ATL Microsoft.VisualStudio.Component.Git " -s msstore
 ```
 
 After Visual Studio, you need the following:

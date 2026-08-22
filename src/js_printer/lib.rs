@@ -2796,6 +2796,64 @@ pub(crate) mod __gated_printer {
             self.print(quote);
         }
 
+        /// A clause item whose symbol carries a namespace alias prints as
+        /// `ns.alias` at every use, so the named binding must not print when
+        /// the statement's star binding replaces it (the export may be
+        /// type-only). `hide_aliased` is true only when that star prints:
+        /// bundling and the record carries `CONTAINS_IMPORT_STAR`. HMR also
+        /// aliases every import item but declares the namespace itself, so
+        /// its clauses stay as written.
+        fn import_item_prints_in_clause(&self, hide_aliased: bool, ref_: Ref) -> bool {
+            if !hide_aliased {
+                return true;
+            }
+            let ref_ = self.symbols().follow(ref_);
+            match self.symbols().get_const(ref_) {
+                Some(symbol) => symbol.namespace_alias.is_none(),
+                None => true,
+            }
+        }
+
+        /// `with { type: ... }` must print on every statement for the record:
+        /// a second statement without it resolves to a different module.
+        fn print_import_record_loader_attribute(&mut self, record: &ImportRecord) {
+            // backwards compatibility: previously, we always stripped type
+            if IS_BUN_PLATFORM {
+                if let Some(loader) = record.loader {
+                    use bun_ast::Loader;
+                    match loader {
+                        Loader::Jsx => self.print_whitespacer(ws!(b" with { type: \"jsx\" }")),
+                        Loader::Js => self.print_whitespacer(ws!(b" with { type: \"js\" }")),
+                        Loader::Ts => self.print_whitespacer(ws!(b" with { type: \"ts\" }")),
+                        Loader::Tsx => self.print_whitespacer(ws!(b" with { type: \"tsx\" }")),
+                        Loader::Css => self.print_whitespacer(ws!(b" with { type: \"css\" }")),
+                        Loader::File => self.print_whitespacer(ws!(b" with { type: \"file\" }")),
+                        Loader::Json => self.print_whitespacer(ws!(b" with { type: \"json\" }")),
+                        Loader::Jsonc => self.print_whitespacer(ws!(b" with { type: \"jsonc\" }")),
+                        Loader::Toml => self.print_whitespacer(ws!(b" with { type: \"toml\" }")),
+                        Loader::Yaml => self.print_whitespacer(ws!(b" with { type: \"yaml\" }")),
+                        Loader::Json5 => self.print_whitespacer(ws!(b" with { type: \"json5\" }")),
+                        Loader::Xml => self.print_whitespacer(ws!(b" with { type: \"xml\" }")),
+                        Loader::Wasm => self.print_whitespacer(ws!(b" with { type: \"wasm\" }")),
+                        Loader::Napi => self.print_whitespacer(ws!(b" with { type: \"napi\" }")),
+                        Loader::Base64 => {
+                            self.print_whitespacer(ws!(b" with { type: \"base64\" }"))
+                        }
+                        Loader::Dataurl => {
+                            self.print_whitespacer(ws!(b" with { type: \"dataurl\" }"))
+                        }
+                        Loader::Text => self.print_whitespacer(ws!(b" with { type: \"text\" }")),
+                        Loader::Bunsh => self.print_whitespacer(ws!(b" with { type: \"sh\" }")),
+                        Loader::Sqlite | Loader::SqliteEmbedded => {
+                            self.print_whitespacer(ws!(b" with { type: \"sqlite\" }"))
+                        }
+                        Loader::Html => self.print_whitespacer(ws!(b" with { type: \"html\" }")),
+                        Loader::Md => self.print_whitespacer(ws!(b" with { type: \"md\" }")),
+                    }
+                }
+            }
+        }
+
         fn print_clause_item(&mut self, item: &js_ast::ClauseItem) {
             self.print_clause_item_as(item, ClauseItemAs::Import)
         }
@@ -5788,6 +5846,41 @@ pub(crate) mod __gated_printer {
                         return Ok(());
                     }
 
+                    // A guarded metadata import from an external module prints
+                    // as `ns.alias` at every use; its named binding must leave
+                    // the clause or the failing import comes back.
+                    let hide_aliased_items = self.options.bundling
+                        && record
+                            .flags
+                            .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR);
+                    let mut visible_items: usize = 0;
+                    for item in slice_of(s.items).iter() {
+                        if self.import_item_prints_in_clause(hide_aliased_items, item.name.ref_) {
+                            visible_items += 1;
+                        }
+                    }
+
+                    // `import * as ns, { X }` is a syntax error; split the
+                    // star binding into its own statement when both survive.
+                    let split_star_from_items = record
+                        .flags
+                        .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR)
+                        && visible_items > 0;
+                    if split_star_from_items {
+                        self.print(b"import");
+                        self.print_space();
+                        self.print_whitespacer(ws!(b"* as"));
+                        self.print(b" ");
+                        self.print_symbol(s.namespace_ref);
+                        self.print(b" ");
+                        self.print_whitespacer(ws!(b"from "));
+                        self.print_import_record_path(record);
+                        self.print_import_record_loader_attribute(record);
+                        self.print_semicolon_after_statement();
+                        self.print_semicolon_if_needed();
+                        self.print_indent();
+                    }
+
                     self.print(b"import");
 
                     // `import defer` grammatically requires `* as ns`; if a
@@ -5807,12 +5900,14 @@ pub(crate) mod __gated_printer {
                     let mut item_count: usize = 0;
 
                     if let Some(name) = &s.default_name {
-                        self.print(b" ");
-                        self.print_symbol(name.ref_);
-                        item_count += 1;
+                        if self.import_item_prints_in_clause(hide_aliased_items, name.ref_) {
+                            self.print(b" ");
+                            self.print_symbol(name.ref_);
+                            item_count += 1;
+                        }
                     }
 
-                    if !slice_of(s.items).is_empty() {
+                    if visible_items > 0 {
                         if item_count > 0 {
                             self.print(b",");
                         }
@@ -5825,8 +5920,14 @@ pub(crate) mod __gated_printer {
                             self.print_space();
                         }
 
-                        for (i, item) in slice_of(s.items).iter().enumerate() {
-                            if i != 0 {
+                        let mut printed: usize = 0;
+                        for item in slice_of(s.items).iter() {
+                            if !self
+                                .import_item_prints_in_clause(hide_aliased_items, item.name.ref_)
+                            {
+                                continue;
+                            }
+                            if printed != 0 {
                                 self.print(b",");
                                 if s.is_single_line {
                                     self.print_space();
@@ -5837,6 +5938,7 @@ pub(crate) mod __gated_printer {
                                 self.print_indent();
                             }
                             self.print_clause_item(item);
+                            printed += 1;
                         }
 
                         if !s.is_single_line {
@@ -5853,6 +5955,7 @@ pub(crate) mod __gated_printer {
                     if record
                         .flags
                         .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR)
+                        && !split_star_from_items
                     {
                         if item_count > 0 {
                             self.print(b",");
@@ -5866,10 +5969,11 @@ pub(crate) mod __gated_printer {
 
                     if item_count > 0 {
                         if !self.options.minify_whitespace
-                            || record
+                            || (record
                                 .flags
                                 .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR)
-                            || slice_of(s.items).is_empty()
+                                && !split_star_from_items)
+                            || visible_items == 0
                         {
                             self.print(b" ");
                         }
@@ -5878,77 +5982,7 @@ pub(crate) mod __gated_printer {
 
                     self.print_import_record_path(record);
 
-                    // backwards compatibility: previously, we always stripped type
-                    if IS_BUN_PLATFORM {
-                        if let Some(loader) = record.loader {
-                            use bun_ast::Loader;
-                            match loader {
-                                Loader::Jsx => {
-                                    self.print_whitespacer(ws!(b" with { type: \"jsx\" }"))
-                                }
-                                Loader::Js => {
-                                    self.print_whitespacer(ws!(b" with { type: \"js\" }"))
-                                }
-                                Loader::Ts => {
-                                    self.print_whitespacer(ws!(b" with { type: \"ts\" }"))
-                                }
-                                Loader::Tsx => {
-                                    self.print_whitespacer(ws!(b" with { type: \"tsx\" }"))
-                                }
-                                Loader::Css => {
-                                    self.print_whitespacer(ws!(b" with { type: \"css\" }"))
-                                }
-                                Loader::File => {
-                                    self.print_whitespacer(ws!(b" with { type: \"file\" }"))
-                                }
-                                Loader::Json => {
-                                    self.print_whitespacer(ws!(b" with { type: \"json\" }"))
-                                }
-                                Loader::Jsonc => {
-                                    self.print_whitespacer(ws!(b" with { type: \"jsonc\" }"))
-                                }
-                                Loader::Toml => {
-                                    self.print_whitespacer(ws!(b" with { type: \"toml\" }"))
-                                }
-                                Loader::Yaml => {
-                                    self.print_whitespacer(ws!(b" with { type: \"yaml\" }"))
-                                }
-                                Loader::Json5 => {
-                                    self.print_whitespacer(ws!(b" with { type: \"json5\" }"))
-                                }
-                                Loader::Xml => {
-                                    self.print_whitespacer(ws!(b" with { type: \"xml\" }"))
-                                }
-                                Loader::Wasm => {
-                                    self.print_whitespacer(ws!(b" with { type: \"wasm\" }"))
-                                }
-                                Loader::Napi => {
-                                    self.print_whitespacer(ws!(b" with { type: \"napi\" }"))
-                                }
-                                Loader::Base64 => {
-                                    self.print_whitespacer(ws!(b" with { type: \"base64\" }"))
-                                }
-                                Loader::Dataurl => {
-                                    self.print_whitespacer(ws!(b" with { type: \"dataurl\" }"))
-                                }
-                                Loader::Text => {
-                                    self.print_whitespacer(ws!(b" with { type: \"text\" }"))
-                                }
-                                Loader::Bunsh => {
-                                    self.print_whitespacer(ws!(b" with { type: \"sh\" }"))
-                                }
-                                Loader::Sqlite | Loader::SqliteEmbedded => {
-                                    self.print_whitespacer(ws!(b" with { type: \"sqlite\" }"))
-                                }
-                                Loader::Html => {
-                                    self.print_whitespacer(ws!(b" with { type: \"html\" }"))
-                                }
-                                Loader::Md => {
-                                    self.print_whitespacer(ws!(b" with { type: \"md\" }"))
-                                }
-                            }
-                        }
-                    }
+                    self.print_import_record_loader_attribute(record);
                     self.print_semicolon_after_statement();
 
                     if Self::MAY_HAVE_MODULE_INFO && self.module_info.is_some() {
@@ -6003,21 +6037,31 @@ pub(crate) mod __gated_printer {
                             (irp_id, fetch_parameters)
                         };
 
+                        // The module record must list exactly the bindings the
+                        // printed clause has; a hidden item would fail to link.
                         if let Some(name) = &s.default_name {
-                            let local_name = self.name_for_symbol(name.ref_);
-                            let mi = self.module_info().expect("infallible: module_info enabled");
-                            let local_name_id = mi.str(local_name);
-                            let default_id = mi.str(b"default");
-                            mi.add_import_info_single(
-                                irp_id,
-                                default_id,
-                                local_name_id,
-                                fetch_parameters,
-                                false,
-                            );
+                            if self.import_item_prints_in_clause(hide_aliased_items, name.ref_) {
+                                let local_name = self.name_for_symbol(name.ref_);
+                                let mi =
+                                    self.module_info().expect("infallible: module_info enabled");
+                                let local_name_id = mi.str(local_name);
+                                let default_id = mi.str(b"default");
+                                mi.add_import_info_single(
+                                    irp_id,
+                                    default_id,
+                                    local_name_id,
+                                    fetch_parameters,
+                                    false,
+                                );
+                            }
                         }
 
                         for item in slice_of(s.items).iter() {
+                            if !self
+                                .import_item_prints_in_clause(hide_aliased_items, item.name.ref_)
+                            {
+                                continue;
+                            }
                             let local_name = self.name_for_symbol(item.name.ref_);
                             let mi = self.module_info().expect("infallible: module_info enabled");
                             let local_name_id = mi.str(local_name);

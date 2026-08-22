@@ -539,6 +539,9 @@ pub enum ImportItemStatus {
     Generated,
     /// The printer will replace this import with "undefined"
     Missing,
+    /// Decorator metadata wrapped every use in a `typeof` guard; a missing
+    /// or ambiguous export becomes `undefined` (not a link error).
+    MetadataGuarded,
 }
 
 #[repr(u8)]

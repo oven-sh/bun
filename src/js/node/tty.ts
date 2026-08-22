@@ -32,6 +32,7 @@ $toClass(ReadStream, "ReadStream", fs.ReadStream);
 Object.defineProperty(ReadStream, "prototype", {
   get() {
     const Prototype = Object.create(fs.ReadStream.prototype);
+    Object.defineProperty(Prototype, "constructor", { value: ReadStream, writable: true, configurable: true });
 
     // Add ref/unref methods to make tty.ReadStream behave like Node.js
     // where TTY streams have socket-like behavior
@@ -131,8 +132,9 @@ function WriteStream(fd): void {
 
 Object.defineProperty(WriteStream, "prototype", {
   get() {
-    const Real = fs.WriteStream.prototype;
-    Object.defineProperty(WriteStream, "prototype", { value: Real });
+    const Prototype = Object.create(fs.WriteStream.prototype);
+    Object.defineProperty(Prototype, "constructor", { value: WriteStream, writable: true, configurable: true });
+    Object.defineProperty(WriteStream, "prototype", { value: Prototype });
 
     WriteStream.prototype._refreshSize = function () {
       const oldCols = this.columns;
@@ -195,7 +197,7 @@ Object.defineProperty(WriteStream, "prototype", {
       })();
     };
 
-    return Real;
+    return Prototype;
   },
   enumerable: true,
   configurable: true,

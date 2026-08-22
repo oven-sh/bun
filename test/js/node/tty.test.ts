@@ -1,6 +1,147 @@
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
-import { WriteStream } from "node:tty";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import fs from "node:fs";
+import path from "node:path";
+import tty, { WriteStream } from "node:tty";
+
+describe("WriteStream.prototype is distinct from fs.WriteStream.prototype", () => {
+  test("tty.WriteStream.prototype is its own object inheriting from fs.WriteStream.prototype", () => {
+    expect(tty.WriteStream.prototype).not.toBe(fs.WriteStream.prototype);
+    expect(Object.getPrototypeOf(tty.WriteStream.prototype)).toBe(fs.WriteStream.prototype);
+  });
+
+  test("tty.{Read,Write}Stream.prototype.constructor point at the tty classes", () => {
+    expect(tty.WriteStream.prototype.constructor).toBe(tty.WriteStream);
+    expect(tty.ReadStream.prototype.constructor).toBe(tty.ReadStream);
+    expect(Object.getOwnPropertyDescriptor(tty.WriteStream.prototype, "constructor")).toEqual({
+      value: tty.WriteStream,
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
+    expect(Object.getOwnPropertyDescriptor(tty.ReadStream.prototype, "constructor")).toEqual({
+      value: tty.ReadStream,
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
+  });
+
+  test("fs.WriteStream instances do not carry tty methods and are not instanceof tty.WriteStream", async () => {
+    using dir = tempDir("tty-writestream-proto", { "out.txt": "" });
+    const ws = fs.createWriteStream(path.join(String(dir), "out.txt"));
+    ws.on("error", () => {});
+    const closed = new Promise<void>(resolve => ws.once("close", () => resolve()));
+    try {
+      expect({
+        instanceofTTY: ws instanceof tty.WriteStream,
+        instanceofFS: ws instanceof fs.WriteStream,
+        cursorTo: typeof (ws as any).cursorTo,
+        getColorDepth: typeof (ws as any).getColorDepth,
+        getWindowSize: typeof (ws as any).getWindowSize,
+        hasColors: typeof (ws as any).hasColors,
+        clearLine: typeof (ws as any).clearLine,
+        moveCursor: typeof (ws as any).moveCursor,
+      }).toEqual({
+        instanceofTTY: false,
+        instanceofFS: true,
+        cursorTo: "undefined",
+        getColorDepth: "undefined",
+        getWindowSize: "undefined",
+        hasColors: "undefined",
+        clearLine: "undefined",
+        moveCursor: "undefined",
+      });
+    } finally {
+      ws.destroy();
+      await closed;
+    }
+  });
+
+  test("mutating tty.WriteStream.prototype does not leak onto fs.WriteStream.prototype", () => {
+    try {
+      (tty.WriteStream.prototype as any).___probe = 1;
+      expect((fs.WriteStream.prototype as any).___probe).toBeUndefined();
+    } finally {
+      delete (tty.WriteStream.prototype as any).___probe;
+    }
+  });
+
+  test("piped process.stdout is not instanceof tty.WriteStream and lacks tty methods", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const tty = require("node:tty");
+         const fs = require("node:fs");
+         const out = process.stdout;
+         process.stdout.write(JSON.stringify({
+           isTTY: !!out.isTTY,
+           instanceofTTY: out instanceof tty.WriteStream,
+           cursorTo: typeof out.cursorTo,
+           getColorDepth: typeof out.getColorDepth,
+           getWindowSize: typeof out.getWindowSize,
+           protoIdentity: tty.WriteStream.prototype === fs.WriteStream.prototype,
+         }));`,
+      ],
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      isTTY: false,
+      instanceofTTY: false,
+      cursorTo: "undefined",
+      getColorDepth: "undefined",
+      getWindowSize: "undefined",
+      protoIdentity: false,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("tty.WriteStream instances still have tty methods and correct instanceof chain", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const tty = require("node:tty");
+         const fs = require("node:fs");
+         const stream = require("node:stream");
+         const ws = new tty.WriteStream(1);
+         process.stdout.write(JSON.stringify({
+           instanceofTTY: ws instanceof tty.WriteStream,
+           instanceofFS: ws instanceof fs.WriteStream,
+           instanceofWritable: ws instanceof stream.Writable,
+           protoIsTTYProto: Object.getPrototypeOf(ws) === tty.WriteStream.prototype,
+           cursorTo: typeof ws.cursorTo,
+           getColorDepth: typeof ws.getColorDepth,
+           getWindowSize: typeof ws.getWindowSize,
+           hasColors: typeof ws.hasColors,
+           _refreshSize: typeof ws._refreshSize,
+           write: typeof ws.write,
+         }));`,
+      ],
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      instanceofTTY: true,
+      instanceofFS: true,
+      instanceofWritable: true,
+      protoIsTTYProto: true,
+      cursorTo: "function",
+      getColorDepth: "function",
+      getWindowSize: "function",
+      hasColors: "function",
+      _refreshSize: "function",
+      write: "function",
+    });
+    expect(exitCode).toBe(0);
+  });
+});
 
 describe("ReadStream.prototype.setRawMode", () => {
   // Regression: on Windows, the `fd === 0` branch returned early on success

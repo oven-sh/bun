@@ -13,6 +13,15 @@ const p = process.platform === "win32" ? (s: string) => s.replaceAll("/", "\\") 
 $.nothrow();
 
 describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
+  // A lone `-` is an operand (a file named `-`), as with getopt(3).
+  TestBuilder.command`cp - copy.txt`
+    .ensureTempDir()
+    .file("-", "dash")
+    .stderr("")
+    .exitCode(0)
+    .fileEquals("copy.txt", "dash")
+    .runAsTest("copy a file named -");
+
   TestBuilder.command`cat ${import.meta.filename} > lmao.txt; cp -v lmao.txt lmao2.txt`
     .stdout(p("$TEMP_DIR/lmao.txt -> $TEMP_DIR/lmao2.txt\n"))
     .ensureTempDir()

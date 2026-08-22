@@ -30,6 +30,31 @@ describe.concurrent("bunshell rm", () => {
     .doesNotExist("node_modules")
     .runAsTest("node_modules");
 
+  // A lone `-` is an operand (a file named `-`), as with getopt(3); it used to
+  // be consumed as an empty cluster of flags, leaving rm without operands.
+  TestBuilder.command`rm -v -`
+    .ensureTempDir()
+    .file("-", "")
+    .stdout("-\n")
+    .stderr("")
+    .exitCode(0)
+    .doesNotExist("-")
+    .runAsTest("rm -v - removes the file named -");
+
+  TestBuilder.command`rm -`
+    .ensureTempDir()
+    .stdout("")
+    .stderr("rm: -: No such file or directory\n")
+    .exitCode(1)
+    .runAsTest("rm - reports the missing file named -");
+
+  TestBuilder.command`rm -f -`
+    .ensureTempDir()
+    .stdout("")
+    .stderr("")
+    .exitCode(0)
+    .runAsTest("rm -f - ignores the missing file named -");
+
   test("force", async () => {
     const files = {
       "existent.txt": "",

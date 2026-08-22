@@ -645,10 +645,10 @@ pub(crate) fn tick_queue_with_count(
 #[cfg(not(windows))]
 #[unsafe(no_mangle)]
 pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
-    // SAFETY: contract above.
-    let poll_ref = unsafe { &mut *poll };
-    let owner = poll_ref.owner;
-    let hup = poll_ref.flags.contains(PollFlag::Hup);
+    // SAFETY: contract above; both reads end at the `;`. The arms below get
+    // `poll` itself where they need it (the memory-pressure and DNS arms may
+    // return it to the store), so this frame keeps no reference into the slot.
+    let (owner, hup) = unsafe { ((*poll).owner, (*poll).flags.contains(PollFlag::Hup)) };
 
     debug_assert!(!owner.is_null());
 
@@ -695,8 +695,9 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
             unsafe { Process::on_wait_pid_from_event_loop_task(proc) };
         }
         poll_tag::MEMORY_PRESSURE => {
-            // SAFETY: `poll` is live per `__bun_run_file_poll`'s contract.
-            crate::node::memory_pressure::on_poll(unsafe { &mut *poll }, size_or_offset);
+            // SAFETY: `poll` is live per `__bun_run_file_poll`'s contract. Passed
+            // raw: `on_poll` may return the slot to the store.
+            unsafe { crate::node::memory_pressure::on_poll(poll, size_or_offset) };
         }
         poll_tag::PARENT_DEATH_WATCHDOG => {
             let wd = owner_as!(bun_io::parent_death_watchdog::ParentDeathWatchdog);
@@ -729,8 +730,10 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
             // `Channel::process` re-enters the resolver via c-ares callbacks.
             // SAFETY: tag set with this pointee type at `FilePoll::init`.
             let resolver = unsafe { &*owner.ptr.cast_const().cast::<DNSResolver>() };
-            // SAFETY: `poll` outlives this call (caller contract).
-            resolver.on_dns_poll(unsafe { &mut *poll });
+            // SAFETY: `poll` is live per `__bun_run_file_poll`'s contract and is
+            // the resolver's registered poll for its fd (it set this owner on
+            // it). Passed raw: `on_dns_poll` may return the slot to the store.
+            unsafe { resolver.on_dns_poll(poll) };
         }
         poll_tag::GET_ADDR_INFO_REQUEST => {
             #[cfg(target_os = "macos")]

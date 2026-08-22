@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { bunRun, isWindows, tempDir } from "harness";
 
 describe("bundler files option", () => {
   test("basic in-memory file bundling", async () => {
@@ -600,5 +600,318 @@ describe("bundler files option", () => {
 
     const output = await result.outputs[0].text();
     expect(output).toContain("injected by plugin");
+  });
+
+  // Relative keys are resolved against the cwd, like relative entrypoints.
+  // Bun.build reads the process cwd, so these run a fixture inside its own
+  // directory instead of chdir-ing the test runner.
+  describe("relative keys", () => {
+    // Appended to a fixture that defines `options`: prints the build result
+    // and which of the string literals in `markers` ended up in the bundle.
+    function report(markers: string[]) {
+      return `
+        const result = await Bun.build({ ...options, throw: false });
+        const output = result.success ? await result.outputs[0].text() : "";
+        console.log(JSON.stringify({
+          success: result.success,
+          logs: result.logs.map(String),
+          found: ${JSON.stringify(markers)}.filter(marker => output.includes(JSON.stringify(marker))),
+        }));
+      `;
+    }
+
+    // The two examples from the `files` docs: override a file that exists on
+    // disk, and provide one that does not, both keyed relative to the cwd
+    // while the importer refers to them as "./config.ts" / "./generated.ts".
+    test.concurrent.each([
+      ["./src/config.ts", "./src/generated.ts"],
+      ["src/config.ts", "src/generated.ts"],
+      ["./src/../src/config.ts", "./src/./generated.ts"],
+      [".\\src\\config.ts", ".\\src\\generated.ts"],
+    ])("disk entrypoint picks up %j and %j", async (configKey, generatedKey) => {
+      using dir = tempDir("bundler-files-relative-override", {
+        "src/index.ts": `
+          import { config } from "./config.ts";
+          import { generated } from "./generated.ts";
+          console.log(config, generated);
+        `,
+        "src/config.ts": `export const config = "config from disk";`,
+        "build.ts": `
+          const options = {
+            entrypoints: ["./src/index.ts"],
+            files: {
+              [${JSON.stringify(configKey)}]: 'export const config = "config from memory";',
+              [${JSON.stringify(generatedKey)}]: 'export const generated = "generated in memory";',
+            },
+          };
+          ${report(["config from disk", "config from memory", "generated in memory"])}
+        `,
+      });
+
+      const { stdout, stderr, exitCode } = await bunRun(`${dir}/build.ts`);
+      expect({ stderr, exitCode, stdout }).toEqual({
+        stderr: "",
+        exitCode: 0,
+        stdout: JSON.stringify({ success: true, logs: [], found: ["config from memory", "generated in memory"] }),
+      });
+    });
+
+    // These imports do not spell out the file, so the disk resolver picks the
+    // file and the key has to match the path it comes back with.
+    test.concurrent("keys override files the resolver finds for extensionless and package imports", async () => {
+      using dir = tempDir("bundler-files-relative-override-resolved", {
+        "src/index.ts": `
+          import { config } from "./config";
+          import { util } from "util-lib";
+          console.log(config, util);
+        `,
+        "src/config.ts": `export const config = "config from disk";`,
+        "node_modules/util-lib/package.json": JSON.stringify({ name: "util-lib", main: "index.js" }),
+        "node_modules/util-lib/index.js": `export const util = "util from disk";`,
+        "build.ts": `
+          const options = {
+            entrypoints: ["./src/index.ts"],
+            files: {
+              "./src/config.ts": 'export const config = "config from memory";',
+              "./node_modules/util-lib/index.js": 'export const util = "util from memory";',
+            },
+          };
+          ${report(["config from disk", "config from memory", "util from disk", "util from memory"])}
+        `,
+      });
+
+      const { stdout, stderr, exitCode } = await bunRun(`${dir}/build.ts`);
+      expect({ stderr, exitCode, stdout }).toEqual({
+        stderr: "",
+        exitCode: 0,
+        stdout: JSON.stringify({ success: true, logs: [], found: ["config from memory", "util from memory"] }),
+      });
+    });
+
+    // An entrypoint spelled one way and keyed another still resolves to the
+    // same in-memory file, and in-memory files keyed relative to the cwd can
+    // import each other. Nothing here exists on disk.
+    test.concurrent.each([
+      ["entry.js", "entry.js", "lib.js"],
+      ["./entry.js", "./entry.js", "./lib.js"],
+      ["entry.js", "./entry.js", "lib.js"],
+      ["./entry.js", "entry.js", "./lib.js"],
+      ["./src/entry.js", "./src/entry.js", "./src/lib.js"],
+      ["src/entry.js", "./src/entry.js", "src/lib.js"],
+      ["./src/entry.js", "src/entry.js", "./src/lib.js"],
+    ])("entrypoint %j with keys %j and %j", async (entrypoint, entryKey, libKey) => {
+      using dir = tempDir("bundler-files-relative-entry", {
+        "build.ts": `
+          const options = {
+            entrypoints: [${JSON.stringify(entrypoint)}],
+            files: {
+              [${JSON.stringify(entryKey)}]: 'import { lib } from "./lib.js"; console.log("entry in memory", lib);',
+              [${JSON.stringify(libKey)}]: 'export const lib = "lib in memory";',
+            },
+          };
+          ${report(["entry in memory", "lib in memory"])}
+        `,
+      });
+
+      const { stdout, stderr, exitCode } = await bunRun(`${dir}/build.ts`);
+      expect({ stderr, exitCode, stdout }).toEqual({
+        stderr: "",
+        exitCode: 0,
+        stdout: JSON.stringify({ success: true, logs: [], found: ["entry in memory", "lib in memory"] }),
+      });
+    });
+
+    test.concurrent("in-memory entrypoint keyed relative to the cwd can import a file on disk", async () => {
+      using dir = tempDir("bundler-files-relative-entry-disk-import", {
+        "lib.js": `export const lib = "lib from disk";`,
+        "build.ts": `
+          const options = {
+            entrypoints: ["./entry.js"],
+            files: { "./entry.js": 'import { lib } from "./lib.js"; console.log("entry in memory", lib);' },
+          };
+          ${report(["entry in memory", "lib from disk"])}
+        `,
+      });
+
+      const { stdout, stderr, exitCode } = await bunRun(`${dir}/build.ts`);
+      expect({ stderr, exitCode, stdout }).toEqual({
+        stderr: "",
+        exitCode: 0,
+        stdout: JSON.stringify({ success: true, logs: [], found: ["entry in memory", "lib from disk"] }),
+      });
+    });
+
+    // The error is reported against the path the key resolved to.
+    test.concurrent("a syntax error in an entrypoint keyed relative to the cwd is a build error", async () => {
+      using dir = tempDir("bundler-files-relative-entry-syntax-error", {
+        "build.ts": `
+          import { isAbsolute, relative } from "node:path";
+          const result = await Bun.build({
+            entrypoints: ["./entry.js"],
+            files: { "./entry.js": ")" },
+            throw: false,
+          });
+          console.log(JSON.stringify({
+            success: result.success,
+            logs: result.logs.map(String),
+            files: result.logs.map(log => {
+              const file = log.position.file;
+              return { absolute: isAbsolute(file), fromCwd: relative(process.cwd(), file) };
+            }),
+          }));
+        `,
+      });
+
+      const { stdout, stderr, exitCode } = await bunRun(`${dir}/build.ts`);
+      expect({ stderr, exitCode, stdout }).toEqual({
+        stderr: "",
+        exitCode: 0,
+        stdout: JSON.stringify({
+          success: false,
+          logs: ["BuildMessage: Unexpected )"],
+          files: [{ absolute: true, fromCwd: "entry.js" }],
+        }),
+      });
+    });
+
+    test.concurrent.skipIf(!isWindows)("keys and entrypoints match whatever the case of the drive letter", async () => {
+      using dir = tempDir("bundler-files-drive-letter", {
+        "build.ts": `
+          import { join } from "node:path";
+          const cwd = process.cwd();
+          const lower = cwd[0].toLowerCase() + cwd.slice(1);
+          const upper = cwd[0].toUpperCase() + cwd.slice(1);
+          const options = {
+            entrypoints: [join(lower, "entry.js")],
+            files: {
+              [join(upper, "entry.js")]: 'import { lib } from "./lib.js"; console.log("entry in memory", lib);',
+              [join(lower, "lib.js")]: 'export const lib = "lib in memory";',
+            },
+          };
+          ${report(["entry in memory", "lib in memory"])}
+        `,
+      });
+
+      const { stdout, stderr, exitCode } = await bunRun(`${dir}/build.ts`);
+      expect({ stderr, exitCode, stdout }).toEqual({
+        stderr: "",
+        exitCode: 0,
+        stdout: JSON.stringify({ success: true, logs: [], found: ["entry in memory", "lib in memory"] }),
+      });
+    });
+
+    // A key is a path, so an importer in another directory is not matched by
+    // a key that merely spells the same text as its import specifier.
+    test.concurrent("a key only matches the file it resolves to", async () => {
+      using dir = tempDir("bundler-files-relative-key-is-a-path", {
+        "src/index.ts": `
+          import { config } from "./config.ts";
+          console.log(config);
+        `,
+        "src/config.ts": `export const config = "config from disk";`,
+        "build.ts": `
+          const options = {
+            entrypoints: ["./src/index.ts"],
+            files: { "./config.ts": 'export const config = "config from memory";' },
+          };
+          ${report(["config from disk", "config from memory"])}
+        `,
+      });
+
+      const { stdout, stderr, exitCode } = await bunRun(`${dir}/build.ts`);
+      expect({ stderr, exitCode, stdout }).toEqual({
+        stderr: "",
+        exitCode: 0,
+        stdout: JSON.stringify({ success: true, logs: [], found: ["config from disk"] }),
+      });
+    });
+
+    // Longer than MAX_PATH_BYTES on every platform (Windows allows the most,
+    // 32767 UTF-16 units * 3 bytes).
+    const longerThanAnyPath = Buffer.alloc(100_000, "x").toString();
+
+    test.concurrent("a key that resolves to a path longer than the platform allows is rejected", async () => {
+      using dir = tempDir("bundler-files-key-too-long", {
+        "build.ts": `
+          const key = ${JSON.stringify(longerThanAnyPath)} + ".js";
+          try {
+            Bun.build({ entrypoints: [key], files: { [key]: "" } });
+            console.log("did not throw");
+          } catch (error) {
+            console.log(JSON.stringify({ name: error.name, message: error.message.replace(/\\d+/, "N") }));
+          }
+        `,
+      });
+
+      const { stdout, stderr, exitCode } = await bunRun(`${dir}/build.ts`);
+      expect({ stderr, exitCode, stdout }).toEqual({
+        stderr: "",
+        exitCode: 0,
+        stdout: JSON.stringify({ name: "TypeError", message: "files: key resolves to a path longer than N bytes" }),
+      });
+    });
+
+    test.concurrent("an import specifier longer than the platform allows is a resolve error, not a crash", async () => {
+      using dir = tempDir("bundler-files-specifier-too-long", {
+        "build.ts": `
+          const long = ${JSON.stringify(longerThanAnyPath)};
+          const result = await Bun.build({
+            entrypoints: ["entry.js"],
+            files: { "entry.js": 'import "./' + long + '.js";' },
+            throw: false,
+          });
+          console.log(JSON.stringify({
+            success: result.success,
+            logs: result.logs.map(log => String(log).replaceAll(long, "<long>")),
+          }));
+        `,
+      });
+
+      const { stdout, stderr, exitCode } = await bunRun(`${dir}/build.ts`);
+      expect({ stderr, exitCode, stdout }).toEqual({
+        stderr: "",
+        exitCode: 0,
+        stdout: JSON.stringify({ success: false, logs: ['ResolveMessage: Could not resolve: "./<long>.js"'] }),
+      });
+    });
+
+    // A plugin can give a module any path it likes. One that does not fit in a
+    // path buffer cannot be joined with the module's imports, so `files` stays
+    // out of the way and the import fails to resolve as it would without it.
+    test.concurrent(
+      "an importer with a path longer than the platform allows is a resolve error, not a crash",
+      async () => {
+        using dir = tempDir("bundler-files-importer-too-long", {
+          "entry.js": `import "long";`,
+          "build.ts": `
+          const results = [];
+          for (const long of [${JSON.stringify(longerThanAnyPath)}, ${JSON.stringify("/" + longerThanAnyPath)}]) {
+            const result = await Bun.build({
+              entrypoints: ["./entry.js"],
+              files: { "./lib.js": "" },
+              plugins: [{
+                name: "long",
+                setup(build) {
+                  build.onResolve({ filter: /^long$/ }, () => ({ path: long, namespace: "long" }));
+                  build.onLoad({ filter: /./, namespace: "long" }, () => ({ contents: 'import "./lib.js";', loader: "js" }));
+                },
+              }],
+              throw: false,
+            });
+            results.push({ success: result.success, logs: result.logs.map(log => String(log).replaceAll(long, "<long>")) });
+          }
+          console.log(JSON.stringify(results));
+        `,
+        });
+
+        const { stdout, stderr, exitCode } = await bunRun(`${dir}/build.ts`);
+        const unresolved = { success: false, logs: ['ResolveMessage: Could not resolve: "./lib.js"'] };
+        expect({ stderr, exitCode, stdout }).toEqual({
+          stderr: "",
+          exitCode: 0,
+          stdout: JSON.stringify([unresolved, unresolved]),
+        });
+      },
+    );
   });
 });

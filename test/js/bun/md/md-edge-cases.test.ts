@@ -122,6 +122,47 @@ describe("fuzzer-like edge cases", () => {
     expect(typeof Markdown.html(input)).toBe("string");
   });
 
+  // Delimiter runs matching more than 6 times used to overflow a fixed-size
+  // match-size array, dropping tags (issue #39496).
+  test("emphasis run matched more than 6 times emits balanced tags", () => {
+    const stars = (n: number) => Buffer.alloc(n, "*").toString();
+    const count = (html: string, tag: string) => html.split(tag).length - 1;
+
+    // One 14-char opener closed by seven `**` closers.
+    const html = Markdown.html(stars(14) + "a** b** c** d** e** f** g**\n");
+    expect(html).toBe(
+      "<p>" +
+        "<strong>".repeat(7) +
+        "a</strong> b</strong> c</strong> d</strong> e</strong> f</strong> g</strong></p>\n",
+    );
+
+    // 14 chars on each side: seven nested <strong> pairs.
+    expect(Markdown.html(stars(14) + "foo" + stars(14) + "\n")).toBe(
+      "<p>" + "<strong>".repeat(7) + "foo" + "</strong>".repeat(7) + "</p>\n",
+    );
+
+    // 64 chars on each side: 32 nested pairs (spills past any inline capacity).
+    expect(Markdown.html(stars(64) + "foo" + stars(64) + "\n")).toBe(
+      "<p>" + "<strong>".repeat(32) + "foo" + "</strong>".repeat(32) + "</p>\n",
+    );
+
+    // Open/close tag counts stay balanced for every run length.
+    for (let n = 1; n <= 70; n++) {
+      const out = Markdown.html(stars(n) + "x" + stars(n) + "\n");
+      expect(count(out, "<strong>")).toBe(count(out, "</strong>"));
+      expect(count(out, "<em>")).toBe(count(out, "</em>"));
+      expect(out).not.toContain("*");
+    }
+
+    // Unequal runs: the unconsumed delimiter char stays as literal text.
+    expect(Markdown.html(stars(15) + "foo" + stars(14) + "\n")).toBe(
+      "<p>*" + "<strong>".repeat(7) + "foo" + "</strong>".repeat(7) + "</p>\n",
+    );
+    expect(Markdown.html(stars(14) + "foo" + stars(15) + "\n")).toBe(
+      "<p>" + "<strong>".repeat(7) + "foo" + "</strong>".repeat(7) + "*</p>\n",
+    );
+  });
+
   test("deeply nested links", () => {
     let input = "";
     for (let i = 0; i < 30; i++) {

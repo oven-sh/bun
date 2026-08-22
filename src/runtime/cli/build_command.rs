@@ -799,9 +799,10 @@ impl BuildCommand {
                 {
                     // if --no-bundle is passed, it won't have an output dir
                     if let options::OutputFileValue::Buffer { bytes } = &output_files[0].value {
-                        writer.write_all(bytes)?;
+                        // The bundle is the result: write it unbuffered so a failed write is reported.
+                        Output::flush();
+                        Output::writer().write_all(bytes)?;
                     }
-                    Output::flush();
                     break 'dump;
                 }
             }

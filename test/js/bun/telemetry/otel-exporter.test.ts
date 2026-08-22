@@ -369,7 +369,7 @@ describe.concurrent("OTLP/HTTP exporter", () => {
           { type: "datadog", apiKey: "ddkey", endpoint: process.env.C },
           { type: "honeycomb", apiKey: "hckey", id: "classic-ds", endpoint: process.env.C },
           { type: "grafana", apiKey: "tok", id: "12345", endpoint: process.env.C + "/otlp" },
-          { type: "newrelic", apiKey: "nrkey", endpoint: process.env.C },
+          { type: "newrelic", apiKey: "nrkey", endpoint: process.env.C, headers: { "Api-Key": "override" } },
           { type: "axiom", apiKey: "axtok", id: "ds", endpoint: process.env.C },
           { type: "dynatrace", apiKey: "dttok", endpoint: process.env.C + "/api/v2/otlp" },
           { type: "sentry", apiKey: "pub", endpoint: process.env.C + "/api/7/integration/otlp/v1/traces" },
@@ -390,7 +390,8 @@ describe.concurrent("OTLP/HTTP exporter", () => {
       "x-honeycomb-dataset": "classic-ds",
     });
     expect(by("/otlp/v1/traces", "authorization").authorization).toBe("Basic " + btoa("12345:tok"));
-    expect(by("/v1/traces", "api-key")["api-key"]).toBe("nrkey");
+    // user headers are merged over the preset's (one api-key header, the user's)
+    expect(by("/v1/traces", "api-key")["api-key"]).toBe("override");
     expect(by("/v1/traces", "x-axiom-dataset")).toMatchObject({
       authorization: "Bearer axtok",
       "x-axiom-dataset": "ds",

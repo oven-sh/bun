@@ -714,8 +714,11 @@ fn read_exporter_extras(
             use bun_http_types::ETag::HeaderEntryColumns;
             let entries = headers.entries.slice();
             for (name, value) in entries.items_name().iter().zip(entries.items_value()) {
+                let name = bstr::ByteSlice::to_str_lossy(headers.as_str(*name)).into_owned();
+                // Merged over a preset's headers: a user header replaces the preset's.
+                x.headers.retain(|(k, _)| !k.eq_ignore_ascii_case(&name));
                 x.headers.push((
-                    bstr::ByteSlice::to_str_lossy(headers.as_str(*name)).into_owned(),
+                    name,
                     bstr::ByteSlice::to_str_lossy(headers.as_str(*value)).into_owned(),
                 ));
             }

@@ -529,6 +529,11 @@ impl Processor {
         }
         if let Some(payload) = self.take_payload() {
             let exporters = self.exporters.read().clone();
+            if exporters.is_empty() {
+                self.stats
+                    .spans_dropped
+                    .fetch_add(payload.span_count as u64, Ordering::Relaxed);
+            }
             payload.expect(exporters.len());
             for e in exporters {
                 let result = e.export_blocking(&payload, deadline);

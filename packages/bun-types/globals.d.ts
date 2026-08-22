@@ -497,6 +497,14 @@ declare function removeEventListener(
   listener: Bun.EventListenerOrEventListenerObject,
   options?: boolean | Bun.EventListenerOptions,
 ): void;
+/**
+ * Dispatches `event` to the listeners registered on the global object with
+ * {@link addEventListener}, invoking them synchronously before returning.
+ *
+ * Returns `false` if `event` is cancelable and a listener called
+ * `event.preventDefault()`, otherwise `true`.
+ */
+declare function dispatchEvent(event: Event): boolean;
 
 /**
  * An event that provides information about an error in a script or in a file.

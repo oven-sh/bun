@@ -203,6 +203,8 @@ const response = await fetch("https://hostname/a/path", {
 });
 ```
 
+The URL still determines the scheme (`https:` speaks TLS over the socket), the `Host` header and the path. A request made over a Unix domain socket is never sent through a proxy: the `http_proxy` / `https_proxy` environment variables are ignored, and passing the `proxy` option together with `unix` rejects with a `TypeError`.
+
 ### TLS
 
 To use a client certificate, use the `tls` option:

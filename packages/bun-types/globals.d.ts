@@ -2002,7 +2002,12 @@ interface BunFetchRequestInit extends RequestInit {
   s3?: Bun.S3Options;
 
   /**
-   * Make the request over a Unix socket
+   * Make the request over a Unix socket. The URL still supplies the scheme
+   * (`https:` speaks TLS over the socket), `Host` header and path.
+   *
+   * A request over a Unix socket never goes through a proxy: the
+   * `http_proxy` / `https_proxy` environment variables are ignored, and
+   * combining this with the `proxy` option rejects with a `TypeError`.
    *
    * @example
    * ```js

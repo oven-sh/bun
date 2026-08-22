@@ -1,7 +1,7 @@
 import { serve, ServeOptions, Server } from "bun";
-import { afterAll, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync } from "fs";
-import { isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, tls as tlsCert, tmpdirSync } from "harness";
 import { request } from "http";
 import { join } from "path";
 const tmp_dir = tmpdirSync();
@@ -272,4 +272,143 @@ it("does not pool the unix-socket connection whose redirect is being followed", 
     results.push(`${response.status} ${response.redirected} ${await response.text()}`);
   }
   expect(results).toEqual(Array(5).fill("200 true tcp /world"));
+});
+
+// `unix` names the transport, so http_proxy / https_proxy in the environment
+// must not apply to the request (an explicit `proxy` alongside `unix` is
+// rejected). If they did, the daemon would be sent the proxy flavour of the
+// request: absolute-form for an http:// URL, a plaintext CONNECT for an
+// https:// URL, either one carrying the proxy URL's credentials in
+// Proxy-Authorization; and a redirect would be followed through the proxy.
+describe("http_proxy / https_proxy in the environment are ignored when `unix` is given", () => {
+  const plainSock = join(tmp_dir, "plain.sock");
+  const tlsSock = join(tmp_dir, "tls.sock");
+  // What the unix daemons received: request line, and whether a
+  // Proxy-Authorization header came with it.
+  const daemonLog: { line: string; proxyAuth: boolean }[] = [];
+  // Request lines that reached the proxy named by the env.
+  const proxyLog: string[] = [];
+  let origin: Server;
+  let proxy: ReturnType<typeof Bun.listen>;
+  let plainDaemon: ReturnType<typeof Bun.listen>;
+  let tlsDaemon: ReturnType<typeof Bun.listen>;
+
+  // Raw HTTP/1.1 server that answers each connection's first request with
+  // whatever `respond` returns for its header block.
+  function recording(respond: (head: string[]) => string) {
+    return {
+      open(socket: Bun.Socket<{ buf: string }>) {
+        socket.data = { buf: "" };
+      },
+      data(socket: Bun.Socket<{ buf: string }>, chunk: Uint8Array) {
+        const buf = (socket.data.buf += new TextDecoder("latin1").decode(chunk));
+        const end = buf.indexOf("\r\n\r\n");
+        if (end < 0) return;
+        socket.end(respond(buf.slice(0, end).split("\r\n")));
+      },
+      error() {},
+    };
+  }
+
+  function daemon(head: string[]) {
+    daemonLog.push({ line: head[0], proxyAuth: head.some(h => /^proxy-authorization:/i.test(h)) });
+    // Matched in both origin-form and absolute-form so the redirect hop is
+    // exercised either way.
+    if (/^GET \S*\/redirect /.test(head[0])) {
+      return `HTTP/1.1 302 Found\r\nLocation: ${origin.url.origin}/final\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`;
+    }
+    return "HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\ndaemon";
+  }
+
+  beforeAll(() => {
+    origin = serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("origin") });
+    proxy = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: recording(head => {
+        proxyLog.push(head[0]);
+        return "HTTP/1.1 200 OK\r\nContent-Length: 9\r\nConnection: close\r\n\r\nvia-proxy";
+      }),
+    });
+    plainDaemon = Bun.listen({ unix: plainSock, socket: recording(daemon) });
+    tlsDaemon = Bun.listen({ unix: tlsSock, tls: tlsCert, socket: recording(daemon) });
+  });
+
+  afterAll(() => {
+    origin.stop(true);
+    proxy.stop(true);
+    plainDaemon.stop(true);
+    tlsDaemon.stop(true);
+  });
+
+  async function fetchInChild(url: string, unix?: string) {
+    daemonLog.length = 0;
+    proxyLog.length = 0;
+    const env = { ...bunEnv };
+    for (const key of ["http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY", "no_proxy", "NO_PROXY"])
+      delete env[key];
+    env.http_proxy = env.https_proxy = `http://user:pass@127.0.0.1:${proxy.port}`;
+    env.URL_TO_FETCH = url;
+    if (unix !== undefined) env.UNIX_SOCKET = unix;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { URL_TO_FETCH, UNIX_SOCKET } = process.env;
+         const res = await fetch(URL_TO_FETCH, UNIX_SOCKET ? { unix: UNIX_SOCKET, tls: { rejectUnauthorized: false } } : {});
+         console.log(res.status, await res.text());`,
+      ],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return {
+      stdout: stdout.trim(),
+      stderr: stderr.trim(),
+      exitCode,
+      daemonLog: [...daemonLog],
+      proxyLog: [...proxyLog],
+    };
+  }
+
+  it("control: the same environment does route a TCP fetch through the proxy", async () => {
+    expect(await fetchInChild(`${origin.url.origin}/final`)).toEqual({
+      stdout: "200 via-proxy",
+      stderr: "",
+      exitCode: 0,
+      daemonLog: [],
+      proxyLog: [`GET http://127.0.0.1:${origin.port}/final HTTP/1.1`],
+    });
+  });
+
+  it("http:// URL: the daemon gets an origin-form request without the proxy credentials", async () => {
+    expect(await fetchInChild("http://daemon.invalid/v1/x", plainSock)).toEqual({
+      stdout: "200 daemon",
+      stderr: "",
+      exitCode: 0,
+      daemonLog: [{ line: "GET /v1/x HTTP/1.1", proxyAuth: false }],
+      proxyLog: [],
+    });
+  });
+
+  it("https:// URL: TLS is spoken to the daemon itself instead of sending it a CONNECT", async () => {
+    expect(await fetchInChild("https://daemon.invalid/v1/y", tlsSock)).toEqual({
+      stdout: "200 daemon",
+      stderr: "",
+      exitCode: 0,
+      daemonLog: [{ line: "GET /v1/y HTTP/1.1", proxyAuth: false }],
+      proxyLog: [],
+    });
+  });
+
+  it("a redirect off the unix socket is followed directly, not through the proxy", async () => {
+    expect(await fetchInChild("http://daemon.invalid/redirect", plainSock)).toEqual({
+      stdout: "200 origin",
+      stderr: "",
+      exitCode: 0,
+      daemonLog: [{ line: "GET /redirect HTTP/1.1", proxyAuth: false }],
+      proxyLog: [],
+    });
+  });
 });

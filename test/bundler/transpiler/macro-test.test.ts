@@ -6,11 +6,11 @@ import path from "node:path";
 import defaultMacro, {
   addStrings,
   addStringsUTF16,
+  bigints,
   default as defaultMacroAlias,
   escape,
   identity,
   identity as identity1,
-  bigints,
   identity as identity2,
   ireturnapromise,
   regexp,

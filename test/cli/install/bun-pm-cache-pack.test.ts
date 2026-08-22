@@ -108,6 +108,22 @@ it("bun pm cache pack / unpack round-trips exactly the cache entries a lockfile 
   expect(r.out).toContain("0 new, 3 already cached");
   expect(r.code).toBe(0);
 
+  // a file name containing `:` (legal on POSIX) round-trips
+  if (!isWindows) {
+    const barDir = join(cache1, (await readdirSorted(cache1)).find(n => n.startsWith("bar@0.0.2"))!);
+    await writeFile(join(barDir, "a:b.js"), "colon");
+    using cache3Dir = tempDir("cache-pack-c", {});
+    r = await run(["pm", "cache", "pack", join(package_dir, "colon.pack")], package_dir, cache1);
+    expect(r.err).not.toContain("error:");
+    expect(r.code).toBe(0);
+    r = await run(["pm", "cache", "unpack", join(package_dir, "colon.pack")], package_dir, String(cache3Dir));
+    expect(r.err).not.toContain("error:");
+    expect(r.code).toBe(0);
+    const bar3 = (await readdirSorted(String(cache3Dir))).find(n => n.startsWith("bar@0.0.2"))!;
+    expect(readFileSync(join(String(cache3Dir), bar3, "a:b.js"), "utf8")).toBe("colon");
+    rmSync(join(barDir, "a:b.js"));
+  }
+
   // a cache entry containing a link that passes *through* another link cannot be
   // restored, so pack refuses it up front instead of producing a pack unpack rejects
   if (!isWindows) {

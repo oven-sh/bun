@@ -27,7 +27,7 @@ use bun_valkey::valkey_protocol as protocol;
 // ───────────────────────────────────────────────────────────────────────────
 
 /// Bridge JS-thread `VirtualMachine` to the aio-level `EventLoopCtx` used by
-/// `KeepAlive::ref_/unref`. Valkey always runs on the JS event loop.
+/// `KeepAlive::ref_`. Valkey always runs on the JS event loop.
 #[inline]
 fn vm_event_loop_ctx() -> bun_io::EventLoopCtx {
     bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)

@@ -47,7 +47,7 @@ fn from_duplex<const SSL: bool>(duplex: &UpgradedDuplex) -> uws::NewSocketHandle
 }
 
 /// Shorthand for the JS-side `EventLoopCtx` (replaces direct VM passing to
-/// `KeepAlive::ref_/unref` — `bun_io` no longer accepts `&VirtualMachine`).
+/// `KeepAlive::unref_on_next_tick` — `bun_io` no longer accepts `&VirtualMachine`).
 #[inline]
 fn js_loop_ctx() -> bun_io::EventLoopCtx {
     bun_io::posix_event_loop::get_vm_ctx(bun_io::posix_event_loop::AllocatorType::Js)

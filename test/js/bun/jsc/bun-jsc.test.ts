@@ -256,6 +256,75 @@ describe("bun:jsc", () => {
   });
 });
 
+it("deserialize of a Date with a crafted NaN timestamp returns a Number from getTime, never a forged JSValue", async () => {
+  // DateTag carries an 8-byte raw double. DateInstance::create stores
+  // timeClip(d) in m_internalNumber, but timeClip() does not canonicalize an
+  // impure NaN (std::abs(NaN) > max is false, std::trunc preserves the
+  // payload), and Date.prototype.getTime()/valueOf() later box that field with
+  // jsNumber() unpurified. Without purifyNaN at the DateTag read, a crafted
+  // bun:jsc.deserialize / v8.deserialize buffer forges boolean/undefined/int32
+  // or a cell pointer that segfaults when touched. Run in a child: the
+  // unfixed debug build asserts !isImpureNaN(d) at boxing time, and the
+  // cell-pointer case segfaults on release.
+  const script = `
+    const { serialize, deserialize } = require("bun:jsc");
+    const v8 = require("node:v8");
+
+    // Derive the wire layout instead of hard-coding offsets: serialize an
+    // Invalid Date (timestamp is canonical NaN) and find those 8 LE bytes.
+    const nanLE = Buffer.alloc(8);
+    nanLE.writeDoubleLE(NaN, 0);
+    const base = Buffer.from(serialize(new Date(NaN)));
+    const at = base.indexOf(nanLE);
+    if (at < 0) throw new Error("NaN bytes not found in serialized Date");
+
+    const payloads = [
+      "fffe000000000007", // would forge boolean true
+      "fffe00000000000a", // would forge undefined
+      "fffc000012345678", // would forge int32 0x12345678
+      "fffe000000001008", // would forge an unmapped cell pointer -> SEGV
+    ];
+
+    for (const bits of payloads) {
+      const patched = Buffer.from(base);
+      Buffer.from(bits, "hex").reverse().copy(patched, at); // native-endian
+      for (const de of [deserialize, buf => v8.deserialize(Buffer.from(buf))]) {
+        const d = de(patched);
+        if (!(d instanceof Date)) throw new Error("not a Date: " + String(d));
+        const t = d.getTime();
+        // Touch it as an object: a forged cell derefs and crashes here.
+        Object.prototype.toString.call(t);
+        const v = d.valueOf();
+        process.stdout.write(JSON.stringify({ t: typeof t, tNaN: Number.isNaN(t), v: typeof v, vNaN: Number.isNaN(v) }) + "\\n");
+      }
+    }
+
+    // A legitimate Date still round-trips.
+    const ok = deserialize(serialize(new Date(1234567890123)));
+    process.stdout.write(JSON.stringify({ ok: ok instanceof Date, ms: ok.getTime() }) + "\\n");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const lines = stdout
+    .split("\n")
+    .filter(Boolean)
+    .map(l => JSON.parse(l));
+  // Two deserialize entry points x four payloads, each purified to number NaN,
+  // then the round-trip check.
+  expect(lines).toEqual([
+    ...Array.from({ length: 8 }, () => ({ t: "number", tNaN: true, v: "number", vNaN: true })),
+    { ok: true, ms: 1234567890123 },
+  ]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
 it("deserialize rejects an object reference index outside the deserialized object pool", async () => {
   // A payload whose first value is ObjectReferenceTag must have its pool index
   // validated against the number of objects deserialized so far (zero here),

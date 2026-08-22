@@ -343,7 +343,8 @@ impl Options {
         if self.npmrc_credentials.is_empty() {
             return None;
         }
-        let url = bun_url::URL::parse(url);
+        let url = without_userinfo(url);
+        let url = bun_url::URL::parse(&url);
         let scheme_ok = url.is_https()
             || (url.is_http()
                 && self.registry_scopes().any(|scope| {
@@ -367,7 +368,8 @@ impl Options {
         let Some(allowed) = self.allowed_hosts else {
             return true;
         };
-        let url = bun_url::URL::parse(url);
+        let url = without_userinfo(url);
+        let url = bun_url::URL::parse(&url);
         if url.hostname.is_empty() {
             return false;
         }
@@ -515,6 +517,27 @@ impl PathCredential {
     }
 }
 
+/// `scheme://user[:pass]@host/…` → `scheme://host/…`. `bun_url::URL::parse`
+/// guesses whether `a@b:c` is `user@host:port` or `user:pass@host` and, for a
+/// password-less userinfo with an explicit port, folds the userinfo into the
+/// hostname; every host / prefix comparison here therefore looks at the URL
+/// with the userinfo removed (it never takes part in those decisions anyway).
+pub fn without_userinfo(url: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    let Some(scheme_end) = strings::index_of(url, b"://") else {
+        return std::borrow::Cow::Borrowed(url);
+    };
+    let authority_start = scheme_end + b"://".len();
+    let rest = &url[authority_start..];
+    let authority = &rest[..strings::index_of_any(rest, b"/?#").unwrap_or(rest.len())];
+    let Some(at) = strings::last_index_of_char(authority, b'@') else {
+        return std::borrow::Cow::Borrowed(url);
+    };
+    let mut out = Vec::with_capacity(url.len() - (at + 1));
+    out.extend_from_slice(&url[..authority_start]);
+    out.extend_from_slice(&rest[at + 1..]);
+    std::borrow::Cow::Owned(out)
+}
+
 /// Is `url` at or under `base`? Same scheme, host (case-insensitive) and
 /// effective port, and `url`'s path starts with `base`'s path compared
 /// segment by segment (so `/npm/team-ab/x` is not under `/npm/team-a/`, and a
@@ -527,8 +550,10 @@ impl PathCredential {
 /// let `https://registry.example.com.evil.test/` pass for
 /// `https://registry.example.com` and `/npm/a/../b/` escape `/npm/a/`.
 pub fn url_under(url: &[u8], base: &[u8]) -> bool {
-    let url = bun_url::URL::parse(url);
-    let base = bun_url::URL::parse(base);
+    let url = without_userinfo(url);
+    let base = without_userinfo(base);
+    let url = bun_url::URL::parse(&url);
+    let base = bun_url::URL::parse(&base);
     if base.hostname.is_empty()
         || url.hostname.is_empty()
         || !url.protocol.eq_ignore_ascii_case(base.protocol)

@@ -154,6 +154,11 @@ private:
     // else drops whatever is still queued.
     bool m_isDispatching { false };
     bool m_closeEventDispatched { false };
+    // Set by a close() that ran while the context was still alive, when the
+    // deferred close-event task was queued but not yet dispatched; cleared in
+    // contextDestroyed() so a Worker terminated right after closing its ports
+    // does not leak the wrapper (OHOS leak fix).
+    std::atomic<bool> m_closeEventPending { false };
     bool m_hasMessageEventListener { false };
     bool m_startDeferredUntilEntrySettled { false };
     // Read from the GC thread: a port whose only listener is 'close' must survive

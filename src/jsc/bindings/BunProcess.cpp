@@ -402,6 +402,7 @@ static char* toFileURI(std::span<const char> span)
 extern "C" size_t Bun__process_dlopen_count;
 
 extern "C" void CrashHandler__setDlOpenAction(const char* action);
+extern "C" bool ohos_ensure_elf_signed(const char* path);
 extern "C" bool Bun__VM__allowAddons(void* vm);
 extern "C" int32_t Bun__addonNeedsGlibcOnMusl(const char* path, size_t len, char* soname_out, size_t soname_cap);
 
@@ -532,6 +533,12 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
     }
 #endif
     CrashHandler__setDlOpenAction(utf8.data());
+#if defined(__OHOS__)
+    // OHOS requires ELF files to have a .codesign section before dlopen.
+    // Auto-sign .node addons compiled by node-gyp during lifecycle scripts
+    // and any other unsigned native addon.
+    ohos_ensure_elf_signed(utf8.data());
+#endif
     void* handle = dlopen(utf8.data(), RTLD_LAZY);
     CrashHandler__setDlOpenAction(nullptr);
 #endif
@@ -2046,7 +2053,9 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionExecve, __attribute__((
     // undone if execve(2) fails: FD_CLOEXEC only takes effect at the next
     // exec, so the still-running image is unaffected.
 #if OS(LINUX) || OS(FREEBSD)
+#if !defined(__OHOS__)
     if (bun_close_range(3, ~0U, /* CLOSE_RANGE_CLOEXEC */ (1U << 2)) != 0)
+#endif
 #endif
     {
         int maxfd = static_cast<int>(sysconf(_SC_OPEN_MAX));
@@ -3269,11 +3278,30 @@ JSC_DEFINE_HOST_FUNCTION(Process_functiongetgroups, (JSGlobalObject * globalObje
         throwSystemError(throwScope, globalObject, "getgroups"_s, errno);
         return {};
     }
-    JSArray* groups = constructEmptyArray(globalObject, nullptr, ngroups);
-    RETURN_IF_EXCEPTION(throwScope, {});
-    Vector<gid_t> groupVector(ngroups);
+    Vector<gid_t> groupVector;
+    groupVector.resize(ngroups);
     getgroups(ngroups, groupVector.begin());
-    for (unsigned i = 0; i < ngroups; i++) {
+
+    // Node's documented behavior: "POSIX leaves it unspecified if the
+    // effective group ID is included, but Node.js ensures it is." A raw
+    // getgroups(2) returns only supplementary groups, and on platforms
+    // where the effective gid is not also in the supplementary list
+    // (observed on OHOS: egid 20020101 not in the list, while `id -G`
+    // reports it) this array disagrees with both Node and `id -G`.
+    const gid_t egid = getegid();
+    bool hasEgid = false;
+    for (unsigned i = 0; i < groupVector.size(); i++) {
+        if (groupVector[i] == egid) {
+            hasEgid = true;
+            break;
+        }
+    }
+    if (!hasEgid)
+        groupVector.append(egid);
+
+    JSArray* groups = constructEmptyArray(globalObject, nullptr, groupVector.size());
+    RETURN_IF_EXCEPTION(throwScope, {});
+    for (unsigned i = 0; i < groupVector.size(); i++) {
         groups->putDirectIndex(globalObject, i, jsNumber(groupVector[i]));
     }
     return JSValue::encode(groups);

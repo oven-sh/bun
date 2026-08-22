@@ -41,9 +41,9 @@ pub const IS_LINUX: bool = cfg!(any(target_os = "linux", target_os = "android"))
 const IS_FREEBSD: bool = cfg!(target_os = "freebsd");
 /// kqueue-based event loop (macOS + FreeBSD share most of this path).
 pub const IS_KQUEUE: bool = IS_MAC || IS_FREEBSD;
-const IS_AARCH64: bool = cfg!(target_arch = "aarch64");
-const IS_X64: bool = cfg!(target_arch = "x86_64");
-pub const IS_MUSL: bool = cfg!(target_env = "musl");
+pub(crate) const IS_AARCH64: bool = cfg!(target_arch = "aarch64");
+pub(crate) const IS_X64: bool = cfg!(target_arch = "x86_64");
+pub const IS_MUSL: bool = cfg!(any(target_env = "musl", target_env = "ohos"));
 pub const IS_ANDROID: bool = cfg!(target_os = "android");
 pub const ALLOW_ASSERT: bool = IS_DEBUG || IS_TEST || build_options::RELEASE_SAFE;
 pub const CI_ASSERT: bool =

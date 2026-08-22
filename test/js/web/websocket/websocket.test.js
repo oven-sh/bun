@@ -8,7 +8,7 @@ import process from "process";
 const TEST_WEBSOCKET_HOST = process.env.TEST_WEBSOCKET_HOST || "wss://ws.postman-echo.com/raw";
 const COMMON_CERT = { ...tls };
 
-describe.concurrent("WebSocket", () => {
+describe("WebSocket", () => {
   it("should connect", async () => {
     using server = Bun.serve({
       port: 0,

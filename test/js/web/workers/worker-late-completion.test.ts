@@ -293,7 +293,9 @@ describe.skipIf(isWindows)("terminate() cancels a read parked on the io loop", (
         const { Worker } = require("node:worker_threads");
         const { execFileSync } = require("node:child_process");
         const fifo = ${JSON.stringify(fifo)};
-        execFileSync("mkfifo", [fifo]);
+        // OHOS: $PATH lacks /bin and /system/bin, so the bare name is ENOENT.
+        const mkfifoBin = Bun.env.BUN_OHOS === "1" ? "/system/bin/mkfifo" : "mkfifo";
+        execFileSync(mkfifoBin, [fifo]);
         // Hold the FIFO open read-write (does not block, unlike a write-only
         // open) so the worker's open() succeeds and its read parks waiting for
         // data that never comes.
@@ -342,7 +344,9 @@ describe.skipIf(isWindows)("terminate() waits for work that cannot be cancelled"
         const { Worker } = require("node:worker_threads");
         const { execFileSync } = require("node:child_process");
         const fifo = ${JSON.stringify(fifo)};
-        execFileSync("mkfifo", [fifo]);
+        // OHOS: $PATH lacks /bin and /system/bin, so the bare name is ENOENT.
+        const mkfifoBin = Bun.env.BUN_OHOS === "1" ? "/system/bin/mkfifo" : "mkfifo";
+        execFileSync(mkfifoBin, [fifo]);
         const w = new Worker(
           'require("node:fs").readFile(require("node:worker_threads").workerData, () => {});' +
           'require("node:worker_threads").parentPort.postMessage("reading");',

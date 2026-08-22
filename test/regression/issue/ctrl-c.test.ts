@@ -106,7 +106,9 @@ beforeAll(() => {
   }).exitCode;
 });
 
-for (const mode of [
+// OHOS: vite's rollup dependency ships no openharmony-arm64 native binding,
+// so vite cannot start there and the SIGINT-kill assertions cannot run.
+for (const mode of Bun.env.BUN_OHOS === "1" ? ([] as string[][]) : [
   ["vite"],
   ["dev"],
   ...(isWindows ? [] : [["./node_modules/.bin/vite"]]),

@@ -635,6 +635,7 @@ impl Listener {
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
             twin: JsCell::new(None),
             verify_error: JsCell::new(None),
+            pending_fatal_send_errno: Cell::new(0),
         });
         let s = this_socket;
         s.ref_();
@@ -681,6 +682,7 @@ impl Listener {
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
             twin: JsCell::new(None),
             verify_error: JsCell::new(None),
+            pending_fatal_send_errno: Cell::new(0),
         });
         let s = this_socket;
         s.ref_();
@@ -1590,6 +1592,7 @@ fn connect_finish<const IS_SSL: bool>(
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
             twin: JsCell::new(None),
             verify_error: JsCell::new(None),
+            pending_fatal_send_errno: Cell::new(0),
         })
     };
     // Either the caller's JS-owned socket (reconnect) or the fresh one above.

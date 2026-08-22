@@ -128,6 +128,19 @@ impl PollOrFd {
     {
         self.close_impl(ctx, on_close_fn, true);
     }
+
+    /// Unregister the poll (epoll) without closing the fd, leaving the
+    /// handle as a plain `Fd`. OHOS multi_run uses this so the tick-based
+    /// drain is the only reader: the OHOS kernel never reports a pipe as
+    /// readable to epoll (T50), so a registered poll would either never
+    /// fire or race the drain's raw `libc::read`.
+    pub fn deinit_poll_keep_fd(&mut self) {
+        if let PollOrFd::Poll(poll) = self {
+            let fd = poll.fd();
+            poll.deinit_force_unregister();
+            *self = PollOrFd::Fd(fd);
+        }
+    }
 }
 
 // Sunk to `bun_io` so `FilePoll::file_type()` needs no aio→io edge; re-export

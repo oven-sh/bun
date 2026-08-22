@@ -19,6 +19,15 @@ impl Error {
     }
 }
 
+impl From<bun_core::Error> for Error {
+    fn from(e: bun_core::Error) -> Self {
+        match e {
+            bun_core::Error::FileNotFound => Self::ModuleNotFound,
+            _ => Self::SyntaxError,
+        }
+    }
+}
+
 impl bun_core::output::ErrName for Error {
     fn name(&self) -> &[u8] {
         (*self).name().as_bytes()

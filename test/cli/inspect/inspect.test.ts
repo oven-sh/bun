@@ -377,7 +377,8 @@ describe("http metadata endpoint", () => {
   });
 });
 
-describe("unix domain socket without websocket", () => {
+// OHOS sandbox denies unix domain sockets (EPERM on listen).
+describe.skipIf(Bun.env.BUN_OHOS === "1")("unix domain socket without websocket", () => {
   let tempdir: string;
   let randomSocketPath: () => string;
 

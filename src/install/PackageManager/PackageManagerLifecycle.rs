@@ -389,7 +389,48 @@ impl PackageManager {
             parent = bun_paths::dirname(dir);
         }
 
+        // OHOS: prepend bun's directory AND node's directory to PATH and set
+        // NODE=bun so lifecycle scripts resolve both `bun` and `node` (and use
+        // bun's process.dlopen, which auto-signs .node ELF files). node is
+        // installed to ~/.harmonybrew/bin on OHOS — NOT ~/.bun — so scripts
+        // run with an empty PATH (tests deliberately set PATH="") would fail
+        // to find `node` if only bun's dir were prepended.
+        #[cfg(target_env = "ohos")]
+        {
+            let bun_dir_bytes = bun_core::self_exe_path().ok()
+                .and_then(|exe| bun_paths::dirname(exe.as_bytes()));
+            // OHOS node install dir; prepend only when it actually contains
+            // a node binary so an absent install stays harmless.
+            let node_dir_bytes: Option<Vec<u8>> = bun_core::env_var::HOME::get().and_then(|home| {
+                let mut v = Vec::with_capacity(home.len() + b"/.harmonybrew/bin/node".len());
+                v.extend_from_slice(home);
+                v.extend_from_slice(b"/.harmonybrew/bin");
+                let node_path = std::path::Path::new(
+                    core::str::from_utf8(&v).unwrap_or(""),
+                ).join("node");
+                node_path.exists().then_some(v)
+            });
+            if let Some(bun_dir) = bun_dir_bytes {
+                let current_path = path.slice();
+                let node_dir_len = node_dir_bytes.as_ref().map_or(0, |v| v.len() + 1);
+                let mut ohos_path = EnvPath::init_capacity(
+                    bun_dir.len() + 1 + node_dir_len + current_path.len() + 1 + original_path.len(),
+                )?;
+                ohos_path.append(bun_dir)?;
+                if let Some(node_dir) = node_dir_bytes.as_deref() {
+                    ohos_path.append(node_dir)?;
+                }
+                ohos_path.append(current_path)?;
+                ohos_path.append(original_path.as_slice())?;
+                path = ohos_path;
+            }
+        }
+        #[cfg(not(target_env = "ohos"))]
         path.append(original_path.as_slice())?;
+        #[cfg(target_env = "ohos")]
+        if let Ok(bun_exe) = bun_core::self_exe_path() {
+            let _ = script_env.put(b"NODE", bun_exe.as_bytes());
+        }
         script_env.put(b"PATH", path.slice())?;
 
         // Ownership transfers to `LifecycleScriptSubprocess`, which

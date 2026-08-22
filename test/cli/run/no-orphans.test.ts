@@ -629,7 +629,8 @@ test.concurrent.skipIf(!isPosix)("bun run --no-orphans <script>: clean exit reap
 // acquisition via O_NOCTTY-less open. The macOS path (EVFILT_SIGNAL+SIGCHLD →
 // wait4 WUNTRACED → same `JobControl.onChildStopped`) is structurally
 // identical and is type-checked by `zig build check-macos`.
-test.concurrent.skipIf(!isLinux)(
+// OHOS: PTY allocation is unsupported in the sandbox.
+test.concurrent.skipIf(!isLinux || Bun.env.BUN_OHOS === "1")(
   "bun run --no-orphans on TTY: Ctrl-Z stop bridges to bun, fg resumes script",
   async () => {
     // openpty + ptsname so a setsid wrapper can reopen the slave as its
@@ -793,7 +794,7 @@ test.concurrent.skipIf(!isLinux)(
 //      itself stopped.
 //   3. After perl `fg`s it (tcsetpgrp + SIGCONT), the script's SIGCONT
 //      handler fires — `onChildStopped` SIGCONT'd the whole script pgroup.
-test.concurrent.skipIf(!isPosix || !hasPerl)(
+test.concurrent.skipIf(!isPosix || !hasPerl || Bun.env.BUN_OHOS === "1")(
   "bun run --no-orphans on a TTY: Ctrl-Z stop observed by outer shell's waitpid(WUNTRACED), fg resumes script",
   async () => {
     // perl in the dev script so `getpgrp()` is trivially available; `$SIG{CONT}`

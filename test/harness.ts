@@ -18,6 +18,7 @@ import { dirname, isAbsolute, join } from "path";
 export const BREAKING_CHANGES_BUN_1_2 = false;
 
 export const isMacOS = process.platform === "darwin";
+export const isOHOS = process.platform === "openharmony";
 export const isLinux = process.platform === "linux";
 export const isFreeBSD = process.platform === "freebsd";
 /** Bun (like Node) reports `"android"` on Android; it is not folded into `isLinux`. */
@@ -509,8 +510,12 @@ export async function bunRun(
   var path = require("path");
   const args = Array.isArray(fileOrArgs) ? fileOrArgs : [fileOrArgs];
   const cwd = Array.isArray(fileOrArgs) ? undefined : path.dirname(fileOrArgs);
+  // Fixtures may import "bun:internal-for-testing" (e.g. socket.test.ts's
+  // kqueue fixture). Release builds gate that module behind --expose-internals
+  // (debug builds always allow it, so adding the flag is harmless there too).
+  const cmd = [bunExe(), "--expose-internals", ...args];
   await using proc = Bun.spawn({
-    cmd: [bunExe(), ...args],
+    cmd,
     cwd,
     env: {
       ...bunEnv,
@@ -1096,10 +1101,15 @@ export function dockerExe(): string | null {
   return which("docker") || which("podman") || null;
 }
 
+// OpenHarmony never ships docker; treat it as permanently docker-less so the
+// CI docker-required throw below doesn't fire on OHOS runners.
+const isOhos =
+  Bun.env.BUN_OHOS === "1" ||
+  (isLinux && process.arch === "arm64" && fs.existsSync("/system/lib/ld-musl-aarch64.so.1"));
 export function isDockerEnabled(): boolean {
   const dockerCLI = dockerExe();
   if (!dockerCLI) {
-    if (isCI && isLinux) {
+    if (isCI && isLinux && !isOhos) {
       throw new Error("A functional `docker` is required in CI for some tests.");
     }
     return false;
@@ -1114,7 +1124,7 @@ export function isDockerEnabled(): boolean {
     const info = execSync(`"${dockerCLI}" info`, { stdio: ["ignore", "pipe", "inherit"] });
     return info.toString().indexOf("Server Version:") !== -1;
   } catch {
-    if (isCI && isLinux) {
+    if (isCI && isLinux && !isOhos) {
       throw new Error("A functional `docker` is required in CI for some tests.");
     }
     return false;
@@ -1841,7 +1851,10 @@ export function libcPathForDlopen() {
         case "glibc":
           return "libc.so.6";
         case "musl":
-          return "/usr/lib/libc.so";
+          // Use bare SONAME so the system dynamic linker resolves the path.
+          // This works on Alpine (musl maps libc.so to the already-loaded libc)
+          // and OHOS (the linker finds libc in its default search path).
+          return "libc.so";
       }
     case "darwin":
       return "libc.dylib";

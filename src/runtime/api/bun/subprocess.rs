@@ -1548,27 +1548,55 @@ impl SourceData for webcore::AnyBlob {
         webcore::AnyBlob::memory_cost(self)
     }
 }
-/// Local newtype so the [`SourceData`] impl satisfies coherence —
-/// `ArrayBufferStrong` lives in `bun_jsc` and the trait in `bun_spawn`, so
-/// implementing it directly would be an orphan.
-struct ArrayBufferSource(jsc::array_buffer::ArrayBufferStrong);
-impl SourceData for ArrayBufferSource {
-    fn slice(&self) -> &[u8] {
-        self.0.slice()
-    }
-    fn detach(&mut self) { /* GC-owned; Drop releases the Strong handle */
-    }
-    fn memory_cost(&self) -> usize {
-        0
-    }
-}
 #[inline]
 pub(crate) fn source_from_blob(b: webcore::AnyBlob) -> Source {
     Source::Any(Box::new(b))
 }
+/// Copy the ArrayBuffer bytes into an owned allocation so the async pipe
+/// writer holds independent storage. Without the copy, the StaticPipeWriter
+/// retains a raw pointer into the JS ArrayBuffer's backing store; if JS
+/// mutates or detaches that buffer before the event-loop-driven write
+/// completes, the child process receives corrupted or truncated data.
+/// Synchronous spawnSync is unaffected because it writes inline.
 #[inline]
 pub(crate) fn source_from_array_buffer(ab: jsc::array_buffer::ArrayBufferStrong) -> Source {
-    Source::Any(Box::new(ArrayBufferSource(ab)))
+    Source::OwnedBytes(ab.array_buffer.byte_slice().to_vec().into_boxed_slice())
+}
+
+/// Windows: the extra stdio pipes (`stdio_pipes`) are uv handles this
+/// Subprocess owns without a reader/writer in front of them; record that so a
+/// thread teardown closes them through us (and `finalize_streams` then finds
+/// the slots empty) instead of anyone closing them twice.
+#[cfg(windows)]
+impl Subprocess<'_> {
+    pub(crate) fn record_stdio_pipe_ownership(this: *mut Self) {
+        // SAFETY: `this` is the live boxed Subprocess (stable address).
+        let me = unsafe { &*this };
+        for item in me.stdio_pipes.get().iter() {
+            if let StdioResult::Buffer(buffer) = item {
+                bun_sys::windows::libuv::open_handles::set_owner(
+                    core::ptr::from_ref::<bun_sys::windows::libuv::Pipe>(&**buffer)
+                        .cast_mut()
+                        .cast(),
+                    this.cast(),
+                    Some(Self::stop_for_vm_teardown),
+                );
+            }
+        }
+    }
+
+    /// `uv::open_handles` entry point: close every stdio pipe still held here.
+    unsafe fn stop_for_vm_teardown(this: *mut core::ffi::c_void) {
+        // SAFETY: recorded by `record_stdio_pipe_ownership` for this live
+        // Subprocess; each pipe leaves the list as its uv_close is issued.
+        let me = unsafe { &*this.cast::<Self>() };
+        for item in me.stdio_pipes.replace(Vec::new()) {
+            if let StdioResult::Buffer(buffer) = item {
+                // SAFETY: Box-allocated uv::Pipe owned by this slot until now.
+                unsafe { bun_sys::windows::libuv::Pipe::close_and_destroy(Box::into_raw(buffer)) };
+            }
+        }
+    }
 }
 
 /// Windows: the extra stdio pipes (`stdio_pipes`) are uv handles this

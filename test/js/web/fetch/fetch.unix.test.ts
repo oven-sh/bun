@@ -5,6 +5,9 @@ import { isWindows, tmpdirSync } from "harness";
 import { request } from "http";
 import { join } from "path";
 const tmp_dir = tmpdirSync();
+// OHOS sandbox denies filesystem-path unix sockets (EPERM on listen);
+// abstract sockets (\0-prefixed) still work, so only the path-based tests skip.
+const unixSocketTest = Bun.env.BUN_OHOS === "1" ? it.skip : it;
 
 it("throws ENAMETOOLONG when socket path exceeds platform-specific limit", () => {
   // this must be the filename specifically, because we add a workaround for the length limit on linux
@@ -167,7 +170,7 @@ afterAll(() => {
   rmSync(tmp_dir, { force: true, recursive: true });
 });
 
-it("provide body", async () => {
+unixSocketTest("provide body", async () => {
   const path = startServerUnix({
     fetch(req) {
       return new Response(req.body);
@@ -181,7 +184,7 @@ it("provide body", async () => {
   }
 });
 
-it("works with node:http", async () => {
+unixSocketTest("works with node:http", async () => {
   const path = startServerUnix({
     fetch(req) {
       return new Response(req.body);
@@ -216,7 +219,7 @@ it("works with node:http", async () => {
   await Promise.all(promises);
 });
 
-it("handle redirect to non-unix", async () => {
+unixSocketTest("handle redirect to non-unix", async () => {
   startServer({
     async fetch(req) {
       if (req.url.endsWith("/world")) {
@@ -250,7 +253,7 @@ it("handle redirect to non-unix", async () => {
 // reusable that way: the request URL below names the TCP server, so pooling
 // the unix connection would serve the TCP hop (and any later fetch of that
 // host:port) from the unix server.
-it("does not pool the unix-socket connection whose redirect is being followed", async () => {
+unixSocketTest("does not pool the unix-socket connection whose redirect is being followed", async () => {
   startServer({
     fetch(req) {
       return new Response(`tcp ${new URL(req.url).pathname}`);

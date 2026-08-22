@@ -1,0 +1,11 @@
+[package]
+name = "ohos_sign"
+version = "0.0.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "ohos-selfsign"
+path = "src/bin/ohos_selfsign.rs"

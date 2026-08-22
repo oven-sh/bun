@@ -539,3 +539,10 @@ void std::__libcpp_verbose_abort(char const* format, ...) BUN_VERBOSE_ABORT_NOEX
 #endif
 
 extern "C" __attribute__((weak)) void mi_thread_set_in_threadpool() {}
+
+
+
+// Bun's source calls mi_on_thread_idle() to hint mimalloc the thread is idle.
+// Our mimalloc fork (oven-sh/mimalloc, v3.3.2) doesn't provide this symbol
+// on all platforms; provide a weak no-op so the binary loads everywhere.
+extern "C" __attribute__((weak)) void mi_on_thread_idle(void) noexcept {}

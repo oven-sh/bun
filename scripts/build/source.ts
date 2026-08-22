@@ -19,6 +19,7 @@
  * re-extraction after a failed patch doesn't re-download.
  */
 
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { ar, cc, cxx, nasm } from "./compile.ts";
@@ -665,13 +666,37 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
     pool: "dep",
   });
 
+  // Git-HEAD stamp for local deps that are git checkouts (see
+  // emitGitHeadStamp). Runs on every ninja invocation (always input) but
+  // rewrites the stamp only when the checkout's HEAD changes — restat
+  // prunes downstream when the commit is unchanged. This replaces the
+  // CMakeLists.txt/Cargo.toml manifest stamp for git checkouts: `git
+  // checkout` preserves mtimes of unchanged files, so a commit bump that
+  // doesn't touch the manifest would otherwise leave generated headers
+  // (e.g. WebKit's BunFFI.h) stale without re-running cmake configure.
+  n.rule("dep_git_stamp", {
+    command: `${stream} --cwd=$srcdir $cmd`,
+    description: "stamp $name (git HEAD)",
+    restat: true,
+    pool: "dep",
+  });
+
   // DirectBuild host tool: compile+link in one clang invocation with NO
   // cfg target/arch flags — the tool runs on the build host. cc()/link()
   // would add --target which breaks cross-compiles. cfg.hostCc (not cfg.cc):
   // when cross-compiling for windows, cc is clang-cl and defaults to a
   // *-windows-msvc triple — host tools must stay plain clang.
+  // Post-link sign for OHOS host: HarmonyOS rejects unsigned ELFs at exec.
+  // Uses binary-sign-tool (from ohos-sdk build dep, always available at build
+  // time) — ohos-selfsign is compiled later inside the same ninja graph and
+  // cannot be used here.
+  const hostCcCmd =
+    `${q(cfg.hostCc)} $flags -o $out $in` +
+    ` && { command -v binary-sign-tool >/dev/null 2>&1` +
+    ` && binary-sign-tool sign -selfSign 1 -inFile $out -outFile $out.signed >/dev/null 2>&1` +
+    ` && mv -f $out.signed $out && chmod +x $out; :; }`;
   n.rule("dep_host_cc", {
-    command: `${q(cfg.hostCc)} $flags -o $out $in`,
+    command: hostCcCmd,
     description: "host-cc $out",
   });
 
@@ -739,6 +764,61 @@ export function depBuildDir(cfg: Config, name: string): string {
 }
 
 /**
+ * Emit a git-HEAD stamp edge for a local dep that is a git checkout, and
+ * return the stamp path to use as the dep's source stamp.
+ *
+ * The edge runs on every ninja invocation (always input, ~ms) but rewrites
+ * the stamp only when `git rev-parse HEAD` changes; restat prunes
+ * downstream when the commit is unchanged. Configure/build edges depend on
+ * the stamp, so a checkout bump re-runs cmake configure — regenerating
+ * headers (WebKit's BunFFI.h) — and rebuilds changed sources. Git preserves
+ * mtimes of unchanged files, so the CMakeLists.txt/Cargo.toml manifest
+ * stamp would miss commit bumps entirely.
+ */
+function emitGitHeadStamp(n: Ninja, cfg: Config, name: string, srcDir: string): string {
+  const stamp = resolve(depBuildDir(cfg, name), ".git-identity");
+  const cmd = quoteArgs(
+    [
+      "bash",
+      "-c",
+      // $1 = stamp path. Re-reads HEAD (falls back to "unknown" if the
+      // repo disappears) and rewrites the stamp only when it changed —
+      // write-if-changed keeps mtime stable so restat prunes downstream.
+      `head=$(git rev-parse HEAD 2>/dev/null) || head=unknown; cur=$(cat "$1" 2>/dev/null) || cur=; if [ "$head" != "$cur" ]; then printf '%s' "$head" > "$1"; fi`,
+      "sh",
+      stamp,
+    ],
+    cfg.host.os === "windows",
+  );
+  n.build({
+    outputs: [stamp],
+    rule: "dep_git_stamp",
+    inputs: [],
+    implicitInputs: [n.always()],
+    vars: { name, srcdir: srcDir, cmd },
+  });
+  return stamp;
+}
+
+/**
+ * Current HEAD of the git checkout at `dir`, or undefined if `dir` is not
+ * a git repo (or git is unavailable). Probes the environment only — no
+ * build artifacts — so it's a legitimate configure-time spawnSync (see
+ * CLAUDE.md "Configure time vs build time").
+ */
+export function gitHeadSync(dir: string): string | undefined {
+  try {
+    const head = execFileSync("git", ["-C", dir, "rev-parse", "HEAD"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return head.length > 0 ? head : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * The dep's source, with `--local-deps` applied: a dep named there is
  * redirected from its pinned github-archive tarball to the local checkout.
  * Only github-archive sources can be redirected — prebuilt/in-tree deps
@@ -758,6 +838,7 @@ export function depSource(cfg: Config, dep: Dependency): Source {
     path: localPath,
     hint: `--local-deps points ${dep.name} at ${localPath} — clone ${source.repo} there`,
   };
+
 }
 
 /**
@@ -866,6 +947,17 @@ export function resolveDep(
           ? `Expected ${stampFile || "source"} at ${source.path}/ — check deps/${dep.name}.ts`
           : (source.hint ?? `Clone the dep to vendor/${dep.name}/ manually`),
     });
+
+    // Git checkouts: replace the manifest stamp with the checkout's actual
+    // HEAD — `git checkout` preserves mtimes of unchanged files, so a
+    // commit bump that doesn't touch CMakeLists.txt/Cargo.toml would leave
+    // the manifest stamp unchanged and skip reconfigure (stale generated
+    // headers, e.g. WebKit's BunFFI.h). In-tree deps (sqlite) are excluded:
+    // their sources are bun-repo files already tracked per-file, and a
+    // HEAD stamp would force needless rebuilds on any unrelated commit.
+    if (source.kind === "local" && stampFile !== "" && cfg.host.os !== "windows" && gitHeadSync(srcDir) !== undefined) {
+      sourceStamp = emitGitHeadStamp(n, cfg, dep.name, srcDir);
+    }
   }
 
   // ─── Resolve fetchDeps → extra inputs on configure + build ───
@@ -1472,14 +1564,22 @@ function emitCargo(n: Ninja, cfg: Config, name: string, spec: CargoBuild, input:
     env[envKey] = cfg.msvcLinker;
   }
 
-  // Cross-compile (Android): cargo's default `cc` linker can't handle the
-  // foreign ELF objects. Use our clang as the linker driver and pass
+  // Cross-compile (Android / OHOS): cargo's default `cc` linker can't handle
+  // the foreign ELF objects. Use our clang as the linker driver and pass
   // --target/--sysroot through, same as the C/C++ deps do via globalFlags.
   // The cdylib output also wants -lunwind, which lives in the NDK's
   // bundled clang resource dir (not the sysroot), so we add that -L too.
   if (cfg.crossTarget !== undefined && spec.rustTarget !== undefined) {
     const envKey = `CARGO_TARGET_${spec.rustTarget.toUpperCase().replace(/-/g, "_")}_LINKER`;
-    env[envKey] = cfg.cc;
+    // OHOS native (host==target==aarch64-unknown-linux-ohos): use the signing
+    // linker wrapper so build-script binaries are signed synchronously after
+    // each link. Unsigned ELFs trip OHOS's "Permission denied" exec guard.
+    const ohosLinker = process.env.OHOS_BUN_SIGNING_LINKER;
+    if (cfg.ohos && ohosLinker !== undefined) {
+      env[envKey] = ohosLinker;
+    } else {
+      env[envKey] = cfg.cc;
+    }
     const linkArgs = [`-Clink-arg=--target=${cfg.crossTarget}`];
     if (cfg.sysroot !== undefined) linkArgs.push(`-Clink-arg=--sysroot=${cfg.sysroot}`);
     if (cfg.androidNdkRuntimeDir !== undefined) {

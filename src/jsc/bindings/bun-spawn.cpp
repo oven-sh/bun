@@ -68,7 +68,9 @@ static inline void closeRangeLoop(int start, int end, bool cloexec_only)
 // Platform-specific close range implementation
 static inline void closeRangeOrLoop(int start, int end, bool cloexec_only)
 {
-#if OS(LINUX)
+#if OS(LINUX) && !defined(__OHOS__)
+    // OHOS seccomp blocks close_range (syscall 436) with SIGSYS.
+    // Skip the direct syscall and fall through to the loop fallback.
     unsigned int flags = cloexec_only ? CLOSE_RANGE_CLOEXEC : 0;
     if (bun_close_range(start, end, flags) == 0) {
         return;
@@ -117,11 +119,12 @@ typedef struct bun_spawn_request_t {
 // as _exit() may try to acquire locks held by threads that don't exist in the child.
 static inline void rawExit(int status)
 {
-#if OS(LINUX)
-    syscall(__NR_exit_group, status);
-#else
-    _exit(status);
+#if defined(__NR_exit_group)
+    // Best-effort: try exit_group first (faster for multi-threaded processes).
+    // If the syscall fails (e.g. blocked by seccomp), fall through to _exit().
+    (void)syscall(__NR_exit_group, status);
 #endif
+    _exit(status);
 }
 
 #if OS(LINUX)
@@ -233,9 +236,9 @@ extern "C" ssize_t posix_spawn_bun(
     sigset_t blockall, oldmask;
     int res = 0, cs = 0;
 
-#if OS(DARWIN) || OS(FREEBSD)
-    // On macOS, we use fork() which requires a self-pipe trick to detect exec failures.
-    // Create a pipe for child-to-parent error communication.
+#if OS(DARWIN) || OS(FREEBSD) || defined(__OHOS__)
+    // On macOS/FreeBSD/OHOS, we use fork() which requires a self-pipe trick to
+    // detect exec failures. Create a pipe for child-to-parent error communication.
     // The write end has O_CLOEXEC so it's automatically closed on successful exec.
     // If exec fails, child writes errno to the pipe.
     int errpipe[2];
@@ -248,11 +251,11 @@ extern "C" ssize_t posix_spawn_bun(
 
     sigfillset(&blockall);
     sigprocmask(SIG_SETMASK, &blockall, &oldmask);
-#if !OS(ANDROID)
+#if !OS(ANDROID) && !defined(__OHOS__)
     pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cs);
 #endif
 
-#if OS(LINUX)
+#if OS(LINUX) && !defined(__OHOS__)
     volatile int child_errno = 0;
     // The vfork child shares this mm, and set*id in the child resets the
     // mm-wide "dumpable" flag to /proc/sys/fs/suid_dumpable (commit_creds).
@@ -264,7 +267,7 @@ extern "C" ssize_t posix_spawn_bun(
 #endif
     pid_t child = -1;
 
-#if OS(DARWIN) || OS(FREEBSD)
+#if OS(DARWIN) || OS(FREEBSD) || defined(__OHOS__)
     const auto childFailed = [&]() -> ssize_t {
         int err = errno;
         // Write errno to pipe so parent can read it
@@ -299,7 +302,7 @@ extern "C" ssize_t posix_spawn_bun(
             sigaction(i, &sa, 0);
         }
 
-#if OS(LINUX)
+#if OS(LINUX) && !defined(__OHOS__)
         // cgroup v1 / pre-5.7 fallback. First, so every page the exec'd image
         // touches is charged to the cgroup. Writing "0" moves the writer.
         if (join_cgroup_in_child) {
@@ -448,7 +451,39 @@ extern "C" ssize_t posix_spawn_bun(
         if (!envp)
             envp = environ;
 
-        // Close all fds > current_max_fd, preferring cloexec if available
+#if defined(__OHOS__)
+        // chdir()-then-exec() into a different binary leaves that binary's
+        // own getcwd() syscall broken for EL2-sandbox paths (EACCES walking
+        // the parent chain) -- a real-device kernel/sandbox limitation.
+        // OHOS uses fork() (not vfork() -- see the fork/vfork branch above),
+        // so the child has its own address space and plain stack arrays are
+        // safe here.
+        char pwdBuf[PATH_MAX + 5]; // "PWD=" + PATH_MAX + NUL
+        constexpr size_t kMaxEnvEntries = 1024;
+        char* newEnvp[kMaxEnvEntries + 2];
+        if (request->chdir) {
+            int n = snprintf(pwdBuf, sizeof(pwdBuf), "PWD=%s", request->chdir);
+            if (n > 0 && static_cast<size_t>(n) < sizeof(pwdBuf)) {
+                size_t count = 0;
+                while (envp[count] && count < kMaxEnvEntries) count++;
+                if (envp[count] == nullptr) {
+                    size_t out = 0;
+                    for (size_t i = 0; i < count; i++) {
+                        if (strncmp(envp[i], "PWD=", 4) == 0) continue;
+                        newEnvp[out++] = envp[i];
+                    }
+                    newEnvp[out++] = pwdBuf;
+                    newEnvp[out] = nullptr;
+                    envp = newEnvp;
+                }
+            }
+        }
+#endif
+
+        // Close all fds > current_max_fd, preferring cloexec if available.
+        // On OHOS, fcntl(F_SETFD) is ignored in vfork children, so fd CLOEXEC
+        // must be prevented by excluding stdio fds (0,1,2) from the range.
+        if (current_max_fd < 2) current_max_fd = 2;
         closeRangeOrLoop(current_max_fd + 1, INT_MAX, true);
 
         if (execve(path, argv, envp) == -1) {
@@ -460,7 +495,7 @@ extern "C" ssize_t posix_spawn_bun(
         return -1;
     };
 
-#if OS(LINUX)
+#if OS(LINUX) && !defined(__OHOS__)
     if (request->cgroup_fd >= 0 && clone3Unavailable.load(std::memory_order_relaxed)) {
         join_cgroup_in_child = true;
     } else if (request->cgroup_fd >= 0) {
@@ -510,8 +545,8 @@ extern "C" ssize_t posix_spawn_bun(
         }
     }
 #else
-    // On macOS, we must use fork() because vfork() is more strictly enforced.
-    // This code path should only be used for PTY spawns on macOS.
+    // On macOS/FreeBSD/OHOS, we use fork() (vfork is blocked by seccomp on
+    // OHOS). This path requires the self-pipe trick to detect exec failures.
     child = fork();
     if (child == 0) {
         // Close read end in child
@@ -520,8 +555,8 @@ extern "C" ssize_t posix_spawn_bun(
     }
 #endif
 
-#if OS(DARWIN) || OS(FREEBSD)
-    // macOS fork() path: use self-pipe trick to detect exec failure
+#if OS(DARWIN) || OS(FREEBSD) || defined(__OHOS__)
+    // macOS/FreeBSD/OHOS fork() path: use self-pipe trick to detect exec failure
     // Parent: close write end
     close(errpipe[1]);
 
@@ -595,7 +630,7 @@ extern "C" ssize_t posix_spawn_bun(
 #endif
 
     sigprocmask(SIG_SETMASK, &oldmask, 0);
-#if !OS(ANDROID)
+#if !OS(ANDROID) && !defined(__OHOS__)
     pthread_setcancelstate(cs, 0);
 #else
     (void)cs;

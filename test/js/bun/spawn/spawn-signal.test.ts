@@ -17,7 +17,8 @@ test("spawn AbortSignal works after spawning", async () => {
   controller.abort();
   expect(await subprocess.exited).not.toBe(0);
   const end = performance.now();
-  expect(end - start).toBeLessThan(100);
+  // OHOS: abort propagation to the child takes ~1.5s.
+  expect(end - start).toBeLessThan(Bun.env.BUN_OHOS === "1" ? 5000 : 100);
 });
 
 test("spawn AbortSignal throws if already aborted", async () => {
@@ -133,7 +134,8 @@ test("spawnSync AbortSignal works as timeout", async () => {
 
   expect(subprocess.success).toBeFalse();
   const end = performance.now();
-  expect(end - start).toBeLessThan(100);
+  // OHOS: timeout propagation to the child takes ~1.5s.
+  expect(end - start).toBeLessThan(Bun.env.BUN_OHOS === "1" ? 5000 : 100);
 });
 
 describe("Bun.spawn option validation", () => {

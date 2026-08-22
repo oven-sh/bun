@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { realpathSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isOHOS, isWindows, tempDir } from "harness";
 import path from "path";
 
 // Helper: spawn bun with multi-run flags, returns { stdout, stderr, exitCode }
@@ -1069,7 +1069,13 @@ describe.concurrent("timing edge cases", () => {
     expectExited(r.stderr, "fail", 1);
     expect(r.exitCode).toBe(1);
     // Waiting out the child's 30s sleep means the abort bypass regressed.
-    expect(Date.now() - start).toBeLessThan(15000);
+    // OHOS devices under full-file parallel load can take ~18-23s to reach
+    // the same force-end (passes in ~3s when the file runs alone); keep a
+    // regression-sensitive bound on other platforms. Note harness' isOHOS
+    // checks process.platform, which is "linux" in OHOS builds — match the
+    // rest of the suite by also honoring the runner's BUN_OHOS flag.
+    const isOhosDevice = isOHOS || Bun.env.BUN_OHOS === "1";
+    expect(Date.now() - start).toBeLessThan(isOhosDevice ? 25_000 : 15_000);
   });
 });
 

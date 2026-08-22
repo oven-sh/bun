@@ -22,8 +22,10 @@ const RULE = "bun(no-duplicate-conditional-property-access)";
 // hosts oxlint, so under ASAN run it with the release bun on PATH (CI agents
 // and dev machines have one) and skip only when there is none. Also skip if
 // the repo's devDependencies haven't been installed yet.
+// oxlint ships a prebuilt glibc binding; it cannot load on musl (the OHOS
+// sandbox runs musl), so skip there too.
 const runtime = isASAN ? releaseBunOnPath() : bunExe();
-const skip = runtime === null || !existsSync(oxlintBin);
+const skip = runtime === null || !existsSync(oxlintBin) || Bun.env.BUN_OHOS === "1";
 const describeOxlint = skip ? describe.skip : describe;
 
 function releaseBunOnPath(): string | null {

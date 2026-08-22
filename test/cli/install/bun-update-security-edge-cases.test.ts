@@ -19,7 +19,7 @@ describe("bun update security edge cases", () => {
 
     // Now add scanner and update package.json to allow updates
     await Bun.write(
-      join(dir, "package.json"),
+      join(String(dir), "package.json"),
       JSON.stringify({
         name: "test-app",
         dependencies: {
@@ -29,7 +29,7 @@ describe("bun update security edge cases", () => {
     );
 
     await Bun.write(
-      join(dir, "bunfig.toml"),
+      join(String(dir), "bunfig.toml"),
       `
 [install.security]
 scanner = "./scanner.js"
@@ -37,7 +37,7 @@ scanner = "./scanner.js"
     );
 
     await Bun.write(
-      join(dir, "scanner.js"),
+      join(String(dir), "scanner.js"),
       `
 module.exports = {
   scanner: {
@@ -175,7 +175,7 @@ module.exports = {
 
     // Now add scanner configuration
     await Bun.write(
-      join(dir, "bunfig.toml"),
+      join(String(dir), "bunfig.toml"),
       `
 [install.security]
 scanner = "./scanner.js"
@@ -184,7 +184,7 @@ scanner = "./scanner.js"
 
     // Now add scanner that knows about the vulnerability
     await Bun.write(
-      join(dir, "scanner.js"),
+      join(String(dir), "scanner.js"),
       `
 module.exports = {
   scanner: {
@@ -273,7 +273,7 @@ module.exports = {
     });
 
     // Install without scanner first
-    const tempBunfig = join(dir, "bunfig.toml");
+    const tempBunfig = join(String(dir), "bunfig.toml");
     const fs = await import("node:fs/promises");
     await fs.rename(tempBunfig, `${tempBunfig}.bak`);
     await Bun.$`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
@@ -345,7 +345,7 @@ module.exports = {
 
     // Update package.json to use caret range
     await Bun.write(
-      join(dir, "package.json"),
+      join(String(dir), "package.json"),
       JSON.stringify({
         name: "test-app",
         dependencies: {
@@ -397,9 +397,9 @@ module.exports = {
     await Bun.$`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
 
     // Add scanner with updated vulnerability database
-    await Bun.write(join(dir, "bunfig.toml"), `[install.security]\nscanner = "./scanner.js"`);
+    await Bun.write(join(String(dir), "bunfig.toml"), `[install.security]\nscanner = "./scanner.js"`);
     await Bun.write(
-      join(dir, "scanner.js"),
+      join(String(dir), "scanner.js"),
       `
 module.exports = {
   scanner: {

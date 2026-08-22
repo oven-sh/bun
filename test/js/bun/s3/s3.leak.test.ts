@@ -20,10 +20,10 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
           "out.bin": "here",
         });
 
-        const dest = path.join(dir, "out.bin");
+        const dest = path.join(String(dir), "out.bin");
 
         const { exitCode, stderr } = Bun.spawnSync(
-          [bunExe(), "--smol", path.join(dir, "s3-stream-leak-fixture.js"), dest],
+          [bunExe(), "--smol", path.join(String(dir), "s3-stream-leak-fixture.js"), dest],
           {
             env: {
               ...bunEnv,
@@ -50,10 +50,10 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
           "out.bin": "here",
         });
 
-        const dest = path.join(dir, "out.bin");
+        const dest = path.join(String(dir), "out.bin");
 
         const { exitCode, stderr } = Bun.spawnSync(
-          [bunExe(), "--smol", path.join(dir, "s3-text-leak-fixture.js"), dest],
+          [bunExe(), "--smol", path.join(String(dir), "s3-text-leak-fixture.js"), dest],
           {
             env: {
               ...bunEnv,
@@ -81,10 +81,10 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
           "out.bin": "here",
         });
 
-        const dest = path.join(dir, "out.bin");
+        const dest = path.join(String(dir), "out.bin");
 
         const { exitCode, stderr } = Bun.spawnSync(
-          [bunExe(), "--smol", path.join(dir, "s3-writer-leak-fixture.js"), dest],
+          [bunExe(), "--smol", path.join(String(dir), "s3-writer-leak-fixture.js"), dest],
           {
             env: {
               ...bunEnv,
@@ -112,10 +112,10 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
           "out.bin": "here",
         });
 
-        const dest = path.join(dir, "out.bin");
+        const dest = path.join(String(dir), "out.bin");
 
         const { exitCode, stderr } = Bun.spawnSync(
-          [bunExe(), "--smol", path.join(dir, "s3-write-leak-fixture.js"), dest],
+          [bunExe(), "--smol", path.join(String(dir), "s3-write-leak-fixture.js"), dest],
           {
             env: {
               ...bunEnv,
@@ -144,10 +144,10 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
           "out.bin": "here",
         });
 
-        const dest = path.join(dir, "out.bin");
+        const dest = path.join(String(dir), "out.bin");
 
         const { exitCode, stderr } = Bun.spawnSync(
-          [bunExe(), "--smol", path.join(dir, "bun-write-leak-fixture.js"), dest],
+          [bunExe(), "--smol", path.join(String(dir), "bun-write-leak-fixture.js"), dest],
           {
             env: {
               ...bunEnv,

@@ -74,10 +74,10 @@ snapshots:
     expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
 
     // Check that bun.lock was created
-    expect(fs.existsSync(join(tmpDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(String(tmpDir), "bun.lock"))).toBe(true);
 
     // Read and snapshot the migrated lockfile
-    const bunLockContent = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(String(tmpDir), "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("simple-pnpm-migration");
 
     // Verify install works with migrated lockfile
@@ -103,8 +103,8 @@ snapshots:
     expect(installExitCode).toBe(0);
 
     // Verify packages were installed
-    expect(fs.existsSync(join(tmpDir, "node_modules/is-number"))).toBe(true);
-    expect(fs.existsSync(join(tmpDir, "node_modules/left-pad"))).toBe(true);
+    expect(fs.existsSync(join(String(tmpDir), "node_modules/is-number"))).toBe(true);
+    expect(fs.existsSync(join(String(tmpDir), "node_modules/left-pad"))).toBe(true);
   });
 
   test("pnpm workspace lockfile migration", async () => {
@@ -253,11 +253,11 @@ snapshots:
     // Check migration message in stderr
     expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
 
-    expect(fs.existsSync(join(tmpDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(String(tmpDir), "bun.lock"))).toBe(true);
 
-    const bunLockContent = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(String(tmpDir), "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("workspace-pnpm-migration");
-    const packageJson = JSON.parse(fs.readFileSync(join(tmpDir, "package.json"), "utf8"));
+    const packageJson = JSON.parse(fs.readFileSync(join(String(tmpDir), "package.json"), "utf8"));
     expect(packageJson).toMatchSnapshot("workspace-pnpm-migration-package-json");
   });
 
@@ -341,9 +341,9 @@ snapshots:
     // Check migration message in stderr
     expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
 
-    expect(fs.existsSync(join(tmpDir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(String(tmpDir), "bun.lock"))).toBe(true);
 
-    const bunLockContent = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
+    const bunLockContent = fs.readFileSync(join(String(tmpDir), "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("npm-aliases-pnpm-migration");
   });
 
@@ -375,7 +375,7 @@ snapshots:
 
     const v8ExitCode = await v8Proc.exited;
     expect(v8ExitCode).toBe(0);
-    expect(fs.existsSync(join(v8Dir, "bun.lock"))).toBe(true);
+    expect(fs.existsSync(join(String(v8Dir), "bun.lock"))).toBe(true);
   });
 
   test("handles missing pnpm-lock.yaml gracefully", async () => {

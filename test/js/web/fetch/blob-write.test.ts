@@ -43,16 +43,16 @@ test("blob.delete() throws for data-backed blob", () => {
 
 test("Bun.file(path).unlink() does not throw", async () => {
   await using dir = tempDir("bun-unlink", { a: "Hello, world!" });
-  const file = Bun.file(path.join(dir, "a"));
+  const file = Bun.file(path.join(String(dir), "a"));
   expect(file.unlink()).resolves.toBeUndefined();
-  expect(await Bun.file(path.join(dir, "a")).exists()).toBe(false);
+  expect(await Bun.file(path.join(String(dir), "a")).exists()).toBe(false);
 });
 
 test("Bun.file(path).delete() does not throw", async () => {
   await using dir = tempDir("bun-unlink", { a: "Hello, world!" });
-  const file = Bun.file(path.join(dir, "a"));
+  const file = Bun.file(path.join(String(dir), "a"));
   expect(file.delete()).resolves.toBeUndefined();
-  expect(await Bun.file(path.join(dir, "a")).exists()).toBe(false);
+  expect(await Bun.file(path.join(String(dir), "a")).exists()).toBe(false);
 });
 
 test("blob.writer() throws for data-backed blob", () => {
@@ -91,7 +91,7 @@ test("blob.stat() returns undefined for data-backed blob", async () => {
 
 test("Bun.file(path).stat() returns stats", async () => {
   await using dir = tempDir("bun-stat", { a: "Hello, world!" });
-  const file = Bun.file(path.join(dir, "a"));
+  const file = Bun.file(path.join(String(dir), "a"));
   const stat = await file.stat();
   expect(stat).toBeDefined();
   expect(stat.size).toBe(13); // "Hello, world!" is 13 bytes

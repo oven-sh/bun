@@ -2293,7 +2293,7 @@ describe("HEAD requests #15355", () => {
       "hello": "Hello World",
     });
 
-    const filename = path.join(dir, "hello");
+    const filename = path.join(String(dir), "hello");
     using server = Bun.serve({
       port: 0,
       fetch(req) {

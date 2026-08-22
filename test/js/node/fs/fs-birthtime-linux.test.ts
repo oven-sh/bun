@@ -9,7 +9,7 @@ describe.skipIf(!isLinux)("birthtime", () => {
       "test.txt": "initial content",
     });
 
-    const filepath = join(dir, "test.txt");
+    const filepath = join(String(dir), "test.txt");
     const stats = statSync(filepath);
 
     // On Linux with statx support, birthtime should be > 0
@@ -20,7 +20,7 @@ describe.skipIf(!isLinux)("birthtime", () => {
 
   it("birthtime should remain constant while other timestamps change", () => {
     using dir = tempDir("birthtime-immutable", {});
-    const filepath = join(dir, "immutable-test.txt");
+    const filepath = join(String(dir), "immutable-test.txt");
 
     // Create file and capture birthtime
     writeFileSync(filepath, "original");
@@ -55,7 +55,7 @@ describe.skipIf(!isLinux)("birthtime", () => {
       "test.txt": "content",
     });
 
-    const filepath = join(dir, "test.txt");
+    const filepath = join(String(dir), "test.txt");
 
     const statResult = statSync(filepath);
     const lstatResult = lstatSync(filepath);
@@ -77,7 +77,7 @@ describe.skipIf(!isLinux)("birthtime", () => {
       "test.txt": "content",
     });
 
-    const filepath = join(dir, "test.txt");
+    const filepath = join(String(dir), "test.txt");
 
     const regularStats = statSync(filepath);
     const bigintStats = statSync(filepath, { bigint: true });
@@ -95,7 +95,7 @@ describe.skipIf(!isLinux)("birthtime", () => {
 
   it("birthtime should be less than or equal to all other timestamps on creation", () => {
     using dir = tempDir("birthtime-ordering", {});
-    const filepath = join(dir, "new-file.txt");
+    const filepath = join(String(dir), "new-file.txt");
 
     writeFileSync(filepath, "new content");
     const stats = statSync(filepath);

@@ -372,8 +372,8 @@ console.log("About manifest:", aboutHtml);
     });
 
     async function buildAndReadManifest() {
-      const out = join(dir, "out");
-      const r = await Bun.build({ entrypoints: [join(dir, "server.ts")], outdir: out, target: "bun" });
+      const out = join(String(dir), "out");
+      const r = await Bun.build({ entrypoints: [join(String(dir), "server.ts")], outdir: out, target: "bun" });
       expect(r.success).toBe(true);
       const js = readFileSync(join(out, "server.js"), "utf8");
       const m = js.match(/__jsonParse\("(.+?)"\)/s)!;
@@ -383,7 +383,7 @@ console.log("About manifest:", aboutHtml);
     }
 
     const a = await buildAndReadManifest();
-    writeFileSync(join(dir, "app.ts"), `console.log(2);`);
+    writeFileSync(join(String(dir), "app.ts"), `console.log(2);`);
     const b = await buildAndReadManifest();
 
     const htmlA = a.files.find(f => f.loader === "html")!;
@@ -418,8 +418,8 @@ console.log("About manifest:", aboutHtml);
     });
 
     const build = await Bun.build({
-      entrypoints: [join(dir, "server.ts")],
-      outdir: join(dir, "out"),
+      entrypoints: [join(String(dir), "server.ts")],
+      outdir: join(String(dir), "out"),
       target: "bun",
       sourcemap: "external",
       minify: { whitespace: true },

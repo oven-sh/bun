@@ -12,7 +12,7 @@ test("Express hello world app supports bun build --compile --minify --sourcemap"
     "out.exe": "",
   });
 
-  const file = join(dir, "out.exe");
+  const file = join(String(dir), "out.exe");
   await $`${bunExe()} build --compile --minify --sourcemap ${join(import.meta.dir, "express-compile-fixture.ts")} --outfile=${file}`;
   await $`${file}`;
 });

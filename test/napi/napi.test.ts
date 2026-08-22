@@ -100,7 +100,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
 
         for (let exec of target === "bun" ? [bunExe()] : [bunExe(), await nodeExeMatchingAbi()]) {
           const result = spawnSync({
-            cmd: [exec, join(dir, "main.js"), "self"],
+            cmd: [exec, join(String(dir), "main.js"), "self"],
             env: bunEnv,
             stdin: "inherit",
             stderr: "inherit",
@@ -124,7 +124,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
               }),
             });
 
-            const exe = join(dir, "main" + (process.platform === "win32" ? ".exe" : ""));
+            const exe = join(String(dir), "main" + (process.platform === "win32" ? ".exe" : ""));
             const build = spawnSync({
               cmd: [
                 bunExe(),
@@ -191,7 +191,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
 
         for (let exec of target === "bun" ? [bunExe()] : [bunExe(), await nodeExeMatchingAbi()]) {
           const result = spawnSync({
-            cmd: [exec, join(dir, "main.js"), "self"],
+            cmd: [exec, join(String(dir), "main.js"), "self"],
             env: bunEnv,
             stdin: "inherit",
             stderr: "inherit",

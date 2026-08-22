@@ -27,7 +27,7 @@ describe("process.on", () => {
       }`,
     });
     const result1 = Bun.spawnSync({
-      cmd: [bunExe(), "build", "--compile", path.join(dir, "./process-on-fixture.ts"), "--outfile=./out"],
+      cmd: [bunExe(), "build", "--compile", path.join(String(dir), "./process-on-fixture.ts"), "--outfile=./out"],
       env: bunEnv,
       cwd: dir,
       stdin: "inherit",
@@ -64,7 +64,7 @@ describe("process.on", () => {
 
     expect(
       Bun.spawnSync({
-        cmd: [bunExe(), "build", "--target=bun", path.join(dir, "entry.ts"), "--outfile=./out.ts"],
+        cmd: [bunExe(), "build", "--target=bun", path.join(String(dir), "entry.ts"), "--outfile=./out.ts"],
         env: bunEnv,
         cwd: dir,
         stdin: "inherit",

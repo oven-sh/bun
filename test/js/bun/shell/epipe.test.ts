@@ -34,7 +34,9 @@ describe.if(isPosix)("exit status when the command's output cannot be written", 
   const builtins = ["echo", "pwd", "which", "seq", "basename", "dirname", "export", "yes", "ls", "cat", "mkdir", "rm"];
 
   // Runs write-error-fixture.ts with the given fd 1 and returns what it
-  // recorded for each command: `[exitCode, stderr]`.
+  // recorded for each command: `[exitCode, stderr]`. The shell also echoes
+  // each command's stderr to the fixture's own stderr, so that has to be
+  // exactly the recorded reports and nothing else.
   async function runFixture(stdout: "pipe" | number): Promise<Record<string, unknown>> {
     using dir = tempDir("shell-write-error", {});
     await using proc = Bun.spawn({
@@ -53,7 +55,13 @@ describe.if(isPosix)("exit status when the command's output cannot be written", 
     }
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     expect(exitCode, stderr).toBe(0);
-    return JSON.parse(readFileSync(join(String(dir), "results.json"), "utf8"));
+    const results: Record<string, unknown> = JSON.parse(readFileSync(join(String(dir), "results.json"), "utf8"));
+    const echoed = Object.values(results)
+      .filter(Array.isArray)
+      .map(([, commandStderr]) => commandStderr)
+      .join("");
+    expect(stderr).toBe(echoed);
+    return results;
   }
 
   test.concurrent("EPIPE: every command exits 1 and reports nothing", async () => {

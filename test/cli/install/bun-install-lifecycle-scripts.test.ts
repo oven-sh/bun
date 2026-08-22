@@ -8,6 +8,7 @@ import {
   bunExe,
   isLinux,
   isWindows,
+  normalizeBunSnapshot,
   readdirSorted,
   runBunInstall,
 } from "harness";
@@ -739,73 +740,66 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       using ctx = await setupTest();
       const { packageDir, packageJson, env } = ctx;
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
-      const writeScript = async (name: string) => {
-        const contents = `
-      import { writeFileSync, existsSync, rmSync } from "fs";
-      import { join } from "path";
 
-      const file = join(import.meta.dir, "${name}.txt");
-
-      if (existsSync(file)) {
-        rmSync(file);
-        writeFileSync(file, "${name} exists!");
-      } else {
-        writeFileSync(file, "${name}!");
-      }
-      `;
-        await writeFile(join(packageDir, `${name}.js`), contents);
+      const scriptNames = ["preinstall", "install", "postinstall", "preprepare", "prepare", "postprepare"];
+      // Every root script appends its own name to `<name>.txt`, so that file holds one line per run.
+      const scripts = Object.fromEntries(scriptNames.map(name => [name, `echo ${name} >> ${name}.txt`]));
+      const rootScriptFiles = (runs: number) =>
+        Object.fromEntries(scriptNames.map(name => [name, `${name}\n`.repeat(runs)]));
+      // Each script of `all-lifecycle-scripts` writes `<name>!` to `<name>.txt`, or `<name> exists!`
+      // when the file is already there. `prepare.txt` ships in the tarball: dependencies only run
+      // preinstall, install and postinstall.
+      const depDir = join(packageDir, "node_modules", "all-lifecycle-scripts");
+      const depScriptFiles = {
+        preinstall: "preinstall!",
+        install: "install!",
+        postinstall: "postinstall!",
+        preprepare: null,
+        prepare: "prepare!",
+        postprepare: null,
       };
 
-      await writeFile(
-        packageJson,
-        JSON.stringify({
-          name: "foo",
-          version: "1.0.0",
-          scripts: {
-            preinstall: `${bunExe()} preinstall.js`,
-            install: `${bunExe()} install.js`,
-            postinstall: `${bunExe()} postinstall.js`,
-            preprepare: `${bunExe()} preprepare.js`,
-            prepare: `${bunExe()} prepare.js`,
-            postprepare: `${bunExe()} postprepare.js`,
-          },
-        }),
-      );
+      async function scriptFiles(dir: string): Promise<Record<string, string | null>> {
+        return Object.fromEntries(
+          await Promise.all(
+            scriptNames.map(async name => {
+              const path = join(dir, `${name}.txt`);
+              return [name, (await exists(path)) ? await file(path).text() : null];
+            }),
+          ),
+        );
+      }
 
-      await writeScript("preinstall");
-      await writeScript("install");
-      await writeScript("postinstall");
-      await writeScript("preprepare");
-      await writeScript("prepare");
-      await writeScript("postprepare");
+      async function install() {
+        await using proc = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "ignore",
+          stderr: "pipe",
+          env: testEnv,
+        });
+        const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(err).not.toContain("not found");
+        expect(err).not.toContain("error:");
+        // Root scripts run in the foreground, and bun prints each command before it runs it.
+        expect(splitErrLines(err).filter(line => line.startsWith("$ "))).toEqual(
+          scriptNames.map(name => `$ ${scripts[name]}`),
+        );
+        expect(exitCode).toBe(0);
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+        return { out, err };
+      }
 
-      var { stdout, stderr, exited } = spawn({
-        cmd: [bunExe(), "install"],
-        cwd: packageDir,
-        stdout: "pipe",
-        stdin: "ignore",
-        stderr: "pipe",
-        env: testEnv,
-      });
-      var err = await stderr.text();
-      var out = await stdout.text();
-      expect(err).not.toContain("not found");
-      expect(err).not.toContain("error:");
-      expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      await writeFile(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", scripts }));
 
-      expect(await exists(join(packageDir, "preinstall.txt"))).toBeTrue();
-      expect(await exists(join(packageDir, "install.txt"))).toBeTrue();
-      expect(await exists(join(packageDir, "postinstall.txt"))).toBeTrue();
-      expect(await exists(join(packageDir, "preprepare.txt"))).toBeTrue();
-      expect(await exists(join(packageDir, "prepare.txt"))).toBeTrue();
-      expect(await exists(join(packageDir, "postprepare.txt"))).toBeTrue();
-      expect(await file(join(packageDir, "preinstall.txt")).text()).toBe("preinstall!");
-      expect(await file(join(packageDir, "install.txt")).text()).toBe("install!");
-      expect(await file(join(packageDir, "postinstall.txt")).text()).toBe("postinstall!");
-      expect(await file(join(packageDir, "preprepare.txt")).text()).toBe("preprepare!");
-      expect(await file(join(packageDir, "prepare.txt")).text()).toBe("prepare!");
-      expect(await file(join(packageDir, "postprepare.txt")).text()).toBe("postprepare!");
+      let { out, err } = await install();
+      expect(err).toContain("No packages! Deleted empty lockfile");
+      expect(normalizeBunSnapshot(out)).toMatchInlineSnapshot(`
+        "bun install <version> (<revision>)
+         done"
+      `);
+      expect(await scriptFiles(packageDir)).toEqual(rootScriptFiles(1));
 
       // add a dependency with all lifecycle scripts
       await writeFile(
@@ -813,14 +807,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         JSON.stringify({
           name: "foo",
           version: "1.0.0",
-          scripts: {
-            preinstall: `${bunExe()} preinstall.js`,
-            install: `${bunExe()} install.js`,
-            postinstall: `${bunExe()} postinstall.js`,
-            preprepare: `${bunExe()} preprepare.js`,
-            prepare: `${bunExe()} prepare.js`,
-            postprepare: `${bunExe()} postprepare.js`,
-          },
+          scripts,
           dependencies: {
             "all-lifecycle-scripts": "1.0.0",
           },
@@ -828,96 +815,36 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         }),
       );
 
-      ({ stdout, stderr, exited } = spawn({
-        cmd: [bunExe(), "install"],
-        cwd: packageDir,
-        stdout: "pipe",
-        stdin: "ignore",
-        stderr: "pipe",
-        env: testEnv,
-      }));
-
-      err = await stderr.text();
-      out = await stdout.text();
+      ({ out, err } = await install());
       expect(err).toContain("Saved lockfile");
-      expect(err).not.toContain("not found");
-      expect(err).not.toContain("error:");
-      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-        expect.stringContaining("bun install v1."),
-        "",
-        "+ all-lifecycle-scripts@1.0.0",
-        "",
-        "1 package installed",
-      ]);
-      expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+      expect(normalizeBunSnapshot(out)).toMatchInlineSnapshot(`
+        "bun install <version> (<revision>)
 
-      expect(await file(join(packageDir, "preinstall.txt")).text()).toBe("preinstall exists!");
-      expect(await file(join(packageDir, "install.txt")).text()).toBe("install exists!");
-      expect(await file(join(packageDir, "postinstall.txt")).text()).toBe("postinstall exists!");
-      expect(await file(join(packageDir, "preprepare.txt")).text()).toBe("preprepare exists!");
-      expect(await file(join(packageDir, "prepare.txt")).text()).toBe("prepare exists!");
-      expect(await file(join(packageDir, "postprepare.txt")).text()).toBe("postprepare exists!");
+        + all-lifecycle-scripts@1.0.0
 
-      const depDir = join(packageDir, "node_modules", "all-lifecycle-scripts");
-
-      expect(await exists(join(depDir, "preinstall.txt"))).toBeTrue();
-      expect(await exists(join(depDir, "install.txt"))).toBeTrue();
-      expect(await exists(join(depDir, "postinstall.txt"))).toBeTrue();
-      expect(await exists(join(depDir, "preprepare.txt"))).toBeFalse();
-      expect(await exists(join(depDir, "prepare.txt"))).toBeTrue();
-      expect(await exists(join(depDir, "postprepare.txt"))).toBeFalse();
-
-      expect(await file(join(depDir, "preinstall.txt")).text()).toBe("preinstall!");
-      expect(await file(join(depDir, "install.txt")).text()).toBe("install!");
-      expect(await file(join(depDir, "postinstall.txt")).text()).toBe("postinstall!");
-      expect(await file(join(depDir, "prepare.txt")).text()).toBe("prepare!");
-
-      await rm(join(packageDir, "preinstall.txt"));
-      await rm(join(packageDir, "install.txt"));
-      await rm(join(packageDir, "postinstall.txt"));
-      await rm(join(packageDir, "preprepare.txt"));
-      await rm(join(packageDir, "prepare.txt"));
-      await rm(join(packageDir, "postprepare.txt"));
-      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-      await rm(join(packageDir, "bun.lock"));
+        1 package installed"
+      `);
+      expect(await scriptFiles(packageDir)).toEqual(rootScriptFiles(2));
+      expect(await scriptFiles(depDir)).toEqual(depScriptFiles);
 
       // all at once
-      ({ stdout, stderr, exited } = spawn({
-        cmd: [bunExe(), "install"],
-        cwd: packageDir,
-        stdout: "pipe",
-        stdin: "ignore",
-        stderr: "pipe",
-        env: testEnv,
-      }));
-      expect(await exited).toBe(0);
-      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
-
-      err = await stderr.text();
-      out = await stdout.text();
-      expect(err).toContain("Saved lockfile");
-      expect(err).not.toContain("not found");
-      expect(err).not.toContain("error:");
-      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-        expect.stringContaining("bun install v1."),
-        "",
-        "+ all-lifecycle-scripts@1.0.0",
-        "",
-        "1 package installed",
+      await Promise.all([
+        ...scriptNames.map(name => rm(join(packageDir, `${name}.txt`))),
+        rm(join(packageDir, "node_modules"), { recursive: true, force: true }),
+        rm(join(packageDir, "bun.lock")),
       ]);
 
-      expect(await file(join(packageDir, "preinstall.txt")).text()).toBe("preinstall!");
-      expect(await file(join(packageDir, "install.txt")).text()).toBe("install!");
-      expect(await file(join(packageDir, "postinstall.txt")).text()).toBe("postinstall!");
-      expect(await file(join(packageDir, "preprepare.txt")).text()).toBe("preprepare!");
-      expect(await file(join(packageDir, "prepare.txt")).text()).toBe("prepare!");
-      expect(await file(join(packageDir, "postprepare.txt")).text()).toBe("postprepare!");
+      ({ out, err } = await install());
+      expect(err).toContain("Saved lockfile");
+      expect(normalizeBunSnapshot(out)).toMatchInlineSnapshot(`
+        "bun install <version> (<revision>)
 
-      expect(await file(join(depDir, "preinstall.txt")).text()).toBe("preinstall!");
-      expect(await file(join(depDir, "install.txt")).text()).toBe("install!");
-      expect(await file(join(depDir, "postinstall.txt")).text()).toBe("postinstall!");
-      expect(await file(join(depDir, "prepare.txt")).text()).toBe("prepare!");
+        + all-lifecycle-scripts@1.0.0
+
+        1 package installed"
+      `);
+      expect(await scriptFiles(packageDir)).toEqual(rootScriptFiles(1));
+      expect(await scriptFiles(depDir)).toEqual(depScriptFiles);
     });
 
     test("workspace lifecycle scripts", async () => {
@@ -1754,11 +1681,12 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       });
 
-      const err = await stderr.text();
+      let err = await stderr.text();
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      const out = await stdout.text();
+      expect(splitErrLines(err).filter(line => line.startsWith("$ "))).toEqual(["$ node-gyp rebuild"]);
+      let out = await stdout.text();
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         expect.stringContaining("bun install v1."),
         "",
@@ -1773,6 +1701,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
       await rm(join(packageDir, "build.node"));
 
+      // The script is added again on every install, not only when the lockfile changes.
       ({ stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "install"],
         cwd: packageDir,
@@ -1782,6 +1711,16 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       }));
 
+      err = await stderr.text();
+      expect(err).not.toContain("Saved lockfile");
+      expect(err).not.toContain("error:");
+      expect(splitErrLines(err).filter(line => line.startsWith("$ "))).toEqual(["$ node-gyp rebuild"]);
+      out = await stdout.text();
+      expect(normalizeBunSnapshot(out)).toMatchInlineSnapshot(`
+        "bun install <version> (<revision>)
+
+        Checked 1 install across 2 packages (no changes)"
+      `);
       expect(await exited).toBe(0);
       assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
 
@@ -2091,6 +2030,23 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
     });
 
+    // Lifecycle scripts run inside the installed package, so a script that writes `fileName`
+    // leaves it in `node_modules/<package>/`. Packages whose script did not write it map to null.
+    async function scriptOutputs(
+      packageDir: string,
+      packages: string[],
+      fileName: string,
+    ): Promise<Record<string, string | null>> {
+      return Object.fromEntries(
+        await Promise.all(
+          packages.map(async pkg => {
+            const path = join(packageDir, "node_modules", pkg, fileName);
+            return [pkg, (await exists(path)) ? await file(path).text() : null];
+          }),
+        ),
+      );
+    }
+
     async function createPackagesWithScripts(
       packageDir: string,
       packageJson: string,
@@ -2139,11 +2095,22 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const { packageDir, packageJson, env } = ctx;
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
-      const scripts = {
-        "preinstall": `${bunExe()} -e 'Bun.sleepSync(500)'`,
-      };
-
-      const dependenciesList = await createPackagesWithScripts(packageDir, packageJson, 4, scripts);
+      // Each script runs in its own package directory under node_modules. It keeps a marker file in
+      // node_modules while it runs, and halfway through it records how many other scripts have a
+      // marker there. Scripts that start together have all written their markers by then, so a
+      // script that runs alongside more than one other script records it.
+      const preinstall = [
+        "const marker = '../running-' + process.pid",
+        "await Bun.write(marker, '')",
+        "Bun.sleepSync(250)",
+        "const others = [...new Bun.Glob('running-*').scanSync('..')].length - 1",
+        "Bun.sleepSync(250)",
+        "await Bun.file(marker).delete()",
+        "await Bun.write('preinstall.txt', String(others))",
+      ].join("; ");
+      const dependenciesList = await createPackagesWithScripts(packageDir, packageJson, 4, {
+        preinstall: `${bunExe()} -e "${preinstall}"`,
+      });
 
       var { stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "install", "--concurrent-scripts=2"],
@@ -2169,6 +2136,11 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       ]);
       expect(exitCode).toBe(0);
       assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+
+      // Every script ran, and none of them ran alongside more than one other script.
+      expect(await scriptOutputs(packageDir, dependenciesList, "preinstall.txt")).toEqual(
+        Object.fromEntries(dependenciesList.map(dep => [dep, expect.stringMatching(/^[01]$/)])),
+      );
     });
 
     test("stress test", async () => {
@@ -2176,11 +2148,13 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const { packageDir, packageJson, env } = ctx;
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
+      // The script is quick: `echo` is a shell builtin, so none of the 500 scripts starts a process
+      // of its own (500 `bun` processes made this the slowest test in the file under ASAN). Default
+      // number for max concurrent scripts.
       const dependenciesList = await createPackagesWithScripts(packageDir, packageJson, 500, {
-        "postinstall": `${bunExe()} --version`,
+        "postinstall": "echo postinstall > postinstall.txt",
       });
 
-      // the script is quick, default number for max concurrent scripts
       var { stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "install"],
         cwd: packageDir,
@@ -2206,6 +2180,10 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
       expect(exitCode).toBe(0);
       assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+
+      expect(await scriptOutputs(packageDir, dependenciesList, "postinstall.txt")).toEqual(
+        Object.fromEntries(dependenciesList.map(dep => [dep, "postinstall\n"])),
+      );
     });
 
     test("it should install and use correct binary version", async () => {
@@ -2344,6 +2322,26 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
     });
 
+    // The three tests that use this check what `bun install` itself puts on the PATH of lifecycle
+    // scripts, so the scripts get exactly `path` to search on top of that. The env can also carry
+    // PATH under another spelling (`Path` on Windows), and a spawned bun keeps whichever spelling it
+    // reads last, so all of them go.
+    function envWithPath(env: Record<string, string>, path: string): Record<string, string> {
+      return {
+        ...Object.fromEntries(Object.entries(env).filter(([key]) => key.toUpperCase() !== "PATH")),
+        PATH: path,
+      };
+    }
+
+    // Without a node-gyp dependency, the `node-gyp` that a lifecycle script finds is the script that
+    // `bun install` writes to its temp dir, which runs `bun x node-gyp` with the `bun` that
+    // `bun install` put next to its `node`. bunx installs the package outside of the project, where
+    // the project's bunfig.toml does not apply, so the registry has to come from the environment.
+    // The registry's node-gyp@latest writes the directory it runs in to `build.node`.
+    function envForBunx(env: Record<string, string>): Record<string, string> {
+      return { ...env, BUN_CONFIG_REGISTRY: verdaccio.registryUrl() };
+    }
+
     test("node-gyp should always be available for lifecycle scripts", async () => {
       using ctx = await setupTest();
       const { packageDir, packageJson, env } = ctx;
@@ -2359,25 +2357,27 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           },
         }),
       );
+      // A PATH that is not empty, but has no node, bun or node-gyp on it: `bun install` has to add
+      // its directories to it. ("ensureTempNodeGypScript works" starts from an empty PATH.)
+      const emptyDir = join(packageDir, "empty");
+      await mkdir(emptyDir);
 
-      const { stdout, stderr, exited } = spawn({
+      await using proc = spawn({
         cmd: [bunExe(), "install"],
         cwd: packageDir,
-        stdout: "pipe",
+        // On Windows the shim is a .cmd file, and cmd.exe echoes its lines to stdout.
+        stdout: "ignore",
         stdin: "ignore",
         stderr: "pipe",
-        env: testEnv,
+        env: envForBunx(envWithPath(testEnv, emptyDir)),
       });
 
-      const err = await stderr.text();
-      expect(err).not.toContain("Saved lockfile");
-      expect(err).not.toContain("not found");
-      expect(err).not.toContain("error:");
-      const out = await stdout.text();
-
-      // if node-gyp isn't available, it would return a non-zero exit code
-      expect(await exited).toBe(0);
+      const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(splitErrLines(err)).toEqual(["No packages! Deleted empty lockfile", "", "$ node-gyp --version", ""]);
+      expect(exitCode).toBe(0);
       assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+
+      expect(await file(join(packageDir, "build.node")).text()).toBe(join(packageDir, "build.node"));
     });
 
     // if this test fails, `electron` might be removed from the default list
@@ -2403,7 +2403,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         stdout: "pipe",
         stdin: "ignore",
         stderr: "pipe",
-        env,
+        env: testEnv,
       });
 
       const err = await stderr.text();
@@ -3686,40 +3686,32 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const { packageDir, packageJson, env } = ctx;
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
-      await writeFile(
-        packageJson,
-        JSON.stringify({
-          name: "foo",
-          version: "1.0.0",
-          scripts: {
-            postinstall: `node -p "require('fs').writeFileSync('postinstall.txt', 'postinstall')"`,
-          },
-        }),
-      );
+      // With an empty PATH, the only `node` the script can find is the one `bun install` provides,
+      // which is `bun install`'s own binary. A real node has no `process.versions.bun`.
+      const postinstall = `node -p "require('fs').writeFileSync('postinstall.txt', process.versions.bun)"`;
+      await writeFile(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", scripts: { postinstall } }));
 
-      const originalPath = env.PATH;
-      env.PATH = "";
-
-      let { stderr, exited } = spawn({
+      await using proc = spawn({
         cmd: [bunExe(), "install"],
         cwd: packageDir,
         stdout: "pipe",
         stdin: "ignore",
         stderr: "pipe",
-        env: testEnv,
+        env: envWithPath(testEnv, ""),
       });
 
-      env.PATH = originalPath;
-
-      let err = await stderr.text();
-      expect(err).toContain("No packages! Deleted empty lockfile");
-      expect(err).not.toContain("not found");
-      expect(err).not.toContain("error:");
-      expect(err).not.toContain("warn:");
-      expect(await exited).toBe(0);
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(splitErrLines(err)).toEqual(["No packages! Deleted empty lockfile", "", `$ ${postinstall}`, ""]);
+      // `node -p` prints what `writeFileSync` returned.
+      expect(normalizeBunSnapshot(out)).toMatchInlineSnapshot(`
+        "bun install <version> (<revision>)
+        undefined
+         done"
+      `);
+      expect(exitCode).toBe(0);
       assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
 
-      expect(await exists(join(packageDir, "postinstall.txt"))).toBeTrue();
+      expect(await file(join(packageDir, "postinstall.txt")).text()).toBe(process.versions.bun);
     });
 
     test("ensureTempNodeGypScript works", async () => {
@@ -3738,27 +3730,22 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         }),
       );
 
-      const originalPath = env.PATH;
-      env.PATH = "";
-
-      let { stderr, exited } = spawn({
+      await using proc = spawn({
         cmd: [bunExe(), "install"],
         cwd: packageDir,
-        stdout: "pipe",
+        // On Windows the shim is a .cmd file, and cmd.exe echoes its lines to stdout.
+        stdout: "ignore",
         stderr: "pipe",
         stdin: "ignore",
-        env,
+        env: envForBunx(envWithPath(testEnv, "")),
       });
 
-      env.PATH = originalPath;
-
-      let err = await stderr.text();
-      expect(err).toContain("No packages! Deleted empty lockfile");
-      expect(err).not.toContain("not found");
-      expect(err).not.toContain("error:");
-      expect(err).not.toContain("warn:");
-      expect(await exited).toBe(0);
+      const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(splitErrLines(err)).toEqual(["No packages! Deleted empty lockfile", "", "$ node-gyp --version", ""]);
+      expect(exitCode).toBe(0);
       assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+
+      expect(await file(join(packageDir, "build.node")).text()).toBe(join(packageDir, "build.node"));
     });
 
     test("bun pm trust and untrusted on missing package", async () => {

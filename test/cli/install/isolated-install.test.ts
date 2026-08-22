@@ -48,17 +48,14 @@ function storeEntryName(name: string, resolution: string): string {
   return `${name}@${resolution.slice(0, CUT_RESOLUTION_LEN)}+${urlHash(resolution)}`;
 }
 
-// The cases run concurrently. CI exports a per-file BUN_INSTALL_CACHE_DIR,
-// which overrides the `cache` each case's bunfig names, and concurrent installs
-// that share one cache (and so one global store, `<cache>/links`) race on
-// Windows. Every install therefore pins the cache to the case's own directory.
+// The cases run concurrently, so every install pins the cache to the case's
+// own directory: CI exports a per-file BUN_INSTALL_CACHE_DIR, which overrides
+// the `cache` each case's bunfig names, and concurrent installs that share one
+// cache (and so one global store, `<cache>/links`) race on Windows. Cases that
+// go through `registry.createTestDir` get this env from it; this is the same
+// env for the cases that build their project with `tempDir`.
 function installEnv(dir: string, env: NodeJS.Dict<string> = bunEnv) {
   return { ...env, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") };
-}
-
-async function createTestDir(opts?: Parameters<VerdaccioRegistry["createTestDir"]>[0]) {
-  const { packageDir, packageJson } = await registry.createTestDir(opts);
-  return { packageDir, packageJson, env: installEnv(packageDir) };
 }
 
 // Everything bun wrote to stderr, except the two progress lines it prints to a
@@ -77,8 +74,8 @@ function stderrLines(stderr: string): string[] {
 // `stderrLines`). The default is the one line bun prints after it wrote
 // bun.lock; an install that leaves the lockfile alone prints nothing.
 async function install(
-  cwd: string,
   env: NodeJS.Dict<string>,
+  cwd: string,
   { args = [], stderr: expectedStderr = ["Saved lockfile"] }: { args?: string[]; stderr?: string[] } = {},
 ) {
   await using proc = spawn({
@@ -108,7 +105,7 @@ afterAll(() => {
 
 describe.concurrent("basic", () => {
   test("single dependency", async () => {
-    const { packageJson, packageDir, env } = await createTestDir({ bunfigOpts: { linker: "isolated" } });
+    const { packageJson, packageDir, env } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
     await write(
       packageJson,
@@ -139,7 +136,7 @@ describe.concurrent("basic", () => {
   });
 
   test("scope package", async () => {
-    const { packageJson, packageDir, env } = await createTestDir({ bunfigOpts: { linker: "isolated" } });
+    const { packageJson, packageDir, env } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
     await write(
       packageJson,
@@ -179,7 +176,7 @@ describe.concurrent("basic", () => {
   });
 
   test("transitive dependencies", async () => {
-    const { packageJson, packageDir, env } = await createTestDir({ bunfigOpts: { linker: "isolated" } });
+    const { packageJson, packageDir, env } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
     await write(
       packageJson,
@@ -270,7 +267,7 @@ describe.concurrent("basic", () => {
 });
 
 test.concurrent("handles cyclic dependencies", async () => {
-  const { packageJson, packageDir, env } = await createTestDir({ bunfigOpts: { linker: "isolated" } });
+  const { packageJson, packageDir, env } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
   await write(
     packageJson,
@@ -324,7 +321,7 @@ test.concurrent("handles cyclic dependencies", async () => {
 });
 
 test.concurrent("package with dependency on previous self works", async () => {
-  const { packageJson, packageDir, env } = await createTestDir({ bunfigOpts: { linker: "isolated" } });
+  const { packageJson, packageDir, env } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
   await write(
     packageJson,
@@ -359,7 +356,7 @@ test.concurrent("package with dependency on previous self works", async () => {
 });
 
 test.concurrent("can install folder dependencies", async () => {
-  const { packageJson, packageDir, env } = await createTestDir({ bunfigOpts: { linker: "isolated" } });
+  const { packageJson, packageDir, env } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
   await write(
     packageJson,
@@ -401,7 +398,7 @@ test.concurrent("can install folder dependencies", async () => {
 });
 
 test.concurrent("can install folder dependencies on root package", async () => {
-  const { packageDir, packageJson, env } = await createTestDir({ bunfigOpts: { linker: "isolated" } });
+  const { packageDir, packageJson, env } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
   await Promise.all([
     write(
@@ -442,7 +439,7 @@ test.concurrent("can install folder dependencies on root package", async () => {
 
 describe.concurrent("isolated workspaces", () => {
   test("basic", async () => {
-    const { packageJson, packageDir, env } = await createTestDir({ bunfigOpts: { linker: "isolated" } });
+    const { packageJson, packageDir, env } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
     await Promise.all([
       write(
@@ -515,7 +512,7 @@ describe.concurrent("isolated workspaces", () => {
   });
 
   test("workspace self dependencies create symlinks", async () => {
-    const { packageDir, env } = await createTestDir({
+    const { packageDir, env } = await registry.createTestDir({
       bunfigOpts: { linker: "isolated" },
       files: {
         "package.json": JSON.stringify({
@@ -602,7 +599,7 @@ describe.concurrent("optional peers", () => {
 
   for (const { deps, expected, name } of tests) {
     test(`will resolve if available through another importer (${name})`, async () => {
-      const { packageDir, env } = await createTestDir({
+      const { packageDir, env } = await registry.createTestDir({
         bunfigOpts: { linker: "isolated" },
         files: {
           "package.json": JSON.stringify({
@@ -621,7 +618,7 @@ describe.concurrent("optional peers", () => {
       });
 
       async function checkInstall(savesLockfile: boolean) {
-        await install(packageDir, env, { stderr: savesLockfile ? ["Saved lockfile"] : [] });
+        await install(env, packageDir, { stderr: savesLockfile ? ["Saved lockfile"] : [] });
         expect(await readdirSorted(join(packageDir, "node_modules/.bun"))).toEqual(expected);
       }
 
@@ -646,7 +643,7 @@ describe.concurrent("optional peers", () => {
   }
 
   test("successfully resolves optional peer with nested package", async () => {
-    const { packageDir, env } = await createTestDir({
+    const { packageDir, env } = await registry.createTestDir({
       bunfigOpts: { linker: "isolated" },
       files: {
         "package.json": JSON.stringify({
@@ -667,7 +664,7 @@ describe.concurrent("optional peers", () => {
     });
 
     async function checkInstall(savesLockfile: boolean) {
-      await install(packageDir, env, { stderr: savesLockfile ? ["Saved lockfile"] : [] });
+      await install(env, packageDir, { stderr: savesLockfile ? ["Saved lockfile"] : [] });
 
       expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bun", "one-dep", "one-one-dep"]);
       expect(await readdirSorted(join(packageDir, "node_modules/.bun"))).toEqual([
@@ -685,7 +682,7 @@ describe.concurrent("optional peers", () => {
 
 // https://github.com/oven-sh/bun/issues/28147
 test.concurrent("patched package shared by multiple peer variants is materialized into the cache once", async () => {
-  const { packageJson, packageDir, env } = await createTestDir({ bunfigOpts: { linker: "isolated" } });
+  const { packageJson, packageDir, env } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
   // `peer-deps@1.0.0` has `peerDependencies: { "no-deps": "*" }`. Giving each
   // workspace a different `no-deps` version forces one isolated store variant
@@ -771,18 +768,18 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
     expect(inodes.size).toBe(1);
   }
 
-  await install(packageDir, env, { args: installArgs });
+  await install(env, packageDir, { args: installArgs });
   await checkInstall();
 
   // Reinstall with a warm cache and no node_modules: the patched cache
   // directory already exists and must not be rebuilt per variant.
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-  await install(packageDir, env, { args: installArgs, stderr: [] });
+  await install(env, packageDir, { args: installArgs, stderr: [] });
   await checkInstall();
 });
 
 test.concurrent("adding, removing and re-adding a patch for an npm dependency", async () => {
-  const { packageJson, packageDir, env } = await createTestDir({ bunfigOpts: { linker: "isolated" } });
+  const { packageJson, packageDir, env } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
   const rootPackageJson = { name: "npm-patch-cycle", dependencies: { "no-deps": "1.0.0" } };
   const patched = {
     ...rootPackageJson,
@@ -811,7 +808,7 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
     await write(packageJson, JSON.stringify(manifest));
     // hardlink (the Linux default) installs into the store entry in place; clonefile replaces it.
     // Every step changes patchedDependencies, so every step saves the lockfile.
-    await install(packageDir, env, { args: ["--backend", "hardlink"] });
+    await install(env, packageDir, { args: ["--backend", "hardlink"] });
     expect({ step, patched: existsSync(patchedFile) }).toEqual({ step, patched: expectPatched });
   }
 });
@@ -823,7 +820,11 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
 // completed task's already-drained callback list, so the pending-task count
 // never reached zero.
 test.concurrent("adding and removing a patch for a github dependency in a workspace completes", async () => {
-  const { packageJson, packageDir } = await createTestDir({ bunfigOpts: { linker: "isolated" } });
+  const {
+    packageJson,
+    packageDir,
+    env: baseEnv,
+  } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
   // Minimal gzipped tarball shaped like a github codeload tarball: a single
   // root directory wrapping the package contents.
@@ -864,10 +865,7 @@ test.concurrent("adding and removing a patch for a github dependency in a worksp
     fetch: () => new Response(tarball, { headers: { "Content-Type": "application/gzip" } }),
   });
 
-  const env = {
-    ...installEnv(packageDir),
-    GITHUB_API_URL: `http://localhost:${server.port}`,
-  };
+  const env = { ...baseEnv, GITHUB_API_URL: `http://localhost:${server.port}` };
 
   const rootPackageJson = {
     name: "patched-github-workspace",
@@ -898,7 +896,7 @@ index 1f0e8b9f1f9a56799cdbc1a5a2f8cf9f9a3b2f1c..2f0e8b9f1f9a56799cdbc1a5a2f8cf9f
 
   const installedIndexJs = file(join(packageDir, "packages", "member", "node_modules", "gh-dep", "index.js"));
 
-  await install(packageDir, env);
+  await install(env, packageDir);
   expect(await installedIndexJs.text()).toBe('console.log("original");\n');
 
   // Adding the patch triggers a re-resolution; this install hung forever
@@ -912,7 +910,7 @@ index 1f0e8b9f1f9a56799cdbc1a5a2f8cf9f9a3b2f1c..2f0e8b9f1f9a56799cdbc1a5a2f8cf9f
       },
     }),
   );
-  await install(packageDir, env);
+  await install(env, packageDir);
   expect(await installedIndexJs.text()).toBe('console.log("patched");\n');
 
   // Cold cache with the patch still in the lockfile: the install phase itself
@@ -920,14 +918,14 @@ index 1f0e8b9f1f9a56799cdbc1a5a2f8cf9f9a3b2f1c..2f0e8b9f1f9a56799cdbc1a5a2f8cf9f
   await rm(join(packageDir, ".bun-cache"), { recursive: true, force: true });
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
   await rm(join(packageDir, "packages", "member", "node_modules"), { recursive: true, force: true });
-  await install(packageDir, env, { stderr: [] });
+  await install(env, packageDir, { stderr: [] });
   expect(await installedIndexJs.text()).toBe('console.log("patched");\n');
 
   // Removing the patch re-resolves again and rebuilds the store entry from
   // the unpatched cache folder (the PatchInfo::Remove path, which hung the
   // same way).
   await write(packageJson, JSON.stringify(rootPackageJson));
-  await install(packageDir, env);
+  await install(env, packageDir);
   expect(await installedIndexJs.text()).toBe('console.log("original");\n');
 
   // Re-adding the same patch must patch again.
@@ -940,7 +938,7 @@ index 1f0e8b9f1f9a56799cdbc1a5a2f8cf9f9a3b2f1c..2f0e8b9f1f9a56799cdbc1a5a2f8cf9f
       },
     }),
   );
-  await install(packageDir, env);
+  await install(env, packageDir);
   expect(await installedIndexJs.text()).toBe('console.log("patched");\n');
 });
 
@@ -949,7 +947,11 @@ index 1f0e8b9f1f9a56799cdbc1a5a2f8cf9f9a3b2f1c..2f0e8b9f1f9a56799cdbc1a5a2f8cf9f
 // protocol: after `git update-server-info`, a bare repo is plain static
 // files. Requires the git executable to build the fixture repository.
 testWithGit("adding and removing a patch for a git dependency in a workspace completes", async () => {
-  const { packageJson, packageDir } = await createTestDir({ bunfigOpts: { linker: "isolated" } });
+  const {
+    packageJson,
+    packageDir,
+    env: baseEnv,
+  } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
   const srcDir = join(packageDir, "git-src");
   const bareDir = join(packageDir, "repo.git");
@@ -996,7 +998,7 @@ testWithGit("adding and removing a patch for a git dependency in a workspace com
   });
   const repoUrl = `git+http://127.0.0.1:${server.port}/repo.git`;
 
-  const env = { ...installEnv(packageDir), ...gitConfigEnv };
+  const env = { ...baseEnv, ...gitConfigEnv };
 
   const rootPackageJson = {
     name: "patched-git-workspace",
@@ -1027,7 +1029,7 @@ index 1f0e8b9f1f9a56799cdbc1a5a2f8cf9f9a3b2f1c..2f0e8b9f1f9a56799cdbc1a5a2f8cf9f
 
   const installedIndexJs = file(join(packageDir, "packages", "member", "node_modules", "git-dep", "index.js"));
 
-  await install(packageDir, env);
+  await install(env, packageDir);
   expect(await installedIndexJs.text()).toBe('console.log("original");\n');
 
   // The patchedDependencies key must carry the resolved commit; a key without
@@ -1041,7 +1043,7 @@ index 1f0e8b9f1f9a56799cdbc1a5a2f8cf9f9a3b2f1c..2f0e8b9f1f9a56799cdbc1a5a2f8cf9f
       },
     }),
   );
-  await install(packageDir, env);
+  await install(env, packageDir);
   expect(await installedIndexJs.text()).toBe('console.log("patched");\n');
 
   // Cold cache with the patch still in the lockfile: the install phase
@@ -1049,11 +1051,11 @@ index 1f0e8b9f1f9a56799cdbc1a5a2f8cf9f9a3b2f1c..2f0e8b9f1f9a56799cdbc1a5a2f8cf9f
   await rm(join(packageDir, ".bun-cache"), { recursive: true, force: true });
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
   await rm(join(packageDir, "packages", "member", "node_modules"), { recursive: true, force: true });
-  await install(packageDir, env, { stderr: [] });
+  await install(env, packageDir, { stderr: [] });
   expect(await installedIndexJs.text()).toBe('console.log("patched");\n');
 
   await write(packageJson, JSON.stringify(rootPackageJson));
-  await install(packageDir, env);
+  await install(env, packageDir);
   expect(await installedIndexJs.text()).toBe('console.log("original");\n');
 
   // Re-adding the same patch must patch again.
@@ -1066,13 +1068,13 @@ index 1f0e8b9f1f9a56799cdbc1a5a2f8cf9f9a3b2f1c..2f0e8b9f1f9a56799cdbc1a5a2f8cf9f
       },
     }),
   );
-  await install(packageDir, env);
+  await install(env, packageDir);
   expect(await installedIndexJs.text()).toBe('console.log("patched");\n');
 });
 
 for (const backend of ["clonefile", "hardlink", "copyfile"]) {
   test.concurrent(`isolated install with backend: ${backend}`, async () => {
-    const { packageJson, packageDir, env } = await createTestDir({ bunfigOpts: { linker: "isolated" } });
+    const { packageJson, packageDir, env } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
     await Promise.all([
       write(
@@ -1102,7 +1104,7 @@ for (const backend of ["clonefile", "hardlink", "copyfile"]) {
       ),
     ]);
 
-    await install(packageDir, env, { args: ["--backend", backend] });
+    await install(env, packageDir, { args: ["--backend", backend] });
 
     expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
       ".bun",
@@ -1196,14 +1198,19 @@ for (const backend of ["clonefile", "hardlink", "copyfile"]) {
 test.concurrent("ranged peer dependency resolution is stable across installs from bun.lock", async () => {
   // `peer-deps-fixed` has a peer on `no-deps@^1.0.0`. The graph contains both
   // no-deps@1.0.1 (exact pin via normal-dep-and-dev-dep, hoisted to the root
-  // of the saved tree) and no-deps@1.1.0 (via two-range-deps). The fresh
-  // resolve binds the peer edge to the highest satisfying version (1.1.0) in
-  // its deferred-peer phase; reloading bun.lock used to re-derive the edge
+  // of the saved tree) and no-deps@1.1.0 (exact pin via the `nd11` alias). The
+  // fresh resolve binds the peer edge to the highest satisfying version (1.1.0)
+  // in its deferred-peer phase; reloading bun.lock used to re-derive the edge
   // from the saved tree paths instead, rebinding it to the hoisted 1.0.1.
   // That silently changed the runtime dependency tree on the second install
   // and re-keyed the isolated store entry (`+<peer hash>` suffix) on every
   // warm install.
-  const { packageJson, packageDir, env } = await createTestDir({
+  //
+  // 1.1.0 used to come from two-range-deps' `no-deps@^1.0.0`, which only adds
+  // its own copy when it is resolved before the 1.0.1 pin is appended; when
+  // the manifests arrive the other way round it dedupes onto 1.0.1 and the
+  // graph has one no-deps. Two exact pins do not depend on that order.
+  const { packageJson, packageDir, env } = await registry.createTestDir({
     bunfigOpts: { linker: "isolated" },
   });
 
@@ -1214,11 +1221,6 @@ test.concurrent("ranged peer dependency resolution is stable across installs fro
       dependencies: {
         "peer-deps-fixed": "1.0.0",
         "normal-dep-and-dev-dep": "1.0.0",
-        "two-range-deps": "1.0.0",
-        // Whether two-range-deps' `^1.0.0` reaches 1.1.0 depends on the order
-        // the manifests arrive in: it dedupes to the exact 1.0.1 pin when that
-        // one is appended first. The alias keeps 1.1.0 in the graph either way
-        // and leaves `node_modules/no-deps` to the hoisted 1.0.1.
         "nd11": "npm:no-deps@1.1.0",
       },
     }),
@@ -1255,7 +1257,7 @@ test.concurrent("aliased peer dependency binds to its real package across instal
   // fresh resolver does; a lookup under the alias would find the real
   // no-deps packages, whose versions also satisfy ^1.0.2, and rebind the
   // edge to the wrong package.
-  const { packageDir, env } = await createTestDir({
+  const { packageDir, env } = await registry.createTestDir({
     bunfigOpts: { linker: "isolated" },
     files: {
       "package.json": JSON.stringify({
@@ -1294,7 +1296,7 @@ test.concurrent("optional ranged peer keeps its hoisted-tree binding across inst
   // in the graph, binding the optional peer by version on load would pick
   // the highest satisfying (1.1.0) while the fresh install bound the hoisted
   // 1.0.1, re-keying the entry on the first reinstall.
-  const { packageJson, packageDir, env } = await createTestDir({
+  const { packageJson, packageDir, env } = await registry.createTestDir({
     bunfigOpts: { linker: "isolated" },
   });
 
@@ -1336,7 +1338,7 @@ test.concurrent("overridden peer dependency keeps the override across installs f
   // bun.lock must not re-filter candidates with the raw ^1.0.0 manifest
   // range, which the override replaced; that would rebind the edge to 1.1.0
   // and re-key the entry on the first reinstall.
-  const { packageJson, packageDir, env } = await createTestDir({
+  const { packageJson, packageDir, env } = await registry.createTestDir({
     bunfigOpts: { linker: "isolated" },
   });
 
@@ -1385,7 +1387,7 @@ test.concurrent("peer satisfied by a workspace package keeps the workspace acros
   // 1.0.0 cannot satisfy), and that version satisfies the peer's ^1.0.0 too;
   // loading bun.lock must not rebind the peer from the workspace to the npm
   // package through the version scan.
-  const { packageDir, env } = await createTestDir({
+  const { packageDir, env } = await registry.createTestDir({
     bunfigOpts: { linker: "isolated" },
     files: {
       "package.json": JSON.stringify({
@@ -1426,7 +1428,7 @@ test.concurrent("peer satisfied by a workspace package keeps the workspace acros
 
 describe.concurrent("existing node_modules, missing node_modules/.bun", () => {
   test("root and workspace node_modules are reset", async () => {
-    const { packageDir, env } = await createTestDir({
+    const { packageDir, env } = await registry.createTestDir({
       bunfigOpts: { linker: "isolated" },
       files: {
         "package.json": JSON.stringify({
@@ -1455,7 +1457,7 @@ describe.concurrent("existing node_modules, missing node_modules/.bun", () => {
       },
     });
 
-    await install(packageDir, env);
+    await install(env, packageDir);
     expect(
       await Promise.all([
         readdirSorted(join(packageDir, "node_modules")),
@@ -1471,7 +1473,7 @@ describe.concurrent("existing node_modules, missing node_modules/.bun", () => {
     ]);
   });
   test("some workspaces don't have node_modules", async () => {
-    const { packageDir, env } = await createTestDir({
+    const { packageDir, env } = await registry.createTestDir({
       bunfigOpts: { linker: "isolated" },
       files: {
         "package.json": JSON.stringify({
@@ -1498,7 +1500,7 @@ describe.concurrent("existing node_modules, missing node_modules/.bun", () => {
       },
     });
 
-    await install(packageDir, env);
+    await install(env, packageDir);
     expect(
       await Promise.all([
         readdirSorted(join(packageDir, "node_modules")),
@@ -1524,7 +1526,7 @@ describe.concurrent("existing node_modules, missing node_modules/.bun", () => {
       write(join(packageDir, "packages", "pkg2", "node_modules", "oops2"), "HI2"),
     ]);
 
-    await install(packageDir, env, { stderr: [] });
+    await install(env, packageDir, { stderr: [] });
 
     expect(
       await Promise.all([
@@ -1553,7 +1555,7 @@ describe.concurrent("--linker flag", () => {
   }
 
   test("can override linker from bunfig", async () => {
-    const { packageJson, packageDir, env } = await createTestDir({ bunfigOpts: { linker: "isolated" } });
+    const { packageJson, packageDir, env } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
     await write(
       packageJson,
@@ -1565,22 +1567,22 @@ describe.concurrent("--linker flag", () => {
       }),
     );
 
-    await install(packageDir, env);
+    await install(env, packageDir);
     await expectLinker(packageDir, "isolated");
 
     await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
 
-    await install(packageDir, env, { args: ["--linker", "hoisted"], stderr: [] });
+    await install(env, packageDir, { args: ["--linker", "hoisted"], stderr: [] });
     await expectLinker(packageDir, "hoisted");
 
     await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
 
-    await install(packageDir, env, { args: ["--linker", "isolated"], stderr: [] });
+    await install(env, packageDir, { args: ["--linker", "isolated"], stderr: [] });
     await expectLinker(packageDir, "isolated");
   });
 
   test("works as the only config option", async () => {
-    const { packageJson, packageDir, env } = await createTestDir();
+    const { packageJson, packageDir, env } = await registry.createTestDir();
 
     await write(
       packageJson,
@@ -1592,28 +1594,28 @@ describe.concurrent("--linker flag", () => {
       }),
     );
 
-    await install(packageDir, env, { args: ["--linker", "isolated"] });
+    await install(env, packageDir, { args: ["--linker", "isolated"] });
     await expectLinker(packageDir, "isolated");
 
     await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
 
-    await install(packageDir, env, { args: ["--linker", "hoisted"], stderr: [] });
+    await install(env, packageDir, { args: ["--linker", "hoisted"], stderr: [] });
     await expectLinker(packageDir, "hoisted");
 
     await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
 
     // without the flag, the bunfig the harness wrote (`linker = "hoisted"`) applies
-    await install(packageDir, env, { stderr: [] });
+    await install(env, packageDir, { stderr: [] });
     await expectLinker(packageDir, "hoisted");
 
     await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
 
-    await install(packageDir, env, { args: ["--linker", "isolated"], stderr: [] });
+    await install(env, packageDir, { args: ["--linker", "isolated"], stderr: [] });
     await expectLinker(packageDir, "isolated");
   });
 });
 test.concurrent("many transitive dependencies", async () => {
-  const { packageJson, packageDir, env } = await createTestDir({ bunfigOpts: { linker: "isolated" } });
+  const { packageJson, packageDir, env } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
   await write(
     packageJson,
@@ -1691,7 +1693,7 @@ test.concurrent("many transitive dependencies", async () => {
 });
 
 test.concurrent("dependency names are preserved", async () => {
-  const { packageJson, packageDir, env } = await createTestDir({ bunfigOpts: { linker: "isolated" } });
+  const { packageJson, packageDir, env } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
   await write(
     packageJson,
@@ -1752,7 +1754,7 @@ test.concurrent("dependency names are preserved", async () => {
 });
 
 test.concurrent("same resolution, different dependency name", async () => {
-  const { packageJson, packageDir, env } = await createTestDir({ bunfigOpts: { linker: "isolated" } });
+  const { packageJson, packageDir, env } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
   await write(
     packageJson,
@@ -1786,7 +1788,7 @@ test.concurrent("same resolution, different dependency name", async () => {
 });
 
 test.concurrent("successfully removes and corrects symlinks", async () => {
-  const { packageJson, packageDir, env } = await createTestDir({ bunfigOpts: { linker: "isolated" } });
+  const { packageJson, packageDir, env } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
   await Promise.all([
     write(join(packageDir, "old-package", "package.json"), JSON.stringify({ name: "old-package", version: "1.0.0" })),
     mkdir(join(packageDir, "node_modules")),
@@ -1820,7 +1822,7 @@ test.concurrent("runs lifecycle scripts correctly", async () => {
   // 2. only postinstall (or any other script that isn't preinstall)
   // 3. preinstall and any other script
 
-  const { packageJson, packageDir, env } = await createTestDir({ bunfigOpts: { linker: "isolated" } });
+  const { packageJson, packageDir, env } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
   await write(
     packageJson,
@@ -1977,13 +1979,13 @@ test.concurrent("transitive peer deps are resolved when resolution is fully sync
   const expectedStderr = ['warn: incorrect peer dependency "no-deps@1.0.0"', "Saved lockfile"];
 
   // First install: populates manifest cache (with max-age=300 from server)
-  await install(String(packageDir), env, { stderr: expectedStderr });
+  await install(env, String(packageDir), { stderr: expectedStderr });
 
   // Second install with NO lockfile and WARM cache. Manifests are fresh
   // (within max-age) so all loads are synchronous — this is the bug trigger.
   await rm(join(String(packageDir), "node_modules"), { recursive: true, force: true });
   await rm(join(String(packageDir), "bun.lock"), { force: true });
-  await install(String(packageDir), env, { stderr: expectedStderr });
+  await install(env, String(packageDir), { stderr: expectedStderr });
 
   const bunDir = join(String(packageDir), "node_modules", ".bun");
   // `+7347ae2d86f1441a` hashes the peer set `no-deps@1.0.0`, `+2ddcb6ca48941e07`
@@ -2083,7 +2085,7 @@ describe.concurrent("long store entry names", () => {
     const sharedPrefix1 = `${atLimit}1`;
     const sharedPrefix2 = `${atLimit}2`;
 
-    const { packageJson, packageDir, env } = await createTestDir({
+    const { packageJson, packageDir, env } = await registry.createTestDir({
       bunfigOpts: { linker: "isolated" },
       files: {
         [`${atLimit}/package.json`]: JSON.stringify({ name: "at-limit", version: "1.0.0" }),
@@ -2141,7 +2143,7 @@ describe.concurrent("long store entry names", () => {
 
   test("the peer hash is appended after the cut resolution", async () => {
     const folder = Buffer.alloc(MAX_RESOLUTION_LEN, "p").toString();
-    const { packageJson, packageDir, env } = await createTestDir({
+    const { packageJson, packageDir, env } = await registry.createTestDir({
       bunfigOpts: { linker: "isolated" },
       files: {
         [`${folder}/package.json`]: JSON.stringify({
@@ -2175,7 +2177,7 @@ describe.concurrent("long store entry names", () => {
     // byte 62. Only the shape is asserted: how non-ASCII bytes are spelled in
     // the name is a separate matter (#32304), the boundary handling is not.
     const folder = `x${Buffer.alloc(40 * 2, "\u00e9").toString()}`;
-    const { packageJson, packageDir, env } = await createTestDir({
+    const { packageJson, packageDir, env } = await registry.createTestDir({
       bunfigOpts: { linker: "isolated" },
       files: { [`${folder}/package.json`]: JSON.stringify({ name: "non-ascii", version: "1.0.0" }) },
     });
@@ -2206,7 +2208,7 @@ describe.concurrent("long store entry names", () => {
     // than NAME_MAX. Unbounded, the install fails with ENAMETOOLONG.
     const segment = Buffer.alloc(85, "d").toString();
     const deep = `${segment}/${segment}/${segment}`;
-    const { packageJson, packageDir, env } = await createTestDir({
+    const { packageJson, packageDir, env } = await registry.createTestDir({
       bunfigOpts: { linker: "isolated" },
       files: {
         [`${deep}/bar-0.0.2.tgz`]: readFileSync(join(import.meta.dir, "bar-0.0.2.tgz")),
@@ -2270,7 +2272,7 @@ describe.concurrent("long store entry names", () => {
     });
     const url = `http://localhost:${server.port}/${segment}/no-deps.tgz`;
 
-    const { packageJson, packageDir, env } = await createTestDir({
+    const { packageJson, packageDir, env } = await registry.createTestDir({
       bunfigOpts: { linker: "isolated", globalStore: true },
       files: { "index.mjs": `import pkg from "no-deps";\nconsole.log(pkg.version);` },
     });
@@ -2305,7 +2307,7 @@ describe.concurrent("long store entry names", () => {
   // (here: a path inside the temp directory) plus the commit, and the entry is
   // the cwd its lifecycle scripts are spawned with.
   test.skipIf(!gitExecutable)("a trusted git dependency with a long URL runs its lifecycle scripts", async () => {
-    const { packageJson, packageDir, env } = await createTestDir({ bunfigOpts: { linker: "isolated" } });
+    const { packageJson, packageDir, env } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
     const repoDir = join(packageDir, Buffer.alloc(60, "r").toString());
     const gitEnv = {
       ...env,
@@ -2580,7 +2582,7 @@ describe.concurrent("global virtual store", () => {
   const gvsBunfigOpts = { linker: "isolated", globalStore: true } as const;
 
   test("is disabled by default", async () => {
-    const { packageJson, packageDir, env } = await createTestDir({ bunfigOpts: { linker: "isolated" } });
+    const { packageJson, packageDir, env } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
     await write(
       packageJson,
@@ -2604,7 +2606,7 @@ describe.concurrent("global virtual store", () => {
   });
 
   test("can be enabled via BUN_INSTALL_GLOBAL_STORE=1", async () => {
-    const { packageJson, packageDir, env } = await createTestDir({ bunfigOpts: { linker: "isolated" } });
+    const { packageJson, packageDir, env } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
     await write(
       packageJson,
@@ -2622,7 +2624,7 @@ describe.concurrent("global virtual store", () => {
   });
 
   test("can be enabled via bunfig install.globalStore", async () => {
-    const { packageJson, packageDir, env } = await createTestDir({ bunfigOpts: gvsBunfigOpts });
+    const { packageJson, packageDir, env } = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
 
     await write(
       packageJson,
@@ -2640,7 +2642,7 @@ describe.concurrent("global virtual store", () => {
   });
 
   test("survives node_modules wipe", async () => {
-    const { packageJson, packageDir, env } = await createTestDir({ bunfigOpts: gvsBunfigOpts });
+    const { packageJson, packageDir, env } = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
 
     await write(
       packageJson,
@@ -2692,7 +2694,7 @@ describe.concurrent("global virtual store", () => {
   });
 
   test("--force replaces a corrupted global-store entry", async () => {
-    const { packageJson, packageDir, env } = await createTestDir({ bunfigOpts: gvsBunfigOpts });
+    const { packageJson, packageDir, env } = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
 
     await write(
       packageJson,
@@ -2730,7 +2732,7 @@ describe.concurrent("global virtual store", () => {
     // --force must rebuild staging and swap it into place over the corrupt
     // final directory instead of discarding the fresh tree on EEXIST.
     await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-    await install(packageDir, env, { args: ["--force"], stderr: [] });
+    await install(env, packageDir, { args: ["--force"], stderr: [] });
 
     expect(readlinkSync(entry)).toBe(gvsTarget);
     expect(await file(pkgJsonPath).text()).toBe(original);
@@ -2743,7 +2745,7 @@ describe.concurrent("global virtual store", () => {
   });
 
   test("BUN_INSTALL_GLOBAL_STORE=0 overrides bunfig globalStore = true", async () => {
-    const { packageJson, packageDir, env } = await createTestDir({ bunfigOpts: gvsBunfigOpts });
+    const { packageJson, packageDir, env } = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
 
     await write(
       packageJson,
@@ -2767,7 +2769,7 @@ describe.concurrent("global virtual store", () => {
   });
 
   test("entry hash is deterministic across fresh installs", async () => {
-    const { packageJson, packageDir, env } = await createTestDir({ bunfigOpts: gvsBunfigOpts });
+    const { packageJson, packageDir, env } = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
 
     await write(
       packageJson,
@@ -2799,8 +2801,8 @@ describe.concurrent("global virtual store", () => {
     // versions of one of its transitive deps must NOT share a global entry —
     // the dep symlink inside the entry would point at the wrong version for
     // one of them.
-    const a = await createTestDir({ bunfigOpts: gvsBunfigOpts });
-    const b = await createTestDir({ bunfigOpts: gvsBunfigOpts });
+    const a = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
+    const b = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
 
     await write(
       a.packageJson,
@@ -2841,7 +2843,7 @@ describe.concurrent("global virtual store", () => {
   });
 
   test("re-resolving the same project re-points the entry link at the new-hash global entry", async () => {
-    const { packageJson, packageDir, env } = await createTestDir({ bunfigOpts: gvsBunfigOpts });
+    const { packageJson, packageDir, env } = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
 
     await write(
       packageJson,
@@ -2888,8 +2890,8 @@ describe.concurrent("global virtual store", () => {
   });
 
   test("two projects with the same closure share one global entry", async () => {
-    const a = await createTestDir({ bunfigOpts: gvsBunfigOpts });
-    const b = await createTestDir({ bunfigOpts: gvsBunfigOpts });
+    const a = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
+    const b = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
 
     for (const { packageJson } of [a, b]) {
       await write(
@@ -2917,7 +2919,7 @@ describe.concurrent("global virtual store", () => {
     // dangling for any other project that shared the entry. The eligibility
     // check propagates: an entry that links to anything project-local is
     // itself project-local.
-    const { packageJson, packageDir, env } = await createTestDir({ bunfigOpts: gvsBunfigOpts });
+    const { packageJson, packageDir, env } = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
 
     await mkdir(join(packageDir, "packages", "ws-pkg"), { recursive: true });
     await write(
@@ -2946,7 +2948,7 @@ describe.concurrent("global virtual store", () => {
   });
 
   test("packages with trusted lifecycle scripts stay project-local", async () => {
-    const { packageJson, packageDir, env } = await createTestDir({ bunfigOpts: gvsBunfigOpts });
+    const { packageJson, packageDir, env } = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
 
     await write(
       packageJson,
@@ -2982,8 +2984,8 @@ describe.concurrent("global virtual store", () => {
     // Two `bun install` processes may race to create the same content-addressed
     // global entry; the loser sees EEXIST from clonefile/symlink/bin-link and
     // must treat it as success rather than failing the install.
-    const a = await createTestDir({ bunfigOpts: gvsBunfigOpts });
-    const b = await createTestDir({ bunfigOpts: gvsBunfigOpts });
+    const a = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
+    const b = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
 
     // Both projects must share one cache for the race to be real; the harness
     // gives each test dir its own `.bun-cache/` by default. Both also install
@@ -3026,8 +3028,8 @@ describe.concurrent("global virtual store", () => {
       // The loser of the race must not report it. `b` has no bun.lock before
       // its first install.
       await Promise.all([
-        install(a.packageDir, a.env, { stderr: [] }),
-        install(b.packageDir, a.env, { stderr: i === 0 ? ["Saved lockfile"] : [] }),
+        install(a.env, a.packageDir, { stderr: [] }),
+        install(a.env, b.packageDir, { stderr: i === 0 ? ["Saved lockfile"] : [] }),
       ]);
     }
 
@@ -3052,7 +3054,7 @@ describe.concurrent("global virtual store", () => {
     // `<entry>/` as the final step, so a published entry is always complete.
     // A crashed earlier install can leave a staging directory behind; the
     // warm-hit check must look at the final path only.
-    const { packageJson, packageDir, env } = await createTestDir({ bunfigOpts: gvsBunfigOpts });
+    const { packageJson, packageDir, env } = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
 
     await write(
       packageJson,
@@ -3094,7 +3096,7 @@ describe.concurrent("global virtual store", () => {
     // resolver would then `ReadFile` a directory. Exercising an actual
     // `require()` through a transitive dep proves the chain resolves
     // end-to-end on every platform.
-    const { packageJson, packageDir, env } = await createTestDir({ bunfigOpts: gvsBunfigOpts });
+    const { packageJson, packageDir, env } = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
 
     await write(
       packageJson,
@@ -3139,7 +3141,7 @@ describe.concurrent("global virtual store", () => {
     // the shared cache. On Windows the `.expect_missing` dep-symlink rewrite
     // then baked a project-absolute junction target into the shared entry,
     // which dangled after `rm -rf node_modules`.
-    const { packageJson, packageDir, env } = await createTestDir({ bunfigOpts: gvsBunfigOpts });
+    const { packageJson, packageDir, env } = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
 
     await write(
       packageJson,
@@ -3181,7 +3183,7 @@ describe.concurrent("global virtual store", () => {
     // real directory. Re-running install with the global store enabled must
     // replace that directory with a symlink (not fail with EEXIST or leave the
     // stale tree behind).
-    const { packageJson, packageDir, env } = await createTestDir({ bunfigOpts: gvsBunfigOpts });
+    const { packageJson, packageDir, env } = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
 
     await write(
       packageJson,
@@ -3212,7 +3214,7 @@ describe.concurrent("global virtual store", () => {
     // warm-path existence check passes *through* a live link, so without
     // stale-link detection the project would silently keep running against
     // (and a later rebuild would write into) the shared store.
-    const { packageJson, packageDir, env } = await createTestDir({ bunfigOpts: gvsBunfigOpts });
+    const { packageJson, packageDir, env } = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
 
     await write(
       packageJson,
@@ -3262,7 +3264,7 @@ describe.concurrent("global virtual store", () => {
     // A subsequent `bun install` (e.g. to add another dep) before `--commit`
     // must not see that real directory as a stale pre-GVS layout and
     // `deleteTree` the user's in-progress edits.
-    const { packageJson, packageDir, env } = await createTestDir({ bunfigOpts: gvsBunfigOpts });
+    const { packageJson, packageDir, env } = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
 
     await write(
       packageJson,
@@ -3319,7 +3321,7 @@ describe.concurrent("global virtual store", () => {
 });
 
 test.concurrent("rejects dependency aliases that traverse outside node_modules", async () => {
-  const { packageJson, packageDir, env } = await createTestDir({ bunfigOpts: { linker: "isolated" } });
+  const { packageJson, packageDir, env } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
   // A (transitively) malicious package.json can use an arbitrary string as a
   // dependency alias. The alias becomes a `node_modules/<alias>` path
@@ -3353,7 +3355,7 @@ test.concurrent("rejects dependency aliases that traverse outside node_modules",
 });
 
 test.concurrent("rejects a dependency alias with more than one path component", async () => {
-  const { packageJson, packageDir, env } = await createTestDir({ bunfigOpts: { linker: "isolated" } });
+  const { packageJson, packageDir, env } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
   await write(
     packageJson,
@@ -3398,7 +3400,7 @@ test.concurrent("invalid --linker value is echoed back in the error", async () =
 });
 
 test.concurrent("store build timings are printed by --verbose only", async () => {
-  const { packageJson, packageDir, env } = await createTestDir({ bunfigOpts: { linker: "isolated" } });
+  const { packageJson, packageDir, env } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
   await write(
     packageJson,
@@ -3425,7 +3427,7 @@ test.concurrent("store build timings are printed by --verbose only", async () =>
 
   // without --verbose, the rebuild of the store prints nothing at all
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-  await install(packageDir, env, { stderr: [] });
+  await install(env, packageDir, { stderr: [] });
 });
 
 describe.concurrent("hoist", () => {
@@ -3435,7 +3437,7 @@ describe.concurrent("hoist", () => {
   // `install.hoist = false` (pnpm's `hoist=false`) skips that fallback
   // directory without touching the rest of the layout.
   test("hoist = false skips the hidden fallback directory", async () => {
-    const { packageJson, packageDir, env } = await createTestDir({
+    const { packageJson, packageDir, env } = await registry.createTestDir({
       bunfigOpts: { linker: "isolated", hoist: false },
     });
 
@@ -3494,7 +3496,7 @@ describe.concurrent("hoist", () => {
   });
 
   test("hoist = false keeps publicHoistPattern working", async () => {
-    const { packageJson, packageDir, env } = await createTestDir({
+    const { packageJson, packageDir, env } = await registry.createTestDir({
       bunfigOpts: { linker: "isolated", hoist: false, publicHoistPattern: "*types*" },
     });
 
@@ -3520,7 +3522,7 @@ describe.concurrent("hoist", () => {
   });
 
   test("hoist = false removes a stale fallback directory from a previous install", async () => {
-    const { packageJson, packageDir, env } = await createTestDir({
+    const { packageJson, packageDir, env } = await registry.createTestDir({
       bunfigOpts: { linker: "isolated" },
     });
 
@@ -3562,7 +3564,7 @@ describe.concurrent("hoist", () => {
   });
 
   test("hoist = false takes precedence over hoistPattern", async () => {
-    const { packageJson, packageDir, env } = await createTestDir({
+    const { packageJson, packageDir, env } = await registry.createTestDir({
       bunfigOpts: { linker: "isolated", hoist: false, hoistPattern: "*" },
     });
 
@@ -3582,7 +3584,7 @@ describe.concurrent("hoist", () => {
   });
 
   test("npmrc hoist=false", async () => {
-    const { packageJson, packageDir, env } = await createTestDir({
+    const { packageJson, packageDir, env } = await registry.createTestDir({
       bunfigOpts: { linker: "isolated" },
       files: {
         ".npmrc": "hoist=false",

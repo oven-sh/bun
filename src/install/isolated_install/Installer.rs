@@ -911,6 +911,26 @@ impl Task {
                             };
                             let _folder_dir_guard = sys::CloseOnDrop::new(folder_dir);
 
+                            // The hardlink/copy walk below only visits names
+                            // in the source folder, so rebuilding in place
+                            // merges: a file deleted from the folder
+                            // dependency would survive every reinstall.
+                            // Delete to replace, like the hoisted linker's
+                            // uninstall-before-install.
+                            //
+                            // To be safe only delete inside the store: a Root
+                            // entry that is not a dependency on the root
+                            // package has the project dir as its store path.
+                            if pkg_res.tag == ResolutionTag::Folder
+                                || dep_id != invalid_dependency_id
+                            {
+                                let mut prev_build = AutoPath::init_top_level_dir();
+                                installer.append_store_path(&mut prev_build, self.entry_id);
+                                if let Some(e) = Fd::cwd().delete_tree(prev_build.slice()).err() {
+                                    return Ok(Yield::failure(TaskError::LinkPackage(e)));
+                                }
+                            }
+
                             let mut backend = InstallMethod::Hardlink;
                             'backend: loop {
                                 match backend {

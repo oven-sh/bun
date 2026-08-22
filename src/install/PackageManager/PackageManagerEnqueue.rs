@@ -158,7 +158,7 @@ pub fn enqueue_tarball_for_download(
     if this.network_task_has_failed(task_id) {
         return Err(EnqueueTarballForDownloadError::AlreadyFailed);
     }
-    {
+    if this.options.offline == crate::package_manager_real::options::OfflineMode::Offline {
         let is_required = this.lockfile.buffers.dependencies[dependency_id as usize]
             .behavior
             .is_required();
@@ -251,6 +251,16 @@ pub fn enqueue_tarball_for_reading(
     this.task_batch.push(ThreadPool::Batch::from(task));
 }
 
+/// Outcome of `enqueue_git_for_checkout`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum GitEnqueueResult {
+    /// a task was queued (or joined an existing one); completion arrives via the task queue
+    Queued,
+    /// `--offline` and the repository is not cached: nothing was queued (already reported
+    /// if required); the caller must count the package as failed/skipped itself
+    OfflineMiss,
+}
+
 pub fn enqueue_git_for_checkout(
     this: &mut PackageManager,
     dependency_id: DependencyID,
@@ -258,7 +268,7 @@ pub fn enqueue_git_for_checkout(
     resolution: &Resolution,
     task_context: TaskCallbackContext,
     patch_name_and_version_hash: Option<u64>,
-) {
+) -> GitEnqueueResult {
     // SAFETY: caller passes `resolution.tag == Git`; the `git` arm is the
     // active union field. Copy out so the value no longer borrows
     // `*resolution` while `*this` is mutably reborrowed below.
@@ -280,7 +290,7 @@ pub fn enqueue_git_for_checkout(
             .behavior
             .is_required();
         if offline_git_miss(this, clone_id, alias, is_required) {
-            return;
+            return GitEnqueueResult::OfflineMiss;
         }
     }
     let checkout_queue = this
@@ -294,7 +304,7 @@ pub fn enqueue_git_for_checkout(
     checkout_queue.value_ptr.push(task_context);
 
     if checkout_queue.found_existing {
-        return;
+        return GitEnqueueResult::Queued;
     }
 
     if let Some(repo_fd) = this.git_repositories.get(&clone_id).copied() {
@@ -320,13 +330,14 @@ pub fn enqueue_git_for_checkout(
             .push(TaskCallbackContext::Dependency(dependency_id));
 
         if clone_queue.found_existing {
-            return;
+            return GitEnqueueResult::Queued;
         }
 
         let dep = this.lockfile.buffers.dependencies[dependency_id as usize].clone();
         let task = enqueue_git_clone(this, clone_id, alias, &repository, &dep, resolution, None);
         this.task_batch.push(ThreadPool::Batch::from(task));
     }
+    GitEnqueueResult::Queued
 }
 
 /// Under `--offline`, an install-phase request for a package that is not in the cache
@@ -3155,7 +3166,7 @@ impl PackageManager {
         resolution: &Resolution,
         task_context: TaskCallbackContext,
         patch_name_and_version_hash: Option<u64>,
-    ) {
+    ) -> GitEnqueueResult {
         enqueue_git_for_checkout(
             self,
             dependency_id,

@@ -311,7 +311,9 @@ it("--offline installs a git dependency from the cached clone without touching t
     ["clone", "-q", "--bare", ".", bare],
   ]) {
     await using p = spawn({ cmd: ["git", ...cmd], cwd: work, env: gitEnv, stdout: "ignore", stderr: "pipe" });
-    expect(await p.exited).toBe(0);
+    const [gitErr, gitCode] = await Promise.all([p.stderr.text(), p.exited]);
+    expect(gitErr).not.toContain("fatal:");
+    expect(gitCode).toBe(0);
   }
   const url = `git+${pathToFileURL(bare)}`;
   // online install populates the git cache
@@ -326,4 +328,25 @@ it("--offline installs a git dependency from the cached clone without touching t
   expect(r.err).not.toContain("error:");
   expect(r.code).toBe(0);
   expect(await readdirSorted(join(dir, "node_modules", "gitpkg"))).toContain("index.js");
+
+  // and from an existing lockfile with the git cache gone: a required one errors, an
+  // optional one is skipped — either way the install finishes (no queued-forever task)
+  for (const entry of await readdirSorted(cache_dir)) {
+    if (entry.endsWith(".git") || entry.startsWith("@G@"))
+      await rm(join(cache_dir, entry), { recursive: true, force: true });
+  }
+  await rm(join(dir, "node_modules"), { recursive: true, force: true });
+  const again = await install(dir, ["--offline"]);
+  expect(again.err).toContain("--offline");
+  expect(again.code).not.toBe(0);
+  const opt = mkdtemp();
+  await writeFile(join(opt, "bunfig.toml"), await Bun.file(join(dir, "bunfig.toml")).text());
+  await writeFile(
+    join(opt, "package.json"),
+    JSON.stringify({ name: "app", version: "1.0.0", optionalDependencies: { gitpkg: url } }),
+  );
+  await writeFile(join(opt, "bun.lock"), await Bun.file(join(dir, "bun.lock")).text());
+  const optr = await install(opt, ["--offline"]);
+  expect(optr.err).not.toContain("error:");
+  expect(optr.code).toBe(0);
 });

@@ -216,12 +216,12 @@ pub use directories::{
 
 pub use self::package_manager_enqueue as enqueue;
 pub use enqueue::{
-    create_extract_task_for_streaming, enqueue_dependency_list, enqueue_dependency_to_root,
-    enqueue_dependency_with_main, enqueue_dependency_with_main_and_success_fn,
-    enqueue_extract_npm_package, enqueue_git_checkout, enqueue_git_for_checkout,
-    enqueue_network_task, enqueue_package_for_download, enqueue_parse_npm_package,
-    enqueue_patch_task, enqueue_patch_task_pre, enqueue_tarball_for_download,
-    enqueue_tarball_for_reading,
+    GitEnqueueResult, create_extract_task_for_streaming, enqueue_dependency_list,
+    enqueue_dependency_to_root, enqueue_dependency_with_main,
+    enqueue_dependency_with_main_and_success_fn, enqueue_extract_npm_package, enqueue_git_checkout,
+    enqueue_git_for_checkout, enqueue_network_task, enqueue_package_for_download,
+    enqueue_parse_npm_package, enqueue_patch_task, enqueue_patch_task_pre,
+    enqueue_tarball_for_download, enqueue_tarball_for_reading,
 };
 
 use self::package_manager_lifecycle as lifecycle;

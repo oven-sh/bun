@@ -2463,13 +2463,21 @@ pub(crate) fn install_isolated_packages(
                             }
                         }
                         ResolutionTag::Git => {
-                            installer.manager_mut().enqueue_git_for_checkout(
+                            if installer.manager_mut().enqueue_git_for_checkout(
                                 dep_id,
                                 dep.name.slice(string_buf),
                                 &pkg_res,
                                 ctx,
                                 patch_info.name_and_version_hash(),
-                            );
+                            ) == crate::package_manager::GitEnqueueResult::OfflineMiss
+                            {
+                                // --offline and not cached: nothing was queued
+                                entry_steps[entry_id.get() as usize]
+                                    .store(installer::Step::Done as u32, Ordering::Relaxed);
+                                installer
+                                    .on_task_complete(entry_id, installer::CompleteState::Fail);
+                                continue;
+                            }
                         }
                         ResolutionTag::Github => {
                             // The `.git()` accessor has a `debug_assert_eq!(tag, Git)` that

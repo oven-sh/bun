@@ -17,6 +17,9 @@ namespace Bun {
 JSC_DECLARE_HOST_FUNCTION(callHash);
 JSC_DECLARE_HOST_FUNCTION(constructHash);
 
+// node:crypto `Hash`: the object returned by createHash(). Its prototype chain is
+// Hash.prototype -> LazyTransform.prototype (JS) -> Transform -> ... so it is a stream,
+// but the digest state lives directly on this cell.
 class JSHash final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
@@ -123,11 +126,9 @@ private:
     void finishCreation(JSC::VM& vm, JSC::JSObject* prototype)
     {
         Base::finishCreation(vm, 2, "Hash"_s, PropertyAdditionMode::WithStructureTransition);
+        putDirect(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     }
 };
-
-JSC_DECLARE_HOST_FUNCTION(jsHashProtoFuncUpdate);
-JSC_DECLARE_HOST_FUNCTION(jsHashProtoFuncDigest);
 
 void setupJSHashClassStructure(JSC::LazyClassStructure::Initializer& init);
 

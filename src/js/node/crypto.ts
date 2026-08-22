@@ -16,8 +16,8 @@ const {
   sign,
   Verify: _Verify,
   verify,
-  Hmac: _Hmac,
-  Hash: _Hash,
+  Hmac,
+  Hash,
   ECDH,
   DiffieHellman,
   DiffieHellmanGroup,
@@ -229,71 +229,11 @@ function createVerify(algorithm, options?) {
 
 crypto_exports.createVerify = createVerify;
 
-function Hash(algorithm, options?): void {
-  if (!new.target) {
-    return new Hash(algorithm, options);
-  }
-
-  const handle = new _Hash(algorithm, options);
-  this[kHandle] = handle;
-
-  LazyTransform.$apply(this, [options]);
-}
-$toClass(Hash, "Hash", LazyTransform);
-
-Object.assign(Hash.prototype, {
-  copy: function (options) {
-    return new Hash(this[kHandle], options);
-  },
-  _transform: function (chunk, encoding, callback) {
-    this[kHandle].update(this, chunk, encoding);
-    callback();
-  },
-  _flush: function (callback) {
-    this.push(this[kHandle].digest(null, false));
-    callback();
-  },
-  update: function (data, encoding) {
-    return this[kHandle].update(this, data, encoding);
-  },
-  digest: function (outputEncoding) {
-    return this[kHandle].digest(outputEncoding);
-  },
-});
-
+// Hash and Hmac are native classes (JSHash.cpp / JSHmac.cpp) whose prototypes extend LazyTransform.
 crypto_exports.Hash = deprecate(Hash, "crypto.Hash constructor is deprecated.", "DEP0179");
 crypto_exports.createHash = function createHash(algorithm, options) {
   return new Hash(algorithm, options);
 };
-
-function Hmac(hmac, key, options?): void {
-  if (!new.target) {
-    return new Hmac(hmac, key, options);
-  }
-
-  const handle = new _Hmac(hmac, key, options);
-  this[kHandle] = handle;
-
-  LazyTransform.$apply(this, [options]);
-}
-$toClass(Hmac, "Hmac", LazyTransform);
-
-Object.assign(Hmac.prototype, {
-  update: function (data, encoding) {
-    return this[kHandle].update(this, data, encoding);
-  },
-  digest: function (outputEncoding) {
-    return this[kHandle].digest(outputEncoding);
-  },
-  _transform: function (chunk, encoding, callback) {
-    this[kHandle].update(this, chunk, encoding);
-    callback();
-  },
-  _flush: function (callback) {
-    this.push(this[kHandle].digest());
-    callback();
-  },
-});
 
 crypto_exports.Hmac = deprecate(Hmac, "crypto.Hmac constructor is deprecated.", "DEP0181");
 crypto_exports.createHmac = function createHmac(hmac, key, options) {

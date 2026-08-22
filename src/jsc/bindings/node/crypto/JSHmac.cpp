@@ -13,12 +13,22 @@
 #include "NodeValidator.h"
 #include <JavaScriptCore/FunctionPrototype.h>
 #include "KeyObject.h"
+#include "ZigGlobalObject.h"
+#include "InternalModuleRegistry.h"
 
 namespace Bun {
 
+static JSC_DECLARE_HOST_FUNCTION(jsHmacProtoFuncUpdate);
+static JSC_DECLARE_HOST_FUNCTION(jsHmacProtoFuncDigest);
+static JSC_DECLARE_HOST_FUNCTION(jsHmacProtoFuncTransform);
+static JSC_DECLARE_HOST_FUNCTION(jsHmacProtoFuncFlush);
+
+// Enumerable, like the `Hmac.prototype.x = ...` assignments in Node's lib/internal/crypto/hash.js.
 static const HashTableValue JSHmacPrototypeTableValues[] = {
-    { "update"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsHmacProtoFuncUpdate, 1 } },
+    { "update"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsHmacProtoFuncUpdate, 2 } },
     { "digest"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsHmacProtoFuncDigest, 1 } },
+    { "_transform"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsHmacProtoFuncTransform, 3 } },
+    { "_flush"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsHmacProtoFuncFlush, 1 } },
 };
 
 const ClassInfo JSHmac::s_info = { "Hmac"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSHmac) };
@@ -115,7 +125,47 @@ void JSHmacPrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSHmac::info(), JSHmacPrototypeTableValues, *this);
-    Bun::putToStringTagWithoutTransition(vm, this, info());
+}
+
+// hmac.update(data[, inputEncoding]) minus the finalized / this checks. Returns false with an exception pending.
+static bool hmacUpdate(JSGlobalObject* globalObject, ThrowScope& scope, JSHmac* hmac, JSValue inputValue, JSValue encodingValue)
+{
+    if (inputValue.isString()) {
+        JSString* inputString = inputValue.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+
+        auto encoding = parseEnumeration<WebCore::BufferEncodingType>(*globalObject, encodingValue).value_or(WebCore::BufferEncodingType::utf8);
+        RETURN_IF_EXCEPTION(scope, false);
+
+        if (encoding == WebCore::BufferEncodingType::hex && inputString->length() % 2 != 0) {
+            Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "encoding"_s, encodingValue, makeString("is invalid for data of length "_s, inputString->length()));
+            return false;
+        }
+
+        auto inputView = inputString->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+
+        JSValue converted = JSValue::decode(WebCore::constructFromEncoding(globalObject, inputView, encoding));
+        RETURN_IF_EXCEPTION(scope, false);
+
+        auto* convertedView = dynamicDowncast<JSC::JSArrayBufferView>(converted);
+        if (!hmac->update(std::span { reinterpret_cast<const uint8_t*>(convertedView->vector()), convertedView->byteLength() })) {
+            Bun::ERR::CRYPTO_HASH_UPDATE_FAILED(scope, globalObject);
+            return false;
+        }
+        return true;
+    }
+
+    if (auto* view = dynamicDowncast<JSArrayBufferView>(inputValue)) {
+        if (!hmac->update(std::span { reinterpret_cast<const uint8_t*>(view->vector()), view->byteLength() })) {
+            Bun::ERR::CRYPTO_HASH_UPDATE_FAILED(scope, globalObject);
+            return false;
+        }
+        return true;
+    }
+
+    Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "data"_s, "string or an instance of Buffer, TypedArray, or DataView"_s, inputValue);
+    return false;
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncUpdate, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -123,101 +173,31 @@ JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // Get the HMAC instance
-    JSHmac* hmac = dynamicDowncast<JSHmac>(callFrame->thisValue());
+    JSValue thisValue = callFrame->thisValue();
+    JSHmac* hmac = dynamicDowncast<JSHmac>(thisValue);
     if (!hmac) [[unlikely]] {
         return Bun::ERR::INVALID_THIS(scope, globalObject, "Hmac"_s);
     }
-
-    // Check if the HMAC is already finalized
     if (hmac->m_finalized) {
         return Bun::ERR::CRYPTO_HASH_FINALIZED(scope, globalObject);
     }
 
-    JSValue wrappedHmac = callFrame->argument(0);
-    JSC::JSValue inputValue = callFrame->argument(1);
-    JSValue encodingValue = callFrame->argument(2);
-
-    // Process the inputValue
-    if (inputValue.isString()) {
-        // Handle string inputValue
-        JSString* inputString = inputValue.toString(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-
-        auto encoding = parseEnumeration<WebCore::BufferEncodingType>(*globalObject, encodingValue).value_or(WebCore::BufferEncodingType::utf8);
-        RETURN_IF_EXCEPTION(scope, {});
-
-        // validateEncoding()
-        if (encoding == WebCore::BufferEncodingType::hex && inputString->length() % 2 != 0) {
-            return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "encoding"_s, encodingValue, makeString("is invalid for data of length "_s, inputString->length()));
-        }
-
-        auto inputView = inputString->view(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-
-        JSValue converted = JSValue::decode(WebCore::constructFromEncoding(globalObject, inputView, encoding));
-        RETURN_IF_EXCEPTION(scope, {});
-
-        auto* convertedView = dynamicDowncast<JSC::JSArrayBufferView>(converted);
-
-        if (!hmac->update(std::span { reinterpret_cast<const uint8_t*>(convertedView->vector()), convertedView->byteLength() })) {
-            return Bun::ERR::CRYPTO_HASH_UPDATE_FAILED(scope, globalObject);
-        }
-
-        return JSValue::encode(wrappedHmac);
-    } else if (auto* view = dynamicDowncast<JSArrayBufferView>(inputValue)) {
-        if (!hmac->update(std::span { reinterpret_cast<const uint8_t*>(view->vector()), view->byteLength() })) {
-            return Bun::ERR::CRYPTO_HASH_UPDATE_FAILED(scope, globalObject);
-        }
-
-        return JSValue::encode(wrappedHmac);
-    }
-
-    return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "data"_s, "string or an instance of Buffer, TypedArray, or DataView"_s, inputValue);
+    if (!hmacUpdate(globalObject, scope, hmac, callFrame->argument(0), callFrame->argument(1)))
+        return {};
+    return JSValue::encode(thisValue);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncDigest, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+// The HMAC as a Buffer/string. Finalizes the context; once finalized, returns an empty
+// Buffer / string (as Node does) rather than throwing.
+static EncodedJSValue hmacDigest(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, JSHmac* hmac, BufferEncodingType encoding)
 {
-    JSC::VM& vm = lexicalGlobalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
-    // Get the HMAC instance
-    JSHmac* hmac = dynamicDowncast<JSHmac>(callFrame->thisValue());
-    if (!hmac) [[unlikely]] {
-        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "Hmac"_s);
-    }
-
-    // Check if already finalized, return empty buffer if already finalized
     if (hmac->m_finalized) {
-        auto* emptyBuffer = JSC::JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), 0);
-        RETURN_IF_EXCEPTION(scope, {});
-
-        // Handle encoding if provided
-        JSC::JSValue encodingValue = callFrame->argument(0);
-
-        auto encoding = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, encodingValue);
-        RETURN_IF_EXCEPTION(scope, {});
-
-        if (encoding.has_value() && encoding.value() != BufferEncodingType::buffer) {
+        if (encoding != BufferEncodingType::buffer)
             return JSValue::encode(jsEmptyString(vm));
-        }
-
-        return JSValue::encode(emptyBuffer);
-    }
-
-    // Handle encoding if provided
-    JSC::JSValue encodingValue = callFrame->argument(0);
-
-    BufferEncodingType encoding = BufferEncodingType::buffer;
-
-    if (encodingValue.pureToBoolean() != TriState::False) {
-        // this value must stringify
-        // https://github.com/nodejs/node/blob/db00f9401882297e7e2e85c9e3ef042888074eaf/lib/internal/crypto/hash.js#L166
-        WTF::String encodingString = encodingValue.toWTFString(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        encoding = parseEnumerationFromString<BufferEncodingType>(encodingString).value_or(BufferEncodingType::buffer);
-        RETURN_IF_EXCEPTION(scope, {});
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), 0)));
     }
 
     unsigned char mdValue[EVP_MAX_MD_SIZE];
@@ -227,48 +207,114 @@ JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
     };
 
     if (hmac->m_ctx) {
-        if (!hmac->m_ctx.digestInto(&mdBuffer)) {
-            hmac->m_ctx.reset();
-            hmac->m_sizeForGC = 0;
+        bool ok = hmac->m_ctx.digestInto(&mdBuffer);
+        hmac->m_ctx.reset();
+        hmac->m_sizeForGC = 0;
+        if (!ok) {
             throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "Failed to digest HMAC"_s);
             return {};
         }
-        hmac->m_ctx.reset();
-        hmac->m_sizeForGC = 0;
+    } else {
+        mdBuffer.len = 0;
     }
-
-    // We shouldn't set finalized if coming from _flush, but this
-    // works because m_ctx is reset after digest
     hmac->m_finalized = true;
 
-    RELEASE_AND_RETURN(scope, StringBytes::encode(lexicalGlobalObject, scope, std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(mdBuffer.data), mdBuffer.len }, encoding));
+    return StringBytes::encode(lexicalGlobalObject, scope, std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(mdBuffer.data), mdBuffer.len }, encoding);
 }
 
-JSC_DEFINE_HOST_FUNCTION(constructHmac, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncDigest, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSHmac* hmac = dynamicDowncast<JSHmac>(callFrame->thisValue());
+    if (!hmac) [[unlikely]] {
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "Hmac"_s);
+    }
+
+    JSC::JSValue encodingValue = callFrame->argument(0);
+    BufferEncodingType encoding = BufferEncodingType::buffer;
+    if (encodingValue.pureToBoolean() != TriState::False) {
+        // this value must stringify
+        // https://github.com/nodejs/node/blob/db00f9401882297e7e2e85c9e3ef042888074eaf/lib/internal/crypto/hash.js#L166
+        WTF::String encodingString = encodingValue.toWTFString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        encoding = parseEnumerationFromString<BufferEncodingType>(encodingString).value_or(BufferEncodingType::buffer);
+    }
+
+    RELEASE_AND_RETURN(scope, hmacDigest(lexicalGlobalObject, scope, hmac, encoding));
+}
+
+// Transform hook: _transform(chunk, encoding, callback)
+JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncTransform, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSHmac* hmac = dynamicDowncast<JSHmac>(callFrame->thisValue());
+    if (!hmac) [[unlikely]] {
+        return Bun::ERR::INVALID_THIS(scope, globalObject, "Hmac"_s);
+    }
+    if (hmac->m_finalized) {
+        return Bun::ERR::CRYPTO_HASH_FINALIZED(scope, globalObject);
+    }
+    if (!hmacUpdate(globalObject, scope, hmac, callFrame->argument(0), callFrame->argument(1)))
+        return {};
+
+    JSValue callback = callFrame->argument(2);
+    auto callData = JSC::getCallData(callback);
+    if (callData.type == CallData::Type::None) [[unlikely]]
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "callback"_s, "function"_s, callback);
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::profiledCall(globalObject, ProfilingReason::API, callback, callData, jsUndefined(), ArgList())));
+}
+
+// Transform hook: _flush(callback) — push the digest and finish.
+JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncFlush, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue thisValue = callFrame->thisValue();
+    JSHmac* hmac = dynamicDowncast<JSHmac>(thisValue);
+    if (!hmac) [[unlikely]] {
+        return Bun::ERR::INVALID_THIS(scope, globalObject, "Hmac"_s);
+    }
+
+    JSValue digest = JSValue::decode(hmacDigest(globalObject, scope, hmac, BufferEncodingType::buffer));
+    RETURN_IF_EXCEPTION(scope, {});
+
+    JSValue push = hmac->get(globalObject, Identifier::fromString(vm, "push"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    auto pushCallData = JSC::getCallData(push);
+    if (pushCallData.type == CallData::Type::None) [[unlikely]]
+        return throwVMTypeError(globalObject, scope, "this.push is not a function"_s);
+    MarkedArgumentBuffer pushArgs;
+    pushArgs.append(digest);
+    JSC::profiledCall(globalObject, ProfilingReason::API, push, pushCallData, thisValue, pushArgs);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    JSValue callback = callFrame->argument(0);
+    auto callData = JSC::getCallData(callback);
+    if (callData.type == CallData::Type::None) [[unlikely]]
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "callback"_s, "function"_s, callback);
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::profiledCall(globalObject, ProfilingReason::API, callback, callData, jsUndefined(), ArgList())));
+}
+
+// new Hmac(hmac, key[, options]) / Hmac(hmac, key[, options])
+static EncodedJSValue constructOrCallHmac(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newTarget)
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     JSC::Structure* structure = zigGlobalObject->m_JSHmacClassStructure.get(zigGlobalObject);
-
-    // Handle new target
-    JSC::JSValue newTarget = callFrame->newTarget();
-    if (zigGlobalObject->m_JSHmacClassStructure.constructor(zigGlobalObject) != newTarget) [[unlikely]] {
-        if (!newTarget) {
-            throwTypeError(globalObject, scope, "Class constructor Hmac cannot be invoked without 'new'"_s);
-            return {};
-        }
-
+    if (newTarget && zigGlobalObject->m_JSHmacClassStructure.constructor(zigGlobalObject) != newTarget) [[unlikely]] {
         auto* functionGlobalObject = defaultGlobalObject(getFunctionRealm(globalObject, newTarget.getObject()));
         RETURN_IF_EXCEPTION(scope, {});
         structure = InternalFunction::createSubclassStructure(globalObject, newTarget.getObject(), functionGlobalObject->m_JSHmacClassStructure.get(functionGlobalObject));
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    JSHmac* hmac = JSHmac::create(vm, structure);
-
-    // Check if we have initialization arguments
     JSValue algorithmValue = callFrame->argument(0);
     V::validateString(scope, globalObject, algorithmValue, "hmac"_s);
     RETURN_IF_EXCEPTION(scope, {});
@@ -277,7 +323,7 @@ JSC_DEFINE_HOST_FUNCTION(constructHmac, (JSC::JSGlobalObject * globalObject, JSC
     JSValue options = callFrame->argument(2);
     JSValue encodingValue = jsUndefined();
     if (options.isObject()) {
-        encodingValue = options.get(globalObject, Identifier::fromString(vm, "encoding"_s));
+        encodingValue = options.get(globalObject, WebCore::builtinNames(vm).encodingPublicName());
         RETURN_IF_EXCEPTION(scope, {});
 
         if (!encodingValue.isUndefinedOrNull()) {
@@ -290,23 +336,30 @@ JSC_DEFINE_HOST_FUNCTION(constructHmac, (JSC::JSGlobalObject * globalObject, JSC
     RETURN_IF_EXCEPTION(scope, {});
 
     JSValue key = callFrame->argument(1);
-
     KeyObject keyObject = KeyObject::prepareSecretKey(globalObject, scope, key, encodingValue);
     RETURN_IF_EXCEPTION(scope, {});
 
+    JSHmac* hmac = JSHmac::create(vm, structure);
     hmac->init(globalObject, scope, algorithm, keyObject.symmetricKey().span());
     RETURN_IF_EXCEPTION(scope, {});
+
+    // LazyTransform's constructor: `this._options = options`. Only materialized when options were
+    // passed so the common createHmac(algorithm, key) path does not allocate property storage.
+    if (!options.isUndefined())
+        hmac->putDirect(vm, Identifier::fromString(vm, "_options"_s), options);
 
     return JSC::JSValue::encode(hmac);
 }
 
+JSC_DEFINE_HOST_FUNCTION(constructHmac, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return constructOrCallHmac(globalObject, callFrame, callFrame->newTarget());
+}
+
+// Node's Hmac is a plain function: calling it without `new` constructs anyway.
 JSC_DEFINE_HOST_FUNCTION(callHmac, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    throwConstructorCannotBeCalledAsFunctionTypeError(globalObject, scope, "Hmac"_s);
-    return JSC::encodedJSUndefined();
+    return constructOrCallHmac(globalObject, callFrame, JSValue());
 }
 
 JSC::Structure* JSHmacConstructor::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -316,10 +369,15 @@ JSC::Structure* JSHmacConstructor::createStructure(JSC::VM& vm, JSC::JSGlobalObj
 
 void setupJSHmacClassStructure(JSC::LazyClassStructure::Initializer& init)
 {
-    auto* prototypeStructure = JSHmacPrototype::createStructure(init.vm, init.global, init.global->objectPrototype());
+    auto* globalObject = defaultGlobalObject(init.global);
+    // class Hmac extends LazyTransform (internal/streams/lazy_transform)
+    auto* lazyTransform = globalObject->internalModuleRegistry()->requireId(init.global, init.vm, InternalModuleRegistry::Field::InternalStreamsLazyTransform).getObject();
+    JSValue lazyTransformPrototype = lazyTransform->getDirect(init.vm, init.vm.propertyNames->prototype);
+
+    auto* prototypeStructure = JSHmacPrototype::createStructure(init.vm, init.global, lazyTransformPrototype);
     auto* prototype = JSHmacPrototype::create(init.vm, init.global, prototypeStructure);
 
-    auto* constructorStructure = JSHmacConstructor::createStructure(init.vm, init.global, init.global->functionPrototype());
+    auto* constructorStructure = JSHmacConstructor::createStructure(init.vm, init.global, lazyTransform);
     auto* constructor = JSHmacConstructor::create(init.vm, constructorStructure, prototype);
 
     auto* structure = JSHmac::createStructure(init.vm, init.global, prototype);

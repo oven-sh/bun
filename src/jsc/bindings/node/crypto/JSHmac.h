@@ -17,6 +17,9 @@ namespace Bun {
 JSC_DECLARE_HOST_FUNCTION(callHmac);
 JSC_DECLARE_HOST_FUNCTION(constructHmac);
 
+// node:crypto `Hmac`: the object returned by createHmac(). Its prototype chain is
+// Hmac.prototype -> LazyTransform.prototype (JS) -> Transform -> ..., and the HMAC
+// context lives directly on this cell.
 class JSHmac final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
@@ -116,12 +119,10 @@ private:
 
     void finishCreation(JSC::VM& vm, JSC::JSObject* prototype)
     {
-        Base::finishCreation(vm, 2, "Hmac"_s, PropertyAdditionMode::WithStructureTransition);
+        Base::finishCreation(vm, 3, "Hmac"_s, PropertyAdditionMode::WithStructureTransition);
+        putDirect(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     }
 };
-
-JSC_DECLARE_HOST_FUNCTION(jsHmacProtoFuncUpdate);
-JSC_DECLARE_HOST_FUNCTION(jsHmacProtoFuncDigest);
 
 void setupJSHmacClassStructure(JSC::LazyClassStructure::Initializer& init);
 

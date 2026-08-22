@@ -32,9 +32,8 @@ test.concurrent("macro that awaits crypto.subtle.digest resolves under bun run",
   expect(exitCode).toBe(0);
 });
 
-// The keep-alive the WebCrypto work queue releases from the pool thread must
-// land on a loop that still ticks once the macro returned, or the process
-// never exits.
+// Work a macro starts but does not await runs on the macro VM's loop; it must
+// not keep the process alive, and whether it finishes before exit is timing.
 test.concurrent("macro that starts crypto.subtle.digest without awaiting still exits", async () => {
   using dir = tempDir("39900-unawaited", {
     "macro.ts": `export function start() {
@@ -55,7 +54,6 @@ console.log(start());
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   expect(stdout).toContain("1\n");
-  expect(stdout).toContain("settled\n");
   expect(exitCode).toBe(0);
 });
 

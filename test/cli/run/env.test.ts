@@ -13,6 +13,7 @@ import {
   tempDir,
   tempDirWithFiles,
 } from "harness";
+import { mkfifo } from "mkfifo";
 import { parseEnv } from "node:util";
 import path from "path";
 
@@ -737,6 +738,32 @@ describe.concurrent("--env-file", () => {
   test("should ignore a file that doesn't exist", async () => {
     const res = await runEnvFile(["--env-file=.env.nonexisting"]);
     expect(res.stdout).toBe("");
+  });
+
+  test.skipIf(isWindows)("should ignore a FIFO", async () => {
+    const fifoPath = path.join(dir, ".env.fifo");
+    mkfifo(fifoPath);
+    try {
+      // Hold a read+write handle so the loader's O_RDONLY open doesn't block,
+      // and stage data so a future reads-FIFOs implementation would be caught.
+      const fd = fs.openSync(fifoPath, "r+");
+      try {
+        fs.writeSync(fd, "BUNTEST_FIFO=from_fifo\n");
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), `--env-file=${fifoPath}`, "-e", "console.log(process.env.BUNTEST_FIFO ?? 'unset')"],
+          cwd: dir,
+          env: { ...bunEnv, NODE_ENV: undefined },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({ stdout: "unset\n", stderr: "", exitCode: 0 });
+      } finally {
+        fs.closeSync(fd);
+      }
+    } finally {
+      fs.rmSync(fifoPath, { force: true });
+    }
   });
 });
 

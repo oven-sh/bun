@@ -1,6 +1,31 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/001/default/style.css 1`] = `
+exports[`bundler css/ComposesWithSharedPropertiesError 1`] = `
+"// styles.module.css
+var styles_module_default = {
+  button: "otherButton_NlEjJA button_-MSaAA"
+};
+
+// entry.js
+console.log(styles_module_default);
+"
+`;
+
+exports[`bundler css/ComposesWithSharedPropertiesError 2`] = `
+"/* other.module.css */
+.otherButton_NlEjJA {
+  color: red;
+  font-size: 16px;
+}
+
+/* styles.module.css */
+.button_-MSaAA {
+  color: #00f;
+}
+"
+`;
+
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /001/default/style.css 1`] = `
 "/* 001/default/a.css */
 .box {
   background-color: green;
@@ -11,7 +36,7 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/001/def
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/001/relative-url/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /001/relative-url/style.css 1`] = `
 "/* 001/relative-url/a.css */
 .box {
   background-color: green;
@@ -22,10 +47,8 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/001/rel
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-charset/001/style.css 1`] = `
-"@charset "UTF-8";
-
-/* at-charset/001/a.css */
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-charset/001/style.css 1`] = `
+"/* at-charset/001/a.css */
 .box {
   background-color: red;
 }
@@ -40,7 +63,7 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-char
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-keyframes/001/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-keyframes/001/style.css 1`] = `
 "/* at-keyframes/001/a.css */
 @media screen {
   .box {
@@ -48,6 +71,7 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-keyf
     animation-duration: 0s;
     animation-fill-mode: both;
   }
+
   @keyframes BOX {
     0%, 100% {
       background-color: green;
@@ -62,6 +86,7 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-keyf
     animation-duration: 0s;
     animation-fill-mode: both;
   }
+
   @keyframes BOX {
     0%, 100% {
       background-color: red;
@@ -74,7 +99,7 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-keyf
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-layer/001/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-layer/001/style.css 1`] = `
 "@layer a;
 
 /* at-layer/001/b.css */
@@ -96,7 +121,7 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-laye
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-layer/002/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-layer/002/style.css 1`] = `
 "@media print {
   @layer a;
 }
@@ -120,7 +145,7 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-laye
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-layer/003/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-layer/003/style.css 1`] = `
 "@layer a;
 
 /* at-layer/003/b.css */
@@ -142,7 +167,7 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-laye
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-layer/004/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-layer/004/style.css 1`] = `
 "/* at-layer/004/b.css */
 @layer {
   .box {
@@ -162,7 +187,7 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-laye
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-layer/005/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-layer/005/style.css 1`] = `
 "/* at-layer/005/b.css */
 @media (min-width: 1px) {
   @layer a {
@@ -187,6 +212,7 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-laye
     background-color: red;
   }
 }
+
 @layer a.b {
   .box {
     background-color: green;
@@ -195,7 +221,7 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-laye
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-layer/006/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-layer/006/style.css 1`] = `
 "/* at-layer/006/b.css */
 @media (min-width: 1px) {
   @layer a {
@@ -220,6 +246,7 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-laye
     background-color: green;
   }
 }
+
 @layer a.b {
   .box {
     background-color: red;
@@ -228,17 +255,14 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-laye
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-layer/007/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-layer/007/style.css 1`] = `
 "/* at-layer/007/style.css */
-@layer foo {
-}
-@layer bar {
-}
 @layer bar {
   .box {
     background-color: green;
   }
 }
+
 @layer foo {
   .box {
     background-color: red;
@@ -247,7 +271,7 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-laye
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-layer/008/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-layer/008/style.css 1`] = `
 "/* at-layer/008/b.css */
 @layer {
   @layer {
@@ -269,7 +293,7 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-laye
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-media/001/default/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-media/001/default/style.css 1`] = `
 "/* at-media/001/default/a.css */
 @media screen {
   .box {
@@ -282,7 +306,7 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-medi
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-media/002/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-media/002/style.css 1`] = `
 "/* at-media/002/a.css */
 @media screen {
   .box {
@@ -302,7 +326,7 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-medi
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-media/003/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-media/003/style.css 1`] = `
 "/* at-media/003/b.css */
 @media screen {
   @media (min-width: 1px) {
@@ -314,12 +338,13 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-medi
 
 /* at-media/003/a.css */
 
+
 /* at-media/003/style.css */
 
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-media/004/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-media/004/style.css 1`] = `
 "/* at-media/004/c.css */
 .box {
   background-color: green;
@@ -336,12 +361,13 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-medi
 
 /* at-media/004/a.css */
 
+
 /* at-media/004/style.css */
 
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-media/005/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-media/005/style.css 1`] = `
 "/* at-media/005/c.css */
 .box {
   background-color: green;
@@ -358,12 +384,13 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-medi
 
 /* at-media/005/a.css */
 
+
 /* at-media/005/style.css */
 
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-media/006/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-media/006/style.css 1`] = `
 "/* at-media/006/b.css */
 @media (min-height: 1px) {
   @media (min-width: 1px) {
@@ -375,12 +402,13 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-medi
 
 /* at-media/006/a.css */
 
+
 /* at-media/006/style.css */
 
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-media/007/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-media/007/style.css 1`] = `
 "/* at-media/007/b.css */
 @media all {
   @media screen {
@@ -392,12 +420,13 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-medi
 
 /* at-media/007/a.css */
 
+
 /* at-media/007/style.css */
 
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-media/008/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-media/008/style.css 1`] = `
 "/* at-media/008/green.css */
 @media all {
   @layer alpha {
@@ -440,6 +469,7 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-medi
     background-color: green;
   }
 }
+
 @layer alpha {
   .box {
     background-color: red;
@@ -448,7 +478,7 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-medi
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-supports/001/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-supports/001/style.css 1`] = `
 "/* at-supports/001/a.css */
 @supports (display: block) {
   .box {
@@ -461,7 +491,7 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-supp
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-supports/002/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-supports/002/style.css 1`] = `
 "/* at-supports/002/b.css */
 @supports (display: block) {
   @supports (width: 10px) {
@@ -473,14 +503,15 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-supp
 
 /* at-supports/002/a.css */
 
+
 /* at-supports/002/style.css */
 
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-supports/003/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-supports/003/style.css 1`] = `
 "/* at-supports/003/b.css */
-@supports ((display: block) or (display: inline)) {
+@supports (display: block) or (display: inline) {
   @supports (width: 10px) {
     .box {
       background-color: green;
@@ -490,12 +521,13 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-supp
 
 /* at-supports/003/a.css */
 
+
 /* at-supports/003/style.css */
 
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-supports/004/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-supports/004/style.css 1`] = `
 "/* at-supports/004/b.css */
 @supports (display: block) {
   @layer a {
@@ -519,7 +551,7 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-supp
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-supports/005/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-supports/005/style.css 1`] = `
 "/* at-supports/005/green.css */
 @supports (display: block) {
   @layer alpha {
@@ -562,6 +594,7 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-supp
     background-color: green;
   }
 }
+
 @layer alpha {
   .box {
     background-color: red;
@@ -570,7 +603,7 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/at-supp
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/cycles/001/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /cycles/001/style.css 1`] = `
 "/* cycles/001/style.css */
 .box {
   background-color: green;
@@ -578,7 +611,7 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/cycles/
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/cycles/002/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /cycles/002/style.css 1`] = `
 "/* cycles/002/red.css */
 .box {
   background-color: red;
@@ -591,14 +624,16 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/cycles/
 
 /* cycles/002/b.css */
 
+
 /* cycles/002/a.css */
+
 
 /* cycles/002/style.css */
 
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/cycles/003/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /cycles/003/style.css 1`] = `
 "/* cycles/003/b.css */
 .box {
   background-color: red;
@@ -614,7 +649,7 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/cycles/
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/cycles/004/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /cycles/004/style.css 1`] = `
 "/* cycles/004/a.css */
 .box {
   background-color: red;
@@ -630,7 +665,7 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/cycles/
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/cycles/005/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /cycles/005/style.css 1`] = `
 "/* cycles/005/b.css */
 .box {
   background-color: red;
@@ -646,7 +681,7 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/cycles/
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/cycles/006/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /cycles/006/style.css 1`] = `
 "/* cycles/006/red.css */
 .box {
   background-color: red;
@@ -659,16 +694,19 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/cycles/
 
 /* cycles/006/b.css */
 
+
 /* cycles/006/a.css */
 
+
 /* cycles/006/c.css */
+
 
 /* cycles/006/style.css */
 
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/cycles/007/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /cycles/007/style.css 1`] = `
 "/* cycles/007/green.css */
 .box {
   background-color: green;
@@ -683,7 +721,9 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/cycles/
 
 /* cycles/007/a.css */
 
+
 /* cycles/007/b.css */
+
 
 /* cycles/007/red.css */
 @media not print {
@@ -703,16 +743,19 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/cycles/
 
 /* cycles/007/b.css */
 
+
 /* cycles/007/a.css */
 
+
 /* cycles/007/c.css */
+
 
 /* cycles/007/style.css */
 
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/cycles/008/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /cycles/008/style.css 1`] = `
 "/* cycles/008/green.css */
 @layer {
   .box {
@@ -729,7 +772,9 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/cycles/
 
 /* cycles/008/a.css */
 
+
 /* cycles/008/b.css */
+
 
 /* cycles/008/red.css */
 @layer {
@@ -751,17 +796,20 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/cycles/
 
 /* cycles/008/b.css */
 
+
 /* cycles/008/a.css */
 
+
 /* cycles/008/c.css */
+
 
 /* cycles/008/style.css */
 
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/data-urls/002/style.css 1`] = `
-"/* <data:text/css;plain,.box%20%7B%0A%09background-color%3A%20green%...> */
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /data-urls/002/style.css 1`] = `
+"/* dataurl:data:text/css;plain,.box%20%7B%0A%09background-color%3A%20green%3B%0A%7D%0A */
 .box {
   background-color: green;
 }
@@ -771,8 +819,8 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/data-ur
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/data-urls/003/style.css 1`] = `
-"/* <data:text/css,.box%20%7B%0A%09background-color%3A%20green%3B%0A%...> */
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /data-urls/003/style.css 1`] = `
+"/* dataurl:data:text/css,.box%20%7B%0A%09background-color%3A%20green%3B%0A%7D%0A */
 .box {
   background-color: green;
 }
@@ -782,7 +830,7 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/data-ur
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/duplicates/001/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /duplicates/001/style.css 1`] = `
 "/* duplicates/001/b.css */
 .box {
   background-color: red;
@@ -798,7 +846,7 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/duplica
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/duplicates/002/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /duplicates/002/style.css 1`] = `
 "/* duplicates/002/b.css */
 .box {
   background-color: red;
@@ -814,8 +862,9 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/duplica
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/empty/001/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /empty/001/style.css 1`] = `
 "/* empty/001/empty.css */
+
 
 /* empty/001/style.css */
 .box {
@@ -824,7 +873,7 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/empty/0
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/relative-paths/001/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /relative-paths/001/style.css 1`] = `
 "/* relative-paths/001/b/b.css */
 .box {
   background-color: green;
@@ -832,12 +881,13 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/relativ
 
 /* relative-paths/001/a/a.css */
 
+
 /* relative-paths/001/style.css */
 
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/relative-paths/002/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /relative-paths/002/style.css 1`] = `
 "/* relative-paths/002/b/b.css */
 .box {
   background-color: green;
@@ -845,15 +895,16 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/relativ
 
 /* relative-paths/002/a/a.css */
 
+
 /* relative-paths/002/style.css */
 
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/subresource/001/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /subresource/001/style.css 1`] = `
 "/* subresource/001/something/styles/green.css */
 .box {
-  background-image: url(data:image/png;base64,Li4u);
+  background-image: url("data:image/png;base64,Li4u");
 }
 
 /* subresource/001/style.css */
@@ -861,10 +912,10 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/subreso
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/subresource/002/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /subresource/002/style.css 1`] = `
 "/* subresource/002/styles/green.css */
 .box {
-  background-image: url(data:image/png;base64,Li4u);
+  background-image: url("data:image/png;base64,Li4u");
 }
 
 /* subresource/002/style.css */
@@ -872,10 +923,10 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/subreso
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/subresource/004/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /subresource/004/style.css 1`] = `
 "/* subresource/004/styles/green.css */
 .box {
-  background-image: url(data:image/png;base64,Li4u);
+  background-image: url("data:image/png;base64,Li4u");
 }
 
 /* subresource/004/style.css */
@@ -883,10 +934,10 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/subreso
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/subresource/005/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /subresource/005/style.css 1`] = `
 "/* subresource/005/styles/green.css */
 .box {
-  background-image: url(data:image/png;base64,Li4u);
+  background-image: url("data:image/png;base64,Li4u");
 }
 
 /* subresource/005/style.css */
@@ -894,15 +945,15 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/subreso
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/subresource/007/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /subresource/007/style.css 1`] = `
 "/* subresource/007/style.css */
 .box {
-  background-image: url(data:image/png;base64,Li4u);
+  background-image: url("data:image/png;base64,Li4u");
 }
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/url-format/001/default/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /url-format/001/default/style.css 1`] = `
 "/* url-format/001/default/a.css */
 .box {
   background-color: green;
@@ -913,7 +964,7 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/url-for
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/url-format/001/relative-url/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /url-format/001/relative-url/style.css 1`] = `
 "/* url-format/001/relative-url/a.css */
 .box {
   background-color: green;
@@ -924,7 +975,7 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/url-for
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/url-format/002/default/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /url-format/002/default/style.css 1`] = `
 "/* url-format/002/default/a.css */
 .box {
   background-color: green;
@@ -935,7 +986,7 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/url-for
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/url-format/002/relative-url/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /url-format/002/relative-url/style.css 1`] = `
 "/* url-format/002/relative-url/a.css */
 .box {
   background-color: green;
@@ -946,7 +997,7 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/url-for
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/url-format/003/default/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /url-format/003/default/style.css 1`] = `
 "/* url-format/003/default/a.css */
 .box {
   background-color: green;
@@ -957,7 +1008,7 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/url-for
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/url-format/003/relative-url/style.css 1`] = `
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /url-format/003/relative-url/style.css 1`] = `
 "/* url-format/003/relative-url/a.css */
 .box {
   background-color: green;
@@ -968,8 +1019,8 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/url-for
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/url-fragments/001/style.css 1`] = `
-"/* url-fragments/001/a.css#foo */
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /url-fragments/001/style.css 1`] = `
+"/* url-fragments/001/a.css */
 .box {
   background-color: green;
 }
@@ -979,18 +1030,13 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/url-fra
 "
 `;
 
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/url-fragments/002/style.css 1`] = `
-"/* url-fragments/002/a.css#1 */
-.box {
-  background-color: green;
-}
-
-/* url-fragments/002/b.css#2 */
+exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /url-fragments/002/style.css 1`] = `
+"/* url-fragments/002/b.css */
 .box {
   background-color: red;
 }
 
-/* url-fragments/002/a.css#3 */
+/* url-fragments/002/a.css */
 .box {
   background-color: green;
 }
@@ -999,142 +1045,6 @@ exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /out/url-fra
 
 "
 `;
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /001/default/style.css 1`] = `"@import url("a.css");"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /001/relative-url/style.css 1`] = `"@import url("./a.css");"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-charset/001/style.css 1`] = `"@charset "utf-8"; @import url("a.css"); @import url("b.css");"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-keyframes/001/style.css 1`] = `"@import url("a.css") screen; @import url("b.css") print;"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-layer/001/style.css 1`] = `
-"@import url("a.css") layer(a);
-@import url("b.css") layer(b);
-@import url("a.css") layer(a);"
-`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-layer/002/style.css 1`] = `
-"@import url("a.css") layer(a) print;
-@import url("b.css") layer(b);
-@import url("a.css") layer(a);"
-`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-layer/003/style.css 1`] = `"@import url("a.css"); @import url("b.css"); @import url("a.css");"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-layer/004/style.css 1`] = `"@import url("a.css"); @import url("b.css"); @import url("a.css");"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-layer/005/style.css 1`] = `
-"@import url("a.css") layer(a) (min-width: 1px);
-@layer a.c { .box { background-color: red; } }
-@layer a.b { .box { background-color: green; } }"
-`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-layer/006/style.css 1`] = `
-"@import url("a.css") layer(a) (min-width: 1px);
-@layer a.c { .box { background-color: green; } }
-@layer a.b { .box { background-color: red; } }"
-`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-layer/007/style.css 1`] = `
-"@layer foo {}
-@layer bar {}
-@layer bar { .box { background-color: green; } }
-@layer foo { .box { background-color: red; } }"
-`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-layer/008/style.css 1`] = `"@import url("a.css") layer;"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-media/001/default/style.css 1`] = `"@import url("a.css") screen;"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-media/002/style.css 1`] = `"@import url("a.css") screen; @import url("b.css") print;"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-media/003/style.css 1`] = `"@import url("a.css") screen;"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-media/004/style.css 1`] = `"@import url("c.css"); @import url("a.css") print;"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-media/005/style.css 1`] = `"@import url("c.css"); @import url("a.css") (max-width: 1px);"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-media/006/style.css 1`] = `"@import url("a.css") (min-height: 1px);"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-media/007/style.css 1`] = `"@import url("a.css") all;"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-media/008/style.css 1`] = `
-"@import url("a.css") layer(alpha) all;
-@import url("b.css") layer(beta) all;
-@layer beta { .box { background-color: green; } }
-@layer alpha { .box { background-color: red; } }"
-`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-supports/001/style.css 1`] = `"@import url("a.css") supports(display: block);"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-supports/002/style.css 1`] = `"@import url("a.css") supports(display: block);"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-supports/003/style.css 1`] = `"@import url("a.css") supports((display: block) or (display: inline));"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-supports/004/style.css 1`] = `"@import url("a.css") layer(a) supports(display: block);"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /at-supports/005/style.css 1`] = `
-"@import url("a.css") layer(alpha) supports(display: block);
-@import url("b.css") layer(beta) supports(display: block);
-@layer beta { .box { background-color: green; } }
-@layer alpha { .box { background-color: red; } }"
-`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /cycles/001/style.css 1`] = `"@import url("style.css"); .box { background-color: green; }"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /cycles/002/style.css 1`] = `"@import url("a.css");"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /cycles/003/style.css 1`] = `"@import url("a.css");"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /cycles/004/style.css 1`] = `"@import url("a.css"); @import url("b.css");"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /cycles/005/style.css 1`] = `"@import url("a.css"); @import url("b.css"); @import url("a.css");"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /cycles/006/style.css 1`] = `"@import url("b.css"); @import url("c.css");"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /cycles/007/style.css 1`] = `"@import url("b.css"); @import url("c.css");"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /cycles/008/style.css 1`] = `"@import url("b.css"); @import url("c.css");"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /data-urls/002/style.css 1`] = `"@import url('data:text/css;plain,.box%20%7B%0A%09background-color%3A%20green%3B%0A%7D%0A');"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /data-urls/003/style.css 1`] = `"@import url('data:text/css,.box%20%7B%0A%09background-color%3A%20green%3B%0A%7D%0A');"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /duplicates/001/style.css 1`] = `"@import url("a.css"); @import url("b.css"); @import url("a.css");"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /duplicates/002/style.css 1`] = `"@import url("a.css"); @import url("b.css"); @import url("a.css"); @import url("b.css"); @import url("a.css");"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /empty/001/style.css 1`] = `"@import url("./empty.css"); .box { background-color: green; }"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /relative-paths/001/style.css 1`] = `"@import url("./a/a.css");"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /relative-paths/002/style.css 1`] = `"@import url("./a/a.css");"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /subresource/001/style.css 1`] = `"@import url("./something/styles/green.css");"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /subresource/002/style.css 1`] = `"@import url("./styles/green.css");"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /subresource/004/style.css 1`] = `"@import url("./styles/green.css");"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /subresource/005/style.css 1`] = `"@import url("./styles/green.css");"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /subresource/007/style.css 1`] = `".box { background-image: url("./green.png"); }"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /url-format/001/default/style.css 1`] = `"@import url(a.css);"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /url-format/001/relative-url/style.css 1`] = `"@import url(./a.css);"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /url-format/002/default/style.css 1`] = `"@import "a.css";"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /url-format/002/relative-url/style.css 1`] = `"@import "./a.css";"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /url-format/003/default/style.css 1`] = `"@import url("a.css""`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /url-format/003/relative-url/style.css 1`] = `"@import url("./a.css""`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /url-fragments/001/style.css 1`] = `"@import url("./a.css#foo");"`;
-
-exports[`esbuild-bundler css/CSSAtImportConditionsFromExternalRepo: /url-fragments/002/style.css 1`] = `"@import url("./a.css#1"); @import url("./b.css#2"); @import url("./a.css#3");"`;
 
 exports[`esbuild-bundler css/CSSAtImportConditionsAtLayerBundle: case1.css 1`] = `
 "@layer first.one;
@@ -1416,45 +1326,56 @@ exports[`esbuild-bundler css/CSSAtImportConditionsAtLayerBundleAlternatingLayerI
 `;
 
 exports[`esbuild-bundler css/CSSAndJavaScriptCodeSplittingESBuildIssue1064: /a.js 1`] = `
-"import shared from './shared.js'
-console.log(shared() + 1)"
-`;
+"import {
+  shared_default
+} from "./chunk.js";
 
-exports[`esbuild-bundler css/CSSAndJavaScriptCodeSplittingESBuildIssue1064: /b.js 1`] = `
-"import shared from './shared.js'
-console.log(shared() + 2)"
-`;
-
-exports[`esbuild-bundler css/CSSAndJavaScriptCodeSplittingESBuildIssue1064: /c.css 1`] = `
-"@import "./shared.css";
-body { color: red }"
-`;
-
-exports[`esbuild-bundler css/CSSAndJavaScriptCodeSplittingESBuildIssue1064: /d.css 1`] = `
-"@import "./shared.css";
-body { color: blue }"
-`;
-
-exports[`bundler css/ComposesWithSharedPropertiesError 1`] = `
-"// styles.module.css
-var styles_module_default = {
-  button: "otherButton_NlEjJA button_-MSaAA"
-};
-
-// entry.js
-console.log(styles_module_default);
+// a.js
+console.log(shared_default() + 1);
 "
 `;
 
-exports[`bundler css/ComposesWithSharedPropertiesError 2`] = `
-"/* other.module.css */
-.otherButton_NlEjJA {
-  color: red;
-  font-size: 16px;
+exports[`esbuild-bundler css/CSSAndJavaScriptCodeSplittingESBuildIssue1064: /b.js 1`] = `
+"import {
+  shared_default
+} from "./chunk.js";
+
+// b.js
+console.log(shared_default() + 2);
+"
+`;
+
+exports[`esbuild-bundler css/CSSAndJavaScriptCodeSplittingESBuildIssue1064: /chunk.js 1`] = `
+"// shared.js
+function shared_default() {
+  return 3;
 }
 
-/* styles.module.css */
-.button_-MSaAA {
+export { shared_default };
+"
+`;
+
+exports[`esbuild-bundler css/CSSAndJavaScriptCodeSplittingESBuildIssue1064: /c.css 1`] = `
+"/* shared.css */
+body {
+  background: #000;
+}
+
+/* c.css */
+body {
+  color: red;
+}
+"
+`;
+
+exports[`esbuild-bundler css/CSSAndJavaScriptCodeSplittingESBuildIssue1064: /d.css 1`] = `
+"/* shared.css */
+body {
+  background: #000;
+}
+
+/* d.css */
+body {
   color: #00f;
 }
 "

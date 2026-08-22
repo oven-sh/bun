@@ -4990,16 +4990,8 @@ impl VirtualMachine {
 
     pub fn set_process_cwd(&mut self, to: &bun_core::ZStr) -> bun_sys::Result<()> {
         let fs = self.transpiler.fs_mut();
-        bun_sys::chdir(to)?;
-        let mut buf = bun_paths::PathBuffer::uninit();
-        let into_cwd_len = match bun_sys::getcwd(&mut buf[..]) {
-            bun_sys::Result::Ok(r) => r,
-            bun_sys::Result::Err(err) => {
-                let mut rollback = bun_paths::PathBuffer::uninit();
-                let _ = bun_sys::chdir(bun_paths::resolve_path::z(fs.top_level_dir, &mut rollback));
-                return bun_sys::Result::Err(err);
-            }
-        };
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let into_cwd_len = bun_sys::chdir_getcwd(to, &mut buf[..])?;
         fs.top_level_dir_buf[..into_cwd_len].copy_from_slice(&buf[..into_cwd_len]);
         fs.top_level_dir_buf[into_cwd_len] = 0;
         // SAFETY: `top_level_dir_buf` is a process-lifetime field of the

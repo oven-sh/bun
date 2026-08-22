@@ -961,7 +961,7 @@ pub mod kernel32 {
     // Re-export externs declared at the crate root so `kernel32::Foo` resolves.
     pub use super::{
         CreateFileW, GetCurrentDirectoryW, GetFileAttributesW, GetSystemDirectoryW, GetSystemInfo,
-        SYSTEM_INFO, SetCurrentDirectoryW, SetFilePointerEx,
+        SYSTEM_INFO, SetCurrentDirectoryW, SetEnvironmentVariableW, SetFilePointerEx,
     };
     pub use super::{
         GetConsoleCP, GetConsoleMode, GetConsoleOutputCP, SetConsoleCP, SetConsoleMode,

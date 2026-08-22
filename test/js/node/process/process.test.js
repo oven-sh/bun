@@ -1,7 +1,8 @@
 import { spawnSync, which } from "bun";
+import { dlopen } from "bun:ffi";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
-import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isArm64, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
 
 const process_sleep = resolve(import.meta.dir, "process-sleep.js");
@@ -311,6 +312,43 @@ it("process.chdir() on root dir", () => {
     expect(process.cwd()).toBe(cwd);
   } finally {
     process.chdir(cwd);
+  }
+});
+
+// Windows stores each drive's cwd in a hidden `=X:` env var that
+// SetCurrentDirectoryW does not update; process.chdir must write it (as
+// libuv's uv_chdir does) so drive-relative paths see the new directory.
+// bun:ffi dlopen is unavailable on Windows arm64 (TinyCC is disabled there).
+it.skipIf(!isWindows || isArm64)("process.chdir() updates the per-drive cwd environment variable on Windows", () => {
+  const cwd = process.cwd();
+  using dir = tempDir("chdir-drive-env", {
+    "a/placeholder.txt": "",
+    "b/placeholder.txt": "",
+  });
+  const a = join(String(dir), "a");
+  const b = join(String(dir), "b");
+  const drive = a[0].toUpperCase();
+  expect(drive).toMatch(/^[A-Z]$/);
+
+  const k32 = dlopen("kernel32.dll", {
+    GetEnvironmentVariableW: { args: ["ptr", "ptr", "u32"], returns: "u32" },
+  });
+  const readDriveCwd = drive => {
+    const name = new Uint16Array([0x3d /* = */, drive.charCodeAt(0), 0x3a /* : */, 0]);
+    const buf = new Uint16Array(32768);
+    const n = k32.symbols.GetEnvironmentVariableW(name, buf, buf.length);
+    if (n === 0 || n >= buf.length) return undefined;
+    return String.fromCharCode(...buf.subarray(0, n));
+  };
+  try {
+    process.chdir(a);
+    expect(readDriveCwd(drive)?.toLowerCase()).toBe(process.cwd().toLowerCase());
+
+    process.chdir(b);
+    expect(readDriveCwd(drive)?.toLowerCase()).toBe(process.cwd().toLowerCase());
+  } finally {
+    process.chdir(cwd);
+    k32.close();
   }
 });
 

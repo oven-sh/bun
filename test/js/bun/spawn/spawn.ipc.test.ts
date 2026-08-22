@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gcTick, isWindows } from "harness";
+import { bunEnv, bunExe, gcTick, isLinux, isWindows, shellExe, tempDir } from "harness";
 import path from "path";
 
 describe.each(["advanced", "json"])("ipc mode %s", mode => {
@@ -119,6 +119,144 @@ describe.each(["advanced", "json"])("ipc mode %s", mode => {
           ? { name: "TypeError", message: "JSON.stringify cannot serialize cyclic structures." }
           : { name: "DataCloneError", message: "The object can not be cloned." },
     });
+  });
+
+  // On the waiter-thread exit path (no usable pidfd, forced here with the feature flag) the
+  // child's exit reaches the parent as a task, which runs before the event loop polls the IPC
+  // socket. The parent used to close the channel on exit without reading it, dropping whatever
+  // the child sent right before exiting; node reads the channel to EOF. The parent below stays
+  // off its event loop until the child is dead, so the exit is always processed first.
+  it.concurrent.skipIf(!isLinux)("delivers messages sent right before exit when the exit is seen first", async () => {
+    const parent = `
+      const { readFileSync } = require("node:fs");
+      const received = [];
+      const disconnected = Promise.withResolvers();
+      const child = Bun.spawn({
+        cmd: [
+          process.execPath, "-e",
+          'process.send("one"); process.send({ two: 2 }); Promise.resolve().then(() => process.exit(7));',
+        ],
+        stdio: ["ignore", "inherit", "inherit"],
+        serialization: ${JSON.stringify(mode)},
+        ipc(message) { received.push(message); },
+        onDisconnect() { disconnected.resolve(); },
+      });
+      function childIsDead() {
+        let stat;
+        try {
+          stat = readFileSync("/proc/" + child.pid + "/stat", "latin1");
+        } catch {
+          return true; // already reaped
+        }
+        // "<pid> (<comm>) <state> ..."
+        return stat[stat.lastIndexOf(")") + 2] === "Z";
+      }
+      const deadline = Date.now() + 30_000;
+      while (!childIsDead()) {
+        if (Date.now() > deadline) throw new Error("child did not exit");
+        Bun.sleepSync(1);
+      }
+      // The waiter thread posts the exit task moments after the child dies; give it a generous
+      // head start before this process returns to its event loop.
+      Bun.sleepSync(50);
+      const exitCode = await child.exited;
+      const receivedBeforeExited = [...received];
+      await disconnected.promise;
+      console.log(JSON.stringify({ receivedBeforeExited, received, exitCode }));
+    `;
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", parent],
+      // BUN_FEATURE_FLAG_FORCE_WAITER_THREAD is only honored when BUN_GARBAGE_COLLECTOR_LEVEL is
+      // also set; bunEnv sets the latter.
+      env: { ...bunEnv, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({
+        receivedBeforeExited: ["one", { two: 2 }],
+        received: ["one", { two: 2 }],
+        exitCode: 7,
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+// After the child exits the channel is closed even if its end is still held open by a grandchild
+// (the channel is never awaited to EOF), but not before what was already written has been read.
+it.concurrent.skipIf(isWindows)(
+  "a grandchild holding the channel open delays neither the last message nor the disconnect",
+  async () => {
+    const received: unknown[] = [];
+    const disconnected = Promise.withResolvers<void>();
+    await using child = spawn({
+      // fd 3 is the child's end of the channel. `sleep` inherits it and outlives the shell.
+      cmd: [shellExe(), "-c", 'echo \'{"from":"shell"}\' >&3; sleep 30 >/dev/null 2>&1 & echo $!'],
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "inherit"],
+      serialization: "json",
+      ipc(message) {
+        received.push(message);
+      },
+      onDisconnect() {
+        disconnected.resolve();
+      },
+    });
+    const grandchildPid = Number((await child.stdout.text()).trim());
+    try {
+      expect(grandchildPid).toBeGreaterThan(0);
+      expect(await child.exited).toBe(0);
+      await disconnected.promise;
+      expect(received).toEqual([{ from: "shell" }]);
+    } finally {
+      if (grandchildPid > 0) process.kill(grandchildPid);
+    }
+  },
+);
+
+// Same race as "delivers messages sent right before exit" above, on every POSIX platform that can
+// force the waiter thread (macOS included, where /proc is not available): the child writes a
+// sentinel file once it has sent, and the parent stays off its event loop until the sentinel exists
+// and the child has had time to exit, so the exit is normally processed before the channel is read.
+it.concurrent.skipIf(isWindows)("delivers a message sent right before exit on the waiter-thread path", async () => {
+  using dir = tempDir("ipc-exit-message", {});
+  const sentinel = path.join(String(dir), "sent");
+  const child = `process.send("hello"); require("node:fs").writeFileSync(${JSON.stringify(sentinel)}, ""); Promise.resolve().then(() => process.exit(0));`;
+  const parent = `
+    const { existsSync } = require("node:fs");
+    const received = [];
+    const child = Bun.spawn({
+      cmd: [process.execPath, "-e", ${JSON.stringify(child)}],
+      stdio: ["ignore", "inherit", "inherit"],
+      serialization: "json",
+      ipc(message) { received.push(message); },
+    });
+    const deadline = Date.now() + 30_000;
+    while (!existsSync(${JSON.stringify(sentinel)})) {
+      if (Date.now() > deadline) throw new Error("child did not send");
+      Bun.sleepSync(1);
+    }
+    // The child exits right after writing the sentinel; stay off the event loop until the waiter
+    // thread has had time to post the exit.
+    Bun.sleepSync(100);
+    const exitCode = await child.exited;
+    console.log(JSON.stringify({ received, exitCode }));
+  `;
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", parent],
+    // Only honored together with BUN_GARBAGE_COLLECTOR_LEVEL, which bunEnv sets.
+    env: { ...bunEnv, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ received: ["hello"], exitCode: 0 }),
+    stderr: "",
+    exitCode: 0,
   });
 });
 

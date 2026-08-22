@@ -1669,8 +1669,6 @@ class OutputLineStream extends EventEmitter {
               this.panicked = true;
               this.emit("panic");
             }
-            // These can be noisy due to symlinks.
-            if (isWindows && line.includes("is not in the project directory and will not be watched")) continue;
             console.log("\x1b[0;30m" + name + "|\x1b[0m", line);
             this.emit("line", line);
           }

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, rss, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, rss, tempDir } from "harness";
 
 test("native ReadableStream reuses the pull buffer across small reads", async () => {
   // #getInternalBuffer used to rotate to a fresh autoAllocateChunkSize
@@ -123,12 +123,14 @@ test.skipIf(isWindows)(
     }
     async function read(bytes: number) {
       let i = 0;
-      while (true) {
-        const { value } = await r.read();
-        i += value?.length ?? 0;
-        if (i >= bytes) {
-          return;
-        }
+      while (i < bytes) {
+        const { done, value } = await r.read();
+        // When this test times out, the runner kills `cat`, its stdout closes,
+        // and every further read() resolves {done: true} at once. Without this
+        // check the abandoned loop spins in microtasks forever, the event loop
+        // never runs again, and no later test file makes progress.
+        if (done) throw new Error(`cat stdout closed after ${i} of ${bytes} bytes`);
+        i += value.length;
       }
     }
 
@@ -141,9 +143,13 @@ test.skipIf(isWindows)(
       stdout: "pipe",
       stderr: "inherit",
     });
-    const r = cat.stdout.getReader() as any;
+    const r = cat.stdout.getReader();
 
-    const rounds = 5000;
+    // The #12198 leak retained every round's chunks, so a few hundred rounds
+    // per phase already blow past the bounds below. 5000 rounds take ~4.5s on
+    // a release build and ~45s under debug+ASAN, so the slow builds run fewer
+    // rounds, and the test carries its own timeout instead of the 5s default.
+    const rounds = isDebug || isASAN ? 500 : 5000;
 
     for (let i = 0; i < rounds; i++) {
       await readAndWrite(BYTES_TO_WRITE);
@@ -171,4 +177,5 @@ test.skipIf(isWindows)(
     expect(after).toBeLessThan((isASAN ? 700 : 250) * 1024 * 1024);
     expect(after).toBeLessThan(before * (isASAN ? 3 : 1.5));
   },
+  60_000,
 );

@@ -384,7 +384,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryWrapSpanContext, (JSGlobalObject * lexicalGl
     if (traceId.isString() && spanId.isString()) {
         BunString t = telemetryBorrow(asString(traceId));
         BunString s = telemetryBorrow(asString(spanId));
-        Bun__Telemetry__stubFromHexIds(&stub, &t, &s, traceFlags.isNumber() ? static_cast<uint8_t>(traceFlags.asNumber()) : TelemetrySpanStub::Sampled, isRemote.isBoolean() ? isRemote.asBoolean() : true);
+        Bun__Telemetry__stubFromHexIds(&stub, &t, &s, traceFlags.isInt32() ? static_cast<uint8_t>(traceFlags.asInt32()) : TelemetrySpanStub::Sampled, isRemote.isBoolean() ? isRemote.asBoolean() : true);
     }
     return JSValue::encode(createCarrier(globalObject, stub, callFrame->argument(4)));
 }

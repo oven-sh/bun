@@ -571,10 +571,10 @@ pub struct JsExporter {
     /// Identity of the owning `VmState`: `callback` is only touched while
     /// that is the current thread's state.
     owner: *const super::VmState,
-    /// Export tasks posted to the owner's event loop and not yet run. At VM
-    /// exit they can never run (the loop is gone), so `detach_all_for_vm`
-    /// settles them instead of letting shutdown wait for them.
-    queued: core::sync::atomic::AtomicU32,
+    /// Payloads posted to the owner's event loop and not yet delivered. At
+    /// VM exit those tasks can never run (the loop is gone), so they are
+    /// settled as abandoned instead of letting shutdown wait for them.
+    queued: bun_threading::Guarded<Vec<Arc<ExportPayload>>>,
 }
 
 // SAFETY: `vm` is a `VmHandle` (holds the VM's Ticket while tasks are in
@@ -605,17 +605,23 @@ impl JsExporter {
             format,
             vm: global.bun_vm().handle(),
             owner: core::ptr::from_ref(super::vm_state_or_init(global)),
-            queued: core::sync::atomic::AtomicU32::new(0),
+            queued: bun_threading::Guarded::new(Vec::new()),
         })
+    }
+
+    /// Settle every still-queued payload as abandoned.
+    fn abandon_queued(&self) {
+        let queued = core::mem::take(&mut *self.queued.lock());
+        for p in queued {
+            super::processor().export_abandoned(&p);
+        }
     }
 
     /// At VM exit: export tasks still queued on this loop will never run;
     /// settle them so shutdown does not wait for them.
     pub(crate) fn settle_stranded_for_vm(s: &super::VmState) {
         for e in s.js_exporters.borrow().iter() {
-            while e.take_queued() {
-                super::processor().export_abandoned();
-            }
+            e.abandon_queued();
         }
     }
 
@@ -623,9 +629,7 @@ impl JsExporter {
         let list = core::mem::take(&mut *s.js_exporters.borrow_mut());
         for e in list {
             *e.callback.borrow_mut() = None;
-            while e.take_queued() {
-                super::processor().export_abandoned();
-            }
+            e.abandon_queued();
             let e: Arc<dyn Exporter> = e;
             super::processor().remove_exporter(&e);
         }
@@ -660,28 +664,24 @@ impl JsExporter {
     fn run_task(task: *mut JsExportTask) -> JsResult<()> {
         // SAFETY: allocated in `export`; consumed here.
         let task = unsafe { Box::from_raw(task) };
-        // Already settled by `detach_all_for_vm` if the count was taken to 0.
-        if task.exporter.take_queued() {
+        // Already settled (abandoned at VM exit) if no longer queued.
+        if task.exporter.take_queued(&task.payload) {
             let result = task.exporter.deliver(&task.payload);
             task.processor.export_done(&task.payload, result);
         }
         Ok(())
     }
 
-    /// Claim one queued task; false if none are outstanding.
-    fn take_queued(&self) -> bool {
-        use core::sync::atomic::Ordering;
-        let mut n = self.queued.load(Ordering::Acquire);
-        while n != 0 {
-            match self
-                .queued
-                .compare_exchange_weak(n, n - 1, Ordering::AcqRel, Ordering::Acquire)
-            {
-                Ok(_) => return true,
-                Err(cur) => n = cur,
+    /// Claim `payload`'s queued entry; false if it was already settled.
+    fn take_queued(&self, payload: &Arc<ExportPayload>) -> bool {
+        let mut q = self.queued.lock();
+        match q.iter().position(|p| Arc::ptr_eq(p, payload)) {
+            Some(i) => {
+                q.swap_remove(i);
+                true
             }
+            None => false,
         }
-        false
     }
 }
 
@@ -695,8 +695,7 @@ impl Exporter for JsExporter {
         // Even on the owner thread, defer to a task so exporters never run
         // re-entrantly inside whatever ended the span.
         let vm = self.vm.clone();
-        self.queued
-            .fetch_add(1, core::sync::atomic::Ordering::AcqRel);
+        self.queued.lock().push(Arc::clone(&payload));
         let task = Box::into_raw(Box::new(JsExportTask {
             exporter: self,
             processor,
@@ -710,8 +709,8 @@ impl Exporter for JsExporter {
                 Box::from_raw(task)
             };
             // The owner VM is gone; like a task stranded at exit, not a failure.
-            if task.exporter.take_queued() {
-                processor.export_abandoned();
+            if task.exporter.take_queued(&task.payload) {
+                processor.export_abandoned(&task.payload);
             }
         }
     }

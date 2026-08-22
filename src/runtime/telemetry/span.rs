@@ -1073,11 +1073,14 @@ pub fn record_exception(
     // a throwing getter on it is ignored here (the error is still delivered
     // by the caller); only a pending termination is propagated.
     let read = |v: bun_jsc::JsResult<Option<JSValue>>| -> bun_jsc::JsResult<Option<bun_core::ZigStringSlice>> {
-        match v {
+        let slice = match v {
             Ok(Some(v)) if v.is_string() => v.to_slice(global).map(Some),
             Ok(_) => Ok(None),
-            Err(_) if global.clear_exception_except_termination() => Ok(None),
             Err(e) => Err(e),
+        };
+        match slice {
+            Err(_) if global.clear_exception_except_termination() => Ok(None),
+            other => other,
         }
     };
     if err.is_object() {

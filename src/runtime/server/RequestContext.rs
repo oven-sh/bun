@@ -650,15 +650,28 @@ where
         server.vm().as_mut().event_loop_mut().drain_microtasks()
     }
 
+    /// Subscribes `on_abort` to the connection closing. A request is dispatched
+    /// unsubscribed and subscribes once it outlives its dispatch (`to_async`, a
+    /// streamed body), so JS that ran before this point (the handler, its
+    /// microtask checkpoint, `error()`) may have run the event loop, and the
+    /// close may already have been dispatched: uWS then dropped the socket's
+    /// callbacks, so subscribing is a no-op and `resp` would dangle once the
+    /// loop frees the socket. Such a close is delivered right here instead,
+    /// which can tear the context down: callers must not use it afterwards.
     pub(crate) fn set_abort_handler(&self) {
         if self.flags.has_abort_handler() {
             return;
         }
-        if let Some(resp) = self.resp.get() {
-            self.flags.set_has_abort_handler(true);
-            // SAFETY: FFI handle valid while resp is Some
-            resp.on_aborted(|this, resp| Self::on_abort(this, resp), self.as_ctx_ptr());
+        let Some(resp) = self.resp.get() else {
+            return;
+        };
+        self.flags.set_has_abort_handler(true);
+        if resp.is_closed() {
+            Self::on_abort(self.as_ctx_ptr(), resp);
+            return;
         }
+        // SAFETY: FFI handle valid while resp is Some
+        resp.on_aborted(|this, resp| Self::on_abort(this, resp), self.as_ctx_ptr());
     }
 
     pub(crate) fn set_cookies(&self, cookie_map: Option<*mut CookieMap>) {
@@ -2630,6 +2643,25 @@ where
         }
     }
 
+    /// The connection closed while the handler or its microtask checkpoint
+    /// ran the event loop (a synchronous wait on a promise does that), before
+    /// `set_abort_handler` had subscribed to it. Nothing has been written yet,
+    /// so the handler's result is dropped as for any aborted request, and the
+    /// request goes async now, which delivers the close (`set_abort_handler`)
+    /// with `Request.url` and headers snapshotted as for any other abort.
+    #[cold]
+    fn on_connection_closed_during_dispatch(&self, this: &ThisServer, response_value: JSValue) {
+        ctx_log!("connection closed during dispatch");
+        if let Some(promise) = response_value.as_any_promise() {
+            // Subscribing to it would have made a later rejection handled.
+            promise.set_handled(this.global_this().vm());
+        }
+        match (self.req.get(), self.request_mut()) {
+            (Some(req), Some(request)) => self.to_async(req, request),
+            _ => self.set_abort_handler(),
+        }
+    }
+
     // Each HTTP request or TCP socket connection is effectively a "task".
     //
     // However, unlike the regular task queue, we don't drain the microtask
@@ -2656,6 +2688,10 @@ where
         request_value.ensure_still_alive();
         response_value.ensure_still_alive();
         if ctx.drain_microtasks().is_err() || ctx.is_aborted_or_ended() {
+            return;
+        }
+        if ctx.resp.get().is_some_and(|resp| resp.is_closed()) {
+            ctx.on_connection_closed_during_dispatch(this, response_value);
             return;
         }
         // if you return a Response object or a Promise<Response>

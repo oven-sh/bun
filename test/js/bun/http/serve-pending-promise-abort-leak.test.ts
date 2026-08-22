@@ -607,3 +607,92 @@ test("413 on a chunked upload frees the context while the handler promise stays 
     socket.destroy();
   }
 });
+
+// A request subscribes to its connection's close only once its dispatch is
+// over (to_async). A synchronous wait on a promise runs the event loop from
+// inside the dispatch, and that nested run can dispatch the close itself, with
+// nobody subscribed. Before the fix the close was lost: request.signal never
+// fired, the context stayed pending, and a Promise<Response> settling later
+// rendered into the freed socket. bun:test's .resolves is such a wait, which
+// is how a test that does `await expect(fetch(...)).rejects.toThrow()` from
+// inside a handler's microtask checkpoint hit this.
+function waitSync(promise: Promise<void>) {
+  expect(promise).resolves.toBeUndefined();
+}
+
+// Ends the client side of an open request and returns only once the server
+// has closed its side: the client's 'close' needs the server's FIN, so when
+// the wait returns, the server socket's close has been dispatched.
+function endClientAndWaitForServerClose(client: import("node:net").Socket, clientClosed: Promise<void>) {
+  client.end();
+  waitSync(clientClosed);
+}
+
+const closeWindows: Array<[string, (run: () => void) => void]> = [
+  ["inside the handler", run => run()],
+  ["in the handler's microtask checkpoint", run => queueMicrotask(run)],
+];
+const handlerResults: Array<[string, () => Response | Promise<Response>]> = [
+  ["a pending Promise<Response>", () => new Promise<Response>(() => {})],
+  ["a Response", () => new Response("nobody is listening")],
+];
+const closeDuringDispatchCases = closeWindows.flatMap(([where, closeWhen]) =>
+  handlerResults.map(([what, result]) => [where, what, closeWhen, result] as const),
+);
+
+test.each(closeDuringDispatchCases)(
+  "connection closed %s, handler returns %s: the request is aborted",
+  async (_where, _what, closeWhen, result) => {
+    const aborted: Array<{ url: string; host: string | null }> = [];
+    const { promise: closedDuringDispatch, resolve: signalClosed } = Promise.withResolvers<void>();
+    let client: import("node:net").Socket;
+    let clientClosed: Promise<void>;
+
+    using server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      fetch(req) {
+        // Read lazily from inside the listener: an abort delivered this way
+        // must still see the request's url and headers, like any other abort.
+        req.signal.addEventListener("abort", () => aborted.push({ url: req.url, host: req.headers.get("host") }), {
+          once: true,
+        });
+        closeWhen(() => {
+          endClientAndWaitForServerClose(client, clientClosed);
+          signalClosed();
+        });
+        return result();
+      },
+    });
+
+    client = connect(Number(server.port), "127.0.0.1", () => {
+      client.write("GET /closed-during-dispatch HTTP/1.1\r\nHost: example.com\r\n\r\n");
+    });
+    client.on("error", () => {});
+    clientClosed = new Promise<void>(resolve => client.once("close", () => resolve()));
+
+    await closedDuringDispatch;
+    // That settled from inside the dispatch. The abort is delivered when the
+    // dispatch finishes, so look only once an immediate queued here has run.
+    await new Promise(resolve => setImmediate(resolve));
+    expect(aborted).toEqual([{ url: "http://example.com/closed-during-dispatch", host: "example.com" }]);
+    await stopAndAssertDrained(server);
+  },
+);
+
+test("a Promise<Response> that settles after its connection closed during dispatch is a no-op", async () => {
+  // In a subprocess: on an unfixed build the late resolve renders into the
+  // socket uSockets freed at the end of the tick (heap-use-after-free under
+  // ASAN), and the abort never fires.
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "serve-close-during-dispatch-late-resolve-fixture.ts")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({ abortCount: 1, pendingAfterResolve: 0 });
+  expect(exitCode).toBe(0);
+}, 30_000);

@@ -772,6 +772,12 @@ pub mod fs {
         }
     }
 
+    /// True when `namespace` is the canonical `file` namespace (empty or `"file"`).
+    #[inline]
+    pub fn is_file_namespace(namespace: &[u8]) -> bool {
+        namespace.is_empty() || namespace == b"file"
+    }
+
     /// The bundler/resolver's logical
     /// path (display `pretty`, canonical `text`, `namespace`, parsed `name`).
     ///
@@ -943,7 +949,7 @@ pub mod fs {
 
         #[inline]
         pub fn is_file(&self) -> bool {
-            self.namespace.is_empty() || self.namespace == b"file"
+            is_file_namespace(self.namespace)
         }
 
         #[inline]

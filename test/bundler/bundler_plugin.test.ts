@@ -365,6 +365,98 @@ describe("bundler", () => {
       },
     };
   });
+  // Two plugin namespaces that resolve to the same `path` must stay distinct
+  // modules (esbuild's contract: module identity is (namespace, path)).
+  itBundled("plugin/NamespaceSamePathDistinctModules", () => {
+    const loads: string[] = [];
+    return {
+      files: {
+        "index.ts": /* ts */ `
+          import a from "nsa:m";
+          import b from "nsb:m";
+          console.log(JSON.stringify({ a, b }));
+        `,
+      },
+      plugins(builder) {
+        builder.onResolve({ filter: /^nsa:/ }, () => ({ path: "SAMEPATH", namespace: "nsa" }));
+        builder.onResolve({ filter: /^nsb:/ }, () => ({ path: "SAMEPATH", namespace: "nsb" }));
+        builder.onLoad({ filter: /.*/, namespace: "nsa" }, () => {
+          loads.push("nsa");
+          return { contents: `export default "FROM_NSA";`, loader: "js" };
+        });
+        builder.onLoad({ filter: /.*/, namespace: "nsb" }, () => {
+          loads.push("nsb");
+          return { contents: `export default "FROM_NSB";`, loader: "js" };
+        });
+      },
+      run: {
+        stdout: `{"a":"FROM_NSA","b":"FROM_NSB"}`,
+      },
+      onAfterBundle() {
+        expect(loads.sort()).toEqual(["nsa", "nsb"]);
+      },
+    };
+  });
+  // A plugin onResolve that returns a `path` equal to a real file on disk but
+  // with a custom namespace must go through the namespaced onLoad, not read
+  // the disk file.
+  itBundled("plugin/NamespaceShadowsDiskFile", ({ root }) => {
+    let loaded = false;
+    return {
+      files: {
+        "index.ts": /* ts */ `
+          import disk from "./real.ts";
+          import virt from "virt:real";
+          console.log(JSON.stringify({ disk, virt }));
+        `,
+        "real.ts": `export default "FROM_DISK";`,
+      },
+      plugins(builder) {
+        builder.onResolve({ filter: /^virt:real$/ }, () => ({
+          path: resolve(root, "real.ts"),
+          namespace: "virt",
+        }));
+        builder.onLoad({ filter: /.*/, namespace: "virt" }, () => {
+          loaded = true;
+          return { contents: `export default "FROM_VIRT";`, loader: "js" };
+        });
+      },
+      run: {
+        stdout: `{"disk":"FROM_DISK","virt":"FROM_VIRT"}`,
+      },
+      onAfterBundle() {
+        expect(loaded).toBe(true);
+      },
+    };
+  });
+  // Control for NamespaceSamePathDistinctModules: two specifiers that resolve
+  // to the SAME (namespace, path) pair are still one module (onLoad fires once,
+  // a single evaluation).
+  itBundled("plugin/NamespaceSamePathSameNamespaceDedup", () => {
+    let loadCount = 0;
+    return {
+      files: {
+        "index.ts": /* ts */ `
+          import a from "ns:one";
+          import b from "ns:two";
+          console.log(a === b, a.tag);
+        `,
+      },
+      plugins(builder) {
+        builder.onResolve({ filter: /^ns:/ }, () => ({ path: "SAMEPATH", namespace: "ns" }));
+        builder.onLoad({ filter: /.*/, namespace: "ns" }, () => {
+          loadCount++;
+          return { contents: `export default { tag: "shared" };`, loader: "js" };
+        });
+      },
+      run: {
+        stdout: "true shared",
+      },
+      onAfterBundle() {
+        expect(loadCount).toBe(1);
+      },
+    };
+  });
   itBundled("plugin/ResolveAndLoadNamespaceNested", ({ root }) => {
     let counter1 = 0;
     let counter2 = 0;

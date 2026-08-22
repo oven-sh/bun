@@ -405,6 +405,26 @@ console.log("survived", require("./late.js"));`,
     expect(Module._resolveFilename("fs")).toBe("fs");
   });
 
+  test("Module.runMain propagates an error from stringifying its argument", () => {
+    const boom = new Error("boom");
+    expect(() =>
+      Module.runMain({
+        toString() {
+          throw boom;
+        },
+      }),
+    ).toThrow(boom);
+  });
+
+  test("module.filename/id/path setters propagate a failed string conversion", () => {
+    const m = new Module("x");
+    for (const key of ["filename", "id", "path"]) {
+      expect(() => {
+        m[key] = Symbol("s");
+      }).toThrow(TypeError);
+    }
+  });
+
   test("Module._resolveFilename accepts an options object without paths", () => {
     // An options object without .paths used to segfault on the isArray() check.
     expect(Module._resolveFilename("fs", null, false, {})).toBe("fs");

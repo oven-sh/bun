@@ -7,8 +7,8 @@ use crate::package_manager_real::TrackInstalledBin;
 use bun_core::fmt::PathSep;
 use bun_install::lockfile::{Printer, package::Meta as PackageMeta};
 use bun_install::{
-    self as install, Bin, Dependency, DependencyID, INVALID_PACKAGE_ID, PackageID, PackageManager,
-    PackageNameHash, Resolution, Subcommand, bin, resolution,
+    self as install, Bin, Dependency, DependencyID, DependencyVersionTag, INVALID_PACKAGE_ID,
+    PackageID, PackageManager, PackageNameHash, Resolution, Subcommand, bin, resolution,
 };
 use bun_sys::Fd;
 
@@ -27,6 +27,8 @@ fn print_installed_workspace_section<
     printed_new_install: &mut bool,
     id_map: Option<&mut [DependencyID]>,
     update_owners: &[PackageID],
+    // The summary has no other sections, so `print_catalog_entry_updates` runs here.
+    sole_section: bool,
 ) -> Result<(), crate::Error>
 where
     W: Write,
@@ -114,6 +116,19 @@ where
     }
 
     if !PRINT_SECTION_HEADER {
+        if sole_section
+            && print_catalog_entry_updates::<W, ENABLE_ANSI_COLORS>(
+                this,
+                manager,
+                installed,
+                pkg_metas,
+                &mut update_dedupe,
+                writer,
+            )?
+        {
+            *printed_new_install = true;
+            printed_update = true;
+        }
         if print_transitive_updates::<W, ENABLE_ANSI_COLORS>(
             this,
             manager,
@@ -375,6 +390,53 @@ where
     Ok(())
 }
 
+/// A bare `bun update` moves the root's catalog entries for every importer at once, but the summary's one section only walks the rows of `update_owners` (above, hence the shared `update_dedupe`), so the entries consumed elsewhere are reported through whichever `catalog:` row names them. The verbose summary prints a section per importer, each reporting its own `catalog:` rows, and skips this. Like a direct dependency's row, a row prints whether or not its new version had to be installed.
+fn print_catalog_entry_updates<W, const ENABLE_ANSI_COLORS: bool>(
+    this: &Printer,
+    manager: &mut PackageManager,
+    installed: &Bitset,
+    pkg_metas: &[PackageMeta],
+    update_dedupe: &mut HashMap<PackageNameHash, ()>,
+    writer: &mut W,
+) -> Result<bool, crate::Error>
+where
+    W: Write,
+{
+    if !manager
+        .updating_packages
+        .values()
+        .iter()
+        .any(|info| info.catalog_entry)
+    {
+        return Ok(false);
+    }
+    let string_buf = this.lockfile.buffers.string_bytes.as_slice();
+    let dependencies = this.lockfile.buffers.dependencies.as_slice();
+    let mut printed = false;
+    for (dep_id, dep) in dependencies.iter().enumerate() {
+        if dep.version.tag != DependencyVersionTag::Catalog
+            || !manager
+                .updating_packages
+                .get(dep.name.slice(string_buf))
+                .is_some_and(|info| info.catalog_entry)
+        {
+            continue;
+        }
+        let dep_id = DependencyID::try_from(dep_id).expect("int cast");
+        let ShouldPrintPackageInstallResult::Update(update_info) =
+            should_print_package_install(this, manager, dep_id, installed, None, pkg_metas)
+        else {
+            continue;
+        };
+        if update_dedupe.get_or_put(dep.name_hash)?.found_existing {
+            continue;
+        }
+        print_updated_package::<W, ENABLE_ANSI_COLORS>(this, manager, &update_info, writer)?;
+        printed = true;
+    }
+    Ok(printed)
+}
+
 /// Packages registered by the transitive half of `bun update` are not rows of the walked workspaces, so the walk above never reaches them; the walked workspaces' own targets stay with them.
 fn print_transitive_updates<W, const ENABLE_ANSI_COLORS: bool>(
     this: &Printer,
@@ -629,6 +691,7 @@ where
                 &mut had_printed_new_install,
                 None,
                 &[0],
+                false,
             )?;
 
             for &workspace_dep_id in &workspaces_to_print {
@@ -642,6 +705,7 @@ where
                     &mut had_printed_new_install,
                     None,
                     &[workspace_package_id],
+                    false,
                 )?;
             }
         } else {
@@ -693,6 +757,7 @@ where
                 &mut had_printed_new_install,
                 Some(&mut id_map),
                 &update_owners,
+                true,
             )?;
         }
     } else {

@@ -4706,3 +4706,26 @@ it("concurrent end() on two allowHalfOpen TLS peers closes both sockets", async 
 
   await Promise.all([serverClosed.promise, clientClosed.promise]);
 });
+
+describe.concurrent("socket handlers that re-enter the event loop before returning", () => {
+  // The fixture runs under `bun test` so that expect(promise).resolves can drive
+  // nested event-loop ticks from inside a data callback. It covers a socket that
+  // is closed by its own data() and must stay allocated until that dispatch has
+  // returned, and an event the outer tick already collected that the nested tick
+  // has to deliver. Both went wrong on Windows while socket handlers still ran
+  // inside libuv's own callbacks.
+  it("keeps the socket alive and the collected events visible", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", fileURLToPath(new URL("./nested-event-loop-fixture.ts", import.meta.url))],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // stdout carries only the runner's version banner; results go to stderr.
+    expect(stdout).toMatch(/^bun test v\S+ \(\S+\)\n$/);
+    expect(stderr).toContain(" 3 pass");
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(0);
+  });
+});

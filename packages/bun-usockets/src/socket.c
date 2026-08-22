@@ -794,7 +794,8 @@ unsigned int us_get_local_address_info(char *buf, struct us_socket_t *s, const c
 
 void us_socket_ref(struct us_socket_t *s) {
 #ifdef LIBUS_USE_LIBUV
-    uv_ref((uv_handle_t *) s->p.uv_p);
+    /* A closed (or relocated) socket no longer owns a libuv handle. */
+    if (s->p.uv_p) uv_ref((uv_handle_t *) s->p.uv_p);
 #endif
     // do nothing if not using libuv
 }
@@ -839,7 +840,7 @@ int us_socket_keepalive(us_socket_r s, int enabled, unsigned int delay) {
 
 void us_socket_unref(struct us_socket_t *s) {
 #ifdef LIBUS_USE_LIBUV
-    uv_unref((uv_handle_t *) s->p.uv_p);
+    if (s->p.uv_p) uv_unref((uv_handle_t *) s->p.uv_p);
 #endif
     // do nothing if not using libuv
 }

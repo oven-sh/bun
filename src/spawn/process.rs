@@ -133,12 +133,41 @@ pub struct Process {
     /// (`None` when owned by a mini event loop, which it posts to directly).
     #[cfg(unix)]
     pub(crate) js_poster: Option<bun_event_loop::JsPoster>,
+    /// The exit libuv reported inside `uv_run`; acted on by `dispatch_exit`
+    /// once `uv_run` has returned (uv::deferred).
+    #[cfg(windows)]
+    uv_exit: UvExit,
+}
+
+#[cfg(windows)]
+struct UvExit {
+    deferred: uv::Deferred,
+    exit_status: i64,
+    term_signal: c_int,
+    rusage: Rusage,
+}
+
+#[cfg(windows)]
+impl Default for UvExit {
+    fn default() -> Self {
+        Self {
+            deferred: uv::Deferred::new(),
+            exit_status: 0,
+            term_signal: 0,
+            rusage: rusage_zeroed(),
+        }
+    }
 }
 
 impl Drop for Process {
     /// The allocation itself is freed by the `heap::take` in `destructor`
     /// above; this `Drop` body covers the `poller.deinit()` call.
     fn drop(&mut self) {
+        // SAFETY: the node is a field of `self`.
+        #[cfg(windows)]
+        unsafe {
+            uv::Deferred::cancel(&raw mut self.uv_exit.deferred)
+        };
         self.poller.deinit();
     }
 }
@@ -537,28 +566,53 @@ impl Process {
         }
     }
 
+    /// libuv exit callback: runs inside `uv_run`, so it only records (the
+    /// resource usage is read here, while the process handle is certainly
+    /// still open). `dispatch_exit` does the rest once `uv_run` has returned.
     #[cfg(windows)]
     extern "C" fn on_exit_uv(process: *mut uv::uv_process_t, exit_status: i64, term_signal: c_int) {
-        // A Rust default-repr `enum` has no
-        // stable variant-payload offset, so the back-pointer is stored in
-        // `uv_process_t.data` (set in `spawn_process_windows` immediately
-        // after the handle is zeroed).
-        //
-        // Read everything needed from `*process` BEFORE creating
-        // `this: &mut Process`. The handle is the inline `Poller::Uv` field,
-        // so once `this` exclusively borrows the whole `Process`, any later
-        // `&mut *process` (or raw read via `process`) overlaps that borrow
-        // and pops `this`'s Unique tag under Stacked Borrows — the
-        // subsequent `this.close()` (which touches `self.poller`) would then
-        // use an invalidated tag.
+        // A Rust default-repr `enum` has no stable variant-payload offset, so
+        // the back-pointer is stored in `uv_process_t.data` (set in
+        // `spawn_process_windows` immediately after the handle is zeroed).
         // SAFETY: libuv passes the live handle; only reads its POD fields.
         let rusage = uv_getrusage(unsafe { &mut *process });
-        // SAFETY: raw read of POD `pid` field on the live handle.
-        let _pid = unsafe { (*process).pid };
-        // SAFETY: `data` was set to the owning `*mut Process` before
-        // `uv_spawn`; libuv never overwrites it. `process` is not
-        // dereferenced again after this point.
-        let this: &mut Process = unsafe { bun_ptr::callback_ctx::<Process>((*process).data) };
+        // SAFETY: `data` is the owning `*mut Process`; libuv never overwrites it.
+        let (this, loop_): (*mut Process, *mut uv::Loop) =
+            unsafe { ((*process).data.cast(), (*process).loop_) };
+        // SAFETY: `this` is live (the handle holds a ref until `on_close_uv`,
+        // which is deferred behind this through the same queue).
+        unsafe {
+            (*this).uv_exit.exit_status = exit_status;
+            (*this).uv_exit.term_signal = term_signal;
+            (*this).uv_exit.rusage = rusage;
+            uv::Deferred::enqueue(
+                loop_,
+                &raw mut (*this).uv_exit.deferred,
+                Self::dispatch_exit,
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    unsafe fn dispatch_exit(node: *mut uv::Deferred) {
+        // SAFETY: `node` is `uv_exit.deferred` of a live Process (enqueue contract).
+        let this: *mut Process = unsafe {
+            bun_core::from_field_ptr!(UvExit, deferred, node)
+                .cast::<u8>()
+                .sub(core::mem::offset_of!(Process, uv_exit))
+                .cast()
+        };
+        // SAFETY: `this` is live; copy the record out before handlers run.
+        let (exit_status, term_signal, rusage, _pid) = unsafe {
+            (
+                (*this).uv_exit.exit_status,
+                (*this).uv_exit.term_signal,
+                core::mem::replace(&mut (*this).uv_exit.rusage, rusage_zeroed()),
+                (*this).pid,
+            )
+        };
+        // SAFETY: `this` is live; sole `&mut` for the handler calls below.
+        let this: &mut Process = unsafe { &mut *this };
         let exit_code: u8 = if exit_status >= 0 {
             (exit_status as u64) as u8
         } else {
@@ -2179,6 +2233,7 @@ mod spawn_process_body {
             status: Status::Running,
             poller: Poller::Detached,
             exit_handler: ProcessExitHandler::default(),
+            uv_exit: UvExit::default(),
         }));
 
         // SAFETY: process is freshly allocated

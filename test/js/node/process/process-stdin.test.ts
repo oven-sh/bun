@@ -167,7 +167,10 @@ test.concurrent("explicit read(n) with no 'readable' listener still pulls from s
         while ((chunk = process.stdin.read(3)) !== null) chunks.push(chunk.toString());
         if (process.stdin.readableEnded) return;
         // Bounded so a regression fails with output instead of spinning forever.
-        if (++spins > 20000) {
+        // The bound is generous: EOF comes from a parent that is busy spawning
+        // this file's other concurrent tests, and each spin is only a few
+        // microseconds.
+        if (++spins > 2_000_000) {
           console.log(JSON.stringify({ chunks, readableEnded: false }));
           process.exit(1);
         }

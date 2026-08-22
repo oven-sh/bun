@@ -858,6 +858,9 @@ impl WindowsWrite {
 #[cfg(windows)]
 #[derive(Default)]
 pub struct WindowsState {
+    /// Reads libuv recorded inside `uv_run`, dispatched after it returns
+    /// (`uv::UvStream::read_start_ctx`).
+    pub(crate) read_deferral: uv::ReadDeferral,
     pub(crate) is_server: bool,
     /// Non-owning raw pointer. The allocation
     /// is `heap::alloc`'d in `write` and freed exactly once by
@@ -1922,6 +1925,21 @@ impl uv::StreamReader for SendQueue {
         IPCHandlers::WindowsNamedPipe::on_read_alloc(this, suggested_size)
     }
     #[inline]
+    unsafe fn on_read_commit(this: *mut Self, data: &[u8]) {
+        // `data` points into `(*this).incoming` (it was returned from
+        // `on_read_alloc`); only its length is needed to commit it.
+        let nread = data.len();
+        let _ = data;
+        // SAFETY: `this` is the live `SendQueue` stashed in `handle.data` by
+        // `read_start_ctx`; a shared reborrow only, and `data` is not used after.
+        IPCHandlers::WindowsNamedPipe::on_read_commit(unsafe { &*this }, nread);
+    }
+    #[inline]
+    unsafe fn on_read(this: *mut Self, nread: usize) {
+        // SAFETY: as above.
+        IPCHandlers::WindowsNamedPipe::on_read(unsafe { &*this }, nread);
+    }
+    #[inline]
     fn on_read_error(this: &mut Self, err: core::ffi::c_int) {
         // Map the raw libuv errno
         // to `bun_sys::E`, defaulting to CANCELED for unmapped codes.
@@ -1929,16 +1947,9 @@ impl uv::StreamReader for SendQueue {
         IPCHandlers::WindowsNamedPipe::on_read_error(this, e);
     }
     #[inline]
-    unsafe fn on_read(this: *mut Self, data: &[u8]) {
-        // `data` points into `(*this).incoming` (it was returned from
-        // `on_read_alloc`); the callee re-derives the written tail from
-        // `incoming` itself, so only the length is forwarded and only a shared
-        // view of `*this` is formed.
-        let nread = data.len();
-        let _ = data;
-        // SAFETY: `this` is the live `SendQueue` stashed in `handle.data` by
-        // `read_start_ctx`; a shared reborrow only, and `data` is not used after.
-        IPCHandlers::WindowsNamedPipe::on_read(unsafe { &*this }, nread);
+    fn read_deferral(this: *mut Self) -> *mut uv::ReadDeferral {
+        // SAFETY: `this` is the live `SendQueue`; raw field projection.
+        unsafe { &raw mut (*(*this).windows.as_ptr()).read_deferral }
     }
 }
 
@@ -1953,6 +1964,8 @@ impl bun_event_loop::Taskable for SendQueue {
 impl Drop for SendQueue {
     fn drop(&mut self) {
         log!("SendQueue#deinit");
+        #[cfg(windows)]
+        self.windows.with_mut(|w| w.read_deferral.cancel());
         self.close_event_sent.set(true);
         self.close_socket(CloseReason::Failure, CloseFrom::Deinit);
 
@@ -2504,9 +2517,27 @@ pub mod IPCHandlers {
             send_queue.close_socket_next_tick(true);
         }
 
-        /// `nread` is the byte count libuv reported into the slice handed out
-        /// by `on_read_alloc` (i.e. the tail of `send_queue.incoming` past its
-        /// current `len`).
+        /// Inside `uv_run`: `nread` is the byte count libuv reported into the
+        /// slice handed out by `on_read_alloc` (i.e. the tail of
+        /// `send_queue.incoming` past its current `len`); commit it so the next
+        /// allocation starts after it.
+        pub(crate) fn on_read_commit(send_queue: &SendQueue, nread: usize) {
+            log!("NewNamedPipeIPCHandler#onReadCommit {}", nread);
+            send_queue.incoming.with_mut(|inc| match inc {
+                IncomingBuffer::Json(json_buf) => {
+                    debug_assert!(json_buf.data.len() + nread <= json_buf.data.capacity());
+                    // For JSON mode, notifyWritten updates the length and scans for newlines.
+                    json_buf.notify_written(nread);
+                }
+                IncomingBuffer::Advanced(adv_buf) => {
+                    // SAFETY: `on_read_alloc` reserved >= nread bytes; libuv initialised them.
+                    unsafe { adv_buf.uv_commit(nread) };
+                }
+            });
+        }
+
+        /// Dispatch phase: decode and deliver what the commits since the last
+        /// call added to `incoming`.
         pub(crate) fn on_read(send_queue: &SendQueue, nread: usize) {
             log!("NewNamedPipeIPCHandler#onRead {}", nread);
             let global_this = send_queue.get_global_this();
@@ -2514,18 +2545,6 @@ pub mod IPCHandlers {
 
             match send_queue.mode {
                 Mode::Json => {
-                    // For JSON mode on Windows, use notifyWritten to update length and scan for newlines
-                    send_queue.incoming.with_mut(|inc| {
-                        let IncomingBuffer::Json(json_buf) = inc else {
-                            unreachable!()
-                        };
-                        debug_assert!(json_buf.data.len() + nread <= json_buf.data.capacity());
-                        // libuv wrote `nread` bytes at `data[old_len..]` via the
-                        // slice returned from `on_read_alloc`; only the count is
-                        // forwarded.
-                        json_buf.notify_written(nread);
-                    });
-
                     // Process complete messages using next() - avoids O(n²) re-scanning
                     loop {
                         match decode_next_json(&send_queue.incoming, &global_this) {
@@ -2541,13 +2560,6 @@ pub mod IPCHandlers {
                     }
                 }
                 Mode::Advanced => {
-                    send_queue.incoming.with_mut(|inc| {
-                        let IncomingBuffer::Advanced(adv_buf) = inc else {
-                            unreachable!()
-                        };
-                        // SAFETY: `on_read_alloc` reserved ≥ nread bytes; libuv initialised them.
-                        unsafe { adv_buf.uv_commit(nread) };
-                    });
                     let mut slice_start: usize = 0;
                     loop {
                         match decode_next_advanced(

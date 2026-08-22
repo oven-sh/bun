@@ -3699,6 +3699,11 @@ pub(crate) struct UvDnsPoll {
     pub parent: *mut Resolver,
     pub socket: c_ares::ares_socket_t,
     pub poll: libuv::uv_poll_t,
+    /// What `on_dns_poll_uv` recorded inside `uv_run` (first error, union of
+    /// events); processed by `dispatch_dns_poll` once it has returned.
+    deferred: libuv::Deferred,
+    status: c_int,
+    events: c_int,
 }
 
 #[cfg(windows)]
@@ -3708,11 +3713,18 @@ impl UvDnsPoll {
             parent,
             socket,
             poll: bun_core::ffi::zeroed(),
+            deferred: libuv::Deferred::new(),
+            status: 0,
+            events: 0,
         }))
     }
 
     fn destroy(this: *mut Self) {
-        unsafe { drop(bun_core::heap::take(this)) };
+        // SAFETY: `this` is the live heap UvDnsPoll; the node is a field of it.
+        unsafe {
+            libuv::Deferred::cancel(&raw mut (*this).deferred);
+            drop(bun_core::heap::take(this))
+        };
     }
 
     fn from_poll(poll: *mut libuv::uv_poll_t) -> *mut Self {
@@ -4701,6 +4713,8 @@ impl Resolver {
 
     // ───────────── poll callbacks ─────────────
 
+    /// libuv poll callback: inside `uv_run`, so it only records (first
+    /// error, union of events); c-ares runs from `dispatch_dns_poll`.
     #[cfg(windows)]
     pub(crate) extern "C" fn on_dns_poll_uv(
         watcher: *mut libuv::uv_poll_t,
@@ -4708,9 +4722,33 @@ impl Resolver {
         events: c_int,
     ) {
         let poll = UvDnsPoll::from_poll(watcher);
-        // SAFETY: `poll` is the live `UvDnsPoll` recovered from libuv's `watcher`
-        // via `from_poll` (libuv guarantees the handle outlives this callback).
-        // `parent` is the heap-allocated Resolver back-ptr (set in
+        // SAFETY: `poll` is the live `UvDnsPoll` (freed only by its close
+        // callback, which is deferred behind this node).
+        unsafe {
+            if (*poll).status == 0 {
+                (*poll).status = status;
+            }
+            (*poll).events |= events;
+            libuv::Deferred::enqueue(
+                (*watcher).loop_,
+                &raw mut (*poll).deferred,
+                Self::dispatch_dns_poll,
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    unsafe fn dispatch_dns_poll(node: *mut libuv::Deferred) {
+        // SAFETY: `node` is `UvDnsPoll.deferred` of a live poll (enqueue contract).
+        let poll: *mut UvDnsPoll = unsafe { bun_core::from_field_ptr!(UvDnsPoll, deferred, node) };
+        // SAFETY: as above.
+        let (status, events) = unsafe {
+            (
+                core::mem::take(&mut (*poll).status),
+                core::mem::take(&mut (*poll).events),
+            )
+        };
+        // SAFETY: `parent` is the heap-allocated Resolver back-ptr (set in
         // `on_dns_socket_state`); it is kept alive across `Channel::process` by the
         // `_guard` below. `channel` is non-null because c-ares
         // must have been initialized for this poll callback to fire.
@@ -4805,9 +4843,11 @@ impl Resolver {
                     // libuv takes ownership of the handle until `on_close_uv`
                     // frees the allocation.
                     unsafe {
+                        let handle: *mut uv::uv_handle_t =
+                            core::ptr::from_mut(&mut (*entry).poll).cast();
                         uv::uv_close(
-                            core::ptr::from_mut(&mut (*entry).poll).cast(),
-                            Some(Self::on_close_uv),
+                            handle,
+                            uv::deferred::close_callback(handle, Self::on_close_uv),
                         )
                     };
                 }
@@ -4853,9 +4893,11 @@ impl Resolver {
                 // `uv_close` is the required teardown path; `on_close_uv` frees
                 // the `UvDnsPoll` box.
                 unsafe {
+                    let handle: *mut uv::uv_handle_t =
+                        core::ptr::from_mut(&mut (*poll).poll).cast();
                     uv::uv_close(
-                        core::ptr::from_mut(&mut (*poll).poll).cast(),
-                        Some(Self::on_close_uv),
+                        handle,
+                        uv::deferred::close_callback(handle, Self::on_close_uv),
                     )
                 };
             }

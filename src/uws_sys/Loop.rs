@@ -177,6 +177,13 @@ impl PosixLoop {
         self.active > 0
     }
 
+    /// Whether a poll-backend callback is on the stack. epoll/kqueue dispatch
+    /// from `us_loop_run_bun_tick` itself, so never; see the libuv impl.
+    #[inline]
+    pub fn in_uv_run(&self) -> bool {
+        false
+    }
+
     // This exists as a method so that we can stick a debugger in here
     pub fn add_active(&mut self, value: u32) {
         bun_core::scoped_log!(
@@ -305,6 +312,7 @@ impl PosixLoop {
 
 // ───────────────────────────── WindowsLoop ─────────────────────────────
 
+// Mirrors C `struct us_loop_t` (packages/bun-usockets/src/internal/eventing/libuv.h).
 #[cfg(windows)]
 #[repr(C, align(16))]
 pub struct WindowsLoop {
@@ -312,8 +320,16 @@ pub struct WindowsLoop {
 
     pub uv_loop: *mut uv::Loop,
     pub is_default: c_int,
-    pub pre: *mut uv::uv_prepare_t,
-    pub check: *mut uv::uv_check_t,
+    /// Intrusive list of `us_poll_t` libuv reported since the last dispatch;
+    /// owned and walked by libuv.c only.
+    ready_head: *mut c_void,
+    ready_tail: *mut c_void,
+    /// Bounds a `tick_with_timeout` park; owned by libuv.c.
+    deadline_timer: *mut uv::Timer,
+    /// Non-zero while this loop's `uv_run` is on the stack (libuv.c).
+    in_uv_run: c_int,
+    /// `bun_libuv_sys::deferred::Queue` storage; libuv.c points `uv_loop.data` here.
+    deferred: [*mut c_void; 2],
 }
 
 #[cfg(windows)]
@@ -370,6 +386,15 @@ impl WindowsLoop {
         self.uv().is_active()
     }
 
+    /// True while this loop's `uv_run` is on the stack, i.e. the caller is
+    /// running inside a libuv callback. Handlers never run there (libuv
+    /// callbacks record and defer; see `bun_libuv_sys::deferred`), so this is
+    /// what the "no JS from a libuv callback" assertions check.
+    #[inline]
+    pub fn in_uv_run(&self) -> bool {
+        self.in_uv_run != 0
+    }
+
     pub fn wakeup(&mut self) {
         // SAFETY: self is a valid loop pointer
         unsafe { c::us_wakeup_loop(self) };
@@ -380,12 +405,20 @@ impl WindowsLoop {
         self.wakeup();
     }
 
-    /// Signature matches the POSIX impl so callers need no `cfg`. `now_ns` is unused here: on
-    /// Windows the park hook is driven from `us_loop_run` (libuv.c), which reads libuv's
-    /// already-refreshed clock via `uv_now` rather than taking one of its own.
-    pub fn tick_with_timeout(&mut self, _: Option<&Timespec>, _now_ns: u64) {
+    /// Same contract as the POSIX impl: park for at most `timeout` (`None` = until something
+    /// happens), then dispatch. `now_ns` is unused here: the park hook in `libuv.c` reads
+    /// libuv's already-refreshed clock via `uv_now` rather than taking one of its own.
+    pub fn tick_with_timeout(&mut self, timeout: Option<&Timespec>, _now_ns: u64) {
+        let timeout_ms: i64 = match timeout {
+            None => -1,
+            // Round up: waking early only to find the timer not yet due costs another park.
+            Some(ts) => ts
+                .sec
+                .saturating_mul(1000)
+                .saturating_add((ts.nsec + 999_999) / 1_000_000),
+        };
         // SAFETY: self is a valid loop pointer
-        unsafe { c::us_loop_run(self) };
+        unsafe { c::us_loop_run_with_timeout(self, timeout_ms) };
     }
 
     pub fn tick_without_idle(&mut self) {
@@ -506,6 +539,8 @@ mod c {
         pub fn us_loop_run(loop_: *mut Loop);
         #[cfg(windows)]
         pub(super) fn us_loop_pump(loop_: *mut Loop);
+        #[cfg(windows)]
+        pub(super) fn us_loop_run_with_timeout(loop_: *mut Loop, timeout_ms: i64);
         pub fn us_wakeup_loop(loop_: *mut Loop);
         #[cfg(not(windows))]
         pub(super) fn us_loop_run_bun_tick(

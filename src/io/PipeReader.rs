@@ -996,6 +996,34 @@ pub struct WindowsBufferedReader {
     pub maxbuf: Option<NonNull<MaxBuf>>,
 
     pub(crate) vtable: BufferedReaderVTable,
+
+    /// What `on_stream_read` recorded inside `uv_run`; handled by
+    /// `dispatch_stream_read` once `uv_run` has returned (uv::deferred).
+    #[cfg(windows)]
+    stream_read: StreamRead,
+}
+
+/// Reads libuv completed on a pipe/tty since the loop last dispatched this
+/// reader. The bytes themselves are already committed to `_buffer`.
+#[cfg(windows)]
+#[derive(Default)]
+struct StreamRead {
+    deferred: uv::Deferred,
+    bytes: usize,
+    end: StreamReadEnd,
+    /// `maxBuffer` ran out during these reads; its owner hears about it at dispatch.
+    over_budget: bool,
+}
+
+#[cfg(windows)]
+#[derive(Default)]
+enum StreamReadEnd {
+    #[default]
+    Open,
+    /// The read limit or `maxBuffer` was used up: this reader's EOF.
+    Budget,
+    Eof,
+    Err(sys::Error),
 }
 
 bitflags::bitflags! {
@@ -1038,6 +1066,7 @@ impl WindowsBufferedReader {
             flags: WindowsFlags::new(),
             maxbuf: None,
             vtable: BufferedReaderVTable::init::<T>(),
+            stream_read: StreamRead::default(),
         }
     }
 
@@ -1061,6 +1090,21 @@ impl WindowsBufferedReader {
         // `set_parent` below re-records this reader as the one a VM teardown
         // stops it through.
         self.source = other.source.take();
+        // Reads recorded but not yet dispatched move too; the queue node is
+        // re-pointed at `self` (its `run` recovers the reader from the node).
+        // SAFETY: both nodes are live; `self`'s is idle (no source until now).
+        unsafe {
+            uv::Deferred::cancel(&raw mut self.stream_read.deferred);
+            self.stream_read.bytes = other.stream_read.bytes;
+            self.stream_read.end = mem::take(&mut other.stream_read.end);
+            self.stream_read.over_budget = other.stream_read.over_budget;
+            other.stream_read.bytes = 0;
+            other.stream_read.over_budget = false;
+            uv::Deferred::relocate(
+                &raw mut other.stream_read.deferred,
+                &raw mut self.stream_read.deferred,
+            );
+        }
 
         other.flags.insert(WindowsFlags::IS_DONE);
         other._offset = 0;
@@ -1357,6 +1401,12 @@ impl WindowsBufferedReader {
         }
     }
 
+    /// libuv read callback: runs inside `uv_run`, so it only records. The
+    /// bytes are committed to `_buffer` and charged against the limits here
+    /// (libuv may call `on_stream_alloc` + this again before `uv_run` returns,
+    /// and the next allocation has to start after these bytes and be clamped
+    /// by what is left); handing anything to the parent waits for
+    /// `dispatch_stream_read`.
     #[cfg(windows)]
     extern "C" fn on_stream_read(
         stream: *mut uv::uv_stream_t,
@@ -1367,8 +1417,6 @@ impl WindowsBufferedReader {
         // `set_data`. Invoked from the event loop with no other Rust borrow of
         // the reader live (single-owner).
         let this = unsafe { bun_ptr::callback_ctx::<WindowsBufferedReader>((*stream).data) };
-        let _parent = this.vtable.ref_parent();
-
         let nread_int = nread.int();
 
         bun_sys::syslog!(
@@ -1377,7 +1425,6 @@ impl WindowsBufferedReader {
             nread_int
         );
 
-        // NOTE: pipes/tty need to call stopReading on errors (yeah)
         match nread_int {
             0 => {
                 // EAGAIN or EWOULDBLOCK or canceled  (buf is not safe to access here)
@@ -1388,39 +1435,115 @@ impl WindowsBufferedReader {
             }
             v if v == uv::UV_EOF as i64 => {
                 let _ = this.stop_reading();
-                // EOF (buf is not safe to access here)
-                return this.on_read(sys::Result::Ok(0), &mut [], ReadState::Eof);
+                this.stream_read.end = StreamReadEnd::Eof;
             }
             _ => {
                 if let Some(err) = nread.to_error(sys::Tag::recv) {
                     let _ = this.stop_reading();
-                    // ERROR (buf is not safe to access here)
-                    this.on_read(sys::Result::Err(err), &mut [], ReadState::Progress);
-                    return;
-                }
-                // we got some data we can slice the buffer!
-                let len: usize = usize::try_from(nread_int).expect("int cast");
-                // SAFETY: buf is valid when nread > 0. `uv_buf_t` is `Copy` —
-                // take a local copy so `slice_mut` can borrow `&mut self`
-                // (libuv's `read_cb` hands us `*const`).
-                let mut b = unsafe { *buf };
-                let slice = unsafe { b.slice_mut() };
-                let data = &mut slice[..len];
-                if matches!(this.source, Some(Source::Tty(_))) {
-                    // Tty chunks arrive in the tty-owned scratch; stage them
-                    // into `_buffer` so `on_read` commits them like a pipe chunk.
-                    this._buffer.reserve(len);
-                    // SAFETY: `_buffer` has `len` spare bytes, disjoint from
-                    // `this` and the scratch.
-                    let staged = unsafe {
-                        let dst = bun_core::vec::spare_bytes_mut(&mut this._buffer).as_mut_ptr();
-                        core::ptr::copy_nonoverlapping(data.as_ptr(), dst, len);
-                        core::slice::from_raw_parts_mut(dst, len)
-                    };
-                    this.on_read(sys::Result::Ok(len), staged, ReadState::Progress);
+                    this.stream_read.end = StreamReadEnd::Err(err);
                 } else {
-                    this.on_read(sys::Result::Ok(len), data, ReadState::Progress);
+                    let len: usize = usize::try_from(nread_int).expect("int cast");
+                    if matches!(this.source, Some(Source::Tty(_))) {
+                        // Tty chunks arrive in the tty-owned scratch; stage them
+                        // into `_buffer` so they are committed like a pipe chunk.
+                        this._buffer.reserve(len);
+                        // SAFETY: buf is valid when nread > 0; `_buffer` has `len`
+                        // spare bytes, disjoint from `this` and the scratch.
+                        unsafe {
+                            let dst =
+                                bun_core::vec::spare_bytes_mut(&mut this._buffer).as_mut_ptr();
+                            core::ptr::copy_nonoverlapping((*buf).base.cast::<u8>(), dst, len);
+                        }
+                    } else {
+                        // Address arithmetic: `buf` covers spare (uninit) capacity, so no `&[u8]` over the Vec may be formed for the check.
+                        debug_assert!(
+                            // SAFETY: buf is valid when nread > 0.
+                            unsafe { (*buf).base } as usize >= this._buffer.as_ptr() as usize
+                                && unsafe { (*buf).base } as usize + len
+                                    <= this._buffer.as_ptr() as usize + this._buffer.capacity(),
+                            "uv_read_cb: buf is not in buffer! This is a bug in bun. Please report it."
+                        );
+                    }
+                    // SAFETY: `len` bytes were written into the spare capacity (by libuv for a pipe, by the copy above for a tty).
+                    unsafe { bun_core::vec::commit_spare(&mut this._buffer, len) };
+                    this.stream_read.bytes += len;
+                    let limit_reached = this.limit.charge(len);
+                    let over_budget = match this.maxbuf {
+                        Some(maxbuf) => MaxBuf::charge(maxbuf, len as u64),
+                        None => false,
+                    };
+                    this.stream_read.over_budget |= over_budget;
+                    if limit_reached || over_budget {
+                        let _ = this.stop_reading();
+                        this.stream_read.end = StreamReadEnd::Budget;
+                    }
                 }
+            }
+        }
+        // SAFETY: the node lives in `*this`, which is stable while its handle
+        // reads (handle.data points at it) and cancels the node when it lets
+        // go of the handle (`close_impl`, `deinit`, `Drop`, `from`).
+        unsafe {
+            uv::Deferred::enqueue(
+                (*stream).loop_,
+                &raw mut this.stream_read.deferred,
+                Self::dispatch_stream_read,
+            )
+        };
+    }
+
+    /// Dispatch phase: hand the parent what `on_stream_read` recorded.
+    #[cfg(windows)]
+    unsafe fn dispatch_stream_read(node: *mut uv::Deferred) {
+        // SAFETY: `node` is `stream_read.deferred` of a live reader (enqueue contract).
+        let this: *mut WindowsBufferedReader = unsafe {
+            bun_core::from_field_ptr!(StreamRead, deferred, node)
+                .cast::<u8>()
+                .sub(core::mem::offset_of!(WindowsBufferedReader, stream_read))
+                .cast()
+        };
+        // SAFETY: `this` is live; each borrow below ends before the parent is
+        // called (the parent may reach this reader again through its own state).
+        let (vtable, bytes, end, over_budget, maxbuf) = unsafe {
+            let sr = &mut (*this).stream_read;
+            (
+                (*this).vtable,
+                mem::take(&mut sr.bytes),
+                mem::take(&mut sr.end),
+                mem::take(&mut sr.over_budget),
+                (*this).maxbuf,
+            )
+        };
+        let _parent = vtable.ref_parent();
+
+        if over_budget {
+            if let Some(maxbuf) = maxbuf {
+                MaxBuf::overflowed(maxbuf);
+            }
+        }
+        match end {
+            StreamReadEnd::Open => {
+                if bytes > 0 {
+                    // SAFETY: `this` is live (see above).
+                    let _ = unsafe { (*this).on_read_chunk(ReadState::Progress) };
+                }
+            }
+            StreamReadEnd::Budget | StreamReadEnd::Eof => {
+                // SAFETY: `this` is live (see above); `close` may free the parent
+                // but not the reader inline (it is a field of the parent, and
+                // `_parent` holds the parent).
+                unsafe {
+                    let _ = (*this).on_read_chunk(ReadState::Eof);
+                    (*this).close();
+                }
+            }
+            StreamReadEnd::Err(err) => {
+                if bytes > 0 {
+                    // SAFETY: as above.
+                    let _ = unsafe { (*this).on_read_chunk(ReadState::Progress) };
+                }
+                // SAFETY: as above; the error dispatch may free the parent.
+                unsafe { Self::on_error(this, err) };
             }
         }
     }
@@ -1565,14 +1688,15 @@ impl WindowsBufferedReader {
                             // SAFETY: the file is fully initialized; libuv
                             // stores the cb and fires it on the event loop.
                             if let Some(err) = unsafe {
+                                let req: *mut uv::fs_t = &raw mut (*file_raw).fs;
                                 uv::uv_fs_read(
                                     this.vtable.loop_().cast(),
-                                    &mut (*file_raw).fs,
+                                    req,
                                     (*file_raw).file,
                                     &(*file_raw).iov,
                                     1,
                                     offset,
-                                    Some(Self::on_file_read),
+                                    uv::deferred::fs_callback(req, Self::on_file_read),
                                 )
                             }
                             // Tagged `.write` even though the syscall is
@@ -1645,14 +1769,15 @@ impl WindowsBufferedReader {
                 // SAFETY: the file is fully initialized; libuv stores cb and
                 // fires it on the event loop.
                 if let Some(err) = unsafe {
+                    let req: *mut uv::fs_t = &raw mut (*file_raw).fs;
                     uv::uv_fs_read(
                         self.vtable.loop_().cast(),
-                        &mut (*file_raw).fs,
+                        req,
                         (*file_raw).file,
                         &(*file_raw).iov,
                         1,
                         offset,
-                        Some(Self::on_file_read),
+                        uv::deferred::fs_callback(req, Self::on_file_read),
                     )
                 }
                 // Tagged `.write` even though the syscall is `uv_fs_read`, so
@@ -1714,6 +1839,13 @@ impl WindowsBufferedReader {
     }
 
     pub fn close_impl<const CALL_DONE: bool>(&mut self) {
+        // Reads recorded for a handle this reader is letting go of are dropped
+        // with it (their bytes stay in `_buffer`).
+        // SAFETY: the node is a field of `self`.
+        unsafe { uv::Deferred::cancel(&raw mut self.stream_read.deferred) };
+        self.stream_read.bytes = 0;
+        self.stream_read.end = StreamReadEnd::Open;
+        self.stream_read.over_budget = false;
         if let Some(source) = self.source.take() {
             match source {
                 Source::SyncFile(mut file) | Source::File(mut file) => {
@@ -1932,6 +2064,8 @@ impl WindowsBufferedReader {
 #[cfg(windows)]
 impl Drop for WindowsBufferedReader {
     fn drop(&mut self) {
+        // SAFETY: the node is a field of `self`.
+        unsafe { uv::Deferred::cancel(&raw mut self.stream_read.deferred) };
         MaxBuf::remove_from_pipereader(&mut self.maxbuf);
         // Do NOT take() source here and let it drop: Box<Pipe>/Box<File> own
         // live uv handles registered with the loop. Let close_impl perform the

@@ -1692,14 +1692,15 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
             // SAFETY: file is fully initialized; libuv stores the cb and fires
             // it on the event loop. parent BACKREF valid.
             if let Some(err) = unsafe {
+                let req: *mut uv::fs_t = &raw mut file.fs;
                 uv::uv_fs_write(
                     Parent::loop_(self.parent()),
-                    &mut file.fs,
+                    req,
                     file.file,
                     &self.write_buffer,
                     1,
                     -1,
-                    Some(Self::on_fs_write_complete),
+                    uv::deferred::fs_callback(req, Self::on_fs_write_complete),
                 )
             }
             .to_error(sys::Tag::write)
@@ -2315,14 +2316,15 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
             // (not `r()`) so the `&write_buffer` borrow is not invalidated by a
             // sibling Unique tag from the `parent()` arg under Stacked Borrows.
             if let Some(err) = unsafe {
+                let req: *mut uv::fs_t = &raw mut file.fs;
                 uv::uv_fs_write(
                     Parent::loop_((*this).parent()),
-                    &mut file.fs,
+                    req,
                     file.file,
                     &(*this).write_buffer,
                     1,
                     -1,
-                    Some(Self::on_fs_write_complete),
+                    uv::deferred::fs_callback(req, Self::on_fs_write_complete),
                 )
             }
             .to_error(sys::Tag::write)

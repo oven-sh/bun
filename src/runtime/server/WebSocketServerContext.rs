@@ -338,8 +338,7 @@ pub(crate) fn on_create(
                 )));
             }
 
-            // uws does not allow idleTimeout to be between (0, 8),
-            // since its timer is not that accurate, therefore round up.
+            // uws::App::ws terminates on an idleTimeout in 1..8 or above 960.
             server.idle_timeout = if seconds > 0 {
                 (seconds as u16).max(8)
             } else {

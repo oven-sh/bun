@@ -344,6 +344,7 @@ pub fn do_patch_commit(
                 random_tempdir.as_bytes(),
                 sys::RenameOptions {
                     move_fallback: true,
+                    ..Default::default()
                 },
             )
             .is_err()
@@ -399,6 +400,7 @@ pub fn do_patch_commit(
                 patch_tag_tmpname.as_bytes(),
                 sys::RenameOptions {
                     move_fallback: true,
+                    ..Default::default()
                 },
             ) {
                 bun_core::warn!(
@@ -431,7 +433,7 @@ pub fn do_patch_commit(
                         random_tempdir.as_bytes(),
                         new_folder_handle.fd,
                         b"node_modules",
-                        sys::RenameOptions { move_fallback: true },
+                        sys::RenameOptions { move_fallback: true, ..Default::default() },
                     ) {
                         bun_core::warn!("failed renaming nested node_modules folder, this may cause issues: {}", e);
                     }
@@ -443,7 +445,7 @@ pub fn do_patch_commit(
                         patch_tag_tmpname.as_bytes(),
                         new_folder_handle.fd,
                         patch_tag,
-                        sys::RenameOptions { move_fallback: true },
+                        sys::RenameOptions { move_fallback: true, ..Default::default() },
                     ) {
                         bun_core::warn!("failed renaming the bun patch tag, this may cause issues: {}", e);
                     }
@@ -588,6 +590,7 @@ pub fn do_patch_commit(
         path_in_patches_dir,
         sys::RenameOptions {
             move_fallback: true,
+            ..Default::default()
         },
     ) {
         Output::err(e, "failed renaming patch file to patches dir", ());

@@ -212,6 +212,11 @@ describe("bundler", () => {
         "function",
       ].join("\n"),
     },
+    onAfterBundle(api) {
+      // The test runs the bundle under bun, which has process.nextTick. A browser does not.
+      const out = api.readFile("/out.js");
+      assert(!out.includes("process.nextTick"), "util polyfill must not depend on process.nextTick");
+    },
   });
   itBundled("browser/NodeUrlProtocolTablesIgnorePrototype", {
     files: {

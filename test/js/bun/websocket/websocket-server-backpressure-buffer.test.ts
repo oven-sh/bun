@@ -235,3 +235,233 @@ describe("BackPressure buffer", () => {
     expect(hash.digest("hex")).toBe(expectedHash);
   });
 });
+
+// Whatever closes a server socket, the client has to end up with every frame
+// uws accepted, then the Close frame, then the TCP FIN. readToEnd() below only
+// returns once the FIN has arrived, so a missing FIN fails these tests by the
+// test timeout: uws's own fallback is the end() timer, 16 s at the default
+// idleTimeout, which is why these tests do not lower it.
+describe("close()", () => {
+  type ServerWebSocket = import("bun").ServerWebSocket<unknown>;
+  const FRAME = 1024 * 1024;
+  const LIMIT = 2 * FRAME;
+  // Server frame: FIN + binary, 64-bit extended length, no mask.
+  const frameHeader = Buffer.from([0x82, 0x7f, 0, 0, 0, 0, 0, 0x10, 0, 0]);
+
+  function closeFrame(code: number, reason: string): Buffer {
+    return Buffer.concat([Buffer.from([0x88, 2 + reason.length, code >> 8, code & 0xff]), Buffer.from(reason)]);
+  }
+
+  // The client side of a Close frame must be masked.
+  function maskedCloseFrame(code: number, reason: string): Buffer {
+    const payload = closeFrame(code, reason).subarray(2);
+    const mask = [0x12, 0x34, 0x56, 0x78];
+    return Buffer.from([0x88, 0x80 | payload.length, ...mask, ...Array.from(payload, (byte, i) => byte ^ mask[i & 3])]);
+  }
+
+  // Counts the intact 1 MiB frames at the front of what the client read and
+  // returns whatever follows them, so a failure shows where the stream ends.
+  function splitStream(bytes: Buffer) {
+    const perFrame = frameHeader.length + FRAME;
+    let dataFrames = 0;
+    while (
+      bytes.length - dataFrames * perFrame >= perFrame &&
+      bytes.subarray(dataFrames * perFrame, dataFrames * perFrame + frameHeader.length).equals(frameHeader)
+    ) {
+      dataFrames++;
+    }
+    const rest = bytes.subarray(dataFrames * perFrame);
+    return { dataFrames, rest: rest.length <= 16 ? rest.toString("hex") : `${rest.length} bytes` };
+  }
+
+  // The expected shape of { ...splitStream(bytes), closeEvent }.
+  function delivered(dataFrames: number, code: number, reason: string) {
+    return { dataFrames, rest: closeFrame(code, reason).toString("hex"), closeEvent: { code, reason } };
+  }
+
+  // Sends 1 MiB frames until uws reports a drop (0) and returns how many it
+  // accepted before that. Frames reported as sent (> 0) or buffered (-1) have
+  // to reach the client.
+  function fillPastLimit(ws: ServerWebSocket): number {
+    const payload = Buffer.alloc(FRAME);
+    let accepted = 0;
+    while (ws.sendBinary(payload) !== 0) {
+      if (++accepted === 64) throw new Error("send() never reported a drop");
+    }
+    expect(ws.getBufferedAmount()).toBeGreaterThan(LIMIT);
+    return accepted;
+  }
+
+  // Lets the paused client read and returns everything after the handshake,
+  // up to the server's FIN.
+  async function readToEnd(sock: net.Socket, initial: Buffer): Promise<Buffer> {
+    const chunks = [initial];
+    const finished = new Promise<void>(resolve => {
+      sock.once("end", resolve);
+      sock.once("close", resolve);
+    });
+    sock.on("data", chunk => chunks.push(chunk));
+    sock.resume();
+    await finished;
+    sock.destroy();
+    return Buffer.concat(chunks);
+  }
+
+  function serve(options: {
+    open?: (ws: ServerWebSocket) => void;
+    drain?: (ws: ServerWebSocket) => void;
+    // Upgrade from a later task. open() then runs from uws's own cork()
+    // instead of inside the HTTP parser, which holds the cork of a
+    // synchronous upgrade and uncorks the socket itself afterwards.
+    asyncUpgrade?: boolean;
+  }) {
+    const closed = Promise.withResolvers<{ code: number; reason: string }>();
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req, s) {
+        if (options.asyncUpgrade) await new Promise(resolve => setTimeout(resolve, 0));
+        if (s.upgrade(req)) return;
+        return new Response("no", { status: 500 });
+      },
+      websocket: {
+        backpressureLimit: LIMIT,
+        open: options.open ?? (() => {}),
+        drain: options.drain,
+        message() {},
+        close(_ws, code, reason) {
+          closed.resolve({ code, reason });
+        },
+      },
+    });
+    return { server, closed: closed.promise };
+  }
+
+  // Over backpressureLimit uws drops every further frame. The Close frame must
+  // not be one of them: it has to queue behind the buffered data, and the FIN
+  // has to wait until that data has drained.
+  describe("while over backpressureLimit", () => {
+    it("ws.close() delivers the buffered frames and then the Close frame", async () => {
+      const opened = Promise.withResolvers<ServerWebSocket>();
+      const { server, closed } = serve({ open: opened.resolve });
+      await using _server = server;
+      const { sock, initial } = await pausedClient(server.port);
+      const ws = await opened.promise;
+      const accepted = fillPastLimit(ws);
+
+      ws.close(1000, "bye");
+
+      expect({ ...splitStream(await readToEnd(sock, initial)), closeEvent: await closed }).toEqual(
+        delivered(accepted, 1000, "bye"),
+      );
+    });
+
+    it("a Close frame from the client is answered behind the buffered frames", async () => {
+      const opened = Promise.withResolvers<ServerWebSocket>();
+      const { server, closed } = serve({ open: opened.resolve });
+      await using _server = server;
+      const { sock, initial } = await pausedClient(server.port);
+      const accepted = fillPastLimit(await opened.promise);
+
+      // The client's read side is paused, but it can still write. uws answers
+      // the peer's Close frame while the socket is still over the limit.
+      sock.write(maskedCloseFrame(4001, "peer"));
+      const closeEvent = await closed;
+
+      expect({ ...splitStream(await readToEnd(sock, initial)), closeEvent }).toEqual(delivered(accepted, 4001, "peer"));
+    });
+
+    // The client cannot read anything before open() returns, so the socket is
+    // over the limit when close() runs.
+    it("ws.close() inside open() after a synchronous upgrade", async () => {
+      const filled = Promise.withResolvers<number>();
+      const { server, closed } = serve({
+        open(ws) {
+          try {
+            filled.resolve(fillPastLimit(ws));
+          } catch (error) {
+            filled.reject(error);
+          }
+          ws.close(1000, "bye");
+        },
+      });
+      await using _server = server;
+      const { sock, initial } = await pausedClient(server.port);
+      const accepted = await filled.promise;
+
+      expect({ ...splitStream(await readToEnd(sock, initial)), closeEvent: await closed }).toEqual(
+        delivered(accepted, 1000, "bye"),
+      );
+    });
+  });
+
+  // Bun runs every handler corked, so the Close frame only leaves the cork
+  // buffer when the handler returns. end() has to flush it and send the FIN
+  // itself: none of the places that uncork afterwards know about the close.
+  describe("from a corked handler", () => {
+    it("ws.close() inside open() after a synchronous upgrade", async () => {
+      const { server, closed } = serve({ open: ws => ws.close(1000, "bye") });
+      await using _server = server;
+      const { sock, initial } = await pausedClient(server.port);
+
+      expect({ ...splitStream(await readToEnd(sock, initial)), closeEvent: await closed }).toEqual(
+        delivered(0, 1000, "bye"),
+      );
+    });
+
+    it("ws.close() inside open() after an asynchronous upgrade", async () => {
+      const { server, closed } = serve({ asyncUpgrade: true, open: ws => ws.close(1000, "bye") });
+      await using _server = server;
+      const { sock, initial } = await pausedClient(server.port);
+
+      expect({ ...splitStream(await readToEnd(sock, initial)), closeEvent: await closed }).toEqual(
+        delivered(0, 1000, "bye"),
+      );
+    });
+
+    it("ws.close() inside ws.cork()", async () => {
+      const opened = Promise.withResolvers<ServerWebSocket>();
+      const { server, closed } = serve({ open: opened.resolve });
+      await using _server = server;
+      const { sock, initial } = await pausedClient(server.port);
+      const ws = await opened.promise;
+
+      ws.cork(() => ws.close(1000, "bye"));
+
+      expect({ ...splitStream(await readToEnd(sock, initial)), closeEvent: await closed }).toEqual(
+        delivered(0, 1000, "bye"),
+      );
+    });
+
+    it("ws.close() inside drain() once the buffer is empty", async () => {
+      const opened = Promise.withResolvers<ServerWebSocket>();
+      const { server, closed } = serve({
+        open: opened.resolve,
+        drain(ws) {
+          if (ws.getBufferedAmount() === 0) ws.close(1000, "bye");
+        },
+      });
+      await using _server = server;
+      const { sock, initial } = await pausedClient(server.port);
+      const accepted = fillPastLimit(await opened.promise);
+
+      expect({ ...splitStream(await readToEnd(sock, initial)), closeEvent: await closed }).toEqual(
+        delivered(accepted, 1000, "bye"),
+      );
+    });
+
+    // uws answers a Close frame from inside its corked data handler.
+    it("a Close frame from the client is answered and followed by the FIN", async () => {
+      const opened = Promise.withResolvers<ServerWebSocket>();
+      const { server, closed } = serve({ open: opened.resolve });
+      await using _server = server;
+      const { sock, initial } = await pausedClient(server.port);
+      await opened.promise;
+
+      sock.write(maskedCloseFrame(4001, "peer"));
+
+      expect({ ...splitStream(await readToEnd(sock, initial)), closeEvent: await closed }).toEqual(
+        delivered(0, 4001, "peer"),
+      );
+    });
+  });
+});

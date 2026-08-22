@@ -20,7 +20,8 @@
   ],
   "homepage": "https://bun.com",
   "dependencies": {
-    "@types/node": "*"
+    "@types/node": "*",
+    "undici-types": "*"
   },
   "scripts": {
     "prebuild": "echo $(pwd)",

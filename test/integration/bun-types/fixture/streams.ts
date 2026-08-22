@@ -42,7 +42,7 @@ for await (const chunk of uint8Transform.readable) {
 }
 
 declare const stream: ReadableStream<Uint8Array>;
-
+// These exist with and without lib.dom.d.ts: https://github.com/oven-sh/bun/issues/29401
 expectType(stream.json()).is<Promise<any>>();
 expectType(stream.bytes()).is<Promise<Uint8Array<ArrayBuffer>>>();
 expectType(stream.text()).is<Promise<string>>();

@@ -318,6 +318,39 @@ clearTimeout(1);
 setImmediate(() => {});
 clearImmediate(1);
 
+// FormData iteration yields File | string values, as in lib.dom.d.ts.
+// https://github.com/oven-sh/bun/issues/27194
+{
+  const form = new FormData();
+
+  // The iterator type differs with and without lib.dom (it is lib.dom's FormDataIterator
+  // when that lib is loaded), so only what the iterators yield is checked here.
+  for (const [name, value] of form) {
+    expectType(name).is<string>();
+    expectType(value).is<File | string>();
+  }
+
+  for (const value of form.values()) {
+    expectType(value).is<File | string>();
+  }
+
+  expectType([...form.keys()]).is<string[]>();
+  expectType([...form.values()]).is<(File | string)[]>();
+  expectType([...form.entries()]).is<[string, File | string][]>();
+  expectType(Object.fromEntries(form)).is<{ [k: string]: File | string }>();
+}
+
+// Without lib.dom, Request and Response come from undici-types, whose FormData has its own
+// iterator types. What their formData() resolves to must still be a FormData, like the Blob
+// case in 24154.ts. (fetch.ts covers the other direction, a FormData as a request body.)
+async function formDataFromRequest(request: Request): Promise<FormData> {
+  return await request.formData();
+}
+
+async function formDataFromResponse(response: Response): Promise<FormData> {
+  return await response.formData();
+}
+
 const err = new Error("test");
 err.cause = "asdf";
 err.cause = new Error("asdf");
@@ -336,7 +369,6 @@ new Error("asdf", {
   cause: new Error("asdf"),
 });
 
-// @ts-expect-error this interface is defined top level in globals.d.ts so we
-// are making sure that .d.ts is a module and that anything top level doesn't
-// leak to userland
+// @ts-expect-error this interface lives in Bun.__internal (globals.d.ts), so we
+// are making sure that it does not leak to userland as a global
 expectType<BunConsumerConvenienceMethods>();

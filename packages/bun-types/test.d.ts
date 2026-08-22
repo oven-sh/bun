@@ -17,8 +17,16 @@ declare module "bun:test" {
   export type Mock<T extends (...args: any[]) => any> = JestMock.Mock<T>;
 
   export const mock: {
+    // Separate overload for the implementation argument: inferring `T` through an
+    // optional parameter (`T | undefined`) instantiates a generic implementation's
+    // type parameters as `unknown`, so its generic call signature would be lost.
     /**
-     * Creates a mock function. The optional `Function` becomes the mock's implementation.
+     * Creates a mock function. `Function` becomes the mock's implementation.
+     */
+    <T extends (...args: any[]) => any>(Function: T): Mock<T>;
+    /**
+     * Creates a mock function with no implementation. Pass a type argument to
+     * give the mock a call signature.
      */
     <T extends (...args: any[]) => any>(Function?: T): Mock<T>;
 
@@ -91,6 +99,8 @@ declare module "bun:test" {
     function restoreAllMocks(): void;
     function clearAllMocks(): void;
     function resetAllMocks(): void;
+    // Same overload pair as `mock()` above, for the same reason.
+    function fn<T extends (...args: any[]) => any>(func: T): Mock<T>;
     function fn<T extends (...args: any[]) => any>(func?: T): Mock<T>;
     function setSystemTime(now?: number | Date): void;
     function setTimeout(milliseconds: number): void;
@@ -2017,9 +2027,13 @@ declare module "bun:test" {
       [K in keyof T as Required<T>[K] extends FunctionLike ? K : never]: T[K];
     };
 
-    export interface Mock<T extends (...args: any[]) => any> extends MockInstance<T> {
-      (...args: Parameters<T>): ReturnType<T>;
-    }
+    /**
+     * The mock is callable exactly like `T`. Intersecting with `T` keeps generic
+     * and overloaded call signatures, which a `(...args: Parameters<T>) =>
+     * ReturnType<T>` call signature would collapse to their `unknown`
+     * instantiation (or to the last overload).
+     */
+    export type Mock<T extends (...args: any[]) => any> = T & MockInstance<T>;
 
     /**
      * All what the internal typings need is to be sure that we have any-function.

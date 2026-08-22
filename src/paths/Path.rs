@@ -35,7 +35,7 @@ pub mod options {
     }
 
     #[derive(PartialEq, Eq, Clone, Copy, Debug)]
-    pub(crate) enum CheckLength {
+    pub enum CheckLength {
         AssumeAlwaysLessThanMaxPath,
         CheckForGreaterThanMaxPath,
     }
@@ -80,7 +80,8 @@ pub mod options {
     }
     impl CheckLength {
         pub(crate) const ASSUME: u8 = 0;
-        pub(crate) const CHECK: u8 = 1;
+        /// For paths that get unbounded input appended; see also [`Path::into_checked`].
+        pub const CHECK: u8 = 1;
         #[inline(always)]
         pub(crate) const fn from_u8(v: u8) -> Self {
             if v == 0 {
@@ -819,6 +820,19 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
     /// nominally distinct, hence this explicit conversion.
     #[inline]
     pub fn into_sep<const NEW_SEP: u8>(self) -> Path<U, KIND, NEW_SEP, CHECK> {
+        self.reinterpret()
+    }
+
+    /// [`Self::into_sep`] for `CHECK`: from here on over-long input is `Err(MaxPathExceeded)`.
+    #[inline]
+    pub fn into_checked(self) -> Path<U, KIND, SEP_OPT, { CheckLength::CHECK }> {
+        self.reinterpret()
+    }
+
+    #[inline]
+    fn reinterpret<const NEW_SEP: u8, const NEW_CHECK: u8>(
+        self,
+    ) -> Path<U, KIND, NEW_SEP, NEW_CHECK> {
         // Explicit field move (not `transmute`): `Path`/`Buf` are `repr(Rust)`, so
         // Rust gives no layout-compat guarantee between distinct const-generic
         // instantiations. Rebuilding field-by-field is layout-agnostic and

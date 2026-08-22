@@ -422,8 +422,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryPropagationHeaders, (JSGlobalObject * lexica
     if (!span)
         return JSValue::encode(out);
     uint32_t flags = Bun__Telemetry__propagationFlags();
-    static constexpr uint8_t zero[16] = {};
-    if ((flags & 1) && memcmp(span->m_stub.traceId, zero, 16)) {
+    if ((flags & 1) && span->m_stub.hasTraceId()) {
         std::span<Latin1Character> buf;
         auto traceparent = WTF::String::createUninitialized(55, buf);
         Bun__Telemetry__formatTraceparent(&span->m_stub, buf.data());

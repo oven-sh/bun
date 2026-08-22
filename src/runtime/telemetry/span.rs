@@ -196,7 +196,7 @@ pub(crate) fn for_each_attribute(
             f(key.slice(), &Value::Str(s.slice()));
         } else if value.is_number() {
             let n = value.as_number();
-            if n.is_finite() && n == n.trunc() && n.abs() < 9007199254740992.0 {
+            if n.is_finite() && n == n.trunc() && n.abs() <= bun_jsc::MAX_SAFE_INTEGER as f64 {
                 f(key.slice(), &Value::Int(n as i64));
             } else {
                 f(key.slice(), &Value::Double(n));
@@ -378,35 +378,26 @@ abi_layout!(
     kind @ 150, status @ 151
 );
 
-/// UTF-8 view of a borrowed JS string: zero-copy when it is Latin-1 and pure
-/// ASCII (nearly always), otherwise transcoded into `scratch`.
+/// UTF-8 view of a borrowed JS string: zero-copy when it is already ASCII
+/// (nearly always), otherwise transcoded into the reused `scratch`.
 #[inline(always)]
 fn utf8<'a>(s: &'a JsString, scratch: &'a mut Vec<u8>) -> &'a [u8] {
-    if s.is_utf16() {
-        scratch.clear();
-        strings::convert_utf16_to_utf8_append(scratch, s.utf16());
-        return &scratch[..];
+    if let Some(b) = s.as_utf8() {
+        return b;
     }
-    let bytes = s.latin1();
-    if strings::is_all_ascii(bytes) {
-        return bytes;
-    }
-    *scratch = strings::allocate_latin1_into_utf8_with_list(core::mem::take(scratch), 0, bytes);
-    &scratch[..]
+    scratch.clear();
+    let r = append_utf8(s, scratch);
+    &scratch[r]
 }
 
-/// `utf8` appended to `out`; returns the range written.
+/// `s` as UTF-8 appended to `out`; returns the range written.
 fn append_utf8(s: &JsString, out: &mut Vec<u8>) -> core::ops::Range<usize> {
     let start = out.len();
     if s.is_utf16() {
         strings::convert_utf16_to_utf8_append(out, s.utf16());
     } else {
-        let bytes = s.latin1();
-        if strings::is_all_ascii(bytes) {
-            out.extend_from_slice(bytes);
-        } else {
-            *out = strings::allocate_latin1_into_utf8_with_list(core::mem::take(out), start, bytes);
-        }
+        *out =
+            strings::allocate_latin1_into_utf8_with_list(core::mem::take(out), start, s.latin1());
     }
     start..out.len()
 }
@@ -611,9 +602,9 @@ fn status_code(api: u8) -> StatusCode {
     }
 }
 
-fn link_context(link: &LinkRef, scratch: &mut Vec<u8>) -> Option<SpanContext> {
-    let trace_id = TraceId::from_hex(utf8(&link.trace_id, scratch))?;
-    let span_id = SpanId::from_hex(utf8(&link.span_id, scratch))?;
+fn link_context(link: &LinkRef) -> Option<SpanContext> {
+    let trace_id = TraceId::from_hex(link.trace_id.to_utf8_without_ref().slice())?;
+    let span_id = SpanId::from_hex(link.span_id.to_utf8_without_ref().slice())?;
     Some(SpanContext {
         trace_id,
         span_id,
@@ -637,11 +628,7 @@ pub extern "C" fn Bun__Telemetry__stubStart(
         // SAFETY: C++ passes null or a live stub.
         Some(unsafe { (*parent).ctx })
     };
-    let now = if start_ns == 0 {
-        clock::now_unix_nanos()
-    } else {
-        start_ns
-    };
+    let now = clock::or_now(start_ns);
     let Some(mut l) = local(global) else {
         *out = SpanStub::NONE;
         return;
@@ -678,11 +665,10 @@ pub extern "C" fn Bun__Telemetry__stubFromHexIds(
     trace_flags: u8,
     remote: bool,
 ) -> bool {
-    let mut scratch = Vec::new();
-    let Some(trace_id) = TraceId::from_hex(utf8(trace_id, &mut scratch)) else {
+    let Some(trace_id) = TraceId::from_hex(trace_id.to_utf8_without_ref().slice()) else {
         return false;
     };
-    let Some(span_id) = SpanId::from_hex(utf8(span_id, &mut scratch)) else {
+    let Some(span_id) = SpanId::from_hex(span_id.to_utf8_without_ref().slice()) else {
         return false;
     };
     let flags = Flags(trace_flags);
@@ -709,8 +695,7 @@ pub extern "C" fn Bun__Telemetry__formatTraceparent(
 /// Parse a W3C `traceparent` into a remote, non-recording carrier.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Telemetry__parseTraceparent(header: &JsString, out: &mut SpanStub) -> bool {
-    let mut scratch = Vec::new();
-    match bun_telemetry::propagation::parse_traceparent(utf8(header, &mut scratch)) {
+    match bun_telemetry::propagation::parse_traceparent(header.to_utf8_without_ref().slice()) {
         Some(ctx) => {
             *out = carrier(ctx, true);
             true
@@ -753,11 +738,7 @@ pub extern "C" fn Bun__Telemetry__encodeSpan(global: &JSGlobalObject, desc: &End
     }
     let lim = limits();
     let value_limit = lim.attribute_value_length as usize;
-    let end_ns = if desc.end_ns == 0 {
-        clock::now_unix_nanos()
-    } else {
-        desc.end_ns
-    };
+    let end_ns = clock::or_now(desc.end_ns);
     let attrs = desc.pool.slice(desc.attrs);
     let kept_attrs = &attrs[..attrs.len().min(lim.attributes as usize)];
     let events: &[EventRef] = if desc.n_events == 0 {
@@ -785,22 +766,20 @@ pub extern "C" fn Bun__Telemetry__encodeSpan(global: &JSGlobalObject, desc: &End
         batch::record(batch, ScopeId(desc.scope), &mut |buf: &mut Vec<u8>| {
             let mut w = SpanWriter::begin(buf, stub, name, SpanKind::from_api(desc.kind), end_ns);
             if !desc.trace_state.is_empty() {
-                let mut tmp = Vec::new();
-                w.trace_state(utf8(&desc.trace_state, &mut tmp));
+                w.trace_state(desc.trace_state.to_utf8_without_ref().slice());
             }
             each_attr(kept_attrs, &desc.pool, value_limit, sc, |k, v| {
                 w.attr_bytes_key(k, *v);
             });
             for e in kept_events {
-                let mut tmp = Vec::new();
-                let ename = utf8(&e.name, &mut tmp);
+                let ename = e.name.to_utf8_without_ref();
+                let ename = ename.slice();
                 let time_ns = if e.time_ns == 0 { end_ns } else { e.time_ns };
                 OwnedAttrs::collect(desc.pool.slice(e.attrs), &desc.pool)
                     .with(value_limit, |pairs| w.event(ename, time_ns, pairs));
             }
             for lk in kept_links {
-                let mut tmp = Vec::new();
-                let Some(ctx) = link_context(lk, &mut tmp) else {
+                let Some(ctx) = link_context(lk) else {
                     continue;
                 };
                 OwnedAttrs::collect(desc.pool.slice(lk.attrs), &desc.pool)
@@ -817,10 +796,9 @@ pub extern "C" fn Bun__Telemetry__encodeSpan(global: &JSGlobalObject, desc: &End
                 w.dropped_links((links.len() - kept_links.len()) as u32);
             }
             if desc.status != 0 {
-                let mut tmp = Vec::new();
                 w.status(
                     status_code(desc.status),
-                    utf8(&desc.status_message, &mut tmp),
+                    desc.status_message.to_utf8_without_ref().slice(),
                 );
             }
             w.finish();
@@ -976,8 +954,7 @@ pub extern "C" fn Bun__Telemetry__nativeAddLink(
     attrs: &AttrPool,
 ) {
     let lim = limits();
-    let mut scratch = Vec::new();
-    let Some(ctx) = link_context(link, &mut scratch) else {
+    let Some(ctx) = link_context(link) else {
         return;
     };
     let owned = OwnedAttrs::collect(attrs.slice(link.attrs), attrs);
@@ -1046,8 +1023,8 @@ pub extern "C" fn Bun__Telemetry__startInstrumentSpan(
     if !stub.is_some() {
         return JSValue::UNDEFINED;
     }
-    let mut scratch = Vec::new();
-    let name = utf8(name, &mut scratch);
+    let name = name.to_utf8_without_ref();
+    let name = name.slice();
     let kind = SpanKind::from_api(api_kind);
     let native = with_active_propagation(global, |ts, bg| {
         let Some(mut l) = local(global) else {

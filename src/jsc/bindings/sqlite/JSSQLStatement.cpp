@@ -202,7 +202,20 @@ static inline JSC::JSValue jsBigIntFromSQLite(JSC::JSGlobalObject* globalObject,
 extern "C" uint32_t Bun__Telemetry__enabled;
 extern "C" const uint32_t Bun__Telemetry__SQLITE_MASK;
 extern "C" uint64_t Bun__Telemetry__sqliteBegin(JSC::JSGlobalObject*, const char* file, size_t fileLen);
-extern "C" void Bun__Telemetry__sqliteEnd(JSC::JSGlobalObject*, uint64_t span, const char* sql, size_t sqlLen, int errcode, const char* errmsg);
+extern "C" void Bun__Telemetry__sqliteEnd(JSC::JSGlobalObject*, uint64_t span, const char* sql, size_t sqlLen, int errcode, const char* codeName, const char* errmsg);
+
+/// `SQLITE_CONSTRAINT_UNIQUE` etc. for a (possibly extended) result code; null if unknown.
+static const char* sqliteCodeName(int code)
+{
+    switch (code) {
+#define MACRO(SQLITE_DEF) \
+    case SQLITE_DEF:      \
+        return #SQLITE_DEF;
+        FOR_EACH_SQLITE_ERROR(MACRO)
+#undef MACRO
+    }
+    return nullptr;
+}
 
 namespace Bun {
 
@@ -267,7 +280,7 @@ private:
         const char* msg = nullptr;
         if (failed)
             msg = !m_errmsg.isNull() ? m_errmsg.data() : (m_db ? sqlite3_errmsg(m_db) : nullptr);
-        Bun__Telemetry__sqliteEnd(m_globalObject, m_span, sql, len, rc, msg);
+        Bun__Telemetry__sqliteEnd(m_globalObject, m_span, sql, len, rc, failed ? sqliteCodeName(rc) : nullptr, msg);
         m_span = 0;
     }
 
@@ -462,20 +475,8 @@ static JSValue createSQLiteError(JSC::JSGlobalObject* globalObject, sqlite3* db)
     auto& builtinNames = WebCore::builtinNames(vm);
     object->putDirect(vm, vm.propertyNames->name, jsString(vm, String("SQLiteError"_s)), JSC::PropertyAttribute::DontEnum | 0);
 
-    String codeStr;
-
-    switch (code) {
-#define MACRO(SQLITE_DEF)          \
-    case SQLITE_DEF: {             \
-        codeStr = #SQLITE_DEF##_s; \
-        break;                     \
-    }
-        FOR_EACH_SQLITE_ERROR(MACRO)
-
-#undef MACRO
-    }
-    if (!codeStr.isEmpty())
-        object->putDirect(vm, builtinNames.codePublicName(), jsString(vm, codeStr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0);
+    if (const char* codeStr = sqliteCodeName(code))
+        object->putDirect(vm, builtinNames.codePublicName(), jsString(vm, String::fromLatin1(codeStr)), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0);
 
     object->putDirect(vm, builtinNames.errnoPublicName(), jsNumber(code), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0);
     object->putDirect(vm, vm.propertyNames->byteOffset, jsNumber(byteOffset), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | 0);

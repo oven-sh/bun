@@ -34,12 +34,6 @@ pub struct OtlpHttpExporter {
 
 const MAX_ATTEMPTS: u32 = 5;
 
-const USER_AGENT: &str = const_format::concatcp!(
-    "Bun/",
-    bun_core::Environment::VERSION_STRING,
-    " OTLP-Exporter"
-);
-
 enum SendError {
     Transport(bun_http::Error),
     Status(u32),
@@ -95,14 +89,14 @@ impl OtlpHttpExporter {
             )
             .into_bytes());
         }
-        let fixed: [(&[u8], &[u8]); 3] = [
+        // The HTTP client adds Bun's User-Agent itself.
+        let fixed: [(&[u8], &[u8]); 2] = [
             (b"content-type", b"application/x-protobuf"),
-            (b"user-agent", USER_AGENT.as_bytes()),
             (b"content-encoding", b"gzip"),
         ];
         let fixed = match cfg.compression {
             Compression::Gzip => &fixed[..],
-            Compression::None => &fixed[..2],
+            Compression::None => &fixed[..1],
         };
         let all = || {
             fixed.iter().copied().chain(

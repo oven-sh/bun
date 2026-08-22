@@ -115,3 +115,11 @@ unsafe extern "C" fn simdutf__base64_encode(
 extern "Rust" fn __bun_crash_handler_out_of_memory() -> ! {
     panic!("out of memory");
 }
+
+#[unsafe(no_mangle)]
+extern "C" fn simdutf__base64_length_from_binary(
+    length: usize,
+    _options: core::ffi::c_int,
+) -> usize {
+    length.div_ceil(3) * 4
+}

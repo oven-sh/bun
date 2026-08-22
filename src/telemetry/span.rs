@@ -10,31 +10,19 @@ pub struct TraceId(pub [u8; 16]);
 #[repr(C)]
 pub struct SpanId(pub [u8; 8]);
 
-/// xoshiro256++ for span/trace ids over the VM's [`Local::rng`](crate::Local)
-/// state, seeded from the process PRNG on first use. Fills `out` with
-/// non-zero values.
+/// Ids come from the per-VM PRNG (`Local::rng`, `bun_core::rand::DefaultPrng`
+/// seeded from the process CSPRNG-backed `fast_random`). Zero is re-drawn: an
+/// all-zero id is invalid in W3C trace context.
+pub type IdRng = Option<bun_core::rand::DefaultPrng>;
+
 #[inline(always)]
-fn next_ids(s: &mut [u64; 4], out: &mut [u64]) {
-    if s[0] | s[1] | s[2] | s[3] == 0 {
-        *s = [
-            bun_core::fast_random() | 1,
-            bun_core::fast_random(),
-            bun_core::fast_random(),
-            bun_core::fast_random(),
-        ];
-    }
+fn next_ids(rng: &mut IdRng, out: &mut [u64]) {
+    let r = rng.get_or_insert_with(|| bun_core::rand::DefaultPrng::init(bun_core::fast_random()));
     for o in out.iter_mut() {
         loop {
-            let result = (s[0].wrapping_add(s[3])).rotate_left(23).wrapping_add(s[0]);
-            let t = s[1] << 17;
-            s[2] ^= s[0];
-            s[3] ^= s[1];
-            s[1] ^= s[2];
-            s[0] ^= s[3];
-            s[2] ^= t;
-            s[3] = s[3].rotate_left(45);
-            if result != 0 {
-                *o = result;
+            let v = r.next_u64();
+            if v != 0 {
+                *o = v;
                 break;
             }
         }
@@ -42,7 +30,7 @@ fn next_ids(s: &mut [u64; 4], out: &mut [u64]) {
 }
 
 #[inline(always)]
-fn next_id_u64(rng: &mut [u64; 4]) -> u64 {
+fn next_id_u64(rng: &mut IdRng) -> u64 {
     let mut v = [0u64; 1];
     next_ids(rng, &mut v);
     v[0]
@@ -56,9 +44,9 @@ impl TraceId {
     }
     /// Random 128-bit id from `rng` (see [`crate::Local`]). The W3C/OTel spec
     /// only requires uniqueness with high probability; samplers read the low 8
-    /// bytes as a uniform integer, which xoshiro provides.
+    /// bytes as a uniform integer, which xoshiro256++ provides.
     #[inline]
-    pub fn generate(rng: &mut [u64; 4]) -> TraceId {
+    pub fn generate(rng: &mut IdRng) -> TraceId {
         let mut v = [0u64; 2];
         next_ids(rng, &mut v);
         let mut id = [0u8; 16];
@@ -89,7 +77,7 @@ impl SpanId {
         self.0 != [0; 8]
     }
     #[inline]
-    pub fn generate(rng: &mut [u64; 4]) -> SpanId {
+    pub fn generate(rng: &mut IdRng) -> SpanId {
         SpanId(next_id_u64(rng).to_be_bytes())
     }
     pub fn to_hex(self, out: &mut [u8; 16]) {
@@ -282,7 +270,7 @@ impl SpanStub {
     /// Start a child of `parent` (or a new root when `parent` is None/invalid).
     #[inline]
     pub fn start(
-        rng: &mut [u64; 4],
+        rng: &mut IdRng,
         parent: Option<&SpanContext>,
         sampler: &crate::Sampler,
         now_ns: u64,

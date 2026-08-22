@@ -2975,6 +2975,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 
     putDirectBuiltinFunction(vm, this, builtinNames.overridableRequirePrivateName(), commonJSOverridableRequireCodeGenerator(vm), 0);
     putDirectBuiltinFunction(vm, this, builtinNames.telemetryAddOneLinkPrivateName(), telemetrySpanTelemetryAddOneLinkCodeGenerator(vm), 0);
+    putDirectBuiltinFunction(vm, this, builtinNames.telemetryFlattenAttributesPrivateName(), telemetrySpanTelemetryFlattenAttributesCodeGenerator(vm), 0);
 
     putDirectNativeFunction(vm, this, builtinNames.createUninitializedArrayBufferPrivateName(), 1, functionCreateUninitializedArrayBuffer, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectNativeFunction(vm, this, builtinNames.resolveSyncPrivateName(), 1, functionImportMeta__resolveSyncPrivate, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);

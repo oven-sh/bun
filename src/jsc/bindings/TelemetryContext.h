@@ -70,10 +70,11 @@ ALWAYS_INLINE TelemetryContextSlot TelemetryContextSlot::read(JSC::JSValue slot)
     }
     if (auto* array = slot.isCell() ? dynamicDowncast<JSC::JSArray>(slot.asCell()) : nullptr) {
         out.array = array;
-        if (array->length() >= 2 && array->canGetIndexQuickly(0u) && isHeader(array->getIndexQuickly(0))) {
-            out.header = array->getIndexQuickly(0);
-            JSC::JSValue extras = array->canGetIndexQuickly(1u) ? array->getIndexQuickly(1) : JSC::JSValue();
-            out.extras = extras.isCell() ? extras : JSC::JSValue();
+        JSC::JSValue header = array->tryGetIndexQuickly(0u);
+        if (array->length() >= 2 && header && isHeader(header)) {
+            out.header = header;
+            JSC::JSValue extras = array->tryGetIndexQuickly(1u);
+            out.extras = extras && extras.isCell() ? extras : JSC::JSValue();
             out.storesStart = 2;
         }
     }

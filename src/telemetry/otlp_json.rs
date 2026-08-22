@@ -66,10 +66,7 @@ impl Json {
     }
     fn base64(&mut self, data: &[u8]) {
         self.out.push(b'"');
-        let at = self.out.len();
-        self.out.resize(at + bun_core::base64::encode_len(data), 0);
-        let n = bun_core::base64::encode(&mut self.out[at..], data);
-        self.out.truncate(at + n);
+        bun_base64::encode_append(&mut self.out, data);
         self.out.push(b'"');
     }
     fn quoted(&mut self, v: impl core::fmt::Display) {

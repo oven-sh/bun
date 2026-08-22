@@ -9,11 +9,16 @@ pub const TRACEPARENT_LEN: usize = 55;
 /// per the spec's forward-compat rule: same layout, extra trailing fields
 /// allowed. Version `ff` is invalid.
 pub fn parse_traceparent(h: &[u8]) -> Option<SpanContext> {
-    let h = trim(h);
+    let h = bun_core::strings::trim(h, b" \t");
     if h.len() < TRACEPARENT_LEN {
         return None;
     }
-    let version = hex_byte(h[0], h[1])?;
+    let hex_byte = |pair: &[u8]| -> Option<u8> {
+        let mut b = [0u8; 1];
+        bun_core::strings::decode_hex_to_bytes(&mut b, pair).ok()?;
+        Some(b[0])
+    };
+    let version = hex_byte(&h[0..2])?;
     if version == 0xff {
         return None;
     }
@@ -35,7 +40,7 @@ pub fn parse_traceparent(h: &[u8]) -> Option<SpanContext> {
     }
     let trace_id = TraceId::from_hex(&h[3..35])?;
     let span_id = SpanId::from_hex(&h[36..52])?;
-    let flags = hex_byte(h[53], h[54])?;
+    let flags = hex_byte(&h[53..55])?;
     Some(SpanContext {
         trace_id,
         span_id,
@@ -52,32 +57,11 @@ pub fn format_traceparent(ctx: &SpanContext, out: &mut [u8; TRACEPARENT_LEN]) {
     bun_core::fmt::bytes_to_hex_lower(&[ctx.flags.w3c()], &mut out[53..55]);
 }
 
-#[inline]
-fn hex_byte(a: u8, b: u8) -> Option<u8> {
-    use bun_core::fmt::{HEX_DECODE_TABLE, HEX_INVALID};
-    let (a, b) = (HEX_DECODE_TABLE[a as usize], HEX_DECODE_TABLE[b as usize]);
-    if a == HEX_INVALID || b == HEX_INVALID {
-        return None;
-    }
-    Some((a << 4) | b)
-}
-
-#[inline]
-fn trim(mut s: &[u8]) -> &[u8] {
-    while let [b' ' | b'\t', rest @ ..] = s {
-        s = rest;
-    }
-    while let [rest @ .., b' ' | b'\t'] = s {
-        s = rest;
-    }
-    s
-}
-
 /// Validate a `tracestate` header enough to decide whether to forward it.
 /// We don't interpret entries; we only refuse to propagate garbage. The spec
 /// caps the list at 32 members and 512 bytes is the recommended budget.
 pub fn tracestate_is_reasonable(h: &[u8]) -> bool {
-    let h = trim(h);
+    let h = bun_core::strings::trim(h, b" \t");
     !h.is_empty()
         && h.len() <= 512
         && h.iter().all(|&c| c == b'\t' || (c >= 0x20 && c < 0x7f))
@@ -86,7 +70,7 @@ pub fn tracestate_is_reasonable(h: &[u8]) -> bool {
 
 /// Same idea for `baggage` (W3C Baggage): forward opaque, bounded, printable.
 pub fn baggage_is_reasonable(h: &[u8]) -> bool {
-    let h = trim(h);
+    let h = bun_core::strings::trim(h, b" \t");
     !h.is_empty() && h.len() <= 8192 && h.iter().all(|&c| c == b'\t' || (c >= 0x20 && c < 0x7f))
 }
 

@@ -6,7 +6,7 @@ use bun_jsc::JSGlobalObject;
 use bun_telemetry::{Instrument, SpanKind, SpanStub, propagation};
 use bun_url::URL;
 
-use super::{http, local, state};
+use super::{local, state};
 
 /// Start a CLIENT span for an outgoing request and inject `traceparent`
 /// (+ `tracestate` / `baggage`) into `headers` unless the caller already set
@@ -62,7 +62,7 @@ pub fn end(
     if !stub.is_recording() {
         return;
     }
-    let name = http::method_name(method);
+    let name = bun_telemetry::http_record::method_name(method);
     super::end_leaf(
         global,
         Instrument::HttpClient,
@@ -72,7 +72,8 @@ pub fn end(
         |w| {
             w.attr("http.request.method", name);
             let u = URL::parse(url);
-            // url.full MUST NOT contain credentials.
+            // url.full MUST NOT contain credentials. (`bun_url` does not
+            // recognise a bare `user@host`, so scan the authority directly.)
             let scheme_end = bun_core::strings::index_of(url, b"://")
                 .map(|i| i + 3)
                 .unwrap_or(0);
@@ -91,12 +92,8 @@ pub fn end(
                     w.attr("url.full", &redacted[..]);
                 }
             }
-            w.attr_opt("server.address", u.display_hostname());
-            let port = u.get_port_auto();
-            if port != 0 {
-                w.attr("server.port", port);
-            }
-            http::status_attrs(w, status, false);
+            w.server(u.display_hostname(), u.get_port_auto());
+            w.http_client_status(status);
             if let Some(e) = error {
                 w.error(e.as_bytes(), e.as_bytes());
             }

@@ -119,9 +119,7 @@ pub fn resolve(p: &PresetInput<'_>, env: EnvGet<'_>) -> Result<OtlpExporterConfi
                     .or_else(|| env("GRAFANA_CLOUD_INSTANCE_ID"))
                     .ok_or_else(|| need("id (the stack's instance id)", p.name))?;
             let cred = format!("{instance}:{token}");
-            let mut auth = vec![0u8; bun_core::base64::encode_len(cred.as_bytes())];
-            let n = bun_core::base64::encode(&mut auth, cred.as_bytes());
-            auth.truncate(n);
+            let auth = bun_base64::encode_alloc(cred.as_bytes());
             headers.push((
                 "authorization".into(),
                 format!("Basic {}", bstr::ByteVec::into_string_lossy(auth)),

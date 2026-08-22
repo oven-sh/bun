@@ -44,16 +44,10 @@ static int uws_res_remote_address_raw(uWS::HttpResponse<SSL> *res, uint8_t *out,
     return data->remoteAddressLength;
   }
 
-/* Case-insensitive compare of a header name against a lowercase literal
- * without a libc call: names are ASCII, so OR-ing 0x20 folds A-Z onto a-z
- * (and leaves '-' and a-z unchanged). */
+/* Header name equals a lowercase literal (same compare HttpRequest::getHeader uses). */
 template <size_t N>
 static inline bool uws_header_is(std::string_view k, const char (&lit)[N]) {
-  if (k.length() != N - 1) return false;
-  for (size_t i = 0; i < N - 1; i++) {
-    if ((static_cast<unsigned char>(k[i]) | 0x20) != static_cast<unsigned char>(lit[i])) return false;
-  }
-  return true;
+  return k.length() == N - 1 && !strncasecmp(k.data(), lit, N - 1);
 }
 
 

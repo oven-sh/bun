@@ -5,6 +5,7 @@
 #include "root.h"
 #include "headers-handwritten.h"
 #include <cstddef>
+#include <cstring>
 
 namespace JSC {
 class JSGlobalObject;
@@ -27,6 +28,16 @@ struct TelemetrySpanStub {
     static constexpr uint8_t Remote = 0x10;
     static constexpr uint8_t NonRecording = 0x40;
     bool isRecording() const { return startNs != 0 && (flags & (Sampled | NonRecording)) == Sampled; }
+    // Mirrors Rust TraceId::is_valid / SpanId::is_valid: all-zero ids are invalid (W3C).
+    bool hasTraceId() const { return !isAllZero(traceId); }
+    bool hasParent() const { return !isAllZero(parentSpanId); }
+
+private:
+    template<size_t N> static bool isAllZero(const uint8_t (&id)[N])
+    {
+        static constexpr uint8_t zero[N] = {};
+        return !memcmp(id, zero, N);
+    }
 };
 static_assert(sizeof(TelemetrySpanStub) == 48);
 static_assert(offsetof(TelemetrySpanStub, traceId) == 0);

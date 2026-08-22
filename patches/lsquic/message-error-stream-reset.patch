@@ -1,0 +1,235 @@
+--- a/include/lsquic.h
++++ b/include/lsquic.h
+@@ -1276,6 +1276,16 @@
+      * maxIdleTimeout transport parameter is specified in milliseconds).
+      */
+     unsigned        es_idle_timeout_ms;
++
++    /**
++     * bun: when nonzero, a malformed HTTP/3 message (content-length
++     * mismatch, hsi_process_header rejection, or a field section QPACK
++     * cannot decode) resets only that stream per RFC 9114 sec 4.1.2
++     * (RESET_STREAM + STOP_SENDING H3_MESSAGE_ERROR, on_reset fired
++     * locally) instead of closing the connection.  Default 0 preserves
++     * the stock CONNECTION_CLOSE behavior.
++     */
++    int             es_message_error_is_stream;
+ };
+ 
+ /* Initialize `settings' to default values */
+--- a/src/liblsquic/lsquic_stream.h
++++ b/src/liblsquic/lsquic_stream.h
+@@ -524,6 +524,9 @@
+ lsquic_stream_maybe_reset (struct lsquic_stream *, uint64_t error_code, int);
+ 
+ void
++lsquic_stream_msg_error (struct lsquic_stream *, uint64_t error_code);
++
++void
+ lsquic_stream_call_on_close (lsquic_stream_t *);
+ 
+ void
+--- a/src/liblsquic/lsquic_stream.c
++++ b/src/liblsquic/lsquic_stream.c
+@@ -1495,6 +1495,68 @@
+ }
+ 
+ 
++/* bun: RFC 9114 sec 4.1.2 treats a malformed message as a *stream* error
++ * (H3_MESSAGE_ERROR on RESET_STREAM + STOP_SENDING), not a CONNECTION_CLOSE.
++ * The stock library wired every caller to ci_abort_error(), so one bad request
++ * tore down every concurrent stream on the connection.  This queues the
++ * per-stream frames, marks the read side as reset so further reads return
++ * ECONNRESET, and fires on_reset(how=0) so the application learns the failure
++ * the same way it would learn of a peer RESET_STREAM. */
++void
++lsquic_stream_msg_error (struct lsquic_stream *stream, uint64_t error_code)
++{
++    if (stream->stream_flags & STREAM_RST_RECVD)
++        return;
++    LSQ_INFO("message-level error 0x%"PRIX64" on stream %"PRIu64"; resetting "
++             "stream instead of connection", error_code, stream->id);
++    stream->error_code = error_code;
++    stream->ss_error_code = error_code;
++    stream->sm_bflags &= ~SMBF_VERIFY_CL;
++    if (!(stream->stream_flags & (STREAM_FIN_RECVD|STREAM_RST_RECVD))
++                            && !(stream->stream_flags & STREAM_SS_SENT)
++                            && !(stream->sm_qflags & SMQF_SEND_STOP_SENDING))
++    {
++        if (!(stream->sm_qflags & SMQF_SENDING_FLAGS))
++            TAILQ_INSERT_TAIL(&stream->conn_pub->sending_streams, stream,
++                                                        next_send_stream);
++        /* No SMQF_WAIT_FIN_OFF: STREAM_RST_RECVD is synthesized below, so
++         * the peer's RESET_STREAM hits lsquic_stream_rst_in's duplicate guard
++         * before the line that would clear it, and stream_is_finished()'s
++         * SMQF_SELF_FLAGS check would keep the stream alive forever. */
++        stream->sm_qflags |= SMQF_SEND_STOP_SENDING;
++    }
++    /* RFC 9000 sec 3.1 permits RESET_STREAM in Data Sent, so FIN_SENT does not
++     * skip the reset: SMQF_SEND_RST is what keeps stream_is_finished() false
++     * until both frames reach the wire.  stream_reset() clears every
++     * SMQF_SENDING flag, so re-arm the STOP_SENDING we just queued. */
++    {
++        const enum stream_q_flags had_ss =
++                            stream->sm_qflags & SMQF_SEND_STOP_SENDING;
++        if (!(stream->stream_flags & STREAM_RST_SENT)
++                                    && !(stream->sm_qflags & SMQF_SEND_RST))
++            stream_reset(stream, error_code, 0);
++        if (had_ss)
++            stream->sm_qflags |= SMQF_SEND_STOP_SENDING;
++    }
++    stream->stream_flags |= STREAM_RST_RECVD;
++    if (stream->stream_if->on_reset
++                        && !(stream->stream_flags & STREAM_ONCLOSE_DONE)
++                        && !(stream->sm_dflags & SMDF_ONRESET0))
++    {
++        stream->sm_dflags |= SMDF_ONRESET0;
++        stream->stream_if->on_reset(stream, stream->st_ctx, 0);
++    }
++    /* The peer has not reset its write side, so reordered or retransmitted
++     * STREAM frames can still arrive; dropping data_in here would turn the
++     * next lsquic_stream_frame_in() into an INS_FRAME_ERR and abort the
++     * connection.  The stream is destroyed (and data_in freed) once the
++     * queued RESET_STREAM/STOP_SENDING reaches the wire and on_close fires. */
++    maybe_finish_stream(stream);
++    maybe_schedule_call_on_close(stream);
++    maybe_conn_to_tickable_if_writeable(stream, 1);
++}
++
++
+ static void
+ verify_cl_on_fin (struct lsquic_stream *stream)
+ {
+@@ -1506,6 +1568,11 @@
+      */
+     if (stream->sm_data_in != 0 && stream->sm_cont_len != stream->sm_data_in)
+     {
++        if (stream->conn_pub->enpub->enp_settings.es_message_error_is_stream)
++        {
++            lsquic_stream_msg_error(stream, HEC_MESSAGE_ERROR);
++            return;
++        }
+         lconn = stream->conn_pub->lconn;
+         lconn->cn_if->ci_abort_error(lconn, 1, HEC_MESSAGE_ERROR,
+             "number of bytes in DATA frames of stream %"PRIu64" is %llu, "
+@@ -4977,9 +5044,14 @@
+     stream->sm_data_in += filter->hqfi_left;
+     if (stream->sm_data_in > stream->sm_cont_len)
+     {
+-        lconn = stream->conn_pub->lconn;
+         filter->hqfi_flags |= HQFI_FLAG_ERROR;
+         stream->sm_bflags &= ~SMBF_VERIFY_CL;
++        if (stream->conn_pub->enpub->enp_settings.es_message_error_is_stream)
++        {
++            lsquic_stream_msg_error(stream, HEC_MESSAGE_ERROR);
++            return;
++        }
++        lconn = stream->conn_pub->lconn;
+         lconn->cn_if->ci_abort_error(lconn, 1, HEC_MESSAGE_ERROR,
+             "number of bytes in DATA frames of stream %"PRIu64" exceeds "
+             "content-length limit of %llu", stream->id, stream->sm_cont_len);
+@@ -5139,6 +5211,20 @@
+                     goto end;
+                 default:
+                     assert(LQRHS_ERROR == rhs);
++                    if (stream->conn_pub->enpub
++                                ->enp_settings.es_message_error_is_stream)
++                    {
++                        stream->sm_qflags &= ~SMQF_QPACK_DEC;
++                        /* hq_filter_df needs HQFI_FLAG_ERROR to force-drain
++                         * the frame; lsqpack may have left p == prev. */
++                        filter->hqfi_flags |= HQFI_FLAG_ERROR;
++                        /* bun: qdec already reset this stream for the peer-
++                         * triggerable cases; the fallback covers the handful
++                         * of LQRHS_ERROR paths (OOM, !QDH_INITIALIZED) that
++                         * return early without reaching qdec's reset. */
++                        lsquic_stream_msg_error(stream, HEC_INTERNAL_ERROR);
++                        goto end;
++                    }
+                     stream->sm_qflags &= ~SMQF_QPACK_DEC;
+                     filter->hqfi_flags |= HQFI_FLAG_ERROR;
+                     LSQ_INFO("error processing header block");
+--- a/src/liblsquic/lsquic_qdec_hdl.c
++++ b/src/liblsquic/lsquic_qdec_hdl.c
+@@ -551,18 +551,34 @@
+ 
+ /* Intercept header errors so that upper-layer errors do not get
+  * misinterpreted as QPACK errors.
++ *
++ * bun: the stock library called ci_abort_error(HEC_MESSAGE_ERROR) here, so a
++ * single rejected header took the whole connection down.  RFC 9114 sec 4.1.2
++ * scopes malformed-message handling to the stream; reset that stream and
++ * propagate the failure so lsqpack stops decoding this field section.
+  */
+ static int
+-qdh_hsi_process_wrapper (struct qpack_dec_hdl *qdh, void *hset,
+-                                                struct lsxpack_header *xhdr)
++qdh_hsi_process_wrapper (struct qpack_dec_hdl *qdh,
++                struct lsquic_stream *stream, void *hset,
++                struct lsxpack_header *xhdr)
+ {
+     int retval;
+ 
+     retval = qdh->qdh_enpub->enp_hsi_if->hsi_process_header(hset, xhdr);
+     if (0 != retval)
+-        qdh->qdh_conn->cn_if->ci_abort_error(qdh->qdh_conn, 1,
+-            HEC_MESSAGE_ERROR,
+-            "error processing headers");
++    {
++        if (qdh->qdh_enpub->enp_settings.es_message_error_is_stream)
++        {
++            /* We are inside lsqpack's dhi_process_header callback; let
++             * stream_reset() skip lsquic_qdh_cancel_stream so it does not
++             * free the read_ctx qdec_header_process still holds. */
++            stream->sm_qflags &= ~SMQF_QPACK_DEC;
++            lsquic_stream_msg_error(stream, HEC_MESSAGE_ERROR);
++        }
++        else
++            qdh->qdh_conn->cn_if->ci_abort_error(qdh->qdh_conn, 1,
++                HEC_MESSAGE_ERROR, "error processing headers");
++    }
+ 
+     return retval;
+ }
+@@ -599,7 +615,7 @@
+     else if ((qdh->qdh_flags & QDH_SAVE_UA) && !qdh->qdh_ua)
+         qdh_maybe_set_user_agent(qdh, xhdr, &qdh->qdh_ua);
+ 
+-    return qdh_hsi_process_wrapper(qdh, u->ctx.hset, xhdr);
++    return qdh_hsi_process_wrapper(qdh, stream, u->ctx.hset, xhdr);
+ }
+ 
+ 
+@@ -658,7 +674,7 @@
+             uh->uh_exclusive = -1;
+             if (qdh->qdh_enpub->enp_hsi_if == lsquic_http1x_if)
+                 uh->uh_flags    |= UH_H1H;
+-            if (0 != qdh_hsi_process_wrapper(qdh, hset, NULL))
++            if (0 != qdh_hsi_process_wrapper(qdh, stream, hset, NULL))
+             {
+                 LSQ_DEBUG("finishing hset failed");
+                 free(uh);
+@@ -696,10 +712,19 @@
+     {
+         qdh_maybe_destroy_hblock_ctx(qdh, stream);
+         qerr = lsqpack_dec_get_err_info(&qdh->qdh_decoder);
+-        qdh->qdh_conn->cn_if->ci_abort_error(qdh->qdh_conn, 1,
+-            HEC_QPACK_DECOMPRESSION_FAILED, "QPACK decompression error; "
+-            "stream %"PRIu64", offset %"PRIu64", line %d", qerr->stream_id,
+-            qerr->off, qerr->line);
++        /* bun: RFC 9204 sec 2.2.3/4.5.1 mandate CONNECTION_CLOSE for a bad
++         * dynamic-table reference or Required Insert Count, but bun advertises
++         * es_qpack_dec_max_size=0 so there is no cross-stream decoder state a
++         * per-stream reset could desynchronize; that leaves the local-limit
++         * case (need > LSXPACK_MAX_STRLEN, RFC 9114 sec 4.2.2) which is
++         * stream-scoped.  qdh_read_encoder_stream stays connection-fatal. */
++        if (qdh->qdh_enpub->enp_settings.es_message_error_is_stream)
++            lsquic_stream_msg_error(stream, HEC_QPACK_DECOMPRESSION_FAILED);
++        else
++            qdh->qdh_conn->cn_if->ci_abort_error(qdh->qdh_conn, 1,
++                HEC_QPACK_DECOMPRESSION_FAILED, "QPACK decompression error; "
++                "stream %"PRIu64", offset %"PRIu64", line %d", qerr->stream_id,
++                qerr->off, qerr->line);
+     }
+ 
+     return rhs;

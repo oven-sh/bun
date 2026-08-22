@@ -486,6 +486,67 @@ describe("bundler", () => {
       },
     },
   });
+  // The extension remap above ("./worker" -> "/$bunfs/root/worker.js") joins
+  // the specifier into a fixed-size path buffer. A specifier that does not fit
+  // used to abort the whole process instead of firing the worker's error event.
+  itBundled("compile/WorkerRelativePathLongerThanPathBuffer", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        const w = (length) => Buffer.alloc(length, "w").toString();
+        // The specifier is joined onto import.meta.dir ("/$bunfs/root") plus a slash.
+        const joinedPrefixLength = import.meta.dir.length + 1;
+        const specifiers = [
+          ["./ past the buffer", "./" + w(100_000)],
+          ["../ past the buffer", "../" + w(100_000)],
+          // Path buffer sizes on macOS, Linux and Windows. The joined path
+          // stops one byte short of filling the buffer, so the join fits and
+          // only the ".js" appended by the remap does not.
+          ...[1024, 4096, 98302].map(size => [
+            "./ one byte short of a " + size + " byte buffer",
+            "./" + w(size - 1 - joinedPrefixLength),
+          ]),
+        ];
+        for (const [label, specifier] of specifiers) {
+          const { promise, resolve } = Promise.withResolvers();
+          const worker = new Worker(specifier);
+          worker.onerror = resolve;
+          await promise;
+          console.log(label + ": error event");
+        }
+      `,
+    },
+    run: {
+      stdout: `
+        ./ past the buffer: error event
+        ../ past the buffer: error event
+        ./ one byte short of a 1024 byte buffer: error event
+        ./ one byte short of a 4096 byte buffer: error event
+        ./ one byte short of a 98302 byte buffer: error event
+      `,
+      setCwd: true,
+    },
+  });
+  // Preloads go through the same remap, on the parent thread.
+  itBundled("compile/WorkerPreloadLongerThanPathBuffer", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        try {
+          new Worker("./worker.ts", { preload: ["./" + Buffer.alloc(100_000, "p").toString()] });
+          console.log("constructed");
+        } catch (e) {
+          console.log("constructor threw an Error:", e instanceof Error);
+        }
+      `,
+      "/worker.ts": /* js */ `
+        console.log("Worker loaded!");
+      `.trim(),
+    },
+    entryPointsRaw: ["./entry.ts", "./worker.ts"],
+    outfile: "dist/out",
+    run: { stdout: "constructor threw an Error: true", file: "dist/out", setCwd: true },
+  });
   itBundled("compile/Bun.embeddedFiles", {
     compile: true,
     // TODO: this shouldn't be necessary, or we should add a map aliasing files.

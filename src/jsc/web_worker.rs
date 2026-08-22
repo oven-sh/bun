@@ -1314,11 +1314,15 @@ unsafe fn resolve_entry_point_specifier<'s>(
             'try_from_extension: {
                 let mut pathbuf = bun_paths::path_buffer_pool::get();
                 let base_path = graph.base_public_path_with_default_suffix();
-                let base = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Loose>(
-                    base_path,
-                    &mut pathbuf[..],
-                    &[str],
-                );
+                // `str` is user input of any length. If it does not fit in the
+                // buffer (with room for the `.js` appended below), skip the
+                // remap and let the resolver below report it as not found.
+                let usable_len = pathbuf.len() - b".js".len();
+                let Some(base) = bun_paths::resolve_path::join_abs_string_buf_checked::<
+                    bun_paths::platform::Loose,
+                >(base_path, &mut pathbuf[..usable_len], &[str]) else {
+                    break 'try_from_extension;
+                };
                 let base_len = base.len();
                 let extname_len = bun_paths::extension(base).len();
                 // `extname` cannot be held as a sub-slice of `pathbuf` while

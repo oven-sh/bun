@@ -131,8 +131,6 @@ function runInCwdSuccess({
   antipattern,
   command = ["present"],
   auto = false,
-  env = {},
-  elideCount,
 }: {
   cwd: string;
   pattern: string | string[];
@@ -140,15 +138,8 @@ function runInCwdSuccess({
   antipattern?: RegExp | RegExp[];
   command?: string[];
   auto?: boolean;
-  env?: Record<string, string | undefined>;
-  elideCount?: number;
 }) {
   const cmd = auto ? [bunExe()] : [bunExe(), "run"];
-
-  // Add elide-lines first if specified
-  if (elideCount !== undefined) {
-    cmd.push("--elide-lines", elideCount.toString());
-  }
 
   if (Array.isArray(pattern)) {
     for (const p of pattern) {
@@ -165,7 +156,7 @@ function runInCwdSuccess({
   const { exitCode, stdout, stderr } = spawnSync({
     cwd,
     cmd,
-    env: { ...bunEnv, ...env },
+    env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -527,19 +518,12 @@ describe("bun", () => {
     expect(exitCode).toBe(23);
   });
 
-  function runElideLinesTest({
-    elideLines,
-    target_pattern,
-    antipattern,
-  }: {
-    elideLines: number;
-    target_pattern: RegExp[];
-    antipattern?: RegExp[];
-  }) {
+  function runElideLinesTest({ elideLines }: { elideLines: number }) {
+    const totalLines = 20;
     const dir = tempDirWithFiles("testworkspace", {
       packages: {
         dep0: {
-          "index.js": Array(20).fill("console.log('log_line');").join("\n"),
+          "index.js": Array(totalLines).fill("console.log('log_line');").join("\n"),
           "package.json": JSON.stringify({
             name: "dep0",
             scripts: {
@@ -554,67 +538,59 @@ describe("bun", () => {
       }),
     });
 
+    const { exitCode, stderr, stdout } = spawnSync({
+      cwd: dir,
+      cmd: [bunExe(), "run", "--filter", "./packages/dep0", "--elide-lines", String(elideLines), "script"],
+      env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stdoutval = stdout.toString();
+
+    expect(stderr.toString()).not.toContain("--elide-lines is only supported in terminal environments");
+
     if (process.platform === "win32") {
       // Windows spawnSync pipes stdout, so `windowsIsTerminal()` returns false,
       // `state.pretty_output` is false, and `redraw()` short-circuits before
-      // ever emitting elision output. `target_pattern` is intentionally NOT
-      // iterated here: every caller bundles TTY-only regexes such as
-      // `/\[N lines elided\]/` that would never appear in piped Windows output
-      // and would fail the test for the wrong reason. The hardcoded log_line
-      // match covers the non-TTY subset of every caller's target_pattern.
-      // `antipattern` is iterated because absence-checks remain valid on either
-      // code path.
-      const { exitCode, stderr, stdout } = spawnSync({
-        cwd: dir,
-        cmd: [bunExe(), "run", "--filter", "./packages/dep0", "--elide-lines", String(elideLines), "script"],
-        env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: "0" },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-
-      const stdoutval = stdout.toString();
-      expect(stderr.toString()).not.toContain("--elide-lines is only supported in terminal environments");
-      expect(stdoutval).toMatch(/(?:log_line[\s\S]*?){20}/);
-      if (antipattern) {
-        for (const r of antipattern) {
-          expect(stdoutval).not.toMatch(r);
-        }
-      }
+      // ever emitting elision output. The non-TTY path streams every line
+      // through untouched, so just verify nothing was dropped.
+      expect((stdoutval.match(/log_line/g) ?? []).length).toBe(totalLines);
+      expect(stdoutval).not.toMatch(/lines elided/);
       expect(exitCode).toBe(0);
       return;
     }
 
-    runInCwdSuccess({
-      cwd: dir,
-      pattern: "./packages/dep0",
-      env: { FORCE_COLOR: "1", NO_COLOR: "0" },
-      target_pattern,
-      antipattern,
-      command: ["script"],
-      elideCount: elideLines,
-    });
+    // The pretty renderer emits a sequence of synchronized-update frames
+    // (\x1b[?2026h ... \x1b[?2026l), each one clearing and replacing the
+    // previous on a real terminal. The raw pipe captures every intermediate
+    // frame, and how many of those appear depends on read-chunk timing, so
+    // only the final frame (rendered from the fully buffered child output
+    // with elision applied) is deterministic.
+    const lastFrameStart = stdoutval.lastIndexOf("\x1b[?2026h");
+    expect(lastFrameStart).toBeGreaterThanOrEqual(0);
+    const finalFrame = stdoutval.slice(lastFrameStart);
+
+    const elided = elideLines === 0 ? 0 : totalLines - elideLines;
+    expect((finalFrame.match(/log_line/g) ?? []).length).toBe(totalLines - elided);
+    if (elided > 0) {
+      expect(finalFrame).toContain(`[${elided} lines elided]`);
+    } else {
+      expect(finalFrame).not.toMatch(/lines elided/);
+    }
+    expect(finalFrame).toMatch(/Done/);
+    expect(exitCode).toBe(0);
   }
 
   test("elides output by default when using --filter", () => {
-    runElideLinesTest({
-      elideLines: 10,
-      target_pattern: [/\[10 lines elided\]/, /(?:log_line[\s\S]*?){20}/],
-    });
+    runElideLinesTest({ elideLines: 10 });
   });
 
   test("respects --elide-lines argument", () => {
-    runElideLinesTest({
-      elideLines: 15,
-      target_pattern: [/\[5 lines elided\]/, /(?:log_line[\s\S]*?){20}/],
-    });
+    runElideLinesTest({ elideLines: 15 });
   });
 
   test("--elide-lines=0 shows all output", () => {
-    runElideLinesTest({
-      elideLines: 0,
-      target_pattern: [/(?:log_line[\s\S]*?){20}/],
-      antipattern: [/lines elided/],
-    });
+    runElideLinesTest({ elideLines: 0 });
   });
 
   test("--elide-lines is a no-op (not an error) when stdout is not a terminal", () => {

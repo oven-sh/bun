@@ -368,7 +368,7 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
         debug_assert_eq!(order.len(), fracs.len());
         for (&i, frac) in order.iter().zip(fracs.iter()) {
             let fc = &by_file.values()[i];
-            let _ = CoverageReportText::write_format_with_values::<ENABLE_COLORS>(
+            let _ = CoverageReportText::write_format_with_values(
                 &fc.path,
                 max_len,
                 *frac,
@@ -376,6 +376,7 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
                 frac.failing,
                 &mut body,
                 true,
+                ENABLE_COLORS,
             );
             let _ = body.write_all(Output::pretty_fmt::<ENABLE_COLORS>("<r><d> | <r>").as_ref());
 
@@ -412,7 +413,7 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
         // bun_core::io::Writer doesn't impl bun_io::Write — buffer
         // through a Vec then write_all once.
         let mut all_files: Vec<u8> = Vec::new();
-        let _ = CoverageReportText::write_format_with_values::<ENABLE_COLORS>(
+        let _ = CoverageReportText::write_format_with_values(
             b"All files",
             max_len,
             avg,
@@ -420,6 +421,7 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
             failing,
             &mut all_files,
             false,
+            ENABLE_COLORS,
         );
         let _ = console.write_all(&all_files);
         let _ = console.write_all(Output::pretty_fmt::<ENABLE_COLORS>("<r><d> |<r>\n").as_ref());

@@ -28,15 +28,9 @@ use bun_sys::{self, Fd, File};
 // Debug log scope for test-runner entrypoint loading.
 bun_output::declare_scope!(bun_test, hidden);
 
-// ─── coverage façade ────────────────────────────────────────────────────────
-// Thin adapter over `bun_sourcemap_jsc::code_coverage` that preserves the
-// legacy call paths used in `print_code_coverage` below (the adapter
-// dispatches the runtime `enable_ansi_colors` bool to the const generic).
-// Drop once the body is normalised to call `code_coverage::{text,lcov}`
-// directly with `<ENABLE_ANSI_COLORS>`.
 mod coverage {
     pub(super) use bun_sourcemap_jsc::code_coverage::{
-        ByteRangeMapping, Fraction, Report as CodeCoverageReport, lcov as Lcov,
+        ByteRangeMapping, Fraction, Report as CodeCoverageReport, lcov as Lcov, text as Text,
     };
 
     /// Less-than predicate adapted to the `Ordering` shape `sort_by` wants.
@@ -46,70 +40,6 @@ mod coverage {
         b: &&mut ByteRangeMapping,
     ) -> core::cmp::Ordering {
         bun_core::order(a.source_url.slice(), b.source_url.slice())
-    }
-
-    #[allow(non_snake_case)]
-    pub(super) mod Text {
-        use super::*;
-        use bun_sourcemap_jsc::code_coverage::text;
-
-        /// Runtime-bool → const-generic dispatch for `text::write_format`.
-        #[inline]
-        pub(crate) fn write_format(
-            report: &CodeCoverageReport,
-            max_filename_length: usize,
-            fraction: &mut Fraction,
-            base_path: &[u8],
-            writer: &mut impl bun_io::Write,
-            enable_ansi_colors: bool,
-        ) -> bun_io::Result<()> {
-            if enable_ansi_colors {
-                text::write_format::<true>(report, max_filename_length, fraction, base_path, writer)
-            } else {
-                text::write_format::<false>(
-                    report,
-                    max_filename_length,
-                    fraction,
-                    base_path,
-                    writer,
-                )
-            }
-        }
-
-        /// Runtime-bool → const-generic dispatch for `text::write_format_with_values`.
-        #[inline]
-        pub(crate) fn write_format_with_values(
-            filename: &[u8],
-            max_filename_length: usize,
-            vals: Fraction,
-            failing: Fraction,
-            failed: bool,
-            writer: &mut impl bun_io::Write,
-            indent_name: bool,
-            enable_ansi_colors: bool,
-        ) -> bun_io::Result<()> {
-            if enable_ansi_colors {
-                text::write_format_with_values::<true>(
-                    filename,
-                    max_filename_length,
-                    vals,
-                    failing,
-                    failed,
-                    writer,
-                    indent_name,
-                )
-            } else {
-                text::write_format_with_values::<false>(
-                    filename,
-                    max_filename_length,
-                    vals,
-                    failing,
-                    failed,
-                    writer,
-                    indent_name,
-                )
-            }
-        }
     }
 }
 use coverage::{ByteRangeMapping, CodeCoverageReport, Fraction};
@@ -1700,10 +1630,6 @@ impl CommandLineReporter {
             // Unreachable by construction.
             unreachable!("No reporters enabled")
         };
-
-        if !reporters_text && !reporters_lcov {
-            unreachable!("No reporters enabled");
-        }
 
         let relative_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
 

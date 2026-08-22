@@ -1453,23 +1453,17 @@ impl PublishCommand {
 
         let mut dist_props: Vec<G::Property> = Vec::with_capacity(3);
         dist_props.push(G::Property {
-            key: Some(Expr::init(
-                E::String::init(b"integrity"),
-                bun_ast::Loc::EMPTY,
-            )),
-            value: Some(Expr::init(
-                E::String::init(integrity_fmt),
-                bun_ast::Loc::EMPTY,
-            )),
+            key: Some(Expr::init(E::String::init(b"integrity"), None)),
+            value: Some(Expr::init(E::String::init(integrity_fmt), None)),
             ..Default::default()
         });
         dist_props.push(G::Property {
-            key: Some(Expr::init(E::String::init(b"shasum"), bun_ast::Loc::EMPTY)),
-            value: Some(Expr::init(E::String::init(shasum_fmt), bun_ast::Loc::EMPTY)),
+            key: Some(Expr::init(E::String::init(b"shasum"), None)),
+            value: Some(Expr::init(E::String::init(shasum_fmt), None)),
             ..Default::default()
         });
         dist_props.push(G::Property {
-            key: Some(Expr::init(E::String::init(b"tarball"), bun_ast::Loc::EMPTY)),
+            key: Some(Expr::init(E::String::init(b"tarball"), None)),
             value: Some(Expr::init(
                 E::String::init(leak!({
                     let mut v = Vec::new();
@@ -1495,7 +1489,7 @@ impl PublishCommand {
                     .map_err(|_| AllocError)?;
                     v
                 })),
-                bun_ast::Loc::EMPTY,
+                None,
             )),
             ..Default::default()
         });
@@ -1508,7 +1502,7 @@ impl PublishCommand {
                     properties: G::PropertyList::move_from_list(dist_props),
                     ..Default::default()
                 },
-                bun_ast::Loc::EMPTY,
+                None,
             ),
         )?;
 
@@ -1627,13 +1621,10 @@ impl PublishCommand {
                     }
 
                     bin_props.push(G::Property {
-                        key: Some(Expr::init(
-                            E::String::init(leak!(package_name)),
-                            bun_ast::Loc::EMPTY,
-                        )),
+                        key: Some(Expr::init(E::String::init(leak!(package_name)), None)),
                         value: Some(Expr::init(
                             E::String::init(leak!(normalized.as_bytes())),
-                            bun_ast::Loc::EMPTY,
+                            None,
                         )),
                         ..Default::default()
                     });
@@ -1648,7 +1639,7 @@ impl PublishCommand {
                             properties: G::PropertyList::move_from_list(bin_props),
                             ..Default::default()
                         },
-                        bun_ast::Loc::EMPTY,
+                        None,
                     ));
                 }
                 ExprData::EObject(bin_obj) => {
@@ -1713,12 +1704,9 @@ impl PublishCommand {
                         bin_props.push(G::Property {
                             key: Some(Expr::init(
                                 E::String::init(crate::cli::cli_dupe(&key)),
-                                bun_ast::Loc::EMPTY,
+                                None,
                             )),
-                            value: Some(Expr::init(
-                                E::String::init(leak!(value.as_bytes())),
-                                bun_ast::Loc::EMPTY,
-                            )),
+                            value: Some(Expr::init(E::String::init(leak!(value.as_bytes())), None)),
                             ..Default::default()
                         });
                     }
@@ -1733,7 +1721,7 @@ impl PublishCommand {
                             properties: G::PropertyList::move_from_list(bin_props),
                             ..Default::default()
                         },
-                        bun_ast::Loc::EMPTY,
+                        None,
                     ));
                 }
                 _ => {}
@@ -1835,12 +1823,9 @@ impl PublishCommand {
                                 E::String::init(leak!(bun_paths::basename_posix(
                                     subpath.as_bytes()
                                 ))),
-                                bun_ast::Loc::EMPTY,
+                                None,
                             )),
-                            value: Some(Expr::init(
-                                E::String::init(subpath.as_bytes()),
-                                bun_ast::Loc::EMPTY,
-                            )),
+                            value: Some(Expr::init(E::String::init(subpath.as_bytes()), None)),
                             ..Default::default()
                         });
 
@@ -1862,7 +1847,7 @@ impl PublishCommand {
                             properties: G::PropertyList::move_from_list(bin_props),
                             ..Default::default()
                         },
-                        bun_ast::Loc::EMPTY,
+                        None,
                     ),
                 )?;
             }

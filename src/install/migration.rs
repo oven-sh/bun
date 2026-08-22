@@ -353,9 +353,9 @@ fn migrate_npm_lockfile<'a>(
             let workspace_packages_count = workspaces.process_names_array(
                 &mut manager.workspace_package_json_cache,
                 log,
-                NamesArray::Immutable(json_array.get(), json_array_loc),
+                NamesArray::Immutable(json_array.get(), Some(json_array_loc)),
                 &json_src,
-                wksp_loc,
+                Some(wksp_loc),
                 None,
                 MissingWorkspace::Skip,
             )?;

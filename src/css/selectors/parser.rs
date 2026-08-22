@@ -1190,13 +1190,7 @@ impl<'a> SelectorParser<'a> {
     ) -> <impl_::Selectors as SelectorImpl>::LocalIdentifier {
         if input.flags.css_modules() {
             return <impl_::Selectors as SelectorImpl>::LocalIdentifier::from_ref(
-                input.add_symbol_for_name(
-                    raw,
-                    tag,
-                    bun_ast::Loc {
-                        start: i32::try_from(loc).expect("int cast"),
-                    },
-                ),
+                input.add_symbol_for_name(raw, tag, bun_ast::Loc::from_usize(loc)),
                 crate::values::ident::debug_ident(raw, input.arena()),
             );
         }

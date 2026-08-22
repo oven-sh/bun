@@ -11,7 +11,7 @@ use crate::collections::{IndexMap, IndexSet};
 use crate::diagnostics::{CompilerError, CompilerErrorDetail, ErrorCategory};
 use bun_alloc::{AstAlloc, AstVec};
 use bun_ast::{
-    ClauseItem, ImportKind, ImportRecord, Loc, LocRef, S, Stmt, StoreSlice, StoreStr, Symbol,
+    ClauseItem, ImportKind, ImportRecord, LocRef, S, Stmt, StoreSlice, StoreStr, Symbol,
 };
 
 use crate::hir::environment::OutputMode;
@@ -208,7 +208,7 @@ pub(crate) fn validate_restricted_imports(
                 "Import from module {}",
                 bun_core::BStr::new(import.path.text)
             ));
-            detail.loc = crate::lowering::convert_loc(import.range.loc);
+            detail.loc = crate::lowering::convert_loc(import.range.map(|r| r.loc));
             error.push_error_detail(detail);
         }
     }
@@ -264,12 +264,12 @@ pub(crate) fn add_imports_to_program(
                 namespace_ref,
                 default_name: None,
                 items: StoreSlice::new_mut(items.leak()),
-                star_name_loc: Loc::EMPTY,
+                star_name_loc: None,
                 import_record_index,
                 is_single_line: true,
                 phase_defer: false,
             },
-            Loc::EMPTY,
+            None,
         ));
     }
 
@@ -284,9 +284,9 @@ pub(crate) fn add_imports_to_program(
 fn make_import_specifier(spec: &NonLocalImportSpecifier) -> ClauseItem {
     ClauseItem {
         alias: arena_str(spec.imported.as_bytes()),
-        alias_loc: Loc::EMPTY,
+        alias_loc: None,
         name: LocRef {
-            loc: Loc::EMPTY,
+            loc: None,
             ref_: spec.name_ref,
         },
         original_name: StoreStr::EMPTY,

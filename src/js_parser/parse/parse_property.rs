@@ -155,7 +155,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if args.len() > 0 {
                             args[0].binding.loc
                         } else {
-                            loc
+                            Some(loc)
                         },
                     );
                     if args.len() > 1 {
@@ -390,7 +390,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             && !p.lexer.has_newline_before
                                         {
                                             opts.is_async = true;
-                                            opts.async_range = name_range;
 
                                             // p.markSyntaxFeature(ObjectAccessors, name_range)
 
@@ -520,7 +519,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             let stmt_list = bun_alloc::AstVec::<Stmt>::from_slice(stmts.as_slice());
                             let block = p.arena.alloc(G::ClassStaticBlock {
                                 stmts: stmt_list,
-                                loc,
+                                loc: Some(loc),
                             });
 
                             return Ok(Some(G::Property {
@@ -678,7 +677,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 if p.lexer.token == T::TEquals {
                     if Self::IS_TYPESCRIPT_ENABLED {
-                        if !opts.declare_range.is_empty() {
+                        if opts.declare_range.is_some() {
                             p.log().add_range_error(
                                 Some(p.source),
                                 p.lexer.range(),
@@ -786,7 +785,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 key: Some(key),
                 value: Some(Expr {
                     data: js_ast::ExprData::EMissing(E::Missing {}),
-                    loc: bun_ast::Loc::default(),
+                    loc: None,
                 }),
                 ..Default::default()
             };

@@ -19,7 +19,7 @@ use super::{gather_captured_context, lower_inner};
 pub(super) fn lower_function_to_value(
     builder: &mut HirBuilder<'_>,
     func: FunctionNode<'_>,
-    func_loc: Loc,
+    func_loc: Option<Loc>,
     expr_type: FunctionExpressionType,
 ) -> Result<InstructionValue, CompilerDiagnostic> {
     let loc = convert_loc(func_loc);
@@ -39,7 +39,7 @@ pub(super) fn lower_function_to_value(
 fn lower_function(
     builder: &mut HirBuilder<'_>,
     func: FunctionNode<'_>,
-    func_loc: Loc,
+    func_loc: Option<Loc>,
 ) -> Result<LoweredFunction, CompilerDiagnostic> {
     let loc = convert_loc(func_loc);
     let id = func
@@ -103,7 +103,7 @@ fn lower_function(
 pub(super) fn lower_function_declaration(
     builder: &mut HirBuilder<'_>,
     func_decl: &G::Fn,
-    stmt_loc: Loc,
+    stmt_loc: Option<Loc>,
 ) -> Result<(), CompilerError> {
     let loc = convert_loc(stmt_loc);
     let func = FunctionNode::Function(func_decl);
@@ -234,7 +234,7 @@ pub(super) fn lower_function_declaration(
 fn lower_function_for_object_method(
     builder: &mut HirBuilder<'_>,
     method: &G::Fn,
-    method_loc: Loc,
+    method_loc: Option<Loc>,
 ) -> Result<LoweredFunction, CompilerError> {
     let func_loc = convert_loc(method_loc);
     let func = FunctionNode::Function(method);
@@ -291,7 +291,7 @@ pub(super) fn lower_object_method(
 ) -> Result<Option<ObjectProperty>, CompilerError> {
     use ast::flags::Property as PF;
     let key_expr = method.key.as_ref();
-    let method_loc = key_expr.map(|k| k.loc).unwrap_or(Loc::EMPTY);
+    let method_loc = key_expr.and_then(|k| k.loc);
 
     let is_method =
         matches!(method.kind, G::PropertyKind::Normal) && method.flags.contains(PF::IsMethod);

@@ -23,7 +23,7 @@ use crate::StoreStr as Str;
 
 #[derive(Clone, Copy)]
 pub struct Expr {
-    pub loc: Loc,
+    pub loc: Option<Loc>,
     pub data: Data,
 }
 
@@ -36,7 +36,7 @@ impl Default for Expr {
 impl Expr {
     pub const EMPTY: Expr = Expr {
         data: Data::EMissing(E::Missing {}),
-        loc: Loc::EMPTY,
+        loc: None,
     };
 }
 
@@ -81,9 +81,9 @@ impl Expr {
     }
 
     #[inline]
-    pub fn init_identifier(ref_: Ref, loc: Loc) -> Expr {
+    pub fn init_identifier(ref_: Ref, loc: impl Into<Option<Loc>>) -> Expr {
         Expr {
-            loc,
+            loc: loc.into(),
             data: Data::EIdentifier(E::Identifier::init(ref_)),
         }
     }
@@ -132,7 +132,7 @@ impl Expr {
 #[derive(Clone, Copy)]
 pub struct Query {
     pub expr: Expr,
-    pub loc: Loc,
+    pub loc: Option<Loc>,
     pub i: u32,
 }
 
@@ -156,7 +156,8 @@ impl Expr {
     }
 
     /// Materialize an immutable JSON leaf/container value as an `Expr`.
-    pub fn from_json_value(value: &E::JsonValue, loc: Loc) -> Expr {
+    pub fn from_json_value(value: &E::JsonValue, loc: impl Into<Option<Loc>>) -> Expr {
+        let loc = loc.into();
         match value {
             E::JsonValue::Null => Expr::init(E::Null, loc),
             E::JsonValue::Boolean(value) => Expr::init(E::Boolean { value: *value }, loc),
@@ -180,7 +181,7 @@ impl Expr {
     }
 
     /// Visit every property of an object expression (`E::Object` or `E::ObjectJSON`) in source order.
-    pub fn for_each_property(&self, mut f: impl FnMut(&[u8], Loc, Expr)) {
+    pub fn for_each_property(&self, mut f: impl FnMut(&[u8], Option<Loc>, Expr)) {
         let _: Result<(), core::convert::Infallible> =
             self.try_for_each_property(|key, loc, value| {
                 f(key, loc, value);
@@ -191,7 +192,7 @@ impl Expr {
     /// [`Expr::for_each_property`] with a fallible callback; stops at the first `Err`.
     pub fn try_for_each_property<Error>(
         &self,
-        mut f: impl FnMut(&[u8], Loc, Expr) -> Result<(), Error>,
+        mut f: impl FnMut(&[u8], Option<Loc>, Expr) -> Result<(), Error>,
     ) -> Result<(), Error> {
         match &self.data {
             Data::EObject(obj) => {
@@ -211,7 +212,7 @@ impl Expr {
                 for property in obj.get().properties() {
                     f(
                         property.key.slice(),
-                        property.key_loc,
+                        Some(property.key_loc),
                         Expr::from_json_value(&property.value, property.key_loc),
                     )?;
                 }
@@ -248,7 +249,7 @@ impl Expr {
                     .find(|(_, p)| p.key.slice() == name)?;
                 Some(Query {
                     expr: Expr::from_json_value(&prop.value, prop.key_loc),
-                    loc: prop.key_loc,
+                    loc: Some(prop.key_loc),
                     i: i as u32,
                 })
             }
@@ -518,7 +519,7 @@ impl Expr {
                         data: Str::new(name),
                         ..Default::default()
                     },
-                    Loc::EMPTY,
+                    None,
                 )),
                 value: Some(value),
                 ..Default::default()
@@ -552,7 +553,7 @@ impl Expr {
                         data: Str::new(value),
                         ..Default::default()
                     },
-                    Loc::EMPTY,
+                    None,
                 ));
                 return Ok(());
             }
@@ -566,14 +567,14 @@ impl Expr {
                         data: Str::new(name),
                         ..Default::default()
                     },
-                    Loc::EMPTY,
+                    None,
                 )),
                 value: Some(Expr::init(
                     E::String {
                         data: Str::new(value),
                         ..Default::default()
                     },
-                    Loc::EMPTY,
+                    None,
                 )),
                 ..Default::default()
             },
@@ -585,7 +586,7 @@ impl Expr {
         &self,
         bump: &'b Bump,
         name: &[u8],
-    ) -> Result<Option<(&'b [u8], Loc)>, AllocError> {
+    ) -> Result<Option<(&'b [u8], Option<Loc>)>, AllocError> {
         let expr = self;
         if let Some(q) = expr.as_property(name) {
             if let Some(str) = q.expr.as_string(bump) {
@@ -595,7 +596,7 @@ impl Expr {
         Ok(None)
     }
 
-    pub fn get_number(&self, name: &[u8]) -> Option<(f64, Loc)> {
+    pub fn get_number(&self, name: &[u8]) -> Option<(f64, Option<Loc>)> {
         if let Some(q) = self.as_property(name) {
             if let Some(num) = q.expr.as_number() {
                 return Some((num, q.expr.loc));
@@ -638,7 +639,7 @@ pub enum ArrayIterator {
     Json {
         array: StoreRef<E::ArrayJSON>,
         index: u32,
-        loc: Loc,
+        loc: Option<Loc>,
     },
 }
 
@@ -1039,19 +1040,19 @@ impl Expr {
     /// Be careful to free the memory (or use an arena that does it for you)
     /// Also, prefer Expr.init or Expr.alloc when possible. This will be slower.
     #[inline]
-    pub fn allocate<T: IntoExprData>(bump: &Bump, st: T, loc: Loc) -> Expr {
+    pub fn allocate<T: IntoExprData>(bump: &Bump, st: T, loc: impl Into<Option<Loc>>) -> Expr {
         data::Store::assert();
         Expr {
-            loc,
+            loc: loc.into(),
             data: st.into_data_alloc(bump),
         }
     }
 
     #[inline]
-    pub fn init<T: IntoExprData>(st: T, loc: Loc) -> Expr {
+    pub fn init<T: IntoExprData>(st: T, loc: impl Into<Option<Loc>>) -> Expr {
         data::Store::assert();
         Expr {
-            loc,
+            loc: loc.into(),
             data: st.into_data_store(),
         }
     }
@@ -1808,7 +1809,7 @@ impl Data {
 
 fn json_value_deep_clone(
     value: &E::JsonValue,
-    loc: Loc,
+    loc: Option<Loc>,
     bump: &Bump,
 ) -> Result<Expr, bun_alloc::AllocError> {
     Ok(match value {
@@ -1891,7 +1892,7 @@ impl Data {
                     Vec::with_capacity_in(rows.len(), bun_alloc::AstAlloc);
                 for (i, row) in rows.iter().enumerate() {
                     let key_bytes: &[u8] = bump.alloc_slice_copy(row.key.slice());
-                    let value_loc = value_locs.map_or(row.key_loc, |l| l[i]);
+                    let value_loc = Some(value_locs.map_or(row.key_loc, |l| l[i]));
                     properties.push(G::Property {
                         key: Some(Expr::allocate(
                             bump,
@@ -1919,7 +1920,7 @@ impl Data {
                 let mut items: crate::ExprNodeList =
                     Vec::with_capacity_in(rows.len(), bun_alloc::AstAlloc);
                 for (i, value) in rows.iter().enumerate() {
-                    let loc = item_locs.map_or(crate::Loc::EMPTY, |l| l[i]);
+                    let loc = item_locs.map(|l| l[i]);
                     items.push(json_value_deep_clone(value, loc, bump)?);
                 }
                 let item = bump.alloc(E::Array {

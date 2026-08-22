@@ -2,7 +2,6 @@ use crate::BundledAst as JSAst;
 use crate::mal_prelude::*;
 use bun_alloc::Arena as Bump;
 use bun_ast::ImportRecordFlags;
-use bun_ast::Loc;
 use bun_ast::{self as js_ast, Binding, Expr, ExprNodeList, Stmt};
 use bun_ast::{B, E, G, S};
 use bun_collections::VecExt;
@@ -79,13 +78,13 @@ pub(crate) fn convert_stmts_for_chunk(
                         ref_: c.unbound_module_ref,
                         ..Default::default()
                     },
-                    Loc::EMPTY,
+                    None,
                 ),
                 name: b"exports".into(),
-                name_loc: Loc::EMPTY,
+                name_loc: None,
                 ..Default::default()
             },
-            Loc::EMPTY,
+            None,
         ));
     }
 
@@ -133,7 +132,7 @@ pub(crate) fn convert_stmts_for_chunk(
                                 S::Import {
                                     namespace_ref: s.namespace_ref,
                                     import_record_index: s.import_record_index,
-                                    star_name_loc: alias.loc,
+                                    star_name_loc: Some(alias.loc),
                                     ..Default::default()
                                 },
                                 stmt.loc,

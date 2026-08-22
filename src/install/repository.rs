@@ -477,7 +477,7 @@ impl CacheStaging {
         if let Err(err) = renamed {
             log.add_error_fmt(
                 None,
-                bun_ast::Loc::EMPTY,
+                None,
                 format_args!(
                     "moving \"{}\" to cache dir failed: {}",
                     BStr::new(name),
@@ -802,7 +802,7 @@ impl RepositoryExt for Repository {
                     if let Err(err) = exec(env, &[b"git", b"-C", path, b"fetch", b"--quiet"]) {
                         log.add_error_fmt(
                             None,
-                            bun_ast::Loc::EMPTY,
+                            None,
                             format_args!("\"git fetch\" for \"{}\" failed", BStr::new(name)),
                         );
                         return Err(err);
@@ -819,7 +819,7 @@ impl RepositoryExt for Repository {
                 {
                     log.add_error_fmt(
                         None,
-                        bun_ast::Loc::EMPTY,
+                        None,
                         format_args!(
                             "--offline: git repository for \"{}\" is not in the cache",
                             BStr::new(name)
@@ -846,7 +846,7 @@ impl RepositoryExt for Repository {
                     if err == crate::Error::RepositoryNotFound || attempt > 1 {
                         log.add_error_fmt(
                             None,
-                            bun_ast::Loc::EMPTY,
+                            None,
                             format_args!("\"git clone\" for \"{}\" failed", BStr::new(name)),
                         );
                     }
@@ -911,7 +911,7 @@ impl RepositoryExt for Repository {
             Err(err) => {
                 log.add_error_fmt(
                     None,
-                    bun_ast::Loc::EMPTY,
+                    None,
                     format_args!(
                         "no commit matching \"{}\" found for \"{}\" (but repository exists)",
                         BStr::new(committish),
@@ -942,7 +942,7 @@ impl RepositoryExt for Repository {
         if !is_safe_resolved_tag(resolved) {
             log.add_error_fmt(
                 None,
-                bun_ast::Loc::EMPTY,
+                None,
                 format_args!(
                     "invalid git commit \"{}\" for \"{}\"",
                     BStr::new(resolved),
@@ -995,7 +995,7 @@ impl RepositoryExt for Repository {
                 staging.discard();
                 log.add_error_fmt(
                     None,
-                    bun_ast::Loc::EMPTY,
+                    None,
                     format_args!("\"git clone\" for \"{}\" failed", BStr::new(name)),
                 );
                 return Err(err);
@@ -1017,7 +1017,7 @@ impl RepositoryExt for Repository {
                 staging.discard();
                 log.add_error_fmt(
                     None,
-                    bun_ast::Loc::EMPTY,
+                    None,
                     format_args!("\"git checkout\" for \"{}\" failed", BStr::new(name)),
                 );
                 return Err(err);
@@ -1056,7 +1056,7 @@ impl RepositoryExt for Repository {
                     staging.discard();
                     log.add_error_fmt(
                         None,
-                        bun_ast::Loc::EMPTY,
+                        None,
                         format_args!(
                             "writing \".bun-tag\" for \"{}\" failed: {}",
                             BStr::new(name),
@@ -1086,7 +1086,7 @@ impl RepositoryExt for Repository {
 
                     log.add_error_fmt(
                         None,
-                        bun_ast::Loc::EMPTY,
+                        None,
                         format_args!(
                             "\"package.json\" for \"{}\" failed to open: {}",
                             BStr::new(name),
@@ -1103,7 +1103,7 @@ impl RepositoryExt for Repository {
             Err(err) => {
                 log.add_error_fmt(
                     None,
-                    bun_ast::Loc::EMPTY,
+                    None,
                     format_args!(
                         "\"package.json\" for \"{}\" failed to resolve: {}",
                         BStr::new(name),

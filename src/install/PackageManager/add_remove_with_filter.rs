@@ -105,7 +105,7 @@ pub(crate) fn load_workspace_members(manager: &mut PackageManager) -> WorkspaceM
         .as_ref()
         .filter(|q| !q.expr.is_array())
         .and_then(|q| q.expr.as_property(b"packages"));
-    let names: Option<(NamesArray<'_>, bun_ast::Loc)> = match (&workspaces, &packages) {
+    let names: Option<(NamesArray<'_>, Option<bun_ast::Loc>)> = match (&workspaces, &packages) {
         (Some(q), _) if q.expr.is_array() => Some((
             NamesArray::from_expr(&q.expr, value_loc_of(&root_source, q.loc))
                 .expect("is_array was checked above"),

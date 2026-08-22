@@ -712,7 +712,7 @@ impl SideEffects {
 
     pub(crate) fn is_primitive_with_side_effects<'a, const TS: bool, const SCAN: bool>(
         p: &P<'a, TS, SCAN>,
-        loc: bun_ast::Loc,
+        loc: Option<bun_ast::Loc>,
         data: &ExprData,
     ) -> bool {
         if !p.stack_check.is_safe_to_recurse() {
@@ -864,7 +864,7 @@ impl SideEffects {
             return None;
         }
         if !p.stack_check.is_safe_to_recurse() {
-            p.report_stack_overflow(bun_ast::Loc::EMPTY);
+            p.report_stack_overflow(None);
             return None;
         }
         match exp {

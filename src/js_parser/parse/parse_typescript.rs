@@ -154,7 +154,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             E::Dot {
                                 target: expr,
                                 name,
-                                name_loc,
+                                name_loc: Some(name_loc),
                                 ..Default::default()
                             },
                             loc,
@@ -168,7 +168,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         E::Call {
                             target: expr,
                             args: args.list,
-                            close_paren_loc: args.loc,
+                            close_paren_loc: Some(args.loc),
                             ..Default::default()
                         },
                         loc,
@@ -222,7 +222,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Declare the namespace and create the scope
         let mut name = LocRef {
-            loc: name_loc,
+            loc: Some(name_loc),
             ref_: Ref::NONE,
         };
         let scope_index = p.push_scope_for_parse_pass(ScopeKind::Entry, loc)?;
@@ -458,7 +458,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.pop_scope();
 
         if !opts.is_typescript_declare {
-            name.ref_ = p.declare_symbol(SymbolKind::TsNamespace, name_loc, name_text)?;
+            name.ref_ = p.declare_symbol(SymbolKind::TsNamespace, Some(name_loc), name_text)?;
             p.ref_to_ts_namespace_member
                 .insert(name.ref_, ns_member_data);
         }
@@ -478,9 +478,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub(crate) fn parse_type_script_import_equals_stmt(
         &mut self,
-        loc: bun_ast::Loc,
+        loc: Option<bun_ast::Loc>,
         opts: &mut ParseStatementOptions,
-        default_name_loc: bun_ast::Loc,
+        default_name_loc: Option<bun_ast::Loc>,
         default_name: &'a [u8],
     ) -> Result<Stmt, Error> {
         let p = self;
@@ -514,7 +514,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 value = p.new_expr(
                     E::Call {
                         target,
-                        close_paren_loc,
+                        close_paren_loc: Some(close_paren_loc),
                         args,
                         ..Default::default()
                     },
@@ -533,7 +533,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     E::Dot {
                         target: prev_value,
                         name: dot_name,
-                        name_loc: dot_name_loc,
+                        name_loc: Some(dot_name_loc),
                         ..Default::default()
                     },
                     loc,
@@ -581,7 +581,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let name_text = p.lexer.identifier;
         p.lexer.expect(T::TIdentifier)?;
         let mut name = LocRef {
-            loc: name_loc,
+            loc: Some(name_loc),
             ref_: Ref::NONE,
         };
 
@@ -595,7 +595,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Declare the enum and create the scope
         let scope_index = p.scopes_in_order.len();
         if !opts.is_typescript_declare {
-            name.ref_ = p.declare_symbol(SymbolKind::TsEnum, name_loc, name_text)?;
+            name.ref_ = p.declare_symbol(SymbolKind::TsEnum, Some(name_loc), name_text)?;
             let _ = p.push_scope_for_parse_pass(ScopeKind::Entry, loc)?;
             p.current_scope_mut().ts_namespace = Some(ts_namespace);
             // Overwrite allowed: on a forbidden redeclaration `declare_symbol` returns
@@ -647,7 +647,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // Identifiers can be referenced by other values
             if !opts.is_typescript_declare && needs_symbol {
-                value.ref_ = p.declare_symbol(SymbolKind::Other, value.loc, value.name.slice())?;
+                value.ref_ =
+                    p.declare_symbol(SymbolKind::Other, Some(value.loc), value.name.slice())?;
             }
 
             // Parse the initializer
@@ -663,7 +664,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             exported_members.put(
                 value_name.slice(),
                 TSNamespaceMember {
-                    loc: value_loc,
+                    loc: Some(value_loc),
                     data: TSNamespaceMemberData::EnumProperty,
                 },
             )?;
@@ -719,7 +720,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 VecExt::append(&mut p.current_scope_mut().generated, arg_ref);
             } else {
                 arg_ref = p
-                    .declare_symbol(SymbolKind::Hoisted, name_loc, name_text)
+                    .declare_symbol(SymbolKind::Hoisted, Some(name_loc), name_text)
                     .expect("unreachable");
             }
             p.ref_to_ts_namespace_member

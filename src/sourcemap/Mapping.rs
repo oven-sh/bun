@@ -451,7 +451,7 @@ pub fn parse(
         if mapping.ensure_total_capacity(count).is_err() {
             return Err(ParseFail {
                 err: crate::Error::Alloc(bun_alloc::AllocError),
-                loc: Loc::default(),
+                loc: None,
             });
         }
     }
@@ -499,7 +499,7 @@ pub fn parse(
             SimdResult::OutOfMemory => {
                 return Err(ParseFail {
                     err: crate::Error::Alloc(bun_alloc::AllocError),
-                    loc: Loc::default(),
+                    loc: None,
                 });
             }
         }
@@ -530,9 +530,7 @@ pub fn parse(
         if generated_column_delta.start == 0 {
             return Err(ParseFail {
                 err: crate::Error::MissingGeneratedColumnValue,
-                loc: Loc {
-                    start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
-                },
+                loc: Some(Loc::from_usize(bytes.len() - remain.len())),
             });
         }
 
@@ -545,9 +543,7 @@ pub fn parse(
         if generated_column < 0 {
             return Err(ParseFail {
                 err: crate::Error::InvalidGeneratedColumnValue,
-                loc: Loc {
-                    start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
-                },
+                loc: Some(Loc::from_usize(bytes.len() - remain.len())),
             });
         }
         generated.columns = Ordinal::from_zero_based(generated_column);
@@ -578,9 +574,7 @@ pub fn parse(
         if source_index_delta.start == 0 {
             return Err(ParseFail {
                 err: crate::Error::InvalidSourceIndexDelta,
-                loc: Loc {
-                    start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
-                },
+                loc: Some(Loc::from_usize(bytes.len() - remain.len())),
             });
         }
         source_index = source_index.wrapping_add(source_index_delta.value);
@@ -588,9 +582,7 @@ pub fn parse(
         if source_index < 0 || source_index >= sources_count {
             return Err(ParseFail {
                 err: crate::Error::InvalidSourceIndexValue,
-                loc: Loc {
-                    start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
-                },
+                loc: Some(Loc::from_usize(bytes.len() - remain.len())),
             });
         }
         remain = &remain[source_index_delta.start..];
@@ -600,9 +592,7 @@ pub fn parse(
         if original_line_delta.start == 0 {
             return Err(ParseFail {
                 err: crate::Error::MissingOriginalLine,
-                loc: Loc {
-                    start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
-                },
+                loc: Some(Loc::from_usize(bytes.len() - remain.len())),
             });
         }
 
@@ -613,9 +603,7 @@ pub fn parse(
         if original_line < 0 {
             return Err(ParseFail {
                 err: crate::Error::InvalidOriginalLineValue,
-                loc: Loc {
-                    start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
-                },
+                loc: Some(Loc::from_usize(bytes.len() - remain.len())),
             });
         }
         original.lines = Ordinal::from_zero_based(original_line);
@@ -626,9 +614,7 @@ pub fn parse(
         if original_column_delta.start == 0 {
             return Err(ParseFail {
                 err: crate::Error::MissingOriginalColumnValue,
-                loc: Loc {
-                    start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
-                },
+                loc: Some(Loc::from_usize(bytes.len() - remain.len())),
             });
         }
 
@@ -639,9 +625,7 @@ pub fn parse(
         if original_column < 0 {
             return Err(ParseFail {
                 err: crate::Error::InvalidOriginalColumnValue,
-                loc: Loc {
-                    start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
-                },
+                loc: Some(Loc::from_usize(bytes.len() - remain.len())),
             });
         }
         original.columns = Ordinal::from_zero_based(original_column);
@@ -663,10 +647,7 @@ pub fn parse(
                     if name_index_delta.start == 0 {
                         return Err(ParseFail {
                             err: crate::Error::InvalidNameIndexDelta,
-                            loc: Loc {
-                                start: i32::try_from(bytes.len() - remain.len())
-                                    .unwrap_or(i32::MAX),
-                            },
+                            loc: Some(Loc::from_usize(bytes.len() - remain.len())),
                         });
                     }
                     remain = &remain[name_index_delta.start..];
@@ -677,10 +658,7 @@ pub fn parse(
                             if mapping.ensure_with_names().is_err() {
                                 return Err(ParseFail {
                                     err: crate::Error::Alloc(bun_alloc::AllocError),
-                                    loc: Loc {
-                                        start: i32::try_from(bytes.len() - remain.len())
-                                            .unwrap_or(i32::MAX),
-                                    },
+                                    loc: None,
                                 });
                             }
                         }

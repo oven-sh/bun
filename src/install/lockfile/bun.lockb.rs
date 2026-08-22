@@ -831,7 +831,7 @@ pub(crate) fn load(
                 if !resolved.is_empty() && !crate::repository::is_safe_resolved_tag(resolved) {
                     log.add_error_fmt(
                         None,
-                        bun_ast::Loc::EMPTY,
+                        None,
                         format_args!(
                             "Invalid git dependency tag \"{}\" in bun.lockb",
                             bstr::BStr::new(resolved)

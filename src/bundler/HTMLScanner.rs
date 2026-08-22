@@ -5,7 +5,7 @@ use crate::Error;
 use crate::bun_fs as fs;
 use bun_alloc::AstAlloc;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag, Index as AstIndex};
-use bun_ast::{Loc, Log, Range, Source};
+use bun_ast::{Log, Source};
 use bun_paths::fs::Path as FsPath;
 use bun_paths::{platform, resolve_path};
 use bun_sys as sys;
@@ -110,7 +110,7 @@ impl<'a> HTMLScanner<'a> {
         let record = ImportRecord {
             path: FsPath::init(owned),
             kind,
-            range: Range::NONE,
+            range: None,
             tag: ImportRecordTag::default(),
             loader: None,
             source_index: AstIndex::default(),
@@ -131,7 +131,7 @@ impl<'a> HTMLScanner<'a> {
         // Vec<u8>` → `Cow::Owned`, so the Log owns and drops the copy.
         let _ = self
             .log
-            .add_error(Some(self.source), Loc::EMPTY, message.to_vec());
+            .add_error(Some(self.source), None, message.to_vec());
     }
 
     fn on_tag(

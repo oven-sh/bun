@@ -3,7 +3,7 @@
 
 use core::mem::ManuallyDrop;
 
-use bun_ast::{Loc, Log};
+use bun_ast::Log;
 use bun_core::Output;
 use bun_core::StringOrTinyString;
 use bun_semver as semver;
@@ -275,7 +275,7 @@ impl<'a> Task<'a> {
                             .unwrap_or(crate::Error::HTTPError);
                         this.log.add_error_fmt(
                             None,
-                            Loc::EMPTY,
+                            None,
                             format_args!(
                                 "{} downloading package manifest {}",
                                 err.name(),
@@ -351,7 +351,7 @@ impl<'a> Task<'a> {
                         npm::registry::PackageVersionResponse::NotFound => {
                             this.log.add_error_fmt(
                                 None,
-                                Loc::EMPTY,
+                                None,
                                 format_args!(
                                     "404 - GET {}",
                                     // `manifest` (split-borrow of

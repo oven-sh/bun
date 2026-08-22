@@ -23,7 +23,7 @@ pub(crate) struct Parser<'a, 's, 'i> {
     pub cursor: usize,
     opts: JSONOptions,
     token_start: usize,
-    prev_error_loc: Loc,
+    prev_error_loc: Option<Loc>,
     stack_check: StackCheck,
     scratch_props: Vec<E::PropertyJSON>,
     scratch_json_items: Vec<E::JsonValue>,
@@ -48,7 +48,7 @@ impl<'s> LexerLog<'s> for Parser<'_, 's, '_> {
         self.source
     }
     #[inline]
-    fn prev_error_loc_mut(&mut self) -> &mut Loc {
+    fn prev_error_loc_mut(&mut self) -> &mut Option<Loc> {
         &mut self.prev_error_loc
     }
     #[inline]
@@ -115,7 +115,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             cursor: 0,
             opts,
             token_start: 0,
-            prev_error_loc: Loc::EMPTY,
+            prev_error_loc: None,
             stack_check: StackCheck::init(),
             scratch_props: Vec::new(),
             scratch_json_items: Vec::new(),
@@ -447,19 +447,19 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 let Data::EObjectJSON(r) = e.data else {
                     unreachable!()
                 };
-                Ok((E::JsonValue::Object(r), e.loc))
+                Ok((E::JsonValue::Object(r), loc))
             }
             b'[' => {
                 let e = self.parse_array(loc)?;
                 let Data::EArrayJSON(r) = e.data else {
                     unreachable!()
                 };
-                Ok((E::JsonValue::Array(r), e.loc))
+                Ok((E::JsonValue::Array(r), loc))
             }
             b'"' | b'\'' => Ok((E::JsonValue::String(self.parse_string_utf8_at(start)?), loc)),
             _ => {
                 let e = self.parse_scalar(loc)?;
-                let value_loc = e.loc;
+                let value_loc = e.loc.unwrap_or(loc);
                 Ok((
                     match e.data {
                         Data::ENumber(n) => E::JsonValue::Number(n),
@@ -629,7 +629,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         let mark = self.scratch_json_items.len();
         let (_, here) = self.peek();
         let mut is_single_line = !self.newline_before(here);
-        let mut close_loc = Loc::EMPTY;
+        let mut close_loc = None;
         let result: PResult = loop {
             let (b, p) = self.peek();
             let cursor = self.cursor;
@@ -642,7 +642,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 if is_single_line && self.newline_before(p) {
                     is_single_line = false;
                 }
-                close_loc = usize2loc(p);
+                close_loc = Some(usize2loc(p));
                 self.cursor += 1;
                 break Ok(());
             }
@@ -674,7 +674,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                     if is_single_line && self.newline_before(after) {
                         is_single_line = false;
                     }
-                    close_loc = usize2loc(after);
+                    close_loc = Some(usize2loc(after));
                     self.cursor += 1;
                     break Ok(());
                 }
@@ -716,7 +716,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         let hmark = self.dup_hashes.len();
         let (_, here) = self.peek();
         let mut is_single_line = !self.newline_before(here);
-        let mut close_loc = Loc::EMPTY;
+        let mut close_loc = None;
         let warn_dup = self.opts.json_warn_duplicate_keys;
 
         let result: PResult = loop {
@@ -731,7 +731,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 if is_single_line && self.newline_before(p) {
                     is_single_line = false;
                 }
-                close_loc = usize2loc(p);
+                close_loc = Some(usize2loc(p));
                 self.cursor += 1;
                 break Ok(());
             }
@@ -763,7 +763,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                     if is_single_line && self.newline_before(after) {
                         is_single_line = false;
                     }
-                    close_loc = usize2loc(after);
+                    close_loc = Some(usize2loc(after));
                     self.cursor += 1;
                     break Ok(());
                 }
@@ -1389,7 +1389,7 @@ fn decode_string_escapes<'s, const ALLOW_RAW_CONTROL: bool, L: LexerLog<'s, Err 
 struct MiniLog<'a, 's> {
     log: &'a mut Log,
     source: &'s Source,
-    prev_error_loc: Loc,
+    prev_error_loc: Option<Loc>,
 }
 
 impl<'s> LexerLog<'s> for MiniLog<'_, 's> {
@@ -1400,7 +1400,7 @@ impl<'s> LexerLog<'s> for MiniLog<'_, 's> {
     fn source(&self) -> &'s Source {
         self.source
     }
-    fn prev_error_loc_mut(&mut self) -> &mut Loc {
+    fn prev_error_loc_mut(&mut self) -> &mut Option<Loc> {
         &mut self.prev_error_loc
     }
     fn start(&self) -> usize {
@@ -1421,7 +1421,7 @@ pub(crate) fn decode_auto_quoted(
     let mut l = MiniLog {
         log,
         source,
-        prev_error_loc: Loc::EMPTY,
+        prev_error_loc: None,
     };
     let mut body = body;
     if opts.ignore_leading_escape_sequences && body.first() == Some(&b'\\') {

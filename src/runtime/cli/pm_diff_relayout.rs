@@ -107,7 +107,7 @@ fn body(arena: C, s: &mut Stmt) {
             arena.arena,
             bun_ast::S::Block {
                 stmts: list,
-                close_brace_loc: bun_ast::Loc::EMPTY,
+                close_brace_loc: None,
             },
             s.loc,
         );

@@ -71,7 +71,7 @@ pub struct BundledAst<'arena> {
     pub(crate) module_ref: Ref,
     pub(crate) wrapper_ref: Ref,
     pub(crate) require_ref: Ref,
-    pub(crate) top_level_await_keyword: bun_ast::Range,
+    pub(crate) top_level_await_keyword: Option<bun_ast::Range>,
     pub tla_check: TlaCheck,
 
     // These are used when bundling. They are filled in during the parser pass
@@ -115,7 +115,7 @@ bun_collections::multi_array_columns! {
         module_ref: Ref,
         wrapper_ref: Ref,
         require_ref: Ref,
-        top_level_await_keyword: bun_ast::Range,
+        top_level_await_keyword: Option<bun_ast::Range>,
         tla_check: TlaCheck,
         named_imports: NamedImports,
         named_exports: NamedExports,
@@ -170,7 +170,7 @@ impl<'arena> BundledAst<'arena> {
             module_ref: Ref::NONE,
             wrapper_ref: Ref::NONE,
             require_ref: Ref::NONE,
-            top_level_await_keyword: bun_ast::Range::NONE,
+            top_level_await_keyword: None,
             tla_check: TlaCheck::default(),
             named_imports: NamedImports::default(),
             named_exports: NamedExports::default(),
@@ -237,14 +237,7 @@ impl<'arena> BundledAst<'arena> {
             uses_exports_ref: self.flags.contains(Flags::USES_EXPORTS_REF),
             uses_module_ref: self.flags.contains(Flags::USES_MODULE_REF),
             // uses_require_ref: ast.uses_require_ref,
-            export_keyword: bun_ast::Range {
-                len: if self.flags.contains(Flags::USES_EXPORT_KEYWORD) {
-                    1
-                } else {
-                    0
-                },
-                loc: bun_ast::Loc::default(),
-            },
+            uses_export_keyword: self.flags.contains(Flags::USES_EXPORT_KEYWORD),
             force_cjs_to_esm: self.flags.contains(Flags::FORCE_CJS_TO_ESM),
             has_lazy_export: self.flags.contains(Flags::HAS_LAZY_EXPORT),
             commonjs_module_exports_assigned_deoptimized: self
@@ -268,7 +261,7 @@ impl<'arena> BundledAst<'arena> {
         flags.set(Flags::USES_EXPORTS_REF, ast.uses_exports_ref);
         flags.set(Flags::USES_MODULE_REF, ast.uses_module_ref);
         // flags.set(Flags::USES_REQUIRE_REF, ast.uses_require_ref);
-        flags.set(Flags::USES_EXPORT_KEYWORD, ast.export_keyword.len > 0);
+        flags.set(Flags::USES_EXPORT_KEYWORD, ast.uses_export_keyword);
         flags.set(Flags::HAS_CHAR_FREQ, ast.char_freq.is_some());
         flags.set(Flags::FORCE_CJS_TO_ESM, ast.force_cjs_to_esm);
         flags.set(Flags::HAS_LAZY_EXPORT, ast.has_lazy_export);

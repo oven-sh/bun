@@ -61,8 +61,14 @@ struct StaticElement {
 
 #[derive(Clone, Copy)]
 enum RewriteKind {
-    ReplaceRef { old: Ref, new: Ref },
-    ReplaceThis { ref_: Ref, loc: bun_ast::Loc },
+    ReplaceRef {
+        old: Ref,
+        new: Ref,
+    },
+    ReplaceThis {
+        ref_: Ref,
+        loc: Option<bun_ast::Loc>,
+    },
 }
 
 // ── Shallow-copy helpers (Property / Class are not `Clone` because they hold
@@ -146,7 +152,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// recordUsage + E.Identifier in one call.
     #[inline]
-    fn use_ref(&mut self, ref_: Ref, l: bun_ast::Loc) -> Expr {
+    fn use_ref(&mut self, ref_: Ref, l: Option<bun_ast::Loc>) -> Expr {
         self.record_usage(ref_);
         self.new_expr(
             E::Identifier {
@@ -158,7 +164,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// Allocate args + callRuntime in one call.
-    fn call_rt(&mut self, l: bun_ast::Loc, name: &'static [u8], args: &[Expr]) -> Expr {
+    fn call_rt(&mut self, l: Option<bun_ast::Loc>, name: &'static [u8], args: &[Expr]) -> Expr {
         let bump = self.arena;
         let a = bump.alloc_slice_copy(args);
         let list = ExprNodeList::from_arena_slice(a);
@@ -173,7 +179,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// Single var declaration statement.
-    fn var_decl(&mut self, ref_: Ref, value: Option<Expr>, l: bun_ast::Loc) -> Stmt {
+    fn var_decl(&mut self, ref_: Ref, value: Option<Expr>, l: Option<bun_ast::Loc>) -> Stmt {
         let binding = self.b(B::Identifier { r#ref: ref_ }, l);
         let decls = DeclList::from_slice(&[G::Decl { binding, value }]);
         self.s(
@@ -192,7 +198,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         v1: Option<Expr>,
         r2: Ref,
         v2: Option<Expr>,
-        l: bun_ast::Loc,
+        l: Option<bun_ast::Loc>,
     ) -> Stmt {
         let b1 = self.b(B::Identifier { r#ref: r1 }, l);
         let b2 = self.b(B::Identifier { r#ref: r2 }, l);
@@ -216,7 +222,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// recordUsage + Expr.assign.
-    fn assign_to(&mut self, ref_: Ref, value: Expr, l: bun_ast::Loc) -> Expr {
+    fn assign_to(&mut self, ref_: Ref, value: Expr, l: Option<bun_ast::Loc>) -> Expr {
         self.record_usage(ref_);
         Expr::assign(
             self.new_expr(
@@ -231,7 +237,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// new WeakMap() expression.
-    fn new_weak_map_expr(&mut self, l: bun_ast::Loc) -> Expr {
+    fn new_weak_map_expr(&mut self, l: Option<bun_ast::Loc>) -> Expr {
         let ref_ = self.find_symbol(l, b"WeakMap").expect("unreachable").r#ref;
         let target = self.new_expr(
             E::Identifier {
@@ -252,7 +258,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// new WeakSet() expression.
-    fn new_weak_set_expr(&mut self, l: bun_ast::Loc) -> Expr {
+    fn new_weak_set_expr(&mut self, l: Option<bun_ast::Loc>) -> Expr {
         let ref_ = self.find_symbol(l, b"WeakSet").expect("unreachable").r#ref;
         let target = self.new_expr(
             E::Identifier {
@@ -273,7 +279,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// Create a static block property from a single expression.
-    fn make_static_block(&mut self, expr: Expr, l: bun_ast::Loc) -> Property {
+    fn make_static_block(&mut self, expr: Expr, l: Option<bun_ast::Loc>) -> Property {
         let bump = self.arena;
         let stmt = self.s(
             S::SExpr {
@@ -350,7 +356,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         is_static: bool,
         storage_ref: Ref,
         value: Option<Expr>,
-        loc: bun_ast::Loc,
+        loc: Option<bun_ast::Loc>,
         constructor_inject: &mut BumpVec<'_, Stmt>,
         static_blocks: &mut BumpVec<'_, Property>,
     ) {
@@ -646,7 +652,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     // ── Private access rewriting ─────────────────────────
 
-    fn private_get_expr(&mut self, obj: Expr, info: &PrivateLoweredInfo, l: bun_ast::Loc) -> Expr {
+    fn private_get_expr(
+        &mut self,
+        obj: Expr,
+        info: &PrivateLoweredInfo,
+        l: Option<bun_ast::Loc>,
+    ) -> Expr {
         if let Some(desc_ref) = info.accessor_desc_ref {
             let storage = self.use_ref(info.storage_ref, l);
             let desc = self.use_ref(desc_ref, l);
@@ -679,7 +690,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         obj: Expr,
         info: &PrivateLoweredInfo,
         val: Expr,
-        l: bun_ast::Loc,
+        l: Option<bun_ast::Loc>,
     ) -> Expr {
         if let Some(desc_ref) = info.accessor_desc_ref {
             let storage = self.use_ref(info.storage_ref, l);
@@ -890,7 +901,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// Drain receiver-capture temporaries created past `baseline` into a
     /// single `var` declaration statement; `None` if none were created.
-    fn drain_capture_temp_decls(&mut self, baseline: usize, loc: bun_ast::Loc) -> Option<Stmt> {
+    fn drain_capture_temp_decls(
+        &mut self,
+        baseline: usize,
+        loc: Option<bun_ast::Loc>,
+    ) -> Option<Stmt> {
         let total = self.temp_refs_to_declare.len();
         if total == baseline {
             return None;
@@ -925,7 +940,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         stmts: js_ast::StmtNodeList,
         temps_before: usize,
-        body_loc: bun_ast::Loc,
+        body_loc: Option<bun_ast::Loc>,
     ) -> js_ast::StmtNodeList {
         let Some(decl_stmt) = self.drain_capture_temp_decls(temps_before, body_loc) else {
             return stmts;
@@ -1084,7 +1099,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn lower_standard_decorators_expr(
         &mut self,
         class: &mut G::Class,
-        loc: bun_ast::Loc,
+        loc: Option<bun_ast::Loc>,
         name_from_context: Option<&'a [u8]>,
     ) -> Expr {
         let bump = self.arena;
@@ -1105,7 +1120,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn lower_impl(
         &mut self,
         class: &mut G::Class,
-        loc: bun_ast::Loc,
+        loc: Option<bun_ast::Loc>,
         name_from_context: Option<&'a [u8]>,
         is_expr: bool,
         original_stmt: Option<Stmt>,
@@ -1122,7 +1137,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // ── Phase 1: Setup ───────────────────────────────
         let mut class_name_ref: Ref;
-        let mut class_name_loc: bun_ast::Loc;
+        let mut class_name_loc: Option<bun_ast::Loc>;
         let mut expr_class_ref: Option<Ref> = None;
         let mut expr_class_is_anonymous = false;
         let mut expr_var_decls = BumpVec::<G::Decl>::new_in(bump);
@@ -2379,7 +2394,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let ctor_body_ptr = bun_ast::StoreSlice::new_mut(ctor_stmts.into_bump_slice_mut());
                 let func = G::Fn {
                     name: None,
-                    open_parens_loc: bun_ast::Loc::EMPTY,
+                    open_parens_loc: None,
                     args: bun_ast::StoreSlice::EMPTY,
                     body: G::FnBody {
                         loc,

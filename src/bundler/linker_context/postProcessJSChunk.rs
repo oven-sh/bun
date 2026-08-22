@@ -139,7 +139,7 @@ pub(crate) fn post_process_js_chunk(
                 path: bun_paths::fs::Path::init(
                     ctx.chunks[import_record.chunk_index as usize].unique_key,
                 ),
-                range: bun_ast::Range::NONE,
+                range: None,
                 // Remaining fields (`ImportRecord` has no `Default` impl):
                 tag: ImportRecordTag::None,
                 loader: None,
@@ -244,7 +244,7 @@ pub(crate) fn post_process_js_chunk(
             if wraps[idx].wrap != crate::WrapKind::None {
                 continue;
             }
-            if !tla_keywords[idx].is_empty() {
+            if tla_keywords[idx].is_some() {
                 mi.flags.has_tla = true;
                 break;
             }
@@ -740,21 +740,18 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                         // "export default require_foo();"
                         S::ExportDefault {
                             default_name: bun_ast::LocRef {
-                                loc: bun_ast::Loc::EMPTY,
+                                loc: None,
                                 ref_: ast.wrapper_ref,
                             },
                             value: StmtOrExpr::Expr(Expr::init(
                                 E::Call {
-                                    target: Expr::init_identifier(
-                                        ast.wrapper_ref,
-                                        bun_ast::Loc::EMPTY,
-                                    ),
+                                    target: Expr::init_identifier(ast.wrapper_ref, None),
                                     ..Default::default()
                                 },
-                                bun_ast::Loc::EMPTY,
+                                None,
                             )),
                         },
-                        bun_ast::Loc::EMPTY,
+                        None,
                     ));
                 }
                 _ => {
@@ -769,18 +766,18 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                                                 E::Call {
                                                     target: Expr::init_identifier(
                                                         ast.wrapper_ref,
-                                                        bun_ast::Loc::EMPTY,
+                                                        None,
                                                     ),
                                                     ..Default::default()
                                                 },
-                                                bun_ast::Loc::EMPTY,
+                                                None,
                                             ),
                                         },
-                                        bun_ast::Loc::EMPTY,
+                                        None,
                                     ),
                                     ..Default::default()
                                 },
-                                bun_ast::Loc::EMPTY,
+                                None,
                             ));
                         } else {
                             // "init_foo();"
@@ -788,17 +785,14 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                                 S::SExpr {
                                     value: Expr::init(
                                         E::Call {
-                                            target: Expr::init_identifier(
-                                                ast.wrapper_ref,
-                                                bun_ast::Loc::EMPTY,
-                                            ),
+                                            target: Expr::init_identifier(ast.wrapper_ref, None),
                                             ..Default::default()
                                         },
-                                        bun_ast::Loc::EMPTY,
+                                        None,
                                     ),
                                     ..Default::default()
                                 },
-                                bun_ast::Loc::EMPTY,
+                                None,
                             ));
                         }
                     }
@@ -898,28 +892,28 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                                             binding: Binding::alloc(
                                                 temp_arena,
                                                 B::Identifier { r#ref: temp_ref },
-                                                bun_ast::Loc::EMPTY,
+                                                None,
                                             ),
                                             value: Some(Expr::init(
                                                 E::ImportIdentifier {
                                                     ref_: resolved_export_data.import_ref,
                                                     ..Default::default()
                                                 },
-                                                bun_ast::Loc::EMPTY,
+                                                None,
                                             )),
                                         }]),
                                         ..Default::default()
                                     },
-                                    bun_ast::Loc::EMPTY,
+                                    None,
                                 ));
 
                                 items.push(bun_ast::ClauseItem {
                                     name: bun_ast::LocRef {
                                         ref_: temp_ref,
-                                        loc: bun_ast::Loc::EMPTY,
+                                        loc: None,
                                     },
                                     alias: bun_ast::StoreStr::new(alias),
-                                    alias_loc: bun_ast::Loc::EMPTY,
+                                    alias_loc: None,
                                     ..Default::default()
                                 });
                             } else {
@@ -967,7 +961,7 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                                 items: bun_ast::StoreSlice::new_mut(items),
                                 is_single_line: false,
                             },
-                            bun_ast::Loc::EMPTY,
+                            None,
                         ));
 
                         if flags.needs_synthetic_default_export && !had_default_export {
@@ -988,7 +982,7 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                                             export_item.name.loc,
                                         )),
                                     },
-                                    bun_ast::Loc::EMPTY,
+                                    None,
                                 );
                                 VecExt::append(
                                     &mut properties,
@@ -1006,7 +1000,7 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                                             E::Function {
                                                 func: G::Fn {
                                                     body: G::FnBody {
-                                                        loc: bun_ast::Loc::EMPTY,
+                                                        loc: None,
                                                         stmts: bun_ast::StoreSlice::new_mut(
                                                             fn_body,
                                                         ),
@@ -1026,17 +1020,17 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                                 S::ExportDefault {
                                     default_name: bun_ast::LocRef {
                                         ref_: Ref::NONE,
-                                        loc: bun_ast::Loc::EMPTY,
+                                        loc: None,
                                     },
                                     value: StmtOrExpr::Expr(Expr::init(
                                         E::Object {
                                             properties,
                                             ..Default::default()
                                         },
-                                        bun_ast::Loc::EMPTY,
+                                        None,
                                     )),
                                 },
-                                bun_ast::Loc::EMPTY,
+                                None,
                             ));
                         }
                     }
@@ -1059,22 +1053,19 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                     stmts.push(Stmt::assign(
                         Expr::init(
                             E::Dot {
-                                target: Expr::init_identifier(
-                                    c.unbound_module_ref,
-                                    bun_ast::Loc::EMPTY,
-                                ),
+                                target: Expr::init_identifier(c.unbound_module_ref, None),
                                 name: b"exports".into(),
-                                name_loc: bun_ast::Loc::EMPTY,
+                                name_loc: None,
                                 ..Default::default()
                             },
-                            bun_ast::Loc::EMPTY,
+                            None,
                         ),
                         Expr::init(
                             E::Call {
-                                target: Expr::init_identifier(ast.wrapper_ref, bun_ast::Loc::EMPTY),
+                                target: Expr::init_identifier(ast.wrapper_ref, None),
                                 ..Default::default()
                             },
-                            bun_ast::Loc::EMPTY,
+                            None,
                         ),
                     ));
                 }
@@ -1084,17 +1075,14 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                         S::SExpr {
                             value: Expr::init(
                                 E::Call {
-                                    target: Expr::init_identifier(
-                                        ast.wrapper_ref,
-                                        bun_ast::Loc::EMPTY,
-                                    ),
+                                    target: Expr::init_identifier(ast.wrapper_ref, None),
                                     ..Default::default()
                                 },
-                                bun_ast::Loc::EMPTY,
+                                None,
                             ),
                             ..Default::default()
                         },
-                        bun_ast::Loc::EMPTY,
+                        None,
                     ));
                 }
                 _ => {}

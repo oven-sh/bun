@@ -4,7 +4,7 @@ use bun_collections::VecExt;
 use bun_core;
 
 use crate::lexer as js_lexer;
-use crate::p::P;
+use crate::p::{EsmExportKeyword, P};
 use bun_ast as js_ast;
 
 use js_ast::op::Level;
@@ -322,7 +322,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(p.s(
             S::With {
                 body,
-                body_loc,
+                body_loc: Some(body_loc),
                 value: test,
             },
             loc,
@@ -386,14 +386,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 cases.push(js_ast::Case {
                     value,
                     body: bun_ast::StoreSlice::from_bump(body),
-                    loc: bun_ast::Loc::EMPTY,
+                    loc: None,
                 });
             }
             p.lexer.expect(T::TCloseBrace)?;
             Ok(p.s(
                 S::Switch {
                     test,
-                    body_loc,
+                    body_loc: Some(body_loc),
                     cases: bun_ast::StoreSlice::from_bump(cases),
                 },
                 loc,
@@ -453,10 +453,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.pop_scope();
             p.lexer.next()?;
             catch = Some(js_ast::Catch {
-                loc: catch_loc,
+                loc: Some(catch_loc),
                 binding,
                 body: bun_ast::StoreSlice::from_bump(stmts),
-                body_loc: catch_body_loc,
+                body_loc: Some(catch_body_loc),
             });
             p.pop_scope();
         }
@@ -469,7 +469,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let stmts = p.parse_stmts_up_to(T::TCloseBrace, &mut stmt_opts)?;
             p.lexer.next()?;
             finally = Some(js_ast::Finally {
-                loc: finally_loc,
+                loc: Some(finally_loc),
                 stmts: bun_ast::StoreSlice::from_bump(stmts),
             });
             p.pop_scope();
@@ -477,7 +477,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         Ok(p.s(
             S::Try {
-                body_loc,
+                body_loc: Some(body_loc),
                 body: bun_ast::StoreSlice::from_bump(body),
                 catch,
                 finally,
@@ -509,7 +509,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // TODO: improve error handling here
                     //                 didGenerateError := p.markSyntaxFeature(compat.ForAwait, awaitRange)
                     if p.fn_or_arrow_data_parse.is_top_level {
-                        p.top_level_await_keyword = await_range;
+                        p.top_level_await_keyword = Some(await_range);
                         // p.markSyntaxFeature(compat.TopLevelAwait, awaitRange)
                     }
                 }
@@ -633,7 +633,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if let Some(r) = bad_async_range {
                     let full = bun_ast::Range {
                         loc: r.loc,
-                        len: p.lexer.range().end().start - r.loc.start,
+                        len: i32::try_from(p.lexer.range().end().get() - r.loc.get())
+                            .expect("int cast"),
                     };
                     p.log().add_range_error(
                         Some(p.source),
@@ -773,9 +774,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.lexer.has_newline_before {
             p.log().add_error(
                 Some(p.source),
-                bun_ast::Loc {
-                    start: loc.start + 5,
-                },
+                loc.add(5),
                 b"Unexpected newline after \"throw\"",
             );
             return Err(crate::Error::SyntaxError);
@@ -811,7 +810,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             Ok(p.s(
                 S::Block {
                     stmts: bun_ast::StoreSlice::from_bump(stmts),
-                    close_brace_loc,
+                    close_brace_loc: Some(close_brace_loc),
                 },
                 loc,
             ))
@@ -829,7 +828,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<Stmt> {
         let previous_export_keyword = p.esm_export_keyword;
         match opts.scope {
-            StatementScope::Module => p.esm_export_keyword = p.lexer.range(),
+            StatementScope::Module => {
+                p.esm_export_keyword = Some(EsmExportKeyword::Parsed(p.lexer.range()))
+            }
             StatementScope::Namespace => {}
             StatementScope::Nested => {
                 p.lexer.unexpected()?;
@@ -1006,10 +1007,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     ref_: name.ref_,
                                 }
                             } else {
-                                p.create_default_name(default_loc)
+                                p.create_default_name(Some(default_loc))
                             }
                         } else {
-                            p.create_default_name(default_loc)
+                            p.create_default_name(Some(default_loc))
                         };
 
                         let value = js_ast::StmtOrExpr::Stmt(stmt);
@@ -1022,7 +1023,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         ));
                     }
 
-                    let default_name = p.create_default_name(loc);
+                    let default_name = p.create_default_name(Some(loc));
 
                     let mut expr = p.parse_async_prefix_expr(async_range, Level::Comma)?;
                     p.parse_suffix(&mut expr, Level::Comma, None, EFlags::None)?;
@@ -1087,14 +1088,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     r,
                                     format_args!(
                                         "Unexpected \"{}\"",
-                                        bstr::BStr::new(p.source.text_for_range(r))
+                                        bstr::BStr::new(
+                                            r.map_or(&b""[..], |r| p.source.text_for_range(r))
+                                        )
                                     ),
                                 );
                                 return Err(crate::Error::SyntaxError);
                             }
                         }
 
-                        p.create_default_name(default_loc)
+                        p.create_default_name(Some(default_loc))
                     };
                     p.has_es_module_syntax = true;
                     return Ok(p.s(
@@ -1136,7 +1139,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             js_ast::StmtData::SFunction(func_container) => {
                                 if let Some(_name) = func_container.func.name {
                                     break 'default_name_getter LocRef {
-                                        loc: default_loc,
+                                        loc: Some(default_loc),
                                         ref_: _name.ref_,
                                     };
                                 }
@@ -1144,7 +1147,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             js_ast::StmtData::SClass(class) => {
                                 if let Some(_name) = class.class.class_name {
                                     break 'default_name_getter LocRef {
-                                        loc: default_loc,
+                                        loc: Some(default_loc),
                                         ref_: _name.ref_,
                                     };
                                 }
@@ -1152,7 +1155,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             _ => {}
                         }
 
-                        p.create_default_name(default_loc)
+                        p.create_default_name(Some(default_loc))
                     };
                     return Ok(p.s(
                         S::ExportDefault {
@@ -1233,7 +1236,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 let import_record_index = p.add_import_record(
                     ImportKind::Stmt,
-                    path.loc,
+                    Some(path.loc),
                     path.text,
                     // TODO: import assertions
                     // path.assertions
@@ -1308,8 +1311,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         );
                     }
 
-                    let import_record_index =
-                        p.add_import_record(ImportKind::Stmt, parsed_path.loc, parsed_path.text);
+                    let import_record_index = p.add_import_record(
+                        ImportKind::Stmt,
+                        Some(parsed_path.loc),
+                        parsed_path.text,
+                    );
                     let path_name = fs::PathName::init(parsed_path.text);
                     let namespace_ref = {
                         use std::io::Write as _;
@@ -1392,7 +1398,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
     ) -> Result<Stmt> {
         let previous_import_keyword = p.esm_import_keyword;
-        p.esm_import_keyword = p.lexer.range();
+        p.esm_import_keyword = Some(p.lexer.range());
         p.lexer.next()?;
         let mut stmt: S::Import = S::Import {
             namespace_ref: Ref::NONE,
@@ -1443,7 +1449,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.expect_contextual_keyword(b"as")?;
                 stmt = S::Import {
                     namespace_ref: p.store_name_in_ref(p.lexer.identifier),
-                    star_name_loc: p.lexer.loc(),
+                    star_name_loc: Some(p.lexer.loc()),
                     import_record_index: u32::MAX,
                     ..Default::default()
                 };
@@ -1491,7 +1497,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     namespace_ref: Ref::NONE,
                     import_record_index: u32::MAX,
                     default_name: Some(LocRef {
-                        loc: p.lexer.loc(),
+                        loc: Some(p.lexer.loc()),
                         ref_: p.store_name_in_ref(default_name),
                     }),
                     ..Default::default()
@@ -1525,7 +1531,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.lexer.expect_contextual_keyword(b"as")?;
                     stmt = S::Import {
                         namespace_ref: p.store_name_in_ref(p.lexer.identifier),
-                        star_name_loc: p.lexer.loc(),
+                        star_name_loc: Some(p.lexer.loc()),
                         import_record_index: u32::MAX,
                         phase_defer: true,
                         ..Default::default()
@@ -1545,7 +1551,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             T::TIdentifier => {
                                 if p.lexer.identifier != b"from" {
                                     default_name = p.lexer.identifier;
-                                    stmt.default_name.as_mut().unwrap().loc = p.lexer.loc();
+                                    stmt.default_name.as_mut().unwrap().loc = Some(p.lexer.loc());
                                     p.lexer.next()?;
 
                                     if p.lexer.token == T::TEquals {
@@ -1553,7 +1559,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         // "import type foo = bar.baz;"
                                         opts.is_typescript_declare = true;
                                         return p.parse_type_script_import_equals_stmt(
-                                            loc,
+                                            Some(loc),
                                             opts,
                                             stmt.default_name.unwrap().loc,
                                             default_name,
@@ -1597,9 +1603,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     {
                         p.esm_import_keyword = previous_import_keyword; // This wasn't an ESM import statement after all;
                         return p.parse_type_script_import_equals_stmt(
-                            loc,
+                            Some(loc),
                             opts,
-                            bun_ast::Loc::EMPTY,
+                            stmt.default_name.unwrap().loc,
                             default_name,
                         );
                     }
@@ -1614,7 +1620,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             p.lexer.next()?;
                             p.lexer.expect_contextual_keyword(b"as")?;
                             stmt.namespace_ref = p.store_name_in_ref(p.lexer.identifier);
-                            stmt.star_name_loc = p.lexer.loc();
+                            stmt.star_name_loc = Some(p.lexer.loc());
                             p.lexer.expect(T::TIdentifier)?;
                         }
                         // "import defaultItem, {item1, item2} from 'path'"
@@ -1656,7 +1662,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p: &mut Self,
         opts: &mut ParseStatementOptions<'a>,
         loc: bun_ast::Loc,
-        label_loc: bun_ast::Loc,
+        label_loc: Option<bun_ast::Loc>,
         label_ref: Ref,
     ) -> Result<Stmt> {
         let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::Label, loc)?;

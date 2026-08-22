@@ -38,10 +38,12 @@ pub struct Ast<'a> {
     pub force_cjs_to_esm: bool,
     pub exports_kind: ExportsKind,
 
-    // This is a list of ES6 features. They are ranges instead of booleans so
-    // that they can be used in log messages. Check to see if "Len > 0".
-    pub export_keyword: Range, // Does not include TypeScript-specific syntax
-    pub top_level_await_keyword: Range,
+    // ES6 features the file uses. `top_level_await_keyword` keeps the range so
+    // a diagnostic can point at it.
+    /// Whether the file uses the `export` keyword (not counting
+    /// TypeScript-specific syntax).
+    pub uses_export_keyword: bool,
+    pub top_level_await_keyword: Option<Range>,
 
     /// These are stored at the AST level instead of on individual AST nodes so
     /// they can be manipulated efficiently without a full AST traversal
@@ -105,8 +107,8 @@ impl<'a> Ast<'a> {
             commonjs_module_exports_assigned_deoptimized: false,
             force_cjs_to_esm: false,
             exports_kind: ExportsKind::None,
-            export_keyword: Range::NONE,
-            top_level_await_keyword: Range::NONE,
+            uses_export_keyword: false,
+            top_level_await_keyword: None,
             import_records: ImportRecordList::new_in(arena),
             hashbang: StoreStr::EMPTY,
             directive: None,

@@ -504,7 +504,7 @@ fn run_tasks_erased(
                             bun_ast::add_warning_pretty!(
                                 manager.log_mut(),
                                 None,
-                                bun_ast::Loc::EMPTY,
+                                None,
                                 "{} downloading package manifest <b>{}<r>. Retry {}/{}...",
                                 bstr::BStr::new(err.name().as_bytes()),
                                 bstr::BStr::new(name),
@@ -533,7 +533,7 @@ fn run_tasks_erased(
                             bun_ast::add_error_pretty!(
                                 manager.log_mut(),
                                 None,
-                                bun_ast::Loc::EMPTY,
+                                None,
                                 "{} downloading package manifest <b>{}<r>",
                                 fmt_args.0,
                                 bstr::BStr::new(fmt_args.1),
@@ -542,7 +542,7 @@ fn run_tasks_erased(
                             bun_ast::add_warning_pretty!(
                                 manager.log_mut(),
                                 None,
-                                bun_ast::Loc::EMPTY,
+                                None,
                                 "{} downloading package manifest <b>{}<r>",
                                 fmt_args.0,
                                 bstr::BStr::new(fmt_args.1),
@@ -591,7 +591,7 @@ fn run_tasks_erased(
                         bun_ast::add_error_pretty!(
                             manager.log_mut(),
                             None,
-                            bun_ast::Loc::EMPTY,
+                            None,
                             "<r><red><b>GET<r><red> {}<d> - {}<r>",
                             bstr::BStr::new(metadata.url.slice()),
                             response.status_code,
@@ -600,7 +600,7 @@ fn run_tasks_erased(
                         bun_ast::add_warning_pretty!(
                             manager.log_mut(),
                             None,
-                            bun_ast::Loc::EMPTY,
+                            None,
                             "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>",
                             bstr::BStr::new(metadata.url.slice()),
                             response.status_code,
@@ -783,7 +783,7 @@ fn run_tasks_erased(
                             bun_ast::add_warning_pretty!(
                                 manager.log_mut(),
                                 None,
-                                bun_ast::Loc::EMPTY,
+                                None,
                                 "<r><yellow>warn:<r> {} downloading tarball <b>{}@{}<r>. Retrying {}/{}...",
                                 bstr::BStr::new(err.name().as_bytes()),
                                 bstr::BStr::new(extract.name.slice()),
@@ -853,7 +853,7 @@ fn run_tasks_erased(
                         bun_ast::add_error_pretty!(
                             manager.log_mut(),
                             None,
-                            bun_ast::Loc::EMPTY,
+                            None,
                             "{} downloading tarball <b>{}@{}<r>",
                             err.name(),
                             bstr::BStr::new(extract.name.slice()),
@@ -865,7 +865,7 @@ fn run_tasks_erased(
                         bun_ast::add_warning_pretty!(
                             manager.log_mut(),
                             None,
-                            bun_ast::Loc::EMPTY,
+                            None,
                             "{} downloading tarball <b>{}@{}<r>",
                             err.name(),
                             bstr::BStr::new(extract.name.slice()),
@@ -942,7 +942,7 @@ fn run_tasks_erased(
                         bun_ast::add_error_pretty!(
                             manager.log_mut(),
                             None,
-                            bun_ast::Loc::EMPTY,
+                            None,
                             "<r><red><b>GET<r><red> {}<d> - {}<r>",
                             bstr::BStr::new(metadata.url.slice()),
                             response.status_code,
@@ -951,7 +951,7 @@ fn run_tasks_erased(
                         bun_ast::add_warning_pretty!(
                             manager.log_mut(),
                             None,
-                            bun_ast::Loc::EMPTY,
+                            None,
                             "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>",
                             bstr::BStr::new(metadata.url.slice()),
                             response.status_code,
@@ -1089,7 +1089,7 @@ fn run_tasks_erased(
                         bun_ast::add_error_pretty!(
                             manager.log_mut(),
                             None,
-                            bun_ast::Loc::EMPTY,
+                            None,
                             "{} parsing package manifest for <b>{}<r>",
                             err.name(),
                             bstr::BStr::new(name),
@@ -1230,7 +1230,7 @@ fn run_tasks_erased(
                     bun_ast::add_error_pretty!(
                         manager.log_mut(),
                         None,
-                        bun_ast::Loc::EMPTY,
+                        None,
                         "{} extracting tarball from <b>{}<r>",
                         err.name(),
                         bstr::BStr::new(alias),
@@ -1439,7 +1439,7 @@ fn run_tasks_erased(
                         bun_ast::add_error_pretty!(
                             manager.log_mut(),
                             None,
-                            bun_ast::Loc::EMPTY,
+                            None,
                             "{} cloning repository for <b>{}<r>",
                             err.name(),
                             bstr::BStr::new(name),
@@ -1563,7 +1563,7 @@ fn run_tasks_erased(
                         bun_ast::add_error_pretty!(
                             manager.log_mut(),
                             None,
-                            bun_ast::Loc::EMPTY,
+                            None,
                             "{} checking out repository for <b>{}<r>",
                             err.name(),
                             bstr::BStr::new(alias.slice()),
@@ -1902,7 +1902,7 @@ pub fn generate_network_task_for_tarball<'a>(
             let name = this.lockfile.str(&package.name).to_vec();
             this.log_mut().add_error_fmt(
                 None,
-                bun_ast::Loc::EMPTY,
+                None,
                 format_args!(
                     "--offline: \"{}\" is not in the cache",
                     bstr::BStr::new(&name)

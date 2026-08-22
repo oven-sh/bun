@@ -106,7 +106,7 @@ pub(crate) fn generate_code_for_lazy_export(
                 all_symbols: &'a [SymbolList<'a>],
                 source_index: IndexInt,
                 log: &'a mut Log,
-                loc: Loc,
+                loc: Option<Loc>,
                 arena: &'a Arena,
             }
 
@@ -161,7 +161,7 @@ pub(crate) fn generate_code_for_lazy_export(
 
                     self.log.add_range_error_fmt_with_note(
                         Some(&self.all_sources[idx as usize]),
-                        bun_ast::Range { loc: compose_loc, ..Default::default() },
+                        bun_ast::Range::at(compose_loc),
                         format_args!(
                             "The composes property cannot be used with {}, because it is not a single class name.",
                             bun_fmt::quote(name),
@@ -170,7 +170,7 @@ pub(crate) fn generate_code_for_lazy_export(
                             "The definition of {} is here.",
                             bun_fmt::quote(name),
                         ),
-                        bun_ast::Range { loc, ..Default::default() },
+                        loc.map(bun_ast::Range::at),
                     );
                 }
 

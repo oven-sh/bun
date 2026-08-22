@@ -632,7 +632,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         TsIdentKind::Normal => {
                             if GET_METADATA {
                                 let ident = self.lexer.identifier;
-                                let find_result = self.find_symbol(bun_ast::Loc::EMPTY, ident)?;
+                                let find_result = self.find_symbol(None, ident)?;
                                 **result
                                     .as_mut()
                                     .expect("infallible: GET_METADATA implies Some") =
@@ -907,14 +907,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 let id_ref = *id_ref;
                                 let mut dot: Vec<Ref> = Vec::with_capacity(2);
                                 dot.push(id_ref);
-                                let find_result = self.find_symbol(bun_ast::Loc::EMPTY, ident)?;
+                                let find_result = self.find_symbol(None, ident)?;
                                 dot.push(find_result.r#ref);
                                 *r = Metadata::MDot(dot);
                             }
                             Metadata::MDot(dot) => {
                                 if self.lexer.is_identifier_or_keyword() {
-                                    let find_result =
-                                        self.find_symbol(bun_ast::Loc::EMPTY, ident)?;
+                                    let find_result = self.find_symbol(None, ident)?;
                                     dot.push(find_result.r#ref);
                                 }
                             }
@@ -1165,20 +1164,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut has_out = false;
             let mut expect_identifier = true;
 
-            let mut invalid_modifier_range = bun_ast::Range::NONE;
+            let mut invalid_modifier_range: Option<bun_ast::Range> = None;
 
             // Scan over a sequence of "in" and "out" modifiers (a.k.a. optional
             // variance annotations) as well as "const" modifiers
             loop {
                 if self.lexer.token == T::TConst {
-                    if invalid_modifier_range.len == 0
+                    if invalid_modifier_range.is_none()
                         && !flags.contains(TypeParameterFlag::ALLOW_CONST_MODIFIER)
                     {
                         // Valid:
                         //   "class Foo<const T> {}"
                         // Invalid:
                         //   "interface Foo<const T> {}"
-                        invalid_modifier_range = self.lexer.range();
+                        invalid_modifier_range = Some(self.lexer.range());
                     }
 
                     result = SkipTypeParameterResult::DefinitelyTypeParameters;
@@ -1188,7 +1187,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 if self.lexer.token == T::TIn {
-                    if invalid_modifier_range.len == 0
+                    if invalid_modifier_range.is_none()
                         && (!flags.contains(TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS)
                             || has_in
                             || has_out)
@@ -1198,7 +1197,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // Invalid:
                         //   "type Foo<in in T> = T"
                         //   "type Foo<out in T> = T"
-                        invalid_modifier_range = self.lexer.range();
+                        invalid_modifier_range = Some(self.lexer.range());
                     }
 
                     self.lexer.next()?;
@@ -1209,7 +1208,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 if self.lexer.is_contextual_keyword(b"out") {
                     let r = self.lexer.range();
-                    if invalid_modifier_range.len == 0
+                    if invalid_modifier_range.is_none()
                         && !flags.contains(TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS)
                     {
                         // Valid:
@@ -1217,11 +1216,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // Invalid:
                         //   "type Foo<out out T> = T"
                         //   "type Foo<in out T> = T"
-                        invalid_modifier_range = r;
+                        invalid_modifier_range = Some(r);
                     }
 
                     self.lexer.next()?;
-                    if invalid_modifier_range.len == 0
+                    if invalid_modifier_range.is_none()
                         && has_out
                         && (self.lexer.token == T::TIn || self.lexer.token == T::TIdentifier)
                     {
@@ -1234,7 +1233,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // Invalid:
                         //   "type Foo<out out in T> = T"
                         //   "type Foo<out out T> = T"
-                        invalid_modifier_range = r;
+                        invalid_modifier_range = Some(r);
                     }
                     has_out = true;
                     expect_identifier = false;
@@ -1245,7 +1244,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             // Only report an error for the first invalid modifier
-            if invalid_modifier_range.len > 0 {
+            if let Some(invalid_modifier_range) = invalid_modifier_range {
                 self.log().add_range_error_fmt(
                     Some(self.source),
                     invalid_modifier_range,

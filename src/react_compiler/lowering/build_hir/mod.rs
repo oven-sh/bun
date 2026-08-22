@@ -407,7 +407,7 @@ pub(super) fn gather_captured_context<'h>(
         clippy::disallowed_types,
         reason = "vendored react_compiler_hir HashMap<BindingId, _> contract"
     )]
-    let mut captured: std::collections::HashMap<Ref, (i32, Option<SourceLocation>)> =
+    let mut captured: std::collections::HashMap<Ref, (Option<Loc>, Option<SourceLocation>)> =
         std::collections::HashMap::new();
 
     for (ref_, ref_loc) in walker.referenced {
@@ -432,7 +432,8 @@ pub(super) fn gather_captured_context<'h>(
                 continue;
             }
         }
-        let pos = ref_loc.start;
+        // `None` (a synthesized reference) orders before every location.
+        let pos = ref_loc;
         let loc = convert_loc(ref_loc);
         captured
             .entry(ref_)
@@ -460,14 +461,13 @@ struct CaptureWalker<'h> {
     host: &'h dyn Host,
     scope_stack: Vec<&'h ast::Scope>,
     declared: RefSet,
-    referenced: Vec<(Ref, Loc)>,
+    referenced: Vec<(Ref, Option<Loc>)>,
 }
 
 impl<'h> CaptureWalker<'h> {
-    fn push_scope(&mut self, loc: Loc) {
-        let next = self
-            .host
-            .scope_for_loc(loc)
+    fn push_scope(&mut self, loc: Option<Loc>) {
+        let next = loc
+            .and_then(|loc| self.host.scope_for_loc(loc))
             .unwrap_or_else(|| self.current_scope());
         self.scope_stack.push(next);
     }
@@ -503,7 +503,7 @@ impl<'h> CaptureWalker<'h> {
         }
     }
 
-    fn record_ref(&mut self, ref_: Ref, loc: Loc) {
+    fn record_ref(&mut self, ref_: Ref, loc: Option<Loc>) {
         if ref_.is_valid() {
             self.referenced.push((self.resolve_ref(ref_), loc));
         }

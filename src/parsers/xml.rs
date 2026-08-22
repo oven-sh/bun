@@ -852,14 +852,18 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
 
     // ── error helpers ──────────────────────────────────────────────────────
 
-    fn loc(&self, pos: usize) -> Loc {
-        if self.transcoded {
-            Loc::EMPTY
-        } else {
-            Loc {
-                start: i32::try_from(pos).unwrap_or(i32::MAX),
-            }
-        }
+    /// Where `pos` is in `source`, for diagnostics; nowhere once the input
+    /// has been transcoded, since `pos` is then an offset into the transcoded
+    /// copy.
+    fn loc(&self, pos: usize) -> Option<Loc> {
+        (!self.transcoded).then(|| Loc::from_usize(pos))
+    }
+
+    /// Where `pos` is in the document being scanned (the transcoded copy, if
+    /// the input was transcoded): the location recorded on the nodes built
+    /// from it.
+    fn node_loc(&self, pos: usize) -> Loc {
+        Loc::from_usize(pos)
     }
 
     fn err(&mut self, pos: usize, msg: &'static str) -> PErr {
@@ -2442,13 +2446,6 @@ impl<T: Copy> Rows<T> {
         self.locs.truncate(len);
     }
 
-    fn reset(&mut self, len: usize, value: T, loc: Loc) {
-        self.values.clear();
-        self.values.resize(len, value);
-        self.locs.clear();
-        self.locs.resize(len, loc);
-    }
-
     #[inline]
     fn set(&mut self, i: usize, value: T, loc: Loc) {
         self.values[i] = value;
@@ -2538,7 +2535,7 @@ impl<'a> Tape<'a> {
         let (first, count) = tape.append_props(props, locs);
         self.props.truncate(mark);
         // SAFETY: as above — the tape's own pointer, and it outlives the node.
-        let object = unsafe { E::ObjectJSON::new(self.tape, first, count, false, loc) };
+        let object = unsafe { E::ObjectJSON::new(self.tape, first, count, false, Some(loc)) };
         let Data::EObjectJSON(row) = Expr::init(object, loc).data else {
             unreachable!()
         };
@@ -2571,7 +2568,7 @@ impl<'a> Tape<'a> {
         // SAFETY: see `object_from`.
         let (first, count) = unsafe { tape.as_mut() }.append_items(items, locs);
         // SAFETY: see `object_from`.
-        let array = unsafe { E::ArrayJSON::new(tape, first, count, false, loc) };
+        let array = unsafe { E::ArrayJSON::new(tape, first, count, false, Some(loc)) };
         let Data::EArrayJSON(row) = Expr::init(array, loc).data else {
             unreachable!()
         };
@@ -2581,7 +2578,7 @@ impl<'a> Tape<'a> {
     fn root(object: StoreRef<E::ObjectJSON>, loc: Loc) -> Expr {
         Expr {
             data: Data::EObjectJSON(object),
-            loc,
+            loc: Some(loc),
         }
     }
 }
@@ -2601,6 +2598,9 @@ struct CompactSink<'a, U: Unit> {
     /// Scratch for `end_element`'s grouping of repeated child names.
     group_of: Vec<u32>,
     groups: Vec<Group>,
+    /// Child indices of the repeated groups laid out run by run; `gathered`
+    /// holds their values and locations in that order.
+    gather_order: Vec<u32>,
     gathered: Rows<E::JsonValue>,
     group_index: HashMap<&'a [u8], u32>,
     root: Option<(&'a [U], E::JsonValue, Loc)>,
@@ -2662,6 +2662,7 @@ impl<'a, U: Unit> CompactSink<'a, U> {
             key_cache: [None; KEY_CACHE_SIZE],
             group_of: Vec::new(),
             groups: Vec::new(),
+            gather_order: Vec::new(),
             gathered: Rows::with_capacity(0),
             group_index: HashMap::default(),
             root: None,
@@ -2787,18 +2788,21 @@ impl<'a, U: Unit> CompactSink<'a, U> {
                 next += g.count;
             }
         }
-        self.gathered
-            .reset(next as usize, E::JsonValue::Null, Loc::EMPTY);
+        self.gather_order.clear();
+        self.gather_order.resize(next as usize, 0);
         for (i, &g) in self.group_of.iter().enumerate() {
             let group = &mut self.groups[g as usize];
             if group.count > 1 {
-                self.gathered.set(
-                    group.cursor as usize,
-                    children[i].value,
-                    self.tape.props.locs[mark + i],
-                );
+                self.gather_order[group.cursor as usize] = i as u32;
                 group.cursor += 1;
             }
+        }
+        self.gathered.truncate(0);
+        for &i in &self.gather_order {
+            self.gathered.push(
+                children[i as usize].value,
+                self.tape.props.locs[mark + i as usize],
+            );
         }
         // Compact the run to one property per group (a group's first
         // property is never behind its final slot, so this is in place).
@@ -3048,7 +3052,7 @@ impl<'a, U: Unit> Sink<'a, U> for NodeSink<'a, U> {
             .root
             .take()
             .expect("finish before the root element ended");
-        Tape::root(root, Loc { start: 0 })
+        Tape::root(root, Loc::new(0))
     }
 }
 
@@ -3956,7 +3960,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
             self.advance_content()?;
             match self.scanner.tok.kind {
                 Kind::Text(text) => {
-                    let loc = self.scanner.loc(self.scanner.tok.pos);
+                    let loc = self.scanner.node_loc(self.scanner.tok.pos);
                     self.sink.text(text, loc);
                 }
                 Kind::StartTag(_) => self.open_element()?,
@@ -3966,11 +3970,11 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
                     self.close_element(name, frame, end_name, pos, end_frame)?;
                 }
                 Kind::Comment(text) => {
-                    let loc = self.scanner.loc(self.scanner.tok.pos);
+                    let loc = self.scanner.node_loc(self.scanner.tok.pos);
                     self.sink.comment(text, loc);
                 }
                 Kind::Pi(target, data) => {
-                    let loc = self.scanner.loc(self.scanner.tok.pos);
+                    let loc = self.scanner.node_loc(self.scanner.tok.pos);
                     self.sink.pi(target, data, loc);
                 }
                 Kind::Eof(_) => {
@@ -4003,7 +4007,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
         if self.open.len() >= MAX_DEPTH {
             return Err(self.stack_overflow());
         }
-        let loc = self.scanner.loc(pos);
+        let loc = self.scanner.node_loc(pos);
         self.sink.begin_element(name, loc);
         let empty = self.parse_attributes(name)?;
         if empty {
@@ -4037,7 +4041,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
         {
             sc.pos = close + 1;
             sc.tag_degraded = false;
-            let loc = sc.loc(start);
+            let loc = sc.node_loc(start);
             self.sink.end_leaf(&src[start..stop], loc);
             return Ok(true);
         }
@@ -4101,7 +4105,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
             return Ok(Step::Slow);
         }
         if stop > start {
-            let loc = sc.loc(start);
+            let loc = sc.node_loc(start);
             self.sink.text(&src[start..stop], loc);
         }
         if next == b'/' {

@@ -71,7 +71,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .expect("oom");
     }
 
-    pub(crate) fn visit_func(&mut self, mut func: G::Fn, open_parens_loc: bun_ast::Loc) -> G::Fn {
+    pub(crate) fn visit_func(
+        &mut self,
+        mut func: G::Fn,
+        open_parens_loc: Option<bun_ast::Loc>,
+    ) -> G::Fn {
         debug_assert!(
             !SCAN_ONLY,
             "only_scan_imports_and_do_not_visit must not run this."
@@ -778,7 +782,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub(crate) fn visit_class(
         &mut self,
-        name_scope_loc: bun_ast::Loc,
+        name_scope_loc: Option<bun_ast::Loc>,
         class: &mut G::Class,
         default_name_ref: Ref,
     ) -> Ref {
@@ -1206,7 +1210,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             E::Function {
                                 func: G::Fn {
                                     name: None,
-                                    open_parens_loc: bun_ast::Loc::EMPTY,
+                                    open_parens_loc: None,
                                     args: bun_ast::StoreSlice::EMPTY,
                                     body: G::FnBody {
                                         loc,
@@ -1940,9 +1944,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
 fn scopes_for_enum_at<'a>(
     map: &bun_collections::ArrayHashMap<bun_ast::Loc, &'a [ScopeOrder<'a>]>,
-    loc: bun_ast::Loc,
+    loc: Option<bun_ast::Loc>,
 ) -> &'a [ScopeOrder<'a>] {
-    map.get(&loc)
+    loc.and_then(|loc| map.get(&loc))
         .copied()
         .expect("scopes_in_order_for_enum miss for enum stmt loc")
 }
@@ -1957,7 +1961,7 @@ fn fn_body_contains_use_strict(body: &[Stmt]) -> Option<bun_ast::Loc> {
             StmtData::SDirective(dir) => {
                 // SAFETY: arena-owned slice valid for the parse.
                 if dir.value.slice() == b"use strict" {
-                    return Some(stmt.loc);
+                    return stmt.loc;
                 }
             }
             StmtData::SEmpty(_) => {}

@@ -459,7 +459,7 @@ mod tests {
         let (v, _) = collect(&mut x);
         assert!(x.index_error.is_none());
         let first = x.first_comment.expect("comment recorded");
-        assert_eq!(first.loc.start, 0);
+        assert_eq!(first.loc.get(), 0);
         assert_eq!(first.len, 8);
         let expected: Vec<u32> = vec![9, 10, 12, 22, 24, 25];
         assert_eq!(v, expected);

@@ -357,7 +357,7 @@ pub struct NewBuilder<'a, T: SourceMapFormatCtx> {
     pub prev_state: SourceMapState,
     pub last_generated_update: u32,
     pub generated_column: i32,
-    pub prev_loc: Loc,
+    pub prev_loc: Option<Loc>,
     pub has_prev_state: bool,
 
     /// `byte_offset_to_start_of_line` column of `line_offset_tables`, cached
@@ -396,7 +396,7 @@ impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<'_, T> {
             prev_state: SourceMapState::default(),
             last_generated_update: 0,
             generated_column: 0,
-            prev_loc: Loc::EMPTY,
+            prev_loc: None,
             has_prev_state: false,
             line_offset_table_byte_offset_list: RawSlice::EMPTY,
             line_offset_table_first_non_ascii: RawSlice::EMPTY,
@@ -623,16 +623,12 @@ impl NewBuilder<'_, VLQSourceMap> {
 
     #[inline(never)]
     pub fn add_source_mapping(&mut self, loc: Loc, output: &[u8]) {
-        if
         // don't insert mappings for same location twice
-        self.prev_loc.eql(loc) ||
-            // exclude generated code from source
-            loc.start == Loc::EMPTY.start
-        {
+        if self.prev_loc == Some(loc) {
             return;
         }
 
-        self.prev_loc = loc;
+        self.prev_loc = Some(loc);
 
         if let LineOffsetTables::Deferred {
             contents,
@@ -684,7 +680,7 @@ impl NewBuilder<'_, VLQSourceMap> {
         // len/cap) and then gathers *every* field via `ptr::read`; for the
         // hot per-token path that dominated `add_source_mapping`. Each
         // `items::<>` is a single `base + CONST*cap` pointer add.
-        let mut original_column = loc.start - byte_offsets[idx] as i32;
+        let mut original_column = (loc.get() - byte_offsets[idx]) as i32;
         {
             // `first_non_ascii` is `i32::MAX as u32` for ASCII-only lines, so the
             // comparison below is false and the `columns_for_non_ascii` SoA column

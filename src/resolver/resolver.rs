@@ -1016,14 +1016,7 @@ impl<'a> Resolver<'a> {
                     let notes = core::mem::take(&mut debug.notes).into_boxed_slice();
                     log.add_msg(Msg {
                         kind: bun_ast::Kind::Debug,
-                        data: bun_ast::range_data(
-                            None,
-                            bun_ast::Range {
-                                loc: bun_ast::Loc::default(),
-                                ..Default::default()
-                            },
-                            what,
-                        ),
+                        data: bun_ast::range_data(None, None, what),
                         notes,
                         ..Default::default()
                     });
@@ -1034,14 +1027,7 @@ impl<'a> Resolver<'a> {
                     let notes = core::mem::take(&mut debug.notes).into_boxed_slice();
                     log.add_msg(Msg {
                         kind: bun_ast::Kind::Verbose,
-                        data: bun_ast::range_data(
-                            None,
-                            bun_ast::Range {
-                                loc: bun_ast::Loc::EMPTY,
-                                ..Default::default()
-                            },
-                            what,
-                        ),
+                        data: bun_ast::range_data(None, None, what),
                         notes,
                         ..Default::default()
                     });
@@ -2888,7 +2874,7 @@ impl<'a> Resolver<'a> {
                         let top_level_dir = self.fs_ref().top_level_dir;
                         self.log_mut().add_resolve_error(
                             None,
-                            bun_ast::Range::NONE,
+                            None,
                             format_args!(
                                 "Cannot read directory \"{}\": {} while resolving \"{}\"",
                                 bstr::BStr::new(top_level_dir),
@@ -3361,7 +3347,7 @@ impl<'a> Resolver<'a> {
                 // TODO: handle this error better
                 let _ = self.log_mut().add_error_fmt(
                     None,
-                    bun_ast::Loc::EMPTY,
+                    None,
                     format_args!("Unable to open directory: {}", bstr::BStr::new(err.name())),
                 );
                 return Err(err.into());
@@ -4547,7 +4533,7 @@ impl<'a> Resolver<'a> {
                                     let pretty = queue_top_unsafe_path;
                                     let _ = self.log_mut().add_error_fmt(
                                         None,
-                                        bun_ast::Loc::default(),
+                                        None,
                                         format_args!(
                                             "Cannot read directory \"{}\": {}",
                                             bstr::BStr::new(pretty),
@@ -5818,7 +5804,7 @@ impl<'a> Resolver<'a> {
                 _ => {
                     let _ = self.log_mut().add_error_fmt(
                         None,
-                        bun_ast::Loc::EMPTY,
+                        None,
                         format_args!(
                             "Cannot read directory \"{}\": {}",
                             bstr::BStr::new(dir_path),
@@ -6493,7 +6479,7 @@ impl<'a> Resolver<'a> {
                         if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                             let _ = self.log_mut().add_error_fmt(
                                 None,
-                                bun_ast::Loc::EMPTY,
+                                None,
                                 format_args!(
                                     "Cannot find tsconfig file {}",
                                     bun_core::fmt::quote(pretty)
@@ -6504,7 +6490,7 @@ impl<'a> Resolver<'a> {
                         {
                             let _ = self.log_mut().add_error_fmt(
                                 None,
-                                bun_ast::Loc::EMPTY,
+                                None,
                                 format_args!(
                                     "Cannot read file {}: {}",
                                     bun_core::fmt::quote(pretty),
@@ -6548,7 +6534,7 @@ impl<'a> Resolver<'a> {
                                 Err(err) => {
                                     let _ = self.log_mut().add_debug_fmt(
                                         None,
-                                        bun_ast::Loc::EMPTY,
+                                        None,
                                         format_args!(
                                             "{} loading tsconfig.json extends {}",
                                             bstr::BStr::new(err.name()),

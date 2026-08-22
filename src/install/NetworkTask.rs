@@ -497,7 +497,7 @@ impl NetworkTask {
                 if !is_optional {
                     log.add_error_fmt(
                         None,
-                        bun_ast::Loc::EMPTY,
+                        None,
                         format_args!(
                             "Failed to join registry {} and package {} URLs",
                             quote(scope.url.href()),
@@ -507,7 +507,7 @@ impl NetworkTask {
                 } else {
                     log.add_warning_fmt(
                         None,
-                        bun_ast::Loc::EMPTY,
+                        None,
                         format_args!(
                             "Failed to join registry {} and package {} URLs",
                             quote(scope.url.href()),
@@ -522,7 +522,7 @@ impl NetworkTask {
                 if !is_optional {
                     log.add_error_fmt(
                         None,
-                        bun_ast::Loc::EMPTY,
+                        None,
                         format_args!(
                             "Registry URL must be http:// or https://\nReceived: \"{}\"",
                             *tmp
@@ -531,7 +531,7 @@ impl NetworkTask {
                 } else {
                     log.add_warning_fmt(
                         None,
-                        bun_ast::Loc::EMPTY,
+                        None,
                         format_args!(
                             "Registry URL must be http:// or https://\nReceived: \"{}\"",
                             *tmp
@@ -558,7 +558,7 @@ impl NetworkTask {
                     if !is_optional {
                         log.add_error_fmt(
                             None,
-                            bun_ast::Loc::EMPTY,
+                            None,
                             format_args!(
                                 "Invalid package name {}: manifest URL {} is not on registry {}",
                                 quote(name),
@@ -569,7 +569,7 @@ impl NetworkTask {
                     } else {
                         log.add_warning_fmt(
                             None,
-                            bun_ast::Loc::EMPTY,
+                            None,
                             format_args!(
                                 "Invalid package name {}: manifest URL {} is not on registry {}",
                                 quote(name),
@@ -803,7 +803,7 @@ impl NetworkTask {
             // manager was constructed with.
             pm.log_mut().add_error_fmt(
                 None,
-                bun_ast::Loc::EMPTY,
+                None,
                 format_args!(
                     "Expected tarball URL to start with https:// or http://, got {} while fetching package {}",
                     quote(&self.url_buf),

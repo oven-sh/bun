@@ -413,15 +413,21 @@ impl<'s> Namer<'s> {
     /// Members of `scope` on `side` that should get positional names, in source order.
     fn candidates(&self, side: usize, scope: &bun_ast::Scope) -> Vec<Candidate> {
         let symbols = &*self.symbols[side];
-        let mut members: Vec<(i32, u32)> = scope
+        // Declared members in source order (one without a location sorts first), then the generated ones.
+        let mut members: Vec<(bool, Option<bun_ast::Loc>, u32)> = scope
             .members
             .values()
-            .map(|m| (m.loc.start, m.ref_.inner_index()))
+            .map(|m| (false, m.loc, m.ref_.inner_index()))
             .collect();
-        members.extend(scope.generated.iter().map(|r| (i32::MAX, r.inner_index())));
+        members.extend(
+            scope
+                .generated
+                .iter()
+                .map(|r| (true, None, r.inner_index())),
+        );
         members.sort_unstable();
         let mut out = Vec::with_capacity(members.len());
-        for (_, inner) in members {
+        for (_, _, inner) in members {
             let i = Self::root(symbols, inner as usize);
             let sym = &symbols[i];
             if self.renamed[side][i]

@@ -92,14 +92,11 @@ pub(crate) fn reserved_identifier_diagnostic(name: &str) -> CompilerDiagnostic {
 /// Bun's `Loc` is a byte offset; HIR `SourceLocation` wants `{line, column}`.
 /// The compiler only uses the end position for diagnostic span width, so a
 /// start-only location with the byte offset in `Position.index` is sufficient.
-pub(crate) fn convert_loc(loc: Loc) -> Option<SourceLocation> {
-    if loc.start < 0 {
-        return None;
-    }
+pub(crate) fn convert_loc(loc: Option<Loc>) -> Option<SourceLocation> {
     let pos = Position {
         line: 0,
         column: 0,
-        index: Some(loc.start as u32),
+        index: Some(loc?.get()),
     };
     Some(SourceLocation {
         start: pos,
@@ -180,7 +177,7 @@ impl<'a> FunctionNode<'a> {
         }
     }
 
-    pub(crate) fn loc(&self) -> Loc {
+    pub(crate) fn loc(&self) -> Option<Loc> {
         match self {
             FunctionNode::Function(f) => f.body.loc,
             FunctionNode::Arrow(a) => a.body.loc,
@@ -190,7 +187,7 @@ impl<'a> FunctionNode<'a> {
     /// Loc that keys the parser's `FunctionArgs` scope for this function.
     /// For `G::Fn` this is `open_parens_loc`; arrows have no stable field so
     /// callers fall back via `HirBuilder::push_scope`'s no-op-on-miss.
-    pub(crate) fn args_loc(&self) -> Loc {
+    pub(crate) fn args_loc(&self) -> Option<Loc> {
         match self {
             FunctionNode::Function(f) => f.open_parens_loc,
             FunctionNode::Arrow(a) => a.body.loc,
@@ -382,10 +379,9 @@ impl<'h> HirBuilder<'h> {
 
     /// Push the lexical scope keyed at `loc`. If the host has no scope at that
     /// loc, the current top is re-pushed so `pop_scope` always balances.
-    pub(crate) fn push_scope(&mut self, loc: Loc) {
-        let next = self
-            .host
-            .scope_for_loc(loc)
+    pub(crate) fn push_scope(&mut self, loc: Option<Loc>) {
+        let next = loc
+            .and_then(|loc| self.host.scope_for_loc(loc))
             .unwrap_or_else(|| self.current_scope());
         self.scope_stack.push(next);
     }

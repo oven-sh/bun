@@ -95,7 +95,7 @@ pub struct BinaryExpressionVisitor {
     /// encapsulate the AST-store invariant, so call sites need no raw-pointer
     /// round-trip to forge an `'arena` borrow.
     pub(crate) e: StoreRef<E::Binary>,
-    pub(crate) loc: bun_ast::Loc,
+    pub(crate) loc: Option<bun_ast::Loc>,
 
     /// Input for visiting the left child
     pub(crate) left_in: ExprIn,
@@ -719,10 +719,10 @@ impl BinaryExpressionVisitor {
                     // Unlike regular identifiers, there are no unbound private identifiers
                     let kind = p.symbols[result.r#ref.inner_index() as usize].kind;
                     if !Symbol::is_kind_private(kind) {
-                        let r = bun_ast::Range {
-                            loc: e_.left.loc,
+                        let r = e_.left.loc.map(|loc| bun_ast::Range {
+                            loc,
                             len: i32::try_from(name.len()).expect("int cast"),
-                        };
+                        });
                         p.log().add_range_error_fmt(
                             Some(p.source),
                             r,

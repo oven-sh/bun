@@ -25,7 +25,7 @@ type Map = StringArrayHashMap<Entry>;
 pub struct Entry {
     pub(crate) name: Box<[u8]>,
     pub(crate) version: Option<Box<[u8]>>,
-    pub(crate) name_loc: bun_ast::Loc,
+    pub(crate) name_loc: Option<bun_ast::Loc>,
     /// `"installConfig": { "hoistingLimits": "workspaces" }` — this workspace's
     /// node_modules must be self-contained (see `Lockfile::self_contained_workspaces`).
     pub(crate) hoisting_limits: bool,
@@ -110,11 +110,14 @@ impl WorkspaceMap {
 #[derive(Clone, Copy)]
 pub(crate) enum NamesArray<'a> {
     Mutable(&'a js_ast::E::Array),
-    Immutable(&'a js_ast::E::ArrayJSON, bun_ast::Loc),
+    Immutable(&'a js_ast::E::ArrayJSON, Option<bun_ast::Loc>),
 }
 
 impl<'a> NamesArray<'a> {
-    pub(crate) fn from_expr(expr: &'a js_ast::Expr, value_loc: bun_ast::Loc) -> Option<Self> {
+    pub(crate) fn from_expr(
+        expr: &'a js_ast::Expr,
+        value_loc: Option<bun_ast::Loc>,
+    ) -> Option<Self> {
         match &expr.data {
             js_ast::ExprData::EArray(arr) => Some(NamesArray::Mutable(arr.get())),
             js_ast::ExprData::EArrayJSON(arr) => Some(NamesArray::Immutable(arr.get(), value_loc)),
@@ -136,13 +139,12 @@ impl<'a> NamesArray<'a> {
         }
     }
 
-    fn item_loc(&self, source: &bun_ast::Source, i: usize) -> bun_ast::Loc {
+    fn item_loc(&self, source: &bun_ast::Source, i: usize) -> Option<bun_ast::Loc> {
         match self {
             NamesArray::Mutable(arr) => arr.slice()[i].loc,
-            NamesArray::Immutable(_, array_loc) => {
-                crate::bun_json::array_item_loc(&source.contents, *array_loc, i)
-                    .unwrap_or(*array_loc)
-            }
+            NamesArray::Immutable(_, array_loc) => array_loc.map(|array_loc| {
+                crate::bun_json::array_item_loc(&source.contents, array_loc, i).unwrap_or(array_loc)
+            }),
         }
     }
 }
@@ -252,7 +254,7 @@ impl WorkspaceMap {
         log: &mut bun_ast::Log,
         arr: NamesArray<'_>,
         source: &bun_ast::Source,
-        loc: bun_ast::Loc,
+        loc: Option<bun_ast::Loc>,
         mut string_builder: Option<&mut StringBuilder<'_>>,
         missing_workspace: MissingWorkspace<'_>,
     ) -> crate::Result<u32> {
@@ -549,7 +551,7 @@ impl WorkspaceMap {
                             } else if err == crate::Error::MissingPackageName {
                                 let _ = log.add_error_fmt(
                                     Some(source),
-                                    bun_ast::Loc::EMPTY,
+                                    None,
                                     format_args!(
                                         "Missing \"name\" from package.json in {}{}{}",
                                         BStr::new(entry_dir),
@@ -560,7 +562,7 @@ impl WorkspaceMap {
                             } else {
                                 let _ = log.add_error_fmt(
                                     Some(source),
-                                    bun_ast::Loc::EMPTY,
+                                    None,
                                     format_args!(
                                         "{} reading package.json for workspace package \"{}\" from \"{}\"",
                                         err.name(),

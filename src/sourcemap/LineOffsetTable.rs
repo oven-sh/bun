@@ -63,9 +63,8 @@ impl<A: Allocator + 'static> LineOffsetTableColumns for List<A> {
 impl LineOffsetTable {
     #[inline]
     pub(crate) fn find_line(byte_offsets_to_start_of_line: &[u32], loc: Loc) -> i32 {
-        debug_assert!(loc.start > -1); // checked by caller
         let mut original_line: usize = 0;
-        let loc_start = usize::try_from(loc.start).expect("int cast");
+        let loc_start = loc.usize();
 
         {
             let mut count = byte_offsets_to_start_of_line.len();
@@ -95,8 +94,7 @@ impl LineOffsetTable {
     /// and falls back to the binary search otherwise.
     #[inline]
     pub(crate) fn find_line_with_hint(offsets: &[u32], loc: Loc, hint: u32) -> i32 {
-        debug_assert!(loc.start > -1);
-        let loc_start = loc.start as u32;
+        let loc_start = loc.get();
         let len = offsets.len();
         let h = hint as usize;
         // The answer is `i` iff `offsets[i] <= loc_start && (i+1 == len || loc_start < offsets[i+1])`.
@@ -119,9 +117,8 @@ impl LineOffsetTable {
     }
 
     pub fn find_index(byte_offsets_to_start_of_line: &[u32], loc: Loc) -> Option<usize> {
-        debug_assert!(loc.start > -1); // checked by caller
         let mut original_line: usize = 0;
-        let loc_start = usize::try_from(loc.start).expect("int cast");
+        let loc_start = loc.usize();
 
         let mut count = byte_offsets_to_start_of_line.len();
         while count > 0 {

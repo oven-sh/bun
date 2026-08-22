@@ -168,7 +168,7 @@ pub fn collect_import_bindings(
                 .get(ref_.inner_index() as usize)
                 .map(|sym| sym.original_name)
         };
-        if !import.star_name_loc.is_empty() {
+        if import.star_name_loc.is_some() {
             if let Some(name) = local_name(import.namespace_ref) {
                 out.insert(
                     import.namespace_ref,
@@ -1070,14 +1070,14 @@ fn build_outlined_decl(outlined: CodegenFunction) -> Stmt {
                 name: outlined.id,
                 args: leak_args(outlined.params),
                 body: G::FnBody {
-                    loc: Loc::EMPTY,
+                    loc: None,
                     stmts: leak_stmts(outlined.body),
                 },
                 flags: fn_flags,
                 ..G::Fn::default()
             },
         },
-        Loc::EMPTY,
+        None,
     )
 }
 
@@ -1181,8 +1181,8 @@ impl ReactCompilerState {
 pub struct PendingCompile {
     pub args: StoreSlice<G::Arg>,
     pub flags: flags::FunctionSet,
-    pub body_loc: Loc,
-    pub args_loc: Loc,
+    pub body_loc: Option<Loc>,
+    pub args_loc: Option<Loc>,
     pub binding: Option<Ref>,
     pub in_react_hoc: bool,
 }

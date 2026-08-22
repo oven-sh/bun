@@ -614,7 +614,7 @@ pub mod parse_worker {
         bump: &'static Bump,
         source: &'static Source,
     ) -> core::result::Result<JSAst<'static>, AnyError> {
-        let root = Expr::init(E::Object::default(), Loc { start: 0 });
+        let root = Expr::init(E::Object::default(), Loc::new(0));
         // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler`; `options`
         // is disjoint from any other field the caller may hold a pointer to.
         let define = unsafe { &mut (*transpiler).options.define };
@@ -635,7 +635,7 @@ pub mod parse_worker {
         bump: &'static Bump,
         source: &'static Source,
     ) -> core::result::Result<JSAst<'static>, AnyError> {
-        let root = Expr::init(RootType::default(), Loc::EMPTY);
+        let root = Expr::init(RootType::default(), None);
         // SAFETY: see `get_empty_css_ast` — disjoint field of a live `*mut Transpiler`.
         let define = unsafe { &mut (*transpiler).options.define };
         Ok(JSAst::init(
@@ -766,7 +766,7 @@ pub mod parse_worker {
                 // `caches` is disjoint from `(*transpiler).options` reborrowed above.
                 let root: Expr = unsafe { &mut (*resolver).caches.json }
                     .parse_json(log, source, mode)?
-                    .unwrap_or_else(|| Expr::init(E::Object::default(), Loc::EMPTY));
+                    .unwrap_or_else(|| Expr::init(E::Object::default(), None));
                 return Ok(JSAst::init(
                     js_parser::new_lazy_export_ast(
                         bump,
@@ -891,7 +891,7 @@ pub mod parse_worker {
                         data: source.contents().into(),
                         ..Default::default()
                     },
-                    Loc { start: 0 },
+                    Loc::new(0),
                 );
                 let mut ast = JSAst::init(
                     js_parser::new_lazy_export_ast(
@@ -918,11 +918,8 @@ pub mod parse_worker {
                 let html = match bun_md::root::render_to_html(&source.contents) {
                     Ok(h) => h,
                     Err(_) => {
-                        let _ = log.add_error(
-                            Some(source),
-                            Loc::EMPTY,
-                            b"Failed to render markdown to HTML",
-                        ); // logger OOM-only
+                        let _ =
+                            log.add_error(Some(source), None, b"Failed to render markdown to HTML"); // logger OOM-only
                         return Err(crate::Error::ParserError);
                     }
                 };
@@ -932,7 +929,7 @@ pub mod parse_worker {
                         data: html.into(),
                         ..Default::default()
                     },
-                    Loc { start: 0 },
+                    Loc::new(0),
                 );
                 let mut ast = JSAst::init(
                     js_parser::new_lazy_export_ast(
@@ -961,7 +958,7 @@ pub mod parse_worker {
                     // logger OOM-only
                     let _ = log.add_error(
                         Some(source),
-                        Loc::EMPTY,
+                        None,
                         b"To use the \"sqlite\" loader, set target to \"bun\"",
                     );
                     return Err(crate::Error::ParserError);
@@ -1001,18 +998,18 @@ pub mod parse_worker {
                         data: path_to_use.into(),
                         ..Default::default()
                     },
-                    Loc { start: 0 },
+                    Loc::new(0),
                 );
 
-                let import_meta = Expr::init(E::ImportMeta {}, Loc { start: 0 });
+                let import_meta = Expr::init(E::ImportMeta {}, Loc::new(0));
                 let require_property = Expr::init(
                     E::Dot {
                         target: import_meta,
-                        name_loc: Loc::EMPTY,
+                        name_loc: None,
                         name: b"require".into(),
                         ..Default::default()
                     },
-                    Loc { start: 0 },
+                    Loc::new(0),
                 );
                 let require_args = bump.alloc_slice_fill_default::<Expr>(2);
                 require_args[0] = import_path;
@@ -1023,14 +1020,14 @@ pub mod parse_worker {
                             data: b"type".into(),
                             ..Default::default()
                         },
-                        Loc { start: 0 },
+                        Loc::new(0),
                     )),
                     value: Some(Expr::init(
                         E::String {
                             data: b"sqlite".into(),
                             ..Default::default()
                         },
-                        Loc { start: 0 },
+                        Loc::new(0),
                     )),
                     ..Default::default()
                 };
@@ -1041,7 +1038,7 @@ pub mod parse_worker {
                         is_single_line: true,
                         ..Default::default()
                     },
-                    Loc { start: 0 },
+                    Loc::new(0),
                 );
                 let require_call = Expr::init(
                     E::Call {
@@ -1050,17 +1047,17 @@ pub mod parse_worker {
                         args: unsafe { bun_ast::ExprNodeList::from_bump_slice(require_args) },
                         ..Default::default()
                     },
-                    Loc { start: 0 },
+                    Loc::new(0),
                 );
 
                 let root = Expr::init(
                     E::Dot {
                         target: require_call,
-                        name_loc: Loc::EMPTY,
+                        name_loc: None,
                         name: b"db".into(),
                         ..Default::default()
                     },
-                    Loc { start: 0 },
+                    Loc::new(0),
                 );
 
                 return Ok(JSAst::init(
@@ -1082,7 +1079,7 @@ pub mod parse_worker {
                     // logger OOM-only
                     let _ = log.add_error(
                     Some(source),
-                    Loc::EMPTY,
+                    None,
                     b"Loading .node files won't work in the browser. Make sure to set target to \"bun\" or \"node\"",
                 );
                     return Err(crate::Error::ParserError);
@@ -1109,7 +1106,7 @@ pub mod parse_worker {
                         data: unique_key.into(),
                         ..Default::default()
                     },
-                    Loc { start: 0 },
+                    Loc::new(0),
                 );
 
                 let require_args = bump.alloc_slice_fill_default::<Expr>(1);
@@ -1119,13 +1116,13 @@ pub mod parse_worker {
                     E::Call {
                         target: Expr {
                             data: ast::ExprData::ERequireCallTarget,
-                            loc: Loc { start: 0 },
+                            loc: Some(Loc::new(0)),
                         },
                         // SAFETY: bump-owned slice; never grown via this Vec.
                         args: unsafe { bun_ast::ExprNodeList::from_bump_slice(require_args) },
                         ..Default::default()
                     },
-                    Loc { start: 0 },
+                    Loc::new(0),
                 );
 
                 *unique_key_for_additional_file = FileLoaderHash {
@@ -1164,7 +1161,7 @@ pub mod parse_worker {
                     &mut topts.define,
                     opts,
                     log,
-                    Expr::init(E::Missing {}, Loc::EMPTY),
+                    Expr::init(E::Missing {}, None),
                     source,
                     b"",
                 )?
@@ -1274,7 +1271,7 @@ pub mod parse_worker {
                     let _ = has_any_css_locals.fetch_add(1, Ordering::Relaxed);
                 }
                 // If this is a css module, the final exports object wil be set in `generateCodeForLazyExport`.
-                let root = Expr::init(E::Object::default(), Loc { start: 0 });
+                let root = Expr::init(E::Object::default(), Loc::new(0));
                 // `StylesheetExtra.symbols` is
                 // `Vec<bun_ast::Symbol>`; `new_lazy_export_ast_impl` takes
                 // `Vec<bun_ast::Symbol>`. Convert field-by-field so CSS-module local refs
@@ -1347,7 +1344,7 @@ pub mod parse_worker {
                         data: unique_key.into(),
                         ..Default::default()
                     },
-                    Loc { start: 0 },
+                    Loc::new(0),
                 );
                 *unique_key_for_additional_file = FileLoaderHash {
                     key: ast::StoreStr::new(unique_key),
@@ -1508,7 +1505,7 @@ pub mod parse_worker {
                         if e == bun_resolver::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                             let _ = log.add_error_fmt(
                                 Some(&source),
-                                Loc::EMPTY,
+                                None,
                                 format_args!(
                                     "File not found {}",
                                     bun_core::fmt::quote(file_path.text)
@@ -1518,7 +1515,7 @@ pub mod parse_worker {
                         } else {
                             let _ = log.add_error_fmt(
                                 Some(&source),
-                                Loc::EMPTY,
+                                None,
                                 format_args!(
                                     "{} reading file: {}",
                                     e.name(),

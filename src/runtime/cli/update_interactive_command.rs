@@ -31,7 +31,6 @@ use bun_resolver::fs::FileSystem;
 // helpers below must operate on that type. The earlier draft imported
 // `bun_ast::Expr`, which is a distinct struct and would not unify
 // with `MapEntry.root`.
-use bun_ast::Loc;
 use bun_ast::{self, E, Expr, expr as js_expr};
 use bun_core::strings;
 use bun_paths::{self as path, PathBuffer};
@@ -2317,7 +2316,7 @@ fn update_default_catalog(
         }
 
         // Update or add the package version
-        let new_expr = Expr::allocate(bump, E::EString::init(version_with_prefix), Loc::EMPTY);
+        let new_expr = Expr::allocate(bump, E::EString::init(version_with_prefix), None);
         catalog_obj
             .put(bump, leak_dup(package_name), new_expr)
             .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
@@ -2337,10 +2336,10 @@ fn update_default_catalog(
                     // non-owning `Copy` handle so the previous `Data::EObject`
                     // pointing at it remains valid.
                     Some(o) => Expr {
-                        loc: Loc::EMPTY,
+                        loc: None,
                         data: js_expr::Data::EObject(o),
                     },
-                    None => Expr::allocate(bump, fresh_obj, Loc::EMPTY),
+                    None => Expr::allocate(bump, fresh_obj, None),
                 };
                 ws_obj
                     .put(bump, b"catalog", expr)
@@ -2359,11 +2358,7 @@ fn update_default_catalog(
     // `workspaces.catalog` key exists.
     if let Some(root_obj) = package_json.data.e_object_mut() {
         root_obj
-            .put(
-                bump,
-                b"catalog",
-                Expr::allocate(bump, fresh_obj, Loc::EMPTY),
-            )
+            .put(bump, b"catalog", Expr::allocate(bump, fresh_obj, None))
             .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
     }
     Ok(())
@@ -2415,7 +2410,7 @@ fn update_named_catalog(
         }
 
         // Update or add the package version
-        let new_expr = Expr::allocate(bump, E::EString::init(version_with_prefix), Loc::EMPTY);
+        let new_expr = Expr::allocate(bump, E::EString::init(version_with_prefix), None);
         catalog_obj
             .put(bump, leak_dup(package_name), new_expr)
             .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
@@ -2426,7 +2421,7 @@ fn update_named_catalog(
                 .put(
                     bump,
                     leak_dup(catalog_name),
-                    Expr::allocate(bump, fresh_catalog, Loc::EMPTY),
+                    Expr::allocate(bump, fresh_catalog, None),
                 )
                 .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
         }
@@ -2443,10 +2438,10 @@ fn update_named_catalog(
                 }
                 let expr = match existing_catalogs {
                     Some(o) => Expr {
-                        loc: Loc::EMPTY,
+                        loc: None,
                         data: js_expr::Data::EObject(o),
                     },
-                    None => Expr::allocate(bump, fresh_catalogs, Loc::EMPTY),
+                    None => Expr::allocate(bump, fresh_catalogs, None),
                 };
                 ws_obj
                     .put(bump, b"catalogs", expr)
@@ -2466,7 +2461,7 @@ fn update_named_catalog(
             .put(
                 bump,
                 b"catalogs",
-                Expr::allocate(bump, fresh_catalogs, Loc::EMPTY),
+                Expr::allocate(bump, fresh_catalogs, None),
             )
             .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
     }

@@ -4605,7 +4605,6 @@ JSC::EncodedJSValue JSC__JSValue__bigIntUnaryMinus(JSC::JSGlobalObject* globalOb
     return JSC::JSValue::encode(JSC::JSBigInt::unaryMinus(globalObject, x.asHeapBigInt()));
 }
 
-
 uint64_t JSC__JSValue__toUInt64NoTruncate(JSC::EncodedJSValue val)
 {
     JSC::JSValue value = JSC::JSValue::decode(val);

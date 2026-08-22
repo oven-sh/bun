@@ -4619,9 +4619,25 @@ declare module "bun" {
 
   interface WebSocketEventMap {
     close: CloseEvent;
-    error: Event;
+    error: ErrorEvent;
     message: MessageEvent;
     open: Event;
+    /**
+     * Dispatched when a ping frame arrives. Bun answers it with a pong
+     * automatically. `data` is the ping payload, in the representation
+     * selected by {@link WebSocket.binaryType}.
+     *
+     * Not available in browsers.
+     */
+    ping: MessageEvent;
+    /**
+     * Dispatched when a pong frame arrives, usually in reply to
+     * {@link WebSocket.ping}. `data` is the pong payload, in the
+     * representation selected by {@link WebSocket.binaryType}.
+     *
+     * Not available in browsers.
+     */
+    pong: MessageEvent;
   }
 
   /**
@@ -4684,9 +4700,16 @@ declare module "bun" {
     readonly extensions: string;
 
     /**
-     * The type of binary data being received.
+     * Sets how binary data is returned in events. This applies to binary `message`
+     * events and to the payload of `ping` and `pong` events.
+     *
+     * - if `nodebuffer`, binary data is returned as `Buffer` objects. **(default)**
+     * - if `arraybuffer`, binary data is returned as `ArrayBuffer` objects.
+     * - if `blob`, binary data is returned as `Blob` objects.
+     *
+     * Assigning any other value throws a `SyntaxError`.
      */
-    binaryType: "arraybuffer" | "nodebuffer";
+    binaryType: "arraybuffer" | "blob" | "nodebuffer";
 
     /**
      * Event handler for open event
@@ -4701,7 +4724,7 @@ declare module "bun" {
     /**
      * Event handler for error event
      */
-    onerror: ((this: WebSocket, ev: Event) => any) | null;
+    onerror: ((this: WebSocket, ev: ErrorEvent) => any) | null;
 
     /**
      * Event handler for close event
@@ -4710,9 +4733,10 @@ declare module "bun" {
 
     /**
      * Transmits data to the server
-     * @param data The data to send to the server
+     * @param data The data to send to the server. A `string` is sent as a text
+     * frame; an `ArrayBuffer`, `ArrayBufferView` or `Blob` is sent as a binary frame.
      */
-    send(data: string | ArrayBufferLike | ArrayBufferView): void;
+    send(data: string | ArrayBufferLike | ArrayBufferView | Blob): void;
 
     /**
      * Closes the WebSocket connection
@@ -4724,16 +4748,16 @@ declare module "bun" {
     close(code?: number, reason?: string): void;
 
     /**
-     * Sends a ping frame to the server
-     * @param data Optional data to include in the ping frame
+     * Sends a ping frame to the server. The server's reply arrives as a `pong` event.
+     * @param data Optional payload to include in the ping frame
      */
-    ping(data?: string | ArrayBufferLike | ArrayBufferView): void;
+    ping(data?: string | ArrayBufferLike | ArrayBufferView | Blob): void;
 
     /**
      * Sends a pong frame to the server
-     * @param data Optional data to include in the pong frame
+     * @param data Optional payload to include in the pong frame
      */
-    pong(data?: string | ArrayBufferLike | ArrayBufferView): void;
+    pong(data?: string | ArrayBufferLike | ArrayBufferView | Blob): void;
 
     /**
      * Immediately terminates the connection

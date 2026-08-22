@@ -194,13 +194,18 @@ function otelClientRequestStart(req, protocol, host, port, arrayHeaders?) {
   req[kOtelSpan] = span;
   if (arrayHeaders !== undefined) {
     const pairs = arrayHeaders.length && ArrayIsArray(arrayHeaders[0]);
+    // (non-string names are left for _storeHeader to reject)
     const has = name => {
       if (pairs) {
-        for (let i = 0; i < arrayHeaders.length; i++)
-          if (StringPrototypeToLowerCase.$call(arrayHeaders[i][0] + "") === name) return true;
+        for (let i = 0; i < arrayHeaders.length; i++) {
+          const k = arrayHeaders[i]?.[0];
+          if (typeof k === "string" && StringPrototypeToLowerCase.$call(k) === name) return true;
+        }
       } else {
-        for (let i = 0; i + 1 < arrayHeaders.length; i += 2)
-          if (StringPrototypeToLowerCase.$call(arrayHeaders[i] + "") === name) return true;
+        for (let i = 0; i + 1 < arrayHeaders.length; i += 2) {
+          const k = arrayHeaders[i];
+          if (typeof k === "string" && StringPrototypeToLowerCase.$call(k) === name) return true;
+        }
       }
       return false;
     };

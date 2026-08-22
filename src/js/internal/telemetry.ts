@@ -26,6 +26,12 @@ const enterContext = $newCppFunction("TelemetryContext.cpp", "jsTelemetryEnterCo
 const exitContext = $newCppFunction("TelemetryContext.cpp", "jsTelemetryExitContext", 1);
 const activeExtras = $newCppFunction("TelemetryContext.cpp", "jsTelemetryActiveExtras", 0);
 
+const ObjectDefineProperty = Object.defineProperty;
+const ObjectKeys = Object.keys;
+const ArrayFrom = Array.from;
+const encodeURIComponent_ = encodeURIComponent;
+const decodeURIComponent_ = decodeURIComponent;
+
 // @opentelemetry/api well-known keys (createContextKey === Symbol.for).
 const SPAN_KEY = Symbol.for("OpenTelemetry Context Key SPAN");
 const BAGGAGE_KEY = Symbol.for("OpenTelemetry Baggage Key");
@@ -38,7 +44,7 @@ const SpanStatusCode = { UNSET: 0, OK: 1, ERROR: 2 } as const;
 function traceStateHeader(traceState: any): string | undefined {
   if (traceState == null) return undefined;
   if (typeof traceState === "string") return traceState;
-  if (typeof traceState.serialize === "function") return String(traceState.serialize());
+  if (typeof traceState.serialize === "function") return traceState.serialize() + "";
   return undefined;
 }
 
@@ -160,7 +166,7 @@ const contextManager = {
       const bound = function (this: unknown, ...args: any[]) {
         return runWithContext(ctx, target, this, args);
       };
-      Object.defineProperty(bound, "length", { configurable: true, value: target.length });
+      ObjectDefineProperty(bound, "length", { configurable: true, value: target.length });
       return bound;
     }
     if (target && typeof target.emit === "function") {
@@ -193,12 +199,12 @@ type Tracer = {
 
 const tracers = new Map<string, Tracer>();
 function getTracer(name?: string, version?: string): Tracer {
-  name = name ? String(name) : "";
+  name = name ? name + "" : "";
   // NUL cannot appear in a package name, so "a@1" + undefined ≠ "a" + "1".
   const key = version ? name + "\0" + version : name;
   let t = tracers.get(key);
   if (!t) {
-    t = createTracer(createScope(name, version), name, version === undefined ? undefined : String(version));
+    t = createTracer(createScope(name, version), name, version === undefined ? undefined : version + "");
     tracers.set(key, t);
   }
   return t;
@@ -222,7 +228,7 @@ class Baggage {
     return e ? { ...e } : undefined;
   }
   getAllEntries() {
-    return Array.from(this.#entries, ([k, v]) => [k, { ...v }]);
+    return ArrayFrom(this.#entries, ([k, v]) => [k, { ...v }]);
   }
   setEntry(key: string, entry: { value: string }) {
     const m = new Map(this.#entries);
@@ -256,10 +262,10 @@ function parseBaggage(header: string): Baggage | undefined {
     let value = kv.slice(eq + 1).trim();
     if (!key) continue;
     try {
-      key = decodeURIComponent(key);
+      key = decodeURIComponent_(key);
     } catch {}
     try {
-      value = decodeURIComponent(value);
+      value = decodeURIComponent_(value);
     } catch {}
     const entry: any = { value };
     if (semi !== -1) entry.metadata = { toString: () => part.slice(semi + 1).trim() };
@@ -277,9 +283,9 @@ function baggageHeaderFromExtras(extras: unknown): string {
 function serializeBaggage(bag: any): string {
   const parts: string[] = [];
   for (const [k, e] of bag.getAllEntries()) {
-    let s = encodeURIComponent(k) + "=" + encodeURIComponent(e.value);
+    let s = encodeURIComponent_(k) + "=" + encodeURIComponent_(e.value);
     const metadata = e.metadata;
-    if (metadata !== undefined) s += ";" + String(metadata);
+    if (metadata !== undefined) s += ";" + metadata;
     parts.push(s);
   }
   return parts.join(",");
@@ -293,8 +299,8 @@ const defaultGetter = {
   },
   keys(carrier: any) {
     if (carrier == null) return [];
-    if (typeof carrier.keys === "function") return Array.from(carrier.keys());
-    return Object.keys(carrier);
+    if (typeof carrier.keys === "function") return ArrayFrom(carrier.keys());
+    return ObjectKeys(carrier);
   },
 };
 const defaultSetter = {
@@ -372,7 +378,7 @@ function installGlobal() {
 const httpClientInstrument = nativeInstrumentId("fetch") as number;
 /** A CLIENT span under the active span, or undefined when disabled. */
 function startClientSpan(name: string) {
-  return startInstrumentSpan(httpClientInstrument, String(name), SpanKind.CLIENT);
+  return startInstrumentSpan(httpClientInstrument, name + "", SpanKind.CLIENT);
 }
 
 // ── Bun.otel ──────────────────────────────────────────────────────────────

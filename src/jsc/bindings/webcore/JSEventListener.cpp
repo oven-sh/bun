@@ -156,8 +156,7 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
 
     VM& vm = scriptExecutionContext.vm();
     JSLockHolder lock(vm);
-    // An earlier listener of this dispatch met a termination (a node:vm timeout keeps the VM's gate
-    // open): it is unwinding, and nothing enters script on top of it.
+    // A termination is unwinding (a node:vm timeout keeps the VM's gate open): enter no script on top of it.
     if (vm.hasPendingTerminationException()) [[unlikely]]
         return;
 
@@ -226,10 +225,8 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
     // InspectorInstrumentation::didCallFunction(&scriptExecutionContext);
 
     if (scope.exception()) [[unlikely]] {
-        // A TerminationException is not this listener's uncaught error: tryClearException() leaves it
-        // pending and reportException() ignores it, so the frames above this dispatch unwind on it.
-        // The NakedPtr overload of profiledCall() would have cleared it unconditionally, and a
-        // microtask-only loop that dispatches events would keep running after terminate().
+        // A TerminationException is not this listener's error: tryClearException() keeps it pending and
+        // reportException() ignores it, so the dispatch unwinds on it.
         auto* exception = scope.exception();
         (void)scope.tryClearException();
         event.target()->uncaughtExceptionInEventHandler();

@@ -6482,11 +6482,14 @@ impl VirtualMachine {
                 TagOptions::DISABLE_INSPECT_CUSTOM | TagOptions::HIDE_GLOBAL,
             )?;
             if !matches!(tag.tag, TagPayload::NativeCode) {
-                let _ = if allow_ansi_color {
-                    formatter.format::<true>(tag, writer, error_instance, global_ref)
+                // Formatting a non-Error value can run user code (toString,
+                // getters) which may throw. Propagate so the caller clears the
+                // exception instead of leaving it pending on the VM.
+                if allow_ansi_color {
+                    formatter.format::<true>(tag, writer, error_instance, global_ref)?;
                 } else {
-                    formatter.format::<false>(tag, writer, error_instance, global_ref)
-                };
+                    formatter.format::<false>(tag, writer, error_instance, global_ref)?;
+                }
                 writer.write_all(b"\n")?;
             }
         }

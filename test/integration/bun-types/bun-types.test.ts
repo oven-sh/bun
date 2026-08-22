@@ -138,6 +138,43 @@ function typeTest(name: string, config: TypeTestConfig) {
   });
 }
 
+let tscCheckCounter = 0;
+
+/**
+ * Type-checks `files` against the packed bun-types with the `bun init` tsconfig (plus
+ * `compilerOptions`) by spawning tsc. Unlike {@link typeTest} this runs on debug builds too:
+ * tsc over a file or two is cheap, unlike the in-process LanguageService runs over the whole
+ * fixture directory.
+ */
+function tscTest(name: string, files: Record<string, string>, compilerOptions: Record<string, unknown> = {}) {
+  test.concurrent(name, async () => {
+    const checkDir = join(TEMP_DIR, `tsc-check-${tscCheckCounter++}`);
+    const tsconfig = structuredClone(sourceTsconfig);
+    tsconfig.include = Object.keys(files);
+    tsconfig.compilerOptions = {
+      ...tsconfig.compilerOptions,
+      typeRoots: [join(BASE_FIXTURE_DIR, "node_modules", "@types")],
+      ...compilerOptions,
+    };
+    await mkdir(checkDir, { recursive: true });
+    await makeTree(checkDir, { ...files, "tsconfig.json": JSON.stringify(tsconfig, null, 2) });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
+      env: bunEnv,
+      cwd: checkDir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr.trim()).toBe("");
+    expect(stdout.trim()).toBe("");
+    expect(exitCode).toBe(0);
+  });
+}
+
 async function diagnose(
   fixtureDir: string,
   config: {
@@ -367,37 +404,38 @@ describe("@types/bun integration test", () => {
     });
   });
 
-  // Runs on debug builds too: spawning tsc over a single file is cheap,
-  // unlike the in-process LanguageService runs above.
   describe("Bun.mmap", () => {
-    test("MMapOptions accepts offset and size", async () => {
-      const checkDir = join(TEMP_DIR, "mmap-options-check");
-      const tsconfig = structuredClone(sourceTsconfig);
-      tsconfig.include = ["mmap-options.ts"];
-      tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
-      await mkdir(checkDir, { recursive: true });
-      await makeTree(checkDir, {
-        "tsconfig.json": JSON.stringify(tsconfig, null, 2),
-        "mmap-options.ts": `const view = Bun.mmap("./data.bin", { shared: true, sync: false, offset: 4096, size: 1024 });
+    tscTest("MMapOptions accepts offset and size", {
+      "mmap-options.ts": `const view = Bun.mmap("./data.bin", { shared: true, sync: false, offset: 4096, size: 1024 });
            view satisfies Uint8Array<ArrayBuffer>;
            Bun.mmap("./data.bin", { offset: 4096 }) satisfies Uint8Array<ArrayBuffer>;
            Bun.mmap("./data.bin", { size: 1024 }) satisfies Uint8Array<ArrayBuffer>;`,
-      });
-
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
-        env: bunEnv,
-        cwd: checkDir,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-      expect(stderr.trim()).toBe("");
-      expect(stdout.trim()).toBe("");
-      expect(exitCode).toBe(0);
     });
+  });
+
+  // The runtime defines `self` on every global object (main thread and Web Workers). Without
+  // lib.dom.d.ts nothing but bun-types can declare it; with lib.dom.d.ts loaded, bun-types has
+  // to defer to lib.dom's declaration or tsc reports a conflicting redeclaration (TS2403).
+  describe("self", () => {
+    tscTest("is the global object without lib.dom.d.ts", {
+      "self.ts": `self satisfies typeof globalThis;
+           globalThis satisfies typeof self;
+           self.Bun.version satisfies string;
+           self.addEventListener("message", event => {
+             event satisfies MessageEvent;
+             self.postMessage(event.data);
+           });`,
+    });
+
+    tscTest(
+      "defers to lib.dom.d.ts when it is loaded",
+      {
+        "self.ts": `self satisfies Window & typeof globalThis;
+           self.Bun.version satisfies string;`,
+      },
+      // The redeclaration error would be reported inside bun-types itself, which skipLibCheck hides.
+      { lib: ["ESNext", "DOM", "DOM.Iterable", "DOM.AsyncIterable"], skipLibCheck: false },
+    );
   });
 
   describe("Test Globals", () => {

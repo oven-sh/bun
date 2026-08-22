@@ -477,6 +477,20 @@ declare function setInterval(handler: Bun.TimerHandler, interval?: number, ...ar
  */
 declare function setTimeout(handler: Bun.TimerHandler, timeout?: number, ...arguments: any[]): Timer;
 
+/**
+ * The global object, like `self` in browsers and web workers. `self === globalThis`
+ * both on the main thread and inside a `Worker`.
+ *
+ * @example
+ * ```ts
+ * // worker.ts
+ * self.addEventListener("message", event => {
+ *   self.postMessage(event.data);
+ * });
+ * ```
+ */
+declare var self: Bun.__internal.UseLibDomIfAvailable<"self", typeof globalThis>;
+
 declare function addEventListener<K extends keyof EventMap>(
   type: K,
   listener: (this: object, ev: EventMap[K]) => any,

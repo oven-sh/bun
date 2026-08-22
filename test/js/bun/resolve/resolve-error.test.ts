@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import path from "node:path";
 
 describe("ResolveMessage", () => {
@@ -281,5 +281,123 @@ describe.concurrent("tsconfig paths wildcard with overlapping prefix/suffix", ()
 
   it("xy*xy vs xy", async () => {
     await run("xy*xy", "xy");
+  });
+});
+
+// A file containing a static `import "node:<unknown>"` is rejected at transpile
+// time when it is transpiled on the JS thread (require(), plugin onLoad
+// sources, import() with the concurrent transpiler disabled), and by the
+// runtime resolve hook when the concurrent transpiler handled it (import()).
+// Both must throw the same Node-shaped ERR_UNKNOWN_BUILTIN_MODULE error.
+describe.concurrent("static import of an unknown node: builtin", () => {
+  const specifier = "node:this_builtin_does_not_exist";
+  const pick = `(e) => ({ code: e.code, specifier: e.specifier, importKind: e.importKind, message: e.message })`;
+  const expected = {
+    code: "ERR_UNKNOWN_BUILTIN_MODULE",
+    specifier,
+    importKind: "import-statement",
+    message: `No such built-in module: ${specifier}`,
+  };
+
+  async function loadFixtures(env: Record<string, string>) {
+    using dir = tempDir("unknown-builtin-import", {
+      // One file per load so no two loads share a module registry entry.
+      "import-a.ts": `import "${specifier}";\n`,
+      "import-b.ts": `import "${specifier}";\n`,
+      "reexport-a.ts": `export * from "${specifier}";\n`,
+      "reexport-b.ts": `export * from "${specifier}";\n`,
+      "main.ts": `
+        const pick = ${pick};
+        const errors = {};
+        try { require("./import-a.ts"); } catch (e) { errors["require import"] = pick(e); }
+        try { await import("./import-b.ts"); } catch (e) { errors["import() import"] = pick(e); }
+        try { require("./reexport-a.ts"); } catch (e) { errors["require reexport"] = pick(e); }
+        try { await import("./reexport-b.ts"); } catch (e) { errors["import() reexport"] = pick(e); }
+        console.log(JSON.stringify(errors));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.ts"],
+      env: { ...bunEnv, ...env },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout);
+  }
+
+  const expectedForEveryLoad = {
+    "require import": expected,
+    "import() import": expected,
+    "require reexport": expected,
+    "import() reexport": expected,
+  };
+
+  it("require() and import() of the importing file throw the same error", async () => {
+    expect(await loadFixtures({})).toEqual(expectedForEveryLoad);
+  });
+
+  it("import() throws the same error when the importing file is transpiled on the JS thread", async () => {
+    expect(await loadFixtures({ BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1" })).toEqual(expectedForEveryLoad);
+  });
+
+  it("source provided by a plugin onLoad callback throws the same error", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        Bun.plugin({
+          name: "virtual",
+          setup(build) {
+            build.onResolve({ filter: /.*/, namespace: "virtual" }, ({ path }) => ({ path, namespace: "virtual" }));
+            build.onLoad({ filter: /.*/, namespace: "virtual" }, () => ({
+              contents: 'import "${specifier}";',
+              loader: "ts",
+            }));
+          },
+        });
+        try {
+          await import("virtual:entry");
+        } catch (e) {
+          console.log(JSON.stringify((${pick})(e)));
+        }
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(expected);
+    expect(exitCode).toBe(0);
+  });
+
+  it("entry point reports the same message at the import's position", async () => {
+    using dir = tempDir("unknown-builtin-entry", {
+      "entry.ts": `import "${specifier}";\n`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(normalizeBunSnapshot(stderr, String(dir))).toMatchInlineSnapshot(`
+      "1 | import "node:this_builtin_does_not_exist";
+                 ^
+      error: No such built-in module: node:this_builtin_does_not_exist
+          at <dir>/entry.ts:1:8
+
+      Bun v<bun-version>"
+    `);
+    expect(exitCode).toBe(1);
   });
 });

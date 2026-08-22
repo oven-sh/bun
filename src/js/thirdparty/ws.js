@@ -932,8 +932,13 @@ function wsEmitClose(server) {
   server.emit("close");
 }
 
-function abortHandshake(response, code, message, headers = {}) {
-  message = message || lazyHttp().STATUS_CODES[code];
+function socketOnError() {
+  this.destroy();
+}
+
+function abortHandshake(socket, code, message, headers) {
+  const { STATUS_CODES } = lazyHttp();
+  message = message || STATUS_CODES[code];
   headers = {
     Connection: "close",
     "Content-Type": "text/html",
@@ -941,19 +946,38 @@ function abortHandshake(response, code, message, headers = {}) {
     ...headers,
   };
 
-  response.writeHead(code, headers);
-  response.write(message);
-  response.end();
+  // handleUpgrade() was called from a 'request' listener: answer through its ServerResponse.
+  const response = socket._httpMessage;
+  if (response) {
+    response.writeHead(code, headers);
+    response.write(message);
+    response.end();
+    return;
+  }
+
+  // Another WebSocketServer on the same http.Server has already taken this connection.
+  if (socket[kBunInternals]?.upgraded) return;
+
+  socket.once("finish", socket.destroy);
+
+  socket.end(
+    `HTTP/1.1 ${code} ${STATUS_CODES[code]}\r\n` +
+      Object.keys(headers)
+        .map(h => `${h}: ${headers[h]}`)
+        .join("\r\n") +
+      "\r\n\r\n" +
+      message,
+  );
 }
 
-function abortHandshakeOrEmitwsClientError(server, req, response, socket, code, message) {
+function abortHandshakeOrEmitwsClientError(server, req, socket, code, message, headers) {
   if (server.listenerCount("wsClientError")) {
     const err = new Error(message);
     Error.captureStackTrace(err, abortHandshakeOrEmitwsClientError);
 
     server.emit("wsClientError", err, socket, req);
   } else {
-    abortHandshake(response, code, message);
+    abortHandshake(socket, code, message, headers);
   }
 }
 
@@ -1516,11 +1540,20 @@ class WebSocketServer extends EventEmitter {
    * @private
    */
   completeUpgrade(extensions, key, protocols, request, socket, head, cb) {
-    const response = socket._httpMessage;
-    const server = socket.server[kBunInternals];
+    // Destroy the socket if the client has already sent a FIN packet.
+    if (!socket.readable || !socket.writable) return socket.destroy();
+
     const req = socket[kBunInternals];
 
-    if (this._state > RUNNING) return abortHandshake(response, 503);
+    if (req?.upgraded) {
+      throw new Error(
+        "server.handleUpgrade() was called more than once with the same socket, possibly due to a misconfiguration",
+      );
+    }
+
+    if (this._state > RUNNING) return abortHandshake(socket, 503);
+
+    const server = socket.server[kBunInternals];
 
     let protocol = "";
     if (protocols.size) {
@@ -1555,7 +1588,7 @@ class WebSocketServer extends EventEmitter {
       }
       cb(ws, request);
     } else {
-      abortHandshake(response, 500);
+      abortHandshake(socket, 500);
     }
   }
   /**
@@ -1569,41 +1602,43 @@ class WebSocketServer extends EventEmitter {
    * @public
    */
   handleUpgrade(req, socket, head, cb) {
-    // socket is actually fake so we use internal http_res
-    const response = socket._httpMessage || socket[kBunInternals];
-
-    // socket.on("error", socketOnError);
+    // Every WebSocketServer on the http.Server sees this socket. Keep one copy.
+    socket.removeListener("error", socketOnError);
+    // Stays attached after the upgrade: node:http removed its own listener at the handoff.
+    socket.on("error", socketOnError);
 
     const key = req.headers["sec-websocket-key"];
     const version = +req.headers["sec-websocket-version"];
 
     if (req.method !== "GET") {
       const message = "Invalid HTTP method";
-      abortHandshakeOrEmitwsClientError(this, req, response, socket, 405, message);
+      abortHandshakeOrEmitwsClientError(this, req, socket, 405, message);
       return;
     }
 
     const upgrade = req.headers.upgrade;
     if (upgrade === undefined || upgrade.toLowerCase() !== "websocket") {
       const message = "Invalid Upgrade header";
-      abortHandshakeOrEmitwsClientError(this, req, response, socket, 400, message);
+      abortHandshakeOrEmitwsClientError(this, req, socket, 400, message);
       return;
     }
 
     if (!key || !wsKeyRegex.test(key)) {
       const message = "Missing or invalid Sec-WebSocket-Key header";
-      abortHandshakeOrEmitwsClientError(this, req, response, socket, 400, message);
+      abortHandshakeOrEmitwsClientError(this, req, socket, 400, message);
       return;
     }
 
     if (version !== 8 && version !== 13) {
       const message = "Missing or invalid Sec-WebSocket-Version header";
-      abortHandshakeOrEmitwsClientError(this, req, response, socket, 400, message);
+      abortHandshakeOrEmitwsClientError(this, req, socket, 400, message, {
+        "Sec-WebSocket-Version": "13, 8",
+      });
       return;
     }
 
     if (!this.shouldHandle(req)) {
-      abortHandshake(response, 400);
+      abortHandshake(socket, 400);
       return;
     }
 
@@ -1615,7 +1650,7 @@ class WebSocketServer extends EventEmitter {
         protocols = subprotocolParse(secWebSocketProtocol);
       } catch {
         const message = "Invalid Sec-WebSocket-Protocol header";
-        abortHandshakeOrEmitwsClientError(this, req, response, socket, 400, message);
+        abortHandshakeOrEmitwsClientError(this, req, socket, 400, message);
         return;
       }
     }
@@ -1637,7 +1672,7 @@ class WebSocketServer extends EventEmitter {
       if (this.options.verifyClient.length === 2) {
         this.options.verifyClient(info, (verified, code, message, headers) => {
           if (!verified) {
-            return abortHandshake(response, code || 401, message, headers);
+            return abortHandshake(socket, code || 401, message, headers);
           }
 
           this.completeUpgrade(extensions, key, protocols, req, socket, head, cb);
@@ -1645,7 +1680,7 @@ class WebSocketServer extends EventEmitter {
         return;
       }
 
-      if (!this.options.verifyClient(info)) return abortHandshake(response, 401);
+      if (!this.options.verifyClient(info)) return abortHandshake(socket, 401);
     }
 
     this.completeUpgrade(extensions, key, protocols, req, socket, head, cb);

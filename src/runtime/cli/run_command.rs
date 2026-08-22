@@ -938,7 +938,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // dispatch hooks (`jsc_hooks::install_jsc_hooks`) are installed by
         // `main.rs` before `Cli::start`, so `VirtualMachine::init` already sees
         // a populated `RuntimeHooks` table.
-        bun_jsc::initialize(ctx.runtime_options.eval.eval_and_print);
+        bun_jsc::initialize(bun_jsc::InitializeOptions {
+            eval_mode: ctx.runtime_options.eval.eval_and_print,
+            one_shot: bun_jsc::is_one_shot_eval_invocation(),
+            ..Default::default()
+        });
         bun_ast::initialize_store();
 
         let vm_ptr = VirtualMachine::init(VmInitOptions {
@@ -1106,7 +1110,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     ) -> crate::Result<()> {
         use bun_standalone_graph::StandaloneModuleGraph::Flags as GraphFlags;
 
-        bun_jsc::initialize(false);
+        // argv belongs to the compiled program, so a `-e` or `-p` in it is not ours.
+        bun_jsc::initialize(bun_jsc::InitializeOptions::default());
         bun_analytics::features::standalone_executable.fetch_add(1, Ordering::Relaxed);
         bun_ast::initialize_store();
 
@@ -1541,6 +1546,10 @@ impl Run<'_> {
 
         vm.on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
         let _ = vm.global().handle_rejected_promises();
+        // The loop stopped on an uncaught error: Node's fatal-exception exit, not a drain.
+        if vm.unhandled_error_counter > 0 {
+            vm.exit_handler.requested = true;
+        }
         vm.on_exit();
 
         if ANY_UNHANDLED.load(Ordering::Relaxed) {
@@ -1610,6 +1619,7 @@ fn dump_build_error(vm: &mut VirtualMachine) {
 )]
 fn exit_with_unhandled_note(vm: &mut VirtualMachine) -> ! {
     vm.exit_handler.exit_code = 1;
+    vm.exit_handler.requested = true;
     vm.on_exit();
     if ANY_UNHANDLED.load(Ordering::Relaxed) {
         bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::print();

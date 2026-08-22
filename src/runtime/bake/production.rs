@@ -97,7 +97,7 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
 
     // Create a VM + global for loading the config file, plugins, and
     // performing build time prerendering.
-    jsc::initialize(false);
+    jsc::initialize(jsc::InitializeOptions::default());
     bun_ast::initialize_store();
 
     let mut arena = Arena::new();
@@ -112,7 +112,6 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
     // SAFETY: `init_bake` returns a freshly-allocated VM owned by this thread;
     // unique access for the rest of this function.
     let vm = unsafe { &mut *vm_ptr };
-    // defer vm.deinit() — handled by `vm.destroy()` on the unwind path below.
     // Note: pass `vm_ptr` by value into the guard so the drop closure does
     // not borrow the local (`defer!` would capture `&vm_ptr`, which under
     // edition-2024 disjoint-capture rules collides with the `&mut *vm_ptr`
@@ -972,7 +971,6 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
 
     let mut params_buf: Vec<&[u8]> = Vec::new();
     for (nav_index, &route_index) in navigatable_routes.iter().enumerate() {
-        // defer params_buf.clearRetainingCapacity()
         let mut params_guard = scopeguard::guard(&mut params_buf, |b| b.clear());
         let params_buf = &mut **params_guard;
 
@@ -1363,9 +1361,8 @@ extern "C" fn BakeProdResolve(
 /// to enqueue the entry points.
 ///
 /// Canonical definition lives in `bun_bundler::bake_types::production` (lower
-/// tier) so the bundler and runtime share ONE nominal type. Re-exported here
-/// for `bake::production::EntryPointMap` callers.
-pub use bun_bundler::bake_types::production::EntryPointMap;
+/// tier) so the bundler and runtime share ONE nominal type.
+pub(crate) use bun_bundler::bake_types::production::EntryPointMap;
 use bun_bundler::bake_types::production::{EntryPointHashMap, InputFile};
 
 impl framework_router::InsertionHandler for EntryPointMap {
@@ -1610,7 +1607,7 @@ extern "C" fn BakeProdLoad(pt: *mut PerThread, key: BunString) -> BunString {
 /// Packed: type (u8) | no_client (bool, 1 bit) | unused (u23)
 #[repr(transparent)]
 #[derive(Clone, Copy)]
-pub struct TypeAndFlags(i32);
+pub(crate) struct TypeAndFlags(i32);
 
 impl TypeAndFlags {
     pub(crate) const fn new(ty: u8, no_client: bool) -> Self {

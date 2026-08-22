@@ -429,7 +429,6 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
         if load_hint != SourceMapLoadHint::IsExternalMap {
             'try_inline: {
                 let source = provider.get_source_slice();
-                // defer source.deref() → Drop on bun_core::String
                 debug_assert!(source.tag() == bun_core::Tag::ZigString);
 
                 let maybe_found_url = if source.is_8bit() {
@@ -441,7 +440,6 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
                 let Some(found_url) = maybe_found_url else {
                     break 'try_inline;
                 };
-                // defer found_url.deinit() → Drop
 
                 match parse_url(&arena, found_url.slice(), result) {
                     Ok(parsed) => break 'parsed (SourceMapLoadHint::IsInlineMap, parsed),

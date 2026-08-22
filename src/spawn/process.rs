@@ -36,7 +36,7 @@ pub struct WaitPidResult {}
 
 /// Low-level fd / memfd helpers historically grouped here as `spawn_sys`.
 /// MOVE_DOWN: real impls now live in `bun_sys` (lower crate); re-export so
-/// higher-tier callers (`bun_runtime::api::bun::spawn::stdio`, `Terminal`)
+/// higher-tier callers (`bun_runtime::api::bun_spawn::stdio`, `Terminal`)
 /// keep their `bun_spawn::process::spawn_sys::*` import path.
 pub mod spawn_sys {
     // POSIX-only — memfd / FD_CLOEXEC have no Windows equivalent
@@ -1460,6 +1460,12 @@ pub enum WindowsStdioResult {
     Unavailable,
     Buffer(Box<uv::Pipe>),
     BufferFd(Fd),
+    /// A stdio slot at index >= 3 whose value `Subprocess.stdio` has exposed:
+    /// a duplicate of the pipe's HANDLE that the caller owns and closes
+    /// (`net.connect({ fd })` adopts it). The `Buffer` it came from is closed
+    /// when the slot is downgraded, so nothing here closes this handle. The
+    /// counterpart of the POSIX `ExtraPipe::UnownedFd`.
+    UnownedFd(Fd),
 }
 
 #[cfg(windows)]
@@ -1812,10 +1818,6 @@ mod spawn_process_body {
 
         let mut uv_files_to_close: Vec<uv::uv_file> = Vec::new();
 
-        // defer: close uv_files_to_close — handled at each return site below
-        // via explicit cleanup calls at each error return; no
-        // `failed` flag is needed.
-
         if let Some(hpcon) = options.pseudoconsole {
             uv_process_options.pseudoconsole = hpcon;
         }
@@ -2062,8 +2064,6 @@ mod spawn_process_body {
             exit_handler: ProcessExitHandler::default(),
         }));
 
-        // defer if failed: process.close(); process.deref(); — handled at error sites
-
         // SAFETY: process is freshly allocated
         unsafe {
             // SAFETY: all-zero is valid uv::Process
@@ -2076,7 +2076,6 @@ mod spawn_process_body {
             uv_proc.data = process.cast::<c_void>();
         }
 
-        // defer dup_fds cleanup — handled below at each exit
         let cleanup_dup = |failed: bool| {
             if dup_src.is_some() {
                 debug_assert!(dup_src.is_some() && dup_tgt.is_some());
@@ -3165,8 +3164,6 @@ mod spawn_process_body {
                 process.stderr.unwrap_or(Fd::INVALID),
             ];
             let mut success = false;
-            // defer cleanup — handled at end / via guards below; error returns
-            // run their cleanup manually
 
             let mut out_fds_to_wait_for: [Fd; 2] = [
                 process.stdout.unwrap_or(Fd::INVALID),

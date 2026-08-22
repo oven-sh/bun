@@ -5226,7 +5226,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     }
 
     fn scan_literal_scalar(&mut self) -> Result<Token<Enc>, ParseError> {
-        // defer self.whitespace_buf.clearRetainingCapacity();
         let start = self.pos;
         let line = self.line;
 

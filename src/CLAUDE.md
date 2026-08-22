@@ -1,8 +1,8 @@
 ## Rust
 
 `src/` is a Cargo workspace (rooted at the repo's top-level `Cargo.toml`, ~200
-member crates). The runtime is built as `libbun_rust.a` via `cargo build -p
-bun_bin` (driven by `scripts/build/rust.ts`). Key crates:
+member crates). The runtime is built as `libbun_runtime.a` via `cargo build -p
+bun_runtime` (driven by `scripts/build/rust.ts`). Key crates:
 
 - `bun_core` (`src/bun_core/`) — strings, formatting, logging, env vars, allocator/heap helpers, the foundation everything else uses
 - `bun_sys` (`src/sys/`) — cross-platform syscall wrappers (`File`, `Fd`, `Dir`, `Error`)
@@ -10,7 +10,9 @@ bun_bin` (driven by `scripts/build/rust.ts`). Key crates:
 - `bun_jsc` (`src/jsc/`) — JSC value types, `Strong`/`Weak`, FFI imports, `URL`
 - `bun_runtime` (`src/runtime/`) — JS-visible APIs (server, fetch, node compat, crypto)
 - `bun_js_parser`, `bun_js_printer`, `bun_resolver`, `bun_bundler`, `bun_install`, `bun_collections`, `bun_threading`, `bun_alloc` — the rest of the pipeline
-- `bun_bin` (`src/bun_bin/`) — the staticlib root that `cargo build` links
+- `bun_runtime::bin_entry` (`src/runtime/bin_entry/`) — the process entry point (`main`) and the
+  C-ABI symbols that must be direct link inputs; `bun_runtime` itself is the
+  `staticlib` that `cargo build` produces for the C++ link.
 
 Conventions:
 

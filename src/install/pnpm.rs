@@ -1624,7 +1624,8 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
 
     lockfile.resolve(log)?;
 
-    lockfile.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration::<false>(manager)?;
+    lockfile
+        .fetch_necessary_package_metadata_after_yarn_or_pnpm_migration::<false, false>(manager)?;
 
     update_package_json_after_migration(manager, log, dir, &found_patches)?;
 

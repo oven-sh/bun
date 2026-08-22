@@ -317,11 +317,19 @@ impl Stringifier {
     }
 
     fn stringify(&mut self, global: &JSGlobalObject, value: JSValue) -> Result<(), StringifyError> {
+        let unwrapped = value.unwrap_boxed_primitive(global)?;
+        self.stringify_unwrapped(global, unwrapped)
+    }
+
+    /// `unwrapped` has been through `unwrap_boxed_primitive`.
+    fn stringify_unwrapped(
+        &mut self,
+        global: &JSGlobalObject,
+        unwrapped: JSValue,
+    ) -> Result<(), StringifyError> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(StringifyError::StackOverflow);
         }
-
-        let unwrapped = value.unwrap_boxed_primitive(global)?;
 
         if unwrapped.is_null() {
             self.builder.append_latin1(b"null");
@@ -546,11 +554,12 @@ impl Stringifier {
 
                     self.indent += 1;
 
-                    if prop_value_needs_newline(iter.value) {
+                    let prop_value = iter.value.unwrap_boxed_primitive(global)?;
+                    if prop_value_needs_newline(prop_value) {
                         self.newline();
                     }
 
-                    self.stringify(global, iter.value)?;
+                    self.stringify_unwrapped(global, prop_value)?;
                     self.indent -= 1;
                 }
                 if first {
@@ -663,7 +672,7 @@ impl Stringifier {
     }
 }
 
-/// Does this object property value need a newline? True for arrays and objects.
+/// Does this (unwrapped) object property value need a newline? True for arrays and objects.
 fn prop_value_needs_newline(value: JSValue) -> bool {
     !value.is_number() && !value.is_boolean() && !value.is_null() && !value.is_string()
 }

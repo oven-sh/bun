@@ -138,7 +138,9 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
                     // takes ownership via `heap::take`.
                     unsafe { boxed.writer.set_pipe(bun_core::heap::into_raw(pipe)) };
                 }
-                WindowsStdioResult::BufferFd(_) | WindowsStdioResult::Unavailable => {
+                WindowsStdioResult::BufferFd(_)
+                | WindowsStdioResult::UnownedFd(_)
+                | WindowsStdioResult::Unavailable => {
                     unreachable!("StaticPipeWriter stdin requires WindowsStdioResult::Buffer");
                 }
             }

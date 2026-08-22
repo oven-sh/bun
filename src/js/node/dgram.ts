@@ -1161,16 +1161,18 @@ Socket.prototype[SymbolAsyncDispose] = async function () {
     return;
   }
   const promise = $newPromise();
-  this.close(err => {
-    if (err) {
-      $rejectPromiseWithFirstResolvingFunctionCallCheck(promise, err);
-    } else {
-      $resolvePromiseWithFirstResolvingFunctionCallCheck(promise, undefined);
-    }
-  });
+  this.close(onAsyncDisposeClosed.bind(undefined, promise));
 
   return promise;
 };
+
+function onAsyncDisposeClosed(promise, err) {
+  if (err) {
+    $rejectPromiseWithFirstResolvingFunctionCallCheck(promise, err);
+  } else {
+    $resolvePromiseWithFirstResolvingFunctionCallCheck(promise, undefined);
+  }
+}
 
 function socketCloseNT(self) {
   self.emit("close");

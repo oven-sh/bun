@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { shellInternals } from "bun:internal-for-testing";
-import { describe, expect } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { bunExe, createTestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
 const { builtinDisabled } = shellInternals;
@@ -171,6 +171,84 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
       .testMini({ cwd: mini_tmpdir })
       .runAsTest("cp_recurse");
   });
+});
+
+// The builtin stats each operand after resolving it against the cwd and used to
+// put the resolved path in the error; the message has to name the operand as
+// written, like ls/rm/mv and the system cp do. Runs in a child process because
+// the builtin is off by default on POSIX (builtinDisabled above), where the env
+// var turns it on.
+test("stat errors name the operand as written", async () => {
+  using dir = tempDir("cp-operand-as-written", {
+    "f.txt": "source",
+    "g.txt": "not a directory",
+    "sub": {},
+    "dir": {},
+  });
+  const cases = {
+    missingSource: ["missing.txt", "dest.txt"],
+    missingSourceInSubdir: ["sub/missing.txt", "dest.txt"],
+    unnormalizedSource: ["./missing.txt", "dest.txt"],
+    missingSourceRecursive: ["-R", "missing", "dest"],
+    // Each source is its own task and reports its own operand; f.txt is still copied.
+    missingSourcesAmongOthers: ["missing1.txt", "f.txt", "missing2.txt", "dir"],
+    // A target is only an error when the failure is something other than
+    // ENOENT (a missing target is created). On Windows the builtin reports
+    // every stat failure as ENOENT, so these two exist on POSIX only.
+    ...(isWindows
+      ? {}
+      : {
+          fileAsSourceDirectory: ["f.txt/x", "dest.txt"],
+          fileAsTargetDirectory: ["f.txt", "g.txt/x"],
+        }),
+  };
+  const script = /* ts */ `
+    import { $ } from "bun";
+    import { existsSync } from "node:fs";
+    $.nothrow();
+    const results = {};
+    for (const [name, args] of Object.entries(${JSON.stringify(cases)})) {
+      const { exitCode, stderr } = await $\`cp \${args}\`.quiet();
+      results[name] = { exitCode, stderr: stderr.toString() };
+    }
+    results.missingSourcesAmongOthers.otherCopied = existsSync("dir/f.txt");
+    console.log(JSON.stringify(results));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const results = JSON.parse(stdout);
+  // The two failing sources finish in whichever order the pool runs them.
+  results.missingSourcesAmongOthers.stderr = sortedShellOutput(results.missingSourcesAmongOthers.stderr);
+
+  const failed = (operand: string, message = "No such file or directory") => ({
+    exitCode: 1,
+    stderr: `cp: ${message}: ${operand}\n`,
+  });
+  expect(results).toEqual({
+    missingSource: failed("missing.txt"),
+    missingSourceInSubdir: failed("sub/missing.txt"),
+    unnormalizedSource: failed("./missing.txt"),
+    missingSourceRecursive: failed("missing"),
+    missingSourcesAmongOthers: {
+      exitCode: 1,
+      stderr: sortedShellOutput(failed("missing1.txt").stderr + failed("missing2.txt").stderr),
+      otherCopied: true,
+    },
+    ...(isWindows
+      ? {}
+      : {
+          fileAsSourceDirectory: failed("f.txt/x", "Not a directory"),
+          fileAsTargetDirectory: failed("g.txt/x", "Not a directory"),
+        }),
+  });
+  expect(exitCode).toBe(0);
 });
 
 function expectSortedOutput(expected: string) {

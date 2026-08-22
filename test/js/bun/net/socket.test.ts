@@ -12,6 +12,7 @@ import {
   isLinux,
   isWindows,
   libcPathForDlopen,
+  normalizeBunSnapshot,
   tempDir,
   tls,
 } from "harness";
@@ -4705,4 +4706,96 @@ it("concurrent end() on two allowHalfOpen TLS peers closes both sockets", async 
   serverSock.end();
 
   await Promise.all([serverClosed.promise, clientClosed.promise]);
+});
+
+// A handler can drive the event loop itself: expect(promise).resolves (like any other
+// synchronous wait for a promise) ticks the loop until the promise settles, while the
+// dispatch that called the handler is still on the stack. A socket closed in that
+// handler goes on the loop's closed list, and the outer dispatch reads it again once
+// the handler returns (loop.c, after data() and after open()). So the inner ticks must
+// not free it: on POSIX they never did (tick_depth), on Windows the libuv backend freed
+// it and, on top of that, ran the libuv close callback twice for it (libuv.c).
+//
+// The fixture runs under bun test in its own process, since the failure is a crash of
+// the process: a segfault inside the dispatch on a debug build, heap corruption on a
+// release build. Each round continues from a timer armed in the handler, so a marker
+// proves that the dispatches around the handlers finished.
+describe.concurrent("a handler that closes its socket and then waits for a promise", () => {
+  it("does not crash the dispatch it was called from", async () => {
+    const source = `
+      import { expect, test } from "bun:test";
+
+      // The close of the socket is completed by the loop (on Windows: the cancelled
+      // poll request completes, then libuv runs the close callback). Nothing in JS
+      // observes that, so the handler holds the loop for a short time instead of
+      // waiting for an event; the inner ticks pick the completion up right away.
+      function waitInsideHandler() {
+        expect(Bun.sleep(20)).resolves.toBeUndefined();
+      }
+
+      test("data() closes the accepted socket", async () => {
+        for (let i = 0; i < 3; i++) {
+          const dispatched = Promise.withResolvers();
+          using server = Bun.listen({
+            hostname: "127.0.0.1",
+            port: 0,
+            socket: {
+              data(socket) {
+                socket.terminate();
+                waitInsideHandler();
+                setTimeout(dispatched.resolve, 0);
+              },
+            },
+          });
+          const peer = await Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { data() {} } });
+          peer.write("x");
+          await dispatched.promise;
+          peer.terminate();
+        }
+        console.log("data() done");
+      });
+
+      test("open() closes the accepted socket and the listener", async () => {
+        for (let i = 0; i < 3; i++) {
+          const dispatched = Promise.withResolvers();
+          const server = Bun.listen({
+            hostname: "127.0.0.1",
+            port: 0,
+            socket: {
+              open(socket) {
+                socket.terminate();
+                server.stop(true);
+                waitInsideHandler();
+                setTimeout(dispatched.resolve, 0);
+              },
+              data() {},
+            },
+          });
+          // The accepted socket is reset before this side's open() runs, so the connect
+          // can be reported as failed. Either way the server side has been dispatched.
+          const peer = Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { data() {} } }).then(
+            socket => socket,
+            () => null,
+          );
+          await dispatched.promise;
+          (await peer)?.terminate();
+        }
+        console.log("open() done");
+      });
+    `;
+    using dir = tempDir("socket-close-then-wait-in-handler", { "fixture.test.ts": source });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "fixture.test.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: normalizeBunSnapshot(stdout), exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({
+      stdout: "bun test <version> (<revision>)\ndata() done\nopen() done",
+      exitCode: 0,
+      stderr: "",
+    });
+  });
 });

@@ -498,6 +498,49 @@ declare function removeEventListener(
   options?: boolean | Bun.EventListenerOptions,
 ): void;
 
+// `onmessage` must stay declared, whatever its type: @types/node (web-globals/*.d.ts) checks
+// `typeof globalThis extends { onmessage: any }` to tell that the environment brings its own
+// Request, Response, MessageEvent, ErrorEvent, ... and declares Node's versions of them otherwise.
+/**
+ * Handler for the `"message"` events a worker thread receives from
+ * `worker.postMessage()` in its parent. Same as `addEventListener("message", handler)`.
+ *
+ * Only useful in a worker thread; the main thread never dispatches `"message"`
+ * events on its global scope. `null` until assigned.
+ *
+ * @example
+ * ```ts
+ * // worker.ts
+ * onmessage = event => {
+ *   postMessage(event.data);
+ * };
+ * ```
+ */
+declare var onmessage: Bun.__internal.UseLibDomIfAvailable<"onmessage", ((event: MessageEvent) => any) | null>;
+
+/**
+ * Handler for the `"error"` event a worker thread dispatches on its own global
+ * scope when an exception or promise rejection in that thread goes unhandled,
+ * before the error is reported to the parent's `Worker` object. Same as
+ * `addEventListener("error", handler)`.
+ *
+ * The handler receives the `ErrorEvent` itself as its only argument. Bun does not
+ * spread it into the `(message, source, lineno, colno, error)` arguments that
+ * browsers pass to `onerror`.
+ *
+ * Only useful in a worker thread; the main thread never dispatches `"error"`
+ * events on its global scope. `null` until assigned.
+ *
+ * @example
+ * ```ts
+ * // worker.ts
+ * onerror = event => {
+ *   console.error(event.message, event.error);
+ * };
+ * ```
+ */
+declare var onerror: Bun.__internal.UseLibDomIfAvailable<"onerror", ((event: ErrorEvent) => any) | null>;
+
 /**
  * An event that provides information about an error in a script or in a file.
  */

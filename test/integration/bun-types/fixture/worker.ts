@@ -41,6 +41,19 @@ webWorker.onmessage = event => {
 // On the worker thread, `postMessage` is automatically "routed" to the parent thread.
 postMessage({ hello: "world" });
 
+// On the worker thread, the global onmessage / onerror handlers receive the event as their
+// only argument. With lib.dom.d.ts loaded, onerror has window.onerror's `Event | string`
+// parameter instead, so the onerror assertion is an expected diagnostic in bun-types.test.ts.
+onmessage = event => {
+  tsd.expectType(event).is<MessageEvent>();
+  postMessage(event.data);
+};
+onerror = event => {
+  tsd.expectType(event).is<ErrorEvent>();
+};
+onmessage = null;
+onerror = null;
+
 // On the main thread
 nodeWorker.postMessage({ hello: "world" });
 

@@ -980,6 +980,152 @@ describe("parseArgs", () => {
 //
 
 describe("parseArgs extra tests", () => {
+  const expectToThrowErrorMatching = (fn, errorPattern) => {
+    let error = undefined;
+    try {
+      fn();
+    } catch (err) {
+      error = err;
+    }
+    expect(error).toMatchObject(errorPattern);
+  };
+
+  describe("allowNegative with declared no-* options", () => {
+    test("boolean option literally declared as 'no-color' is accepted", () => {
+      const result = parseArgs({
+        args: ["--no-color"],
+        options: { "no-color": { type: "boolean" } },
+        allowNegative: true,
+      });
+      expect(result).toEqual({ values: { __proto__: null, color: false }, positionals: [] });
+    });
+
+    test("string option declared as 'no-color' consumes the next arg", () => {
+      const result = parseArgs({
+        args: ["--no-color", "val"],
+        options: { "no-color": { type: "string" } },
+        allowNegative: true,
+        allowPositionals: true,
+      });
+      expect(result).toEqual({ values: { __proto__: null, "no-color": "val" }, positionals: [] });
+    });
+
+    test("string option declared as 'no-color' with missing value throws INVALID_OPTION_VALUE", () => {
+      expectToThrowErrorMatching(
+        () =>
+          parseArgs({
+            args: ["--no-color"],
+            options: { "no-color": { type: "string", short: "n" } },
+            allowNegative: true,
+          }),
+        { code: "ERR_PARSE_ARGS_INVALID_OPTION_VALUE", message: "Option '-n, --no-color <value>' argument missing" },
+      );
+    });
+
+    test("multiple:true on the declared 'no-color' option is not applied to the stripped key", () => {
+      const result = parseArgs({
+        args: ["--no-color", "--no-color"],
+        options: { "no-color": { type: "boolean", multiple: true } },
+        allowNegative: true,
+      });
+      expect(result).toEqual({ values: { __proto__: null, color: false }, positionals: [] });
+    });
+
+    test("default on the declared 'no-color' option is applied since the stripped key is stored", () => {
+      const result = parseArgs({
+        args: ["--no-color"],
+        options: { "no-color": { type: "boolean", default: true } },
+        allowNegative: true,
+      });
+      expect(result).toEqual({ values: { __proto__: null, "color": false, "no-color": true }, positionals: [] });
+    });
+
+    test("tokens output has the stripped name", () => {
+      const result = parseArgs({
+        args: ["--no-color"],
+        options: { "no-color": { type: "boolean" } },
+        allowNegative: true,
+        tokens: true,
+      });
+      expect(result.tokens).toEqual([
+        { kind: "option", index: 0, name: "color", rawName: "--no-color", value: undefined, inlineValue: undefined },
+      ]);
+    });
+
+    test("declared 'no-color' string takes precedence over declared 'color' boolean for value consumption", () => {
+      const result = parseArgs({
+        args: ["--no-color", "val"],
+        options: { "no-color": { type: "string" }, "color": { type: "boolean", multiple: true } },
+        allowNegative: true,
+        allowPositionals: true,
+      });
+      expect(result).toEqual({ values: { __proto__: null, "no-color": "val" }, positionals: [] });
+    });
+
+    test("boolean option declared as 'no-foo' does not consume next arg as value", () => {
+      const result = parseArgs({
+        args: ["--no-foo", "val"],
+        options: { "no-foo": { type: "boolean" } },
+        allowNegative: true,
+        allowPositionals: true,
+      });
+      expect(result).toEqual({ values: { __proto__: null, foo: false }, positionals: ["val"] });
+    });
+
+    test("nested 'no-no-foo' strips one level", () => {
+      const result = parseArgs({
+        args: ["--no-no-foo"],
+        options: { "no-no-foo": { type: "boolean" } },
+        allowNegative: true,
+      });
+      expect(result).toEqual({ values: { __proto__: null, "no-foo": false }, positionals: [] });
+    });
+
+    test("option declared as bare 'no-' resolves to empty key", () => {
+      const result = parseArgs({
+        args: ["--no-"],
+        options: { "no-": { type: "boolean" } },
+        allowNegative: true,
+      });
+      expect(result).toEqual({ values: { __proto__: null, "": false }, positionals: [] });
+    });
+
+    test("bare '--no-' in non-strict mode stores empty key without crashing", () => {
+      const result = parseArgs({
+        args: ["--no-"],
+        options: {},
+        allowNegative: true,
+        strict: false,
+        tokens: true,
+      });
+      expect(result.values).toEqual({ __proto__: null, "": false });
+      expect(result.tokens).toEqual([
+        { kind: "option", index: 0, name: "", rawName: "--no-", value: undefined, inlineValue: undefined },
+      ]);
+    });
+
+    test("stripped name declared as string still throws UNKNOWN_OPTION in strict mode", () => {
+      expectToThrowErrorMatching(
+        () =>
+          parseArgs({
+            args: ["--no-color"],
+            options: { color: { type: "string" } },
+            allowNegative: true,
+          }),
+        { code: "ERR_PARSE_ARGS_UNKNOWN_OPTION" },
+      );
+    });
+
+    test("multiple:true on the stripped name is applied", () => {
+      const result = parseArgs({
+        args: ["--no-color", "--no-color"],
+        options: { color: { type: "boolean", multiple: true } },
+        allowNegative: true,
+      });
+      expect(result).toEqual({ values: { __proto__: null, color: [false, false] }, positionals: [] });
+    });
+  });
+
   test("accepts numeric options", () => {
     const result = parseArgs({
       allowPositionals: true,

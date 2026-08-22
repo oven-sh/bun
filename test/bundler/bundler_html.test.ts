@@ -122,6 +122,43 @@ describe("bundler", () => {
     },
   });
 
+  // #fragment / ?query on an asset URL must survive the rewrite (SVG sprite
+  // symbol selectors, media-fragment ranges, cache-bust queries).
+  itBundled("html/asset-url-fragment-query", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <body>
+    <img src="./sprite.svg#home">
+    <video src="./clip.png#t=10,20"></video>
+    <img src="./clip.png?v=3">
+    <img src="./sprite.svg?q=1#icon">
+    <img src="https://example.com/sprite.svg#ext">
+  </body>
+</html>`,
+      "/sprite.svg": `<svg xmlns="http://www.w3.org/2000/svg"><symbol id="home"/></svg>`,
+      "/clip.png": "fake image content",
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      const attrs = [...html.matchAll(/(?:src|href)="([^"]*)"/g)].map(m => m[1]);
+
+      expect(attrs.filter(a => /sprite-[a-z0-9]+\.svg#home$/.test(a))).toHaveLength(1);
+      expect(attrs.filter(a => /clip-[a-z0-9]+\.png#t=10,20$/.test(a))).toHaveLength(1);
+      expect(attrs.filter(a => /clip-[a-z0-9]+\.png\?v=3$/.test(a))).toHaveLength(1);
+      expect(attrs.filter(a => /sprite-[a-z0-9]+\.svg\?q=1#icon$/.test(a))).toHaveLength(1);
+      // External reference is left untouched.
+      expect(attrs).toContain("https://example.com/sprite.svg#ext");
+
+      // Both references to clip.png point at the same emitted asset.
+      const clipHashes = new Set(attrs.map(a => a.match(/clip-([a-z0-9]+)\.png/)?.[1]).filter(Boolean));
+      expect(clipHashes.size).toBe(1);
+    },
+  });
+
   // Test external assets preservation
   itBundled("html/external-assets", {
     outdir: "out/",

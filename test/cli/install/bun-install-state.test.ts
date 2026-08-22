@@ -207,15 +207,20 @@ describe.each(["hoisted", "isolated"] as const)("install state (%s)", linker => 
     expect(existsSync(join(package_dir, ".cache", ".install-state"))).toBeFalse();
   });
 
-  it("removing a scoped package is noticed (only the @scope directory's mtime changes)", async () => {
-    setHandler(dummyRegistry(urls, { "0.0.2": {}, "0.0.3": {}, "0.0.5": {}, "0.1.0": {} }));
+  it("nested / store packages are verified like top-level ones (scoped removal, missing package.json)", async () => {
+    // `@barn/moo` is only a transitive dependency (of bar), so under the isolated linker it
+    // exists solely inside the store — no root node_modules entry covers it
+    setHandler(
+      dummyRegistry(urls, {
+        "0.0.2": { dependencies: { "@barn/moo": "0.1.0" } },
+        "0.0.3": {},
+        "0.0.5": {},
+        "0.1.0": {},
+      }),
+    );
     await writeFile(
       join(package_dir, "package.json"),
-      JSON.stringify({
-        name: "root",
-        workspaces: ["packages/*"],
-        dependencies: { "@barn/moo": "0.1.0", bar: "0.0.2" },
-      }),
+      JSON.stringify({ name: "root", workspaces: ["packages/*"], dependencies: { bar: "0.0.2" } }),
     );
     let r = await install(package_dir);
     expect(r.err).not.toContain("error:");
@@ -223,25 +228,32 @@ describe.each(["hoisted", "isolated"] as const)("install state (%s)", linker => 
     r = await install(package_dir);
     expect(r.out).toMatch(noChanges);
 
-    // find where @barn/moo actually lives (root node_modules for hoisted; the store entry's
-    // node_modules for isolated) and remove it: only `@barn`'s mtime changes
-    // (store entries first, so the isolated arm exercises the store scan rather than the
-    // root node_modules symlink; a real directory, not a symlink into the store)
-    const candidates: string[] = [];
+    // where the real @barn/moo directory lives: hoisted → root node_modules; isolated → its
+    // own store entry
     const store = join(package_dir, "node_modules", ".bun");
-    if (existsSync(store)) {
-      for (const e of readdirSync(store)) candidates.push(join(store, e, "node_modules", "@barn", "moo"));
-    }
-    candidates.push(join(package_dir, "node_modules", "@barn", "moo"));
-    const victim = candidates.find(p => existsSync(join(p, "package.json")) && lstatSync(p).isDirectory());
-    expect(victim).toBeDefined();
-    await rm(victim!, { recursive: true, force: true });
-    // (a full pass that only re-links prints the same summary as the fast path, so assert
-    // on the effect: the fast path would have left the package missing)
+    const real =
+      linker === "isolated"
+        ? join(store, readdirSync(store).find(e => e.startsWith("@barn+moo"))!, "node_modules", "@barn", "moo")
+        : join(package_dir, "node_modules", "@barn", "moo");
+    expect(lstatSync(real).isDirectory()).toBeTrue();
+
+    // 1. its package.json disappears (only the package dir's own mtime changes): repaired.
+    //    (A full pass that only re-links prints the same summary as the fast path, so
+    //    assert on the effect — the fast path would have left it missing.)
+    await rm(join(real, "package.json"));
     r = await install(package_dir);
     expect(r.err).not.toContain("error:");
     expect(r.code).toBe(0);
-    expect(existsSync(join(victim!, "package.json"))).toBeTrue();
+    expect(existsSync(join(real, "package.json"))).toBeTrue();
+    r = await install(package_dir);
+    expect(r.out).toMatch(noChanges);
+
+    // 2. the whole scoped package directory disappears (only `@barn`'s mtime changes)
+    await rm(real, { recursive: true, force: true });
+    r = await install(package_dir);
+    expect(r.err).not.toContain("error:");
+    expect(r.code).toBe(0);
+    expect(existsSync(join(real, "package.json"))).toBeTrue();
   });
 
   it("local file: dependencies: untouched is a no-op, an edited source re-installs", async () => {

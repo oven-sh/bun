@@ -16,8 +16,9 @@ const {
   validateInteger,
   validateFunction,
   validateOneOf,
+  validatePort,
 } = require("internal/validators");
-const { ConnResetException, hasObserver, startPerf, stopPerf, kInternalSendOptions } = require("internal/shared");
+const { ConnResetException, ExceptionWithHostPort, hasObserver, startPerf, stopPerf } = require("internal/shared");
 const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
@@ -69,6 +70,7 @@ const OutgoingMessagePrototype = OutgoingMessage.prototype;
 const { kIncomingMessage } = require("node:_http_common");
 let http1Fallback;
 const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
+const kClusterProbeKey = Symbol("kClusterProbeKey");
 const kTrackedConnections = Symbol("http.server.trackedConnections");
 const kHttpAllowHalfOpen = Symbol("http.server.httpAllowHalfOpen");
 
@@ -88,6 +90,10 @@ function traceServerRequestEnd() {
 }
 
 const getBunServerAllClosedPromise = $newRustFunction("node_http_binding.rs", "getBunServerAllClosedPromise", 1);
+let uvBinding;
+function uv() {
+  return (uvBinding ??= process.binding("uv"));
+}
 
 const kServerResponse = Symbol("ServerResponse");
 const kChunkedEncoding = Symbol("kChunkedEncoding");
@@ -269,6 +275,8 @@ function Server(options, callback): void {
 
   this.listening = false;
   this._unref = false;
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L1876
+  this._listeningId = 1;
   this.timeout = 0;
   this.maxRequestsPerSocket = 0;
   this.maxHeadersCount = null;
@@ -470,9 +478,19 @@ Server.prototype.closeIdleConnections = function () {
 
 Server.prototype.close = function (optionalCallback?) {
   const server = this[serverSymbol];
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2423
+  this._listeningId++;
   // Node.js's httpServerPreClose clears the connections-checking interval
   // even when the server was never listening.
   clearInterval(this[kConnectionsCheckingInterval]);
+  const probeKey = this[kClusterProbeKey];
+  if (probeKey !== undefined) {
+    this[kClusterProbeKey] = undefined;
+    if (process.connected && cluster?.worker) {
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/child.js#L142-L161
+      cluster._sendInternal({ act: "close", key: probeKey });
+    }
+  }
   http1Fallback?.closeIdleHttp1Connections(this);
   if (!server) {
     if (typeof optionalCallback === "function") process.nextTick(optionalCallback, $ERR_SERVER_NOT_RUNNING());
@@ -532,6 +550,7 @@ Server.prototype.listen = function () {
   const server = this;
   let port, host, onListen;
   let socketPath;
+  let fd;
   let tls = this[tlsSymbol];
 
   // This logic must align with:
@@ -544,6 +563,8 @@ Server.prototype.listen = function () {
       port = arg0.port;
       host = arg0.host;
       socketPath = arg0.path;
+      const arg0Fd = arg0.fd;
+      if (typeof arg0Fd === "number" && arg0Fd >= 0) fd = arg0Fd;
 
       const otherTLS = arg0.tls;
       if (otherTLS && $isObject(otherTLS)) {
@@ -563,15 +584,17 @@ Server.prototype.listen = function () {
 
   // Bun defaults to port 3000.
   // Node defaults to port 0.
-  if (port === undefined && !socketPath) {
+  if (port === undefined && !socketPath && fd === undefined) {
     port = 0;
   }
 
-  if (typeof port === "string") {
-    const portNumber = parseInt(port);
-    if (!Number.isNaN(portNumber)) {
-      port = portNumber;
-    }
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2130
+  this._listeningId++;
+
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2159 (validatePort before listenInCluster)
+  if (typeof port === "number" || typeof port === "string") {
+    validatePort(port, "options.port");
+    port = port | 0;
   }
 
   const lastArg = arguments[argc - 1];
@@ -583,15 +606,13 @@ Server.prototype.listen = function () {
     // listenInCluster
 
     if (isPrimary) {
-      server[kRealListen](tls, port, host, socketPath, false, onListen);
+      server[kRealListen](tls, port, host, socketPath, false, onListen, fd);
       return this;
     }
 
     if (cluster === undefined) cluster = require("node:cluster");
 
-    server.once("listening", () => {
-      // No channel (NODE_UNIQUE_ID inherited by a plain child, or already disconnected): nothing to notify.
-      if (!process.connected) return;
+    const notifyListening = () => {
       cluster.worker.state = "listening";
       const address = server.address();
       const isObjectAddress = address !== null && typeof address === "object";
@@ -604,10 +625,42 @@ Server.prototype.listen = function () {
         address: socketPath ?? (boundHost && boundHost.address) ?? null,
         addressType: socketPath ? -1 : boundHost && boundHost.family === "IPv6" ? 6 : 4,
       };
-      process.send(message, undefined, kInternalSendOptions);
-    });
+      cluster._sendInternal(message);
+    };
+    server.once("listening", notifyListening);
+    // A close() or another listen() before the primary replies makes the reply stale.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2078-L2085
+    const listeningId = this._listeningId;
 
-    server[kRealListen](tls, port, host, socketPath, true, onListen);
+    try {
+      // listen({fd}) in a worker: share the primary-inherited fd over SCM_RIGHTS.
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2065-L2096 (listenInCluster)
+      if (typeof fd === "number" && fd >= 0 && process.connected) {
+        if (process.platform === "win32") {
+          server.removeListener("listening", notifyListening);
+          process.nextTick(emitListenErrorNT, server, new ExceptionWithHostPort(uv().UV_EINVAL, "listen", null, 0));
+          return this;
+        }
+        cluster._sendInternal(
+          { act: "shareListenFd", fd, addressType: 4 },
+          onShareListenFdReply.bind(null, server, notifyListening, listeningId, tls, port, host, socketPath, onListen),
+        );
+        return this;
+      }
+
+      const askPrimary = typeof port === "number" && port > 0 && !socketPath && process.connected;
+      if (askPrimary) {
+        cluster._sendInternal(
+          { act: "probePort", address: host ?? null, port, addressType: 4 },
+          onProbePortReply.bind(null, server, notifyListening, listeningId, tls, port, host, socketPath, onListen),
+        );
+      } else {
+        server[kRealListen](tls, port, host, socketPath, true, onListen, fd);
+      }
+    } catch (err) {
+      server.removeListener("listening", notifyListening);
+      throw err;
+    }
   } catch (err) {
     setTimeout(() => server.emit("error", err), 1);
   }
@@ -615,7 +668,77 @@ Server.prototype.listen = function () {
   return this;
 };
 
-Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort, onListen) {
+function closeSharedFd(fd) {
+  try {
+    require("node:fs").closeSync(fd);
+  } catch {}
+}
+
+// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2043-L2045
+function emitListenErrorNT(server, err) {
+  server.emit("error", err);
+}
+
+function onShareListenFdReply(
+  server,
+  notifyListening,
+  listeningId,
+  tls,
+  port,
+  host,
+  socketPath,
+  onListen,
+  reply,
+  receivedFd,
+) {
+  const sharedFd = typeof receivedFd === "number" && receivedFd >= 0 ? receivedFd : undefined;
+  if (listeningId !== server._listeningId) {
+    server.removeListener("listening", notifyListening);
+    if (sharedFd !== undefined) closeSharedFd(sharedFd);
+    return;
+  }
+  const replyErrno = reply.errno;
+  if (replyErrno || sharedFd === undefined) {
+    server.removeListener("listening", notifyListening);
+    if (sharedFd !== undefined) closeSharedFd(sharedFd);
+    server.emit("error", new ExceptionWithHostPort(replyErrno || uv().UV_EBADF, "listen", null, 0));
+    return;
+  }
+  try {
+    server[kRealListen](tls, port, host, socketPath, true, onListen, sharedFd);
+  } catch (err) {
+    server.removeListener("listening", notifyListening);
+    closeSharedFd(sharedFd);
+    server.emit("error", err);
+  }
+}
+
+function onProbePortReply(server, notifyListening, listeningId, tls, port, host, socketPath, onListen, reply) {
+  const replyErrno = reply.errno;
+  if (listeningId !== server._listeningId) {
+    server.removeListener("listening", notifyListening);
+    // The primary recorded this worker under reply.key when the probe succeeded.
+    if (!replyErrno) cluster._sendInternal({ act: "close", key: reply.key });
+    return;
+  }
+  if (replyErrno) {
+    server.removeListener("listening", notifyListening);
+    server.emit("error", new ExceptionWithHostPort(replyErrno, "bind", host ?? null, port));
+    return;
+  }
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/child.js#L75-L114 (indexesKey/handles)
+  server[kClusterProbeKey] = reply.key;
+  try {
+    server[kRealListen](tls, port, host, socketPath, true, onListen);
+  } catch (err) {
+    server.removeListener("listening", notifyListening);
+    server[kClusterProbeKey] = undefined;
+    cluster._sendInternal({ act: "close", key: reply.key });
+    server.emit("error", err);
+  }
+}
+
+Server.prototype[kRealListen] = function realListen(tls, port, host, socketPath, reusePort, onListen, fd) {
   {
     const ResponseClass = this[optionsSymbol].ServerResponse || ServerResponse;
     const RequestClass = this[optionsSymbol].IncomingMessage || IncomingMessage;
@@ -631,6 +754,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       port,
       hostname: host,
       unix: socketPath,
+      fd,
       reusePort,
       // Bindings to be used for WS Server
       websocket: {

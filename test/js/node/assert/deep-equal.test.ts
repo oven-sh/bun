@@ -872,3 +872,18 @@ describe("AssertionError", () => {
     expect(error).toBe(custom);
   });
 });
+
+describe("boxed primitive on one side only (same JSType as a non-final ordinary object)", () => {
+  // Symbol and BigInt wrappers share JSC's ObjectType with non-final objects such as Math and
+  // JSON, and the native comparison only recognizes a wrapper on its first operand; the result
+  // must not depend on operand order. Only skipPrototype mode reaches this (strict mode rejects
+  // these pairs on [[Prototype]] first).
+  const skipProto = new assert.Assert({ skipPrototype: true });
+  test.each([
+    ["Math vs boxed Symbol", () => Math, () => Object(Symbol("x"))],
+    ["JSON vs boxed BigInt", () => JSON, () => Object(10n)],
+  ])("%s is unequal in both operand orders", (_name, plain, boxed) => {
+    expect(() => skipProto.deepStrictEqual(plain(), boxed())).toThrow(assert.AssertionError);
+    expect(() => skipProto.deepStrictEqual(boxed(), plain())).toThrow(assert.AssertionError);
+  });
+});

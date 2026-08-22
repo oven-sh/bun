@@ -58,6 +58,9 @@ pub struct ServerConfig {
     pub(crate) websocket: Option<WebSocketServerContext>,
 
     pub(crate) reuse_port: bool,
+    /// Adopt an inherited, already-bound descriptor instead of binding
+    /// `address` (internal: node:http `listen({fd})`).
+    pub(crate) listen_fd: Option<i32>,
     pub(crate) id: Box<[u8]>,
     pub(crate) allow_hot: bool,
     pub(crate) ipv6_only: bool,
@@ -92,6 +95,7 @@ impl Default for ServerConfig {
             is_node_http_server: false,
             websocket: None,
             reuse_port: false,
+            listen_fd: None,
             id: Box::default(),
             allow_hot: true,
             ipv6_only: false,
@@ -290,6 +294,7 @@ impl ServerConfig {
             is_node_http_server: self.is_node_http_server,
             websocket: self.websocket.take(),
             reuse_port: self.reuse_port,
+            listen_fd: self.listen_fd,
             id: core::mem::take(&mut self.id),
             allow_hot: self.allow_hot,
             ipv6_only: self.ipv6_only,
@@ -1220,6 +1225,18 @@ impl ServerConfig {
             return Err(JsError::Thrown);
         }
 
+        if let Some(fd_) = arg.get_truthy(global, "fd")? {
+            if fd_.is_number() {
+                let fd = fd_.coerce::<i32>(global)?;
+                if fd >= 0 {
+                    args.listen_fd = Some(fd);
+                }
+            }
+        }
+        if global.has_exception() {
+            return Err(JsError::Thrown);
+        }
+
         if let Some(base_uri) = arg.get_truthy(global, "baseURI")? {
             let sliced = base_uri.to_slice(global)?;
 
@@ -1486,6 +1503,16 @@ impl ServerConfig {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Cannot disable http1 with a unix socket — HTTP/3 over AF_UNIX is not supported",
             )));
+        }
+        if args.listen_fd.is_some() {
+            if args.on_node_http_request.is_empty() || !matches!(args.address, Address::Tcp { .. })
+            {
+                args.listen_fd = None;
+            } else if !args.http1 {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "fd cannot be used with an http3-only server"
+                )));
+            }
         }
 
         // ---- base_uri / base_url normalization ----

@@ -237,9 +237,6 @@ export const isolatedModuleCacheSourceType: (specifier: string) => string | null
 );
 export const Dequeue = require("internal/fifo");
 
-// node lib/internal/util.js normalizeEncoding: nullish and '' mean utf8, and
-// non-strings are undefined; Bun's Rust binding does not fold 'utf-16le',
-// so the node edge cases are handled here.
 const rustNormalizeEncoding = $newRustFunction("node_util_binding.rs", "normalizeEncoding", 1);
 const nodeKEmptyObject = require("internal/shared").kEmptyObject;
 function nodeNormalizeEncoding(enc) {
@@ -247,7 +244,6 @@ function nodeNormalizeEncoding(enc) {
   if (typeof enc !== "string") return undefined;
   const lower = enc.toLowerCase();
   if (lower === "utf-16le") return "utf16le";
-  // The Rust map also accepts Buffer-only names node's normalizeEncoding rejects.
   if (lower === "buffer" || lower === "utf16-le") return undefined;
   return rustNormalizeEncoding(enc);
 }
@@ -337,8 +333,6 @@ class WeakReference {
     this.#ref = new WeakRef(object);
   }
   get() {
-    // Serving from the pinned ref (when held) is equivalent to deref() and
-    // keeps the keepalive member read, not write-only.
     return this.#strong ?? this.#ref.deref();
   }
   incRef() {
@@ -406,7 +400,6 @@ function nodeGetValidStdio(stdio, sync?) {
         readable: i === 0,
         writable: i !== 0,
       };
-      // node: `a.handle = new Pipe(PipeConstants.SOCKET)`; bun has no Pipe wrap.
       if (!sync) a.handle = { close() {} };
       acc.push(a);
     } else if (stdio === "ipc") {
@@ -460,19 +453,14 @@ export const exposedInternals = {
   "internal/async_hooks": require("internal/async_hooks"),
   "internal/webstreams/adapters": require("internal/webstreams_adapters"),
   "internal/dgram": require("internal/dgram"),
-  // Bun's real implementations, under the names node's tests import them by.
   "internal/validators": require("internal/validators"),
   "internal/util/inspect": require("internal/util/inspect"),
   "internal/freelist": require("internal/freelist"),
   // Node's internal/fixed_queue module IS the FixedQueue class.
   "internal/fixed_queue": require("internal/fixed_queue").FixedQueue,
+  "internal/timers": require("internal/timers"),
   "internal/assert/myers_diff": require("internal/assert/myers_diff"),
-  // Bun's internal/errors only carries aggregateTwoErrors; the ERR_* hierarchy
-  // is native, not a JS `codes` table, so nothing else is exposed here.
   "internal/errors": require("internal/errors"),
-  // normalizeEncoding wraps the same Rust binding node:crypto and the
-  // webstream adapters call; the rest are node's own JS helpers, ported
-  // verbatim from lib/internal/util.js where Bun has no native equivalent.
   "internal/util": {
     normalizeEncoding: nodeNormalizeEncoding,
     // Bun always has crypto support compiled in.
@@ -484,18 +472,12 @@ export const exposedInternals = {
     kEmptyObject: nodeKEmptyObject,
     WeakReference,
   },
-  // Bun's EventTarget/Event/CustomEvent are the native (global) ones; node
-  // keeps them in internal/event_target. kWeakHandler is Bun's real weak
-  // listener symbol from internal/shared. Bun has no NodeEventTarget.
   "internal/event_target": {
     Event: globalThis.Event,
     CustomEvent: globalThis.CustomEvent,
     EventTarget: globalThis.EventTarget,
     kWeakHandler: require("internal/shared").kWeakHandler,
   },
-  // ChildProcess is the real class exec()/spawn() instantiate, so vendored
-  // tests can monkeypatch its prototype; getValidStdio is ported from node.
-  // A getter so loading this module does not eagerly pull in child_process.
   get "internal/child_process"() {
     return (cachedInternalChildProcess ??= {
       ChildProcess: require("node:child_process").ChildProcess,

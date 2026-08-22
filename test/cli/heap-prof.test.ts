@@ -34,7 +34,7 @@ test("--heap-prof writes a .heapprofile with node's filename format on exit", as
     stderr: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited, proc.stderr.text()]);
 
   expect(stdout.trim()).toBe("done");
   expect(exitCode).toBe(0);
@@ -170,7 +170,7 @@ test("--heap-prof-dir specifies the output directory", async () => {
     stderr: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited, proc.stderr.text()]);
 
   expect(stdout.trim()).toBe("hello");
   expect(exitCode).toBe(0);
@@ -219,7 +219,7 @@ test("--heap-prof-name specifies output filename", async () => {
     stderr: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited, proc.stderr.text()]);
 
   expect(stdout.trim()).toBe("hello");
   expect(exitCode).toBe(0);
@@ -250,7 +250,7 @@ test("--heap-prof-name and --heap-prof-dir work together", async () => {
     stderr: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited, proc.stderr.text()]);
 
   expect(stdout.trim()).toBe("hello");
   expect(exitCode).toBe(0);
@@ -333,7 +333,7 @@ test("--heap-prof-interval equal to the default is a noop without --heap-prof, l
     stderr: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited, proc.stderr.text()]);
 
   expect(stdout.trim()).toBe("hello");
   expect(exitCode).toBe(0);
@@ -350,7 +350,7 @@ test("--heap-prof --heap-prof-interval is accepted", async () => {
     stderr: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited, proc.stderr.text()]);
 
   expect(stdout.trim()).toBe("hello");
   expect(exitCode).toBe(0);

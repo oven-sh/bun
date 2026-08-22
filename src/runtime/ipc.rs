@@ -256,9 +256,6 @@ mod advanced {
     const HEADER_LENGTH: usize = size_of::<IPCMessageType>() + size_of::<u32>();
     // HEADER_LENGTH is a 5-byte compile-time constant; narrowing to u32 is provably safe.
     const HEADER_LENGTH_U32: u32 = HEADER_LENGTH as u32;
-    // v2 added `SerializedMessageWithBuffers`. The peer's advertised version is
-    // debug-logged, never consulted, so mixed-version pairs only break when a
-    // Buffer-bearing message actually crosses to a v1 peer.
     const VERSION: u32 = 2;
 
     #[repr(u8)]
@@ -1681,6 +1678,24 @@ impl SendQueue {
         }
     }
 
+    /// Raw descriptor of the live IPC channel (Node `Control#fd`, lib/internal/child_process.js:596).
+    /// `None` once closed; Windows has no raw fd here so callers surface `undefined`.
+    pub fn channel_fd(&self) -> Option<Fd> {
+        #[cfg(not(windows))]
+        {
+            let socket = self.get_socket()?;
+            let raw = socket.socket.get()?;
+            // SAFETY: `get()` is Some only for a live connected socket owned
+            // by this queue; the pointer is valid for the duration of the
+            // synchronous read below.
+            Some(unsafe { (*raw).get_fd() })
+        }
+        #[cfg(windows)]
+        {
+            None
+        }
+    }
+
     #[cfg(windows)]
     pub fn ipc_peer_pid(&self) -> u32 {
         match *self.socket.get() {
@@ -2390,7 +2405,9 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
                             log!("hit NotEnoughBytes");
                             return;
                         }
-                        Err(e) => return finish_decode(send_queue, &DecodeStep::Fail(e)),
+                        Err(e) => {
+                            return finish_decode(send_queue, &DecodeStep::Fail(e));
+                        }
                     }
                 }
             }
@@ -2571,9 +2588,10 @@ pub fn ipc_serialize(
     message: JSValue,
     handle: JSValue,
     options: JSValue,
+    target: JSValue,
 ) -> JsResult<JSValue> {
     // `[[ZIG_EXPORT(zero_is_throw)]]`
-    bun_jsc::cpp::IPCSerialize(global_object, message, handle, options)
+    bun_jsc::cpp::IPCSerialize(global_object, message, handle, options, target)
 }
 
 #[track_caller]

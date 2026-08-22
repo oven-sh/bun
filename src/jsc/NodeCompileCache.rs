@@ -33,6 +33,9 @@ struct CacheState {
     /// `<absolute base dir>/<version tag>` — what `getCompileCacheDir()`
     /// returns and where entries live.
     dir: Box<[u8]>,
+    /// The resolved base dir (node's `compile_cache_dir_str_`):
+    /// `enableCompileCache().directory` returns this on every call.
+    base_dir: Box<[u8]>,
     dir_handle: sys::Dir,
     /// Portable mode: keys use paths relative to `dir`, so the cache
     /// survives moving the tree (NODE_COMPILE_CACHE_PORTABLE / {portable}).
@@ -338,7 +341,7 @@ pub fn enable(explicit_dir: Option<&[u8]>, portable: Option<bool>) -> EnableResu
     if is_enabled() {
         return EnableResult {
             status: STATUS_ALREADY_ENABLED,
-            directory: get_dir(),
+            directory: get_base_dir(),
             message: None,
         };
     }
@@ -494,7 +497,7 @@ fn enable_with_dir(dir: &[u8], portable: bool) -> EnableResult {
             // keep the installed cache — replacing it would drop live blobs.
             return EnableResult {
                 status: STATUS_ALREADY_ENABLED,
-                directory: Some(existing.dir.to_vec()),
+                directory: Some(existing.base_dir.to_vec()),
                 message: None,
             };
         }
@@ -511,6 +514,7 @@ fn enable_with_dir(dir: &[u8], portable: bool) -> EnableResult {
         }
         *state = Some(CacheState {
             dir: tagged.into_boxed_slice(),
+            base_dir: directory.clone().into_boxed_slice(),
             dir_handle,
             portable,
             entries: HashMap::new(),
@@ -533,6 +537,16 @@ pub fn get_dir() -> Option<Vec<u8>> {
     }
     let state = STATE.lock();
     state.as_ref().map(|s| s.dir.to_vec())
+}
+
+/// The resolved base dir (`enableCompileCache().directory`), stable across
+/// repeat enables.
+fn get_base_dir() -> Option<Vec<u8>> {
+    if !is_enabled() {
+        return None;
+    }
+    let state = STATE.lock();
+    state.as_ref().map(|s| s.base_dir.to_vec())
 }
 
 // ──────────────────────────────────────────────────────────────────────────

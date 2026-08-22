@@ -1278,6 +1278,21 @@ describe("node:http", () => {
     });
   });
 
+  // Node validates the port string as given (lib/net.js validatePort), so a
+  // fractional or exponent form is rejected instead of being truncated by parseInt.
+  test.each([["80.5"], ["1e9"], [""], [{ port: "80.5" }], [{ port: "1e9" }], [{ port: "" }]])(
+    "listen(%j) throws ERR_SOCKET_BAD_PORT synchronously",
+    arg => {
+      const server = createServer();
+      server.on("error", () => {});
+      try {
+        expect(() => server.listen(arg)).toThrow(expect.objectContaining({ code: "ERR_SOCKET_BAD_PORT" }));
+      } finally {
+        server.close();
+      }
+    },
+  );
+
   test("error event not fired, issue#4651", async () => {
     const { promise, resolve } = Promise.withResolvers();
     const server = createServer((req, res) => {

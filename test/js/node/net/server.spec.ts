@@ -124,7 +124,7 @@ describe("new net.Server()", () => {
       expect(server.eventNames()).toEqual([]);
     });
     it("is not using workers", () => expect(server._usingWorkers).toBe(false));
-    it.skip("has a listening id", () => {
+    it("has a listening id", () => {
       expect((server as unknown as { _listeningId: number })._listeningId).toEqual(expect.any(Number));
     });
   }); // </the server instance>

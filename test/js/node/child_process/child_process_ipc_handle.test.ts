@@ -610,18 +610,22 @@ process.on('disconnect', () => process.exit(sawQueued ? 0 : 3));
   // The child sends a server and disconnects at once. node: process.connected drops immediately, a
   // second disconnect() errors, and the parent still receives the server (its adoption completes a
   // loop turn later, which must not lose it) as well as the message queued behind it. Order is not
-  // pinned: bun currently emits the late-adopted handle after 'disconnect', node before it.
+  // pinned: bun currently emits the late-adopted handle after 'disconnect', node before it. The
+  // child's 'exit' can also arrive before either, so the parent reports once its own loop drains:
+  // the pending adoption keeps it alive until the handle has been delivered (or dropped).
   test.concurrent("a handle sent right before the child's disconnect() is still delivered", async () => {
     using dir = tempDir("ipc-handle-then-disconnect", {
       "parent.js": `
 const { fork } = require('node:child_process');
 const child = fork('child.js', { stdio: ['ignore', 'inherit', 'pipe', 'ipc'] });
 const got = [];
+let exitCode = null;
 let childReport = '';
 child.stderr.on('data', d => { childReport += d; });
 child.on('message', (m, h) => { got.push(h ? 'handle:' + m : m); if (h) h.close(); });
 child.on('disconnect', () => got.push('disconnect'));
-child.on('exit', code => console.log(JSON.stringify({ got: got.sort(), code, child: JSON.parse(childReport) })));
+child.on('exit', code => { exitCode = code; });
+process.on('exit', () => console.log(JSON.stringify({ got: got.sort(), code: exitCode, child: JSON.parse(childReport) })));
 `,
       "child.js": `
 const net = require('node:net');
@@ -653,6 +657,102 @@ const server = net.createServer().listen(0, '127.0.0.1', () => {
       },
       stderr: "",
     });
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe("NODE_-prefixed user messages", () => {
+  test.concurrent(
+    "a user send with cmd NODE_CLUSTER reaches a plain-fork parent as internalMessage, like node",
+    async () => {
+      using dir = tempDir("ipc-node-cluster-user-msg", {
+        "parent.js": `
+const { fork } = require('node:child_process');
+const child = fork('child.js');
+const got = [];
+const done = () => {
+  if (got.length === 2) {
+    console.log(JSON.stringify(got));
+    child.kill();
+    process.exit(0);
+  }
+};
+child.on('message', m => { got.push(['message', m]); done(); });
+child.on('internalMessage', m => { got.push(['internalMessage', m]); done(); });
+setTimeout(() => { console.log('TIMEOUT:' + JSON.stringify(got)); process.exit(1); }, 10000);
+`,
+        "child.js": `
+process.send({ cmd: 'NODE_CLUSTER', x: 1 });
+process.send({ cmd: 'OTHER', y: 2 });
+setInterval(() => {}, 1 << 30);
+`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "parent.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited, proc.stderr.text()]);
+      expect(JSON.parse(stdout.trim())).toEqual([
+        ["internalMessage", { cmd: "NODE_CLUSTER", x: 1 }],
+        ["message", { cmd: "OTHER", y: 2 }],
+      ]);
+      expect(exitCode).toBe(0);
+    },
+  );
+});
+
+describe.skipIf(isWindows)("http listen({ fd })", () => {
+  test.concurrent("adopts fd 0 (inetd-style) and stays alive with nothing else pending", async () => {
+    using dir = tempDir("http-listen-fd0", {
+      "parent.js": `
+const net = require('node:net');
+const server = net.createServer();
+server.listen(0, '127.0.0.1', async () => {
+  const port = server.address().port;
+  const child = Bun.spawn({
+    cmd: [process.execPath, 'child.js'],
+    stdio: [server._handle.fd, 'pipe', 'inherit'],
+    env: { ...process.env },
+    cwd: import.meta.dir,
+  });
+  // The child owns a dup; drop the parent's acceptor so requests reach it.
+  server.close();
+  // Wait for the child to report that listen({ fd: 0 }) completed.
+  const decoder = new TextDecoder();
+  let childOut = '';
+  for await (const chunk of child.stdout) {
+    childOut += decoder.decode(chunk, { stream: true });
+    if (childOut.includes('ready')) break;
+  }
+  // The adopted listen alone must keep the child alive.
+  console.log('child alive:', child.exitCode === null);
+  const res = await fetch('http://127.0.0.1:' + port + '/', { signal: AbortSignal.timeout(5000) });
+  console.log('response:', await res.text());
+  child.kill();
+  process.exit(0);
+});
+`,
+      "child.js": `
+const http = require('node:http');
+const s = http.createServer((req, res) => res.end('hello-fd0'));
+s.on('error', e => { console.error('listen error:', e.code); process.exit(3); });
+// fd 0: get_truthy would drop it and silently bind the default port instead.
+s.listen({ fd: 0 }, () => console.log('ready'));
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited, proc.stderr.text()]);
+    expect(stdout).toContain("child alive: true");
+    expect(stdout).toContain("response: hello-fd0");
     expect(exitCode).toBe(0);
   });
 });

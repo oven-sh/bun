@@ -1,8 +1,8 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 
 describe("bun test", () => {
   test("running a non-existent absolute file path is a 1 exit code", () => {
@@ -718,6 +718,68 @@ describe("bun test", () => {
         },
       });
       expect(stderr).toMatch(/::error title=error: Test \"time out\" timed out after \d+ms::/);
+    });
+    test("should annotate an error thrown from a source whose URL is longer than a path buffer", () => {
+      // Longer than a path buffer on every platform (98302 bytes on Windows).
+      const padding = 100_000;
+      const dataUrlModule = 'export default function fromDataUrl() { throw new Error("boom"); }//';
+      const base64 = btoa(dataUrlModule + Buffer.alloc(padding, "x").toString());
+      const longPath = "/" + Buffer.alloc(padding, "y").toString();
+      const stderr = runTest({
+        input: `
+          import { test } from "bun:test";
+          test("data url", async () => {
+            const source = ${JSON.stringify(dataUrlModule)} + Buffer.alloc(${padding}, "x").toString();
+            const m = await import("data:text/javascript;base64," + btoa(source));
+            m.default();
+          });
+          test("long sourceURL", () => {
+            const sourceURL = "/" + Buffer.alloc(${padding}, "y").toString();
+            (0, eval)("(function fromLongPath() { throw new Error('boom'); })\\n//# sourceURL=" + sourceURL)();
+          });
+        `,
+        env: {
+          GITHUB_ACTIONS: "true",
+        },
+        expectExitCode: 1,
+      });
+      const annotations = stderr.split("\n").filter(line => line.startsWith("::error"));
+      expect(annotations).toHaveLength(2);
+      const [dataUrl, longSourceUrl] = annotations;
+      expect(dataUrl).toStartWith(`::error file=data%3Atext/javascript;base64%2C${base64},line=1,col=`);
+      expect(dataUrl).toContain(`%0A      at fromDataUrl (data:text/javascript;base64,${base64}:1:`);
+      expect(longSourceUrl).toStartWith(`::error file=${longPath},line=1,col=`);
+      expect(longSourceUrl).toContain(`%0A      at fromLongPath (${longPath}:1:`);
+    });
+    test("should make the annotation file relative to GITHUB_WORKSPACE only when it is a path", () => {
+      const cwd = createTest([
+        {
+          filename: "workspace.test.ts",
+          contents: `
+            import { test } from "bun:test";
+            test("in the test file", () => {
+              throw new Error("boom");
+            });
+            test("in a sourceURL that is not a path", () => {
+              (0, eval)("(function fromSourceUrl() { throw new Error('boom'); })\\n//# sourceURL=webpack://app/./src/x.ts")();
+            });
+          `,
+        },
+      ]);
+      const stderr = runTest({
+        cwd,
+        env: {
+          GITHUB_ACTIONS: "true",
+          GITHUB_WORKSPACE: dirname(cwd),
+        },
+        expectExitCode: 1,
+      });
+      const annotations = stderr.split("\n").filter(line => line.startsWith("::error"));
+      expect(annotations).toHaveLength(2);
+      const [testFile, sourceUrl] = annotations;
+      expect(testFile).toStartWith(`::error file=${basename(cwd)}${sep}workspace.test.ts,line=4,col=`);
+      expect(sourceUrl).toStartWith("::error file=webpack%3A//app/./src/x.ts,line=1,col=");
+      expect(sourceUrl).toContain("%0A      at fromSourceUrl (webpack://app/./src/x.ts:1:");
     });
   });
   describe(".each", () => {
@@ -1570,49 +1632,183 @@ describe("bun test", () => {
     expect(output).toContain("app message");
   });
 
-  test("runs process.on('exit') handlers", async () => {
-    using dir = tempDir("bun-test-exit-handler", {
-      "exit.test.ts": `
-        import { test } from "bun:test";
-        process.on("exit", () => console.log("exit handler ran"));
-        test("a test", () => {});
-      `,
+  // jest and vitest never run a test file's process.on('exit') listeners; node's test harness asserts from them.
+  describe.concurrent("process.on('exit') listeners", () => {
+    async function runFiles(files: Record<string, string>, ...args: string[]) {
+      using dir = tempDir("bun-test-exit-listener", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", ...args],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    function runFile(name: string, contents: string) {
+      return runFiles({ [name]: contents }, name);
+    }
+
+    const bunTestFile = (n: number) => `
+      import { test } from "bun:test";
+      process.on("exit", () => {
+        console.log("exit listener ${n} ran");
+        process.exit(1);
+      });
+      test("test ${n}", () => {});
+    `;
+    const nodeTestFile = (n: number) => `
+      import { test } from "node:test";
+      process.on("exit", () => process.exit(1));
+      test("test ${n}", () => {});
+    `;
+
+    test("are not run for a bun:test file", async () => {
+      const { stdout, stderr, exitCode } = await runFile("exit.test.ts", bunTestFile(1));
+      expect(stdout).not.toContain("exit listener");
+      expect(stderr).toContain("1 pass");
+      expect(exitCode).toBe(0);
     });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "exit.test.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stderr: "pipe",
+    test("are not run for a file that registers globals-style tests", async () => {
+      const { stdout, stderr, exitCode } = await runFile(
+        "globals.test.ts",
+        `
+          process.on("exit", () => {
+            console.log("exit listener ran");
+            process.exit(1);
+          });
+          test("a passing test", () => {});
+        `,
+      );
+      expect(stdout).not.toContain("exit listener ran");
+      expect(stderr).toContain("1 pass");
+      expect(exitCode).toBe(0);
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout).toContain("exit handler ran");
-    expect(stderr).toContain("1 pass");
-    expect(exitCode).toBe(0);
-  });
-
-  test("an exit handler can fail the run, like node's common.mustCall()", async () => {
-    using dir = tempDir("bun-test-exit-handler-code", {
-      "exit-code.test.ts": `
-        import { test } from "bun:test";
-        process.on("exit", () => process.exit(1));
-        test("a passing test", () => {});
-      `,
+    test("are not run when node:test is only imported", async () => {
+      const { stdout, stderr, exitCode } = await runFile(
+        "node-import-only.test.ts",
+        `
+          import { test } from "bun:test";
+          import { mock } from "node:test";
+          void mock;
+          process.on("exit", () => {
+            console.log("exit listener ran");
+            process.exit(1);
+          });
+          test("a passing test", () => {});
+        `,
+      );
+      expect(stdout).not.toContain("exit listener ran");
+      expect(stderr).toContain("1 pass");
+      expect(exitCode).toBe(0);
     });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "exit-code.test.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stderr: "pipe",
+    test("are not run when only a Worker uses node:test", async () => {
+      const { stdout, stderr, exitCode } = await runFiles(
+        {
+          "worker-uses-node-test.test.ts": `
+            import { test } from "bun:test";
+            process.on("exit", () => {
+              console.log("exit listener ran");
+              process.exit(1);
+            });
+            test("a Worker uses node:test", async () => {
+              const worker = new Worker(new URL("./worker.ts", import.meta.url));
+              await new Promise((resolve, reject) => {
+                worker.addEventListener("message", resolve, { once: true });
+                worker.addEventListener("error", e => reject(e.error ?? new Error(e.message)), { once: true });
+              });
+              worker.terminate();
+            });
+          `,
+          "worker.ts": `
+            import { mock } from "node:test";
+            mock.fn(() => {});
+            postMessage("used");
+          `,
+        },
+        "worker-uses-node-test.test.ts",
+      );
+      expect(stdout).not.toContain("exit listener ran");
+      expect(stderr).toContain("1 pass");
+      expect(exitCode).toBe(0);
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // Windows prints the banner to stdout; only assert nothing test-shaped leaks.
-    expect(stdout).not.toContain("pass");
-    expect(stderr).toContain("1 pass");
-    expect(exitCode).toBe(1);
+    test("still run when the file itself calls process.exit()", async () => {
+      const { stdout, exitCode } = await runFile(
+        "explicit-exit.test.ts",
+        `
+          import { test } from "bun:test";
+          process.on("exit", code => console.log("exit listener ran with", code));
+          test("exits", () => process.exit(3));
+        `,
+      );
+      expect(stdout).toContain("exit listener ran with 3");
+      expect(exitCode).toBe(3);
+    });
+
+    test("run once a node:test API registers a test", async () => {
+      const { stdout, stderr, exitCode } = await runFile(
+        "node.test.ts",
+        `
+          import { test } from "node:test";
+          process.on("exit", code => console.log("exit listener ran with", code));
+          test("a passing test", () => {});
+        `,
+      );
+      expect(stdout).toContain("exit listener ran with 0");
+      expect(stderr).toContain("1 pass");
+      expect(exitCode).toBe(0);
+    });
+
+    test("can fail the run once node:test registered a test, like node's common.mustCall()", async () => {
+      const { stderr, exitCode } = await runFile("node-exit-code.test.ts", nodeTestFile(1));
+      expect(stderr).toContain("1 pass");
+      expect(exitCode).toBe(1);
+    });
+
+    test("run for a bun:test file under BUN_TEST_DRAIN_EVENT_LOOP, which the vendored node tests set", async () => {
+      using dir = tempDir("bun-test-exit-listener", { "drain.test.ts": bunTestFile(1) });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "drain.test.ts"],
+        env: { ...bunEnv, BUN_TEST_DRAIN_EVENT_LOOP: "1" },
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toContain("exit listener 1 ran");
+      expect(stderr).toContain("1 pass");
+      expect(exitCode).toBe(1);
+    });
+
+    test("are not run in --parallel workers for bun:test files", async () => {
+      const { stdout, stderr, exitCode } = await runFiles(
+        { "a.test.ts": bunTestFile(1), "b.test.ts": bunTestFile(2) },
+        "--parallel=2",
+        "a.test.ts",
+        "b.test.ts",
+      );
+      // Worker output is relayed on the coordinator's stderr.
+      expect(stdout + stderr).not.toContain("exit listener");
+      expect(stderr).toContain("2 pass");
+      expect(exitCode).toBe(0);
+    });
+
+    // --parallel implies --isolate, and a file's listeners are torn down with its global before the worker exits.
+    test("--parallel workers exit cleanly after node:test files; listeners do not reach the run's exit code", async () => {
+      const { stderr, exitCode } = await runFiles(
+        { "a.test.ts": nodeTestFile(1), "b.test.ts": nodeTestFile(2) },
+        "--parallel=2",
+        "a.test.ts",
+        "b.test.ts",
+      );
+      expect(stderr).not.toContain("worker crashed");
+      expect(stderr).toContain("2 pass");
+      expect(exitCode).toBe(0);
+    });
   });
 });
 
@@ -1745,6 +1941,153 @@ describe.concurrent("test file discovery (scanner)", () => {
 
     expect(stdout).toContain("RAN solo");
     expect(stdout).not.toContain("RAN other");
+    expect(stderr).toContain(" 1 pass");
+    expect(exitCode).toBe(0);
+  });
+
+  // The scanner builds every absolute path in a PathBuffer of MAX_PATH_BYTES:
+  // 4096 on Linux, 1024 on every other POSIX (src/bun_core/util.rs). On Windows
+  // it is 32767*3+1 bytes, more than a command line or an NT path can hold, so
+  // the overflow is unreachable there.
+  const maxPathBytes = isLinux ? 4096 : 1024;
+  const existsTest = `import { test } from "bun:test"; test("exists", () => {});`;
+
+  for (const [kind, prefix, len] of [
+    ["absolute", "/", 5000],
+    ["absolute", "/", 100_000],
+    ["relative", "./", 5000],
+  ] as const) {
+    test.skipIf(isWindows)(
+      `${kind} path argument of ${len} bytes (longer than MAX_PATH_BYTES) reports no match instead of panicking`,
+      async () => {
+        using dir = tempDir("scanner-long-arg", { "exists.test.ts": existsTest });
+        const longArg = prefix + Buffer.alloc(len, "a").toString() + ".test.ts";
+
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "test", longArg],
+          env: bunEnv,
+          cwd: String(dir),
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+        expect(stderr).toContain("had no matches");
+        expect(exitCode).toBe(1);
+      },
+    );
+  }
+
+  test.skipIf(isWindows)(
+    "a path argument longer than MAX_PATH_BYTES is skipped like a missing path when other arguments match",
+    async () => {
+      using dir = tempDir("scanner-long-arg-mixed", { "exists.test.ts": existsTest });
+      const longArg = "/" + Buffer.alloc(5000, "a").toString() + ".test.ts";
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "./exists.test.ts", longArg],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toContain("Ran 1 test across 1 file.");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // The directory walk joins parent + entry name for every directory it
+  // descends into and every candidate test file. With pathIgnorePatterns
+  // configured it additionally joins each directory before queueing it, so the
+  // same tree is scanned once per configuration to reach both code paths.
+  for (const [config, files] of [
+    ["no bunfig", {}],
+    ["pathIgnorePatterns configured", { "bunfig.toml": `[test]\npathIgnorePatterns = ["unrelated/**"]\n` }],
+  ] as const) {
+    test.skipIf(isWindows)(
+      `entries whose absolute path exceeds MAX_PATH_BYTES are skipped during the directory walk (${config})`,
+      async () => {
+        using dir = tempDir("scanner-deep-tree", {
+          ...files,
+          "shallow.test.ts": `import { test } from "bun:test"; test("shallow", () => {});`,
+        });
+        const root = String(dir);
+        // Each level adds "/" + segment = 255 bytes. The deepest directory the
+        // scanner can still open is the last one whose path is at most
+        // maxPathBytes - 1 (it reserves one byte for the NUL); the directory
+        // below it is skipped. A 255-byte name in the deepest directory
+        // overflows too: that directory is at most 254 bytes short of the limit
+        // and the name adds 256. The deepest directory gets three such entries:
+        // a test file, a subdirectory, and a symlink. readdir does not report a
+        // symlink's kind, so the scanner stats it first, and that stat builds
+        // the path through the resolver (RealFS::kind) rather than through the
+        // scanner's own joins.
+        const segment = Buffer.alloc(254, "d").toString();
+        const longTestFile = Buffer.alloc(247, "f").toString() + ".test.ts";
+        const longTestLink = Buffer.alloc(247, "l").toString() + ".test.ts";
+        const fitDepth = Math.floor((maxPathBytes - 1 - root.length) / (segment.length + 1));
+        expect([longTestFile.length, longTestLink.length]).toEqual([255, 255]);
+        expect(root.length + fitDepth * 255 + 256).toBeGreaterThan(maxPathBytes);
+
+        // The over-long entries cannot be addressed by absolute path
+        // (ENAMETOOLONG), so walk down the chain and create them relative to
+        // the deepest directory.
+        const script = ["set -e"];
+        for (let level = 1; level <= fitDepth; level++) {
+          script.push(`mkdir ${segment} && cd ${segment}`);
+        }
+        script.push(`touch ${longTestFile}`, `ln -s ${longTestFile} ${longTestLink}`, `mkdir ${segment}`);
+        await using setup = Bun.spawn({
+          cmd: ["bash", "-c", script.join("\n")],
+          env: bunEnv,
+          cwd: root,
+          stderr: "pipe",
+        });
+        const [setupStderr, setupExitCode] = await Promise.all([setup.stderr.text(), setup.exited]);
+        expect(setupStderr).toBe("");
+        expect(setupExitCode).toBe(0);
+
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "test"],
+          env: bunEnv,
+          cwd: root,
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+        expect(stderr).toContain("shallow.test.ts:");
+        expect(stderr).toContain("Ran 1 test across 1 file.");
+        expect(exitCode).toBe(0);
+      },
+    );
+  }
+
+  // https://github.com/oven-sh/bun/issues/39852
+  test.skipIf(isWindows)("does not keep a directory fd open per scanned directory", async () => {
+    const N = 64;
+    const files: Record<string, string> = {};
+    for (let i = 0; i < N; i++) {
+      files[`sub${i}/a/b/c/.gitkeep`] = "";
+    }
+    files["sub0/probe.test.ts"] = /* ts */ `
+      import { test } from "bun:test";
+      import { readdirSync } from "node:fs";
+      test("probe", () => {
+        console.log("OPEN_FDS=" + readdirSync(process.platform === "linux" ? "/proc/self/fd" : "/dev/fd").length);
+      });
+    `;
+    using dir = tempDir("scanner-dir-fds", files);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "probe"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // 4N+1 directories are scanned; none of them may stay open.
+    expect(Number(stdout.match(/OPEN_FDS=(\d+)/)?.[1])).toBeLessThan(N);
     expect(stderr).toContain(" 1 pass");
     expect(exitCode).toBe(0);
   });

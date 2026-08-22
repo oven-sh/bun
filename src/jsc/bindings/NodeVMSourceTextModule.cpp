@@ -19,8 +19,6 @@
 #include "JavaScriptCore/Parser.h"
 #include "JavaScriptCore/SourceCodeKey.h"
 
-#include "../vm/SigintWatcher.h"
-
 namespace Bun {
 using namespace NodeVM;
 
@@ -98,10 +96,14 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     WTF::String sourceText = sourceTextValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    Ref<StringSourceProvider> sourceProvider = StringSourceProvider::create(WTF::move(sourceText), sourceOrigin, String {}, SourceTaintedOrigin::Untainted,
-        TextPosition { OrdinalNumber::fromZeroBasedInt(lineOffset), OrdinalNumber::fromZeroBasedInt(columnOffset) }, SourceProviderSourceType::Module);
+    TextPosition startPosition {
+        clampOffsetForSource(OrdinalNumber::fromZeroBasedInt(lineOffset), sourceText.length()),
+        clampOffsetForSource(OrdinalNumber::fromZeroBasedInt(columnOffset), sourceText.length()),
+    };
 
-    SourceCode sourceCode(WTF::move(sourceProvider), lineOffset, columnOffset);
+    Ref<StringSourceProvider> sourceProvider = StringSourceProvider::create(WTF::move(sourceText), sourceOrigin, String {}, SourceTaintedOrigin::Untainted, startPosition, SourceProviderSourceType::Module);
+
+    SourceCode sourceCode(WTF::move(sourceProvider), startPosition.m_line.zeroBasedInt(), startPosition.m_column.zeroBasedInt());
 
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     WTF::String identifier = identifierValue.toWTFString(globalObject);

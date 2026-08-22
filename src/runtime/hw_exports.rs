@@ -414,7 +414,7 @@ pub fn bindgen_bunobject_dispatch_gc(
     // SAFETY: `arg_force`/`out` are valid C++ stack locals.
     let force = unsafe { *arg_force };
     // `garbage_collect(force)`: mimalloc cleanup, then sync `runGC(true)`
-    // when `force`, else `collectAsync()` + `heap.size()`.
+    // when `force`, else `collect_async()` + `heap_size()`.
     // SAFETY: bun_vm() never null for a Bun-owned global.
     unsafe { *out = global.bun_vm().as_mut().garbage_collect(force) };
     true
@@ -451,7 +451,7 @@ pub fn bindgen_fmt_jsc_dispatch_fmt_string(
             let _ = global.throw_out_of_memory();
             false
         }
-        // `JSError` / `JSTerminated` already set (or cleared) the pending
+        // `JSError` already set (or cleared) the pending
         // exception on `global`; the bindgen ABI signals "exception pending"
         // via `false`.
         Err(_) => false,

@@ -14,6 +14,8 @@ async function runRepl(
   const inputStr = Array.isArray(input) ? input.join("\n") + "\n" : input;
   const { env = {} } = options;
 
+  // The REPL loads and saves $HOME/.bun_repl_history (USERPROFILE on Windows).
+  using home = tempDir("repl-home", {});
   await using proc = Bun.spawn({
     cmd: [bunExe(), "repl"],
     stdin: Buffer.from(inputStr),
@@ -24,6 +26,8 @@ async function runRepl(
       TERM: "dumb",
       NO_COLOR: "1",
       ...env,
+      HOME: String(home),
+      USERPROFILE: String(home),
     },
   });
 
@@ -37,6 +41,152 @@ async function runRepl(
 
 const stripAnsi = Bun.stripANSI;
 
+interface Screen {
+  /** One string per row, holding exactly the cells that were written to it. */
+  rows: string[];
+  cursor: { row: number; col: number };
+}
+
+// A model of a `cols` wide terminal fed with the REPL's output: text auto-wraps
+// (a wide glyph that does not fit in the last cell moves to the next row whole),
+// and the cursor and erase controls the line editor uses are interpreted. The
+// screen is unbounded in height, so rows never scroll off.
+class ScreenModel {
+  private readonly rows: string[][] = [[]];
+  private row = 0;
+  private col = 0;
+  // A glyph that fills the row leaves the cursor on the last column; the wrap
+  // happens when the next glyph arrives (as in xterm).
+  private pendingWrap = false;
+  // An escape sequence cut off at the end of the previous chunk.
+  private unfinished = "";
+
+  constructor(private cols: number) {}
+
+  /** Rows drawn so far keep their cells, as in a terminal that does not reflow. */
+  resize(cols: number): void {
+    this.cols = cols;
+  }
+
+  private rowAt(index: number): string[] {
+    while (this.rows.length <= index) this.rows.push([]);
+    return this.rows[index];
+  }
+
+  feed(chunk: string): void {
+    const output = this.unfinished + chunk;
+    this.unfinished = "";
+    let i = 0;
+    while (i < output.length) {
+      const codePoint = output.codePointAt(i)!;
+      if (codePoint === 0x1b) {
+        const rest = output.slice(i, i + 24);
+        const seq = /^\x1b\[([\d;]*)([A-Za-z])/.exec(rest);
+        if (seq === null) {
+          if (/^\x1b(\[[\d;]*)?$/.test(rest)) {
+            this.unfinished = output.slice(i);
+            return;
+          }
+          throw new Error(`ScreenModel: unsupported escape sequence ${JSON.stringify(rest)}`);
+        }
+        i += seq[0].length;
+        this.control(seq[2], seq[1], seq[0]);
+        continue;
+      }
+      const ch = codePoint > 0xffff ? String.fromCodePoint(codePoint) : output[i];
+      i += ch.length;
+      if (ch === "\r") {
+        this.col = 0;
+        this.pendingWrap = false;
+      } else if (ch === "\n") {
+        // The pty translates "\n" to "\r\n", so the column was already reset.
+        this.row++;
+        this.pendingWrap = false;
+      } else {
+        this.put(ch, codePoint < 0x80 ? 1 : Bun.stringWidth(ch));
+      }
+    }
+  }
+
+  private control(command: string, params: string, sequence: string): void {
+    if (command === "m") return; // colors
+    // The line editor only ever sends a single parameter, and never one past a terminal's size.
+    if (!/^\d{0,4}$/.test(params)) {
+      throw new Error(`ScreenModel: unsupported escape sequence ${JSON.stringify(sequence)}`);
+    }
+    const n = params === "" ? undefined : Number(params);
+    switch (command) {
+      case "A":
+        this.row = Math.max(0, this.row - (n ?? 1));
+        break;
+      case "B":
+        this.row += n ?? 1;
+        break;
+      case "C":
+        this.col = Math.min(this.cols - 1, this.col + (n ?? 1));
+        break;
+      case "D":
+        this.col = Math.max(0, this.col - (n ?? 1));
+        break;
+      case "J": // erase from the cursor to the end of the screen
+        if ((n ?? 0) !== 0) throw new Error(`ScreenModel: unsupported erase ${JSON.stringify(sequence)}`);
+        this.rowAt(this.row).length = Math.min(this.rowAt(this.row).length, this.col);
+        this.rows.length = this.row + 1;
+        break;
+      case "K": // erase to the end of the row (0) or the whole row (2)
+        if (n === 2) this.rowAt(this.row).length = 0;
+        else if ((n ?? 0) === 0) this.rowAt(this.row).length = Math.min(this.rowAt(this.row).length, this.col);
+        else throw new Error(`ScreenModel: unsupported erase ${JSON.stringify(sequence)}`);
+        break;
+      default:
+        throw new Error(`ScreenModel: unsupported escape sequence ${JSON.stringify(sequence)}`);
+    }
+    this.pendingWrap = false;
+  }
+
+  private put(ch: string, width: number): void {
+    if (width === 0) return;
+    if (this.pendingWrap || this.col + width > this.cols) {
+      this.row++;
+      this.col = 0;
+      this.pendingWrap = false;
+    }
+    const cells = this.rowAt(this.row);
+    while (cells.length < this.col) cells.push(" ");
+    cells[this.col] = ch;
+    // The second cell of a wide glyph holds nothing of its own.
+    for (let extra = 1; extra < width; extra++) cells[this.col + extra] = "";
+    if (this.col + width >= this.cols) {
+      this.col = this.cols - 1;
+      this.pendingWrap = true;
+    } else {
+      this.col += width;
+    }
+  }
+
+  screen(): Screen {
+    this.rowAt(this.row);
+    return { rows: this.rows.map(cells => cells.join("")), cursor: { row: this.row, col: this.col } };
+  }
+}
+
+function formatScreen({ rows, cursor }: Screen): string {
+  return rows
+    .map((text, row) => {
+      if (row !== cursor.row) return text;
+      // Find the character that starts at the cursor's column.
+      let column = 0;
+      let index = 0;
+      while (index < text.length && column < cursor.col) {
+        const ch = String.fromCodePoint(text.codePointAt(index)!);
+        column += Bun.stringWidth(ch);
+        index += ch.length;
+      }
+      return text.slice(0, index) + " ".repeat(Math.max(0, cursor.col - column)) + "|" + text.slice(index);
+    })
+    .join("\n");
+}
+
 // Helper to run REPL in a PTY and interact with it
 async function withTerminalRepl(
   fn: (helpers: {
@@ -44,18 +194,29 @@ async function withTerminalRepl(
     proc: Bun.ChildProcess;
     send: (text: string) => void;
     waitFor: (pattern: string | RegExp, timeoutMs?: number) => Promise<string>;
+    /** Resolves with the rendered screen once `ready` accepts it. */
+    waitForScreen: (ready: (screen: Screen) => boolean, timeoutMs?: number) => Promise<Screen>;
+    /** Changes the width of the pty, and of the screen that `waitForScreen` renders. */
+    resize: (cols: number) => void;
     allOutput: () => string;
   }) => Promise<void>,
+  options: { env?: Record<string, string | undefined>; cols?: number } = {},
 ) {
   const received: string[] = [];
+  const cols = options.cols ?? 120;
+  const rows = 40;
   let cursor = 0;
   let resolveWaiter: (() => void) | null = null;
+  // Streaming, so that a multi-byte character split across two reads stays intact.
+  const decoder = new TextDecoder();
 
+  // The REPL loads and saves $HOME/.bun_repl_history (USERPROFILE on Windows).
+  using home = tempDir("repl-home", {});
   await using terminal = new Bun.Terminal({
-    cols: 120,
-    rows: 40,
+    cols,
+    rows,
     data(_term, data) {
-      const str = Buffer.from(data).toString();
+      const str = decoder.decode(data, { stream: true });
       received.push(str);
       if (resolveWaiter) {
         resolveWaiter();
@@ -70,6 +231,9 @@ async function withTerminalRepl(
     env: {
       ...bunEnv,
       TERM: "xterm-256color",
+      ...options.env,
+      HOME: String(home),
+      USERPROFILE: String(home),
     },
   });
 
@@ -100,14 +264,53 @@ async function withTerminalRepl(
     }
   };
 
+  // The REPL redraws within milliseconds of a keystroke; the deadline is well
+  // below the test timeout so that a failure reports the screen it got stuck on.
+  const model = new ScreenModel(cols);
+  let modelled = 0;
+  const renderReceived = () => {
+    while (modelled < received.length) model.feed(received[modelled++]);
+  };
+  const waitForScreen = async (ready: (screen: Screen) => boolean, timeoutMs = 3000): Promise<Screen> => {
+    const deadline = Date.now() + timeoutMs;
+    while (true) {
+      renderReceived();
+      const screen = model.screen();
+      if (ready(screen)) return screen;
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        throw new Error(`Timed out waiting for the screen. Last screen (| marks the cursor):\n${formatScreen(screen)}`);
+      }
+      // Wait for the next chunk of terminal data, or for the deadline.
+      await new Promise<void>(resolve => {
+        const timer = setTimeout(resolve, remaining);
+        resolveWaiter = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+      });
+      resolveWaiter = null;
+    }
+  };
+
+  // Call this while the REPL waits for input: what it wrote before is laid out
+  // at the old width, and what it writes next at the new one.
+  const resize = (newCols: number) => {
+    renderReceived();
+    terminal.resize(newCols, rows);
+    model.resize(newCols);
+  };
+
   const allOutput = () => stripAnsi(received.join(""));
 
   await waitFor(/\u276f|> /); // Wait for prompt
 
-  await fn({ terminal, proc, send, waitFor, allOutput });
+  await fn({ terminal, proc, send, waitFor, waitForScreen, resize, allOutput });
 
-  // Clean exit
-  send(".exit\n");
+  // Clean exit. Ctrl+A then Ctrl+K first discards whatever the test left on
+  // the line, wherever the cursor is, so `.exit` is not appended to it (which
+  // would leave the REPL running until the kill below).
+  send("\x01\x0b.exit\n");
   await Promise.race([proc.exited, Bun.sleep(2000)]);
   if (!proc.killed) proc.kill();
 }
@@ -1053,6 +1256,530 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
       await waitFor(".he");
       send("\t"); // Tab — should complete to .help (only match)
       await waitFor(".help");
+    });
+  });
+
+  describe("inline suggestions", () => {
+    // Ghost text is rendered as: ESC[2m<remainder>ESC[0m after the typed text.
+    // The feature requires colors, so override bunEnv's NO_COLOR for these.
+    const DIM = "\x1b[2m";
+    const colorEnv = { NO_COLOR: undefined, FORCE_COLOR: "1" };
+
+    test("suggests global completion while typing", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          // "cons" should suggest "ole" (-> console). There are longer globals
+          // like `constructor` on the prototype chain, but the REPL picks the
+          // shortest match.
+          send("cons");
+          await waitFor(`${DIM}ole`);
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("right arrow accepts the suggestion", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          send("JSO");
+          await waitFor(`${DIM}N`);
+          send("\x1b[C"); // Right arrow accepts the ghost text
+          // After acceptance the input is `JSON`; extend it and evaluate.
+          // The result "81" never appears in the echoed input, so this only
+          // matches once the expression actually evaluates, proving the ghost
+          // was accepted (otherwise `JSO.stringify` is a ReferenceError).
+          send(".stringify(9*9)\n");
+          await waitFor('"81"');
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("suggests property completion after a dot", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          // Build up `console.` by accepting the global suggestion first.
+          send("cons");
+          await waitFor(`${DIM}ole`);
+          send("\x1b[C"); // accept -> "console"
+          send(".l");
+          // console.l -> "log" is the shortest property starting with "l"
+          await waitFor(`${DIM}og`);
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("tab accepts the visible suggestion", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          send("JSON.str");
+          await waitFor(`${DIM}ingify`, 10000);
+          send("\t"); // Tab accepts the ghost suggestion -> `JSON.stringify`
+          // Result "81" cannot occur in the echoed input, so it only matches
+          // if Tab really completed to `stringify` and the call succeeded.
+          send("(9*9)\n");
+          await waitFor('"81"');
+        },
+        { env: colorEnv },
+      );
+    }, 15000);
+
+    test("end key accepts the suggestion", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          send("Mat");
+          await waitFor(`${DIM}h`);
+          send("\x1b[F"); // End accepts the suggestion -> "Math"
+          // Result 63 cannot occur in the echoed input; if End didn't accept,
+          // `Mat.max(...)` would throw instead of producing it.
+          send(".max(4,7)*9\n");
+          await waitFor("63");
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("suggests first property when prefix is empty after dot", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          // Define an object with a single distinctive property so the
+          // suggestion is deterministic regardless of prototype ordering.
+          send("globalThis.__sgObj = Object.create(null); __sgObj.onlyProp = 1\n");
+          await waitFor("1");
+          send("__sgObj.");
+          await waitFor(`${DIM}onlyProp`);
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("falls back to JS keywords when no global matches", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          // No global starts with "instan", but the keyword `instanceof` does.
+          send("x instan");
+          await waitFor(`${DIM}ceof`);
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("no global or keyword suggestion for a property of an unresolvable expression", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          send('globalThis.__o = () => ({ th: "no" + "Ghost", this: "had" + "Ghost" }); "o" + "Ready"\n');
+          await waitFor("oReady");
+          // `.th` names a property of the call result, so the keyword fallback
+          // (`this`) must not kick in. Right arrow would accept such a ghost,
+          // turning the line into `__o().this`.
+          send("__o().th\x1b[C\n");
+          await waitFor("noGhost");
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("suggests non-ASCII property names that are valid identifiers", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          // Both keys start with "caf" and have the same byte length, and `caf→`
+          // comes first; only `cafés` can follow a `.`, so the ghost must be its
+          // remainder.
+          send(
+            'globalThis.__u = { "caf\\u2192": 1, "caf\\u00e9s": 2 }; globalThis["caf\\u00e9"] = { latte: 1 }; "u" + "Ready"\n',
+          );
+          await waitFor("uReady");
+          send("__u.caf");
+          await waitFor(`${DIM}és`);
+          // The typed prefix itself may contain non-ASCII characters.
+          send("é");
+          await waitFor(`${DIM}s`);
+          // So may the object being completed: the chain segment is looked up as
+          // UTF-8, not byte-per-character.
+          send("\x15café.");
+          await waitFor(`${DIM}latte`);
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("resolves chain segments inherited from Object.prototype", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          // `constructor` comes from Object.prototype; it must resolve to `Object`
+          // like a real property access would, not stop at the object's own keys.
+          send('globalThis.__plain = {}; "plain" + "Ready"\n');
+          await waitFor("plainReady");
+          send("__plain.constructor.getOwnPropertyNa");
+          await waitFor(`${DIM}mes`);
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("resolves chains through primitive values", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          // `process.version` is a string and `.length` a number; both get boxed
+          // the way a real property access would, ending on Number.prototype.
+          send("process.version.length.toF");
+          await waitFor(`${DIM}ixed`);
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("spread dots do not turn the word into a property access", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          send("[...cons");
+          await waitFor(`${DIM}ole`);
+          // Nor do they swallow the chain that follows them.
+          send("\x15[...console.l");
+          await waitFor(`${DIM}og`);
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("a chain starting with `this` completes against the global object", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          send("this.cons");
+          await waitFor(`${DIM}ole`);
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("no suggestions inside a string literal", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          // `st` would otherwise match globals such as `structuredClone`, and the
+          // right arrow would accept that ghost, changing the evaluated string.
+          send('"st\x1b[C" + "x"\n');
+          await waitFor('"stx"');
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("tab inside a string literal indents instead of completing", async () => {
+      await withTerminalRepl(async ({ send, waitFor }) => {
+        // `JSON.pars` has exactly one completion, which Tab would otherwise splice
+        // into the string; indenting adds two spaces, so the length is 9 + 2.
+        send('("JSON.pars\t").length\n');
+        await waitFor(/\b11\b/);
+      });
+    });
+
+    test("suggests inside a template hole but not in the template text around it", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          send("`${JSO");
+          await waitFor(`${DIM}N`);
+          // Back in template text after the `}`: "st" must get no ghost, or the
+          // right arrow would accept it. `${JSON}` stringifies to the 13-char
+          // "[object JSON]", plus " st", so the length is 16.
+          send("N} st\x1b[C`.length === 16\n");
+          await waitFor("true");
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("tab on a continuation line of a template literal indents", async () => {
+      await withTerminalRepl(async ({ send, waitFor }) => {
+        send("globalThis.__tpl = `\n");
+        await waitFor("...");
+        // The backtick was opened on the previous line. Without that context
+        // Tab would complete `JSON.pars` to `parse` inside the template.
+        send("JSON.pars\t`\n");
+        await waitFor(/\u276f|> /);
+        // "\n" + "JSON.pars" + two spaces.
+        send("__tpl.length\n");
+        await waitFor(/\b12\b/);
+      });
+    });
+
+    test("tab on a continuation line outside a string still completes", async () => {
+      await withTerminalRepl(async ({ send, waitFor }) => {
+        send("function __cont() {\n");
+        await waitFor("...");
+        send("return JSON.pars\t\n");
+        send("}\n");
+        await waitFor(/\u276f|> /);
+        send("__cont() === JSON.parse\n");
+        await waitFor("true");
+      });
+    });
+
+    test("completion on a Proxy with a misbehaving getPrototypeOf trap does not hang", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          // The trap alternates between ending the chain and pointing back at
+          // the proxy, so any completer that walks the chain itself never finishes.
+          send(
+            'globalThis.__flipN = 0; globalThis.__flip = new Proxy({}, { getPrototypeOf: () => (__flipN++ % 2 ? __flip : null) }); "flip" + "Ready"\n',
+          );
+          await waitFor("flipReady");
+          // Typing the `.` computes completions for `__flip`; Ctrl+C then
+          // discards the line and the REPL must still evaluate the next one.
+          send("__flip.\x03");
+          send('"still" + "Alive"\n');
+          await waitFor("stillAlive");
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("tab completes properties on an object (no ghost)", async () => {
+      // Tab completion resolves `obj.prefix` chains even when ghost text is
+      // disabled (NO_COLOR), so this covers parse_completion_context + resolve.
+      await withTerminalRepl(async ({ send, waitFor }) => {
+        // Store the marker as two halves so it never appears in the echoed
+        // input; it only shows up once the completed property is evaluated.
+        send("globalThis.__tcObj = { uniqueLongName: 'tcMAR' + 'KER' }; 0\n");
+        await waitFor(/\b0\b/);
+        send("__tcObj.uni");
+        send("\t");
+        // After tab, the full property should be in the input; evaluate it.
+        send("\n");
+        await waitFor("tcMARKER");
+      });
+    });
+
+    test("suggestion is not evaluated on enter", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          send("globalThis.zzGhostMarker = 1\n");
+          await waitFor("1");
+          // Type a prefix that triggers a suggestion but don't accept it.
+          send("zz");
+          await waitFor(`${DIM}GhostMarker`);
+          // Hit Enter without accepting: the ghost text must not be part of
+          // the evaluated input, so `zz` alone is a ReferenceError.
+          send("\n");
+          await waitFor(/ReferenceError|not defined/);
+        },
+        { env: colorEnv },
+      );
+    });
+  });
+
+  describe("input wider than the terminal", () => {
+    // Every keystroke redraws the whole input. When the input spans more than
+    // one terminal row, the redraw has to start on the prompt's row, otherwise
+    // each keystroke leaves another stale copy of the first row behind.
+    const cols = 30;
+    // "> " plus 37 characters: the first 28 characters share the prompt's row.
+    const line = "[111, 222, 333, 444, 555, 666].length";
+    const split = cols - "> ".length;
+
+    test("a wrapped line is redrawn in place and its result is printed below it", async () => {
+      await withTerminalRepl(
+        async ({ send, waitForScreen }) => {
+          const top = (await waitForScreen(s => s.rows.at(-1) === "> ")).rows.length - 1;
+
+          send(line);
+          let screen = await waitForScreen(s => s.rows.at(-1) === line.slice(split));
+          expect(screen.rows.slice(top)).toEqual([`> ${line.slice(0, split)}`, line.slice(split)]);
+          await waitForScreen(s => s.cursor.row === top + 1 && s.cursor.col === line.length - split);
+
+          // Ctrl+A, then insert at the start: the cursor is on the prompt's row
+          // while the line still continues on the next one.
+          send("\x01" + "0;");
+          const edited = `0;${line}`;
+          screen = await waitForScreen(s => s.rows.at(-1) === edited.slice(split));
+          expect(screen.rows.slice(top)).toEqual([`> ${edited.slice(0, split)}`, edited.slice(split)]);
+          await waitForScreen(s => s.cursor.row === top && s.cursor.col === "> 0;".length);
+
+          send("\n");
+          screen = await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "6");
+          expect(screen.rows.slice(top)).toEqual([`> ${edited.slice(0, split)}`, edited.slice(split), "6", "> "]);
+        },
+        { cols },
+      );
+    });
+
+    test("Ctrl+C is echoed after the end of a wrapped line", async () => {
+      await withTerminalRepl(
+        async ({ send, waitForScreen }) => {
+          const top = (await waitForScreen(s => s.rows.at(-1) === "> ")).rows.length - 1;
+
+          send(line);
+          await waitForScreen(s => s.rows.at(-1) === line.slice(split));
+          // Ctrl+A moves the cursor up to the prompt's row, then Ctrl+C.
+          send("\x01\x03");
+          const screen = await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === `${line.slice(split)}^C`);
+          expect(screen.rows.slice(top)).toEqual([`> ${line.slice(0, split)}`, `${line.slice(split)}^C`, "> "]);
+        },
+        { cols },
+      );
+    });
+
+    test("recalling a shorter history entry clears the rows of a longer one", async () => {
+      await withTerminalRepl(
+        async ({ send, waitForScreen }) => {
+          const top = (await waitForScreen(s => s.rows.at(-1) === "> ")).rows.length - 1;
+
+          send(`${line}\n`);
+          await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "6");
+          send("7\n");
+          await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "7");
+
+          send("\x1b[A"); // Up: 7
+          await waitForScreen(s => s.rows.at(-1) === "> 7");
+          send("\x1b[A"); // Up: the wrapped line
+          let screen = await waitForScreen(s => s.rows.at(-1) === line.slice(split));
+          const history = [`> ${line.slice(0, split)}`, line.slice(split), "6", "> 7", "7"];
+          expect(screen.rows.slice(top)).toEqual([...history, `> ${line.slice(0, split)}`, line.slice(split)]);
+
+          send("\x1b[B"); // Down: back to 7, which needs one row less
+          screen = await waitForScreen(s => s.rows.at(-1) === "> 7");
+          expect(screen.rows.slice(top)).toEqual([...history, "> 7"]);
+          await waitForScreen(s => s.cursor.row === screen.rows.length - 1 && s.cursor.col === "> 7".length);
+        },
+        { cols },
+      );
+    });
+
+    test("ghost text that does not fit on the row wraps and is erased on enter", async () => {
+      // Colors enable ghost text; the prompt is then "❯ ".
+      const cols = 40;
+      // "❯ " plus 30 characters leaves room for 8 of the 14 ghost characters.
+      const input = "[1, 2, 3, 4, 5, 6].length + zz";
+      await withTerminalRepl(
+        async ({ send, waitForScreen }) => {
+          const top = (await waitForScreen(s => s.rows.at(-1) === "❯ ")).rows.length - 1;
+
+          // `zz` itself is skipped as a suggestion for `zz`, so the ghost is
+          // the remainder of zzLongSuffixName.
+          send("var zz = 1, zzLongSuffixName = 5\n");
+          await waitForScreen(s => s.rows.at(-1) === "❯ " && s.rows.at(-2) === "5");
+          const setup = ["❯ var zz = 1, zzLongSuffixName = 5", "5"];
+
+          send(input);
+          let screen = await waitForScreen(s => s.rows.at(-1) === "ixName");
+          expect(screen.rows.slice(top)).toEqual([...setup, `❯ ${input}LongSuff`, "ixName"]);
+          // The cursor stays in front of the ghost, on the prompt's row.
+          await waitForScreen(s => s.cursor.row === top + setup.length && s.cursor.col === `❯ ${input}`.length);
+
+          send("\n");
+          screen = await waitForScreen(s => s.rows.at(-1) === "❯ " && s.rows.at(-2) === "7");
+          expect(screen.rows.slice(top)).toEqual([...setup, `❯ ${input}`, "7", "❯ "]);
+          const evaluated = [...setup, `❯ ${input}`, "7"];
+
+          // "❯ " plus 38 characters fills the row, so the whole ghost goes to the
+          // next row, and the cursor with it.
+          const filling = "[1, 2, 3, 4, 5, 6, 7, 888].length + zz";
+          send(filling);
+          screen = await waitForScreen(s => s.rows.at(-1) === "LongSuffixName");
+          expect(screen.rows.slice(top)).toEqual([...evaluated, `❯ ${filling}`, "LongSuffixName"]);
+          await waitForScreen(s => s.cursor.row === screen.rows.length - 1 && s.cursor.col === 0);
+
+          // Enter erases the ghost; the result takes the row the ghost was on.
+          send("\n");
+          screen = await waitForScreen(s => s.rows.at(-1) === "❯ " && s.rows.at(-2) === "9");
+          expect(screen.rows.slice(top)).toEqual([...evaluated, `❯ ${filling}`, "9", "❯ "]);
+        },
+        { cols, env: { NO_COLOR: undefined, FORCE_COLOR: "1" } },
+      );
+    });
+
+    test("a line that fills the row exactly leaves no blank row behind", async () => {
+      // "> " plus 28 characters is exactly 30 columns.
+      const filling = `"${Buffer.alloc(19, "a")}".length`;
+      await withTerminalRepl(
+        async ({ send, waitForScreen }) => {
+          const top = (await waitForScreen(s => s.rows.at(-1) === "> ")).rows.length - 1;
+
+          send(filling);
+          // The cursor has nowhere to go on the full row, so it waits on an empty one.
+          let screen = await waitForScreen(s => s.cursor.row === top + 1 && s.cursor.col === 0);
+          expect(screen.rows.slice(top)).toEqual([`> ${filling}`, ""]);
+
+          send("\n");
+          screen = await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "19");
+          expect(screen.rows.slice(top)).toEqual([`> ${filling}`, "19", "> "]);
+
+          send(filling);
+          await waitForScreen(s => s.rows.at(-1) === "" && s.rows.at(-2) === `> ${filling}`);
+          send("\x03");
+          screen = await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "^C");
+          expect(screen.rows.slice(top)).toEqual([`> ${filling}`, "19", `> ${filling}`, "^C", "> "]);
+        },
+        { cols },
+      );
+    });
+
+    test("wide characters wrap the way the terminal wraps them", async () => {
+      // 21 columns: a 2 column glyph never fits in the last cell of a row that
+      // starts on an even column, so those rows hold one column less than the
+      // width. `> "` and nine glyphs fill the first row; the second row holds ten
+      // glyphs and a blank cell; the rest goes on the third row.
+      const cols = 21;
+      const glyphs = Array.from({ length: 25 }, () => "日");
+      const input = `"${glyphs.join("")}".length`;
+      await withTerminalRepl(
+        async ({ send, waitForScreen }) => {
+          const top = (await waitForScreen(s => s.rows.at(-1) === "> ")).rows.length - 1;
+
+          send(input);
+          const third = `${glyphs.slice(19).join("")}".length`;
+          let screen = await waitForScreen(s => s.rows.at(-1) === third);
+          expect(screen.rows.slice(top)).toEqual([
+            `> "${glyphs.slice(0, 9).join("")}`,
+            glyphs.slice(9, 19).join(""),
+            third,
+          ]);
+          // Six glyphs and `".length` are 20 columns.
+          await waitForScreen(s => s.cursor.row === top + 2 && s.cursor.col === 20);
+
+          send("\n");
+          screen = await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "25");
+          expect(screen.rows.slice(top + 2)).toEqual([third, "25", "> "]);
+        },
+        { cols },
+      );
+    });
+
+    test("the cursor is positioned past column 80 on a wide terminal", async () => {
+      const cols = 120;
+      const input = Buffer.alloc(90, "q").toString();
+      await withTerminalRepl(
+        async ({ send, waitFor, waitForScreen }) => {
+          const top = (await waitForScreen(s => s.rows.at(-1) === "> ")).rows.length - 1;
+
+          send(input);
+          await waitFor(`> ${input}`);
+          send("\x1b[D"); // Left
+          await waitForScreen(s => s.cursor.row === top && s.cursor.col === `> ${input}`.length - 1);
+
+          send("Z");
+          const edited = `${input.slice(0, -1)}Zq`;
+          await waitForScreen(s => s.rows.at(-1) === `> ${edited}` && s.cursor.col === `> ${edited}`.length - 1);
+        },
+        { cols },
+      );
+    });
+
+    test("a terminal narrowed after startup wraps the input at its new width", async () => {
+      // The pty starts out 120 columns wide, on which the line fits on one row.
+      await withTerminalRepl(async ({ send, resize, waitForScreen }) => {
+        const top = (await waitForScreen(s => s.rows.at(-1) === "> ")).rows.length - 1;
+        resize(cols);
+
+        send(line);
+        let screen = await waitForScreen(s => s.rows.at(-1) === line.slice(split));
+        expect(screen.rows.slice(top)).toEqual([`> ${line.slice(0, split)}`, line.slice(split)]);
+        await waitForScreen(s => s.cursor.row === top + 1 && s.cursor.col === line.length - split);
+
+        send("\n");
+        screen = await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "6");
+        expect(screen.rows.slice(top)).toEqual([`> ${line.slice(0, split)}`, line.slice(split), "6", "> "]);
+      });
     });
   });
 

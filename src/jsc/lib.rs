@@ -80,8 +80,6 @@ pub mod script_execution_status;
 pub mod sizes;
 #[path = "SourceProvider.rs"]
 pub mod source_provider;
-#[path = "TextCodec.rs"]
-pub mod text_codec;
 #[path = "URLSearchParams.rs"]
 pub mod url_search_params;
 #[path = "WTF.rs"]
@@ -180,6 +178,7 @@ pub mod zig_string;
 pub use self::js_value::{
     CoerceTo, ComparisonResult, ForEachCallback, FromAny, FromJsEnum, JSValue,
     Protected as ProtectedJSValue, ProxyField, SerializedFlags, SerializedScriptValue,
+    TemporalType,
 };
 
 // LAYERING (PORTING.md §Dispatch): the task dispatch covers every concrete
@@ -348,7 +347,7 @@ pub use self::counters::Counters;
 pub use self::decoded_js_value::DecodedJSValue;
 pub use self::deprecated_strong::DeprecatedStrong;
 pub use self::js_array::JSArray;
-pub use self::js_ref::JsRef;
+pub use self::js_ref::{JsCellRefExt, JsRef};
 pub use self::string_builder::StringBuilder;
 pub use self::uuid::{UUID, UUID5, UUID7};
 
@@ -391,9 +390,7 @@ pub use self::marked_argument_buffer::MarkedArgumentBuffer;
 pub use self::regular_expression::RegularExpression;
 pub use self::script_execution_status::ScriptExecutionStatus;
 pub use self::source_provider::SourceProvider;
-pub use self::text_codec::TextCodec;
 pub use self::url_search_params::URLSearchParams;
-pub use self::zig_error_type::ZigErrorType;
 pub use self::zig_stack_frame_code::ZigStackFrameCode;
 pub use self::zig_stack_frame_position::ZigStackFramePosition;
 
@@ -459,9 +456,7 @@ pub mod zig_exception;
 pub mod zig_stack_frame;
 #[path = "ZigStackTrace.rs"]
 pub mod zig_stack_trace;
-// `generated_classes_list.rs` is mounted by `bun_runtime` (see its lib.rs) —
-// every aliased type lives in api/webcore/test_runner/bake, so mounting it
-// here would create a `bun_jsc → bun_runtime` cycle.
+
 #[path = "AsyncModule.rs"]
 pub mod async_module;
 #[path = "bindgen.rs"]
@@ -485,21 +480,23 @@ pub mod jsc_scheduler;
 #[path = "ProcessAutoKiller.rs"]
 pub mod process_auto_killer;
 
-/// Binding for JSCInitialize in ZigGlobalObject.cpp
-pub fn initialize(eval_mode: bool) {
-    initialize_with(eval_mode, false);
+/// Flags for `JSCInitialize` in ZigGlobalObject.cpp. JSC is set up once per process: the first call's flags win.
+#[derive(Clone, Copy, Default)]
+pub struct InitializeOptions {
+    /// JSC `evalMode`: keeps completion values, for `bun --print` and the REPL.
+    pub eval_mode: bool,
+    /// `bun -e` / `bun -p` ([`is_one_shot_eval_invocation`]): no concurrent JIT or parallel GC marker threads.
+    pub one_shot: bool,
+    /// `bun test --isolate`/`--parallel`: each file gets a fresh global and per-global JIT code is discarded with it.
+    pub short_lived_globals: bool,
 }
 
-/// `short_lived_globals`: `bun test --isolate`/`--parallel`, where each file gets a fresh global and per-global JIT code is discarded with it.
-pub fn initialize_with(eval_mode: bool, short_lived_globals: bool) {
+/// Binding for JSCInitialize in ZigGlobalObject.cpp
+pub fn initialize(options: InitializeOptions) {
     // The counter lives in `bun_core` so this crate doesn't depend on
     // `bun_analytics`.
     bun_core::analytics::Features::jsc_inc();
     let env = bun_sys::environ();
-    // One-shot eval invocations (`bun -e ...` / `bun --print ...`) exit before
-    // any long-running event loop; tell JSC to skip the worker threads it
-    // otherwise spawns eagerly at VM creation (see `JSCInitialize`).
-    let one_shot = is_one_shot_eval_invocation();
     // SAFETY: `env` borrows the libc `environ` global for the duration of the
     // call; `on_jsc_invalid_env_var` is `extern "C"` and only reads the (ptr,len)
     // it is handed. JSCInitialize is called exactly once at startup.
@@ -508,9 +505,9 @@ pub fn initialize_with(eval_mode: bool, short_lived_globals: bool) {
             env.as_ptr(),
             env.len(),
             on_jsc_invalid_env_var,
-            eval_mode,
-            one_shot,
-            short_lived_globals,
+            options.eval_mode,
+            options.one_shot,
+            options.short_lived_globals,
         )
     };
 }
@@ -521,8 +518,8 @@ pub fn initialize_with(eval_mode: bool, short_lived_globals: bool) {
 ///
 /// Kept conservative on purpose: only the explicit eval flags qualify. `bun
 /// <file>` is *not* treated as one-shot (it may start a server), so server
-/// workloads keep the default multi-threaded JIT/GC configuration.
-fn is_one_shot_eval_invocation() -> bool {
+/// workloads keep the default multi-threaded JIT/GC configuration. Only valid for the `bun` CLI's own argv.
+pub fn is_one_shot_eval_invocation() -> bool {
     for arg in bun_core::argv().iter().skip(1) {
         if arg == b"-e" || arg == b"--eval" || arg == b"-p" || arg == b"--print" {
             return true;
@@ -555,104 +552,38 @@ Warning: options change between releases of Bun and WebKit without notice. This 
     bun_core::exit(1);
 }
 
-/// `bun.JSError` — the canonical Bun JS error union (`error{Thrown, OutOfMemory, Terminated}`).
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum JsError {
-    /// A JavaScript exception is pending in the VM's exception scope.
-    Thrown,
-    /// Allocation failure; caller must throw an `OutOfMemoryError`.
-    OutOfMemory,
-    /// The VM is terminating (worker shutdown / `process.exit`).
-    Terminated,
-}
-/// `bun.JSError!T`. Dropping a `JsResult` swallows a pending JS exception —
-/// always `?`-propagate, [`JsResultExt::report_unhandled`], or `let _ =` with a
-/// comment justifying the swallow.
+/// `bun.JSError` — the canonical Bun JS error union (`error{Thrown, OutOfMemory, Terminated}`),
+/// defined at tier 0 (`bun_core`) so every layer names the one type.
+///
+/// `Err(JsError::Thrown)` means exactly what a JSC `ThrowScope` seeing an exception means: one is
+/// pending on the VM — beneath script that includes the VM's TerminationException, which JSC unwinds.
+/// Where a TerminationException unwinds past the outermost script frame it is taken off the VM at that
+/// boundary (as WebCore's entry helpers do; JSC resets its own termination state there and expects the
+/// embedder to), execution is already forbidden, and the frames above learn of it as `Terminated`:
+/// nothing pending, stand down ([`Stopped`] at loop level). Loop-level code that learns of a stop from
+/// the gate uses [`Stopped::throw`], which only really throws when there is script above to unwind.
+pub use bun_core::JsError;
+/// `bun.JSError!T`. Dropping a `JsResult` leaves a JS exception pending on the
+/// VM: `?`-propagate it to the frame's dispatcher (which folds it —
+/// [`task::report_error_or_terminate`]), run further JS through
+/// `EventLoop::run_callback`, or `let _ =` with a comment saying whose fold
+/// takes it.
 ///
 /// Note: `#[must_use]` cannot be applied to type aliases; `Result` already
 /// carries it. We instead `#![warn(unused_must_use)]` in every crate that
 /// blanket-`allow(unused)`s so the underlying lint is never silenced.
 pub type JsResult<T> = core::result::Result<T, JsError>;
 
-bun_core::oom_from_alloc!(JsError);
-
-impl From<bun_core::JsError> for JsError {
-    #[inline]
-    fn from(e: bun_core::JsError) -> Self {
-        use bun_core::JsError as E;
-        match e {
-            E::Thrown => JsError::Thrown,
-            E::OutOfMemory => JsError::OutOfMemory,
-            E::Terminated => JsError::Terminated,
-        }
-    }
-}
-
-impl From<JsTerminated> for bun_core::JsError {
-    #[inline]
-    fn from(_: JsTerminated) -> Self {
-        bun_core::JsError::Terminated
-    }
-}
-
-impl From<JsError> for bun_core::JsError {
-    #[inline]
-    fn from(e: JsError) -> Self {
-        use bun_core::JsError as E;
-        match e {
-            JsError::Thrown => E::Thrown,
-            JsError::OutOfMemory => E::OutOfMemory,
-            JsError::Terminated => E::Terminated,
-        }
-    }
-}
-
 /// Converts `bun.JSError` → `std.Io.Writer.Error` for Console formatting paths.
 /// `Display` impls return `fmt::Error`; the JS exception, if any, remains on the VM.
 #[inline]
 pub fn js_error_to_write_error(e: JsError) -> core::fmt::Error {
     match e {
-        // TODO: this might lose a JSTerminated, causing m_terminationException problems
-        JsError::Terminated => core::fmt::Error,
         // TODO: this might lose a JSError, causing exception check problems
-        JsError::Thrown => core::fmt::Error,
+        JsError::Thrown | JsError::Terminated => core::fmt::Error,
         // `bun.handleOom(error.OutOfMemory)` — panic-on-OOM wrapper fed a literal OOM,
         // i.e. unconditionally abort.
         JsError::OutOfMemory => bun_alloc::out_of_memory(),
-    }
-}
-
-impl From<JsTerminated> for JsError {
-    fn from(_: JsTerminated) -> Self {
-        JsError::Terminated
-    }
-}
-
-/// Extension surface for [`JsResult`]. Gives every `JsResult` a terminal sink
-/// so the `unused_must_use` lint can be satisfied without `let _ =` at call
-/// sites that legitimately cannot `?`-propagate (FFI thunks, drop glue,
-/// fire-and-forget callbacks).
-pub trait JsResultExt {
-    /// Consume the result; if `Err`, take the pending exception off `global`
-    /// and route it through the VM's uncaught-exception handler. Returns the
-    /// `Ok` payload (or its `Default`) so callers can chain.
-    ///
-    /// Use this when an error has nowhere left to bubble — never to paper over
-    /// a missing `?`.
-    fn report_unhandled(self, global: &JSGlobalObject);
-}
-
-impl<T> JsResultExt for JsResult<T> {
-    #[inline]
-    fn report_unhandled(self, global: &JSGlobalObject) {
-        if let Err(e) = self {
-            // `Terminated` carries no exception value to report — the VM is
-            // already unwinding. `OutOfMemory`/`Thrown` both leave a pending
-            // exception that `report_uncaught_exception_from_error` will take.
-            if e != JsError::Terminated {
-                global.report_uncaught_exception_from_error(e);
-            }
-        }
     }
 }
 
@@ -694,10 +625,8 @@ impl From<JsError> for crate::CrateError {
     fn from(e: JsError) -> Self {
         match e {
             JsError::OutOfMemory => crate::CrateError::Alloc(bun_alloc::AllocError),
-            // `Terminated` (worker shutdown) has no distinct error tag of its
-            // own, so collapse into `JSError` like every other thrown JS
-            // exception.
-            JsError::Thrown | JsError::Terminated => crate::CrateError::JSError,
+            JsError::Thrown => crate::CrateError::JSError,
+            JsError::Terminated => crate::CrateError::WorkerTerminated,
         }
     }
 }
@@ -991,6 +920,7 @@ pub enum BuiltinName {
     type_,
     signal,
     cmd,
+    errors,
     /// Private name (`$internal` in builtins); user code cannot set it.
     internal,
     /// Private name (`$sharedFd` in builtins); user code cannot set it.
@@ -1014,39 +944,6 @@ impl BuiltinName {
     pub const Error: Self = Self::error;
     pub const Encoding: Self = Self::encoding;
     pub const Type: Self = Self::type_;
-
-    pub fn get(property: &[u8]) -> Option<BuiltinName> {
-        BUILTIN_NAME_MAP.get(property).copied()
-    }
-}
-
-bun_core::comptime_string_map! {
-    static BUILTIN_NAME_MAP: BuiltinName = {
-        b"method" => BuiltinName::method,
-        b"headers" => BuiltinName::headers,
-        b"status" => BuiltinName::status,
-        b"statusText" => BuiltinName::statusText,
-        b"url" => BuiltinName::url,
-        b"body" => BuiltinName::body,
-        b"data" => BuiltinName::data,
-        b"toString" => BuiltinName::toString,
-        b"redirect" => BuiltinName::redirect,
-        b"inspectCustom" => BuiltinName::inspectCustom,
-        b"highWaterMark" => BuiltinName::highWaterMark,
-        b"path" => BuiltinName::path,
-        b"stream" => BuiltinName::stream,
-        b"asyncIterator" => BuiltinName::asyncIterator,
-        b"name" => BuiltinName::name,
-        b"message" => BuiltinName::message,
-        b"error" => BuiltinName::error,
-        b"default" => BuiltinName::default,
-        b"encoding" => BuiltinName::encoding,
-        b"fatal" => BuiltinName::fatal,
-        b"ignoreBOM" => BuiltinName::ignoreBOM,
-        b"type" => BuiltinName::type_,
-        b"signal" => BuiltinName::signal,
-        b"cmd" => BuiltinName::cmd,
-    };
 }
 
 /// RAII guard that keeps a `JSValue` reachable across an FFI call by emitting
@@ -1123,8 +1020,6 @@ unsafe extern "C" {
     ) -> JSValue;
     safe fn ZigString__toValueGC(this: &bun_core::ZigString, global: &JSGlobalObject) -> JSValue;
     // ZigString__toExternalValue: use the generated `cpp::` re-export (canonical signature).
-    safe fn ZigString__toJSONObject(this: &bun_core::ZigString, global: &JSGlobalObject)
-    -> JSValue;
     // safe: `ZigString`/`JSGlobalObject` are `#[repr(C)]`/opaque-ZST handles (`&`
     // is ABI-identical to non-null `*const`); `ctx` is an opaque round-trip
     // pointer C++ stores into the external string's finalizer slot and forwards
@@ -1342,9 +1237,7 @@ pub mod virtual_machine;
 pub mod vm_handle;
 pub use self::virtual_machine as VirtualMachine;
 pub use self::virtual_machine::InitOptions as VirtualMachineInitOptions;
-pub use self::vm_handle::{
-    ConcurrentPoster, LoopHandle, LoopKind, Postable, Posted, VmHandle, post_job,
-};
+pub use self::vm_handle::{ConcurrentPoster, LoopKind, Posted, Ticket, VmHandle};
 
 #[path = "ModuleLoader.rs"]
 pub mod module_loader;
@@ -1384,11 +1277,10 @@ pub use self::event_loop as EventLoop;
 pub mod job;
 pub use self::event_loop::{
     AnyEventLoop, AnyTaskWithExtraContext, ConcurrentCppTask, ConcurrentTask, CppTask,
-    DeferredTaskQueue, EventLoopHandle, EventLoopTask, GarbageCollectionController, JsTerminated,
-    JsTerminatedResult, ManagedTask, MiniEventLoop, PosixSignalHandle, PosixSignalTask, Task,
-    WorkPool, WorkPoolTask,
+    DeferredTaskQueue, EventLoopHandle, EventLoopTask, GarbageCollectionController, ManagedTask,
+    MiniEventLoop, PosixSignalHandle, PosixSignalTask, Stopped, Task, WorkPool, WorkPoolTask,
 };
-pub use self::job::{Completion, Job, JobContext, JsPtr, JsSide, JsThread, Protected};
+pub use self::job::{Completion, Job, JobContext, JsPtr, JsThread, Protected};
 #[cfg(unix)]
 pub type PlatformEventLoop = bun_uws::Loop;
 #[cfg(not(unix))]
@@ -1472,10 +1364,6 @@ pub(crate) fn mark_member_binding(class: &'static str, src: &core::panic::Locati
     }
 }
 
-// LAYERING: no `Subprocess` alias is exported here — that type lives in
-// `bun_runtime::api` (forward-dep); callers reference
-// `bun_runtime::api::Subprocess` directly.
-
 /// Generated classes — re-run generate-classes.ts with .rs output.
 pub mod codegen {
     // GENERATED: re-run src/codegen/generate-classes.ts with .rs output
@@ -1495,8 +1383,6 @@ pub mod codegen {
     }
 }
 pub use self::codegen as Codegen;
-// `GeneratedClassesList` lives in `bun_runtime::GeneratedClassesList`
-// (layering: every aliased type is defined above `bun_jsc`).
 
 /// Extension trait providing JSC-aware methods on `bun_core::String`.
 pub trait StringJsc {
@@ -1588,7 +1474,7 @@ pub trait ZigStringJsc: Sized {
     /// buffer to JSC's external-string finalizer.
     fn to_external_value(&self, global: &JSGlobalObject) -> JSValue;
     /// `ZigString.toJSONObject` — `JSON.parse` over the bytes.
-    fn to_json_object(&self, global: &JSGlobalObject) -> JSValue;
+    fn to_json_object(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
     /// `ZigString.external` — like `to_external_value` but with a caller-supplied
     /// `ctx` + finalizer callback (used to keep a `Blob::Store` ref alive).
     ///
@@ -1663,8 +1549,9 @@ impl ZigStringJsc for bun_core::ZigString {
         unsafe { cpp::ZigString__toExternalValue(self, global.as_ptr()) }
     }
     #[inline]
-    fn to_json_object(&self, global: &JSGlobalObject) -> JSValue {
-        ZigString__toJSONObject(self, global)
+    fn to_json_object(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        // SAFETY: `self` is a live `&ZigString` for the duration of the call.
+        unsafe { crate::cpp::ZigString__toJSONObject(self, global) }
     }
     #[inline]
     unsafe fn external(

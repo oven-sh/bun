@@ -4,7 +4,6 @@ use std::io::Write as _;
 
 use bun_ast::Log;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag};
-use bun_collections::HashMap;
 use bun_paths::{self, SEP};
 // two `fs` shapes are in play here. `bun_resolver::fs` (`Fs`) holds
 // the singleton `FileSystem` / `DirnameStore`; `bun_paths::fs` (`PFs`) defines
@@ -13,8 +12,8 @@ use bun_paths::{self, SEP};
 // `import_record.path` via `PFs::Path` so the field assignment unifies.
 use bun_core::strings;
 use bun_paths::fs as PFs;
+use bun_resolver as resolver;
 use bun_resolver::fs as Fs;
-use bun_resolver::{self as resolver, Resolver};
 use bun_sys::Fd;
 use bun_url::URL;
 
@@ -23,12 +22,6 @@ use crate::options_impl::Target as BundleTarget;
 use crate::transpiler::{
     BunPluginTarget, ParseResult, PluginResolver, PluginRunner, ResolveQueue, ResolveResults,
 };
-
-type HashedFileNameMap = HashMap<u64, &'static [u8]>;
-
-// Matches `Transpiler::IS_CACHE_ENABLED`; inlined so `get_hashed_filename`
-// doesn't need a `Transpiler` handle.
-const IS_CACHE_ENABLED: bool = false;
 
 pub struct Linker {
     // arena field dropped — global mimalloc (callers pass `bun.default_allocator`)
@@ -41,9 +34,7 @@ pub struct Linker {
     pub(crate) fs: *mut Fs::FileSystem,
     pub log: *mut Log,
     pub(crate) resolve_queue: *mut ResolveQueue,
-    pub resolver: *mut Resolver<'static>,
     pub(crate) resolve_results: *mut ResolveResults,
-    pub(crate) hashed_filenames: HashedFileNameMap,
 
     pub plugin_runner: Option<*mut dyn PluginResolver>,
 }
@@ -237,7 +228,6 @@ impl Linker {
         log: *mut Log,
         resolve_queue: *mut ResolveQueue,
         options: *mut BundleOptions<'static>,
-        resolver: *mut Resolver<'static>,
         resolve_results: *mut ResolveResults,
         fs: *mut Fs::FileSystem,
     ) -> Self {
@@ -249,9 +239,7 @@ impl Linker {
             fs,
             log,
             resolve_queue,
-            resolver,
             resolve_results,
-            hashed_filenames: HashedFileNameMap::default(),
             plugin_runner: None,
         }
     }
@@ -266,14 +254,12 @@ impl Linker {
         log: *mut Log,
         resolve_queue: *mut ResolveQueue,
         options: *mut BundleOptions<'static>,
-        resolver: *mut Resolver<'static>,
         resolve_results: *mut ResolveResults,
         fs: *mut Fs::FileSystem,
     ) {
         self.log = log;
         self.resolve_queue = resolve_queue;
         self.options = options;
-        self.resolver = resolver;
         self.resolve_results = resolve_results;
         self.fs = fs;
     }
@@ -318,35 +304,9 @@ impl Linker {
         file_path: &PFs::Path<'_>,
         fd: Option<Fd>,
     ) -> crate::Result<&'static [u8]> {
-        if IS_CACHE_ENABLED {
-            let hashed = bun_wyhash::hash(file_path.text);
-            if let Some(v) = self.hashed_filenames.get(&hashed) {
-                return Ok(*v);
-            }
-        }
-
         let modkey = self.get_mod_key(file_path, fd)?;
-        // `ModKey::hash_name` writes into a caller-supplied buffer (1 KiB)
-        // and returns a borrow of it; `dupe` copies the bytes into the
-        // process-lifetime interner to satisfy this fn's `'static` return.
-        // Note: `IS_CACHE_ENABLED` is a hard `const false` (see above), so
-        // the `hashed_filenames` cache never dedups — every call interns a
-        // fresh copy for the life of the process. Accepted: the `'static`
-        // return contract forces a copy anyway, and the alternative (the old
-        // threadlocal slice return) was unsound. `dupe` also aborts on OOM
-        // where the old path propagated `?` — consistent with the
-        // `bun.handleOom` idiom for interner allocations.
-        // Spec passes `file_path.text` even though the param is named
-        // `basename`; preserved verbatim.
         let mut hash_name_buf = [0u8; 1024];
-        let hash_name = dupe(modkey.hash_name(file_path.text, &mut hash_name_buf)?);
-
-        if IS_CACHE_ENABLED {
-            let hashed = bun_wyhash::hash(file_path.text);
-            self.hashed_filenames.insert(hashed, hash_name);
-        }
-
-        Ok(hash_name)
+        Ok(dupe(modkey.hash_name(file_path.text, &mut hash_name_buf)?))
     }
 
     /// This modifies the Ast in-place! It resolves import records and
@@ -632,32 +592,32 @@ impl Linker {
             ImportPathFormat::Relative => {
                 let relative_name = bun_paths::resolve_path::relative(source_dir, source_path);
 
+                let text: &'static [u8];
                 let pretty: &'static [u8];
-                let relative_name_out: &'static [u8];
                 if use_hashed_name {
                     let basepath = PFs::Path::init(source_path);
                     let basename = self.get_hashed_filename(&basepath, None)?;
                     let name = basepath.name();
                     let dir = name.dir_with_trailing_slash();
-                    let mut _pretty: Vec<u8> =
+                    let mut hashed: Vec<u8> =
                         Vec::with_capacity(dir.len() + basename.len() + name.ext.len());
-                    _pretty.extend_from_slice(dir);
-                    _pretty.extend_from_slice(basename);
-                    _pretty.extend_from_slice(name.ext);
-                    pretty = intern(_pretty);
-                    relative_name_out = dupe(relative_name);
+                    hashed.extend_from_slice(dir);
+                    hashed.extend_from_slice(basename);
+                    hashed.extend_from_slice(name.ext);
+                    text = intern(hashed);
+                    pretty = dupe(relative_name);
                 } else {
                     if relative_name.len() > 1
                         && !(relative_name[0] == SEP || relative_name[0] == b'.')
                     {
-                        pretty = dupe(&strings::concat(&[b"./", relative_name]));
+                        text = dupe(&strings::concat(&[b"./", relative_name]));
                     } else {
-                        pretty = dupe(relative_name);
+                        text = dupe(relative_name);
                     }
-                    relative_name_out = pretty;
+                    pretty = text;
                 }
 
-                Ok(PFs::Path::init_with_pretty(pretty, relative_name_out))
+                Ok(PFs::Path::init_with_pretty(text, pretty))
             }
 
             ImportPathFormat::AbsoluteUrl => {

@@ -231,13 +231,10 @@ impl DirInfo {
     /// `unsafe` here. The `.data` map must only be probed/iterated while the
     /// lock is held; use [`get_entry`](Self::get_entry) for one-shot lookups.
     pub fn get_entries_ref_locked(&self, generation: Generation) -> Option<&'static fs::DirEntry> {
-        let entries_ptr = fs::FileSystem::instance()
+        fs::FileSystem::instance()
             .fs
-            .entries_at_locked(self.entries, generation)?;
-        match entries_ptr {
-            fs::EntriesOption::Entries(entries) => Some(&**entries),
-            fs::EntriesOption::Err(_) => None,
-        }
+            .entries_at_locked(self.entries, generation)?
+            .as_entries()
     }
 
     /// Generation-checked lookup of one basename in this directory's cached
@@ -257,13 +254,9 @@ impl DirInfo {
         // `MutexGuard` stores the mutex by raw pointer, so holding it does not
         // keep `rfs` borrowed.
         let _lock = rfs.entries_mutex.lock_guard();
-        match rfs.entries_at_locked(self.entries, generation)? {
-            fs::EntriesOption::Entries(entries) => {
-                let entries: &'static fs::DirEntry = entries;
-                entries.get(query)
-            }
-            fs::EntriesOption::Err(_) => None,
-        }
+        rfs.entries_at_locked(self.entries, generation)?
+            .as_entries()?
+            .get(query)
     }
 
     /// As-cached listing access with no generation check and no locking.
@@ -271,14 +264,11 @@ impl DirInfo {
     /// `.data` map must only be probed/iterated while `entries_mutex` is held
     /// (a concurrent stale-generation re-read rewrites it in place).
     pub fn get_entries_const(&self) -> Option<&fs::DirEntry> {
-        let entries_ptr = fs::FileSystem::instance()
+        fs::FileSystem::instance()
             .fs
             .entries
-            .at_index(self.entries)?;
-        match entries_ptr {
-            fs::EntriesOption::Entries(entries) => Some(&**entries),
-            fs::EntriesOption::Err(_) => None,
-        }
+            .at_index(self.entries)?
+            .as_entries()
     }
 
     #[inline]

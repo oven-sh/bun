@@ -144,15 +144,6 @@ pub struct Raw {
     pub(crate) len: u64,
 }
 
-impl Default for Raw {
-    fn default() -> Self {
-        Self {
-            ptr: ptr::null(),
-            len: 0,
-        }
-    }
-}
-
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct TypedArray {
@@ -206,18 +197,9 @@ impl SQLDataCell {
                 let len = bytea[1];
                 // Build the fat pointer with the safe `ptr::slice_from_raw_parts_mut`
                 // (no `&mut` reference materialized); only `Box::from_raw` is unsafe.
-                // SAFETY: bytea[0]/bytea[1] are ptr/len of a buffer allocated
-                // via the global allocator. The only `free_value=1` Bytea
-                // producer is `parse_bytea`
-                // (postgres/DataCell.rs), which allocates exactly `hex.len()/2`
-                // bytes and stores `decode_hex_to_bytes`'s return. With that
-                // call-site invariant (`source.len() >= 2 * dest.len()`), the
-                // non-truncating decoder cannot exhaust the input before the
-                // destination fills, so on success it returns `dest.len()` —
-                // hence allocation size == len and the `Box<[u8]>` layout
-                // below matches the allocation. (In general the decoder may
-                // return less than `dest.len()` when the input runs out first;
-                // this proof depends on parse_bytea's allocation size.)
+                // SAFETY: the only `free_value=1` Bytea producer is `parse_bytea`
+                // (postgres/DataCell.rs), which stores the ptr/len of a
+                // `Box<[u8]>` of exactly `len` bytes, so the layout matches.
                 unsafe { drop(Box::<[u8]>::from_raw(ptr::slice_from_raw_parts_mut(p, len))) };
             }
             Tag::Array => {
@@ -269,18 +251,27 @@ impl SQLDataCell {
     /// the right named/indexed/duplicate flag into `toJS`.
     #[inline]
     pub(crate) fn null_for_column(position: u32, column: &ColumnIdentifier) -> SQLDataCell {
-        SQLDataCell {
-            is_indexed_column: match column {
-                ColumnIdentifier::Duplicate => 2,
-                ColumnIdentifier::Index(_) => 1,
-                ColumnIdentifier::Name(_) => 0,
-            },
-            index: match column {
-                ColumnIdentifier::Index(i) => *i,
-                _ => position,
-            },
-            ..SQLDataCell::default()
-        }
+        let mut cell = SQLDataCell::null();
+        cell.set_column(position, column);
+        cell
+    }
+
+    /// Tags the cell with the column it was decoded for, in the encoding
+    /// SQLClient.cpp's `DataCell` reads: `is_indexed_column` is 0 for a named
+    /// column, 1 for an all-digits name (the object key is that number, not the
+    /// ordinal `position`, so indexed cells can land out of order) and 2 for a
+    /// duplicate, which object-mode results skip.
+    #[inline]
+    pub(crate) fn set_column(&mut self, position: u32, column: &ColumnIdentifier) {
+        self.is_indexed_column = match column {
+            ColumnIdentifier::Duplicate => 2,
+            ColumnIdentifier::Index(_) => 1,
+            ColumnIdentifier::Name(_) => 0,
+        };
+        self.index = match column {
+            ColumnIdentifier::Index(i) => *i,
+            _ => position,
+        };
     }
 
     #[inline]

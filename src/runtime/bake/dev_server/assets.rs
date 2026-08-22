@@ -30,11 +30,10 @@ pub struct Assets {
 
 // SAFETY: `Assets` is only ever constructed as the `assets` field of
 // `DevServer` (which is `Box`-allocated and never moved post-init).
-bun_core::impl_field_parent! { Assets => DevServer.assets; pub(super) fn owner; fn owner_mut; }
+bun_core::impl_field_parent! { Assets => DevServer.assets; fn owner; fn mut owner_mut; }
 
 impl Assets {
     pub(crate) fn get_hash(&self, path: &[u8]) -> Option<u64> {
-        debug_assert!(self.owner().magic == Magic::Valid);
         self.path_map
             .get(path)
             .map(|idx| self.files.keys()[idx.get_usize()])
@@ -69,8 +68,6 @@ impl Assets {
             bstr::BStr::new(&*mime_type.value),
         );
 
-        // Captured up-front so borrows of `self.files` / `self.path_map` below don't
-        // overlap with `owner()` (`&self`) calls.
         let server = self.owner().server;
         debug_assert!(server.is_some());
 
@@ -193,7 +190,6 @@ impl Assets {
 
     /// Look up a `StaticRoute` by content hash.
     pub(crate) fn get(&self, content_hash: u64) -> Option<&StaticRouteRef> {
-        debug_assert!(self.owner().magic == Magic::Valid);
         debug_assert_eq!(self.files.count(), self.refs.len());
         self.files.get(&content_hash)
     }

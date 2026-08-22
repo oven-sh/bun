@@ -370,7 +370,7 @@ impl S3BlobStatTask {
     fn on_s3_exists_resolved(
         result: s3::S3StatResult,
         this: *mut core::ffi::c_void,
-    ) -> Result<(), bun_jsc::JsTerminated> {
+    ) -> JsResult<()> {
         // SAFETY: `this` was allocated via heap::alloc in `exists`; reconstructing here replaces `defer this.deinit()`
         let mut this = unsafe { bun_core::heap::take(this.cast::<S3BlobStatTask>()) };
         // Copy the BackRef out so `this` is not borrowed across `&mut this.promise`.
@@ -401,10 +401,7 @@ impl S3BlobStatTask {
         Ok(())
     }
 
-    fn on_s3_size_resolved(
-        result: s3::S3StatResult,
-        this: *mut core::ffi::c_void,
-    ) -> Result<(), bun_jsc::JsTerminated> {
+    fn on_s3_size_resolved(result: s3::S3StatResult, this: *mut core::ffi::c_void) -> JsResult<()> {
         // SAFETY: `this` was allocated via heap::alloc in `size`; reconstructing here replaces `defer this.deinit()`
         let mut this = unsafe { bun_core::heap::take(this.cast::<S3BlobStatTask>()) };
         // Copy the BackRef out so `this` is not borrowed across `&mut this.promise`.
@@ -429,10 +426,7 @@ impl S3BlobStatTask {
         Ok(())
     }
 
-    fn on_s3_stat_resolved(
-        result: s3::S3StatResult,
-        this: *mut core::ffi::c_void,
-    ) -> Result<(), bun_jsc::JsTerminated> {
+    fn on_s3_stat_resolved(result: s3::S3StatResult, this: *mut core::ffi::c_void) -> JsResult<()> {
         // SAFETY: `this` was allocated via heap::alloc in `stat`; reconstructing here replaces `defer this.deinit()`
         let mut this = unsafe { bun_core::heap::take(this.cast::<S3BlobStatTask>()) };
         // Copy the BackRef out so `this` is not borrowed across `&mut this.promise`.

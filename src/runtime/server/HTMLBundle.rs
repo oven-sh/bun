@@ -130,6 +130,20 @@ impl HTMLBundle {
     pub(crate) fn get_index(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         bun_jsc::bun_string_jsc::create_utf8_for_js(global, &this.path)
     }
+
+    /// For `Route::on_complete` and the dev server's `finalize_bundle`, when a build has no page for the file.
+    pub(crate) fn no_html_page_log(&self) -> Log {
+        let mut log = Log::init();
+        log.add_error_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "Bundling {} did not produce an html page for it. A plugin may have resolved it to another file or loaded it as something other than html.",
+                bun_core::fmt::quote(&self.path)
+            ),
+        );
+        log
+    }
 }
 
 /// Deprecated: use Route instead.
@@ -169,6 +183,8 @@ pub struct Route {
 
 pub enum State {
     Pending,
+    /// `None` while the server's plugins are still loading. In either form the
+    /// route holds a pending request on `Route::server` (`schedule_bundle`).
     Building(Option<*mut JSBundleCompletionTask>),
     Err(Log),
     /// Intrusive-refcounted; freed via `StaticRoute::deref_` in `State::deinit`.
@@ -387,20 +403,52 @@ impl Route {
     }
 
     /// Schedule a bundle to be built.
-    /// If success, bumps the ref count and returns true;
-    fn schedule_bundle(&self, server: AnyServer) -> Result<(), crate::Error> {
+    ///
+    /// Entering `State::Building` counts as a pending request on the server:
+    /// the plugin load and the build finish on later event-loop turns and call
+    /// back into it (`on_plugins_resolved`, `on_complete`), so its
+    /// `deinit_if_we_can` must not free it before then. Nothing else holds it
+    /// on the route's behalf; the clients waiting in `pending_responses` only
+    /// count as connections and can disconnect at any time. `finish_building`
+    /// releases the pending request when the route leaves `State::Building`.
+    fn schedule_bundle(&self, mut server: AnyServer) -> Result<(), crate::Error> {
         match server.get_or_load_plugins(ServePluginsCallback::HtmlBundleRoute(self.as_ctx_ptr())) {
             GetOrStartLoadResult::Err => {
                 self.state.set(State::Err(Log::init()));
             }
             GetOrStartLoadResult::Ready(plugins) => {
-                self.on_plugins_resolved(plugins.map(NonNull::from))?;
+                let plugins = plugins.map(NonNull::from);
+                server.on_pending_request();
+                self.on_plugins_resolved(plugins)?;
             }
             GetOrStartLoadResult::Pending => {
+                server.on_pending_request();
                 self.state.set(State::Building(None));
             }
         }
         Ok(())
+    }
+
+    /// Leaves `State::Building`: answers the requests that arrived while the
+    /// route was building, then releases the pending request `schedule_bundle`
+    /// took on the server. The release comes last because it runs the server's
+    /// idle pass (`deinit_if_we_can`), which schedules the server's deinit when
+    /// this build was the only thing still keeping a stopped server alive.
+    fn finish_building(&self) {
+        debug_assert!(matches!(self.state.get(), State::Err(_) | State::Html(_)));
+        self.resume_pending_responses();
+        self.server.get().expect("server set").on_request_complete();
+    }
+
+    /// Production keeps the reason to itself, see `resume_pending_responses`.
+    fn set_build_error(&self, server: AnyServer, log: Log) {
+        if server.config().is_development() {
+            // `Log::print` takes the process-global writer as a `*mut io::Writer` through `IntoLogWrite`.
+            let writer: *mut bun_core::io::Writer = bun_output::error_writer_buffered();
+            let _ = log.print(writer);
+            bun_output::flush();
+        }
+        self.state.set(State::Err(log));
     }
 
     pub(crate) fn on_plugins_resolved(
@@ -419,6 +467,13 @@ impl Route {
         // `Config` owns its fields and
         // drops on early-return.
         config.entry_points.insert(&self.bundle.path)?;
+        // An import attribute or a bunfig `[loader]` entry may have made this html. `ext` is `""` without one.
+        config.loaders = Some(bun_options_types::schema::api::LoaderMap {
+            extensions: vec![Box::from(
+                bun_paths::fs::PathName::init(&self.bundle.path).ext,
+            )],
+            loaders: vec![bun_options_types::schema::api::Loader::html],
+        });
         let xform = &vm.transpiler.options.transform_options;
         if let Some(public_path) = xform.serve_public_path.as_deref() {
             if !public_path.is_empty() {
@@ -530,7 +585,7 @@ impl Route {
             std::ptr::from_ref(self) as usize
         );
         self.state.set(State::Err(Log::init()));
-        self.resume_pending_responses();
+        self.finish_building();
         Ok(())
     }
 
@@ -538,6 +593,10 @@ impl Route {
         // For the build task — matches the ref() taken in on_plugins_resolved.
         // SAFETY: self is IntrusiveRc-managed; `adopt` consumes the prior +1 on Drop.
         let _drop_build_ref = unsafe { bun_ptr::ScopedRef::<Route>::adopt(self.as_ctx_ptr()) };
+        // Still allocated, even if it has been stopped and its JS wrapper
+        // collected since: the route holds a pending request on it until
+        // `finish_building` (see `schedule_bundle`).
+        let server = self.server.get().expect("server set");
 
         match &mut completion_task.result {
             BundleV2Result::Err(err) => {
@@ -546,27 +605,13 @@ impl Route {
                 }
                 let mut log = Log::init();
                 completion_task.log.clone_to_with_recycled(&mut log, true);
-                if let Some(server) = self.server.get() {
-                    if server.config().is_development() {
-                        // `Output.errorWriterBuffered()` → process-global writer;
-                        // `Log::print` accepts it via the `*mut io::Writer`
-                        // `IntoLogWrite` adapter and dispatches on
-                        // `enable_ansi_colors_stderr` internally.
-                        let writer: *mut bun_core::io::Writer = bun_output::error_writer_buffered();
-                        let _ = log.print(writer);
-                        bun_output::flush();
-                    }
-                }
-                self.state.set(State::Err(log));
+                self.set_build_error(server, log);
             }
-            BundleV2Result::Value(bundle) => {
+            BundleV2Result::Value(bundle) => 'bundle: {
                 if bun_core::Environment::ENABLE_LOGS {
                     bun_output::scoped_log!(debug, "onComplete: success");
                 }
                 // Find the HTML entry point and create static routes
-                let Some(server) = self.server.get() else {
-                    return;
-                };
                 // S008: `JSGlobalObject` is an `opaque_ffi!` ZST — safe `*const → &` deref.
                 let global_this = bun_opaque::opaque_deref(server.global_this());
                 let output_files = &mut bundle.output_files;
@@ -589,6 +634,15 @@ impl Route {
                     );
                     bun_output::flush();
                 }
+
+                // A plugin can resolve or load the entry point as something other than html.
+                let Some(html_index) = output_files.iter().position(|output_file| {
+                    output_file.output_kind == bundler_options::OutputKind::EntryPoint
+                        && output_file.loader == Loader::Html
+                }) else {
+                    self.set_build_error(server, self.bundle.no_html_page_log());
+                    break 'bundle;
+                };
 
                 // `AnyRoute::Static` carries
                 // an intrusive `*mut StaticRoute` here; defer appending the HTML
@@ -673,10 +727,7 @@ impl Route {
                         route_path = &route_path[1..];
                     }
 
-                    if this_html_route.is_none()
-                        && output_files[i].output_kind == bundler_options::OutputKind::EntryPoint
-                        && output_files[i].loader == Loader::Html
-                    {
+                    if i == html_index {
                         // Defer registration so we retain unique ownership for `clone()`.
                         this_html_route = Some((static_route, Box::<[u8]>::from(route_path)));
                         continue;
@@ -689,9 +740,8 @@ impl Route {
                     ));
                 }
 
-                let (html_route, html_route_path) = this_html_route.unwrap_or_else(|| {
-                    panic!("Internal assertion failure: HTML entry point not found in HTMLBundle.")
-                });
+                let (html_route, html_route_path) =
+                    this_html_route.expect("the loop above visited html_index");
                 // SAFETY: html_route is a fresh heap::alloc with ref_count=1;
                 // sole owner before registration.
                 let html_route_clone =
@@ -711,11 +761,10 @@ impl Route {
             BundleV2Result::Pending => unreachable!(),
         }
 
-        // Handle pending responses
-        self.resume_pending_responses();
+        self.finish_building();
     }
 
-    pub(crate) fn resume_pending_responses(&self) {
+    fn resume_pending_responses(&self) {
         // R-2: `JsCell::replace` moves the Vec out so the per-response loop
         // (which writes responses and may run uws callbacks) holds no borrow
         // into `self.pending_responses`.

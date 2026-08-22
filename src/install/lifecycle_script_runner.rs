@@ -760,7 +760,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             // in `reset_polls` via `process.deref()`.
             let process: *mut Process = spawned.to_process(event_loop);
 
-            debug_assert!((*this).process.is_null(), "forgot to call `resetPolls`");
+            debug_assert!((*this).process.is_null(), "forgot to call `reset_polls`");
             (*this).process = process;
             // SAFETY: `this` is the allocation-rooted `LifecycleScriptSubprocess`;
             // we hold no live `&mut Self` here, so the synchronous `on_exit`

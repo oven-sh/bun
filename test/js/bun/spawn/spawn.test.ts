@@ -1,17 +1,19 @@
 import { ArrayBufferSink, readableStreamToText, spawn, spawnSync } from "bun";
+import { dlopen } from "bun:ffi";
 import { beforeAll, describe, expect, it } from "bun:test";
 import {
   gcTick as _gcTick,
   bunEnv,
   bunExe,
   getMaxFD,
+  isAndroid,
   isBroken,
   isDebug,
   isLinux,
-  isMacOS,
   isPosix,
   isWindows,
   shellExe,
+  tempDir,
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
@@ -607,8 +609,10 @@ for (let [gcTick, label] of [
   });
 }
 
-// This is a test which should only be used when pidfd and EVTFILT_PROC is NOT available
-it.skipIf(Boolean(process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD) || !isPosix || isMacOS)(
+// The waiter thread is the Linux fallback for kernels/sandboxes without pidfd;
+// kqueue platforms (macOS, FreeBSD) always have EVFILT_PROC and its non-Linux
+// loop has no wakeup for processes appended after it starts.
+it.skipIf(Boolean(process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD) || (!isLinux && !isAndroid))(
   "with BUN_FEATURE_FLAG_FORCE_WAITER_THREAD",
   async () => {
     const result = spawnSync({
@@ -1170,6 +1174,84 @@ describe("close handling", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "PASS", stderr: "", exitCode: 0 });
     });
+
+    it.if(isWindows)("'pipe' at index >= 3: the handle .stdio exposes is not closed again at GC", async () => {
+      // On Windows .stdio[3] is a HANDLE value. net.connect({fd}) adopts it
+      // and closes it with the socket. The getter used to expose the handle
+      // of its own uv_pipe_t and close that handle again when the Subprocess
+      // was GC'd. Windows reuses a closed handle value at once, so the second
+      // close destroyed whatever owned the value by then (a worker thread's
+      // handle, in the crash reports). Here the new owner is an event we put
+      // into the value on purpose: it stays signaled unless something closes
+      // it out from under us.
+      const fixture = /* js */ `
+        import { dlopen } from "bun:ffi";
+        import { connect } from "node:net";
+        const k32 = dlopen("kernel32.dll", {
+          CreateEventW: { args: ["ptr", "i32", "i32", "ptr"], returns: "ptr" },
+          SetHandleInformation: { args: ["ptr", "u32", "u32"], returns: "i32" },
+          WaitForSingleObject: { args: ["ptr", "u32"], returns: "u32" },
+          CloseHandle: { args: ["ptr"], returns: "i32" },
+        }).symbols;
+        const WAIT_OBJECT_0 = 0;
+        const isOpen = handle => k32.SetHandleInformation(handle, 0, 0) !== 0;
+
+        // Returns the handle value .stdio[3] exposed, now occupied by our
+        // event, or null when something else took the value first. The
+        // Subprocess is unreachable once this returns.
+        async function spawnReadAndReoccupy() {
+          const proc = Bun.spawn({
+            cmd: [process.execPath, "-e", "require('fs').writeSync(3, 'hi')"],
+            stdio: ["ignore", "ignore", "ignore", "pipe"],
+          });
+          const handle = proc.stdio[3];
+          if (typeof handle !== "number") throw new Error("stdio[3] is " + String(handle));
+          if (proc.stdio[3] !== handle) throw new Error("stdio[3] changed between reads");
+          const socket = connect({ fd: handle });
+          let data = "";
+          socket.on("data", chunk => (data += chunk));
+          // EOF when the child exits; the socket closes the handle.
+          await new Promise(resolve => socket.once("close", resolve));
+          await proc.exited;
+          if (data !== "hi") throw new Error("read " + JSON.stringify(data) + " through stdio[3]");
+          if (isOpen(handle)) return null;
+
+          // Allocate until the kernel gives the value back to us.
+          const misses = [];
+          let occupied = false;
+          for (let i = 0; i < 4096 && !occupied && !isOpen(handle); i++) {
+            const event = Number(k32.CreateEventW(null, 1, 1, null));
+            if (event === handle) occupied = true;
+            else misses.push(event);
+          }
+          for (const event of misses) k32.CloseHandle(event);
+          return occupied ? handle : null;
+        }
+
+        const events = [];
+        for (let i = 0; i < 3; i++) {
+          const handle = await spawnReadAndReoccupy();
+          if (handle !== null) events.push(handle);
+        }
+        for (let i = 0; i < 8; i++) {
+          Bun.gc(true);
+          await Bun.sleep(0);
+        }
+        const closedAgain = events.filter(event => k32.WaitForSingleObject(event, 0) !== WAIT_OBJECT_0);
+        for (const event of events) k32.CloseHandle(event);
+        if (closedAgain.length) {
+          throw new Error("the Subprocess finalizer closed " + closedAgain.length + "/" + events.length + " handle values it had handed out");
+        }
+        console.log("PASS");
+      `;
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "PASS", stderr: "", exitCode: 0 });
+    });
   });
 });
 
@@ -1310,6 +1392,84 @@ it.skipIf(isWindows)("leaves a Bun.file(fd) stdout open when stdin stream setup 
   expect(stdout.trim()).toBe("pull unavailable");
   expect(readFileSync(file, "utf8")).toContain("still-open");
   expect(exitCode).toBe(0);
+});
+
+// Bun.file(fd).stream() (like the shell's stdio and cwd handles) works on a
+// dup() of the descriptor. On Windows that duplicate used to be created
+// inheritable, and libuv spawns with bInheritHandles=TRUE, so every child
+// started while one was open got a copy and kept the file open after the
+// parent closed it. POSIX dup() uses F_DUPFD_CLOEXEC; the Windows side must match.
+it.if(isWindows)("handles duplicated for Bun.file(fd).stream() are not inherited by children", async () => {
+  const N = 64;
+  // Bigger than the stream's high-water mark, so each reader parks on its
+  // duplicate instead of reading to EOF and closing it.
+  using dir = tempDir("spawn-dup-inherit", { "data.bin": Buffer.alloc(1024 * 1024) });
+
+  const k32 = dlopen("kernel32.dll", {
+    GetCurrentProcess: { args: [], returns: "ptr" },
+    GetProcessHandleCount: { args: ["ptr", "ptr"], returns: "i32" },
+  });
+  const ownHandleCount = () => {
+    const out = new Uint32Array(1);
+    if (k32.symbols.GetProcessHandleCount(k32.symbols.GetCurrentProcess(), out) === 0) {
+      throw new Error("GetProcessHandleCount failed");
+    }
+    return out[0];
+  };
+
+  // The child reports how many handles it was started with.
+  const spawnHandleCounter = () =>
+    spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import { dlopen } from "bun:ffi";
+        const k32 = dlopen("kernel32.dll", {
+          GetCurrentProcess: { args: [], returns: "ptr" },
+          GetProcessHandleCount: { args: ["ptr", "ptr"], returns: "i32" },
+        });
+        const out = new Uint32Array(1);
+        if (k32.symbols.GetProcessHandleCount(k32.symbols.GetCurrentProcess(), out) === 0) {
+          throw new Error("GetProcessHandleCount failed");
+        }
+        console.log(out[0]);
+        `,
+      ],
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  const reportedHandleCount = async (proc: ReturnType<typeof spawnHandleCounter>) => {
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return Number(stdout.trim());
+  };
+
+  const fds = Array.from({ length: N }, () => openSync(join(String(dir), "data.bin"), "r"));
+  const readers: ReadableStreamDefaultReader<Uint8Array>[] = [];
+  try {
+    // Plain descriptors are already non-inheritable; this child is the baseline.
+    await using control = spawnHandleCounter();
+
+    const before = ownHandleCount();
+    for (const fd of fds) readers.push(Bun.file(fd).stream().getReader());
+    // getReader() starts the stream, which dup()s the descriptor: the
+    // duplicates exist in this process while the next child is created.
+    expect(ownHandleCount() - before).toBeGreaterThanOrEqual(N);
+    await using withDuplicates = spawnHandleCounter();
+
+    const [controlCount, withDuplicatesCount] = await Promise.all([
+      reportedHandleCount(control),
+      reportedHandleCount(withDuplicates),
+    ]);
+    // An inheritable dup() hands every one of the N duplicates to the child,
+    // so the difference used to be exactly N.
+    expect(withDuplicatesCount - controlCount).toBeLessThan(N / 2);
+  } finally {
+    await Promise.all(readers.map(reader => reader.cancel()));
+    for (const fd of fds) closeSync(fd);
+  }
 });
 
 it.if(isWindows)("throws a spawn error for a cwd longer than the maximum path length", async () => {

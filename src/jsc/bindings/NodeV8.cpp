@@ -79,14 +79,14 @@ JSC_DEFINE_HOST_FUNCTION(functionStopGCProfiler, (JSGlobalObject * globalObject,
     unsigned index = 0;
     for (const auto& record : *records) {
         JSObject* entry = constructEmptyObject(globalObject);
-        entry->putDirect(vm, Identifier::fromString(vm, "isFullCollection"_s), jsBoolean(record.isFullCollection));
-        entry->putDirect(vm, Identifier::fromString(vm, "cost"_s), jsNumber(record.costMicroseconds));
-        entry->putDirect(vm, Identifier::fromString(vm, "usedBefore"_s), jsNumber(record.usedBefore));
-        entry->putDirect(vm, Identifier::fromString(vm, "capacityBefore"_s), jsNumber(record.capacityBefore));
-        entry->putDirect(vm, Identifier::fromString(vm, "externalBefore"_s), jsNumber(record.externalBefore));
-        entry->putDirect(vm, Identifier::fromString(vm, "usedAfter"_s), jsNumber(record.usedAfter));
-        entry->putDirect(vm, Identifier::fromString(vm, "capacityAfter"_s), jsNumber(record.capacityAfter));
-        entry->putDirect(vm, Identifier::fromString(vm, "externalAfter"_s), jsNumber(record.externalAfter));
+        Bun::putDirectNamed(vm, entry, "isFullCollection"_s, jsBoolean(record.isFullCollection));
+        Bun::putDirectNamed(vm, entry, "cost"_s, jsNumber(record.costMicroseconds));
+        Bun::putDirectNamed(vm, entry, "usedBefore"_s, jsNumber(record.usedBefore));
+        Bun::putDirectNamed(vm, entry, "capacityBefore"_s, jsNumber(record.capacityBefore));
+        Bun::putDirectNamed(vm, entry, "externalBefore"_s, jsNumber(record.externalBefore));
+        Bun::putDirectNamed(vm, entry, "usedAfter"_s, jsNumber(record.usedAfter));
+        Bun::putDirectNamed(vm, entry, "capacityAfter"_s, jsNumber(record.capacityAfter));
+        Bun::putDirectNamed(vm, entry, "externalAfter"_s, jsNumber(record.externalAfter));
         result->putDirectIndex(globalObject, index++, entry);
         RETURN_IF_EXCEPTION(scope, {});
     }

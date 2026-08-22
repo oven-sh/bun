@@ -8,6 +8,20 @@ use super::command_line_arguments::{self, CommandLineArguments};
 use bun_dotenv::Loader as DotEnvLoader;
 use bun_install::{Features, Npm};
 
+/// Network policy for this install.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum OfflineMode {
+    /// Default: revalidate stale manifests, download what is missing.
+    #[default]
+    Online,
+    /// `--prefer-offline` / `install.prefer = "offline"`: a cached manifest of any age
+    /// satisfies resolution; only what is missing from the cache is fetched.
+    PreferOffline,
+    /// `--offline` / `install.offline = true`: never touch the network; anything not
+    /// in the cache is an error.
+    Offline,
+}
+
 // `string` fields are `[]const u8` borrowed from CLI args / bunfig config,
 // which live for the process lifetime. There is no `deinit` on Options. Mapped to
 // `&'static [u8]` per PORTING.md (no lifetime params on structs).
@@ -32,12 +46,14 @@ pub struct Options {
     pub positionals: &'static [&'static [u8]],
     pub(crate) update: DependencyGroup,
     pub dry_run: bool,
+    pub check: bool,
     pub(crate) link_workspace_packages: bool,
     pub(crate) remote_package_features: Features,
-    pub(crate) local_package_features: Features,
+    pub local_package_features: Features,
     pub(crate) patch_features: PatchFeatures,
 
     pub filter_patterns: &'static [&'static [u8]],
+    pub add_catalog: Option<&'static [u8]>,
     pub pack_destination: &'static [u8],
     pub pack_filename: &'static [u8],
     pub pack_gzip_level: Option<&'static [u8]>,
@@ -70,7 +86,7 @@ pub struct Options {
     pub depth: Option<usize>,
 
     /// isolated installs (pnpm-like) or hoisted installs (yarn-like, original)
-    pub(crate) node_linker: NodeLinker,
+    pub node_linker: NodeLinker,
 
     pub(crate) public_hoist_pattern: Option<Api::PnpmMatcher>,
     pub(crate) hoist_pattern: Option<Api::PnpmMatcher>,
@@ -78,6 +94,9 @@ pub struct Options {
     /// Isolated linker: `false` skips the `node_modules/.bun/node_modules`
     /// fallback (pnpm's `hoist=false`); takes precedence over `hoist_pattern`.
     pub(crate) hoist: bool,
+
+    /// `--offline` / `--prefer-offline` (or `install.offline` / `install.prefer = "offline"`).
+    pub offline: OfflineMode,
 
     // Security scanner module path
     pub security_scanner: Option<&'static [u8]>,
@@ -89,9 +108,9 @@ pub struct Options {
     pub minimum_release_age_excludes: Option<&'static [&'static [u8]]>,
 
     /// Override CPU architecture for optional dependencies filtering
-    pub(crate) cpu: Npm::Architecture,
+    pub cpu: Npm::Architecture,
     /// Override OS for optional dependencies filtering
-    pub(crate) os: Npm::OperatingSystem,
+    pub os: Npm::OperatingSystem,
 
     pub(crate) config_version: Option<ConfigVersion>,
 }
@@ -114,6 +133,7 @@ impl Default for Options {
             positionals: &[],
             update: DependencyGroup::default(),
             dry_run: false,
+            check: false,
             link_workspace_packages: true,
             remote_package_features: Features {
                 optional_dependencies: true,
@@ -127,6 +147,7 @@ impl Default for Options {
             },
             patch_features: PatchFeatures::Nothing,
             filter_patterns: &[],
+            add_catalog: None,
             pack_destination: b"",
             pack_filename: b"",
             pack_gzip_level: None,
@@ -152,6 +173,7 @@ impl Default for Options {
             public_hoist_pattern: None,
             hoist_pattern: None,
             hoist: true,
+            offline: OfflineMode::Online,
             security_scanner: None,
             minimum_release_age_ms: None,
             minimum_release_age_excludes: None,
@@ -471,6 +493,10 @@ impl Options {
                 self.hoist = hoist;
             }
 
+            if config.offline == Some(true) {
+                self.offline = OfflineMode::Offline;
+            }
+
             if let Some(security_scanner) = config.security_scanner.as_deref() {
                 self.security_scanner = Some(leak_static(security_scanner));
                 self.do_.set(Do::PREFETCH_RESOLVED_TARBALLS, false);
@@ -603,26 +629,44 @@ impl Options {
                     if !registry_.is_empty()
                         && (registry_.starts_with(b"https://") || registry_.starts_with(b"http://"))
                     {
-                        let prev_scope = self.scope.clone();
-                        let prev_url = prev_scope.url.url();
-                        let new_url = bun_url::URL::parse(registry_);
-                        let token = if bun_core::without_trailing_slash(new_url.host)
-                            == bun_core::without_trailing_slash(prev_url.host)
-                            && (new_url.is_https() || !prev_url.is_https())
-                        {
-                            prev_scope.token
-                        } else {
-                            Box::default()
-                        };
-                        // Default (empty strings) is the zero value for Api::NpmRegistry.
-                        let api_registry = Api::NpmRegistry {
-                            url: registry_.into(),
-                            token,
-                            ..Default::default()
-                        };
+                        let mut api_registry = Api::NpmRegistry::from_url(registry_);
+                        // Credentials in the URL win, as they do for `registry=` in .npmrc.
+                        if !api_registry.has_credentials() {
+                            let prev_url = self.scope.url.url();
+                            let new_url = bun_url::URL::parse(&api_registry.url);
+                            if bun_core::without_trailing_slash(new_url.host)
+                                == bun_core::without_trailing_slash(prev_url.host)
+                                && (new_url.is_https() || !prev_url.is_https())
+                            {
+                                api_registry.token = core::mem::take(&mut self.scope.token);
+                            }
+                        }
                         self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;
                         break;
                     }
+                }
+            }
+        }
+
+        if let Some(cli) = &maybe_cli {
+            if !cli.registry.is_empty() {
+                let api_registry = Api::NpmRegistry::from_url(cli.registry);
+                if api_registry.has_credentials() {
+                    self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;
+                } else {
+                    let new_url = bun_url::URL::parse(&api_registry.url);
+                    let same_origin = {
+                        let prev_url = self.scope.url.url();
+                        bun_core::without_trailing_slash(new_url.host)
+                            == bun_core::without_trailing_slash(prev_url.host)
+                            && (new_url.is_https() || !prev_url.is_https())
+                    };
+                    if !same_origin {
+                        self.scope.token = Box::default();
+                        self.scope.auth = Box::default();
+                        self.scope.user = Box::default();
+                    }
+                    self.scope.set_url(api_registry.url);
                 }
             }
         }
@@ -683,25 +727,6 @@ impl Options {
             self.enable
                 .set(Enable::ONLY_MISSING, cli.only_missing || cli.analyze);
 
-            if !cli.registry.is_empty() {
-                let new_url = bun_url::URL::parse(cli.registry);
-                let same_origin = {
-                    let prev_url = self.scope.url.url();
-                    bun_core::without_trailing_slash(new_url.host)
-                        == bun_core::without_trailing_slash(prev_url.host)
-                        && (new_url.is_https() || !prev_url.is_https())
-                };
-                if !same_origin {
-                    self.scope.token = Box::default();
-                    self.scope.auth = Box::default();
-                    self.scope.user = Box::default();
-                }
-                let href: Box<[u8]> = cli.registry.into();
-                self.scope.url_hash =
-                    Npm::registry::Scope::hash(bun_core::without_trailing_slash(&href));
-                self.scope.url = bun_url::OwnedURL::from_href(href);
-            }
-
             if let Some(cache_dir) = cli.cache_dir {
                 self.cache_directory = cache_dir;
             }
@@ -725,12 +750,14 @@ impl Options {
                 self.do_.set(Do::WRITE_PACKAGE_JSON, false);
                 self.do_.set(Do::SAVE_LOCKFILE, false);
             }
+            self.check = cli.check;
 
             if cli.no_summary || cli.log_level.is_silent() {
                 self.do_.set(Do::SUMMARY, false);
             }
 
             self.filter_patterns = cli.filters;
+            self.add_catalog = cli.add_catalog;
             self.pack_destination = cli.pack_destination;
             self.pack_filename = cli.pack_filename;
             self.pack_gzip_level = cli.pack_gzip_level;
@@ -790,11 +817,20 @@ impl Options {
             } else {
                 cli.log_level
             };
+            if cli.log_level.is_silent() {
+                log.level = bun_ast::Level::Err;
+                bun_ast::DEFAULT_LOG_LEVEL.store(bun_ast::Level::Err);
+            }
             // SAFETY: main-thread CLI option load — single writer.
             super::PackageManager::set_verbose_install(cli.log_level.is_verbose());
 
             if cli.no_verify {
                 self.do_.set(Do::VERIFY_INTEGRITY, false);
+            }
+            if cli.offline {
+                self.offline = OfflineMode::Offline;
+            } else if cli.prefer_offline && self.offline == OfflineMode::Online {
+                self.offline = OfflineMode::PreferOffline;
             }
 
             if cli.yarn {
@@ -899,6 +935,16 @@ impl Options {
         // moved from `defer { ... }` after scope assignment (see note above).
         self.did_override_default_scope = self.scope.url_hash != *Npm::registry::DEFAULT_URL_HASH;
 
+        // The manifest cache is the data source for --prefer-offline/--offline; keep it on
+        // even where it is otherwise bypassed (`bun update`, `--no-cache`, `--force`).
+        if self.offline != OfflineMode::Online {
+            self.enable.set(Enable::MANIFEST_CACHE, true);
+        }
+        // Prefetching resolved tarballs is a latency optimisation for downloads; under
+        // --offline there is nothing to download and the install phase reports misses.
+        if self.offline == OfflineMode::Offline {
+            self.do_.set(Do::PREFETCH_RESOLVED_TARBALLS, false);
+        }
         Ok(())
     }
 }

@@ -23,16 +23,12 @@ use bun_sha_hmac::SHA512;
 
 pub(crate) struct PasswordObject;
 
-#[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
+#[derive(Copy, Clone)]
 #[repr(u8)]
 pub enum Algorithm {
-    #[strum(serialize = "argon2i")]
     Argon2i,
-    #[strum(serialize = "argon2d")]
     Argon2d,
-    #[strum(serialize = "argon2id")]
     Argon2id,
-    #[strum(serialize = "bcrypt")]
     Bcrypt,
 }
 
@@ -567,11 +563,7 @@ impl<Op: PasswordOp> Drop for PasswordJob<Op> {
 impl<Op: PasswordOp> bun_jsc::JobContext for PasswordJob<Op> {
     type OffThread = Self;
     type Js = JSPromiseStrong;
-    fn run(
-        this: &mut Self,
-        _vm: &bun_jsc::vm_handle::Borrow,
-        done: bun_jsc::Completion<Self>,
-    ) -> Option<bun_jsc::Completion<Self>> {
+    fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         this.value = Some(this.op.compute(&this.password));
         Some(done)
     }
@@ -723,7 +715,6 @@ fn js_password_object_hash_sync(
             "string or TypedArray",
         ));
     };
-    // defer string_or_buffer.deinit() — Drop at scope exit.
 
     if string_or_buffer.slice().is_empty() {
         return Err(
@@ -878,8 +869,6 @@ fn js_password_object_verify_sync(
     if let StringOrBuffer::Buffer(buffer) = &mut password {
         buffer.buffer = ArrayBuffer::from_typed_array(global_object, buffer.buffer.value);
     }
-
-    // defer password.deinit() / hash_.deinit() — Drop at scope exit.
 
     if hash_.slice().is_empty() {
         return Ok(JSValue::FALSE);

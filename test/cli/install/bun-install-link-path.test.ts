@@ -76,7 +76,10 @@ it("a link: path whose target does not exist is reported when linking, not as an
     "package.json": JSON.stringify({ name: "root", dependencies: { later: "link:./vendor/later" } }),
   });
   const r = await install(String(dir));
+  // resolution succeeds (no "is not linked" / global-link hint) and the lockfile is written…
   expect(r.err).not.toContain("is not linked");
   expect(r.err).toContain("Saved lockfile");
-  expect(r.out + r.err).toContain("later");
+  // …but linking the missing directory fails and says which package
+  expect(r.out + r.err).toContain("failed linking dependency/workspace to node_modules for package later");
+  expect(r.out).toContain("Failed to install 1 package");
 });

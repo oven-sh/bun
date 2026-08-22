@@ -1635,17 +1635,6 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                             quoted: true
                         },
                     );
-                } else if dependency_tag == dependency::version::Tag::Symlink
-                    && crate::resolution::is_path_link(this.lockfile.str(version.symlink()))
-                {
-                    bun_ast::add_error_pretty!(
-                        this.log_mut(),
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        "Could not resolve \"{}\": link target <b>{}<r> could not be read",
-                        bstr::BStr::new(this.lockfile.str(&name)),
-                        bstr::BStr::new(this.lockfile.str(version.symlink())),
-                    );
                 } else {
                     bun_ast::add_error_pretty!(
                         this.log_mut(),
@@ -1668,17 +1657,6 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                             version,
                             quoted: true
                         },
-                    );
-                } else if dependency_tag == dependency::version::Tag::Symlink
-                    && crate::resolution::is_path_link(this.lockfile.str(version.symlink()))
-                {
-                    bun_ast::add_warning_pretty!(
-                        this.log_mut(),
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        "Could not resolve \"{}\": link target <b>{}<r> could not be read",
-                        bstr::BStr::new(this.lockfile.str(&name)),
-                        bstr::BStr::new(this.lockfile.str(version.symlink())),
                     );
                 } else {
                     bun_ast::add_warning_pretty!(

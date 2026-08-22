@@ -330,9 +330,9 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
                 }
                 Err(err) => {
                     // yarn/pnpm `link:./dir` may point at a plain directory without a
-                    // package.json (or one that does not exist yet — the symlink is created
-                    // either way): treat it as an empty manifest named after the directory
-                    // (a lockfile package needs a name), with no dependencies.
+                    // package.json: treat it as an empty manifest named after the directory
+                    // (a lockfile package needs a name), with no dependencies. (If the
+                    // directory itself is missing, the link step reports that later.)
                     let literal = version
                         .literal
                         .slice(manager.lockfile.buffers.string_bytes.as_slice());

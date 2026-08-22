@@ -1,5 +1,5 @@
 import type { ServerWebSocket } from "bun";
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createHash, createPrivateKey, randomBytes } from "crypto";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, tempDir, tls } from "harness";
@@ -21,7 +21,7 @@ const fetchH3 = (port: number, path: string, init: RequestInit & { signal?: Abor
 // a live loopback server answers in well under this even on the ASAN lane.
 const DEAD_PORT_ABORT_MS = 1000;
 
-// Every fixture server in this file is torn down on stdin close so the client's
+// Every spawned fixture in this file is torn down on stdin close so the client's
 // pooled session sees CONNECTION_CLOSE and is dropped; otherwise a killed
 // process leaves the client retransmitting until lsquic's idle timeout, and if
 // the OS reuses that ephemeral UDP port a later test's request gets matched
@@ -30,232 +30,180 @@ const DEAD_PORT_ABORT_MS = 1000;
 // client's socket before stop(true) returns, so the process can exit at once.
 // (A fixture that is SIGKILLed instead makes a non-retryable POST to a
 // re-bound port time out every time; an immediate exit after stop(true) never
-// does.) The helpers below await that exit before the next case starts.
+// does.) withCustomServer() awaits that exit before the next case starts.
 const STOP_ON_STDIN_END = `process.stdin.on("end", () => { server.stop(true); process.exit(0); });`;
 
 const md5 = (b: Uint8Array | ArrayBuffer) => createHash("md5").update(Buffer.from(b)).digest("hex");
 
-const fixture = `
-import { serve } from "bun";
-
-const big = Buffer.alloc(512 * 1024, "abcdefghijklmnop");
-
-const server = serve({
-  port: 0,
-  tls: ${JSON.stringify(tls)},
-  http3: true,
-  http1: process.env.H3_ONLY !== "1",
-  routes: {
-    "/api/:id": req => new Response("id=" + req.params.id, { headers: { "x-route": "api" } }),
-    "/route-only": { POST: () => new Response("posted") },
-    "/lifetime/:id": async req => {
-      const before = req.params.id;
-      await Bun.sleep(0);
-      return new Response(before + "|" + req.params.id);
+/** The standard fixture: an in-process server with every route the
+ * request/response cases below use. `dir` holds big.bin (200 KB) and huge.bin
+ * (2 MB). */
+function serveFixture(dir: string, { http1 = true } = {}) {
+  const big = Buffer.alloc(512 * 1024, "abcdefghijklmnop");
+  const bigFile = join(dir, "big.bin");
+  const hugeFile = join(dir, "huge.bin");
+  return Bun.serve({
+    port: 0,
+    tls,
+    http3: true,
+    http1,
+    routes: {
+      "/api/:id": req => new Response("id=" + req.params.id, { headers: { "x-route": "api" } }),
+      "/route-only": { POST: () => new Response("posted") },
+      "/lifetime/:id": async req => {
+        const before = req.params.id;
+        await Bun.sleep(0);
+        return new Response(before + "|" + req.params.id);
+      },
+      "/static": new Response("from-static-route", {
+        headers: { "content-type": "text/plain", etag: '"v1"' },
+      }),
+      "/file-route": Bun.file(bigFile),
     },
-    "/static": new Response("from-static-route", {
-      headers: { "content-type": "text/plain", etag: '"v1"' },
-    }),
-    "/file-route": Bun.file(process.env.BIG_FILE),
-  },
-  async fetch(req) {
-    const url = new URL(req.url);
-    if (url.pathname === "/hello") {
-      return new Response("hello over h3", {
-        headers: { "x-proto": "h3", "content-type": "text/plain" },
-      });
-    }
-    if (url.pathname === "/echo") {
-      const body = await req.text();
-      return new Response(body, {
-        status: 201,
-        headers: {
-          "x-method": req.method,
-          "x-echo": req.headers.get("x-echo") ?? "",
-          "x-len": String(body.length),
-        },
-      });
-    }
-    if (url.pathname === "/echo-bytes") {
-      const body = await req.arrayBuffer();
-      return new Response(body, {
-        status: 200,
-        headers: { "x-len": String(body.byteLength) },
-      });
-    }
-    if (url.pathname === "/transform") {
-      const body = new Uint8Array(await req.arrayBuffer());
-      for (let i = 0; i < body.length; i++) body[i] = (body[i] + 1) & 0xff;
-      return new Response(body, { headers: { "x-len": String(body.length) } });
-    }
-    if (url.pathname === "/lifetime") {
-      const mode = url.searchParams.get("d");
-      const beforeUrl = req.url;
-      const beforeMethod = req.method;
-      const beforeHdr = req.headers.get("x-probe");
-      if (mode === "micro") await Promise.resolve();
-      else if (mode === "macro") await Bun.sleep(0);
-      else if (mode === "double") { await Promise.resolve(); await Bun.sleep(0); }
-      const afterUrl = req.url;
-      const afterMethod = req.method;
-      const afterHdr = req.headers.get("x-probe");
-      const all = {};
-      for (const [k, v] of req.headers) all[k] = v;
-      const body = await req.text();
-      return Response.json({
-        ok: beforeUrl === afterUrl && beforeMethod === afterMethod && beforeHdr === afterHdr,
-        url: afterUrl, method: afterMethod, probe: afterHdr,
-        headerCount: Object.keys(all).length, bodyLen: body.length,
-      });
-    }
-    if (url.pathname === "/spawn") {
-      const p = Bun.spawn({
-        cmd: [process.execPath, "-e", "for(let i=0;i<40;i++)process.stdout.write('x'.repeat(1000)+String.fromCharCode(10))"],
-        stdout: "pipe",
-      });
-      return new Response(p.stdout, { headers: { "content-type": "text/plain" } });
-    }
-    if (url.pathname === "/passthrough") {
-      return new Response(req.body, { status: 200, headers: { "x-passthrough": "1" } });
-    }
-    if (url.pathname === "/file-stream") {
-      return new Response(Bun.file(process.env.BIG_FILE).stream());
-    }
-    if (url.pathname === "/headers") {
-      const out = {};
-      for (const [k, v] of req.headers) out[k] = v;
-      return Response.json(out);
-    }
-    if (url.pathname === "/big") {
-      return new Response(big, { headers: { "content-type": "application/octet-stream" } });
-    }
-    if (url.pathname === "/status") {
-      return new Response(null, { status: 204 });
-    }
-    if (url.pathname === "/query") {
-      return new Response(url.searchParams.get("q") ?? "<none>");
-    }
-    if (url.pathname === "/slow") {
-      // Only the client-abort case requests this; its 10 ms abort timer must
-      // win even when the concurrent group keeps the test's event loop busy.
-      await new Promise(r => setTimeout(r, 500));
-      return new Response("late");
-    }
-    if (url.pathname === "/stream") {
-      return new Response(
-        new ReadableStream({
-          async start(ctrl) {
-            for (const c of ["one ", "two ", "three"]) {
-              ctrl.enqueue(new TextEncoder().encode(c));
-              await new Promise(r => setTimeout(r, 5));
-            }
-            ctrl.close();
+    async fetch(req, server) {
+      const url = new URL(req.url);
+      if (url.pathname === "/hello") {
+        return new Response("hello over h3", {
+          headers: { "x-proto": "h3", "content-type": "text/plain" },
+        });
+      }
+      if (url.pathname === "/echo") {
+        const body = await req.text();
+        return new Response(body, {
+          status: 201,
+          headers: {
+            "x-method": req.method,
+            "x-echo": req.headers.get("x-echo") ?? "",
+            "x-len": String(body.length),
           },
-        }),
-        { headers: { "content-type": "text/plain" } },
-      );
-    }
-    if (url.pathname === "/file") {
-      return new Response(Bun.file(process.env.BIG_FILE));
-    }
-    if (url.pathname === "/huge-file") {
-      return new Response(Bun.file(process.env.HUGE_FILE));
-    }
-    if (url.pathname === "/remote") {
-      return Response.json(server.requestIP(req));
-    }
-    return new Response("not found: " + url.pathname, { status: 404 });
-  },
-});
+        });
+      }
+      if (url.pathname === "/echo-bytes") {
+        const body = await req.arrayBuffer();
+        return new Response(body, {
+          status: 200,
+          headers: { "x-len": String(body.byteLength) },
+        });
+      }
+      if (url.pathname === "/transform") {
+        const body = new Uint8Array(await req.arrayBuffer());
+        for (let i = 0; i < body.length; i++) body[i] = (body[i] + 1) & 0xff;
+        return new Response(body, { headers: { "x-len": String(body.length) } });
+      }
+      if (url.pathname === "/lifetime") {
+        const mode = url.searchParams.get("d");
+        const beforeUrl = req.url;
+        const beforeMethod = req.method;
+        const beforeHdr = req.headers.get("x-probe");
+        if (mode === "micro") await Promise.resolve();
+        else if (mode === "macro") await Bun.sleep(0);
+        else if (mode === "double") {
+          await Promise.resolve();
+          await Bun.sleep(0);
+        }
+        const afterUrl = req.url;
+        const afterMethod = req.method;
+        const afterHdr = req.headers.get("x-probe");
+        const all: Record<string, string> = {};
+        for (const [k, v] of req.headers) all[k] = v;
+        const body = await req.text();
+        return Response.json({
+          ok: beforeUrl === afterUrl && beforeMethod === afterMethod && beforeHdr === afterHdr,
+          url: afterUrl,
+          method: afterMethod,
+          probe: afterHdr,
+          headerCount: Object.keys(all).length,
+          bodyLen: body.length,
+        });
+      }
+      if (url.pathname === "/spawn") {
+        const p = Bun.spawn({
+          cmd: [bunExe(), "-e", "for(let i=0;i<40;i++)process.stdout.write('x'.repeat(1000)+String.fromCharCode(10))"],
+          env: bunEnv,
+          stdout: "pipe",
+        });
+        return new Response(p.stdout, { headers: { "content-type": "text/plain" } });
+      }
+      if (url.pathname === "/passthrough") {
+        return new Response(req.body, { status: 200, headers: { "x-passthrough": "1" } });
+      }
+      if (url.pathname === "/file-stream") {
+        return new Response(Bun.file(bigFile).stream());
+      }
+      if (url.pathname === "/headers") {
+        const out: Record<string, string> = {};
+        for (const [k, v] of req.headers) out[k] = v;
+        return Response.json(out);
+      }
+      if (url.pathname === "/big") {
+        return new Response(big, { headers: { "content-type": "application/octet-stream" } });
+      }
+      if (url.pathname === "/status") {
+        return new Response(null, { status: 204 });
+      }
+      if (url.pathname === "/query") {
+        return new Response(url.searchParams.get("q") ?? "<none>");
+      }
+      if (url.pathname === "/slow") {
+        // Only the client-abort case requests this; its 10 ms abort timer must
+        // win even when the concurrent group keeps the test's event loop busy.
+        await new Promise(r => setTimeout(r, 500));
+        return new Response("late");
+      }
+      if (url.pathname === "/stream") {
+        return new Response(
+          new ReadableStream({
+            async start(ctrl) {
+              for (const c of ["one ", "two ", "three"]) {
+                ctrl.enqueue(new TextEncoder().encode(c));
+                await new Promise(r => setTimeout(r, 5));
+              }
+              ctrl.close();
+            },
+          }),
+          { headers: { "content-type": "text/plain" } },
+        );
+      }
+      if (url.pathname === "/file") {
+        return new Response(Bun.file(bigFile));
+      }
+      if (url.pathname === "/huge-file") {
+        return new Response(Bun.file(hugeFile));
+      }
+      if (url.pathname === "/remote") {
+        return Response.json(server.requestIP(req));
+      }
+      return new Response("not found: " + url.pathname, { status: 404 });
+    },
+  });
+}
 
-console.error("PORT=" + server.port);
-process.stdin.on("data", () => {});
-${STOP_ON_STDIN_END}
-`;
-
-type Fixture = { port: number; dir: string; stop(): Promise<void> };
-
-/** Start the standard fixture above. stop() closes its stdin, awaits the exit
- * and asserts that it wrote nothing to stderr but the port line. */
-async function startServer(env: Record<string, string> = {}): Promise<Fixture> {
-  const dir = tempDir("serve-http3", {
-    "server.mjs": fixture,
+// The request/response cases share one standard fixture for the whole file.
+// stop(true) closes the client's still-pooled session with CONNECTION_CLOSE
+// instead of leaving it to lsquic's idle timeout.
+let fixtureDir: ReturnType<typeof tempDir>;
+let fixture: ReturnType<typeof serveFixture>;
+beforeAll(() => {
+  fixtureDir = tempDir("serve-http3", {
     "big.bin": Buffer.alloc(200 * 1024, "FILEfile"),
     "huge.bin": Buffer.alloc(2 * 1024 * 1024, "0123456789abcdef"),
   });
-  const proc = Bun.spawn({
-    cmd: [bunExe(), "server.mjs"],
-    cwd: String(dir),
-    env: { ...bunEnv, ...env, BIG_FILE: join(String(dir), "big.bin"), HUGE_FILE: join(String(dir), "huge.bin") },
-    stdout: "inherit",
-    stderr: "pipe",
-    stdin: "pipe",
-  });
-  const listening = Promise.withResolvers<number>();
-  let stderr = "";
-  const decoder = new TextDecoder();
-  const stderrDone = (async () => {
-    for await (const chunk of proc.stderr) {
-      stderr += decoder.decode(chunk, { stream: true });
-      const m = stderr.match(/PORT=(\d+)\n/);
-      if (m) listening.resolve(Number(m[1]));
-    }
-    listening.reject(new Error(`fixture exited before printing its port; stderr:\n${stderr}`));
-  })();
-  let port: number;
-  try {
-    port = await listening.promise;
-  } catch (e) {
-    dir[Symbol.dispose]();
-    throw e;
-  }
-  return {
-    port,
-    dir: String(dir),
-    async stop() {
-      proc.stdin.end();
-      const exitCode = await proc.exited;
-      await stderrDone;
-      dir[Symbol.dispose]();
-      expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: `PORT=${port}\n` });
-    },
-  };
-}
-
-// Cases that only send requests to the standard fixture share one fixture
-// process for the whole file. It starts on first use and stops in the afterAll
-// below, which also checks its exit code and stderr. A case that needs a
-// differently configured fixture (env) gets a process of its own.
-let shared: Promise<Fixture> | undefined;
+  fixture = serveFixture(String(fixtureDir));
+});
 afterAll(async () => {
-  if (shared) await (await shared).stop();
+  await fixture.stop(true);
+  fixtureDir[Symbol.dispose]();
 });
 
-async function withServer(
-  fn: (port: number, dir: string) => Promise<void>,
-  env: Record<string, string> = {},
-): Promise<void> {
-  if (Object.keys(env).length === 0) {
-    const { port, dir } = await (shared ??= startServer());
-    await fn(port, dir);
-    return;
-  }
-  const server = await startServer(env);
-  try {
-    await fn(server.port, server.dir);
-  } catch (e) {
-    // The case already failed: still let the fixture stop(true) and exit, so
-    // the client drops its session, but report the case's error, not stop()'s.
-    await server.stop().catch(() => {});
-    throw e;
-  }
-  await server.stop();
+async function withServer(fn: (port: number, dir: string) => Promise<void>): Promise<void> {
+  await fn(fixture.port, String(fixtureDir));
 }
 
-// Concurrent: these cases either share the fixture process (and multiplex their
-// requests over the client's one pooled QUIC connection) or spawn a process of
-// their own. The cases that probe a dead port are test.serial so that no other
-// fixture can bind that port while they probe it.
+// Concurrent: these cases send requests to the shared fixture (multiplexed over
+// the client's one pooled QUIC connection), start an in-process server of their
+// own, or spawn a process of their own. A case that probes a dead port is
+// test.serial so that no other fixture can bind that port while it probes it,
+// and a case that breaks the connection on purpose needs a server of its own.
 describe.concurrent("Bun.serve HTTP/3", () => {
   test("basic GET", async () => {
     await withServer(async port => {
@@ -334,19 +282,16 @@ describe.concurrent("Bun.serve HTTP/3", () => {
   });
 
   test("http1: false rejects HTTP/1.1 but accepts HTTP/3", async () => {
-    await withServer(
-      async port => {
-        const h3 = await fetchH3(port, "/hello");
-        expect(h3.status).toBe(200);
-        expect(h3.headers.get("x-proto")).toBe("h3");
-        expect(await h3.text()).toBe("hello over h3");
-        // TCP listener should not be bound at all
-        await expect(
-          fetch(`https://127.0.0.1:${port}/hello`, { tls: { rejectUnauthorized: false } } as RequestInit),
-        ).rejects.toMatchObject({ code: "ConnectionRefused" });
-      },
-      { H3_ONLY: "1" },
-    );
+    await using server = serveFixture(String(fixtureDir), { http1: false });
+    const port = server.port;
+    const h3 = await fetchH3(port, "/hello");
+    expect(h3.status).toBe(200);
+    expect(h3.headers.get("x-proto")).toBe("h3");
+    expect(await h3.text()).toBe("hello over h3");
+    // TCP listener should not be bound at all
+    await expect(
+      fetch(`https://127.0.0.1:${port}/hello`, { tls: { rejectUnauthorized: false } } as RequestInit),
+    ).rejects.toMatchObject({ code: "ConnectionRefused" });
   });
 
   // With http1:false the TCP listen socket is never created, so server.url /

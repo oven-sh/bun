@@ -425,10 +425,10 @@ impl Processor {
         self.finish_one();
     }
 
-    /// An export that was handed to an exporter can no longer complete (its
-    /// event loop is exiting): count it as failed and stop waiting for it.
+    /// An export handed to an exporter whose event loop is exiting can no
+    /// longer run; stop waiting for it. Not counted as a failure: the owner
+    /// is being torn down deliberately.
     pub fn export_abandoned(&self) {
-        self.stats.exports_failed.fetch_add(1, Ordering::Relaxed);
         self.finish_one();
     }
 

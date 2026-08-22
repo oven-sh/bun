@@ -1,13 +1,18 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import http from "node:http";
 
 const spans: any[] = [];
-Bun.otel.start({
-  serviceName: "otel-http-test",
-  exporters: [{ export: (b: any[]) => spans.push(...b) }],
-  instrumentations: { http: true, fetch: true },
-});
+function restore() {
+  Bun.otel.start({
+    serviceName: "otel-http-test",
+    exporters: [{ export: (b: any[]) => spans.push(...b) }],
+    instrumentations: { http: true, fetch: true },
+  });
+}
+restore();
+// Tests below may reconfigure; each starts from the default pipeline.
+beforeEach(restore);
 // The pipeline is process-global; leave nothing behind for later files.
 afterAll(() => Bun.otel.shutdown());
 
@@ -457,15 +462,55 @@ describe("node:http", () => {
       propagators: [],
     });
     await (await fetch(`http://localhost:${front.port}/`)).text();
-    Bun.otel.start({
-      serviceName: "otel-http-test",
-      exporters: [{ export: (b: any[]) => spans.push(...b) }],
-      instrumentations: { http: true, fetch: true },
-    });
     await collect();
     expect(seen[0].traceparent).toMatch(/^00-0af7651916cd43dd8448eb211c80319c-[0-9a-f]{16}-01$/);
     expect(seen[0].tracestate).toBe("vendor=abc");
     expect(seen[1]).toEqual({ traceparent: undefined, tracestate: undefined });
+  });
+
+  test("http.request with array-form headers still carries traceparent (flat and [k, v] pairs)", async () => {
+    const seen: Record<string, string | null>[] = [];
+    using upstream = Bun.serve({
+      port: 0,
+      fetch(req) {
+        seen.push({ traceparent: req.headers.get("traceparent"), xa: req.headers.get("x-a") });
+        return new Response("u");
+      },
+    });
+    const get = (headers: any) =>
+      new Promise<void>((resolve, reject) => {
+        const req = http.request({ host: "localhost", port: upstream.port, path: "/x", headers }, res => {
+          res.resume();
+          res.on("end", resolve);
+          res.on("error", reject);
+        });
+        req.on("error", reject);
+        req.end();
+      });
+    const span = Bun.otel.tracer("t").startSpan("parent");
+    await Bun.otel.with(span, () => get(["Host", "localhost", "x-a", "1"]));
+    await Bun.otel.with(span, () =>
+      get([
+        ["Host", "localhost"],
+        ["x-a", "2"],
+      ]),
+    );
+    // caller-supplied traceparent in the array wins
+    await Bun.otel.with(span, () =>
+      get(["Host", "localhost", "x-a", "3", "TraceParent", "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"]),
+    );
+    span.end();
+    await collect();
+    const traceId = span.spanContext().traceId;
+    expect(seen[0]).toEqual({
+      traceparent: expect.stringMatching(new RegExp(`^00-${traceId}-[0-9a-f]{16}-01$`)),
+      xa: "1",
+    });
+    expect(seen[1]).toEqual({
+      traceparent: expect.stringMatching(new RegExp(`^00-${traceId}-[0-9a-f]{16}-01$`)),
+      xa: "2",
+    });
+    expect(seen[2]).toEqual({ traceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01", xa: "3" });
   });
 
   test("http.request client goes through fetch instrumentation", async () => {
@@ -494,9 +539,5 @@ describe("disable", () => {
     const got = await collect();
     expect(byName(got, "bun.http.server")).toHaveLength(0);
     expect(byName(got, "bun.http.client")).toHaveLength(1);
-    Bun.otel.start({
-      exporters: [{ export: (b: any[]) => spans.push(...b) }],
-      instrumentations: { http: true, fetch: true },
-    });
   });
 });

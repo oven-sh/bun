@@ -53,21 +53,30 @@ impl Sampler {
     }
 
     /// `OTEL_TRACES_SAMPLER` / `OTEL_TRACES_SAMPLER_ARG`.
-    pub fn from_env(name: &[u8], arg: Option<&[u8]>) -> Option<Sampler> {
-        let ratio = || {
-            arg.and_then(|a| core::str::from_utf8(a).ok())
-                .and_then(|a| a.trim().parse::<f64>().ok())
-                .filter(|r| (0.0..=1.0).contains(r))
-                .map(Sampler::ratio_threshold)
-                .unwrap_or(u64::MAX)
+    /// `OTEL_TRACES_SAMPLER_ARG` as a ratio: `Ok(None)` when absent/empty,
+    /// `Err(())` when present but not a number in 0..=1.
+    pub fn parse_ratio_arg(arg: Option<&[u8]>) -> Result<Option<f64>, ()> {
+        let Some(a) = arg.map(|a| a.trim_ascii()).filter(|a| !a.is_empty()) else {
+            return Ok(None);
         };
+        core::str::from_utf8(a)
+            .ok()
+            .and_then(|a| a.parse::<f64>().ok())
+            .filter(|r| (0.0..=1.0).contains(r))
+            .map(Some)
+            .ok_or(())
+    }
+
+    /// `ratio` defaults to 1.0 (the spec default) when None.
+    pub fn from_env(name: &[u8], ratio: Option<f64>) -> Option<Sampler> {
+        let threshold = || ratio.map(Sampler::ratio_threshold).unwrap_or(u64::MAX);
         Some(match name {
             b"always_on" => Sampler::AlwaysOn,
             b"always_off" => Sampler::AlwaysOff,
-            b"traceidratio" => Sampler::TraceIdRatio(ratio()),
+            b"traceidratio" => Sampler::TraceIdRatio(threshold()),
             b"parentbased_always_on" => Sampler::ParentBasedAlwaysOn,
             b"parentbased_always_off" => Sampler::ParentBasedAlwaysOff,
-            b"parentbased_traceidratio" => Sampler::ParentBasedTraceIdRatio(ratio()),
+            b"parentbased_traceidratio" => Sampler::ParentBasedTraceIdRatio(threshold()),
             _ => return None,
         })
     }

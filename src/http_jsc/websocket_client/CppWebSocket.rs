@@ -62,7 +62,11 @@ unsafe extern "C" {
         headers: FfiSlice<'_, RawHeader<'_>>,
         body: FfiSlice<'_>,
     );
-    safe fn WebSocket__didClose(websocket_context: &CppWebSocket, code: u16, reason: &mut BunString);
+    safe fn WebSocket__didClose(
+        websocket_context: &CppWebSocket,
+        code: u16,
+        reason: &mut BunString,
+    );
     safe fn WebSocket__didReceiveText(
         websocket_context: &CppWebSocket,
         clone: bool,

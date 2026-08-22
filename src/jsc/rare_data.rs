@@ -205,6 +205,9 @@ pub struct RareData {
     pub(crate) stdin_mode: Mode,
     pub stdout_store: Option<NonNull<c_void>>,
     pub(crate) stdout_mode: Mode,
+    /// Handed out through `EventLoopCtx::stdin_tty`.
+    #[cfg(windows)]
+    pub(crate) stdin_tty: Async::StdinTty,
 
     pub(crate) entropy_cache: Option<Box<EntropyCache>>,
 
@@ -303,6 +306,8 @@ impl Default for RareData {
             stdin_mode: 0,
             stdout_store: None,
             stdout_mode: 0,
+            #[cfg(windows)]
+            stdin_tty: Async::StdinTty::default(),
             entropy_cache: None,
             hot_map: None,
             cron_jobs: Vec::new(),
@@ -1065,7 +1070,7 @@ impl Drop for RareData {
     fn drop(&mut self) {
         // pipe_read_scratch / h2_padded_frame_buffer / spawn_sync_event_loop_ /
         // s3_default_client / default_csrf_secret / cleanup_hooks / cron_jobs /
-        // path_buf / tls_default_ciphers:
+        // path_buf / tls_default_ciphers / stdin_tty:
         // all dropped automatically via field Drop.
 
         if let Some(engine) = self.boring_ssl_engine.take() {

@@ -402,9 +402,12 @@ function getTestAgent(platform, options) {
   const { os, arch, profile, tier } = platform;
 
   if (os === "darwin") {
-    // `release-tier` is emitted by scripts/agent.mjs based on the box's macOS
-    // major version. arm64 splits into `latest` (current macOS) + `previous`
-    // (anything older). x64 is NOT tier-targeted — single entry, any Intel
+    // `release-tier` is emitted from the macOS major version by scripts/agent.mjs
+    // (bare boxes) and scripts/darwin-ci (tart hosts, which by default run one
+    // agent per guest image and so serve both tiers; test/internal/source-lints/
+    // darwin-ci-release-tiers.test.ts keeps its images in step with the tiers and
+    // latest release targeted here). arm64 splits into `latest` (current macOS)
+    // + `previous` (anything older). x64 is NOT tier-targeted — single entry, any Intel
     // box — because the tier split bottlenecked the smaller pool and Intel
     // can't run latest anyway.
     return {

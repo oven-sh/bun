@@ -1,5 +1,5 @@
 #!/bin/bash
-# Runs inside a fresh guest to turn the base image into bun-ci-base. Args: <bun repo> <ref> <buildkite-agent version> <tools to verify>
+# Runs inside a fresh guest to turn a base image into its bun-ci-<release> image. Args: <bun repo> <ref> <buildkite-agent version> <tools to verify>
 set -euo pipefail
 exec </dev/null
 repo=$1 ref=$2 agent_version=$3 toolchain=$4

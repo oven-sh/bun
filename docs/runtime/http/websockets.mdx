@@ -275,7 +275,7 @@ The `.send(message)` method of `ServerWebSocket` returns a `number` indicating t
 
 ### Timeouts and limits
 
-By default, Bun closes a WebSocket connection that has been idle for 120 seconds. Configure this with the `idleTimeout` parameter.
+By default, Bun closes a WebSocket connection that has been idle for 120 seconds. Configure this with the `idleTimeout` parameter. The maximum value is `960`, and `0` disables the timeout entirely.
 
 ```ts
 Bun.serve({

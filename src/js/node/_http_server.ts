@@ -1734,9 +1734,7 @@ function getNodeHTTPServerSocket() {
     }
 
     _destroy(err, callback) {
-      // Like Node.js's net.Socket._destroy: a destroyed socket must not emit
-      // 'timeout'. #onClose clears the timer too, but the native close is
-      // asynchronous; an already-expired timer would fire in that gap.
+      // Match net.Socket._destroy: #onClose clears this too, but the native close is async and an already-due timer would fire first.
       const timer = this[kSocketTimeoutTimer];
       if (timer) {
         clearTimeout(timer);

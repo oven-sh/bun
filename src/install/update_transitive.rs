@@ -711,12 +711,13 @@ pub(crate) fn print_kept_patched(manager: &mut PackageManager) {
     manager.kept_patched_text = render_kept_rows(&rows);
 }
 
-/// After the lockfile is cleaned: one warning per root `patchedDependencies` key whose `name@version` no longer names an installed npm package. Returns true when any such key exists, even at a silent log level.
+/// After the lockfile is cleaned: one warning per root `patchedDependencies` key whose `name@version` no longer names an installed npm package. Returns true when any such key exists, even when the output stays quiet.
 pub(crate) fn warn_orphaned_patches(manager: &mut PackageManager) -> bool {
     if manager.lockfile.patched_dependencies.count() == 0 {
         return false;
     }
-    let silent = manager.options.log_level == LogLevel::Silent;
+    // A dry run can hold resolutions it will not commit, so it detects orphans without the warning.
+    let quiet = manager.options.log_level == LogLevel::Silent || manager.options.dry_run;
     let keys: Vec<Box<[u8]>> = {
         let log = manager.log_mut();
         // SAFETY: written once inside `PackageManager::init` on this thread; only read afterwards.
@@ -781,7 +782,7 @@ pub(crate) fn warn_orphaned_patches(manager: &mut PackageManager) -> bool {
             continue;
         }
         any_orphaned = true;
-        if silent {
+        if quiet {
             continue;
         }
         if now.is_empty() {
@@ -799,7 +800,7 @@ pub(crate) fn warn_orphaned_patches(manager: &mut PackageManager) -> bool {
             );
         }
     }
-    if !silent {
+    if !quiet {
         Output::flush();
     }
     any_orphaned

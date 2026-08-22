@@ -688,12 +688,8 @@ pub fn install_with_manager(
         }
     };
     let lockfile_before_clean = core::mem::replace(&mut manager.lockfile, new_lockfile);
-    let has_orphaned_patches = if !manager.options.dry_run {
-        Output::flush();
-        crate::update_transitive::warn_orphaned_patches(manager)
-    } else {
-        false
-    };
+    Output::flush();
+    let has_orphaned_patches = crate::update_transitive::warn_orphaned_patches(manager);
     let requests_removed_from_lockfile = if manager.subcommand == Subcommand::Remove {
         count_requests_removed_from_lockfile(manager, &lockfile_before_clean)
     } else {

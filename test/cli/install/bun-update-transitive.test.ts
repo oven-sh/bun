@@ -687,6 +687,11 @@ test.concurrent("`bun install --frozen-lockfile` fails when a patchedDependencie
     "a patchedDependencies entry in package.json no longer applies to any installed package version",
   );
   expect(exitCode).not.toBe(0);
+  // the documented validation form fails too (without the warning: dry runs stay quiet)
+  const dry = await run(dir, "install", "--frozen-lockfile", "--dry-run");
+  expect(dry.stderr).not.toContain("warn:");
+  expect(dry.stderr).toContain("lockfile had changes, but lockfile is frozen");
+  expect(dry.exitCode).not.toBe(0);
 });
 
 // bun.lock still records the `no-deps: 1.0.0` override; package.json is edited without an install in between, so the update sees the new overrides first.

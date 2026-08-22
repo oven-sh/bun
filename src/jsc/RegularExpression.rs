@@ -107,11 +107,8 @@ unsafe extern "C" {
 /// `None` if `pattern` or `js_flags` (a `RegExp.prototype.flags` string) is invalid.
 #[unsafe(no_mangle)]
 fn __bun_regex_compile(pattern: &[u8], js_flags: &[u8]) -> Option<core::ptr::NonNull<()>> {
-    // Idempotent. Only `bun install` (hoist patterns, compiled on first match)
-    // and `bun build --mangle-props` reach this before initializing JSC
-    // themselves, and the defaults are right for both; every other command has
-    // already initialized JSC with its own options by the time a pattern
-    // compiles (see `bun_install_types::regex`).
+    // Idempotent. Only `bun install` (hoist patterns) and `bun build` (mangle
+    // patterns) get here before initializing JSC, and both use the defaults.
     crate::initialize(crate::InitializeOptions::default());
     // Both strings are only read while compiling, so borrowed views suffice.
     let matcher = Bun__RegExpMatcher__create(

@@ -20,10 +20,7 @@ pub struct RegularExpression(NonNull<()>);
 impl RegularExpression {
     /// `pattern` is a `RegExp` source and `js_flags` its flags string (`b""` for
     /// none); every flag is supported. `None` if either is invalid.
-    ///
-    /// Compiling initializes JSC with default options if nothing has yet, which
-    /// is final for the process. A command that initializes JSC with its own
-    /// options must not compile before that; see `NodeLinker::RegularExpression`.
+    /// Initializes JSC if nothing has yet; `NodeLinker::RegularExpression` says when that matters.
     #[inline]
     pub fn compile(pattern: &[u8], js_flags: &[u8]) -> Option<Self> {
         // SAFETY: link-time extern; both arguments are only borrowed for the call.

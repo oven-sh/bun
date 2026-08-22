@@ -2457,13 +2457,10 @@ pub mod bv2_impl {
             }
 
             if path.pretty.as_ptr() == path.text.as_ptr() {
-                // TODO: outbase
                 let rel = bun_paths::resolve_path::relative_platform::<
                     bun_paths::resolve_path::platform::Loose,
                     false,
-                >(
-                    bun_resolver::fs::FileSystem::get().top_level_dir, path.text
-                );
+                >(self.pretty_path_base_dir(), path.text);
                 // SAFETY: arena outlives the bundle pass; raw-pointer detour erases the
                 // `&self` lifetime so the resulting `&'static [u8]` doesn't pin `self`.
                 path.pretty =
@@ -5763,6 +5760,17 @@ pub mod bv2_impl {
             false
         }
 
+        /// Base directory for display ("pretty") paths: the configured
+        /// bundle `root`, falling back to cwd.
+        fn pretty_path_base_dir(&self) -> &[u8] {
+            let root_dir: &[u8] = &self.transpiler.options.root_dir;
+            if root_dir.is_empty() {
+                self.transpiler.fs().top_level_dir
+            } else {
+                root_dir
+            }
+        }
+
         fn path_with_pretty_initialized(
             &self,
             path: &Fs::Path<'static>,
@@ -5775,7 +5783,7 @@ pub mod bv2_impl {
             let out = generic_path_with_pretty_initialized(
                 path,
                 target,
-                self.transpiler.fs().top_level_dir,
+                self.pretty_path_base_dir(),
                 bump,
             )?;
             Ok(out)

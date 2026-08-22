@@ -1603,12 +1603,11 @@ mod border_handler_body {
 
             macro_rules! prop {
                 ($id:ident) => {{
-                    let _ = &dest; // autofix
-                    let mut upppppppppp = unparsed.with_property_id(arena, PropertyId::$id);
-                    context.add_unparsed_fallbacks(arena, &mut upppppppppp);
+                    let mut up = unparsed.with_property_id(arena, PropertyId::$id);
+                    context.add_unparsed_fallbacks(arena, &mut up);
                     self.flushed_properties
                         .insert(BorderProperty::try_from_property_id(PropertyIdTag::$id).unwrap());
-                    // Intentionally not pushed to dest (preserves existing behavior; likely a bug).
+                    dest.push(Property::Unparsed(up));
                 }};
             }
 

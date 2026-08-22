@@ -7,5 +7,8 @@
   },
   "resolutions": {
     "one-dep/no-deps": "patch:no-deps@npm%3A1.0.1#~/.yarn/patches/no-deps-npm-1.0.1-aa11bb22cc.patch"
+  },
+  "patchedDependencies": {
+    "no-deps@1.0.0": ".yarn/patches/no-deps-npm-1.0.0-d5a9b7e1c2.patch"
   }
 }

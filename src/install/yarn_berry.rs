@@ -176,7 +176,7 @@ fn strip_npm_protocol(spec: &[u8]) -> &[u8] {
     let is_alias = split_locator(rest).is_some_and(|(n, _)| {
         !n.is_empty()
             && !n[0].is_ascii_digit()
-            && !matches!(n[0], b'^' | b'~' | b'>' | b'<' | b'=' | b'*' | b'v')
+            && !matches!(n[0], b'^' | b'~' | b'>' | b'<' | b'=' | b'*')
     });
     if is_alias { spec } else { rest }
 }
@@ -689,16 +689,17 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
     }
 
     // yarn `resolutions`, consulted when a descriptor has no lockfile key of
-    // its own because yarn rewrote it; keys are reduced to their last
-    // `name[@range]` segment (`parent/name` and `**/name` forms).
-    let mut resolutions: Vec<(&[u8], &[u8])> = Vec::new();
+    // its own because yarn rewrote it: (parent package name of a `parent/name`
+    // key, last `name[@range]` segment, target).
+    let mut resolutions: Vec<(Option<&[u8]>, &[u8], &[u8])> = Vec::new();
     if let Some(ExprData::EObject(res)) = root_manifest.get(b"resolutions").map(|e| e.data) {
         for p in res.properties.slice() {
             let (Some(k), Some(v)) = (&p.key, &p.value) else {
                 continue;
             };
             if let (Some(k), Some(v)) = (as_str(k), as_str(v)) {
-                resolutions.push((resolution_key_pattern(k), v));
+                let (parent, pattern) = resolution_key_parts(k);
+                resolutions.push((parent, pattern, v));
             }
         }
     }
@@ -707,7 +708,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
     let mut original_specs = OriginalSpecs::default();
     // `"name@range": "patch:..."` values only make sense to yarn; bun gets the
     // patch through `patchedDependencies` and the pinned range as the override.
-    for (_, target) in &resolutions {
+    for (_, _, target) in &resolutions {
         if target.starts_with(b"patch:")
             && !root_rewrites.iter().any(|r| &*r.original_spec == *target)
         {
@@ -803,7 +804,6 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
     let mut warned_registries: StringArrayHashMap<()> = StringArrayHashMap::new();
     // entries whose tarball lives outside the registry's conventional path
     let mut archive_url_entries: Vec<usize> = Vec::new();
-    let mut skipped: u32 = 0;
     for i in 0..entries.len() {
         if entries[i].kind != EntryKind::Package {
             continue;
@@ -894,7 +894,6 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
                     bstr::BStr::new(reference),
                 );
             }
-            skipped += 1;
             continue;
         };
 
@@ -917,7 +916,6 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
         }
         entries[i].package_id = this.append_package_dedupe(&mut pkg)?;
     }
-    let _ = skipped;
 
     // patch entries -> same package as the locator they patch (+ patchedDependencies)
     let mut patched: Vec<(Vec<u8>, Vec<u8>)> = Vec::new(); // ("name@version", patch path)
@@ -965,6 +963,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
         .resize(dep_count, INVALID_PACKAGE_ID);
     let mut key: Vec<u8> = Vec::with_capacity(128);
     let mut unbound: Vec<(Box<[u8]>, Box<[u8]>)> = Vec::new();
+    let has_scoped_resolutions = resolutions.iter().any(|(parent, ..)| parent.is_some());
     let pkg_count = this.packages.len();
     for pkg_id in 0..pkg_count {
         // the owning workspace, for `::locator=` descriptors
@@ -1014,14 +1013,42 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
             };
 
             let lookup = |key: &[u8]| -> Option<usize> { descriptor_to_entry.get(key).copied() };
+            let from_resolutions = |scoped_to: Option<&[u8]>| -> Option<usize> {
+                resolutions
+                    .iter()
+                    .filter(|(parent, pattern, _)| {
+                        *parent == scoped_to
+                            && resolution_pattern_matches(pattern, name, original_literal, literal)
+                    })
+                    .find_map(|(_, _, target)| {
+                        resolution_target_entry(
+                            name,
+                            target,
+                            &locator_to_entry,
+                            &descriptor_to_entry,
+                        )
+                    })
+            };
 
+            // 0. a `parent/name` resolution names this package: yarn rewrote only this
+            //    edge, while the plain descriptor may still be locked for other parents
+            let mut found: Option<usize> = if has_scoped_resolutions && !dep.behavior.is_workspace()
+            {
+                from_resolutions(Some(
+                    this.packages.items_name()[pkg_id].slice(string_bytes!(this)),
+                ))
+            } else {
+                None
+            };
             // 1. exactly as written (protocol descriptors: workspace:, patch:, npm: aliases, URLs)
             key.clear();
             key.extend_from_slice(name);
             key.push(b'@');
             key.extend_from_slice(literal);
             let exact_len = key.len();
-            let mut found: Option<usize> = lookup(&key);
+            if found.is_none() {
+                found = lookup(&key);
+            }
             // 2. how yarn normalizes a bare range / tag
             if found.is_none() && !has_protocol(literal) {
                 key.truncate(name.len() + 1);
@@ -1068,20 +1095,12 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
             }
             // 5. package.json `resolutions` that rewrote this descriptor
             if found.is_none() && !dep.behavior.is_workspace() {
-                for (pattern, target) in &resolutions {
-                    if !resolution_pattern_matches(pattern, name, original_literal, literal) {
-                        continue;
-                    }
-                    if let Some(i) = resolution_target_entry(
-                        name,
-                        target,
-                        &locator_to_entry,
-                        &descriptor_to_entry,
-                    ) {
-                        found = Some(i);
-                        break;
-                    }
-                }
+                found = from_resolutions(None).or_else(|| {
+                    resolutions
+                        .iter()
+                        .filter(|(parent, ..)| parent.is_some())
+                        .find_map(|(parent, ..)| from_resolutions(*parent))
+                });
             }
 
             match found.map(|i| entries[i].package_id) {
@@ -1299,37 +1318,49 @@ fn git_resolution(this: &mut Lockfile, name: &[u8], head: &[u8]) -> Result<Resol
     } else {
         url.strip_prefix(b"git+").unwrap_or(url)
     };
+    // `resolved` is the checked-out commit; a branch or tag (only in a hand-edited
+    // lockfile — yarn always writes `#commit=`) is left for the install to resolve.
+    let is_sha = commit.len() == 40 && commit.iter().all(u8::is_ascii_hexdigit);
     Ok(Resolution::init(TaggedValue::Git(Repository {
         owner: String::default(),
         repo: sbuf!(this).append(url)?,
         committish: sbuf!(this).append(commit)?,
-        resolved: sbuf!(this).append(commit)?,
+        resolved: if is_sha {
+            sbuf!(this).append(commit)?
+        } else {
+            String::default()
+        },
         package_name: sbuf!(this).append(name)?,
     })))
 }
 
-/// `parent/name`, `**/name`, `name@npm:range` -> the last `name[@range]` segment.
-fn resolution_key_pattern(key: &[u8]) -> &[u8] {
-    // a scope's `/` is part of the name; any other `/` separates selector segments
-    let mut rest = key;
-    loop {
-        let search_from = usize::from(rest.first() == Some(&b'@'));
-        let Some(slash) = strings::index_of_char_usize(&rest[search_from..], b'/') else {
-            return rest;
+/// A `resolutions` key -> (the parent package's name for `parent/name` keys,
+/// the last `name[@range]` segment). Yarn's grammar: segments are separated by
+/// `/`, a leading `@scope/` belongs to the name, and a range never contains `/`
+/// (`@babel/core@npm:^7.0.0/regenerator-runtime`, `**/left-pad`, `ms@^2`).
+fn resolution_key_parts(key: &[u8]) -> (Option<&[u8]>, &[u8]) {
+    fn next_segment(rest: &[u8]) -> (&[u8], &[u8]) {
+        let scope = match rest.first() {
+            Some(&b'@') => strings::index_of_char_usize(rest, b'/').map_or(rest.len(), |i| i + 1),
+            _ => 0,
         };
-        let slash = slash + search_from;
-        let after = &rest[slash + 1..];
-        if search_from == 1 {
-            // `@scope/name[...]`: only a further `/` (before any `@range`) starts a new segment
-            let name_end = strings::index_of_char_usize(after, b'@').unwrap_or(after.len());
-            match strings::index_of_char_usize(&after[..name_end], b'/') {
-                Some(next) => rest = &after[next + 1..],
-                None => return rest,
-            }
-        } else {
-            rest = after;
+        match strings::index_of_char_usize(&rest[scope..], b'/') {
+            Some(i) => (&rest[..scope + i], &rest[scope + i + 1..]),
+            None => (rest, &b""[..]),
         }
     }
+    let mut parent: Option<&[u8]> = None;
+    let (mut segment, mut rest) = next_segment(key);
+    while !rest.is_empty() {
+        parent = Some(segment);
+        (segment, rest) = next_segment(rest);
+    }
+    let parent = parent.filter(|p| *p != b"**").map(|p| {
+        // `@scope/name@range` / `name@range` -> the name
+        let from = usize::from(p.first() == Some(&b'@'));
+        strings::index_of_char_usize(&p[from..], b'@').map_or(p, |i| &p[..from + i])
+    });
+    (parent, segment)
 }
 
 /// `name`, `name@<literal>`, `name@npm:<literal>` (either the literal as
@@ -1768,20 +1799,39 @@ fn update_package_json(
         }
     }
 
-    if !patched.is_empty() && json.get(b"patchedDependencies").is_none() {
-        let mut props = bun_alloc::AstAlloc::vec();
-        for (key, path) in patched {
-            VecExt::append(
-                &mut props,
-                bun_ast::G::Property {
-                    key: Some(string_expr(key)),
-                    value: Some(string_expr(path)),
-                    ..Default::default()
-                },
-            );
+    if !patched.is_empty() {
+        match json.get(b"patchedDependencies") {
+            Some(mut existing) if existing.is_object() => {
+                // keep what the user already declared for bun; add yarn's on top
+                let obj = e_object_mut(&mut existing);
+                let mut any = false;
+                for (key, path) in patched {
+                    if obj.get(key).is_none() {
+                        obj.put(&bump, bun_ast::data_store_dupe_str(key), string_expr(path))?;
+                        any = true;
+                    }
+                }
+                if any {
+                    changed.push("added patchedDependencies");
+                }
+            }
+            Some(_) => {}
+            None => {
+                let mut props = bun_alloc::AstAlloc::vec();
+                for (key, path) in patched {
+                    VecExt::append(
+                        &mut props,
+                        bun_ast::G::Property {
+                            key: Some(string_expr(key)),
+                            value: Some(string_expr(path)),
+                            ..Default::default()
+                        },
+                    );
+                }
+                e_object_mut(&mut json).put(&bump, b"patchedDependencies", object_expr(props))?;
+                changed.push("added patchedDependencies");
+            }
         }
-        e_object_mut(&mut json).put(&bump, b"patchedDependencies", object_expr(props))?;
-        changed.push("added patchedDependencies");
     }
 
     if let Some(catalogs) = catalogs.filter(|_| has_catalogs) {

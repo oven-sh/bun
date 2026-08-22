@@ -98,6 +98,103 @@ test("should not duplicate transfer-encoding header in response when explicitly 
   expect(bodySection).toContain("Goodbye, World!");
 });
 
+// llhttp flags Transfer-Encoding as present only once a non-whitespace value
+// byte arrives, so node treats a TE field with an empty (or whitespace-only)
+// value as if the header were absent: no clientError, Content-Length framing
+// applies. oven-sh/bun#40124: Bun served the request AND fired a spurious
+// clientError, so a typical handler destroyed the live connection.
+for (const [name, te] of [
+  ["empty", ""],
+  ["whitespace-only", "   "],
+] as const) {
+  test(`${name} Transfer-Encoding value is ignored like node, no clientError`, async () => {
+    const events: string[] = [];
+    await using server = createServer((req, res) => {
+      events.push(`request ${req.url}`);
+      res.end("ok");
+    });
+    server.on("clientError", (err: any, socket) => {
+      events.push(`clientError ${err.code}`);
+      socket.destroy();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const { promise, resolve } = Promise.withResolvers<string>();
+    // Pipeline a second request: the spurious clientError kills the
+    // connection after the first response, so /b proves it survived.
+    const socket = connect(port, "127.0.0.1", () => {
+      socket.write(
+        `GET /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding:${te}\r\n\r\n` +
+          "GET /b HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+      );
+    });
+    let raw = "";
+    socket.on("data", chunk => (raw += chunk.toString()));
+    socket.on("error", () => {});
+    socket.on("close", () => resolve(raw));
+    const response = await promise;
+    expect(events).toEqual(["request /a", "request /b"]);
+    expect(response.match(/HTTP\/1\.1 200/g)).toHaveLength(2);
+  });
+}
+
+test("empty Transfer-Encoding with Content-Length frames the body like node", async () => {
+  const events: string[] = [];
+  await using server = createServer((req, res) => {
+    let body = "";
+    req.on("data", d => (body += d));
+    req.on("end", () => {
+      events.push(`request ${req.url} body=${body}`);
+      res.end("ok");
+    });
+  });
+  server.on("clientError", (err: any, socket) => {
+    events.push(`clientError ${err.code}`);
+    socket.destroy();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const { promise, resolve } = Promise.withResolvers<string>();
+  const socket = connect(port, "127.0.0.1", () => {
+    socket.write(
+      "POST /p HTTP/1.1\r\nHost: x\r\nTransfer-Encoding:\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello",
+    );
+  });
+  let raw = "";
+  socket.on("data", chunk => (raw += chunk.toString()));
+  socket.on("error", () => {});
+  socket.on("close", () => resolve(raw));
+  const response = await promise;
+  expect(events).toEqual(["request /p body=hello"]);
+  expect(response).toStartWith("HTTP/1.1 200");
+});
+
+// Boundary of the leniency: node errors once any non-whitespace value byte
+// arrives, even one that names no coding.
+test("comma-only Transfer-Encoding value still fires clientError like node", async () => {
+  const { promise, resolve } = Promise.withResolvers<any>();
+  await using server = createServer((req, res) => {
+    req.resume();
+    res.end("ok");
+  });
+  server.on("clientError", (err, socket) => {
+    socket.destroy();
+    resolve(err);
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const socket = connect(port, "127.0.0.1", () => {
+    socket.write("GET / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: ,\r\n\r\n");
+  });
+  socket.on("error", () => {});
+  const err = await promise;
+  socket.destroy();
+  expect(err.code).toBe("HPE_INVALID_TRANSFER_ENCODING");
+});
+
 // Value lengths landing parseTrailerFields' 8-byte field-value scan on the
 // alignments where its last load reaches past the terminating CRLF CRLF: that
 // read leaves the heap allocation without the section's post-padding (ASAN).

@@ -291,6 +291,12 @@ struct HttpResponseData;
              * the still-encoded body handed to the app; Bun.serve rejects it
              * (RFC 9112 6.1). node:http accepts it to match llhttp. */
             bool multipleCodings: 1 = false;
+            /* Some Transfer-Encoding field value holds a byte other than
+             * space/tab. llhttp flags Transfer-Encoding as present only once
+             * such a byte arrives, so node:http treats a request whose TE
+             * field values are all empty or whitespace-only as if the header
+             * were absent (no error, Content-Length framing applies). */
+            bool nonEmptyValue: 1 = false;
         };
 
         TransferEncoding getTransferEncoding()
@@ -315,6 +321,9 @@ struct HttpResponseData;
 
                     // Parse comma-separated values, ensuring "chunked" is last if present
                     const auto value = h->value;
+                    if (value.find_first_not_of(" \t") != std::string_view::npos) {
+                        te.nonEmptyValue = true;
+                    }
                     size_t pos = 0;
 
                     while (pos < value.length()) {
@@ -1261,6 +1270,18 @@ struct HttpResponseData;
 
             /* Check Transfer-Encoding header validity and conflicts */
             HttpRequest::TransferEncoding transferEncoding = req->getTransferEncoding();
+
+            /* node:http compat: llhttp flags Transfer-Encoding as present only
+             * once a non-whitespace value byte arrives, so a TE field whose
+             * value is empty or whitespace-only is treated as if the header
+             * were absent: the body is framed by Content-Length (or has zero
+             * length) and no error is raised. Bun.serve keeps treating it as
+             * present and rejects below; treating it as absent is the
+             * Content-Length fallback that getTransferEncoding() guards
+             * against. */
+            if (IsNodeHttp && transferEncoding.has && !transferEncoding.nonEmptyValue) {
+                transferEncoding = {};
+            }
 
             /* RFC 9112 6.1: Transfer-Encoding was introduced in HTTP/1.1. A server that
              * receives an HTTP/1.0 message containing a Transfer-Encoding header field

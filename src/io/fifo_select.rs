@@ -3,29 +3,33 @@
 //! XNU attaches a FIFO's `EVFILT_READ` knote to the vnode (`vn_kqfilter`), and
 //! `filt_vnode_common` activates it only while bytes are buffered. The last
 //! writer closing never wakes it, and `poll(2)` is built on the same filter, so
-//! a reader parked in the loop's kqueue after draining the pipe never learns
-//! about EOF. `select(2)` goes through the FIFO's socket (`fifo_select` ->
-//! `soo_select`), whose readable test includes `SS_CANTRCVMORE`: it wakes for
-//! data and for the last writer's close. `pipe(2)` pipes are not affected
-//! (their own filter reports `EV_EOF`); they `fstat` with `st_dev == 0`, a
-//! named pipe with the device of the filesystem it lives on.
+//! a reader parked in a kqueue after draining the pipe never learns about EOF.
+//! `select(2)` goes through the FIFO's socket (`fifo_select` -> `soo_select`),
+//! whose readable test includes `SS_CANTRCVMORE`: it wakes for data and for the
+//! last writer's close. `pipe(2)` pipes are not affected (their own filter
+//! reports `EV_EOF`); they `fstat` with `st_dev == 0`, a named pipe with the
+//! device of the filesystem it lives on.
 //!
 //! One thread per process blocks in `select` on every armed FIFO. A FIFO that
-//! becomes readable is disarmed (one-shot, like the `EV_DISPATCH` kqueue
-//! registration it stands in for) and its `FilePoll` is delivered into the
-//! owning loop's kqueue as an `EVFILT_USER` event, so it reaches
-//! `FilePoll::on_kqueue_event` like any other readiness event. `unregister`
-//! removes the armed entry before the owner closes the fd; that removal and the
-//! delivery take the same lock, so a poll that is gone is never delivered.
+//! becomes readable is disarmed (one-shot, like the `EV_ONESHOT`/`EV_DISPATCH`
+//! knote it stands in for) and its poll is delivered into the owning kqueue as
+//! an `EVFILT_USER` event with the poll's `udata`, so it reaches that kqueue's
+//! dispatch like any other readiness event. The owner disarms before it closes
+//! the fd; that removal and the delivery take the same lock, so a poll that is
+//! gone is never delivered.
 
 use bun_sys::{self as sys, Fd, FdExt as _};
 use bun_threading::{Guarded, Mutex};
 
+/// User flag (low 24 bits of `fflags`) on a delivered `EVFILT_USER` event: the
+/// fd is readable or at EOF.
+pub(crate) const NOTE_FIFO_READABLE: u32 = 0x1;
+
 struct Armed {
     fd: Fd,
-    /// The owning loop's kqueue.
+    /// The kqueue the owner waits in.
     kqueue: Fd,
-    /// `Pollable::init(poll).ptr()`: the `udata` the loop dispatches on.
+    /// The `udata` that kqueue's dispatch decodes into the poll.
     udata: u64,
     generation: u64,
 }
@@ -104,19 +108,24 @@ impl Watcher {
         }
     }
 
-    /// Disarms every registration of `fd` and delivers each to its loop.
-    /// Returns whether there was one.
-    fn deliver(&self, fd: Fd) -> bool {
+    /// Disarms every registration of `fd` and delivers each to its kqueue.
+    fn deliver(&self, fd: Fd) {
         let mut armed = self.armed.lock();
-        let mut delivered = false;
         while let Some(index) = armed.iter().position(|a| a.fd == fd) {
             let entry = armed.swap_remove(index);
-            // Still under the lock: an `unregister` that runs after this has
-            // the knote to delete, one that ran before took the entry away.
+            // Still under the lock: an owner that unregisters after this has
+            // the knote to delete, one that did so before took the entry away.
             entry.deliver();
-            delivered = true;
         }
-        delivered
+    }
+
+    /// Drops every registration of `fd` without delivering, the way a kqueue
+    /// drops a knote whose fd was closed. Returns whether there was one.
+    fn forget(&self, fd: Fd) -> bool {
+        let mut armed = self.armed.lock();
+        let before = armed.len();
+        armed.retain(|a| a.fd != fd);
+        armed.len() != before
     }
 }
 
@@ -127,7 +136,7 @@ impl Armed {
             ident: u64::try_from(self.fd.native()).expect("int cast"),
             filter: EVFILT::USER,
             flags: EV::ADD | EV::ONESHOT,
-            fflags: NOTE::TRIGGER,
+            fflags: NOTE::TRIGGER | NOTE_FIFO_READABLE,
             data: 0,
             udata: self.udata,
             ext: [self.generation, 0],
@@ -155,9 +164,10 @@ impl Armed {
 }
 
 /// Waits for `fd` (a named pipe) to be readable or at EOF on behalf of the
-/// `FilePoll` behind `udata`; the result arrives in `kqueue` as an
-/// `EVFILT_USER` event with `ident == fd`. Arming an fd that `kqueue` already
-/// has armed replaces that registration, as kqueue does for one `ident`.
+/// poll behind `udata`; the result arrives in `kqueue` as an `EVFILT_USER`
+/// event with `ident == fd` and `NOTE_FIFO_READABLE` in `fflags`. Arming an fd
+/// that `kqueue` already has armed replaces that registration, as kqueue does
+/// for one `ident`.
 pub(crate) fn arm(kqueue: Fd, fd: Fd, udata: u64, generation: u64) -> sys::Result<()> {
     let watcher = watcher()?;
     {
@@ -240,19 +250,19 @@ fn run(watcher: &'static Watcher) {
                         <&'static str>::from(errno)
                     );
                     // An fd closed behind its owner's back is the one way a set
-                    // of live registrations fails. Deliver those, so the
-                    // owner's read reports the error instead of waiting
-                    // forever; never deliver a live fd that is not readable,
-                    // since the owner's read on a blocking FIFO would then
-                    // block the loop. With nothing to deliver, back off
-                    // instead of spinning on a failure we cannot explain.
-                    let mut delivered = false;
+                    // of live registrations fails. Forget those, as a kqueue
+                    // forgets the knote of a closed fd; never deliver an fd
+                    // that is not readable, since the owner's read on a
+                    // blocking FIFO would then block its loop. With nothing to
+                    // forget, back off instead of spinning on a failure we
+                    // cannot explain.
+                    let mut forgot = false;
                     for fd in &fds[1..] {
                         if sys::get_fcntl_flags(*fd).is_err() {
-                            delivered |= watcher.deliver(*fd);
+                            forgot |= watcher.forget(*fd);
                         }
                     }
-                    if !delivered {
+                    if !forgot {
                         std::thread::sleep(core::time::Duration::from_millis(10));
                     }
                     continue;

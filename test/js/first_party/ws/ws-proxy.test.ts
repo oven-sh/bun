@@ -139,7 +139,7 @@ describe("ws package proxy API", () => {
       new WebSocket("ws://example.com", {
         proxy: "not-a-valid-url",
       });
-    }).toThrow(SyntaxError);
+    }).toThrow(DOMException);
   });
 });
 

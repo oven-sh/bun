@@ -1531,13 +1531,18 @@ impl<'a> PackageInstaller<'a> {
                 installer.cache_dir = Fd::cwd();
             }
             resolution::Tag::Symlink => {
-                let directory = package_manager::global_link_dir(self.manager_mut());
-
                 let folder_str = *resolution.symlink();
                 let folder = folder_str.slice(string_buf!());
 
                 if folder.is_empty() || (folder.len() == 1 && folder[0] == b'.') {
                     installer.cache_dir_subpath = ZStr::from_static(b".\0");
+                    installer.cache_dir = Fd::cwd();
+                } else if crate::resolution::is_path_link(folder) {
+                    // `link:./dir`: the value is project-relative (see `is_path_link`)
+                    self.folder_path_buf[..folder.len()].copy_from_slice(folder);
+                    self.folder_path_buf[folder.len()] = 0;
+                    installer.cache_dir_subpath =
+                        ZStr::from_buf(&self.folder_path_buf, folder.len());
                     installer.cache_dir = Fd::cwd();
                 } else {
                     let global_link_dir = package_manager::global_link_dir_path(self.manager_mut());
@@ -1554,7 +1559,7 @@ impl<'a> PackageInstaller<'a> {
                     buf[len] = 0;
                     // SAFETY: buf[len] == 0 written above
                     installer.cache_dir_subpath = ZStr::from_buf(&self.folder_path_buf, len);
-                    installer.cache_dir = directory;
+                    installer.cache_dir = package_manager::global_link_dir(self.manager_mut());
                 }
             }
             _ => {

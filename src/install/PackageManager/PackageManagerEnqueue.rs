@@ -2966,15 +2966,28 @@ fn get_or_put_resolved_package(
             // set once and never freed); `get_or_put` copies `symlink_path`
             // into the lockfile string buffer before any other mutation.
             // `version.tag == Symlink`.
-            let link_dir =
-                unsafe { detach_lifetime(package_manager_real::global_link_dir_path(this)) };
             let symlink_path = this.lockfile.str_detached(version.symlink());
-            let res = FolderResolution::get_or_put(
-                GlobalOrRelative::Global(link_dir),
-                version,
-                symlink_path,
-                this,
-            );
+            let res = if crate::resolution::is_path_link(symlink_path) {
+                // yarn/pnpm-style `link:./dir`: relative to the project, not to the
+                // global link directory
+                FolderResolution::get_or_put(
+                    GlobalOrRelative::Relative(dependency::version::Tag::Symlink),
+                    version,
+                    symlink_path,
+                    this,
+                )
+            } else {
+                // SAFETY: see the note above — `global_link_dir_path` is set once and
+                // never freed; `get_or_put` copies what it needs before mutating.
+                let link_dir =
+                    unsafe { detach_lifetime(package_manager_real::global_link_dir_path(this)) };
+                FolderResolution::get_or_put(
+                    GlobalOrRelative::Global(link_dir),
+                    version,
+                    symlink_path,
+                    this,
+                )
+            };
 
             resolved_folder_package(this, res, dependency_id, success_fn)
         }

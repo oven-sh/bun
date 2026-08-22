@@ -52,6 +52,15 @@ impl Resolution {
     }
 }
 
+/// A `link:` dependency whose target is written as a path (`link:./vendor/x`,
+/// `link:../y`, `link:/abs`) rather than the name of a package registered with
+/// `bun link`. Such a link resolves relative to the declaring project and its
+/// `Symlink` resolution stores that project-relative path instead of a name.
+#[inline]
+pub fn is_path_link(target: &[u8]) -> bool {
+    target.starts_with(b".") || target.starts_with(b"/")
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ResolutionType<SemverInt: VersionInt> {

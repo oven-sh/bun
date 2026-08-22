@@ -2764,15 +2764,21 @@ impl<'a> Installer<'a> {
                 // threads, so the lazy init is hoisted to the main-thread caller
                 // (`isolated_install::install_packages`, before any `start_task`).
                 // Reading the cached field here is then equivalent.
-                let symlink_dir_path: &[u8] = &self.manager().global_link_dir_path;
-                debug_assert!(
-                    !symlink_dir_path.is_empty(),
-                    "global_link_dir_path must be ensured before tasks start",
-                );
+                let target = pkg_res.symlink().slice(string_buf);
+                if crate::resolution::is_path_link(target) {
+                    // `link:./dir`: project-relative (buf starts at the project root)
+                    buf.append(target);
+                } else {
+                    let symlink_dir_path: &[u8] = &self.manager().global_link_dir_path;
+                    debug_assert!(
+                        !symlink_dir_path.is_empty(),
+                        "global_link_dir_path must be ensured before tasks start",
+                    );
 
-                buf.clear();
-                buf.append(symlink_dir_path);
-                buf.append(pkg_res.symlink().slice(string_buf));
+                    buf.clear();
+                    buf.append(symlink_dir_path);
+                    buf.append(target);
+                }
             }
             _ => {
                 let pkg_name = pkg_names[pkg_id as usize];

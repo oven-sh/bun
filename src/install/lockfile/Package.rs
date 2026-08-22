@@ -1873,6 +1873,45 @@ impl Package<u64> {
                 dependency_version.value.folder = string_builder
                     .append::<String>(if relative.is_empty() { b"." } else { relative });
             }
+            // yarn/pnpm-style `link:./dir` (a path, not the name of a package registered
+            // with `bun link`): like `file:` above, rebase it from the declaring package's
+            // directory to the project root so every consumer sees the same target. The
+            // stored value keeps a leading `./` so it stays recognisable as a path.
+            dependency::version::Tag::Symlink
+                if crate::resolution::is_path_link(dependency_version.symlink().slice(buf)) =>
+            {
+                let target = *dependency_version.symlink();
+                let mut link_buf = PathBuffer::uninit();
+                let Some(joined) = resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
+                    FileSystem::instance().top_level_dir(),
+                    &mut link_buf.0,
+                    &[source.path.name().dir, target.slice(buf)],
+                ) else {
+                    log.add_error_fmt(
+                        source,
+                        value_loc_of(source, key_loc),
+                        format_args!(
+                            "Dependency \"{}\" has an unsafe link path",
+                            bstr::BStr::new(external_alias.slice(buf)),
+                        ),
+                    );
+                    return Err(crate::Error::InstallFailed);
+                };
+                let relative: &[u8] =
+                    resolve_path::relative(FileSystem::instance().top_level_dir(), joined);
+                let mut dotted = Vec::with_capacity(relative.len() + 2);
+                if relative.is_empty() {
+                    dotted.push(b'.');
+                } else {
+                    if !crate::resolution::is_path_link(relative) {
+                        dotted.extend_from_slice(b"./");
+                    }
+                    dotted.extend_from_slice(relative);
+                }
+                #[cfg(windows)]
+                path::dangerously_convert_path_to_posix_in_place::<u8>(&mut dotted);
+                dependency_version.value.symlink = string_builder.append::<String>(&dotted);
+            }
             dependency::version::Tag::Npm => {
                 if let Some(workspace_version) = workspace_version {
                     let satisfies =
@@ -2471,9 +2510,11 @@ impl Package<u64> {
                             string_builder.count(value);
 
                             // If it's a folder or workspace, pessimistically assume we will need a maximum path
+                            // (a path-like `link:` is rebased like a folder, so it too)
                             match dependency::version::Tag::infer(value) {
                                 dependency::version::Tag::Folder
-                                | dependency::version::Tag::Workspace => {
+                                | dependency::version::Tag::Workspace
+                                | dependency::version::Tag::Symlink => {
                                     string_builder.cap += MAX_PATH_BYTES;
                                 }
                                 _ => {}

@@ -319,13 +319,47 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
             bun_perf::trace(bun_perf::PerfEvent::FolderResolverReadPackageJSONFromDiskFolder);
 
         let source = {
-            let file = File::openat(Fd::cwd(), abs.as_bytes(), O::RDONLY, 0)?;
             body.reset();
-            let read_result = file
-                .read_to_end_with_array_list(&mut body.list, bun_sys::SizeHint::ProbablySmall)
-                .map(|_| ());
-            let _ = file.close();
-            read_result?;
+            match File::openat(Fd::cwd(), abs.as_bytes(), O::RDONLY, 0) {
+                Ok(file) => {
+                    // defer file.close()
+                    let read_result = file
+                        .read_to_end_with_array_list(
+                            &mut body.list,
+                            bun_sys::SizeHint::ProbablySmall,
+                        )
+                        .map(|_| ());
+                    let _ = file.close();
+                    read_result?;
+                }
+                Err(err) => {
+                    // yarn/pnpm `link:./dir` may point at a plain directory without a
+                    // package.json: treat it as an empty manifest named after the
+                    // directory (a lockfile package needs a name), with no dependencies.
+                    let literal = version
+                        .literal
+                        .slice(manager.lockfile.buffers.string_bytes.as_slice());
+                    let dir = bun_paths::dirname(abs.as_bytes()).unwrap_or(b"");
+                    let is_dir = matches!(
+                        bun_sys::stat(&bun_core::ZBox::from_bytes(dir)),
+                        Ok(st) if bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode) == bun_sys::FileKind::Directory
+                    );
+                    if err.get_errno() == bun_sys::E::ENOENT
+                        && literal.starts_with(b"link:")
+                        && is_dir
+                    {
+                        body.list.extend_from_slice(b"{\"name\":\"");
+                        for &c in bun_paths::basename(dir) {
+                            if c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_' | b'.') {
+                                body.list.push(c);
+                            }
+                        }
+                        body.list.extend_from_slice(b"\",\"version\":\"0.0.0\"}");
+                    } else {
+                        return Err(err.into());
+                    }
+                }
+            }
 
             bun_ast::Source::init_path_string(abs.as_bytes(), body.list.as_slice())
         };
@@ -464,6 +498,26 @@ pub(crate) fn get_or_put(
                     abs,
                     version,
                     Features::WORKSPACE,
+                    &mut resolver,
+                );
+            }
+            // `link:./dir` — a path, not a globally registered name: recorded as a
+            // Symlink resolution whose value is the project-relative directory (see
+            // `resolution::is_path_link`), installed as a symlink to it.
+            dependency::version::Tag::Symlink => 'link: {
+                let mut dotted = Vec::with_capacity(rel.len() + 2);
+                if !(rel.starts_with(b".") || rel.starts_with(b"/")) {
+                    dotted.extend_from_slice(b"./");
+                }
+                dotted.extend_from_slice(rel);
+                let mut resolver: SymlinkResolver = NewResolver {
+                    folder_path: &dotted,
+                };
+                break 'link read_package_json_from_disk(
+                    manager,
+                    abs,
+                    version,
+                    Features::LINK,
                     &mut resolver,
                 );
             }

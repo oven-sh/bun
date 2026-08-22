@@ -16,6 +16,15 @@ test("23865", async () => {
   expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`"bun test <version> (<revision>)"`);
   expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
     "23865.fixture.ts:
+    1 | // Should not crash
+    2 | test("abc", () => {
+    3 |   expect(async () => {
+    4 |     await Bun.sleep(100);
+    5 |     throw new Error("uh oh!");
+    6 |   }).toThrow("uh oh!");
+             ^
+    error: Received function returned a promise that was still pending when the test timed out
+        at <anonymous> (file:NN:NN)
     (fail) abc
       ^ this test timed out after 50ms.
 

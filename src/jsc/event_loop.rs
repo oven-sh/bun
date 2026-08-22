@@ -1122,10 +1122,18 @@ impl EventLoop {
     /// `JsResult` function crosses explicitly with [`jsc::Stopped::throw`] (which, with
     /// the termination already pending, is just `Thrown`).
     pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) -> Result<(), jsc::Stopped> {
+        self.wait_for_promise_or_give_up(promise, || false)
+            .map(|_settled| ())
+    }
+
+    /// [`Self::wait_for_promise`] that also returns `Ok(false)` once `give_up`,
+    /// asked before each tick, says so; `Ok(true)` means the promise settled.
+    pub fn wait_for_promise_or_give_up(
+        &mut self,
+        promise: jsc::AnyPromise,
+        mut give_up: impl FnMut() -> bool,
+    ) -> Result<bool, jsc::Stopped> {
         let jsc_vm = self.vm_ref().jsc_vm();
-        if promise.status() != PromiseStatus::Pending {
-            return Ok(());
-        }
         while promise.status() == PromiseStatus::Pending {
             if jsc_vm.execution_forbidden()
                 || !self.vm_ref().script_allowed()
@@ -1133,12 +1141,15 @@ impl EventLoop {
             {
                 return Err(jsc::Stopped);
             }
+            if give_up() {
+                return Ok(false);
+            }
             self.tick();
             if promise.status() == PromiseStatus::Pending {
                 self.auto_tick();
             }
         }
-        Ok(())
+        Ok(true)
     }
 
     pub fn wakeup(&self) {

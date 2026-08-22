@@ -1814,6 +1814,8 @@ bool BaseVMOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::
     JSObject* options = nullptr;
     bool any = false;
 
+    this->filename = "evalmachine.<anonymous>"_s;
+
     if (!optionsArg.isUndefined()) {
         V::validateObject(scope, globalObject, optionsArg, "options"_s);
         RETURN_IF_EXCEPTION(scope, false);
@@ -1831,8 +1833,6 @@ bool BaseVMOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::
                 ERR::INVALID_ARG_TYPE(scope, globalObject, "options.filename"_s, "string"_s, filenameOpt);
                 return false;
             }
-        } else {
-            this->filename = "evalmachine.<anonymous>"_s;
         }
 
         auto lineOffsetOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "lineOffset"_s));

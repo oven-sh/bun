@@ -409,6 +409,7 @@ where
                 Ok(socket) => {
                     this.tcp.set(socket);
                     if this.state.get() == State::Failed {
+                        socket.take_ext_owner::<Self>();
                         client.deref();
                         return None;
                     }
@@ -452,6 +453,7 @@ where
                 this.tcp.set(sock);
                 // I don't think this case gets reached.
                 if this.state.get() == State::Failed {
+                    sock.take_ext_owner::<Self>();
                     client.deref();
                     return None;
                 }

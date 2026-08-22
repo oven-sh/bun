@@ -151,10 +151,10 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     /// C++ let go of `m_connectedWebSocket`: forget the back-reference and
     /// release the ref held on its behalf. May free `self`.
-    fn release_cpp_ref(&self) -> Option<BackRef<CppWebSocket>> {
-        let (ws, cpp_ref) = self.outgoing_websocket.replace(None)?;
-        cpp_ref.deref();
-        Some(ws)
+    fn release_cpp_ref(&self) {
+        if let Some((_, cpp_ref)) = self.outgoing_websocket.replace(None) {
+            cpp_ref.deref();
+        }
     }
 
     /// Release the I/O layer's ref. May free `self`.
@@ -273,15 +273,14 @@ impl<const SSL: bool> WebSocket<SSL> {
             return;
         }
 
-        // Fail closed: without the SSL handle we cannot verify the peer.
+        // Fail closed: without the SSL handle or a name to check against we
+        // cannot verify the peer.
         let Some(ssl) = socket.ssl_mut() else {
             self.fail(ErrorCode::FailedToConnect);
             return;
         };
-        let Some(hostname) = ssl.servername().map(<[u8]>::to_vec) else {
-            return;
-        };
-        if !boringssl::check_server_identity(ssl, &hostname) {
+        let hostname = ssl.servername().map(<[u8]>::to_vec).unwrap_or_default();
+        if hostname.is_empty() || !boringssl::check_server_identity(ssl, &hostname) {
             self.fail(ErrorCode::FailedToConnect);
         }
     }

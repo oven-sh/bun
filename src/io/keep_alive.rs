@@ -5,14 +5,20 @@
 //! external users go through `bun_io::KeepAlive` and only touch the
 //! identical-signature methods).
 
+use core::ptr::NonNull;
+
 use crate::EventLoopCtx;
-use crate::posix_event_loop::js_vm_ctx;
 
 /// Track if an object whose file descriptor is being watched should keep the
 /// event loop alive. This is not reference counted — only Active / Inactive.
 #[derive(Default)]
 pub struct KeepAlive {
     status: Status,
+    /// The loop `ref_` counted on, so `unref` releases that same loop.
+    /// `Bun.spawnSync` swaps the VM's current loop to its isolated loop while
+    /// it blocks, so a teardown that runs in that window (a GC finalizer) must
+    /// not resolve the loop through the ctx again.
+    loop_: Option<NonNull<bun_uws_sys::Loop>>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
@@ -31,7 +37,7 @@ impl KeepAlive {
 
     /// Make calling ref() on this poll into a no-op.
     pub fn disable(&mut self) {
-        self.unref(js_vm_ctx());
+        self.unref();
         self.status = Status::Done;
     }
 
@@ -40,15 +46,21 @@ impl KeepAlive {
     }
 
     /// Prevent a poll from keeping the process alive.
-    pub fn unref(&mut self, event_loop_ctx: EventLoopCtx) {
+    pub fn unref(&mut self) {
         if self.status != Status::Active {
             return;
         }
         self.status = Status::Inactive;
+        let Some(loop_) = self.loop_.take() else {
+            return;
+        };
+        // SAFETY: `ref_` stored the live per-thread loop, which outlives every
+        // `KeepAlive` counted on it; single-threaded, leaf counter update.
+        let loop_ = unsafe { &mut *loop_.as_ptr() };
         #[cfg(not(windows))]
-        event_loop_ctx.loop_unref();
+        loop_.unref();
         #[cfg(windows)]
-        event_loop_ctx.loop_sub_active(1);
+        loop_.sub_active(1);
     }
 
     /// Prevent a poll from keeping the process alive on the next tick.
@@ -57,6 +69,7 @@ impl KeepAlive {
             return;
         }
         self.status = Status::Inactive;
+        self.loop_ = None;
         // vm.pending_unref_counter +|= 1;
         #[cfg(not(windows))]
         event_loop_ctx.increment_pending_unref_counter();
@@ -70,6 +83,7 @@ impl KeepAlive {
             return;
         }
         self.status = Status::Active;
+        self.loop_ = NonNull::new(event_loop_ctx.platform_event_loop_ptr());
         event_loop_ctx.loop_ref();
     }
 

@@ -282,7 +282,7 @@ pub(crate) fn set_ref(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
     if enabled {
         vm.channel_ref.ref_(bun_io::js_vm_ctx());
     } else {
-        vm.channel_ref.unref(bun_io::js_vm_ctx());
+        vm.channel_ref.unref();
     }
     Ok(JSValue::UNDEFINED)
 }
@@ -299,7 +299,7 @@ pub fn ref_channel_unless_overridden(global: &JSGlobalObject) {
 pub fn unref_channel_unless_overridden(global: &JSGlobalObject) {
     let vm = global.bun_vm().as_mut();
     if !vm.channel_ref_overridden {
-        vm.channel_ref.unref(bun_io::js_vm_ctx());
+        vm.channel_ref.unref();
     }
 }
 

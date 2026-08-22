@@ -396,7 +396,7 @@ impl CronJobBase for CronRegisterJob {
         // SAFETY: `this` is the unique Box<Self> leaked in cron_register; every
         // caller returns without touching it again.
         let mut job = unsafe { bun_core::heap::take(this.as_ptr()) };
-        job.poll.unref(bun_io::js_vm_ctx());
+        job.poll.unref();
         let ev = VirtualMachine::get().event_loop_mut();
         ev.enter();
         if let Some(msg) = job.err_msg.get() {
@@ -1164,7 +1164,7 @@ impl CronJobBase for CronRemoveJob {
         // SAFETY: `this` is the unique Box<Self> leaked in cron_remove; every
         // caller returns without touching it again.
         let mut job = unsafe { bun_core::heap::take(this.as_ptr()) };
-        job.poll.unref(bun_io::js_vm_ctx());
+        job.poll.unref();
         let ev = VirtualMachine::get().event_loop_mut();
         ev.enter();
         if let Some(msg) = job.err_msg.get() {
@@ -1496,7 +1496,7 @@ impl CronJob {
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
             timer_all().remove(self.event_loop_timer.as_ptr());
         }
-        self.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
+        self.poll_ref.with_mut(|p| p.unref());
         self.maybe_downgrade();
     }
 
@@ -1527,7 +1527,7 @@ impl CronJob {
         // and clearAllForVM(.teardown) can release pending_ref.
         if this.in_fire.get() || this.pending_ref.get() {
             this.stopped.set(true);
-            this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
+            this.poll_ref.with_mut(|p| p.unref());
             return;
         }
         this.stop_internal(vm);
@@ -1766,7 +1766,7 @@ impl CronJob {
         _global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        self.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
+        self.poll_ref.with_mut(|p| p.unref());
         Ok(frame.this())
     }
 

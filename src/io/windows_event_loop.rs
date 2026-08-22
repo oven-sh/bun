@@ -30,6 +30,10 @@ pub struct FilePoll {
     pub(crate) fd: Fd,
     pub(crate) owner: Owner,
     pub(crate) flags: FlagsSet,
+    /// The loop this poll is bound to: the ctx's loop at `init`. Counter
+    /// updates go to this loop, never to the VM's current handle, which
+    /// `Bun.spawnSync` swaps to its isolated loop while it blocks.
+    loop_: ptr::NonNull<WindowsLoop>,
     pub(crate) next_to_free: *mut FilePoll,
 }
 
@@ -54,14 +58,24 @@ impl FilePoll {
             || self.flags.contains(Flags::PollMachport)
     }
 
+    /// The loop this poll is bound to. Same contract as
+    /// `EventLoopCtx::loop_mut`: the loop outlives its polls, the event loop
+    /// is single-threaded, and every caller is a leaf counter update.
+    #[inline]
+    fn loop_mut(&self) -> &'static mut WindowsLoop {
+        // SAFETY: see the contract above.
+        unsafe { &mut *self.loop_.as_ptr() }
+    }
+
     /// Decrements the active counter if it was previously incremented.
-    pub(crate) fn disable_keeping_process_alive(&mut self, vm: EventLoopCtx) {
+    pub(crate) fn disable_keeping_process_alive(&mut self) {
         if self.flags.contains(Flags::Closed) {
             return;
         }
         self.flags.insert(Flags::Closed);
 
-        vm.loop_sub_active(self.flags.contains(Flags::HasIncrementedPollCount) as u32);
+        self.loop_mut()
+            .sub_active(self.flags.contains(Flags::HasIncrementedPollCount) as u32);
     }
 
     pub(crate) fn init(vm: EventLoopCtx, fd: Fd, flags: FlagsSet, owner: Owner) -> *mut FilePoll {
@@ -74,12 +88,15 @@ impl FilePoll {
         flags: FlagsSet,
         owner: Owner,
     ) -> *mut FilePoll {
+        let loop_ = ptr::NonNull::new(vm.platform_event_loop_ptr())
+            .expect("FilePoll::init before the event loop exists");
         // Crate-private backref-deref accessor — single live `&mut Store` borrow.
         vm.file_polls_mut()
             .get_init(FilePoll {
                 fd,
                 flags,
                 owner,
+                loop_,
                 next_to_free: ptr::null_mut(),
             })
             .as_ptr()
@@ -95,7 +112,7 @@ impl FilePoll {
         self.deinit()
     }
 
-    pub(crate) fn unregister(&mut self, _loop: &mut WindowsLoop) -> bool {
+    pub(crate) fn unregister(&mut self) -> bool {
         // TODO: This cast is extremely suspicious. At best, `fd` is
         // the wrong type (it should be a uv handle), at worst this code is a
         // crash due to invalid memory access.
@@ -114,9 +131,9 @@ impl FilePoll {
         true
     }
 
-    fn deinit_possibly_defer(&mut self, vm: EventLoopCtx, loop_: &mut WindowsLoop) {
+    fn deinit_possibly_defer(&mut self, vm: EventLoopCtx) {
         if self.is_registered() {
-            let _ = self.unregister(loop_);
+            let _ = self.unregister();
         }
 
         let was_ever_registered = self.flags.contains(Flags::WasEverRegistered);
@@ -135,22 +152,20 @@ impl FilePoll {
     }
 
     pub(crate) fn deinit_with_vm(&mut self, vm: EventLoopCtx) {
-        // `loop_mut()` — crate-private nonnull-asref accessor (single deref in
-        // `EventLoopCtx`); the uws loop is a disjoint allocation from `self`.
         // Stacked-Borrows: `self` may live inside `Store.hive`'s inline buffer,
         // so `&mut Store` is materialised only *after* `&mut self` is retired
         // inside `deinit_possibly_defer` (via `file_polls_mut()`).
-        let loop_ = vm.loop_mut();
-        self.deinit_possibly_defer(vm, loop_);
+        self.deinit_possibly_defer(vm);
     }
 
-    pub(crate) fn enable_keeping_process_alive(&mut self, vm: EventLoopCtx) {
+    pub(crate) fn enable_keeping_process_alive(&mut self) {
         if !self.flags.contains(Flags::Closed) {
             return;
         }
         self.flags.remove(Flags::Closed);
 
-        vm.loop_add_active(self.flags.contains(Flags::HasIncrementedPollCount) as u32);
+        self.loop_mut()
+            .add_active(self.flags.contains(Flags::HasIncrementedPollCount) as u32);
     }
 }
 

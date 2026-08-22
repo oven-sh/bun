@@ -308,7 +308,6 @@ impl Inflight {
 pub(crate) struct SharedConnection {
     main_ref: DNSServiceRef,
     file_poll: NonNull<FilePoll>,
-    ctx: Async::EventLoopCtx,
     inflight: Vec<Inflight>,
     /// `context` of the previous reply (a different one ends the prior request's contiguous run).
     last_ctx: *mut c_void,
@@ -358,7 +357,6 @@ impl SharedConnection {
         let mut this = Box::new(Self {
             main_ref,
             file_poll: NonNull::dangling(),
-            ctx,
             inflight: Vec::new(),
             last_ctx: ptr::null_mut(),
             early_out_timer: JsCell::new(EventLoopTimer::init_paused(
@@ -377,10 +375,7 @@ impl SharedConnection {
         );
         // SAFETY: `FilePoll::init` returned a live pool slot; exclusive here.
         let poll = unsafe { &mut *poll_ptr };
-        // SAFETY: the event loop outlives every lookup made on it.
-        let loop_ = unsafe { ctx.platform_event_loop() };
         let rc = poll.register_with_fd(
-            loop_,
             Async::PollKind::Readable,
             Async::posix_event_loop::OneShotFlag::None,
             fd,
@@ -408,8 +403,7 @@ impl SharedConnection {
         let suppress = addrconfig_flags(protocol);
         let sub = self.issue(protocol, suppress, hostname, callback, context)?;
         if self.inflight.is_empty() {
-            let ctx = self.ctx;
-            self.file_poll().enable_keeping_process_alive(ctx);
+            self.file_poll().enable_keeping_process_alive();
         }
         // SAFETY: `owner` is the caller's live request, tracked here until `finish()`.
         let q = unsafe { owner.query() };
@@ -515,8 +509,7 @@ impl SharedConnection {
             }
         }
         if self.inflight.is_empty() {
-            let ctx = self.ctx;
-            self.file_poll().disable_keeping_process_alive(ctx);
+            self.file_poll().disable_keeping_process_alive();
         }
         ready
     }
@@ -648,8 +641,7 @@ impl SharedConnection {
         );
         q.sd_ref = sub;
         if this.inflight.is_empty() {
-            let ctx = this.ctx;
-            this.file_poll().enable_keeping_process_alive(ctx);
+            this.file_poll().enable_keeping_process_alive();
         }
         this.inflight.push(inf);
         true

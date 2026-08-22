@@ -495,9 +495,7 @@ impl Drop for S3HttpSimpleTask {
         // KeepAlive::unref takes an aio EventLoopCtx; the JS-loop ctx is fetched via
         // the global hook (registered by crate::init) — same pattern as
         // `event_loop_handle_to_ctx` in process.rs.
-        self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
-            bun_io::AllocatorType::Js,
-        ));
+        self.poll_ref.unref();
         // Only `http.clear_data()` runs — never a full AsyncHTTP destructor —
         // so we intentionally do NOT `assume_init_drop`.
         self.release_portable();

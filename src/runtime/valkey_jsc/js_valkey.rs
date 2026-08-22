@@ -1683,7 +1683,7 @@ impl JSValkeyClient {
             self.poll_ref.with_mut(|r| r.ref_(vm_event_loop_ctx()));
         } else {
             // There is no pending activity so it is safe to remove the event loop.
-            self.poll_ref.with_mut(|r| r.unref(vm_event_loop_ctx()));
+            self.poll_ref.with_mut(|r| r.unref());
         }
 
         if self.this_value.get().is_empty() {

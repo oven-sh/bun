@@ -1956,7 +1956,7 @@ impl napi_async_work {
         let mut poll_ref = core::mem::take(&mut self.poll_ref);
         // KeepAlive::unref needs an event-loop ctx so it cannot impl Drop
         // generically; this is a genuine one-off cleanup.
-        scopeguard::defer! { poll_ref.unref(bun_io::js_vm_ctx()); }
+        scopeguard::defer! { poll_ref.unref(); }
 
         // https://github.com/nodejs/node/blob/a2de5b9150da60c77144bb5333371eaca3fab936/src/node_api.cc#L1201
         let Some(complete) = self.complete else {
@@ -3086,7 +3086,7 @@ impl ThreadSafeFunction {
 
     /// `napi_unref_threadsafe_function` — JS thread only (as in Node).
     pub(crate) fn unref(&mut self) {
-        self.poll_ref.unref(bun_io::js_vm_ctx());
+        self.poll_ref.unref();
     }
 
     pub(crate) fn acquire(&mut self) -> napi_status {

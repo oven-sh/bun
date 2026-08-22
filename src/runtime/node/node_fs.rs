@@ -969,7 +969,7 @@ mod _async_tasks {
             // reclaim ownership (paired with the Box::leak in create()).
             let mut task = unsafe { bun_core::heap::take(this) };
             // `bun_sys::Error` frees its path on Drop.
-            task.r#ref.unref(bun_io::js_vm_ctx());
+            task.r#ref.unref();
         }
     }
 
@@ -1748,8 +1748,7 @@ mod _async_tasks {
             // schedule_new()).
             let mut task = unsafe { bun_core::heap::take(this) };
             if !IS_SHELL {
-                let ctx = event_loop_handle_to_ctx(task.evtloop);
-                task.r#ref.unref(ctx);
+                task.r#ref.unref();
             }
             // `Drop for ThreadSafe<args::Cp>` releases the `protect()` taken by
             // `to_thread_safe()` when `src`/`dest` are Buffers, so nothing leaks here.

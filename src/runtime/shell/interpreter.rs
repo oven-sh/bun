@@ -2627,7 +2627,7 @@ impl ShellTask {
     /// A queued completion that will never run (`Taskable::release_unrun`):
     /// drop the keep-alive `schedule` took, as `run_from_main_thread` would have.
     pub(crate) fn unref_unrun(&mut self) {
-        self.keep_alive.unref(self.event_loop.as_event_loop_ctx());
+        self.keep_alive.unref();
     }
 
     /// A subtask created on a pool thread (`ls -R` discovering a directory):
@@ -2774,9 +2774,7 @@ impl ShellTask {
         // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
         unsafe {
             let this = ctx.byte_add(C::TASK_OFFSET).cast::<ShellTask>();
-            (*this)
-                .keep_alive
-                .unref((*this).event_loop.as_event_loop_ctx());
+            (*this).keep_alive.unref();
             let interp = &*(*this).interp;
             C::run_from_main_thread(ctx, interp);
         }

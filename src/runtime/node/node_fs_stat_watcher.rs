@@ -675,8 +675,7 @@ impl StatWatcher {
                 debug_assert!(core::ptr::eq(VirtualMachine::get(), this_ref.ctx.as_ptr())); // We cannot unref() on another thread this way.
             }
         }
-        let el_ctx = this_ref.ctx_el_ctx();
-        this_ref.poll_ref.with_mut(|p| p.unref(el_ctx));
+        this_ref.poll_ref.with_mut(|p| p.unref());
         this_ref.closed.store(true, Ordering::Relaxed);
         // `this_value.deinit()` handled by JsRef Drop below; explicit reset
         // drops the Strong before dealloc.
@@ -711,8 +710,7 @@ impl StatWatcher {
     ) -> JsResult<JSValue> {
         if this.persistent.get() {
             this.persistent.set(false);
-            let el_ctx = this.ctx_el_ctx();
-            this.poll_ref.with_mut(|p| p.unref(el_ctx));
+            this.poll_ref.with_mut(|p| p.unref());
         }
         Ok(JSValue::UNDEFINED)
     }
@@ -733,8 +731,7 @@ impl StatWatcher {
         if self.persistent.get() {
             self.persistent.set(false);
         }
-        let el_ctx = self.ctx_el_ctx();
-        self.poll_ref.with_mut(|p| p.unref(el_ctx));
+        self.poll_ref.with_mut(|p| p.unref());
         self.closed.store(true, Ordering::Relaxed);
         self.this_value.with_mut(|r| r.downgrade());
     }

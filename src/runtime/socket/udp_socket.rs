@@ -1677,7 +1677,7 @@ impl UDPSocket {
         _: &CallFrame,
     ) -> JsResult<JSValue> {
         let _ = global_this;
-        this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
+        this.poll_ref.with_mut(|p| p.unref());
 
         Ok(JSValue::UNDEFINED)
     }

@@ -483,7 +483,7 @@ impl WebWorker {
                 worker
             }
             Err(_) => {
-                worker_ref.with_parent_poll_ref(|p| p.unref(bun_io::js_vm_ctx()));
+                worker_ref.with_parent_poll_ref(|p| p.unref());
                 // SAFETY: never shared; drop both refs (the thread's and the caller's).
                 unsafe {
                     WebWorker::deref(worker);
@@ -539,7 +539,7 @@ impl WebWorker {
             if value {
                 poll.ref_(bun_io::js_vm_ctx());
             } else {
-                poll.unref(bun_io::js_vm_ctx());
+                poll.unref();
             }
         });
     }
@@ -576,7 +576,7 @@ impl WebWorker {
     #[unsafe(export_name = "WebWorker__releaseParentPollRef")]
     pub(crate) extern "C" fn release_parent_poll_ref(this: *mut WebWorker) {
         let this_ref = bun_ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
-        this_ref.with_parent_poll_ref(|p| p.unref(bun_io::js_vm_ctx()));
+        this_ref.with_parent_poll_ref(|p| p.unref());
         // SAFETY: parent thread; `parent` outlives its children (it joins them).
         let children = unsafe { &mut (*this_ref.parent).child_workers };
         if let Some(i) = children.iter().position(|&c| core::ptr::eq(c, this)) {

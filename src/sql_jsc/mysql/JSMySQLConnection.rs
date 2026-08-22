@@ -400,8 +400,7 @@ impl JSMySQLConnection {
             {
                 let r = &*this;
                 r.stop_timers();
-                let ctx = r.vm_ctx();
-                r.poll_ref.with_mut(|p| p.unref(ctx));
+                r.poll_ref.with_mut(|p| p.unref());
                 r.unregister_auto_flusher();
                 r.connection_mut().cleanup();
             }
@@ -432,7 +431,7 @@ impl JSMySQLConnection {
             if self.connection.get().status == my_sql_connection::Status::Connected
                 && self.connection.get().is_idle()
             {
-                self.poll_ref.with_mut(|p| p.unref(ctx));
+                self.poll_ref.with_mut(|p| p.unref());
             } else {
                 self.poll_ref.with_mut(|p| p.r#ref(ctx));
             }
@@ -441,8 +440,7 @@ impl JSMySQLConnection {
         if self.js_value.get().is_not_empty() && self.js_value.get().is_strong() {
             self.js_value.with_mut(|r| r.downgrade());
         }
-        let ctx = self.vm_ctx();
-        self.poll_ref.with_mut(|p| p.unref(ctx));
+        self.poll_ref.with_mut(|p| p.unref());
     }
 
     // — same proc-macro limitation as `constructor` above.

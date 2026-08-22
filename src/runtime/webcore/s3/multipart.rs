@@ -375,11 +375,7 @@ impl Drop for MultiPartUpload {
         // KeepAlive::unref takes an `EventLoopCtx` (aio cycle-break vtable),
         // not `&VirtualMachine`. Route through the global hook like simple_request does.
         let _ = self.vm;
-        self.poll_ref.with_mut(|poll_ref| {
-            poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
-                bun_io::AllocatorType::Js,
-            ))
-        });
+        self.poll_ref.with_mut(|poll_ref| poll_ref.unref());
         // path, proxy, content_type, content_disposition, content_encoding — Box dropped automatically
         // `IntrusiveRc<T>` (= `RefPtr<T>`) has no `Drop` — release the +1 the
         // constructing `writable_stream`/`upload_stream` adopted.

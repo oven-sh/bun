@@ -124,7 +124,7 @@ impl bun_event_loop::Taskable for AsyncModule {
         // SAFETY: fn contract — the box `done()` queued.
         let mut this = unsafe { bun_core::heap::take(this) };
         let vm = VirtualMachine::get().as_mut();
-        this.poll_ref.unref(bun_io::js_vm_ctx());
+        this.poll_ref.unref();
         vm.modules.scheduled -= 1;
     }
 }
@@ -706,9 +706,7 @@ impl AsyncModule {
             jsc_vm.package_manager().end_progress_bar();
         }
         let mut log = bun_ast::Log::init();
-        this.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
-            bun_io::AllocatorType::Js,
-        ));
+        this.poll_ref.unref();
         let errorable: ErrorableResolvedSource = match this.resume_loading_module(&mut log) {
             Ok(rs) => ErrorableResolvedSource::ok(rs),
             Err(
@@ -937,9 +935,7 @@ impl AsyncModule {
         let promise = promise_value.as_internal_promise().unwrap();
         promise_value.ensure_still_alive();
         let _ = vm;
-        self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
-            bun_io::AllocatorType::Js,
-        ));
+        self.poll_ref.unref();
         // The caller (Queue::retain_mut) returns `false` and Vec drops the
         // element, running Drop.
         // `JSInternalPromise` is an `opaque_ffi!` ZST handle; `opaque_mut` is
@@ -1145,9 +1141,7 @@ impl AsyncModule {
         let promise = promise_value.as_internal_promise().unwrap();
         promise_value.ensure_still_alive();
         let _ = vm;
-        self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
-            bun_io::AllocatorType::Js,
-        ));
+        self.poll_ref.unref();
         // Caller drops via retain_mut → false.
         // `JSInternalPromise` is an `opaque_ffi!` ZST handle; `opaque_mut` is
         // the centralised non-null deref proof.

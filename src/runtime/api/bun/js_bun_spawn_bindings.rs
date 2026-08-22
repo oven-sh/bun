@@ -2037,6 +2037,15 @@ fn spawn_maybe_sync(
         return Ok(JSValue::ZERO);
     }
 
+    // Debug-only fault injection for test/js/bun/spawn/spawnsync-isolated-event-loop.test.ts:
+    // a GC whose finalizers run while the isolated loop is still installed cannot be
+    // scheduled from JS, so collect here. Finalizers that release main-loop polls
+    // must not touch the isolated loop's counters.
+    #[cfg(debug_assertions)]
+    if bun_core::env_var::feature_flag::BUN_INTERNAL_SPAWN_SYNC_GC.get() == Some(true) {
+        let _ = global_this.vm().run_gc(true);
+    }
+
     subprocess.update_has_pending_activity();
 
     let signal_code = SubprocessT::get_signal_code(subprocess, global_this);

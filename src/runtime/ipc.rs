@@ -1454,7 +1454,7 @@ impl SendQueue {
             if should_ref {
                 k.ref_(ctx);
             } else {
-                k.unref(ctx);
+                k.unref();
             }
         });
     }

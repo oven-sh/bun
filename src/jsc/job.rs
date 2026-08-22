@@ -372,7 +372,7 @@ impl<C: JobContext> Job<C> {
             js,
             ..
         } = unsafe { *Box::from_raw(this) };
-        keep_alive.unref(bun_io::js_vm_ctx());
+        keep_alive.unref();
         (off, js)
     }
 

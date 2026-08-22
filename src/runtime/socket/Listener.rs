@@ -862,7 +862,7 @@ impl Listener {
         // sockets each have their own (see `on_create`). Drop it now so a
         // closed server whose connections the caller unref'd lets the process
         // exit like Node does.
-        this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
+        this.poll_ref.with_mut(|p| p.unref());
         if this.handlers.active_connections.get() == 0 {
             this.this_value.with_mut(|r| r.downgrade());
             this.strong_data
@@ -949,7 +949,7 @@ impl Listener {
         let this_ref = unsafe { &*this };
         this_ref.this_value.with_mut(|r| r.finalize());
         this_ref.strong_data.with_mut(|s| s.deinit());
-        this_ref.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
+        this_ref.poll_ref.with_mut(|p| p.unref());
         debug_assert!(matches!(this_ref.listener.get(), ListenerType::None));
 
         // Clear the back-pointer before force-closing: this listener is already
@@ -1047,7 +1047,7 @@ impl Listener {
         _global: &JSGlobalObject,
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
+        this.poll_ref.with_mut(|p| p.unref());
         // `this_value` stays strong: the wrapper roots the handlers a future
         // accept dispatches into. `do_stop` / `mark_inactive` downgrade it
         // once the listen socket is closed.

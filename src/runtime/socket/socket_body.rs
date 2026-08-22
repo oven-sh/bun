@@ -1335,7 +1335,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             .with_mut(|b| b.clear_and_free());
         self.detach_native_callback();
         old.close(uws::CloseCode::Failure);
-        self.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
+        self.poll_ref.with_mut(|p| p.unref());
         if self.flags.get().contains(Flags::IS_ACTIVE) {
             self.update_flags(|f| f.remove(Flags::IS_ACTIVE));
             if let Some(h) = self.handlers_opt() {
@@ -1374,7 +1374,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                     self.handlers.set(None);
                 }
             }
-            self.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
+            self.poll_ref.with_mut(|p| p.unref());
         }
     }
 
@@ -1677,7 +1677,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         let callback = handlers.on_end();
         if callback.is_empty() {
-            this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
+            this.poll_ref.with_mut(|p| p.unref());
 
             // If you don't handle TCP fin, we assume you're done.
             this.mark_inactive();
@@ -2106,7 +2106,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(());
         }
 
-        this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
+        this.poll_ref.with_mut(|p| p.unref());
 
         let callback = handlers.on_close();
 
@@ -3104,11 +3104,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let is_semi_connect = socket.socket.get().is_some() && !socket.is_established();
         this.close_and_detach(uws::CloseCode::Failure);
         if is_semi_connect {
-            this.poll_ref.with_mut(|p| {
-                p.unref(bun_io::posix_event_loop::get_vm_ctx(
-                    bun_io::AllocatorType::Js,
-                ))
-            });
+            this.poll_ref.with_mut(|p| p.unref());
             if !matches!(this.this_value.get(), JsRef::Finalized) {
                 this.this_value.with_mut(|r| r.downgrade());
             }
@@ -3170,11 +3166,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         socket.close(uws::CloseCode::FastShutdown);
         this.socket.set(SocketHandler::<SSL>::DETACHED);
         let _ = global;
-        this.poll_ref.with_mut(|p| {
-            p.unref(bun_io::posix_event_loop::get_vm_ctx(
-                bun_io::AllocatorType::Js,
-            ))
-        });
+        this.poll_ref.with_mut(|p| p.unref());
         if is_semi_connect {
             if !matches!(this.this_value.get(), JsRef::Finalized) {
                 this.this_value.with_mut(|r| r.downgrade());
@@ -3250,11 +3242,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             this.ref_pollref_on_connect.set(false);
         }
         let _ = global;
-        this.poll_ref.with_mut(|p| {
-            p.unref(bun_io::posix_event_loop::get_vm_ctx(
-                bun_io::AllocatorType::Js,
-            ))
-        });
+        this.poll_ref.with_mut(|p| p.unref());
         Ok(JSValue::UNDEFINED)
     }
 
@@ -3276,11 +3264,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             .buffered_data_for_node_net
             .with_mut(|b| b.clear_and_free());
 
-        this_ref.poll_ref.with_mut(|p| {
-            p.unref(bun_io::posix_event_loop::get_vm_ctx(
-                bun_io::AllocatorType::Js,
-            ))
-        });
+        this_ref.poll_ref.with_mut(|p| p.unref());
         // need to deinit event without being attached
         if this_ref.flags.get().contains(Flags::OWNED_PROTOS) {
             this_ref.protos.set(None); // Box::<[u8]> drops

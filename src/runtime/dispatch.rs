@@ -531,7 +531,7 @@ fn run_task_cold(task: Task) {
             // SAFETY: see above; `task.task` is the embedded ShellTask.
             unsafe {
                 let st = &raw mut (*t).task.task;
-                (*st).keep_alive.unref((*st).event_loop.as_event_loop_ctx());
+                (*st).keep_alive.unref();
                 let interp = &*(*st).interp;
                 <$ty>::run_from_main_thread(t, interp);
             }

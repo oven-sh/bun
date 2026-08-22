@@ -1431,7 +1431,7 @@ impl QuicEndpoint {
         let busy = listening || !self.sessions.get().is_empty();
         let ctx = bun_io::js_vm_ctx();
         self.poll_ref
-            .with_mut(|p| if busy { p.ref_(ctx) } else { p.unref(ctx) });
+            .with_mut(|p| if busy { p.ref_(ctx) } else { p.unref() });
     }
 
     fn process(&self, global: &JSGlobalObject) {

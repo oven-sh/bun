@@ -626,10 +626,7 @@ impl JSBundleCompletionTask {
 
     fn on_complete(&mut self) -> bun_event_loop::JsResult<()> {
         let this = self;
-        let vm = this.global_this.bun_vm_ptr();
-        // SAFETY: `vm` is the live per-thread VM (`global_this.bun_vm_ptr()`).
-        this.poll_ref
-            .unref(unsafe { jsc::virtual_machine::VirtualMachine::event_loop_ctx(vm) });
+        this.poll_ref.unref();
         if this.cancelled.load(core::sync::atomic::Ordering::Acquire) {
             return Ok(());
         }

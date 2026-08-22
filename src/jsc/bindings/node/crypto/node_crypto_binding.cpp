@@ -357,8 +357,10 @@ __attribute__((minsize)) JSValue createNodeCryptoBinding(Zig::GlobalObject* glob
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "checkPrimeSync"_s)),
         JSFunction::create(vm, globalObject, 2, "checkPrimeSync"_s, jsCheckPrimeSync, ImplementationVisibility::Public, NoIntrinsic), 0);
 
-    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "Cipher"_s)),
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "Cipheriv"_s)),
         globalObject->m_JSCipherClassStructure.constructor(globalObject));
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "Decipheriv"_s)),
+        globalObject->m_JSDecipherClassStructure.constructor(globalObject));
 
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "hkdf"_s)),
         JSFunction::create(vm, globalObject, 6, "hkdf"_s, jsHkdf, ImplementationVisibility::Public, NoIntrinsic), 0);

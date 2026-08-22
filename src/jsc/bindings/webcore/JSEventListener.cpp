@@ -225,8 +225,7 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
     // InspectorInstrumentation::didCallFunction(&scriptExecutionContext);
 
     if (scope.exception()) [[unlikely]] {
-        // A TerminationException is not this listener's error: tryClearException() keeps it pending and
-        // reportException() ignores it, so the dispatch unwinds on it.
+        // A TerminationException is not this listener's error: it stays pending and the dispatch unwinds on it.
         auto* exception = scope.exception();
         (void)scope.tryClearException();
         event.target()->uncaughtExceptionInEventHandler();

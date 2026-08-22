@@ -82,6 +82,10 @@ export const bunEnv: NodeJS.Dict<string> = {
   // Tests drive `bun update --interactive` by writing keystrokes to a pipe;
   // the real command refuses on non-TTY stdin. Bypass that gate under test.
   BUN_INTERNAL_INTERACTIVE_ASSUME_TTY: "1",
+  // `bun install` writes each manifest cache entry from a thread pool task it
+  // does not wait for before exiting, so a test that installs again right away
+  // may not find the entry. Write it before the install exits instead.
+  BUN_INTERNAL_SYNC_MANIFEST_CACHE_WRITES: "1",
   BUN_GARBAGE_COLLECTOR_LEVEL: process.env.BUN_GARBAGE_COLLECTOR_LEVEL || "0",
   BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1",
   BUN_DEBUG_linkerctx: "0",

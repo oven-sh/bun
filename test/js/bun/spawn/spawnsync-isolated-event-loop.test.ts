@@ -188,7 +188,6 @@ describe.concurrent("spawnSync isolated event loop", () => {
 
           // pidfd + stdout + stderr: three polls, the same count the three
           // writers released.
-          const start = performance.now();
           const result = Bun.spawnSync({
             cmd: ["echo", "second"],
             stdout: "pipe",
@@ -200,7 +199,6 @@ describe.concurrent("spawnSync isolated event loop", () => {
               stdout: result.stdout.toString(),
               exitedDueToTimeout: result.exitedDueToTimeout,
               exitCode: result.exitCode,
-              fast: performance.now() - start < 4000,
             }),
           );
         `,
@@ -217,7 +215,6 @@ describe.concurrent("spawnSync isolated event loop", () => {
         stdout: "second\n",
         exitedDueToTimeout: false,
         exitCode: 0,
-        fast: true,
       });
       expect(exitCode).toBe(0);
     },

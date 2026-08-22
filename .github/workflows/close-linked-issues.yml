@@ -75,8 +75,8 @@ jobs:
             // A hedge: the PR may or may not close the reference ("may fix #1",
             // "partially fixes #1", "hopefully this fixes #1", "could this fix #1?").
             const HEDGES = new Set([
-              "may", "might", "could", "would", "possibly", "probably", "potentially", "maybe", "hopefully", "likely", "unlikely",
-              "partially", "partly", "partial",
+              "may", "might", "could", "would", "possibly", "probably", "potentially", "maybe", "perhaps", "hopefully",
+              "likely", "unlikely", "partially", "partly", "partial",
             ]);
 
             // A keyword led by one of these does not state that the PR closes

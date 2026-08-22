@@ -1389,7 +1389,8 @@ void JSCommonJSModule::evaluate(
     Zig::GlobalObject* globalObject,
     const WTF::String& key,
     ResolvedSource& source,
-    bool isBuiltIn)
+    bool isBuiltIn,
+    bool skipIsolationCache)
 {
     auto& vm = JSC::getVM(globalObject);
 
@@ -1413,7 +1414,7 @@ void JSCommonJSModule::evaluate(
 
     auto sourceProvider = Zig::SourceProvider::create(globalObject, source, JSC::SourceProviderSourceType::Program, isBuiltIn);
     this->ignoreESModuleAnnotation = source.tag == ResolvedSourceTagPackageJSONTypeModule;
-    if (!isBuiltIn && !globalObject->hasOverriddenModuleWrapper && Bun::IsolatedModuleCache::canUse(vm, globalObject->bunVM())) {
+    if (!isBuiltIn && !skipIsolationCache && !globalObject->hasOverriddenModuleWrapper && Bun::IsolatedModuleCache::canUse(vm, globalObject->bunVM())) {
         Bun::IsolatedModuleCache::insert(vm, key, sourceProvider.get());
     }
     if (this->hasEvaluated)
@@ -1490,7 +1491,8 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSString* requireMapKey,
     ResolvedSource& source,
-    bool isBuiltIn)
+    bool isBuiltIn,
+    bool skipIsolationCache)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1531,7 +1533,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
         }
 
         auto sourceProvider = Zig::SourceProvider::create(globalObject, source, JSC::SourceProviderSourceType::Program, isBuiltIn);
-        if (!isBuiltIn && !globalObject->hasOverriddenModuleWrapper && Bun::IsolatedModuleCache::canUse(vm, globalObject->bunVM())) {
+        if (!isBuiltIn && !skipIsolationCache && !globalObject->hasOverriddenModuleWrapper && Bun::IsolatedModuleCache::canUse(vm, globalObject->bunVM())) {
             Bun::IsolatedModuleCache::insert(vm, sourceURL, sourceProvider.get());
         }
         sourceOrigin = sourceProvider->sourceOrigin();

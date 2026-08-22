@@ -211,10 +211,8 @@ describe.concurrent("spawnSync isolated event loop", () => {
       // stderr is drained, not asserted: the child's JSON and exit code carry the signal.
       const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect({ exitCode, out: stdout.trim() }).toEqual({
-        exitCode: 0,
-        out: JSON.stringify({ stdout: "second\n", exitedDueToTimeout: false, exitCode: 0 }),
-      });
+      expect(stdout.trim()).toBe(JSON.stringify({ stdout: "second\n", exitedDueToTimeout: false, exitCode: 0 }));
+      expect(exitCode).toBe(0);
     },
   );
 });

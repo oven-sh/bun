@@ -145,4 +145,23 @@ describe("path.join", () => {
 
     assert.strictEqual(failures.length, 0, failures.join(""));
   });
+
+  test("more than 65535 arguments", () => {
+    // The argument count used to cross the C++/native boundary as a uint16_t,
+    // so path.join(...70000 args) silently joined only (70000 & 0xffff) = 4464
+    // of them and path.join(...65536 args) saw 0 args and returned ".".
+    const n = 70000;
+    const args = new Array(n).fill("a");
+    const expectedLen = n * 2 - 1;
+
+    const posix = path.posix.join(...args);
+    assert.strictEqual(posix.length, expectedLen);
+    assert.strictEqual(posix.slice(0, 3), "a/a");
+    assert.strictEqual(posix.slice(-3), "a/a");
+
+    const win32 = path.win32.join(...args);
+    assert.strictEqual(win32.length, expectedLen);
+    assert.strictEqual(win32.slice(0, 3), "a\\a");
+    assert.strictEqual(win32.slice(-3), "a\\a");
+  });
 });

@@ -10,9 +10,6 @@ use bun_collections::ArrayHashMap;
 
 bun_core::declare_scope!(CSS_SELECTORS, visible);
 
-pub use css::PrintErr as _PrintErr;
-pub use css::Printer as _Printer; // re-export alias parity
-
 pub(crate) use parser::Component;
 pub use parser::PseudoClass;
 pub use parser::PseudoElement;

@@ -102,8 +102,6 @@ class JSCStackTrace;
 
 using DOMGuardedObjectSet = UncheckedKeyHashSet<WebCore::DOMGuardedObject*>;
 
-#define ZIG_GLOBAL_OBJECT_DEFINED
-
 class GlobalObject : public Bun::GlobalScope {
     using Base = Bun::GlobalScope;
 
@@ -275,11 +273,9 @@ public:
 
     JSC::Structure* NodeVMSourceTextModuleStructure() const { return m_NodeVMSourceTextModuleClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* NodeVMSourceTextModule() const { return m_NodeVMSourceTextModuleClassStructure.constructorInitializedOnMainThread(this); }
-    JSC::JSValue NodeVMSourceTextModulePrototype() const { return m_NodeVMSourceTextModuleClassStructure.prototypeInitializedOnMainThread(this); }
 
     JSC::Structure* NodeVMSyntheticModuleStructure() const { return m_NodeVMSyntheticModuleClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* NodeVMSyntheticModule() const { return m_NodeVMSyntheticModuleClassStructure.constructorInitializedOnMainThread(this); }
-    JSC::JSValue NodeVMSyntheticModulePrototype() const { return m_NodeVMSyntheticModuleClassStructure.prototypeInitializedOnMainThread(this); }
 
     WebCore::JSStreamsRuntime* streamsRuntime() { return &m_streamsRuntime; }
     JSC::JSMap* requireMap() const { return m_requireMap.getInitializedOnMainThread(this); }
@@ -288,8 +284,6 @@ public:
     // clearAll() instead.
 
     JSC::Structure* callSiteStructure() const { return m_callSiteStructure.getInitializedOnMainThread(this); }
-
-    JSC::JSObject* performanceObject() const { return m_performanceObject.getInitializedOnMainThread(this); }
 
     JSC::JSFunction* performMicrotaskVariadicFunction() const { return m_performMicrotaskVariadicFunction.getInitializedOnMainThread(this); }
 
@@ -757,7 +751,6 @@ public:
         return m_memoryFootprintStructure.getInitializedOnMainThread(this);
     }
 
-    JSObject* navigatorObject();
     JSFunction* nativeMicrotaskTrampoline() const { return m_nativeMicrotaskTrampoline.getInitializedOnMainThread(this); }
 
     String agentClusterID() const;
@@ -773,6 +766,7 @@ public:
     size_t reloadCount = 0;
 
     void reload();
+    void clearModuleRegistry();
 
     JSC::Structure* jsonlParseResultStructure() { return m_jsonlParseResultStructure.get(this); }
     JSC::Structure* pathParsedObjectStructure() { return m_pathParsedObjectStructure.get(this); }
@@ -847,7 +841,6 @@ public:
     WTF::Vector<WTF::Ref<NapiEnv>> m_napiEnvs;
     Ref<NapiEnv> makeNapiEnv(const napi_module&);
     napi_env makeNapiEnvForFFI();
-    bool hasNapiFinalizers() const;
     void adoptNapiEnvsForTestIsolation(GlobalObject* oldGlobal);
 
 private:
@@ -948,9 +941,6 @@ inline void* bunVM(Zig::GlobalObject* globalObject)
 {
     return globalObject->bunVM();
 }
-
-JSC_DECLARE_HOST_FUNCTION(jsFunctionNotImplemented);
-JSC_DECLARE_HOST_FUNCTION(jsFunctionCreateFunctionThatMasqueradesAsUndefined);
 
 extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToText(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue);
 extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToArrayBuffer(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue);

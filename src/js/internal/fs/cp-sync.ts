@@ -16,8 +16,7 @@ const {
   unlinkSync,
   utimesSync,
 } = require("node:fs");
-const { dirname, isAbsolute, join, parse, resolve, sep, toNamespacedPath } = require("node:path");
-const permission = require("internal/permission");
+const { dirname, isAbsolute, join, parse, resolve, sep } = require("node:path");
 
 const { EEXIST, EISDIR, EINVAL, ENOTDIR } = $processBindingConstants.os.errno;
 
@@ -111,22 +110,6 @@ function getValidMode(mode) {
 }
 
 const kValidatedCpOptions = Symbol("kValidatedCpOptions");
-
-// node checks the source for fs.read and the destination for fs.write before
-// any stat runs (node_file.cc CpSyncCheckPaths), on the toNamespacedPath form.
-// Without this the copy below is denied by lstat, which reports the path as
-// passed, so err.resource differs from node's on Windows.
-function checkCpPermissions(src, dest) {
-  if (!permission.enabled) return;
-  const srcPath = typeof src === "string" ? src : String(src);
-  if (!permission.has("fs.read", srcPath)) {
-    throw permission.accessDeniedError("fs.read", toNamespacedPath(srcPath));
-  }
-  const destPath = typeof dest === "string" ? dest : String(dest);
-  if (!permission.has("fs.write", destPath)) {
-    throw permission.accessDeniedError("fs.write", toNamespacedPath(destPath));
-  }
-}
 
 function validateCpOptions(options) {
   // Callback fs.cp validates before delegating to fs.promises.cp; the brand
@@ -525,7 +508,6 @@ function copyLink(resolvedSrc, dest) {
 }
 
 export default {
-  checkCpPermissions,
   cpSyncFn,
   validateCpOptions,
   tryNativeFastPathSync,

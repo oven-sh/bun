@@ -92,36 +92,6 @@ function validateThisInternalField(object, fieldKey, className) {
   }
 }
 
-// node lib/internal/validators.js validateObject option flags.
-const kValidateObjectNone = 0;
-const kValidateObjectAllowNullable = 1 << 0;
-const kValidateObjectAllowArray = 1 << 1;
-const kValidateObjectAllowFunction = 1 << 2;
-const kValidateObjectAllowObjects = kValidateObjectAllowArray | kValidateObjectAllowFunction;
-const kValidateObjectAllowObjectsAndNull =
-  kValidateObjectAllowNullable | kValidateObjectAllowArray | kValidateObjectAllowFunction;
-
-const validateObjectStrict = $newCppFunction("NodeValidator.cpp", "jsFunction_validateObject", 2);
-
-/** (value, name, options?) — flag-aware port of node's validateObject; the
- * common no-flags call goes straight to the native strict check. */
-function validateObject(value, name, options?) {
-  if (!options) {
-    return validateObjectStrict(value, name);
-  }
-  if ((kValidateObjectAllowNullable & options) === 0 && value === null) {
-    throw $ERR_INVALID_ARG_TYPE(name, "object", value);
-  }
-  if ((kValidateObjectAllowArray & options) === 0 && Array.isArray(value)) {
-    throw $ERR_INVALID_ARG_TYPE(name, "object", value);
-  }
-  const throwOnFunction = (kValidateObjectAllowFunction & options) === 0;
-  const typeofValue = typeof value;
-  if (typeofValue !== "object" && (throwOnFunction || typeofValue !== "function")) {
-    throw $ERR_INVALID_ARG_TYPE(name, "object", value);
-  }
-}
-
 /** Validate a string-or-URL path and return it resolved to an absolute path string. */
 function getValidatedPath(p: any) {
   if (p instanceof URL) return Bun.fileURLToPath(p as URL);
@@ -177,20 +147,30 @@ function warnOnNonPortableTemplate(template: any) {
   }
 }
 
-hideFromStack(validateLinkHeaderValue, validateThisInternalField, validateObject);
+hideFromStack(validateLinkHeaderValue, validateThisInternalField);
 hideFromStack(validateString, validateFunction, validateBoolean);
 hideFromStack(getValidatedPath, getValidatedFsPath, throwIfNullBytesInFileName);
 hideFromStack(warnOnNonPortableTemplate);
 
+// Must match jsFunction_validateObject in NodeValidator.cpp. The values are node's:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/validators.js#L224-L227
+const kValidateObjectNone = 0;
+const kValidateObjectAllowNullable = 1 << 0;
+const kValidateObjectAllowArray = 1 << 1;
+const kValidateObjectAllowFunction = 1 << 2;
+const kValidateObjectAllowObjects = kValidateObjectAllowArray | kValidateObjectAllowFunction;
+const kValidateObjectAllowObjectsAndNull =
+  kValidateObjectAllowNullable | kValidateObjectAllowArray | kValidateObjectAllowFunction;
+
 export default {
-  /** (value, name, options?) */
-  validateObject,
   kValidateObjectNone,
   kValidateObjectAllowNullable,
   kValidateObjectAllowArray,
   kValidateObjectAllowFunction,
   kValidateObjectAllowObjects,
   kValidateObjectAllowObjectsAndNull,
+  /** (value, name[, kValidateObject* flags]) */
+  validateObject: $newCppFunction("NodeValidator.cpp", "jsFunction_validateObject", 2),
   validateLinkHeaderValue: validateLinkHeaderValue,
   checkIsHttpToken: checkIsHttpToken,
   /** `(value, name, min, max)` */

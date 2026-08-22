@@ -518,16 +518,6 @@ pub struct ListenConfig {
     pub options: i32,
 }
 
-impl Default for ListenConfig {
-    fn default() -> Self {
-        Self {
-            port: 0,
-            host: ptr::null(),
-            options: 0,
-        }
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // extern "C"
 // ──────────────────────────────────────────────────────────────────────────

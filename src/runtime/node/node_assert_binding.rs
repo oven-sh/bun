@@ -9,43 +9,113 @@ use super::node_assert;
 ///     Delete = 1,
 ///     Equal  = 2,
 /// }
-/// type Diff = { operation: DiffType, text: string };
-/// declare function myersDiff(actual: string | string[], expected: string | string[]): Diff[];
+/// // `value` is a line, or a char code when `lines` is false. Arrays (one
+/// // string per line, for `util.diff()`) always diff by line.
+/// type Diff = { kind: DiffType, value: string | number };
+/// declare function myersDiff(
+///     actual: string | string[],
+///     expected: string | string[],
+///     checkCommaDisparity?: boolean,
+///     lines?: boolean,
+/// ): Diff[];
 /// ```
 #[bun_jsc::host_fn]
 fn myers_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let output = node_assert::Output::List {
+        check_comma_disparity: frame.argument(2).is_truthy(),
+        lines: frame.argument(3).is_truthy(),
+    };
+    run(global, frame, "myersDiff", &output)
+}
+
+/// `printSimpleMyersDiff(actual, expected, colors)`: char diff rendered to a string.
+#[bun_jsc::host_fn]
+fn print_simple_myers_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let colors = colors_from_js(global, frame.argument(2))?;
+    run(
+        global,
+        frame,
+        "printSimpleMyersDiff",
+        &node_assert::Output::Simple(&colors),
+    )
+}
+
+/// `printMyersDiff(actual, expected, checkCommaDisparity, colors)`: line diff rendered to
+/// `{ message, skipped }`.
+#[bun_jsc::host_fn]
+fn print_myers_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let check_comma_disparity = frame.argument(2).is_truthy();
+    let colors = colors_from_js(global, frame.argument(3))?;
+    let output = node_assert::Output::Lines {
+        colors: &colors,
+        check_comma_disparity,
+    };
+    run(global, frame, "printMyersDiff", &output)
+}
+
+/// Reads `{ green, red, white, blue }` (internal/util/colors) as ASCII escape sequences.
+fn colors_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<node_assert::Colors> {
+    let get = |name: &'static str| -> JsResult<Vec<u8>> {
+        if !value.is_object() {
+            return Ok(Vec::new());
+        }
+        let Some(v) = value.get(global, name)? else {
+            return Ok(Vec::new());
+        };
+        if !v.is_string() {
+            return Ok(Vec::new());
+        }
+        let s = bstring::OwnedString::new(v.to_bun_string(global)?);
+        Ok(s.to_utf8_without_ref().slice().to_vec())
+    };
+    Ok(node_assert::Colors {
+        green: get("green")?,
+        red: get("red")?,
+        white: get("white")?,
+        blue: get("blue")?,
+    })
+}
+
+fn run(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+    name: &'static str,
+    output: &node_assert::Output<'_>,
+) -> JsResult<JSValue> {
     let nargs = frame.arguments_count();
     if nargs < 2 {
-        return Err(global.throw_not_enough_arguments("printMyersDiff", 2, nargs as usize));
+        return Err(global.throw_not_enough_arguments(name, 2, nargs as usize));
     }
 
     let actual_arg: JSValue = frame.argument(0);
     let expected_arg: JSValue = frame.argument(1);
-    let (check_comma_disparity, lines): (bool, bool) = match nargs {
-        0 | 1 => unreachable!(),
-        2 => (false, false),
-        3 => (frame.argument(2).is_truthy(), false),
-        _ => (frame.argument(2).is_truthy(), frame.argument(3).is_truthy()),
-    };
 
-    // `util.diff()` also diffs arrays of strings, one element per line.
-    if actual_arg.is_array() || expected_arg.is_array() {
-        if !actual_arg.is_array() {
-            return Err(global.throw_invalid_argument_type_value("actual", "array", actual_arg));
-        }
-        if !expected_arg.is_array() {
-            return Err(global.throw_invalid_argument_type_value(
-                "expected",
-                "array",
+    // `util.diff()` also diffs arrays of strings, one element per line. Only
+    // the raw list takes them; the renderers want strings and fall through to
+    // the type error below.
+    if let node_assert::Output::List {
+        check_comma_disparity,
+        ..
+    } = *output
+    {
+        if actual_arg.is_array() || expected_arg.is_array() {
+            if !actual_arg.is_array() {
+                return Err(global.throw_invalid_argument_type_value("actual", "array", actual_arg));
+            }
+            if !expected_arg.is_array() {
+                return Err(global.throw_invalid_argument_type_value(
+                    "expected",
+                    "array",
+                    expected_arg,
+                ));
+            }
+            return node_assert::myers_diff_arrays(
+                global,
+                actual_arg,
                 expected_arg,
-            ));
+                check_comma_disparity,
+            );
         }
-        return node_assert::myers_diff_arrays(
-            global,
-            actual_arg,
-            expected_arg,
-            check_comma_disparity,
-        );
     }
 
     if !actual_arg.is_string() {
@@ -63,20 +133,13 @@ fn myers_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     debug_assert!(actual_str.tag() != bstring::Tag::Dead);
     debug_assert!(expected_str.tag() != bstring::Tag::Dead);
 
-    node_assert::myers_diff(
-        // allocator param dropped (was arena-backed; non-AST crate uses global mimalloc)
-        global,
-        &actual_str,
-        &expected_str,
-        check_comma_disparity,
-        lines,
-    )
+    node_assert::myers_diff(global, &actual_str, &expected_str, output)
 }
 
 // =============================================================================
 
 pub(crate) fn generate(global: &JSGlobalObject) -> JSValue {
-    let exports = JSValue::create_empty_object(global, 1);
+    let exports = JSValue::create_empty_object(global, 3);
 
     exports.put(
         global,
@@ -86,6 +149,28 @@ pub(crate) fn generate(global: &JSGlobalObject) -> JSValue {
             "myersDiff",
             __jsc_host_myers_diff,
             2,
+            Default::default(),
+        ),
+    );
+    exports.put(
+        global,
+        bstring::String::static_(b"printSimpleMyersDiff"),
+        JSFunction::create(
+            global,
+            "printSimpleMyersDiff",
+            __jsc_host_print_simple_myers_diff,
+            3,
+            Default::default(),
+        ),
+    );
+    exports.put(
+        global,
+        bstring::String::static_(b"printMyersDiff"),
+        JSFunction::create(
+            global,
+            "printMyersDiff",
+            __jsc_host_print_myers_diff,
+            4,
             Default::default(),
         ),
     );

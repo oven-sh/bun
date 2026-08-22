@@ -121,7 +121,7 @@ pub(crate) use compat::Feature;
 /// Alias of `error::ParserErrorKind`.
 pub use error::ParserErrorKind as ParseErrorKind;
 pub use properties::custom::{TokenList, TokenListFns};
-pub use values::ident::{CustomIdentFns, DashedIdentFns, IdentFns};
+pub use values::ident::IdentFns;
 pub use values::string::{CssString as CSSString, CssStringFns as CSSStringFns};
 
 // `css::generic::*` is an alternate spelling of the protocol traits +

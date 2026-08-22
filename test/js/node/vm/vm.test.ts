@@ -1977,10 +1977,18 @@ test.concurrent("a context nothing references is collected while it is still the
     // The collector scans the stack conservatively, and the call that creates a context leaves pointers
     // to it in the stack memory that call used. So the context is created 1000 frames down: when the
     // loop below calls Bun.gc(), all of that memory is below the stack pointer and is not scanned.
+    // A call inside a try block is never a tail call, so JSC cannot turn the recursion into a jump in
+    // strict code. Without the frames the output would look like the bug's, so the check below is loud.
     function createDeep(makeRef, depth) {
-      if (depth > 0) return createDeep(makeRef, depth - 1);
-      return makeRef();
+      try {
+        if (depth > 0) return createDeep(makeRef, depth - 1);
+        return makeRef();
+      } finally {
+      }
     }
+    Error.stackTraceLimit = 2000;
+    const framesAtLeaf = createDeep(() => new Error().stack.split("\n").length - 1, 1000);
+    if (framesAtLeaf < 1000) throw new Error("createDeep is only " + framesAtLeaf + " frames deep");
     // A case counts as collectable when any of its rounds collected the context. The shared structure
     // kept the context alive in every round.
     const collectedRounds = {};

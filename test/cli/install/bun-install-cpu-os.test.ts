@@ -816,6 +816,7 @@ describe("bun install --libc flag and the libc field", () => {
       "dep-glibc": [ABBREVIATED_MANIFEST_ACCEPT],
       "dep-musl": [ABBREVIATED_MANIFEST_ACCEPT],
     });
+    expect(await cachedManifestCount(2)).toBe(2);
 
     // Resolving the same exact versions again as regular dependencies is served by the cache.
     await rm(join(package_dir, "bun.lockb"), { force: true });
@@ -996,6 +997,7 @@ describe("bun install --libc flag and the libc field", () => {
     await writePackageJson({ dependencies: { baz: "0.0.5" } });
     await installWithEnv(env, "--libc", "glibc");
     expect(await installed()).toEqual(["baz"]);
+    expect(await cachedManifestCount(1)).toBe(1);
 
     // Second install: the optional edge from dep-universal requests the full document, which fails,
     // and the regular edge from dep-both is satisfied by the cached abbreviated one, which the

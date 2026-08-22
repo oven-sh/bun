@@ -1,8 +1,8 @@
 import { spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
-import { existsSync, lstatSync, readFileSync } from "fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, symlinkSync } from "fs";
 import { rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, isWindows, readdirSorted, tempDir } from "harness";
+import { bunExe, bunEnv as env, isMacOS, isWindows, readdirSorted, tempDir } from "harness";
 import { basename, dirname, join } from "path";
 import {
   dummyAfterAll,
@@ -107,6 +107,21 @@ it("bun pm cache pack / unpack round-trips exactly the cache entries a lockfile 
   r = await run(["pm", "cache", "unpack", pack], package_dir, cache2);
   expect(r.out).toContain("0 new, 3 already cached");
   expect(r.code).toBe(0);
+
+  // a cache entry containing a link that passes *through* another link cannot be
+  // restored, so pack refuses it up front instead of producing a pack unpack rejects
+  if (!isWindows) {
+    const barDir = join(cache1, (await readdirSorted(cache1)).find(n => n.startsWith("bar@0.0.2"))!);
+    mkdirSync(join(barDir, "real"), { recursive: true });
+    symlinkSync("real", join(barDir, "lnk"));
+    symlinkSync("lnk/inner", join(barDir, "through"));
+    r = await run(["pm", "cache", "pack", join(package_dir, "bad.pack")], package_dir, cache1);
+    expect(r.err).toContain("passes through another symlink");
+    expect(r.code).not.toBe(0);
+    expect(existsSync(join(package_dir, "bad.pack"))).toBeFalse();
+    rmSync(join(barDir, "through"));
+    rmSync(join(barDir, "lnk"));
+  }
 
   // argument validation
   r = await run(["pm", "cache", "pack"], package_dir, cache2);
@@ -282,6 +297,26 @@ it("bun pm cache unpack refuses hostile packs", async () => {
   expect(r.code).toBe(0);
   const links2 = (await readdirSorted(cache)).find(n => n.startsWith("links2@1.0.0"))!;
   expect(readFileSync(join(cache, links2, "bin", "cli"), "utf8")).toBe("y");
+
+  // a non-ASCII pair that only a case-insensitive/normalising filesystem equates: the
+  // lexical check cannot see it, the physical parent-chain walk must (macOS/Windows)
+  if (isMacOS || isWindows) {
+    await writeFile(
+      join(dir, "chain4.pack"),
+      Buffer.concat([
+        MAGIC,
+        rec(1, "chain4@1.0.0", 0, ""),
+        rec(4, "ä", 0o755, ""),
+        rec(3, "ä/up", 0o777, ".."),
+        rec(3, "Ä/UP/Ä/UP/out", 0o777, "../../../.."),
+        rec(0, "", 0, ""),
+      ]),
+    );
+    r = await run(["pm", "cache", "unpack", join(dir, "chain4.pack")], dir, cacheViaVictim);
+    expect(r.err).toContain("passes through another symlink");
+    expect(r.code).not.toBe(0);
+    expect((await readdirSorted(cache)).filter(n => n.startsWith("chain4"))).toEqual([]);
+  }
 
   // an absurd symlink target length
   await writeFile(

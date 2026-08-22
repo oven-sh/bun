@@ -1954,8 +1954,6 @@ impl napi_async_work {
         // Note: KeepAlive is not `Copy`, so move it out (the original slot may
         // be freed under us by `complete`).
         let mut poll_ref = core::mem::take(&mut self.poll_ref);
-        // KeepAlive::unref needs an event-loop ctx so it cannot impl Drop
-        // generically; this is a genuine one-off cleanup.
         scopeguard::defer! { poll_ref.unref(); }
 
         // https://github.com/nodejs/node/blob/a2de5b9150da60c77144bb5333371eaca3fab936/src/node_api.cc#L1201

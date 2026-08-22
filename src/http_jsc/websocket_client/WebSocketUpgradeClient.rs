@@ -422,7 +422,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
                             // connection succeed against a host the user didn't
                             // trust. The C++ caller emits an `error` event on null.
                             log!("createSSLContext failed for WebSocket: {:?}", err);
-                            // SAFETY: `vm_ptr` is the live per-thread VM.
                             poll_ref.unref();
                             return None;
                         };
@@ -577,10 +576,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     }
 
     pub(crate) fn clear_data(&self) {
-        self.poll_ref.with_mut(|p| {
-            // SAFETY: `get_mut_ptr()` is the live per-thread VM singleton.
-            p.unref()
-        });
+        self.poll_ref.with_mut(|p| p.unref());
 
         self.subprotocols.with_mut(|s| s.clear_and_free());
         self.clear_input();

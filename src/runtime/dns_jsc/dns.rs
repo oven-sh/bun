@@ -1914,8 +1914,6 @@ impl Drop for DNSLookup {
     fn drop(&mut self) {
         bun_output::scoped_log!(DNSLookup, "deinit");
         let _ = self.global_this();
-        // DNSLookup is always created on the JS event loop (it holds a JSGlobalObject),
-        // so the Js-arm vtable is the correct EventLoopCtx for KeepAlive::unref.
         self.poll_ref.unref();
         // RefPtr (= IntrusiveRc) does NOT deref on Drop; release the ref taken
         // by `init_ref` in `init()` / `GetAddrInfoRequest::init()`.

@@ -488,13 +488,10 @@ impl S3HttpSimpleTask {
 impl Drop for S3HttpSimpleTask {
     fn drop(&mut self) {
         // Side effects beyond freeing owned fields (which Rust drops automatically):
-        // - poll_ref.unref(vm)
+        // - poll_ref.unref()
         // - http.clearData()
         // Owned-field frees (response_buffer, headers, sign_result, range,
         // proxy_url, result.certificate_info, result.metadata) are handled by their own Drop impls.
-        // KeepAlive::unref takes an aio EventLoopCtx; the JS-loop ctx is fetched via
-        // the global hook (registered by crate::init) — same pattern as
-        // `event_loop_handle_to_ctx` in process.rs.
         self.poll_ref.unref();
         // Only `http.clear_data()` runs — never a full AsyncHTTP destructor —
         // so we intentionally do NOT `assume_init_drop`.

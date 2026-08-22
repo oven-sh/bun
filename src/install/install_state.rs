@@ -198,7 +198,7 @@ fn env_and_argv_hash(manager: &PackageManager) -> u64 {
         .filter(|k| {
             starts_with_ci(k, b"BUN_INSTALL")
                 || starts_with_ci(k, b"BUN_CONFIG_")
-                || k.len() >= 11 && k[..11].eq_ignore_ascii_case(b"NPM_CONFIG_")
+                || starts_with_ci(k, b"NPM_CONFIG_")
                 // spliced into argv (see below)
                 || k.eq_ignore_ascii_case(b"BUN_OPTIONS")
                 // where the global .npmrc / .bunfig.toml are looked up

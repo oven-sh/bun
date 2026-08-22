@@ -2151,6 +2151,9 @@ pub mod internal {
         /// Not a precise timestamp.
         pub(crate) created_at: u32,
 
+        /// Cleared once `get()` must no longer hand this request out: it
+        /// expired, a connect to its addresses failed, or it never fit in the
+        /// cache. From then on it is freed as soon as `refcount` drops to zero.
         pub(crate) valid: bool,
 
         #[cfg(target_os = "macos")]
@@ -2159,6 +2162,7 @@ pub mod internal {
 
     impl Request {
         pub(crate) fn new(key: RequestKeyOwned, refcount: u32, created_at: u32) -> *mut Self {
+            LIVE_REQUESTS.fetch_add(1, Ordering::Relaxed);
             bun_core::heap::into_raw(Box::new(Self {
                 key,
                 result: None,
@@ -2206,6 +2210,7 @@ pub mod internal {
                 // `result_buf` (Box<[ResultEntry]>) and `key.host` freed by Drop.
                 drop(bun_core::heap::take(this));
             }
+            LIVE_REQUESTS.fetch_sub(1, Ordering::Relaxed);
         }
     }
 
@@ -2563,10 +2568,11 @@ pub mod internal {
     }
 
     fn after_result_entries(req: *mut Request, results: Option<Box<[ResultEntry]>>, err: c_int) {
-        let guard = global_cache().lock();
+        let mut guard = global_cache().lock();
 
-        // SAFETY: `req` is the heap-allocated cache entry; its mutable fields are
-        // only touched under `global_cache().lock()`, which is held here.
+        // SAFETY: `req` is the heap-allocated request whose lookup just finished;
+        // its mutable fields are only touched under `global_cache().lock()`,
+        // which is held here.
         let notify = unsafe {
             // Park the owning Box on `Request.result_buf`; `RequestResult.info`
             // borrows its first element as a thin pointer for the C side.
@@ -2578,6 +2584,14 @@ pub mod internal {
             (*req).result = Some(RequestResult { info, err });
             let notify = core::mem::take(&mut (*req).notify);
             (*req).refcount -= 1;
+            if (*req).refcount == 0 && !(*req).valid {
+                // The lookup held the last reference, so no `freeaddrinfo` call
+                // is coming to apply this rule; `get()` never serves it either.
+                debug_assert!(notify.is_empty());
+                guard.remove(req);
+                Request::deinit(req);
+                return;
+            }
             notify
         };
 
@@ -2779,6 +2793,11 @@ pub mod internal {
     static DNS_CACHE_MISSES: AtomicUsize = AtomicUsize::new(0);
     static DNS_CACHE_ERRORS: AtomicUsize = AtomicUsize::new(0);
     static GETADDRINFO_CALLS: AtomicUsize = AtomicUsize::new(0);
+    /// `Request`s allocated and not yet freed. `DNS_CACHE_SIZE` only counts
+    /// the ones stored in the cache; this also counts the ones it had no room
+    /// for, so a test (via `bun:internal-for-testing`) can tell a freed request
+    /// from a leaked one.
+    static LIVE_REQUESTS: AtomicUsize = AtomicUsize::new(0);
 
     #[host_fn]
     pub(crate) fn get_dns_cache_stats(
@@ -2920,6 +2939,79 @@ pub mod internal {
         Ok(out)
     }
 
+    /// `bun:internal-for-testing`: see [`LIVE_REQUESTS`].
+    pub(crate) fn live_requests_for_testing(
+        _global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let live = LIVE_REQUESTS.load(Ordering::Relaxed);
+        Ok(JSValue::js_number(live as f64))
+    }
+
+    fn hostname_argument_for_testing(
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<bun::ZBox> {
+        let hostname = frame.argument(0);
+        if !hostname.is_string() {
+            return Err(global.throw_invalid_arguments(format_args!("expected (hostname: string)")));
+        }
+        let hostname_slice = hostname.to_slice(global)?;
+        Ok(bun::ZBox::from_bytes(hostname_slice.slice()))
+    }
+
+    /// `bun:internal-for-testing`: hold a reference on the cache entry for
+    /// `hostname`, as a connect does from its lookup until it settles. A
+    /// referenced entry cannot be evicted, so once every slot holds one the
+    /// next lookup for another name gets a request the cache has no room for.
+    /// Balance with [`release_cache_entry_for_testing`].
+    pub(crate) fn acquire_cache_entry_for_testing(
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let hostname = hostname_argument_for_testing(global, frame)?;
+        let key = RequestKey::init(Some(hostname.as_zstr()), 0);
+        let mut guard = global_cache().lock();
+        let mut timestamp_to_store: u32 = 0;
+        let Some(entry) = guard.get(&key, &mut timestamp_to_store) else {
+            drop(guard);
+            return Err(global.throw_invalid_arguments(format_args!(
+                "{} is not in the DNS cache",
+                bstr::BStr::new(hostname.as_bytes())
+            )));
+        };
+        // SAFETY: `entry` is a live cache slot; refcount is only mutated under the held lock.
+        unsafe { (*entry).refcount += 1 };
+        Ok(JSValue::UNDEFINED)
+    }
+
+    /// `bun:internal-for-testing`: drop a reference taken by
+    /// [`acquire_cache_entry_for_testing`] through the path a settled connect
+    /// uses (`Bun__addrinfo_freeRequest`). The reference being dropped is what
+    /// keeps the entry alive between the lookup and the release.
+    pub(crate) fn release_cache_entry_for_testing(
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let hostname = hostname_argument_for_testing(global, frame)?;
+        let key = RequestKey::init(Some(hostname.as_zstr()), 0);
+        let mut guard = global_cache().lock();
+        let mut timestamp_to_store: u32 = 0;
+        let entry = guard
+            .get(&key, &mut timestamp_to_store)
+            // SAFETY: `entry` is a live cache slot; refcount is only read under the held lock.
+            .filter(|entry| unsafe { (**entry).refcount > 0 });
+        drop(guard);
+        let Some(entry) = entry else {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "{} has no referenced DNS cache entry",
+                bstr::BStr::new(hostname.as_bytes())
+            )));
+        };
+        freeaddrinfo(entry, 0);
+        Ok(JSValue::UNDEFINED)
+    }
+
     pub(crate) fn getaddrinfo(
         loop_: *mut Loop,
         host: Option<&ZStr>,
@@ -2981,7 +3073,13 @@ pub mod internal {
             },
         );
 
-        let _ = guard.try_push(req);
+        if !guard.try_push(req) {
+            // Every entry is referenced, so there is nothing to evict for this
+            // one. The lookup still runs for this caller, but `get()` will never
+            // find the request, so it has to go with its last reference.
+            // SAFETY: `req` was just allocated and nothing else has seen it yet.
+            unsafe { (*req).valid = false };
+        }
         DNS_CACHE_MISSES.fetch_add(1, Ordering::Relaxed);
         DNS_CACHE_SIZE.store(guard.len, Ordering::Relaxed);
         drop(guard);
@@ -6069,4 +6167,16 @@ export_host_fn!(
 export_host_fn!(
     internal::seed_cache_for_testing,
     "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_seedCacheForTesting"
+);
+export_host_fn!(
+    internal::live_requests_for_testing,
+    "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_liveRequestsForTesting"
+);
+export_host_fn!(
+    internal::acquire_cache_entry_for_testing,
+    "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_acquireCacheEntryForTesting"
+);
+export_host_fn!(
+    internal::release_cache_entry_for_testing,
+    "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_releaseCacheEntryForTesting"
 );

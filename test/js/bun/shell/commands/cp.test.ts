@@ -1,7 +1,9 @@
 import { $ } from "bun";
 import { shellInternals } from "bun:internal-for-testing";
-import { describe, expect } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { join } from "node:path";
 import { bunExe, createTestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
 const { builtinDisabled } = shellInternals;
@@ -170,6 +172,110 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
       .fileEquals(TEST_COPY_TO_FOLDER_NEW_FILE, "Hello, World!")
       .testMini({ cwd: mini_tmpdir })
       .runAsTest("cp_recurse");
+  });
+});
+
+// The builtin is only the default on Windows; on POSIX it is switched on by an
+// env var that is read once per process, so each cp runs in a child bun.
+describe.concurrent("bunshell cp -R copies symlinks as written", () => {
+  const builtinEnv = { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" };
+
+  /** A directory holding `outside.txt` and `src/inner/target`; `addLinks` adds links to `src/`. */
+  function setup(name: string, addLinks: (src: string) => void) {
+    const dir = tempDir(`shell-cp-symlinks-${name}`, {
+      "outside.txt": "outside\n",
+      "src/inner/target": "target\n",
+    });
+    addLinks(join(String(dir), "src"));
+    return dir;
+  }
+
+  /** Runs `command` through the shell builtin inside `cwd`; returns cp's exit code and stderr. */
+  async function cp(cwd: string, command: string): Promise<{ exitCode: number; stderr: string }> {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        "const r = await Bun.$`${{ raw: process.argv[1] }}`.nothrow().quiet();" +
+          "console.log(JSON.stringify({ exitCode: r.exitCode, stderr: r.stderr.toString() }));",
+        command,
+      ],
+      cwd,
+      env: builtinEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout);
+  }
+
+  const copied = { exitCode: 0, stderr: "" };
+
+  function links(dir: string, names: string[]) {
+    return Object.fromEntries(names.map(name => [name, readlinkSync(join(dir, name))]));
+  }
+
+  test("relative targets stay relative, so the copy does not point into the source tree", async () => {
+    using dir = setup("relative", src => {
+      symlinkSync("inner/target", join(src, "rel"));
+      symlinkSync("../outside.txt", join(src, "up"));
+      symlinkSync(join(src, "inner", "target"), join(src, "abs"));
+      symlinkSync("inner", join(src, "reldir"), "dir");
+    });
+    const out = join(String(dir), "out");
+
+    expect(await cp(String(dir), "cp -R src out")).toEqual(copied);
+    expect(links(out, ["rel", "up", "abs", "reldir"])).toEqual({
+      rel: p("inner/target"),
+      up: p("../outside.txt"),
+      abs: readlinkSync(join(String(dir), "src", "abs")),
+      reldir: "inner",
+    });
+    expect(realpathSync(join(out, "rel"))).toBe(realpathSync(join(out, "inner", "target")));
+    expect(readdirSync(join(out, "reldir"))).toEqual(["target"]);
+
+    // The copy stands on its own once the source is gone.
+    rmSync(join(String(dir), "src"), { recursive: true });
+    expect(readFileSync(join(out, "rel"), "utf8")).toBe("target\n");
+    expect(readFileSync(join(out, "up"), "utf8")).toBe("outside\n");
+    expect(readFileSync(join(out, "reldir", "target"), "utf8")).toBe("target\n");
+  });
+
+  test("a dangling link is copied as written", async () => {
+    using dir = setup("dangling", src => symlinkSync("missing", join(src, "dangling")));
+
+    expect(await cp(String(dir), "cp -R src out")).toEqual(copied);
+    expect(readlinkSync(join(String(dir), "out", "dangling"))).toBe("missing");
+  });
+
+  test("a link named as the source operand is copied as written", async () => {
+    using dir = setup("operand", src => symlinkSync("inner/target", join(src, "rel")));
+
+    expect(await cp(String(dir), "cp -R src/rel rel-copy")).toEqual(copied);
+    expect(readlinkSync(join(String(dir), "rel-copy"))).toBe(p("inner/target"));
+  });
+
+  test.skipIf(!isWindows)("a junction is copied as a link to the same directory", async () => {
+    using dir = setup("junction", src => symlinkSync(join(src, "inner"), join(src, "junction"), "junction"));
+    const out = join(String(dir), "out");
+
+    expect(await cp(String(dir), "cp -R src out")).toEqual(copied);
+    expect(lstatSync(join(out, "junction")).isSymbolicLink()).toBe(true);
+    expect(realpathSync(join(out, "junction"))).toBe(realpathSync(join(String(dir), "src", "inner")));
+  });
+
+  // `\\localhost\C$\...` is the administrative-share spelling of a local path, as in the node:fs cp tests.
+  test.skipIf(!isWindows)("a directory link to a UNC path is copied as written", async () => {
+    using dir = setup("unc", src => {
+      const inner = realpathSync(join(src, "inner"));
+      symlinkSync(`\\\\localhost\\${inner[0]}$\\${inner.slice(3)}`, join(src, "share"), "dir");
+    });
+    const out = join(String(dir), "out");
+
+    expect(await cp(String(dir), "cp -R src out")).toEqual(copied);
+    expect(readlinkSync(join(out, "share"))).toBe(readlinkSync(join(String(dir), "src", "share")));
+    expect(readFileSync(join(out, "share", "target"), "utf8")).toBe("target\n");
   });
 });
 

@@ -1,11 +1,10 @@
-use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::io::Write as _;
 
 use bstr::BStr;
 use bun_ast::{Expr, Log, Source};
 use bun_collections::{DynamicBitSet, StringHashMap, index_sort};
-use bun_core::fmt::PathSep;
+use bun_core::fmt::{PathSep, escape_control_chars};
 use bun_core::{FileKind, Global, Output, strings};
 use bun_install::isolated_install::store::entry::fmt_store_key;
 use bun_install::lockfile::{Lockfile, package::PackageColumns as _, reachable, tree};
@@ -347,19 +346,6 @@ fn license_order(a: &[u8], b: &[u8]) -> Ordering {
                 .cmp(b_key.iter().map(u8::to_ascii_lowercase))
         })
         .then_with(|| a.cmp(b))
-}
-
-fn printable(s: &[u8]) -> Cow<'_, [u8]> {
-    if s.iter().any(u8::is_ascii_control) {
-        Cow::Owned(
-            s.iter()
-                .copied()
-                .filter(|b| !b.is_ascii_control())
-                .collect(),
-        )
-    } else {
-        Cow::Borrowed(s)
-    }
 }
 
 fn tree_locations(lockfile: &Lockfile) -> Vec<Option<Box<[u8]>>> {
@@ -732,7 +718,7 @@ fn print_text(entries: &[Entry], long: bool, checked: usize, summary: bool) {
         licenses += 1;
         bun_core::prettyln!(
             "<b>{}<r> <d>({})<r>",
-            BStr::new(&printable(license)),
+            escape_control_chars(license),
             end - start
         );
         for (i, entry) in entries[start..end].iter().enumerate() {
@@ -740,8 +726,8 @@ fn print_text(entries: &[Entry], long: bool, checked: usize, summary: bool) {
             bun_core::pretty!(
                 "<d>{}<r> {}<d>@{}<r>",
                 if last { "└──" } else { "├──" },
-                BStr::new(&entry.name),
-                BStr::new(&entry.version)
+                escape_control_chars(&entry.name),
+                escape_control_chars(&entry.version)
             );
             if entry.dev_only {
                 bun_core::pretty!(" <d>(dev)<r>");
@@ -753,9 +739,9 @@ fn print_text(entries: &[Entry], long: bool, checked: usize, summary: bool) {
                     .flatten()
                 {
                     if last {
-                        bun_core::prettyln!("    <d>{}<r>", BStr::new(&printable(field)));
+                        bun_core::prettyln!("    <d>{}<r>", escape_control_chars(field));
                     } else {
-                        bun_core::prettyln!("<d>│   {}<r>", BStr::new(&printable(field)));
+                        bun_core::prettyln!("<d>│   {}<r>", escape_control_chars(field));
                     }
                 }
             }

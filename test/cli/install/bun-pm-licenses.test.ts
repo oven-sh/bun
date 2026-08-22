@@ -71,6 +71,9 @@ function expectEmptyText(stdout: string, checked: number) {
 
 const MISSING_NOTE = "note: run 'bun install' first";
 
+// Text output is printable text and newlines; any other C0 byte, DEL or C1 character came through from a package.json unescaped.
+const RAW_CONTROL = /[\x00-\x09\x0b-\x1f\x7f\x80-\x9f]/;
+
 const fixturePackageJson = JSON.stringify({
   name: "licenses-fixture",
   version: "1.0.0",
@@ -770,7 +773,7 @@ describe("bun pm licenses", () => {
 
     const second = await licensesText(dir, "--long");
     expect(second).toContain(
-      "├── no-deps@1.0.0\n│   only a description\n├── no-deps@1.0.1\n│   newest winsline two\n│   https://example.com/new\n└── one-dep@1.0.0\n",
+      "├── no-deps@1.0.0\n│   only a description\n├── no-deps@1.0.1\n│   newest wins\\nline two\n│   https://example.com/new\n└── one-dep@1.0.0\n",
     );
     expect(second.split("\n").some(line => line.startsWith("line two"))).toBeFalse();
     const parsed = await licensesJson(dir);
@@ -838,7 +841,7 @@ describe("bun pm licenses", () => {
   });
 
   test.concurrent(
-    "control characters from package.json are stripped in text output but preserved in --json",
+    "control characters from package.json are escaped in text output but preserved in --json",
     async () => {
       const dir = await setup();
       const evilLicense = "MIT\u001b[31m\nEVIL";
@@ -849,17 +852,15 @@ describe("bun pm licenses", () => {
       // --no-summary drops the "bun pm licenses v<version> (<short sha>)" banner. A short sha can be all
       // digits, and the banner would then pass the group-header filter below.
       const stdout = await licensesText(dir, "--long", "--no-summary");
-      expect(stdout).not.toContain("\u001b");
-      expect(stdout).not.toContain("\r");
-      expect(stdout).not.toContain("\t");
-      expect(stdout).toContain("MIT[31mEVIL (1)\n└── a-dep@1.0.1 (dev)\n    tabhere\n");
-      expect(stdout).toContain("ISCGPL-3.0 (1)\n└── one-dep@1.0.0\n");
-      expect(stdout).toContain("BSD2 (1)\n└── no-deps@1.0.0\n");
+      expect(stdout).not.toMatch(RAW_CONTROL);
+      expect(stdout).toContain("MIT\\x1b[31m\\nEVIL (1)\n└── a-dep@1.0.1 (dev)\n    tab\\there\\r\\n\n");
+      expect(stdout).toContain("ISC\\nGPL-3.0 (1)\n└── one-dep@1.0.0\n");
+      expect(stdout).toContain("BSD\\t2 (1)\n└── no-deps@1.0.0\n");
       expect(stdout.split("\n").filter(line => / \(\d+\)$/.test(line))).toStrictEqual([
-        "BSD2 (1)",
-        "ISCGPL-3.0 (1)",
+        "BSD\\t2 (1)",
+        "ISC\\nGPL-3.0 (1)",
         "MIT (2)",
-        "MIT[31mEVIL (1)",
+        "MIT\\x1b[31m\\nEVIL (1)",
         "Unknown (1)",
       ]);
       expect(stdout.split("\n").some(line => line.startsWith("GPL-3.0") || line.startsWith("EVIL"))).toBeFalse();
@@ -875,7 +876,7 @@ describe("bun pm licenses", () => {
     },
   );
 
-  test.concurrent("--long strips control characters from author, description and homepage", async () => {
+  test.concurrent("--long escapes control characters in author, description and homepage", async () => {
     const dir = await setup();
     const author = "Eve\u001b]8;;https://evil.example\u0007click\u001b]8;;\u0007";
     const description = "first\r\nsecond";
@@ -883,11 +884,13 @@ describe("bun pm licenses", () => {
     patchInstalledManifest(dir, "a-dep", { author, description, homepage });
 
     const stdout = await licensesText(dir, "--long");
-    expect(stdout).not.toContain("\u001b");
-    expect(stdout).not.toContain("\u0007");
-    expect(stdout).not.toContain("\r");
+    expect(stdout).not.toMatch(RAW_CONTROL);
     expect(stdout).toContain(
-      "├── a-dep@1.0.1 (dev)\n│   Eve]8;;https://evil.exampleclick]8;;\n│   firstsecond\n│   https://example.com/[2Jx\n├── no-deps@1.0.0\n",
+      "├── a-dep@1.0.1 (dev)\n" +
+        "│   Eve\\x1b]8;;https://evil.example\\x07click\\x1b]8;;\\x07\n" +
+        "│   first\\r\\nsecond\n" +
+        "│   https://example.com/\\x1b[2Jx\n" +
+        "├── no-deps@1.0.0\n",
     );
     expect(stdout.split("\n").some(line => line.startsWith("second"))).toBeFalse();
 
@@ -898,6 +901,47 @@ describe("bun pm licenses", () => {
       homepage,
     });
   });
+
+  // U+009B is the one-character form of ESC [ and, unlike the ASCII controls above, is accepted in a file name and a
+  // package name, so a tarball carries it into both halves of the name@version column. A backslash and U+00A9 (encoded
+  // with the same lead byte as U+009B) must come through unchanged.
+  test.concurrent(
+    "C1 controls and DEL are escaped in the license, the name@version column and --long fields",
+    async () => {
+      const C1 = "\u009b";
+      const manifest = {
+        name: `dep-${C1}`,
+        version: "1.0.0",
+        license: `MIT${C1}31m`,
+        author: `Eve${C1}2J \\ \u007f \u00a9`,
+        description: `one${C1}two`,
+        homepage: `https://example.com/${C1}x`,
+      };
+      const tarball = `dep-${C1}.tgz`;
+      const { packageDir: dir } = await registry.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: { "package.json": pkg({ dependencies: { dep: `file:./${tarball}` } }) },
+      });
+      const archive = new Bun.Archive({ "package/package.json": JSON.stringify(manifest) }, { compress: "gzip" });
+      writeFileSync(join(dir, tarball), await archive.bytes());
+      await install(dir, "hoisted");
+
+      const stdout = await licensesText(dir, "--long");
+      expect(stdout).not.toMatch(RAW_CONTROL);
+      expect(stdout).toContain(
+        "MIT\\u009b31m (1)\n" +
+          "└── dep-\\u009b@./dep-\\u009b.tgz\n" +
+          "    Eve\\u009b2J \\ \\x7f \u00a9\n" +
+          "    one\\u009btwo\n" +
+          "    https://example.com/\\u009bx\n",
+      );
+
+      const { name, license, author, description, homepage } = manifest;
+      expect(await licensesJson(dir)).toStrictEqual({
+        [license]: [{ name, versions: [`./${tarball}`], license, author, description, homepage }],
+      });
+    },
+  );
 
   test.concurrent("isolated linker matches hoisted: marker, --dev and --long", async () => {
     const dir = await setup("isolated");

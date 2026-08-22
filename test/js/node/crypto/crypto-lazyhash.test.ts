@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Cipheriv, Decipheriv, Hash, Hmac, createCipheriv, createDecipheriv, createHash, createHmac } from "crypto";
-import { StringDecoder } from "string_decoder";
 import { Transform } from "stream";
+import { StringDecoder } from "string_decoder";
 
 describe("LazyHash quirks", () => {
   test("hash instanceof Transform", () => {
@@ -19,10 +19,34 @@ const iv = Buffer.alloc(16, 2);
 // Hash/Hmac/Cipheriv/Decipheriv are native classes extending Transform whose Transform half is
 // only constructed when _readableState/_writableState is first touched (Node's LazyTransform).
 describe.each([
-  ["Hash", Hash, (...extra: unknown[]) => new (Hash as any)("sha256", ...extra), 2, ["_flush", "_transform", "copy", "digest", "update"]],
-  ["Hmac", Hmac, (...extra: unknown[]) => new (Hmac as any)("sha256", "key", ...extra), 3, ["_flush", "_transform", "digest", "update"]],
-  ["Cipheriv", Cipheriv, (...extra: unknown[]) => new (Cipheriv as any)("aes-256-cbc", key, iv, ...extra), 4, ["_flush", "_transform", "final", "getAuthTag", "setAAD", "setAutoPadding", "update"]],
-  ["Decipheriv", Decipheriv, (...extra: unknown[]) => new (Decipheriv as any)("aes-256-cbc", key, iv, ...extra), 4, ["_flush", "_transform", "final", "setAAD", "setAuthTag", "setAutoPadding", "update"]],
+  [
+    "Hash",
+    Hash,
+    (...extra: unknown[]) => new (Hash as any)("sha256", ...extra),
+    2,
+    ["_flush", "_transform", "copy", "digest", "update"],
+  ],
+  [
+    "Hmac",
+    Hmac,
+    (...extra: unknown[]) => new (Hmac as any)("sha256", "key", ...extra),
+    3,
+    ["_flush", "_transform", "digest", "update"],
+  ],
+  [
+    "Cipheriv",
+    Cipheriv,
+    (...extra: unknown[]) => new (Cipheriv as any)("aes-256-cbc", key, iv, ...extra),
+    4,
+    ["_flush", "_transform", "final", "getAuthTag", "setAAD", "setAutoPadding", "update"],
+  ],
+  [
+    "Decipheriv",
+    Decipheriv,
+    (...extra: unknown[]) => new (Decipheriv as any)("aes-256-cbc", key, iv, ...extra),
+    4,
+    ["_flush", "_transform", "final", "setAAD", "setAuthTag", "setAutoPadding", "update"],
+  ],
 ] as const)("%s class shape", (name, Ctor: any, make, length, methods) => {
   test("instance has no own properties until options are passed or it is streamed", () => {
     const h = make();
@@ -106,7 +130,9 @@ test("Cipheriv/Decipheriv output encoding uses a lazily created this._decoder", 
   expect(c._decoder).toBeInstanceOf(StringDecoder);
   const d = createDecipheriv("aes-256-cbc", key, iv);
   // split mid-character: the decoder must carry state between update() calls
-  expect(d.update(hex.slice(0, 6), "hex", "utf8") + "|" + d.update(hex.slice(6), "hex", "utf8")).toBe("|héllo wörld mo");
+  expect(d.update(hex.slice(0, 6), "hex", "utf8") + "|" + d.update(hex.slice(6), "hex", "utf8")).toBe(
+    "|héllo wörld mo",
+  );
   expect(() => d.final("latin1")).toThrow(expect.objectContaining({ code: "ERR_INTERNAL_ASSERTION" }));
   expect(() => createDecipheriv("aes-256-cbc", key, iv).update(hex, "hex", "bogus" as any)).toThrow(
     expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING" }),

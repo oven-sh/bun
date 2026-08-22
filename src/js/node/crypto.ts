@@ -69,7 +69,6 @@ const {
   argon2Sync: _argon2Sync,
 } = $rust("node_crypto_binding.rs", "createNodeCryptoBindingZig");
 
-
 const {
   validateFunction,
   validateInteger,

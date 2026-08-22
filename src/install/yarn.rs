@@ -129,10 +129,13 @@ impl<'a> Entry<'a> {
     }
 
     pub(crate) fn is_git_dependency(version: &[u8]) -> bool {
+        if let Some(github_path) = version.strip_prefix(b"https://github.com/") {
+            // An archive download's `#` is yarn's tarball hash, not a commit.
+            return !dependency::is_github_tarball_path(Entry::url_without_hash(github_path));
+        }
         version.starts_with(b"git+")
             || version.starts_with(b"git://")
             || version.starts_with(b"github:")
-            || version.starts_with(b"https://github.com/")
     }
 
     pub(crate) fn is_npm_alias(version: &[u8]) -> bool {
@@ -141,6 +144,14 @@ impl<'a> Entry<'a> {
 
     pub(crate) fn is_remote_tarball(version: &[u8]) -> bool {
         version.starts_with(b"https://") && version.ends_with(b".tgz")
+    }
+
+    /// yarn v1 writes tarball `resolved` fields as `<url>#<sha1 of the tarball>`.
+    pub(crate) fn url_without_hash(resolved: &[u8]) -> &[u8] {
+        match strings::index_of_char_usize(resolved, b'#') {
+            Some(hash_idx) => &resolved[..hash_idx],
+            None => resolved,
+        }
     }
 
     pub(crate) fn is_workspace_dependency(version: &[u8]) -> bool {
@@ -939,31 +950,26 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
 
         package_id_to_yarn_idx[package_id as usize] = yarn_idx;
 
+        let resolved_url: Option<&[u8]> = entry.resolved.as_deref().map(Entry::url_without_hash);
+
         let name_to_use: &[u8] = 'blk: {
             if entry.commit.is_some() && entry.git_repo_name.is_some() {
                 break 'blk entry.git_repo_name.as_deref().unwrap();
-            } else if let Some(resolved) = entry.resolved.as_deref() {
-                if is_direct_url_dep
-                    || Entry::is_remote_tarball(resolved)
-                    || resolved.ends_with(b".tgz")
+            } else if let (true, Some(resolved)) = (is_direct_url_dep, resolved_url) {
+                // https://registry.npmjs.org/package/-/package-version.tgz
+                if strings::index_of(resolved, b"registry.npmjs.org/").is_some()
+                    || strings::index_of(resolved, b"registry.yarnpkg.com/").is_some()
                 {
-                    // https://registry.npmjs.org/package/-/package-version.tgz
-                    if strings::index_of(resolved, b"registry.npmjs.org/").is_some()
-                        || strings::index_of(resolved, b"registry.yarnpkg.com/").is_some()
-                    {
-                        if let Some(separator_idx) = strings::index_of(resolved, b"/-/") {
-                            if let Some(registry_idx) = strings::index_of(resolved, b"registry.") {
-                                let after_registry = &resolved[registry_idx..];
-                                if let Some(domain_slash) = strings::index_of(after_registry, b"/")
-                                {
-                                    let package_start = registry_idx + domain_slash + 1;
-                                    let extracted_name = &resolved[package_start..separator_idx];
-                                    break 'blk extracted_name;
-                                }
+                    if let Some(separator_idx) = strings::index_of(resolved, b"/-/") {
+                        if let Some(registry_idx) = strings::index_of(resolved, b"registry.") {
+                            let after_registry = &resolved[registry_idx..];
+                            if let Some(domain_slash) = strings::index_of(after_registry, b"/") {
+                                let package_start = registry_idx + domain_slash + 1;
+                                let extracted_name = &resolved[package_start..separator_idx];
+                                break 'blk extracted_name;
                             }
                         }
                     }
-                    break 'blk base_name;
                 }
             }
             break 'blk base_name;
@@ -1033,17 +1039,8 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                     }
                 }
                 break 'blk Resolution::default();
-            } else if let Some(resolved) = entry.resolved.as_deref() {
+            } else if let Some(resolved) = resolved_url {
                 if is_direct_url_dep {
-                    break 'blk Resolution::init(ResolutionValue::RemoteTarball(
-                        sbuf!().append(resolved)?,
-                    ));
-                }
-
-                // Yarn v1 lockfiles legitimately contain entries without an integrity field
-                // (workspace deps, file:, codeload tarballs), so migration intentionally
-                // accepts off-registry tarball URLs without integrity instead of failing.
-                if Entry::is_remote_tarball(resolved) || resolved.ends_with(b".tgz") {
                     break 'blk Resolution::init(ResolutionValue::RemoteTarball(
                         sbuf!().append(resolved)?,
                     ));
@@ -1053,9 +1050,20 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 let result =
                     Semver::Version::parse(version.sliced(this.buffers.string_bytes.as_slice()));
                 if !result.valid {
+                    // Yarn v1 lockfiles legitimately contain entries without an integrity field
+                    // (workspace deps, file:, codeload tarballs), so migration intentionally
+                    // accepts off-registry tarball URLs without integrity instead of failing.
+                    if Entry::is_remote_tarball(resolved) || resolved.ends_with(b".tgz") {
+                        break 'blk Resolution::init(ResolutionValue::RemoteTarball(
+                            sbuf!().append(resolved)?,
+                        ));
+                    }
                     break 'blk Resolution::default();
                 }
 
+                // `has_trusted_dependency` compares this URL with the canonical registry
+                // tarball URL, so it must be the bare URL a fresh install records: no
+                // `#sha1`, and no RemoteTarball just because the URL ends in `.tgz`.
                 let is_default_registry = resolved.starts_with(b"https://registry.yarnpkg.com/")
                     || resolved.starts_with(b"https://registry.npmjs.org/");
 

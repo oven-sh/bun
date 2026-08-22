@@ -2935,7 +2935,7 @@ exports[`bun pm migrate for existing yarn.lock yarn-cli-repo: yarn-cli-repo 1`] 
 
     "class-utils/define-property/is-descriptor/is-data-descriptor/kind-of": ["kind-of@3.2.2", "", { "dependencies": { "is-buffer": "^1.1.5" } }, "sha1-MeohpzS6ubuw8yRm2JOupR5KPGQ="],
 
-    "commitizen/inquirer/cli-cursor/restore-cursor/onetime": ["onetime@1.1.0", "http://registry.npmjs.org/onetime/-/onetime-1.1.0.tgz#a1f7838f8314c516f05ecefcbc4ccfe04b4ed789", {}, "sha1-ofeDj4MUxRbwXs78vEzP4EtO14k="],
+    "commitizen/inquirer/cli-cursor/restore-cursor/onetime": ["onetime@1.1.0", "http://registry.npmjs.org/onetime/-/onetime-1.1.0.tgz", {}, "sha1-ofeDj4MUxRbwXs78vEzP4EtO14k="],
 
     "eslint/inquirer/chalk/supports-color/has-flag": ["has-flag@3.0.0", "", {}, "sha1-tdRU3CGZriJWmfNGfloH87lVuv0="],
 
@@ -3154,7 +3154,7 @@ exports[`bun pm migrate for existing yarn.lock yarn-stuff: yarn-stuff 1`] = `
 
     "reg": ["abbrev@1.1.1", "", {}, "sha512-nne9/IiQ/hzIhY6pdDnbBtz7DjPTKrY00P/zvPSm5pOFkl6xuGrGnXn/VtTNNfNtAfZ9/1RtehkszU9qcTii0Q=="],
 
-    "remote": ["abbrev@https://registry.npmjs.org/abbrev/-/abbrev-1.1.1.tgz#f8f2c887ad10bf67f634f005b6987fed3179aac8", {}],
+    "remote": ["abbrev@https://registry.npmjs.org/abbrev/-/abbrev-1.1.1.tgz", {}],
 
     "symlink": ["symlink@file:abbrev-link-target", {}],
 

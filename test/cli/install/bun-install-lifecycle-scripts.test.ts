@@ -1,5 +1,6 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { readdirSync } from "fs";
 import { exists, mkdir, rm, writeFile } from "fs/promises";
 import {
   VerdaccioRegistry,
@@ -10,6 +11,7 @@ import {
   isWindows,
   readdirSorted,
   runBunInstall,
+  tempDir,
 } from "harness";
 import { join, sep } from "path";
 
@@ -4217,3 +4219,232 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
   });
 }
+
+// These tests use a self-contained registry instead of verdaccio because the
+// verdaccio fixture set is installed under a hoisted `setupTest()`, and the
+// isolated-linker code path needs a workspace layout.
+describe.concurrent("pm untrusted/trust under the isolated linker", () => {
+  function makeTarball(pkg: Record<string, unknown>): Uint8Array {
+    const enc = new TextEncoder();
+    const hdr = (name: string, size: number) => {
+      const h = new Uint8Array(512);
+      const put = (s: string, o: number) => h.set(enc.encode(s), o);
+      put(name, 0);
+      put("0000644\0", 100);
+      put("0000000\0", 108);
+      put("0000000\0", 116);
+      put(size.toString(8).padStart(11, "0") + "\0", 124);
+      put("00000000000\0", 136);
+      h.fill(0x20, 148, 156);
+      h[156] = 0x30;
+      put("ustar\0", 257);
+      put("00", 263);
+      let sum = 0;
+      for (let i = 0; i < 512; i++) sum += h[i];
+      put(sum.toString(8).padStart(6, "0") + "\0 ", 148);
+      return h;
+    };
+    const entry = (name: string, data: string) => {
+      const body = enc.encode(data);
+      const pad = new Uint8Array((512 - (body.length % 512)) % 512);
+      return [hdr(name, body.length), body, pad];
+    };
+    const parts = [
+      ...entry("package/package.json", JSON.stringify(pkg)),
+      ...entry("package/index.js", "module.exports = {}"),
+      new Uint8Array(1024),
+    ];
+    const out = new Uint8Array(parts.reduce((a, x) => a + x.length, 0));
+    let off = 0;
+    for (const p of parts) {
+      out.set(p, off);
+      off += p.length;
+    }
+    return Bun.gzipSync(out);
+  }
+
+  /**
+   * Workspace root + `packages/b` depending on `pkgName`, which has a postinstall
+   * that drops `RAN-marker` in its own directory. Served from an in-process registry.
+   * `depSpec(serverUrl)` controls how `packages/b` depends on it.
+   */
+  async function setup(opts: { pkgName: string; bunfigExtra?: string; depSpec?: (serverUrl: string) => string }) {
+    const { pkgName } = opts;
+    const pj = {
+      name: pkgName,
+      version: "1.0.0",
+      scripts: {
+        postinstall: `${bunExe()} -e 'require("fs").writeFileSync("RAN-marker","ok")'`,
+      },
+    };
+    const tgz = makeTarball(pj);
+    const integrity = "sha512-" + new Bun.CryptoHasher("sha512").update(tgz).digest("base64");
+
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        if (new URL(req.url).pathname.endsWith(".tgz")) return new Response(tgz);
+        return Response.json({
+          name: pkgName,
+          "dist-tags": { latest: "1.0.0" },
+          versions: {
+            "1.0.0": {
+              ...pj,
+              hasInstallScript: true,
+              dist: { tarball: `${server.url}${pkgName}-1.0.0.tgz`, integrity },
+            },
+          },
+        });
+      },
+    });
+    const serverUrl = String(server.url);
+
+    const dir = tempDir("pm-trust-isolated", {
+      "package.json": JSON.stringify({ name: "root", private: true, workspaces: ["packages/*"] }),
+      "packages/b/package.json": JSON.stringify({
+        name: "ws-b",
+        version: "1.0.0",
+        dependencies: { [pkgName]: opts.depSpec ? opts.depSpec(serverUrl) : "1.0.0" },
+      }),
+    });
+    const packageDir = String(dir);
+    const cacheDir = join(packageDir, ".bun-cache");
+    await write(
+      join(packageDir, "bunfig.toml"),
+      `[install]\nregistry = "${serverUrl}"\ncache = "${cacheDir.replaceAll("\\", "\\\\")}"\nlinker = "isolated"\n${opts.bunfigExtra ?? ""}`,
+    );
+
+    return {
+      packageDir,
+      cacheDir,
+      env: { ...baseEnv, BUN_INSTALL_CACHE_DIR: cacheDir },
+      async [Symbol.asyncDispose]() {
+        await server.stop(true);
+        await dir[Symbol.asyncDispose]();
+      },
+    };
+  }
+
+  async function run(ctx: { packageDir: string; env: Record<string, string> }, ...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd: ctx.packageDir,
+      env: ctx.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out, err, exitCode };
+  }
+
+  function findMarkers(root: string): string[] {
+    const found: string[] = [];
+    const walk = (d: string) => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const full = join(d, e.name);
+        if (e.name === "RAN-marker") found.push(full);
+        else if (e.isDirectory() && !e.isSymbolicLink()) walk(full);
+      }
+    };
+    walk(root);
+    return found;
+  }
+
+  test("finds and runs workspace-member dep scripts in node_modules/.bun", async () => {
+    const pkgName = "lifecycle-postinstall-pkg";
+    await using ctx = await setup({ pkgName });
+    const { packageDir } = ctx;
+
+    {
+      const { out, err, exitCode } = await run(ctx, "install");
+      expect(err).not.toContain("error:");
+      expect(out).toContain("Blocked 1 postinstall. Run `bun pm untrusted` for details.");
+      expect(exitCode).toBe(0);
+    }
+
+    const storePkgDir = join(packageDir, "node_modules", ".bun", `${pkgName}@1.0.0`, "node_modules", pkgName);
+    expect(await exists(storePkgDir)).toBe(true);
+    expect(await exists(join(storePkgDir, "RAN-marker"))).toBe(false);
+
+    {
+      const { out, err, exitCode } = await run(ctx, "pm", "untrusted");
+      expect(err).toContain("bun pm untrusted");
+      expect(out).toContain(join("node_modules", ".bun", `${pkgName}@1.0.0`, "node_modules", pkgName));
+      expect(out).toContain("[postinstall]");
+      expect(exitCode).toBe(0);
+    }
+
+    {
+      const { out, err, exitCode } = await run(ctx, "pm", "trust", pkgName);
+      expect(err).not.toContain("error:");
+      expect(out).toContain("1 script ran across 1 package");
+      expect(exitCode).toBe(0);
+    }
+
+    expect(await exists(join(storePkgDir, "RAN-marker"))).toBe(true);
+    expect(JSON.parse(await file(join(packageDir, "package.json")).text()).trustedDependencies).toEqual([pkgName]);
+  });
+
+  test("matches store entries whose resolution was truncated and hashed", async () => {
+    const pkgName = "lifecycle-long-url-pkg";
+    // The store dir is `<name>@<resolution>`, and the resolution part is capped
+    // (Store.rs MAX_RESOLUTION_LEN); a long tarball URL forces the
+    // `<cut>+<hash>` form, which a naive `<name>@<full resolution>` lookup misses.
+    const longSegment = Buffer.alloc(120, "x").toString();
+    await using ctx = await setup({ pkgName, depSpec: url => `${url}${longSegment}/${pkgName}-1.0.0.tgz` });
+    const { packageDir } = ctx;
+
+    {
+      const { out, err, exitCode } = await run(ctx, "install");
+      expect(err).not.toContain("error:");
+      expect(out).toContain("Blocked 1 postinstall. Run `bun pm untrusted` for details.");
+      expect(exitCode).toBe(0);
+    }
+
+    const bunStore = join(packageDir, "node_modules", ".bun");
+    const [entryName, ...rest] = readdirSync(bunStore).filter(n => n.startsWith(`${pkgName}@`));
+    expect(rest).toEqual([]);
+    // Proves the truncation path was taken: far shorter than the URL we depended on.
+    expect(entryName.length).toBeLessThan(`${pkgName}@`.length + longSegment.length);
+    expect(entryName).toMatch(/\+[0-9a-f]{16}$/);
+
+    {
+      const { out, exitCode } = await run(ctx, "pm", "untrusted");
+      expect(out).toContain(join("node_modules", ".bun", entryName, "node_modules", pkgName));
+      expect(out).toContain("[postinstall]");
+      expect(exitCode).toBe(0);
+    }
+
+    {
+      const { out, err, exitCode } = await run(ctx, "pm", "trust", pkgName);
+      expect(err).not.toContain("error:");
+      expect(out).toContain("1 script ran across 1 package");
+      expect(exitCode).toBe(0);
+    }
+
+    expect(findMarkers(bunStore)).toEqual([join(bunStore, entryName, "node_modules", pkgName, "RAN-marker")]);
+    expect(JSON.parse(await file(join(packageDir, "package.json")).text()).trustedDependencies).toEqual([pkgName]);
+  });
+
+  test("does not run scripts inside the shared global store", async () => {
+    const pkgName = "lifecycle-globalstore-pkg";
+    await using ctx = await setup({ pkgName, bunfigExtra: "globalStore = true\n" });
+    const { packageDir, cacheDir } = ctx;
+
+    {
+      const { err, exitCode } = await run(ctx, "install");
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    }
+
+    {
+      const { out, err, exitCode } = await run(ctx, "pm", "trust", pkgName);
+      expect(err).not.toContain("error:");
+      expect(out).toContain("linked from the global store");
+      expect(exitCode).toBe(0);
+    }
+
+    expect(JSON.parse(await file(join(packageDir, "package.json")).text()).trustedDependencies).toEqual([pkgName]);
+    expect(findMarkers(cacheDir)).toEqual([]);
+  });
+});

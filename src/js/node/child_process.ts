@@ -1694,9 +1694,6 @@ function isInternalIpcMessage(message) {
 }
 
 function streamFdOf(item): number | undefined {
-  const itemFd = ObjectHasOwn(item, "fd") ? item.fd : undefined;
-  if (typeof itemFd === "number") return itemFd;
-
   const handle = item._handle;
   const handleFd = handle ? handle.fd : undefined;
   if (typeof handleFd === "number") return handleFd;
@@ -1712,7 +1709,7 @@ function streamFdOf(item): number | undefined {
   return undefined;
 }
 
-function nodeToBun(item: string, index: number): string | number | null | NodeJS.TypedArray | ArrayBufferView {
+function nodeToBun(item, index: number): string | number | null | NodeJS.TypedArray | ArrayBufferView {
   // If not defined, use the default.
   // For stdin/stdout/stderr, it's pipe. For others, it's ignore.
   if (item == null) {
@@ -1722,6 +1719,11 @@ function nodeToBun(item: string, index: number): string | number | null | NodeJS
   // we can get the fd from the ReadStream for the corresponding stdio
   if (typeof item === "number") {
     return item;
+  }
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L1058
+  if (typeof item === "object") {
+    const fd = item.fd;
+    if (typeof fd === "number") return fd;
   }
   if (isNodeStreamReadable(item) || isNodeStreamWritable(item)) {
     const fd = streamFdOf(item);
@@ -1788,7 +1790,7 @@ function getBunStdioFromOptions(stdio) {
   // overlapped -- same as pipe on Unix based systems
   // inherit -- 'inherit': equivalent to ['inherit', 'inherit', 'inherit'] or [0, 1, 2]
   // ignore -- > /dev/null, more or less same as null option for Bun.spawn stdio
-  // TODO: Stream -- use this stream
+  // Stream, handle or { fd } object -- its underlying FD is shared with the child
   // number -- used as FD
   // null, undefined: Use default value. Not same as ignore, which is Bun.spawn null.
   // null/undefined: For stdio fds 0, 1, and 2 (in other words, stdin, stdout, and stderr) a pipe is created. For fd 3 and up, the default is 'ignore'
@@ -1803,7 +1805,7 @@ function getBunStdioFromOptions(stdio) {
   // overlapped -> pipe
   // ignore -> null
   // inherit -> inherit (stdin/stdout/stderr)
-  // Stream -> throw err for now
+  // Stream / handle / { fd } -> fd (a stream without an fd throws)
   const bunStdio = normalizedStdio.map(nodeToBun);
   return bunStdio;
 }
@@ -1823,9 +1825,7 @@ function normalizeStdio(stdio): string[] {
         throw ERR_INVALID_OPT_VALUE("stdio", stdio);
     }
   } else if ($isJSArray(stdio)) {
-    // Validate if each is a valid stdio type
-    // TODO: Support wrapped types here
-
+    // Each entry is validated and translated by nodeToBun.
     let processedStdio;
     if (stdio.length === 0) processedStdio = ["pipe", "pipe", "pipe"];
     else if (stdio.length === 1) processedStdio = [stdio[0], "pipe", "pipe"];

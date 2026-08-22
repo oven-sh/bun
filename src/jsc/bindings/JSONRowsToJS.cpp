@@ -117,8 +117,10 @@ public:
             return {};
         }
         const RowProperty* rows = m_props + o.first;
-        JSObject* object = constructEmptyObject(m_globalObject, m_globalObject->objectPrototype(),
-            std::min<unsigned>(o.count, JSFinalObject::maxInlineCapacity));
+        JSObject* object = o.count
+            ? constructEmptyObject(m_globalObject, m_globalObject->objectPrototype(),
+                  std::min<unsigned>(o.count, JSFinalObject::maxInlineCapacity))
+            : constructEmptyObject(m_globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         for (uint32_t i = 0; i < o.count; ++i) {
             Identifier ident = identifier(rows[i].key);

@@ -79,8 +79,10 @@
   [[maybe_unused]] const bool defaultObjectWasCached = !!nativeModuleDefaultSlot; \
   JSC::JSObject *defaultObject = defaultObjectWasCached                        \
       ? nativeModuleDefaultSlot.get()                                          \
-      : JSC::constructEmptyObject(                                             \
-            globalObject, globalObject->objectPrototype(), numberOfExportNames); \
+      : (numberOfExportNames)                                                  \
+          ? JSC::constructEmptyObject(globalObject,                            \
+                globalObject->objectPrototype(), numberOfExportNames)          \
+          : JSC::constructEmptyObject(globalObject);                           \
   if (!defaultObjectWasCached)                                                 \
     nativeModuleDefaultSlot.set(vm, globalObject, defaultObject);              \
   __NATIVE_MODULE_ASSERT_DECL(numberOfExportNames);                            \

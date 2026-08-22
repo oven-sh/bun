@@ -38,6 +38,10 @@ export class BuildCommand extends Command {
       multiple: true,
       default: [],
     }),
+    profile: Flags.string({
+      description: "The AWS profile to publish the layer.",
+      default: "default",
+    }),
     public: Flags.boolean({
       description: "If the layer should be public.",
       default: false,

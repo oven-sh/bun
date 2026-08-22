@@ -102,6 +102,7 @@ Builds a Lambda layer for Bun then publishes it to your AWS account.
 | ---------- | ----------------------------------------- | ------- |
 | `--layer`  | The layer name.                           | bun     |
 | `--region` | The region name, or "\*" for all regions. |         |
+| `--profile`| The AWS profile name                      | default |
 | `--public` | If the layer should be public.            | false   |
 
 Example:
@@ -111,5 +112,6 @@ bun run publish-layer -- \
   --arch aarch64 \
   --release latest \
   --output /path/to/layer.zip \
-  --region us-east-1
+  --region us-east-1 \
+  --profile default
 ```

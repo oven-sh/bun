@@ -912,3 +912,57 @@ describe.concurrent("modules that fail to print", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+describe.concurrent("bun build --watch", () => {
+  // Resolves once `needle` has been written to `stream`. The stream only ends
+  // early if the process dies, in which case the output so far (the crash
+  // report) is the error message.
+  async function outputUntil(stream: ReadableStream<Uint8Array>, needle: string): Promise<string> {
+    const reader = stream.getReader();
+    const decoder = new TextDecoder();
+    let output = "";
+    try {
+      while (!output.includes(needle)) {
+        const { value, done } = await reader.read();
+        if (done) throw new Error(`stream ended before ${JSON.stringify(needle)} appeared. Output:\n${output}`);
+        output += decoder.decode(value, { stream: true });
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    return output;
+  }
+
+  // In watch mode every failed resolution busts the resolver's directory
+  // cache for the specifier. The cache keys derived from these specifiers
+  // ended in a separator, which fails the resolver's cache key assertion in
+  // debug and ASAN builds, so the process aborted instead of reporting the
+  // resolution error.
+  test.each([
+    ["relative import ending in a slash", (_dir: string) => "./missing/"],
+    ["absolute import ending in a slash", (dir: string) => join(dir, "missing") + "/"],
+    ["absolute import with a doubled separator", (dir: string) => dir + path.sep + path.sep + "missing"],
+  ])("reports an unresolvable %s and keeps watching", async (_kind, specifierFor) => {
+    using dir = tempDir("build-watch-trailing-slash", {});
+    const specifier = specifierFor(String(dir));
+    const entry = join(String(dir), "index.ts");
+    writeFileSync(entry, `import ${JSON.stringify(specifier)};\n`);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--watch", "index.ts", "--outdir", "dist"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    await outputUntil(proc.stderr, `error: Could not resolve: "${specifier}"`);
+    expect(proc.exitCode).toBeNull();
+
+    // The failed build left the watcher running: fixing the entry point rebuilds.
+    writeFileSync(entry, `console.log("fixed");\n`);
+    expect(await outputUntil(proc.stdout, "index.js")).toContain("Bundled 1 module");
+    expect(await Bun.file(join(String(dir), "dist", "index.js")).text()).toContain("fixed");
+  });
+});

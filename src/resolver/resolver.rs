@@ -2441,9 +2441,9 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// Bust the directory cache for the given path.
-    /// See `assertValidCacheKey` for requirements on the input
+    /// Bust the directory cache for the given path, which may end in a separator.
     pub fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
+        let path = strings::without_trailing_slash_windows_path(path);
         Self::assert_valid_cache_key(path);
         let first_bust = self.fs_mut().fs.bust_entries_cache(path);
         let second_bust = self.dir_cache_mut().remove(path);
@@ -2465,10 +2465,7 @@ impl<'a> Resolver<'a> {
         specifier: &[u8],
     ) -> bool {
         if bun_paths::is_absolute(specifier) {
-            let dir = bun_paths::dirname_platform(specifier, bun_paths::Platform::AUTO);
-            let a = self.bust_dir_cache(dir);
-            let b = self.bust_dir_cache(specifier);
-            return a || b;
+            return self.bust_dir_cache_and_parent(specifier);
         }
 
         if !(specifier.starts_with(b"./") || specifier.starts_with(b"../")) {
@@ -2483,10 +2480,16 @@ impl<'a> Resolver<'a> {
             bun_paths::Platform::AUTO,
             specifier,
         );
-        let dir = bun_paths::dirname_platform(joined, bun_paths::Platform::AUTO);
+        self.bust_dir_cache_and_parent(joined)
+    }
+
+    fn bust_dir_cache_and_parent(&mut self, path: &[u8]) -> bool {
+        // Strip before taking the dirname: on Windows the dirname of `a\hello\` is `a\hello`.
+        let path = strings::without_trailing_slash_windows_path(path);
+        let dir = bun_paths::dirname_platform(path, bun_paths::Platform::AUTO);
 
         let a = self.bust_dir_cache(dir);
-        let b = self.bust_dir_cache(joined);
+        let b = self.bust_dir_cache(path);
         a || b
     }
 

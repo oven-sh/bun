@@ -99,6 +99,33 @@ devTest("importing a file before it is created", {
     await c.expectMessage("value: 456");
   },
 });
+// The dev server busts the resolver's directory cache after every failed
+// resolution. The cache keys derived from a specifier ending in a slash kept
+// that slash, which fails the resolver's cache key assertion in debug and ASAN
+// builds and took the whole dev server down instead of showing the error.
+devTest("importing a directory with a trailing slash before it is created", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { abc } from './second/';
+      console.log('value: ' + abc);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: [`index.ts:1:21: error: Could not resolve: "./second/"`],
+    });
+
+    await c.expectReload(async () => {
+      await dev.write("index.ts", `console.log('value: ' + 789);`);
+    });
+
+    await c.expectMessage("value: 789");
+  },
+});
 devTest("default export same-scope handling", {
   files: {
     "index.html": emptyHtmlFile({

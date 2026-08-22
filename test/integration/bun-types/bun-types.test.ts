@@ -400,6 +400,45 @@ describe("@types/bun integration test", () => {
     });
   });
 
+  // Runs on debug builds too, like the Bun.mmap test above.
+  describe("global addEventListener", () => {
+    test('"error" listeners receive an ErrorEvent', async () => {
+      const checkDir = join(TEMP_DIR, "global-error-event-check");
+      const tsconfig = structuredClone(sourceTsconfig);
+      tsconfig.include = ["global-error-event.ts"];
+      tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
+      await mkdir(checkDir, { recursive: true });
+      await makeTree(checkDir, {
+        "tsconfig.json": JSON.stringify(tsconfig, null, 2),
+        "global-error-event.ts": `addEventListener("error", event => {
+             event satisfies ErrorEvent;
+             event.message satisfies string;
+             console.log(event.error);
+           });
+           removeEventListener("error", event => {
+             event satisfies ErrorEvent;
+           });
+           const onError = (event: ErrorEvent) => console.log(event.error);
+           addEventListener("error", onError, { once: true });
+           removeEventListener("error", onError);`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
+        env: bunEnv,
+        cwd: checkDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr.trim()).toBe("");
+      expect(stdout.trim()).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("Test Globals", () => {
     const code = `
       const test_shouldBeAFunction: Function = test;

@@ -48,6 +48,28 @@ nodeWorker.postMessage({ hello: "world" });
 
 await nodeWorker.terminate();
 
+// Inside a worker, an uncaught error is dispatched to the worker's own global
+// scope as an ErrorEvent, so the global EventMap types "error" as ErrorEvent.
+{
+  addEventListener("error", event => {
+    tsd.expectType(event).is<ErrorEvent>();
+    tsd.expectType(event.message).is<string>();
+    tsd.expectType(event.error).is<any>();
+  });
+  globalThis.addEventListener("error", event => {
+    tsd.expectType(event).is<ErrorEvent>();
+  });
+  removeEventListener("error", event => {
+    tsd.expectType(event).is<ErrorEvent>();
+  });
+
+  const onError = (event: ErrorEvent) => event.error;
+  addEventListener("error", onError);
+  removeEventListener("error", onError);
+  addEventListener("error", onError, { once: true });
+  removeEventListener("error", onError, { capture: false });
+}
+
 // Bun.pathToFileURL
 const _worker3 = new Worker(new URL("worker.ts", "/path/to/").href, {
   ref: true,

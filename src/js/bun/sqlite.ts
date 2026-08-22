@@ -431,6 +431,7 @@ class Database implements SqliteTypes.Database {
   #internalFlags = 0;
   #handle;
   #queryCache: Map<string, Statement> = new Map();
+  #queryCacheBytes = 0;
   filename;
   get handle() {
     return this.#handle;
@@ -499,12 +500,14 @@ class Database implements SqliteTypes.Database {
   close(throwOnError = false) {
     // native close finalizes every kOwnedByDatabaseFlag statement (query cache + transaction controller)
     this.#queryCache.$clear();
+    this.#queryCacheBytes = 0;
     controllers?.delete(this);
     return SQL.close(this.#handle, throwOnError);
   }
   clearQueryCache() {
     this.#queryCache.$forEach(stmt => stmt.finalize());
     this.#queryCache.$clear();
+    this.#queryCacheBytes = 0;
   }
 
   run(query, ...params) {
@@ -534,6 +537,8 @@ class Database implements SqliteTypes.Database {
   }
 
   static MAX_QUERY_CACHE_SIZE = 20;
+  static MAX_QUERY_CACHE_BYTES = 2 * 1024 * 1024;
+  static MAX_QUERY_CACHE_ENTRY_BYTES = 64 * 1024;
 
   get [cachedCount]() {
     return this.#queryCache.$size;
@@ -544,7 +549,8 @@ class Database implements SqliteTypes.Database {
       throw new TypeError(`Expected 'query' to be a string, got '${typeof query}'`);
     }
 
-    if (query.length === 0) {
+    const queryLength = query.length;
+    if (queryLength === 0) {
       throw new Error("SQL query cannot be empty.");
     }
 
@@ -553,17 +559,27 @@ class Database implements SqliteTypes.Database {
     if (stmt !== undefined) {
       // LRU: re-insert so the most recently used key is last
       cache.$delete(query);
+      this.#queryCacheBytes -= queryLength;
       if (stmt.isFinalized) stmt = this[kPrepareOwned](query, constants.SQLITE_PREPARE_PERSISTENT);
-      cache.$set(query, stmt);
+      if (Database.MAX_QUERY_CACHE_SIZE > 0) {
+        cache.$set(query, stmt);
+        this.#queryCacheBytes += queryLength;
+      }
       return stmt;
     }
 
     stmt = this[kPrepareOwned](query, constants.SQLITE_PREPARE_PERSISTENT);
     const max = Database.MAX_QUERY_CACHE_SIZE;
-    if (max > 0) {
+    if (max > 0 && queryLength <= Database.MAX_QUERY_CACHE_ENTRY_BYTES) {
+      const maxBytes = Database.MAX_QUERY_CACHE_BYTES;
       // evicted statements stay usable; close() still finalizes them via kOwnedByDatabaseFlag
-      if (cache.$size >= max) cache.$delete(cache.$keys().next().value);
+      while (cache.$size > 0 && (cache.$size >= max || this.#queryCacheBytes + queryLength > maxBytes)) {
+        const oldest = cache.$keys().next().value;
+        cache.$delete(oldest);
+        this.#queryCacheBytes -= oldest.length;
+      }
       cache.$set(query, stmt);
+      this.#queryCacheBytes += queryLength;
     }
     return stmt;
   }

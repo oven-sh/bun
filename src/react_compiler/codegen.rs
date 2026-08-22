@@ -14,6 +14,7 @@
     reason = "interops with vendored react_compiler_hir which uses std::collections"
 )]
 
+use bun_collections::index_sort;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
@@ -656,7 +657,7 @@ fn codegen_reactive_scope(
     let mut change_exprs: Vec<Expr> = Vec::new();
 
     let mut deps = scope_deps;
-    deps.sort_unstable_by(|a, b| compare_scope_dependency(a, b, cx.env));
+    index_sort::sort_slice_unstable_by(&mut deps, |a, b| compare_scope_dependency(a, b, cx.env));
 
     let cache_name = cx.synthesize_name("$");
     let cache_ref = cx
@@ -700,7 +701,9 @@ fn codegen_reactive_scope(
     let mut first_output_index: Option<u32> = None;
 
     let mut decls = scope_decls;
-    decls.sort_unstable_by(|(_a, a), (_b, b)| compare_scope_declaration(a, b, cx.env));
+    index_sort::sort_slice_unstable_by(&mut decls, |(_a, a), (_b, b)| {
+        compare_scope_declaration(a, b, cx.env)
+    });
 
     let mut output_declarators: Vec<G::Decl> = Vec::new();
     for (_ident_id, decl) in &decls {

@@ -7,6 +7,7 @@
  */
 
 use crate::collections::{IndexMap, IndexSet};
+use bun_collections::index_sort;
 
 use crate::diagnostics::{CompilerError, CompilerErrorDetail, ErrorCategory};
 use bun_alloc::{AstAlloc, AstVec};
@@ -238,7 +239,7 @@ pub(crate) fn add_imports_to_program(
 
     let mut new_stmts: Vec<Stmt> = Vec::new();
     let mut sorted_modules: Vec<_> = context.imports.iter().collect();
-    sorted_modules.sort_unstable_by(|(a, _), (b, _)| {
+    index_sort::sort_slice_unstable_by(&mut sorted_modules, |(a, _), (b, _)| {
         a.bytes()
             .map(|c| c.to_ascii_lowercase())
             .cmp(b.bytes().map(|c| c.to_ascii_lowercase()))
@@ -247,7 +248,7 @@ pub(crate) fn add_imports_to_program(
     for (module_name, imports_map) in sorted_modules {
         let sorted_imports = {
             let mut sorted: Vec<_> = imports_map.values().collect();
-            sorted.sort_unstable_by_key(|s| s.imported);
+            index_sort::sort_slice_unstable_by(&mut sorted, |a, b| a.imported.cmp(b.imported));
             sorted
         };
 

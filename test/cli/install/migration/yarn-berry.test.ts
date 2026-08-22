@@ -418,8 +418,17 @@ describe("yarn berry migration", () => {
       "one-fixed-dep@1.0.0",
       "one-fixed-dep@2.0.0",
     ]);
-    expect(bunLock).toMatch(/"one-fixed-dep-2\/no-deps": \["no-deps@2\.0\.0"|"no-deps": \["no-deps@2\.0\.0"/);
-    expect(bunLock).toMatch(/"one-fixed-dep\/no-deps": \["no-deps@1\.0\.1"|"no-deps": \["no-deps@1\.0\.1"/);
+    // each parent got its own copy: one-fixed-dep@1.0.0 resolves the hoisted, redirected
+    // 1.0.1; the alias of one-fixed-dep@2.0.0 keeps its untouched 2.0.0 nested
+    expect(bunLock).toContain(`"no-deps": ["no-deps@1.0.1", `);
+    expect(bunLock).toContain(`"one-fixed-dep-2/no-deps": ["no-deps@2.0.0", `);
+    expect(existsSync(join(dir, "node_modules", "one-fixed-dep", "node_modules"))).toBeFalse();
+    expect(nodeModulesPackages(dir)).toMatchInlineSnapshot(`
+      "node_modules/no-deps/no-deps@1.0.1
+      node_modules/one-fixed-dep-2/node_modules/no-deps/no-deps@2.0.0
+      node_modules/one-fixed-dep-2/one-fixed-dep@2.0.0
+      node_modules/one-fixed-dep/one-fixed-dep@1.0.0"
+    `);
 
     await expectFrozenInstall(dir);
   });

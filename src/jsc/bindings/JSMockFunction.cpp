@@ -1490,8 +1490,10 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
             if (slot.isTaintedByOpaqueObject()) [[unlikely]] {
                 // if it's a Proxy or JSModuleNamespaceObject
                 value = object->get(globalObject, propertyKey);
+                RETURN_IF_EXCEPTION(scope, {});
             } else {
                 value = slot.getValue(globalObject, propertyKey);
+                RETURN_IF_EXCEPTION(scope, {});
             }
 
             if (dynamicDowncast<JSMockFunction>(value)) {

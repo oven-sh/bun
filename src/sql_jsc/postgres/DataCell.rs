@@ -215,7 +215,6 @@ fn parse_array(
                 | types::Tag::date_array => {
                     let date_str = &slice[1..current_idx];
                     let mut str = BunString::init(date_str);
-                    // defer str.deref() → Drop on BunString
                     array.push(SQLDataCell::date(
                         crate::jsc::bun_string_jsc::parse_date(&mut str, global_object)
                             .map_err(crate::jsc::js_error_to_postgres)?,

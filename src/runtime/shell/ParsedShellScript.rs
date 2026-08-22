@@ -183,9 +183,7 @@ impl ParsedShellScript {
             // on OOM).
             let slice = value_str.to_owned_slice();
             let keyref = EnvStr::init_ref_counted(keyslice.into_boxed_slice());
-            // defer keyref.deref() — done below (insert refs again).
             let valueref = EnvStr::init_ref_counted(slice.into_boxed_slice());
-            // defer valueref.deref() — done below.
 
             env.insert(keyref, valueref);
             keyref.deref();

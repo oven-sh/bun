@@ -221,7 +221,6 @@ fn print_source_at_address(
         }
         Err(e) => return Err(e),
     };
-    // defer free(sl.file_name) — handled by Drop on SourceLocation.file_name: Box<[u8]>
 
     // jsc_llint_begin/end are link-time symbols; `&raw const` avoids creating a reference to extern static
     let llint_begin = (&raw const jsc_llint_begin) as usize;
@@ -390,7 +389,6 @@ fn print_line_from_file_any_os(
         0,
     )
     .map_err(Into::<Error>::into)?;
-    // defer f.close() — handled by Drop
     // TODO fstat and make sure that the file has the correct size
 
     let mut buf = [0u8; 4096];

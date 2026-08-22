@@ -734,6 +734,10 @@ pub enum ForTarballError {
     OutOfMemory,
     #[error("InvalidURL")]
     InvalidURL,
+    /// `--offline` and the tarball is not in the cache. Already reported (once per
+    /// package); callers treat it like `AlreadyFailed`.
+    #[error("TarballFailedToDownload")]
+    Offline,
     /// Returned by `enqueue_*_for_download` when the dedupe map already records
     /// a terminal failure for this task id. Callers handle it silently (the
     /// original failure was already reported) and advance their own bookkeeping.
@@ -746,7 +750,9 @@ impl From<ForTarballError> for crate::Error {
         match e {
             ForTarballError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
             ForTarballError::InvalidURL => crate::Error::InvalidURL,
-            ForTarballError::AlreadyFailed => crate::Error::TarballFailedToDownload,
+            ForTarballError::AlreadyFailed | ForTarballError::Offline => {
+                crate::Error::TarballFailedToDownload
+            }
         }
     }
 }

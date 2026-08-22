@@ -625,7 +625,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         cache: bun_collections::ArrayHashMap::default(),
         visited: AutoBitSet::init_empty(c.graph.files.len()).expect("oom"),
     };
-    // defer static_route_visitor.deinit() — handled by Drop
 
     // For standalone mode, resolve JS/CSS chunks so we can inline their content into HTML.
     // Closing tag escaping (</script → <\\/script, </style → <\\/style) is handled during

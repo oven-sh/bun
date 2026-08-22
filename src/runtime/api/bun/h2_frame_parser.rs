@@ -1558,7 +1558,6 @@ impl Stream {
             }
         };
 
-        // defer block from Zig (only when the full frame was flushed)
         if let Some(_frame) = owned_frame {
             // only call the callback + free the frame if we write to the socket the full frame
             client

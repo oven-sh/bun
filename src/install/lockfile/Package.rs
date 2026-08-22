@@ -703,7 +703,6 @@ impl Package<u64> {
         string_builder.count(manifest.str(&package_version_ptr.tarball_url));
 
         string_builder.allocate()?;
-        // defer string_builder.clamp(); — handled at end of scope
         let extern_strings_list = &mut lockfile.buffers.extern_strings;
         let dependencies_list = &mut lockfile.buffers.dependencies;
         let resolutions_list = &mut lockfile.buffers.resolutions;
@@ -1416,7 +1415,6 @@ impl Diff {
                 }
                 continue;
             }
-            // defer to_i += 1; — applied at end of iteration body
             let cur_to_i = to_i;
             to_i += 1;
 
@@ -1458,7 +1456,6 @@ impl Diff {
                         };
 
                         let mut package_json_path: AutoAbsPath = AutoAbsPath::init_top_level_dir();
-                        // defer package_json_path.deinit(); — Drop handles it
 
                         let _ = package_json_path.append(
                             workspace_path.slice(to_lockfile.buffers.string_bytes.as_slice()),
@@ -2291,7 +2288,6 @@ impl Package<u64> {
         };
 
         let mut workspace_names = workspace_map::WorkspaceMap::init();
-        // defer workspace_names.deinit(); — Drop handles it
 
         // pnpm/yarn synthesise an implicit `"*"` optional peer for entries
         // that appear in `peerDependenciesMeta` but not in
@@ -2303,7 +2299,6 @@ impl Package<u64> {
             &[u8],
             bun_collections::identity_context::U64,
         > = ArrayHashMap::default();
-        // defer optional_peer_dependencies.deinit(); — Drop handles it
 
         if FEATURES.peer_dependencies {
             if let Some(peer_dependencies_meta) = json.as_property(b"peerDependenciesMeta") {
@@ -2413,6 +2408,48 @@ impl Package<u64> {
                                     Some(&mut string_builder),
                                     missing_workspace,
                                 )?;
+                            }
+                            // "workspaces": { "selfContained": ["apps/desktop"] } — workspaces
+                            // (by path or name) whose node_modules must be complete and
+                            // physical; see docs/pm/workspaces.mdx.
+                            if let Some(q) = dependencies_q.expr.as_property(b"selfContained") {
+                                if !q.expr.is_array() {
+                                    let _ = log.add_error_fmt(
+                                        source,
+                                        q.expr.loc,
+                                        format_args!(
+                                            "\"workspaces.selfContained\" expects an array of workspace paths or names"
+                                        ),
+                                    );
+                                    return Err(crate::Error::InvalidPackageJSON);
+                                }
+                                let mut owned: Vec<Vec<u8>> = Vec::new();
+                                if let Some(mut items) = q.expr.as_array() {
+                                    while let Some(item) = items.next() {
+                                        let Some(s) = item.as_string(&bump) else {
+                                            let _ = log.add_error_fmt(
+                                                source,
+                                                item.loc,
+                                                format_args!(
+                                                    "\"workspaces.selfContained\" entries must be strings (workspace paths or names)"
+                                                ),
+                                            );
+                                            return Err(crate::Error::InvalidPackageJSON);
+                                        };
+                                        owned.push(s.to_vec());
+                                    }
+                                }
+                                let list: Vec<&[u8]> = owned.iter().map(|v| v.as_slice()).collect();
+                                for unmatched in workspace_names.mark_self_contained(&list) {
+                                    log.add_warning_fmt(
+                                        Some(source),
+                                        q.expr.loc,
+                                        format_args!(
+                                            "\"workspaces.selfContained\": \"{}\" does not match any workspace path or name",
+                                            bstr::BStr::new(unmatched)
+                                        ),
+                                    );
+                                }
                             }
 
                             break 'brk;
@@ -2715,7 +2752,6 @@ impl Package<u64> {
         }
 
         let mut bundled_deps = StringSet::init();
-        // defer bundled_deps.deinit(); — Drop handles it
         let mut bundle_all_deps = false;
         if !resolver.is_void() && resolver.check_bundled_dependencies() {
             if let Some(bundled_deps_expr) = json
@@ -2749,7 +2785,6 @@ impl Package<u64> {
                     (),
                     ArrayIdentityContext,
                 > = ArrayHashMap::default();
-                // defer seen_workspace_names.deinit(allocator); — Drop handles it
                 for (entry, path_) in workspace_names
                     .values()
                     .iter()
@@ -2856,6 +2891,24 @@ impl Package<u64> {
                     }
 
                     let external_name = string_builder.append::<ExternalString>(&entry.name);
+                    // a property of the manifest, recorded whether or not the dependency
+                    // edge below turns out to be new
+                    if entry.hoisting_limits {
+                        lockfile
+                            .self_contained_workspaces
+                            .put(external_name.hash, ())?;
+                    }
+                    if let Some(v) = &entry.unsupported_hoisting_limits {
+                        log.add_warning_fmt(
+                            Some(source),
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "workspace \"{}\": installConfig.hoistingLimits \"{}\" is not supported (only \"workspaces\" is); ignoring",
+                                bstr::BStr::new(&entry.name),
+                                bstr::BStr::new(v),
+                            ),
+                        );
+                    }
 
                     let workspace_version = 'brk: {
                         if let Some(version_string) = &entry.version {
@@ -3231,7 +3284,6 @@ pub mod serializer {
         if migrate_from_v2 {
             type OldPackageV2 = Package<u32>;
             let mut list_for_migrating_from_v2 = <List<u32>>::default();
-            // defer list_for_migrating_from_v2.deinit(allocator); — Drop handles it
 
             list_for_migrating_from_v2.ensure_total_capacity(list_len as usize)?;
             // SAFETY: capacity reserved above; `load_fields` writes every column.

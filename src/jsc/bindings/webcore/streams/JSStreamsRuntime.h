@@ -37,6 +37,7 @@
 #include <JavaScriptCore/JSFunction.h>
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/Structure.h>
+#include <utility>
 
 namespace WebCore {
 
@@ -380,6 +381,12 @@ public:
     // The readMany `{value, size, done}` result shape, so results are built with
     // putDirectOffset instead of three transitioning putDirects.
     JSC::Structure* readManyResultStructure(const Zig::GlobalObject*);
+    static constexpr JSC::PropertyOffset readManyResultValueOffset = 0;
+    static constexpr JSC::PropertyOffset readManyResultSizeOffset = 1;
+    static constexpr JSC::PropertyOffset readManyResultDoneOffset = 2;
+
+    // `{ done, value }` of a readMany() result: the slots while `result` has readManyResultStructure, else `get(done)` then `get(value)` (both empty if either throws).
+    std::pair<JSC::JSValue, JSC::JSValue> readManyResult(JSC::JSGlobalObject*, JSC::JSObject* result) const;
 
 private:
     JSC::JSGlobalObject* m_globalObject { nullptr };
@@ -392,5 +399,19 @@ private:
     JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure> m_internalStructures[static_cast<size_t>(InternalStructure::Count)];
     JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure> m_readManyResultStructure;
 };
+
+inline std::pair<JSC::JSValue, JSC::JSValue> JSStreamsRuntime::readManyResult(JSC::JSGlobalObject* globalObject, JSC::JSObject* result) const
+{
+    if (result->structureID() == m_readManyResultStructure.getInitializedOnMainThread(m_globalObject)->id()) [[likely]]
+        return { result->getDirect(readManyResultDoneOffset), result->getDirect(readManyResultValueOffset) };
+
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSValue done = result->get(globalObject, vm.propertyNames->done);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSC::JSValue value = result->get(globalObject, vm.propertyNames->value);
+    RETURN_IF_EXCEPTION(scope, {});
+    return { done, value };
+}
 
 } // namespace WebCore

@@ -180,6 +180,12 @@ pub struct Lockfile {
     pub(crate) scripts: Scripts,
     pub(crate) workspace_paths: NameHashMap,
     pub workspace_versions: VersionHashMap,
+    /// Workspaces (by name hash) that must get a self-contained node_modules: those
+    /// listed in the root manifest's `workspaces.selfContained` and those declaring
+    /// `installConfig.hoistingLimits = "workspaces"`. Mirrored from the manifests on
+    /// every install and persisted per workspace in bun.lock (`"hoistingLimits"`), so a
+    /// tree rebuilt from the lockfile is hoisted the same way.
+    pub self_contained_workspaces: ArrayHashMap<PackageNameHash, (), ArrayIdentityContextU64>,
 
     /// Optional because `trustedDependencies` in package.json might be an
     /// empty list or it might not exist
@@ -684,6 +690,7 @@ impl Lockfile {
         self.trusted_dependencies = None;
         self.workspace_paths = NameHashMap::default();
         self.workspace_versions = VersionHashMap::default();
+        self.self_contained_workspaces = ArrayHashMap::default();
         self.overrides = OverrideMap::default();
         self.catalogs = CatalogMap::default();
         self.patched_dependencies = PatchedDependenciesMap::default();
@@ -810,6 +817,47 @@ impl Lockfile {
         }
 
         invalid_package_id
+    }
+
+    /// Workspace packages whose node_modules must be self-contained: listed in the
+    /// root manifest's `workspaces.selfContained` (by path or name) or declaring
+    /// `"installConfig": { "hoistingLimits": "workspaces" }` in their own manifest.
+    /// Both are recorded in `self_contained_workspaces` while the workspaces are
+    /// parsed (and persisted per workspace in bun.lock).
+    pub(crate) fn self_contained_workspace_ids(&self) -> Vec<PackageID> {
+        if self.self_contained_workspaces.count() == 0 {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        let pkgs = self.packages.slice();
+        for (i, res) in pkgs.items_resolution().iter().enumerate() {
+            if res.tag == crate::resolution::Tag::Workspace
+                && self
+                    .self_contained_workspaces
+                    .contains(&pkgs.items_name_hash()[i])
+            {
+                out.push(i as PackageID);
+            }
+        }
+        out
+    }
+
+    /// The workspace (or root, 0) package that owns tree `id`: walk up until a
+    /// workspace/root tree is reached and return the package it stands for.
+    pub(crate) fn owning_workspace_of_tree(&self, mut id: tree::Id) -> PackageID {
+        while id != 0 && (id as usize) < self.buffers.trees.len() {
+            let t = &self.buffers.trees[id as usize];
+            let dep_id = t.dependency_id;
+            if (dep_id as usize) < self.buffers.dependencies.len()
+                && self.buffers.dependencies[dep_id as usize]
+                    .behavior
+                    .is_workspace()
+            {
+                return self.buffers.resolutions[dep_id as usize];
+            }
+            id = t.parent;
+        }
+        0
     }
 
     /// Does this tree id belong to a workspace (including workspace root)?
@@ -1090,6 +1138,9 @@ impl Lockfile {
                 new.workspace_versions.re_index()?;
                 new.workspace_paths.re_index()?;
             }
+            for key in old.self_contained_workspaces.keys() {
+                new.self_contained_workspaces.put(*key, ())?;
+            }
         }
 
         // When you run `"bun add react"
@@ -1322,8 +1373,10 @@ impl Lockfile {
         // `ParentRef::new` captures `SharedReadOnly` provenance from `&*self`,
         // which is exactly what `Builder` needs (it only ever `Deref`s); the
         // `Builder` does not outlive this `&mut self` borrow.
+        let self_contained = self.self_contained_workspace_ids();
         let lockfile_ref = bun_ptr::ParentRef::<Lockfile>::new(&*self);
         let mut builder = tree::Builder::<METHOD> {
+            self_contained,
             queue: tree::TreeFiller::init(),
             resolution_lists: slice.items_resolutions(),
             resolutions: self.buffers.resolutions.as_mut_slice(),
@@ -1986,6 +2039,7 @@ impl Lockfile {
             trusted_dependencies: None,
             workspace_paths: NameHashMap::default(),
             workspace_versions: VersionHashMap::default(),
+            self_contained_workspaces: ArrayHashMap::default(),
             overrides: OverrideMap::default(),
             catalogs: CatalogMap::default(),
             meta_hash: ZERO_HASH,
@@ -2922,6 +2976,30 @@ impl Lockfile {
             string_builder.count(SCRIPTS_END);
         }
 
+        // Self-contained workspaces change the hoisted layout without changing any
+        // resolution; include them (sorted, only when present) so bun.lockb's
+        // frozen-lockfile check notices. Text lockfiles compare the tree itself.
+        const SELF_CONTAINED_BEGIN: &[u8] = b"\n-- BEGIN SELF-CONTAINED WORKSPACES --\n";
+        let mut self_contained_names: Vec<&[u8]> = Vec::new();
+        if self.self_contained_workspaces.count() > 0 {
+            for i in 0..packages_len {
+                if resolutions[i].tag == crate::resolution::Tag::Workspace
+                    && self
+                        .self_contained_workspaces
+                        .contains(&self.packages.items_name_hash()[i])
+                {
+                    self_contained_names.push(names[i].slice(bytes));
+                }
+            }
+            self_contained_names.sort_unstable();
+            if !self_contained_names.is_empty() {
+                string_builder.count(SELF_CONTAINED_BEGIN);
+                for n in &self_contained_names {
+                    string_builder.fmt_count(format_args!("{}\n", bstr::BStr::new(n)));
+                }
+            }
+        }
+
         {
             let alphabetizer = package::Alphabetizer::<u64> {
                 names: names.into(),
@@ -2958,6 +3036,13 @@ impl Lockfile {
                 }
             }
             let _ = string_builder.append(SCRIPTS_END);
+        }
+
+        if !self_contained_names.is_empty() {
+            let _ = string_builder.append(SELF_CONTAINED_BEGIN);
+            for n in &self_contained_names {
+                let _ = string_builder.fmt(format_args!("{}\n", bstr::BStr::new(n)));
+            }
         }
 
         let _ = string_builder.append(HASH_SUFFIX);

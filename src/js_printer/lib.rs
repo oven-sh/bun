@@ -7468,8 +7468,6 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         no_op_renamer.to_renamer()
     };
 
-    // defer: if minify_identifiers { renamer.deinit() } — Drop handles.
-
     // `is_bun_platform = ascii_only` for printAst.
     type PrinterType<'a, W, const A: bool, const G: bool> =
         Printer<'a, W, A, /*IS_BUN_PLATFORM=*/ A, false, G>;
@@ -7560,7 +7558,6 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     } else {
         None
     };
-    // defer: if let Some(chunk) = &mut source_maps_chunk { chunk.deinit() } — Drop handles.
 
     if let Some(cache) = printer.options.runtime_transpiler_cache {
         let mut srlz_res: Vec<u8> = Vec::new();
@@ -7748,7 +7745,6 @@ pub(crate) fn print_with_writer_and_platform<
         printer.module_info = printer.options.module_info.take();
     }
     printer.binary_expression_stack = Vec::new();
-    // defer: temporary_bindings.deinit / writer.* = printer.writer.* — handled by move-out below.
 
     // `Index::is_runtime` ⇔ `index.value == 0`.
     if module_type == bundle_opts::Format::InternalBakeDev && source.index.0 != 0 {

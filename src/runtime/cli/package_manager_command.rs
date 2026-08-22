@@ -636,7 +636,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 let root_deps = slice.items_dependencies()[0];
 
                 Output::println(format_args!(
-                    "{} node_modules ({})",
+                    "{} node_modules ({} installed)",
                     bstr::BStr::new(path),
                     lockfile.buffers.hoisted_dependencies.len(),
                 ));

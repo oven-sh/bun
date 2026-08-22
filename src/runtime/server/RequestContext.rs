@@ -650,15 +650,25 @@ where
         server.vm().as_mut().event_loop_mut().drain_microtasks()
     }
 
+    /// Runs `on_abort` itself (may free `self`) if a nested event loop run already closed the socket.
     pub(crate) fn set_abort_handler(&self) {
         if self.flags.has_abort_handler() {
             return;
         }
-        if let Some(resp) = self.resp.get() {
-            self.flags.set_has_abort_handler(true);
-            // SAFETY: FFI handle valid while resp is Some
-            resp.on_aborted(|this, resp| Self::on_abort(this, resp), self.as_ctx_ptr());
+        let Some(resp) = self.resp.get() else {
+            return;
+        };
+        self.flags.set_has_abort_handler(true);
+        if resp.is_closed() {
+            // `req` is still set only while the dispatch is on the stack: snapshot as `to_async` would have.
+            if let (Some(req), Some(request)) = (self.req.get(), self.request_mut()) {
+                self.to_async_without_abort_handler(req, request);
+            }
+            Self::on_abort(self.as_ctx_ptr(), resp);
+            return;
         }
+        // SAFETY: FFI handle valid while resp is Some
+        resp.on_aborted(|this, resp| Self::on_abort(this, resp), self.as_ctx_ptr());
     }
 
     pub(crate) fn set_cookies(&self, cookie_map: Option<*mut CookieMap>) {
@@ -785,7 +795,7 @@ where
     pub(crate) fn should_render_missing(&self) -> bool {
         // If we did not respond yet, we should render missing
         // To allow this all the conditions above should be true:
-        // 1 - still has a response (not detached)
+        // 1 - still has a response (not detached, socket still open)
         // 2 - not aborted
         // 3 - not marked completed
         // 4 - not marked pending
@@ -831,7 +841,7 @@ where
                 "no sendfile context"
             },
         );
-        self.resp.get().is_some()
+        self.resp.get().is_some_and(|resp| !resp.is_closed())
             && !self.flags.aborted()
             && !self.flags.has_marked_complete()
             && !self.flags.has_marked_pending()
@@ -2028,6 +2038,8 @@ where
         debug_assert!(this.server.get().is_some());
         let global_this = this.server().global_this();
 
+        // Armed here, not in `to_async()`: `stop(true)` inside `pull()` must reach `on_abort`; see `end_already_responded_stream`.
+        this.set_abort_handler();
         if this.is_aborted_or_ended() {
             crate::dispatch::fold(stream.cancel(global_this));
             this.response_body_readable_stream_ref
@@ -2060,11 +2072,6 @@ where
             this.render_metadata();
         }
 
-        // Before `pull()` runs, not in `to_async()`: a `server.stop(true)` inside
-        // `pull()` has to reach `on_abort`, and once the stream has completed the
-        // response, uWS `markDone()` must have dropped these for good (the flag
-        // makes the later `to_async()` a no-op); see `end_already_responded_stream`.
-        this.set_abort_handler();
         resp.on_writable(
             |this, off, resp| Self::on_writable_response_stream(this, off, resp),
             this.as_ctx_ptr(),
@@ -2630,6 +2637,17 @@ where
         }
     }
 
+    /// Drops the callback's result as for any aborted request; `set_abort_handler` delivers the missed close.
+    #[cold]
+    fn on_connection_closed_during_dispatch(&self, this: &ThisServer, result: JSValue) {
+        ctx_log!("connection closed during dispatch");
+        if let Some(promise) = result.as_any_promise() {
+            // Subscribing to it would have made a later rejection handled.
+            promise.set_handled(this.global_this().vm());
+        }
+        self.set_abort_handler();
+    }
+
     // Each HTTP request or TCP socket connection is effectively a "task".
     //
     // However, unlike the regular task queue, we don't drain the microtask
@@ -2656,6 +2674,10 @@ where
         request_value.ensure_still_alive();
         response_value.ensure_still_alive();
         if ctx.drain_microtasks().is_err() || ctx.is_aborted_or_ended() {
+            return;
+        }
+        if ctx.resp.get().is_some_and(|resp| resp.is_closed()) {
+            ctx.on_connection_closed_during_dispatch(this, response_value);
             return;
         }
         // if you return a Response object or a Promise<Response>
@@ -3603,6 +3625,10 @@ where
                 // error() may have ended the request or called server.upgrade(req),
                 // either of which already released this context's ref.
                 if self.is_aborted_or_ended() || self.did_upgrade_web_socket() {
+                    return;
+                }
+                if self.resp.get().is_some_and(|resp| resp.is_closed()) {
+                    self.on_connection_closed_during_dispatch(server, result);
                     return;
                 }
                 if !result.is_empty_or_undefined_or_null() {

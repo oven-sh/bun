@@ -7,7 +7,6 @@
 #include "helpers.h"
 #include "ZigGlobalObject.h"
 
-#include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSMap.h>
@@ -557,13 +556,12 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
         if (url.isValid() && url.protocolIsFile()) {
             auto fromString = url.fileSystemPath();
             BunString from = Bun::toString(fromString);
-            auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            auto result = JSValue::decode(Bun__resolveSyncWithSource(globalObject, JSValue::encode(specifierString), &from, true, false));
-            if (topExceptionScope.exception()) {
-                (void)topExceptionScope.tryClearException();
-            }
+            // Not resolving is fine (mocking a module that does not exist yet); anything else thrown
+            // while resolving (e.g. by an onResolve plugin) propagates.
+            auto result = JSValue::decode(Bun__resolveSyncWithSourceIfExists(globalObject, JSValue::encode(specifierString), &from, true));
+            RETURN_IF_EXCEPTION(scope, );
 
-            if (result && result.isString()) {
+            if (result.isString()) {
                 auto* specifierStr = result.toString(globalObject);
                 if (specifierStr->length() > 0) {
                     specifierString = specifierStr;

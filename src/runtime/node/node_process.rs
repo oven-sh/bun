@@ -84,6 +84,7 @@ pub(crate) extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
             bun_core::Output::flush();
             bun_core::reload_process(should_clear_terminal, false);
         }
+        vm.exit_handler.requested = true;
         vm.on_exit();
         vm.global_exit();
     }

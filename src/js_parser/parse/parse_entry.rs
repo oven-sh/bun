@@ -768,14 +768,6 @@ impl<'a> Parser<'a> {
         p.binary_expression_stack = BumpVec::with_capacity_in(41, p.arena);
         p.binary_expression_simplify_stack = BumpVec::with_capacity_in(47, p.arena);
 
-        // defer {
-        //     if (p.allocated_names_pool) |pool| {
-        //         pool.data = p.allocated_names;
-        //         pool.release();
-        //         p.allocated_names_pool = null;
-        //     }
-        // }
-
         // Consume a leading hashbang comment
         let mut hashbang: &[u8] = b"";
         if p.lexer.token == js_lexer::T::THashbang {

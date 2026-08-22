@@ -34,6 +34,7 @@
 #include "JSDOMWrapperCache.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
+#include "ZigGlobalObject.h"
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSCInlines.h>
@@ -51,6 +52,7 @@ using namespace JSC;
 // Functions
 
 static JSC_DECLARE_HOST_FUNCTION(jsPerformanceEntryPrototypeFunction_toJSON);
+static JSC_DECLARE_HOST_FUNCTION(jsPerformanceEntryPrototypeFunction_inspectCustom);
 
 // Attributes
 
@@ -124,6 +126,11 @@ void JSPerformanceEntryPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSPerformanceEntry::info(), JSPerformanceEntryPrototypeTableValues, *this);
+    // Node prints entries as `<ClassName> { ...toJSON() }` (lib/internal/perf/performance_entry.js);
+    // the fields here are prototype accessors, so util.inspect would otherwise show `{}`.
+    putDirect(vm, builtinNames(vm).inspectCustomPublicName(),
+        JSFunction::create(vm, globalObject(), 2, "[nodejs.util.inspect.custom]"_s, jsPerformanceEntryPrototypeFunction_inspectCustom, ImplementationVisibility::Public),
+        static_cast<unsigned>(PropertyAttribute::DontEnum));
     Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
@@ -246,6 +253,88 @@ static inline EncodedJSValue jsPerformanceEntryPrototypeFunction_toJSONBody(JSGl
 JSC_DEFINE_HOST_FUNCTION(jsPerformanceEntryPrototypeFunction_toJSON, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSPerformanceEntry>::call<jsPerformanceEntryPrototypeFunction_toJSONBody>(*lexicalGlobalObject, *callFrame, "toJSON");
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsPerformanceEntryPrototypeFunction_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue thisValue = callFrame->thisValue();
+    double depth = callFrame->argument(0).toNumber(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    auto* entry = dynamicDowncast<JSObject>(thisValue);
+    if (depth < 0 || !entry)
+        return JSValue::encode(thisValue);
+
+    // util.inspect skips the hook on a prototype object (`obj.constructor.prototype === obj`),
+    // but console.log / Bun.inspect call it, and toJSON below is brand-checked. On the WebCore
+    // prototypes `constructor` is a custom getter, so this has to be a [[Get]], not an own-value check.
+    JSValue constructor = entry->get(lexicalGlobalObject, vm.propertyNames->constructor);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    JSValue constructorName = jsUndefined();
+    if (constructor.isObject()) {
+        JSValue prototype = constructor.get(lexicalGlobalObject, vm.propertyNames->prototype);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (prototype == thisValue)
+            return JSValue::encode(thisValue);
+        constructorName = constructor.get(lexicalGlobalObject, vm.propertyNames->name);
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
+    auto nameString = constructorName.toWTFString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    JSValue options = callFrame->argument(1);
+    JSValue inspect = callFrame->argument(2);
+    if (!inspect.isCallable()) {
+        inspect = defaultGlobalObject(lexicalGlobalObject)->utilInspectFunction();
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
+
+    // { ...options, depth: options.depth == null ? null : options.depth - 1 }
+    // Spread defines the copies, so not objectAssignGeneric: its [[Set]] would run a setter that
+    // userland put on Object.prototype under one of the option names.
+    JSObject* innerOptions = constructEmptyObject(lexicalGlobalObject);
+    JSValue innerDepth = jsNull();
+    if (auto* optionsObject = dynamicDowncast<JSObject>(options)) {
+        PropertyNameArrayBuilder names(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+        optionsObject->methodTable()->getOwnPropertyNames(optionsObject, lexicalGlobalObject, names, DontEnumPropertiesMode::Exclude);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        for (const auto& name : names) {
+            JSValue value = optionsObject->get(lexicalGlobalObject, name);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            // util.inspect forwards unknown user options as-is, so a key here can be an array index.
+            innerOptions->putDirectMayBeIndex(lexicalGlobalObject, name, value);
+            RETURN_IF_EXCEPTION(throwScope, {});
+        }
+        JSValue optionsDepth = optionsObject->get(lexicalGlobalObject, Identifier::fromString(vm, "depth"_s));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (!optionsDepth.isUndefinedOrNull()) {
+            double d = optionsDepth.toNumber(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            innerDepth = jsNumber(d - 1);
+        }
+    }
+    innerOptions->putDirect(vm, Identifier::fromString(vm, "depth"_s), innerDepth);
+
+    JSValue toJSON = entry->get(lexicalGlobalObject, vm.propertyNames->toJSON);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    auto toJSONCallData = JSC::getCallData(toJSON);
+    if (toJSONCallData.type == CallData::Type::None) [[unlikely]]
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "this.toJSON is not a function"_s);
+    JSValue json = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, toJSON, toJSONCallData, entry, ArgList());
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    MarkedArgumentBuffer inspectArgs;
+    inspectArgs.append(json);
+    inspectArgs.append(innerOptions);
+    ASSERT(!inspectArgs.hasOverflowed());
+    JSValue inspected = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, inspect, JSC::getCallData(inspect), jsUndefined(), inspectArgs);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    auto inspectedString = inspected.toWTFString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(jsString(vm, makeString(nameString, " "_s, inspectedString))));
 }
 
 JSC::GCClient::IsoSubspace* JSPerformanceEntry::subspaceForImpl(JSC::VM& vm)

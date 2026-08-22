@@ -93,6 +93,10 @@ pub struct PackageInstaller<'a> {
     pub(crate) successfully_installed: Bitset,
     pub(crate) command_ctx: Command::Context<'a>,
     pub(crate) current_tree_id: lockfile::tree::Id,
+    /// Trees that live under a self-contained workspace: packages there are copied
+    /// (real files) rather than hardlinked/cloned/symlinked from the cache, so tools
+    /// that walk, prune or rewrite that node_modules cannot reach the shared cache.
+    pub(crate) copy_trees: Bitset,
 
     // fields used for running lifecycle scripts when it's safe
     //
@@ -1599,14 +1603,21 @@ impl<'a> PackageInstaller<'a> {
                 };
                 match resolution.tag {
                     resolution::Tag::Git => {
-                        package_manager::enqueue_git_for_checkout(
+                        if package_manager::enqueue_git_for_checkout(
                             self.manager_mut(),
                             dependency_id,
                             alias.slice(string_buf!()),
                             resolution,
                             context,
                             download_patch_hash,
-                        );
+                        ) == package_manager::GitEnqueueResult::OfflineMiss
+                        {
+                            self.increment_tree_install_count(
+                                !is_pending_package_install,
+                                self.current_tree_id,
+                                log_level,
+                            );
+                        }
                     }
                     resolution::Tag::Github => {
                         let url = self.manager_mut().alloc_github_url(resolution.github());
@@ -1624,7 +1635,7 @@ impl<'a> PackageInstaller<'a> {
                             Err(ForTarballError::InvalidURL) => {
                                 self.fail_with_invalid_url(log_level, is_pending_package_install)
                             }
-                            Err(ForTarballError::AlreadyFailed) => self
+                            Err(ForTarballError::AlreadyFailed | ForTarballError::Offline) => self
                                 .increment_tree_install_count(
                                     !is_pending_package_install,
                                     self.current_tree_id,
@@ -1656,7 +1667,7 @@ impl<'a> PackageInstaller<'a> {
                             Err(ForTarballError::InvalidURL) => {
                                 self.fail_with_invalid_url(log_level, is_pending_package_install)
                             }
-                            Err(ForTarballError::AlreadyFailed) => self
+                            Err(ForTarballError::AlreadyFailed | ForTarballError::Offline) => self
                                 .increment_tree_install_count(
                                     !is_pending_package_install,
                                     self.current_tree_id,
@@ -1694,7 +1705,7 @@ impl<'a> PackageInstaller<'a> {
                             Err(ForTarballError::InvalidURL) => {
                                 self.fail_with_invalid_url(log_level, is_pending_package_install)
                             }
-                            Err(ForTarballError::AlreadyFailed) => self
+                            Err(ForTarballError::AlreadyFailed | ForTarballError::Offline) => self
                                 .increment_tree_install_count(
                                     !is_pending_package_install,
                                     self.current_tree_id,
@@ -1869,10 +1880,17 @@ impl<'a> PackageInstaller<'a> {
                         break 'result result;
                     }
 
+                    let method = if (self.current_tree_id as usize) < self.copy_trees.bit_length()
+                        && self.copy_trees.is_set(self.current_tree_id as usize)
+                    {
+                        package_install::Method::Copyfile
+                    } else {
+                        installer.get_install_method()
+                    };
                     break 'result installer.install(
                         self.skip_delete,
                         &destination_dir,
-                        installer.get_install_method(),
+                        method,
                         resolution.tag,
                     );
                 }

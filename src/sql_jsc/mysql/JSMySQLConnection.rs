@@ -713,8 +713,6 @@ impl JSMySQLConnection {
         };
         on_close.ensure_still_alive();
         let loop_ = self.event_loop();
-        // loop.enter();
-        // defer loop.exit();
         self.ensure_js_value_is_alive();
         let mut js_error = value.to_error().unwrap_or(value);
         if js_error.is_empty() {
@@ -793,7 +791,6 @@ impl JSMySQLConnection {
             bigint: request.is_bigint_supported(),
             values: Box::default(),
         };
-        // defer row.deinit(allocator) — Drop on ResultSet::Row
         if let Err(e) = row.decode(reader) {
             if e == AnyMySQLErrorT::ShortRead {
                 return Err(OnResultRowError::ShortRead);

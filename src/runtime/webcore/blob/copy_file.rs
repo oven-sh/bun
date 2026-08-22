@@ -365,7 +365,6 @@ impl CopyFile {
         let src_fd = self.source_fd;
         let dest_fd = self.destination_fd;
 
-        // defer { this.read_len = @truncate(total_written); }
         let read_len_slot: *mut SizeType = &raw mut self.read_len;
         let total_written_slot: *const u64 = core::ptr::addr_of!(total_written);
         scopeguard::defer! {
@@ -626,8 +625,6 @@ impl CopyFile {
         }
         #[cfg(not(windows))]
         {
-            // defer task.onFinish();
-
             #[cfg(target_os = "macos")]
             let mut stat_: Option<Stat> = None;
             #[cfg(not(target_os = "macos"))]

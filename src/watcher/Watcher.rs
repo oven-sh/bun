@@ -397,7 +397,6 @@ impl Watcher {
             "flush_evictions: caller must hold self.mutex (platform watcher holds it around on_file_update)",
         );
         let evict_list_i = self.evict_list_i as usize;
-        // defer this.evict_list_i = 0 — set at end of fn
 
         // swapRemove messes up the order
         // But, it only messes up the order if any elements in the list appear after the item being removed

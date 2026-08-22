@@ -1365,7 +1365,6 @@ impl Archiver {
                         else {
                             continue 'loop_;
                         };
-                        // defer opened.close()
                         let _close_guard = scopeguard::guard(opened, |fd| fd.close());
                         let stat_size = bun_sys::get_file_size(opened)?;
 

@@ -712,7 +712,6 @@ impl NodeHTTPResponse {
 
     fn mark_request_as_done(&self) {
         scoped_log!(NodeHTTPResponse, "markRequestAsDone()");
-        // defer this.deref(); — moved to end of fn body.
         self.update_flags(|f| f.remove(Flags::IS_REQUEST_PENDING));
 
         // The async path (`on_node_http_request_with_upgrade_ctx`) stashes the
@@ -735,7 +734,13 @@ impl NodeHTTPResponse {
         let vm = vm_get();
         self.clear_on_data_callback(self.get_this_value(), vm.global());
         self.clear_pending_pinned_write(vm.global(), JSValue::ZERO);
-        self.upgrade_context.with_mut(|c| c.reset());
+        // ws may still upgrade an open tunnel: keep a context whose request pointer is detached.
+        let tunneled = self.flags.get().contains(Flags::TUNNELED);
+        self.upgrade_context.with_mut(|c| {
+            if !tunneled || !c.request.is_null() {
+                c.reset();
+            }
+        });
 
         self.buffered_request_body_data_during_pause
             .with_mut(|b| b.clear_and_free());
@@ -1255,9 +1260,6 @@ pub enum AbortEvent {
 
 impl NodeHTTPResponse {
     fn handle_abort_or_timeout<const EVENT: AbortEvent>(&self, js_value: JSValue) {
-        // defer { if event == abort, raw_response = None }
-        // The deferred null is moved to explicit tail positions.
-
         if self.flags.get().contains(Flags::REQUEST_HAS_COMPLETED) {
             if EVENT == AbortEvent::Abort {
                 // The socket is gone — no further uws callback will arrive to
@@ -1285,8 +1287,6 @@ impl NodeHTTPResponse {
         }
 
         self.ref_();
-        // defer this.deref();
-        // defer if (event == .abort) this.markRequestAsDoneIfNecessary();
 
         let js_this: JSValue = if js_value.is_empty() {
             self.get_this_value()
@@ -1487,7 +1487,6 @@ fn node_http_request_on_resolve(global_object: &JSGlobalObject, callframe: &Call
         p.deinit();
         had
     });
-    // defer this.deref(); — moved to tail.
     this.maybe_stop_reading_body(bun_vm_mut(global_object), arguments[1]);
 
     let flags = this.flags.get();
@@ -1532,8 +1531,6 @@ fn node_http_request_on_reject(global_object: &JSGlobalObject, callframe: &CallF
         had
     });
     this.maybe_stop_reading_body(bun_vm_mut(global_object), arguments[1]);
-
-    // defer this.deref(); — moved to tail.
 
     let flags = this.flags.get();
     if !flags.contains(Flags::REQUEST_HAS_COMPLETED)
@@ -1680,8 +1677,6 @@ impl NodeHTTPResponse {
             self.body_read_state.set(BodyReadState::Done);
         }
 
-        // defer { if last { ... } } — moved to tail.
-
         // "Armed" means a callable is cached — the slot holds an explicit
         // `undefined` between the dispatch reset and the reader's _read() arming
         // it, and a body arriving in that window used to be dropped outright.
@@ -1820,7 +1815,6 @@ impl NodeHTTPResponse {
     fn on_drain_corked(&self, offset: u64) {
         scoped_log!(NodeHTTPResponse, "onDrainCorked({})", offset);
         self.ref_();
-        // defer this.deref(); — moved to tail.
 
         let this_value = self.get_this_value();
         let Some(on_writable) = js::on_writable_get_cached(this_value) else {
@@ -2297,7 +2291,6 @@ impl NodeHTTPResponse {
         {
             js::on_data_set_cached(this_value, global_object, JSValue::UNDEFINED);
             self.armed_this_value.set(JSValue::ZERO);
-            // defer { if body_read_ref.has { unref } } — moved to tail of this branch.
             match self.body_read_state.get() {
                 BodyReadState::Pending | BodyReadState::Done => {
                     if !flags.contains(Flags::REQUEST_HAS_COMPLETED)
@@ -2349,7 +2342,6 @@ impl NodeHTTPResponse {
     }
 
     fn on_auto_flush(&self) -> bool {
-        // defer this.deref(); — moved to tail.
         let flags = self.flags.get();
         if !flags.contains(Flags::SOCKET_CLOSED) && !flags.contains(Flags::UPGRADED) {
             if let Some(raw_response) = self.raw_response.get() {
@@ -2534,7 +2526,6 @@ impl NodeHTTPResponse {
         // BACKREF: `this` is the live `m_ctx` heap payload; `ref_()` keeps it
         // alive across re-entry.
         this.ref_();
-        // defer this.deref(); — moved to tail.
 
         // Snapshot before re-entry; `raw_response` is `Copy`.
         let raw_response = this.raw_response.get();

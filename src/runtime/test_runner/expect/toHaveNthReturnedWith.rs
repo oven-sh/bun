@@ -68,7 +68,6 @@ pub(crate) fn to_have_nth_returned_with(
     // Handle failure
     let mut formatter = super::make_formatter(global);
     let mut formatter2 = super::make_formatter(global);
-    // defer formatter.deinit() — handled by Drop
 
     let signature = get_signature("toHaveNthReturnedWith", "<green>n<r>, <green>expected<r>", false);
 

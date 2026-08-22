@@ -715,7 +715,6 @@ fn js_password_object_hash_sync(
             "string or TypedArray",
         ));
     };
-    // defer string_or_buffer.deinit() — Drop at scope exit.
 
     if string_or_buffer.slice().is_empty() {
         return Err(
@@ -870,8 +869,6 @@ fn js_password_object_verify_sync(
     if let StringOrBuffer::Buffer(buffer) = &mut password {
         buffer.buffer = ArrayBuffer::from_typed_array(global_object, buffer.buffer.value);
     }
-
-    // defer password.deinit() / hash_.deinit() — Drop at scope exit.
 
     if hash_.slice().is_empty() {
         return Ok(JSValue::FALSE);

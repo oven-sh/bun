@@ -1979,7 +1979,6 @@ impl<'a> Formatter<'a> {
 
                     writer.write_all(b"<");
 
-                    let mut needs_space;
                     let mut tag_name_str = ZigString::init(b"");
 
                     let tag_name_slice: ZigStringSlice;
@@ -2002,11 +2001,8 @@ impl<'a> Formatter<'a> {
                         }
 
                         tag_name_slice = tag_name_str.to_slice();
-                        needs_space = true;
                     } else {
                         tag_name_slice = ZigString::init(b"unknown").to_slice();
-
-                        needs_space = true;
                     }
 
                     if !is_tag_kind_primitive {
@@ -2027,11 +2023,7 @@ impl<'a> Formatter<'a> {
 
                     if let Some(key_value) = value.get(self.global_this, "key")? {
                         if !key_value.is_undefined_or_null() {
-                            if needs_space {
-                                writer.write_all(b" key=");
-                            } else {
-                                writer.write_all(b"key=");
-                            }
+                            writer.write_all(b" key=");
 
                             let old_quote_strings = self.quote_strings;
                             self.quote_strings = true;
@@ -2046,7 +2038,6 @@ impl<'a> Formatter<'a> {
                             })();
                             self.quote_strings = old_quote_strings;
                             inner?;
-                            needs_space = true;
                         }
                     }
 
@@ -2073,15 +2064,10 @@ impl<'a> Formatter<'a> {
                         if props_iter.len > 0 {
                             {
                                 self.indent += 1;
-                                let count_without_children =
-                                    props_iter.len - usize::from(children_prop.is_some());
 
                                 let loop_result: JsResult<()> = (|| {
-                                // `JSPropertyIterator::i` is private upstream;
-                                // track the 1-based iteration index locally.
-                                let mut iter_i: usize = 0;
+                                let mut printed_props: usize = 0;
                                 while let Some(prop) = props_iter.next()? {
-                                    iter_i += 1;
                                     if prop.eql_comptime(b"children") {
                                         continue;
                                     }
@@ -2093,10 +2079,14 @@ impl<'a> Formatter<'a> {
                                         continue;
                                     }
 
-                                    if needs_space {
+                                    // Five props fit on the tag's line; the rest go one per line.
+                                    if printed_props >= 5 {
+                                        writer.write_all(b"\n");
+                                        self.write_indent(writer.ctx).expect("unreachable");
+                                    } else {
                                         writer.write_all(b" ");
                                     }
-                                    needs_space = false;
+                                    printed_props += 1;
 
                                     writer.print(format_args!(
                                         "{}{}{}={}",
@@ -2124,23 +2114,6 @@ impl<'a> Formatter<'a> {
                                                 pretty_fmt_const!(true, "<r>").as_bytes(),
                                             );
                                         }
-                                    }
-
-                                    if
-                                    // count_without_children is necessary to prevent printing an extra newline
-                                    // if there are children and one prop and the child prop is the last prop
-                                    iter_i + 1 < count_without_children
-                                        // 3 is arbitrary but basically
-                                        //  <input type="text" value="foo" />
-                                        //  ^ should be one line
-                                        // <input type="text" value="foo" bar="true" baz={false} />
-                                        //  ^ should be multiple lines
-                                        && iter_i > 3
-                                    {
-                                        writer.write_all(b"\n");
-                                        self.write_indent(writer.ctx).expect("unreachable");
-                                    } else if iter_i + 1 < count_without_children {
-                                        writer.write_all(b" ");
                                     }
                                 }
                                 Ok(())

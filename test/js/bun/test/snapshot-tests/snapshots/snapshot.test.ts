@@ -2,6 +2,7 @@ import { $ } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, DirectoryTree, isDebug, tempDir, tempDirWithFiles } from "harness";
+import { createElement } from "react";
 
 function test1000000(arg1: any, arg218718132: any) {}
 
@@ -369,6 +370,39 @@ test("basic unchanging inline snapshot", () => {
 }
 `,
   );
+});
+
+test("jsx element props are separated in snapshots and diffs", () => {
+  expect(createElement("x", { a: "1" })).toMatchInlineSnapshot(`<x a="1" />`);
+  expect(createElement("x", { a: "1", b: "2" })).toMatchInlineSnapshot(`<x a="1" b="2" />`);
+  expect(createElement("x", { a: "1", b: "2", c: "3" })).toMatchInlineSnapshot(`<x a="1" b="2" c="3" />`);
+  expect(createElement("x", { key: "k", a: "1", b: "2" })).toMatchInlineSnapshot(`<x key="k" a="1" b="2" />`);
+  expect(createElement("x", { a: "1", b: "2" }, "c")).toMatchInlineSnapshot(`<x a="1" b="2">c</x>`);
+  // A spread can put `children` before the other props.
+  expect(createElement("x", { children: "c", a: "1", b: "2" })).toMatchInlineSnapshot(`<x a="1" b="2">c</x>`);
+  // `children: undefined` is not printed and must not leave a stray space behind.
+  expect(createElement("x", { a: "1", b: "2", children: undefined })).toMatchInlineSnapshot(`<x a="1" b="2" />`);
+  // Five props share the tag's line; the rest go one per line.
+  // (Multi-line JSX is not wrapped in newlines the way objects are, so these templates are verbatim.)
+  expect(createElement("x", { a: "1", b: "2", c: "3", d: "4", e: "5", f: "6", g: "7" }))
+    .toMatchInlineSnapshot(`<x a="1" b="2" c="3" d="4" e="5"
+  f="6"
+  g="7" />`);
+  expect(createElement("x", { children: "c", a: "1", b: "2", c: "3", d: "4", e: "5", f: "6" }))
+    .toMatchInlineSnapshot(`<x a="1" b="2" c="3" d="4" e="5"
+  f="6">c</x>`);
+  expect(createElement("x", { a: "1" }, createElement("y", { p: "1", q: "2" }))).toMatchInlineSnapshot(`<x a="1">
+  <y p="1" q="2" />
+</x>`);
+
+  // toEqual and friends print both sides with the same formatter; the message is colored when colors are on.
+  let message = "";
+  try {
+    expect(createElement("x", { a: "1", b: "2" })).toEqual(createElement("x", { a: "1", b: "3" }));
+  } catch (e) {
+    message = Bun.stripANSI((e as Error).message);
+  }
+  expect(message).toContain('Expected: <x a="1" b="3" />\nReceived: <x a="1" b="2" />');
 });
 
 class InlineSnapshotTester {

@@ -1105,11 +1105,7 @@ pub mod js_bundler {
                     },
                 )?;
 
-                // `loader_iter.i` is the property position, not a dense index of yielded
-                // entries. With `skip_empty_name = true` (or a skipped property getter),
-                // writing at `loader_iter.i` would leave earlier slots uninitialized and
-                // later freed as garbage. Use ArrayLists so the stored slice is always
-                // exactly what was appended.
+                // `len` counts slots that `next()` may skip, so it is only a capacity hint.
                 let mut loader_names: Vec<Box<[u8]>> = Vec::new();
                 // errdefer: Vec<Box<[u8]>> drops automatically
                 let mut loader_values: Vec<api::Loader> = Vec::new();

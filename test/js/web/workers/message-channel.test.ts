@@ -707,9 +707,8 @@ describe("keeps the event loop alive while a message listener is attached", () =
     for (let i = 0; i < 8; i++) await new Promise(r => setImmediate(r));
     Bun.gc(true);
     Bun.gc(true);
-    // Unfixed, all 10 listening ports stay pinned. Allow generous slack for
-    // wrappers kept by conservative stack scanning, which does not scale with
-    // the channel count.
+    // Unfixed, all 10 listening ports stay pinned. Allow small slack for GC
+    // nondeterminism, which does not scale with the channel count.
     expect(count() - base).toBeLessThanOrEqual(5);
   }, 60_000);
 });

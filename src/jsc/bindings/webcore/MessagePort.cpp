@@ -410,8 +410,8 @@ bool MessagePort::virtualHasPendingActivity() const
 {
     // Called from the GC thread concurrently with the mutator; must be
     // lockless. m_pipe is a Ref<> held for the port's whole lifetime, so
-    // the dereference is always safe; state() and isOtherSideOpen() are
-    // atomic loads. The plain bool reads can observe stale values but
+    // the dereference is always safe; state() and isOtherSideClosedByRequest()
+    // are atomic loads. The plain bool reads can observe stale values but
     // cannot crash — at worst the wrapper is collected one cycle early
     // or late, which is the same tolerance as before this refactor.
     if (!scriptExecutionContext() || m_isDetached)

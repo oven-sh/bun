@@ -1997,11 +1997,13 @@ describe("deferred work of a context that is collected while the work is pending
       const keep = [];
       for (let i = 0; i < 8; i++) keep.push(vm.createContext({}));
 
-      let contextsCollected = 0;
-      const observer = new FinalizationRegistry(() => contextsCollected++);
+      // Which rounds' sandboxes have died, so that a round only looks at its own context.
+      const collectedRounds = new Set();
+      const observer = new FinalizationRegistry(round => collectedRounds.add(round));
 
+      let round = 0;
       function createContext(sandbox) {
-        observer.register(sandbox, null);
+        observer.register(sandbox, round);
         return vm.createContext(sandbox);
       }
 
@@ -2015,7 +2017,7 @@ describe("deferred work of a context that is collected while the work is pending
 
       ${body}
 
-      for (let round = 0; round < 5; round++) {
+      for (round = 0; round < 5; round++) {
         deep(500, setup);
         // The structure shared by every context roots the most recently created one.
         vm.createContext({});
@@ -2025,12 +2027,11 @@ describe("deferred work of a context that is collected while the work is pending
         fullGC();
         afterCollection();
         // The next tick runs whatever was queued, then the observer's job for this round's sandbox.
-        const before = contextsCollected;
-        for (let i = 0; contextsCollected === before && i < 50; i++) await Bun.sleep(1);
-        afterRound(contextsCollected > before);
+        for (let i = 0; !collectedRounds.has(round) && i < 50; i++) await Bun.sleep(1);
+        afterRound(collectedRounds.has(round));
       }
       // A round whose context survived the collection exercised nothing.
-      if (contextsCollected === 0) throw new Error("no round collected its context");
+      if (collectedRounds.size === 0) throw new Error("no round collected its context");
       console.log("done");
     `;
   }

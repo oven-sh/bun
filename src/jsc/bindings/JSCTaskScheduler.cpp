@@ -32,29 +32,39 @@ public:
     WTF_MAKE_TZONE_ALLOCATED(JSCDeferredWorkTask);
 };
 
-static bool holdsEventLoopOpen(Ticket& ticket)
-{
-    return ticket.type() == DeferredWorkTimer::WorkType::ImminentlyScheduled;
-}
+// Ticket::embedderData(): the loop that was current when JSC registered the work,
+// which its completion is posted to, and whether the ticket took an event loop ref.
+static constexpr uint8_t loopKindMask = 0x1;
+static constexpr uint8_t holdsEventLoopRef = 0x2;
+static_assert(static_cast<uint8_t>(BunLoopKind::Macro) <= loopKindMask);
 
-// The loop that was current when JSC registered the work; its completion is posted there.
 static BunLoopKind loopKindOf(Ticket& ticket)
 {
-    return static_cast<BunLoopKind>(ticket.embedderData());
+    return static_cast<BunLoopKind>(ticket.embedderData() & loopKindMask);
+}
+
+static void releaseEventLoopRef(WebCore::JSVMClientData* clientData, Ticket& ticket)
+{
+    if (ticket.embedderData() & holdsEventLoopRef)
+        Bun__VmHandle__refKeepAlive(clientData->vmHandle, BunLoopKind::Regular, -1);
 }
 
 void JSCTaskScheduler::onAddPendingWork(WebCore::JSVMClientData* clientData, Ticket& ticket)
 {
-    ticket.setEmbedderData(static_cast<uint8_t>(Bun__VM__currentLoopKind(clientData->bunVM)));
-    if (holdsEventLoopOpen(ticket))
+    uint8_t data = static_cast<uint8_t>(Bun__VM__currentLoopKind(clientData->bunVM));
+    // Past the event loop's last tick nothing runs any more, and the release below
+    // would be dropped once the VM handle closes, so no ref is taken.
+    if (ticket.type() == DeferredWorkTimer::WorkType::ImminentlyScheduled && !clientData->deferredWorkTimer.isShuttingDown()) {
         Bun__eventLoop__refKeepAlive(clientData->bunVM, 1);
+        data |= holdsEventLoopRef;
+    }
+    ticket.setEmbedderData(data);
 }
 
 // The ticket stops being pending here or in runPendingWork, never both.
 void JSCTaskScheduler::onCancelPendingWork(WebCore::JSVMClientData* clientData, Ticket& ticket)
 {
-    if (holdsEventLoopOpen(ticket))
-        Bun__VmHandle__refKeepAlive(clientData->vmHandle, BunLoopKind::Regular, -1);
+    releaseEventLoopRef(clientData, ticket);
 }
 
 void JSCTaskScheduler::onScheduleWorkSoon(WebCore::JSVMClientData* clientData, Ref<Ticket>&& ticket, Task&& task)
@@ -79,8 +89,7 @@ static void runPendingWork(JSCDeferredWorkTask* job)
     // False once a collection found the ticket's realm dead, or once an earlier job
     // for the same ticket ran. Nothing the ticket points at may be read then.
     if (vm.deferredWorkTimer->takePendingWork(ticket)) {
-        if (holdsEventLoopOpen(ticket))
-            Bun__VmHandle__refKeepAlive(clientData->vmHandle, BunLoopKind::Regular, -1);
+        releaseEventLoopRef(clientData, ticket);
 
         // Deferred work runs script (FinalizationRegistry callbacks, wasm
         // completions); not once the VM's stop was requested. Like any other

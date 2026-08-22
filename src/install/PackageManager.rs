@@ -80,6 +80,8 @@ pub mod populate_manifest_cache;
 pub mod process_dependency_list;
 #[path = "PackageManager/ProgressStrings.rs"]
 pub mod progress_strings;
+#[path = "PackageManager/retry_timer.rs"]
+pub(crate) mod retry_timer;
 #[path = "PackageManager/runTasks.rs"]
 pub mod run_tasks;
 #[path = "PackageManager/security_scanner.rs"]
@@ -357,6 +359,9 @@ pub struct PackageManager {
     pub(crate) network_tarball_batch: thread_pool::Batch,
     pub(crate) network_resolve_batch: thread_pool::Batch,
     pub(crate) network_task_fifo: NetworkQueue,
+    /// Network tasks waiting out a retry backoff: (not-before ms timestamp, task).
+    /// Drained into `network_task_fifo` by `flush_due_retries` (see runTasks).
+    pub(crate) retry_queue: Vec<(u64, *mut NetworkTask)>,
     pub(crate) patch_apply_batch: thread_pool::Batch,
     pub(crate) patch_calc_hash_batch: thread_pool::Batch,
     pub(crate) patch_task_fifo: PatchTaskFifo,
@@ -2040,6 +2045,7 @@ pub fn init(
             }
         );
         wr!(network_task_fifo, NetworkQueue::init());
+        wr!(retry_queue, Vec::new());
         wr!(patch_task_fifo, PatchTaskFifo::init());
         wr!(log, ctx.log);
         wr!(root_dir, entries_option);
@@ -2498,6 +2504,7 @@ fn init_with_runtime_once(
             }
         );
         wr!(network_task_fifo, NetworkQueue::init());
+        wr!(retry_queue, Vec::new());
         wr!(log, std::ptr::from_mut(log));
         wr!(root_dir, root_dir);
         wr!(ast_arena, bun_alloc::Arena::new());

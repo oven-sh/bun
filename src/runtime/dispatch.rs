@@ -231,20 +231,15 @@ pub(crate) fn run_task(
             })?;
         }
         task_tag::MacroRequest => {
-            // SAFETY: tag identifies pointee — a request whose caller is parked
-            // until the macro host answers it.
+            // Tag identifies pointee — a request whose caller is parked until
+            // the macro host answers it.
             bun_js_parser_jsc::Macro::MacroRequest::run_on_macro_host(
                 cast_ptr!(bun_js_parser_jsc::Macro::MacroRequest<'static>),
                 global,
             );
         }
         task_tag::MacroCancel => {
-            // SAFETY: tag identifies pointee — see `MacroCancel::run_on_macro_host`.
-            unsafe {
-                bun_js_parser_jsc::Macro::MacroCancel::run_on_macro_host(cast_ptr!(
-                    bun_js_parser_jsc::Macro::MacroCancel
-                ))
-            };
+            bun_js_parser_jsc::Macro::MacroCancel::run_on_macro_host(task.ptr);
         }
         task_tag::BundleV2PluginLoad => {
             // As `BundleV2PluginResolve`.

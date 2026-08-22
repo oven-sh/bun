@@ -235,10 +235,6 @@ impl MacroContext {
             )),
             done: ResetEvent::default(),
             task: ConcurrentTask::default(),
-            cancel: MacroCancel {
-                request: core::ptr::null_mut(),
-                task: ConcurrentTask::default(),
-            },
         };
         host.run(&mut request, waiting_vm);
 
@@ -411,36 +407,6 @@ pub struct MacroRequest<'a> {
     outcome: MacroOutcome,
     done: ResetEvent,
     task: ConcurrentTask,
-    /// Posted to the host by the caller's VM if the caller is terminated
-    /// (`worker.terminate()`) while parked; see [`VmHandle::park`].
-    cancel: MacroCancel,
-}
-
-/// A [`MacroRequest`]'s "give up" task: the host answers the request as
-/// interrupted if it is still in flight, and ignores it otherwise.
-pub struct MacroCancel {
-    request: *mut MacroRequest<'static>,
-    task: ConcurrentTask,
-}
-
-impl Taskable for MacroCancel {
-    const TAG: TaskTag = task_tag::MacroCancel;
-    /// The host is tearing down: it answers every in-flight request itself.
-    unsafe fn release_unrun(_this: *mut Self) {}
-}
-
-impl MacroCancel {
-    /// `bun_runtime::dispatch` arm for [`task_tag::MacroCancel`].
-    ///
-    /// # Safety
-    /// `this` is the task the caller's VM posted; the caller cannot return
-    /// (and free it) before the host sets `done`, which `cancel` does last if
-    /// at all.
-    pub unsafe fn run_on_macro_host(this: *mut Self) {
-        // SAFETY: fn contract.
-        let request = unsafe { (*this).request };
-        HostState::with(|state| state.cancel(request));
-    }
 }
 
 // SAFETY: handed to the host thread through the concurrent task queue and
@@ -470,6 +436,26 @@ impl MacroRequest<'_> {
     /// host thread inside its event loop's task phase.
     pub fn run_on_macro_host(this: *mut Self, global: &JSGlobalObject) {
         HostState::with(|state| state.start(this.cast(), global));
+    }
+}
+
+/// [`task_tag::MacroCancel`]: "give up on this request" — posted to the host
+/// by the VM a caller is waiting for when that VM is stopped
+/// (`worker.terminate()`); see [`VmHandle::park`]. Its `ptr` is the
+/// request's address, used only to look the request up: by the time it runs
+/// the request may have been answered and be gone.
+pub struct MacroCancel;
+
+impl Taskable for MacroCancel {
+    const TAG: TaskTag = task_tag::MacroCancel;
+    /// Nothing owned; the carrier is the queue's.
+    unsafe fn release_unrun(_this: *mut Self) {}
+}
+
+impl MacroCancel {
+    /// `bun_runtime::dispatch` arm for [`task_tag::MacroCancel`].
+    pub fn run_on_macro_host(request: *mut ()) {
+        HostState::with(|state| state.cancel(request.cast()));
     }
 }
 
@@ -771,15 +757,8 @@ impl MacroHost {
         // another thread); `outcome` still holds its initial failure.
         if posted {
             // The VM this parse is for (a Worker's, say) can be stopped while
-            // we wait; that posts `cancel` to the host so the wait ends.
-            request.cancel.request = request_ptr.cast();
-            let cancel_ptr: *mut MacroCancel = &raw mut request.cancel;
-            let cancel = NonNull::from(
-                request
-                    .cancel
-                    .task
-                    .from(cancel_ptr, AutoDeinit::ManualDeinit),
-            );
+            // we wait; that posts a `MacroCancel` to the host so the wait ends.
+            let cancel = bun_event_loop::Task::new(task_tag::MacroCancel, request_ptr.cast());
             let own;
             let waiting_vm = match waiting_vm {
                 Some(h) => Some(h),

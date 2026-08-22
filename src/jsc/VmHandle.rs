@@ -276,15 +276,26 @@ pub struct VmHandle(Arc<Shared>);
 
 struct Parked {
     on: VmHandle,
-    task: NonNull<ConcurrentTaskItem>,
+    task: bun_event_loop::Task,
+}
+
+impl Parked {
+    fn fire(&self) {
+        // Heap carrier, freed by `on` after dispatch (or on release): the
+        // parked thread may be gone by the time it is looked at.
+        if let Posted::Refused(task) = self.on.post(ConcurrentTaskItem::create(self.task)) {
+            // SAFETY: refused ⇒ never queued; ours to free.
+            unsafe { ConcurrentTaskItem::release_refused(task) };
+        }
+    }
 }
 
 /// Clears the [`VmHandle::park`] registration on drop.
-pub struct ParkGuard<'a>(&'a VmHandle, NonNull<ConcurrentTaskItem>);
+pub struct ParkGuard<'a>(&'a VmHandle, *mut ());
 impl Drop for ParkGuard<'_> {
     fn drop(&mut self) {
         let mut parked = (self.0).0.parked.lock();
-        if let Some(i) = parked.iter().position(|p| p.task == self.1) {
+        if let Some(i) = parked.iter().position(|p| p.task.ptr == self.1) {
             parked.swap_remove(i);
         }
     }
@@ -403,10 +414,10 @@ impl VmHandle {
             self.0.event_loop().wakeup();
         }
         // Neither of those reaches a thread blocked natively; ask whoever it
-        // is waiting on to answer it. Under the lock, so a parked thread
-        // cannot return (and free what `task` points at) before the post.
+        // is waiting on to answer it. Under the lock, so it is posted before
+        // the parked thread can unregister and go on to post anything else.
         for p in self.0.parked.lock().drain(..) {
-            let _ = p.on.post(p.task);
+            p.fire();
         }
     }
 
@@ -414,15 +425,18 @@ impl VmHandle {
     /// blocked natively waiting on `on`, and a stop of this VM
     /// ([`request_termination`](Self::request_termination), from any thread —
     /// or one that already happened) posts `task` to `on` so that VM answers
-    /// the wait. `task` must stay valid until the guard drops. Any thread.
-    pub fn park(&self, on: VmHandle, task: NonNull<ConcurrentTaskItem>) -> ParkGuard<'_> {
+    /// the wait. The wait may also end on its own first, so `on` treats a
+    /// `task` for a wait it no longer has as a no-op and never dereferences
+    /// `task.ptr` before checking. Any thread.
+    pub fn park(&self, on: VmHandle, task: bun_event_loop::Task) -> ParkGuard<'_> {
+        let p = Parked { on, task };
         let mut parked = self.0.parked.lock();
         if self.0.state() >= State::Stopping {
-            let _ = on.post(task);
+            p.fire();
         } else {
-            parked.push(Parked { on, task });
+            parked.push(p);
         }
-        ParkGuard(self, task)
+        ParkGuard(self, task.ptr)
     }
 
     /// Wake the VM's loop (no-op once closed). Any thread.

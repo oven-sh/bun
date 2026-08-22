@@ -2890,7 +2890,6 @@ impl VirtualMachine {
 pub(crate) fn process_fetch_log(
     global_this: &JSGlobalObject,
     specifier: bun_core::String,
-    referrer: bun_core::String,
     log: &mut bun_ast::Log,
     ret: &mut ErrorableResolvedSource,
     err: crate::CrateError,
@@ -2903,7 +2902,7 @@ pub(crate) fn process_fetch_log(
 
     // `ResolveMessage::create` takes raw `&[u8]` and stores them verbatim, so
     // we must convert to UTF-8 here.
-    let referrer_utf8 = referrer.to_utf8();
+    let referrer_utf8 = specifier.to_utf8();
 
     match log.msgs.len() {
         0 => {

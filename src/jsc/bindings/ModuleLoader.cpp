@@ -479,8 +479,7 @@ extern "C" void Bun__onFulfillAsyncModule(
     Zig::GlobalObject* globalObject,
     JSC::EncodedJSValue encodedPromiseValue,
     ErrorableResolvedSource* res,
-    BunString* specifier,
-    BunString* referrer)
+    BunString* specifier)
 {
     ResolvedSourceCodeHolder sourceCodeHolder(res);
     auto& vm = JSC::getVM(globalObject);

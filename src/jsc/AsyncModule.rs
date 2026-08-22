@@ -156,36 +156,11 @@ impl AsyncModule {
         promise: JSValue,
         resolved_source: &mut ResolvedSource,
         err: Option<crate::CrateError>,
-        specifier_: BunString,
-        referrer_: BunString,
+        specifier: BunString,
         log: &mut bun_ast::Log,
     ) -> JsResult<()> {
         jsc::mark_binding();
-        let mut specifier = specifier_;
-        let mut referrer = referrer_;
-        // BunString is `Copy` (no Drop), so deref the held
-        // refcounts explicitly via scopeguard. The `TopExceptionScope` is
-        // omitted: `from_js_host_call_generic` already checks the VM for a
-        // pending exception after the FFI call (host_fn.rs).
-        //
-        // The guard captures raw pointers to the locals (not by-value copies)
-        // so the deref observes the *post-FFI* value of the variable —
-        // `Bun__onFulfillAsyncModule` receives
-        // `&mut specifier`/`&mut referrer` and is free to overwrite them.
-        // Safety: `specifier`/`referrer` are declared above this guard, so
-        // they outlive it (locals drop in reverse order); the `&mut` reborrow
-        // passed to FFI below is dead by the time the guard runs.
-        let sp: *mut BunString = &raw mut specifier;
-        let rp: *mut BunString = &raw mut referrer;
-        let _strings_guard = scopeguard::guard((), move |()| {
-            // SAFETY: `sp`/`rp` point at `specifier`/`referrer` declared above
-            // this guard; locals drop in reverse order so they outlive it, and
-            // the `&mut` reborrows passed to FFI are dead by the time this runs.
-            unsafe {
-                (*sp).deref();
-                (*rp).deref();
-            }
-        });
+        let mut specifier = OwnedString::new(specifier);
 
         let mut errorable: ErrorableResolvedSource;
         if let Some(e) = err {
@@ -219,8 +194,7 @@ impl AsyncModule {
                 );
                 crate::virtual_machine::process_fetch_log(
                     global_this,
-                    specifier,
-                    referrer,
+                    specifier.get(),
                     log,
                     &mut errorable,
                     e,
@@ -232,13 +206,7 @@ impl AsyncModule {
         bun_core::scoped_log!(AsyncModule, "fulfill: {}", specifier);
 
         jsc::from_js_host_call_generic(global_this, || {
-            Bun__onFulfillAsyncModule(
-                global_this,
-                promise,
-                &mut errorable,
-                &mut specifier,
-                &mut referrer,
-            )
+            Bun__onFulfillAsyncModule(global_this, promise, &mut errorable, &mut specifier)
         })
     }
 }
@@ -259,7 +227,6 @@ unsafe extern "C" {
         promise_value: JSValue,
         res: &mut ErrorableResolvedSource,
         specifier: &mut BunString,
-        referrer: &mut BunString,
     );
 }
 
@@ -728,7 +695,6 @@ impl AsyncModule {
                 crate::virtual_machine::process_fetch_log(
                     global_this,
                     BunString::init(ZigString::init(this.specifier())),
-                    BunString::init(ZigString::init(this.referrer())),
                     &mut log,
                     &mut errorable,
                     err,
@@ -740,14 +706,12 @@ impl AsyncModule {
         // log dropped at scope exit (defer log.deinit()).
 
         let mut spec = BunString::init(ZigString::from_bytes(this.specifier()).with_encoding());
-        let mut ref_ = BunString::init(ZigString::from_bytes(this.referrer()).with_encoding());
         jsc::from_js_host_call_generic(global_this, || {
             Bun__onFulfillAsyncModule(
                 global_this,
                 this.promise.get().unwrap(),
                 &mut errorable,
                 &mut spec,
-                &mut ref_,
             )
         })
     }

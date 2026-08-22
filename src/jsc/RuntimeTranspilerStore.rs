@@ -318,7 +318,6 @@ impl RuntimeTranspilerStore {
         global_object: &JSGlobalObject,
         input_specifier: String,
         path: &Fs::Path<'_>,
-        referrer: String,
         loader: Loader,
         package_json: Option<&PackageJSON>,
     ) -> *mut c_void {
@@ -359,7 +358,6 @@ impl RuntimeTranspilerStore {
                 non_threadsafe_input_specifier: OwnedString::new(input_specifier),
                 path: owned_path,
                 global_this: BackRef::new(global_object),
-                non_threadsafe_referrer: OwnedString::new(referrer),
                 vm,
                 ticket: None,
                 log: bun_ast::Log::init(),
@@ -411,7 +409,6 @@ pub struct TranspilerJob {
     /// RAII: `Drop` derefs the WTF refcount — torn down by
     /// `HiveArray::put` → `drop_in_place` (not in `reset_for_pool`).
     pub(crate) non_threadsafe_input_specifier: OwnedString,
-    pub(crate) non_threadsafe_referrer: OwnedString,
     pub(crate) loader: Loader,
     pub(crate) promise: StrongOptional,
     // Note: struct is stored in a HiveArray and crosses to a worker thread;
@@ -503,7 +500,7 @@ impl TranspilerJob {
     /// `run_from_js_thread`.
     ///
     /// Note: `HiveArrayFallback::put` runs `drop_in_place` on the slot (see
-    /// hive_array.rs note), so the Drop-carrying fields — `OwnedString` ×2,
+    /// hive_array.rs note), so the Drop-carrying fields — `OwnedString`,
     /// `OwnedResolvedSource`, `Log`, `StrongOptional` — are torn down *there*,
     /// not here. This function handles only the teardown that field drop glue
     /// does **not** cover: the leaked `path.text` Box, `poll_ref.disable()`,
@@ -553,7 +550,6 @@ impl TranspilerJob {
         // vtable; resolve it via the `get_vm_ctx` hook (registered by `bun_runtime::init`).
         self.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
 
-        let referrer = core::mem::take(&mut self.non_threadsafe_referrer).into_inner();
         let mut log = core::mem::replace(&mut self.log, bun_ast::Log::init());
         // Take RAII ownership out of the job; `into_ffi()` below transfers the
         // +1 strings to `AsyncModule::fulfill` → C++ `Zig::ResolvedSource`.
@@ -593,7 +589,6 @@ impl TranspilerJob {
             &mut resolved_source,
             parse_error,
             specifier,
-            referrer,
             &mut log,
         )
     }

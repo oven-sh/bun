@@ -4323,8 +4323,7 @@ void markAsUntransferable(VM& vm, JSObject& object)
     markObjectWithPrivateName(vm, object, builtinNames(vm).isUntransferablePrivateName());
 }
 
-// Serializing runs user code (getters, Proxy traps) that can invalidate entries the transfer list
-// loop in create() accepted. Runs before anything is detached, so a failure detaches nothing.
+// Serializing runs user code (getters, Proxy traps) that can invalidate entries create() accepted; runs before anything is detached.
 static std::optional<Exception> transferListChangedDuringSerialization(VM& vm, const Vector<JSC::Strong<JSC::JSObject>>& transferList, const Vector<RefPtr<JSC::ArrayBuffer>>& arrayBuffers, const Vector<RefPtr<MessagePort>>& messagePorts)
 {
     for (auto& transferable : transferList) {

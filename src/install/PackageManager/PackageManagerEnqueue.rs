@@ -1202,7 +1202,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                             format_args!(
                                                                 "Version \"{}@{}\" was published within minimum release age of {} seconds",
                                                                 bstr::BStr::new(package_name),
-                                                                find_result.version.fmt(this.lockfile.buffers.string_bytes.as_slice()),
+                                                                find_result.version.fmt(&loaded_manifest.as_ref().unwrap().string_buf),
                                                                 min_age_seconds,
                                                             ),
                                                         );
@@ -2703,7 +2703,10 @@ fn get_or_put_resolved_package(
                                 }
                                 dependency::version::Tag::Npm => {
                                     // SAFETY: `version.tag == Npm`.
-                                    let version_str = &version.npm().version.fmt(manifest_buf);
+                                    let version_str = &version
+                                        .npm()
+                                        .version
+                                        .fmt(this.lockfile.buffers.string_bytes.as_slice());
                                     bun_core::pretty_errorln!(
                                         "<d>[minimum-release-age]<r> <b>{}<r>@{}<r> selected <green>{}<r> instead of <yellow>{}<r> due to {}-second filter",
                                         bstr::BStr::new(package_name),

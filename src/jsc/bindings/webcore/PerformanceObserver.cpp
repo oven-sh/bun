@@ -96,8 +96,8 @@ ExceptionOr<void> PerformanceObserver::observe(Init&& init)
         m_performance->registerPerformanceObserver(*this);
         m_registered = true;
     }
-    if (isBuffered)
-        deliver();
+    if (isBuffered && !m_entriesToDeliver.isEmpty())
+        m_performance->scheduleTaskIfNeeded();
 
     return {};
 }
@@ -124,6 +124,8 @@ void PerformanceObserver::queueEntry(PerformanceEntry& entry)
 
 void PerformanceObserver::deliver()
 {
+    if (!m_registered)
+        return;
     if (m_entriesToDeliver.isEmpty())
         return;
 

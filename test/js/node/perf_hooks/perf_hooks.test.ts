@@ -169,6 +169,70 @@ test("timerify and AsyncResource.bind survive Object.prototype.get pollution", a
   expect(exitCode).toBe(0);
 });
 
+// Performance Timeline L2 §observe: with {buffered:true} the existing entries
+// are appended to the observer buffer synchronously and delivery is queued as
+// a task, not invoked inside observe(). Verified against Node v26.3.0.
+test("observe({type, buffered: true}) buffers synchronously and delivers as one deferred batch", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { performance, PerformanceObserver } = require("node:perf_hooks");
+       const tick = () => new Promise(r => setImmediate(r));
+       (async () => {
+         const out = {};
+
+         // takeRecords() right after a buffered observe() sees the buffered
+         // entries plus any entry added before the first delivery task runs.
+         performance.mark("pre1"); performance.mark("pre2");
+         let syncFired = false;
+         const oA = new PerformanceObserver(() => { syncFired = true; });
+         oA.observe({ type: "mark", buffered: true });
+         out.syncFired = syncFired;
+         performance.mark("post1");
+         out.takeRecords = oA.takeRecords().map(e => e.name);
+         oA.disconnect(); performance.clearMarks();
+         await tick();
+
+         // Buffered entries and entries queued before the task runs arrive in
+         // a single callback batch.
+         performance.mark("b1");
+         const batches = [];
+         const oB = new PerformanceObserver(l => batches.push(l.getEntries().map(e => e.name)));
+         oB.observe({ type: "mark", buffered: true });
+         performance.mark("b2");
+         await tick();
+         out.batches = batches;
+         oB.disconnect(); performance.clearMarks();
+         await tick();
+
+         // disconnect() before the task runs drops the buffered delivery.
+         performance.mark("c1");
+         const late = [];
+         const oC = new PerformanceObserver(l => late.push(l.getEntries().map(e => e.name)));
+         oC.observe({ type: "mark", buffered: true });
+         oC.disconnect();
+         await tick();
+         out.afterDisconnect = late;
+
+         console.log(JSON.stringify(out));
+       })();`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    syncFired: false,
+    takeRecords: ["pre1", "pre2", "post1"],
+    batches: [["b1", "b2"]],
+    afterDisconnect: [],
+  });
+  expect(exitCode).toBe(0);
+});
+
 test("net entries are instanceof PerformanceEntry", async () => {
   const { promise, resolve } = Promise.withResolvers();
   const observer = new PerformanceObserver(list => resolve(list.getEntries()[0]));

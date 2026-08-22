@@ -31,6 +31,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     to_common_js_ref: Ref,
     to_esm_ref: Ref,
     runtime_require_ref: Option<Ref>,
+    inside_bun_cjs_wrapper: bool,
     stmts: &mut StmtList,
     arena: &Bump,
     temp_arena: &Bump,
@@ -226,6 +227,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 Ref::NONE,
                 Ref::NONE,
                 None,
+                false,
                 part_range.source_index,
                 source,
                 module_info,
@@ -911,10 +913,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     let out_stmts: &mut [Stmt] = out_stmts.slice_mut();
 
     if out_stmts.is_empty() {
-        return PrintResult::Result(PrintResultSuccess {
-            code: Box::new([]),
-            source_map: None,
-        });
+        return PrintResult::Result(PrintResultSuccess::default());
     }
 
     // `get_source` returns `&'static Source` (parse_graph SoA is append-only and
@@ -931,6 +930,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         to_esm_ref,
         to_common_js_ref,
         runtime_require_ref,
+        inside_bun_cjs_wrapper,
         part_range.source_index,
         source,
         module_info,

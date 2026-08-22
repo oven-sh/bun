@@ -460,7 +460,7 @@ allowedHosts = []
     expect(elsewhereReceived).toEqual([]);
   });
 
-  it("skips an optional dependency whose tarball host is not listed instead of failing", async () => {
+  it("an optional dependency whose tarball host is not listed also fails the install", async () => {
     const elsewhereReceived: Received[] = [];
     await using elsewhere = serveElsewhere(elsewhereReceived);
     const tarballUrl = `http://127.0.0.1:${elsewhere.port}/no-deps/-/no-deps-1.0.0.tgz`;
@@ -477,12 +477,81 @@ allowedHosts = []
 
     const { stderr, exitCode } = await install(String(dir));
     expect(stderr).toContain(
-      `warn: Skipping optional package "no-deps": "${tarballUrl}" is not in install.allowedHosts`,
+      `error: Refusing to download "${tarballUrl}" for package "no-deps": host is not in install.allowedHosts`,
     );
-    expect(stderr).not.toContain("error:");
-    expect(exitCode).toBe(0);
+    expect(stderr).not.toContain("internal error");
+    expect(exitCode).toBe(1);
     expect(elsewhereReceived).toEqual([]);
     expect(existsSync(join(String(dir), "node_modules", "no-deps"))).toBeFalse();
+  });
+
+  it("a package that is optional for one dependent and required for another is refused once", async () => {
+    // Whichever edge is seen first, the refusal is one error and the install
+    // fails; the second edge must neither downgrade nor repeat it.
+    const elsewhereReceived: Received[] = [];
+    await using elsewhere = serveElsewhere(elsewhereReceived);
+    const pkgs = join(import.meta.dir, "registry", "packages");
+    await using registry = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        const url = new URL(req.url);
+        const origin = `http://127.0.0.1:${registry.port}`;
+        if (url.pathname === "/one-dep") {
+          // one-dep@1.0.0 depends on no-deps@1.0.1; its own tarball is on the registry
+          return Response.json({
+            name: "one-dep",
+            "dist-tags": { latest: "1.0.0" },
+            versions: {
+              "1.0.0": {
+                name: "one-dep",
+                version: "1.0.0",
+                dependencies: { "no-deps": "1.0.1" },
+                dist: { tarball: `${origin}/one-dep/-/one-dep-1.0.0.tgz` },
+              },
+            },
+          });
+        }
+        if (url.pathname === "/no-deps") {
+          return Response.json({
+            name: "no-deps",
+            "dist-tags": { latest: "1.0.1" },
+            versions: {
+              "1.0.1": {
+                name: "no-deps",
+                version: "1.0.1",
+                dist: { tarball: `http://127.0.0.1:${elsewhere.port}/no-deps/-/no-deps-1.0.1.tgz` },
+              },
+            },
+          });
+        }
+        if (url.pathname === "/one-dep/-/one-dep-1.0.0.tgz") {
+          return new Response(Bun.file(join(pkgs, "one-dep", "one-dep-1.0.0.tgz")));
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+    using dir = tempDir("allowed-hosts", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "one-dep": "1.0.0" },
+        optionalDependencies: { "no-deps": "1.0.1" },
+      }),
+      "bunfig.toml": `
+[install]
+cache = false
+registry = "http://127.0.0.1:${registry.port}/"
+allowedHosts = []
+`,
+    });
+
+    const { stderr, exitCode } = await install(String(dir));
+    const refusal = `error: Refusing to download "http://127.0.0.1:${elsewhere.port}/no-deps/-/no-deps-1.0.1.tgz" for package "no-deps": host is not in install.allowedHosts`;
+    expect(stderr).toContain(refusal);
+    expect(stderr.split(refusal).length - 1).toBe(1);
+    expect(exitCode).toBe(1);
+    expect(elsewhereReceived).toEqual([]);
   });
 
   it("a host allowed only on the ssh port still gets the ssh attempt", async () => {
@@ -511,7 +580,7 @@ allowedHosts = ["git.example.invalid:22"]
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).not.toContain("Refusing to clone");
     expect(stderr).toContain(`"git clone" for "repo" failed`);
     expect(exitCode).toBe(1);

@@ -47,6 +47,7 @@ import {
   getDistro,
   getDistroVersion,
   getEnv,
+  getErrorLineInFile,
   getFileUrl,
   getHostname,
   getLoggedInUserCountOrDetails,
@@ -1928,6 +1929,7 @@ async function spawnBun(execPath, { args, cwd, timeout, gracefulTimeout, idleTim
  * @property {boolean} ok
  * @property {string} status
  * @property {string} [error]
+ * @property {TestError[]} errors every error the file reported, in output order
  * @property {TestEntry[]} tests
  * @property {string} stdout
  * @property {string} stdoutPreview
@@ -1939,7 +1941,7 @@ async function spawnBun(execPath, { args, cwd, timeout, gracefulTimeout, idleTim
  * @property {string} file
  * @property {string} test
  * @property {string} status
- * @property {TestError} [error]
+ * @property {TestError[]} [errors] the errors reported before this test's result line
  * @property {number} [duration]
  */
 
@@ -1947,8 +1949,8 @@ async function spawnBun(execPath, { args, cwd, timeout, gracefulTimeout, idleTim
  * @typedef {object} TestError
  * @property {string} [url]
  * @property {string} file
- * @property {number} line
- * @property {number} col
+ * @property {string} [line] as printed in the `::error` annotation; absent when the error had no location
+ * @property {string} [col]
  * @property {string} name
  * @property {string} stack
  */
@@ -2082,7 +2084,7 @@ function pipeTestStdout(io, chunk) {
 /**
  * @typedef {object} TestOutput
  * @property {string} stdout
- * @property {TestResult[]} tests
+ * @property {TestEntry[]} tests
  * @property {TestError[]} errors
  */
 
@@ -2857,25 +2859,13 @@ function formatTestToMarkdown(result, concise, retries) {
   const platform = buildUrl ? `<a href="${buildUrl}">${buildLabel}</a>` : buildLabel;
 
   let markdown = "";
-  for (const { testPath, ok, tests, error, stdoutPreview: stdout } of results) {
+  for (const { testPath, ok, errors, error, stdoutPreview: stdout } of results) {
     if (ok || error === "SIGTERM") {
       continue;
     }
 
-    let errorLine;
-    for (const { error } of tests) {
-      if (!error) {
-        continue;
-      }
-      const { file, line } = error;
-      if (line) {
-        errorLine = line;
-        break;
-      }
-    }
-
     const testTitle = testPath.replace(/\\/g, "/");
-    const testUrl = getFileUrl(testPath, errorLine);
+    const testUrl = getFileUrl(testPath, getErrorLineInFile(testPath, errors));
 
     if (concise) {
       markdown += "<li>";

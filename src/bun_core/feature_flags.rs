@@ -24,8 +24,6 @@ pub const DISABLE_COMPRESSION_IN_HTTP_CLIENT: bool = false;
 
 pub const ENABLE_KEEPALIVE: bool = true;
 
-pub const ATOMIC_FILE_WATCHER: bool = env::IS_LINUX;
-
 pub const HTTP_BUFFER_POOLING: bool = true;
 
 /// There is, what I think is, a bug in getaddrinfo()

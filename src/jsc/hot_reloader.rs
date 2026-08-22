@@ -36,11 +36,10 @@ impl ImportWatcher {
     /// Look up the `package_json` column for `hash` under the watcher's
     /// mutex.
     ///
-    /// Deliberately does NOT hand out the stored fd: the watchlist owns it
-    /// and `flush_evictions` closes it concurrently, so a reader would hit
-    /// `EBADF`/`EISDIR` after the mutex is released (watch-many-dirs.test.ts)
-    /// or read the stale pre-rename inode after an atomic save. Reloads open
-    /// the file by path; `Watcher::add_file` adopts the fresh descriptor.
+    /// Deliberately does NOT hand out a stored fd (kqueue entries hold one):
+    /// the watchlist owns it and `flush_evictions` closes it concurrently, so
+    /// a reader would hit `EBADF`/`EISDIR` after the mutex is released
+    /// (watch-many-dirs.test.ts). Reloads open the file by path.
     pub fn snapshot_package_json(
         &self,
         hash: bun_watcher::HashType,
@@ -1183,32 +1182,27 @@ where
                                             file_hash = Watcher::get_hash(path_string.as_bytes());
                                             for (entry_id, hash) in hashes.iter().enumerate() {
                                                 if *hash == file_hash {
-                                                    if file_descriptors[entry_id].is_valid() {
-                                                        if prev_entry_id != entry_id {
-                                                            record_changed_path(
-                                                                path_string.as_bytes(),
-                                                            );
-                                                            current_task.append(hashes[entry_id]);
-                                                            if self.verbose {
-                                                                Self::debug(format_args!(
-                                                                    "Removing file: {}",
-                                                                    bstr::BStr::new(
-                                                                        path_string.as_bytes()
-                                                                    )
-                                                                ));
-                                                            }
-                                                            // SAFETY: see the
-                                                            // File-arm call
-                                                            // above.
-                                                            unsafe {
-                                                                (*ctx).remove_at_index::<false>(
-                                                                    bun_watcher::Kind::File,
-                                                                    entry_id as u16,
-                                                                    0,
-                                                                    &[],
+                                                    if prev_entry_id != entry_id {
+                                                        record_changed_path(path_string.as_bytes());
+                                                        current_task.append(hashes[entry_id]);
+                                                        if self.verbose {
+                                                            Self::debug(format_args!(
+                                                                "Removing file: {}",
+                                                                bstr::BStr::new(
+                                                                    path_string.as_bytes()
                                                                 )
-                                                            };
+                                                            ));
                                                         }
+                                                        // SAFETY: see the File-arm
+                                                        // call above.
+                                                        unsafe {
+                                                            (*ctx).remove_at_index::<false>(
+                                                                bun_watcher::Kind::File,
+                                                                entry_id as u16,
+                                                                0,
+                                                                &[],
+                                                            )
+                                                        };
                                                     }
 
                                                     prev_entry_id = entry_id;

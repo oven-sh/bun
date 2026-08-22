@@ -178,9 +178,7 @@ impl Response {
     pub(crate) fn should_close_connection(&mut self) -> bool {
         self.state().is_http_connection_close()
     }
-    /// `us_quic_on_close` frees the stream right after `on_stream_close`, so a
-    /// handle that can be asked is never closed; only the armed `onAborted`
-    /// callback observes an HTTP/3 stream's close.
+    /// `us_quic_on_close` frees the stream right after its close callback: a live handle is never closed.
     pub(crate) fn is_closed(&self) -> bool {
         false
     }

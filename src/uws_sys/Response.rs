@@ -159,12 +159,7 @@ impl<const SSL: bool> Response<SSL> {
         self.state().is_http_connection_close()
     }
 
-    /// Whether the socket under this response has already been closed. uSockets
-    /// keeps a closed socket allocated until the outermost loop tick ends, so a
-    /// holder whose frame was on the stack while a nested run of the event loop
-    /// closed the socket can still ask. Registering a callback on a closed
-    /// response is a no-op (see `uws_res_on_aborted`), so such a holder has to
-    /// act on the close itself.
+    /// Valid after the close callback: uSockets frees a closed socket only when the outermost tick ends.
     pub(crate) fn is_closed(&self) -> bool {
         // Same view as `downcast_socket`: the response handle is the socket.
         us_socket_t::opaque_ref(std::ptr::from_ref::<Self>(self).cast::<us_socket_t>()).is_closed()
@@ -846,8 +841,7 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.should_close_connection())
     }
 
-    /// See [`Response::is_closed`]. Always `false` for HTTP/3, whose stream is
-    /// freed by its close callback, so a closed stream never has a handle to ask.
+    /// See `Response::is_closed`; always `false` for HTTP/3 (see `h3::Response::is_closed`).
     pub fn is_closed(self) -> bool {
         any_dispatch!(self, |r| r.is_closed())
     }

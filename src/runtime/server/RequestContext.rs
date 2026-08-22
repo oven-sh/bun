@@ -650,14 +650,7 @@ where
         server.vm().as_mut().event_loop_mut().drain_microtasks()
     }
 
-    /// Subscribes `on_abort` to the connection closing. A request is dispatched
-    /// unsubscribed and subscribes once it outlives its dispatch (`to_async`, a
-    /// streamed body), so JS that ran before this point (the handler, its
-    /// microtask checkpoint, `error()`) may have run the event loop, and the
-    /// close may already have been dispatched: uWS then dropped the socket's
-    /// callbacks, so subscribing is a no-op and `resp` would dangle once the
-    /// loop frees the socket. Such a close is delivered right here instead,
-    /// which can tear the context down: callers must not use it afterwards.
+    /// Runs `on_abort` itself (may free `self`) if a nested event loop run already closed the socket.
     pub(crate) fn set_abort_handler(&self) {
         if self.flags.has_abort_handler() {
             return;
@@ -2643,12 +2636,7 @@ where
         }
     }
 
-    /// The connection closed while the handler or its microtask checkpoint
-    /// ran the event loop (a synchronous wait on a promise does that), before
-    /// `set_abort_handler` had subscribed to it. Nothing has been written yet,
-    /// so the handler's result is dropped as for any aborted request, and the
-    /// request goes async now, which delivers the close (`set_abort_handler`)
-    /// with `Request.url` and headers snapshotted as for any other abort.
+    /// Drops the handler's result as for any aborted request; `to_async` delivers the missed close.
     #[cold]
     fn on_connection_closed_during_dispatch(&self, this: &ThisServer, response_value: JSValue) {
         ctx_log!("connection closed during dispatch");

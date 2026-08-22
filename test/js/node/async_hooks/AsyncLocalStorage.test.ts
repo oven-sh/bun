@@ -200,6 +200,72 @@ describe("AsyncLocalStorage", () => {
       alsA.disable();
     }
   });
+
+  // Node delegates ALS.bind to AsyncResource.bind, which copies fn.length and
+  // (via NamedEvaluation of `let bound`) names the result "bound". Verified
+  // against Node v26.3.0.
+  test("static bind() preserves fn.length, names the result 'bound', and forwards `this`", () => {
+    function named(a, b) {}
+    const b1 = AsyncLocalStorage.bind(named);
+    expect({ length: b1.length, name: b1.name }).toEqual({ length: 2, name: "bound" });
+
+    const b2 = AsyncLocalStorage.bind((a, b, c) => {});
+    expect({ length: b2.length, name: b2.name }).toEqual({ length: 3, name: "bound" });
+
+    expect(Object.getOwnPropertyDescriptor(b1, "length")).toEqual({
+      value: 2,
+      writable: false,
+      enumerable: false,
+      configurable: true,
+    });
+    expect(Object.getOwnPropertyDescriptor(b1, "name")).toEqual({
+      value: "bound",
+      writable: false,
+      enumerable: false,
+      configurable: true,
+    });
+
+    // Node's ALS.bind = AsyncResource.bind with thisArg undefined, which
+    // forwards the call-site `this` through to fn.
+    const receiver = { tag: 1 };
+    const seen = AsyncLocalStorage.bind(function (this: unknown) {
+      return this;
+    }).call(receiver);
+    expect(seen).toBe(receiver);
+  });
+
+  // Node: snapshot() = ALS.bind((cb, ...args) => cb(...args)). The arrow has
+  // one declared parameter, and AsyncResource.bind names it "bound".
+  test("static snapshot() returns a function with length 1 and name 'bound'", () => {
+    const snap = AsyncLocalStorage.snapshot();
+    expect({ length: snap.length, name: snap.name }).toEqual({ length: 1, name: "bound" });
+  });
+
+  // Node's run() is ReflectApply(fn, null, args); exit() is run(undefined, fn, ...).
+  test("run() and exit() invoke the callback with this === null", () => {
+    const als = new AsyncLocalStorage();
+    expect(
+      als.run("s", function (this: unknown) {
+        return this;
+      }),
+    ).toBeNull();
+    expect(
+      als.exit(function (this: unknown) {
+        return this;
+      }),
+    ).toBeNull();
+    // The same-value short-circuit path (store already equals the frame value).
+    als.enterWith("v");
+    try {
+      expect(
+        als.run("v", function (this: unknown) {
+          return this;
+        }),
+      ).toBeNull();
+    } finally {
+      als.disable();
+    }
+  });
 });
 
 test("AsyncResource", () => {

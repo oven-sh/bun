@@ -445,7 +445,9 @@ describe.each(["hoisted", "isolated"])("linker=%s", linker => {
 });
 
 // Retries are spaced out (exponential backoff) instead of fired back-to-back, and a
-// `Retry-After` header on a 429/503 is honoured.
+// `Retry-After` header on a 429/503 is honoured. There is a single dependency, so while
+// its tarball retry is backing off nothing else is in flight: the install loop only
+// makes progress because the retry timer wakes it at the deadline.
 it("backs off between retries and honours Retry-After", async () => {
   const tarballHits: number[] = [];
   setHandler(async request => {

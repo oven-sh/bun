@@ -500,6 +500,9 @@ fn run_tasks_erased(
                     if task.retried < manager.options.max_retry_count {
                         task.retried += 1;
                         let retry_after = retry_after_secs(task);
+                        // drop this attempt's response so a connection-level failure on the
+                        // next attempt is not mistaken for another 429/503 (stale Retry-After)
+                        task.response = Default::default();
                         enqueue::enqueue_network_task_for_retry(
                             manager,
                             task_ptr,

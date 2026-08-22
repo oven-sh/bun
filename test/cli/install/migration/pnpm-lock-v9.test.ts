@@ -999,7 +999,8 @@ snapshots:
     expect(exitCode).toBe(0);
 
     const bunLock = await bunLockOf(String(dir));
-    expect(bunLock).toContain(`"config": "file:shared/config"`);
+    // as outer/package.json declares it, not pnpm's lockfile-relative `file:shared/config`
+    expect(bunLock).toContain(`"config": "file:../shared/config"`);
     expect(bunLock).toContain(
       `"fork": "https://codeload.github.com/o/bar/tar.gz/aeb6b15f9c9957c8fa56f9731e914c4d8a6d2f2b"`,
     );
@@ -1081,8 +1082,15 @@ snapshots:
 
     const bunLock = await bunLockOf(String(dir));
     expect(bunLock).toContain(`"sub-dep": "file:./sub-dep"`);
-    expect(bunLock).toContain(`["sub-dep@file:sub-dep", { "dependencies": { "nested-child": "file:sub-dep/child" } }]`);
+    // pnpm-lock.yaml has `nested-child: file:sub-dep/child`; bun.lock stores the path relative to
+    // sub-dep, the way sub-dep/package.json declares it, and resolves it from there when loaded.
+    expect(bunLock).toContain(`["sub-dep@file:sub-dep", { "dependencies": { "nested-child": "file:child" } }]`);
     expect(bunLock).toContain(`["nested-child@file:sub-dep/child", {}]`);
+
+    const update = await run(String(dir), "update", "nested-child");
+    expect(update.stderr).not.toContain("error:");
+    expect(update.exitCode).toBe(0);
+    expect(await bunLockOf(String(dir))).toBe(bunLock);
   });
 
   test.concurrent("codeload tarballs with and without gitHosted: true", async () => {

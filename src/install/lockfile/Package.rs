@@ -111,6 +111,28 @@ pub(crate) fn value_loc_of(source: &bun_ast::Source, key_loc: bun_ast::Loc) -> b
     crate::bun_json::property_value_loc(&source.contents, key_loc).unwrap_or(key_loc)
 }
 
+/// The form `Version.value.folder` has in root, workspace and `file:` packages (`None`: too long for `buf`).
+pub(crate) fn folder_relative_to_top_level_dir<'a>(
+    pkg_dir: &[u8],
+    folder: &[u8],
+    buf: &'a mut [u8],
+) -> Option<&'a [u8]> {
+    let top_level_dir = FileSystem::instance().top_level_dir();
+    let joined = resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
+        top_level_dir,
+        buf,
+        &[pkg_dir, folder],
+    )?;
+    let relative = resolve_path::relative(top_level_dir, joined);
+    // empty when the package depends on itself
+    let relative: &[u8] = if relative.is_empty() { b"." } else { relative };
+    let len = relative.len();
+    buf[..len].copy_from_slice(relative);
+    #[cfg(windows)]
+    path::dangerously_convert_path_to_posix_in_place::<u8>(&mut buf[..len]);
+    Some(&buf[..len])
+}
+
 #[cold]
 fn invalid_trusted_dependencies(
     log: &mut bun_ast::Log,
@@ -1843,10 +1865,10 @@ impl Package<u64> {
             dependency::version::Tag::Folder => {
                 let folder = *dependency_version.folder();
                 let mut folder_buf = PathBuffer::uninit();
-                let Some(joined) = resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
-                    FileSystem::instance().top_level_dir(),
+                let Some(relative) = folder_relative_to_top_level_dir(
+                    source.path.name().dir,
+                    folder.slice(buf),
                     &mut folder_buf.0,
-                    &[source.path.name().dir, folder.slice(buf)],
                 ) else {
                     log.add_error_fmt(
                         source,
@@ -1858,20 +1880,7 @@ impl Package<u64> {
                     );
                     return Err(crate::Error::InstallFailed);
                 };
-                let relative: &[u8] =
-                    resolve_path::relative(FileSystem::instance().top_level_dir(), joined);
-                #[cfg(windows)]
-                let relative: &[u8] = {
-                    let len = relative.len();
-                    folder_buf.0[..len].copy_from_slice(relative);
-                    path::dangerously_convert_path_to_posix_in_place::<u8>(
-                        &mut folder_buf.0[..len],
-                    );
-                    &folder_buf.0[..len]
-                };
-                // if relative is empty, we are linking the package to itself
-                dependency_version.value.folder = string_builder
-                    .append::<String>(if relative.is_empty() { b"." } else { relative });
+                dependency_version.value.folder = string_builder.append::<String>(relative);
             }
             dependency::version::Tag::Npm => {
                 if let Some(workspace_version) = workspace_version {

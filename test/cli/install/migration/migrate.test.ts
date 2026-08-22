@@ -217,6 +217,49 @@ test("npm lockfile migration skips extraneous packages that also declare inBundl
   expect(fs.existsSync(join(testDir, "bun.lock"))).toBeTrue();
 });
 
+test("bun update <name> re-resolves a file: dependency of a file: package in the same run as the migration", async () => {
+  // package-lock.json (as `npm install --package-lock-only` writes it) keeps `b` the way
+  // vendor/a/package.json declares it, relative to vendor/a. Updating `b` resolves that row again
+  // straight from the migrated lockfile, so it has to be looked up from vendor/a, not the project.
+  await using testDir = tempDir("migrate-nested-file-dep", {
+    "package.json": JSON.stringify({ name: "app", dependencies: { a: "file:./vendor/a" } }),
+    "vendor/a/package.json": JSON.stringify({ name: "a", version: "1.0.0", dependencies: { b: "file:../b" } }),
+    "vendor/b/package.json": JSON.stringify({ name: "b", version: "1.0.0" }),
+    "package-lock.json": JSON.stringify({
+      name: "app",
+      lockfileVersion: 3,
+      requires: true,
+      packages: {
+        "": { name: "app", dependencies: { a: "file:./vendor/a" } },
+        "node_modules/a": { resolved: "vendor/a", link: true },
+        "node_modules/b": { resolved: "vendor/b", link: true },
+        "vendor/a": { version: "1.0.0", dependencies: { b: "file:../b" } },
+        "vendor/b": { version: "1.0.0" },
+      },
+    }),
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "update", "b"],
+    cwd: String(testDir),
+    env: bunEnv,
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("migrated lockfile from package-lock.json");
+  expect(stderr).not.toContain("error:");
+  expect(exitCode).toBe(0);
+
+  const bunLock = await Bun.file(join(testDir, "bun.lock")).text();
+  expect(bunLock).toContain(`"a": ["a@file:vendor/a", { "dependencies": { "b": "file:../b" } }]`);
+  expect(bunLock).toContain(`"a/b": ["b@file:vendor/b", {}]`);
+  expect(await Bun.file(join(testDir, "node_modules", "a", "node_modules", "b", "package.json")).json()).toEqual({
+    name: "b",
+    version: "1.0.0",
+  });
+});
+
 test("package-lock.json migration requires integrity for tarball URLs outside the configured registry", async () => {
   // A package-lock.json entry whose `resolved` tarball URL points outside the configured
   // registry and that carries no `integrity` field must not be imported as-is. The bun.lock

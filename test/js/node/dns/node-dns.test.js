@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows } from "harness";
 import * as dgram from "node:dgram";
 import * as dns from "node:dns";
@@ -1027,5 +1027,169 @@ describe("pending cache", () => {
   test.concurrent("concurrent lookup() of the same name all settle", async () => {
     const results = await Promise.all(Array.from({ length: 8 }, () => dns_promises.lookup("localhost", { family: 4 })));
     expect(results).toEqual(Array(8).fill({ address: "127.0.0.1", family: 4 }));
+  });
+});
+
+describe("dns.resolve IDNA-encodes internationalized hostnames", () => {
+  // A tiny in-process DNS responder on 127.0.0.1 that answers A 10.7.7.7 for
+  // any query and records which qnames actually reached the wire. Node.js
+  // punycode-encodes IDN hostnames (ada::idna::to_ascii in cares_wrap) before
+  // ares_query; Bun must do the same so non-ASCII names are resolvable.
+  let server;
+  let resolver;
+  let callbackResolver;
+  const wire = [];
+
+  beforeAll(async () => {
+    server = dgram.createSocket("udp4");
+    server.on("message", (msg, rinfo) => {
+      let i = 12;
+      const labels = [];
+      while (msg[i]) {
+        labels.push(msg.slice(i + 1, i + 1 + msg[i]).toString("latin1"));
+        i += msg[i] + 1;
+      }
+      const qname = labels.join(".");
+      wire.push(qname);
+      const question = msg.slice(12, i + 5);
+      if (qname.endsWith(".nxdomain.test")) {
+        const nxdomain = Buffer.from([msg[0], msg[1], 0x81, 0x83, 0, 1, 0, 0, 0, 0, 0, 0]);
+        server.send(Buffer.concat([nxdomain, question]), rinfo.port, rinfo.address);
+        return;
+      }
+      const header = Buffer.from([msg[0], msg[1], 0x81, 0x80, 0, 1, 0, 1, 0, 0, 0, 0]);
+      // TTL=0 so c-ares does not cache across tests that share an ASCII qname.
+      const answer = Buffer.from([0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 0, 0, 4, 10, 7, 7, 7]);
+      server.send(Buffer.concat([header, question, answer]), rinfo.port, rinfo.address);
+    });
+    const { promise, resolve, reject } = Promise.withResolvers();
+    server.once("error", reject);
+    server.bind(0, "127.0.0.1", resolve);
+    await promise;
+
+    const servers = ["127.0.0.1:" + server.address().port];
+    resolver = new dns.promises.Resolver({ timeout: 2000, tries: 1 });
+    resolver.setServers(servers);
+    callbackResolver = new dns.Resolver({ timeout: 2000, tries: 1 });
+    callbackResolver.setServers(servers);
+  });
+
+  afterAll(() => {
+    server?.close();
+  });
+
+  it.each([
+    ["bücher.example", "xn--bcher-kva.example"],
+    ["münchen.de", "xn--mnchen-3ya.de"],
+    ["例え.jp", "xn--r8jz45g.jp"],
+    ["straße.de", "xn--strae-oqa.de"],
+  ])("resolve4 of %p sends %p on the wire", async (input, ascii) => {
+    wire.length = 0;
+    const result = await resolver.resolve4(input);
+    expect({ result, wire: [...wire] }).toEqual({ result: ["10.7.7.7"], wire: [ascii] });
+  });
+
+  it("already-punycoded names pass through unchanged", async () => {
+    wire.length = 0;
+    const result = await resolver.resolve4("xn--nxasmq6b.example");
+    expect({ result, wire: [...wire] }).toEqual({ result: ["10.7.7.7"], wire: ["xn--nxasmq6b.example"] });
+  });
+
+  it("plain ASCII names pass through unchanged", async () => {
+    wire.length = 0;
+    const result = await resolver.resolve4("plain.example");
+    expect({ result, wire: [...wire] }).toEqual({ result: ["10.7.7.7"], wire: ["plain.example"] });
+  });
+
+  it("callback Resolver resolve4 encodes IDN", async () => {
+    wire.length = 0;
+    const { promise, resolve, reject } = Promise.withResolvers();
+    callbackResolver.resolve4("bücher.example", (err, addrs) => (err ? reject(err) : resolve(addrs)));
+    const result = await promise;
+    expect({ result, wire: [...wire] }).toEqual({ result: ["10.7.7.7"], wire: ["xn--bcher-kva.example"] });
+  });
+
+  it("callback Resolver resolve(hostname, 'A') encodes IDN", async () => {
+    wire.length = 0;
+    const { promise, resolve, reject } = Promise.withResolvers();
+    callbackResolver.resolve("例え.jp", "A", (err, addrs) => (err ? reject(err) : resolve(addrs)));
+    const result = await promise;
+    expect({ result, wire: [...wire] }).toEqual({ result: ["10.7.7.7"], wire: ["xn--r8jz45g.jp"] });
+  });
+
+  it("err.hostname on NXDOMAIN preserves the caller's original spelling", async () => {
+    wire.length = 0;
+    const err = await resolver.resolve4("bücher.nxdomain.test").then(
+      () => ({}),
+      e => e,
+    );
+    expect({ code: err.code, hostname: err.hostname, wire: [...wire] }).toEqual({
+      code: "ENOTFOUND",
+      hostname: "bücher.nxdomain.test",
+      wire: ["xn--bcher-kva.nxdomain.test"],
+    });
+  });
+
+  // U+200D (ZWJ) outside a CONTEXTJ position fails UTS #46, so there is no
+  // ASCII form to send. Before IDNA encoding these names were rejected with
+  // no wire traffic. An encoding failure must not turn into an empty name:
+  // Channel::resolve lets an empty name through for NS and SOA as a root-zone
+  // query, so these would otherwise return the root servers.
+  const unencodable = "a\u200Db.example";
+
+  it.each(["resolveNs", "resolveSoa", "resolve4", "resolveTxt"])(
+    "%s of an unencodable name rejects without a query",
+    async method => {
+      wire.length = 0;
+      const err = await resolver[method](unencodable).then(
+        () => ({}),
+        e => e,
+      );
+      expect({ code: err.code, hostname: err.hostname, wire: [...wire] }).toEqual({
+        code: "ENOTFOUND",
+        hostname: unencodable,
+        wire: [],
+      });
+    },
+  );
+
+  // dns.lookup() goes through the default resolver, so point that resolver at
+  // the fake server in a child process. The trailing dot keeps c-ares from also
+  // trying the host's search domains. The hostname is passed as a JS string
+  // literal with \\u escapes so argv stays ASCII on every platform.
+  async function caresLookupInChild(hostnameLiteral) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `require("node:dns").setServers(["127.0.0.1:" + process.argv[1]]);
+         Bun.dns.lookup(${hostnameLiteral}, { backend: "c-ares", family: 4 }).then(
+           r => console.log(JSON.stringify(r.map(({ address, family }) => ({ address, family })))),
+           e => console.log(JSON.stringify({ code: e.code })),
+         );`,
+        String(server.address().port),
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout);
+  }
+
+  it("c-ares lookup() sends the punycode form on the wire", async () => {
+    wire.length = 0;
+    const result = await caresLookupInChild('"b\\u00fccher.example."');
+    expect({ result, wire: [...wire] }).toEqual({
+      result: [{ address: "10.7.7.7", family: 4 }],
+      wire: ["xn--bcher-kva.example"],
+    });
+  });
+
+  it("c-ares lookup() of an unencodable name rejects without a query", async () => {
+    wire.length = 0;
+    const result = await caresLookupInChild('"a\\u200Db.example."');
+    expect({ result, wire: [...wire] }).toEqual({ result: { code: "DNS_ENOTFOUND" }, wire: [] });
   });
 });

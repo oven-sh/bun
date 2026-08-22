@@ -176,6 +176,27 @@ JSC_DEFINE_HOST_FUNCTION(jsDomainToASCII, (JSC::JSGlobalObject * globalObject, J
     return JSC::JSValue::encode(JSC::jsString(vm, host));
 }
 
+// Returns ASCII bytes written, or 0 on IDNA failure or overflow.
+extern "C" int32_t Bun__hostnameToASCII(const char* input, size_t input_len, char* output, size_t output_cap)
+{
+    auto domain = WTF::String::fromUTF8(std::span { input, input_len });
+    if (domain.isNull())
+        return 0;
+
+    auto ascii = icuToASCII(domain, IDNAMode::Default);
+    if (ascii.isEmpty() || ascii.length() > output_cap)
+        return 0;
+
+    if (ascii.is8Bit()) {
+        memcpy(output, ascii.span8().data(), ascii.length());
+    } else {
+        const auto span = ascii.span16();
+        for (size_t i = 0; i < span.size(); i++)
+            output[i] = static_cast<char>(span[i]);
+    }
+    return static_cast<int32_t>(ascii.length());
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsDomainToUnicode, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);

@@ -416,6 +416,7 @@ impl<'a> Parser<'a> {
                             else {
                                 continue;
                             };
+                            self.expect_string(v)?;
                             if let (Some(k), Some(v)) =
                                 (k.as_string(self.bump), v.as_string(self.bump))
                             {

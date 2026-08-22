@@ -575,3 +575,32 @@ pub fn split_host_port(host: &[u8]) -> (&[u8], Option<u16>) {
         _ => (host, None),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::split_host_port;
+
+    #[test]
+    fn host_port() {
+        let cases: &[(&str, &str, Option<u16>)] = &[
+            ("example.com", "example.com", None),
+            ("example.com:8080", "example.com", Some(8080)),
+            ("example.com:0", "example.com", Some(0)),
+            ("example.com:", "example.com:", None),
+            ("example.com:65536", "example.com:65536", None),
+            ("example.com:abc", "example.com:abc", None),
+            ("127.0.0.1:3000", "127.0.0.1", Some(3000)),
+            ("[::1]:80", "[::1]", Some(80)),
+            ("[::1]", "[::1]", None),
+            ("[::1]x", "[::1]", None),
+            ("[::1", "[::1", None),
+            ("::1", "::1", None),
+            ("2001:db8::1", "2001:db8::1", None),
+            ("", "", None),
+        ];
+        for (input, host, port) in cases {
+            let (h, p) = split_host_port(input.as_bytes());
+            assert_eq!((h, p), (host.as_bytes(), *port), "{input:?}");
+        }
+    }
+}

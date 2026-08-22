@@ -29,6 +29,8 @@ const ObjectDefineProperty = Object.defineProperty;
 const ObjectKeys = Object.keys;
 const NumberIsFinite = Number.isFinite;
 const ArrayIsArray = Array.isArray;
+const ArrayPrototypeSlice = Array.prototype.slice;
+const StringPrototypeToLowerCase = String.prototype.toLowerCase;
 
 const onClientRequestCreatedChannel = dc.channel("http.client.request.created");
 const onClientRequestStartChannel = dc.channel("http.client.request.start");
@@ -167,12 +169,41 @@ function traceClientResponseEnd(req) {
 // single native call that returns false unless tracing is on.
 const kOtelSpan = Symbol("kOtelSpan");
 let otel;
-function otelClientRequestStart(req, protocol, host, port) {
+// `arrayHeaders`: the request's headers were given as an array (flat or
+// [[k, v]]), which is serialized as-is instead of kOutHeaders; returns the
+// array to serialize (a copy with trace context appended when injected).
+function otelClientRequestStart(req, protocol, host, port, arrayHeaders?) {
   otel ??= require("internal/telemetry");
   const span = otel.startClientSpan(req.method);
-  if (!span) return;
+  if (!span) return arrayHeaders;
   req[kOtelSpan] = span;
-  if (!req.getHeader("traceparent")) {
+  if (arrayHeaders !== undefined) {
+    const pairs = arrayHeaders.length && ArrayIsArray(arrayHeaders[0]);
+    const has = name => {
+      if (pairs) {
+        for (let i = 0; i < arrayHeaders.length; i++)
+          if (StringPrototypeToLowerCase.$call(arrayHeaders[i][0] + "") === name) return true;
+      } else {
+        for (let i = 0; i + 1 < arrayHeaders.length; i += 2)
+          if (StringPrototypeToLowerCase.$call(arrayHeaders[i] + "") === name) return true;
+      }
+      return false;
+    };
+    if (!has("traceparent")) {
+      const [traceparent, tracestate, baggage] = otel.propagationHeaders(span);
+      const add: [string, string][] = [];
+      if (traceparent) add.push(["traceparent", traceparent]);
+      if (tracestate && !has("tracestate")) add.push(["tracestate", tracestate]);
+      if (baggage && !has("baggage")) add.push(["baggage", baggage]);
+      if (add.length) {
+        arrayHeaders = ArrayPrototypeSlice.$call(arrayHeaders);
+        for (const [k, v] of add) {
+          if (pairs) arrayHeaders.push([k, v]);
+          else arrayHeaders.push(k, v);
+        }
+      }
+    }
+  } else if (!req.getHeader("traceparent")) {
     const [traceparent, tracestate, baggage] = otel.propagationHeaders(span);
     if (traceparent) req.setHeader("traceparent", traceparent);
     if (tracestate && !req.getHeader("tracestate")) req.setHeader("tracestate", tracestate);
@@ -189,6 +220,7 @@ function otelClientRequestStart(req, protocol, host, port) {
       "url.full": protocol + "//" + urlHost + (p !== defaultPort ? ":" + p : "") + req.path,
     });
   }
+  return arrayHeaders;
 }
 function otelClientRequestEnd(req, res, err) {
   const span = req[kOtelSpan];
@@ -442,9 +474,10 @@ function ClientRequest(input, options, cb) {
       rewriteForProxiedHttp(this, optsWithoutSignal);
     }
   } else {
-    if (otelHttpClientEnabled()) otelClientRequestStart(this, protocol, host, port);
+    let arrayHeaders = optionsHeaders;
+    if (otelHttpClientEnabled()) arrayHeaders = otelClientRequestStart(this, protocol, host, port, arrayHeaders);
     rewriteForProxiedHttp(this, optsWithoutSignal);
-    this._storeHeader(this.method + " " + this.path + " HTTP/1.1\r\n", optionsHeaders);
+    this._storeHeader(this.method + " " + this.path + " HTTP/1.1\r\n", arrayHeaders);
   }
 
   this[kUniqueHeaders] = parseUniqueHeadersOption(options.uniqueHeaders);

@@ -737,18 +737,43 @@ fn read_exporter_extras(
 }
 
 fn sampler_from_js(global: &JSGlobalObject, v: JSValue, arg: Option<JSValue>) -> JsResult<Sampler> {
+    let ratio_of = |r: f64| {
+        if (0.0..=1.0).contains(&r) {
+            Ok(r)
+        } else {
+            Err(global.throw_range_error(
+                r,
+                bun_core::fmt::OutOfRangeOptions {
+                    min: 0,
+                    max: 1,
+                    field_name: b"sampler ratio",
+                    ..Default::default()
+                },
+            ))
+        }
+    };
     if v.is_number() {
         return Ok(Sampler::ParentBasedTraceIdRatio(Sampler::ratio_threshold(
-            v.as_number(),
+            ratio_of(v.as_number())?,
         )));
     }
     if let Some(name) = arg_string(global, v)? {
-        let arg_s = match arg {
-            Some(a) if a.is_number() => Some(a.as_number().to_string()),
-            Some(a) => arg_string(global, a)?,
+        let ratio = match arg {
+            Some(a) if a.is_number() => Some(ratio_of(a.as_number())?),
+            Some(a) => match arg_string(global, a)? {
+                Some(s) => match Sampler::parse_ratio_arg(Some(s.as_bytes())) {
+                    Ok(r) => r,
+                    Err(()) => {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "samplerArg \"{s}\" is not a number in 0..=1"
+                        )));
+                    }
+                },
+                None => None,
+            },
             None => None,
         };
-        if let Some(s) = Sampler::from_env(name.as_bytes(), arg_s.as_deref().map(str::as_bytes)) {
+        if let Some(s) = Sampler::from_env(name.as_bytes(), ratio) {
             return Ok(s);
         }
         return Err(global.throw_invalid_arguments(format_args!("unknown sampler \"{name}\"")));

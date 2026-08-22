@@ -1,21 +1,20 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { AsyncLocalStorage } from "node:async_hooks";
 
 // One process-wide pipeline: every test in this file shares the collector.
 const spans: any[] = [];
-Bun.otel.start({
-  serviceName: "otel-api-test",
-  resourceAttributes: { "deployment.environment": "test", n: 1 },
-  exporters: [
-    {
-      export(batch) {
-        spans.push(...batch);
-      },
-    },
-  ],
-  // Keep the built-in integrations quiet so only user spans show up here.
-  instrumentations: [],
-});
+function restore() {
+  Bun.otel.start({
+    serviceName: "otel-api-test",
+    resourceAttributes: { "deployment.environment": "test", n: 1 },
+    exporters: [{ export: (batch: any[]) => spans.push(...batch) }],
+    // Keep the built-in integrations quiet so only user spans show up here.
+    instrumentations: [],
+  });
+}
+restore();
+// Tests below may reconfigure; each starts from the default pipeline.
+beforeEach(restore);
 // The pipeline is process-global; leave nothing behind for later files.
 afterAll(() => Bun.otel.shutdown());
 
@@ -347,11 +346,6 @@ describe("encoding", () => {
     expect(sb.events[0].name).toBe("e");
     expect(sb.links[0].attributes[0]).toEqual({ key: "w", value: { intValue: "1" } });
     // restore the collector for later tests
-    Bun.otel.start({
-      serviceName: "otel-api-test",
-      exporters: [{ export: (b: any[]) => spans.push(...b) }],
-      instrumentations: [],
-    });
   });
 
   test("Bun.otel.decode round-trips protobuf export", async () => {
@@ -367,11 +361,6 @@ describe("encoding", () => {
     expect(d.name).toBe("dec");
     expect(d.attributes).toEqual({ a: 1 });
     expect(d.spanId).toBe(s.spanId);
-    Bun.otel.start({
-      serviceName: "otel-api-test",
-      exporters: [{ export: (b: any[]) => spans.push(...b) }],
-      instrumentations: [],
-    });
   });
 });
 
@@ -412,11 +401,6 @@ describe("configuration", () => {
     expect(got.droppedEventsCount).toBe(1);
     expect(got.links).toHaveLength(0);
     expect(got.droppedLinksCount).toBe(1);
-    Bun.otel.start({
-      serviceName: "otel-api-test",
-      exporters: [{ export: (b: any[]) => spans.push(...b) }],
-      instrumentations: [],
-    });
   });
 
   test("always_off sampler yields non-recording spans that still propagate ids", async () => {
@@ -434,12 +418,6 @@ describe("configuration", () => {
     c.end();
     s.end();
     expect(await collect()).toEqual([]);
-    Bun.otel.start({
-      serviceName: "otel-api-test",
-      exporters: [{ export: (b: any[]) => spans.push(...b) }],
-      instrumentations: [],
-      sampler: "parentbased_always_on",
-    });
   });
 
   test("parentbased sampler honours a remote unsampled parent", async () => {
@@ -476,10 +454,5 @@ describe("configuration", () => {
     expect(() => Bun.otel.start({ instrumentations: { nope: true } } as any)).toThrow(/unknown instrumentation/);
     expect(() => Bun.otel.start({ sampler: "sometimes" } as any)).toThrow(/unknown sampler/);
     // pipeline still intact
-    Bun.otel.start({
-      serviceName: "otel-api-test",
-      exporters: [{ export: (b: any[]) => spans.push(...b) }],
-      instrumentations: [],
-    });
   });
 });

@@ -184,6 +184,7 @@ struct ConnectSpan {
     port: u16,
     path: Box<[u8]>,
     secure: bool,
+    unix_socket: Option<Box<[u8]>>,
 }
 
 impl ConnectSpan {
@@ -198,9 +199,15 @@ impl ConnectSpan {
             b"websocket.connect",
             bun_telemetry::SpanKind::Client,
             |w| {
-                w.attr_opt("server.address", &self.host);
-                if self.port != 0 {
-                    w.attr("server.port", self.port);
+                if let Some(path) = &self.unix_socket {
+                    // semconv: for a unix socket the address is the socket path.
+                    w.attr("network.transport", "unix");
+                    w.attr("server.address", &path[..]);
+                } else {
+                    w.attr_opt("server.address", &self.host);
+                    if self.port != 0 {
+                        w.attr("server.port", self.port);
+                    }
                 }
                 let scheme: &[u8] = if self.secure { b"wss://" } else { b"ws://" };
                 let mut url =
@@ -495,6 +502,11 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 port,
                 path: pathname_slice.slice().into(),
                 secure: target_is_secure,
+                unix_socket: unix_socket_path_slice
+                    .as_ref()
+                    .map(|p| p.slice())
+                    .filter(|p| !p.is_empty())
+                    .map(Into::into),
             })
         });
         let client: *mut Self = bun_core::heap::into_raw(Box::new(HTTPClient::<SSL> {

@@ -206,7 +206,14 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
 
     if let Some(name) = get("OTEL_TRACES_SAMPLER") {
         let arg = get("OTEL_TRACES_SAMPLER_ARG");
-        match Sampler::from_env(name.trim_ascii(), arg.as_deref()) {
+        let ratio = Sampler::parse_ratio_arg(arg.as_deref()).unwrap_or_else(|()| {
+            warnings.push(format!(
+                "OTEL_TRACES_SAMPLER_ARG {:?} is not a number in 0..=1; using 1.0",
+                s(arg.as_deref().unwrap_or_default())
+            ));
+            None
+        });
+        match Sampler::from_env(name.trim_ascii(), ratio) {
             Some(sm) => c.sampler = sm,
             None => warnings.push(format!(
                 "unknown OTEL_TRACES_SAMPLER {:?}; using parentbased_always_on",
@@ -463,14 +470,37 @@ pub fn from_env(get: &dyn Fn(&str) -> Option<Vec<u8>>) -> EnvConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
 
     fn env(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<Vec<u8>> {
-        let m: HashMap<String, Vec<u8>> = pairs
+        let m: Vec<(String, Vec<u8>)> = pairs
             .iter()
             .map(|(k, v)| (k.to_string(), v.as_bytes().to_vec()))
             .collect();
-        move |k: &str| m.get(k).cloned()
+        move |k: &str| m.iter().find(|(key, _)| key == k).map(|(_, v)| v.clone())
+    }
+
+    #[test]
+    fn invalid_sampler_arg_warns_and_defaults() {
+        let e = env(&[
+            ("BUN_OTEL", "1"),
+            ("OTEL_TRACES_SAMPLER", "traceidratio"),
+            ("OTEL_TRACES_SAMPLER_ARG", "lots"),
+        ]);
+        let r = from_env(&e);
+        assert!(matches!(r.config.sampler, Sampler::TraceIdRatio(u64::MAX)));
+        assert!(
+            r.warnings
+                .iter()
+                .any(|w| w.starts_with("OTEL_TRACES_SAMPLER_ARG"))
+        );
+        let e = env(&[
+            ("BUN_OTEL", "1"),
+            ("OTEL_TRACES_SAMPLER", "traceidratio"),
+            ("OTEL_TRACES_SAMPLER_ARG", " 0.5 "),
+        ]);
+        let r = from_env(&e);
+        assert!(r.warnings.is_empty(), "{:?}", r.warnings);
+        assert!(matches!(r.config.sampler, Sampler::TraceIdRatio(t) if t != u64::MAX && t != 0));
     }
 
     #[test]

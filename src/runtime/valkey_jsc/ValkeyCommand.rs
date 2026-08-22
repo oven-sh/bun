@@ -331,11 +331,23 @@ impl Promise {
         jsvalue: JsResult<JSValue>,
     ) -> JsResult<()> {
         if self.otel.is_some() {
+            // Describing the error must not stand between it and the promise:
+            // a failed `code` read counts as no code (a termination surfaces
+            // from `promise.reject` below).
             let code = match &jsvalue {
-                Ok(v) if v.is_object() => match v.get(global_object, "code")? {
-                    Some(c) if c.is_string() => Some(c.to_slice(global_object)?),
-                    _ => None,
-                },
+                Ok(v) if v.is_object() => {
+                    let read = v.get(global_object, "code").and_then(|c| match c {
+                        Some(c) if c.is_string() => c.to_slice(global_object).map(Some),
+                        _ => Ok(None),
+                    });
+                    match read {
+                        Ok(c) => c,
+                        Err(_) => {
+                            global_object.clear_exception_except_termination();
+                            None
+                        }
+                    }
+                }
                 _ => None,
             };
             self.otel_end(

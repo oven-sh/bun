@@ -248,3 +248,38 @@ pub fn end(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::sql_operation;
+
+    #[test]
+    fn leading_verb() {
+        let cases: &[(&str, Option<&str>)] = &[
+            ("", None),
+            ("   ", None),
+            ("SELECT 1", Some("SELECT")),
+            ("select * from t", Some("SELECT")),
+            ("  \n\tinsert into t values (1)", Some("INSERT")),
+            ("(select 1) union (select 2)", Some("SELECT")),
+            ("((with x as (select 1) select * from x", Some("WITH")),
+            ("-- comment\nUPDATE t SET a=1", Some("UPDATE")),
+            ("-- comment without newline", None),
+            ("/* hi */ delete from t", Some("DELETE")),
+            ("/* unterminated select 1", None),
+            ("/* a */ -- b\n /* c */ SELECT 1", Some("SELECT")),
+            ("SELECT;", Some("SELECT")),
+            ("SELECT(1)", Some("SELECT")),
+            ("SELECTX 1", None),
+            ("SELECT1", None),
+            ("S 1", None),
+            ("do", Some("DO")),
+            ("VERYLONGWORDHERE 1", None),
+            ("1 SELECT", None),
+            ("$1", None),
+        ];
+        for (sql, want) in cases {
+            assert_eq!(sql_operation(sql.as_bytes()), *want, "{sql:?}");
+        }
+    }
+}

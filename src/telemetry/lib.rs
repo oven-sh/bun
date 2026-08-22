@@ -24,6 +24,9 @@ pub mod rt;
 pub mod sampler;
 pub mod span;
 
+#[cfg(test)]
+mod native_test_shims;
+
 use core::sync::atomic::{AtomicU32, Ordering};
 
 pub use config::Config;

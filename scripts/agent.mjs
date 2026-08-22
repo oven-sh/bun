@@ -13,6 +13,7 @@ import {
   getAwsSecret,
   getAzureSecret,
   getCloud,
+  getCloudLaunchedInstanceType,
   getCloudMetadataTag,
   getDistro,
   getDistroVersion,
@@ -385,6 +386,12 @@ async function doBuildkiteAgent(action, cliOptions = {}) {
           tags[tag] = value;
         }
       }
+      // Deliberately not `instance-type`: that key is the type the job asked
+      // for (.buildkite/ci.mjs), and under capacity pressure this machine may
+      // be a different one. The runner reads this back from
+      // BUILDKITE_AGENT_META_DATA_LAUNCHED_INSTANCE_TYPE for the job log header
+      // and failure annotations.
+      tags["launched-instance-type"] = await getCloudLaunchedInstanceType(cloud);
     }
 
     options["tags"] = Object.entries(tags)

@@ -357,4 +357,67 @@ describe("Valkey: RESP push frame routing", () => {
       server.close();
     }
   });
+
+  // The acks below reach the client while it is not (or no longer) in
+  // subscriber mode. The ack handler used to assert that it was, which
+  // aborted debug and ASAN builds (release builds compile the check out).
+  const bulk = (s: string) => `$${Buffer.byteLength(s)}\r\n${s}\r\n`;
+  const pushAck = (kind: string, subject: string | null, remaining: number) =>
+    Buffer.from(`>3\r\n${bulk(kind)}${subject === null ? "_\r\n" : bulk(subject)}:${remaining}\r\n`);
+  const OK = Buffer.from("+OK\r\n");
+
+  async function withMockClient<T>(payloads: Buffer[], body: (client: Bun.RedisClient) => Promise<T>): Promise<T> {
+    const { server, port } = await createMockRedisServer(payloads);
+    try {
+      const client = new Bun.RedisClient(`redis://127.0.0.1:${port}`, {
+        autoReconnect: false,
+        connectionTimeout: 2000,
+      });
+      try {
+        return await body(client);
+      } finally {
+        client.close();
+      }
+    } finally {
+      server.close();
+    }
+  }
+
+  test("acks for several in-flight UNSUBSCRIBEs all resolve after the first one leaves subscriber mode", async () => {
+    // unsubscribe() drops the channel's handlers when it is called, so by the
+    // time the first ack arrives the handler map is already empty and the
+    // client leaves subscriber mode; the second UNSUBSCRIBE is acked afterwards.
+    const payloads = [
+      pushAck("subscribe", "a", 1),
+      pushAck("subscribe", "b", 2),
+      pushAck("unsubscribe", "a", 1),
+      pushAck("unsubscribe", "b", 0),
+      OK,
+    ];
+    await withMockClient(payloads, async client => {
+      const noop = () => {};
+      await client.subscribe("a", noop);
+      await client.subscribe("b", noop);
+
+      expect(await Promise.all([client.unsubscribe("a"), client.unsubscribe("b")])).toEqual([undefined, undefined]);
+      // set() throws synchronously while in subscriber mode, so this also
+      // checks that the client is back in normal command mode.
+      expect(await client.set("key", "value")).toBe("OK");
+    });
+  });
+
+  test("punsubscribe() from a client that never subscribed resolves with the ack", async () => {
+    await withMockClient([pushAck("punsubscribe", "news.*", 0), OK], async client => {
+      expect(await client.punsubscribe("news.*")).toEqual({ type: "punsubscribe", data: ["news.*", 0] });
+      expect(await client.set("key", "value")).toBe("OK");
+    });
+  });
+
+  test("a raw UNSUBSCRIBE sent through send() from a client that never subscribed resolves", async () => {
+    // With nothing to unsubscribe from, the server acks with a null channel.
+    await withMockClient([pushAck("unsubscribe", null, 0), OK], async client => {
+      expect(await client.send("UNSUBSCRIBE", [])).toBeUndefined();
+      expect(await client.set("key", "value")).toBe("OK");
+    });
+  });
 });

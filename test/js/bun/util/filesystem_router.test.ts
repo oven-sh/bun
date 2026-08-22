@@ -490,6 +490,69 @@ it("dir should be validated", async () => {
   }).toThrow("Expected dir to be a string");
 });
 
+it("throws instead of aborting when a relative dir no longer fits in a path buffer once joined with the cwd", async () => {
+  // A relative `dir` is joined onto the cwd inside a MAX_PATH_BYTES buffer
+  // (src/bun_core/util.rs). The constructor used to write past the end of that
+  // buffer and abort the process, so run the cases in a subprocess. An absolute
+  // `dir` never touches the buffer and is reported as a missing directory.
+  const maxPathBytes = isWindows ? 32767 * 3 + 1 : isMacOS ? 1024 : 4096;
+  const tooLong = `TypeError: Expected dir to resolve to a path of at most ${maxPathBytes} bytes`;
+  using dir = tempDir("fsr-long-relative-dir", {
+    "pages/index.tsx": "export default 1;\n",
+  });
+
+  const code = /* ts */ `
+    import path from "path";
+    function construct(dir: string) {
+      try {
+        const router = new Bun.FileSystemRouter({ dir, style: "nextjs", fileExtensions: [".tsx"] });
+        return Object.keys(router.routes);
+      } catch (e: any) {
+        return e.name + ": " + e.message.replace(dir, "<dir>").replace(process.cwd(), "<cwd>");
+      }
+    }
+    // The joined path is cwd + separator + dir.
+    const resolvingTo = (bytes: number) => Buffer.alloc(bytes - Buffer.byteLength(process.cwd()) - 1, "a").toString();
+    // Longer than MAX_PATH_BYTES on every platform, and than the 2 * MAX_PATH_BYTES
+    // buffer the constructor used to overflow (196604 bytes on Windows).
+    const longDir = Buffer.alloc(250_000, "a").toString();
+    console.log(JSON.stringify({
+      relative: construct(longDir),
+      absolute: construct(path.parse(process.cwd()).root + longDir),
+      atLimit: construct(resolvingTo(${maxPathBytes})),
+      oneByteOverLimit: construct(resolvingTo(${maxPathBytes} + 1)),
+      afterwards: construct("pages"),
+    }));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // An aborted subprocess prints nothing to stdout; keep it as-is so the panic in stderr is what the diff shows.
+  expect({
+    stdout: stdout === "" ? stdout : JSON.parse(stdout),
+    stderr,
+    exitCode,
+    signalCode: proc.signalCode,
+  }).toEqual({
+    stdout: {
+      relative: tooLong,
+      absolute: "Error: Unable to find directory: <dir>",
+      atLimit: `Error: Unable to find directory: <cwd>${path.sep}<dir>`,
+      oneByteOverLimit: tooLong,
+      afterwards: ["/"],
+    },
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
 it("origin should be validated", async () => {
   const { dir } = make(["posts.tsx"]);
 

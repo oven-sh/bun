@@ -135,7 +135,8 @@ impl FileSystemRouter {
         let mut origin_str: ZigStringSlice = ZigStringSlice::default();
         let mut asset_prefix_slice: ZigStringSlice = ZigStringSlice::default();
 
-        let mut out_buf = [0u8; MAX_PATH_BYTES * 2];
+        // Backs `root_dir_path` when `dir` is relative; read until `root_dir_info` is looked up.
+        let mut dir_buf = path::path_buffer_pool::get();
         if let Some(style_val) = argument.get(global_this, "style")? {
             if !(style_val.get_zig_string(global_this)?).eql_comptime("nextjs") {
                 return Err(global_this.throw_invalid_arguments(format_args!(
@@ -160,14 +161,19 @@ impl FileSystemRouter {
                 if path::Platform::AUTO.is_absolute(path_) {
                     root_dir_path = root_dir_path_;
                 } else {
-                    let parts: [&[u8]; 1] = [path_];
-                    root_dir_path = ZigStringSlice::from_utf8_never_free(
-                        path::resolve_path::join_abs_string_buf::<path::platform::Auto>(
+                    let Some(joined) =
+                        path::resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
                             Fs::FileSystem::instance().top_level_dir,
-                            &mut out_buf,
-                            &parts,
-                        ),
-                    );
+                            &mut dir_buf[..],
+                            &[path_],
+                        )
+                    else {
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "Expected dir to resolve to a path of at most {} bytes",
+                            MAX_PATH_BYTES
+                        )));
+                    };
+                    root_dir_path = ZigStringSlice::from_utf8_never_free(joined);
                 }
             }
         } else {

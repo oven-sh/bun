@@ -486,7 +486,7 @@ impl LinkerContext<'_> {
                 stmts: stmts_eat1!(Stmt::allocate(arena, S::Return { value: Some(value) }, loc,)),
                 loc,
             };
-            properties.push(G::Property {
+            let mut prop = G::Property {
                 key: Some(Expr::allocate(
                     arena,
                     // TODO: test emoji work as expected (relevant for WASM exports)
@@ -506,7 +506,13 @@ impl LinkerContext<'_> {
                     loc,
                 )),
                 ..Default::default()
-            });
+            };
+            // An alias named `__proto__` must print as a computed key: a bare
+            // `__proto__:` sets this descriptor object's prototype, and
+            // `__export`'s `for..in` would never install that getter.
+            prop.flags =
+                E::own_key_property_flags(prop.key.as_ref().expect("infallible: prop has key"));
+            properties.push(prop);
             ns_export_symbol_uses
                 .put_assume_capacity(exp_data.import_ref, SymbolUse { count_estimate: 1 });
 

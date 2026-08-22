@@ -212,4 +212,338 @@ describe("css", () => {
       expect(css).toContain(`.${betaOwn}`);
     },
   });
+
+  // Whether a `composes` declaration counts is decided by the parser: it has to
+  // sit directly in a style rule whose selector is a single class. Accepted ones
+  // are recorded for the exports object and omitted from the stylesheet; the
+  // rest get a warning and are dropped, like esbuild does (they used to fail the
+  // whole build at print time). A dropped declaration leaves an empty rule
+  // behind, which the minifier removes, so rules holding nothing but a rejected
+  // `composes` must not appear in the output.
+  const notAllowedNested = '"composes" is not allowed inside nested selectors';
+  const notSingleClass = '"composes" only works inside single class selectors';
+  const notValidHere = '"composes" is not valid here';
+  const entry = /* js */ `
+    import styles from "./styles.module.css";
+    console.log(styles);
+  `;
+
+  itBundled("css-module/ComposesInNestedRuleIsDropped", {
+    files: {
+      "/entry.js": entry,
+      "/styles.module.css": /* css */ `
+        .c { color: red }
+        .a {
+          .z { composes: c; color: blue }
+          .y { composes: c }
+        }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    bundleWarnings: { "/styles.module.css": [notAllowedNested, notAllowedNested] },
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
+        "// styles.module.css
+        var styles_module_default = {
+          c: "c_-MSaAA",
+          a: "a_-MSaAA",
+          z: "z_-MSaAA",
+          y: "y_-MSaAA"
+        };
+
+        // entry.js
+        console.log(styles_module_default);
+        "
+      `);
+      api.expectFile("/out/entry.css").toMatchInlineSnapshot(`
+        "/* styles.module.css */
+        .c_-MSaAA {
+          color: red;
+        }
+
+        .a_-MSaAA .z_-MSaAA {
+          color: #00f;
+        }
+        "
+      `);
+    },
+  });
+
+  itBundled("css-module/ComposesOnNonSingleClassSelectorIsDropped", {
+    files: {
+      "/entry.js": entry,
+      "/styles.module.css": /* css */ `
+        .c { color: red }
+        .a .b { composes: c; color: blue }
+        .d, .e { composes: c }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    bundleWarnings: { "/styles.module.css": [notSingleClass, notSingleClass] },
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
+        "// styles.module.css
+        var styles_module_default = {
+          c: "c_-MSaAA",
+          a: "a_-MSaAA",
+          b: "b_-MSaAA",
+          d: "d_-MSaAA",
+          e: "e_-MSaAA"
+        };
+
+        // entry.js
+        console.log(styles_module_default);
+        "
+      `);
+      api.expectFile("/out/entry.css").toMatchInlineSnapshot(`
+        "/* styles.module.css */
+        .c_-MSaAA {
+          color: red;
+        }
+
+        .a_-MSaAA .b_-MSaAA {
+          color: #00f;
+        }
+        "
+      `);
+    },
+  });
+
+  itBundled("css-module/ComposesInAtRuleNestedInRuleIsDropped", {
+    files: {
+      "/entry.js": entry,
+      "/styles.module.css": /* css */ `
+        .c { color: red }
+        .a {
+          @media (min-width: 1px) { composes: c }
+          @media (min-width: 2px) { composes: c; color: blue }
+        }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    bundleWarnings: { "/styles.module.css": [notAllowedNested, notAllowedNested] },
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
+        "// styles.module.css
+        var styles_module_default = {
+          c: "c_-MSaAA",
+          a: "a_-MSaAA"
+        };
+
+        // entry.js
+        console.log(styles_module_default);
+        "
+      `);
+      api.expectFile("/out/entry.css").toMatchInlineSnapshot(`
+        "/* styles.module.css */
+        .c_-MSaAA {
+          color: red;
+        }
+
+        @media (min-width: 2px) {
+          .a_-MSaAA {
+            color: #00f;
+          }
+        }
+        "
+      `);
+    },
+  });
+
+  itBundled("css-module/ComposesOutsideStyleRuleIsDropped", {
+    files: {
+      "/entry.js": entry,
+      "/styles.module.css": /* css */ `
+        .c { color: red }
+        @keyframes fade {
+          from { composes: x from "./other.module.css"; opacity: 0 }
+          to { opacity: 1 }
+        }
+        @page { composes: c; margin: 1cm }
+        .s { animation: fade 1s }
+      `,
+      "/other.module.css": /* css */ `.x { color: green }`,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    // Only @page reports its declaration: @keyframes bodies are parsed with a
+    // fresh ParserOptions (rules/keyframes.rs), which has nowhere to log to.
+    // The keyframe's declaration is still dropped, as the stylesheet shows.
+    bundleWarnings: { "/styles.module.css": [notValidHere] },
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
+        "// styles.module.css
+        var styles_module_default = {
+          c: "c_-MSaAA",
+          s: "s_-MSaAA"
+        };
+
+        // entry.js
+        console.log(styles_module_default);
+        "
+      `);
+      // other.module.css is not part of the bundle.
+      api.expectFile("/out/entry.css").toMatchInlineSnapshot(`
+        "/* styles.module.css */
+        .c_-MSaAA {
+          color: red;
+        }
+
+        @keyframes fade_-MSaAA {
+          from {
+            opacity: 0;
+          }
+
+          to {
+            opacity: 1;
+          }
+        }
+
+        @page {
+          margin: 1cm;
+        }
+
+        .s_-MSaAA {
+          animation: 1s fade_-MSaAA;
+        }
+        "
+      `);
+    },
+  });
+
+  itBundled("css-module/RejectedComposesFromDoesNotImportTheFile", {
+    files: {
+      "/entry.js": entry,
+      "/styles.module.css": /* css */ `
+        .c { color: red }
+        .a .b { composes: x from "./other.module.css"; color: blue }
+        .a .d { composes: y from "./missing.module.css" }
+        .ok { composes: c }
+      `,
+      "/other.module.css": /* css */ `.x { color: green }`,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    bundleWarnings: { "/styles.module.css": [notSingleClass, notSingleClass] },
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
+        "// styles.module.css
+        var styles_module_default = {
+          c: "c_-MSaAA",
+          a: "a_-MSaAA",
+          b: "b_-MSaAA",
+          d: "d_-MSaAA",
+          ok: "c_-MSaAA ok_-MSaAA"
+        };
+
+        // entry.js
+        console.log(styles_module_default);
+        "
+      `);
+      // Neither other.module.css nor the unresolvable missing.module.css is
+      // part of the bundle.
+      api.expectFile("/out/entry.css").toMatchInlineSnapshot(`
+        "/* styles.module.css */
+        .c_-MSaAA {
+          color: red;
+        }
+
+        .a_-MSaAA .b_-MSaAA {
+          color: #00f;
+        }
+
+        .ok_-MSaAA {
+        }
+        "
+      `);
+    },
+  });
+
+  // The printer used to reject any `composes` printed inside a block, which
+  // also covered rules the parser had accepted. The CLI backend makes any
+  // warning fail these two tests.
+  itBundled("css-module/ComposesInRuleInsideTopLevelAtRule", {
+    files: {
+      "/entry.js": entry,
+      "/styles.module.css": /* css */ `
+        .c { color: red }
+        @media (min-width: 1px) { .b { composes: c } }
+        @supports (display: grid) { @layer x { .d { composes: c; color: blue } } }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    backend: "cli",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
+        "// styles.module.css
+        var styles_module_default = {
+          c: "c_-MSaAA",
+          b: "c_-MSaAA b_-MSaAA",
+          d: "c_-MSaAA d_-MSaAA"
+        };
+
+        // entry.js
+        console.log(styles_module_default);
+        "
+      `);
+      api.expectFile("/out/entry.css").toMatchInlineSnapshot(`
+        "/* styles.module.css */
+        .c_-MSaAA {
+          color: red;
+        }
+
+        @media (min-width: 1px) {
+          .b_-MSaAA {
+          }
+        }
+
+        @supports (display: grid) {
+          @layer x {
+            .d_-MSaAA {
+              color: #00f;
+            }
+          }
+        }
+        "
+      `);
+    },
+  });
+
+  itBundled("css-module/ComposesInModuleImportedWithConditions", {
+    files: {
+      "/entry.css": /* css */ `@import "./styles.module.css" layer(base) supports(display: grid) (min-width: 1px);`,
+      "/styles.module.css": /* css */ `
+        .c { color: red }
+        .b { composes: c }
+      `,
+    },
+    entryPoints: ["/entry.css"],
+    outdir: "/out",
+    backend: "cli",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toMatchInlineSnapshot(`
+        "/* styles.module.css */
+        @media (min-width: 1px) {
+          @supports (display: grid) {
+            @layer base {
+              .c_-MSaAA {
+                color: red;
+              }
+
+              .b_-MSaAA {
+              }
+            }
+          }
+        }
+
+        /* entry.css */
+
+        "
+      `);
+    },
+  });
 });

@@ -229,9 +229,6 @@ pub mod text {
         executable_lines_that_havent_been_executed.set_intersection(&report.executable_lines);
 
         let mut iter = executable_lines_that_havent_been_executed.iterator::<true, true>();
-        let mut start_of_line_range: usize = 0;
-        let mut prev_line: usize = 0;
-        let mut is_first = true;
 
         // `concat!(pretty_fmt!(..), "{}")` requires a literal; split into a
         // prefix `write_all` + plain `write!` so the const-generic `ENABLE_COLORS` can
@@ -239,48 +236,42 @@ pub mod text {
         let red = pretty_fmt::<ENABLE_COLORS>("<red>");
         let comma = pretty_fmt::<ENABLE_COLORS>("<r><d>,<r>");
 
+        let mut pending: Option<(usize, usize)> = None;
+        let mut is_first = true;
+        macro_rules! flush_range {
+            ($start:expr, $end:expr) => {{
+                if is_first {
+                    is_first = false;
+                } else {
+                    writer.write_all(&comma)?;
+                }
+                writer.write_all(&red)?;
+                if $start == $end {
+                    write!(writer, "{}", $start + 1)?;
+                } else {
+                    write!(writer, "{}-{}", $start + 1, $end + 1)?;
+                }
+            }};
+        }
+
         while let Some(next_line) = iter.next() {
-            if next_line == (prev_line + 1) {
-                prev_line = next_line;
-                continue;
-            } else if is_first && start_of_line_range == 0 && prev_line == 0 {
-                start_of_line_range = next_line;
-                prev_line = next_line;
-                continue;
-            }
-
-            if is_first {
-                is_first = false;
-            } else {
-                writer.write_all(&comma)?;
-            }
-
-            if start_of_line_range == prev_line {
-                writer.write_all(&red)?;
-                write!(writer, "{}", start_of_line_range + 1)?;
-            } else {
-                writer.write_all(&red)?;
-                write!(writer, "{}-{}", start_of_line_range + 1, prev_line + 1)?;
-            }
-
-            prev_line = next_line;
-            start_of_line_range = next_line;
-        }
-
-        if prev_line != start_of_line_range {
-            if is_first {
-            } else {
-                writer.write_all(&comma)?;
-            }
-
-            if start_of_line_range == prev_line {
-                writer.write_all(&red)?;
-                write!(writer, "{}", start_of_line_range + 1)?;
-            } else {
-                writer.write_all(&red)?;
-                write!(writer, "{}-{}", start_of_line_range + 1, prev_line + 1)?;
+            match pending {
+                Some((start, prev)) if next_line == prev + 1 => {
+                    pending = Some((start, next_line));
+                }
+                Some((start, prev)) => {
+                    flush_range!(start, prev);
+                    pending = Some((next_line, next_line));
+                }
+                None => {
+                    pending = Some((next_line, next_line));
+                }
             }
         }
+        if let Some((start, prev)) = pending {
+            flush_range!(start, prev);
+        }
+        let _ = is_first;
         Ok(())
     }
 }
@@ -387,7 +378,7 @@ impl<'a> Generator<'a> {
         let all = unsafe { core::slice::from_raw_parts(blocks_ptr, blocks_len) };
         let blocks: &[BasicBlockRange] = &all[0..function_start_offset];
         let mut function_blocks: &[BasicBlockRange] = &all[function_start_offset..blocks_len];
-        if function_blocks.len() > 1 {
+        if !function_blocks.is_empty() {
             function_blocks = &function_blocks[1..];
         }
 
@@ -550,7 +541,12 @@ impl ByteRangeMapping {
                     executable_lines.set(line as usize);
                     if has_executed {
                         lines_which_have_executed.set(line as usize);
-                        line_hits_slice[line as usize] += 1;
+                        let hits = u32::try_from(block.execution_count)
+                            .unwrap_or(u32::MAX)
+                            .max(1);
+                        if line_hits_slice[line as usize] < hits {
+                            line_hits_slice[line as usize] = hits;
+                        }
                     }
                 }
 
@@ -598,8 +594,8 @@ impl ByteRangeMapping {
 
                 // only mark the lines as executable if the function has not executed
                 // functions that have executed have non-executable lines in them and thats fine.
-                if !did_fn_execute {
-                    let end = max_line.min(line_count);
+                if !did_fn_execute && min_line != u32::MAX {
+                    let end = (max_line + 1).min(line_count);
                     line_hits_slice[min_line as usize..end as usize].fill(0);
                     for line in min_line..end {
                         executable_lines.set(line as usize);
@@ -684,7 +680,12 @@ impl ByteRangeMapping {
                         executable_lines.set(line as usize);
                         if has_executed {
                             lines_which_have_executed.set(line as usize);
-                            line_hits_slice[line as usize] += 1;
+                            let hits = u32::try_from(block.execution_count)
+                                .unwrap_or(u32::MAX)
+                                .max(1);
+                            if line_hits_slice[line as usize] < hits {
+                                line_hits_slice[line as usize] = hits;
+                            }
                         }
 
                         min_line = min_line.min(line);
@@ -753,6 +754,13 @@ impl ByteRangeMapping {
                         if point.original.lines.zero_based() < 0 {
                             continue;
                         }
+                        // Generated-column-0 mappings point at the previous statement's end;
+                        // `column_position` is always > 0 here (the `>= byte_offset` check above
+                        // skips column 0), so any column-0 result is a closest-preceding fallback.
+                        if point.generated.columns.zero_based() == 0 {
+                            debug_assert!(column_position > 0);
+                            continue;
+                        }
 
                         let line: u32 =
                             u32::try_from(point.original.lines.zero_based()).expect("int cast");
@@ -774,7 +782,7 @@ impl ByteRangeMapping {
                 // only mark the lines as executable if the function has not executed
                 // functions that have executed have non-executable lines in them and thats fine.
                 if !did_fn_execute {
-                    let end = max_line.min(line_count);
+                    let end = (max_line + 1).min(line_count);
                     for line in min_line..end {
                         executable_lines.set(line as usize);
                         lines_which_have_executed.unset(line as usize);
@@ -877,7 +885,7 @@ extern "C" fn ByteRangeMapping__findExecutedLines(
     let all = unsafe { core::slice::from_raw_parts(blocks_ptr.as_ptr(), blocks_len) };
     let blocks: &[BasicBlockRange] = &all[0..function_start_offset];
     let mut function_blocks: &[BasicBlockRange] = &all[function_start_offset..blocks_len];
-    if function_blocks.len() > 1 {
+    if !function_blocks.is_empty() {
         function_blocks = &function_blocks[1..];
     }
     let url_slice = source_url.to_utf8();

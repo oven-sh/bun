@@ -192,8 +192,8 @@ test("should call only some functions", () => {
 ---------------|---------|---------|-------------------
 File           | % Funcs | % Lines | Uncovered Line #s
 ---------------|---------|---------|-------------------
-All files      |   75.00 |   83.33 |
- include-me.ts |   50.00 |   66.67 | 
+All files      |   75.00 |   75.00 |
+ include-me.ts |   50.00 |   50.00 | 6-7
  test.test.ts  |  100.00 |  100.00 | 
 ---------------|---------|---------|-------------------
 
@@ -385,8 +385,8 @@ test("should call both functions", () => {
 SF:include-me.ts
 FNF:1
 FNH:1
-DA:2,11
-DA:3,17
+DA:2,1
+DA:3,1
 LF:2
 LH:2
 end_of_record
@@ -394,13 +394,13 @@ TN:
 SF:test.test.ts
 FNF:1
 FNH:1
-DA:2,40
-DA:3,41
-DA:4,39
-DA:6,42
-DA:7,39
-DA:8,36
-DA:9,2
+DA:2,1
+DA:3,1
+DA:4,1
+DA:6,1
+DA:7,1
+DA:8,1
+DA:9,1
 LF:7
 LH:7
 end_of_record"

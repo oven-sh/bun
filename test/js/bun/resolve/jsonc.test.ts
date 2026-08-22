@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
-import { bunRun, tempDir } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, bunRun, tempDir } from "harness";
 import { join } from "path";
 test.concurrent("empty jsonc - package.json", async () => {
   await using dir = tempDir("jsonc", {
@@ -56,4 +56,100 @@ test.concurrent("imported JSON strings match JSON.parse exactly (escapes, lone s
     `,
   });
   expect(await bunRun(join(dir, "index.ts"))).toSpawn();
+});
+
+// https://github.com/oven-sh/bun/issues/8524
+describe("import a .json file containing comments/trailing commas", () => {
+  const jsoncContent = `{
+  // a comment
+  "name": "example",
+  "list": [1, 2, 3,],
+}
+`;
+  const indexEsm = `import data from "./data.json";\nconsole.log(JSON.stringify(data));\n`;
+  const indexCjs = `const data = require("./data.json");\nconsole.log(JSON.stringify(data));\n`;
+  const expected = `{"name":"example","list":[1,2,3]}`;
+
+  test.concurrent.each([
+    [".json:jsonc", "esm"],
+    [".json=jsonc", "esm"],
+    [".json:jsonc", "cjs"],
+  ])("with --loader %s (%s)", async (loaderArg, kind) => {
+    using dir = tempDir("jsonc-loader-cli", {
+      "data.json": jsoncContent,
+      "index.ts": kind === "cjs" ? indexCjs : indexEsm,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--loader", loaderArg, join(String(dir), "index.ts")],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe(expected);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent('with bunfig [loader] ".json" = "jsonc"', async () => {
+    using dir = tempDir("jsonc-loader-bunfig", {
+      "data.json": jsoncContent,
+      "index.ts": indexEsm,
+      "bunfig.toml": `[loader]\n".json" = "jsonc"\n`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "./index.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe(expected);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("with Bun.build loader option", async () => {
+    using dir = tempDir("jsonc-loader-build", {
+      "data.json": jsoncContent,
+      "index.ts": indexEsm,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--loader", ".json:jsonc", "--target=bun", join(String(dir), "index.ts")],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr.trim()).toBe("");
+    expect(stdout).toContain(`"example"`);
+    expect(stdout).not.toContain("// a comment");
+    expect(exitCode).toBe(0);
+  });
+
+  describe("without a loader override the error names the file", () => {
+    test.concurrent.each(["esm", "cjs"])("(%s)", async kind => {
+      using dir = tempDir("json-parse-error", {
+        "data.json": jsoncContent,
+        "index.ts": `try {
+  ${kind === "cjs" ? `require("./data.json");` : `await import("./data.json");`}
+  console.log("FAIL: did not throw");
+} catch (e) {
+  console.log(e.message);
+}
+`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(String(dir), "index.ts")],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const jsonPath = join(String(dir), "data.json").replaceAll("\\", "/");
+      expect(stdout.trim().replaceAll("\\", "/")).toBe(`${jsonPath}: JSON Parse error: Unrecognized token '/'`);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
 });

@@ -298,8 +298,6 @@ pub enum Error {
     FailedToGetTempPath,
     #[error("UnexpectedCreatingStdin")]
     UnexpectedCreatingStdin,
-    #[error("UnableToDecode")]
-    UnableToDecode,
     #[error("UnableToEncode")]
     UnableToEncode,
     #[error("SocketClosed")]
@@ -719,7 +717,6 @@ impl Error {
             Self::CouldntReadCurrentDirectory => "CouldntReadCurrentDirectory",
             Self::FailedToGetTempPath => "FailedToGetTempPath",
             Self::UnexpectedCreatingStdin => "UnexpectedCreatingStdin",
-            Self::UnableToDecode => "UnableToDecode",
             Self::UnableToEncode => "UnableToEncode",
             Self::SocketClosed => "SocketClosed",
             Self::InvalidHeaderName => "InvalidHeaderName",

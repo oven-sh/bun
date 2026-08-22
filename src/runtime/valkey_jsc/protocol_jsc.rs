@@ -20,23 +20,18 @@ pub(crate) fn valkey_error_to_js(
         RedisError::ConnectionClosed => JscError::REDIS_CONNECTION_CLOSED,
         RedisError::InvalidResponse => JscError::REDIS_INVALID_RESPONSE,
         RedisError::InvalidBulkString => JscError::REDIS_INVALID_BULK_STRING,
-        RedisError::InvalidArray => JscError::REDIS_INVALID_ARRAY,
         RedisError::InvalidInteger => JscError::REDIS_INVALID_INTEGER,
-        RedisError::InvalidSimpleString => JscError::REDIS_INVALID_SIMPLE_STRING,
-        RedisError::InvalidErrorString => JscError::REDIS_INVALID_ERROR_STRING,
         RedisError::InvalidDouble
         | RedisError::InvalidBoolean
         | RedisError::InvalidNull
         | RedisError::InvalidMap
         | RedisError::InvalidSet
-        | RedisError::InvalidBigNumber
         | RedisError::InvalidVerbatimString
         | RedisError::InvalidBlobError
         | RedisError::InvalidAttribute
         | RedisError::InvalidPush => JscError::REDIS_INVALID_RESPONSE,
         RedisError::AuthenticationFailed => JscError::REDIS_AUTHENTICATION_FAILED,
         RedisError::InvalidCommand => JscError::REDIS_INVALID_COMMAND,
-        RedisError::InvalidArgument => JscError::REDIS_INVALID_ARGUMENT,
         RedisError::UnsupportedProtocol => JscError::REDIS_INVALID_RESPONSE,
         RedisError::InvalidResponseType => JscError::REDIS_INVALID_RESPONSE_TYPE,
         RedisError::ConnectionTimeout => JscError::REDIS_CONNECTION_TIMEOUT,

@@ -1,8 +1,6 @@
 use core::ffi::{c_char, c_int, c_void};
 
-use bun_core::Fd;
-
-use crate::{LIBUS_SOCKET_DESCRIPTOR, SocketGroup, SslCtx, us_socket_t};
+use crate::{SocketGroup, SslCtx, us_socket_t};
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle for a uSockets listen socket.
@@ -42,30 +40,16 @@ impl ListenSocket {
         unsafe { &mut *us_listen_socket_group(self) }
     }
 
-    pub fn fd(&mut self) -> Fd {
-        let raw = us_listen_socket_get_fd(self);
-        // SOCKET → kind=system (mask bit 63); `from_native` would store the
-        // raw bits verbatim and mis-tag `INVALID_SOCKET` (~0) as kind=uv.
-        #[cfg(windows)]
-        {
-            Fd::from_system(raw as *mut core::ffi::c_void)
-        }
-        #[cfg(not(windows))]
-        {
-            Fd::from_native(raw)
-        }
-    }
-
     /// `ssl_ctx` is `SSL_CTX_up_ref`'d for the SNI node; the listener drops
     /// that ref on close / `remove_server_name`. `user` is the per-domain handle
-    /// `find_server_name_userdata` recovers (uWS uses an `HttpRouter*`; Bun.listen
+    /// `us_socket_server_name_userdata` recovers (uWS uses an `HttpRouter*`; Bun.listen
     /// passes null).
     ///
     /// `ssl_ctx` is taken as a raw `*mut SslCtx` (not `&mut SslCtx`) because
     /// `SSL_CTX` is a refcounted shared object — C `SSL_CTX_up_ref`s it and
     /// stores the pointer past this call, so the caller cannot legitimately
     /// hold exclusive `&mut` access. `user` is likewise raw `*mut` because the
-    /// C side stores it and `find_server_name_userdata` later hands it back as
+    /// C side stores it and `us_socket_server_name_userdata` later hands it back as
     /// a mutable pointer; accepting `&U` and const-casting would make that
     /// round-trip UB.
     pub fn add_server_name(
@@ -101,7 +85,6 @@ impl ListenSocket {
 unsafe extern "C" {
     safe fn us_listen_socket_close(ls: &mut ListenSocket);
     safe fn us_listen_socket_group(ls: &mut ListenSocket) -> *mut SocketGroup;
-    safe fn us_listen_socket_get_fd(ls: &mut ListenSocket) -> LIBUS_SOCKET_DESCRIPTOR;
     fn us_listen_socket_add_server_name(
         ls: *mut ListenSocket,
         hostname: *const c_char,

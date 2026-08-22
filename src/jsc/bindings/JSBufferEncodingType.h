@@ -11,6 +11,5 @@ template<> std::optional<BufferEncodingType> parseEnumeration<BufferEncodingType
 std::optional<BufferEncodingType> parseEnumerationAllowBuffer(JSC::JSGlobalObject&, JSValue);
 template<> std::optional<BufferEncodingType> parseEnumerationFromString(const WTF::String&);
 template<> std::optional<BufferEncodingType> parseEnumerationFromView(const WTF::StringView&);
-template<> WTF::ASCIILiteral expectedEnumerationValues<BufferEncodingType>();
 
 } // namespace WebCore

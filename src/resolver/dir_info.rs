@@ -26,9 +26,6 @@ pub type Index = IndexType;
 // only inside `dir_info_uncached` while filling a freshly-`put` slot, before
 // any handle to that slot escapes. All access is additionally serialized under
 // the resolver mutex.
-//
-// `as_ptr()` exposes the raw `*mut` for the few callers that still need it
-// (the `dir_info_uncached` fill path and `MatchResult.dir_info` round-trip).
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Non-owning, `Copy` handle to a `DirInfo` slot in the BSSMap singleton.

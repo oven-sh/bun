@@ -46,8 +46,6 @@ pub(crate) const WINDOWS_DEV_NULL: &ZStr = bun_core::zstr!("NUL");
 pub enum ShellErr {
     Sys(SystemError),
     Custom(Box<[u8]>),
-    InvalidArguments { val: Box<[u8]> },
-    Todo(Box<[u8]>),
 }
 
 impl ShellErr {
@@ -72,10 +70,6 @@ impl ShellErr {
                 let err_value = BunString::clone_utf8(&custom).to_error_instance(global);
                 global.throw_value(err_value)
             }
-            ShellErr::InvalidArguments { val } => {
-                global.throw_invalid_arguments(format_args!("{}", bstr::BStr::new(&*val)))
-            }
-            ShellErr::Todo(todo) => global.throw_todo(&todo),
         }
     }
 
@@ -95,18 +89,6 @@ impl ShellErr {
                     bstr::BStr::new(&*custom)
                 );
             }
-            ShellErr::InvalidArguments { val } => {
-                bun_core::pretty_errorln!(
-                    "<r><red>error<r>: Failed due to error: <b>bunsh: invalid arguments: {}<r>",
-                    bstr::BStr::new(&*val)
-                );
-            }
-            ShellErr::Todo(todo) => {
-                bun_core::pretty_errorln!(
-                    "<r><red>error<r>: Failed due to error: <b>TODO: {}<r>",
-                    bstr::BStr::new(&*todo)
-                );
-            }
         }
         bun_core::Global::exit(1)
     }
@@ -117,10 +99,6 @@ impl fmt::Display for ShellErr {
         match self {
             ShellErr::Sys(e) => write!(f, "bun: {}: {}", e.message, e.path),
             ShellErr::Custom(msg) => write!(f, "bun: {}", bstr::BStr::new(msg)),
-            ShellErr::InvalidArguments { val } => {
-                write!(f, "bun: invalid arguments: {}", bstr::BStr::new(val))
-            }
-            ShellErr::Todo(msg) => write!(f, "bun: TODO: {}", bstr::BStr::new(msg)),
         }
     }
 }

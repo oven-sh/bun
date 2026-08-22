@@ -20,6 +20,7 @@
 #include <JavaScriptCore/DeferTermination.h>
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/ErrorInstance.h>
+#include <JavaScriptCore/FrameTracers.h>
 #include <JavaScriptCore/HeapSnapshotBuilder.h>
 #include <JavaScriptCore/JIT.h>
 #include <JavaScriptCore/JSBasePrivate.h>
@@ -35,6 +36,9 @@
 #include <cstddef>
 #include <wtf/FileSystem.h>
 #include <wtf/MemoryFootprint.h>
+#include <wtf/ProcessID.h>
+#include <wtf/StringPrintStream.h>
+#include <wtf/Threading.h>
 #include <wtf/text/WTFString.h>
 
 #include "BunProcess.h"
@@ -445,6 +449,38 @@ JSC_DEFINE_HOST_FUNCTION(functionNeverInlineFunction,
 }
 
 extern "C" bool Bun__mkdirp(JSC::JSGlobalObject*, const char*);
+extern "C" void Bun__VirtualMachine__setSamplingProfilerDirectory(void* bunVM, const BunString* directory);
+
+// Writes `vm`'s sampling profiler report into `directory` (`directoryLength`
+// bytes of UTF-8). Called once per VM from VirtualMachine::on_exit when
+// bun:jsc's startSamplingProfiler() was given a directory. Returns false when
+// the file could not be written.
+extern "C" bool Bun__SamplingProfiler__reportToDirectory(JSC::VM* vm, const char* directory, size_t directoryLength)
+{
+    JSC::SamplingProfiler* samplingProfiler = vm->samplingProfiler();
+    if (!samplingProfiler)
+        return true;
+
+    WTF::StringPrintStream report;
+    {
+        JSC::JSLockHolder locker(*vm);
+        // A terminated Worker reaches on_exit with its JSC termination exception
+        // still pending but the termination request already cleared; the report's
+        // DeferTermination asserts on that mix, so park the exception while reporting.
+        JSC::SuspendExceptionScope suspendExceptions(*vm);
+        samplingProfiler->reportTopFunctions(report);
+        samplingProfiler->reportTopBytecodes(report);
+    }
+
+    // One report per VM; workers share the pid, so key the name on the thread
+    // too. Joined with makeString, not FileSystem::pathByAppendingComponent:
+    // the latter goes through libstdc++'s std::filesystem, whose string frees
+    // bypass mimalloc and crash on musl.
+    auto path = makeString(String::fromUTF8(std::span { directory, directoryLength }), '/',
+        "samplingProfile."_s, getCurrentProcessID(), '.', Thread::currentSingleton().uid(), ".txt"_s);
+    auto utf8 = report.toCString();
+    return FileSystem::overwriteEntireFile(path, byteCast<uint8_t>(utf8.span())).has_value();
+}
 
 JSC_DECLARE_HOST_FUNCTION(functionStartSamplingProfiler);
 JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler,
@@ -460,8 +496,14 @@ JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler,
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (directoryValue.isString()) {
         auto path = directoryValue.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
         if (!path.isEmpty()) {
-            StringPrintStream pathOut;
+            if (path.contains(static_cast<UChar>(0))) {
+                throwVMError(
+                    globalObject, scope,
+                    createTypeError(globalObject, "directory must not contain null bytes"_s));
+                return {};
+            }
             auto pathCString = toCString(String(path));
             if (!Bun__mkdirp(globalObject, pathCString.span().data())) {
                 throwVMError(
@@ -470,8 +512,13 @@ JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler,
                 return {};
             }
 
-            Options::samplingProfilerPath() = pathCString.span().data();
-            samplingProfiler.registerForReportAtExit();
+            // JSC's own report-at-exit reads the directory from
+            // Options::samplingProfilerPath(), but the options page was frozen
+            // read-only when the VM was constructed (Config::finalize), so
+            // assigning that option here segfaults. Keep the directory on Bun's
+            // per-VM state instead; on_exit writes the report.
+            auto directory = Bun::toString(path);
+            Bun__VirtualMachine__setSamplingProfilerDirectory(bunVM(globalObject), &directory);
         }
     }
     if (sampleValue.isNumber()) {

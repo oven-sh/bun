@@ -207,6 +207,11 @@ pub struct VirtualMachine {
     pub dns_result_order: u8,
     pub cpu_profiler_config: Option<crate::bun_cpu_profiler::CPUProfilerConfig>,
     pub heap_profiler_config: Option<crate::bun_heap_profiler::HeapProfilerConfig>,
+    /// UTF-8 directory given to `bun:jsc`'s `startSamplingProfiler()`.
+    /// JSC's own report-at-exit reads `Options::samplingProfilerPath()`, which
+    /// is frozen read-only before user JS can run, so the path lives here and
+    /// [`Self::on_exit`] writes the report.
+    pub sampling_profiler_directory: Option<Box<[u8]>>,
     pub counters: Counters,
 
     /// `--hot` / `--watch` mode this VM runs under.
@@ -513,6 +518,19 @@ impl VMHolder {
         let Some(vm_ptr) = VM.get() else { return };
         // SAFETY: called on the JS thread that owns this VM (process._kill).
         let vm = unsafe { &mut *vm_ptr };
+        // Sampling report before the CPU profile: they share the per-VM
+        // SamplingProfiler and stopCPUProfiler clears its traces.
+        if let Some(directory) = vm.sampling_profiler_directory.take() {
+            if let Err(e) =
+                crate::bun_cpu_profiler::write_sampling_profiler_report(vm.jsc_vm_mut(), &directory)
+            {
+                bun_core::Output::err(
+                    <&'static str>::from(e),
+                    "Failed to write sampling profiler report",
+                    (),
+                );
+            }
+        }
         if let Some(config) = vm.cpu_profiler_config.take() {
             if let Err(e) =
                 crate::bun_cpu_profiler::stop_and_write_profile(vm.jsc_vm_mut(), &config)
@@ -1677,6 +1695,22 @@ impl VirtualMachine {
             }
         }
 
+        // Write the JSC sampling profiler report if bun:jsc's
+        // startSamplingProfiler() was given a directory. Runs before the CPU
+        // profile flush: both share the per-VM SamplingProfiler and
+        // stopCPUProfiler clears its traces, while the report only reads them.
+        if let Some(directory) = self.sampling_profiler_directory.take() {
+            if let Err(e) = crate::bun_cpu_profiler::write_sampling_profiler_report(
+                self.jsc_vm_mut(),
+                &directory,
+            ) {
+                bun_core::Output::err(
+                    <&'static str>::from(e),
+                    "Failed to write sampling profiler report",
+                    (),
+                );
+            }
+        }
         // Write CPU profile if profiling was enabled - do this FIRST before any
         // shutdown begins. Grab the config and null it out to make this
         // idempotent.

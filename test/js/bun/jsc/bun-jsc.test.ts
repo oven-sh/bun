@@ -24,7 +24,9 @@ import {
   totalCompileTime,
 } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isBuildKite, isWindows } from "harness";
+import { bunEnv, bunExe, isBuildKite, isWindows, tempDir } from "harness";
+import { readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
 
 describe("bun:jsc", () => {
   function count() {
@@ -616,3 +618,120 @@ describe("JsRef::Weak liveness", () => {
     expect(kept.keep).toBe(true);
   });
 });
+
+it.concurrent("startSamplingProfiler with a directory writes a report at exit", async () => {
+  // https://github.com/oven-sh/bun/issues/32212
+  using dir = tempDir("sampling-profiler", {
+    "entry.mjs": `
+      import { startSamplingProfiler } from "bun:jsc";
+      import { join } from "node:path";
+      startSamplingProfiler(join(import.meta.dir, "profiles"));
+      let x = 0;
+      for (let i = 0; i < 2e6; i++) x += Math.sqrt(i);
+      console.log("done", x > 0);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("done true\n");
+  expect(exitCode).toBe(0);
+
+  const profileDir = join(String(dir), "profiles");
+  const reports = readdirSync(profileDir).filter(name => name.startsWith("samplingProfile."));
+  expect(reports).toHaveLength(1);
+  expect(statSync(join(profileDir, reports[0])).size).toBeGreaterThan(0);
+});
+
+it.concurrent("startSamplingProfiler with a directory in a worker writes a report at worker teardown", async () => {
+  // https://github.com/oven-sh/bun/issues/32212
+  using dir = tempDir("sampling-profiler-worker", {
+    "main.mjs": `
+      import { readdirSync, statSync } from "node:fs";
+      import { join } from "node:path";
+      const worker = new Worker(new URL("./worker.mjs", import.meta.url));
+      const message = await new Promise((resolve, reject) => {
+        worker.onmessage = e => resolve(e.data);
+        worker.onerror = e => reject(new Error(e.message));
+        worker.addEventListener("close", () => reject(new Error("worker closed before posting a message")));
+      });
+      console.log(message);
+      // The report is written during worker VM teardown, which completes
+      // before the close event is dispatched to the parent.
+      const closed = new Promise(resolve => worker.addEventListener("close", resolve));
+      await worker.terminate();
+      await closed;
+      const profileDir = join(import.meta.dir, "profiles");
+      const reports = readdirSync(profileDir).filter(name => name.startsWith("samplingProfile."));
+      console.log("reports", reports.length, reports.every(name => statSync(join(profileDir, name)).size > 0));
+    `,
+    "worker.mjs": `
+      import { startSamplingProfiler } from "bun:jsc";
+      import { join } from "node:path";
+      startSamplingProfiler(join(import.meta.dir, "profiles"));
+      let x = 0;
+      for (let i = 0; i < 2e6; i++) x += Math.sqrt(i);
+      postMessage("done " + (x > 0));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("done true\nreports 1 true\n");
+  expect(exitCode).toBe(0);
+});
+
+it.concurrent(
+  "startSamplingProfiler resolves a relative directory against the working directory at call time",
+  async () => {
+    using dir = tempDir("sampling-profiler-relative", {
+      "entry.mjs": `
+      import { startSamplingProfiler } from "bun:jsc";
+      import { mkdirSync } from "node:fs";
+      let nulThrew = false;
+      try {
+        startSamplingProfiler("bad\\0dir");
+      } catch (e) {
+        nulThrew = e instanceof TypeError;
+      }
+      console.log("nul-throws", nulThrew);
+      startSamplingProfiler("profiles");
+      mkdirSync("elsewhere");
+      process.chdir("elsewhere");
+      let x = 0;
+      for (let i = 0; i < 2e6; i++) x += Math.sqrt(i);
+      console.log("done", x > 0);
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("nul-throws true\ndone true\n");
+    expect(exitCode).toBe(0);
+
+    // The report lands in the directory as resolved when the profiler started,
+    // not relative to the working directory at exit.
+    const profileDir = join(String(dir), "profiles");
+    const reports = readdirSync(profileDir).filter(name => name.startsWith("samplingProfile."));
+    expect(reports).toHaveLength(1);
+    expect(statSync(join(profileDir, reports[0])).size).toBeGreaterThan(0);
+  },
+);

@@ -62,6 +62,30 @@ pub fn exit_during_uncaught_exception(this: &mut VirtualMachine) {
     this.exit_on_uncaught_exception = true;
 }
 
+/// `bun:jsc`'s `startSamplingProfiler(directory)`. The JSC option that
+/// normally carries this path is read-only by the time user JS can run (see
+/// [`crate::VirtualMachine::sampling_profiler_directory`]), so the directory
+/// is kept here and `on_exit` writes the report. Resolved to an absolute path
+/// now: the report is written at exit, when the working directory may differ.
+// HOST_EXPORT(Bun__VirtualMachine__setSamplingProfilerDirectory, c)
+pub fn set_sampling_profiler_directory(this: &mut VirtualMachine, directory: &BunString) {
+    let directory = directory.to_utf8_bytes();
+    let directory = if bun_paths::is_absolute(&directory) {
+        directory
+    } else {
+        let mut cwd_buf = bun_paths::path_buffer_pool::get();
+        match bun_sys::getcwd_z(&mut cwd_buf) {
+            Ok(cwd) => bun_paths::resolve_path::join::<bun_paths::resolve_path::platform::Auto>(&[
+                cwd.as_bytes(),
+                &directory,
+            ])
+            .to_vec(),
+            Err(_) => directory,
+        }
+    };
+    this.sampling_profiler_directory = Some(directory.into_boxed_slice());
+}
+
 // `Bun__Process__send` lives in `bun_runtime::ipc_host` (its body — via
 // `do_send` — names the `bun_runtime::Listener` type; LAYERING).
 

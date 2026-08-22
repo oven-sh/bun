@@ -150,3 +150,90 @@ it("console.log with SharedArrayBuffer", () => {
   expect(Bun.inspect(new ArrayBuffer(3))).toBe("ArrayBuffer(3) [ 0, 0, 0 ]");
   expect(Bun.inspect(new SharedArrayBuffer(3))).toBe("SharedArrayBuffer(3) [ 0, 0, 0 ]");
 });
+
+// https://github.com/oven-sh/bun/issues/31714
+// Like Node: a string first arg becomes "Assertion failed: <str>" and stays the
+// format string; any other first value gets a bare "Assertion failed" before it.
+it("console.assert prepends the Assertion failed marker", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        import { assert } from "node:console";
+        console.assert(false, "Whoops %s work", "didn't"); // string first arg: "Assertion failed: " + format, %s still applies
+        console.assert(false, "plain message");            // string first arg, no specifiers
+        console.assert(false, 42);                         // non-string first arg: bare marker, space separator
+        console.assert(false, [1, 2], "arr");              // non-string first arg stays data, not "1,2"
+        console.assert(false, { code: "E42", user: "u1" }, "ctx"); // object stays data too
+        console.assert(false, "");                         // empty string is still a string -> colon prefix
+        console.assert(false);                             // no args -> bare marker
+        console.assert(true, "should not print");          // truthy condition prints nothing
+        assert(false, "from node:console %s", "works");    // node:console export is the same function
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr.replaceAll("\r\n", "\n")).toBe(
+    [
+      "Assertion failed: Whoops didn't work",
+      "Assertion failed: plain message",
+      "Assertion failed 42",
+      "Assertion failed [ 1, 2 ] arr",
+      "Assertion failed {",
+      '  code: "E42",',
+      '  user: "u1",',
+      "} ctx",
+      "Assertion failed: ",
+      "Assertion failed",
+      "Assertion failed: from node:console works",
+      "",
+    ].join("\n"),
+  );
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(0);
+});
+
+// A custom `new Console(...)` uses the JS builtin assert and must follow the
+// same rules: a non-string first arg survives as data, not "[object Object]".
+it("custom Console.assert prepends the Assertion failed marker like Node", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { Console } = require("node:console");
+        const c = new Console(process.stdout, process.stderr);
+        c.assert(false, "Whoops %s work", "didn't");
+        c.assert(false, { code: "E42", user: "u1" }, "ctx");
+        c.assert(false, [1, 2], "arr");
+        c.assert(false, 42);
+        c.assert(false);
+        c.assert(true, "should not print");
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr.replaceAll("\r\n", "\n")).toBe(
+    [
+      "Assertion failed: Whoops didn't work",
+      "Assertion failed { code: 'E42', user: 'u1' } ctx",
+      "Assertion failed [ 1, 2 ] arr",
+      "Assertion failed 42",
+      "Assertion failed",
+      "",
+    ].join("\n"),
+  );
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(0);
+});

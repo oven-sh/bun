@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
-import fs, { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import fs, { closeSync, mkdirSync, openSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "node:path";
 
 describe.concurrent(
@@ -912,3 +912,59 @@ describe.concurrent("modules that fail to print", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+test.skipIf(isWindows)("bun build still writes every output file when stdout cannot be written", async () => {
+  using dir = tempDir("build-ebadf", {
+    "a.js": `import "./shared.js"; console.log("a");`,
+    "b.js": `import "./shared.js"; console.log("b");`,
+    "shared.js": `console.log("shared");`,
+  });
+  // A read-only descriptor as stdout makes the summary's write(2) fail with EBADF.
+  const stdoutFd = openSync("/dev/null", "r");
+  try {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "./a.js", "./b.js", "--outdir=out", "--splitting"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdin: "ignore",
+      stdout: stdoutFd,
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // Two entry points and the shared chunk are all on disk.
+    const files = fs.readdirSync(join(String(dir), "out")).sort();
+    expect(files).toHaveLength(3);
+    expect(files).toContain("a.js");
+    expect(files).toContain("b.js");
+    expect(exitCode).toBe(0);
+  } finally {
+    closeSync(stdoutFd);
+  }
+});
+
+test.skipIf(isWindows)(
+  "bun build to stdout reports a failed write, also for a bundle smaller than the output buffer",
+  async () => {
+    using dir = tempDir("build-stdout-ebadf", {
+      "a.js": `console.log("a");`,
+    });
+    // A read-only descriptor as stdout makes the bundle's write(2) fail with EBADF.
+    const stdoutFd = openSync("/dev/null", "r");
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "./a.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdin: "ignore",
+        stdout: stdoutFd,
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("WriteFailed");
+      expect(exitCode).toBe(1);
+    } finally {
+      closeSync(stdoutFd);
+    }
+  },
+);

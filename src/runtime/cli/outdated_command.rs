@@ -191,7 +191,7 @@ impl OutdatedCommand {
             &workspace_pkg_ids,
             was_filtered,
         )?;
-        if populate_manifest_cache::print_fetch_failures(manager)? {
+        if populate_manifest_cache::print_fetch_failures(manager) {
             Global::crash();
         }
         Ok(())

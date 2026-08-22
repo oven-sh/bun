@@ -1179,7 +1179,6 @@ pub fn save_lockfile(
                 if this
                     .lockfile
                     .has_meta_hash_changed(false, packages_len_before_install)
-                    .unwrap_or(false)
                 {
                     Output::panic(format_args!(
                         "Lockfile metahash non-deterministic after saving"

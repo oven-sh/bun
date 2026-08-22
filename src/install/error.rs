@@ -212,7 +212,7 @@ pub enum Error {
     #[error(transparent)]
     Alloc(#[from] bun_alloc::AllocError),
     #[error(transparent)]
-    Core(#[from] bun_core::Error),
+    Core(bun_core::Error),
     #[error(transparent)]
     Resolver(#[from] bun_resolver::Error),
     #[error(transparent)]
@@ -440,6 +440,17 @@ impl From<crate::pnpm::MigratePnpmLockfileError> for Error {
         match e {
             E::OutOfMemory => Self::Alloc(bun_alloc::AllocError),
             _ => Self::InvalidLockfile,
+        }
+    }
+}
+
+impl From<bun_core::Error> for Error {
+    fn from(e: bun_core::Error) -> Self {
+        match e {
+            bun_core::Error::Alloc(a) => Self::Alloc(a),
+            bun_core::Error::WriteFailed => Self::WriteFailed,
+            bun_core::Error::InvalidCharacter => Self::InvalidCharacter,
+            other => Self::Core(other),
         }
     }
 }

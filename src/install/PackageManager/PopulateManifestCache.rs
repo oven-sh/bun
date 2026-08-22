@@ -366,13 +366,13 @@ pub fn populate_manifest_cache(
 }
 
 /// Prints the fetch failures a [`Packages::Ids`] pass logged; true when one of them is a required dependency's.
-pub fn print_fetch_failures(manager: &PackageManager) -> crate::Result<bool> {
+pub fn print_fetch_failures(manager: &PackageManager) -> bool {
     let log = manager.log_mut();
     let failed_required = log.has_errors();
     if !log.msgs.is_empty() {
         Output::flush();
-        log.print(core::ptr::from_mut(Output::error_writer()))?;
+        let _ = log.print(core::ptr::from_mut(Output::error_writer()));
         log.reset();
     }
-    Ok(failed_required)
+    failed_required
 }

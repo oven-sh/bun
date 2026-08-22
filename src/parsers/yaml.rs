@@ -5482,9 +5482,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         Ok(value)
     }
 
-    /// With the cursor on the last hex digit of a `\uD8xx` escape: the trail
-    /// surrogate named by an immediately following `\uDCxx` escape. Does not
-    /// move the cursor.
+    /// Cursor on the last hex digit of a `\uD8xx` escape. Does not advance.
     fn peek_trail_surrogate_escape(&self) -> Option<u16> {
         if Enc::wide(self.peek(1)) != 0x5C /* '\\' */ || Enc::wide(self.peek(2)) != 0x75
         /* 'u' */
@@ -5511,15 +5509,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         }
 
         if (0xD800..=0xDFFF).contains(&cp) {
-            // `\U` ([60] ns-esc-32-bit) names a Unicode character, and a
-            // surrogate code point is not one.
+            // `\U` names a Unicode character; a surrogate code point is not one.
             if !matches!(escape, Escape::LowerU) {
                 return Err(ParseError::UnexpectedCharacter);
             }
-            // YAML 1.2 is a JSON superset. JSON writes a supplementary code
-            // point as a `\uD8xx\uDCxx` pair, and `JSON.parse` keeps an
-            // unpaired `\uHHHH` surrogate as a lone UTF-16 code unit. So does
-            // this parser (js-yaml and eemeli/yaml do the same).
+            // Like `JSON.parse`: a `\uD8xx\uDCxx` pair is one code point and
+            // an unpaired surrogate stays a lone code unit.
             if bun_core::strings::u16_is_lead(cp as u16) {
                 if let Some(trail) = self.peek_trail_surrogate_escape() {
                     self.inc(2 + Escape::LowerU as usize);
@@ -5530,9 +5525,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         match Enc::KIND {
             EncodingKind::Utf8 => {
-                // WTF-8: a lone surrogate becomes `ED xx xx`, which the
-                // `E::String` → JS conversion (`wtf8_to_utf16_alloc`) turns
-                // back into the code unit it names.
+                // WTF-8: a lone surrogate stays `ED xx xx` until
+                // `wtf8_to_utf16_alloc` turns it back into a code unit for JS.
                 let mut buf = [0u8; 4];
                 let len = bun_core::strings::encode_wtf8_rune(&mut buf, cp);
                 for &b in &buf[..len] {

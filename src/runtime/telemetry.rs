@@ -166,6 +166,10 @@ fn local_hook(global: *mut c_void) -> *const RefCell<bun_telemetry::Local> {
 }
 
 impl VmState {
+    fn idle_hook_key(&self) -> usize {
+        core::ptr::from_ref(self) as usize
+    }
+
     #[inline]
     fn global(&self) -> &JSGlobalObject {
         // SAFETY: the VmState belongs to one VM; `rebind_global` keeps this the live global.
@@ -231,6 +235,7 @@ extern "C" fn on_vm_exit(ctx: *mut c_void) {
         processor().tick();
     }
     exporter::JsExporter::detach_all_for_vm(s);
+    processor().remove_idle_hooks(s.idle_hook_key());
     if global.bun_vm().worker_ref().is_some() {
         // The worker thread is going away; nothing can reach this VmState again.
         global.bun_vm().as_mut().rare_data().telemetry = None;
@@ -296,12 +301,19 @@ pub fn init_for_vm(global: &JSGlobalObject) {
 /// additive; `start()` clears them first when it is given an explicit list.
 /// The enable mask replaces the previous one.
 pub fn configure(global: &JSGlobalObject, cfg: &bun_telemetry::Config) -> Result<(), Vec<u8>> {
+    let otlp_exporters = exporter::OtlpHttpExporter::from_configs(&cfg.otlp_exporters)?;
+    configure_with(global, cfg, otlp_exporters);
+    Ok(())
+}
+
+/// Apply `cfg` with already-constructed OTLP exporters (infallible part).
+fn configure_with(
+    global: &JSGlobalObject,
+    cfg: &bun_telemetry::Config,
+    otlp_exporters: Vec<Arc<exporter::OtlpHttpExporter>>,
+) {
     let vm = global.bun_vm();
     let p = processor();
-    let mut otlp_exporters = Vec::with_capacity(cfg.otlp_exporters.len());
-    for x in &cfg.otlp_exporters {
-        otlp_exporters.push(Arc::new(exporter::OtlpHttpExporter::new(x)?));
-    }
     let new_state = Box::into_raw(Box::new(State {
         sampler: cfg.sampler,
         limits: cfg.limits,
@@ -349,7 +361,6 @@ pub fn configure(global: &JSGlobalObject, cfg: &bun_telemetry::Config) -> Result
     let s = vm_state_or_init(global);
     s.arm_timer();
     install_api_global(global);
-    Ok(())
 }
 
 /// Pre-populate `globalThis[Symbol.for("opentelemetry.js.api.1")]` so any
@@ -634,15 +645,21 @@ pub fn start(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // An explicit exporter list replaces whatever was configured before
     // (env or an earlier start()), so repeated start() calls don't fan out
     // to duplicate destinations.
+    // Validate (construct) the new exporters before dropping the old ones, so
+    // a bad URL leaves the previous pipeline intact.
+    let otlp = match exporter::OtlpHttpExporter::from_configs(&cfg.otlp_exporters) {
+        Ok(v) => v,
+        Err(e) => {
+            return Err(global.throw_invalid_arguments(format_args!("{}", bstr::BStr::new(&e))));
+        }
+    };
     if replaces_exporters {
         processor().clear_exporters();
         if let Some(s) = vm_state(global) {
             exporter::JsExporter::detach_all_for_vm(s);
         }
     }
-    if let Err(e) = configure(global, &cfg) {
-        return Err(global.throw_invalid_arguments(format_args!("{}", bstr::BStr::new(&e))));
-    }
+    configure_with(global, &cfg, otlp);
     if !js_exporters.is_empty() {
         let s = vm_state_or_init(global);
         for e in js_exporters {
@@ -877,9 +894,12 @@ pub fn force_flush(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSVa
     s.flush_waiters.borrow_mut().push(strong);
     if !s.flush_hook_installed.replace(true) {
         let handle = global.bun_vm().handle();
-        processor().on_idle(Box::new(move || {
-            exporter::post_flush_wake(&handle);
-        }));
+        processor().on_idle(
+            s.idle_hook_key(),
+            Box::new(move || {
+                exporter::post_flush_wake(&handle);
+            }),
+        );
     }
     // The idle edge may have already passed between the check and the hook.
     if processor().inflight() == 0 {

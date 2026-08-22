@@ -19,13 +19,41 @@ pub struct PresetInput<'a> {
 
 pub type EnvGet<'a> = &'a dyn Fn(&str) -> Option<String>;
 
-fn need(what: &str, preset: &str) -> String {
-    format!("exporter preset {preset:?} needs {what}")
+/// Why a preset could not be turned into an exporter.
+#[derive(Debug)]
+pub enum PresetError {
+    /// A required credential/identifier was neither passed nor found in the environment.
+    Missing {
+        preset: String,
+        what: &'static str,
+    },
+    Unknown(String),
+}
+
+impl core::fmt::Display for PresetError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            PresetError::Missing { preset, what } => {
+                write!(f, "exporter preset {preset:?} needs {what}")
+            }
+            PresetError::Unknown(name) => write!(
+                f,
+                "unknown exporter preset {name:?} (known: datadog, honeycomb, grafana, newrelic, axiom, dynatrace, sentry, otlp)"
+            ),
+        }
+    }
+}
+
+fn need(what: &'static str, preset: &str) -> PresetError {
+    PresetError::Missing {
+        preset: preset.to_string(),
+        what,
+    }
 }
 
 /// Resolve a preset to a concrete OTLP/HTTP exporter. `env` reads the
 /// vendor's conventional variables (`DD_API_KEY`, `HONEYCOMB_API_KEY`, …).
-pub fn resolve(p: &PresetInput<'_>, env: EnvGet<'_>) -> Result<OtlpExporterConfig, String> {
+pub fn resolve(p: &PresetInput<'_>, env: EnvGet<'_>) -> Result<OtlpExporterConfig, PresetError> {
     let key = |vars: &[&str]| -> Option<String> {
         p.api_key
             .clone()
@@ -190,11 +218,7 @@ pub fn resolve(p: &PresetInput<'_>, env: EnvGet<'_>) -> Result<OtlpExporterConfi
         }
         // Local Collector / Jaeger / Tempo.
         "otlp" => traces_endpoint(p.endpoint.as_deref().unwrap_or("http://localhost:4318")),
-        other => {
-            return Err(format!(
-                "unknown exporter preset {other:?} (known: datadog, honeycomb, grafana, newrelic, axiom, dynatrace, sentry, otlp)"
-            ));
-        }
+        other => return Err(PresetError::Unknown(other.to_string())),
     };
     Ok(OtlpExporterConfig {
         headers,

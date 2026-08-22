@@ -48,6 +48,9 @@ pub fn begin(
     argv: &[*const c_char],
     pid: i64,
 ) -> NativeSpan {
+    if !stub.is_some() {
+        return NativeSpan::NONE;
+    }
     let Some(mut l) = super::local(global) else {
         return NativeSpan::NONE;
     };

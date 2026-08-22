@@ -464,6 +464,19 @@ describe.concurrent("OTLP/HTTP exporter", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("console exporter with many one-span batches chains without recursing", async () => {
+    const { stderr, exitCode } = await run(
+      `
+        const t = Bun.otel.tracer("t");
+        for (let i = 0; i < 300; i++) t.startSpan("s" + i).end();
+        await Bun.otel.forceFlush();
+      `,
+      { BUN_OTEL: "1", OTEL_TRACES_EXPORTER: "console", OTEL_BSP_MAX_EXPORT_BATCH_SIZE: "1" },
+    );
+    expect(stderr.match(/"resourceSpans"/g)?.length).toBe(300);
+    expect(exitCode).toBe(0);
+  });
+
   test("start() without exporters keeps the env-configured pipeline instead of duplicating it", async () => {
     using c = collector();
     const { exitCode, stderr } = await run(

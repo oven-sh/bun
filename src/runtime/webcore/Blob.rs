@@ -1106,7 +1106,7 @@ impl BlobExt for Blob {
         {
             writer.write_str(" {\n")?;
             {
-                formatter.indent_inc();
+                let mut formatter = bun_jsc::IndentScope::new(&mut *formatter);
 
                 if show_name {
                     formatter.write_indent(writer)?;
@@ -1162,8 +1162,6 @@ impl BlobExt for Blob {
                         self.last_modified.get(),
                     )?;
                 }
-
-                formatter.indent_dec();
             }
             formatter.write_indent(writer)?;
             writer.write_str("}")?;

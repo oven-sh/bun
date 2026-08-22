@@ -1,0 +1,72 @@
+---
+title: "Package extensions"
+description: "Add missing dependencies and peerDependencies to third-party packages with packageExtensions"
+---
+
+Some packages forget to declare a package they `require()`, or a peer dependency they expect the consumer to provide. With hoisted `node_modules` this often goes unnoticed because the missing package happens to be installed nearby, but with [isolated installs](/pm/isolated-installs) a package can only access what it declares, so the import fails.
+
+`packageExtensions` lets the root project patch the _declared dependencies_ of any package in the dependency tree without forking or patching it. It is the same feature (and the same shape) as pnpm's `pnpm.packageExtensions` and Yarn's `packageExtensions`.
+
+{/* prettier-ignore */}
+```json package.json icon="file-json"
+{
+  "name": "my-app",
+  "dependencies": {
+    "react": "^18.0.0",
+    "react-redux": "^7.0.0",
+    "legacy-plugin": "^2.0.0"
+  },
+  "packageExtensions": { // [!code ++]
+    "react-redux@7": { // [!code ++]
+      "peerDependencies": { "react": "*" } // [!code ++]
+    }, // [!code ++]
+    "legacy-plugin": { // [!code ++]
+      "dependencies": { "lodash": "^4.17.21" }, // [!code ++]
+      "peerDependencies": { "webpack": "*" }, // [!code ++]
+      "peerDependenciesMeta": { "webpack": { "optional": true } } // [!code ++]
+    } // [!code ++]
+  } // [!code ++]
+}
+```
+
+Each key is a package name, optionally followed by `@` and a semver range (`react-redux@7`, `@scope/pkg@^1.2`). Without a range the extension applies to every version of the package; with one it only applies to resolved versions that satisfy it.
+
+Each value may contain `dependencies`, `optionalDependencies`, `peerDependencies` and `peerDependenciesMeta`, with exactly the meaning they have in a `package.json`. When `bun install` resolves a matching package, the listed entries are added to that package's own dependency list and are then resolved, installed and written to `bun.lock` like any dependency the package declared itself. A `peerDependenciesMeta` entry with `"optional": true` makes the corresponding peer optional.
+
+Extensions only ever _add_ entries. If the package already declares a dependency with the same name — in any of its dependency groups — the package's own declaration wins and the extension entry is ignored. To change the version of a dependency a package already declares, use [`overrides`](/pm/overrides) instead.
+
+## Where to configure it
+
+Bun reads `packageExtensions` from the root `package.json`, both at the top level (shown above) and under the `pnpm` key, so an existing pnpm configuration keeps working:
+
+```json package.json icon="file-json"
+{
+  "pnpm": {
+    "packageExtensions": {
+      "react-redux@7": { "peerDependencies": { "react": "*" } }
+    }
+  }
+}
+```
+
+When migrating from a `pnpm-lock.yaml`, `pnpm.packageExtensions` and the `packageExtensions` field of `pnpm-workspace.yaml` are moved to the top level of `package.json` automatically.
+
+It can also be set in [`bunfig.toml`](/runtime/bunfig#install-packageextensions), which is merged with the `package.json` entries:
+
+```toml bunfig.toml icon="settings"
+[install.packageExtensions."react-redux@7"]
+peerDependencies = { react = "*" }
+
+[install.packageExtensions.legacy-plugin]
+dependencies = { lodash = "^4.17.21" }
+peerDependencies = { webpack = "*" }
+peerDependenciesMeta = { webpack = { optional = true } }
+```
+
+## Lockfile behavior
+
+The added entries are recorded in `bun.lock` as part of the extended package's metadata, so installs from the lockfile (including `bun install --frozen-lockfile`) reproduce them without consulting the configuration again.
+
+Adding an extension to an existing project does not re-resolve the rest of the tree: on the next `bun install`, packages already in the lockfile that match the new extension get the new entries appended and only those are resolved. Because the lockfile does not distinguish injected entries from declared ones, _removing_ an extension takes effect the next time the affected package is re-resolved (for example by `bun update <pkg>`, or by deleting `bun.lock`).
+
+Extensions apply to packages resolved from a registry. Workspace packages and `file:`, `link:`, git and tarball dependencies are not extended — edit their `package.json` directly.

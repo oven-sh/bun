@@ -107,6 +107,12 @@ pub struct Options {
     // Packages to exclude from minimum release age checking
     pub minimum_release_age_excludes: Option<&'static [&'static [u8]]>,
 
+    /// `packageExtensions` from bunfig and the root package.json, merged
+    /// (see `Lockfile::apply_package_extensions`). The first
+    /// `package_extensions_from_bunfig` entries are bunfig's.
+    pub package_extensions: Vec<Api::PackageExtension>,
+    pub(crate) package_extensions_from_bunfig: usize,
+
     /// Override CPU architecture for optional dependencies filtering
     pub cpu: Npm::Architecture,
     /// Override OS for optional dependencies filtering
@@ -177,6 +183,8 @@ impl Default for Options {
             security_scanner: None,
             minimum_release_age_ms: None,
             minimum_release_age_excludes: None,
+            package_extensions: Vec::new(),
+            package_extensions_from_bunfig: 0,
             cpu: Npm::Architecture::CURRENT,
             os: Npm::OperatingSystem::CURRENT,
             config_version: None,
@@ -588,6 +596,12 @@ impl Options {
                 // equivalent), same as `leak_static` above.
                 self.minimum_release_age_excludes =
                     Some(&*bun_core::heap::release(leaked.into_boxed_slice()));
+            }
+
+            if let Some(package_extensions) = &config.package_extensions {
+                self.package_extensions
+                    .extend(package_extensions.iter().cloned());
+                self.package_extensions_from_bunfig = self.package_extensions.len();
             }
 
             // `PnpmMatcher` is move-only; `config` is `&` here so the matchers

@@ -3482,7 +3482,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         if (moduleName->startsWith("file://"_s)) {
             auto url = WTF::URL(moduleName);
             if (url.isValid() && !url.isEmpty()) {
-                keyZ = Bun::toStringRef(url.fileSystemPath());
+                keyZ = Bun::toStringRef(Bun::fileSystemPathWithQuery(url));
             } else {
                 keyZ = Bun::toStringRef(moduleName);
             }
@@ -3619,7 +3619,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         if (moduleName.startsWith("file://"_s)) {
             auto url = WTF::URL(moduleName);
             if (url.isValid() && !url.isEmpty()) {
-                moduleStringHolder = url.fileSystemPath();
+                moduleStringHolder = Bun::fileSystemPathWithQuery(url);
                 moduleNameZ = Bun::toStringRef(moduleStringHolder);
             } else {
                 moduleNameZ = Bun::toStringRef(moduleName);

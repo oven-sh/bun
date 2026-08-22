@@ -34,6 +34,7 @@ typedef union BunStringImpl {
 namespace WTF {
 class StringImpl;
 class String;
+class URL;
 }
 
 typedef union BunStringImpl {
@@ -325,6 +326,8 @@ BunString toStringRef(WTF::StringImpl* wtfString);
 // This creates a detached string view, which cannot be ref/unref.
 // Be very careful using this, and ensure the memory owner does not get destroyed.
 BunString toStringView(WTF::StringView view);
+
+WTF::String fileSystemPathWithQuery(const WTF::URL&);
 }
 
 typedef struct {

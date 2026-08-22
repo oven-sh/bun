@@ -1172,18 +1172,21 @@ test(
                 loop + " await 0; } })();" +
                 "}, 0);";
               const w = new Worker(src, { eval: true });
-              const exited = new Promise(r => w.once("exit", r));
+              const exited = new Promise(r => w.once("exit", c => r("exit code " + c)));
+              const errored = new Promise(r => w.once("error", e => r("error " + (e && e.message))));
               const hang = Bun.sleep(${deadline}).then(() => "HANG");
-              let code;
-              if (exit !== undefined) {
-                code = await Promise.race([exited, hang]);
-              } else {
-                await new Promise(r => w.once("message", r));
-                code = await Promise.race([w.terminate(), hang]);
-              }
-              if (code === "HANG" || (exit !== undefined && code !== exit)) {
-                console.log((code === "HANG" ? "HANG " : "exit code " + code + " ") + name + " round " + i);
+              const fail = why => {
+                console.log(why + " " + name + " round " + i);
                 process.exit(2);
+              };
+              if (exit !== undefined) {
+                const got = await Promise.race([exited, errored, hang]);
+                if (got !== "exit code " + exit) fail(got);
+              } else {
+                const got = await Promise.race([new Promise(r => w.once("message", r)), exited, errored, hang]);
+                if (got !== "go") fail(got + " before 'go'");
+                const code = await Promise.race([w.terminate(), hang]);
+                if (code === "HANG") fail("HANG");
               }
             }
           }

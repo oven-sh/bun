@@ -779,16 +779,22 @@ impl Encoding {
         Ok(Self::from(str.to_utf8().slice()))
     }
 
+    /// Node's `assertEncoding` (lib/internal/fs/utils.js):
+    /// `ERR_INVALID_ARG_VALUE('encoding', value, 'is invalid encoding')`.
     pub(crate) fn throw_encoding_error(
         global_object: &JSGlobalObject,
         value: JSValue,
     ) -> jsc::JsError {
+        let actual = match JSGlobalObject::inspect_for_error_message(global_object, value) {
+            Ok(actual) => actual,
+            Err(err) => return err,
+        };
         global_object
             .err(
                 jsc::ErrorCode::INVALID_ARG_VALUE,
                 format_args!(
-                    "encoding '{}' is an invalid encoding",
-                    value.fmt_string(global_object)
+                    "The argument 'encoding' is invalid encoding. Received {}",
+                    actual
                 ),
             )
             .throw()

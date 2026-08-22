@@ -1745,6 +1745,15 @@ pub mod io {
             panic!("io::Write::written_len: writer does not track bytes written");
         }
 
+        /// Whether this sink has hit an output cap and is discarding writes.
+        /// Byte-budgeted sinks override this; producers can poll it to stop
+        /// generating output early. Writes after truncation still return
+        /// `Ok`, so infallible-sink callers need no changes.
+        #[inline]
+        fn is_truncated(&self) -> bool {
+            false
+        }
+
         // ── provided helpers ────────────────────────────────────────────────
 
         /// Write a single byte.
@@ -1843,6 +1852,10 @@ pub mod io {
         fn written_len(&self) -> usize {
             (**self).written_len()
         }
+        #[inline]
+        fn is_truncated(&self) -> bool {
+            (**self).is_truncated()
+        }
     }
 
     impl<W: Write + ?Sized> Write for Box<W> {
@@ -1857,6 +1870,10 @@ pub mod io {
         #[inline]
         fn written_len(&self) -> usize {
             (**self).written_len()
+        }
+        #[inline]
+        fn is_truncated(&self) -> bool {
+            (**self).is_truncated()
         }
     }
 

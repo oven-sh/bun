@@ -349,8 +349,9 @@ pub enum Encoding {
     Binary = 0,
     #[default]
     Latin1 = 1,
-    // Not used yet.
-    Utf8 = 2,
+    /// Native-endian UTF-16 code units, serialized at a 2-byte-aligned offset
+    /// so the runtime can wrap the section bytes in a 16-bit external string.
+    Utf16 = 2,
 }
 
 #[repr(u8)]
@@ -489,7 +490,13 @@ impl File {
 
     pub fn stat(&self) -> Stat {
         let mut result: Stat = bun_core::ffi::zeroed();
-        result.st_size = self.contents.len() as _;
+        // Size of the bytes a read returns (`utf8_contents`), not of the
+        // stored width.
+        result.st_size = match self.encoding {
+            Encoding::Binary => self.contents.len(),
+            Encoding::Latin1 => strings::element_length_latin1_into_utf8(self.contents.as_bytes()),
+            Encoding::Utf16 => strings::element_length_utf16_into_utf8(self.utf16_units()),
+        } as _;
         // `Stat` is `libc::stat` (POSIX) / `uv_stat_t` (Windows, `st_mode: u64`).
         result.st_mode = (libc::S_IFREG | 0o644) as _;
         result
@@ -501,15 +508,54 @@ impl File {
         strings::cmp_strings_asc((), lhs.name, rhs.name)
     }
 
+    /// `Utf16` contents viewed as code units.
+    fn utf16_units(&self) -> &'static [u16] {
+        debug_assert!(self.encoding == Encoding::Utf16);
+        let bytes = self.contents.as_bytes();
+        debug_assert!(bytes.len().is_multiple_of(2));
+        debug_assert!(bytes.as_ptr().addr().is_multiple_of(2));
+        #[expect(
+            clippy::cast_ptr_alignment,
+            reason = "2-byte alignment is externally guaranteed; see the SAFETY comment and the debug_asserts above"
+        )]
+        // SAFETY: `to_bytes` serializes `Utf16` contents as u16 code units at
+        // a 2-byte-aligned offset, and the section base is even on every
+        // platform (the bytecode subrange in the same section relies on
+        // base % 128 == 8).
+        unsafe {
+            core::slice::from_raw_parts(bytes.as_ptr().cast::<u16>(), bytes.len() / 2)
+        }
+    }
+
+    /// The file's bytes as UTF-8, whatever width `contents` is stored in.
+    /// `Binary` and pure-ASCII `Latin1` borrow the section directly; a
+    /// transcoded module materializes a copy so `fs.readFileSync` /
+    /// `Bun.file()` on its bunfs path round-trip the original source bytes.
+    pub fn utf8_contents(&self) -> std::borrow::Cow<'static, [u8]> {
+        use std::borrow::Cow;
+        let bytes = self.contents.as_bytes();
+        match self.encoding {
+            Encoding::Binary => Cow::Borrowed(bytes),
+            Encoding::Latin1 => match strings::to_utf8_from_latin1(bytes) {
+                Some(utf8) => Cow::Owned(utf8),
+                None => Cow::Borrowed(bytes),
+            },
+            Encoding::Utf16 => Cow::Owned(strings::to_utf8_alloc(self.utf16_units())),
+        }
+    }
+
     pub fn to_wtf_string(&mut self) -> BunString {
         if self.wtf_string.is_empty() {
             match self.encoding {
-                Encoding::Binary | Encoding::Utf8 => {
+                Encoding::Binary => {
                     self.wtf_string = BunString::clone_utf8(self.contents.as_bytes());
                 }
                 Encoding::Latin1 => {
                     self.wtf_string =
                         BunString::create_static_external(self.contents.as_bytes(), true);
+                }
+                Encoding::Utf16 => {
+                    self.wtf_string = BunString::create_static_external_utf16(self.utf16_units());
                 }
             }
         }
@@ -819,6 +865,22 @@ unsafe fn slice_to_z(base: *const u8, len: usize, ptr: StringPointer) -> &'stati
     unsafe { ZStr::from_raw(base.add(off), n) }
 }
 
+/// Server-side JS modules are stored in the width JSC will load them in
+/// (Latin-1 or UTF-16) so the runtime can wrap the mmapped section bytes in a
+/// zero-copy external string instead of transcoding the whole module into a
+/// 16-bit heap copy at startup. The printer escapes non-ASCII in server JS,
+/// but `--banner`/`--footer`/hashbang text is concatenated verbatim as UTF-8.
+/// Client chunks and non-JS files are served as raw bytes (assets,
+/// `Bun.embeddedFiles`) and must stay verbatim UTF-8. Bytecode generation in
+/// `generateChunksInParallel.rs` mirrors this conversion; the two must agree
+/// or the SourceCodeKey won't match at runtime.
+fn stores_transcoded_contents(output_file: &OutputFile) -> bool {
+    matches!(
+        output_file.loader,
+        Loader::Js | Loader::Jsx | Loader::Ts | Loader::Tsx
+    ) && output_file.side.unwrap_or(options::Side::Server) == options::Side::Server
+}
+
 pub(crate) fn to_bytes(
     prefix: &[u8],
     output_files: &[OutputFile],
@@ -857,7 +919,15 @@ pub(crate) fn to_bytes(
                     }
                 }
 
-                string_builder.count_z(bytes);
+                if stores_transcoded_contents(output_file)
+                    && strings::first_non_ascii(bytes).is_some()
+                {
+                    // Transcoded worst case: UTF-16 doubles every ASCII byte,
+                    // plus 1 byte of alignment padding and the NUL.
+                    string_builder.cap += bytes.len() * 2 + 2;
+                } else {
+                    string_builder.count_z(bytes);
+                }
                 module_count += 1;
             }
         }
@@ -1026,6 +1096,37 @@ pub(crate) fn to_bytes(
             StringPointer::default()
         };
 
+        // Store JS text in the width JSC loads it in; see
+        // `stores_transcoded_contents` for why and for what must stay UTF-8.
+        let (contents, encoding) = if matches!(
+            output_file.loader,
+            Loader::Js | Loader::Jsx | Loader::Ts | Loader::Tsx
+        ) && strings::first_non_ascii(buf_bytes).is_none()
+        {
+            (string_builder.append_count_z(buf_bytes), Encoding::Latin1)
+        } else if stores_transcoded_contents(output_file) {
+            match strings::to_wtf_units_alloc(buf_bytes).map_err(|_| bun_alloc::AllocError)? {
+                Some(units) => {
+                    if units.is_utf16() && string_builder.len % 2 != 0 {
+                        // UTF-16 code units must land at an even offset; the
+                        // section base is even on every platform.
+                        string_builder.writable()[0] = 0;
+                        string_builder.len += 1;
+                    }
+                    let encoding = if units.is_utf16() {
+                        Encoding::Utf16
+                    } else {
+                        Encoding::Latin1
+                    };
+                    (string_builder.append_count_z(units.as_bytes()), encoding)
+                }
+                // Pure ASCII (unreachable here): Latin-1 as-is.
+                None => (string_builder.append_count_z(buf_bytes), Encoding::Latin1),
+            }
+        } else {
+            (string_builder.append_count_z(buf_bytes), Encoding::Binary)
+        };
+
         let mut module = CompiledModuleGraphFile {
             name: string_builder.fmt_append_count_z(format_args!(
                 "{}{}",
@@ -1033,20 +1134,8 @@ pub(crate) fn to_bytes(
                 bstr::BStr::new(dest_path)
             )),
             loader: output_file.loader,
-            contents: string_builder.append_count_z(buf_bytes),
-            // Latin1 lets the runtime wrap the mmapped section bytes in a
-            // zero-copy ExternalStringImpl. The printer escapes non-ASCII for
-            // server-side JS, but `--banner`/`--footer`/hashbang and
-            // client-side (target=browser) chunks are concatenated verbatim
-            // as UTF-8, so verify the final bytes before committing to Latin1.
-            encoding: match output_file.loader {
-                Loader::Js | Loader::Jsx | Loader::Ts | Loader::Tsx
-                    if strings::first_non_ascii(buf_bytes).is_none() =>
-                {
-                    Encoding::Latin1
-                }
-                _ => Encoding::Binary,
-            },
+            contents,
+            encoding,
             module_format: if output_file.loader.is_javascript_like() {
                 match output_format {
                     Format::Cjs => ModuleFormat::Cjs,

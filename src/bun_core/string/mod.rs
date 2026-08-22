@@ -355,6 +355,15 @@ impl String {
         // without copying and never frees it.
         unsafe { BunString__createStaticExternal(bytes.as_ptr(), bytes.len(), is_latin1) }
     }
+    /// 16-bit variant of [`Self::create_static_external`]: wraps `units` in a
+    /// never-freed `WTF::ExternalStringImpl`. The C++ side reinterprets the
+    /// pointer as `char16_t*` with `units.len()` code units.
+    pub fn create_static_external_utf16(units: &[u16]) -> Self {
+        debug_assert!(!units.is_empty());
+        // SAFETY: units describes a valid, 2-byte-aligned slice; C++ side
+        // stores ptr/len without copying and never frees it.
+        unsafe { BunString__createStaticExternal(units.as_ptr().cast::<u8>(), units.len(), false) }
+    }
     /// `bun.String.createFormat` — formats `args` into a temporary buffer and
     /// copies the result into a fresh WTF-backed string.
     pub fn create_format(args: core::fmt::Arguments<'_>) -> Self {

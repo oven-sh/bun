@@ -6967,7 +6967,10 @@ impl NodeFS {
 
                 if let Some(graph) = standalone_module_graph() {
                     if let Some(file) = graph.find_ref(path.as_bytes()) {
-                        let contents: &[u8] = file.contents.as_bytes();
+                        // UTF-8 regardless of the stored width, so reads
+                        // round-trip the original source bytes.
+                        let contents = file.utf8_contents();
+                        let contents: &[u8] = &contents;
                         return if args.encoding == Encoding::Buffer {
                             // PORTING.md §Forbidden bans `Vec::leak()`; round-trip through
                             // `into_boxed_slice()` so the allocation layout JSC frees with

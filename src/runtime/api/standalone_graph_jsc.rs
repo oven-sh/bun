@@ -24,12 +24,17 @@ pub(crate) trait FileJsc {
 impl FileJsc for File {
     fn file_blob(&mut self, global: &JSGlobalObject) -> &mut Blob {
         if self.cached_blob.is_none() {
-            // `contents` is a `'static` slice into the embedded executable
-            // section — borrow it directly (no copy) and hand it to a `Bytes`
-            // store with the default allocator. The leaked extra `ref_()` below
-            // pins the refcount ≥ 1 forever, so `Store::deref` never runs and
-            // the (otherwise UB) free of a static slice is unreachable.
-            let contents = self.contents.as_bytes();
+            // UTF-8 view of the contents: a `'static` borrow of the embedded
+            // section for most files, or — for module text stored Latin-1 /
+            // UTF-16 — a one-time materialized copy, leaked because this Blob
+            // is cached for the process lifetime anyway. The leaked extra
+            // `ref_()` below pins the refcount ≥ 1 forever, so `Store::deref`
+            // never runs and the (otherwise UB) free of a static slice is
+            // unreachable.
+            let contents: &'static [u8] = match self.utf8_contents() {
+                std::borrow::Cow::Borrowed(bytes) => bytes,
+                std::borrow::Cow::Owned(utf8) => Box::leak(utf8.into_boxed_slice()),
+            };
             // SAFETY: `contents` is `'static` and never freed (see above);
             // the const-cast is sound because Blob consumers only read via
             // `shared_view()`.

@@ -767,3 +767,118 @@ describe("compiled binary in a deleted cwd", () => {
 });
 
 // file command test works well
+
+// A compiled executable stores server-side JS modules in the width JSC loads
+// them in (Latin-1 or UTF-16) so the runtime wraps the mmapped bytes zero-copy
+// instead of transcoding the module into a 16-bit heap string at startup.
+// Function.prototype.toString() returns a substring of the module source, so
+// bun:jsc's jscDescribe exposes the width the source was loaded in.
+describe("compile module source text width", () => {
+  const mainJs = `function probeFn() { return 1 + 1; }
+const desc = require("bun:jsc").jscDescribe(probeFn.toString());
+console.log("width", desc.includes("8Bit:(1)") ? "8bit" : "16bit");
+console.log("value", "café 😀");
+`;
+
+  async function buildAndRun(extraArgs: string[], runEnv: Record<string, string> = {}, source: string = mainJs) {
+    using dir = tempDir("compile-text-width", { "main.js": source });
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", ...extraArgs, "main.js", "--outfile", "app"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect(buildStderr).not.toContain("error:");
+    expect(buildExit).toBe(0);
+
+    await using proc = Bun.spawn({
+      cmd: [join(String(dir), isWindows ? "app.exe" : "app")],
+      env: { ...bunEnv, ...runEnv },
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  }
+
+  test("pure ASCII module text stays 8-bit", async () => {
+    const [stdout, , exitCode] = await buildAndRun([]);
+    expect(stdout).toBe("width 8bit\nvalue café 😀\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("Latin-1-range banner keeps module text 8-bit", async () => {
+    const [stdout, , exitCode] = await buildAndRun(["--banner", "// café ünïcödé"]);
+    expect(stdout).toBe("width 8bit\nvalue café 😀\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("module text above U+00FF loads as 16-bit", async () => {
+    const [stdout, , exitCode] = await buildAndRun(["--banner", "// 😀 emoji"]);
+    expect(stdout).toBe("width 16bit\nvalue café 😀\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("bytecode cache hits with a non-ASCII banner", async () => {
+    const [stdout, stderr, exitCode] = await buildAndRun(["--bytecode", "--banner", "// café"], {
+      BUN_JSC_verboseDiskCache: "1",
+    });
+    expect(stdout).toContain("width 8bit");
+    expect(stdout + stderr).toContain("Cache hit for sourceCode");
+    expect(exitCode).toBe(0);
+  });
+
+  test("bytecode cache hits with UTF-16 source", async () => {
+    const [stdout, stderr, exitCode] = await buildAndRun(["--bytecode", "--banner", "// 😀 emoji"], {
+      BUN_JSC_verboseDiskCache: "1",
+    });
+    expect(stdout).toContain("width 16bit");
+    expect(stdout + stderr).toContain("Cache hit for sourceCode");
+    expect(exitCode).toBe(0);
+  });
+
+  // Whatever width the module text is stored in, reading its bunfs path
+  // through fs or Bun.file must still return the original UTF-8 bytes.
+  const roundTripJs = (banner: string) => `import { readFileSync, statSync } from "node:fs";
+const text = readFileSync(import.meta.path, "utf8");
+const blob = await Bun.file(import.meta.path).text();
+console.log("banner", text.includes(${JSON.stringify(banner)}) ? "intact" : "mangled");
+console.log("blob", blob === text ? "same" : "different");
+console.log("size", statSync(import.meta.path).size === Buffer.byteLength(text, "utf8") ? "matches" : "differs");
+`;
+
+  test.each([
+    ["Latin-1", "// café banner"],
+    ["UTF-16", "// café 😀 banner"],
+  ])("fs reads of the module's bunfs path round-trip the source (%s)", async (_width, banner) => {
+    const [stdout, , exitCode] = await buildAndRun(["--banner", banner], {}, roundTripJs(banner));
+    expect(stdout).toBe("banner intact\nblob same\nsize matches\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // Not --compile: the on-disk .jsc sidecar's key is computed from the raw
+  // bytes read as Latin-1, matching the loader's already_bundled path.
+  test("on-disk .jsc bytecode cache hits with a non-ASCII banner", async () => {
+    using dir = tempDir("jsc-sidecar-nonascii", { "main.js": `console.log("ok");` });
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--bytecode", "--target=bun", "--banner", "// café", "main.js", "--outdir", "out"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect(buildStderr).not.toContain("error:");
+    expect(buildExit).toBe(0);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join("out", "main.js")],
+      env: { ...bunEnv, BUN_JSC_verboseDiskCache: "1" },
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("ok");
+    expect(stdout + stderr).toContain("Cache hit for sourceCode");
+    expect(exitCode).toBe(0);
+  });
+});

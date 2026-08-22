@@ -1059,9 +1059,43 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         let mut source_provider_url =
                             bun_core::OwnedString::new(source_provider_url);
 
+                        // For --compile, bytecode must be generated from the
+                        // exact code units the executable stores (see
+                        // `stores_transcoded_contents` in
+                        // `StandaloneModuleGraph.rs`), or the SourceCodeKey
+                        // won't match at runtime.
+                        let transcoded = if c.options.compile_mode.is_executable()
+                            && side == options::Side::Server
+                        {
+                            bun_core::handle_oom(
+                                strings::to_wtf_units_alloc(&code_result.buffer)
+                                    .map_err(|_| bun_alloc::AllocError),
+                            )
+                        } else {
+                            None
+                        };
+                        let (source, source_encoding): (&[u8], strings::EncodingNonAscii) =
+                            match &transcoded {
+                                Some(units) => (
+                                    units.as_bytes(),
+                                    if units.is_utf16() {
+                                        strings::EncodingNonAscii::Utf16
+                                    } else {
+                                        strings::EncodingNonAscii::Latin1
+                                    },
+                                ),
+                                // On-disk `.jsc` sidecars (and compile-mode
+                                // pure-ASCII text, identical either way): the
+                                // loader's `already_bundled` path builds its
+                                // runtime string with `clone_latin1`, so the
+                                // key must be computed the same way.
+                                None => (&code_result.buffer, strings::EncodingNonAscii::Latin1),
+                            };
+
                         if let Some(bytecode) = crate::bundle_v2::dispatch::generate_cached_bytecode(
                             c.options.output_format,
-                            &code_result.buffer,
+                            source,
+                            source_encoding,
                             &mut source_provider_url,
                         ) {
                             let source_provider_url_str = source_provider_url.to_utf8();

@@ -1282,9 +1282,7 @@ extern "C" void Bun__logUnhandledException(JSC::EncodedJSValue exception);
 
 extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue exception, int isRejection)
 {
-    // A node:vm context has no process object of its own: an exception reported
-    // against one goes to this thread's process, as promiseRejectionTrackerForNodeVM
-    // does for rejections.
+    // The exception may come from a node:vm context, which has no process of its own.
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto* process = globalObject->processObject();
     auto& wrapped = process->wrapped();

@@ -2,7 +2,7 @@
 //! (including the AnyResponse dispatch arms) see the same surface regardless
 //! of transport.
 
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr;
 
 use crate::SocketAddress;
@@ -61,6 +61,11 @@ impl Request {
         // SAFETY: uws returns a pointer+len pair valid for the lifetime of the request
         unsafe { bun_core::ffi::slice(p, n) }
     }
+    /// Extended CONNECT with `:protocol: webtransport`. Anything else on a
+    /// CONNECT route is an ordinary tunnel request.
+    pub fn is_webtransport(&mut self) -> bool {
+        c::uws_h3_req_is_webtransport(self)
+    }
     pub fn header(&mut self, name: &[u8]) -> Option<&[u8]> {
         let mut p: *const u8 = ptr::null();
         // SAFETY: self is a live FFI handle; name ptr/len valid for read; out-ptr is a valid local
@@ -81,6 +86,18 @@ impl Request {
 bun_opaque::opaque_ffi! { pub struct Response; }
 
 impl Response {
+    /// Answer an extended CONNECT with 200 and keep the stream open as a
+    /// session. `None` when the response was already written to, or the
+    /// connection never negotiated the extension; the caller still owns it.
+    pub fn upgrade_webtransport(
+        &mut self,
+        req: &mut Request,
+        user_data: *mut c_void,
+    ) -> Option<*mut WebTransport> {
+        // SAFETY: self and req are live FFI handles; `user_data` is stored, not read here
+        let p = unsafe { c::uws_h3_res_upgrade_webtransport(self, req, user_data) };
+        if p.is_null() { None } else { Some(p) }
+    }
     pub fn end(&mut self, data: &[u8], close_connection: bool) {
         // SAFETY: self is a live FFI handle; data ptr/len valid for read
         unsafe { c::uws_h3_res_end(self, data.as_ptr(), data.len(), close_connection) }
@@ -349,6 +366,9 @@ enum RouteKind {
     Head,
     Options,
     Connect,
+    /// The WebTransport session route, registered high-priority so the
+    /// per-method `/*` fallback cannot cull it.
+    WebTransportConnect,
     Trace,
     Any,
 }
@@ -361,8 +381,8 @@ bun_core::impl_tag_error!(AddServerNameError);
 
 /// Stamps one `pub fn $name<UD, H>(&mut self, p, ud, h)` per HTTP verb,
 /// each forwarding to [`App::route`] with the matching [`RouteKind`].
-/// `connect`/`trace` are intentionally omitted — h3 exposes those only via
-/// [`App::method`].
+/// `trace` is omitted; h3 exposes it only via [`App::method`]. `connect` is
+/// here for the WebTransport route, which `NewServer::listen` registers.
 macro_rules! h3_route_methods {
     ($($name:ident => $kind:ident),* $(,)?) => {$(
         pub fn $name<UD, H>(&mut self, p: &[u8], ud: *mut UD, h: H)
@@ -375,9 +395,13 @@ macro_rules! h3_route_methods {
 }
 
 impl App {
-    pub fn create(opts: &BunSocketContextOptions, idle_timeout_s: u32) -> Option<*mut App> {
+    pub fn create(
+        opts: &BunSocketContextOptions,
+        idle_timeout_s: u32,
+        webtransport: bool,
+    ) -> Option<*mut App> {
         // SAFETY: opts is `#[repr(C)]` passed by value; uws owns the returned handle
-        let p = unsafe { c::uws_h3_create_app(*opts, idle_timeout_s) };
+        let p = unsafe { c::uws_h3_create_app(*opts, idle_timeout_s, webtransport) };
         if p.is_null() { None } else { Some(p) }
     }
     pub fn add_server_name_with_options(
@@ -403,6 +427,16 @@ impl App {
     }
     pub fn clear_routes(&mut self) {
         c::uws_h3_app_clear_routes(self)
+    }
+    /// Session-lifetime callbacks; the CONNECT route opens a session.
+    pub fn on_webtransport(
+        &mut self,
+        on_datagram: unsafe extern "C" fn(*mut WebTransport, *const u8, c_uint),
+        on_close: unsafe extern "C" fn(*mut WebTransport, u32, *const u8, usize),
+    ) {
+        // SAFETY: self is a live FFI handle; both fn pointers are non-null and
+        // outlive the app (they are `extern "C" fn` items, not closures)
+        unsafe { c::uws_h3_app_on_webtransport(self, Some(on_datagram), Some(on_close)) }
     }
 
     fn route<UD, H>(which: RouteKind, this: &mut App, pattern: &[u8], ud: *mut UD, _handler: H)
@@ -433,6 +467,7 @@ impl App {
             RouteKind::Head => c::uws_h3_app_head,
             RouteKind::Options => c::uws_h3_app_options,
             RouteKind::Connect => c::uws_h3_app_connect,
+            RouteKind::WebTransportConnect => c::uws_h3_app_webtransport_connect,
             RouteKind::Trace => c::uws_h3_app_trace,
             RouteKind::Any => c::uws_h3_app_any,
         };
@@ -456,6 +491,8 @@ impl App {
         patch   => Patch,
         head    => Head,
         options => Options,
+        connect => Connect,
+        webtransport_connect => WebTransportConnect,
         any     => Any,
     }
 
@@ -526,6 +563,59 @@ pub struct ListenConfig {
 // extern "C"
 // ──────────────────────────────────────────────────────────────────────────
 
+// ──────────────────────────────────────────────────────────────────────────
+// WebTransport
+// ──────────────────────────────────────────────────────────────────────────
+
+bun_opaque::opaque_ffi! { pub struct WebTransport; }
+
+/// What `send_datagram` did with the payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DatagramResult {
+    /// Bytes queued, prefix included so an empty payload is not `Dropped`.
+    Sent(usize),
+    /// The connection's queue is full. Nothing is retained; this path has no
+    /// retransmission.
+    Dropped,
+    /// Larger than the peer will accept, or the session is already gone.
+    TooLarge,
+}
+
+impl WebTransport {
+    pub fn user_data(&mut self) -> *mut c_void {
+        c::uws_h3_wt_get_user_data(self)
+    }
+    pub fn set_user_data(&mut self, ud: *mut c_void) {
+        // SAFETY: self is a live FFI handle; `ud` is stored, never dereferenced here
+        unsafe { c::uws_h3_wt_set_user_data(self, ud) }
+    }
+    pub fn send_datagram(&mut self, data: &[u8]) -> DatagramResult {
+        let Ok(len) = c_uint::try_from(data.len()) else {
+            return DatagramResult::TooLarge;
+        };
+        // SAFETY: self is a live FFI handle; data ptr/len valid for read
+        match unsafe { c::uws_h3_wt_send_datagram(self, data.as_ptr(), len) } {
+            n if n > 0 => DatagramResult::Sent(n as usize),
+            0 => DatagramResult::Dropped,
+            _ => DatagramResult::TooLarge,
+        }
+    }
+    pub fn max_datagram_size(&mut self) -> usize {
+        c::uws_h3_wt_max_datagram_size(self) as usize
+    }
+    /// WT_CLOSE_SESSION then FIN. The close handler runs before this returns,
+    /// with the code and reason given here.
+    pub fn close(&mut self, code: u32, reason: &[u8]) {
+        // SAFETY: self is a live FFI handle; reason ptr/len valid for read
+        unsafe { c::uws_h3_wt_close(self, code, reason.as_ptr(), reason.len()) }
+    }
+    /// Ask the peer to wind up. Advisory: the session stays usable and nothing
+    /// waits for an answer.
+    pub fn drain(&mut self) {
+        c::uws_h3_wt_drain(self)
+    }
+}
+
 mod c {
     use super::*;
 
@@ -541,6 +631,7 @@ mod c {
         pub(super) fn uws_h3_create_app(
             opts: BunSocketContextOptions,
             idle_timeout_s: u32,
+            webtransport: bool,
         ) -> *mut App;
         pub(super) fn uws_h3_app_destroy(app: *mut App);
         pub(super) safe fn uws_h3_app_close(app: &mut App);
@@ -594,6 +685,13 @@ mod c {
             ud: *mut c_void,
         );
         pub(super) fn uws_h3_app_options(
+            app: *mut App,
+            p: *const u8,
+            n: usize,
+            h: Handler,
+            ud: *mut c_void,
+        );
+        pub(super) fn uws_h3_app_webtransport_connect(
             app: *mut App,
             p: *const u8,
             n: usize,
@@ -729,5 +827,37 @@ mod c {
             len: usize,
             out: *mut *const u8,
         ) -> usize;
+
+        pub(super) safe fn uws_h3_req_is_webtransport(req: &mut Request) -> bool;
+        pub(super) fn uws_h3_app_on_webtransport(
+            app: *mut App,
+            on_datagram: WtDatagramHandler,
+            on_close: WtCloseHandler,
+        );
+        pub(super) fn uws_h3_res_upgrade_webtransport(
+            res: *mut Response,
+            req: *mut Request,
+            user_data: *mut c_void,
+        ) -> *mut WebTransport;
+        pub(super) safe fn uws_h3_wt_get_user_data(wt: &mut WebTransport) -> *mut c_void;
+        pub(super) fn uws_h3_wt_set_user_data(wt: *mut WebTransport, ud: *mut c_void);
+        pub(super) fn uws_h3_wt_send_datagram(
+            wt: *mut WebTransport,
+            data: *const u8,
+            len: c_uint,
+        ) -> c_int;
+        pub(super) safe fn uws_h3_wt_max_datagram_size(wt: &mut WebTransport) -> c_uint;
+        pub(super) fn uws_h3_wt_close(
+            wt: *mut WebTransport,
+            code: u32,
+            reason: *const u8,
+            reason_len: usize,
+        );
+        pub(super) safe fn uws_h3_wt_drain(wt: &mut WebTransport);
     }
+
+    pub(super) type WtDatagramHandler =
+        Option<unsafe extern "C" fn(*mut WebTransport, *const u8, c_uint)>;
+    pub(super) type WtCloseHandler =
+        Option<unsafe extern "C" fn(*mut WebTransport, u32, *const u8, usize)>;
 }

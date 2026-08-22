@@ -104,6 +104,10 @@ function generate(name) {
       "wsOnError",
       "wsOnPing",
       "wsOnPong",
+      "wtOnUpgrade",
+      "wtOnOpen",
+      "wtOnDatagram",
+      "wtOnClose",
     ],
   });
 }
@@ -370,6 +374,43 @@ export default [
     construct: true,
     klass: {},
     values: ["server"],
+  }),
+
+  define({
+    name: "WebTransportSession",
+    JSType: "0b11101110",
+    noConstructor: true,
+    finalize: true,
+    // The native side keeps its state in `Cell`s, so host-fns take `&self`
+    // and a re-entrant sendDatagram() from inside a datagram handler is not
+    // two overlapping `&mut`s.
+    sharedThis: true,
+    proto: {
+      sendDatagram: {
+        fn: "sendDatagram",
+        length: 1,
+      },
+      close: {
+        fn: "close",
+        length: 2,
+      },
+      drain: {
+        fn: "drain",
+        length: 0,
+      },
+      data: {
+        getter: "getData",
+        cache: true,
+        setter: "setData",
+      },
+      maxDatagramSize: {
+        getter: "getMaxDatagramSize",
+      },
+      closed: {
+        getter: "getClosed",
+      },
+    },
+    klass: {},
   }),
 
   define({

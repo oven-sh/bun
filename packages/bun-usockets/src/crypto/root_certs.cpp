@@ -2,6 +2,7 @@
 #include "./root_certs_header.h"
 #include "./internal/internal.h"
 #include <mutex>
+#include <atomic>
 #include <string.h>
 #include "./default_ciphers.h"
 
@@ -23,20 +24,32 @@ extern "C" void BUN__warn__extra_ca_load_failed(const char* filename, const char
 // Forward declarations for platform-specific functions
 // (Actual implementations are in platform-specific files)
 
-// External variable from Zig CLI arguments
+// External variables from the CLI arguments
 extern "C" bool Bun__Node__UseSystemCA;
+extern "C" bool Bun__Node__NoUseSystemCA;
+// BunCAStore discriminant (Arguments.rs): 1 == --use-openssl-ca.
+extern "C" uint8_t Bun__Node__CAStore;
+static const uint8_t BUN_CA_STORE_OPENSSL = 1;
 
-// Helper function to check if system CA should be used
-// Checks both CLI flag (--use-system-ca) and environment variable (NODE_USE_SYSTEM_CA=1)
-static bool us_should_use_system_ca() {
-  // Check CLI flag first
-  if (Bun__Node__UseSystemCA) {
-    return true;
+// The process-wide default: --no-use-system-ca beats everything, then --use-system-ca, then
+// NODE_USE_SYSTEM_CA=1. A thread (node: Environment) started with its own flag overrides this for
+// the contexts it creates — see us_bun_socket_context_options_t.use_system_ca.
+extern "C" int us_default_use_system_ca() {
+  if (Bun__Node__NoUseSystemCA) {
+    return 0;
   }
-  
-  // Check environment variable
+  if (Bun__Node__UseSystemCA) {
+    return 1;
+  }
   const char *use_system_ca = getenv("NODE_USE_SYSTEM_CA");
   return use_system_ca && strcmp(use_system_ca, "1") == 0;
+}
+
+// Resolve an options-struct tri-state (0: process default, >0: include system roots, <0: exclude).
+extern "C" int us_resolve_use_system_ca(int requested) {
+  if (requested > 0) return 1;
+  if (requested < 0) return 0;
+  return us_default_use_system_ca();
 }
 
 // Platform-specific system certificate loading implementations are separated:
@@ -207,30 +220,48 @@ STACK_OF(X509) *us_get_root_system_cert_instances() {
   return system_certs;
 }
 
-extern "C" X509_STORE *us_get_default_ca_store() {
+extern "C" X509_STORE *us_get_default_ca_store(int use_system_ca) {
   X509_STORE *store = X509_STORE_new();
   if (store == NULL) {
     return NULL;
   }
 
-  if (!X509_STORE_set_default_paths(store)) {
+  // Node's NewRootCertStore: --use-openssl-ca means OpenSSL's default lookups *instead of* the
+  // bundled roots (system roots ignored); otherwise the bundled roots, plus the system store when
+  // asked (on Linux that store is what honours SSL_CERT_FILE / SSL_CERT_DIR, see root_certs_linux.cpp;
+  // on macOS / Windows node's is the OS store alone). NODE_EXTRA_CA_CERTS is added in every mode.
+  // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L1099-L1109
+  const int openssl_ca = Bun__Node__CAStore == BUN_CA_STORE_OPENSSL;
+  if (openssl_ca && !X509_STORE_set_default_paths(store)) {
     X509_STORE_free(store);
     return NULL;
   }
 
   us_default_ca_certificates *default_ca_certificates = us_get_default_ca_certificates();
-  X509** root_cert_instances = default_ca_certificates->root_cert_instances;
-  STACK_OF(X509) *root_extra_cert_instances = default_ca_certificates->root_extra_cert_instances;
 
-  // load all root_cert_instances on the default ca store
-  for (size_t i = 0; i < root_certs_size; i++) {
-    X509 *cert = root_cert_instances[i];
-    if (cert == NULL)
-      continue;
-    X509_up_ref(cert);
-    X509_STORE_add_cert(store, cert);
+  if (!openssl_ca) {
+    X509** root_cert_instances = default_ca_certificates->root_cert_instances;
+    for (size_t i = 0; i < root_certs_size; i++) {
+      X509 *cert = root_cert_instances[i];
+      if (cert == NULL)
+        continue;
+      X509_up_ref(cert);
+      X509_STORE_add_cert(store, cert);
+    }
+
+    if (use_system_ca) {
+      STACK_OF(X509) *root_system_cert_instances = us_get_root_system_cert_instances();
+      if (root_system_cert_instances) {
+        for (int i = 0; i < sk_X509_num(root_system_cert_instances); i++) {
+          X509 *cert = sk_X509_value(root_system_cert_instances, i);
+          X509_up_ref(cert);
+          X509_STORE_add_cert(store, cert);
+        }
+      }
+    }
   }
 
+  STACK_OF(X509) *root_extra_cert_instances = default_ca_certificates->root_extra_cert_instances;
   if (root_extra_cert_instances) {
     for (int i = 0; i < sk_X509_num(root_extra_cert_instances); i++) {
       X509 *cert = sk_X509_value(root_extra_cert_instances, i);
@@ -239,32 +270,30 @@ extern "C" X509_STORE *us_get_default_ca_store() {
     }
   }
 
-  if (us_should_use_system_ca()) {
-    STACK_OF(X509) *root_system_cert_instances = us_get_root_system_cert_instances();
-    if (root_system_cert_instances) {
-      for (int i = 0; i < sk_X509_num(root_system_cert_instances); i++) {
-        X509 *cert = sk_X509_value(root_system_cert_instances, i);
-        X509_up_ref(cert);
-        X509_STORE_add_cert(store, cert);
-      }
-    }
-  }
-
   return store;
 }
 
-// Process-wide immutable default store. Safe to share across SSL_CTXs that
-// don't add per-config CAs (the user-`ca` path in build_raw populates the
-// SSL_CTX's own private, initially-empty store instead). This makes the
-// ~150-root build a once-per-process cost instead of once-per-SSL_CTX, which
-// is what kept Bun.connect({tls:true}) under the node-tls-server.test.ts
-// 100ms cold-path budget in debug+ASAN.
-extern "C" X509_STORE *us_get_shared_default_ca_store() {
-  static X509_STORE *shared = nullptr;
-  static std::once_flag once;
-  std::call_once(once, []() { shared = us_get_default_ca_store(); });
+// Process-wide immutable default stores, one per system-CA decision. Safe to share across SSL_CTXs
+// that don't add per-config CAs (the user-`ca` path in build_raw populates the SSL_CTX's own
+// private, initially-empty store instead). This makes the ~150-root build a once-per-process cost
+// (per variant actually used) instead of once-per-SSL_CTX, which is what kept
+// Bun.connect({tls:true}) under the node-tls-server.test.ts 100ms cold-path budget in debug+ASAN.
+static std::atomic<X509_STORE *> shared_default_ca_store[2] = { nullptr, nullptr };
+
+extern "C" X509_STORE *us_get_shared_default_ca_store(int use_system_ca) {
+  static std::once_flag once[2];
+  int i = use_system_ca ? 1 : 0;
+  std::call_once(once[i], [i]() { shared_default_ca_store[i].store(us_get_default_ca_store(i)); });
+  X509_STORE *shared = shared_default_ca_store[i].load();
   if (shared) X509_STORE_up_ref(shared);
   return shared;
+}
+
+// Whether `store` is one of the process-shared default stores (as opposed to a context's own).
+// Compares against whatever has been built so far; builds nothing.
+extern "C" int us_is_shared_default_ca_store(X509_STORE *store) {
+  return store != nullptr
+      && (store == shared_default_ca_store[0].load() || store == shared_default_ca_store[1].load());
 }
 
 extern "C" const char *us_get_default_ciphers() {

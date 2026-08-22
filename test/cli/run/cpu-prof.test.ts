@@ -125,6 +125,105 @@ describe.concurrent("--cpu-prof", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("--cpu-prof-name is inherited by workers, as node does", async () => {
+    using dir = tempDir("cpu-prof-name-worker", {
+      "test.js": `
+        const { Worker } = require("node:worker_threads");
+        const w = new Worker(\`const end = Date.now() + 100; while (Date.now() < end) {}\`, { eval: true });
+        const end = Date.now() + 100;
+        while (Date.now() < end) {}
+        await new Promise(r => w.on("exit", r));
+      `,
+    });
+
+    const customName = "main.cpuprofile";
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--cpu-prof", "--cpu-prof-name", customName, "test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    const exitCode = await proc.exited;
+
+    const profiles = readdirSync(String(dir)).filter(f => f.endsWith(".cpuprofile"));
+    expect(profiles).toEqual([customName]);
+    expect(exitCode).toBe(0);
+  });
+
+  // With default names each thread gets its own file, and the tid segment is worker.threadId
+  // (CPU.<date>.<time>.<pid>.<tid>.<seq>.cpuprofile), so the two profiles can be told apart as node's can.
+  test("--cpu-prof is inherited by workers and writes one profile per thread, named by threadId", async () => {
+    using dir = tempDir("cpu-prof-worker-inherit", {
+      "test.js": `
+        const { Worker } = require("node:worker_threads");
+        const w = new Worker(\`const end = Date.now() + 100; while (Date.now() < end) {}\`, { eval: true });
+        console.log(w.threadId);
+        await new Promise(r => w.on("exit", r));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--cpu-prof", "--cpu-prof-dir", "profiles", "test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const workerThreadId = stdout.trim();
+
+    const tids = readdirSync(join(String(dir), "profiles"))
+      .map(f => f.match(/^CPU\.\d+\.\d+\.\d+\.(\d+)\.\d+\.cpuprofile$/)?.[1])
+      .sort();
+    expect({ tids, exitCode }).toEqual({ tids: ["0", workerThreadId], exitCode: 0 });
+  });
+
+  // node's --cpu-prof options are per-Environment: a worker's own execArgv decides where and under
+  // which name its profile is written, independently of the (unprofiled) parent.
+  test("--cpu-prof-dir and --cpu-prof-name in a worker's execArgv are honoured", async () => {
+    using dir = tempDir("cpu-prof-worker-execargv", {
+      "test.js": `
+        const { Worker } = require("node:worker_threads");
+        const spin = \`const end = Date.now() + 100; while (Date.now() < end) {}\`;
+        const json = new Worker(spin, {
+          eval: true,
+          execArgv: ["--cpu-prof", "--cpu-prof-dir", "profiles", "--cpu-prof-name", "worker.cpuprofile"],
+        });
+        await new Promise(r => json.on("exit", r));
+        const md = new Worker(spin, { eval: true, execArgv: ["--cpu-prof-md", "--cpu-prof-dir=mdprofiles"] });
+        await new Promise(r => md.on("exit", r));
+        // Flags after another option's separate value (as in [...process.execArgv, ...]) still count.
+        const afterValue = new Worker(spin, {
+          eval: true,
+          execArgv: ["--conditions", "custom", "--cpu-prof", "--cpu-prof-dir", "aftervalue", "--cpu-prof-name", "late.cpuprofile"],
+        });
+        await new Promise(r => afterValue.on("exit", r));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    const exitCode = await proc.exited;
+
+    // Nothing in the cwd (the parent is not profiling); the JSON profile is where the worker asked.
+    expect(readdirSync(String(dir)).filter(f => f.endsWith(".cpuprofile") || f.endsWith(".md"))).toEqual([]);
+    expect(readdirSync(join(String(dir), "profiles"))).toEqual(["worker.cpuprofile"]);
+    const profile = JSON.parse(readFileSync(join(String(dir), "profiles", "worker.cpuprofile"), "utf-8"));
+    expect(Array.isArray(profile.nodes)).toBe(true);
+    // --cpu-prof-md alone enables the markdown format, with the default (thread-distinct) name.
+    const mdFiles = readdirSync(join(String(dir), "mdprofiles"));
+    expect(mdFiles).toHaveLength(1);
+    expect(mdFiles[0]).toMatch(/^CPU\..*\.md$/);
+    expect(readdirSync(join(String(dir), "aftervalue"))).toEqual(["late.cpuprofile"]);
+    expect(exitCode).toBe(0);
+  });
+
   // On Windows the path buffer is ~98 KB and the CreateProcess command-line
   // limit is ~32 KB, so an overflowing CLI argument cannot be delivered. On
   // POSIX 5000 bytes exceeds the fixed path buffer (Linux 4096, macOS 1024);

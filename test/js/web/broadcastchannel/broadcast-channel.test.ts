@@ -31,6 +31,13 @@ test("broadcast channel properties", () => {
   c1.close();
 });
 
+test("ref() and unref() return the channel", () => {
+  const bc = new BroadcastChannel("ref-return");
+  expect(bc.ref()).toBe(bc);
+  expect(bc.unref()).toBe(bc);
+  bc.close();
+});
+
 test("broadcast channel worker wait", done => {
   var worker = new Worker(new URL("broadcast-channel-worker-simple.ts", import.meta.url).href);
   worker.ref();

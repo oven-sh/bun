@@ -1680,22 +1680,27 @@ function cacheBundledRootCertificates(): string[] {
   return bundledRootCertificates;
 }
 const getUseSystemCA = $newRustFunction("bun.rs", "getUseSystemCA", 0);
+const getUseOpensslCA = $newRustFunction("bun.rs", "getUseOpensslCA", 0);
 
 let defaultCACertificates: string[] | undefined;
+// Mirrors the store root_certs.cpp builds, in node's shape:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/tls.js#L146-L178
 function cacheDefaultCACertificates() {
   if (defaultCACertificates) return defaultCACertificates;
   defaultCACertificates = [];
 
-  const bundled = cacheBundledRootCertificates();
-  for (let i = 0; i < bundled.length; ++i) {
-    ArrayPrototypePush.$call(defaultCACertificates, bundled[i]);
-  }
+  if (!getUseOpensslCA()) {
+    const bundled = cacheBundledRootCertificates();
+    for (let i = 0; i < bundled.length; ++i) {
+      ArrayPrototypePush.$call(defaultCACertificates, bundled[i]);
+    }
 
-  // Include system certificates when --use-system-ca is set or NODE_USE_SYSTEM_CA=1
-  if (getUseSystemCA() || process.env.NODE_USE_SYSTEM_CA === "1") {
-    const system = cacheSystemCACertificates();
-    for (let i = 0; i < system.length; ++i) {
-      ArrayPrototypePush.$call(defaultCACertificates, system[i]);
+    const useSystemCA = getUseSystemCA();
+    if (useSystemCA === true || (useSystemCA === undefined && process.env.NODE_USE_SYSTEM_CA === "1")) {
+      const system = cacheSystemCACertificates();
+      for (let i = 0; i < system.length; ++i) {
+        ArrayPrototypePush.$call(defaultCACertificates, system[i]);
+      }
     }
   }
 

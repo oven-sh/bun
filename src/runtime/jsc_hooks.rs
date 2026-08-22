@@ -271,6 +271,8 @@ pub(crate) unsafe fn runtime_state_of(vm: *mut VirtualMachine) -> *mut RuntimeSt
 /// # Safety
 /// `vm` must be the live per-thread VM; called only from the JS thread.
 pub(crate) unsafe fn default_client_ssl_ctx(vm: *mut VirtualMachine) -> *mut bun_uws::SslCtx {
+    // SAFETY: per fn contract.
+    let use_system_ca = unsafe { (*vm).tls_use_system_ca_option() };
     // SAFETY: per fn contract; `rare_data()` lazy-inits the box.
     let rare = unsafe { (*vm).rare_data() };
     if rare.default_client_ssl_ctx.is_none() {
@@ -290,8 +292,14 @@ pub(crate) unsafe fn default_client_ssl_ctx(vm: *mut VirtualMachine) -> *mut bun
         // weak cache so a `tls.connect()` with default options later resolves
         // to the same CTX rather than building a second one with the same
         // digest. The +1 ref returned here is held for the VM's lifetime, so
-        // the entry never tombstones.
-        match cache.get_or_create_opts(&Default::default(), &mut err) {
+        // the entry never tombstones. `use_system_ca` is this thread's
+        // --use-system-ca decision (per-Environment in node), the same value
+        // `tls_true_defaults` stamps, so the two resolve to one CTX.
+        let opts = bun_uws::us_bun_socket_context_options_t {
+            use_system_ca,
+            ..Default::default()
+        };
+        match cache.get_or_create_opts(&opts, &mut err) {
             Some(ctx) => rare.default_client_ssl_ctx = Some(ctx),
             None => bun_core::Output::panic(format_args!(
                 "default client SSL_CTX init failed: {}",
@@ -1535,7 +1543,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     console_print_runtime_object,
     load_standalone_sourcemap,
     apply_standalone_runtime_flags,
-    parse_worker_exec_argv_allow_addons,
+    parse_worker_exec_argv,
     stop_cron_for_vm_teardown,
     cron_clear_all_reload,
     retroactively_report_discovered_tests,
@@ -1575,26 +1583,23 @@ unsafe fn apply_standalone_runtime_flags(
     crate::run_main::apply_standalone_runtime_flags(unsafe { &mut *transpiler }, graph);
 }
 
-/// Parse a Worker's `execArgv` against the
-/// `RunCommand` param table and return `!args.flag("--no-addons")`, or `None`
-/// on parse error.
-///
-/// Note: the Rust `bun_clap::parse_ex` port currently constrains
-/// `ArgIter<'static>` (parsed values are stored by reference), which would
-/// force leaking the per-call UTF-8 copies of `exec_argv`. Spec only ever
-/// reads the single `--no-addons` flag from the result (per the in-tree
-/// `// TODO: currently this only checks for --no-addons`), so this body scans
-/// the converted argv directly with the same `stop_after_positional_at = 1`
-/// short-circuit. Full clap routing can return when `ComptimeClap` grows a
-/// borrowed-lifetime variant.
-///
+/// Parse a Worker's `execArgv`; scans argv directly since `ArgIter<'static>` would leak the UTF-8 copies.
 /// # Safety
-/// Each `WTFStringImpl` in `exec_argv` is a live WTF string (the C++
-/// `Worker::create` array, kept alive for the worker's lifetime).
-unsafe fn parse_worker_exec_argv_allow_addons(
+/// Each `WTFStringImpl` in `exec_argv` is a live WTF string kept alive for the worker's lifetime.
+unsafe fn parse_worker_exec_argv(
     exec_argv: &[bun_core::WTFStringImpl],
-) -> Option<bool> {
+) -> bun_jsc::virtual_machine::WorkerExecArgv {
+    use crate::cli::arguments::replace_pid_placeholder;
+    enum Pending {
+        None,
+        Interval,
+        Name,
+        Dir,
+    }
+    let mut out = bun_jsc::virtual_machine::WorkerExecArgv::default();
     let mut no_addons = false;
+    let mut pending = Pending::None;
+    let parse_interval = |v: &[u8]| std::str::from_utf8(v).ok().and_then(|s| s.parse().ok());
     for &arg in exec_argv {
         if arg.is_null() {
             continue;
@@ -1602,19 +1607,56 @@ unsafe fn parse_worker_exec_argv_allow_addons(
         // SAFETY: per fn contract — `arg` is a live `WTFStringImpl*`.
         let owned = unsafe { &*arg }.to_owned_slice_z();
         let bytes = owned.as_bytes();
-        // `stop_after_positional_at = 1` — first non-flag token ends parsing.
+        match core::mem::replace(&mut pending, Pending::None) {
+            Pending::None => {}
+            Pending::Interval => {
+                out.cpu_prof_interval = parse_interval(bytes);
+                continue;
+            }
+            Pending::Name => {
+                out.cpu_prof_name = Some(replace_pid_placeholder(bytes));
+                continue;
+            }
+            Pending::Dir => {
+                out.cpu_prof_dir = Some(bytes.into());
+                continue;
+            }
+        }
+        // execArgv holds no positionals: a bare token is the value of a flag this parser doesn't model
+        // (`-r ./preload.js`, `--conditions x`), so skip it rather than ending the scan.
         if bytes.first() != Some(&b'-') {
-            break;
+            continue;
         }
         if bytes == b"--" {
             break;
         }
         if bytes == b"--no-addons" {
             no_addons = true;
+        } else if bytes == b"--use-system-ca" {
+            out.use_system_ca = Some(true);
+        } else if bytes == b"--no-use-system-ca" {
+            out.use_system_ca = Some(false);
+        } else if bytes == b"--cpu-prof" {
+            out.cpu_prof = true;
+        } else if bytes == b"--cpu-prof-md" {
+            out.cpu_prof_md = true;
+        } else if bytes == b"--cpu-prof-interval" {
+            pending = Pending::Interval;
+        } else if let Some(v) = bytes.strip_prefix(b"--cpu-prof-interval=") {
+            out.cpu_prof_interval = parse_interval(v);
+        } else if bytes == b"--cpu-prof-name" {
+            pending = Pending::Name;
+        } else if let Some(v) = bytes.strip_prefix(b"--cpu-prof-name=") {
+            out.cpu_prof_name = Some(replace_pid_placeholder(v));
+        } else if bytes == b"--cpu-prof-dir" {
+            pending = Pending::Dir;
+        } else if let Some(v) = bytes.strip_prefix(b"--cpu-prof-dir=") {
+            out.cpu_prof_dir = Some(v.into());
         }
     }
-    // Override `allow_addons` unconditionally on successful parse.
-    Some(!no_addons)
+    // Override `allow_addons` unconditionally.
+    out.allow_addons = Some(!no_addons);
+    out
 }
 
 /// `jsc.API.cron.CronJob.clearAllForVM(vm, .teardown)` —

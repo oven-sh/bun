@@ -70,7 +70,8 @@ class WorkerMessagingProxy final : public ThreadSafeRefCounted<WorkerMessagingPr
 public:
     enum class State : uint8_t {
         Pending, // created; worker thread starting up
-        Running, // workerGlobalScopeStarted() has run on the worker thread
+        Started, // the worker's VM is up and its entry point is loading; 'online' has been posted
+        Running, // workerGlobalScopeStarted() has run on the worker thread: tasks are routed directly
         Closing, // workerGlobalScopeDestroyedInternal() is dispatching 'close' on the parent
         Closed, // the thread is joined and released; nothing further will happen
     };
@@ -85,19 +86,32 @@ public:
     // Queued while Pending, posted while Running, refused (false) once Closing.
     bool postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>&&);
     void setKeepAlive(bool);
+    // Whether the thread keeps the parent's loop alive; nullopt once the thread is released
+    // (node: the handle is gone and hasRef() reads back undefined).
+    std::optional<bool> hasRef() const;
+    bool eventLoopUtilization(double& elapsedMs, double& idleMs);
     void workerObjectDestroyed();
     // The parent context is exiting: the thread has been asked to stop; wait for it and release what
     // workerGlobalScopeDestroyedInternal() would have released. Parent thread.
     void parentContextWillDestroy();
 
     bool hasPendingActivity() const { return m_state.load() != State::Closed; }
-    bool isOnline() const { return m_state.load() == State::Running; }
+    // node's kIsOnline: from 'online' until the thread goes.
+    bool isOnline() const
+    {
+        auto state = m_state.load();
+        return state == State::Started || state == State::Running;
+    }
     bool isClosingOrClosed() const { return m_state.load() >= State::Closing; }
 
     uint64_t registerCrossVMRequest(JSC::VM&, JSC::JSPromise*);
     JSC::Strong<JSC::JSPromise> takeCrossVMRequest(uint64_t id);
 
     // -- WorkerObjectProxy / WorkerReportingProxy (worker thread) ---------------------------------
+    // The VM is up; the entry point loads next. Posts 'online' (node reports it before user code).
+    void workerThreadStarted();
+    // The entry point has evaluated (up to its first top-level await): tasks and messages that
+    // arrived meanwhile are delivered and later ones routed directly.
     void workerGlobalScopeStarted(Zig::GlobalObject&);
     void postMessageToWorkerObject(MessageWithMessagePorts&&);
     void postErrorToWorkerObject(Zig::GlobalObject&, const String& message, JSC::JSValue error);
@@ -123,7 +137,7 @@ private:
     void releaseWorkerThread();
     void drainMessagesToWorkerObject(ScriptExecutionContext&, DrainBudget);
     void rejectAllCrossVMRequests();
-    void postMessageErrorToWorkerObject(String&& message);
+    void postMessageErrorToWorkerObject(String&& message, String&& code);
     bool postSerializedErrorToWorkerObject(Zig::GlobalObject&, JSC::JSValue error);
 
     // Parent thread only.

@@ -380,6 +380,31 @@ describe("web worker", () => {
     });
   });
 
+  // 'open' reports that the worker thread is up, before its entry point runs
+  // (node's 'online'); it is not a signal that the script has executed.
+  describe("'open' event order", () => {
+    test("'open' is delivered before anything the entry point posts", async () => {
+      const w = new Worker("data:text/javascript,postMessage('from entry')");
+      const order: string[] = [];
+      const done = Promise.withResolvers<void>();
+      w.addEventListener("open", () => order.push("open"));
+      w.onmessage = e => {
+        order.push(e.data);
+        done.resolve();
+      };
+      await done.promise;
+      expect(order).toEqual(["open", "from entry"]);
+      w.terminate();
+    });
+
+    test("'open' fires for a worker whose entry point never returns", async () => {
+      const w = new Worker("data:text/javascript,for(;;){}");
+      await once(w, "open");
+      w.terminate();
+      await once(w, "close");
+    });
+  });
+
   describe("terminate() races and lifecycle edges", () => {
     // A vm timeout inside a worker is a transient termination of that VM; it
     // must not leave the worker unable to run script (parent messages dropped).

@@ -1252,6 +1252,79 @@ test.concurrent("it should detect duplicate workspace dependencies", async () =>
   expect(await exited).toBe(1);
 });
 
+// https://github.com/oven-sh/bun/issues/2773
+for (const spec of ["workspace:*", "workspace:0.0.1", "workspace:^"]) {
+  for (const linker of ["hoisted", "isolated"] as const) {
+    test.concurrent(`workspace member can depend on root via ${spec} (${linker})`, async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+      await Promise.all([
+        write(
+          packageJson,
+          JSON.stringify({
+            name: "Foo",
+            version: "0.0.1",
+            workspaces: ["bar"],
+          }),
+        ),
+        write(
+          join(packageDir, "bar", "package.json"),
+          JSON.stringify({
+            name: "Bar",
+            version: "0.0.2",
+            devDependencies: { Foo: spec },
+          }),
+        ),
+        write(join(packageDir, "index.js"), "module.exports = 42;\n"),
+      ]);
+
+      let { stderr, exited } = spawn({
+        cmd: [bunExe(), "install", `--linker=${linker}`],
+        cwd: packageDir,
+        stdout: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      let [err, exit] = await Promise.all([stderr.text(), exited]);
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("failed to resolve");
+      expect(err).not.toContain("error:");
+      expect(err).toContain("Saved lockfile");
+      expect(exit).toBe(0);
+
+      // bun.lock records the root package and does not add a bogus workspace path
+      const lock = await file(join(packageDir, "bun.lock")).text();
+      expect(lock).toContain('"Foo": ["Foo@root:"');
+      expect(lock).not.toContain("bar/0.0.1");
+
+      // the member can require the root package
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", 'console.log(require("Foo"))'],
+        cwd: join(packageDir, "bar"),
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [rout, rerr, rexit] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(rerr).toBe("");
+      expect(rout).toBe("42\n");
+      expect(rexit).toBe(0);
+
+      // second install is stable
+      ({ stderr, exited } = spawn({
+        cmd: [bunExe(), "install", "--frozen-lockfile", `--linker=${linker}`],
+        cwd: packageDir,
+        stdout: "ignore",
+        stderr: "pipe",
+        env,
+      }));
+      [err, exit] = await Promise.all([stderr.text(), exited]);
+      expect(err).not.toContain("error:");
+      expect(exit).toBe(0);
+    });
+  }
+}
+
 const versions = ["workspace:1.0.0", "workspace:*", "workspace:^1.0.0", "1.0.0", "*"];
 
 for (const rootVersion of versions) {

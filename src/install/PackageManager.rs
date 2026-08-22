@@ -343,6 +343,9 @@ pub struct PackageManager {
     /// could be any of the workspaces.
     pub root_package_id: RootPackageId,
 
+    /// Name hash of the workspace root's package.json (not in `workspace_paths`).
+    pub(crate) workspace_root_name_hash: PackageNameHash,
+
     pub(crate) thread_pool: ThreadPool,
     pub(crate) task_batch: thread_pool::Batch,
     pub(crate) task_queue: TaskDependencyQueue,
@@ -2091,6 +2094,7 @@ pub fn init(
         wr!(update_request_index, Default::default());
         wr!(audit_fix_pins, Box::default());
         wr!(root_package_id, RootPackageId::default());
+        wr!(workspace_root_name_hash, 0);
         wr!(task_batch, thread_pool::Batch::default());
         wr!(task_queue, TaskDependencyQueue::default());
         wr!(manifests, PackageManifestMap::default());
@@ -2549,6 +2553,7 @@ fn init_with_runtime_once(
         wr!(audit_fix_pins, Box::default());
         wr!(root_package_json_name_at_time_of_init, Box::default());
         wr!(root_package_id, RootPackageId::default());
+        wr!(workspace_root_name_hash, 0);
         wr!(task_batch, thread_pool::Batch::default());
         wr!(task_queue, TaskDependencyQueue::default());
         wr!(manifests, PackageManifestMap::default());

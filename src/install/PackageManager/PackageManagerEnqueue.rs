@@ -2923,12 +2923,29 @@ fn get_or_put_resolved_package(
             }
             // package name hash should be used to find workspace path from map
             // SAFETY: `version.tag == Workspace` discriminates the union arm.
-            let workspace_path_raw: SemverString = this
-                .lockfile
-                .workspace_paths
-                .get(&name_hash)
-                .copied()
-                .unwrap_or_else(|| *version.workspace());
+            let workspace_path_raw: SemverString =
+                match this.lockfile.workspace_paths.get(&name_hash).copied() {
+                    Some(p) => p,
+                    None => {
+                        // No member has this name; fall back to the root package.
+                        if name_hash != 0 {
+                            if let Some(root) = this.lockfile.root_package() {
+                                let buf = this.lockfile.buffers.string_bytes.as_slice();
+                                if root.name_hash == name_hash
+                                    && root.name.slice(buf) == name.slice(buf)
+                                {
+                                    success_fn(this, dependency_id, 0);
+                                    return Ok(Some(ResolvedPackageResult {
+                                        package: *this.lockfile.packages.get(0),
+                                        is_first_time: false,
+                                        task: None,
+                                    }));
+                                }
+                            }
+                        }
+                        *version.workspace()
+                    }
+                };
             // reshaped for borrowck — `workspace_path` may borrow
             // `string_bytes`; detach the slice lifetime so the
             // `&mut PackageManager` reborrow for `get_or_put` below does not

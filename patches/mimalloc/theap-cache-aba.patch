@@ -1,0 +1,17 @@
+--- a/src/theap.c
++++ b/src/theap.c
+@@ -670,6 +670,14 @@ void _mi_heap_detach_theaps( mi_heap_t* heap ) {
+                                 else { mi_assert_internal(theap->tld->theaps == theap); theap->tld->theaps = theap->tnext; }
+             theap->tnext = theap->tprev = NULL;       
+             theap->tld = NULL;
++            // Also clear `heap` (as `_mi_tld_detach_theaps` does). The owning thread's
++            // `_mi_theap_cached` can still point at this theap, and `_mi_heap_theap` only
++            // compares `theap->heap` with the requested heap: if a later `mi_heap_new` reuses
++            // this heap's address, a stale `heap` would hand that thread this detached theap,
++            // whose pages are destroyed (an ABA on the heap address). Doing it while holding the
++            // tld lock is safe: the thread is not in `mi_thread_theaps_done` for this theap, and
++            // the theap is no longer in the tld list for a later pass.
++            mi_atomic_store_ptr_release(mi_heap_t, &theap->heap, NULL);
+             mi_lock_release(&tld->theaps_lock);
+           }
+           else {

@@ -13,6 +13,44 @@ import {
 } from "harness";
 import path from "path";
 
+const WEBSOCKET_ASYNC_FIRST_MESSAGE = "first";
+const WEBSOCKET_ASYNC_SECOND_MESSAGE = "second";
+const WEBSOCKET_ASYNC_DONE_PREFIX = "done:";
+const WEBSOCKET_ASYNC_POLL_TURNS = 20;
+const WEBSOCKET_ASYNC_NOT_FOUND_STATUS = 404;
+const WEBSOCKET_ASYNC_EXPECTED_MESSAGE_COUNT = 2;
+const WEBSOCKET_ASYNC_REJECT_MESSAGE = "reject";
+const WEBSOCKET_ASYNC_AFTER_REJECT_MESSAGE = "after-reject";
+const WEBSOCKET_ASYNC_REJECTION_MESSAGE = "async websocket handler rejected";
+const WEBSOCKET_ASYNC_REJECT_DEADLINE_MS = 20_000;
+const WEBSOCKET_ASYNC_SUBPROCESS_TIMEOUT_MS = 30_000;
+const HTTP_PROTOCOL_PREFIX = "http";
+const WS_PROTOCOL_PREFIX = "ws";
+
+async function didSettleWithinImmediateTurns<T>(promise: Promise<T>, turns: number): Promise<boolean> {
+  let settled = false;
+  let rejected = false;
+  let rejection: unknown;
+  promise.then(
+    () => {
+      settled = true;
+    },
+    error => {
+      rejected = true;
+      rejection = error;
+    },
+  );
+
+  for (let turn = 0; turn < turns; turn++) {
+    if (rejected) throw rejection;
+    if (settled) return true;
+    await new Promise<void>(resolve => setImmediate(resolve));
+  }
+
+  if (rejected) throw rejection;
+  return settled;
+}
+
 describe.concurrent("Server", () => {
   test("should not use 100% CPU when websocket is idle", async () => {
     await using proc = Bun.spawn({
@@ -1962,6 +2000,176 @@ test("should be able to async upgrade using custom protocol", async () => {
 
   expect(await promise).toBe(true);
 });
+
+test("async websocket message handlers run serially per socket", async () => {
+  const firstEntered = Promise.withResolvers<void>();
+  const secondEntered = Promise.withResolvers<void>();
+  const releaseFirst = Promise.withResolvers<void>();
+  const clientOpened = Promise.withResolvers<void>();
+  const clientMessagesReceived = Promise.withResolvers<void>();
+  const clientMessages: string[] = [];
+  const handlerEntries: string[] = [];
+  let inFlightHandlers = 0;
+  let maxInFlightHandlers = 0;
+
+  using server = Bun.serve({
+    port: 0,
+    fetch(req, server) {
+      if (server.upgrade(req)) return;
+      return new Response(null, { status: WEBSOCKET_ASYNC_NOT_FOUND_STATUS });
+    },
+    websocket: {
+      async message(ws, message) {
+        inFlightHandlers++;
+        maxInFlightHandlers = Math.max(maxInFlightHandlers, inFlightHandlers);
+        const text = String(message);
+        handlerEntries.push(text);
+        if (text === WEBSOCKET_ASYNC_FIRST_MESSAGE) {
+          firstEntered.resolve();
+          await releaseFirst.promise;
+        } else if (text === WEBSOCKET_ASYNC_SECOND_MESSAGE) {
+          secondEntered.resolve();
+        }
+        ws.send(WEBSOCKET_ASYNC_DONE_PREFIX + text);
+        inFlightHandlers--;
+      },
+    },
+  });
+
+  const ws = new WebSocket(server.url.href.replace(HTTP_PROTOCOL_PREFIX, WS_PROTOCOL_PREFIX));
+  ws.onopen = () => clientOpened.resolve();
+  ws.onerror = event => {
+    clientOpened.reject(event);
+    clientMessagesReceived.reject(event);
+  };
+  ws.onmessage = event => {
+    clientMessages.push(String(event.data));
+    if (clientMessages.length === WEBSOCKET_ASYNC_EXPECTED_MESSAGE_COUNT) {
+      clientMessagesReceived.resolve();
+    }
+  };
+
+  await clientOpened.promise;
+  ws.send(WEBSOCKET_ASYNC_FIRST_MESSAGE);
+  await firstEntered.promise;
+
+  ws.send(WEBSOCKET_ASYNC_SECOND_MESSAGE);
+  const secondStartedBeforeFirstSettled = await didSettleWithinImmediateTurns(
+    secondEntered.promise,
+    WEBSOCKET_ASYNC_POLL_TURNS,
+  );
+
+  expect({
+    handlerEntries,
+    maxInFlightHandlers,
+    secondStartedBeforeFirstSettled,
+  }).toEqual({
+    handlerEntries: [WEBSOCKET_ASYNC_FIRST_MESSAGE],
+    maxInFlightHandlers: 1,
+    secondStartedBeforeFirstSettled: false,
+  });
+
+  releaseFirst.resolve();
+  await secondEntered.promise;
+  await clientMessagesReceived.promise;
+
+  expect({ clientMessages, maxInFlightHandlers }).toEqual({
+    clientMessages: [
+      WEBSOCKET_ASYNC_DONE_PREFIX + WEBSOCKET_ASYNC_FIRST_MESSAGE,
+      WEBSOCKET_ASYNC_DONE_PREFIX + WEBSOCKET_ASYNC_SECOND_MESSAGE,
+    ],
+    maxInFlightHandlers: 1,
+  });
+
+  ws.close();
+});
+
+// `websocket.error` is not in the public `WebSocketHandler` type, so this runs
+// in a subprocess like the other `websocket.error` coverage in this file.
+test(
+  "a rejected async websocket message handler reports the error and resumes the socket",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const REJECT = ${JSON.stringify(WEBSOCKET_ASYNC_REJECT_MESSAGE)};
+        const AFTER = ${JSON.stringify(WEBSOCKET_ASYNC_AFTER_REJECT_MESSAGE)};
+        const DONE_PREFIX = ${JSON.stringify(WEBSOCKET_ASYNC_DONE_PREFIX)};
+        const REJECTION_MESSAGE = ${JSON.stringify(WEBSOCKET_ASYNC_REJECTION_MESSAGE)};
+
+        const errorReported = Promise.withResolvers();
+        const echoReceived = Promise.withResolvers();
+
+        using server = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          fetch(req, s) {
+            if (s.upgrade(req)) return;
+            return new Response(null, { status: ${WEBSOCKET_ASYNC_NOT_FOUND_STATUS} });
+          },
+          websocket: {
+            async message(ws, message) {
+              const text = String(message);
+              if (text === REJECT) {
+                // Suspend first so the handler returns a *pending* promise: that
+                // is the path that pauses the socket.
+                await Promise.resolve();
+                throw new Error(REJECTION_MESSAGE);
+              }
+              ws.send(DONE_PREFIX + text);
+            },
+            error(error) {
+              errorReported.resolve(error?.message ?? String(error));
+            },
+          },
+        });
+
+        const ws = new WebSocket("ws://127.0.0.1:" + server.port);
+        const opened = Promise.withResolvers();
+        ws.onopen = () => opened.resolve();
+        ws.onerror = event => {
+          opened.reject(event);
+          errorReported.reject(event);
+          echoReceived.reject(event);
+        };
+        ws.onmessage = event => echoReceived.resolve(String(event.data));
+        await opened.promise;
+
+        // Deadline only: turns a broken resume into a printed null instead of a hang.
+        const deadline = Bun.sleep(${WEBSOCKET_ASYNC_REJECT_DEADLINE_MS}).then(() => null);
+
+        ws.send(REJECT);
+        const errorMessage = await Promise.race([errorReported.promise, deadline]);
+
+        // The socket was paused for the pending handler; this only arrives if
+        // the rejection resumed it.
+        ws.send(AFTER);
+        const echoed = await Promise.race([echoReceived.promise, deadline]);
+
+        console.log(JSON.stringify({ errorMessage, echoed }));
+        process.exit(0);
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ out: JSON.parse(stdout.trim() || "null"), stderr }).toEqual({
+      out: {
+        errorMessage: WEBSOCKET_ASYNC_REJECTION_MESSAGE,
+        echoed: WEBSOCKET_ASYNC_DONE_PREFIX + WEBSOCKET_ASYNC_AFTER_REJECT_MESSAGE,
+      },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+  WEBSOCKET_ASYNC_SUBPROCESS_TIMEOUT_MS,
+);
 
 test("should be able to abrubtly close a upload request", async () => {
   const { promise, resolve } = Promise.withResolvers();

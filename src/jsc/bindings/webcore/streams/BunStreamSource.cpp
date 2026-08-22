@@ -1121,7 +1121,7 @@ static void rsisContinueWithMany(JSC::VM& vm, JSGlobalObject* globalObject, JSRe
         throwTypeError(globalObject, scope, "readMany() returned an invalid result"_s);
         return;
     }
-    JSValue done = manyObject->get(globalObject, vm.propertyNames->done);
+    auto [done, valuesValue] = WebCore::JSStreamsRuntime::from(globalObject)->readManyResult(globalObject, manyObject);
     RETURN_IF_EXCEPTION(scope, );
     bool isDone = done.toBoolean(globalObject);
     RETURN_IF_EXCEPTION(scope, );
@@ -1132,11 +1132,11 @@ static void rsisContinueWithMany(JSC::VM& vm, JSGlobalObject* globalObject, JSRe
         rsisRegisterAndStart(vm, globalObject, op);
         RETURN_IF_EXCEPTION(scope, );
     }
-    JSValue valuesValue = manyObject->get(globalObject, vm.propertyNames->value);
-    RETURN_IF_EXCEPTION(scope, );
     JSObject* values = valuesValue.getObject();
     unsigned length = 0;
-    if (values) {
+    if (auto* valuesArray = dynamicDowncast<JSArray>(values)) {
+        length = valuesArray->length();
+    } else if (values) {
         JSValue lengthValue = values->get(globalObject, vm.propertyNames->length);
         RETURN_IF_EXCEPTION(scope, );
         length = lengthValue.toUInt32(globalObject);

@@ -826,6 +826,11 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     /// Move an open socket into a new group/kind, stashing `owner` in the ext.
     /// Replaces `Socket.adoptPtr`.
     ///
+    /// Returns `false` without touching the socket (or `owner`) when
+    /// `us_socket_adopt` refuses it because it is closed or shut down: the
+    /// socket then still belongs to its previous kind, whose `on_close` reads
+    /// the ext as its own owner type.
+    ///
     /// `set_socket_field` — the closure writes the resulting
     /// `Self` into the owner's socket field via the raw `*mut Owner` (passing
     /// `&mut Owner` here would alias any live `&mut` the caller already holds).

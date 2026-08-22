@@ -362,13 +362,15 @@ struct us_socket_group_t *us_socket_group_next(us_socket_group_r group) nonnull_
 
 /* Move an open socket between groups / kinds, optionally resizing its ext.
  * Replaces us_socket_context_adopt_socket + us_create_child_socket_context.
- * Returns the (possibly relocated) socket. */
+ * Returns the (possibly relocated) socket, or NULL if s is closed or shut
+ * down: s is then left untouched (same group, kind and ext owner), and the
+ * caller must not store anything in its ext. */
 struct us_socket_t *us_socket_adopt(us_socket_r s, us_socket_group_r group,
     unsigned char kind, int old_ext_size, int ext_size) nonnull_fn_decl;
 
 /* Same, but also attaches a fresh SSL* built from ssl_ctx (which is up_ref'd
  * for the lifetime of the socket). Used for STARTTLS / Bun.connect upgrade.
- * sni may be NULL. */
+ * sni may be NULL. Returns NULL in the same cases as us_socket_adopt. */
 struct us_socket_t *us_socket_adopt_tls(us_socket_r s, us_socket_group_r group,
     unsigned char kind, struct ssl_ctx_st *ssl_ctx, const char *sni,
     int is_client, int request_cert, int reject_unauthorized,

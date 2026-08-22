@@ -958,6 +958,25 @@ describe("ES Decorators", () => {
       expect(stdout).toBe("true\n");
       expect(exitCode).toBe(0);
     });
+
+    // Classes without side effects are hoisted to the top of the module at
+    // runtime; a static accessor's initializer is a side effect like a static
+    // field's, so these classes must stay below the binding they read.
+    test("classes with static accessor initializers are not hoisted above the bindings they use", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const names = ["p"];
+        class Stmt {
+          static accessor s = names[0] + "1";
+        }
+        export default class Def {
+          static accessor d = names[0] + "2";
+        }
+        console.log(Stmt.s, Def.d);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("p1 p2\n");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("anonymous class expressions with reserved-word inferred names", () => {
@@ -1208,6 +1227,24 @@ describe("ES Decorators", () => {
       expect(filterStderr(rawStderr)).toBe("");
       expect(stdout).toBe("undefined\nworld\n");
       expect(exitCode).toBe(0);
+    });
+
+    // tsc rejects standard decorators on abstract members (TS1270), so like a
+    // decorated abstract field the member is dropped from the output. Only the
+    // legacy-decorator path keeps its decorators.
+    test("decorated abstract accessor stays dropped in standard mode", () => {
+      const t = new Bun.Transpiler({ loader: "ts" });
+      const out = t.transformSync(`
+        declare const dec: any;
+        abstract class A {
+          @dec abstract accessor g: number;
+          x = 1;
+        }
+      `);
+      expect(out).toContain("x = 1");
+      expect(out).not.toContain('"g"');
+      expect(out).not.toContain("accessor g");
+      expect(out).not.toContain("__decorateElement");
     });
   });
 });

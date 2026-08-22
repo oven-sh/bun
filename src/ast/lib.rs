@@ -2931,6 +2931,9 @@ pub mod flags {
         IsStatic,
         WasShorthand,
         IsSpread,
+        /// Getter/setter pair generated for an `accessor` member; `ts_metadata`
+        /// on the one carrying the decorators is the member's declared type.
+        IsLoweredAutoAccessor,
     }
     pub type PropertySet = EnumSet<Property>;
     pub const PROPERTY_NONE: PropertySet = EnumSet::empty();

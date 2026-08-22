@@ -146,7 +146,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// recordUsage + E.Identifier in one call.
     #[inline]
-    fn use_ref(&mut self, ref_: Ref, l: bun_ast::Loc) -> Expr {
+    pub(crate) fn use_ref(&mut self, ref_: Ref, l: bun_ast::Loc) -> Expr {
         self.record_usage(ref_);
         self.new_expr(
             E::Identifier {
@@ -166,7 +166,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// newSymbol + scope.generated.append in one call.
-    fn new_sym(&mut self, kind: js_ast::symbol::Kind, name: &'a [u8]) -> Ref {
+    pub(crate) fn new_sym(&mut self, kind: js_ast::symbol::Kind, name: &'a [u8]) -> Ref {
         let ref_ = self.new_symbol(kind, name);
         VecExt::append(&mut self.current_scope_mut().generated, ref_);
         ref_
@@ -394,8 +394,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Bump-format `_{prefix}{n}` (or just `_{prefix}` when n is omitted).
-    fn bump_name(&self, prefix: &[u8], n: Option<usize>) -> &'a [u8] {
+    /// Bump-format `{prefix}{n}` (or just `{prefix}` when n is omitted).
+    pub(crate) fn bump_name(&self, prefix: &[u8], n: Option<usize>) -> &'a [u8] {
         let mut v = BumpVec::<u8>::new_in(self.arena);
         v.extend_from_slice(prefix);
         if let Some(n) = n {
@@ -407,7 +407,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         v.into_bump_slice()
     }
 
-    fn bump_name2(&self, a: &[u8], b: &[u8]) -> &'a [u8] {
+    pub(crate) fn bump_name2(&self, a: &[u8], b: &[u8]) -> &'a [u8] {
         let mut v = BumpVec::<u8>::new_in(self.arena);
         v.extend_from_slice(a);
         v.extend_from_slice(b);

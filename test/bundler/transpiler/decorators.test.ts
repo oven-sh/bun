@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 import DecoratedClass from "./decorator-export-default-class-fixture";
 import DecoratedAnonClass from "./decorator-export-default-class-fixture-anon";
 
@@ -1105,3 +1106,598 @@ test("lowering many decorated instance fields into a large constructor body stay
   const { tSmall, tLarge } = JSON.parse(stdout);
   expect(tLarge).toBeLessThan(tSmall * 3);
 }, 90_000);
+
+// With experimentalDecorators the standard-decorator lowering (which also lowers
+// `accessor` members) is not used, so `accessor` is desugared in place instead:
+//   accessor x = 1  ->  #x = 1; get x() { return this.#x } set x(v) { this.#x = v }
+// tsc accepts the keyword in this mode too, and decorates such a member like a
+// getter/setter pair.
+describe("accessor keyword with experimentalDecorators", () => {
+  function transpile(code: string, compilerOptions: Record<string, unknown> = {}) {
+    const transpiler = new Bun.Transpiler({
+      loader: "ts",
+      tsconfig: { compilerOptions: { experimentalDecorators: true, ...compilerOptions } },
+    });
+    return transpiler
+      .transformSync(code)
+      .replace(/^import \{[\s\S]*?\} from "bun:wrap";\n/m, "")
+      .replace(/__legacy(\w+?)TS_\w+/g, "__legacy$1TS")
+      .trim();
+  }
+
+  async function run(name: string, files: Record<string, string>, compilerOptions: Record<string, unknown> = {}) {
+    using dir = tempDir(name, {
+      "tsconfig.json": JSON.stringify({ compilerOptions: { experimentalDecorators: true, ...compilerOptions } }),
+      ...files,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("is lowered to a private field plus a getter/setter pair", () => {
+    expect(transpile(`class A { accessor x = 1 }`)).toMatchInlineSnapshot(`
+      "class A {
+        #x = 1;
+        get x() {
+          return this.#x;
+        }
+        set x(v) {
+          this.#x = v;
+        }
+      }"
+    `);
+  });
+
+  test("static, private, literal and computed keys", () => {
+    expect(
+      transpile(`
+        const k = () => "dyn";
+        class A {
+          static accessor s = 1;
+          accessor #p = 2;
+          accessor [k()] = 3;
+          accessor ["lit"] = 4;
+          accessor 42 = 5;
+          accessor noInit: string;
+          getP() { return this.#p; }
+        }
+      `),
+    ).toMatchInlineSnapshot(`
+      "var __bun_temp_ref_1$;
+      const k = () => "dyn";
+
+      class A {
+        static #s = 1;
+        static get s() {
+          return this.#s;
+        }
+        static set s(v) {
+          this.#s = v;
+        }
+        #_p = 2;
+        get #p() {
+          return this.#_p;
+        }
+        set #p(v) {
+          this.#_p = v;
+        }
+        #_accessor_storage = 3;
+        get [__bun_temp_ref_1$ = k()]() {
+          return this.#_accessor_storage;
+        }
+        set [__bun_temp_ref_1$](v) {
+          this.#_accessor_storage = v;
+        }
+        #_accessor_storage2 = 4;
+        get ["lit"]() {
+          return this.#_accessor_storage2;
+        }
+        set ["lit"](v) {
+          this.#_accessor_storage2 = v;
+        }
+        #_accessor_storage3 = 5;
+        get 42() {
+          return this.#_accessor_storage3;
+        }
+        set 42(v) {
+          this.#_accessor_storage3 = v;
+        }
+        #noInit;
+        get noInit() {
+          return this.#noInit;
+        }
+        set noInit(v) {
+          this.#noInit = v;
+        }
+        getP() {
+          return this.#p;
+        }
+      }"
+    `);
+  });
+
+  test("backing fields avoid the private names of the class and of enclosing classes", () => {
+    expect(
+      transpile(`
+        class Outer {
+          #x = "outer";
+          accessor x = 1;
+          static accessor x = 2;
+          inner() {
+            return class Inner {
+              accessor x = 3;
+              outerX(o: Outer) { return o.#x; }
+            };
+          }
+        }
+      `),
+    ).toMatchInlineSnapshot(`
+      "class Outer {
+        #x = "outer";
+        #x2 = 1;
+        get x() {
+          return this.#x2;
+        }
+        set x(v) {
+          this.#x2 = v;
+        }
+        static #x3 = 2;
+        static get x() {
+          return this.#x3;
+        }
+        static set x(v) {
+          this.#x3 = v;
+        }
+        inner() {
+          return class Inner {
+            #x2 = 3;
+            get x() {
+              return this.#x2;
+            }
+            set x(v) {
+              this.#x2 = v;
+            }
+            outerX(o) {
+              return o.#x;
+            }
+          };
+        }
+      }"
+    `);
+  });
+
+  test("a decorated accessor is decorated like a getter/setter pair", () => {
+    expect(
+      transpile(`
+        declare const dec: any;
+        declare const key: () => string;
+        class A {
+          @dec accessor x = 1;
+          @dec static accessor s = 2;
+          @dec accessor [key()] = 3;
+        }
+      `),
+    ).toMatchInlineSnapshot(`
+      "var __bun_temp_ref_1$;
+
+      class A {
+        #x = 1;
+        get x() {
+          return this.#x;
+        }
+        set x(v) {
+          this.#x = v;
+        }
+        static #s = 2;
+        static get s() {
+          return this.#s;
+        }
+        static set s(v) {
+          this.#s = v;
+        }
+        #_accessor_storage = 3;
+        get [__bun_temp_ref_1$ = key()]() {
+          return this.#_accessor_storage;
+        }
+        set [__bun_temp_ref_1$](v) {
+          this.#_accessor_storage = v;
+        }
+      }
+      __legacyDecorateClassTS([
+        dec
+      ], A.prototype, "x", null);
+      __legacyDecorateClassTS([
+        dec
+      ], A.prototype, __bun_temp_ref_1$, null);
+      __legacyDecorateClassTS([
+        dec
+      ], A, "s", null);"
+    `);
+  });
+
+  test("TypeScript modifiers are stripped and decorated siblings are lowered as usual", () => {
+    // tsc accepts a class that mixes legacy decorators with accessor members, so
+    // the accessors must not make the rest of the class an error. A decorated
+    // abstract accessor is decorated like an abstract field (no body member).
+    expect(
+      transpile(`
+        declare const dec: any;
+        abstract class Entity {
+          @dec id = 0;
+          accessor name = "";
+          private accessor b = 2;
+          protected readonly accessor c = 3;
+          public static accessor d = 4;
+          protected static override accessor e = 5;
+          abstract accessor f: number;
+          @dec abstract accessor g: number;
+          @dec save() {}
+        }
+      `),
+    ).toMatchInlineSnapshot(`
+      "class Entity {
+        constructor() {
+          this.id = 0;
+        }
+        #name = "";
+        get name() {
+          return this.#name;
+        }
+        set name(v) {
+          this.#name = v;
+        }
+        #b = 2;
+        get b() {
+          return this.#b;
+        }
+        set b(v) {
+          this.#b = v;
+        }
+        #c = 3;
+        get c() {
+          return this.#c;
+        }
+        set c(v) {
+          this.#c = v;
+        }
+        static #d = 4;
+        static get d() {
+          return this.#d;
+        }
+        static set d(v) {
+          this.#d = v;
+        }
+        static #e = 5;
+        static get e() {
+          return this.#e;
+        }
+        static set e(v) {
+          this.#e = v;
+        }
+        save() {}
+      }
+      __legacyDecorateClassTS([
+        dec
+      ], Entity.prototype, "id", undefined);
+      __legacyDecorateClassTS([
+        dec
+      ], Entity.prototype, "g", undefined);
+      __legacyDecorateClassTS([
+        dec
+      ], Entity.prototype, "save", null);"
+    `);
+  });
+
+  test("emitDecoratorMetadata describes the accessor's declared type, unlike a getter's signature", () => {
+    expect(
+      transpile(
+        `
+          declare const dec: any;
+          class A {
+            @dec accessor x: number = 1;
+            @dec get y(): string { return ""; }
+          }
+        `,
+        { emitDecoratorMetadata: true },
+      ),
+    ).toMatchInlineSnapshot(`
+      "class A {
+        #x = 1;
+        get x() {
+          return this.#x;
+        }
+        set x(v) {
+          this.#x = v;
+        }
+        get y() {
+          return "";
+        }
+      }
+      __legacyDecorateClassTS([
+        dec,
+        __legacyMetadataTS("design:type", Number)
+      ], A.prototype, "x", null);
+      __legacyDecorateClassTS([
+        dec,
+        __legacyMetadataTS("design:type", String),
+        __legacyMetadataTS("design:paramtypes", [])
+      ], A.prototype, "y", null);"
+    `);
+  });
+
+  test("useDefineForClassFields: false moves the backing field's initializer into the constructor", () => {
+    expect(
+      transpile(
+        `
+          class A {
+            a = 1;
+            accessor x = this.a + 1;
+            b = 2;
+          }
+        `,
+        { useDefineForClassFields: false },
+      ),
+    ).toMatchInlineSnapshot(`
+      "class A {
+        constructor() {
+          this.a = 1;
+          this.#x = this.a + 1;
+          this.b = 2;
+        }
+        #x;
+        get x() {
+          return this.#x;
+        }
+        set x(v) {
+          this.#x = v;
+        }
+      }"
+    `);
+  });
+
+  test("accessor is still an ordinary member name", () => {
+    expect(
+      transpile(`
+        declare const computed: string;
+        class A {
+          accessor = 1;
+          static accessor: string = "s";
+          accessor
+          afterNewline = 2;
+          accessor
+          [computed] = 3;
+          accessor?: number;
+          accessor(): void {}
+        }
+        const o = { accessor: 1 };
+      `),
+    ).toMatchInlineSnapshot(`
+      "class A {
+        accessor = 1;
+        static accessor = "s";
+        accessor;
+        afterNewline = 2;
+        accessor;
+        [computed] = 3;
+        accessor;
+        accessor() {}
+      }
+      const o = { accessor: 1 };"
+    `);
+  });
+
+  test.concurrent("accessors behave like the native keyword at runtime", async () => {
+    const { stdout, stderr, exitCode } = await run("legacy-accessor-runtime", {
+      "index.ts": `
+        import Anon from "./anon";
+        const keyCalls: string[] = [];
+        const key = () => { keyCalls.push("key"); return "dyn"; };
+        class Base {
+          accessor name = "base";
+          static accessor count = 1;
+          accessor #secret = "s";
+          accessor [key()] = "d";
+          get secret() { return this.#secret; }
+          set secret(v: string) { this.#secret = v; }
+        }
+        class Derived extends Base {
+          accessor name = "derived";
+          superName() { return super.name; }
+        }
+        const Expr = class { accessor e = 1 };
+        const d: any = new Derived();
+        d.name = "changed";
+        d.dyn = "d2";
+        d.secret = "s2";
+        Base.count++;
+        console.log(JSON.stringify({
+          name: d.name,
+          superName: d.superName(),
+          baseName: new Base().name,
+          count: Base.count,
+          dyn: d.dyn,
+          keyCalls,
+          secret: d.secret,
+          protoKeys: Object.getOwnPropertyNames(Base.prototype),
+          ownKeys: Object.keys(d),
+          descriptor: typeof Object.getOwnPropertyDescriptor(Base.prototype, "name").set,
+          expr: new Expr().e,
+          anonName: Anon.name,
+          anonValue: new Anon().z,
+        }));
+      `,
+      "anon.ts": `export default class { accessor z = "z" }`,
+    });
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      name: "changed",
+      superName: "base",
+      baseName: "base",
+      count: 2,
+      dyn: "d2",
+      keyCalls: ["key"],
+      secret: "s2",
+      protoKeys: ["constructor", "name", "dyn", "secret"],
+      ownKeys: [],
+      descriptor: "function",
+      expr: 1,
+      anonName: "default",
+      anonValue: "z",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("legacy decorators on accessors receive the property descriptor", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      "legacy-accessor-decorated",
+      {
+        "index.ts": `
+          const seen: unknown[] = [];
+          // Stand-in for reflect-metadata: __legacyMetadataTS calls Reflect.metadata when it exists.
+          (Reflect as any).metadata = (k: string, v: any) => (_target: object, key: string) => {
+            seen.push({ metadata: k, type: v.name, key });
+          };
+          function record(target: object, key: string, desc?: PropertyDescriptor) {
+            seen.push({
+              key,
+              onPrototype: target === A.prototype,
+              onClass: target === A,
+              get: typeof desc?.get,
+              set: typeof desc?.set,
+              args: arguments.length,
+            });
+          }
+          function double(_target: object, _key: string, desc: PropertyDescriptor): PropertyDescriptor {
+            const { get } = desc;
+            return { ...desc, get() { return get!.call(this) * 2; } };
+          }
+          let keyEvaluations = 0;
+          const key = () => "k" + keyEvaluations++;
+          class A {
+            @record accessor x = 1;
+            @double accessor n: number = 21;
+            @record accessor [key()] = 3;
+            @record static accessor s = 2;
+          }
+          const a: any = new A();
+          const nBefore = a.n;
+          a.n = 5;
+          console.log(JSON.stringify({ seen, keyEvaluations, k0: a.k0, nBefore, nAfter: a.n, x: a.x, s: A.s }));
+        `,
+      },
+      { emitDecoratorMetadata: true },
+    );
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      seen: [
+        { metadata: "design:type", type: "Object", key: "x" },
+        { key: "x", onPrototype: true, onClass: false, get: "function", set: "function", args: 3 },
+        { metadata: "design:type", type: "Number", key: "n" },
+        { metadata: "design:type", type: "Object", key: "k0" },
+        { key: "k0", onPrototype: true, onClass: false, get: "function", set: "function", args: 3 },
+        { metadata: "design:type", type: "Object", key: "s" },
+        { key: "s", onPrototype: false, onClass: true, get: "function", set: "function", args: 3 },
+      ],
+      keyEvaluations: 1,
+      k0: 3,
+      nBefore: 42,
+      nAfter: 10,
+      x: 1,
+      s: 2,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent(
+    "useDefineForClassFields: false initializes accessors in source order with the other fields",
+    async () => {
+      const { stdout, stderr, exitCode } = await run(
+        "legacy-accessor-use-define",
+        {
+          "index.ts": `
+          const order: string[] = [];
+          class A {
+            a = (order.push("a"), 1);
+            accessor x = (order.push("x"), this.a + 1);
+            b = (order.push("b"), 2);
+            static accessor s = (order.push("s"), 3);
+            constructor() { order.push("ctor"); }
+          }
+          const a = new A();
+          console.log(JSON.stringify({ order, x: a.x, s: A.s, ownKeys: Object.keys(a) }));
+        `,
+        },
+        { useDefineForClassFields: false },
+      );
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ order: ["s", "a", "x", "b", "ctor"], x: 2, s: 3, ownKeys: ["a", "b"] });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test.concurrent("bundling keeps the generated bindings of different files apart", async () => {
+    using dir = tempDir("legacy-accessor-bundle", {
+      "tsconfig.json": JSON.stringify({ compilerOptions: { experimentalDecorators: true } }),
+      // b.ts is bundled first and its export keeps the name _computedKey, so both
+      // the temporary generated for B's computed key and the function declared
+      // below need fresh names. If those two ended up sharing a name, defining B
+      // would overwrite the function.
+      "index.ts": `
+        import { B, _computedKey as exported } from "./b";
+        function _computedKey() { return "function"; }
+        const key = () => "ka";
+        class A {
+          #x = "private";
+          accessor x = 1;
+          accessor [key()] = 2;
+          privateX() { return this.#x; }
+        }
+        const a: any = new A();
+        const b: any = new B();
+        console.log(JSON.stringify({
+          ax: a.x, aka: a.ka, privateX: a.privateX(), bx: b.x, bkb: b.kb, fn: _computedKey(), exported,
+        }));
+      `,
+      "b.ts": `
+        export const _computedKey = "exported";
+        const key = () => "kb";
+        export class B {
+          accessor x = 3;
+          accessor [key()] = 4;
+        }
+      `,
+    });
+    const build = await Bun.build({
+      entrypoints: [join(String(dir), "index.ts")],
+      outdir: join(String(dir), "out"),
+      target: "bun",
+    });
+    expect(build.logs).toEqual([]);
+    expect(build.success).toBe(true);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join("out", "index.js")],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      ax: 1,
+      aka: 2,
+      privateX: "private",
+      bx: 3,
+      bkb: 4,
+      fn: "function",
+      exported: "exported",
+    });
+    expect(exitCode).toBe(0);
+  });
+});

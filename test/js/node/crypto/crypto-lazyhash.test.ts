@@ -66,7 +66,9 @@ describe.each([
   test("works as a stream and digest() is still readable after the stream ends", async () => {
     const h = make();
     h.end("streamed");
-    const out: Buffer = h.read();
+    const chunks: Buffer[] = [];
+    for await (const chunk of h) chunks.push(chunk as Buffer);
+    const out = Buffer.concat(chunks);
     const expected =
       name === "Hash"
         ? createHash("sha256").update("streamed").digest("hex")

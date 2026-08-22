@@ -484,7 +484,9 @@ void setupJSHashClassStructure(JSC::LazyClassStructure::Initializer& init)
     auto* globalObject = defaultGlobalObject(init.global);
     // class Hash extends LazyTransform (internal/streams/lazy_transform)
     auto* lazyTransform = globalObject->internalModuleRegistry()->requireId(init.global, init.vm, InternalModuleRegistry::Field::InternalStreamsLazyTransform).getObject();
+    RELEASE_ASSERT(lazyTransform);
     JSValue lazyTransformPrototype = lazyTransform->getDirect(init.vm, init.vm.propertyNames->prototype);
+    RELEASE_ASSERT(lazyTransformPrototype && lazyTransformPrototype.isObject());
 
     auto* prototypeStructure = JSHashPrototype::createStructure(init.vm, init.global, lazyTransformPrototype);
     auto* prototype = JSHashPrototype::create(init.vm, init.global, prototypeStructure);

@@ -691,7 +691,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         // so the sourceMappingURL resolves relative to the HTML
                         // file rather than a JS file next to the .map. Point at
                         // the .map path relative to the HTML chunk's directory.
-                        let mut relative_platform_buf = path::path_buffer_pool::get();
+                        let mut relative_spill: Vec<u8> = Vec::new();
                         let [a, b]: [&[u8]; 2] = if !c.options.public_path.is_empty() {
                             cheap_prefix_normalizer(
                                 c.options.public_path,
@@ -719,13 +719,10 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                 if html_dir.is_empty() {
                                     &source_map_final_rel_path
                                 } else {
-                                    path::resolve_path::relative_platform_buf::<
+                                    path::resolve_path::relative_platform_spill::<
                                         path::platform::Posix,
-                                        false,
                                     >(
-                                        &mut relative_platform_buf[..],
-                                        html_dir,
-                                        &source_map_final_rel_path,
+                                        &mut relative_spill, html_dir, &source_map_final_rel_path
                                     )
                                 },
                             )

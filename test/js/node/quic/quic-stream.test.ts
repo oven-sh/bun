@@ -178,6 +178,90 @@ describe("HTTP/3 header encoding", () => {
     expect(seen.length).toBe(1);
     expect(Object.keys(seen[0])).not.toContain("authorization");
   });
+
+  // A single header whose decoded size is well under the configured
+  // maxHeaderLength must decode cleanly; the QPACK decoder must not abort the
+  // whole connection at the lsxpack 16-bit buffer ceiling.
+  test("accepts a large header value under the configured limit and keeps the session alive", async () => {
+    const app = { maxHeaderPairs: 1000, maxHeaderLength: 1 << 20, maxFieldSectionSize: 1 << 20 };
+    let serverSessionError: any;
+    let received: number | undefined;
+    await using server = await listen(
+      async serverSession => {
+        serverSession.onerror = (e: any) => {
+          serverSessionError = e;
+        };
+        serverSession.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        alpn: ["h3"],
+        application: app,
+        transportParams: { maxIdleTimeout: 1 },
+        onheaders(this: any, headers: Record<string, string>) {
+          received = headers["x-big"]?.length;
+          this.sendHeaders({ ":status": "200" });
+          this.writer.endSync();
+        },
+      },
+    );
+
+    const client = await connect(server.address, {
+      servername: "localhost",
+      alpn: "h3",
+      verifyPeer: "manual",
+      application: app,
+      transportParams: { maxIdleTimeout: 1 },
+    });
+    let clientSessionError: any;
+    client.onerror = (e: any) => {
+      clientSessionError = e;
+    };
+    client.closed.catch(() => {});
+    await client.opened;
+
+    // ~60 KB: Huffman-encodes to ~45 KB, and the decoder reserves 1.5x that,
+    // which previously overflowed the 16-bit lsxpack length and aborted the
+    // connection with H3_QPACK_DECOMPRESSION_FAILED.
+    const BIG = Buffer.alloc(60000, "A").toString();
+    const first = Promise.withResolvers<string>();
+    const sessionDied = client.closed.then(
+      () => Promise.reject(new Error("session closed before the large-header request was answered")),
+      e => Promise.reject(e),
+    );
+    sessionDied.catch(() => {});
+    const st1 = await client.createBidirectionalStream({
+      headers: { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost", "x-big": BIG },
+      onheaders(headers: Record<string, string>) {
+        first.resolve(headers[":status"]);
+      },
+    });
+    st1.closed.catch(() => {});
+
+    expect(await Promise.race([first.promise, sessionDied])).toBe("200");
+    expect(received).toBe(BIG.length);
+    expect(client.destroyed).toBe(false);
+
+    // The session must still carry a second request.
+    const second = Promise.withResolvers<string>();
+    const st2 = await client.createBidirectionalStream({
+      headers: { ":method": "GET", ":path": "/2", ":scheme": "https", ":authority": "localhost" },
+      onheaders(headers: Record<string, string>) {
+        second.resolve(headers[":status"]);
+      },
+    });
+    st2.closed.catch(() => {});
+    expect(await Promise.race([second.promise, sessionDied])).toBe("200");
+
+    client.close();
+    await client.closed.catch(() => {});
+
+    expect(serverSessionError).toBeUndefined();
+    expect(clientSessionError).toBeUndefined();
+  });
 });
 
 describe("verifyClient", () => {

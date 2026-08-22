@@ -77,3 +77,58 @@ console.log(await result.outputs[0].text());
   expect(stdout).toContain(expected);
   expect(exitCode).toBe(0);
 });
+
+// Same wait, other producers whose completion is posted to the regular loop
+// from another thread (JSC's DeferredWorkTimer, postTaskTo): each hung the
+// same way.
+const producers = {
+  "WebAssembly.instantiate": `const { instance } = await WebAssembly.instantiate(new Uint8Array([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0]));
+  return "ok " + typeof instance.exports;`,
+  "crypto.subtle.sign": `const key = await crypto.subtle.generateKey({ name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  return "ok " + (await crypto.subtle.sign("HMAC", key, new Uint8Array(8))).byteLength;`,
+  MessageChannel: `const { port1, port2 } = new MessageChannel();
+  const data = await new Promise(resolve => {
+    port2.onmessage = e => resolve(e.data);
+    port1.postMessage("ok channel");
+  });
+  port1.close();
+  port2.close();
+  return data;`,
+  BroadcastChannel: `const a = new BroadcastChannel("39900"), b = new BroadcastChannel("39900");
+  const data = await new Promise(resolve => {
+    b.onmessage = e => resolve(e.data);
+    a.postMessage("ok broadcast");
+  });
+  a.close();
+  b.close();
+  return data;`,
+  Worker: `const worker = new Worker(new URL("./worker.js", import.meta.url).href);
+  const data = await new Promise((resolve, reject) => {
+    worker.onmessage = e => resolve(e.data);
+    worker.onerror = reject;
+  });
+  await worker.terminate();
+  return data;`,
+};
+
+for (const [name, body] of Object.entries(producers)) {
+  test.concurrent(`macro that awaits ${name} resolves`, async () => {
+    using dir = tempDir("39900-producer", {
+      "macro.ts": `export async function value() {\n  ${body}\n}\n`,
+      "worker.js": `postMessage("ok worker");`,
+      "index.ts": `import { value } from "./macro.ts" with { type: "macro" };
+console.log(JSON.stringify(value()));
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toMatch(/^"ok .*"$/m);
+    expect(exitCode).toBe(0);
+  });
+}

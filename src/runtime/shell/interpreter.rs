@@ -993,7 +993,6 @@ impl Interpreter {
         // Only `Script` can be a direct child of the interpreter.
         debug_assert!(matches!(self.nodes.get()[child.idx()], Node::Script(_)));
         log!("Interpreter script finish {}", exit_code);
-        Script::deinit_from_interpreter(self, child);
         self.free_node(child);
         self.exit_code.set(Some(exit_code));
         if self.async_commands_executing.get() == 0 {

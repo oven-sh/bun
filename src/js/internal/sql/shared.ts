@@ -2244,7 +2244,4 @@ export default {
   BasePooledConnection,
   BaseSQLAdapter,
   createPooledConnectionHandle,
-  // @ts-expect-error we're exporting a const enum which works in our builtins
-  // generator but not in typescript officially
-  SSLMode,
 };

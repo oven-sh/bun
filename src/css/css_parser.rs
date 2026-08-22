@@ -289,23 +289,21 @@ pub trait EnumProperty: Sized + Copy + Into<&'static str> {
 /// Skips to the end of the current block. Returns `true` if the matching
 /// closing token was found, `false` if the end of input was reached first
 /// (the block is unclosed).
-#[cold]
+/// Hot: `parse_nested_block` calls this on every block exit, so it must not allocate.
+#[inline(never)] // one copy, not one per `parse_nested_block` instantiation
 fn consume_until_end_of_block(block_type: BlockType, tokenizer: &mut Tokenizer) -> bool {
-    // Vec is fine for the cold path.
-    let mut stack: Vec<BlockType> = Vec::with_capacity(16);
-    stack.push(block_type);
+    let mut innermost = block_type;
+    let mut outer = SmallList::<BlockType, 16>::default();
 
     while let Ok(tok) = tokenizer.next() {
-        if let Some(b) = BlockType::closing(&tok) {
-            if *stack.last().unwrap() == b {
-                let _ = stack.pop();
-                if stack.is_empty() {
-                    return true;
-                }
+        if BlockType::closing(&tok) == Some(innermost) {
+            match outer.pop() {
+                Some(enclosing) => innermost = enclosing,
+                None => return true,
             }
-        }
-        if let Some(bt) = BlockType::opening(&tok) {
-            stack.push(bt);
+        } else if let Some(opened) = BlockType::opening(&tok) {
+            outer.append(innermost);
+            innermost = opened;
         }
     }
     false

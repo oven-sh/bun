@@ -711,8 +711,7 @@ pub(crate) fn print_kept_patched(manager: &mut PackageManager) {
     manager.kept_patched_text = render_kept_rows(&rows);
 }
 
-/// After the lockfile is cleaned: one warning per root `patchedDependencies` key whose `name@version` no longer names an installed npm package.
-/// Returns true when at least one such orphaned key exists (detected even when the log level is silent).
+/// After the lockfile is cleaned: one warning per root `patchedDependencies` key whose `name@version` no longer names an installed npm package. Returns true when any such key exists, even at a silent log level.
 pub(crate) fn warn_orphaned_patches(manager: &mut PackageManager) -> bool {
     if manager.lockfile.patched_dependencies.count() == 0 {
         return false;

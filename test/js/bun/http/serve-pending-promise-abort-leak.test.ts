@@ -626,9 +626,9 @@ const stoppedRequests: Array<[string, string, string[]]> = [
 ];
 test.each(stoppedRequests)("server.stop(true) inside the handler of %s aborts it", async (_what, head, expected) => {
   const events: string[] = [];
-  const { promise: reached, resolve: signalReached } = Promise.withResolvers<void>();
+  const { promise: reached, resolve: signalReached, reject: failReached } = Promise.withResolvers<void>();
   let stopped: Promise<void>;
-  const server = Bun.serve({
+  using server = Bun.serve({
     port: 0,
     idleTimeout: 0,
     fetch(req, srv) {
@@ -650,7 +650,9 @@ test.each(stoppedRequests)("server.stop(true) inside the handler of %s aborts it
   });
 
   const client = connect(Number(server.port), "127.0.0.1", () => client.write(head));
-  client.on("error", () => {});
+  // A reset after the server closed the connection is expected; a failure
+  // before the handler ran is not.
+  client.on("error", failReached);
 
   await reached;
   // The abort is delivered as the dispatch finishes; an immediate queued from

@@ -30,8 +30,7 @@ public:
     void subscribe(const String& name, ScriptExecutionContext&, BroadcastChannel&);
     void unsubscribe(const String& name, BroadcastChannel&);
     void post(const String& name, BroadcastChannel& source, Ref<SerializedScriptValue>&&);
-    // Synchronous single pop of a delivered-but-not-yet-dispatched message,
-    // for node:worker_threads receiveMessageOnPort(broadcastChannel).
+    // Synchronous pop of one undispatched message, for receiveMessageOnPort(channel).
     RefPtr<SerializedScriptValue> takePending(const String& name, BroadcastChannel&);
 
 private:
@@ -46,9 +45,7 @@ private:
         // Raw pointer used only for identity comparison under the lock;
         // never dereferenced.
         BroadcastChannel* identity;
-        // Messages posted but not yet dispatched (or synchronously consumed
-        // via takePending). Kept in the registry rather than the channel so
-        // the posting thread never needs a strong channel ref.
+        // Posted but not yet dispatched; kept here so posting needs no strong channel ref.
         Deque<Ref<SerializedScriptValue>> pending;
     };
 

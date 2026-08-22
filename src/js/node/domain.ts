@@ -83,9 +83,7 @@ domain.createDomain = domain.create = function () {
     domain.active = process.domain = stack.length ? stack[stack.length - 1] : null;
     return this;
   };
-  // Node's Domain.prototype._errorHandler: decorate, emit 'error' (not on a handlerless
-  // top-level domain), clear the domain stack, return whether a handler caught it.
-  // https://github.com/nodejs/node/blob/v26.3.0/lib/domain.js#L219
+  // Node's Domain.prototype._errorHandler (lib/domain.js); returns whether a handler caught it.
   d._errorHandler = function (er) {
     let caught = false;
 
@@ -120,8 +118,7 @@ domain.createDomain = domain.create = function () {
       }
     }
 
-    // Uncaught exceptions end the current tick; no domains stay entered
-    // between ticks.
+    // An uncaught exception ends the tick, so no domain stays entered.
     stack.length = 0;
     domain.active = process.domain = null;
 

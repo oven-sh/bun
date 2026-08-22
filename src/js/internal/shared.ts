@@ -159,8 +159,7 @@ const reportUncaughtException = $newCppFunction("BunProcess.cpp", "jsFunctionRep
 // callback keeps its place in the event loop; only the throw is rerouted. The
 // arity switch avoids materializing `arguments` for the shapes fs and dns use.
 function guardCallback(callback) {
-  // Node's MakeCallback runs async callbacks inside the domain active at dispatch
-  // and routes throws to its error handler; capture it at creation (== dispatch here).
+  // Like node's MakeCallback: run inside the domain active at dispatch, route throws to it.
   const domain = (process as any).domain;
   if (domain != null && typeof domain._errorHandler === "function") {
     return function guardedInDomain(a, b, c) {

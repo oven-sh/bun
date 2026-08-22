@@ -1,5 +1,4 @@
-// Control-channel message-type table from node's lib/internal/worker/io.js; values
-// must match node's exactly — they travel over the wire to internal/worker/messaging.ts.
+// Control-channel message types from node's lib/internal/worker/io.js; the values go over the wire.
 const messageTypes = {
   UP_AND_RUNNING: "upAndRunning",
   COULD_NOT_SERIALIZE_ERROR: "couldNotSerializeError",

@@ -2093,16 +2093,13 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             // DataCloneError otherwise. NapiPrototype, ObjectPrototype, and process.env
             // are allowed (Node supports structuredClone(process.env) as a plain object).
             if (inObject->classInfo() != JSFinalObject::info() && inObject->classInfo() != Zig::NapiPrototype::info() && inObject->classInfo() != JSC::ObjectPrototype::info() && !Bun::isProcessEnvClassInfo(inObject->classInfo())) {
-                // node reports this error for a MessageChannel found in a message
-                // (its ports would need transferring).
+                // node's error for a MessageChannel in a message.
                 if (inObject->inherits<JSMessageChannel>()) {
                     WebCore::propagateException(*m_lexicalGlobalObject, scope,
                         Exception { DataCloneError, "Object that needs transfer was found in message but not listed in transferList"_s });
                     return SerializationReturnCode::ExistingExceptionError;
                 }
-                // node (V8) renders a rejected callable with its source text
-                // (`function foo() {} could not be cloned.`); any other
-                // unsupported object is reported as a host object.
+                // node names a rejected callable by its source text, anything else as a host object.
                 if (auto* function = dynamicDowncast<JSC::JSFunction>(inObject)) {
                     JSString* sourceString = function->toString(m_lexicalGlobalObject);
                     RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);

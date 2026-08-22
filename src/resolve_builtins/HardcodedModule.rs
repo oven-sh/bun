@@ -198,8 +198,7 @@ pub enum HardcodedModule {
     /// gated behind '--expose-internals' like `bun:internal-for-testing`.
     #[strum(serialize = "internal/test/binding")]
     InternalTestBinding,
-    /// Node's `internal/worker/io` (message-type table), gated behind
-    /// '--expose-internals' like `internal/test/binding`.
+    /// Node's `internal/worker/io`, gated behind `--expose-internals`.
     #[strum(serialize = "internal/worker/io")]
     InternalWorkerIo,
 }

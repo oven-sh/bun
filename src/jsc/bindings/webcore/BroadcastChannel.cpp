@@ -147,8 +147,7 @@ bool BroadcastChannel::virtualHasPendingActivity() const
 
 void BroadcastChannel::jsRef(JSGlobalObject* lexicalGlobalObject)
 {
-    // node: ref() on a closed channel is a no-op (its handle is gone), and
-    // nothing would ever release the ref again.
+    // node: ref() on a closed channel is a no-op; nothing could release it again.
     if (isClosed())
         return;
     if (!m_hasRef) {

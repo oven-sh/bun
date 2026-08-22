@@ -220,8 +220,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
         return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "The \"port\" argument must be a MessagePort instance"_s);
     }
 
-    // node: `undefined` when the queue is empty, otherwise `{ message }` — built
-    // here so a posted `undefined`/falsy value is distinguishable from "empty".
+    // node: `undefined` when empty, else `{ message }` (so a posted undefined is distinguishable).
     bool hadMessage = false;
     JSValue message;
     if (auto* messagePort = dynamicDowncast<JSMessagePort>(port)) {

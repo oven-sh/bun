@@ -93,12 +93,10 @@ function internalBinding(name: string) {
     case "util":
       return { isInsideNodeModules };
     case "worker":
-      // node's env message port is the thread's control channel to its parent;
-      // bun's equivalent is the port to the main-thread messaging hub.
+      // node's env port is the thread's control channel to its parent.
       return { getEnvMessagePort: require("internal/worker/messaging").getMainThreadPort };
     case "js_stream":
-      // Just enough of JSStream for tests that probe how a native handle
-      // behaves (the structured-clone serializer rejects it as a host object).
+      // A host object the structured-clone serializer rejects, which is all the tests probe.
       return {
         JSStream: class JSStream {
           constructor() {

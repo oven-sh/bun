@@ -150,8 +150,7 @@ crypto_exports.hash = function hash(algorithm, input, outputEncoding = "hex") {
   return CryptoHasher.hash(algorithm, input, outputEncoding);
 };
 
-// Node's MakeCallback runs async crypto callbacks inside the active domain; bridge
-// the trailing callback through the domain-aware guard when one is active.
+// Like node's MakeCallback, the trailing callback runs inside the active domain.
 function wrapDomainCallbackLast(fn, name) {
   function wrapper() {
     if (process.domain != null) {

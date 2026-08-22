@@ -66,9 +66,7 @@ void BunBroadcastChannelRegistry::post(const String& name, BroadcastChannel& sou
         for (auto& sub : it->value) {
             if (sub.identity == &source)
                 continue;
-            // Queued in the registry (not captured in the task) so
-            // receiveMessageOnPort can consume it synchronously and close()
-            // drops what was never delivered.
+            // Queued here so receiveMessageOnPort can take it synchronously.
             sub.pending.append(message.copyRef());
             targets.append({ sub.ctxId, sub.ctxLoopKind, sub.channel });
         }

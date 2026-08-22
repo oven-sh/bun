@@ -4046,8 +4046,7 @@ function emitListeningNextTick(self) {
 }
 
 let cluster;
-// fe80::/10: first byte 0xfe, top two bits of the second byte 10.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2230
+// fe80::/10, as node's isIpv6LinkLocal (lib/net.js).
 function isIpv6LinkLocal(ip) {
   if (!isIPv6(ip)) return false;
   const firstColon = StringPrototypeIndexOf.$call(ip, ":");
@@ -4056,8 +4055,7 @@ function isIpv6LinkLocal(ip) {
   return (firstGroup & 0xffc0) === 0xfe80;
 }
 
-// Return the first non IPv6 link-local address if present, otherwise the
-// first address.
+// The first non link-local address, else the first address.
 function filterOnlyValidAddress(addresses) {
   for (const address of addresses) {
     if (!isIpv6LinkLocal(address.address)) {
@@ -4067,8 +4065,7 @@ function filterOnlyValidAddress(addresses) {
   return addresses[0];
 }
 
-// Node resolves a non-IP listen host through dns.lookup({ all: true }) and binds the
-// first non-link-local address: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2259
+// node's lookupAndListen (lib/net.js): resolve the host, bind the first non link-local address.
 function lookupAndListen(
   server,
   port,

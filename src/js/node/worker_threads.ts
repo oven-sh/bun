@@ -64,8 +64,7 @@ const {
 };
 const SHARE_ENV = Symbol.for("nodejs.worker_threads.SHARE_ENV");
 
-// node's BroadcastChannel (lib/internal/worker/io.js) adds non-WHATWG argument handling:
-// ERR_MISSING_ARGS, non-symbol name stringified, postMessage() arg required, closed => DOMException.
+// node's BroadcastChannel (lib/internal/worker/io.js) argument handling on top of the WHATWG class.
 class BroadcastChannel extends WebBroadcastChannel {
   #closed = false;
 
@@ -76,8 +75,7 @@ class BroadcastChannel extends WebBroadcastChannel {
     super(`${name}`);
   }
 
-  // node brand-checks `this` on every member before anything else
-  // (ERR_INVALID_THIS, checked ahead of argument validation).
+  // node brand-checks `this` before validating arguments.
   static #check(channel: BroadcastChannel) {
     if (!(#closed in channel)) throw $ERR_INVALID_THIS("BroadcastChannel");
   }
@@ -1247,8 +1245,7 @@ class Worker extends EventEmitter {
     this.emit("exit", e.code);
   }
 
-  // node's Worker[kOnCouldNotSerializeErr]: the worker reported that
-  // serializing its uncaught exception failed.
+  // node's Worker[kOnCouldNotSerializeErr].
   #onCouldNotSerializeError() {
     this.emit("error", $ERR_WORKER_UNSERIALIZABLE_ERROR("Serializing an uncaught exception failed"));
   }

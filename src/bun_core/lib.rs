@@ -2431,6 +2431,37 @@ pub mod ffi {
         UTSNAME.get_or_init(uname)
     }
 
+    /// A borrowed `&'a [T]` in C layout (`struct { const T* ptr; size_t len; }`)
+    /// for passing slices *into* `extern "C"` functions by value. Carries the
+    /// borrow's lifetime, so an import taking `FfiSlice<'_, T>` can be declared
+    /// `safe fn`: the callee may read `len` elements at `ptr` for the duration
+    /// of the call and nothing else.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct FfiSlice<'a, T = u8> {
+        ptr: *const T,
+        len: usize,
+        _borrow: core::marker::PhantomData<&'a [T]>,
+    }
+
+    impl<'a, T> FfiSlice<'a, T> {
+        #[inline]
+        pub const fn new(s: &'a [T]) -> Self {
+            Self {
+                ptr: s.as_ptr(),
+                len: s.len(),
+                _borrow: core::marker::PhantomData,
+            }
+        }
+    }
+
+    impl<'a, T> From<&'a [T]> for FfiSlice<'a, T> {
+        #[inline]
+        fn from(s: &'a [T]) -> Self {
+            Self::new(s)
+        }
+    }
+
     /// Slice up to (excluding) the first NUL byte;
     /// re-exported as `bun_core::slice_to_nul`.
     #[inline]

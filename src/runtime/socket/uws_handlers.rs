@@ -189,7 +189,10 @@ where
     }
 }
 
-impl<const SSL: bool> RawSocketEvents<SSL> for websocket_upgrade_client::NewHttpUpgradeClient<SSL> {
+impl<const SSL: bool> RawSocketEvents<SSL> for websocket_upgrade_client::NewHttpUpgradeClient<SSL>
+where
+    Self: bun_http_jsc::websocket_client::websocket_proxy_tunnel::IntoUpgradeClientRef,
+{
     const HAS_ON_OPEN: bool = true;
 
     fn on_open(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) -> JsResult<()> {

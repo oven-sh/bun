@@ -198,17 +198,21 @@ public:
     void didConnect();
     void didStartClosingHandshake();
     void didClose(unsigned unhandledBufferedAmount, unsigned short code, const String& reason);
-    void didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize, const PerMessageDeflateParams* deflate_params, void* customSSLCtx);
-    void didConnectWithTunnel(void* tunnel, char* bufferedData, size_t bufferedDataSize, const PerMessageDeflateParams* deflate_params);
+    void didConnect(us_socket_t* socket, void* bufferedData, const PerMessageDeflateParams* deflate_params, void* customSSLCtx);
+    void didConnectWithTunnel(void* tunnel, void* bufferedData, const PerMessageDeflateParams* deflate_params);
     void didFailWithErrorCode(Bun::WebSocketErrorCode code);
 
     void didReceiveMessage(String&& message);
     void didReceiveBinaryData(const AtomString& eventName, const std::span<const uint8_t> binaryData);
+    /// `bun_core::ffi::FfiSlice` — a borrowed `&[u8]` passed by value.
+    struct FfiSlice {
+        const uint8_t* ptr;
+        size_t len;
+        std::span<const uint8_t> span() const { return { ptr, len }; }
+    };
     struct HandshakeRawHeader {
-        const uint8_t* name_ptr;
-        size_t name_len;
-        const uint8_t* value_ptr;
-        size_t value_len;
+        FfiSlice name;
+        FfiSlice value;
     };
     void didReceiveHandshakeResponse(uint16_t statusCode, std::span<const uint8_t> statusMessage, std::span<const HandshakeRawHeader> headers, std::span<const uint8_t> body);
 

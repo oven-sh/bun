@@ -259,6 +259,7 @@ unsafe extern "C" {
 
 /// Owns one `SSL_CTX` reference; `SSL_CTX_free`s it on drop. Construct from a
 /// pointer that already carries a +1 (`SSL_CTX_new`, `SSL_CTX_up_ref`).
+#[repr(transparent)]
 pub struct OwnedSslCtx(core::ptr::NonNull<SSL_CTX>);
 
 impl OwnedSslCtx {
@@ -481,6 +482,21 @@ impl Iterator for CommonNames<'_> {
 }
 
 impl SSL {
+    /// The SNI host name configured on (client) or received by (server) this
+    /// connection, if any.
+    pub fn servername(&self) -> Option<&[u8]> {
+        // SAFETY: `self` is a live SSL; the returned string is owned by the
+        // SSL/session and outlives this borrow.
+        unsafe {
+            let p = SSL_get_servername(self, 0 /* TLSEXT_NAMETYPE_host_name */);
+            if p.is_null() {
+                None
+            } else {
+                Some(core::ffi::CStr::from_ptr(p).to_bytes())
+            }
+        }
+    }
+
     /// The peer's leaf certificate, borrowed from this SSL's cert chain.
     pub fn peer_leaf_certificate(&mut self) -> Option<&mut X509> {
         // SAFETY: the chain and its entries are owned by this SSL and outlive

@@ -818,6 +818,14 @@ impl<T: AnyRefCounted> RefPtr<T> {
         unsafe { crate::ThisPtr::new(self.data.as_ptr()) }
     }
 
+    /// Take a new ref on the pointee of a dispatch-time [`ThisPtr`](crate::ThisPtr).
+    /// Safe: the `ThisPtr` invariant is that its pointee is live.
+    #[inline]
+    pub fn from_this(this: crate::ThisPtr<T>) -> Self {
+        // SAFETY: `ThisPtr::new` invariant — pointee is live.
+        unsafe { Self::init_ref(this.as_ptr()) }
+    }
+
     /// Consume this `RefPtr` into a [`ThisPtr`](crate::ThisPtr), transferring
     /// the ref to the callee — the counterpart of `into_raw` for the
     /// `ThisPtr`-shaped dispatch entry points. Safe for the same reason

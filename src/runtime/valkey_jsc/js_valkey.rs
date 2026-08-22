@@ -1527,10 +1527,7 @@ impl JSValkeyClient {
         }
         let ssl_ctx: Option<*mut uws::SslCtx> = match &self.client.get().tls {
             valkey::TLS::None => None,
-            valkey::TLS::Enabled => {
-                // SAFETY: `vm` is the live per-thread VM (see above).
-                Some(unsafe { crate::jsc_hooks::default_client_ssl_ctx(vm) })
-            }
+            valkey::TLS::Enabled => Some(crate::jsc_hooks::default_client_ssl_ctx(vm)),
             valkey::TLS::Custom(_) => Some(self._secure.get().unwrap()),
         };
 

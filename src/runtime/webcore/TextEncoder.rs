@@ -268,10 +268,11 @@ unsafe extern "C" fn TextEncoder__encodeInto16(
     buf_ptr: *mut u8,
     buf_len: usize,
 ) -> u64 {
-    // SAFETY: caller guarantees buf_ptr[0..buf_len] is a valid mutable buffer
-    let output = unsafe { core::slice::from_raw_parts_mut(buf_ptr, buf_len) };
+    // SAFETY: caller guarantees buf_ptr[0..buf_len] is a valid mutable buffer. `ffi::slice_mut`
+    // tolerates the C convention of `(null, 0)` from a detached ArrayBufferView.
+    let output = unsafe { bun_core::ffi::slice_mut(buf_ptr, buf_len) };
     // SAFETY: caller guarantees input_ptr[0..input_len] is valid UTF-16 data
-    let input = unsafe { core::slice::from_raw_parts(input_ptr, input_len) };
+    let input = unsafe { bun_core::ffi::slice(input_ptr, input_len) };
     let result: strings::EncodeIntoResult = strings::copy_utf16_into_utf8(output, input);
     // Pack `read` at byte offset 0 and `written` at offset 4 via native-endian bytes — no `unsafe`.
     let mut b = [0u8; 8];
@@ -290,10 +291,11 @@ unsafe extern "C" fn TextEncoder__encodeInto8(
     buf_ptr: *mut u8,
     buf_len: usize,
 ) -> u64 {
-    // SAFETY: caller guarantees buf_ptr[0..buf_len] is a valid mutable buffer
-    let output = unsafe { core::slice::from_raw_parts_mut(buf_ptr, buf_len) };
+    // SAFETY: caller guarantees buf_ptr[0..buf_len] is a valid mutable buffer. `ffi::slice_mut`
+    // tolerates the C convention of `(null, 0)` from a detached ArrayBufferView.
+    let output = unsafe { bun_core::ffi::slice_mut(buf_ptr, buf_len) };
     // SAFETY: caller guarantees input_ptr[0..input_len] is valid Latin-1 data
-    let input = unsafe { core::slice::from_raw_parts(input_ptr, input_len) };
+    let input = unsafe { bun_core::ffi::slice(input_ptr, input_len) };
     let result: strings::EncodeIntoResult = strings::copy_latin1_into_utf8(output, input);
     // Pack `read` at byte offset 0 and `written` at offset 4 via native-endian bytes — no `unsafe`.
     let mut b = [0u8; 8];

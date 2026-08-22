@@ -2,6 +2,7 @@ import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
+import { run } from "node:test";
 
 describe("node:test", () => {
   // These three drive the largest fixtures (01-harness has 32 node:test cases);
@@ -323,6 +324,113 @@ describe("node:test", () => {
       stderr: expect.stringContaining("0 fail"),
     });
   });
+
+  test("should enforce a top-level suite's signal option", async () => {
+    const { exitCode, stdout, stderr } = await runTests(["33-suite-signal.js"]);
+    const markers = stdout.split("\n").filter(line => line.startsWith("OBS "));
+    expect(markers).toEqual([
+      "OBS pre-aborted suite callback ran",
+      "OBS first child ran",
+      "OBS running child settled, signal aborted: true",
+      "OBS after ran, suite signal aborted: true",
+      "OBS before hook aborted the suite",
+      "OBS second before hook still ran",
+      "OBS after of the suite aborted by its hook ran, suite signal aborted: true",
+    ]);
+    // Each aborted suite fails with its signal's reason.
+    expect(stderr).toContain("aborted before declaration");
+    expect(stderr).toContain("aborted by an earlier test");
+    expect(stderr).toContain("aborted while running");
+    expect(stderr).toContain("aborted by a before hook");
+    expect(stderr).toContain("The test was aborted");
+    expect(stderr).toContain("test did not finish before its parent and was cancelled");
+    expect(stderr).not.toContain("too late to matter");
+    // The deliberate failures: five suites, the two children cancelled by the
+    // abort while running, and the child of the suite its before hook aborted.
+    expect(stderr).toContain("4 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 1,
+      stderr: expect.stringContaining("8 fail"),
+    });
+  });
+
+  // Fixtures 32 and 34 each hold a before hook that deliberately outlasts a 1s
+  // suite timeout, on top of the debug+ASAN child's startup, so like the
+  // fixtures at the top they get headroom and overlap with each other.
+  test.concurrent(
+    "should enforce a top-level suite's timeout option",
+    async () => {
+      const { exitCode, stdout, stderr } = await runTests(["32-suite-timeout.js"]);
+      const markers = stdout.split("\n").filter(line => line.startsWith("OBS "));
+      expect(markers).toEqual([
+        "OBS before ran",
+        "OBS running child settled, signal aborted: true",
+        "OBS after ran, suite signal aborted: false",
+        "OBS child ran after the slow before hook",
+      ]);
+      // The suite's own verdict, and the verdict of the children it stopped.
+      expect(stderr).toContain("test timed out after 20ms");
+      expect(stderr).toContain("test did not finish before its parent and was cancelled");
+      // The deliberate failures: the running child, the queued child, the
+      // queued nested suite, the suite itself, and the test with a timeout of
+      // its own.
+      expect(stderr).toContain("4 pass");
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 1,
+        stderr: expect.stringContaining("5 fail"),
+      });
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "should enforce an inline suite's timeout and signal options",
+    async () => {
+      const { exitCode, stderr } = await runTests(["34-inline-suite-stop.js"]);
+      // The owning test fails for the three stopped suites, with the timeout as
+      // the reported cause; the before-hook test and the one inspecting what
+      // the suites left behind pass.
+      expect(stderr).toContain("error: 3 subtests failed");
+      expect(stderr).toContain("test timed out after 20ms");
+      expect(stderr).toContain("2 pass");
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 1,
+        stderr: expect.stringContaining("1 fail"),
+      });
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "should report a stopped inline suite's own error and its cancelled children through run()",
+    async () => {
+      const events = await run({ files: [join(import.meta.dirname, "fixtures", "34-inline-suite-stop.js")] }).toArray();
+      const outcomes = events
+        .filter(({ type }) => type === "test:pass" || type === "test:fail")
+        .map(({ type, data }) => [data.name, type === "test:pass" ? "pass" : data.details.error.message])
+        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+      const cancelled = "test did not finish before its parent and was cancelled";
+      expect(outcomes).toEqual([
+        ["aborted by its own before hook", "inline suite aborted by a before hook"],
+        ["already aborted", "inline abort reason"],
+        ["an inline suite's before hooks do not count against its timeout", "pass"],
+        ["before hook outlasts the timeout", "pass"],
+        ["child of the aborted suite", cancelled],
+        ["child of the suite aborted by its hook", cancelled],
+        ["inline suites are stopped by their timeout or an aborted signal", "3 subtests failed"],
+        ["nested child", cancelled],
+        ["nested suite queued when the suite times out", cancelled],
+        ["passes", "pass"],
+        ["queued when the suite times out", cancelled],
+        ["running when the suite times out", cancelled],
+        ["runs after the slow before hook", "pass"],
+        ["times out", "test timed out after 20ms"],
+        ["what the stopped inline suites left behind", "pass"],
+        ["within its timeout", "pass"],
+      ]);
+    },
+    30_000,
+  );
 });
 
 async function runTests(filenames: string[], env: Record<string, string> = {}, args: string[] = []) {

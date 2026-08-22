@@ -629,6 +629,12 @@ impl RepositoryExt for Repository {
         }
 
         if url.starts_with(b"ssh://") {
+            // Like hosted-git-info's parseUrl, only "correct" URLs that do not parse as-is;
+            // ssh://git@github.com:2222/user/repo is a port, not an scp-style colon.
+            if hosted_git_info::is_parseable_url(url) {
+                return Some(url);
+            }
+
             // TODO(markovejnovic): This is a stop-gap. One of the problems with the implementation
             // here is that we should integrate hosted_git_info more thoroughly into the codebase
             // to avoid the allocation and copy here. For now, the thread-local buffer is a good

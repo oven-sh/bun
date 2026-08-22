@@ -146,6 +146,7 @@ typedef struct ErrorableResolvedSource {
 } ErrorableResolvedSource;
 
 typedef struct SystemError {
+    /// MinInt (`SystemError::NO_ERRNO` in Rust) = the error gets `errno: undefined`
     int errno_;
     BunString code;
     BunString message;

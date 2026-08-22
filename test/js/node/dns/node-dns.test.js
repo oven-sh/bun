@@ -157,6 +157,101 @@ test.skipIf(isWindows)("dns.resolveSrv accepts compressed target in RDATA", asyn
   }
 });
 
+// Node only sets a numeric `errno` on DNS errors when libuv reported a
+// numeric error (getaddrinfo/getnameinfo). c-ares resolver failures carry a
+// string code and leave `errno` undefined. https://github.com/oven-sh/bun/issues/37320
+test.skipIf(isWindows)("resolver query errors leave errno undefined, lookup errors keep a number", async () => {
+  const socket = dgram.createSocket("udp4");
+  try {
+    socket.on("message", (query, rinfo) => {
+      // Reply NXDOMAIN to every query.
+      const res = Buffer.from(query);
+      res[2] = 0x81; // QR=1, RD=1
+      res[3] = 0x83; // RA=1, RCODE=3 (NXDOMAIN)
+      res.fill(0, 6, 12); // ANCOUNT/NSCOUNT/ARCOUNT = 0
+      socket.send(res, rinfo.port, rinfo.address);
+    });
+    socket.bind(0, "127.0.0.1");
+    await once(socket, "listening");
+    const { port } = socket.address();
+
+    const servers = ["127.0.0.1:" + port];
+    const resolver = new dns.Resolver({ timeout: 1000, tries: 1 });
+    resolver.setServers(servers);
+    const promisesResolver = new dns.promises.Resolver({ timeout: 1000, tries: 1 });
+    promisesResolver.setServers(servers);
+
+    const unexpectedSuccess = new Error("expected the query to fail");
+    const callbackError = query =>
+      new Promise((resolve, reject) => query(err => (err ? resolve(err) : reject(unexpectedSuccess))));
+    const promiseError = promise =>
+      promise.then(
+        () => {
+          throw unexpectedSuccess;
+        },
+        err => err,
+      );
+
+    const errors = {
+      resolve4: await callbackError(cb => resolver.resolve4("invalid.invalid", cb)),
+      resolveAny: await callbackError(cb => resolver.resolveAny("invalid.invalid", cb)),
+      reverse: await callbackError(cb => resolver.reverse("192.0.2.1", cb)),
+      promisesResolve4: await promiseError(promisesResolver.resolve4("invalid.invalid")),
+      promisesResolveAny: await promiseError(promisesResolver.resolveAny("invalid.invalid")),
+      promisesReverse: await promiseError(promisesResolver.reverse("192.0.2.1")),
+      // dns.lookup() rejects a name with a NUL byte before it reaches a resolver
+      // backend, so this getaddrinfo failure does not need the network either.
+      lookup: await promiseError(dns.promises.lookup("invalid.invalid\0")),
+    };
+
+    // Node keeps `errno` as an own property of the error and only leaves its
+    // value undefined, so check the property is still there.
+    const shapes = Object.fromEntries(
+      Object.entries(errors).map(([name, err]) => [
+        name,
+        {
+          code: err.code,
+          syscall: err.syscall,
+          hostname: err.hostname,
+          errno: err.errno,
+          hasOwnErrno: Object.hasOwn(err, "errno"),
+        },
+      ]),
+    );
+    const query = syscall => ({
+      code: "ENOTFOUND",
+      syscall,
+      hostname: "invalid.invalid",
+      errno: undefined,
+      hasOwnErrno: true,
+    });
+    const reverse = {
+      code: "ENOTFOUND",
+      syscall: "getHostByAddr",
+      hostname: "192.0.2.1",
+      errno: undefined,
+      hasOwnErrno: true,
+    };
+    expect(shapes).toEqual({
+      resolve4: query("queryA"),
+      resolveAny: query("queryAny"),
+      reverse,
+      promisesResolve4: query("queryA"),
+      promisesResolveAny: query("queryAny"),
+      promisesReverse: reverse,
+      lookup: {
+        code: "ENOTFOUND",
+        syscall: "getaddrinfo",
+        hostname: "invalid.invalid\0",
+        errno: expect.any(Number),
+        hasOwnErrno: true,
+      },
+    });
+  } finally {
+    socket.close();
+  }
+});
+
 test("dns.resolveTxt (txt.socketify.dev)", () => {
   const { promise, resolve, reject } = Promise.withResolvers();
   dns.resolveTxt("txt.socketify.dev", (err, results) => {
@@ -404,6 +499,8 @@ test("dns.lookup bad (qedjp3f4q4jgjh4d6vaf3fd2hbfhg6upt2bscrfe.com)", () => {
       expect(err).not.toBeNull();
       expect(err.syscall).toEqual("getaddrinfo");
       expect(err.code).toEqual("ENOTFOUND");
+      // Unlike resolver query errors, lookup errors keep a numeric errno in Node.
+      expect(err.errno).toBeNumber();
       expect(address).toBeUndefined();
       expect(family).toBeUndefined();
       resolve();

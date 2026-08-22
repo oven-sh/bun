@@ -39,11 +39,11 @@ bun_output::declare_scope!(Terminal, hidden);
 // Generated bindings — `jsc.Codegen.JSTerminal`. The `.classes.ts` codegen
 // emits `crate::generated_classes::js_Terminal` with `from_js`/`to_js` and the
 // cached-value accessors; re-export here so callers continue to spell `js::*`.
-pub use self::js::{from_js, from_js_direct, to_js};
+pub use self::js::to_js;
 pub mod js {
     pub use crate::generated_classes::js_Terminal::{
         data_get_cached, data_set_cached, drain_get_cached, drain_set_cached, exit_get_cached,
-        exit_set_cached, from_js, from_js_direct, get_constructor, to_js,
+        exit_set_cached, from_js, get_constructor, to_js,
     };
 
     /// Typed accessor for the `values:` slots.
@@ -342,12 +342,6 @@ impl From<CreatePtyError> for InitError {
             CreatePtyError::DupFailed => InitError::DupFailed,
             CreatePtyError::NotSupported => InitError::NotSupported,
         }
-    }
-}
-
-impl From<InitError> for crate::Error {
-    fn from(e: InitError) -> Self {
-        crate::Error::TerminalInit(e)
     }
 }
 
@@ -831,12 +825,6 @@ pub enum CreatePtyError {
     DupFailed,
     #[error("NotSupported")]
     NotSupported,
-}
-
-impl From<CreatePtyError> for crate::Error {
-    fn from(e: CreatePtyError) -> Self {
-        crate::Error::TerminalInit(e.into())
-    }
 }
 
 fn create_pty(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {

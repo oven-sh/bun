@@ -321,38 +321,8 @@ void JSTextEncoder::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     Base::analyzeHeap(cell, analyzer);
 }
 
-#if ENABLE(BINDING_INTEGRITY)
-#if PLATFORM(WIN)
-#pragma warning(disable : 4483)
-extern "C" {
-extern void (*const __identifier("??_7TextEncoder@WebCore@@6B@")[])();
-}
-#else
-extern "C" {
-extern void* _ZTVN7WebCore11TextEncoderE[];
-}
-#endif
-#endif
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<TextEncoder>&& impl)
 {
-
-    if constexpr (std::is_polymorphic_v<TextEncoder>) {
-#if ENABLE(BINDING_INTEGRITY)
-        // const void* actualVTablePointer = getVTablePointer(impl.ptr());
-#if PLATFORM(WIN)
-        void* expectedVTablePointer = __identifier("??_7TextEncoder@WebCore@@6B@");
-#else
-        // void* expectedVTablePointer = &_ZTVN7WebCore11TextEncoderE[2];
-#endif
-
-        // If you hit this assertion you either have a use after free bug, or
-        // TextEncoder has subclasses. If TextEncoder has subclasses that get passed
-        // to toJS() we currently require TextEncoder you to opt out of binding hardening
-        // by adding the SkipVTableValidation attribute to the interface IDL definition
-        // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
-#endif
-    }
     return createWrapper<TextEncoder>(globalObject, WTF::move(impl));
 }
 

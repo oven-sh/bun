@@ -438,18 +438,6 @@ pub struct Response<'a> {
     pub bytes_read: usize,
 }
 
-impl<'a> Default for Response<'a> {
-    fn default() -> Self {
-        Response {
-            minor_version: 0,
-            status_code: 0,
-            status: b"",
-            headers: HeaderList::default(),
-            bytes_read: 0,
-        }
-    }
-}
-
 impl<'a> Response<'a> {
     pub fn count(&self, builder: &mut StringBuilder) {
         builder.count(self.status);

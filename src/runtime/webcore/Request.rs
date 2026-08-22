@@ -131,10 +131,6 @@ impl Default for Flags {
     }
 }
 
-// NOTE: toJS is overridden
-pub use js_gen::from_js;
-pub use js_gen::from_js_direct;
-
 // Heap-allocates via Box::new (global mimalloc).
 impl Request {
     #[inline]

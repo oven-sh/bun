@@ -33,9 +33,7 @@ ALWAYS_INLINE JSC::JSValue getIfPropertyExistsPrototypePollutionMitigation(JSC::
  */
 JSC::JSValue getOwnPropertyIfExists(JSC::JSGlobalObject* globalObject, JSC::JSObject* object, const JSC::PropertyName& name);
 
-// `{ done, value }` of an iterator result. An object with the realm's iteratorResultObjectStructure
-// holds both as data properties at fixed inline offsets (any mutation transitions it away), so the
-// slots are read directly. Otherwise `get(done)` then `get(value)`; both empty if either throws.
+// `{ done, value }` of an iterator result: the inline slots when `result` has the realm's iteratorResultObjectStructure, else `get(done)` then `get(value)` (both empty if either throws).
 ALWAYS_INLINE std::pair<JSC::JSValue, JSC::JSValue> getIteratorResult(JSC::JSGlobalObject* globalObject, JSC::JSObject* result)
 {
     if (result->structureID() == globalObject->iteratorResultObjectStructure()->id()) [[likely]]

@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, readdirSync, readFileSync, statSync, utimesSync } from "fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, statSync, utimesSync } from "fs";
 import { mkdir, rm, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env } from "harness";
 import { join } from "path";
@@ -225,12 +225,15 @@ describe.each(["hoisted", "isolated"] as const)("install state (%s)", linker => 
 
     // find where @barn/moo actually lives (root node_modules for hoisted; the store entry's
     // node_modules for isolated) and remove it: only `@barn`'s mtime changes
-    const candidates = [join(package_dir, "node_modules", "@barn", "moo")];
+    // (store entries first, so the isolated arm exercises the store scan rather than the
+    // root node_modules symlink; a real directory, not a symlink into the store)
+    const candidates: string[] = [];
     const store = join(package_dir, "node_modules", ".bun");
     if (existsSync(store)) {
       for (const e of readdirSync(store)) candidates.push(join(store, e, "node_modules", "@barn", "moo"));
     }
-    const victim = candidates.find(p => existsSync(join(p, "package.json")));
+    candidates.push(join(package_dir, "node_modules", "@barn", "moo"));
+    const victim = candidates.find(p => existsSync(join(p, "package.json")) && lstatSync(p).isDirectory());
     expect(victim).toBeDefined();
     await rm(victim!, { recursive: true, force: true });
     // (a full pass that only re-links prints the same summary as the fast path, so assert

@@ -261,20 +261,23 @@ describe("event loop routing around macros", () => {
     ],
   ];
 
-  test.concurrent.each(unawaited)("%s that it does not await still lets the process exit", async (_name, macroSource) => {
-    await using server = Bun.serve({ port: 0, fetch: () => new Response("settled") });
-    const { lines, stderr, exitCode } = await run(
-      {
-        "m.ts": macroSource,
-        "index.ts": `import { m } from "./m.ts" with { type: "macro" };\nconsole.log("value", m());\n`,
-      },
-      { MACRO_TEST_URL: server.url.href },
-    );
-    // The continuation runs on the macro loop if the work finishes while the macro is still being waited
-    // on and on the regular loop otherwise, so its position relative to the entry module's output varies.
-    expect({ lines: lines.sort(), stderr }).toEqual({ lines: ["settled", "value 1"], stderr: "" });
-    expect(exitCode).toBe(0);
-  });
+  test.concurrent.each(unawaited)(
+    "%s that it does not await still lets the process exit",
+    async (_name, macroSource) => {
+      await using server = Bun.serve({ port: 0, fetch: () => new Response("settled") });
+      const { lines, stderr, exitCode } = await run(
+        {
+          "m.ts": macroSource,
+          "index.ts": `import { m } from "./m.ts" with { type: "macro" };\nconsole.log("value", m());\n`,
+        },
+        { MACRO_TEST_URL: server.url.href },
+      );
+      // The continuation runs on the macro loop if the work finishes while the macro is still being waited
+      // on and on the regular loop otherwise, so its position relative to the entry module's output varies.
+      expect({ lines: lines.sort(), stderr }).toEqual({ lines: ["settled", "value 1"], stderr: "" });
+      expect(exitCode).toBe(0);
+    },
+  );
 
   // The program's digest finishes (microseconds, on the work queue) while the macro is parked in its
   // 200 ms wait. Its callback belongs to the program: it must run after require() returns, not inside

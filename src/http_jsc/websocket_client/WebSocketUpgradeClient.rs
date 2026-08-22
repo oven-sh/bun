@@ -675,7 +675,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
     fn dispatch_abrupt_close(this: ThisPtr<Self>, code: ErrorCode) {
         let ws = this.outgoing_websocket.take();
         if let Some(ws) = ws {
-            CppWebSocket::opaque_ref(ws).did_abrupt_close(code);
+            // The upgrade handshake has no send buffer yet, so the backlog is 0.
+            CppWebSocket::opaque_ref(ws).did_abrupt_close(code, 0);
             // SAFETY: `this` carries root provenance; may free `this`.
             unsafe { Self::deref(this.as_ptr()) };
         }

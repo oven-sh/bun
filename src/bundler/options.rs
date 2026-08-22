@@ -1389,6 +1389,7 @@ impl<'a> BundleOptions<'a> {
             define: Box::new(defines::Define {
                 identifiers: self.define.identifiers.clone(),
                 dots: self.define.dots.clone(),
+                injected: self.define.injected.clone(),
                 drop_debugger: self.define.drop_debugger,
             }),
             drop: self.drop.clone(),
@@ -1638,6 +1639,7 @@ impl<'a> BundleOptions<'a> {
             define: Box::new(defines::Define {
                 identifiers: Default::default(),
                 dots: Default::default(),
+                injected: Vec::new(),
                 drop_debugger: false,
             }),
             loaders,

@@ -1205,6 +1205,46 @@ impl<'a> Parser<'a> {
             }
         }
 
+        // `var define_X_default = {...}` for each referenced injected define.
+        for i in 0..p.injected_define_refs.len() {
+            let ref_ = p.injected_define_refs[i];
+            if p.symbols.as_slice()[ref_.inner_index() as usize].use_count_estimate == 0 {
+                continue;
+            }
+            let value = p.define.injected[i].value;
+            let mut declared_symbols =
+                bun_ast::DeclaredSymbolList::init_capacity(1).expect("unreachable");
+            declared_symbols.append_assume_capacity(DeclaredSymbol {
+                ref_,
+                is_top_level: true,
+            });
+            let binding = p.b(B::Identifier { r#ref: ref_ }, bun_ast::Loc::EMPTY);
+            let part_stmts = p.arena.alloc_slice_fill_with(1, |_| {
+                let mut decls = G::DeclList::init_capacity(1);
+                decls.append_assume_capacity(G::Decl {
+                    binding,
+                    value: Some(Expr {
+                        data: value,
+                        loc: bun_ast::Loc::EMPTY,
+                    }),
+                });
+                p.s(
+                    S::Local {
+                        kind: js_ast::LocalKind::KVar,
+                        decls,
+                        ..Default::default()
+                    },
+                    bun_ast::Loc::EMPTY,
+                )
+            });
+            before.push(js_ast::Part {
+                stmts: part_stmts.into(),
+                declared_symbols,
+                can_be_removed_if_unused: true,
+                ..Default::default()
+            });
+        }
+
         // This is a workaround for broken module environment checks in packages like lodash-es
         // https://github.com/lodash/lodash/issues/5660
         let mut force_esm = false;

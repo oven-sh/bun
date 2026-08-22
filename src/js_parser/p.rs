@@ -536,6 +536,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) temp_refs_to_declare: List<'a, TempRef>,
     pub(crate) temp_ref_count: i32,
 
+    // Indexed by `DefineData.injected_define_index`.
+    pub injected_define_refs: List<'a, Ref>,
+
     // When bundling, hoisted top-level local variables declared with "var" in
     // nested scopes are moved up to be declared in the top-level scope instead.
     // The old "var" statements are turned into regular assignments instead. This
@@ -2754,6 +2757,35 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"__dirname")?;
         self.filename_ref =
             self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"__filename")?;
+
+        if !self.define.injected.is_empty() {
+            self.injected_define_refs
+                .reserve(self.define.injected.len());
+            let will_use_renamer = self.will_use_renamer();
+            for injected in self.define.injected.iter() {
+                let sanitized = bun_core::MutableString::ensure_valid_identifier(&injected.name)?;
+                // No renamer => printed verbatim, so suffix a hash for collision safety.
+                let name: &'a [u8] = if will_use_renamer {
+                    bun_alloc::arena_format!(
+                        in self.arena,
+                        "define_{}_default",
+                        bstr::BStr::new(&sanitized)
+                    )
+                } else {
+                    bun_alloc::arena_format!(
+                        in self.arena,
+                        "define_{}_default_{}",
+                        bstr::BStr::new(&sanitized),
+                        bun_core::fmt::truncated_hash32(bun_wyhash::hash(&injected.name))
+                    )
+                }
+                .into_bump_str()
+                .as_bytes();
+                let ref_ = self.new_symbol(js_ast::symbol::Kind::Other, name);
+                VecExt::append(&mut self.module_scope_mut().generated, ref_);
+                self.injected_define_refs.push(ref_);
+            }
+        }
 
         if self.options.features.inject_jest_globals {
             self.jest.test =
@@ -6193,6 +6225,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         is_delete_target: bool,
         define_data: &DefineData,
     ) -> Expr {
+        if let Some(idx) = define_data.injected_define_index {
+            if let Some(&ref_) = self.injected_define_refs.get(idx as usize) {
+                self.record_usage(ref_);
+                return Expr {
+                    data: js_ast::ExprData::EIdentifier(
+                        E::Identifier::init(ref_).with_can_be_removed_if_unused(true),
+                    ),
+                    loc,
+                };
+            }
+        }
+
         // Callers gate on `!valueless()` before reaching here, so `value` is a
         // real Expr.Data by contract.
         let value = define_data.value;
@@ -8696,6 +8740,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             await_target: None,
             temp_refs_to_declare: BumpVec::new_in(arena),
             temp_ref_count: 0,
+            injected_define_refs: BumpVec::new_in(arena),
             relocated_top_level_vars: BumpVec::new_in(arena),
             after_arrow_body_loc: bun_ast::Loc::EMPTY,
             const_values: Default::default(),

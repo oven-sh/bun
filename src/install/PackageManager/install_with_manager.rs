@@ -822,14 +822,22 @@ pub fn install_with_manager(
                         section,
                         loaded_lockfile_name(&load_result)
                     );
+                    bun_core::note!(
+                        "try re-running without <d>--frozen-lockfile<r> and commit the updated lockfile"
+                    );
                 } else if has_orphaned_patches {
+                    // A re-run without --frozen-lockfile does not converge here: the stale key lives only in package.json.
                     bun_core::note!(
                         "a patchedDependencies entry in package.json no longer applies to any installed package version"
                     );
+                    bun_core::note!(
+                        "re-create the patch for the installed version with <d>bun patch<r>, or remove the stale entry from package.json"
+                    );
+                } else {
+                    bun_core::note!(
+                        "try re-running without <d>--frozen-lockfile<r> and commit the updated lockfile"
+                    );
                 }
-                bun_core::note!(
-                    "try re-running without <d>--frozen-lockfile<r> and commit the updated lockfile"
-                );
             }
             Global::crash();
         }

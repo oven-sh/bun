@@ -686,6 +686,9 @@ test.concurrent("`bun install --frozen-lockfile` fails when a patchedDependencie
   expect(stderr).toContain(
     "a patchedDependencies entry in package.json no longer applies to any installed package version",
   );
+  // the generic re-run hint cannot converge here: the stale key lives only in package.json
+  expect(stderr).toContain("re-create the patch for the installed version with bun patch, or remove the stale entry");
+  expect(stderr).not.toContain("try re-running without --frozen-lockfile");
   expect(exitCode).not.toBe(0);
   // the documented validation form fails too (without the warning: dry runs stay quiet)
   const dry = await run(dir, "install", "--frozen-lockfile", "--dry-run");

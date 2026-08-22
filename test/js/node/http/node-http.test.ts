@@ -160,6 +160,37 @@ describe("node:http", () => {
       server.close();
     });
 
+    // Like net.Server, http.Server reports the listen() result from process.nextTick, not a timer.
+    // No host argument: with one, Node resolves it through dns.lookup first, which adds a tick.
+    it("emits 'listening' on the next tick, before the event loop polls", async () => {
+      const server = createServer();
+      const order: string[] = [];
+      server.on("listening", () => order.push("listening"));
+      server.listen(0);
+      process.nextTick(() => order.push("nextTick"));
+      await once(server, "listening");
+      server.close();
+      await once(server, "close");
+      expect(order).toEqual(["listening", "nextTick"]);
+    });
+
+    it("emits a listen() error on the next tick, before the event loop polls", async () => {
+      const occupant = createServer();
+      occupant.listen(0);
+      await once(occupant, "listening");
+      const { port } = occupant.address() as AddressInfo;
+
+      const server = createServer();
+      const order: string[] = [];
+      server.on("error", (err: NodeJS.ErrnoException) => order.push("error:" + err.code));
+      server.listen(port);
+      process.nextTick(() => order.push("nextTick"));
+      await once(server, "error");
+      occupant.close();
+      await once(occupant, "close");
+      expect(order).toEqual(["error:EADDRINUSE", "nextTick"]);
+    });
+
     it("should use the provided port", async () => {
       while (true) {
         try {

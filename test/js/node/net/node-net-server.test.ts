@@ -241,16 +241,17 @@ describe("net.createServer listen", () => {
   });
 
   // The error twin of the test above: a listen() that fails reports on the same tick as one that succeeds.
+  // No host argument: with one, Node resolves it through dns.lookup first, which adds a tick.
   it("emits a listen() error on the next tick, before the event loop polls", async () => {
     const occupant: Server = createServer();
-    occupant.listen(0, "127.0.0.1");
+    occupant.listen(0);
     await once(occupant, "listening");
     const { port } = occupant.address() as AddressInfo;
 
     const server: Server = createServer();
     const order: string[] = [];
     server.on("error", (err: NodeJS.ErrnoException) => order.push("error:" + err.code));
-    server.listen(port, "127.0.0.1");
+    server.listen(port);
     process.nextTick(() => order.push("nextTick"));
     await once(server, "error");
     occupant.close();

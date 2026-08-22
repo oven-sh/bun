@@ -562,13 +562,13 @@ fn get_description(
             return Ok(description_class_name.to_owned_slice());
         }
 
-        let description_name = description.get_name(global)?;
-        // `description_name.deref()` handled by Drop on bun_core::String
+        // `get_name` hands back a +1 WTFStringImpl ref.
+        let description_name = bun_core::OwnedString::new(description.get_name(global)?);
         return Ok(description_name.to_owned_slice());
     }
 
     if description.is_function() {
-        let func_name = description.get_name(global)?;
+        let func_name = bun_core::OwnedString::new(description.get_name(global)?);
         if func_name.length() > 0 {
             return Ok(func_name.to_owned_slice());
         }

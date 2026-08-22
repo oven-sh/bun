@@ -1818,7 +1818,8 @@ impl<'a> Formatter<'a> {
                     writer.write_all(b"\n");
                 }
                 Tag::JSON => {
-                    let mut str = bun_core::String::empty();
+                    // `json_stringify` hands back a +1 WTFStringImpl ref.
+                    let mut str = bun_core::OwnedString::default();
 
                     value.json_stringify(self.global_this, self.indent, &mut str)?;
                     self.add_for_new_line(str.length());
@@ -2925,7 +2926,9 @@ impl JestPrettyFormat {
                 else {
                     return Ok(true);
                 };
-                let matcher_name = matcher_fn.get_name(this.amf_global_this())?;
+                // `get_name` hands back a +1 WTFStringImpl ref.
+                let matcher_name =
+                    bun_core::OwnedString::new(matcher_fn.get_name(this.amf_global_this())?);
 
                 Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
                 if flags.not() {

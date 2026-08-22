@@ -5444,10 +5444,13 @@ pub mod formatter {
                 self.reset_line();
             }
 
-            let mut display_name = value.get_name(self.global_this)?;
-            if display_name.is_empty() {
-                display_name = BunString::static_("Object");
-            }
+            // `get_name` hands back a +1 WTFStringImpl ref.
+            let name = bun_core::OwnedString::new(value.get_name(self.global_this)?);
+            let display_name = if name.is_empty() {
+                BunString::static_("Object")
+            } else {
+                name.get()
+            };
             let _ = write!(
                 writer_,
                 "{}[{} ...]{}",

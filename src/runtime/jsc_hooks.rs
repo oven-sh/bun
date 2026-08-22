@@ -3853,6 +3853,10 @@ fn get_hardcoded_module(
             }
             Some(js_synthetic_module(b"internal:test/binding", specifier))
         }
+        // Only macOS builds carry these; the resolver's alias table already
+        // hides the specifiers elsewhere, this covers a lookup by raw name.
+        #[cfg(not(target_os = "macos"))]
+        HardcodedModule::BunAppkit | HardcodedModule::BunAppkitReact => None,
         HardcodedModule::BunWrap => {
             // `Runtime.Runtime.sourceCode()` — the bundler's CJS-interop
             // shim, embedded as a static string in `bun_ast::runtime`.

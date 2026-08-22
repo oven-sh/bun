@@ -115,5 +115,8 @@ bun_install_jsc.workspace = true
 bun_patch_jsc.workspace = true
 bun_css_jsc.workspace = true
 
+[target.'cfg(target_os = "macos")'.dependencies]
+bun_appkit.workspace = true
+
 [features]
 default = []

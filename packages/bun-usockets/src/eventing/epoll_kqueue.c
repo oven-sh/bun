@@ -434,6 +434,18 @@ static const struct timespec *us_internal_clamp_to_sweep(struct us_loop_t *loop,
     return storage;
 }
 
+/* Owner-thread mimalloc idle sweep for a tick that really parks, rate-limited because sweeping on
+ * every park is what the scavenger hand-off exists to avoid. */
+static void us_internal_idle_sweep_inline(uint64_t now_ns) {
+    static const uint64_t idle_sweep_interval_ns = 100 * 1000000ULL;
+    static _Thread_local uint64_t last_idle_sweep_ns = 0;
+    const uint64_t sweep_now_ns = now_ns ? now_ns : us_internal_monotonic_ns();
+    if (sweep_now_ns >= last_idle_sweep_ns + idle_sweep_interval_ns) {
+        last_idle_sweep_ns = sweep_now_ns;
+        mi_on_thread_idle();
+    }
+}
+
 void us_loop_run(struct us_loop_t *loop) {
     /* While we have non-fallthrough polls we shouldn't fall through */
     while (loop->num_polls) {
@@ -498,21 +510,28 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     if (will_idle_inside_event_loop && loop->data.jsc_vm)
         Bun__JSC_onBeforeWait(loop->data.jsc_vm, now_ns);
 
+    int park_in_kernel = will_idle_inside_event_loop;
+#ifdef LIBUS_USE_KQUEUE
+    if (loop->data.park_cb) {
+        /* The park callback waits inside AppKit and dispatches UI events (and Apple Events inside
+         * the wait), which run JavaScript, so the scavenger cannot have our heaps across it: sweep
+         * inline while we still own them, then let it wait, and only hand off below. */
+        if (will_idle_inside_event_loop)
+            us_internal_idle_sweep_inline(now_ns);
+        static const struct timespec zero_ts = {0, 0};
+        loop->data.park_cb(loop, will_idle_inside_event_loop ? timeout : &zero_ts);
+        park_in_kernel = 0;
+    }
+#endif
+
     /* The scavenger sweeps our heaps while we are in the kernel. Must come after
-     * Bun__JSC_onBeforeWait, which allocates: nothing may touch our heaps until the matching
-     * _end. mimalloc paces the sweep itself, so this costs a compare-and-swap per tick.
+     * Bun__JSC_onBeforeWait and park_cb, which allocate: nothing may touch our heaps until the
+     * matching _end. mimalloc paces the sweep itself, so this costs a compare-and-swap per tick.
      * With no scavenger to hand off to, fall back to sweeping inline -- but only on a tick that
      * really parks, and rate-limited, because doing it between ticks is what we are avoiding. */
     const int handed_off = mi_on_thread_idle_start();
-    if (!handed_off && will_idle_inside_event_loop) {
-        static const uint64_t idle_sweep_interval_ns = 100 * 1000000ULL;
-        static _Thread_local uint64_t last_idle_sweep_ns = 0;
-        const uint64_t sweep_now_ns = now_ns ? now_ns : us_internal_monotonic_ns();
-        if (sweep_now_ns >= last_idle_sweep_ns + idle_sweep_interval_ns) {
-            last_idle_sweep_ns = sweep_now_ns;
-            mi_on_thread_idle();
-        }
-    }
+    if (!handed_off && park_in_kernel)
+        us_internal_idle_sweep_inline(now_ns);
 
     /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
@@ -522,14 +541,14 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS, timeout);
 #else
     loop->num_ready_polls = bun_kevent64_wait(loop->fd, loop->ready_polls, LIBUS_MAX_READY_POLLS,
-        /* When we won't idle (pending wakeups or zero timeout), use KEVENT_FLAG_IMMEDIATE.
-         * In XNU's kqueue_scan (bsd/kern/kern_event.c):
+        /* When we won't idle (pending wakeups, zero timeout, or park_cb already waited), use
+         * KEVENT_FLAG_IMMEDIATE. In XNU's kqueue_scan (bsd/kern/kern_event.c):
          *  - KEVENT_FLAG_IMMEDIATE: returns immediately after kqueue_process() (line 8031)
          *  - Zero timespec without the flag: falls through to assert_wait_deadline (line 8039)
          *    and thread_block (line 8048), doing a full context switch cycle (~14us) even
          *    though the deadline is already in the past. */
-        will_idle_inside_event_loop ? 0 : KEVENT_FLAG_IMMEDIATE,
-        timeout);
+        park_in_kernel ? 0 : KEVENT_FLAG_IMMEDIATE,
+        park_in_kernel ? timeout : NULL);
 #endif
 
     /* Before anything can allocate again. */

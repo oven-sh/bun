@@ -46,6 +46,9 @@ static constexpr ASCIILiteral builtinModuleNamesSortedLength[] = {
     "inspector"_s,
     "node:quic"_s,
     "node:test"_s,
+#if OS(DARWIN)
+    "bun:appkit"_s,
+#endif
     "bun:sqlite"_s,
     "path/posix"_s,
     "path/win32"_s,
@@ -75,6 +78,9 @@ static constexpr ASCIILiteral builtinModuleNamesSortedLength[] = {
     "timers/promises"_s,
     "_stream_readable"_s,
     "_stream_writable"_s,
+#if OS(DARWIN)
+    "bun:appkit/react"_s,
+#endif
     "stream/consumers"_s,
     "_stream_transform"_s,
     "readline/promises"_s,

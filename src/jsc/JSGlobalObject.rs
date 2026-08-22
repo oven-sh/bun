@@ -978,6 +978,11 @@ impl JSGlobalObject {
         JSGlobalObject__hasException(self)
     }
 
+    /// `Object.prototype` of this realm.
+    pub fn object_prototype(&self) -> JSValue {
+        JSGlobalObject__objectPrototype(self)
+    }
+
     /// The pending exception is the VM's TerminationException: for host code that handles ordinary errors
     /// itself but must let a termination keep unwinding without taking it.
     #[inline]
@@ -1589,6 +1594,7 @@ unsafe extern "C" {
     safe fn JSGlobalObject__clearExceptionExceptTermination(this: &JSGlobalObject) -> bool;
     safe fn JSGlobalObject__clearTerminationException(this: &JSGlobalObject);
     safe fn JSGlobalObject__hasException(this: &JSGlobalObject) -> bool;
+    safe fn JSGlobalObject__objectPrototype(this: &JSGlobalObject) -> JSValue;
     safe fn JSGlobalObject__setTimeZone(this: &JSGlobalObject, time_zone: &ZigString) -> bool;
     safe fn JSGlobalObject__tryTakeException(this: &JSGlobalObject) -> JSValue;
 

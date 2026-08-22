@@ -134,6 +134,7 @@
               "/runtime/shell",
               "/runtime/child-process",
               "/runtime/webview",
+              "/runtime/appkit",
               "/runtime/cron"
             ]
           },

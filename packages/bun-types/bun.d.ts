@@ -8828,6 +8828,25 @@ declare module "bun" {
     readonly height: number;
   }
 
+  /**
+   * Native macOS windows and controls (AppKit) from JavaScript, without a
+   * web view. The same namespace as `import * as AppKit from "bun:appkit"`;
+   * see that module for the full API and `bun:appkit/react` for the React
+   * renderer. AppKit is loaded the first time this property is read.
+   *
+   * @example
+   * ```ts
+   * const { Window, Text } = Bun.AppKit;
+   * new Window({ title: "Hi", content: new Text({ text: "Hello" }) }).show();
+   * ```
+   *
+   * Only present on macOS; feature-test with `if (Bun.AppKit)`.
+   *
+   * @platform macOS
+   * @experimental
+   */
+  const AppKit: typeof import("bun:appkit") | undefined;
+
   namespace WebView {
     type Modifier = "Shift" | "Control" | "Alt" | "Meta";
 

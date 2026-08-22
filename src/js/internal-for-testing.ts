@@ -783,3 +783,15 @@ export const byteStreamInternals = {
     stream: ReadableStream,
   ) => void,
 };
+
+export const appKitInternals = {
+  /** Native `bun:appkit` views alive on this thread; 0 where AppKit was never loaded. */
+  liveViews: (): number => require("internal/appkit_private").liveViews(),
+  /** Every Objective-C binding compiled into this build checked against the loaded frameworks; one string per mismatch. Requires `bun:appkit` to have been imported. */
+  verifyBindings: (): string[] => require("internal/appkit_private").testing("verifyBindings") as string[],
+  /** Runs `callback` after `ms` from inside AppKit's event wait (the way a display timer or an Apple Event runs), not from Bun's timer heap. The app must be running. */
+  runInsideWait: (ms: number, callback: () => void): void =>
+    void require("internal/appkit_private").testing("runInsideWait", ms, callback),
+  /** `-[NSApplication terminate:]`: the path the Quit menu item, the Dock's Quit and a logout take. */
+  terminate: (): void => void require("internal/appkit_private").testing("terminate"),
+};

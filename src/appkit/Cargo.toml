@@ -1,0 +1,21 @@
+[package]
+name = "bun_appkit"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_core.workspace = true
+bun_uws_sys.workspace = true
+libc.workspace = true
+thiserror.workspace = true
+
+[[test]]
+name = "bindings"
+path = "tests/bindings.rs"
+harness = false

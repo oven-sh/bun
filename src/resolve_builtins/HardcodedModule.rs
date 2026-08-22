@@ -11,6 +11,10 @@ pub enum HardcodedModule {
     AbortController,
     #[strum(serialize = "bun:app")]
     BunApp,
+    #[strum(serialize = "bun:appkit")]
+    BunAppkit,
+    #[strum(serialize = "bun:appkit/react")]
+    BunAppkitReact,
     #[strum(serialize = "bun:ffi")]
     BunFfi,
     #[strum(serialize = "bun:jsc")]
@@ -208,6 +212,8 @@ bun_core::comptime_string_map! {
         // Bun
         b"bun" => HardcodedModule::Bun,
         b"bun:app" => HardcodedModule::BunApp,
+        b"bun:appkit" => HardcodedModule::BunAppkit,
+        b"bun:appkit/react" => HardcodedModule::BunAppkitReact,
         b"bun:ffi" => HardcodedModule::BunFfi,
         b"bun:jsc" => HardcodedModule::BunJsc,
         b"bun:main" => HardcodedModule::BunMain,
@@ -711,6 +717,15 @@ const BUN_EXTRA_ALIAS_KVS: &[AliasKv] = &[
     ),
     entry!("bun:test"),
     entry!("bun:app"),
+    // Every "is this a builtin" query (import, require.resolve,
+    // process.getBuiltinModule, Module._resolveLookupPaths) goes through these
+    // tables, so leaving the alias out is what makes `bun:appkit` not a
+    // builtin off macOS. isBuiltinModule.cpp and NodeModuleModule.cpp gate
+    // their name lists the same way.
+    #[cfg(target_os = "macos")]
+    entry!("bun:appkit"),
+    #[cfg(target_os = "macos")]
+    entry!("bun:appkit/react"),
     entry!("bun:ffi"),
     entry!("bun:jsc"),
     entry!("bun:main"),

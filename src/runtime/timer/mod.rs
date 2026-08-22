@@ -952,6 +952,52 @@ impl All {
         }
     }
 
+    /// How long until either heap (or the QUIC tick) next needs a turn, zero
+    /// if something is already due or `has_pending_immediate`; `None` when
+    /// nothing is armed. Unlike [`All::get_timeout`] this only peeks: it fires
+    /// nothing and never runs JavaScript. (AppKit's run loop asks this before
+    /// it sleeps.)
+    #[cfg(target_os = "macos")]
+    pub(crate) fn peek_next_due(
+        &self,
+        has_pending_immediate: bool,
+        quic_next_tick_us: Option<i64>,
+    ) -> Option<Timespec> {
+        if has_pending_immediate {
+            return Some(Timespec { sec: 0, nsec: 0 });
+        }
+        let wtf_next = self.wtf_timers.lock().peek().map(|min| {
+            // SAFETY: `peek` returns a live heap node; read under the guard.
+            let next = unsafe { &(*min).next };
+            Timespec {
+                sec: next.sec,
+                nsec: next.nsec,
+            }
+        });
+        let reg_next = self.timers.peek().map(|min| {
+            // SAFETY: `peek` returns a live heap node; only this thread touches the regular heap.
+            let next = unsafe { &(*min).next };
+            Timespec {
+                sec: next.sec,
+                nsec: next.nsec,
+            }
+        });
+        let quic = quic_next_tick_us.filter(|us| *us >= 0).map(|us| Timespec {
+            sec: us / US_PER_S,
+            nsec: (us % US_PER_S) * NS_PER_US,
+        });
+        let Some(next) = Self::soonest(wtf_next, reg_next) else {
+            return quic;
+        };
+        let now = Timespec::now(TimespecMockMode::ForceRealTime);
+        let wait = if next.greater(&now) {
+            next.duration(&now)
+        } else {
+            Timespec { sec: 0, nsec: 0 }
+        };
+        Self::soonest(Some(wait), quic)
+    }
+
     #[inline]
     fn soonest(a: Option<Timespec>, b: Option<Timespec>) -> Option<Timespec> {
         match (a, b) {

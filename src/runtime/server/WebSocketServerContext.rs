@@ -340,7 +340,11 @@ pub(crate) fn on_create(
 
             // uws does not allow idleTimeout to be between (0, 8),
             // since its timer is not that accurate, therefore round up.
-            server.idle_timeout = if seconds > 0 { (seconds as u16).max(8) } else { 0 };
+            server.idle_timeout = if seconds > 0 {
+                (seconds as u16).max(8)
+            } else {
+                0
+            };
         }
     }
     if let Some(value) = object.get(global_object, "backpressureLimit")? {

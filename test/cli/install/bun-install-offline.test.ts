@@ -3,6 +3,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { rm, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, readdirSorted, tempDir } from "harness";
 import { join } from "path";
+import { pathToFileURL } from "url";
 import {
   dummyAfterAll,
   dummyAfterEach,
@@ -59,12 +60,12 @@ async function install(cwd: string, args: string[]) {
   return { out, err, code };
 }
 
-async function newProject(deps: Record<string, string>, cache = cache_dir) {
+async function newProject(deps: Record<string, string>, cache = cache_dir, linker: "hoisted" | "isolated" = "hoisted") {
   const dir = mkdtemp();
   await writeFile(
     join(dir, "bunfig.toml"),
     Bun.TOML.stringify({
-      install: { cache: { dir: cache }, registry: root_url + "/", saveTextLockfile: true, linker: "hoisted" },
+      install: { cache: { dir: cache }, registry: root_url + "/", saveTextLockfile: true, linker },
     }),
   );
   await writeFile(join(dir, "package.json"), JSON.stringify({ name: "app", version: "1.0.0", dependencies: deps }));
@@ -95,40 +96,42 @@ it("--prefer-offline resolves from cached manifests without touching the network
   expect(await readdirSorted(join(dir2, "node_modules", "baz"))).toContain("package.json");
 });
 
-it("--offline never issues a request and fails cleanly on a cache miss", async () => {
-  const urls: string[] = [];
-  setHandler(dummyRegistry(urls, { "0.0.3": {}, "0.0.5": {} }));
-  await writeFile(
-    join(package_dir, "package.json"),
-    JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { baz: "0.0.3" } }),
-  );
-  let r = await install(package_dir, []);
-  expect(r.code).toBe(0);
-  const before = urls.length;
+describe.each(["hoisted", "isolated"] as const)("--offline (%s linker)", linker => {
+  it("never issues a request and fails cleanly on a cache miss", async () => {
+    const urls: string[] = [];
+    setHandler(dummyRegistry(urls, { "0.0.3": {}, "0.0.5": {} }));
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { baz: "0.0.3" } }),
+    );
+    let r = await install(package_dir, []);
+    expect(r.code).toBe(0);
+    const before = urls.length;
 
-  // everything cached → works
-  const dir2 = await newProject({ baz: "0.0.3" });
-  r = await install(dir2, ["--offline"]);
-  expect(r.err).not.toContain("error:");
-  expect(r.code).toBe(0);
-  expect(urls.length).toBe(before);
+    // everything cached → works
+    const dir2 = await newProject({ baz: "0.0.3" }, cache_dir, linker);
+    r = await install(dir2, ["--offline"]);
+    expect(r.err).not.toContain("error:");
+    expect(r.code).toBe(0);
+    expect(urls.length).toBe(before);
 
-  // manifest for `bar` was never fetched → clean error, still no request
-  const dir3 = await newProject({ bar: "0.0.2" });
-  r = await install(dir3, ["--offline"]);
-  expect(r.err).toContain("--offline");
-  expect(r.code).not.toBe(0);
-  expect(urls.length).toBe(before);
+    // manifest for `bar` was never fetched → clean error, still no request
+    const dir3 = await newProject({ bar: "0.0.2" }, cache_dir, linker);
+    r = await install(dir3, ["--offline"]);
+    expect(r.err).toContain("--offline");
+    expect(r.code).not.toBe(0);
+    expect(urls.length).toBe(before);
 
-  // manifest cached but that version's tarball evicted → clean error, no request
-  for (const entry of await readdirSorted(cache_dir)) {
-    if (entry.startsWith("baz@0.0.3")) await rm(join(cache_dir, entry), { recursive: true, force: true });
-  }
-  const dir4 = await newProject({ baz: "0.0.3" });
-  r = await install(dir4, ["--offline"]);
-  expect(r.err).toContain("--offline");
-  expect(r.code).not.toBe(0);
-  expect(urls.length).toBe(before);
+    // manifest cached but that version's tarball evicted → clean error, no request
+    for (const entry of await readdirSorted(cache_dir)) {
+      if (entry.startsWith("baz@0.0.3")) await rm(join(cache_dir, entry), { recursive: true, force: true });
+    }
+    const dir4 = await newProject({ baz: "0.0.3" }, cache_dir, linker);
+    r = await install(dir4, ["--offline"]);
+    expect(r.err).toContain("--offline");
+    expect(r.code).not.toBe(0);
+    expect(urls.length).toBe(before);
+  });
 });
 
 // Regression: with an *expired* cached manifest (here forced via --force, which turns off
@@ -192,7 +195,7 @@ it("--offline skips an optional dependency that is not in the cache", async () =
 });
 
 it("--offline refuses an uncached git dependency without running git", async () => {
-  const dir = await newProject({ dep: "git+https://127.0.0.1:1/nobody/nothing.git#deadbeef" });
+  const dir = await newProject({ dep: `git+${pathToFileURL(join(cache_dir, "no-such-repo.git"))}#deadbeef` });
   const r = await install(dir, ["--offline"]);
   expect(r.err).toContain("--offline");
   expect(r.err).not.toContain('"git clone"');
@@ -211,7 +214,7 @@ it("--offline refuses an uncached git dependency without running git", async () 
     JSON.stringify({
       name: "app",
       version: "1.0.0",
-      optionalDependencies: { dep: "git+https://127.0.0.1:1/nobody/nothing.git#deadbeef" },
+      optionalDependencies: { dep: `git+${pathToFileURL(join(cache_dir, "no-such-repo.git"))}#deadbeef` },
     }),
   );
   const r2 = await install(dir2, ["--offline"]);
@@ -284,4 +287,43 @@ it('install.prefer = "offline" and install.offline = true in bunfig.toml behave 
   expect(r.err).toContain("--offline");
   expect(r.code).not.toBe(0);
   expect(urls.length).toBe(before);
+});
+
+const gitEnv = {
+  ...installEnv,
+  GIT_CONFIG_NOSYSTEM: "1",
+  GIT_AUTHOR_NAME: "Test",
+  GIT_AUTHOR_EMAIL: "test@example.com",
+  GIT_COMMITTER_NAME: "Test",
+  GIT_COMMITTER_EMAIL: "test@example.com",
+};
+
+it("--offline installs a git dependency from the cached clone without touching the repository", async () => {
+  // a local bare repository with one package
+  const work = mkdtemp();
+  const bare = join(mkdtemp(), "repo.git");
+  await writeFile(join(work, "package.json"), JSON.stringify({ name: "gitpkg", version: "1.0.0" }));
+  await writeFile(join(work, "index.js"), "module.exports = 1;");
+  for (const cmd of [
+    ["init", "-q"],
+    ["add", "-A"],
+    ["commit", "-q", "-m", "init", "--no-gpg-sign"],
+    ["clone", "-q", "--bare", ".", bare],
+  ]) {
+    await using p = spawn({ cmd: ["git", ...cmd], cwd: work, env: gitEnv, stdout: "ignore", stderr: "pipe" });
+    expect(await p.exited).toBe(0);
+  }
+  const url = `git+${pathToFileURL(bare)}`;
+  // online install populates the git cache
+  const warm = await newProject({ gitpkg: url });
+  const w = await install(warm, []);
+  expect(w.err).not.toContain("error:");
+  expect(w.code).toBe(0);
+  // the repository disappears; --offline must use the cached clone (no fetch) and succeed
+  await rm(bare, { recursive: true, force: true });
+  const dir = await newProject({ gitpkg: url });
+  const r = await install(dir, ["--offline"]);
+  expect(r.err).not.toContain("error:");
+  expect(r.code).toBe(0);
+  expect(await readdirSorted(join(dir, "node_modules", "gitpkg"))).toContain("index.js");
 });

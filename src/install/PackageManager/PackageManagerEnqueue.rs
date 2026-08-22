@@ -158,6 +158,18 @@ pub fn enqueue_tarball_for_download(
     if this.network_task_has_failed(task_id) {
         return Err(EnqueueTarballForDownloadError::AlreadyFailed);
     }
+    {
+        let is_required = this.lockfile.buffers.dependencies[dependency_id as usize]
+            .behavior
+            .is_required();
+        let name = this
+            .lockfile
+            .str(&this.lockfile.packages.get(package_id as usize).name)
+            .to_vec();
+        if offline_tarball_miss(this, task_id, &name, is_required) {
+            return Err(EnqueueTarballForDownloadError::Offline);
+        }
+    }
     let task_queue = this.task_queue.get_or_put(task_id)?;
     if !task_queue.found_existing {
         *task_queue.value_ptr = TaskCallbackList::default();
@@ -261,6 +273,16 @@ pub fn enqueue_git_for_checkout(
     let clone_id = Task::Id::for_git_clone(url);
     let resolved = this.lockfile.str_detached(&repository.resolved);
     let checkout_id = Task::Id::for_git_checkout(url, resolved);
+    // --offline: decide before any queue registration, so an optional miss leaves
+    // nothing behind and a later required edge still reaches the report
+    if this.git_repositories.get(&clone_id).is_none() {
+        let is_required = this.lockfile.buffers.dependencies[dependency_id as usize]
+            .behavior
+            .is_required();
+        if offline_git_miss(this, clone_id, alias, is_required) {
+            return;
+        }
+    }
     let checkout_queue = this
         .task_queue
         .get_or_put(checkout_id)
@@ -302,12 +324,37 @@ pub fn enqueue_git_for_checkout(
         }
 
         let dep = this.lockfile.buffers.dependencies[dependency_id as usize].clone();
-        if offline_git_miss(this, clone_id, alias, dep.behavior.is_required()) {
-            return;
-        }
         let task = enqueue_git_clone(this, clone_id, alias, &repository, &dep, resolution, None);
         this.task_batch.push(ThreadPool::Batch::from(task));
     }
+}
+
+/// Under `--offline`, an install-phase request for a package that is not in the cache
+/// (these helpers are only reached after the cache lookup missed): report it once if
+/// required, skip if optional, and never register a task nobody will complete.
+fn offline_tarball_miss(
+    this: &mut PackageManager,
+    task_id: Task::Id,
+    name: &[u8],
+    is_required: bool,
+) -> bool {
+    if this.options.offline != crate::package_manager_real::options::OfflineMode::Offline {
+        return false;
+    }
+    if is_required && !this.network_task_has_failed(task_id) {
+        // reserve + mark failed so later dependents take the already-failed path
+        let _ = this.has_created_network_task(task_id, true);
+        this.mark_network_task_failed(task_id);
+        let _ = this.log_mut().add_error_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "--offline: \"{}\" is not in the cache",
+                bstr::BStr::new(name)
+            ),
+        );
+    }
+    true
 }
 
 /// Under `--offline`, a git dependency whose clone is not already in the cache cannot
@@ -403,6 +450,14 @@ pub fn enqueue_package_for_download(
     let task_id = Task::Id::for_npm_package(name, version);
     if this.network_task_has_failed(task_id) {
         return Err(EnqueuePackageForDownloadError::AlreadyFailed);
+    }
+    {
+        let is_required = this.lockfile.buffers.dependencies[dependency_id as usize]
+            .behavior
+            .is_required();
+        if offline_tarball_miss(this, task_id, name, is_required) {
+            return Err(EnqueuePackageForDownloadError::Offline);
+        }
     }
     let task_queue = this.task_queue.get_or_put(task_id)?;
     if !task_queue.found_existing {

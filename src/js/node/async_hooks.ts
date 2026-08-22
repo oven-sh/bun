@@ -368,7 +368,8 @@ class AsyncResource {
     if (!Number.isSafeInteger(triggerAsyncId) || triggerAsyncId < -1) {
       throw $ERR_INVALID_ASYNC_ID("triggerAsyncId", triggerAsyncId);
     }
-    if (hasEnabledCreateHook && type.length === 0) {
+    // Node only validates the type when an `init` hook is currently enabled.
+    if (type.length === 0 && require("internal/async_hooks").initHooksExist()) {
       throw $ERR_ASYNC_TYPE(type);
     }
 
@@ -482,7 +483,6 @@ const createHookNotImpl = createWarning(
   true,
 );
 
-let hasEnabledCreateHook = false;
 const kHookEnabled = Symbol("kHookEnabled");
 function createHook(hook) {
   validateObject(hook, "hook");
@@ -510,10 +510,9 @@ function createHook(hook) {
       if (before !== undefined || after !== undefined || destroy !== undefined || promiseResolve !== undefined) {
         createHookNotImpl(hook);
       }
-      hasEnabledCreateHook = true;
       if (!this[kHookEnabled]) {
         this[kHookEnabled] = true;
-        require("internal/async_hooks").markHookEnabled();
+        require("internal/async_hooks").markHookEnabled(init !== undefined);
       }
       return this;
     },
@@ -526,7 +525,7 @@ function createHook(hook) {
       }
       if (this[kHookEnabled]) {
         this[kHookEnabled] = false;
-        require("internal/async_hooks").markHookDisabled();
+        require("internal/async_hooks").markHookDisabled(init !== undefined);
       }
       return this;
     },

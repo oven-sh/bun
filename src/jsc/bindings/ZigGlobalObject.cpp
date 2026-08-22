@@ -2420,6 +2420,9 @@ void GlobalObject::finishCreation(VM& vm)
         { OBJECT_OFFSETOF(GlobalObject, m_importMetaBakeObjectStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              init.set(Zig::ImportMetaObject::createStructure(init.vm, init.owner, true));
          } },
+        { OBJECT_OFFSETOF(GlobalObject, m_importMetaHotStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+             init.set(Zig::ImportMetaObject::createHotStructure(init.vm, init.owner));
+         } },
         { OBJECT_OFFSETOF(GlobalObject, m_asyncBoundFunctionStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              init.set(AsyncContextFrame::createStructure(init.vm, init.owner));
          } },
@@ -3370,6 +3373,7 @@ void GlobalObject::visitAdditionalChildrenInGCThread(Visitor& visitor)
     thisObject->globalEventScope->visitJSEventListeners(visitor);
 
     thisObject->m_aboutToBeNotifiedRejectedPromises.visit(thisObject, visitor);
+    thisObject->m_importMetaHotDisposeCallbacks.visit(thisObject, visitor);
 
     ScriptExecutionContext* context = thisObject->scriptExecutionContext();
     visitor.addOpaqueRoot(context);

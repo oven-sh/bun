@@ -498,16 +498,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     if name == b"hot" {
-                        return Some(Expr {
-                            data: js_ast::ExprData::ESpecial(
-                                if p.options.features.hot_module_reloading {
-                                    E::Special::HotEnabled
-                                } else {
-                                    E::Special::HotDisabled
-                                },
-                            ),
-                            loc,
-                        });
+                        p.has_import_meta_hot = true;
+                        if p.options.features.hot_module_reloading {
+                            return Some(Expr {
+                                data: js_ast::ExprData::ESpecial(E::Special::HotEnabled),
+                                loc,
+                            });
+                        }
+                        // Only the `--hot` runtime provides the property; fold it
+                        // away everywhere else so calls on it DCE.
+                        if !p.options.features.runtime_hot {
+                            return Some(Expr {
+                                data: js_ast::ExprData::ESpecial(E::Special::HotDisabled),
+                                loc,
+                            });
+                        }
                     }
 
                     // Inline import.meta properties for Bake

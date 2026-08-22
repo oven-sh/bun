@@ -758,8 +758,32 @@ impl Cmd {
                             STDERR_NO as i32,
                         )?;
                     }
-                } else if crate::webcore::ReadableStream::from_js(jsval, global)?.is_some() {
-                    panic!("TODO SHELL READABLE STREAM");
+                } else if let Some(mut stream) =
+                    crate::webcore::ReadableStream::from_js(jsval, global)?
+                {
+                    if !flags.stdin() {
+                        return Err(global.throw(format_args!(
+                            "ReadableStream cannot be used for stdout or stderr; \
+                             only '< ${{...}}' (stdin) is supported"
+                        )));
+                    }
+                    if stream.is_locked(global) || stream.is_disturbed(global) {
+                        return Err(global
+                            .err(
+                                crate::jsc::ErrorCode::INVALID_STATE,
+                                format_args!(
+                                    "ReadableStream redirected to stdin has already been used"
+                                ),
+                            )
+                            .throw());
+                    }
+                    // Fully-buffered / not-yet-started file-backed streams collapse
+                    // to a blob and take the existing `StaticPipeWriter` path.
+                    if let Some(blob) = stream.to_any_blob(global) {
+                        stdio[STDIN_NO].extract_blob(global, blob, STDIN_NO as i32)?;
+                    } else {
+                        stdio[STDIN_NO] = Stdio::ReadableStream(stream);
+                    }
                 } else if let Some(req) = jsval.as_::<crate::webcore::Response>() {
                     // SAFETY: `as_` returns a live JSC-owned `*mut Response`;
                     // `get_body_value` is `&self`.

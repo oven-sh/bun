@@ -5537,7 +5537,7 @@ describe("update", () => {
       expect(out).toEqual([
         expect.stringContaining("bun update v1."),
         "",
-        "Checked 1 install across 2 packages (no changes)",
+        "Checked 1 install across 2 packages (up to date, package.json synced)",
       ]);
       expect(await file(packageJson).json()).toEqual({
         name: "foo",
@@ -5696,7 +5696,7 @@ describe("update", () => {
       expect(out).toStrictEqual([
         expect.stringContaining("bun update v1."),
         "",
-        "Checked 2 installs across 3 packages (no changes)",
+        "Checked 2 installs across 3 packages (up to date, package.json synced)",
       ]);
       expect(await file(packageJson).json()).toStrictEqual({
         name: "foo",
@@ -5883,7 +5883,7 @@ describe("update", () => {
     expect(out).toEqual([
       expect.stringContaining("bun update v1."),
       "",
-      "Checked 1 install across 2 packages (no changes)",
+      "Checked 1 install across 2 packages (up to date, package.json synced)",
     ]);
     expect(await file(packageJson).json()).toEqual({
       name: "foo",
@@ -6203,14 +6203,15 @@ describe("update", () => {
       version: "1.0.0",
     });
 
-    // update no-deps, no range, no change
+    // update no-deps, no range, no change to the resolved version (the re-printed
+    // package.json is still written back, which the summary reports)
     let { out } = await runBunUpdate(env, packageDir, ["no-deps"]);
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
     expect(out).toStrictEqual([
       expect.stringContaining("bun update v1."),
       "",
-      "Checked 5 installs across 6 packages (no changes)",
+      "Checked 5 installs across 6 packages (up to date, package.json synced)",
     ]);
     expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
       version: "1.0.0",

@@ -9,8 +9,8 @@
 //! `bun_runtime` re-exports them. The only non-leaf dependencies are
 //! `bun_io` (`FilePoll`/`KeepAlive`/`EventLoopCtx`), `bun_ptr`
 //! (`ThreadSafeRefCount`), `bun_io` (`BufferedWriter`), `bun_event_loop`,
-//! `bun_threading`, and `bun_crash_handler` — none of which depend back on
-//! this crate, so no cycle.
+//! and `bun_threading` — none of which depend back on this crate, so no
+//! cycle.
 
 use core::ffi::c_char;
 

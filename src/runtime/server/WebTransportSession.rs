@@ -79,7 +79,11 @@ fn build_request(global: &JSGlobalObject, req: &mut Request) -> Option<JSValue> 
         .filter(|host| WebRequest::is_valid_host_header(host))
         .map(|host| {
             let mut s = Vec::new();
-            let fmt = bun_fmt::HostFormatter { is_https: true, host, port: None };
+            let fmt = bun_fmt::HostFormatter {
+                is_https: true,
+                host,
+                port: None,
+            };
             let _ = core::fmt::Write::write_fmt(
                 &mut bun_fmt::VecWriter(&mut s),
                 format_args!("https://{fmt}"),
@@ -169,9 +173,7 @@ impl WebTransportSession {
                 // Reported rather than routed to the server's `error` handler,
                 // which answers with a `Response`: this throw has already
                 // decided its answer. Same as a throwing websocket handler.
-                VirtualMachine::get()
-                    .as_mut()
-                    .run_error_handler(err, None);
+                VirtualMachine::get().as_mut().run_error_handler(err, None);
                 return Decision::Failed;
             }
         };

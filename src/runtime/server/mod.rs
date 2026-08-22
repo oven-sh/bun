@@ -2399,14 +2399,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             Self::write_wt_refusal(server, global, response_value, res);
                         }
                         web_transport_session::Decision::Accept(data_value) => {
-                            let Some(handler) = server.config.webtransport_handler.as_ref()
-                            else {
+                            let Some(handler) = server.config.webtransport_handler.as_ref() else {
                                 return;
                             };
                             let any = AnyServer::from(core::ptr::from_ref::<Self>(server));
-                            WebTransportSession::accept(
-                                global, handler, req, res, data_value, any,
-                            );
+                            WebTransportSession::accept(global, handler, req, res, data_value, any);
                         }
                     }
                 });

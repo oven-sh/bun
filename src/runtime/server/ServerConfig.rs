@@ -1197,8 +1197,9 @@ impl ServerConfig {
 
         if let Some(webtransport_object) = arg.get_truthy(global, "webtransport")? {
             if !webtransport_object.is_object() {
-                return Err(global
-                    .throw_invalid_arguments(format_args!("Expected webtransport to be an object")));
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "Expected webtransport to be an object"
+                )));
             }
             args.webtransport_handler = Some(super::WebTransportHandler::from_js(
                 global,

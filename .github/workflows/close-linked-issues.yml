@@ -94,7 +94,7 @@ jobs:
 
             // A clause that starts with one of these is a condition or a time, not a
             // statement about this PR: "once we fix #1", "if this fixes #1".
-            const SUBORDINATORS = new Set(["if", "when", "whenever", "once", "until", "unless", "before", "after"]);
+            const SUBORDINATORS = new Set(["if", "whether", "when", "whenever", "once", "until", "unless", "before", "after"]);
             const DETERMINERS = new Set(["this", "that", "the", "a", "an"]);
 
             // Words that can sit between the deciding word and the keyword without
@@ -315,9 +315,12 @@ jobs:
                 }
                 if (trimmed.startsWith(">")) {
                   // Only a quoted paragraph continues onto the next unmarked line. After a
-                  // quoted heading, rule, fence or empty quote, the next line is outside.
+                  // quoted heading (ATX, or a setext underline under a quoted paragraph),
+                  // rule, fence or empty quote, the next line is outside.
                   const quoted = trimmed.slice(1).trim();
-                  quote = quoted !== "" && !isHeading(quoted) && !isThematicBreak(quoted) && !isFenceOpening(quoted);
+                  const underline = quote && (isRunOf(quoted, "=") || isRunOf(quoted, "-"));
+                  quote =
+                    quoted !== "" && !underline && !isHeading(quoted) && !isThematicBreak(quoted) && !isFenceOpening(quoted);
                   paragraph = false;
                   kept.push("");
                   continue;
@@ -328,9 +331,10 @@ jobs:
                   continue;
                 }
                 quote = false;
-                // A heading, a rule or a setext underline ("===" under a paragraph) is
-                // not a paragraph line.
-                paragraph = !isHeading(trimmed) && !isThematicBreak(trimmed) && !(paragraph && isRunOf(trimmed, "="));
+                // A heading, a rule or a setext underline ("===" or "--" under a
+                // paragraph) is not a paragraph line.
+                const underline = paragraph && (isRunOf(trimmed, "=") || isRunOf(trimmed, "-"));
+                paragraph = !underline && !isHeading(trimmed) && !isThematicBreak(trimmed);
                 if (!rest.includes("<!--")) {
                   kept.push(rest);
                   continue;

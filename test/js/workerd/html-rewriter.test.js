@@ -1737,6 +1737,94 @@ it("#3334 regression", async () => {
   Bun.gc(true);
 });
 
+// A Response built without a `headers` init only reports its body's
+// Content-Type once `.headers` is read. The transformed Response's body is a
+// stream, so transform() has to carry that header over itself.
+describe("transform() carries the input Response's Content-Type", () => {
+  const rewrite = input =>
+    new HTMLRewriter()
+      .on("p", {
+        element(element) {
+          element.setInnerContent("rewritten");
+        },
+      })
+      .transform(input);
+
+  const contentTypeAndBody = async response => ({
+    contentType: response.headers.get("content-type"),
+    body: await response.text(),
+  });
+
+  it("Bun.file() body", async () => {
+    using dir = tempDir("html-rewriter-content-type", { "index.html": "<p>original</p>" });
+    const response = rewrite(new Response(Bun.file(join(String(dir), "index.html"))));
+    expect(await contentTypeAndBody(response)).toEqual({
+      contentType: "text/html;charset=utf-8",
+      body: "<p>rewritten</p>",
+    });
+  });
+
+  it("typed Blob body", async () => {
+    const response = rewrite(new Response(new Blob(["<p>original</p>"], { type: "text/html" })));
+    expect(await contentTypeAndBody(response)).toEqual({
+      contentType: "text/html;charset=utf-8",
+      body: "<p>rewritten</p>",
+    });
+  });
+
+  it("Response built by fetch() for a data: URL", async () => {
+    const response = rewrite(await fetch("data:text/html,<p>original</p>"));
+    expect(await contentTypeAndBody(response)).toEqual({
+      contentType: "text/html;charset=utf-8",
+      body: "<p>rewritten</p>",
+    });
+  });
+
+  it("FormData body keeps the boundary of the encoded body", async () => {
+    const form = new FormData();
+    form.append("field", "<p>original</p>");
+    const { contentType, body } = await contentTypeAndBody(rewrite(new Response(form)));
+    expect(contentType).toStartWith("multipart/form-data; boundary=");
+    const boundary = contentType.slice("multipart/form-data; boundary=".length);
+    expect(body).toStartWith(`--${boundary}\r\n`);
+    expect(body).toContain("<p>rewritten</p>");
+  });
+
+  it("headers init and the body's Content-Type are both carried", async () => {
+    const response = rewrite(
+      new Response(new Blob(["<p>original</p>"], { type: "text/html" }), { headers: { "x-custom": "1" } }),
+    );
+    expect([...response.headers]).toEqual([
+      ["content-type", "text/html;charset=utf-8"],
+      ["x-custom", "1"],
+    ]);
+  });
+
+  it("a Content-Type deleted from the input's headers stays deleted", async () => {
+    const input = new Response(new Blob(["<p>original</p>"], { type: "text/html" }));
+    input.headers.delete("content-type");
+    expect(await contentTypeAndBody(rewrite(input))).toEqual({ contentType: null, body: "<p>rewritten</p>" });
+  });
+
+  it("an untyped Blob body gets no Content-Type", async () => {
+    const response = rewrite(new Response(new Blob(["<p>original</p>"])));
+    expect(await contentTypeAndBody(response)).toEqual({ contentType: null, body: "<p>rewritten</p>" });
+  });
+
+  it("Bun.serve sends the carried Content-Type", async () => {
+    using dir = tempDir("html-rewriter-served-content-type", { "index.html": "<p>original</p>" });
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => rewrite(new Response(Bun.file(join(String(dir), "index.html")))),
+    });
+    const response = await fetch(`http://localhost:${server.port}/`);
+    expect(await contentTypeAndBody(response)).toEqual({
+      contentType: "text/html;charset=utf-8",
+      body: "<p>rewritten</p>",
+    });
+  });
+});
+
 it("#3489", async () => {
   var el;
   await new HTMLRewriter()

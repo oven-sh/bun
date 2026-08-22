@@ -2409,6 +2409,48 @@ impl Package<u64> {
                                     missing_workspace,
                                 )?;
                             }
+                            // "workspaces": { "selfContained": ["apps/desktop"] } — workspaces
+                            // (by path or name) whose node_modules must be complete and
+                            // physical; see docs/pm/workspaces.mdx.
+                            if let Some(q) = dependencies_q.expr.as_property(b"selfContained") {
+                                if !q.expr.is_array() {
+                                    let _ = log.add_error_fmt(
+                                        source,
+                                        q.expr.loc,
+                                        format_args!(
+                                            "\"workspaces.selfContained\" expects an array of workspace paths or names"
+                                        ),
+                                    );
+                                    return Err(crate::Error::InvalidPackageJSON);
+                                }
+                                let mut owned: Vec<Vec<u8>> = Vec::new();
+                                if let Some(mut items) = q.expr.as_array() {
+                                    while let Some(item) = items.next() {
+                                        let Some(s) = item.as_string(&bump) else {
+                                            let _ = log.add_error_fmt(
+                                                source,
+                                                item.loc,
+                                                format_args!(
+                                                    "\"workspaces.selfContained\" entries must be strings (workspace paths or names)"
+                                                ),
+                                            );
+                                            return Err(crate::Error::InvalidPackageJSON);
+                                        };
+                                        owned.push(s.to_vec());
+                                    }
+                                }
+                                let list: Vec<&[u8]> = owned.iter().map(|v| v.as_slice()).collect();
+                                for unmatched in workspace_names.mark_self_contained(&list) {
+                                    log.add_warning_fmt(
+                                        Some(source),
+                                        q.expr.loc,
+                                        format_args!(
+                                            "\"workspaces.selfContained\": \"{}\" does not match any workspace path or name",
+                                            bstr::BStr::new(unmatched)
+                                        ),
+                                    );
+                                }
+                            }
 
                             break 'brk;
                         }
@@ -2849,6 +2891,24 @@ impl Package<u64> {
                     }
 
                     let external_name = string_builder.append::<ExternalString>(&entry.name);
+                    // a property of the manifest, recorded whether or not the dependency
+                    // edge below turns out to be new
+                    if entry.hoisting_limits {
+                        lockfile
+                            .self_contained_workspaces
+                            .put(external_name.hash, ())?;
+                    }
+                    if let Some(v) = &entry.unsupported_hoisting_limits {
+                        log.add_warning_fmt(
+                            Some(source),
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "workspace \"{}\": installConfig.hoistingLimits \"{}\" is not supported (only \"workspaces\" is); ignoring",
+                                bstr::BStr::new(&entry.name),
+                                bstr::BStr::new(v),
+                            ),
+                        );
+                    }
 
                     let workspace_version = 'brk: {
                         if let Some(version_string) = &entry.version {

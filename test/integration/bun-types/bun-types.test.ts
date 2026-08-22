@@ -449,6 +449,7 @@ describe("@types/bun integration test", () => {
 
       const labels = [...fixture.slice(arrayStart, arrayEnd).matchAll(/"([^"]+)"/g)].map(m => m[1]);
       expect(labels).toHaveLength(222);
+      expect(new Set(labels).size).toBe(labels.length);
 
       const rejected = labels.filter(label => {
         try {

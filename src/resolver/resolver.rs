@@ -1382,10 +1382,6 @@ impl<'a> Resolver<'a> {
                 .unwrap_or_else(|_| panic!("Failed to query CWD"));
         };
 
-        // r.mutex.lock();
-        // defer r.mutex.unlock();
-        // errdefer (r.flushDebugLogs(.fail) catch {}) — handled at each error return below
-
         // A path with a null byte cannot exist on the filesystem. Continuing
         // anyways would cause assertion failures.
         if strings::index_of_char(import_path, 0).is_some() {
@@ -4454,7 +4450,6 @@ impl<'a> Resolver<'a> {
             let (qt_unsafe_path, qt_safe_path) = (queue_top.unsafe_path, queue_top.safe_path);
             let queue_top_unsafe_path: &[u8] = qt_unsafe_path.slice();
             let queue_top_safe_path: &[u8] = qt_safe_path.slice();
-            // defer top_parent = queue_top.result — done at end of loop body
             queue_slice_len -= 1;
 
             let open_dir: FD = if queue_top.fd.is_valid() {
@@ -5187,7 +5182,6 @@ impl<'a> Resolver<'a> {
             debug.increase_indent();
         }
 
-        // defer { debug.decreaseIndent() } — handled at returns
         macro_rules! dec_ret {
             ($e:expr) => {{
                 if let Some(d) = self.debug_logs.as_mut() {
@@ -5576,7 +5570,6 @@ impl<'a> Resolver<'a> {
             ));
             debug.increase_indent();
         }
-        // defer if (r.debug_logs) |*debug| debug.decreaseIndent();
         macro_rules! dec_ret {
             ($e:expr) => {{
                 if let Some(d) = self.debug_logs.as_mut() {

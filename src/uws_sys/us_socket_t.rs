@@ -30,8 +30,8 @@ bun_opaque::opaque_ffi! { pub struct us_socket_t; }
 pub enum CloseCode {
     /// TLS: send close_notify and defer fd close until peer replies. TCP: FIN.
     normal = 0,
-    /// Closes now, whatever the peer does: TLS fast-shutdown with no spill
-    /// deferral; TCP SO_LINGER{1,0} → RST, dropping any unflushed send buffer.
+    /// Closes now, whatever the peer does: TLS sends no close_notify (abortive);
+    /// TCP SO_LINGER{1,0} → RST, dropping any unflushed send buffer.
     /// For `terminate()` / GC abort, and for a protocol client that has given
     /// up on the connection and rejected everything on it (the valkey client's
     /// `fail()`, and its `close()` once a `fast_shutdown` came back deferred),
@@ -611,18 +611,6 @@ pub struct us_socket_stream_buffer_t {
     pub(crate) list_len: usize,
     pub(crate) total_bytes_written: usize,
     pub(crate) cursor: usize,
-}
-
-impl Default for us_socket_stream_buffer_t {
-    fn default() -> Self {
-        Self {
-            list_ptr: ptr::null_mut(),
-            list_cap: 0,
-            list_len: 0,
-            total_bytes_written: 0,
-            cursor: 0,
-        }
-    }
 }
 
 /// Minimal structural mirror of `bun_io::StreamBuffer` for tier-0 interop.

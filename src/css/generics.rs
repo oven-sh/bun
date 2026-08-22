@@ -298,7 +298,6 @@ macro_rules! css_eql_partialeq {
         }
     )+};
 }
-pub use css_eql_partialeq;
 
 impl CssEql for [u8] {
     #[inline]

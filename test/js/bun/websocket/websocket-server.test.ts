@@ -1,5 +1,6 @@
 import type { Server, ServerWebSocket, Subprocess, WebSocketHandler } from "bun";
 import { serve, spawn } from "bun";
+import { heapStats } from "bun:jsc";
 import { afterEach, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, forceGuardMalloc, isWindows, tempDir } from "harness";
 import net, { isIP } from "node:net";
@@ -56,6 +57,10 @@ const binaryTypes = [
   {
     label: "uint8array",
     type: Uint8Array,
+  },
+  {
+    label: "blob",
+    type: Blob,
   },
 ] as const;
 
@@ -736,6 +741,115 @@ describe("ServerWebSocket", () => {
         },
       }));
     }
+    test("keeps accepting the capitalized and 'buffer' spellings", done => ({
+      open(ws) {
+        try {
+          const seen: string[] = [];
+          for (const spelling of ["Buffer", "buffer", "ArrayBuffer", "Uint8Array", "nodebuffer"]) {
+            ws.binaryType = spelling as typeof ws.binaryType;
+            seen.push(ws.binaryType!);
+          }
+          expect(seen).toEqual(["nodebuffer", "nodebuffer", "arraybuffer", "uint8array", "nodebuffer"]);
+          done();
+        } catch (err) {
+          done(err);
+        }
+      },
+    }));
+    test("blob payloads carry the frame bytes", done => {
+      const received: { event: string; size: number; type: string; bytes: number[] }[] = [];
+      async function record(event: string, data: unknown) {
+        const blob = data as Blob;
+        received.push({ event, size: blob.size, type: blob.type, bytes: Array.from(await blob.bytes()) });
+      }
+      // The echo client answers a message with the same message, a pong with the same pong
+      // and a ping with the same ping. The client's WebSocket also answers a ping with an
+      // automatic pong, so the server pong is sent first and only the first pong is recorded.
+      return {
+        open(ws) {
+          try {
+            ws.binaryType = "blob";
+            ws.send(new Uint8Array([1, 2, 3]));
+          } catch (err) {
+            done(err);
+          }
+        },
+        async message(ws, data) {
+          try {
+            await record("message", data);
+            ws.pong(new Uint8Array([5]));
+          } catch (err) {
+            done(err);
+          }
+        },
+        async pong(ws, data) {
+          if (received.some(({ event }) => event === "pong")) return;
+          try {
+            await record("pong", data);
+            ws.ping(new Uint8Array([4]));
+          } catch (err) {
+            done(err);
+          }
+        },
+        async ping(_, data) {
+          try {
+            await record("ping", data);
+            expect(received).toEqual([
+              { event: "message", size: 3, type: "", bytes: [1, 2, 3] },
+              { event: "pong", size: 1, type: "", bytes: [5] },
+              { event: "ping", size: 1, type: "", bytes: [4] },
+            ]);
+            done();
+          } catch (err) {
+            done(err);
+          }
+        },
+      };
+    });
+    it("blob frames report their bytes to the garbage collector", async () => {
+      const { promise, resolve, reject } = Promise.withResolvers<Blob>();
+      using server = serve({
+        port: 0,
+        fetch(req, server) {
+          if (server.upgrade(req)) return;
+          return new Response(null, { status: 400 });
+        },
+        websocket: {
+          open(ws) {
+            try {
+              ws.binaryType = "blob";
+            } catch (err) {
+              reject(err);
+            }
+          },
+          message(_, data) {
+            resolve(data as unknown as Blob);
+          },
+        },
+      });
+      // Stays alive until the end, so it is part of both measurements.
+      const payload = new Uint8Array(2 * 1024 * 1024);
+      let before = 0;
+      const client = new WebSocket(`ws://${server.hostname}:${server.port}`);
+      client.onerror = () => reject(new Error("client error"));
+      client.onopen = () => {
+        // Both sockets exist at this point, so only the transfer separates the two measurements.
+        Bun.gc(true);
+        before = heapStats().extraMemorySize;
+        client.send(payload);
+      };
+      try {
+        const blob = await promise;
+        Bun.gc(true);
+        const reported = heapStats().extraMemorySize - before;
+        expect(blob.size).toBe(payload.byteLength);
+        // Without the report this is close to 0. Memory that earlier tests release in the
+        // meantime lowers the number a little, so half the payload is the bound.
+        expect(reported).toBeGreaterThanOrEqual(payload.byteLength / 2);
+      } finally {
+        client.close();
+      }
+    });
   });
   describe("send()", () => {
     for (const { label, message, bytes } of messages) {
@@ -1231,7 +1345,10 @@ describe("ServerWebSocket", () => {
           ws.cork(() => {
             throw new Error("boom");
           }),
-        ).toThrow();
+        ).toThrow("boom");
+        // A returned Error is a return value, not a throw.
+        const returned = new Error("returned");
+        expect(ws.cork(() => returned)).toBe(returned);
 
         setTimeout(() => {
           ws.cork(() => {
@@ -1996,5 +2113,194 @@ describe("server.upgrade() validates the opening handshake", () => {
     expect(v8.status).toBe(426);
     expect(v8.headers.toLowerCase()).toContain("sec-websocket-version: 13");
     expect(upgradeResult).toBe(false);
+  });
+});
+
+// server.upgrade() runs open() before it returns, and ws.close() runs close()
+// before it returns. A request handler (or a request's abort listener) that
+// calls one of them must still run to completion first: the nextTick and
+// promise callbacks it queued run once it has returned, as they do for a timer
+// or socket callback that does the same thing. They used to run inside the
+// upgrade()/close() call.
+describe.concurrent("request handlers run to completion before the callbacks they queued", () => {
+  function queueThen(order: string[], nativeCall: () => void) {
+    process.nextTick(() => order.push("nextTick"));
+    Promise.resolve().then(() => order.push("microtask"));
+    nativeCall();
+    order.push("rest of handler");
+  }
+
+  function wsUrl(server: Server, pathname: string) {
+    return new URL(pathname, server.url.href.replace(/^http/, "ws"));
+  }
+
+  // Resolves once the server has closed the socket (or the handshake failed).
+  function connectUntilClosed(server: Server, pathname: string) {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const ws = new WebSocket(wsUrl(server, pathname));
+    ws.onerror = () => resolve();
+    ws.onclose = () => resolve();
+    return promise;
+  }
+
+  const upgradeHandler = (order: string[]) => (req: Request, srv: Server) => {
+    queueThen(order, () => {
+      if (!srv.upgrade(req)) order.push("upgrade() failed");
+    });
+  };
+
+  const websocket = (order: string[], onOpen: (ws: ServerWebSocket<unknown>) => void) =>
+    ({
+      open(ws) {
+        onOpen(ws);
+      },
+      message() {},
+      close() {
+        order.push("close()");
+      },
+    }) satisfies WebSocketHandler<unknown>;
+
+  it("fetch() calling server.upgrade()", async () => {
+    const order: string[] = [];
+    using server = serve({
+      port: 0,
+      fetch: upgradeHandler(order),
+      websocket: websocket(order, ws => {
+        order.push("open()");
+        ws.close();
+      }),
+    });
+
+    await connectUntilClosed(server, "/");
+    expect(order).toEqual(["open()", "close()", "rest of handler", "nextTick", "microtask"]);
+  });
+
+  it("a route handler calling server.upgrade()", async () => {
+    const order: string[] = [];
+    using server = serve({
+      port: 0,
+      routes: { "/ws": upgradeHandler(order) },
+      websocket: websocket(order, ws => {
+        order.push("open()");
+        ws.close();
+      }),
+    });
+
+    await connectUntilClosed(server, "/ws");
+    expect(order).toEqual(["open()", "close()", "rest of handler", "nextTick", "microtask"]);
+  });
+
+  // Opens a websocket on `/ws` and hands back the server side of it.
+  async function openHeldSocket(server: Server, opened: Promise<ServerWebSocket<unknown>>) {
+    const closed = connectUntilClosed(server, "/ws");
+    const held = await opened;
+    return { held, closed };
+  }
+
+  it("fetch() closing an open ServerWebSocket", async () => {
+    const order: string[] = [];
+    const opened = Promise.withResolvers<ServerWebSocket<unknown>>();
+    let held: ServerWebSocket<unknown>;
+    using server = serve({
+      port: 0,
+      fetch(req, srv) {
+        if (new URL(req.url).pathname === "/ws") {
+          return srv.upgrade(req) ? undefined : new Response("upgrade() failed", { status: 500 });
+        }
+        queueThen(order, () => held.close());
+        return new Response("ok");
+      },
+      websocket: websocket(order, opened.resolve),
+    });
+
+    const sockets = await openHeldSocket(server, opened.promise);
+    held = sockets.held;
+    expect(await fetch(new URL("/close-it", server.url)).then(res => res.text())).toBe("ok");
+    await sockets.closed;
+    expect(order).toEqual(["close()", "rest of handler", "nextTick", "microtask"]);
+  });
+
+  it("a route handler closing an open ServerWebSocket", async () => {
+    const order: string[] = [];
+    const opened = Promise.withResolvers<ServerWebSocket<unknown>>();
+    let held: ServerWebSocket<unknown>;
+    using server = serve({
+      port: 0,
+      routes: {
+        "/ws": (req, srv) => (srv.upgrade(req) ? undefined : new Response("upgrade() failed", { status: 500 })),
+        "/close-it": () => {
+          queueThen(order, () => held.close());
+          return new Response("ok");
+        },
+      },
+      websocket: websocket(order, opened.resolve),
+    });
+
+    const sockets = await openHeldSocket(server, opened.promise);
+    held = sockets.held;
+    expect(await fetch(new URL("/close-it", server.url)).then(res => res.text())).toBe("ok");
+    await sockets.closed;
+    expect(order).toEqual(["close()", "rest of handler", "nextTick", "microtask"]);
+  });
+
+  it("a request's abort listener closing an open ServerWebSocket", async () => {
+    const order: string[] = [];
+    const opened = Promise.withResolvers<ServerWebSocket<unknown>>();
+    const reachedHandler = Promise.withResolvers<void>();
+    let held: ServerWebSocket<unknown>;
+    using server = serve({
+      port: 0,
+      fetch(req, srv) {
+        if (new URL(req.url).pathname === "/ws") {
+          return srv.upgrade(req) ? undefined : new Response("upgrade() failed", { status: 500 });
+        }
+        req.signal.addEventListener("abort", () => queueThen(order, () => held.close()));
+        reachedHandler.resolve();
+        // Never responds: the client aborts the request instead.
+        return new Promise<Response>(() => {});
+      },
+      websocket: websocket(order, opened.resolve),
+    });
+
+    const sockets = await openHeldSocket(server, opened.promise);
+    held = sockets.held;
+    const controller = new AbortController();
+    const aborted = fetch(new URL("/abort-me", server.url), { signal: controller.signal });
+    await reachedHandler.promise;
+    controller.abort();
+    await expect(aborted).rejects.toThrow();
+    await sockets.closed;
+    expect(order).toEqual(["close()", "rest of handler", "nextTick", "microtask"]);
+  });
+
+  // After an await, the rest of an async handler runs from the microtask
+  // checkpoint the server performs as soon as the handler returns its promise.
+  // Only a promise callback is queued here: a nextTick queued from inside a
+  // microtask is ordered differently from one queued by synchronous code, and
+  // that ordering is not what this test is about.
+  it("the continuation of an async fetch() closing an open ServerWebSocket", async () => {
+    const order: string[] = [];
+    const opened = Promise.withResolvers<ServerWebSocket<unknown>>();
+    let held: ServerWebSocket<unknown>;
+    using server = serve({
+      port: 0,
+      async fetch(req, srv) {
+        if (new URL(req.url).pathname === "/ws") {
+          return srv.upgrade(req) ? undefined : new Response("upgrade() failed", { status: 500 });
+        }
+        await Promise.resolve();
+        Promise.resolve().then(() => order.push("microtask"));
+        held.close();
+        order.push("rest of handler");
+        return new Response("ok");
+      },
+      websocket: websocket(order, opened.resolve),
+    });
+
+    const sockets = await openHeldSocket(server, opened.promise);
+    held = sockets.held;
+    expect(await fetch(new URL("/close-it", server.url)).then(res => res.text())).toBe("ok");
+    await sockets.closed;
+    expect(order).toEqual(["close()", "rest of handler", "microtask"]);
   });
 });

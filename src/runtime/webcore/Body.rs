@@ -394,7 +394,6 @@ impl PendingValue {
                         Action::GetBlob => global_this.readable_stream_to_blob(readable.value),
                         Action::GetFormData(form_data) => 'brk: {
                             let fd = form_data.take().unwrap();
-                            // defer: form_data already taken; action.getFormData = None handled by take()
                             let encoding_js = match &fd.encoding {
                                 bun_core::form_data::Encoding::Multipart(multipart) => {
                                     BunString::init(&multipart[..]).to_js(global_this)?
@@ -867,7 +866,7 @@ impl Value {
             drain_result = drain(locked.task.unwrap());
         }
 
-        if matches!(drain_result, DrainResult::Empty | DrainResult::Aborted) {
+        if matches!(drain_result, DrainResult::Aborted) {
             *self = Value::Null;
             return ReadableStream::empty(global_this);
         }
@@ -1085,7 +1084,7 @@ impl Value {
                 if fed.is_some() {
                     *new = Value::Used;
                 } else {
-                    readable.done(global);
+                    readable.done();
                 }
                 locked.readable.deinit();
             }
@@ -1487,7 +1486,7 @@ impl Value {
             drain_result = drain(locked.task.unwrap());
         }
 
-        if matches!(drain_result, DrainResult::Empty | DrainResult::Aborted) {
+        if matches!(drain_result, DrainResult::Aborted) {
             *self = Value::Null;
             return Ok(Value::Null);
         }

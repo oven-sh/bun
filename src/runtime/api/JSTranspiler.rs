@@ -549,7 +549,6 @@ impl Config {
                 // SAFETY: `replace_obj` is non-null (just returned by get_object()).
                 let replace_obj_ref = unsafe { &*replace_obj };
                 let mut iter = JSPropertyIterator::init(global, replace_obj_ref, PROP_ITER_OPTS)?;
-                // defer iter.deinit() → Drop
 
                 if iter.len > 0 {
                     bun_core::handle_oom(replacements.ensure_unused_capacity(iter.len));
@@ -702,10 +701,8 @@ impl TransformTask {
         let mut log = bun_ast::Log::init();
         log.level = config.log.level;
 
-        // SAFETY: bitwise copy of the wrapper's Transpiler; `ManuallyDrop` so the
-        // copy never frees what the original owns. Its self-pointers (log,
-        // linker.resolver, arena) are re-aimed in `run` once the task has its
-        // final address inside the job.
+        // SAFETY: `ManuallyDrop` keeps this bitwise copy from freeing what the
+        // wrapper owns; `run` re-aims its log and arena pointers.
         let transpiler_copy = core::mem::ManuallyDrop::new(unsafe {
             core::ptr::read(transpiler.transpiler.as_ptr())
         });
@@ -743,8 +740,6 @@ impl TransformTask {
 
     fn run(&mut self, vm: &jsc::Ticket) {
         let name = self.loader.stdin_name();
-        let resolver_ptr: *mut _ = &raw mut self.transpiler.resolver;
-        self.transpiler.linker.resolver = resolver_ptr;
         // SAFETY: the wrapper's config, alive under the job's ticket (see `schedule`).
         let tsconfig: Option<&TSConfigJSON> =
             self.tsconfig.map(|p| &*unsafe { p.under_ticket(vm) });
@@ -1294,7 +1289,6 @@ impl JSTranspiler {
         // SAFETY: bun_vm() returns the live VM singleton on this thread.
         let vm = global.bun_vm();
         let mut args = ArgumentsSlice::init(vm, callframe.arguments());
-        // defer args.deinit() → Drop
         let Some(code_arg) = args.next() else {
             return Err(global.throw_invalid_argument_type("scan", "code", "string or Uint8Array"));
         };
@@ -1302,7 +1296,6 @@ impl JSTranspiler {
         let Some(code_holder) = StringOrBuffer::from_js(global, code_arg)? else {
             return Err(global.throw_invalid_argument_type("scan", "code", "string or Uint8Array"));
         };
-        // defer code_holder.deinit() → Drop
         let code = code_holder.slice();
         args.eat();
 
@@ -1320,7 +1313,6 @@ impl JSTranspiler {
 
         let arena = Arena::new();
         let mut log = bun_ast::Log::init();
-        // defer log.deinit() → Drop
         // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
         // `_restore` (declared after `arena`/`log`, so dropped first) restores
         // `prev_arena` and `&self.config.log` before either local drops.
@@ -1384,7 +1376,6 @@ impl JSTranspiler {
         // SAFETY: bun_vm() returns the live VM singleton on this thread.
         let vm = global.bun_vm();
         let mut args = ArgumentsSlice::init(vm, callframe.arguments());
-        // defer args.arena.deinit() → Drop
         let Some(code_arg) = args.next() else {
             return Err(global.throw_invalid_argument_type(
                 "transform",
@@ -1450,7 +1441,6 @@ impl JSTranspiler {
         // SAFETY: bun_vm() returns the live VM singleton on this thread.
         let vm = global.bun_vm();
         let mut args = ArgumentsSlice::init(vm, arguments);
-        // defer args.arena.deinit() → Drop
         let Some(code_arg) = args.next() else {
             return Err(global.throw_invalid_argument_type(
                 "transformSync",
@@ -1467,7 +1457,6 @@ impl JSTranspiler {
                 "string or Uint8Array",
             ));
         };
-        // defer code_holder.deinit() → Drop
         let code = code_holder.slice();
         arguments[0].ensure_still_alive();
         let _keep0 = bun_jsc::EnsureStillAlive(arguments[0]);
@@ -1559,9 +1548,6 @@ impl JSTranspiler {
             bun_core::handle_oom(writer.buffer.grow_if_needed(code.len()));
             writer
         });
-
-        // defer { this.buffer_writer = buffer_writer } — only the print-error and tail
-        // paths reach past this point; both write `Some(..)` back explicitly.
 
         buffer_writer.reset();
         let mut printer = JSPrinter::BufferPrinter::init(buffer_writer);
@@ -1661,7 +1647,6 @@ impl JSTranspiler {
         // SAFETY: bun_vm() returns the live VM singleton on this thread.
         let vm = global.bun_vm();
         let mut args = ArgumentsSlice::init(vm, callframe.arguments());
-        // defer args.deinit() → Drop
 
         let Some(code_arg) = args.next() else {
             return Err(global.throw_invalid_argument_type(
@@ -1685,7 +1670,6 @@ impl JSTranspiler {
             }
         };
         args.eat();
-        // defer code_holder.deinit() → Drop
         let code = code_holder.slice();
 
         let mut loader: Loader = self.config.get().default_loader;
@@ -1704,7 +1688,6 @@ impl JSTranspiler {
 
         let arena = Arena::new();
         let mut log = bun_ast::Log::init();
-        // defer log.deinit() → Drop
         // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
         // `_restore` (declared after `arena`/`log`, so dropped first) restores
         // `prev_arena` and `&self.config.log` before either local drops.

@@ -89,6 +89,9 @@ extern "C" void* highway_memmem(const uint8_t* haystack, size_t haystack_len, co
 extern "C" size_t highway_memrmem(const uint8_t* haystack, size_t haystack_len, const uint8_t* needle, size_t needle_len);
 extern "C" size_t highway_memmem16(const uint16_t* haystack, size_t haystack_len, const uint16_t* needle, size_t needle_len);
 extern "C" size_t highway_memrmem16(const uint16_t* haystack, size_t haystack_len, const uint16_t* needle, size_t needle_len);
+extern "C" void highway_bswap16(uint8_t* data, size_t len);
+extern "C" void highway_bswap32(uint8_t* data, size_t len);
+extern "C" void highway_bswap64(uint8_t* data, size_t len);
 extern "C" size_t highway_index_of_char(const uint8_t* haystack, size_t haystack_len, uint8_t needle);
 extern "C" size_t highway_last_index_of_char(const uint8_t* haystack, size_t haystack_len, uint8_t needle);
 static constexpr size_t kHighwayNotFound = ~static_cast<size_t>(0);
@@ -326,17 +329,6 @@ static std::optional<JSString*> resolveEncodingString(JSC::ThrowScope& scope, JS
 // Matches Node's validateOffset (lib/buffer.js), which is validateInteger and
 // therefore renders its range as ">= min && <= max", unlike boundsError's
 // ">= min and <= max".
-size_t validateOffset(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, JSC::JSValue name, size_t min, size_t max)
-{
-    if (!value.isNumber()) [[unlikely]]
-        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "number"_s, value);
-    auto value_num = value.asNumber();
-    if (std::fmod(value_num, 1.0) != 0) [[unlikely]]
-        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
-    if (value_num < min || value_num > max) [[unlikely]]
-        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, makeString(">= "_s, min, " && <= "_s, max), value);
-    return static_cast<size_t>(value_num);
-}
 size_t validateOffset(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, WTF::ASCIILiteral name, size_t min, size_t max)
 {
     if (!value.isNumber()) [[unlikely]]
@@ -1065,7 +1057,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSBufferPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSBufferPrototype* ptr = new (NotNull, JSC::allocateCell<JSBufferPrototype>(vm)) JSBufferPrototype(vm, globalObject, structure);
+        JSBufferPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSBufferPrototype))) JSBufferPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm, globalObject);
         return ptr;
     }
@@ -1079,7 +1071,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -1968,15 +1960,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_swap16Body(JSC::JSGlobalObj
         return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_BUFFER_SIZE, "Buffer size must be a multiple of 16-bits"_s);
     }
 
-    uint8_t* data = castedThis->typedVector();
-    size_t count = length / elemSize;
-
-    for (size_t i = 0; i < count; i++) {
-        uint16_t val;
-        memcpy(&val, data + i * elemSize, sizeof(val));
-        val = __builtin_bswap16(val);
-        memcpy(data + i * elemSize, &val, sizeof(val));
-    }
+    highway_bswap16(castedThis->typedVector(), length);
 
     return JSC::JSValue::encode(castedThis);
 }
@@ -1988,26 +1972,13 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_swap32Body(JSC::JSGlobalObj
 
     // A detached buffer has byteLength() 0: nothing below touches its null vector
     // and it is returned unchanged, like in Node.
-    constexpr int elemSize = 4;
-    int64_t length = static_cast<int64_t>(castedThis->byteLength());
+    constexpr size_t elemSize = 4;
+    size_t length = castedThis->byteLength();
     if (length % elemSize != 0) {
         return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_BUFFER_SIZE, "Buffer size must be a multiple of 32-bits"_s);
     }
 
-    uint8_t* typedVector = castedThis->typedVector();
-
-    constexpr size_t swaps = elemSize / 2;
-    for (size_t elem = 0; elem < length; elem += elemSize) {
-        const size_t right = elem + elemSize - 1;
-        for (size_t k = 0; k < swaps; k++) {
-            const size_t i = right - k;
-            const size_t j = elem + k;
-
-            uint8_t temp = typedVector[i];
-            typedVector[i] = typedVector[j];
-            typedVector[j] = temp;
-        }
-    }
+    highway_bswap32(castedThis->typedVector(), length);
 
     return JSC::JSValue::encode(castedThis);
 }
@@ -2025,15 +1996,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_swap64Body(JSC::JSGlobalObj
         return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_BUFFER_SIZE, "Buffer size must be a multiple of 64-bits"_s);
     }
 
-    uint8_t* data = castedThis->typedVector();
-    size_t count = length / elemSize;
-
-    for (size_t i = 0; i < count; i++) {
-        uint64_t val;
-        memcpy(&val, data + i * elemSize, sizeof(val));
-        val = __builtin_bswap64(val);
-        memcpy(data + i * elemSize, &val, sizeof(val));
-    }
+    highway_bswap64(castedThis->typedVector(), length);
 
     return JSC::JSValue::encode(castedThis);
 }
@@ -2688,7 +2651,7 @@ public:
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
     {
         JSValue prototype = globalObject->m_typedArrayUint8.constructorInitializedOnMainThread(globalObject);
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(prototype.asCell()->type(), StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(prototype.asCell()->type(), StructureFlags), info());
     }
 
     DECLARE_INFO;
@@ -2731,10 +2694,6 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_copyBytesFrom, (JSGlobalObj
     return jsBufferConstructorFunction_copyBytesFromBody(lexicalGlobalObject, callFrame);
 }
 
-extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(jsBufferConstructorAllocWithoutTypeChecks, JSUint8Array*, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, int size));
-extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(jsBufferConstructorAllocUnsafeWithoutTypeChecks, JSUint8Array*, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, int size));
-extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(jsBufferConstructorAllocUnsafeSlowWithoutTypeChecks, JSUint8Array*, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, int size));
-
 static size_t validateOffsetBigInt64(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSC::JSValue offsetVal, size_t byteLength)
 {
     // Node's checkBounds/boundsError validates the offset's type and
@@ -2773,36 +2732,6 @@ static size_t validateOffsetBigInt64(JSC::JSGlobalObject* lexicalGlobalObject, J
     }
 
     return truncateDoubleToUint64(offsetD);
-}
-
-JSC_DEFINE_JIT_OPERATION(jsBufferConstructorAllocWithoutTypeChecks, JSUint8Array*, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, int byteLength))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    IGNORE_WARNINGS_BEGIN("frame-address")
-    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-    IGNORE_WARNINGS_END
-    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    return { allocBuffer(lexicalGlobalObject, byteLength) };
-}
-
-JSC_DEFINE_JIT_OPERATION(jsBufferConstructorAllocUnsafeWithoutTypeChecks, JSUint8Array*, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, int byteLength))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    IGNORE_WARNINGS_BEGIN("frame-address")
-    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-    IGNORE_WARNINGS_END
-    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    return { allocBufferUnsafe(lexicalGlobalObject, byteLength) };
-}
-
-JSC_DEFINE_JIT_OPERATION(jsBufferConstructorAllocUnsafeSlowWithoutTypeChecks, JSUint8Array*, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, int byteLength))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    IGNORE_WARNINGS_BEGIN("frame-address")
-    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-    IGNORE_WARNINGS_END
-    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    return { allocBufferUnsafe(lexicalGlobalObject, byteLength) };
 }
 
 JSC_ANNOTATE_HOST_FUNCTION(JSBufferConstructorConstruct, JSBufferConstructor::construct);
@@ -3229,8 +3158,8 @@ static const HashTableValue JSBufferPrototypeTableValues[]
 void JSBufferPrototype::finishCreation(VM& vm, JSC::JSGlobalObject* globalThis)
 {
     Base::finishCreation(vm);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
-    reifyStaticProperties(vm, JSBuffer::info(), JSBufferPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
+    Bun::reifyStaticPropertyTable(vm, JSBuffer::info(), JSBufferPrototypeTableValues, *this);
 
     ALIAS("toLocaleString", "toString");
 

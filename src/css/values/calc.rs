@@ -297,7 +297,7 @@ impl<V: CalcValue> Calc<V> {
         // name slice is owned by the cloned `Token` (whose payload already
         // carries the parser's arena lifetime) instead of being laundered to
         // `'static` here.
-        let tok = input.next()?.clone();
+        let tok = *input.next()?;
         let unit = match tok {
             css::Token::Function(f) => match CalcUnit::get_any_case(f) {
                 Some(u) => u,
@@ -340,48 +340,30 @@ impl<V: CalcValue> Calc<V> {
                 Ok(Calc::Function(Box::new(MathFunction::Max(reduced))))
             }
             CalcUnit::Clamp => {
-                let (mut min, mut center, mut max) = input.parse_nested_block(|i| {
+                let (min, mut center, max) = input.parse_nested_block(|i| {
                     let min = Self::parse_sum(i, parse_ident)?;
                     i.expect_comma()?;
                     let center = Self::parse_sum(i, parse_ident)?;
                     i.expect_comma()?;
                     let max = Self::parse_sum(i, parse_ident)?;
-                    Ok((Some(min), center, Some(max)))
+                    Ok((min, center, max))
                 })?;
 
-                // According to the spec, the minimum should "win" over the maximum if they are in the wrong order.
-                let cmp = if let (Some(mx), Calc::Value(cv)) = (&max, &center) {
-                    if let Calc::Value(mv) = mx {
-                        protocol::PartialCmp::partial_cmp(&**cv, &**mv)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
+                // The minimum wins over a smaller maximum, so the maximum is applied first.
+                let Some(center_vs_max) = Self::partial_cmp_args(&center, &max) else {
+                    return Ok(Calc::Function(Box::new(MathFunction::Clamp {
+                        min,
+                        center,
+                        max,
+                    })));
                 };
-
-                // If center is known to be greater than the maximum, replace it with maximum and remove the max argument.
-                // Otherwise, if center is known to be less than the maximum, remove the max argument.
-                if let Some(cmp_val) = cmp {
-                    if cmp_val == Ordering::Greater {
-                        let val = max.take().unwrap();
-                        center = val;
-                    } else {
-                        min = None;
-                    }
+                if center_vs_max == Ordering::Greater {
+                    center = max;
                 }
-
-                Ok(match (min, max) {
-                    (None, None) => center,
-                    (Some(min), None) => {
-                        Calc::Function(Box::new(MathFunction::Max(arr2(min, center))))
-                    }
-                    (None, Some(max)) => {
-                        Calc::Function(Box::new(MathFunction::Min(arr2(max, center))))
-                    }
-                    (Some(min), Some(max)) => {
-                        Calc::Function(Box::new(MathFunction::Clamp { min, center, max }))
-                    }
+                Ok(match Self::partial_cmp_args(&center, &min) {
+                    None => Calc::Function(Box::new(MathFunction::Max(arr2(min, center)))),
+                    Some(Ordering::Less) => min,
+                    Some(_) => center,
                 })
             }
             CalcUnit::Round => input.parse_nested_block(|i| {
@@ -560,7 +542,7 @@ impl<V: CalcValue> Calc<V> {
                 if input.is_exhausted() {
                     break; // allow trailing whitespace
                 }
-                let next_tok = input.next()?.clone();
+                let next_tok = *input.next()?;
                 if matches!(next_tok, css::Token::Delim(c) if c == b'+' as u32) {
                     let next = Self::parse_product(input, parse_ident)?;
                     cur = cur.add(next, input)?;
@@ -679,7 +661,7 @@ impl<V: CalcValue> Calc<V> {
         // try-parse so the ident slice is owned by the cloned `Token` rather
         // than laundered to `'static` from the `&mut Parser` borrow.
         if let Ok(ident) = input.try_parse(|p| {
-            let tok = p.next()?.clone();
+            let tok = *p.next()?;
             match tok {
                 css::Token::Ident(s) => Ok(s),
                 other => Err(p.new_unexpected_token_error(other)),
@@ -1011,6 +993,14 @@ impl<V: CalcValue> Calc<V> {
                     expression: Box::new(Calc::Function(Box::new(other_fn))),
                 },
             },
+        }
+    }
+
+    /// Orders two values when their units allow it.
+    fn partial_cmp_args(a: &Self, b: &Self) -> Option<Ordering> {
+        match (a, b) {
+            (Calc::Value(a), Calc::Value(b)) => protocol::PartialCmp::partial_cmp(&**a, &**b),
+            _ => None,
         }
     }
 

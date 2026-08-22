@@ -32,7 +32,7 @@ it("import.meta.main", () => {
   expect(exitCode).toBe(0);
 });
 
-it("import.meta.main follows a Bun.main override but not an own path property, is readable from a vm context, and is false in workers", async () => {
+it("import.meta.main follows a Bun.main override but not an own path property, is readable from a vm context, and is true in a worker's entry module", async () => {
   using dir = tempDir("import-meta-main", {
     "entry.mjs": `
       import { runInNewContext } from "node:vm";
@@ -78,7 +78,8 @@ it("import.meta.main follows a Bun.main override but not an own path property, i
     vmContext: [true, false],
     after: [false, true],
     ownPath: [false, true],
-    worker: false,
+    // node: the worker's entry module is main for that thread.
+    worker: true,
   });
   expect(exitCode).toBe(0);
 });

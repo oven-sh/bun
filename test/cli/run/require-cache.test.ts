@@ -14,6 +14,23 @@ import {
 } from "harness";
 import { join } from "path";
 
+// Environment for the eight leak fixtures below, which compare RSS before and after a
+// load/evict loop. Under ASAN every freed allocation parks in the allocator quarantine
+// (default quarantine_size_mb=256) instead of being returned, so with nothing leaking the
+// readings reach the fixtures' bounds (507 MB against 320 in build 100180, 407 against 400 in
+// build 87834). Disable the quarantine for the measuring process; harmless when the binary is
+// not ASAN-built. The fixtures' own widened ASAN bounds predate this and are only margin now: a
+// debug ASAN build without the quarantine reads 22-33 MB where the release bounds are 48-120 MB.
+//
+// Their 300_000 ms budgets: the loops are sized for release builds, where the slowest fixture
+// takes up to ~18 s. On the release+ASAN lane the same loops take 48-56 s on a typical agent
+// and longer on a slow one, so the previous 20-60 s budgets timed out there on every attempt
+// (builds 97573, 99491, 99519, 100192). The runner's per-file limit still bounds a hang.
+const leakFixtureEnv = {
+  ...bunEnv,
+  ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":"),
+};
+
 describe.concurrent("require.cache", () => {
   test("require.cache is not an empty object literal when inspected", () => {
     const inspected = Bun.inspect(require.cache);
@@ -101,13 +118,13 @@ describe.concurrent("require.cache", () => {
       console.log({ dir });
       await using proc = Bun.spawn({
         cmd: [bunExe(), "run", "--smol", join(dir, "require-cache-bug-leak-fixture.js")],
-        env: bunEnv,
+        env: leakFixtureEnv,
         stdio: ["inherit", "inherit", "inherit"],
       });
 
       const exitCode = await proc.exited;
       expect(exitCode).toBe(0);
-    }, 60000);
+    }, 300_000);
 
     test("via await import() with a lot of function calls", async () => {
       let text = "function i() { return 1; }\n";
@@ -154,13 +171,13 @@ describe.concurrent("require.cache", () => {
       });
       await using proc = Bun.spawn({
         cmd: [bunExe(), "run", "--smol", join(dir, "require-cache-bug-leak-fixture.js")],
-        env: bunEnv,
+        env: leakFixtureEnv,
         stdio: ["inherit", "inherit", "inherit"],
       });
 
       const exitCode = await proc.exited;
       expect(exitCode).toBe(0);
-    }, 60000); // takes 4s on an M1 in release build
+    }, 300_000); // takes 4s on an M1 in release build
 
     test("via import() with a lot of long export names", async () => {
       let text = "";
@@ -205,13 +222,13 @@ describe.concurrent("require.cache", () => {
       console.log({ dir });
       await using proc = Bun.spawn({
         cmd: [bunExe(), "run", "--smol", join(dir, "require-cache-bug-leak-fixture.js")],
-        env: bunEnv,
+        env: leakFixtureEnv,
         stdio: ["inherit", "inherit", "inherit"],
       });
 
       const exitCode = await proc.exited;
       expect(exitCode).toBe(0);
-    }, 60000);
+    }, 300_000);
 
     test.todoIf(
       // Flaky specifically on macOS CI, and on musl-aarch64 under ThinLTO +
@@ -270,14 +287,14 @@ describe.concurrent("require.cache", () => {
         });
         await using proc = Bun.spawn({
           cmd: [bunExe(), "run", "--smol", join(dir, "require-cache-bug-leak-fixture.js")],
-          env: bunEnv,
+          env: leakFixtureEnv,
           stdio: ["inherit", "inherit", "inherit"],
         });
 
         const exitCode = await proc.exited;
         expect(exitCode).toBe(0);
       },
-      60000,
+      300_000,
     ); // takes 4s on an M1 in release build
   });
 
@@ -285,7 +302,7 @@ describe.concurrent("require.cache", () => {
     test("via require()", async () => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "run", join(import.meta.dir, "require-cache-bug-leak-fixture.js")],
-        env: bunEnv,
+        env: leakFixtureEnv,
         stderr: "inherit",
       });
 
@@ -293,12 +310,12 @@ describe.concurrent("require.cache", () => {
 
       expect(stdout.trim()).toEndWith("--pass--");
       expect(exitCode).toBe(0);
-    }, 20000);
+    }, 300_000);
 
     test("via import()", async () => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "run", join(import.meta.dir, "esm-bug-leak-fixture.mjs")],
-        env: bunEnv,
+        env: leakFixtureEnv,
         stderr: "inherit",
       });
 
@@ -306,7 +323,7 @@ describe.concurrent("require.cache", () => {
 
       expect(stdout.trim()).toEndWith("--pass--");
       expect(exitCode).toBe(0);
-    }, 20000);
+    }, 300_000);
   });
 
   // These tests are extra slow in debug builds
@@ -314,7 +331,7 @@ describe.concurrent("require.cache", () => {
     test("via require()", async () => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "--smol", "run", join(import.meta.dir, "cjs-fixture-leak-small.js")],
-        env: bunEnv,
+        env: leakFixtureEnv,
         stderr: "inherit",
       });
 
@@ -322,24 +339,19 @@ describe.concurrent("require.cache", () => {
 
       expect(stdout.trim()).toEndWith("--pass--");
       expect(exitCode).toBe(0);
-    }, 30000);
+    }, 300_000);
 
-    test(
-      "via import()",
-      async () => {
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "--smol", "run", join(import.meta.dir, "esm-fixture-leak-small.mjs")],
-          env: bunEnv,
-          stderr: "inherit",
-        });
+    test("via import()", async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--smol", "run", join(import.meta.dir, "esm-fixture-leak-small.mjs")],
+        env: leakFixtureEnv,
+        stderr: "inherit",
+      });
 
-        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
-        expect(stdout.trim()).toEndWith("--pass--");
-        expect(exitCode).toBe(0);
-      },
-      // TODO: Investigate why this is so slow on Windows
-      isWindows ? 60000 : 30000,
-    );
+      expect(stdout.trim()).toEndWith("--pass--");
+      expect(exitCode).toBe(0);
+    }, 300_000);
   });
 });

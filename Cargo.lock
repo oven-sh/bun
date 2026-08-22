@@ -864,10 +864,8 @@ dependencies = [
  "bun_jsc",
  "bun_options_types",
  "bun_parsers",
- "bun_ptr",
  "bun_resolver",
  "bun_threading",
- "strum",
  "thiserror",
 ]
 

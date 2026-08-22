@@ -524,8 +524,7 @@ impl StdinTty {
                     uv: bun_core::ffi::zeroed(),
                     read_scratch: Vec::new(),
                 });
-                // Whole-struct provenance, as `Tty::init`; not `Tty::init`
-                // itself, which would list it as a tty its opener frees.
+                // Whole-struct pointer as in `Tty::init`, which would also list it as heap.
                 let uv_ptr = core::ptr::from_mut(&mut *tty).cast::<uv::uv_tty_t>();
                 // SAFETY: `uv` is the first `#[repr(C)]` field, sized for uv_tty_t.
                 let rc = unsafe { uv::uv_tty_init(loop_, uv_ptr, 0, 0) };

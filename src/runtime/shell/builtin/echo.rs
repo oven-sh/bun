@@ -17,6 +17,8 @@ enum State {
     #[default]
     Idle,
     WaitingIo,
+    /// The stdout write failed and the write-error report is in flight.
+    WaitingWriteErr,
     Done,
 }
 
@@ -109,12 +111,16 @@ impl Echo {
         _: usize,
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
+        if matches!(Self::state_mut(interp, cmd).state, State::WaitingWriteErr) {
+            return Builtin::done(interp, cmd, 1);
+        }
+        if let Some(err) = err {
+            return Builtin::fail_write(interp, cmd, err.get_errno(), || {
+                Self::state_mut(interp, cmd).state = State::WaitingWriteErr
+            });
+        }
         Self::state_mut(interp, cmd).state = State::Done;
-        Builtin::done(
-            interp,
-            cmd,
-            err.map(|e| e.errno as crate::shell::ExitCode).unwrap_or(0),
-        )
+        Builtin::done(interp, cmd, 0)
     }
 }
 

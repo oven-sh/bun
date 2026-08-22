@@ -26,6 +26,8 @@ pub enum State {
         had_not_found: bool,
         waiting_write: bool,
     },
+    /// A stdout write failed and the write-error report is in flight.
+    WaitingWriteErr,
 }
 
 impl Which {
@@ -178,8 +180,13 @@ impl Which {
         _: usize,
         e: Option<bun_sys::SystemError>,
     ) -> Yield {
+        if matches!(Self::state_mut(interp, cmd).state, State::WaitingWriteErr) {
+            return Builtin::done(interp, cmd, 1);
+        }
         if let Some(err) = e {
-            return Builtin::done(interp, cmd, err.errno as crate::shell::ExitCode);
+            return Builtin::fail_write(interp, cmd, err.get_errno(), || {
+                Self::state_mut(interp, cmd).state = State::WaitingWriteErr
+            });
         }
         match Self::state_mut(interp, cmd).state {
             State::OneArg => Builtin::done(interp, cmd, 1),

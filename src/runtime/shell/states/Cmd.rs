@@ -949,14 +949,27 @@ impl Cmd {
     /// Mark the subprocess's buffered stdout/stderr as closed (flushing the
     /// captured bytes into the shell buffers); if that makes the command
     /// finished, transition to `Done` and yield back to the trampoline.
+    ///
+    /// `err`: the shell failed to relay that stream (the pipe could not be
+    /// read, or the shell's own output rejected the bytes, e.g. EPIPE). Part
+    /// of the command's output is lost, so the command gets status 1, as a
+    /// builtin does from `Builtin::fail_write`, unless the process already
+    /// exited with a non-zero status of its own. A status set here also makes
+    /// `on_process_exit` skip `on_exit`, as before.
     pub(crate) fn buffered_output_close(
         &mut self,
         kind: OutKind,
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
+        if let Some(e) = err {
+            log!("cmd output relay failed: {}", e.message);
+            if !matches!(self.exit_code, Some(code) if code != 0) {
+                self.exit_code = Some(1);
+            }
+        }
         match kind {
-            OutKind::Stdout => self.buffered_output_close_stdout(err),
-            OutKind::Stderr => self.buffered_output_close_stderr(err),
+            OutKind::Stdout => self.buffered_output_close_stdout(),
+            OutKind::Stderr => self.buffered_output_close_stderr(),
         }
         if self.has_finished() {
             // Set `state = Done` and hand the Yield back to the caller
@@ -981,12 +994,9 @@ impl Cmd {
         Yield::suspended()
     }
 
-    fn buffered_output_close_stdout(&mut self, err: Option<bun_sys::SystemError>) {
+    fn buffered_output_close_stdout(&mut self) {
         debug_assert!(matches!(self.exec, Exec::Subproc(_)));
         log!("cmd close buffered stdout");
-        if let Some(e) = err {
-            self.exit_code = Some(e.errno.unsigned_abs() as ExitCode);
-        }
         let redirect = self.ast_node().redirect;
         let Exec::Subproc(sub) = &mut self.exec else {
             return;
@@ -1017,12 +1027,9 @@ impl Cmd {
         child.close_io(StdioKind::Stdout);
     }
 
-    fn buffered_output_close_stderr(&mut self, err: Option<bun_sys::SystemError>) {
+    fn buffered_output_close_stderr(&mut self) {
         debug_assert!(matches!(self.exec, Exec::Subproc(_)));
         log!("cmd close buffered stderr");
-        if let Some(e) = err {
-            self.exit_code = Some(e.errno.unsigned_abs() as ExitCode);
-        }
         let redirect = self.ast_node().redirect;
         let Exec::Subproc(sub) = &mut self.exec else {
             return;

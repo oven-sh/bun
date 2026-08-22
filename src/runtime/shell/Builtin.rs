@@ -1099,6 +1099,43 @@ impl Builtin {
         Self::write_failing_error(interp, cmd, &buf, 1)
     }
 
+    /// Shared failure path for a builtin whose write to stdout or stderr
+    /// failed with `errno`: finish with exit 1, the status bash builtins and
+    /// coreutils use for a write error. Every errno except `EPIPE` is
+    /// reported first as `"{kind}: write error: {strerror}"` on stderr.
+    /// `EPIPE` is silent: the reader of the builtin's output went away
+    /// (`ls | head`), which kills an external command through SIGPIPE
+    /// without a message.
+    ///
+    /// `set_wait_err` moves the builtin's state machine to the variant whose
+    /// `on_io_writer_chunk` finishes with exit 1 for any completion. That
+    /// variant also absorbs the failure of the report itself, which happens
+    /// when stderr is the stream that died (`2>&1`): the dead writer rejects
+    /// the report at once and the builtin still terminates.
+    pub(crate) fn fail_write(
+        interp: &Interpreter,
+        cmd: NodeId,
+        errno: bun_sys::E,
+        set_wait_err: impl FnOnce(),
+    ) -> Yield {
+        set_wait_err();
+        if errno == bun_sys::E::EPIPE {
+            return Self::done(interp, cmd, 1);
+        }
+        let kind = Self::kind_of(interp, cmd);
+        let message = bun_sys::Error::from_code(errno, bun_sys::Tag::write)
+            .msg()
+            .unwrap_or(b"unknown error");
+        let buf: Vec<u8> = Self::fmt_error_arena(
+            interp,
+            cmd,
+            Some(kind),
+            format_args!("write error: {}\n", bstr::BStr::new(message)),
+        )
+        .to_vec();
+        Self::write_failing_error(interp, cmd, &buf, 1)
+    }
+
     /// Write `buf` to stderr (async if needed) then finish with `exit_code`.
     /// Shared helper for builtins whose only failure path is "print error and
     /// exit", so each builtin doesn't repeat the needs_io branch.

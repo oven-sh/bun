@@ -242,8 +242,13 @@ impl Cat {
         _: usize,
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
+        if matches!(
+            Self::state_mut(interp, cmd).state,
+            CatState::WaitingWriteErr
+        ) {
+            return Builtin::done(interp, cmd, 1);
+        }
         if let Some(e) = err {
-            let errno = e.get_errno() as ExitCode;
             let rchild = ReaderChildPtr {
                 node: cmd,
                 tag: ReaderTag::Cat,
@@ -252,12 +257,7 @@ impl Cat {
             // Pull the reader `Arc` out of
             // state before calling `remove_reader`, then drop it.
             match &mut Self::state_mut(interp, cmd).state {
-                CatState::ExecStdin {
-                    in_done,
-                    errno: st_errno,
-                    ..
-                } => {
-                    *st_errno = errno;
+                CatState::ExecStdin { in_done, .. } => {
                     let was_done = core::mem::replace(in_done, true);
                     if !was_done {
                         if let BuiltinInput::Fd(r) = &Builtin::of(interp, cmd).stdin {
@@ -270,10 +270,17 @@ impl Cat {
                         r.remove_reader(rchild);
                     }
                 }
-                CatState::WaitingWriteErr => {}
                 _ => panic!("Invalid state"),
             }
-            return Builtin::done(interp, cmd, errno);
+            // The other chunks this cat queued die with this one; make sure
+            // none of them reports back after the builtin is finished.
+            let wchild = ChildPtr::new(cmd, WriterTag::Builtin);
+            if let BuiltinIO::Fd(fd) = &Builtin::of(interp, cmd).stdout {
+                fd.writer.cancel_chunks(wchild);
+            }
+            return Builtin::fail_write(interp, cmd, e.get_errno(), || {
+                Self::state_mut(interp, cmd).state = CatState::WaitingWriteErr
+            });
         }
 
         let step = match &mut Self::state_mut(interp, cmd).state {
@@ -307,7 +314,6 @@ impl Cat {
                     Step::Suspend
                 }
             }
-            CatState::WaitingWriteErr => Step::Done(1),
             _ => panic!("Invalid state"),
         };
         step.run(interp, cmd)

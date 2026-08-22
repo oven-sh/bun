@@ -36,6 +36,10 @@ pub struct Exec {
     /// self-reference).
     pub(crate) args_start: usize,
     pub(crate) err: Option<bun_sys::Error>,
+    /// First failure to write a task's output. Reported by
+    /// `Builtin::fail_write` once every task has finished, because the tasks
+    /// still running keep writing until then.
+    pub(crate) write_err: Option<bun_sys::E>,
     /// FIFO of in-flight OutputTask pointers awaiting an IOWriter chunk
     /// completion. Stopgap until `WriterTag` can carry the `*mut OutputTask`
     /// directly (IOWriter.rs is out of scope here): `write_err`/`write_out`
@@ -76,6 +80,7 @@ impl Mkdir {
             output_done: 0,
             args_start,
             err: None,
+            write_err: None,
             output_queue: std::collections::VecDeque::new(),
         });
         Self::next(interp, cmd)
@@ -96,9 +101,13 @@ impl Mkdir {
                     if exec.tasks_done >= exec.tasks_count
                         && exec.output_done >= exec.output_waiting
                     {
-                        let exit_code: ExitCode = if exec.err.is_some() { 1 } else { 0 };
-                        exec.err = None;
-                        NextAction::Done(exit_code)
+                        if let Some(errno) = exec.write_err {
+                            NextAction::FailWrite(errno)
+                        } else {
+                            let exit_code: ExitCode = if exec.err.is_some() { 1 } else { 0 };
+                            exec.err = None;
+                            NextAction::Done(exit_code)
+                        }
                     } else {
                         return Yield::suspended();
                     }
@@ -115,6 +124,9 @@ impl Mkdir {
                 Self::state_mut(interp, cmd).state = State::Done;
                 Builtin::done(interp, cmd, code)
             }
+            NextAction::FailWrite(errno) => Builtin::fail_write(interp, cmd, errno, || {
+                Self::state_mut(interp, cmd).state = State::WaitingWriteErr
+            }),
             NextAction::Schedule(args_start) => {
                 let argc = Builtin::of(interp, cmd).args_slice().len();
                 let task_count = argc - args_start;
@@ -145,7 +157,12 @@ impl Mkdir {
     ) -> Yield {
         let pending = match &mut Self::state_mut(interp, cmd).state {
             State::WaitingWriteErr => return Builtin::done(interp, cmd, 1),
-            State::Exec(exec) => exec.output_queue.pop_front(),
+            State::Exec(exec) => {
+                if let (Some(e), None) = (&e, exec.write_err) {
+                    exec.write_err = Some(e.get_errno());
+                }
+                exec.output_queue.pop_front()
+            }
             State::Idle | State::Done => panic!("Invalid state"),
         };
         if let Some(task) = pending {
@@ -179,6 +196,7 @@ impl Mkdir {
 
 enum NextAction {
     Done(ExitCode),
+    FailWrite(bun_sys::E),
     Schedule(usize),
 }
 

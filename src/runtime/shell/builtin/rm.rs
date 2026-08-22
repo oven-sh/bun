@@ -30,7 +30,6 @@ pub enum RmState {
     Done {
         exit_code: ExitCode,
     },
-    Err(ExitCode),
 }
 
 pub struct ExecState {
@@ -38,6 +37,10 @@ pub struct ExecState {
     pub(crate) args_start: usize,
     pub(crate) total_tasks: usize,
     pub(crate) err: Option<bun_sys::Error>,
+    /// First failure to write a message or a `-v` line. Reported by
+    /// `Builtin::fail_write` in [`Rm::try_finish`], once every task has
+    /// finished, because the tasks still running keep writing until then.
+    pub(crate) write_err: Option<E>,
     pub(crate) error_signal: AtomicBool,
     pub(crate) output_done: AtomicUsize,
     pub(crate) output_count: AtomicUsize,
@@ -109,7 +112,6 @@ impl Rm {
                 ParseOpts(u32, bool),
                 Exec,
                 Done(ExitCode),
-                Err(ExitCode),
             }
             let tag = match &Self::state_mut(interp, cmd).state {
                 RmState::Idle => Tag::Idle,
@@ -119,7 +121,6 @@ impl Rm {
                 } => Tag::ParseOpts(*idx, *wait_write_err),
                 RmState::Exec(_) => Tag::Exec,
                 RmState::Done { exit_code } => Tag::Done(*exit_code),
-                RmState::Err(c) => Tag::Err(*c),
             };
             match tag {
                 Tag::Idle => {
@@ -248,6 +249,7 @@ impl Rm {
                                 args_start,
                                 total_tasks,
                                 err: None,
+                                write_err: None,
                                 error_signal: AtomicBool::new(false),
                                 output_done: AtomicUsize::new(0),
                                 output_count: AtomicUsize::new(0),
@@ -330,7 +332,6 @@ impl Rm {
                     return Yield::suspended();
                 }
                 Tag::Done(code) => return Builtin::done(interp, cmd, code),
-                Tag::Err(code) => return Builtin::done(interp, cmd, code),
             }
         }
     }
@@ -356,30 +357,42 @@ impl Rm {
         _: usize,
         e: Option<bun_sys::SystemError>,
     ) -> Yield {
-        let outcome: Option<ExitCode> = match &mut Self::state_mut(interp, cmd).state {
+        let in_exec = match &mut Self::state_mut(interp, cmd).state {
             RmState::Exec(exec) => {
+                if let (Some(err), None) = (e, exec.write_err) {
+                    exec.write_err = Some(err.get_errno());
+                }
                 exec.output_done.fetch_add(1, Ordering::SeqCst);
-                if exec.tasks_done >= exec.total_tasks && exec.output_drained() {
-                    Some(if exec.err.is_some() { 1 } else { 0 })
-                } else {
-                    None
-                }
+                true
             }
-            state => {
-                if let Some(err) = &e {
-                    let code = err.get_errno() as ExitCode;
-                    *state = RmState::Err(code);
-                    Some(code)
-                } else {
-                    Some(1)
-                }
-            }
+            _ => false,
         };
-        drop(e);
-        match outcome {
-            Some(code) => Builtin::done(interp, cmd, code),
-            None => Yield::suspended(),
+        if !in_exec {
+            // The chunk was an error message written from `ParseOpts`, or the
+            // write-error report: exit 1 whether or not it got through.
+            return Builtin::done(interp, cmd, 1);
         }
+        Self::try_finish(interp, cmd).unwrap_or_else(Yield::suspended)
+    }
+
+    /// Once every task has finished and every queued chunk has completed,
+    /// finish: exit 1 if a removal failed or a chunk could not be written
+    /// (the latter is reported first), else 0. `None` while work is pending.
+    fn try_finish(interp: &Interpreter, cmd: NodeId) -> Option<Yield> {
+        let (failed, write_err) = match &Self::state_mut(interp, cmd).state {
+            RmState::Exec(exec) if exec.tasks_done >= exec.total_tasks && exec.output_drained() => {
+                (exec.err.is_some(), exec.write_err)
+            }
+            _ => return None,
+        };
+        if let Some(errno) = write_err {
+            return Some(Builtin::fail_write(interp, cmd, errno, || {
+                Self::state_mut(interp, cmd).state = RmState::Done { exit_code: 1 }
+            }));
+        }
+        let exit_code: ExitCode = if failed { 1 } else { 0 };
+        Self::state_mut(interp, cmd).state = RmState::Done { exit_code };
+        Some(Self::next(interp, cmd))
     }
 
     /// # Safety
@@ -398,7 +411,7 @@ impl Rm {
         let errstr: Option<Vec<u8>> = task_err
             .as_ref()
             .map(|e| Builtin::task_error_to_string(interp, cmd, Kind::Rm, e).to_vec());
-        let (tasks_done, total) = {
+        {
             let RmState::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
                 panic!("Invalid state")
             };
@@ -410,8 +423,7 @@ impl Rm {
                 // soon-to-be-dangling path slice from our copy.
                 exec.err = Some(e.without_path());
             }
-            (exec.tasks_done, exec.total_tasks)
-        };
+        }
 
         if let Some(s) = errstr {
             if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
@@ -428,23 +440,8 @@ impl Rm {
             let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, &s);
         }
 
-        let all_out = match &Self::state_mut(interp, cmd).state {
-            RmState::Exec(exec) => exec.output_drained(),
-            _ => true,
-        };
-        if tasks_done >= total && all_out {
-            let code = match &Self::state_mut(interp, cmd).state {
-                RmState::Exec(exec) => {
-                    if exec.err.is_some() {
-                        1
-                    } else {
-                        0
-                    }
-                }
-                _ => 0,
-            };
-            Self::state_mut(interp, cmd).state = RmState::Done { exit_code: code };
-            Self::next(interp, cmd).run(interp);
+        if let Some(y) = Self::try_finish(interp, cmd) {
+            y.run(interp);
         }
     }
 
@@ -480,27 +477,10 @@ impl Rm {
                 .enqueue(child, &buf, safeguard);
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
-        let done = match &mut Self::state_mut(interp, cmd).state {
-            RmState::Exec(exec) => {
-                exec.output_done.fetch_add(1, Ordering::SeqCst);
-                exec.tasks_done >= exec.total_tasks && exec.output_drained()
-            }
-            _ => false,
-        };
-        if done {
-            let code = match &Self::state_mut(interp, cmd).state {
-                RmState::Exec(exec) => {
-                    if exec.err.is_some() {
-                        1
-                    } else {
-                        0
-                    }
-                }
-                _ => 0,
-            };
-            return Builtin::done(interp, cmd, code);
+        if let RmState::Exec(exec) = &Self::state_mut(interp, cmd).state {
+            exec.output_done.fetch_add(1, Ordering::SeqCst);
         }
-        Yield::done()
+        Self::try_finish(interp, cmd).unwrap_or_else(Yield::done)
     }
 
     fn parse_flag(opts: &mut Opts, flag: &[u8]) -> RmParseFlag {

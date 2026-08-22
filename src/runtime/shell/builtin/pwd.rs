@@ -67,15 +67,26 @@ impl Pwd {
         _: usize,
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
-        if let Some(_err) = err {
-            Self::state_mut(interp, cmd).state = State::Err;
-            return Builtin::done(interp, cmd, 1);
-        }
         let kind = match &Self::state_mut(interp, cmd).state {
-            State::WaitingIo { kind } => *kind,
-            _ => return Builtin::done(interp, cmd, 0),
+            State::WaitingIo { kind } => Some(*kind),
+            State::Err => None,
+            State::Idle | State::Done => {
+                crate::shell::interpreter::unreachable_state("Pwd.onIOWriterChunk", "idle/done")
+            }
         };
-        Self::state_mut(interp, cmd).state = State::Done;
-        Builtin::done(interp, cmd, if kind == WaitKind::Stderr { 1 } else { 0 })
+        match kind {
+            // The message in flight was itself an error report (`too many
+            // arguments`, or the write-error report): exit 1 either way.
+            None | Some(WaitKind::Stderr) => Builtin::done(interp, cmd, 1),
+            Some(WaitKind::Stdout) => match err {
+                Some(err) => Builtin::fail_write(interp, cmd, err.get_errno(), || {
+                    Self::state_mut(interp, cmd).state = State::Err
+                }),
+                None => {
+                    Self::state_mut(interp, cmd).state = State::Done;
+                    Builtin::done(interp, cmd, 0)
+                }
+            },
+        }
     }
 }

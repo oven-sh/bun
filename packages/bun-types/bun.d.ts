@@ -7119,11 +7119,12 @@ declare module "bun" {
        *
        * For stdout and stderr you may pass:
        *
-       * - `"pipe"`, `undefined`: The process has a {@link ReadableStream} for standard output/error
+       * - `"pipe"`: The process has a {@link ReadableStream} for standard output/error
        * - `"ignore"`, `null`: The process has no standard output/error
        * - `"inherit"`: The process inherits the standard output/error of the current process
        * - `ArrayBufferView`: The process writes to the preallocated buffer. Not implemented.
        * - `number`: The process writes to the file descriptor
+       * - `undefined`: The default for that position, see below
        *
        * At indices >= 3, `"socket-fd"` (POSIX only) is also accepted:
        * creates a socketpair like `"pipe"`, but the parent-end fd exposed
@@ -7152,11 +7153,12 @@ declare module "bun" {
       /**
        * The file descriptor for the standard output. It may be:
        *
-       * - `"pipe"`, `undefined`: The process has a {@link ReadableStream} for standard output/error
+       * - `"pipe"`: The process has a {@link ReadableStream} for standard output/error
        * - `"ignore"`, `null`: The process has no standard output/error
        * - `"inherit"`: The process inherits the standard output/error of the current process
        * - `ArrayBufferView`: The process writes to the preallocated buffer. Not implemented.
        * - `number`: The process writes to the file descriptor
+       * - `undefined`: The default below
        *
        * @default "pipe"
        */
@@ -7164,11 +7166,13 @@ declare module "bun" {
       /**
        * The file descriptor for the standard error. It may be:
        *
-       * - `"pipe"`, `undefined`: The process has a {@link ReadableStream} for standard output/error
+       * - `"pipe"`: The process has a {@link ReadableStream} for standard output/error
        * - `"ignore"`, `null`: The process has no standard output/error
        * - `"inherit"`: The process inherits the standard output/error of the current process
        * - `ArrayBufferView`: The process writes to the preallocated buffer. Not implemented.
        * - `number`: The process writes to the file descriptor
+       * - `undefined`: The default below, so with {@link spawn} the process inherits standard error
+       *   and {@link Subprocess.stderr} is `undefined`
        *
        * @default "inherit" for `spawn`
        * "pipe" for `spawnSync`
@@ -7436,11 +7440,22 @@ declare module "bun" {
       terminal?: TerminalOptions | Terminal;
     }
 
-    type ReadableToIO<X extends Readable> = X extends "pipe" | undefined
-      ? ReadableStream<Uint8Array<ArrayBuffer>>
-      : X extends BunFile | ArrayBufferView | number
-        ? number
-        : undefined;
+    /**
+     * The type of {@link Subprocess.stdout} / {@link Subprocess.stderr} for a `stdout` / `stderr`
+     * option of type `X`.
+     *
+     * An `undefined` option means the slot's default, and {@link spawn} has a different default
+     * for each slot: `"pipe"` for stdout, `"inherit"` for stderr. `Default` is that slot default,
+     * so `ReadableToIO<undefined, "pipe">` (stdout) is a {@link ReadableStream} and
+     * `ReadableToIO<undefined, "inherit">` (stderr) is `undefined`.
+     */
+    type ReadableToIO<X extends Readable, Default extends Exclude<Readable, undefined> = "pipe"> = X extends undefined
+      ? ReadableToIO<Default>
+      : X extends "pipe"
+        ? ReadableStream<Uint8Array<ArrayBuffer>>
+        : X extends BunFile | ArrayBufferView | number
+          ? number
+          : undefined;
 
     type ReadableToSyncIO<X extends Readable> = X extends "pipe" | undefined ? Buffer : undefined;
 
@@ -7545,8 +7560,8 @@ declare module "bun" {
     Err extends SpawnOptions.Readable = SpawnOptions.Readable,
   > extends AsyncDisposable {
     readonly stdin: SpawnOptions.WritableToIO<In>;
-    readonly stdout: SpawnOptions.ReadableToIO<Out>;
-    readonly stderr: SpawnOptions.ReadableToIO<Err>;
+    readonly stdout: SpawnOptions.ReadableToIO<Out, "pipe">;
+    readonly stderr: SpawnOptions.ReadableToIO<Err, "inherit">;
 
     /**
      * The terminal attached to this subprocess, if spawned with the `terminal` option.
@@ -7583,7 +7598,7 @@ declare module "bun" {
      *
      * Exists for compatibility with {@link ReadableStream.pipeThrough}
      */
-    readonly readable: SpawnOptions.ReadableToIO<Out>;
+    readonly readable: SpawnOptions.ReadableToIO<Out, "pipe">;
 
     /**
      * The process ID of the child process

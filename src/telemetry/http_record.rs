@@ -260,12 +260,16 @@ const TEMPLATES: usize = 4;
 /// Most-recently-used encoded span templates (see [`crate::Local`]).
 pub struct Cache {
     entries: Vec<Template>,
+    /// The limits the templates were encoded under (they truncate values); a
+    /// reconfigure with different limits invalidates them.
+    limits: (u32, u16),
 }
 
 impl Cache {
     pub const fn new() -> Cache {
         Cache {
             entries: Vec::new(),
+            limits: (0, 0),
         }
     }
 }
@@ -291,6 +295,10 @@ fn off_start(has_parent: bool) -> usize {
 pub fn encode(c: &mut Cache, out: &mut Vec<u8>, facts: &Facts, p: &SpanParts<'_>, limits: &Limits) {
     if limits.attributes < 16 {
         return encode_untemplated(out, facts, p, limits);
+    }
+    if c.limits != (limits.attribute_value_length, limits.attributes) {
+        c.entries.clear();
+        c.limits = (limits.attribute_value_length, limits.attributes);
     }
     let s = facts.strings();
     let has_parent = p.stub.parent.is_valid();

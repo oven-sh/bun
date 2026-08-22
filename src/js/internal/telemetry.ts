@@ -194,7 +194,8 @@ type Tracer = {
 const tracers = new Map<string, Tracer>();
 function getTracer(name?: string, version?: string): Tracer {
   name = name ? String(name) : "";
-  const key = version ? name + "@" + version : name;
+  // NUL cannot appear in a package name, so "a@1" + undefined ≠ "a" + "1".
+  const key = version ? name + "\0" + version : name;
   let t = tracers.get(key);
   if (!t) {
     t = createTracer(createScope(name, version), name, version === undefined ? undefined : String(version));

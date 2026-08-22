@@ -56,7 +56,6 @@ public:
     }
 };
 
-bool isCrossThreadShareable(const WTF::String& string);
 WTF::String toCrossThreadShareable(const WTF::String& string);
 
 }

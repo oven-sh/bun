@@ -254,7 +254,6 @@ public:
         void (*onClose)(void* ctx, unsigned short code) = nullptr;
     };
     void setNativeCallbacks(NativeCallbacks cb) { m_native = cb; }
-    bool hasNativeCallbacks() const { return m_native.onMessage != nullptr; }
 
     // Public wrapper for the native-callback consumer to send text frames.
     // Bypasses the ExceptionOr<> wrapping — the caller has already checked

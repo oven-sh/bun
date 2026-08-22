@@ -109,8 +109,6 @@ public:
     // -- Either thread ---------------------------------------------------------------------------
     WorkerOptions& options() { return m_options; }
     ScriptExecutionContextIdentifier workerContextIdentifier() const { return m_workerContextIdentifier; }
-    // Post to the Worker object's (parent) context, onto the loop the Worker was created under.
-    bool postTaskToWorkerObject(Function<void(ScriptExecutionContext&)>&&);
 
     struct MessageInbox {
         Lock lock;

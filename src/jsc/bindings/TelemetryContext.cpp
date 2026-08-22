@@ -161,4 +161,3 @@ extern "C" JSC::EncodedJSValue Bun__Telemetry__activeExtras(Zig::GlobalObject* g
     JSValue extras = TelemetryContextSlot::current(globalObject).extras;
     return JSValue::encode(extras ? extras : jsUndefined());
 }
-

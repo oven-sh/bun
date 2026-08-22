@@ -3079,10 +3079,6 @@ pub(crate) fn parse_into_binary_lockfile(
             .resize(lockfile.buffers.dependencies.len(), invalid_package_id);
         lockfile.buffers.resolutions.fill(invalid_package_id);
 
-        // a package can list the same dependency in each dependnecy group, but only the first
-        // is chosen (dev -> optional -> prod -> peer)
-        let mut seen_deps: bun_collections::StringArrayHashMap<()> = Default::default();
-
         // The two `[0]` writes are done first via
         // sequential `&mut` accessors so the loops can take all column views
         // immutably without overlapping exclusive borrows or `unsafe`.
@@ -3093,6 +3089,7 @@ pub(crate) fn parse_into_binary_lockfile(
         let pkgs = lockfile.packages.slice();
         let pkg_deps = pkgs.items_dependencies();
         let pkg_names = pkgs.items_name();
+        let pkg_name_hashes: &[PackageNameHash] = pkgs.items_name_hash();
         let pkg_resolutions: &[Resolution] = pkgs.items_resolution();
 
         // Populated by `append_package_dedupe` while the packages object was
@@ -3101,6 +3098,10 @@ pub(crate) fn parse_into_binary_lockfile(
         let package_index = &lockfile.package_index;
         let overrides = &lockfile.overrides;
         let catalogs: &CatalogMap = &lockfile.catalogs;
+        let workspace_versions: &VersionHashMap = &lockfile.workspace_versions;
+        let link_workspace_packages = manager
+            .as_deref()
+            .is_none_or(|manager| manager.options.link_workspace_packages);
 
         // Disjoint-field split of `lockfile.buffers` so each loop body can hold
         // `&mut dependencies[i]` and `&mut resolutions[i]` together with a shared
@@ -3109,6 +3110,16 @@ pub(crate) fn parse_into_binary_lockfile(
         let string_buf: &[u8] = buffers.string_bytes.as_slice();
         let dependencies: &mut [Dependency] = buffers.dependencies.as_mut_slice();
         let resolutions: &mut [PackageID] = buffers.resolutions.as_mut_slice();
+
+        let workspace_links = WorkspaceLinks {
+            pkg_names,
+            pkg_name_hashes,
+            workspace_versions,
+            catalogs,
+            overrides,
+            string_buf,
+            link_workspace_packages,
+        };
 
         {
             // first the root dependencies are resolved
@@ -3141,22 +3152,14 @@ pub(crate) fn parse_into_binary_lockfile(
                     return Err(ParseError::InvalidPackageInfo);
                 };
 
-                if !dep.behavior.is_workspace()
-                    && seen_deps
-                        .get_or_put(dep.name.slice(string_buf))?
-                        .found_existing
-                {
-                    resolutions[dep_id as usize] = res_id;
-                    continue;
-                }
-
-                map_dep_to_pkg(
+                map_manifest_dep_to_pkg(
                     dep,
                     dep_id,
                     res_id,
                     resolutions,
                     lockfile_version,
                     pkg_resolutions,
+                    &workspace_links,
                 );
             }
         }
@@ -3168,8 +3171,6 @@ pub(crate) fn parse_into_binary_lockfile(
             for _pkg_id in workspace_pkgs_off..workspace_pkgs_off + workspace_pkgs_len {
                 let pkg_id: PackageID = _pkg_id;
                 let workspace_name = pkg_names[pkg_id as usize].slice(string_buf);
-
-                seen_deps.clear_retaining_capacity();
 
                 let deps = pkg_deps[pkg_id as usize];
                 for _dep_id in deps.begin()..deps.end() {
@@ -3226,18 +3227,14 @@ pub(crate) fn parse_into_binary_lockfile(
                         return Err(ParseError::InvalidPackageInfo);
                     };
 
-                    if seen_deps.get_or_put(dep_name)?.found_existing {
-                        resolutions[dep_id as usize] = res_id;
-                        continue;
-                    }
-
-                    map_dep_to_pkg(
+                    map_manifest_dep_to_pkg(
                         dep,
                         dep_id,
                         res_id,
                         resolutions,
                         lockfile_version,
                         pkg_resolutions,
+                        &workspace_links,
                     );
                 }
             }
@@ -3478,16 +3475,7 @@ fn map_dep_to_pkg(
     if text_lockfile_version != Version::V0 {
         let res = &pkg_resolutions[pkg_id as usize];
         if res.tag == ResolutionTag::Workspace {
-            // Whole-struct assign so `DependencyVersion::Drop` frees any prior
-            // npm chain. SAFETY: `res.tag == Workspace` checked above.
-            let literal = dep.version.literal;
-            dep.version = DependencyVersion {
-                tag: DependencyVersionTag::Workspace,
-                literal,
-                value: DependencyVersionValue {
-                    workspace: *res.workspace(),
-                },
-            };
+            link_dep_to_workspace(dep, res);
         }
     }
 }
@@ -3495,6 +3483,103 @@ fn map_dep_to_pkg(
 /// Edges a fresh install may itself leave unresolved, so bun.lock lists them without a package.
 fn may_stay_unresolved(dep: &Dependency) -> bool {
     dep.behavior.intersects(Behavior::OPTIONAL | Behavior::PEER)
+}
+
+fn map_manifest_dep_to_pkg(
+    dep: &mut Dependency,
+    dep_id: DependencyID,
+    pkg_id: PackageID,
+    resolutions: &mut [PackageID],
+    text_lockfile_version: Version,
+    pkg_resolutions: &[Resolution],
+    workspace_links: &WorkspaceLinks<'_>,
+) {
+    resolutions[dep_id as usize] = pkg_id;
+
+    if text_lockfile_version == Version::V0 {
+        return;
+    }
+
+    let res = &pkg_resolutions[pkg_id as usize];
+    if res.tag == ResolutionTag::Workspace && workspace_links.links(dep, pkg_id) {
+        link_dep_to_workspace(dep, res);
+    }
+}
+
+struct WorkspaceLinks<'a> {
+    pkg_names: &'a [String],
+    pkg_name_hashes: &'a [PackageNameHash],
+    workspace_versions: &'a VersionHashMap,
+    catalogs: &'a CatalogMap,
+    overrides: &'a OverrideMap,
+    string_buf: &'a [u8],
+    link_workspace_packages: bool,
+}
+
+impl WorkspaceLinks<'_> {
+    /// Whether `Package::parse_dependency` links `dep` to the workspace `bun.lock`
+    /// bound it to, so that `Diff::generate` sees the loaded and the parsed
+    /// dependency as equal. With `linkWorkspacePackages` off it links no range, and
+    /// a range still bound to a workspace is loaded as linked on purpose: the diff
+    /// re-resolves it. Peers, overridden entries and dist-tags bind to a workspace
+    /// either way.
+    fn links(&self, dep: &Dependency, workspace_pkg_id: PackageID) -> bool {
+        if dep.version.tag == DependencyVersionTag::Workspace {
+            return true;
+        }
+
+        let range = if self.link_workspace_packages {
+            &dep.version
+        } else {
+            if dep.behavior.is_peer() || self.overridden(dep) {
+                return false;
+            }
+            self.catalogs.resolve_range(self.string_buf, dep)
+        };
+        if range.tag != DependencyVersionTag::Npm {
+            return false;
+        }
+
+        let npm = range.npm();
+        let workspace_pkg = workspace_pkg_id as usize;
+        // `workspace_versions` and a peer's binding are keyed by name hash; the
+        // names themselves have to match as well.
+        if !npm.name.eql(
+            self.pkg_names[workspace_pkg],
+            self.string_buf,
+            self.string_buf,
+        ) {
+            return false;
+        }
+
+        !self.link_workspace_packages
+            || self
+                .workspace_versions
+                .get(&self.pkg_name_hashes[workspace_pkg])
+                .is_some_and(|workspace_version| {
+                    npm.version
+                        .satisfies(*workspace_version, self.string_buf, self.string_buf)
+                })
+    }
+
+    /// Same exemption as `enqueue_dependency_with_main_and_success_fn`: an `npm:`
+    /// alias is never overridden.
+    fn overridden(&self, dep: &Dependency) -> bool {
+        let is_alias = dep.version.tag == DependencyVersionTag::Npm && dep.version.npm().is_alias;
+        !is_alias && self.overrides.has_rule_for_name(dep.name_hash)
+    }
+}
+
+fn link_dep_to_workspace(dep: &mut Dependency, res: &Resolution) {
+    // Whole-struct assign so `DependencyVersion::Drop` frees any prior npm chain.
+    let literal = dep.version.literal;
+    dep.version = DependencyVersion {
+        tag: DependencyVersionTag::Workspace,
+        literal,
+        value: DependencyVersionValue {
+            workspace: *res.workspace(),
+        },
+    };
 }
 
 fn dependency_resolution_failure(

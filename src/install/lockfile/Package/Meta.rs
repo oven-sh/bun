@@ -1,5 +1,5 @@
 use bun_install::integrity::Integrity;
-use bun_install::npm::{Architecture, OperatingSystem};
+use bun_install::npm::{Architecture, Libc, OperatingSystem};
 use bun_install::{INVALID_PACKAGE_ID, Origin, PackageID};
 use bun_semver::String;
 
@@ -18,7 +18,10 @@ pub struct Meta {
 
     pub(crate) arch: Architecture,
     pub(crate) os: OperatingSystem,
-    pub(crate) _padding_os: u16,
+    /// Occupies what used to be padding, so a `bun.lockb` written before this
+    /// field existed reads back as `Libc::NONE` (not declared).
+    pub(crate) libc: Libc,
+    pub(crate) _padding_libc: u8,
 
     pub(crate) id: PackageID,
 
@@ -52,7 +55,8 @@ impl Default for Meta {
             _padding_origin: 0,
             arch: Architecture::ALL,
             os: OperatingSystem::ALL,
-            _padding_os: 0,
+            libc: Libc::NONE,
+            _padding_libc: 0,
             id: INVALID_PACKAGE_ID,
             man_dir: String::default(),
             integrity: Integrity::default(),
@@ -63,10 +67,11 @@ impl Default for Meta {
 }
 
 impl Meta {
-    /// Does the `cpu` arch and `os` match the requirements listed in the package?
-    /// This is completely unrelated to "devDependencies", "peerDependencies", "optionalDependencies" etc
-    pub fn is_disabled(&self, cpu: Architecture, os: OperatingSystem) -> bool {
-        !self.arch.is_match(cpu) || !self.os.is_match(os)
+    /// Does the `cpu` arch, `os` and `libc` match the requirements listed in the package?
+    /// This is completely unrelated to "devDependencies", "peerDependencies", "optionalDependencies" etc,
+    /// except that callers pass `Libc::for_dependency` of the dependency being checked as `libc`.
+    pub fn is_disabled(&self, cpu: Architecture, os: OperatingSystem, libc: Libc) -> bool {
+        !self.arch.is_match(cpu) || !self.os.is_match(os) || !self.libc.is_match(libc)
     }
 
     pub(crate) fn has_install_script(&self) -> bool {
@@ -110,6 +115,7 @@ impl Meta {
             integrity: self.integrity,
             arch: self.arch,
             os: self.os,
+            libc: self.libc,
             origin: self.origin,
             has_install_script: self.has_install_script,
             ..Meta::default()

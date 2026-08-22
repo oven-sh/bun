@@ -53,7 +53,8 @@ fn start_manifest_task(
         return Ok(());
     }
     let task_id = Task::Id::for_manifest(pkg_name);
-    if run_tasks::has_created_network_task(manager, task_id, is_required) {
+    if run_tasks::has_created_manifest_task(manager, task_id, is_required, needs_extended_manifest)
+    {
         return Ok(());
     }
     if manager.options.log_level.show_progress() {
@@ -97,6 +98,8 @@ fn start_manifest_task(
 #[derive(Clone, Copy)]
 pub enum Packages<'a> {
     /// Every npm package in the lockfile; best-effort (the post-migration backfill), so failures are warnings.
+    /// The only mode that records platform fields, so the only one that requests the extended document
+    /// for optional dependencies (`Options::needs_extended_manifest`); the other two just pick versions.
     All,
     /// The direct dependencies of these workspace packages; a required one failing is an error, see [`print_fetch_failures`].
     Ids(&'a [PackageID]),
@@ -152,9 +155,14 @@ pub fn populate_manifest_cache(
 
     match packages {
         Packages::All => {
-            let mut seen_pkg_ids: HashMap<PackageID, ()> = HashMap::new();
+            // Value: whether the extended document was already requested for the
+            // package. A package that is a regular dependency of one package and an
+            // optional dependency of another needs the extended one whichever of its
+            // dependencies comes first (`has_created_manifest_task` dedupes the
+            // requests themselves).
+            let mut seen_pkg_ids: HashMap<PackageID, bool> = HashMap::new();
 
-            for _dep_id in 0..dependencies.len() {
+            for (_dep_id, dep) in dependencies.iter().enumerate() {
                 let dep_id: DependencyID = DependencyID::try_from(_dep_id).expect("int cast");
 
                 let pkg_id = resolutions[dep_id as usize];
@@ -162,10 +170,15 @@ pub fn populate_manifest_cache(
                     continue;
                 }
 
-                // `getOrPut(pkg_id).found_existing` — value is `void`, so this is a set insert.
-                if seen_pkg_ids.insert(pkg_id, ()).is_some() {
+                // `options` is not mutated between here and the
+                // `start_manifest_task` call — read via the BACKREF `mgr_ref`.
+                let needs_extended_manifest = mgr_ref.options.needs_extended_manifest(dep.behavior);
+
+                let seen = seen_pkg_ids.get_or_put(pkg_id)?;
+                if seen.found_existing && (*seen.value_ptr || !needs_extended_manifest) {
                     continue;
                 }
+                *seen.value_ptr = needs_extended_manifest;
 
                 let res = &pkg_resolutions[pkg_id as usize];
                 if res.tag != ResolutionTag::Npm {
@@ -174,9 +187,6 @@ pub fn populate_manifest_cache(
 
                 let pkg_name = pkg_names[pkg_id as usize];
                 let pkg_name_slice = pkg_name.slice(string_buf);
-                // `options` is not mutated between here and the
-                // `start_manifest_task` call — read via the BACKREF `mgr_ref`.
-                let needs_extended_manifest = mgr_ref.options.minimum_release_age_ms.is_some();
 
                 // `scope_for_package_name` borrows only `options` (via the
                 // BACKREF `mgr_ref`); `manifests` is a disjoint field projected
@@ -234,7 +244,8 @@ pub fn populate_manifest_cache(
 
                     // `options` read via BACKREF `mgr_ref` — see provenance-root
                     // note above.
-                    let needs_extended_manifest = mgr_ref.options.minimum_release_age_ms.is_some();
+                    let needs_extended_manifest =
+                        mgr_ref.options.needs_extended_manifest_to_pick_versions();
                     let package_name = pkg_names[pkg_id as usize].slice(string_buf);
                     // See disjoint-field note on the `.All` arm above.
                     let scope =
@@ -269,12 +280,13 @@ pub fn populate_manifest_cache(
             }
         }
         Packages::Exact(ids) => {
+            let needs_extended_manifest =
+                mgr_ref.options.needs_extended_manifest_to_pick_versions();
             for &pkg_id in ids {
                 if pkg_resolutions[pkg_id as usize].tag != ResolutionTag::Npm {
                     continue;
                 }
                 let package_name = pkg_names[pkg_id as usize].slice(string_buf);
-                let needs_extended_manifest = mgr_ref.options.minimum_release_age_ms.is_some();
                 let scope =
                     bun_ptr::BackRef::new(mgr_ref.options.scope_for_package_name(package_name));
                 // SAFETY: `manifests` is disjoint from `options`/`lockfile`; `manager_ptr` is the SRW root.

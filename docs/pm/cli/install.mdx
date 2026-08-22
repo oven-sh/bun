@@ -434,21 +434,27 @@ jobs:
 
 ## Platform-specific dependencies?
 
-Bun stores normalized `cpu` and `os` values from npm in the lockfile, along with the resolved packages. It skips downloading, extracting, and installing packages disabled for the current target at runtime. This means the lockfile doesn't change between platforms/architectures even if the packages ultimately installed do change.
+Bun stores normalized `cpu`, `os` and `libc` values from npm in the lockfile, along with the resolved packages. It skips downloading, extracting, and installing packages disabled for the current target at runtime. This means the lockfile doesn't change between platforms/architectures even if the packages ultimately installed do change.
 
-### `--cpu` and `--os` flags
+The `libc` field (`"glibc"` or `"musl"`) is how native packages such as `@rollup/rollup-linux-x64-gnu` and `@rollup/rollup-linux-x64-musl` tell the two Linux variants apart. npm only includes it in the full package metadata, so Bun requests the full metadata for `optionalDependencies`, where these variants are declared, and keeps using the smaller abbreviated metadata for everything else. Accordingly, `libc` is only checked for `optionalDependencies`: a package listed in `dependencies` or `devDependencies` is installed regardless of its `libc` field. By default, Bun on Linux installs the variant for the libc it was built against (the regular build is glibc, the `-musl` build is musl), and Bun on other operating systems does not filter by `libc` at all. The `--libc` flag below overrides this either way, for example to install for a Linux target from macOS.
+
+### `--cpu`, `--os` and `--libc` flags
 
 You can override the target platform for package selection:
 
 ```bash
-bun install --cpu=x64 --os=linux
+bun install --cpu=x64 --os=linux --libc=musl
 ```
 
-These flags install packages for the specified platform instead of the current system. Use them for cross-platform builds or when preparing deployments for different environments.
+These flags install packages for the specified platform instead of the current system. Use them for cross-platform builds or when preparing deployments for different environments, for example installing on a glibc machine for an Alpine image.
 
 **Accepted values for `--cpu`**: `arm`, `arm64`, `ia32`, `mips`, `mipsel`, `ppc`, `ppc64`, `s390`, `s390x`, `x32`, `x64`
 
 **Accepted values for `--os`**: `aix`, `darwin`, `freebsd`, `linux`, `openbsd`, `sunos`, `win32`, `android`
+
+**Accepted values for `--libc`**: `glibc`, `musl`
+
+Each flag can be repeated, takes `*` to allow every value, and takes `!name` to exclude one: `--libc='*'` installs both the glibc and the musl variant.
 
 ## Peer dependencies?
 

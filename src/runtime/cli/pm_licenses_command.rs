@@ -170,7 +170,7 @@ impl PmLicensesCommand {
             peer: features.peer_dependencies,
             optional_peer: features.peer_dependencies,
             bundled: true,
-            platform: Some((pm.options.cpu, pm.options.os)),
+            platform: Some((pm.options.cpu, pm.options.os, pm.options.libc)),
         };
         let resolutions = lockfile.buffers.resolutions.as_slice();
         let walk = if flags.dev_only {

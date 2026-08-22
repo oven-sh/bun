@@ -32,6 +32,41 @@ fn pretty_help(text: &str) {
     Output::pretty(text);
 }
 
+/// `--cpu` / `--os` / `--libc`: each may be repeated, values combine like the
+/// package.json arrays they filter against (`!name` negates, `*` or `any`
+/// allows everything, `none` is accepted as-is). `None` when the flag was not
+/// passed. `Negatable::apply` tolerates unknown names because a package.json
+/// may name a platform this build does not know; on the command line an
+/// unknown name, negated or not, is a typo and fatal.
+fn parse_platform_flag<T: Npm::NegatableEnum>(
+    values: &[&[u8]],
+    what: &str,
+    valid_names: &str,
+) -> Option<T> {
+    if values.is_empty() {
+        return None;
+    }
+    let mut negatable = Npm::Negatable::<T>::default();
+    for &value in values {
+        match value {
+            b"*" => negatable.had_wildcard = true,
+            b"any" | b"none" => negatable.apply(value),
+            _ => {
+                let name = value.strip_prefix(b"!").unwrap_or(value);
+                if T::lookup_name(name).is_none() {
+                    Output::err_generic(
+                        "Invalid {}: '{}'. Valid values are: *, any, {}. Use !name to negate.",
+                        (what, bstr::BStr::new(value), valid_names),
+                    );
+                    Global::crash();
+                }
+                negatable.apply(value);
+            }
+        }
+    }
+    Some(negatable.combine())
+}
+
 type ParamType = clap::Param<clap::Help>;
 
 // `bun_clap::concat_params!` is a const-fn slice concat over `Param<Help>`, so combined tables
@@ -130,6 +165,9 @@ const SHARED_TAIL_PARAMS: &[ParamType] = &[
     ),
     clap::param!(
         "--os <STR>...                         Override operating system for optional dependencies (e.g., linux, darwin, * for all)"
+    ),
+    clap::param!(
+        "--libc <STR>...                       Override libc for optional dependencies (e.g., glibc, musl, * for all)"
     ),
     clap::param!("-h, --help                            Print this help menu"),
 ];
@@ -483,6 +521,9 @@ const PRUNE_HELP_PARAMS: &[ParamType] = &[
         "--cpu <STR>...                         Prune for a different CPU architecture than the current one"
     ),
     clap::param!(
+        "--libc <STR>...                        Prune for a different libc than the current one"
+    ),
+    clap::param!(
         "--linker <STR>                         Prune a node_modules installed with the given linker (one of \"isolated\" or \"hoisted\")"
     ),
     clap::param!(
@@ -599,9 +640,10 @@ pub struct CommandLineArguments {
     pub audit_level: Option<AuditLevel>,
     pub audit_ignore_list: &'static [&'static [u8]],
 
-    // CPU and OS overrides for optional dependencies
+    // CPU, OS and libc overrides for optional dependencies
     pub(crate) cpu: Npm::Architecture,
     pub(crate) os: Npm::OperatingSystem,
+    pub(crate) libc: Npm::Libc,
 }
 
 impl Default for CommandLineArguments {
@@ -698,6 +740,7 @@ impl Default for CommandLineArguments {
 
             cpu: Npm::Architecture::CURRENT,
             os: Npm::OperatingSystem::CURRENT,
+            libc: Npm::Libc::CURRENT,
         }
     }
 }
@@ -1528,58 +1571,22 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             cli.config = Some(opt);
         }
 
-        // Parse multiple --cpu flags and combine them using Negatable
-        let cpu_values = args.options(b"--cpu");
-        if !cpu_values.is_empty() {
-            let mut cpu_negatable = Npm::Architecture::NONE.negatable();
-            for cpu_str in cpu_values {
-                // apply() already handles "any" as wildcard and negation with !
-                cpu_negatable.apply(cpu_str);
-
-                // Support * as an alias for "any"
-                if *cpu_str == *b"*" {
-                    cpu_negatable.had_wildcard = true;
-                    cpu_negatable.had_unrecognized_values = false;
-                } else if cpu_negatable.had_unrecognized_values
-                    && *cpu_str != *b"any"
-                    && *cpu_str != *b"none"
-                {
-                    // Only error for truly unrecognized values (not "any" or "none")
-                    Output::err_generic(
-                        "Invalid CPU architecture: '{}'. Valid values are: *, any, arm, arm64, ia32, mips, mipsel, ppc, ppc64, s390, s390x, x32, x64. Use !name to negate.",
-                        (bstr::BStr::new(cpu_str),),
-                    );
-                    Global::crash();
-                }
-            }
-            cli.cpu = cpu_negatable.combine();
+        if let Some(cpu) = parse_platform_flag(
+            args.options(b"--cpu"),
+            "CPU architecture",
+            "arm, arm64, ia32, mips, mipsel, ppc, ppc64, s390, s390x, x32, x64",
+        ) {
+            cli.cpu = cpu;
         }
-
-        // Parse multiple --os flags and combine them using Negatable
-        let os_values = args.options(b"--os");
-        if !os_values.is_empty() {
-            let mut os_negatable = Npm::OperatingSystem::NONE.negatable();
-            for os_str in os_values {
-                // apply() already handles "any" as wildcard and negation with !
-                os_negatable.apply(os_str);
-
-                // Support * as an alias for "any"
-                if *os_str == *b"*" {
-                    os_negatable.had_wildcard = true;
-                    os_negatable.had_unrecognized_values = false;
-                } else if os_negatable.had_unrecognized_values
-                    && *os_str != *b"any"
-                    && *os_str != *b"none"
-                {
-                    // Only error for truly unrecognized values (not "any" or "none")
-                    Output::err_generic(
-                        "Invalid operating system: '{}'. Valid values are: *, any, aix, darwin, freebsd, linux, openbsd, sunos, win32, android. Use !name to negate.",
-                        (bstr::BStr::new(os_str),),
-                    );
-                    Global::crash();
-                }
-            }
-            cli.os = os_negatable.combine();
+        if let Some(os) = parse_platform_flag(
+            args.options(b"--os"),
+            "operating system",
+            "aix, darwin, freebsd, linux, openbsd, sunos, win32, android",
+        ) {
+            cli.os = os;
+        }
+        if let Some(libc) = parse_platform_flag(args.options(b"--libc"), "libc", "glibc, musl") {
+            cli.libc = libc;
         }
 
         if matches!(subcommand, Subcommand::Add | Subcommand::Install) {

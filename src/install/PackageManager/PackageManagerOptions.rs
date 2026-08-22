@@ -6,7 +6,7 @@ use bun_paths::PathBuffer;
 use super::Subcommand;
 use super::command_line_arguments::{self, CommandLineArguments};
 use bun_dotenv::Loader as DotEnvLoader;
-use bun_install::{Features, Npm};
+use bun_install::{Behavior, Features, Npm};
 
 /// Network policy for this install.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
@@ -111,8 +111,29 @@ pub struct Options {
     pub cpu: Npm::Architecture,
     /// Override OS for optional dependencies filtering
     pub os: Npm::OperatingSystem,
+    /// Override libc for optional dependencies filtering
+    pub libc: Npm::Libc,
 
     pub(crate) config_version: Option<ConfigVersion>,
+}
+
+impl Options {
+    /// Whether picking versions needs the full registry document instead of the
+    /// abbreviated one: only the full one has the publish times `minimumReleaseAge`
+    /// filters on.
+    pub(crate) fn needs_extended_manifest_to_pick_versions(&self) -> bool {
+        self.minimum_release_age_ms.is_some()
+    }
+
+    /// Whether resolving `dependency` needs the full registry document. Besides
+    /// the publish times, the abbreviated document lacks the `libc` field, which
+    /// is only enforced for optional dependencies (`Libc::for_dependency`), so
+    /// only those pay for the larger document. This is also what decides the
+    /// `libc` recorded in the lockfile, so it does not depend on the host: a
+    /// lockfile written on macOS still filters on Linux.
+    pub(crate) fn needs_extended_manifest(&self, dependency: Behavior) -> bool {
+        self.needs_extended_manifest_to_pick_versions() || dependency.is_optional()
+    }
 }
 
 impl Default for Options {
@@ -179,6 +200,7 @@ impl Default for Options {
             minimum_release_age_excludes: None,
             cpu: Npm::Architecture::CURRENT,
             os: Npm::OperatingSystem::CURRENT,
+            libc: Npm::Libc::CURRENT,
             config_version: None,
         }
     }
@@ -844,9 +866,10 @@ impl Options {
                     .store(backend as u8, core::sync::atomic::Ordering::Relaxed);
             }
 
-            // CPU and OS are now parsed as enums in CommandLineArguments, just copy them
+            // CPU, OS and libc are now parsed as enums in CommandLineArguments, just copy them
             self.cpu = cli.cpu;
             self.os = cli.os;
+            self.libc = cli.libc;
 
             self.do_.set(Do::UPDATE_TO_LATEST, cli.latest);
             self.do_.set(Do::RECURSIVE, cli.recursive);

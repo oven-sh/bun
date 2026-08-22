@@ -5055,34 +5055,35 @@ void JSC__JSValue__getNameProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalOb
         return;
     }
 
-    JSC::JSValue name = obj->getIfPropertyExists(arg1, vm.propertyNames->toStringTagSymbol);
+    // Name first: async and generator functions inherit a Symbol.toStringTag ("AsyncFunction", ...) from their prototype.
+    if (JSC::JSFunction* function = dynamicDowncast<JSC::JSFunction>(obj)) {
+        WTF::String actualName = function->name(vm);
+        if (actualName.isEmpty() && !function->isHostOrBuiltinFunction()) {
+            actualName = function->jsExecutable()->name().string();
+        }
+
+        if (!actualName.isEmpty()) {
+            *arg2 = Zig::toZigString(actualName);
+            return;
+        }
+    } else if (JSC::InternalFunction* function = dynamicDowncast<JSC::InternalFunction>(obj)) {
+        WTF::String actualName = function->name();
+        if (!actualName.isEmpty()) {
+            *arg2 = Zig::toZigString(actualName);
+            return;
+        }
+    }
+
+    JSC::JSValue toStringTag = obj->getIfPropertyExists(arg1, vm.propertyNames->toStringTagSymbol);
     RETURN_IF_EXCEPTION(scope, );
 
-    if (name && name.isString()) {
-        auto str = name.toWTFString(arg1);
+    if (toStringTag && toStringTag.isString()) {
+        auto str = toStringTag.toWTFString(arg1);
+        RETURN_IF_EXCEPTION(scope, );
         if (!str.isEmpty()) {
             *arg2 = Zig::toZigString(str);
             return;
         }
-    }
-
-    if (JSC::JSFunction* function = dynamicDowncast<JSC::JSFunction>(obj)) {
-
-        WTF::String actualName = function->name(vm);
-        if (!actualName.isEmpty() || function->isHostOrBuiltinFunction()) {
-            *arg2 = Zig::toZigString(actualName);
-            return;
-        }
-
-        actualName = function->jsExecutable()->name().string();
-
-        *arg2 = Zig::toZigString(actualName);
-        return;
-    }
-
-    if (JSC::InternalFunction* function = dynamicDowncast<JSC::InternalFunction>(obj)) {
-        *arg2 = Zig::toZigString(function->name());
-        return;
     }
 
     arg2->len = 0;

@@ -19,8 +19,9 @@
  * A bare "#1", "see #1", "related to #1", "part of #1", "fix for #1" or
  * "#1's approach" is left alone. So is a keyword that is negated or hedged
  * ("does not fix #1", "partially fixes #1", "may fix #1"), or that is not a
- * verb ("the closed #1", "the rm fix #1"). Text in code spans, fenced code
- * blocks, blockquotes and HTML comments is skipped.
+ * verb ("the closed #1", "the rm fix #1"), or whose subject is another
+ * reference ("#100 supersedes #1"). Text in code spans, fenced code blocks,
+ * blockquotes, HTML comments and ~~strikethrough~~ is skipped.
  *
  * Env: GITHUB_TOKEN, GITHUB_REPOSITORY ("owner/repo"), PR_NUMBER.
  * GITHUB_API_URL overrides the API origin. DRY_RUN=1 prints the plan and
@@ -93,11 +94,12 @@ const DISQUALIFIERS: ReadonlySet<string> = new Set([
 /**
  * The base forms are nouns as often as verbs ("the rm fix #1"). They count only
  * where a noun cannot stand: at the start of a sentence or line ("Fix #1"), or
- * after one of these words ("to fix #1", "will fix #1", "and fix #1").
+ * after one of these words ("will fix #1", "and fix #1"). "to" is not one of
+ * them: an infinitive says nothing about what the PR does ("unable to fix #1",
+ * "how to fix #1", "decided not to close #1").
  */
 const BASE_FORMS: ReadonlySet<string> = new Set(["close", "fix", "resolve", "supersede", "replace"]);
 const VERB_MARKERS: ReadonlySet<string> = new Set([
-  "to",
   "will",
   "shall",
   "should",
@@ -135,6 +137,9 @@ type Token =
   | { kind: "word"; text: string }
   | { kind: "ref"; repository: string | null; number: number; attached: boolean }
   | { kind: "punct"; text: string }
+  /** One line break. A list continues past it only after a separator: "Fixes #1,\n#2". */
+  | { kind: "newline" }
+  /** A blank line. Nothing continues past it. */
   | { kind: "break" };
 
 type RefToken = Extract<Token, { kind: "ref" }>;
@@ -170,6 +175,7 @@ export function findLinkedReferences(body: string, repository: string): LinkedRe
       if (isPunct(tokens[k], ",")) k++;
       if (isWord(tokens[k], "and") || isPunct(tokens[k], "&")) k++;
       if (k === j) break;
+      if (tokens[k]?.kind === "newline") k++;
       ref = readReference(tokens, k);
       if (ref === null) break;
     }
@@ -186,6 +192,9 @@ function isClosingStatement(tokens: Token[], index: number, keyword: string): bo
     if (token.kind !== "word" || !ADVERBS.has(token.text)) break;
   }
   const before = tokens[k];
+  // "#100 supersedes #1": another pull request is the subject. A line break
+  // ends that reading: "Fixes #1\nFixes #2" is two statements.
+  if (before?.kind === "ref") return false;
   if (before === undefined || before.kind !== "word") return true;
   if (DISQUALIFIERS.has(before.text)) return false;
   return !BASE_FORMS.has(keyword) || VERB_MARKERS.has(before.text);
@@ -206,12 +215,8 @@ function readReference(tokens: Token[], index: number): { token: RefToken; end: 
   if (token.kind === "ref") return token.attached ? null : { token, end: index + 1 };
   if (!isPunct(token, "[")) return null;
   let close = index + 1;
-  while (
-    close < tokens.length &&
-    close < index + 10 &&
-    !isPunct(tokens[close], "]") &&
-    tokens[close].kind !== "break"
-  ) {
+  while (close < tokens.length && close < index + 10 && !isPunct(tokens[close], "]")) {
+    if (tokens[close].kind === "newline" || tokens[close].kind === "break") return null;
     close++;
   }
   if (!isPunct(tokens[close], "]") || !isPunct(tokens[close + 1], "(") || !isPunct(tokens[close + 3], ")")) return null;
@@ -222,9 +227,13 @@ function readReference(tokens: Token[], index: number): { token: RefToken; end: 
   return null;
 }
 
-/** Removes HTML comments, fenced code blocks, blockquotes and code spans. */
+/** Removes HTML comments, fenced code blocks, blockquotes, code spans and struck-through text. */
 function stripNonProse(body: string): string {
-  return removeCodeSpans(removeFencesAndQuotes(removeHtmlComments(body.replaceAll("\r\n", "\n"))));
+  let text = removeHtmlComments(body.replaceAll("\r\n", "\n"));
+  text = removeFencesAndQuotes(text);
+  text = removeSpans(text, "`");
+  text = removeSpans(text, "~", 2);
+  return text;
 }
 
 function removeHtmlComments(text: string): string {
@@ -255,7 +264,9 @@ function removeFencesAndQuotes(text: string): string {
       continue;
     }
     const opening = leadingRun(trimmed, "`") || leadingRun(trimmed, "~");
-    if (opening.length >= 3) {
+    // A backtick fence's info string cannot hold a backtick: "```bun test```" is a code span.
+    const isFence = opening.length >= 3 && (opening[0] === "~" || !trimmed.slice(opening.length).includes("`"));
+    if (isFence) {
       fence = opening;
       kept.push("");
     } else if (trimmed.startsWith(">")) {
@@ -277,22 +288,27 @@ function isRunOf(text: string, char: string): boolean {
   return leadingRun(text, char).length === text.length;
 }
 
-function removeCodeSpans(text: string): string {
+/**
+ * Removes the text between a run of `marker` and the next run of the same
+ * length: `code spans` for "`", ~~struck-through text~~ for "~" with `runLength` 2.
+ * A run with no closing run stays as it is.
+ */
+function removeSpans(text: string, marker: string, runLength?: number): string {
   let out = "";
   let i = 0;
   while (i < text.length) {
-    if (text[i] !== "`") {
+    if (text[i] !== marker) {
       out += text[i];
       i++;
       continue;
     }
-    const opening = leadingRun(text.slice(i), "`");
+    const opening = leadingRun(text.slice(i), marker);
     let close = -1;
-    let from = i + opening.length;
+    let from = runLength === undefined || opening.length === runLength ? i + opening.length : text.length;
     while (from < text.length) {
       const at = text.indexOf(opening, from);
       if (at === -1) break;
-      const run = leadingRun(text.slice(at), "`");
+      const run = leadingRun(text.slice(at), marker);
       if (run.length === opening.length) {
         close = at;
         break;
@@ -321,6 +337,7 @@ function tokenize(text: string): Token[] {
         i++;
       }
       if (newlines >= 2) tokens.push({ kind: "break" });
+      else if (newlines === 1) tokens.push({ kind: "newline" });
       continue;
     }
     let end = i + 1;

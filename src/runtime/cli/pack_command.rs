@@ -2431,6 +2431,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
             ctx,
             &root_dir,
             &mut pack_queue,
+            &mut bundled_pack_queue,
             &bins,
             edited_package_json.len(),
         );
@@ -3877,6 +3878,7 @@ fn dry_run_pack_list(
     ctx: &mut Context<'_>,
     root_dir: &Dir,
     pack_queue: &mut PackQueue,
+    bundled_pack_queue: &mut PackQueue,
     bins: &[BinInfo],
     package_json_len: usize,
 ) -> PackList {
@@ -3928,6 +3930,27 @@ fn dry_run_pack_list(
             subpath: item.path.as_bytes().into(),
             size,
         });
+    }
+
+    // Bundled dependency files count toward the size and the entry count but are not listed.
+    while let Some(item) = bundled_pack_queue.remove_or_null() {
+        match bun_sys::fstatat(root_dir, &item.path) {
+            Ok(stat) => {
+                ctx.stats.unpacked_size += usize::try_from(stat.st_size).expect("int cast");
+            }
+            Err(err) => {
+                if item.optional {
+                    ctx.stats.total_files -= 1;
+                    continue;
+                }
+                Output::err(
+                    crate::Error::from(err),
+                    "failed to stat file: \"{}\"",
+                    format_args!("{}", bstr::BStr::new(item.path.as_bytes())),
+                );
+                Global::crash();
+            }
+        }
     }
 
     pack_list

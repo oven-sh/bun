@@ -262,12 +262,16 @@ _bun_pm_completion() {
             'bin\:"print the path to bin folder" '
             'ls\:"list the dependency tree according to the current lockfile" '
             'why\:"show dependency tree explaining why a package is installed" '
+            'diff\:"show what changed between two versions of a package" '
             'licenses\:"list installed packages grouped by license" '
             'whoami\:"print the current npm username" '
+            'view\:"view package metadata from the registry" '
+            'pkg\:"manage data in package.json" '
             'hash\:"generate & print the hash of the current lockfile" '
             'hash-string\:"print the string used to hash the lockfile" '
             'hash-print\:"print the hash stored in the current lockfile" '
             'cache\:"print the path to the cache folder" '
+            'migrate\:"migrate another package manager'"'"'s lockfile without installing anything" '
             'scan\:"scan all packages in lockfile for security vulnerabilities" '
             'untrusted\:"print current untrusted dependencies with scripts" '
             'trust\:"run scripts for untrusted dependencies and add to trustedDependencies" '
@@ -348,7 +352,7 @@ _bun_pm_completion() {
                 ret=0
 
             ;;
-        whoami|hash|hash-print|scan|untrusted|default-trusted)
+        whoami|view|diff|hash|hash-print|scan|untrusted|default-trusted)
             _arguments -s -C \
                 '1: :->cmd' \
                 '2: :->cmd2' \

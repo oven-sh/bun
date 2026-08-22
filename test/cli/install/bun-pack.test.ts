@@ -1909,19 +1909,39 @@ describe("--json", () => {
       null,
       2,
     );
+    const dep1Json = JSON.stringify({ name: "dep1", version: "1.1.1" });
+    const dep2Json = JSON.stringify({ name: "dep2", version: "1.1.1" });
     using dir = tempDir("pack-json-bundled", {
       "package.json": packageJson,
       node_modules: {
-        dep1: { "package.json": JSON.stringify({ name: "dep1", version: "1.1.1" }) },
-        dep2: { "package.json": JSON.stringify({ name: "dep2", version: "1.1.1" }), "index.js": indexSrc },
+        dep1: { "package.json": dep1Json },
+        dep2: { "package.json": dep2Json, "index.js": indexSrc },
       },
     });
+
+    const unpackedSize =
+      Buffer.byteLength(packageJson) +
+      Buffer.byteLength(dep1Json) +
+      Buffer.byteLength(dep2Json) +
+      Buffer.byteLength(indexSrc);
+
+    // The dry run stats the bundled files instead of archiving them; the counts are the same.
+    const dryRun = await packJson(String(dir), "--dry-run");
+    expect(JSON.parse(dryRun.out)[0]).toMatchObject({
+      entryCount: 4,
+      unpackedSize,
+      files: [{ path: "package.json", size: Buffer.byteLength(packageJson) }],
+      bundled: ["dep1", "dep2"],
+    });
+    expect(dryRun.err).toBe("");
+    expect(dryRun.exitCode).toBe(0);
 
     const { out, err, exitCode } = await packJson(String(dir));
 
     const [doc] = JSON.parse(out);
     expect(doc).toMatchObject({
       entryCount: 4,
+      unpackedSize,
       files: [{ path: "package.json", size: Buffer.byteLength(packageJson) }],
       bundled: ["dep1", "dep2"],
     });

@@ -208,7 +208,7 @@ _bun_completions() {
         pm)
             _long_short_completion \
                 "${PM_OPTIONS[LONG_OPTIONS]} ${PM_OPTIONS[SHORT_OPTIONS]}";
-            COMPREPLY+=( $(compgen -W "pack bin ls why licenses whoami cache hash hash-print hash-string scan untrusted trust default-trusted version" -- "${cur_word}") );
+            COMPREPLY+=( $(compgen -W "pack bin ls why diff licenses whoami view version pkg hash hash-print hash-string cache migrate scan untrusted trust default-trusted" -- "${cur_word}") );
             return;;
         *)
             local replaced_script;

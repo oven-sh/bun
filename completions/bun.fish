@@ -176,10 +176,10 @@ complete -c bun \
 	-n "__fish_seen_subcommand_from add" -d 'History' -a '(__history_completions)'
 
 complete -c bun \
-	-n "__fish_seen_subcommand_from pm; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) cache;" -a 'pack bin ls why licenses whoami cache hash hash-print hash-string scan untrusted trust default-trusted version' -f
+	-n "__fish_seen_subcommand_from pm; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) cache;" -a 'pack bin ls why diff licenses whoami view version pkg hash hash-print hash-string cache migrate scan untrusted trust default-trusted' -f
 
 complete -c bun \
-	-n "__fish_seen_subcommand_from pm; and __fish_seen_subcommand_from pack bin ls why whoami cache hash hash-print scan untrusted default-trusted version" -l 'json' -d 'Output in JSON format' -f
+	-n "__fish_seen_subcommand_from pm; and __fish_seen_subcommand_from pack bin ls why diff whoami view cache hash hash-print scan untrusted default-trusted version" -l 'json' -d 'Output in JSON format' -f
 
 complete -c bun \
 	-n "__fish_seen_subcommand_from pm; and __fish_seen_subcommand_from cache; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts);" -a 'rm' -f

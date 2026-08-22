@@ -283,11 +283,9 @@ pub static OVERRIDDEN_DEFAULT_USER_AGENT: std::sync::OnceLock<&'static [u8]> =
 /// body-phase reads; response-header reads do not re-arm it, so it is an
 /// absolute deadline for the header block to complete (undici `headersTimeout`
 /// semantics). 0 disables the timer (matching `disable_timeout = true`).
-/// Overridable via `BUN_CONFIG_HTTP_IDLE_TIMEOUT`. Default is 5 minutes — the
-/// previous hard-coded value — so unchanged environments see identical
-/// behaviour except that the handshake phase is now also covered. Values
-/// above 240s are served by uSockets' minute-granularity long timer (see
-/// [`SocketTimeout::set_timeout`]), so they round up to the next whole minute.
+/// Overridable via `BUN_CONFIG_HTTP_IDLE_TIMEOUT`. Default is 5 minutes.
+/// `HTTPThread::on_start` stores it padded for the timer-wheel sweep (see
+/// [`normalize_idle_timeout_seconds`]).
 pub(crate) static IDLE_TIMEOUT_SECONDS: AtomicU32 = AtomicU32::new(300);
 
 /// Safe accessor for [`IDLE_TIMEOUT_SECONDS`].
@@ -296,17 +294,29 @@ pub(crate) fn idle_timeout_seconds() -> c_uint {
     IDLE_TIMEOUT_SECONDS.load(Ordering::Relaxed)
 }
 
-/// Normalise an idle timeout (seconds) for uSockets' timers: the long-timeout
-/// counter wraps `% 240` minutes, so clamp to 239 min, and values above 240s
-/// are served by the minute-granularity long timer, so round them up to a
-/// whole minute so the floor-to-minute path never fires *earlier* than asked.
+/// Normalise an idle timeout (seconds) for uSockets' timer wheels. The sweep
+/// phase is unrelated to when a socket arms its timer, so a timer armed for N
+/// ticks can fire up to one period (4s short wheel, 60s long wheel) before
+/// the requested duration (#39952). Pad by one period so it never fires
+/// early, and clamp so the padded value stays at the long wheel's 239 min
+/// maximum. 0 = disabled.
 #[inline]
 pub fn normalize_idle_timeout_seconds(raw: u64) -> c_uint {
-    let raw = raw.min(239 * 60);
-    (if raw > 240 {
-        raw.div_ceil(60) * 60
+    if raw == 0 {
+        return 0;
+    }
+    /// `LIBUS_TIMEOUT_GRANULARITY` (packages/bun-usockets/src/libusockets.h).
+    const SHORT_WHEEL_PERIOD_SECONDS: u64 = 4;
+    const LONG_WHEEL_PERIOD_SECONDS: u64 = 60;
+    /// `SocketTimeout::set_timeout` routes values above this to the long wheel.
+    const SHORT_WHEEL_MAX_SECONDS: u64 = 240;
+    /// The long counter wraps `% 240` minutes; one minute of pad stays below.
+    const MAX_RAW_SECONDS: u64 = 238 * LONG_WHEEL_PERIOD_SECONDS;
+    let raw = raw.min(MAX_RAW_SECONDS);
+    (if raw + SHORT_WHEEL_PERIOD_SECONDS > SHORT_WHEEL_MAX_SECONDS {
+        (raw.div_ceil(LONG_WHEEL_PERIOD_SECONDS) + 1) * LONG_WHEEL_PERIOD_SECONDS
     } else {
-        raw
+        raw + SHORT_WHEEL_PERIOD_SECONDS
     }) as c_uint
 }
 

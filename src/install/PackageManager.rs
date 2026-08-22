@@ -232,9 +232,7 @@ pub use resolution::{assign_root_resolution, resolve_from_disk_cache};
 
 pub use self::progress_strings::ProgressStrings;
 
-pub use self::patch_package::{PatchCommitResult, do_patch_commit, prepare_patch};
-
-pub use self::process_dependency_list::GitResolver;
+pub use self::patch_package::PatchCommitResult;
 
 pub use self::run_tasks::{
     alloc_github_url, decrement_pending_tasks, drain_dependency_list, flush_dependency_queue,

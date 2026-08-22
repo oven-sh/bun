@@ -36,6 +36,7 @@ use core::ptr::NonNull;
 
 use bun_boringssl as boringssl;
 use bun_io::StreamBuffer;
+use bun_ptr::ThisPtr;
 use bun_uws::ssl_wrapper::{Handlers as SslHandlers, SslWrapper};
 use bun_uws::{NewSocketHandler, us_bun_verify_error_t};
 
@@ -61,46 +62,42 @@ pub(crate) enum UpgradeClientUnion {
 }
 
 impl UpgradeClientUnion {
-    fn handle_decrypted_data(&self, data: &[u8]) {
+    fn dispatch(
+        self,
+        http: impl FnOnce(ThisPtr<HttpUpgradeClient>),
+        https: impl FnOnce(ThisPtr<HttpsUpgradeClient>),
+    ) {
+        // The upgrade client resets this to `None` (`detach_upgrade_client`,
+        // from `clear_data`) before it can be freed, so a non-`None` variant
+        // points at a live client for the duration of this call.
         match self {
-            // SAFETY: BACKREF — caller (WebSocketUpgradeClient) outlives the tunnel during handshake phase
-            UpgradeClientUnion::Http(client) => unsafe {
-                HttpUpgradeClient::handle_decrypted_data(*client, data)
-            },
-            // SAFETY: BACKREF — caller (WebSocketUpgradeClient) outlives the tunnel during handshake phase
-            UpgradeClientUnion::Https(client) => unsafe {
-                HttpsUpgradeClient::handle_decrypted_data(*client, data)
-            },
+            // SAFETY: see above.
+            UpgradeClientUnion::Http(client) => http(unsafe { ThisPtr::new(client) }),
+            // SAFETY: see above.
+            UpgradeClientUnion::Https(client) => https(unsafe { ThisPtr::new(client) }),
             UpgradeClientUnion::None => {}
         }
     }
 
-    fn terminate(&self, code: ErrorCode) {
-        match self {
-            // SAFETY: BACKREF — caller (WebSocketUpgradeClient) outlives the tunnel during handshake phase
-            UpgradeClientUnion::Http(client) => unsafe {
-                HttpUpgradeClient::terminate(*client, code)
-            },
-            // SAFETY: BACKREF — caller (WebSocketUpgradeClient) outlives the tunnel during handshake phase
-            UpgradeClientUnion::Https(client) => unsafe {
-                HttpsUpgradeClient::terminate(*client, code)
-            },
-            UpgradeClientUnion::None => {}
-        }
+    fn handle_decrypted_data(self, data: &[u8]) {
+        self.dispatch(
+            |c| HttpUpgradeClient::handle_decrypted_data(c, data),
+            |c| HttpsUpgradeClient::handle_decrypted_data(c, data),
+        );
     }
 
-    fn on_proxy_tls_handshake_complete(&self) {
-        match self {
-            // SAFETY: BACKREF — caller (WebSocketUpgradeClient) outlives the tunnel during handshake phase
-            UpgradeClientUnion::Http(client) => unsafe {
-                HttpUpgradeClient::on_proxy_tls_handshake_complete(*client)
-            },
-            // SAFETY: BACKREF — caller (WebSocketUpgradeClient) outlives the tunnel during handshake phase
-            UpgradeClientUnion::Https(client) => unsafe {
-                HttpsUpgradeClient::on_proxy_tls_handshake_complete(*client)
-            },
-            UpgradeClientUnion::None => {}
-        }
+    fn terminate(self, code: ErrorCode) {
+        self.dispatch(
+            |c| HttpUpgradeClient::terminate(c, code),
+            |c| HttpsUpgradeClient::terminate(c, code),
+        );
+    }
+
+    fn on_proxy_tls_handshake_complete(self) {
+        self.dispatch(
+            HttpUpgradeClient::on_proxy_tls_handshake_complete,
+            HttpsUpgradeClient::on_proxy_tls_handshake_complete,
+        );
     }
 
     fn is_none(&self) -> bool {
@@ -144,7 +141,7 @@ type SslWrapperType = SslWrapper<*mut WebSocketProxyTunnel>;
 impl WebSocketProxyTunnel {
     /// Initialize a new proxy tunnel with all required parameters
     pub(crate) fn init<const SSL: bool>(
-        upgrade_client: *mut NewHttpUpgradeClient<SSL>,
+        upgrade_client: ThisPtr<NewHttpUpgradeClient<SSL>>,
         socket: NewSocketHandler<SSL>,
         sni_hostname: &[u8],
         reject_unauthorized: bool,
@@ -155,12 +152,12 @@ impl WebSocketProxyTunnel {
         // `InternalSocket` so no `unsafe` is needed.
         let (upgrade_client, socket) = if SSL {
             (
-                UpgradeClientUnion::Https(upgrade_client.cast::<HttpsUpgradeClient>()),
+                UpgradeClientUnion::Https(upgrade_client.as_ptr().cast::<HttpsUpgradeClient>()),
                 SocketUnion::Ssl(socket.assume_ssl()),
             )
         } else {
             (
-                UpgradeClientUnion::Http(upgrade_client.cast::<HttpUpgradeClient>()),
+                UpgradeClientUnion::Http(upgrade_client.as_ptr().cast::<HttpUpgradeClient>()),
                 SocketUnion::Tcp(socket.assume_tcp()),
             )
         };

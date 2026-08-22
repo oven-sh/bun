@@ -70,27 +70,34 @@ impl PosixSignalHandle {
         true
     }
 
-    /// Called by the main thread (single consumer).
-    /// Returns `None` if the ring is empty, or the next signal otherwise.
+    /// Called by the main thread (the consumer); also by whichever thread is
+    /// about to execve, via `Bun__takeQueuedPosixSignal`. Returns `None` if the
+    /// ring is empty, or the next signal otherwise.
     #[allow(dead_code)]
     pub(crate) fn dequeue(&self) -> Option<u8> {
-        // Read the current head and tail.
-        let old_head = self.head.load(Ordering::Acquire);
-        let tail_val = self.tail.load(Ordering::Acquire);
+        loop {
+            // Read the current head and tail.
+            let old_head = self.head.load(Ordering::Acquire);
+            let tail_val = self.tail.load(Ordering::Acquire);
 
-        // If head == tail, the ring is empty.
-        if old_head == tail_val {
-            return None; // No available items
+            // If head == tail, the ring is empty.
+            if old_head == tail_val {
+                return None; // No available items
+            }
+
+            let slot_index = (old_head % BUFFER_SIZE) as usize;
+            // Acquire load of the stored signal to get the item.
+            let signal = self.signals[slot_index].swap(0, Ordering::AcqRel);
+
+            // Publish the updated head (Release).
+            self.head.store(old_head.wrapping_add(1), Ordering::Release);
+
+            // A zeroed slot was taken by the exec-time consumer racing this one
+            // (or vice versa); signal numbers start at 1, so skip it.
+            if signal != 0 {
+                return Some(signal);
+            }
         }
-
-        let slot_index = (old_head % BUFFER_SIZE) as usize;
-        // Acquire load of the stored signal to get the item.
-        let signal = self.signals[slot_index].swap(0, Ordering::AcqRel);
-
-        // Publish the updated head (Release).
-        self.head.store(old_head.wrapping_add(1), Ordering::Release);
-
-        Some(signal)
     }
 
     /// Drain as many signals as possible and enqueue them as tasks in the event loop.
@@ -141,6 +148,29 @@ extern "C" fn Bun__onPosixSignal(number: i32) {
     }
     #[cfg(not(unix))]
     let _ = number;
+}
+
+/// Called by `on_before_reload_process_posix` (from whichever thread is doing
+/// the reload) once every caught disposition is back to SIG_DFL: returns the
+/// next signal `Bun__onPosixSignal` queued for a JS listener, or 0 once the
+/// ring is empty. Nothing still queued at that point can reach JS before the
+/// execve discards it (the JS thread is running the pre-reload kill-signal
+/// handlers, is wedged, or is not the reloading thread), so the caller
+/// re-raises it and it takes its default action, like a signal arriving after
+/// the reset. Racing the main thread's `drain` is harmless: each signal ends
+/// up either dispatched to JS in the dying image or re-raised.
+#[cfg(unix)]
+#[unsafe(no_mangle)]
+extern "C" fn Bun__takeQueuedPosixSignal() -> i32 {
+    let Some(vm) = VirtualMachine::get_main_thread_vm() else {
+        return 0;
+    };
+    // SAFETY: same projection as `Bun__onPosixSignal`: the VM and its event
+    // loop live for the process and only the `signal_handler` slot is read.
+    let handler = unsafe { (*(*vm).event_loop()).signal_handler };
+    handler
+        .and_then(|handler| handler.dequeue())
+        .map_or(0, i32::from)
 }
 
 pub struct PosixSignalTask;

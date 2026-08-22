@@ -219,6 +219,33 @@ it("--offline refuses an uncached git dependency without running git", async () 
   expect(r2.code).toBe(0);
 });
 
+it("--offline reports an uncached tarball-URL / github dependency once, and skips optional ones", async () => {
+  const req = await newProject({ dep: `${root_url}/never-fetched-1.0.0.tgz` });
+  const r = await install(req, ["--offline"]);
+  expect(r.err).toContain("--offline");
+  expect(r.err).not.toContain("TarballFailedToDownload");
+  expect(r.code).not.toBe(0);
+
+  const opt = mkdtemp();
+  await writeFile(
+    join(opt, "bunfig.toml"),
+    Bun.TOML.stringify({
+      install: { cache: { dir: cache_dir }, registry: root_url + "/", saveTextLockfile: true, linker: "hoisted" },
+    }),
+  );
+  await writeFile(
+    join(opt, "package.json"),
+    JSON.stringify({
+      name: "app",
+      version: "1.0.0",
+      optionalDependencies: { dep: `${root_url}/never-fetched-1.0.0.tgz`, gh: "github:nobody-xyz/nothing#deadbeef" },
+    }),
+  );
+  const r2 = await install(opt, ["--offline"]);
+  expect(r2.err).not.toContain("error:");
+  expect(r2.code).toBe(0);
+});
+
 it('install.prefer = "offline" and install.offline = true in bunfig.toml behave like the flags', async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls, { "0.0.3": {} }));

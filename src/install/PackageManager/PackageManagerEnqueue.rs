@@ -347,6 +347,9 @@ fn offline_git_miss(
                 bstr::BStr::new(name)
             ),
         );
+    } else {
+        // let a later required edge on the same repository report it
+        let _ = this.network_dedupe_map.remove(&clone_id);
     }
     true
 }
@@ -1461,7 +1464,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 }
             }
 
-            if let Some(network_task) = run_tasks::generate_network_task_for_tarball(
+            let generated = match run_tasks::generate_network_task_for_tarball(
                 this,
                 task_id,
                 &url,
@@ -1475,7 +1478,12 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 },
                 None,
                 crate::network_task::Authorization::NoAuthorization,
-            )? {
+            ) {
+                // --offline miss: already reported (if required) / skipped (if optional)
+                Err(crate::network_task::ForTarballError::Offline) => return Ok(()),
+                other => other?,
+            };
+            if let Some(network_task) = generated {
                 // reshaped for borrowck — see `enqueue_tarball_for_download`.
                 let nt: *mut NetworkTask = network_task;
                 enqueue_network_task(this, nt);
@@ -1692,7 +1700,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     // immediately so the `&mut *this` borrow ends before
                     // `enqueue_network_task(this, …)` reborrows it (NLL).
                     let network_task: Option<*mut NetworkTask> =
-                        run_tasks::generate_network_task_for_tarball(
+                        match run_tasks::generate_network_task_for_tarball(
                             this,
                             task_id,
                             url,
@@ -1706,8 +1714,11 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                             },
                             None,
                             crate::network_task::Authorization::NoAuthorization,
-                        )?
-                        .map(std::ptr::from_mut::<NetworkTask>);
+                        ) {
+                            // --offline miss: already reported / skipped
+                            Err(crate::network_task::ForTarballError::Offline) => return Ok(()),
+                            other => other?.map(std::ptr::from_mut::<NetworkTask>),
+                        };
                     if let Some(network_task) = network_task {
                         enqueue_network_task(this, network_task);
                     }

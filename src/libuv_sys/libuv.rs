@@ -2005,6 +2005,16 @@ pub struct uv_interface_address_t {
     pub address: addr_union,
     pub netmask: netmask_union,
 }
+/// Strings are one allocation owned by `username`; free via `uv_os_free_passwd`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct uv_passwd_t {
+    pub username: *mut c_char,
+    pub uid: c_ulong,
+    pub gid: c_ulong,
+    pub shell: *mut c_char,
+    pub homedir: *mut c_char,
+}
 #[repr(C)]
 pub struct uv_utsname_t {
     pub sysname: [u8; 256],
@@ -2819,6 +2829,8 @@ unsafe extern "C" {
     pub fn uv_uptime(uptime: *mut f64) -> c_int;
     pub fn uv_getrusage(rusage: *mut uv_rusage_t) -> c_int;
     pub fn uv_os_homedir(buffer: *mut u8, size: *mut usize) -> ReturnCode;
+    pub fn uv_os_get_passwd(pwd: *mut uv_passwd_t) -> ReturnCode;
+    pub fn uv_os_free_passwd(pwd: *mut uv_passwd_t);
     pub fn uv_os_getppid() -> uv_pid_t;
     pub fn uv_os_getpriority(pid: uv_pid_t, priority: *mut c_int) -> c_int;
     pub fn uv_translate_sys_error(sys_errno: c_int) -> c_int;
@@ -3099,6 +3111,12 @@ const _: () = {
     assert_size!(uv_rusage_t, 128);
     assert_size!(uv_cpu_info_t, 56);
     assert_size!(uv_interface_address_t, 80);
+    // `unsigned long` is 4 bytes on Windows, so uid/gid pack into one word.
+    assert_size!(uv_passwd_t, 32);
+    assert_offset!(uv_passwd_t, uid, 8);
+    assert_offset!(uv_passwd_t, gid, 12);
+    assert_offset!(uv_passwd_t, shell, 16);
+    assert_offset!(uv_passwd_t, homedir, 24);
 
     // `UV_REQ_FIELDS` header — every req-derived struct shares this prefix,
     // so asserting `uv_req_t` and field offsets covers all of them.

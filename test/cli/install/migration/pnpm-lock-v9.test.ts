@@ -810,9 +810,9 @@ snapshots:
       );
     });
 
-    // `bun update` migrates, then edits the cached root package.json that the migration rewrote, so the cached
-    // copy has to be re-read from the rewritten contents (a stale copy pointed into the freed previous contents).
-    test("bun update straight from pnpm-lock.yaml edits the package.json the migration rewrote", async () => {
+    // `bun update` prints the root package.json again after the install, from the tree the migration left in the
+    // cache. The pnpm block and the root-level copies both have to survive that second print.
+    test("bun update straight from pnpm-lock.yaml keeps the pnpm block and the root copies", async () => {
       const pnpm = {
         patchedDependencies: { "no-deps": "patches/no-deps.patch" },
         overrides: { "a-dep": "1.0.1" },
@@ -2546,10 +2546,9 @@ snapshots:
     });
   });
 
-  // #23694: `bun update -i` migrates once to list the outdated packages, edits the root package.json through the
-  // cache, then installs, which migrates again because bun.lock is still not on disk. The editor and the second
-  // migration both used the tree the first migration had edited, which pointed into the contents it had freed.
-  test("bun update -i in a pnpm workspace migrates twice and keeps package.json intact", async () => {
+  // `bun update -i` runs the migration twice (once to list the outdated packages, once when it installs). The second
+  // pass finds the root-level copies the first pass wrote and merges into them; the pnpm block survives both passes.
+  test("bun update -i migrates twice without duplicating the copies or touching the pnpm block", async () => {
     const { packageDir } = await verdaccio.createTestDir({
       bunfigOpts: { linker: "hoisted" },
       files: {

@@ -1490,6 +1490,7 @@ var require_wasi = __commonJS({
             return constants_1.WASI_ESUCCESS;
           }),
           poll_oneoff: (sin, sout, nsubscriptions, neventsPtr) => {
+            const pollEntryNs = BigInt(Bun.nanoseconds());
             let nevents = 0;
             let waitTimeNs = BigInt(0);
             let fd = -1;
@@ -1580,7 +1581,7 @@ var require_wasi = __commonJS({
               }
             }
             if (waitTimeNs > 0) {
-              waitTimeNs -= Bun.nanoseconds() - timeOrigin;
+              waitTimeNs -= BigInt(Bun.nanoseconds()) - pollEntryNs;
               if (waitTimeNs >= 1e6) {
                 const sleep = this.sleep;
                 if (sleep == null && !warnedAboutSleep) {

@@ -1,5 +1,5 @@
 import { spawnSync } from "bun";
-import { expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import fs from "node:fs";
 import path from "node:path";
@@ -21,6 +21,101 @@ it("Should support printing 'hello world'", () => {
     stdout: "hello world\n",
     stderr: "",
     exitCode: 0,
+  });
+});
+
+describe("poll_oneoff clock subscriptions", () => {
+  const WASI_ESUCCESS = 0;
+  const WASI_EVENTTYPE_CLOCK = 0;
+  const WASI_EVENTTYPE_FD_READ = 1;
+  const WASI_CLOCK_MONOTONIC = 1;
+  const WASI_SUBSCRIPTION_CLOCK_ABSTIME = 1;
+  const WASI_STDIN_FILENO = 0;
+  const SUBSCRIPTION_SIZE = 48;
+  const TEN_SECONDS_NS = 10_000_000_000n;
+  const TEN_SECONDS_MS = 10_000;
+  const sin = 512;
+  const sout = 1024;
+  const neventsPtr = 128;
+
+  // `sleep` is the hook poll_oneoff uses to block (Bun.sleepSync by default). Recording
+  // its argument instead of sleeping keeps the tests fast and turns a wrong wait length
+  // into a wrong number instead of a hang.
+  function setup(sleep) {
+    const wasi = new WASI({ version: "preview1", sleep });
+    wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+    return { wasi, view: new DataView(wasi.memory.buffer) };
+  }
+
+  function writeClockSubscription(view, offset, { userdata, timeout, absolute = false }) {
+    view.setBigUint64(offset + 0, userdata, true);
+    view.setUint8(offset + 8, WASI_EVENTTYPE_CLOCK);
+    view.setUint32(offset + 16, WASI_CLOCK_MONOTONIC, true);
+    view.setBigUint64(offset + 24, timeout, true);
+    view.setBigUint64(offset + 32, 0n, true);
+    view.setUint16(offset + 40, absolute ? WASI_SUBSCRIPTION_CLOCK_ABSTIME : 0, true);
+  }
+
+  function writeStdinReadSubscription(view, offset, userdata) {
+    view.setBigUint64(offset + 0, userdata, true);
+    view.setUint8(offset + 8, WASI_EVENTTYPE_FD_READ);
+    view.setUint32(offset + 16, WASI_STDIN_FILENO, true);
+  }
+
+  it("a relative timeout sleeps for the timeout", () => {
+    // The hostcall wasi-libc makes for sleep()/usleep()/nanosleep().
+    const sleeps = [];
+    const { wasi, view } = setup(ms => void sleeps.push(ms));
+    writeClockSubscription(view, sin, { userdata: 42n, timeout: TEN_SECONDS_NS });
+
+    const errno = wasi.wasiImport.poll_oneoff(sin, sout, 1, neventsPtr);
+
+    expect(errno).toBe(WASI_ESUCCESS);
+    expect(view.getUint32(neventsPtr, true)).toBe(1);
+    expect(view.getBigUint64(sout + 0, true)).toBe(42n);
+    expect(view.getUint16(sout + 8, true)).toBe(WASI_ESUCCESS);
+    expect(view.getUint8(sout + 10)).toBe(WASI_EVENTTYPE_CLOCK);
+    // Less the time poll_oneoff itself took before it got around to sleeping.
+    expect(sleeps).toHaveLength(1);
+    expect(sleeps[0]).toBeLessThanOrEqual(TEN_SECONDS_MS);
+    expect(sleeps[0]).toBeGreaterThan(TEN_SECONDS_MS - 1000);
+  });
+
+  it("an absolute deadline sleeps until the deadline", () => {
+    const sleeps = [];
+    const { wasi, view } = setup(ms => void sleeps.push(ms));
+    const deadline = BigInt(Bun.nanoseconds()) + TEN_SECONDS_NS;
+    writeClockSubscription(view, sin, { userdata: 7n, timeout: deadline, absolute: true });
+
+    const errno = wasi.wasiImport.poll_oneoff(sin, sout, 1, neventsPtr);
+
+    expect(errno).toBe(WASI_ESUCCESS);
+    expect(view.getUint32(neventsPtr, true)).toBe(1);
+    expect(sleeps).toHaveLength(1);
+    expect(sleeps[0]).toBeLessThanOrEqual(TEN_SECONDS_MS);
+    expect(sleeps[0]).toBeGreaterThan(TEN_SECONDS_MS - 1000);
+  });
+
+  it("time already spent inside poll_oneoff is deducted from the wait", () => {
+    // The hostcall wasi-libc makes for poll() on stdin with a timeout. With no recent stdin
+    // activity, poll_oneoff pauses 50ms for the stdin subscription (shortPause) before it
+    // reaches the clock wait; the clock wait must be shortened by the time that took.
+    const sleeps = [];
+    const { wasi, view } = setup(ms => {
+      sleeps.push(ms);
+      if (sleeps.length === 1) Bun.sleepSync(ms);
+    });
+    writeStdinReadSubscription(view, sin, 1n);
+    writeClockSubscription(view, sin + SUBSCRIPTION_SIZE, { userdata: 2n, timeout: TEN_SECONDS_NS });
+
+    const errno = wasi.wasiImport.poll_oneoff(sin, sout, 2, neventsPtr);
+
+    expect(errno).toBe(WASI_ESUCCESS);
+    expect(view.getUint32(neventsPtr, true)).toBe(2);
+    expect(sleeps).toHaveLength(2);
+    expect(sleeps[0]).toBe(50);
+    expect(sleeps[1]).toBeLessThanOrEqual(TEN_SECONDS_MS - 50);
+    expect(sleeps[1]).toBeGreaterThan(TEN_SECONDS_MS - 1000);
   });
 });
 

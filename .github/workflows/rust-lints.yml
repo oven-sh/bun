@@ -181,9 +181,13 @@ jobs:
           # Mordant's nightly is older than rust-toolchain.toml's, so `#[allow]`s
           # of lints added since then are unknown to it.
           DYLINT_RUSTFLAGS: "-A unknown_lints"
+        # Without an explicit --manifest-path, dylint turns a failing
+        # `cargo metadata` (a manifest the merge with main broke, say) into a
+        # warning, finds no libraries, and exits 0 having linted nothing.
+        # With one, the cargo error fails the step.
         run: |
           rm -f target/mordant/over-baseline.txt
-          cargo dylint --all --workspace -- --keep-going
+          cargo dylint --manifest-path Cargo.toml --all --workspace -- --keep-going
 
       - name: Fail on findings over the baseline
         # In baseline mode mordant reports findings over mordant-baseline.toml

@@ -8,7 +8,8 @@ name: Close issues linked from merged PRs
 #
 # Runs entirely against the GitHub API. Nothing is checked out and no code from
 # the repository runs, so pull_request_target is safe here: the description is
-# the only PR-controlled input, and it is parsed as text.
+# the only PR-controlled input, it is parsed as text, and it is read from the
+# merge event, so an edit after the merge changes nothing.
 #
 # The description is not searched with a regex. A reference counts only when a
 # keyword leads it, directly or through a list:
@@ -454,7 +455,8 @@ jobs:
             const { owner, repo } = context.repo;
             const repository = `${owner}/${repo}`;
             const inputs = context.payload.inputs ?? {};
-            const prNumber = context.payload.pull_request?.number ?? Number(inputs.pr_number);
+            const event = context.payload.pull_request;
+            const prNumber = event?.number ?? Number(inputs.pr_number);
             const dryRun = String(inputs.dry_run ?? "false") === "true";
             if (!Number.isInteger(prNumber) || prNumber <= 0) {
               core.setFailed(`not a pull request number: ${inputs.pr_number}`);
@@ -472,9 +474,12 @@ jobs:
               return;
             }
 
+            // The description as it was when the PR was merged. Only a manual run
+            // reads the current one.
+            const body = (event ? event.body : pr.body) ?? "";
             const seen = new Set();
             const targets = [];
-            for (const ref of findLinkedReferences(pr.body ?? "", repository)) {
+            for (const ref of findLinkedReferences(body, repository)) {
               if (ref.repository !== repository.toLowerCase()) {
                 core.info(`${ref.repository}#${ref.number}: another repository, skipping`);
                 continue;

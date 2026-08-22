@@ -104,10 +104,9 @@ public:
     void reportException(const String& errorMessage, int lineNumber, int columnNumber, const String& sourceURL, JSC::Exception* exception, RefPtr<void*>&&, CachedScript* = nullptr, bool = false)
     {
     }
-    // `loopKind`: which of the target VM's loops the task joins — what the poster captured on the
-    // target's thread when the work whose completion this is was initiated (currentLoopKind()), or
-    // Regular for work no script there initiated. From the target's own thread it is the loop that
-    // thread is running now regardless.
+    // `loopKind`: which of the target VM's loops the task joins — currentLoopKind() captured on the
+    // target's thread when the work whose completion this is was initiated, or Regular for work no
+    // script there initiated.
     WEBCORE_EXPORT static bool postTaskTo(ScriptExecutionContextIdentifier identifier, BunLoopKind loopKind, Function<void(ScriptExecutionContext&)>&& task);
     WEBCORE_EXPORT static bool ensureOnContextThread(ScriptExecutionContextIdentifier, Function<void(ScriptExecutionContext&)>&& task);
 

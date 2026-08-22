@@ -709,6 +709,24 @@ fn arm_watch_reload_grace_timer() {
     }
 }
 
+/// The watcher could not be created or started. Every caller asked for watch
+/// mode on the command line, so there is nothing to fall back to. The usual
+/// cause is an exhausted descriptor limit in the environment (EMFILE from
+/// `inotify_init1` / `kqueue`), which is a CLI error, not a crash to report.
+#[cold]
+fn exit_on_watcher_error(action: &str, err: bun_watcher::Error) -> ! {
+    bun_core::pretty_errorln!(
+        "<red>error<r><d>:<r> Failed to {} File Watcher: {}",
+        action,
+        err.name()
+    );
+    if let Some(hint) = err.limit_hint() {
+        bun_core::note!("{}", hint);
+    }
+    Output::flush();
+    bun_core::Global::exit(1);
+}
+
 impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
     NewHotReloader<Ctx, EventLoopType, RELOAD_IMMEDIATELY>
 where
@@ -746,13 +764,7 @@ where
         // SAFETY: see above; `watcher_top_level_dir` returns `&'static [u8]`.
         let watcher = match Watcher::init(reloader, unsafe { (*this).watcher_top_level_dir() }) {
             Ok(w) => w,
-            Err(err) => {
-                bun_core::handle_error_return_trace(&err);
-                Output::panic(format_args!(
-                    "Failed to enable File Watcher: {}",
-                    err.name()
-                ));
-            }
+            Err(err) => exit_on_watcher_error("enable", err),
         };
 
         // SAFETY: see above.
@@ -767,13 +779,7 @@ where
 
         // SAFETY: `watcher_ptr` was just installed into the ctx and is live.
         if let Err(err) = unsafe { (*watcher_ptr).start() } {
-            bun_core::handle_error_return_trace(&err);
-            bun_core::pretty_errorln!(
-                "<red>error<r><d>:<r> Failed to start File Watcher: {}",
-                err.name()
-            );
-            Output::flush();
-            bun_core::Global::exit(1);
+            exit_on_watcher_error("start", err);
         }
     }
 

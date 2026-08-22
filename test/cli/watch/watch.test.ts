@@ -1,6 +1,6 @@
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
-import { afterEach, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isBroken, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
 import { readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -129,29 +129,61 @@ setInterval(() => {}, 1000);
   10000,
 );
 
-// Watcher::start() must propagate a failed thread spawn as an Err through its
-// Result return instead of aborting inside start() with `.expect()`. An
-// LD_PRELOAD shim arms on inotify_init1 (which Watcher::init() calls on Linux
-// immediately before start()) and fails the very next pthread_create.
+// The watcher fault-injection tests below build an LD_PRELOAD shim around the
+// libc calls Watcher::init()/start() make on Linux. The shims zero RLIMIT_CORE
+// because the unfixed binaries these tests guard against abort, and a core file
+// would make CI's runner flag the child as a crash. RLIMIT_CORE survives execvp.
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+const NO_CORE_C = /* c */ `
+#include <sys/resource.h>
+__attribute__((constructor)) static void no_core(void) {
+  struct rlimit rl = {0, 0};
+  setrlimit(RLIMIT_CORE, &rl);
+}
+`;
+
+async function compileShim(dir: string): Promise<string> {
+  const shimPath = join(dir, "shim.so");
+  await using ccProc = Bun.spawn({
+    cmd: [cc!, "-shared", "-fPIC", "-o", shimPath, join(dir, "shim.c"), "-ldl", "-lpthread"],
+    env: bunEnv,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [ccOut, ccErr, ccExit] = await Promise.all([ccProc.stdout.text(), ccProc.stderr.text(), ccProc.exited]);
+  if (ccExit !== 0) throw new Error(`shim compile failed: ${ccErr || ccOut}`);
+  return shimPath;
+}
+
+async function runWatcheeWithShim(dir: string, shimPath: string, args: string[]) {
+  const existing = bunEnv.LD_PRELOAD;
+  await using proc = Bun.spawn({
+    // --debug-crash-handler-use-trace-string skips the debug build's slow
+    // backtrace symbolication so an aborting child exits promptly.
+    cmd: [bunExe(), "--debug-crash-handler-use-trace-string", ...args],
+    cwd: dir,
+    env: { ...bunEnv, LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+}
+
+// Watcher::start() must propagate a failed thread spawn as an Err through its
+// Result return instead of aborting inside start() with `.expect()`. The shim
+// arms on inotify_init1 (which Watcher::init() calls on Linux immediately
+// before start()) and fails the very next pthread_create.
 it.skipIf(!isLinux || !cc)("propagates FileWatcher thread spawn failure instead of panicking in start()", async () => {
   const SHIM_C = /* c */ `
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <errno.h>
 #include <pthread.h>
-#include <sys/resource.h>
-
+${NO_CORE_C}
 static int (*real_inotify_init1)(int);
 static int (*real_pthread_create)(pthread_t *, const pthread_attr_t *, void *(*)(void *), void *);
 static volatile int armed = 0;
-
-/* The child is expected to abort; suppress the core file so CI's runner does
- * not flag it as a crash. RLIMIT_CORE survives execvp. */
-__attribute__((constructor)) static void no_core(void) {
-  struct rlimit rl = {0, 0};
-  setrlimit(RLIMIT_CORE, &rl);
-}
 
 int inotify_init1(int flags) {
   if (!real_inotify_init1) real_inotify_init1 = dlsym(RTLD_NEXT, "inotify_init1");
@@ -173,27 +205,8 @@ int pthread_create(pthread_t *t, const pthread_attr_t *a, void *(*f)(void *), vo
     "shim.c": SHIM_C,
     "watchee.js": "console.log('unreachable');\n",
   });
-  const shimPath = join(String(dir), "shim.so");
-  await using ccProc = Bun.spawn({
-    cmd: [cc!, "-shared", "-fPIC", "-o", shimPath, join(String(dir), "shim.c"), "-ldl", "-lpthread"],
-    env: bunEnv,
-    stderr: "pipe",
-    stdout: "pipe",
-  });
-  const [ccOut, ccErr, ccExit] = await Promise.all([ccProc.stdout.text(), ccProc.stderr.text(), ccProc.exited]);
-  if (ccExit !== 0) throw new Error(`shim compile failed: ${ccErr || ccOut}`);
-
-  const existing = bunEnv.LD_PRELOAD;
-  await using proc = Bun.spawn({
-    // --debug-crash-handler-use-trace-string skips the debug build's slow
-    // backtrace symbolication so the child exits promptly.
-    cmd: [bunExe(), "--debug-crash-handler-use-trace-string", "--watch", "watchee.js"],
-    cwd: String(dir),
-    env: { ...bunEnv, LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const shimPath = await compileShim(String(dir));
+  const { stdout, stderr, exitCode } = await runWatcheeWithShim(String(dir), shimPath, ["--watch", "watchee.js"]);
 
   // The .expect("spawn FileWatcher thread") panic inside start() must be gone;
   // the error now reaches the caller, which reports it by errno name.
@@ -201,6 +214,46 @@ int pthread_create(pthread_t *t, const pthread_attr_t *a, void *(*f)(void *), vo
   expect(stderr).toContain("Failed to start File Watcher: EAGAIN");
   expect(stdout).not.toContain("unreachable");
   expect(exitCode).not.toBe(0);
+});
+
+// inotify_init1 fails with EMFILE when the process is out of file descriptors
+// or the user is out of inotify instances (fs.inotify.max_user_instances). That
+// is the environment's limit, not a bug: watch mode must report it like any
+// other CLI error and exit 1 instead of aborting with a crash report.
+describe.skipIf(!isLinux || !cc)("watcher init failure", () => {
+  const SHIM_C = /* c */ `
+#include <errno.h>
+${NO_CORE_C}
+int inotify_init1(int flags) {
+  (void)flags;
+  errno = EMFILE;
+  return -1;
+}
+`;
+
+  const commands: [name: string, args: string[]][] = [
+    ["bun --watch", ["--watch", "watchee.js"]],
+    ["bun --hot", ["--hot", "watchee.js"]],
+    ["bun test --watch", ["test", "--watch", "watchee.test.js"]],
+    ["bun build --watch", ["build", "--watch", "watchee.js", "--outdir", "out"]],
+  ];
+
+  it.concurrent.each(commands)("%s reports EMFILE from inotify_init1 as an error and exits 1", async (_, args) => {
+    using dir = tempDir("watch-init-emfile", {
+      "shim.c": SHIM_C,
+      "watchee.js": "console.log('unreachable');\n",
+      "watchee.test.js": "import { test } from 'bun:test';\ntest('unreachable', () => console.log('unreachable'));\n",
+    });
+    const shimPath = await compileShim(String(dir));
+    const { stdout, stderr, exitCode, signalCode } = await runWatcheeWithShim(String(dir), shimPath, args);
+
+    expect(stderr).toContain("error: Failed to enable File Watcher: EMFILE");
+    expect(stderr).toContain("note: ");
+    expect(stderr).toContain("fs.inotify.max_user_instances");
+    expect(stdout).not.toContain("unreachable");
+    expect(signalCode).toBeNull();
+    expect(exitCode).toBe(1);
+  });
 });
 
 // A script that registers a SIGTERM handler and then spins in synchronous

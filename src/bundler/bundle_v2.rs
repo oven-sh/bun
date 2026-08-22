@@ -84,7 +84,11 @@ impl PendingImport {
             Self::SourceIndex {
                 to_source_index, ..
             } => import_record.source_index = to_source_index,
-            Self::ExternalPath { path, .. } => import_record.path = path,
+            Self::ExternalPath { path, .. } => {
+                import_record.path = path;
+                // The path map pass may have matched the source specifier to a module.
+                import_record.source_index = Index::INVALID;
+            }
         }
     }
 }
@@ -4907,10 +4911,9 @@ pub mod bv2_impl {
                     let mut out_source_index: Option<Index> = None;
                     // SAFETY: `result.{path,namespace}` are `Box<[u8]>`. Every arm below
                     // either moves both boxes into `this.free_list`, which outlives the
-                    // graph, before it stores `path` (`!found_existing`, and the external
-                    // rewrite), or drops them after its last read of `path` without
-                    // storing it (`found_existing`, entry point, unchanged specifier). So
-                    // the erased `'static` borrow is never read after the bytes are freed.
+                    // graph, before it stores `path` (`!found_existing`, external), or
+                    // drops them without storing `path` (`found_existing`, entry point).
+                    // So the erased `'static` borrow is never read after the bytes are freed.
                     let (result_path_static, result_ns_static): (&'static [u8], &'static [u8]) = unsafe {
                         (
                             &*std::ptr::from_ref::<[u8]>(result.path.as_ref()),
@@ -5057,9 +5060,6 @@ pub mod bv2_impl {
                                 bun_core::fmt::quote(&resolve.import_record.specifier),
                             ),
                         );
-                        drop(result.namespace);
-                        drop(result.path);
-                    } else if strings::eql_long(&resolve.import_record.specifier, path.text, true) {
                         drop(result.namespace);
                         drop(result.path);
                     } else {

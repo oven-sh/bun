@@ -24,8 +24,8 @@ name: Close issues linked from merged PRs
 # ("does not fix #1", "partially fixes #1", "may fix #1"), or that is not a
 # verb ("the closed #1", "the rm fix #1"), or whose subject is another
 # reference ("#100 supersedes #1", "reverts #100, which fixed #1"). Text in
-# code spans, fenced code blocks, blockquotes, HTML comments and
-# ~~strikethrough~~ is skipped.
+# code spans, fenced or indented code blocks, blockquotes, HTML comments and
+# strikethrough is skipped.
 #
 # test/internal/close-linked-issues.test.ts runs the script below against a
 # fake API.
@@ -77,7 +77,8 @@ jobs:
             // "partially fixes #1"), or a determiner or preposition that makes
             // the keyword an adjective ("the closed #1", "a comment on closed #1").
             const DISQUALIFIERS = new Set([
-              "not", "never", "without", "cannot", "can't", "doesn't", "don't", "won't", "didn't", "isn't", "wasn't",
+              "not", "never", "neither", "nor", "without", "cannot", "can't", "doesn't", "don't", "won't", "didn't",
+              "isn't", "wasn't", "hasn't", "haven't", "hadn't",
               "partially", "partly", "partial",
               "may", "might", "could", "would", "possibly", "probably", "potentially", "maybe", "hopefully", "likely", "unlikely",
               "the", "a", "an", "of", "on", "in", "by", "from", "with", "for", "than",
@@ -91,9 +92,13 @@ jobs:
             const BASE_FORMS = new Set(["close", "fix", "resolve", "supersede", "replace"]);
             const VERB_MARKERS = new Set(["will", "shall", "should", "does", "do", "did", "and", "we", "they", "i"]);
 
-            // Adverbs that can sit between a disqualifier or verb marker and the
-            // keyword: "may also fix", "will fully fix".
-            const ADVERBS = new Set(["also", "fully", "completely", "entirely", "actually", "really", "yet", "directly", "properly"]);
+            // Words that can sit between the deciding word and the keyword without
+            // changing the reading: adverbs ("may also fix", "will fully fix") and the
+            // auxiliaries of the perfect ("would have fixed", "#100 has fixed").
+            const INTERVENING = new Set([
+              "also", "fully", "completely", "entirely", "actually", "really", "yet", "directly", "properly",
+              "have", "has", "had",
+            ]);
 
             // Tokens: { kind: "word", text } (lowercased), { kind: "ref", repository, number, attached }
             // (repository is "owner/repo" lowercased or null for a bare "#1"; attached means the
@@ -142,7 +147,7 @@ jobs:
             // Whether the keyword at `index` states that the PR closes what follows.
             // Decided by what comes before it.
             function isClosingStatement(tokens, index, keyword) {
-              const k = skipAdverbsBack(tokens, index - 1);
+              const k = skipInterveningBack(tokens, index - 1);
               const before = tokens[k];
               if (before === undefined) return true;
               // "#100 supersedes #1": another pull request is the subject. A line
@@ -152,7 +157,7 @@ jobs:
                 // A word wrapped onto the previous line still applies: "does not\nfix #1",
                 // "unable to\nfix #1", "#100, which\nfixed #1". A line that starts with
                 // "Fix #1" after prose still counts.
-                const w = skipAdverbsBack(tokens, k - 1);
+                const w = skipInterveningBack(tokens, k - 1);
                 const wrapped = tokens[w];
                 if (wrapped?.kind !== "word") return true;
                 if (DISQUALIFIERS.has(wrapped.text) || isRelativeToReference(tokens, w)) return false;
@@ -190,8 +195,8 @@ jobs:
               return tokens[p - 4]?.kind === "ref" && isPunct(tokens[p - 5], "[");
             }
 
-            function skipAdverbsBack(tokens, k) {
-              while (k >= 0 && tokens[k].kind === "word" && ADVERBS.has(tokens[k].text)) k--;
+            function skipInterveningBack(tokens, k) {
+              while (k >= 0 && tokens[k].kind === "word" && INTERVENING.has(tokens[k].text)) k--;
               return k;
             }
 
@@ -223,23 +228,28 @@ jobs:
               return null;
             }
 
-            // Removes fenced code blocks, blockquotes, HTML comments, code spans and
-            // struck-through text.
+            // Removes fenced and indented code blocks, blockquotes, HTML comments, code
+            // spans and struck-through text.
             function stripNonProse(body) {
               let text = removeBlocks(body.replaceAll("\r\n", "\n"));
               text = removeSpans(text, "`");
               text = removeSpans(text, "~", 2);
+              for (const tag of ["s", "del", "strike"]) text = removeTagged(text, tag);
               return text;
             }
 
-            // Blanks fenced code blocks, blockquote lines and HTML comments in one pass
-            // over the lines, so a marker inside one of them opens nothing else: "<!--"
-            // in a fence is code, and "```" in a comment is comment. An unclosed
-            // comment runs to the end, as in CommonMark.
+            // Blanks fenced code blocks, indented code blocks, blockquotes and HTML
+            // comments in one pass over the lines, so a marker inside one of them opens
+            // nothing else: "<!--" in a fence is code, and "```" in a comment is
+            // comment. An unclosed comment runs to the end, as in CommonMark. A line
+            // after a quote line continues the quote until a blank line or a new block.
             function removeBlocks(text) {
               const kept = [];
               let fence = null;
               let comment = false;
+              let indented = false;
+              let quote = false;
+              let blankBefore = true;
               for (const line of text.split("\n")) {
                 let rest = line;
                 if (comment) {
@@ -257,18 +267,37 @@ jobs:
                   kept.push("");
                   continue;
                 }
+                const blank = trimmed === "";
+                if (blank) {
+                  quote = false;
+                  blankBefore = true;
+                  kept.push("");
+                  continue;
+                }
+                // Four spaces or a tab after a blank line open an indented code block.
+                if ((rest.startsWith("    ") || rest.startsWith("\t")) && (blankBefore || indented)) {
+                  indented = true;
+                  blankBefore = false;
+                  kept.push("");
+                  continue;
+                }
+                indented = false;
+                blankBefore = false;
                 const opening = leadingRun(trimmed, "`") || leadingRun(trimmed, "~");
                 // A backtick fence's info string cannot hold a backtick: "```bun test```" is a code span.
                 const isFence = opening.length >= 3 && (opening[0] === "~" || !trimmed.slice(opening.length).includes("`"));
                 if (isFence) {
                   fence = opening;
+                  quote = false;
                   kept.push("");
                   continue;
                 }
-                if (trimmed.startsWith(">")) {
+                if (trimmed.startsWith(">") || (quote && !startsBlock(trimmed))) {
+                  quote = true;
                   kept.push("");
                   continue;
                 }
+                quote = false;
                 let out = "";
                 let i = 0;
                 while (i < rest.length) {
@@ -288,6 +317,41 @@ jobs:
                 kept.push(out);
               }
               return kept.join("\n");
+            }
+
+            // A heading, a list item or a rule ends a blockquote's lazy continuation.
+            function startsBlock(trimmed) {
+              const c = trimmed[0];
+              if (c === "#" || c === "-" || c === "*" || c === "+") return true;
+              let n = 0;
+              while (isDigit(trimmed[n])) n++;
+              return n > 0 && (trimmed[n] === "." || trimmed[n] === ")");
+            }
+
+            // Removes "<tag>...</tag>" within a paragraph, for the HTML spellings of
+            // strikethrough: <s>, <del>, <strike>.
+            function removeTagged(text, tag) {
+              const lower = text.toLowerCase();
+              const open = `<${tag}>`;
+              const close = `</${tag}>`;
+              let out = "";
+              let i = 0;
+              while (i < text.length) {
+                const start = lower.indexOf(open, i);
+                if (start === -1) {
+                  out += text.slice(i);
+                  break;
+                }
+                const end = lower.indexOf(close, start + open.length);
+                if (end === -1 || end >= nextBlankLine(text, start)) {
+                  out += text.slice(i, start + open.length);
+                  i = start + open.length;
+                  continue;
+                }
+                out += text.slice(i, start) + " ";
+                i = end + close.length;
+              }
+              return out;
             }
 
             function leadingRun(text, char) {

@@ -67,7 +67,7 @@ Vector<JSC::Strong<JSC::JSObject>> convertTransferList(JSGlobalObject& lexicalGl
         RETURN_IF_EXCEPTION(throwScope, {});
         if (!step.isObject())
             return notIterable();
-        auto [done, element] = Bun::getIteratorResult(&lexicalGlobalObject, asObject(step));
+        auto [done, element] = Bun::getIteratorResult(&lexicalGlobalObject, asObject(step), Bun::IteratorDoneValue::Skip);
         RETURN_IF_EXCEPTION(throwScope, {});
         if (done.toBoolean(&lexicalGlobalObject))
             break;

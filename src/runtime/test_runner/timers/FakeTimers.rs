@@ -195,7 +195,9 @@ impl FakeTimers {
         CURRENT_TIME.clear(global);
         self.active = false;
         // On a reused global the surviving setTimeout keeps the marker; a stale one misroutes testing-library to jest.advanceTimersByTime.
-        set_fake_timer_marker(global, false);
+        if set_fake_timer_marker(global, false).is_err() {
+            let _ = global.clear_exception_except_termination();
+        }
     }
 
     /// Pop every fake timer. Popping only unlinks the nodes; the owners that

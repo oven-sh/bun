@@ -1198,42 +1198,13 @@ class ChildProcess extends EventEmitter {
     switch (i) {
       case 0: {
         switch (io) {
-          case "pipe": {
-            const stdin = handle?.stdin;
-
-            if (!stdin) {
-              // This can happen if the process was already killed.
-              const Writable = require("internal/streams/writable");
-              const stream = new Writable({
-                write(chunk, encoding, callback) {
-                  // Gracefully handle writes - stream acts as if it's ended
-                  if (callback) callback();
-                  return false;
-                },
-              });
-              // Mark as destroyed to indicate it's not usable
-              stream.destroy();
-              return stream;
-            }
-            const result = require("internal/fs/streams").writableFromFileSink(stdin);
-            result.readable = false;
-            return result;
-          }
+          case "pipe":
+            // handle.stdin can be undefined if the process was already killed.
+            return createStdinSocket(handle?.stdin);
           case "inherit":
             return null;
-          case "destroyed": {
-            const Writable = require("internal/streams/writable");
-            const stream = new Writable({
-              write(chunk, encoding, callback) {
-                // Gracefully handle writes - stream acts as if it's ended
-                if (callback) callback();
-                return false;
-              },
-            });
-            // Mark as destroyed to indicate it's not usable
-            stream.destroy();
-            return stream;
-          }
+          case "destroyed":
+            return createStdinSocket(undefined);
           case "undefined":
             return undefined;
           default:
@@ -1245,25 +1216,22 @@ class ChildProcess extends EventEmitter {
         switch (io) {
           case "pipe": {
             const value = handle?.[fdToStdioName(i as 1 | 2)!];
+            const Ctor = getStdoutSocket();
             // This can happen if the process was already killed.
             if (!value) {
-              const Readable = require("internal/streams/readable");
-              const stream = new Readable({ read() {} });
-              // Mark as destroyed to indicate it's not usable
+              const stream = new Ctor({ read() {} });
               stream.destroy();
               return stream;
             }
 
-            const pipe = require("internal/streams/native-readable").constructNativeReadable(value, {});
+            const pipe = require("internal/streams/native-readable").constructNativeReadable(value, {}, Ctor);
             this.#closesNeeded++;
             pipe.once("close", () => this.#maybeClose());
             if (autoResume) pipe.resume();
             return pipe;
           }
           case "destroyed": {
-            const Readable = require("internal/streams/readable");
-            const stream = new Readable({ read() {} });
-            // Mark as destroyed to indicate it's not usable
+            const stream = new (getStdoutSocket())({ read() {} });
             stream.destroy();
             return stream;
           }
@@ -1703,7 +1671,8 @@ function streamFdOf(item): number | undefined {
 
   if (item.destroyed) return undefined;
 
-  const sink = item[require("internal/fs/streams").kWriteStreamFastPath];
+  // Another child's stdin socket, or a fs.WriteStream on its FileSink fast path.
+  const sink = item[kStdinSink] ?? item[require("internal/fs/streams").kWriteStreamFastPath];
   if (sink && sink !== true) {
     const fd = sink._getFd();
     if (typeof fd === "number" && fd >= 0) return fd;
@@ -1777,6 +1746,179 @@ function fdToStdioName(fd: number) {
     default:
       return null;
   }
+}
+
+// Node's createSocket wraps each piped stdio in a net.Socket; subclass it for
+// `instanceof` but route I/O to the FileSink / native readable that backs Bun's pipes.
+const kStdinSink = Symbol("kStdinSink");
+const kStdinUnrefed = Symbol("kStdinUnrefed");
+let StdinSocket;
+let StdoutSocket;
+
+function initStdioSocket(self, options) {
+  const Duplex = require("internal/streams/duplex");
+  Duplex.$call(self, options);
+  // net.Socket prototype methods read these; there is no native handle here.
+  self._handle = null;
+  self._parent = null;
+  self.connecting = false;
+  self.server = null;
+  self._server = null;
+}
+
+// Idempotent flag like net.Socket; FileSink's counter already starts at 1.
+function stdioSocketRef(this: any) {
+  if (this[kStdinUnrefed]) {
+    this[kStdinUnrefed] = false;
+    this[kStdinSink]?.ref?.();
+  }
+  return this;
+}
+
+function stdioSocketUnref(this: any) {
+  if (!this[kStdinUnrefed]) {
+    this[kStdinUnrefed] = true;
+    this[kStdinSink]?.unref?.();
+  }
+  return this;
+}
+
+function stdinSocketWrite(this: any, chunk: any, encoding: any, cb: any) {
+  const sink = this[kStdinSink];
+  if (!sink) {
+    cb($ERR_SOCKET_CLOSED());
+    return false;
+  }
+  try {
+    // FileSink treats string input as UTF-8; transcode other encodings here.
+    if (
+      typeof chunk === "string" &&
+      encoding !== undefined &&
+      encoding !== "utf8" &&
+      encoding !== "utf-8" &&
+      encoding !== "buffer"
+    ) {
+      chunk = Buffer.from(chunk, encoding);
+    }
+    const result = sink.write(chunk);
+    if ($isPromise(result)) {
+      result.then(() => cb(), cb);
+      return false;
+    }
+    cb();
+    return true;
+  } catch (err) {
+    cb(err);
+    return false;
+  }
+}
+
+function stdinSocketWritev(this: any, chunks: any, cb: any) {
+  const buffers = new Array(chunks.length);
+  for (let i = 0; i < chunks.length; i++) {
+    const { chunk, encoding } = chunks[i];
+    buffers[i] = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
+  }
+  stdinSocketWrite.$call(this, BufferConcat(buffers), "buffer", cb);
+}
+
+function stdinSocketFinal(this: any, cb: any) {
+  const sink = this[kStdinSink];
+  if (sink) {
+    this[kStdinSink] = undefined;
+    try {
+      const result = sink.end();
+      if ($isPromise(result)) {
+        result.then(() => cb(), cb);
+        return;
+      }
+    } catch (err) {
+      cb(err);
+      return;
+    }
+  }
+  cb();
+}
+
+function stdinSocketDestroy(this: any, err: any, cb: any) {
+  const sink = this[kStdinSink];
+  if (sink) {
+    this[kStdinSink] = undefined;
+    try {
+      const result = sink.end(err);
+      if ($isPromise(result)) {
+        result.then(
+          () => cb(err),
+          (e: any) => cb(e || err),
+        );
+        return;
+      }
+    } catch (e) {
+      cb(e || err);
+      return;
+    }
+  }
+  cb(err);
+}
+
+function getStdinSocket() {
+  if (StdinSocket === undefined) {
+    if (!NetModule) NetModule = require("node:net");
+    StdinSocket = function Socket(this: any) {
+      initStdioSocket(this, {
+        readable: false,
+        decodeStrings: false,
+        autoDestroy: true,
+        emitClose: true,
+      });
+      this[kStdinSink] = undefined;
+      this[kStdinUnrefed] = false;
+    };
+    $toClass(StdinSocket, "Socket", NetModule.Socket);
+    StdinSocket.prototype._write = stdinSocketWrite;
+    StdinSocket.prototype._writev = stdinSocketWritev;
+    StdinSocket.prototype._final = stdinSocketFinal;
+    StdinSocket.prototype._destroy = stdinSocketDestroy;
+    StdinSocket.prototype.ref = stdioSocketRef;
+    StdinSocket.prototype.unref = stdioSocketUnref;
+  }
+  return StdinSocket;
+}
+
+function stdoutSocketDestroy(this: any, err: any, cb: any) {
+  cb(err);
+}
+
+function getStdoutSocket() {
+  if (StdoutSocket === undefined) {
+    if (!NetModule) NetModule = require("node:net");
+    StdoutSocket = function Socket(this: any, options: any) {
+      initStdioSocket(this, {
+        ...options,
+        writable: false,
+        allowHalfOpen: false,
+        autoDestroy: true,
+        emitClose: true,
+      });
+    };
+    $toClass(StdoutSocket, "Socket", NetModule.Socket);
+    // Live pipes get instance _read/_destroy/ref/unref from constructNativeReadable.
+    StdoutSocket.prototype._destroy = stdoutSocketDestroy;
+    StdoutSocket.prototype.ref = stdioSocketRef;
+    StdoutSocket.prototype.unref = stdioSocketUnref;
+  }
+  return StdoutSocket;
+}
+
+function createStdinSocket(sink: any) {
+  const Ctor = getStdinSocket();
+  const stream = new Ctor();
+  if (sink) {
+    stream[kStdinSink] = sink;
+  } else {
+    stream.destroy();
+  }
+  return stream;
 }
 
 function getBunStdioFromOptions(stdio) {

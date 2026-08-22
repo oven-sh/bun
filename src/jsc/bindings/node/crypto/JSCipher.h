@@ -113,7 +113,10 @@ private:
     static void destroy(JSC::JSCell* cell) { static_cast<JSCipher*>(cell)->~JSCipher(); }
 };
 
-void setupCipherClassStructure(JSC::LazyClassStructure::Initializer&);
+// node:crypto Cipheriv / Decipheriv: both are JSCipher cells (m_kind tells them apart) with
+// their own prototype/constructor, chained under Transform.prototype.
+void setupCipherivClassStructure(JSC::LazyClassStructure::Initializer&);
+void setupDecipherivClassStructure(JSC::LazyClassStructure::Initializer&);
 
 JSC_DECLARE_HOST_FUNCTION(jsPublicEncrypt);
 JSC_DECLARE_HOST_FUNCTION(jsPublicDecrypt);

@@ -18,8 +18,8 @@ JSC_DECLARE_HOST_FUNCTION(callHmac);
 JSC_DECLARE_HOST_FUNCTION(constructHmac);
 
 // node:crypto `Hmac`: the object returned by createHmac(). Its prototype chain is
-// Hmac.prototype -> LazyTransform.prototype (JS) -> Transform -> ..., and the HMAC
-// context lives directly on this cell.
+// Hmac.prototype -> Transform.prototype (JS) -> ...; the Transform half is constructed lazily
+// (LazyTransform.h) and the HMAC context lives directly on this cell.
 class JSHmac final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;

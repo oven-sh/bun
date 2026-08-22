@@ -2,7 +2,7 @@
 #include "CryptoUtil.h"
 #include "BunClientData.h"
 #include "ZigGlobalObject.h"
-#include "InternalModuleRegistry.h"
+#include "LazyTransform.h"
 #include <JavaScriptCore/ArrayBuffer.h>
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/Exception.h>
@@ -29,6 +29,8 @@ static const HashTableValue JSHashPrototypeTableValues[] = {
     { "_flush"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsHashProtoFuncFlush, 1 } },
     { "update"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsHashProtoFuncUpdate, 2 } },
     { "digest"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsHashProtoFuncDigest, 1 } },
+    { "_readableState"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsLazyTransformStateGetter, jsLazyTransformStateSetter } },
+    { "_writableState"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsLazyTransformStateGetter, jsLazyTransformStateSetter } },
 };
 
 const ClassInfo JSHash::s_info = { "Hash"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSHash) };
@@ -399,8 +401,7 @@ static JSHash* createHash(JSGlobalObject* globalObject, Structure* structure, co
         }
     }
 
-    // LazyTransform's constructor: `this._options = options`. Only materialized when options were
-    // passed so the common createHash(algorithm) path does not allocate property storage.
+    // Transform is constructed lazily (see LazyTransform.h); it reads `this._options` then.
     if (!optionsValue.isUndefined())
         hash->putDirect(vm, Identifier::fromString(vm, "_options"_s), optionsValue);
 
@@ -487,17 +488,16 @@ JSC::Structure* JSHashConstructor::createStructure(JSC::VM& vm, JSC::JSGlobalObj
 
 void setupJSHashClassStructure(JSC::LazyClassStructure::Initializer& init)
 {
-    auto* globalObject = defaultGlobalObject(init.global);
-    // class Hash extends LazyTransform (internal/streams/lazy_transform)
-    auto* lazyTransform = globalObject->internalModuleRegistry()->requireId(init.global, init.vm, InternalModuleRegistry::Field::InternalStreamsLazyTransform).getObject();
-    RELEASE_ASSERT(lazyTransform);
-    JSValue lazyTransformPrototype = lazyTransform->getDirect(init.vm, init.vm.propertyNames->prototype);
-    RELEASE_ASSERT(lazyTransformPrototype && lazyTransformPrototype.isObject());
+    // class Hash extends Transform (internal/streams/transform); see LazyTransform.h for the lazy part.
+    JSObject* transform = transformConstructor(init.global);
+    RELEASE_ASSERT(transform);
+    JSValue transformPrototype = transform->getDirect(init.vm, init.vm.propertyNames->prototype);
+    RELEASE_ASSERT(transformPrototype && transformPrototype.isObject());
 
-    auto* prototypeStructure = JSHashPrototype::createStructure(init.vm, init.global, lazyTransformPrototype);
+    auto* prototypeStructure = JSHashPrototype::createStructure(init.vm, init.global, transformPrototype);
     auto* prototype = JSHashPrototype::create(init.vm, init.global, prototypeStructure);
 
-    auto* constructorStructure = JSHashConstructor::createStructure(init.vm, init.global, lazyTransform);
+    auto* constructorStructure = JSHashConstructor::createStructure(init.vm, init.global, transform);
     auto* constructor = JSHashConstructor::create(init.vm, constructorStructure, prototype);
 
     auto* structure = JSHash::createStructure(init.vm, init.global, prototype);

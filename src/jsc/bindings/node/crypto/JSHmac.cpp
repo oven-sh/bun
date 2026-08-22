@@ -14,7 +14,7 @@
 #include <JavaScriptCore/FunctionPrototype.h>
 #include "KeyObject.h"
 #include "ZigGlobalObject.h"
-#include "InternalModuleRegistry.h"
+#include "LazyTransform.h"
 
 namespace Bun {
 
@@ -27,6 +27,8 @@ static JSC_DECLARE_HOST_FUNCTION(jsHmacProtoFuncFlush);
 static const HashTableValue JSHmacPrototypeTableValues[] = {
     { "update"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsHmacProtoFuncUpdate, 2 } },
     { "digest"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsHmacProtoFuncDigest, 1 } },
+    { "_readableState"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsLazyTransformStateGetter, jsLazyTransformStateSetter } },
+    { "_writableState"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsLazyTransformStateGetter, jsLazyTransformStateSetter } },
     { "_transform"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsHmacProtoFuncTransform, 3 } },
     { "_flush"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsHmacProtoFuncFlush, 1 } },
 };
@@ -344,8 +346,7 @@ static EncodedJSValue constructOrCallHmac(JSGlobalObject* globalObject, CallFram
     hmac->init(globalObject, scope, algorithm, keyObject.symmetricKey().span());
     RETURN_IF_EXCEPTION(scope, {});
 
-    // LazyTransform's constructor: `this._options = options`. Only materialized when options were
-    // passed so the common createHmac(algorithm, key) path does not allocate property storage.
+    // Transform is constructed lazily (see LazyTransform.h); it reads `this._options` then.
     if (!options.isUndefined())
         hmac->putDirect(vm, Identifier::fromString(vm, "_options"_s), options);
 
@@ -370,17 +371,16 @@ JSC::Structure* JSHmacConstructor::createStructure(JSC::VM& vm, JSC::JSGlobalObj
 
 void setupJSHmacClassStructure(JSC::LazyClassStructure::Initializer& init)
 {
-    auto* globalObject = defaultGlobalObject(init.global);
-    // class Hmac extends LazyTransform (internal/streams/lazy_transform)
-    auto* lazyTransform = globalObject->internalModuleRegistry()->requireId(init.global, init.vm, InternalModuleRegistry::Field::InternalStreamsLazyTransform).getObject();
-    RELEASE_ASSERT(lazyTransform);
-    JSValue lazyTransformPrototype = lazyTransform->getDirect(init.vm, init.vm.propertyNames->prototype);
-    RELEASE_ASSERT(lazyTransformPrototype && lazyTransformPrototype.isObject());
+    // class Hmac extends Transform (internal/streams/transform); see LazyTransform.h for the lazy part.
+    JSObject* transform = transformConstructor(init.global);
+    RELEASE_ASSERT(transform);
+    JSValue transformPrototype = transform->getDirect(init.vm, init.vm.propertyNames->prototype);
+    RELEASE_ASSERT(transformPrototype && transformPrototype.isObject());
 
-    auto* prototypeStructure = JSHmacPrototype::createStructure(init.vm, init.global, lazyTransformPrototype);
+    auto* prototypeStructure = JSHmacPrototype::createStructure(init.vm, init.global, transformPrototype);
     auto* prototype = JSHmacPrototype::create(init.vm, init.global, prototypeStructure);
 
-    auto* constructorStructure = JSHmacConstructor::createStructure(init.vm, init.global, lazyTransform);
+    auto* constructorStructure = JSHmacConstructor::createStructure(init.vm, init.global, transform);
     auto* constructor = JSHmacConstructor::create(init.vm, constructorStructure, prototype);
 
     auto* structure = JSHmac::createStructure(init.vm, init.global, prototype);

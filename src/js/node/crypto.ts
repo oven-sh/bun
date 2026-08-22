@@ -1,6 +1,4 @@
 // Hardcoded module "node:crypto"
-const StringDecoder = require("node:string_decoder").StringDecoder;
-const LazyTransform = require("internal/streams/lazy_transform");
 const { defineCustomPromisifyArgs } = require("internal/promisify");
 const Writable = require("internal/streams/writable");
 const { CryptoHasher } = Bun;
@@ -26,7 +24,8 @@ const {
   checkPrimeSync,
   generatePrime,
   generatePrimeSync,
-  Cipher,
+  Cipheriv,
+  Decipheriv,
   hkdf,
   hkdfSync,
 
@@ -70,7 +69,6 @@ const {
   argon2Sync: _argon2Sync,
 } = $rust("node_crypto_binding.rs", "createNodeCryptoBindingZig");
 
-const normalizeEncoding = $newRustFunction("node_util_binding.rs", "normalizeEncoding", 1);
 
 const {
   validateFunction,
@@ -380,115 +378,15 @@ crypto_exports.createECDH = function createECDH(curve) {
   return new ECDH(curve);
 };
 
-{
-  function getDecoder(decoder, encoding) {
-    const normalizedEncoding = normalizeEncoding(encoding);
-    decoder ||= new StringDecoder(encoding);
-    if (decoder.encoding !== normalizedEncoding) {
-      if (normalizedEncoding === undefined) {
-        throw $ERR_UNKNOWN_ENCODING(encoding);
-      }
-
-      // there's a test for this
-      // https://github.com/nodejs/node/blob/6b4255434226491449b7d925038008439e5586b2/lib/internal/crypto/cipher.js#L100
-      // https://github.com/nodejs/node/blob/6b4255434226491449b7d925038008439e5586b2/test/parallel/test-crypto-encoding-validation-error.js#L31
-      throw $ERR_INTERNAL_ASSERTION("Cannot change encoding");
-    }
-    return decoder;
-  }
-
-  function Cipheriv(cipher, key, iv, options): void {
-    if (!new.target) {
-      return new Cipheriv(cipher, key, iv, options);
-    }
-
-    this[kHandle] = new Cipher(false, cipher, key, iv, options);
-    LazyTransform.$apply(this, [options]);
-    this._decoder = null;
-  }
-  $toClass(Cipheriv, "Cipheriv", LazyTransform);
-
-  Object.assign(Cipheriv.prototype, {
-    setAutoPadding: function (ap) {
-      this[kHandle].setAutoPadding(ap);
-      return this;
-    },
-    getAuthTag: function () {
-      return this[kHandle].getAuthTag();
-    },
-    setAAD: function (aadbuf, options) {
-      this[kHandle].setAAD(aadbuf, options);
-      return this;
-    },
-    _transform: function (chunk, encoding, callback) {
-      this.push(this[kHandle].update(chunk, encoding));
-      callback();
-    },
-    _flush: function (callback) {
-      try {
-        this.push(this[kHandle].final());
-      } catch (e) {
-        callback(e);
-        return;
-      }
-      callback();
-    },
-    update: function (data, inputEncoding, outputEncoding) {
-      const res = this[kHandle].update(data, inputEncoding);
-
-      if (outputEncoding && outputEncoding !== "buffer") {
-        this._decoder = getDecoder(this._decoder, outputEncoding);
-        return this._decoder.write(res);
-      }
-
-      return res;
-    },
-    final: function (outputEncoding) {
-      const res = this[kHandle].final();
-
-      if (outputEncoding && outputEncoding !== "buffer") {
-        this._decoder = getDecoder(this._decoder, outputEncoding);
-        return this._decoder.end(res);
-      }
-
-      return res;
-    },
-  });
-
-  function Decipheriv(cipher, key, iv, options): void {
-    if (!new.target) {
-      return new Decipheriv(cipher, key, iv, options);
-    }
-
-    this[kHandle] = new Cipher(true, cipher, key, iv, options);
-    LazyTransform.$apply(this, [options]);
-    this._decoder = null;
-  }
-  $toClass(Decipheriv, "Decipheriv", LazyTransform);
-
-  Object.assign(Decipheriv.prototype, {
-    setAutoPadding: Cipheriv.prototype.setAutoPadding,
-    setAuthTag: function (tagbuf, encoding) {
-      this[kHandle].setAuthTag(tagbuf, encoding);
-      return this;
-    },
-    setAAD: Cipheriv.prototype.setAAD,
-    _transform: Cipheriv.prototype._transform,
-    _flush: Cipheriv.prototype._flush,
-    update: Cipheriv.prototype.update,
-    final: Cipheriv.prototype.final,
-  });
-
-  crypto_exports.Cipheriv = Cipheriv;
-  crypto_exports.Decipheriv = Decipheriv;
-  crypto_exports.createCipheriv = function createCipheriv(cipher, key, iv, options) {
-    return new Cipheriv(cipher, key, iv, options);
-  };
-  crypto_exports.createDecipheriv = function createDecipheriv(cipher, key, iv, options) {
-    return new Decipheriv(cipher, key, iv, options);
-  };
-  crypto_exports.getCiphers = getCiphers;
-}
+crypto_exports.Cipheriv = Cipheriv;
+crypto_exports.Decipheriv = Decipheriv;
+crypto_exports.createCipheriv = function createCipheriv(cipher, key, iv, options) {
+  return new Cipheriv(cipher, key, iv, options);
+};
+crypto_exports.createDecipheriv = function createDecipheriv(cipher, key, iv, options) {
+  return new Decipheriv(cipher, key, iv, options);
+};
+crypto_exports.getCiphers = getCiphers;
 
 crypto_exports.scrypt = scrypt;
 crypto_exports.scryptSync = scryptSync;

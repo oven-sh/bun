@@ -3,6 +3,7 @@
 #include "root.h"
 #include <JavaScriptCore/CallData.h>
 #include <JavaScriptCore/ObjectConstructor.h>
+#include "JSCipher.h"
 
 namespace Bun {
 
@@ -11,10 +12,10 @@ public:
     using Base = JSC::JSNonFinalObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
-    static JSCipherPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+    static JSCipherPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, CipherKind kind)
     {
         JSCipherPrototype* prototype = new (NotNull, JSC::allocateCell<JSCipherPrototype>(vm)) JSCipherPrototype(vm, structure);
-        prototype->finishCreation(vm);
+        prototype->finishCreation(vm, kind);
         return prototype;
     }
 
@@ -39,7 +40,7 @@ private:
     {
     }
 
-    void finishCreation(JSC::VM&);
+    void finishCreation(JSC::VM&, CipherKind);
 };
 
 } // namespace Bun

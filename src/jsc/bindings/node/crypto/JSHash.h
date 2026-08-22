@@ -18,8 +18,8 @@ JSC_DECLARE_HOST_FUNCTION(callHash);
 JSC_DECLARE_HOST_FUNCTION(constructHash);
 
 // node:crypto `Hash`: the object returned by createHash(). Its prototype chain is
-// Hash.prototype -> LazyTransform.prototype (JS) -> Transform -> ... so it is a stream,
-// but the digest state lives directly on this cell.
+// Hash.prototype -> Transform.prototype (JS) -> ...; the Transform half is constructed lazily
+// (LazyTransform.h) and the digest state lives directly on this cell.
 class JSHash final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;

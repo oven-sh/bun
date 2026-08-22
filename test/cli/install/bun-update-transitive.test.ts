@@ -1569,6 +1569,7 @@ async function staleShared() {
   return { dir, packageJson };
 }
 
+// Every row moves within its own range, then the versions the update added collapse onto the fewest that satisfy them: 1.0.2 covers `*`, `^1.0.1` and `>=1.0.1`, so 2.0.2 is not kept.
 test.concurrent.each([
   ["bare", []],
   ["named", ["hoist-lockfile-shared"]],
@@ -1579,7 +1580,7 @@ test.concurrent.each([
   expect(stderr).not.toContain("error:");
   expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
   expect((await lock(dir)).workspaces[""].dependencies).toStrictEqual(HOIST_DEPENDENTS);
-  expect(await lockedVersions(dir, "hoist-lockfile-shared")).toStrictEqual(["1.0.2", "2.0.2"]);
+  expect(await lockedVersions(dir, "hoist-lockfile-shared")).toStrictEqual(["1.0.2"]);
   await frozen(dir);
   expect(exitCode).toBe(0);
 });
@@ -1588,11 +1589,7 @@ test.concurrent("the plan counts packages, not the edges that move onto them", a
   const { dir } = await staleShared();
   const before = await lockText(dir);
   const { stdout, stderr, exitCode } = await run(dir, "update", "--dry-run");
-  expectDryRun(
-    stdout,
-    movedRow("hoist-lockfile-shared", "1.0.1", "1.0.2", "2.0.2"),
-    movedRow("hoist-lockfile-shared", "1.0.1", "2.0.2"),
-  );
+  expectDryRun(stdout, movedRow("hoist-lockfile-shared", "1.0.1", "1.0.2", "2.0.2"));
   expectCleanStderr(stderr);
   expect(await lockText(dir)).toBe(before);
   expect(exitCode).toBe(0);

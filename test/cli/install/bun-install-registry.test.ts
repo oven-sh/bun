@@ -4784,6 +4784,40 @@ describe("hoisting", async () => {
     expect(await sharedResolutions()).toStrictEqual({ "hoist-lockfile-shared": "hoist-lockfile-shared@1.0.2" });
     expect(await exists(join(packageDir, "node_modules", "hoist-lockfile-1", "node_modules"))).toBeFalse();
   });
+
+  test("two dependencies' ranges on the same package share one copy when one version satisfies both", async () => {
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: { "hoist-lockfile-1": "1.0.0", "hoist-lockfile-2": "1.0.0" },
+      }),
+    );
+
+    expect(await sharedResolutions()).toStrictEqual({ "hoist-lockfile-shared": "hoist-lockfile-shared@1.0.2" });
+    expect(await exists(join(packageDir, "node_modules", "hoist-lockfile-1", "node_modules"))).toBeFalse();
+    expect(await exists(join(packageDir, "node_modules", "hoist-lockfile-2", "node_modules"))).toBeFalse();
+  });
+
+  test("a copy already in bun.lock is kept by a later install that only adds packages", async () => {
+    await write(
+      packageJson,
+      JSON.stringify({ name: "foo", dependencies: { "hoist-lockfile-1": "1.0.0" } }),
+    );
+    expect(await sharedResolutions()).toStrictEqual({ "hoist-lockfile-shared": "hoist-lockfile-shared@2.0.2" });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: { "hoist-lockfile-1": "1.0.0", "hoist-lockfile-2": "1.0.0" },
+      }),
+    );
+    expect(await sharedResolutions()).toStrictEqual({
+      "hoist-lockfile-shared": "hoist-lockfile-shared@2.0.2",
+      "hoist-lockfile-2/hoist-lockfile-shared": "hoist-lockfile-shared@1.0.2",
+    });
+  });
 });
 
 describe("transitive file dependencies", () => {

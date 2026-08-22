@@ -38,6 +38,25 @@ pub struct DirectDependencies {
 
 impl DirectDependencies {
     pub fn snapshot(lockfile: &Lockfile) -> DirectDependencies {
+        Self::snapshot_of(lockfile, |_| true)
+    }
+
+    /// Only the owners the root still reaches: a workspace member dropped from the glob keeps its rows until the clean.
+    pub fn snapshot_reachable(lockfile: &Lockfile) -> DirectDependencies {
+        let reachable = crate::lockfile::reachable::packages(
+            lockfile,
+            lockfile.buffers.resolutions.as_slice(),
+            crate::lockfile::reachable::Options::all(0),
+        );
+        Self::snapshot_of(lockfile, |owner| {
+            reachable.is_set_allow_out_of_bound(owner as usize, false)
+        })
+    }
+
+    fn snapshot_of(
+        lockfile: &Lockfile,
+        owner_counts: impl Fn(PackageID) -> bool,
+    ) -> DirectDependencies {
         let pkg_res = lockfile.packages.items_resolution();
         let dep_slices = lockfile.packages.items_dependencies();
         let res_slices = lockfile.packages.items_resolutions();
@@ -49,7 +68,8 @@ impl DirectDependencies {
             if !matches!(
                 pkg_res[owner].tag,
                 ResolutionTag::Root | ResolutionTag::Workspace
-            ) {
+            ) || !owner_counts(owner as PackageID)
+            {
                 continue;
             }
             let start = out.rows.len();
@@ -284,7 +304,6 @@ struct Planned {
     v: Semver::Version,
     /// `None` re-resolves the edge through its own dist-tag.
     to: Option<Semver::Version>,
-    later: Box<[u8]>,
 }
 
 /// The transitive half of a bare `bun update`: every edge owned by a non-workspace package the selected workspaces reach (all of them from the root or with -r) moves to the newest release its own range allows, or to wherever its dist-tag points now. A range edge sharing the package a root/workspace entry resolves to follows that entry instead (`deferred`).
@@ -340,7 +359,7 @@ impl TransitiveUpdate {
             return Ok(false);
         }
         direct.redirect_dependents(&mut manager.lockfile);
-        let current = DirectDependencies::snapshot(&manager.lockfile);
+        let current = DirectDependencies::snapshot_reachable(&manager.lockfile);
         let edges = {
             let lockfile = &*manager.lockfile;
             let packages_len = lockfile.packages.len();
@@ -361,7 +380,6 @@ impl TransitiveUpdate {
         let planned = plan_edges(manager, &edges, &current)?;
         register_moved(manager, &planned.report.moved)?;
         if let Some(report) = &mut self.report {
-            report.rows.extend(planned.report.rows);
             report.moved.extend(planned.report.moved);
         }
         if planned.pins.is_empty() {
@@ -430,13 +448,13 @@ impl TransitiveUpdate {
             return;
         }
         let dry_run = options.dry_run;
-        let mut rows = self
-            .report
-            .as_ref()
-            .map_or_else(Vec::new, |report| report.rows.clone());
+        // Read back from the resolutions so rows the collapse re-pointed print where they landed.
+        let pinned: Vec<(DependencyID, PackageID)> =
+            self.pins.iter().map(|pin| (pin.dep_id, pin.from)).collect();
         let mut pairs = direct.moved_pairs(&manager.lockfile);
         pairs.extend(named_pairs(&manager.lockfile, named));
-        rows.extend(rows_between(manager, pairs));
+        pairs.extend(named_pairs(&manager.lockfile, &pinned));
+        let mut rows = rows_between(manager, pairs);
         sort_dedup_rows(&mut rows);
         let kept = kept_patched_rows(manager);
         if !dry_run && rows.is_empty() && kept.is_empty() {
@@ -500,7 +518,7 @@ pub(crate) fn refresh_children_of(
         edges
     };
     // The direct rows are resolved by now, so the rows `plan_edges` defers are sharing a package those rows settled on and simply stay there.
-    let direct = DirectDependencies::snapshot(&manager.lockfile);
+    let direct = DirectDependencies::snapshot_reachable(&manager.lockfile);
     let planned = plan_edges(manager, &edges, &direct)?;
     register_moved(manager, &planned.report.moved)?;
     let update = TransitiveUpdate {
@@ -626,7 +644,6 @@ struct Row {
 
 #[derive(Default)]
 struct Report {
-    rows: Vec<Row>,
     /// Pre-clean ids of the instances at least one row moves away from.
     moved: Vec<PackageID>,
 }
@@ -1277,7 +1294,7 @@ fn plan_edges(
         };
         let manifest: &PackageManifest = manifest;
         let manifest_buf: &[u8] = &manifest.string_buf;
-        let rows_before = report.rows.len();
+        let pins_before = pins.len();
         let planned: Vec<Option<Planned>> = inst
             .wants
             .iter()
@@ -1289,11 +1306,7 @@ fn plan_edges(
                         .unwrap()
                         .map(|found| found.version)
                         .filter(|&v| v.order(inst.current, manifest_buf, buf) == Ordering::Greater)
-                        .map(|v| Planned {
-                            v,
-                            to: Some(v),
-                            later: later_than(manifest, v, min_age, excludes),
-                        })
+                        .map(|v| Planned { v, to: Some(v) })
                 } else {
                     let tag = want.version.dist_tag().tag.slice(buf);
                     manifest
@@ -1301,11 +1314,7 @@ fn plan_edges(
                         .unwrap()
                         .map(|found| found.version)
                         .filter(|&v| v.order(inst.current, manifest_buf, buf) != Ordering::Equal)
-                        .map(|v| Planned {
-                            v,
-                            to: None,
-                            later: Box::default(),
-                        })
+                        .map(|v| Planned { v, to: None })
                 }
             })
             .collect();
@@ -1398,14 +1407,8 @@ fn plan_edges(
                 from: inst.pkg_id,
                 to,
             }));
-            report.rows.push(Row {
-                name: Box::from(name),
-                from: text(inst.current.fmt(buf)),
-                to: text(v.fmt(manifest_buf)),
-                later: plan.later.clone(),
-            });
         }
-        if report.rows.len() != rows_before {
+        if pins.len() != pins_before {
             report.moved.push(inst.pkg_id);
         }
     }
@@ -1425,7 +1428,6 @@ fn plan_edges(
         }
     }
 
-    sort_dedup_rows(&mut report.rows);
     Ok(plan)
 }
 
@@ -1847,23 +1849,4 @@ fn forks_surviving_instance(
         Some(w) => (planned[w].is_none() || held_wants[w]) && stays(&inst.wants[w].version),
         None => uncarried(edge),
     })
-}
-
-/// The `latest` dist-tag when it is newer than the release `v` an in-range move stops at, like the `+` rows' `(vX available)`.
-fn later_than(
-    manifest: &PackageManifest,
-    v: Semver::Version,
-    min_age: Option<f64>,
-    excludes: Option<&[&[u8]]>,
-) -> Box<[u8]> {
-    if v.tag.has_pre() {
-        return Box::default();
-    }
-    let manifest_buf: &[u8] = &manifest.string_buf;
-    let latest = manifest
-        .find_by_dist_tag_with_filter(b"latest", min_age, excludes)
-        .unwrap()
-        .map(|found| found.version)
-        .filter(|latest| latest.order(v, manifest_buf, manifest_buf) == Ordering::Greater);
-    latest.map_or_else(Box::default, |latest| text(latest.fmt(manifest_buf)))
 }

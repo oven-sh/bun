@@ -22,6 +22,8 @@ Each row is a version Bun removed and the version its dependents now use.
 
 `bun dedupe` only chooses between versions already in the lockfile and never modifies `package.json`. It never fetches new versions from the registry and never moves a dependency outside its range. Use [`bun update`](/pm/cli/update) for that.
 
+`bun install` and `bun update` run the same collapse over the versions they add, so a fresh install does not create duplicates that one version could have covered. Versions already in `bun.lock` are left as they are; only `bun dedupe` removes those.
+
 ### `--check` and `--dry-run`
 
 `--check` reports what Bun would remove without changing anything, and exits `1` if there are duplicates. Use it in CI:

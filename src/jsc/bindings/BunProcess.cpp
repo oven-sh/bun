@@ -2887,6 +2887,7 @@ enum class BunProcessStdinFdType : int32_t {
 extern "C" BunProcessStdinFdType Bun__Process__getStdinFdType(void*, int fd);
 
 extern "C" void Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(JSC::JSGlobalObject*, JSC::EncodedJSValue);
+extern "C" void Bun__trackProcessStdioSinkForTestIsolation(JSC::JSGlobalObject*, JSC::EncodedJSValue);
 // node:worker_threads worker: process.stdout/stderr forward to the parent Worker's
 // worker.stdout/stderr over a MessagePort; process.stdin is port-fed for { stdin: true }
 // and otherwise an already-ended Readable (never the process-wide fd 0). fd 0/1/2 selects the port.
@@ -2952,8 +2953,12 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
     // Until then, we have to force it to be sync EVEN for sockets or else console.log() may flush at a different time than process.stdout.write.
     forceSync = true;
 #endif
+    JSC::EncodedJSValue sink = JSValue::encode(resultObject->getIndex(globalObject, 1));
+    RETURN_IF_EXCEPTION(scope, {});
+    // No-op outside `bun test --isolate`, where the swap must end this sink.
+    Bun__trackProcessStdioSinkForTestIsolation(globalObject, sink);
     if (forceSync) {
-        Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(globalObject, JSValue::encode(resultObject->getIndex(globalObject, 1)));
+        Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(globalObject, sink);
     }
 
     return resultObject->getIndex(globalObject, 0);

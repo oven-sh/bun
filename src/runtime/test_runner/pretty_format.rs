@@ -497,20 +497,22 @@ impl Tag {
             return Tag::get(value.get_proxy_target(), global_this);
         }
 
-        // Is this a react element?
+        // Is this a react element? Keep the list in sync with `ConsoleObject.rs`.
         if js_type.is_object() && js_type != JSType::ProxyObject {
             if let Some(typeof_symbol) = value.get_own_truthy(global_this, "$$typeof")? {
-                let mut react_element = ZigString::init(b"react.element");
-                let mut react_fragment = ZigString::init(b"react.fragment");
+                const REACT_ELEMENT_SYMBOLS: [&[u8]; 3] = [
+                    b"react.element",
+                    // React 19 - https://github.com/oven-sh/bun/issues/17223
+                    b"react.transitional.element",
+                    b"react.fragment",
+                ];
 
-                if typeof_symbol
-                    .is_same_value(JSValue::symbol_for(global_this, &mut react_element), global_this)?
-                    || typeof_symbol.is_same_value(
-                        JSValue::symbol_for(global_this, &mut react_fragment),
-                        global_this,
-                    )?
-                {
-                    return Ok(TagResult { tag: Tag::JSX, cell: js_type });
+                for symbol_key in REACT_ELEMENT_SYMBOLS {
+                    let mut symbol_key = ZigString::init(symbol_key);
+                    let react_symbol = JSValue::symbol_for(global_this, &mut symbol_key);
+                    if typeof_symbol.is_same_value(react_symbol, global_this)? {
+                        return Ok(TagResult { tag: Tag::JSX, cell: js_type });
+                    }
                 }
             }
         }

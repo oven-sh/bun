@@ -588,6 +588,64 @@ it("expect().toEqual() on objects with property indices doesn't print undefined"
   expect(err).not.toContain("undefined");
 });
 
+// React 18 marks elements with Symbol.for("react.element"), React 19 with
+// Symbol.for("react.transitional.element"). Matcher diffs print both as JSX, the way
+// React 18 elements always have, instead of dumping the element's fields.
+it.each(["react.element", "react.transitional.element"])(
+  "expect() diffs print %s elements as JSX",
+  async $$typeofKey => {
+    using dir = tempDir("diff-jsx-" + $$typeofKey, {
+      "jsx.test.js": `
+      import { expect, test } from "bun:test";
+      const $$typeof = Symbol.for(${JSON.stringify($$typeofKey)});
+      const h = (type, props) => ({ $$typeof, type, key: null, ref: null, props });
+      test("toEqual", () => {
+        expect(h("div", { id: "received" })).toEqual(h("div", { id: "expected" }));
+      });
+      test("toStrictEqual with child elements", () => {
+        expect(h("ul", { children: [h("li", { children: "one" })] })).toStrictEqual(
+          h("ul", { children: [h("li", { children: "two" })] }),
+        );
+      });
+      test("not.toEqual", () => {
+        const el = h("div", { id: "x" });
+        expect(el).not.toEqual(el);
+      });
+    `,
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "test", "jsx.test.js"],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // Keep only the matcher output: from each `error:` line up to its stack trace.
+    const diffs = [...stderr.matchAll(/^error: expect\(received\)[^]*?(?=\n\s+at )/gm)].map(m => m[0]);
+    expect(diffs.join("\n")).toMatchInlineSnapshot(`
+      "error: expect(received).toEqual(expected)
+
+      Expected: <div id="expected" />
+      Received: <div id="received" />
+      error: expect(received).toStrictEqual(expected)
+
+        <ul>
+      -   <li>two</li>
+      +   <li>one</li>
+        </ul>
+
+      - Expected  - 1
+      + Received  + 1
+      error: expect(received).not.toEqual(expected)
+
+      Expected: not <div id="x" />"
+    `);
+    expect(exitCode).toBe(1);
+  },
+);
+
 it("test --preload supports global lifecycle hooks", () => {
   const preloadedPath = join(tmp, "test-fixture-preload-global-lifecycle-hook-preloaded.js");
   const path = join(tmp, "test-fixture-preload-global-lifecycle-hook-test.test.js");

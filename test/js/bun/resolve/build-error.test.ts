@@ -68,6 +68,48 @@ test("import with many build errors keeps AggregateError entries alive across GC
   expect(exitCode).toBe(0);
 });
 
+test("import whose transpile log holds a resolve error rejects with a ResolveMessage next to the BuildMessage", async () => {
+  // A macro import that cannot be resolved is logged by the resolver while the
+  // file is being transpiled, so process_fetch_log sees one Resolve-metadata
+  // message and one Build-metadata message and has to wrap each in the
+  // matching JS class.
+  using dir = tempDir("build-error-resolve-message", {
+    "needs-macro.ts": `
+      import { nope } from "./does-not-exist" with { type: "macro" };
+      export const value = nope();
+    `,
+  });
+
+  let error: any;
+  try {
+    await import(join(String(dir), "needs-macro.ts"));
+    expect.unreachable();
+  } catch (e) {
+    error = e;
+  }
+
+  expect(error).toBeInstanceOf(AggregateError);
+  expect(error.message).toMatch(/^2 errors building ".*needs-macro\.ts"$/);
+  expect(
+    error.errors.map((e: any) => ({
+      name: e.name,
+      message: e.message,
+      ...(e.name === "ResolveMessage" ? { specifier: e.specifier, importKind: e.importKind } : {}),
+    })),
+  ).toEqual([
+    {
+      name: "ResolveMessage",
+      message: 'Macro "./does-not-exist" not found',
+      specifier: "./does-not-exist",
+      importKind: "import-statement",
+    },
+    {
+      name: "BuildMessage",
+      message: '"MacroNotFound" error in macro',
+    },
+  ]);
+});
+
 test("BuildMessage finalize frees with the same allocator it was created with", async () => {
   // BuildMessage.create() clones the message with the passed allocator
   // but finalize() was freeing it with bun.default_allocator and never

@@ -29,8 +29,9 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
-import { mkdir, rename, rm } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { publishTree } from "./download.ts";
 import { BuildError } from "./error.ts";
 
 /**
@@ -146,9 +147,10 @@ export async function ensureMacosSdk(cfg: {
     `[macos-sdk] Apple's SDK license terms (https://www.apple.com/legal/sla/ — \`bun ${relativeXmac()} license\`).`,
   );
 
-  // Extract into a staging dir, then rename the .sdk into place — same
+  // Extract into a staging dir, then publish the .sdk with publishTree — same
   // discipline as fetchPrebuilt() so an interrupted configure never leaves a
-  // half-extracted tree claiming to be an SDK. The downloaded .pkg itself is
+  // half-extracted tree claiming to be an SDK and a concurrent configure
+  // sharing the cache dir never replaces one. The downloaded .pkg itself is
   // cached separately under <cacheDir>/xmac so a failed/interrupted
   // extraction doesn't re-download ~60 MB.
   const suffix = `.${process.pid}.${Date.now().toString(36)}`;
@@ -199,9 +201,11 @@ export async function ensureMacosSdk(cfg: {
         hint: `Expected MacOSX${MACOS_SDK_VERSION}.sdk inside the Command Line Tools ${MACOS_SDK_CLT_RELEASE} package.`,
       });
     }
-    await rm(expected, { recursive: true, force: true });
-    await rename(extracted, expected);
-    console.log(`[macos-sdk] extracted to ${expected}`);
+    if (await publishTree(extracted, expected, () => isMacosSdk(expected))) {
+      console.log(`[macos-sdk] extracted to ${expected}`);
+    } else {
+      console.log(`[macos-sdk] ${expected} was extracted by a concurrent build`);
+    }
   } finally {
     await rm(staging, { recursive: true, force: true }).catch(() => {});
   }

@@ -1065,6 +1065,90 @@ describe("bundler", () => {
       expect(out).toMatch(/__MEMO_CACHE_SENTINEL\)\s*\{[^}]*globalFn\(\)/);
     },
   });
+
+  // The parser's constant folding (on under minify.syntax) joins strings as a
+  // rope: the E::String keeps only its first segment in `data` and links the
+  // rest through `next`. Template heads and tails come out of folding in that
+  // shape too, and lowering used to read `data` alone, so every segment after
+  // the first was dropped from the compiled output: "pre" + `fix/${id}` came
+  // out as `pre${id}`. A folded computed object key is the same rope and used
+  // to make the whole function bail out of compilation.
+  itBundled("react-compiler/FoldedTemplateAndKeyKeepAllSegments", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        const enum Route { Users = "users" }
+        export function Links({ id }: { id: string }) {
+          const head = "pre" + \`fix/\${id}\`;
+          const tail = \`\${id}/mid\` + "dle";
+          const foldedHead = \`a\${"b"}c/\${id}\`;
+          const foldedTail = \`\${id}/x\${"y"}z\`;
+          const joined = \`\${id}/one\` + \`two/\${id}\`;
+          const emptyHead = \`\${Route.Users}/\${id}\`;
+          return (
+            <a href={head} data-tail={tail} data-fh={foldedHead} data-ft={foldedTail} data-j={joined} data-e={emptyHead}>
+              {id}
+            </a>
+          );
+        }
+        export function ComputedKey({ id }: { id: string }) {
+          const o = { ["a" + "b"]: id };
+          return <a data-keys={Object.keys(o).join()}>{o.ab}</a>;
+        }
+        const { children: _a, ...links } = Links({ id: "7" }).props;
+        const { children: _b, ...computed } = ComputedKey({ id: "7" }).props;
+        console.log(JSON.stringify(links));
+        console.log(JSON.stringify(computed));
+        console.log(globalThis.memoCachesAllocated);
+      `,
+      "/node_modules/react/index.js": `module.exports = {};`,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (t, p) => ({ t, props: p });`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, props: p });`,
+      "/node_modules/react/compiler-runtime.js": `
+        exports.c = n => {
+          globalThis.memoCachesAllocated = (globalThis.memoCachesAllocated ?? 0) + 1;
+          return new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));
+        };
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    minifySyntax: true,
+    run: {
+      stdout: [
+        '{"href":"prefix/7","data-tail":"7/middle","data-fh":"abc/7","data-ft":"7/xyz","data-j":"7/onetwo/7","data-e":"users/7"}',
+        '{"data-keys":"ab"}',
+        // One memo cache per component: both must have been compiled rather
+        // than left as written.
+        "2",
+      ].join("\n"),
+    },
+  });
+
+  // import() arguments are folded even without minify.syntax, so this rope
+  // reaches the compiler in a default build; the emitted specifier used to lose
+  // its "/" and come out as `./pages${name}.js`.
+  itBundled("react-compiler/FoldedImportSpecifierKeepsAllSegments", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        const enum Dir { Pages = "./pages" }
+        export function Loader({ name }: { name: string }) {
+          const load = () => import(Dir.Pages + \`/\${name}.js\`);
+          return <button onClick={load}>{name}</button>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toMatch(/\b_c\(\d+\)/);
+      expect(out).toMatch(/import\(`\.\/pages\/\$\{name\}\.js`\)/);
+    },
+  });
 });
 
 // validate_locals_not_reassigned_after_render (src/react_compiler/validation)

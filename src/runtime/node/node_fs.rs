@@ -678,6 +678,7 @@ mod _async_tasks {
 
             let loop_ = uv::Loop::get();
             task.req.data = core::ptr::from_mut::<Self>(task).cast::<c_void>();
+            let req: *mut uv::fs_t = &raw mut task.req;
 
             // The match resolves at compile time (`F` is a const generic), but
             // each arm's body needs `A` re-asserted to its concrete `args::*`
@@ -715,11 +716,11 @@ mod _async_tasks {
                     let rc = unsafe {
                         uv::uv_fs_open(
                             loop_,
-                            &mut task.req,
+                            req,
                             path.as_ptr(),
                             flags,
                             mode,
-                            Some(Self::uv_callback),
+                            uv::deferred::fs_callback(req, Self::uv_callback),
                         )
                     };
                     debug_assert!(rc == uv::ReturnCode::ZERO);
@@ -735,7 +736,12 @@ mod _async_tasks {
                     let fd = args.fd.uv();
                     // SAFETY: libuv async request.
                     let rc = unsafe {
-                        uv::uv_fs_close(loop_, &mut task.req, fd, Some(Self::uv_callback))
+                        uv::uv_fs_close(
+                            loop_,
+                            req,
+                            fd,
+                            uv::deferred::fs_callback(req, Self::uv_callback),
+                        )
                     };
                     debug_assert!(rc == uv::ReturnCode::ZERO);
                     sys::syslog!("uv close({}) = scheduled", fd);
@@ -753,12 +759,12 @@ mod _async_tasks {
                     let rc = unsafe {
                         uv::uv_fs_read(
                             loop_,
-                            &mut task.req,
+                            req,
                             fd,
                             bufs.as_ptr(),
                             1,
                             args.position.map(|p| p as i64).unwrap_or(-1),
-                            Some(Self::uv_callback),
+                            uv::deferred::fs_callback(req, Self::uv_callback),
                         )
                     };
                     debug_assert!(rc == uv::ReturnCode::ZERO);
@@ -776,12 +782,12 @@ mod _async_tasks {
                     let rc = unsafe {
                         uv::uv_fs_write(
                             loop_,
-                            &mut task.req,
+                            req,
                             fd,
                             bufs.as_ptr(),
                             1,
                             args.position.map(|p| p as i64).unwrap_or(-1),
-                            Some(Self::uv_callback),
+                            uv::deferred::fs_callback(req, Self::uv_callback),
                         )
                     };
                     debug_assert!(rc == uv::ReturnCode::ZERO);
@@ -798,12 +804,12 @@ mod _async_tasks {
                     let rc = unsafe {
                         uv::uv_fs_read(
                             loop_,
-                            &mut task.req,
+                            req,
                             fd,
                             bufs.as_ptr().cast(),
                             c_uint::try_from(bufs.len()).expect("int cast"),
                             pos,
-                            Some(Self::uv_callback),
+                            uv::deferred::fs_callback(req, Self::uv_callback),
                         )
                     };
                     debug_assert!(rc == uv::ReturnCode::ZERO);
@@ -841,12 +847,12 @@ mod _async_tasks {
                     let rc = unsafe {
                         uv::uv_fs_write(
                             loop_,
-                            &mut task.req,
+                            req,
                             fd,
                             bufs.as_ptr().cast(),
                             c_uint::try_from(bufs.len()).expect("int cast"),
                             pos,
-                            Some(Self::uv_callback),
+                            uv::deferred::fs_callback(req, Self::uv_callback),
                         )
                     };
                     debug_assert!(rc == uv::ReturnCode::ZERO);
@@ -870,9 +876,9 @@ mod _async_tasks {
                     let rc = unsafe {
                         uv::uv_fs_statfs(
                             loop_,
-                            &mut task.req,
+                            req,
                             path.as_ptr(),
-                            Some(Self::uv_callbackreq),
+                            uv::deferred::fs_callback(req, Self::uv_callbackreq),
                         )
                     };
                     debug_assert!(rc == uv::ReturnCode::ZERO);

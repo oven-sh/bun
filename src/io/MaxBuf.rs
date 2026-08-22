@@ -145,13 +145,27 @@ impl MaxBuf {
     /// `owned_by_reader` is set, which every caller has just checked via
     /// `Some(maxbuf)`).
     pub(crate) fn on_read_bytes(this: NonNull<MaxBuf>, bytes: u64) -> bool {
+        if !Self::charge(this, bytes) {
+            return false;
+        }
+        Self::overflowed(this)
+    }
+
+    /// Charges `bytes` against the budget; `true` once it is overdrawn. Pure
+    /// bookkeeping (no callback), for read completions that are recorded
+    /// inside the poll backend and dispatched later; pair with [`overflowed`].
+    pub(crate) fn charge(this: NonNull<MaxBuf>, bytes: u64) -> bool {
         let mb = Self::live(&this);
         let delta = i64::try_from(bytes).unwrap_or(0);
         let remaining = mb.remaining_bytes.get().checked_sub(delta).unwrap_or(-1);
         mb.remaining_bytes.set(remaining);
-        if remaining >= 0 {
-            return false;
-        }
+        remaining < 0 && mb.owned_by_subprocess.get().is_some()
+    }
+
+    /// Tells the owning subprocess its `maxBuffer` was overdrawn (it kills the
+    /// child). `true` if there was an owner to tell.
+    pub(crate) fn overflowed(this: NonNull<MaxBuf>) -> bool {
+        let mb = Self::live(&this);
         let Some(owner) = mb.owned_by_subprocess.get() else {
             return false;
         };

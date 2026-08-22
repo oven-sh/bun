@@ -2269,11 +2269,12 @@ pub mod closer {
             // SAFETY: closer is a freshly-boxed valid pointer.
             unsafe {
                 (*closer).io_request.data = closer.cast::<c_void>();
+                let req: *mut uv::fs_t = &raw mut (*closer).io_request;
                 if let Some(err) = uv::uv_fs_close(
                     loop_,
-                    &mut (*closer).io_request,
+                    req,
                     fd.uv(),
-                    Some(Self::on_close),
+                    uv::deferred::fs_callback(req, Self::on_close),
                 )
                 .err_enum()
                 {

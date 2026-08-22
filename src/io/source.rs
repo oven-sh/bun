@@ -221,7 +221,7 @@ impl File {
                 uv::Loop::get(),
                 fs_ptr,
                 self.file,
-                Some(Self::on_close_complete),
+                uv::deferred::fs_callback(fs_ptr, Self::on_close_complete),
             );
         }
     }

@@ -92,6 +92,10 @@ jobs:
             const BASE_FORMS = new Set(["close", "fix", "resolve", "supersede", "replace"]);
             const VERB_MARKERS = new Set(["will", "shall", "should", "does", "do", "did", "and", "we", "they", "i"]);
 
+            // A clause that starts with one of these is a condition or a time, not a
+            // statement about this PR: "once we fix #1", "if this fixes #1".
+            const SUBORDINATORS = new Set(["if", "when", "whenever", "once", "until", "unless", "before", "after"]);
+
             // Words that can sit between the deciding word and the keyword without
             // changing the reading: adverbs ("may also fix", "will fully fix") and the
             // auxiliaries of the perfect ("would have fixed", "#100 has fixed").
@@ -166,6 +170,8 @@ jobs:
               if (before.kind !== "word") return true;
               if (isRelativeToReference(tokens, k)) return false;
               if (DISQUALIFIERS.has(before.text)) return false;
+              const prev = tokens[skipInterveningBack(tokens, k - 1)];
+              if (prev?.kind === "word" && SUBORDINATORS.has(prev.text)) return false;
               return !BASE_FORMS.has(keyword) || VERB_MARKERS.has(before.text);
             }
 
@@ -298,16 +304,18 @@ jobs:
                   continue;
                 }
                 quote = false;
+                // A "<!--" inside a code span on this line is code: "Handles `<!--`. Fixes #1".
+                const prose = removeSpans(rest, "`");
                 let out = "";
                 let i = 0;
-                while (i < rest.length) {
-                  const start = rest.indexOf("<!--", i);
+                while (i < prose.length) {
+                  const start = prose.indexOf("<!--", i);
                   if (start === -1) {
-                    out += rest.slice(i);
+                    out += prose.slice(i);
                     break;
                   }
-                  out += rest.slice(i, start) + " ";
-                  const end = rest.indexOf("-->", start + 4);
+                  out += prose.slice(i, start) + " ";
+                  const end = prose.indexOf("-->", start + 4);
                   if (end === -1) {
                     comment = true;
                     break;

@@ -24,9 +24,8 @@ std::optional<CompressionFormat> parseCompressionFormat(JSC::JSGlobalObject*, JS
 // read() and how far the coder runs ahead of a slow consumer. Throws RangeError / TypeError as
 // ExtractHighWaterMark does; `size` is ignored.
 size_t parseCodecHighWaterMark(JSC::JSGlobalObject*, JSC::JSValue strategy);
-// CompressionStream only: the `level` member of the same second argument selects the
-// compression level (zlib formats 0-9, brotli quality 0-11, zstd 1-22; absent = the
-// format's default). Throws RangeError on a non-integer or out-of-range value.
+// CompressionStream only: the `level` member of the same argument (zlib formats 0-9, brotli
+// quality 0-11, zstd 1-22; absent = the format's default). Throws RangeError when invalid.
 std::optional<int32_t> parseCompressionLevel(JSC::JSGlobalObject*, JSC::JSValue strategy, CompressionFormat);
 
 } // namespace WebStreams

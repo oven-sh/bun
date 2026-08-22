@@ -196,8 +196,6 @@ impl CompressionStreamCoder {
             (Format::Deflate | Format::DeflateRaw | Format::Gzip, false) => {
                 let mut s = Box::new(bun_core::ffi::zeroed::<zlib::z_stream>());
                 // Spec: "default compression level". Z_DEFAULT_COMPRESSION = -1.
-                // The caller validates an explicit `level` against the format's
-                // range (JSCompressionStreamShared.cpp).
                 // SAFETY: `s` is a zeroed, #[repr(C)] z_stream; zlibVersion() is
                 // a static C string.
                 let rc = unsafe {
@@ -789,8 +787,7 @@ impl AsyncInput {
 
 // ─── extern "C" surface (called from JSCompressionStream.cpp) ──────────────
 
-/// `level` (with `has_level`) is the compression level the constructor's options
-/// carry, already range-checked per format by the caller; ignored for decompression.
+/// `level` (present when `has_level`) is range-checked by the caller; ignored for decompression.
 #[unsafe(no_mangle)]
 pub extern "C" fn CompressionStreamCoder__create(
     format: u8,

@@ -2325,11 +2325,28 @@ impl QuicSession {
         Self::transport_params_to_js(global, &tp)
     }
 
+    /// `on_conn_closed` for `QuicEndpoint::detach_for_finalize`.
+    pub(super) unsafe extern "C" fn on_closed_detached(ctx: *mut c_void) {
+        // SAFETY: `finalize` nulls the lsquic ctx, so a non-null one is live;
+        // only `conn` is touched because `endpoint`/`streams` may be freed.
+        if let Some(session) = unsafe { super::ffi::ctx_ref::<QuicSession>(ctx) } {
+            session.conn.set(null_mut());
+        }
+    }
+
     #[expect(
         clippy::boxed_local,
         reason = "codegen's host_fn_finalize calls this as `|b| QuicSession::finalize(b)` and requires `self: Box<Self>`"
     )]
-    pub(crate) fn finalize(self: Box<Self>) {}
+    pub(crate) fn finalize(self: Box<Self>) {
+        let conn = self.conn.get();
+        if !conn.is_null() {
+            // SAFETY: see `QuicEndpoint::detach_for_finalize`; a non-null
+            // `conn` is live (on_conn_closed / teardown null it), and null is
+            // always a valid ctx.
+            unsafe { lsquic::lsquic_conn_set_ctx(conn, null_mut()) };
+        }
+    }
 }
 
 lsquic_callback! {

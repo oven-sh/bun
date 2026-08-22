@@ -2099,11 +2099,11 @@ describe.concurrent("test file discovery (scanner)", () => {
 // "Unhandled error between tests"; a handle that is still pending after that
 // pass is surfaced as a note without being waited on.
 describe.concurrent("bun test post-run drain", () => {
-  async function run(fixture: string) {
+  async function run(fixture: string, env: Record<string, string> = {}) {
     using dir = tempDir("post-run-drain", { "drain.test.ts": fixture });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "drain.test.ts"],
-      env: bunEnv,
+      env: { ...bunEnv, ...env },
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
@@ -2200,6 +2200,39 @@ describe.concurrent("bun test post-run drain", () => {
     // the handle; it must not print once per remaining file either.
     const notes = stderr.split("still pending after the last test finished").length - 1;
     expect(notes).toBe(1);
+    expect(exitCode).toBe(0);
+  });
+
+  test("under GitHub Actions the note prints after the last ::endgroup::", async () => {
+    const { stderr, exitCode } = await run(
+      `
+      import { test } from "bun:test";
+      test("leaks a timer", () => { setTimeout(() => {}, 60_000); });
+    `,
+      { GITHUB_ACTIONS: "true" },
+    );
+    const endgroup = stderr.lastIndexOf("::endgroup::");
+    const note = stderr.indexOf("still pending after the last test finished");
+    expect(endgroup).toBeGreaterThan(-1);
+    expect(note).toBeGreaterThan(endgroup);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a --parallel worker does not attribute its IPC socket to a test", async () => {
+    using dir = tempDir("post-run-drain-parallel", {
+      "a.test.ts": `import { test } from "bun:test"; test("clean a", () => {});`,
+      "b.test.ts": `import { test } from "bun:test"; test("clean b", () => {});`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel", "--no-isolate", "a.test.ts", "b.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("still pending");
+    expect(stderr).toContain("2 pass");
     expect(exitCode).toBe(0);
   });
 });

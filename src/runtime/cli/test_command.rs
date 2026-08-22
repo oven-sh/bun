@@ -3337,6 +3337,7 @@ impl TestCommand {
 
             vm.event_loop_ref().tick();
 
+            let mut pending_work_note = false;
             'blk: {
                 // Check if bun_test is available and has tests to run
                 let Some(buntest_strong) = bun_test_root.clone_active_file() else {
@@ -3397,17 +3398,15 @@ impl TestCommand {
                 // here since such a file already failed. Opt-in; one file per process.
                 if should_drain_event_loop() {
                     vm.on_before_exit();
-                } else if first_last.last
+                }
+                // Default serial mode only: --isolate tears down per-file handles,
+                // and a --parallel worker's own IPC socket would count as work.
+                pending_work_note = first_last.last
                     && repeat_index + 1 == repeat_count
                     && !vm.test_isolation_enabled
-                    && vm.has_pending_loop_work()
-                {
-                    // Default serial mode only: --isolate/--parallel tear down
-                    // per-file handles (and a worker's IPC socket would count).
-                    bun_core::note!(
-                        "a test left a timer or open handle that is still pending after the last test finished. `bun test` will not wait for it.",
-                    );
-                }
+                    && reporter.worker_ipc_file_idx.is_none()
+                    && !should_drain_event_loop()
+                    && vm.has_pending_loop_work();
                 drop(buntest_strong);
             }
 
@@ -3416,6 +3415,14 @@ impl TestCommand {
             if Output::is_github_action() && reporter.worker_ipc_file_idx.is_none() {
                 pretty_errorln!("<r>\n::endgroup::\n");
                 Output::flush();
+            }
+
+            // After ::endgroup:: so the note is not folded into the last file's
+            // collapsed log group in GitHub Actions.
+            if pending_work_note {
+                bun_core::note!(
+                    "a test left a timer or open handle that is still pending after the last test finished. `bun test` will not wait for it.",
+                );
             }
 
             if !vm.test_isolation_enabled {

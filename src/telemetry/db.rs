@@ -241,12 +241,13 @@ pub fn end(
             pool::with(&mut local.pool, span, |s| {
                 // `{operation} {target}` when there is a namespace, else the operation.
                 let has_target = crate::otlp::find_attribute(&s.attrs, b"db.namespace").is_some();
-                let target = core::mem::take(&mut s.name);
-                s.name.reserve(o.len() + 1 + target.len());
-                s.name.extend_from_slice(o);
                 if has_target {
-                    s.name.push(b' ');
-                    s.name.extend_from_slice(&target);
+                    // prefix in place: the slot's name buffer is reused across spans
+                    s.name
+                        .splice(0..0, o.iter().copied().chain(core::iter::once(b' ')));
+                } else {
+                    s.name.clear();
+                    s.name.extend_from_slice(o);
                 }
             });
         }

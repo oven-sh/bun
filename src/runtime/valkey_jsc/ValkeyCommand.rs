@@ -255,11 +255,9 @@ impl Promise {
             }
             let name = &upper[..n];
             // semconv `{operation} {target}`: begin() named the span by its target.
-            let target = core::mem::take(&mut s.name);
-            s.name.reserve(name.len() + 1 + target.len());
-            s.name.extend_from_slice(name);
-            s.name.push(b' ');
-            s.name.extend_from_slice(&target);
+            // prefix in place: the slot's name buffer is reused across spans
+            s.name
+                .splice(0..0, name.iter().copied().chain(core::iter::once(b' ')));
             let limits = crate::telemetry::span::limits();
             s.push_attribute(
                 b"db.operation.name",

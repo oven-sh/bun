@@ -186,6 +186,135 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
   });
 });
 
+// "ssl_write" makes the next SSL_write inside usockets fail with a fatal SSL
+// error, which is what a record-layer failure such as oven-sh/bun#38120's looks
+// like from the socket layer. us_internal_ssl_write used to report it as 0
+// bytes written: every layer above buffered the data and waited for a drain
+// that could never come, and the connection stayed open and silent until the
+// peer happened to send something or hang up.
+describe.skipIf(skip)("fatal SSL_write after the handshake", () => {
+  test("node:tls fails the write with EPROTO, then emits 'error' and 'close'", async () => {
+    using p = await connectedTLSPair();
+    const events: string[] = [];
+    p.client.on("error", () => {});
+    const clientClosed = new Promise<void>(resolve => p.client.on("close", () => resolve()));
+    const serverClosed = Promise.withResolvers<boolean>();
+    p.serverSock.on("error", err => events.push(`error:${(err as NodeJS.ErrnoException).code}`));
+    p.serverSock.on("close", hadError => {
+      events.push("close");
+      serverClosed.resolve(hadError);
+    });
+
+    const writeCallback = Promise.withResolvers<NodeJS.ErrnoException | null | undefined>();
+    // The client is idle, so the next SSL_write in this process is this one.
+    fault.set({ syscall: "ssl_write", action: "errno", errno: "EINVAL" });
+    p.serverSock.write("reply", err => writeCallback.resolve(err));
+
+    const [err, hadError] = await Promise.all([writeCallback.promise, serverClosed.promise]);
+    expect({ code: err?.code, syscall: err?.syscall, events, hadError }).toEqual({
+      code: "EPROTO",
+      syscall: "write",
+      events: ["error:EPROTO", "close"],
+      hadError: true,
+    });
+    // The transport really went away, not just the JS object.
+    await clientClosed;
+  });
+
+  test("node:tls reports a failure of the flush retried from the writable dispatch the same way", async () => {
+    using p = await connectedTLSPair();
+    p.client.on("error", () => {});
+    const events: string[] = [];
+    const serverClosed = Promise.withResolvers<boolean>();
+    p.serverSock.on("error", err => events.push(`error:${(err as NodeJS.ErrnoException).code}`));
+    p.serverSock.on("close", hadError => {
+      events.push("close");
+      serverClosed.resolve(hadError);
+    });
+
+    // The client is not reading, so the socket buffers fill up and a write
+    // eventually completes only partially; its tail is then held natively and
+    // retried from the writable dispatch. A TLS write that went out in full
+    // completes its callback on the next tick, so writableLength tells the two
+    // apart once that tick has run.
+    const chunk = Buffer.alloc(1024 * 1024, "z");
+    let partialWrite: Promise<NodeJS.ErrnoException | null | undefined>;
+    do {
+      const { promise, resolve } = Promise.withResolvers<NodeJS.ErrnoException | null | undefined>();
+      partialWrite = promise;
+      p.serverSock.write(chunk, resolve);
+      await new Promise(resolve => process.nextTick(resolve));
+    } while (p.serverSock.writableLength === 0);
+    fault.set({ syscall: "ssl_write", action: "errno", errno: "EINVAL", repeat: -1 });
+    // Discard what was buffered so the server's socket becomes writable again.
+    p.client.resume();
+
+    const hadError = await serverClosed.promise;
+    fault.clear();
+    const err = await partialWrite;
+    expect({ code: err?.code, syscall: err?.syscall, events, hadError }).toEqual({
+      code: "EPROTO",
+      syscall: "write",
+      events: ["error:EPROTO", "close"],
+      hadError: true,
+    });
+  });
+
+  // uWS ignores write()'s return value in the way node:tls does not: it keeps
+  // the response buffered and waits for writable. Only the socket layer can end
+  // such a connection.
+  test("Bun.serve closes the connection instead of holding the response forever", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls: { key: certs.key, cert: certs.cert },
+      fetch() {
+        // The request was written before this handler ran, so the next
+        // SSL_write in the process is the response. repeat: -1 also covers a
+        // client that retries on a fresh connection.
+        fault.set({ syscall: "ssl_write", action: "errno", errno: "EINVAL", repeat: -1 });
+        return new Response("hello");
+      },
+    });
+    await expect(fetch(server.url, { tls: { ca: certs.cert } })).rejects.toThrow();
+  });
+
+  test("Bun.serve closes the connection when the failing write is issued from the writable dispatch", async () => {
+    // Once a response is backpressured, uWS writes the rest from its writable
+    // handler. The loop drops writable interest from a shut-down socket as soon
+    // as that dispatch returns, so a failure there has to be acted on before
+    // it returns: no later event would arrive to close from.
+    const body = Buffer.alloc(64 * 1024 * 1024, "y");
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls: { key: certs.key, cert: certs.cert },
+      fetch: () => new Response(body),
+    });
+    const response = await fetch(server.url, { tls: { ca: certs.cert } });
+    const reader = response.body!.getReader();
+    const first = await reader.read();
+    expect(first.done).toBe(false);
+    // The body is far larger than the socket buffers: by the time its first
+    // bytes got here the remainder was already parked in uWS, and every write
+    // from now on is issued by the writable dispatch.
+    fault.set({ syscall: "ssl_write", action: "errno", errno: "EINVAL", repeat: -1 });
+    let received = first.value!.byteLength;
+    const outcome = await (async () => {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) return "ended";
+        received += value.byteLength;
+      }
+    })().then(
+      value => value,
+      () => "errored",
+    );
+    fault.clear();
+    expect({ outcome, truncated: received < body.byteLength }).toEqual({ outcome: "errored", truncated: true });
+  });
+});
+
 describe.skipIf(skip)("node:tls close_notify / shutdown under faults", () => {
   test("paused client resumed after the peer's end()+destroySoon() receives every byte", async () => {
     // The peer's data AND its FIN are already queued when the client resumes

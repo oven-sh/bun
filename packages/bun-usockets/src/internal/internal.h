@@ -255,6 +255,9 @@ void us_internal_ssl_ctx_up_ref(struct ssl_ctx_st *ssl_ctx);
 void us_internal_ssl_ctx_unref(struct ssl_ctx_st *ssl_ctx);
 /* TCP-level FIN, bypassing the SSL layer (used by ssl_on_end). */
 void us_internal_socket_raw_shutdown(us_socket_r s);
+/* Poll for writable (keeping readable unless paused / past the peer's FIN), so
+ * the next writable dispatch reaches the socket. */
+void us_internal_rearm_writable(us_socket_r s);
 
 int us_internal_handle_dns_results(us_loop_r loop);
 

@@ -1125,6 +1125,58 @@ describe.skipIf(!canCreateDirSymlink)("literal path segment through a symlinked 
     );
     expect(norm(result)).toEqual(["linkdir/file.txt"]);
   });
+
+  // The literal-tail fast path resolves the name with a following stat, which
+  // fails (ENOENT/ELOOP) on a broken or cyclic link even though the directory
+  // entry exists. That must behave like the wildcard path: yield the entry
+  // under onlyFiles:false, and never let a single unresolvable name throw.
+  test.skipIf(isWindows)("literal pattern naming a broken symlink matches wildcard behaviour", () => {
+    using dir = tempDir("glob-scan-symlink-literal-broken", {
+      "a.txt": "x",
+      "sub/keep.txt": "x",
+    });
+    const cwd = String(dir);
+    fs.symlinkSync("nowhere", path.join(cwd, "dangling"));
+    fs.symlinkSync("cyc2", path.join(cwd, "cyc1"));
+    fs.symlinkSync("cyc1", path.join(cwd, "cyc2"));
+    fs.symlinkSync("nowhere", path.join(cwd, "sub", "dangling"));
+    fs.symlinkSync("cyc2", path.join(cwd, "sub", "cyc1"));
+    fs.symlinkSync("cyc1", path.join(cwd, "sub", "cyc2"));
+
+    const scan = (p: string, o: GlobScanOptions) => norm(Array.from(new Glob(p).scanSync({ cwd, ...o })));
+
+    // onlyFiles:false yields the link itself; literal and wildcard agree.
+    expect(scan("dangling", { onlyFiles: false })).toEqual(["dangling"]);
+    expect(scan("dangling*", { onlyFiles: false })).toEqual(["dangling"]);
+    expect(scan("cyc1", { onlyFiles: false })).toEqual(["cyc1"]);
+    expect(scan("cyc1*", { onlyFiles: false })).toEqual(["cyc1"]);
+
+    // onlyFiles:true never yields a link whose target cannot be resolved, and
+    // naming an ELOOP entry does not throw.
+    expect(scan("dangling", { onlyFiles: true })).toEqual([]);
+    expect(scan("cyc1", { onlyFiles: true })).toEqual([]);
+
+    // Literal tail reached via an iterated parent still agrees.
+    expect(scan("*/dangling", { onlyFiles: false })).toEqual(["sub/dangling"]);
+    expect(scan("*/cyc1", { onlyFiles: false })).toEqual(["sub/cyc1"]);
+    expect(scan("*/cyc1", { onlyFiles: true })).toEqual([]);
+
+    // A trailing `/` means directories-only; a broken link (or regular file)
+    // never satisfies that, and literal/wildcard agree.
+    expect(scan("dangling/", { onlyFiles: false })).toEqual([]);
+    expect(scan("dangling*/", { onlyFiles: false })).toEqual([]);
+    expect(scan("cyc1/", { onlyFiles: false })).toEqual([]);
+    expect(scan("a.txt/", { onlyFiles: false })).toEqual([]);
+    expect(scan("a.txt*/", { onlyFiles: false })).toEqual([]);
+
+    // throwErrorOnBrokenSymlink still surfaces the original following-stat error.
+    const throwing = (p: string, onlyFiles: boolean) => () => [
+      ...new Glob(p).scanSync({ cwd, onlyFiles, throwErrorOnBrokenSymlink: true }),
+    ];
+    expect(throwing("dangling", false)).toThrow(/ENOENT/);
+    expect(throwing("cyc1", false)).toThrow(/ELOOP/);
+    expect(throwing("cyc1", true)).toThrow(/ELOOP/);
+  });
 });
 
 // A directory the user can read but not write (RX-only grant) must still be

@@ -664,29 +664,46 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 let pat_slice = self.walker.pattern_components[idx as usize]
                     .pattern_slice(&self.walker.pattern)
                     .to_vec();
+                let trailing_sep = self.walker.pattern_components[idx as usize].trailing_sep;
                 let pathz = dupe_z(&pat_slice);
                 // SAFETY: dupe_z NUL-terminates
                 let pathz_ref = ZStr::from_slice_with_nul(&pathz[..]);
-                let stat_result: Stat = match A::statat(fd, pathz_ref) {
-                    Err(e_) => {
-                        let e: SysError = e_;
+                // lstat first so a plain miss stays one syscall; only follow
+                // through to statat when the entry is actually a symlink.
+                let stat_result: Stat = match A::lstatat(fd, pathz_ref) {
+                    Err(le) => {
                         self.close_disallowing_cwd(fd);
-                        if e.get_errno() == E::ENOENT {
+                        if le.get_errno() == E::ENOENT {
                             self.iter_state = IterState::GetNext;
                             return Ok(Ok(()));
                         }
-                        return Ok(Err(e.with_path(
+                        return Ok(Err(le.with_path(
                             self.walker.pattern_components[idx as usize]
                                 .pattern_slice(&self.walker.pattern),
                         )));
                     }
-                    Ok(stat) => stat,
+                    Ok(lst) if !S::ISLNK(lst.st_mode as u32) => lst,
+                    Ok(lst) => match A::statat(fd, pathz_ref) {
+                        Ok(st) => st,
+                        Err(e) => {
+                            if self.walker.error_on_broken_symlinks {
+                                self.close_disallowing_cwd(fd);
+                                return Ok(Err(e.with_path(
+                                    self.walker.pattern_components[idx as usize]
+                                        .pattern_slice(&self.walker.pattern),
+                                )));
+                            }
+                            lst
+                        }
+                    },
                 };
                 self.close_disallowing_cwd(fd);
                 let mode = stat_result.st_mode as u32;
-                let matches = (S::ISDIR(mode) && !self.walker.only_files)
-                    || S::ISREG(mode)
-                    || !self.walker.only_files;
+                let matches = if trailing_sep {
+                    S::ISDIR(mode) && !self.walker.only_files
+                } else {
+                    S::ISREG(mode) || !self.walker.only_files
+                };
                 if matches {
                     if let Some(path) = self
                         .walker

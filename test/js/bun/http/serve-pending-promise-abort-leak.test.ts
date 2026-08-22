@@ -607,3 +607,58 @@ test("413 on a chunked upload frees the context while the handler promise stays 
     socket.destroy();
   }
 });
+
+// A request subscribes to its connection's close only once its dispatch is
+// over (to_async), so a close that lands before that was lost. server.stop(true)
+// inside the handler closes the connection right there. A request with its body
+// in flight then went async on the closed socket and was parked forever: no
+// abort, a pending body read that never settled, pendingRequests stuck at 1,
+// and a stop() promise that never resolved. A request without a body rendered
+// a 204 into the closed socket instead of aborting.
+const stoppedRequests: Array<[string, string, string[]]> = [
+  ["a GET", "GET /stopped HTTP/1.1\r\nHost: example.com\r\n\r\n", ["abort http://example.com/stopped example.com"]],
+  [
+    "a POST with its body in flight",
+    // Declares 1000 bytes and sends 10.
+    "POST /stopped HTTP/1.1\r\nHost: example.com\r\nContent-Length: 1000\r\n\r\n0123456789",
+    ["abort http://example.com/stopped example.com", "text rejected: AbortError"],
+  ],
+];
+test.each(stoppedRequests)("server.stop(true) inside the handler of %s aborts it", async (_what, head, expected) => {
+  const events: string[] = [];
+  const { promise: reached, resolve: signalReached, reject: failReached } = Promise.withResolvers<void>();
+  let stopped: Promise<void>;
+  using server = Bun.serve({
+    port: 0,
+    idleTimeout: 0,
+    fetch(req, srv) {
+      // url and headers are read lazily from inside the listener: an abort
+      // delivered this way must still see them, like any other abort.
+      req.signal.addEventListener("abort", () => events.push(`abort ${req.url} ${req.headers.get("host")}`), {
+        once: true,
+      });
+      if (req.method === "POST") {
+        req.text().then(
+          () => events.push("text resolved"),
+          e => events.push(`text rejected: ${(e as Error).name}`),
+        );
+      }
+      stopped = srv.stop(true);
+      signalReached();
+      return new Promise<Response>(() => {});
+    },
+  });
+
+  const client = connect(Number(server.port), "127.0.0.1", () => client.write(head));
+  // A reset after the server closed the connection is expected; a failure
+  // before the handler ran is not.
+  client.on("error", failReached);
+
+  await reached;
+  // The abort is delivered as the dispatch finishes; an immediate queued from
+  // inside it runs after that.
+  await new Promise(resolve => setImmediate(resolve));
+  expect(events).toEqual(expected);
+  expect(server.pendingRequests).toBe(0);
+  await stopped!;
+});

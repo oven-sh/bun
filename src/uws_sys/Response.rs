@@ -159,6 +159,12 @@ impl<const SSL: bool> Response<SSL> {
         self.state().is_http_connection_close()
     }
 
+    /// Valid after the close callback: uSockets frees a closed socket only when the outermost tick ends.
+    pub(crate) fn is_closed(&self) -> bool {
+        // Same view as `downcast_socket`: the response handle is the socket.
+        us_socket_t::opaque_ref(std::ptr::from_ref::<Self>(self).cast::<us_socket_t>()).is_closed()
+    }
+
     pub(crate) fn prepare_for_sendfile(&mut self) {
         c::uws_res_prepare_for_sendfile(Self::ssl_flag(), self.as_raw())
     }
@@ -833,6 +839,11 @@ impl AnyResponse {
 
     pub fn should_close_connection(self) -> bool {
         any_dispatch!(self, |r| r.should_close_connection())
+    }
+
+    /// See `Response::is_closed`; always `false` for HTTP/3 (see `h3::Response::is_closed`).
+    pub fn is_closed(self) -> bool {
+        any_dispatch!(self, |r| r.is_closed())
     }
 
     pub fn try_end(self, data: &[u8], total_size: usize, close_connection: bool) -> bool {

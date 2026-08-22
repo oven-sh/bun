@@ -1891,6 +1891,29 @@ pub fn generate_network_task_for_tarball<'a>(
     if has_created_network_task(this, task_id, is_required) {
         return Ok(None);
     }
+    // Only reached when the tarball is not already extracted in the cache. Under
+    // --offline nothing can be fetched: report it once (the dedupe entry above stays,
+    // so later edges to the same package are quiet) — as an error only if some edge
+    // requires it — and let the caller treat it like an already-failed download.
+    if this.options.offline == crate::package_manager_real::options::OfflineMode::Offline {
+        if is_required {
+            // reported once; later dependents see the failed dedupe entry
+            mark_network_task_failed(this, task_id);
+            let name = this.lockfile.str(&package.name).to_vec();
+            this.log_mut().add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "--offline: \"{}\" is not in the cache",
+                    bstr::BStr::new(&name)
+                ),
+            );
+        } else {
+            // let a later required edge on the same package report it
+            let _ = this.network_dedupe_map.remove(&task_id);
+        }
+        return Err(ForTarballError::Offline);
+    }
 
     // reshaped for borrowck —
     // all `&mut this` uses (patch-task alloc, cache/temp dir, pool slot) happen

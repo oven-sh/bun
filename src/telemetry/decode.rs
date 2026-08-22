@@ -10,6 +10,10 @@ use crate::proto::{Reader, Value};
 /// A message that can be viewed over its encoded body.
 pub trait Message<'a>: Sized {
     fn decode(body: &'a [u8]) -> Self;
+    /// `depth`: how many `AnyValue` array/kvlist levels enclose this message.
+    fn decode_nested(body: &'a [u8], _depth: u8) -> Self {
+        Self::decode(body)
+    }
 }
 
 struct Fields<'a>(Reader<'a>);
@@ -32,6 +36,7 @@ fn fields(body: &[u8]) -> Fields<'_> {
 pub struct Repeated<'a, T> {
     body: &'a [u8],
     field: u32,
+    depth: u8,
     _marker: PhantomData<fn() -> T>,
 }
 
@@ -42,12 +47,21 @@ impl<T> Clone for Repeated<'_, T> {
 }
 impl<T> Copy for Repeated<'_, T> {}
 
+/// Nested `AnyValue`s (arrays / kvlists) deeper than this decode as `Empty`,
+/// so hostile input cannot drive a consumer's recursion arbitrarily deep.
+pub const MAX_VALUE_DEPTH: u8 = 32;
+
 impl<'a, T> Repeated<'a, T> {
     #[inline]
     fn new(body: &'a [u8], field: u32) -> Self {
+        Self::nested(body, field, 0)
+    }
+    #[inline]
+    fn nested(body: &'a [u8], field: u32, depth: u8) -> Self {
         Repeated {
             body,
             field,
+            depth,
             _marker: PhantomData,
         }
     }
@@ -70,6 +84,7 @@ impl<'a, T: Message<'a>> IntoIterator for Repeated<'a, T> {
         RepeatedIter {
             fields: fields(self.body),
             field: self.field,
+            depth: self.depth,
             _marker: PhantomData,
         }
     }
@@ -78,6 +93,7 @@ impl<'a, T: Message<'a>> IntoIterator for Repeated<'a, T> {
 pub struct RepeatedIter<'a, T> {
     fields: Fields<'a>,
     field: u32,
+    depth: u8,
     _marker: PhantomData<fn() -> T>,
 }
 
@@ -87,7 +103,7 @@ impl<'a, T: Message<'a>> Iterator for RepeatedIter<'a, T> {
         for (fl, v) in self.fields.by_ref() {
             if fl == self.field {
                 if let Value::Len(body) = v {
-                    return Some(T::decode(body));
+                    return Some(T::decode_nested(body, self.depth));
                 }
             }
         }
@@ -411,6 +427,9 @@ pub struct KeyValue<'a> {
 
 impl<'a> Message<'a> for KeyValue<'a> {
     fn decode(body: &'a [u8]) -> Self {
+        Self::decode_nested(body, 0)
+    }
+    fn decode_nested(body: &'a [u8], depth: u8) -> Self {
         let mut m = KeyValue {
             key: b"",
             value: AnyValue::Empty,
@@ -418,7 +437,7 @@ impl<'a> Message<'a> for KeyValue<'a> {
         for (fl, v) in fields(body) {
             match fl {
                 f::KV_KEY => m.key = v.as_bytes(),
-                f::KV_VALUE => m.value = AnyValue::decode(v.as_bytes()),
+                f::KV_VALUE => m.value = AnyValue::decode_nested(v.as_bytes(), depth),
                 _ => {}
             }
         }
@@ -439,8 +458,12 @@ pub enum AnyValue<'a> {
 }
 
 impl<'a> Message<'a> for AnyValue<'a> {
-    /// `AnyValue` is a oneof: the last member present wins.
     fn decode(body: &'a [u8]) -> Self {
+        Self::decode_nested(body, 0)
+    }
+    /// `AnyValue` is a oneof: the last member present wins. Arrays / kvlists
+    /// nested deeper than `MAX_VALUE_DEPTH` decode as `Empty`.
+    fn decode_nested(body: &'a [u8], depth: u8) -> Self {
         let mut m = AnyValue::Empty;
         for (fl, v) in fields(body) {
             m = match fl {
@@ -448,8 +471,13 @@ impl<'a> Message<'a> for AnyValue<'a> {
                 f::AV_BOOL => AnyValue::Bool(v.as_u64() != 0),
                 f::AV_INT => AnyValue::Int(v.as_u64() as i64),
                 f::AV_DOUBLE => AnyValue::Double(v.as_f64()),
-                f::AV_ARRAY => AnyValue::Array(Repeated::new(v.as_bytes(), f::ARR_VALUES)),
-                f::AV_KVLIST => AnyValue::KvList(Repeated::new(v.as_bytes(), f::KVLIST_VALUES)),
+                f::AV_ARRAY | f::AV_KVLIST if depth >= MAX_VALUE_DEPTH => AnyValue::Empty,
+                f::AV_ARRAY => {
+                    AnyValue::Array(Repeated::nested(v.as_bytes(), f::ARR_VALUES, depth + 1))
+                }
+                f::AV_KVLIST => {
+                    AnyValue::KvList(Repeated::nested(v.as_bytes(), f::KVLIST_VALUES, depth + 1))
+                }
                 f::AV_BYTES => AnyValue::Bytes(v.as_bytes()),
                 _ => continue,
             };
@@ -470,6 +498,28 @@ mod tests {
     use super::*;
     use crate::otlp::{self, ScopeChunk, SpanWriter, Value as V};
     use crate::span::{Flags, SpanContext, SpanId, SpanKind, SpanStub, StatusCode, TraceId};
+
+    #[test]
+    fn nesting_is_capped() {
+        // AnyValue{array_value{values:[AnyValue{array_value{...}}]}} nested 10k deep.
+        let mut inner: Vec<u8> = vec![];
+        for _ in 0..10_000 {
+            // ArrayValue.values (field 1, LEN) wrapping the previous AnyValue
+            let mut arr = vec![];
+            crate::proto::write_bytes(&mut arr, f::ARR_VALUES, &inner);
+            // AnyValue.array_value (field 5, LEN)
+            let mut av = vec![];
+            crate::proto::write_bytes(&mut av, f::AV_ARRAY, &arr);
+            inner = av;
+        }
+        fn depth(v: AnyValue<'_>) -> usize {
+            match v {
+                AnyValue::Array(items) => 1 + items.into_iter().map(depth).max().unwrap_or(0),
+                _ => 0,
+            }
+        }
+        assert_eq!(depth(AnyValue::decode(&inner)), MAX_VALUE_DEPTH as usize);
+    }
 
     #[test]
     fn roundtrip() {

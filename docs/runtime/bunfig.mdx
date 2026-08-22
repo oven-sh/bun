@@ -624,7 +624,7 @@ allowedHosts = []
 allowedHosts = ["cdn.example.com", "git.example.com:8443"]
 ```
 
-The check applies to the URL Bun requests, after any [`install.rewrite`](#install-rewrite) rules; HTTP redirects are followed as usual.
+The check applies to the URL Bun requests, after any [`install.rewrite`](#install-rewrite) rules; HTTP redirects are followed as usual. A required dependency on a refused host fails the install; an optional one is skipped with a warning. For git dependencies the https and ssh forms of a specifier are checked separately, so `"git.example.com:22"` permits only the ssh transport.
 
 ### `install.rewrite`
 

@@ -319,16 +319,37 @@ impl Options {
                 auth: &scope.auth,
             };
         }
-        if !self.npmrc_credentials.is_empty() {
-            let parsed = bun_url::URL::parse(url);
-            if let Some(found) = self.npmrc_credentials.iter().find(|c| c.covers(&parsed)) {
-                return Credentials {
-                    token: found.token,
-                    auth: found.auth,
-                };
-            }
+        if let Some(found) = self.npmrc_credential_for(url) {
+            return Credentials {
+                token: found.token,
+                auth: found.auth,
+            };
         }
         Credentials::NONE
+    }
+
+    /// The `.npmrc` `//host/path/` credential covering `url`, if any. Such keys
+    /// carry no scheme, so to keep a manifest from downgrading a request to
+    /// plaintext and still collecting the token, they cover `https://` URLs,
+    /// and `http://` URLs only on an origin the configuration itself declares
+    /// as a plain-http registry (default or scoped).
+    fn npmrc_credential_for(&self, url: &[u8]) -> Option<&PathCredential> {
+        if self.npmrc_credentials.is_empty() {
+            return None;
+        }
+        let url = bun_url::URL::parse(url);
+        let scheme_ok = url.is_https()
+            || (url.is_http()
+                && self.registry_scopes().any(|scope| {
+                    let registry = scope.url.url();
+                    registry.is_http()
+                        && registry.hostname.eq_ignore_ascii_case(url.hostname)
+                        && registry.get_port_auto() == url.get_port_auto()
+                }));
+        if !scheme_ok {
+            return None;
+        }
+        self.npmrc_credentials.iter().find(|c| c.covers(&url))
     }
 
     /// `install.allowedHosts`: may bun connect to the host of `url` at all?
@@ -437,6 +458,7 @@ impl PathCredential {
     /// entry written without a port only covers URLs on their scheme's default
     /// port (npm derives the key from the parsed URL, which drops default
     /// ports); the path must be a segment-wise prefix with no dot-segments.
+    /// The scheme policy lives in `Options::npmrc_credential_for`.
     pub fn covers(&self, url: &bun_url::URL<'_>) -> bool {
         if url.hostname.is_empty() || !self.hostname.eq_ignore_ascii_case(url.hostname) {
             return false;

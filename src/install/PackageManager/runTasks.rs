@@ -2008,12 +2008,14 @@ pub fn generate_network_task_for_tarball<'a>(
         .expect("unreachable"),
     };
 
-    if let Err(err) = network_task.for_tarball(extract_tarball, scope, authorization) {
+    if let Err(err) = network_task.for_tarball(extract_tarball, scope, authorization, is_required) {
         if matches!(err, ForTarballError::InvalidURL) {
-            // The URL was refused before any request was made; record that on
-            // the dedupe entry so a later enqueue for the same tarball (e.g.
-            // from the install phase) fails fast with `AlreadyFailed` instead
-            // of waiting on a task that was never scheduled.
+            // The URL was refused before any request was made and that was
+            // reported (an error, or a warning for an optional dependency);
+            // record it on the dedupe entry — as a non-retryable HTTP status
+            // would be — so a later enqueue for the same tarball (e.g. from
+            // the install phase) fails fast with `AlreadyFailed` instead of
+            // reporting again or waiting on a task that was never scheduled.
             mark_network_task_failed(this, task_id);
         }
         return Err(err);

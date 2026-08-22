@@ -1,5 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
+import { existsSync } from "fs";
 import { rm } from "fs/promises";
 import { bunExe, bunEnv as env, tempDir } from "harness";
 import { join } from "path";
@@ -208,6 +209,10 @@ cache = false
       ]);
     }
 
+    // Over plain http an npmrc entry only covers an origin the configuration
+    // itself declares as an http registry (the entries carry no scheme, and a
+    // manifest must not be able to downgrade a request to cleartext and still
+    // collect the token) ...
     tarballOnElsewhere = true;
     received.length = 0;
     {
@@ -215,6 +220,23 @@ cache = false
         "package.json": packageJson,
         "bunfig.toml": `[install]\ncache = false\n`,
         ".npmrc": npmrc,
+      });
+      const { stdout, stderr, exitCode } = await install(String(dir));
+      expect(stderr).toContain("Saved lockfile");
+      expect(stdout).toContain("1 package installed");
+      expect(exitCode).toBe(0);
+      expect(received).toEqual([{ path: "/prefix-a/no-deps", authorization: "Bearer tok-a" }]);
+      expect(elsewhereReceived).toEqual([{ path: "/downloads/no-deps-1.0.0.tgz", authorization: null }]);
+    }
+
+    // ... such as a scoped registry on that origin.
+    received.length = 0;
+    elsewhereReceived.length = 0;
+    {
+      using dir = tempDir("registry-path-scoped-auth", {
+        "package.json": packageJson,
+        "bunfig.toml": `[install]\ncache = false\n`,
+        ".npmrc": npmrc + `@other:registry=http://127.0.0.1:${elsewhere.port}/\n`,
       });
       const { stdout, stderr, exitCode } = await install(String(dir));
       expect(stderr).toContain("Saved lockfile");
@@ -413,6 +435,63 @@ allowedHosts = []
     );
     expect(exitCode).toBe(1);
     expect(elsewhereReceived).toEqual([]);
+  });
+
+  it("skips an optional dependency whose tarball host is not listed instead of failing", async () => {
+    const elsewhereReceived: Received[] = [];
+    await using elsewhere = serveElsewhere(elsewhereReceived);
+    const tarballUrl = `http://127.0.0.1:${elsewhere.port}/no-deps/-/no-deps-1.0.0.tgz`;
+    await using registry = serveRegistry([], () => tarballUrl);
+    using dir = tempDir("allowed-hosts", {
+      "package.json": JSON.stringify({ name: "app", version: "1.0.0", optionalDependencies: { "no-deps": "1.0.0" } }),
+      "bunfig.toml": `
+[install]
+cache = false
+registry = "http://127.0.0.1:${registry.port}/"
+allowedHosts = []
+`,
+    });
+
+    const { stderr, exitCode } = await install(String(dir));
+    expect(stderr).toContain(
+      `warn: Skipping optional package "no-deps": "${tarballUrl}" is not in install.allowedHosts`,
+    );
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    expect(elsewhereReceived).toEqual([]);
+    expect(existsSync(join(String(dir), "node_modules", "no-deps"))).toBeFalse();
+  });
+
+  it("a host allowed only on the ssh port still gets the ssh attempt", async () => {
+    // `git@host:path` is tried over https first (port 443, not allowed here)
+    // and then over ssh (port 22, allowed). The https form must be skipped
+    // quietly rather than failing the dependency; the ssh attempt is made to
+    // fail fast so no real connection is needed.
+    using dir = tempDir("allowed-hosts", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { repo: "git@git.example.invalid:someone/repo.git" },
+      }),
+      "bunfig.toml": `
+[install]
+cache = false
+registry = "http://localhost:1/"
+allowedHosts = ["git.example.invalid:22"]
+`,
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: { ...env, GIT_SSH_COMMAND: "false", GIT_TERMINAL_PROMPT: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("Refusing to clone");
+    expect(stderr).toContain(`"git clone" for "repo" failed`);
+    expect(exitCode).toBe(1);
   });
 
   it("rejects entries that are not host[:port]", async () => {

@@ -628,6 +628,101 @@ it("Readable.fromWeb: destroy(err) after consuming a chunk cancels the web sourc
   });
 });
 
+// destroy(err) on the native-backed fromWeb adapter (Blob.stream(), Response.body)
+// must emit 'error' before 'close', matching Node and the JS-adapter path. The
+// native _destroy previously called its callback without forwarding the error,
+// so only 'close' fired and an unhandled destroy error was silently dropped.
+it.each([
+  ["Blob.stream()", () => new Blob(["hello"]).stream()],
+  ["Response.body", () => new Response("hello").body],
+])("Readable.fromWeb over native %s: destroy(err) emits 'error' before 'close'", async (_name, makeWeb) => {
+  const r = Readable.fromWeb(makeWeb());
+  const events = [];
+  r.on("error", e => events.push("error:" + e.code));
+  r.on("close", () => events.push("close"));
+  let fin = "pending";
+  finished(r, e => {
+    fin = e ? e.code : "clean";
+  });
+  r.destroy(Object.assign(new Error("boom"), { code: "EBOOM" }));
+  await new Promise(resolve => r.once("close", resolve));
+  expect({ events, finished: fin, errored: r.errored?.code }).toEqual({
+    events: ["error:EBOOM", "close"],
+    finished: "EBOOM",
+    errored: "EBOOM",
+  });
+});
+
+it("Readable.fromWeb over native stream: destroy(err) with no 'error' listener surfaces as uncaughtException", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { Readable } = require("node:stream");
+        process.on("uncaughtException", e => console.log("UNCAUGHT:" + e.code));
+        const r = Readable.fromWeb(new Blob(["hello"]).stream());
+        r.on("close", () => console.log("CLOSE"));
+        r.destroy(Object.assign(new Error("boom"), { code: "EBOOM" }));
+        setImmediate(() => setImmediate(() => {}));
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Node: emitting 'error' with no listener throws, which interrupts emitErrorCloseNT
+  // before it can emit 'close', so only the uncaughtException line is printed.
+  expect({ out: stdout.trim().split("\n"), err: stderr }).toEqual({
+    out: ["UNCAUGHT:EBOOM"],
+    err: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
+it("Readable.fromWeb over native stream: breaking out of for-await emits 'error' ABORT_ERR", async () => {
+  const r = Readable.fromWeb(new Blob([Buffer.alloc(1000, "a")]).stream());
+  const events = [];
+  r.on("error", e => events.push("error:" + e.code));
+  r.on("close", () => events.push("close"));
+  let seen = 0;
+  for await (const chunk of r) {
+    seen++;
+    break;
+    void chunk;
+  }
+  await new Promise(resolve => r.once("close", resolve));
+  expect({ seen, events, errored: r.errored?.code }).toEqual({
+    seen: 1,
+    events: ["error:ABORT_ERR", "close"],
+    errored: "ABORT_ERR",
+  });
+});
+
+it("Readable.fromWeb over native stream: read(n) beyond buffered returns null until more arrives", async () => {
+  const total = 300000;
+  const r = Readable.fromWeb(new Response(new Uint8Array(total)).body);
+  await new Promise(resolve => r.once("readable", resolve));
+  const buffered = r.readableLength;
+  // The native adapter delivers the body in chunks; first 'readable' doesn't carry everything.
+  expect(buffered).toBeGreaterThan(0);
+  expect(buffered).toBeLessThan(total);
+  expect(r.readableEnded).toBe(false);
+  // n > buffered while not ended: Node's fromWeb returns null and schedules more
+  // reading. The native _read previously pushed synchronously, so the request was
+  // satisfied in the same frame.
+  const over = r.read(buffered + 5000);
+  expect({ over, stillBuffered: r.readableLength }).toEqual({ over: null, stillBuffered: buffered });
+  // Drain the rest and confirm no bytes were lost.
+  let seen = 0;
+  r.on("readable", () => {
+    let c;
+    while ((c = r.read()) !== null) seen += c.length;
+  });
+  await new Promise(resolve => r.once("end", resolve));
+  expect(seen).toBe(total);
+});
+
 it("Readable.toWeb(Readable.fromWeb(rs)).cancel(reason) propagates to the web source", async () => {
   let cancelReason;
   const web = new ReadableStream({

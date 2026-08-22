@@ -784,7 +784,7 @@ fn run_tasks_erased(
                                 manager.log_mut(),
                                 None,
                                 bun_ast::Loc::EMPTY,
-                                "<r><yellow>warn:<r> {} downloading tarball <b>{}@{}<r>. Retrying {}/{}...",
+                                "{} downloading tarball <b>{}@{}<r>. Retrying {}/{}...",
                                 bstr::BStr::new(err.name().as_bytes()),
                                 bstr::BStr::new(extract.name.slice()),
                                 extract

@@ -1026,6 +1026,11 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("-e with empty script exits instead of starting the interactive REPL", async () => {
+      const { stdout, stderr, exitCode } = await runReplWith(["-e", ""]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    });
+
     test("-e supports TypeScript", async () => {
       const { stdout, exitCode } = await runReplWith(["-p", "const x: number = 42; x * 2"]);
       expect(stdout).toBe("84\n");
@@ -2151,6 +2156,19 @@ describe.concurrent("--interactive", () => {
     async () => {
       const { stdout, exitCode } = await runInteractive([], 'console.log("EVAL=" + process._eval)\n');
       expect(stdout).toContain("EVAL=undefined");
+      expect(exitCode).toBe(0);
+    },
+    interactiveTimeout,
+  );
+
+  // `node -i -e ""` still enters the REPL and leaves process._eval undefined.
+  test(
+    "-e with an empty script enters the REPL with process._eval undefined",
+    async () => {
+      const { stdout, stderr, exitCode } = await runInteractive(["-e", ""], 'console.log("EVAL=" + process._eval)\n');
+      expect(stdout).toContain("Welcome to Bun");
+      expect(stdout).toContain("EVAL=undefined");
+      expect(stderr).not.toContain("error");
       expect(exitCode).toBe(0);
     },
     interactiveTimeout,

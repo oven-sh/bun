@@ -1121,7 +1121,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         if let Some(port_str) = args.option(b"--port") {
             if cmd == CommandTag::RunAsNodeCommand {
                 // TODO: prevent `node --port <script>` from working
-                ctx.runtime_options.eval.script = port_str.into();
+                ctx.runtime_options.eval.script = Some(port_str.into());
                 ctx.runtime_options.eval.eval_and_print = true;
             } else {
                 opts.port = match strings::parse_int::<u16>(port_str, 10) {
@@ -1198,10 +1198,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         }
 
         if let Some(script) = args.option(b"--print") {
-            ctx.runtime_options.eval.script = script.into();
+            ctx.runtime_options.eval.script = Some(script.into());
             ctx.runtime_options.eval.eval_and_print = true;
         } else if let Some(script) = args.option(b"--eval") {
-            ctx.runtime_options.eval.script = script.into();
+            ctx.runtime_options.eval.script = Some(script.into());
         }
         ctx.runtime_options.if_present = args.flag(b"--if-present");
         ctx.runtime_options.smol = args.flag(b"--smol");

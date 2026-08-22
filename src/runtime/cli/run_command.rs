@@ -977,16 +977,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let mut run_entry = entry;
         vm.set_main(entry);
 
-        if !ctx.runtime_options.eval.script.is_empty() {
+        if let Some(eval_script) = ctx.runtime_options.eval.script.as_deref() {
             // SAFETY: `ctx.runtime_options.eval.script` is process-lifetime
             // (CLI argv); erase the borrow lifetime so the `Source` (stored in
             // the VM for the process duration) can backref into it.
-            let script: &'static [u8] = unsafe {
-                ::core::slice::from_raw_parts(
-                    ctx.runtime_options.eval.script.as_ptr(),
-                    ctx.runtime_options.eval.script.len(),
-                )
-            };
+            let script: &'static [u8] =
+                unsafe { ::core::slice::from_raw_parts(eval_script.as_ptr(), eval_script.len()) };
             vm.module_loader.eval_source =
                 Some(Box::new(bun_ast::Source::init_path_string(entry, script)));
             vm.module_loader.interactive_eval_script =
@@ -1258,7 +1254,7 @@ impl Run<'_> {
             fn JSC__JSGlobalObject__addGc(global: *const JSGlobalObject);
         }
         let ro = &ctx.runtime_options;
-        if !ro.eval.script.is_empty() {
+        if ro.eval.script.is_some() {
             // SAFETY: FFI; `vm.global` is live for the VM lifetime.
             unsafe { Bun__ExposeNodeModuleGlobals(vm.global) };
         }
@@ -2804,7 +2800,7 @@ impl RunCommand {
         if bun_sys::File::stdin().read_to_end_into(&mut list).is_err() {
             return Ok(false);
         }
-        ctx.runtime_options.eval.script = list.into_boxed_slice();
+        ctx.runtime_options.eval.script = Some(list.into_boxed_slice());
 
         #[cfg(windows)]
         const STDIN_TRIGGER: &[u8] = b"\\[stdin]";
@@ -2852,8 +2848,8 @@ impl RunCommand {
         // bootstrap via `[eval]`; it runs `process._eval` like Node's
         // internal/main/repl.js — no source splicing.
         ctx.runtime_options.eval.interactive_script =
-            Some(::core::mem::take(&mut ctx.runtime_options.eval.script));
-        ctx.runtime_options.eval.script = bootstrap.to_vec().into_boxed_slice();
+            Some(ctx.runtime_options.eval.script.take().unwrap_or_default());
+        ctx.runtime_options.eval.script = Some(bootstrap.to_vec().into_boxed_slice());
         Self::exec_eval(ctx)
     }
 
@@ -2906,7 +2902,7 @@ impl RunCommand {
             return Self::exec_node_repl(ctx);
         }
 
-        if !ctx.runtime_options.eval.script.is_empty() {
+        if ctx.runtime_options.eval.script.is_some() {
             // synthetic `[eval]` path under cwd
             let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
             let mut cwd_buf = PathBuffer::uninit();

@@ -87,6 +87,27 @@ describe("fake node cli", () => {
     expect(fakeNodeRun(temp, ["-e", "console.log('pass')"]).stdout).toBe("pass");
   });
 
+  // Like node, an empty -e / -p script is still a script to run. It used to be
+  // treated as no script at all (the "Missing script" / REPL path below), so
+  // stdin is pinned to a pipe here as well.
+  test.each([
+    [["-e", ""], ""],
+    [["-p", ""], "undefined\n"],
+    [["-pe", ""], "undefined\n"],
+  ])("node %j runs an empty program", async (args, expectedStdout) => {
+    using temp = tempDir("fake-node", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--bun", "node", ...args],
+      cwd: String(temp),
+      env: { ...bunEnv, NODE_ENV: undefined },
+      stdin: Buffer.alloc(0),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: expectedStdout, stderr: "", exitCode: 0 });
+  });
+
   test("process args work", () => {
     using temp = tempDir("fake-node", {
       "index.js": "console.log(JSON.stringify(process.argv.slice(1)))",

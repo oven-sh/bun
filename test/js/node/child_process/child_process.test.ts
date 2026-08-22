@@ -933,15 +933,21 @@ it.if(isLinux)("spawn still works with more than 10240 fds open", async () => {
 // GC'd, finalize_streams does not close the fd a second time (EBADF, or
 // worse, closing a reused fd number). Before the fix, Fd::close()'s
 // debug_assert!(err.is_none()) panicked under debug_assertions builds.
-it.skipIf(isWindows)("extra stdio pipes are not double-closed on GC", async () => {
-  // Run in a subprocess so GC/finalize timing is isolated from the test
-  // runner's own state, and so the assert abort surfaces as a non-zero
-  // exit rather than taking the whole test runner down.
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
+//
+// Each of the 20 children boots the runtime for its empty `-e ""` program and
+// every iteration runs two full GCs, which adds up to several seconds on a
+// debug build, hence the explicit timeout.
+it.skipIf(isWindows)(
+  "extra stdio pipes are not double-closed on GC",
+  async () => {
+    // Run in a subprocess so GC/finalize timing is isolated from the test
+    // runner's own state, and so the assert abort surfaces as a non-zero
+    // exit rather than taking the whole test runner down.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
         const { spawn } = require("node:child_process");
         async function once() {
           const child = spawn(process.execPath, ["-e", ""], {
@@ -961,14 +967,16 @@ it.skipIf(isWindows)("extra stdio pipes are not double-closed on GC", async () =
         }
         console.log("OK");
       `,
-    ],
-    env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "1" },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "OK", stderr: "", exitCode: 0 });
-});
+      ],
+      env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "OK", stderr: "", exitCode: 0 });
+  },
+  30_000,
+);
 
 // Windows: the extra "pipe" slots are HANDLE values that child_process wraps
 // in net.Sockets (net.connect({fd})); each socket closes its handle. The

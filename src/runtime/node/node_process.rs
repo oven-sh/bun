@@ -447,7 +447,11 @@ mod _impl {
             }
             return ZigString::init(script).with_encoding().to_js(global_object);
         }
-        if let Some(source) = vm.module_loader.eval_source.as_deref() {
+        // Node only defines `process._eval` for a non-empty script, so
+        // `-e ""` reports `undefined` just like the `--interactive` case above.
+        if let Some(source) = vm.module_loader.eval_source.as_deref()
+            && !source.contents().is_empty()
+        {
             return ZigString::init(source.contents())
                 .with_encoding()
                 .to_js(global_object);

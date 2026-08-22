@@ -28,6 +28,7 @@ public:
     V(Structure, mockModuleStructure)                \
     V(Structure, activeSpySetStructure)              \
     V(JSFunction, withImplementationCleanupFunction) \
+    V(JSFunction, mockModuleResolvedFunction)        \
     V(JSC::Structure, mockWithImplementationCleanupDataStructure)
 
 #define DECLARE_JSMOCKMODULE_GC_MEMBER(T, name) \

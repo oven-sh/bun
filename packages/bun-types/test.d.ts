@@ -29,8 +29,16 @@ declare module "bun:test" {
      * value of `factory`. If an export didn't exist before, it is not added to
      * existing import statements. This is a consequence of how ESM works.
      *
+     * If the module is already loaded and `factory` returns a promise (an
+     * `async` function, or one returning `import()`), the existing exports are
+     * only overwritten once that promise settles, and `mock.module()` returns a
+     * promise that resolves after they have been (or rejects with the factory's
+     * error). `await` it before using the mocked module. Otherwise `mock.module()`
+     * returns `undefined`; when the module has not been loaded yet, `factory` is
+     * not called until the first import.
+     *
      * @param id module ID to mock
-     * @param factory a function returning an object used as the exports of the mocked module
+     * @param factory a function returning an object used as the exports of the mocked module, or a promise for one
      *
      * @example
      * ```ts

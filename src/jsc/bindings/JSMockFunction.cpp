@@ -757,6 +757,10 @@ JSMockModule JSMockModule::create(JSC::JSGlobalObject* globalObject)
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSFunction>::Initializer& init) {
             init.set(JSC::JSFunction::create(init.vm, init.owner, 2, String(), jsMockFunctionWithImplementationCleanup, ImplementationVisibility::Public));
         });
+    mock.mockModuleResolvedFunction.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSFunction>::Initializer& init) {
+            init.set(JSC::JSFunction::create(init.vm, init.owner, 2, String(), Zig::jsFunctionMockModuleResolved, ImplementationVisibility::Public));
+        });
     mock.mockWithImplementationCleanupDataStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
             init.set(Bun::MockWithImplementationCleanupData::createStructure(init.vm, init.owner, init.owner->objectPrototype()));

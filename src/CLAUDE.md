@@ -157,7 +157,7 @@ let joined  = resolve_path::join_string_buf::<platform::Auto>(&mut *buf, &[a, b]
 `bun_paths::os_path_buffer_pool` selects the wide (`u16`) variant on Windows
 and the narrow (`u8`) variant on POSIX.
 
-## URL Parsing (`bun_jsc::URL`)
+## URL Parsing (`bun_url::whatwg::URL`, re-exported as `bun_jsc::URL`)
 
 WHATWG-compliant, backed by WebKit's URL parser. Returns `None` for invalid input.
 
@@ -171,14 +171,15 @@ let url = URL::from_utf8(href)?;                  // Option<NonNull<URL>>
 url.protocol()   // bun_core::String
 url.pathname()   // bun_core::String
 url.host()       // bun_core::String — the hostname WITHOUT the port (opposite of JS `host`!)
+url.hostname()   // bun_core::String — the host WITH the port (opposite of JS `hostname`!)
 url.port()       // u32 (u32::MAX = unset; otherwise u16 range)
 ```
 
-`URL::href_from_js`, `URL::file_url_from_string`, `URL::path_from_file_url`
-do whole-string conversions. The JSC-free shim `bun_url::whatwg::URL` exposes
-`hostname()`, which returns the host WITH the port (also the opposite of JS
-`hostname`) — so `bun_jsc::URL::host` and `bun_url::whatwg::URL::hostname`
-are effectively swapped relative to their JS namesakes.
+`URL::file_url_from_string` / `URL::path_from_file_url` (and the free
+`bun_url::href_from_string` / `bun_url::join`) do whole-string conversions and
+are usable from JSC-free crates. The entry points that take a `JSValue`
+(`href_from_js`, `from_js`) live on the `bun_jsc::UrlJsc` extension trait, so
+callers need `use bun_jsc::UrlJsc as _;`.
 
 ## MIME Types (`bun_http_types::MimeType`)
 

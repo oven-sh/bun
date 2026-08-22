@@ -1674,6 +1674,7 @@ dependencies = [
  "bun_alloc",
  "bun_collections",
  "bun_core",
+ "bun_opaque",
  "bun_paths",
  "bun_wyhash",
  "thiserror",

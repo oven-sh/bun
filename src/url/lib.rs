@@ -45,11 +45,11 @@ pub mod whatwg {
     use super::BunString as String;
     use super::strings;
 
-    /// Opaque handle to a heap-allocated WTF::URL (C++). Always behind `*mut URL`.
-    /// Construct via `from_string`/`from_utf8`; free via `deinit`.
-    #[repr(C)]
-    pub struct URL {
-        _opaque: [u8; 0],
+    bun_opaque::opaque_ffi! {
+        /// Opaque handle to a heap-allocated WTF::URL (C++). Always behind a pointer.
+        /// Construct via `from_string`/`from_utf8` (or `bun_jsc::UrlJsc::from_js`);
+        /// free exactly once via `deinit`/`destroy`.
+        pub struct URL;
     }
 
     // Getters take `*const URL` — the C++ side (BunString.cpp) never mutates the
@@ -64,11 +64,16 @@ pub mod whatwg {
         safe fn URL__fromString(str: &mut String) -> Option<core::ptr::NonNull<URL>>;
         safe fn URL__protocol(url: &URL) -> String;
         safe fn URL__href(url: &URL) -> String;
+        safe fn URL__username(url: &URL) -> String;
+        safe fn URL__password(url: &URL) -> String;
+        safe fn URL__host(url: &URL) -> String;
         safe fn URL__hostname(url: &URL) -> String;
+        safe fn URL__port(url: &URL) -> u32;
         safe fn URL__deinit(url: &mut URL);
         safe fn URL__pathname(url: &URL) -> String;
         safe fn URL__getHref(input: &mut String) -> String;
         safe fn URL__getFileURLString(input: &mut String) -> String;
+        safe fn URL__pathFromFileURL(input: &mut String) -> String;
         safe fn URL__getHrefJoin(base: &mut String, relative: &mut String) -> String;
         safe fn URL__fragmentIdentifier(url: &URL) -> String;
         fn URL__originLength(latin1_slice: *const u8, len: usize) -> usize;
@@ -114,12 +119,24 @@ pub mod whatwg {
     }
 
     impl URL {
-        pub(crate) fn from_string(str: &String) -> Option<core::ptr::NonNull<URL>> {
-            let mut input = *str;
+        /// Returns an owned C++ heap allocation that the caller must free exactly
+        /// once via [`deinit`](Self::deinit) / [`destroy`](Self::destroy), or
+        /// `None` if `str` does not parse.
+        pub fn from_string(str: String) -> Option<core::ptr::NonNull<URL>> {
+            let mut input = str;
             URL__fromString(&mut input)
         }
+        /// See [`from_string`](Self::from_string) for ownership.
         pub fn from_utf8(input: &[u8]) -> Option<core::ptr::NonNull<URL>> {
-            Self::from_string(&String::borrow_utf8(input))
+            Self::from_string(String::borrow_utf8(input))
+        }
+        /// By-value form of the free [`file_url_from_string`].
+        pub fn file_url_from_string(str: String) -> String {
+            file_url_from_string(&str)
+        }
+        pub fn path_from_file_url(str: String) -> String {
+            let mut input = str;
+            URL__pathFromFileURL(&mut input)
         }
         /// The URL fragment (the part after `#`), excluding the leading '#'.
         pub fn fragment_identifier(&self) -> String {
@@ -131,10 +148,27 @@ pub mod whatwg {
         pub fn href(&self) -> String {
             URL__href(self)
         }
+        pub fn username(&self) -> String {
+            URL__username(self)
+        }
+        pub fn password(&self) -> String {
+            URL__password(self)
+        }
+        /// Returns the host WITHOUT the port.
+        ///
+        /// Note that this does NOT match JS `host`, which includes the port (that
+        /// form is [`hostname`](Self::hostname) here).
+        ///
+        /// ```text
+        /// URL("http://example.com:8080").host() => "example.com"
+        /// ```
+        pub fn host(&self) -> String {
+            URL__host(self)
+        }
         /// Returns the host WITH the port.
         ///
         /// Note that this does NOT match JS `hostname`, which excludes the port (that
-        /// port-less form is `bun_jsc::URL::host`).
+        /// port-less form is [`host`](Self::host) here).
         ///
         /// ```text
         /// URL("http://example.com:8080").hostname() => "example.com:8080"
@@ -142,11 +176,27 @@ pub mod whatwg {
         pub fn hostname(&self) -> String {
             URL__hostname(self)
         }
+        /// Returns `u32::MAX` if the port is not set. Otherwise, `port`
+        /// is guaranteed to be within the `u16` range.
+        pub fn port(&self) -> u32 {
+            URL__port(self)
+        }
         pub fn pathname(&self) -> String {
             URL__pathname(self)
         }
         pub fn deinit(&mut self) {
             URL__deinit(self)
+        }
+        /// Raw-pointer form of [`deinit`](Self::deinit) for callers holding the
+        /// pointer returned by `from_string`/`from_utf8`/`from_js`. Not a `Drop`:
+        /// the handle is constructed and destroyed across the C++ boundary.
+        ///
+        /// # Safety
+        /// `this` must be a live handle returned by one of the constructors and
+        /// must not be used again afterwards.
+        pub unsafe fn destroy(this: *mut Self) {
+            // SAFETY: caller guarantees `this` is live and uniquely owned.
+            unsafe { &mut *this }.deinit()
         }
     }
 

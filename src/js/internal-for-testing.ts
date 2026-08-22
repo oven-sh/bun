@@ -43,6 +43,23 @@ export const highwayStringsForTesting: (
   arg: number | Uint8Array,
 ) => number = $newCppFunction("highway_strings_testing.cpp", "Bun__highwayStringsForTesting", 3);
 
+// The bun_highway wrappers (src/highway/lib.rs) that write into an output slice
+// the kernel is never told the length of, called with arguments of the test's
+// choosing (src/runtime/highway_testing.rs). Each returns what `output` holds
+// afterwards; a too-short `output` must panic.
+export const highwayOutputProbes = {
+  copyU16ToU8: $newRustFunction("runtime/highway_testing.rs", "copyU16ToU8Probe", 2) as (
+    input: Uint16Array,
+    output: Uint8Array,
+  ) => Uint8Array,
+  fillWithSkipMask: $newRustFunction("runtime/highway_testing.rs", "fillWithSkipMaskProbe", 4) as (
+    mask: Uint8Array,
+    output: Uint8Array,
+    input: Uint8Array,
+    skipMask: boolean,
+  ) => Uint8Array,
+};
+
 export const SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
 
 export const patchInternals = {

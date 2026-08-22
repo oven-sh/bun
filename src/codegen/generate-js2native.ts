@@ -85,6 +85,7 @@ const rustIdentifierPaths: Record<string, string> = {
   "patch.rs": "patch/patch.rs",
   "postgres.rs": "sql_jsc/postgres.rs",
   "runtime/dns_jsc/dns.rs": "runtime/dns_jsc/dns.rs",
+  "runtime/highway_testing.rs": "runtime/highway_testing.rs",
   "runtime/node/types.rs": "runtime/node/types.rs",
   "runtime/socket/socket.rs": "runtime/socket/socket.rs",
   "runtime/timer/Timer.rs": "runtime/timer/Timer.rs",

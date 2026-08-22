@@ -596,12 +596,23 @@ pub fn last_index_of_any_char(haystack: &[u8], chars: &[u8]) -> Option<usize> {
     found
 }
 
-// `&[u16]` requires
-// 2-byte alignment. Callers with unaligned data must go through the raw extern.
+/// Truncates each code unit to its low byte, writing exactly `input.len()`
+/// bytes to `output`; panics if `output` is shorter (the kernel is never told
+/// its length). `&[u16]` requires 2-byte alignment; callers with unaligned
+/// data must go through the raw extern.
 #[inline(always)]
 pub fn copy_u16_to_u8(input: &[u16], output: &mut [u8]) {
-    // SAFETY: input.ptr/len readable, output.ptr writable for at least input.len() bytes
-    // (caller contract: output.len() >= input.len()).
+    // Runtime check (not just debug): this is a safe wrapper around an FFI
+    // write, so a too-small `output` must panic instead of corrupting memory.
+    assert!(
+        output.len() >= input.len(),
+        "copy_u16_to_u8: output too small ({} bytes for {} input code units)",
+        output.len(),
+        input.len()
+    );
+    // SAFETY: `input` is readable for `input.len()` code units and `output`
+    // is writable for at least that many bytes (asserted above); the kernel
+    // writes exactly `input.len()` bytes and the slices cannot overlap (`&`/`&mut`).
     unsafe { highway_copy_u16_to_u8(input.as_ptr(), input.len(), output.as_mut_ptr()) }
 }
 
@@ -682,13 +693,27 @@ pub fn decode_hex_u16(src: &[u16], dst: &mut [u8]) -> usize {
 
 /// Apply a WebSocket mask to data using SIMD acceleration
 /// If skip_mask is true, data is copied without masking
+///
+/// Writes exactly `input.len()` bytes to `output`; panics if `output` is
+/// shorter (the kernel is never told its length).
 #[inline(always)]
 pub fn fill_with_skip_mask(mask: [u8; 4], output: &mut [u8], input: &[u8], skip_mask: bool) {
+    // Runtime check (not just debug): this is a safe wrapper around an FFI
+    // write, so a too-small `output` must panic instead of corrupting memory.
+    assert!(
+        output.len() >= input.len(),
+        "fill_with_skip_mask: output too small ({} bytes for {} input bytes)",
+        output.len(),
+        input.len()
+    );
     if input.is_empty() {
         return;
     }
 
-    // SAFETY: mask is 4 bytes; input.ptr/len readable; output.ptr writable for input.len() bytes.
+    // SAFETY: mask is 4 readable bytes; `input` is readable for `input.len()`
+    // bytes and `output` is writable for at least that many (asserted above);
+    // the kernel writes exactly `input.len()` bytes and the slices cannot
+    // overlap (`&`/`&mut`).
     unsafe {
         highway_fill_with_skip_mask(
             mask.as_ptr(),

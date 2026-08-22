@@ -1139,7 +1139,7 @@ fn do_resolve(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<J
 /// is a single tag-compare no-op, so unused slots cost effectively nothing.
 struct ResolveDerefOnDrop {
     query_string: BunString,
-    /// Only set when the specifier had a `file://` prefix and we allocated a
+    /// Only set when the specifier had a `file:` prefix and we allocated a
     /// decoded copy. On the fast path the caller's `specifier` is borrowed
     /// directly and this stays empty (no refcount traffic).
     decoded_specifier: BunString,
@@ -1186,10 +1186,10 @@ fn resolve_with_args<const IS_FILE_PATH: bool>(
         result_value: BunString::empty(),
     };
 
-    // Fast path: no `file://` prefix → forward the caller-owned `specifier`
+    // Fast path: no `file:` prefix → forward the caller-owned `specifier`
     // by value without `dupe_ref()`/`deref()` refcount churn. Only the
     // URL-decoded branch produces a string we must release.
-    let specifier_for_resolve = if specifier.has_prefix_comptime(b"file://") {
+    let specifier_for_resolve = if specifier.has_prefix_comptime(b"file:") {
         owned.decoded_specifier = jsc::URL::path_from_file_url(specifier);
         owned.decoded_specifier
     } else {

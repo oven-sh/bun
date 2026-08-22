@@ -136,6 +136,40 @@ it("file url in await import resolves", async () => {
   expect(stdout.toString("utf8")).toBe("1\n");
 });
 
+it("single-slash file: URL resolves like file:// (#39780)", async () => {
+  await using dir = tempDir("fileurl-one-slash", {
+    "mod.mjs": "export const foo = 1;",
+  });
+  const href = pathToFileURL(join(String(dir), "mod.mjs")).href;
+  // WHATWG URL parsing normalizes file:/path to file:///path.
+  const oneSlash = href.replace("file://", "file:");
+  writeFileSync(
+    `${dir}/test.mjs`,
+    `import { foo as staticFoo } from ${JSON.stringify(oneSlash)};
+const { foo } = await import(${JSON.stringify(oneSlash)});
+const resolved = import.meta.resolve(${JSON.stringify(oneSlash)});
+console.log(staticFoo, foo, resolved === ${JSON.stringify(href)});`,
+  );
+
+  const { exitCode, stdout, stderr } = Bun.spawnSync({
+    cmd: [bunExe(), `${dir}/test.mjs`],
+    env: bunEnv,
+    cwd: import.meta.dir,
+  });
+  expect(stderr.toString("utf8")).toBe("");
+  expect(stdout.toString("utf8")).toBe("1 1 true\n");
+  expect(exitCode).toBe(0);
+
+  // Pins the Bun.resolveSync / require path, which decodes the URL in Rust.
+  expect(Bun.resolveSync(oneSlash, String(dir))).toBe(join(String(dir), "mod.mjs"));
+});
+
+it("zero-slash file: specifier parses standalone like in Node (#39780)", () => {
+  // Node parses a file: specifier with no base URL: file:mod.mjs is
+  // file:///mod.mjs, not a sibling of the importer.
+  expect(import.meta.resolve("file:mod.mjs")).toBe("file:///mod.mjs");
+});
+
 it("file url with special characters in await import resolves", async () => {
   const filename = "🅱️ndex.js";
   await using dir = tempDir("file url", {

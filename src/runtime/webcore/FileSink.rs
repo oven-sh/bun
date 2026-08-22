@@ -208,7 +208,13 @@ impl Default for Options {
 impl Options {
     pub(crate) fn flags(&self) -> i32 {
         let _ = self;
-        bun_sys::O::NONBLOCK | bun_sys::O::CLOEXEC | bun_sys::O::CREAT | bun_sys::O::WRONLY
+        // Only path opens reach these flags (fd inputs skip the open), so
+        // stdio/pipe sinks are never truncated.
+        bun_sys::O::NONBLOCK
+            | bun_sys::O::CLOEXEC
+            | bun_sys::O::CREAT
+            | bun_sys::O::WRONLY
+            | bun_sys::O::TRUNC
     }
 }
 

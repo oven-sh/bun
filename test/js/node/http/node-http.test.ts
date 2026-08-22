@@ -4035,6 +4035,58 @@ it("http.Agent with proxyEnv does not write to a literal 'undefined' property", 
   }
 });
 
+it("http.Server exposes _handle like net.Server (null/truthy/null over listen/close)", async () => {
+  // supertest (and other ecosystem code) gates `server.close()` on
+  // `server._handle` being truthy; without it the ephemeral server is never
+  // closed and the process never exits. https://github.com/oven-sh/bun/issues/13087
+  const server = createServer((req, res) => res.end("hi"));
+  try {
+    expect((server as any)._handle).toBeNull();
+
+    server.listen(0);
+    await once(server, "listening");
+    expect((server as any)._handle).toBeTruthy();
+
+    const closed = once(server, "close");
+    server.close();
+    expect((server as any)._handle).toBeNull();
+    await closed;
+    expect((server as any)._handle).toBeNull();
+  } finally {
+    server.close();
+  }
+});
+
+it("process exits after supertest-style server._handle gated close()", async () => {
+  // https://github.com/oven-sh/bun/issues/13087, https://github.com/oven-sh/bun/issues/23648
+  const fixture = /* js */ `
+    const http = require("node:http");
+    const server = http.createServer((req, res) => res.end("hi"));
+    server.listen(0, () => {
+      const port = server.address().port;
+      http.get("http://127.0.0.1:" + port + "/", (res) => {
+        res.resume();
+        res.on("end", () => {
+          // supertest's end(): if (server && server._handle) return server.close(cb); cb();
+          const done = () => console.log("done", server._handle == null ? "ok" : "leaked");
+          if (server && server._handle) server.close(done);
+          else done();
+        });
+      });
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("done ok");
+  expect(exitCode).toBe(0);
+});
+
 it("OutgoingMessage outputData is per-instance and _flushOutput is defined", () => {
   expect(typeof OutgoingMessage.prototype._flushOutput).toBe("function");
 

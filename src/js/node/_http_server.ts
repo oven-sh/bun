@@ -268,6 +268,8 @@ function Server(options, callback): void {
   });
 
   this.listening = false;
+  // supertest et al. branch on `_handle` truthiness; track the Bun.serve instance there.
+  this._handle = null;
   this._unref = false;
   this.timeout = 0;
   this.maxRequestsPerSocket = 0;
@@ -446,6 +448,7 @@ Server.prototype.closeAllConnections = function () {
     return;
   }
   this[serverSymbol] = undefined;
+  this._handle = null;
   clearInterval(this[kConnectionsCheckingInterval]);
   this.listening = false;
 
@@ -480,6 +483,7 @@ Server.prototype.close = function (optionalCallback?) {
     return this;
   }
   this[serverSymbol] = undefined;
+  this._handle = null;
   if (typeof optionalCallback === "function") setCloseCallback(this, optionalCallback);
   this.listening = false;
   server.closeIdleConnections();
@@ -1053,6 +1057,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       },
     });
 
+    this._handle = this[serverSymbol];
     getBunServerAllClosedPromise(this[serverSymbol]).$then(emitCloseNTServer.bind(this));
     applyServerCustomOptions(this);
 

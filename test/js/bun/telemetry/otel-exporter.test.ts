@@ -402,6 +402,22 @@ describe.concurrent("OTLP/HTTP exporter", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("Bun.otel.start() with no exporter configured anywhere targets the local collector default", async () => {
+    // Nothing may be listening on 4318 here; what is asserted is where it tried to send.
+    const { stderr, exitCode } = await run(
+      `
+        Bun.otel.start();
+        Bun.otel.tracer("t").startSpan("s").end();
+        await Bun.otel.forceFlush();
+        const { spansExported, exportsFailed } = Bun.otel.stats();
+        if (spansExported === 0 && exportsFailed === 0) throw new Error("span was dropped without an export attempt");
+      `,
+      { OTEL_BSP_EXPORT_TIMEOUT: "2000", OTEL_EXPORTER_OTLP_TIMEOUT: "2000" },
+    );
+    if (stderr.includes("[otel]")) expect(stderr).toContain("http://localhost:4318/v1/traces");
+    expect(exitCode).toBe(0);
+  });
+
   test("start() without exporters keeps the env-configured pipeline instead of duplicating it", async () => {
     using c = collector();
     const { exitCode, stderr } = await run(

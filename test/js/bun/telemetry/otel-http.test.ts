@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import http from "node:http";
 
 const spans: any[] = [];
@@ -539,6 +539,22 @@ describe("node:http", () => {
     });
     const [client] = byName(await collect(), "bun.http.client");
     expect(client.attributes["url.full"]).toBe(`http://localhost:${server.port}/hr`);
+  });
+});
+
+describe("client.address", () => {
+  test("comes from X-Forwarded-For even when there is no socket peer (unix listener); IPv6 Host is bare", async () => {
+    using dir = tempDir("otel-unix", {});
+    const unix = require("node:path").join(String(dir), "s.sock");
+    using server = Bun.serve({ unix, fetch: () => new Response("x") });
+    await (
+      await fetch("http://[::1]:8080/u", { unix, headers: { "x-forwarded-for": "203.0.113.7, 10.0.0.1" } })
+    ).text();
+    const [srv] = byName(await collect(), "bun.http.server");
+    expect(srv.attributes["client.address"]).toBe("203.0.113.7");
+    expect(srv.attributes["network.peer.address"]).toBeUndefined();
+    expect(srv.attributes["server.address"]).toBe("::1");
+    expect(srv.attributes["server.port"]).toBe(8080);
   });
 });
 

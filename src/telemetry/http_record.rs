@@ -609,15 +609,17 @@ fn peer_text_of(encoded: &[u8]) -> &[u8] {
 
 /// Attributes appended per request rather than templated (see `append_tail`).
 fn tail_attr_count(facts: &Facts) -> u32 {
-    // url.path [+ url.query] [+ client.address + network.peer.address [+ .port]]
-    1 + u32::from(facts.flags & FLAG_HAS_QUERY != 0)
-        + if facts.peer_encoded_attrs != 0 {
-            1 + facts.peer_encoded_attrs as u32
-        } else if !matches!(facts.peer, PeerIp::None) {
-            2 + u32::from(facts.peer_port != 0)
-        } else {
-            0
-        }
+    // url.path [+ url.query] [+ client.address] [+ network.peer.address [+ .port]]
+    let peer_attrs = if facts.peer_encoded_attrs != 0 {
+        facts.peer_encoded_attrs as u32
+    } else if !matches!(facts.peer, PeerIp::None) {
+        1 + u32::from(facts.peer_port != 0)
+    } else {
+        0
+    };
+    // client.address: the forwarded hop (lens[1]) or else the peer.
+    let has_client = facts.lens[1] != 0 || peer_attrs != 0;
+    1 + u32::from(facts.flags & FLAG_HAS_QUERY != 0) + u32::from(has_client) + peer_attrs
 }
 
 /// Attributes the span already carries from the request path (captured
@@ -658,17 +660,19 @@ fn append_tail(
     } else {
         (b"", 0)
     };
-    if !encoded.is_empty() && room != 0 {
-        // semconv: client.address is the client behind any proxies
-        // (X-Forwarded-For / Forwarded), network.peer.* the socket peer.
-        let peer = peer_text_of(encoded);
-        otlp::write_str_kv_small(
-            out,
-            f::ATTRIBUTES,
-            "client.address",
-            if s.client.is_empty() { peer } else { s.client },
-        );
+    // semconv: client.address is the client behind any proxies (X-Forwarded-For
+    // / Forwarded) — also the only identity on a unix-socket listener — and
+    // network.peer.* the socket peer.
+    let client = if s.client.is_empty() {
+        peer_text_of(encoded)
+    } else {
+        s.client
+    };
+    if !client.is_empty() && room != 0 {
+        otlp::write_str_kv_small(out, f::ATTRIBUTES, "client.address", client);
         room -= 1;
+    }
+    if !encoded.is_empty() {
         if room >= n {
             out.extend_from_slice(encoded);
             room -= n;
@@ -767,6 +771,11 @@ fn encode_head(
     );
     if !host.is_empty() {
         let (hname, port) = split_host_port(host);
+        // semconv examples give IPv6 literals bare (as network.peer.address is).
+        let hname = hname
+            .strip_prefix(b"[")
+            .and_then(|h| h.strip_suffix(b"]"))
+            .unwrap_or(hname);
         a.put("server.address", Value::Str(lim(hname)));
         // semconv: required when server.address is set; the scheme default when Host has none.
         let port = port.unwrap_or(if flags & FLAG_HTTPS != 0 { 443 } else { 80 });

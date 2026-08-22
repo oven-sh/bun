@@ -14,8 +14,6 @@ use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{PackageID, Resolution};
 use bun_paths::{self as path, AbsPath, PathBuffer, SEP};
 use bun_semver::{self as Semver, String as SemverString};
-#[cfg(windows)]
-use bun_sys::FdDirExt;
 use bun_sys::{self as sys, Dir, Fd, File};
 
 use crate::bun_progress::Node as ProgressNode;
@@ -107,6 +105,15 @@ pub(crate) unsafe fn get_cache_directory_raw(this: *mut PackageManager) -> Fd {
     fd
 }
 
+/// Absolute path the cache directory was opened from (opens it if needed).
+pub fn get_cache_directory_path(this: &mut PackageManager) -> &'static ZStr {
+    let _ = get_cache_directory(this);
+    // SAFETY: `cache_directory_path` is assigned by `ensure_cache_directory`
+    // before `cache_directory` is set and never reassigned afterwards; the
+    // `PackageManager` singleton lives for the rest of the process.
+    unsafe { bun_ptr::detach_lifetime_ref(this.cache_directory_path.as_zstr()) }
+}
+
 #[inline]
 pub fn get_cache_directory_and_abs_path(this: &mut PackageManager) -> (Fd, AbsPath) {
     let cache_dir = get_cache_directory(this);
@@ -130,13 +137,10 @@ pub fn get_temporary_directory(this: &mut PackageManager) -> &'static TemporaryD
 
 pub struct TemporaryDirectory {
     pub(crate) handle: Dir,
-    #[cfg(windows)]
+    /// Absolute path `handle` was opened from.
     pub(crate) path: ZBox,
-    pub(crate) name: &'static [u8],
 }
 
-// `TemporaryDirectory` is auto-`Send + Sync`: `Dir` wraps `Fd` (an integer),
-// `ZBox` wraps `Box<[u8]>`, and `&'static [u8]` is `Sync`. No `unsafe impl`.
 const _: fn() = || {
     fn assert<T: Send + Sync>() {}
     assert::<TemporaryDirectory>();
@@ -280,38 +284,30 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
     if let Some(timer) = timer.as_mut() {
         let elapsed = timer.read();
         if elapsed > bun_core::time::NS_PER_MS * 100 {
-            let mut path_buf = PathBuffer::uninit();
-            let cache_dir_path: &[u8] = match sys::get_fd_path(cache_directory_fd, &mut path_buf) {
-                Ok(p) => &p[..],
-                Err(_) => b"it",
-            };
             bun_core::pretty_errorln!(
                 "<r><yellow>warn<r>: Slow filesystem detected. If {} is a network drive, consider setting $BUN_INSTALL_CACHE_DIR to a local folder.",
-                bun_fmt::s(cache_dir_path)
+                bun_fmt::s(manager.cache_directory_path.as_bytes())
             );
         }
     }
 
-    #[cfg(windows)]
-    let mut buf = PathBuffer::uninit();
-    #[cfg(windows)]
-    let temp_dir_path = match sys::get_fd_path_z(Fd::from_std_dir(&tempdir), &mut buf) {
-        Ok(p) => p,
-        Err(err) => {
-            Output::err(
-                err,
-                "Failed to read temporary directory path: '{}'",
-                (bun_fmt::s(temp_dir_name),),
-            );
-            Global::exit(1);
-        }
+    let mut path_buf = PathBuffer::uninit();
+    let temp_dir_path = if tried_dot_tmp {
+        path::resolve_path::join_string_buf::<path::platform::Auto>(
+            &mut path_buf.0,
+            &[manager.cache_directory_path.as_bytes(), b".tmp"],
+        )
+    } else {
+        path::resolve_path::join_abs_string_buf::<path::platform::Auto>(
+            FileSystem::instance().top_level_dir(),
+            &mut path_buf.0,
+            &[temp_dir_name],
+        )
     };
 
     TemporaryDirectory {
         handle: tempdir,
-        name: temp_dir_name,
-        #[cfg(windows)]
-        path: ZBox::from_bytes(temp_dir_path.as_bytes()),
+        path: ZBox::from_bytes(temp_dir_path),
     }
 }
 
@@ -781,14 +777,13 @@ pub fn is_package_in_cache(
 // ─────────────────────────── global directories ───────────────────────────────
 
 pub fn setup_global_dir(manager: &mut PackageManager, ctx: &Command::Context) -> Result<(), Error> {
-    manager.options.global_bin_dir = options::open_global_bin_dir(ctx.install.as_deref())?;
-    let mut out_buffer = PathBuffer::uninit();
-    let result = sys::get_fd_path_z(manager.options.global_bin_dir, &mut out_buffer)?;
+    let bin_path = options::make_global_bin_dir(
+        FileSystem::instance().top_level_dir(),
+        ctx.install.as_deref(),
+    )?;
     let path = FileSystem::instance()
         .dirname_store()
-        .append(result.as_bytes_with_nul())?;
-    // SAFETY: `path` includes the trailing NUL (we appended `as_bytes_with_nul`)
-    // and lives for program lifetime in the dirname store.
+        .append(bin_path.as_bytes_with_nul())?;
     manager.options.bin_path = ZStr::from_slice_with_nul(path);
     Ok(())
 }
@@ -802,8 +797,11 @@ pub fn global_link_dir(this: &mut PackageManager) -> Fd {
         return d.fd();
     }
 
-    let global_dir = match options::open_global_dir(this.options.explicit_global_directory) {
-        Ok(d) => Dir::from_fd(d),
+    let (global_dir, global_dir_path) = match options::open_global_dir(
+        FileSystem::instance().top_level_dir(),
+        this.options.explicit_global_directory,
+    ) {
+        Ok(d) => d,
         Err(crate::Error::NoGlobalDirectoryFound) => {
             Output::err_generic(
                 "failed to find a global directory for package caching and global link directories",
@@ -816,13 +814,18 @@ pub fn global_link_dir(this: &mut PackageManager) -> Fd {
             Global::exit(1);
         }
     };
+    let mut buf = PathBuffer::uninit();
+    let link_dir_path = path::resolve_path::join_string_buf::<path::platform::Auto>(
+        &mut buf.0,
+        &[global_dir_path.as_bytes(), b"node_modules"],
+    );
     let link_dir = match global_dir.make_open_path(b"node_modules", Default::default()) {
         Ok(d) => d,
         Err(err) => {
             Output::err(
                 err,
                 "failed to open global link dir node_modules at '{}'",
-                (global_dir.fd(),),
+                (bstr::BStr::new(link_dir_path),),
             );
             Global::exit(1);
         }
@@ -830,27 +833,14 @@ pub fn global_link_dir(this: &mut PackageManager) -> Fd {
     let link_fd = link_dir.fd();
     this.global_dir = Some(global_dir);
     this.global_link_dir = Some(link_dir);
-    let mut buf = PathBuffer::uninit();
-    let path_ = match sys::get_fd_path(link_fd, &mut buf) {
-        Ok(p) => p,
-        Err(err) => {
-            Output::err(
-                err,
-                "failed to get the full path of the global directory",
-                (),
-            );
-            Global::exit(1);
-        }
-    };
-    this.global_link_dir_path = Box::<[u8]>::from(bun_core::handle_oom(
-        FileSystem::instance().dirname_store().append(path_),
-    ));
+    this.global_link_dir_path =
+        bun_core::handle_oom(FileSystem::instance().dirname_store().append(link_dir_path));
     link_fd
 }
 
-pub fn global_link_dir_path(this: &mut PackageManager) -> &[u8] {
+pub fn global_link_dir_path(this: &mut PackageManager) -> &'static [u8] {
     let _ = global_link_dir(this);
-    &this.global_link_dir_path
+    this.global_link_dir_path
 }
 
 // ────────────────────────── cached path resolution ────────────────────────────
@@ -939,6 +929,8 @@ pub struct CacheDirAndSubpath<'a> {
     /// Borrowed view: the descriptor is owned by the `PackageManager` singleton
     /// (or is `Fd::cwd()`); callers must not close it.
     pub(crate) cache_dir: Fd,
+    /// Absolute path `cache_dir` was opened from.
+    pub(crate) cache_dir_path: &'static [u8],
     pub(crate) cache_dir_subpath: &'a ZStr,
 }
 
@@ -953,6 +945,7 @@ pub fn compute_cache_dir_and_subpath<'a>(
 ) -> CacheDirAndSubpath<'a> {
     let name = pkg_name;
     let mut cache_dir = Fd::cwd();
+    let mut cache_dir_path = FileSystem::instance().top_level_dir();
     let mut cache_dir_subpath: &ZStr = ZStr::EMPTY;
 
     match resolution.tag {
@@ -960,16 +953,19 @@ pub fn compute_cache_dir_and_subpath<'a>(
             let version = resolution.npm().version;
             cache_dir_subpath = cached_npm_package_folder_name(manager, name, version, patch_hash);
             cache_dir = get_cache_directory(manager);
+            cache_dir_path = get_cache_directory_path(manager).as_bytes();
         }
         ResolutionTag::Git => {
             let git = resolution.git();
             cache_dir_subpath = cached_git_folder_name(manager, git, patch_hash);
             cache_dir = get_cache_directory(manager);
+            cache_dir_path = get_cache_directory_path(manager).as_bytes();
         }
         ResolutionTag::Github => {
             let github = resolution.github();
             cache_dir_subpath = cached_github_folder_name(manager, github, patch_hash);
             cache_dir = get_cache_directory(manager);
+            cache_dir_path = get_cache_directory_path(manager).as_bytes();
         }
         ResolutionTag::Folder => {
             let buf = manager.lockfile.buffers.string_bytes.as_slice();
@@ -990,11 +986,13 @@ pub fn compute_cache_dir_and_subpath<'a>(
             let tarball = *resolution.local_tarball();
             cache_dir_subpath = cached_tarball_folder_name(manager, tarball, patch_hash);
             cache_dir = get_cache_directory(manager);
+            cache_dir_path = get_cache_directory_path(manager).as_bytes();
         }
         ResolutionTag::RemoteTarball => {
             let tarball = *resolution.remote_tarball();
             cache_dir_subpath = cached_tarball_folder_name(manager, tarball, patch_hash);
             cache_dir = get_cache_directory(manager);
+            cache_dir_path = get_cache_directory_path(manager).as_bytes();
         }
         ResolutionTag::Workspace => {
             let buf = manager.lockfile.buffers.string_bytes.as_slice();
@@ -1039,6 +1037,7 @@ pub fn compute_cache_dir_and_subpath<'a>(
                 let len = off;
                 cache_dir_subpath = ZStr::from_buf(folder_path_buf, len);
                 cache_dir = directory;
+                cache_dir_path = global_link_dir;
             }
         }
         _ => {}
@@ -1046,6 +1045,7 @@ pub fn compute_cache_dir_and_subpath<'a>(
 
     CacheDirAndSubpath {
         cache_dir,
+        cache_dir_path,
         cache_dir_subpath,
     }
 }

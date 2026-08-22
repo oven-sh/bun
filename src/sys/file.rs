@@ -332,11 +332,6 @@ impl File {
         let _ = self.close(); // close error is non-actionable; discarded
         result
     }
-    /// `bun.sys.File.getPath` — `getFdPath(self.handle, buf)`.
-    #[inline]
-    pub fn get_path<'a>(&self, buf: &'a mut bun_paths::PathBuffer) -> Maybe<&'a [u8]> {
-        get_fd_path(self.handle, buf).map(|s| &*s)
-    }
 
     // ── one-shot path helpers (open + io + close) ───────────────────────
     /// Open + read + close. Accepts `&[u8]`; `&ZStr` callers deref-coerce.

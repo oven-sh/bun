@@ -210,37 +210,11 @@ impl Scripts {
         let (first_index, total, scripts) =
             self.get_script_entries(lockfile_buf, resolution_tag, add_node_gyp_rebuild_script);
         if first_index != -1 {
-            #[cfg(windows)]
-            let mut cwd_buf = bun_paths::PathBuffer::uninit();
-
-            #[cfg(not(windows))]
-            let cwd: &[u8] = cwd_.slice();
-
-            #[cfg(windows)]
-            let cwd: &[u8] = 'brk: {
-                let Ok(cwd_handle) =
-                    bun_sys::open_dir_no_renaming_or_deleting_windows(Fd::INVALID, cwd_.slice_z())
-                else {
-                    break 'brk cwd_.slice();
-                };
-                // Resolve the canonical path, then close the directory HANDLE.
-                // (`Fd` is `Copy` with no `Drop`, so without this explicit
-                // close one kernel directory HANDLE leaks per script-bearing
-                // package.)
-                let path = bun_sys::get_fd_path(cwd_handle, &mut cwd_buf);
-                let _ = bun_sys::close(cwd_handle);
-                match path {
-                    Ok(p) => p,
-                    Err(_) => cwd_.slice(),
-                }
-            };
-
             return Some(List {
                 items: scripts,
                 first_index: u8::try_from(first_index).expect("int cast"),
                 total,
-                // Owned NUL-terminated copy.
-                cwd: ZBox::from_bytes(cwd),
+                cwd: ZBox::from_bytes(cwd_.slice()),
                 package_name: Box::<[u8]>::from(package_name),
             });
         }

@@ -192,6 +192,20 @@ impl DirInfo {
         self.flags.contains(Flags::InsideNodeModules)
     }
 
+    /// `abs_real_path` if a symlink was resolved along the way, else `abs_path`,
+    /// without the trailing separator directory paths are cached with (a
+    /// filesystem root keeps its own).
+    #[inline]
+    pub fn real_path(&self) -> &'static [u8] {
+        bun_paths::string_paths::without_trailing_slash_windows_path(
+            if self.abs_real_path.is_empty() {
+                self.abs_path
+            } else {
+                self.abs_real_path
+            },
+        )
+    }
+
     /// Read-only view of `package_json`. The field stores `NonNull` to preserve
     /// mut-provenance; callers that only read go through here.
     #[inline]

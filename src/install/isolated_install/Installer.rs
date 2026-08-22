@@ -987,51 +987,18 @@ impl Task {
 
                                     InstallMethod::Copyfile => {
                                         #[cfg(windows)]
-                                        let mut src_path = OsAutoAbsPath::init();
+                                        let src_path = {
+                                            let mut src_path =
+                                                OsAutoAbsPath::init_top_level_dir_long_path();
+                                            if pkg_res.tag == ResolutionTag::Folder {
+                                                let _ = src_path.append_join(
+                                                    pkg_res.folder().slice(string_buf),
+                                                );
+                                            }
+                                            src_path
+                                        };
                                         #[cfg(not(windows))]
                                         let src_path = OsAutoAbsPath::init();
-
-                                        #[cfg(windows)]
-                                        {
-                                            // Hoist a single `&mut [u16]` borrow so the raw pointer
-                                            // and length come from the SAME reborrow — calling
-                                            // `src_path.buf()` twice in the FFI arg list would take
-                                            // a fresh `&mut` for the len, invalidating the `*mut u16`
-                                            // derived from the first call under Stacked Borrows.
-                                            let buf = src_path.buf();
-                                            let cap = buf.len();
-                                            let ptr = buf.as_mut_ptr();
-                                            // SAFETY: FFI — `folder_dir` is an open handle; `ptr`
-                                            // points into a writable WPathBuffer of `cap` elements.
-                                            let src_path_len = unsafe {
-                                                bun_sys::windows::GetFinalPathNameByHandleW(
-                                                    folder_dir.native(),
-                                                    ptr,
-                                                    u32::try_from(cap).expect("int cast"),
-                                                    0,
-                                                )
-                                            };
-
-                                            if src_path_len == 0 || src_path_len as usize >= cap {
-                                                use bun_sys::windows::Win32ErrorExt as _;
-                                                let err: sys::SystemErrno = if src_path_len == 0 {
-                                                    bun_sys::windows::Win32Error::get()
-                                                        .to_system_errno()
-                                                        .unwrap_or(sys::SystemErrno::EUNKNOWN)
-                                                } else {
-                                                    sys::SystemErrno::ENAMETOOLONG
-                                                };
-                                                return Ok(Yield::failure(TaskError::LinkPackage(
-                                                    sys::Error {
-                                                        errno: err as _,
-                                                        syscall: sys::Tag::copyfile,
-                                                        ..Default::default()
-                                                    },
-                                                )));
-                                            }
-
-                                            src_path.set_length(src_path_len as usize);
-                                        }
 
                                         let mut dest = OsAutoPath::init();
                                         installer.append_store_path(&mut dest, self.entry_id);
@@ -2764,7 +2731,7 @@ impl<'a> Installer<'a> {
                 // threads, so the lazy init is hoisted to the main-thread caller
                 // (`isolated_install::install_packages`, before any `start_task`).
                 // Reading the cached field here is then equivalent.
-                let symlink_dir_path: &[u8] = &self.manager().global_link_dir_path;
+                let symlink_dir_path: &[u8] = self.manager().global_link_dir_path;
                 debug_assert!(
                     !symlink_dir_path.is_empty(),
                     "global_link_dir_path must be ensured before tasks start",

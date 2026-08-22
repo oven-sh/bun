@@ -46,7 +46,8 @@ struct Folder {
 }
 
 struct Entry<'a> {
-    dir: &'a Dir,
+    /// The folder holding this entry, relative to the cwd.
+    dir_path: &'a [u8],
     alias: &'a [u8],
     name: &'a [u8],
     kind: EntryKind,
@@ -1393,27 +1394,8 @@ fn open_real_subdir(dir: &Dir, name: &[u8]) -> Option<Dir> {
         .ok()
 }
 
-#[cfg(not(windows))]
 fn lstat_kind(dir: &Dir, name: &[u8]) -> EntryKind {
     match sys::lstatat(dir.fd(), ZStr::from_slice_with_nul(&zname(name))) {
-        Ok(st) => sys::kind_from_mode(st.st_mode as sys::Mode),
-        Err(_) => EntryKind::Unknown,
-    }
-}
-
-// `sys::lstatat` fstats the opened reparse point, which reports junctions as directories.
-#[cfg(windows)]
-fn lstat_kind(dir: &Dir, name: &[u8]) -> EntryKind {
-    let mut dir_buf = bun_paths::path_buffer_pool::get();
-    let Ok(dir_path) = dir.get_fd_path(&mut dir_buf) else {
-        return EntryKind::Unknown;
-    };
-    let mut path_buf = bun_paths::path_buffer_pool::get();
-    let path = bun_paths::resolve_path::join_string_buf_z::<bun_paths::platform::Auto>(
-        &mut path_buf[..],
-        &[&*dir_path, name],
-    );
-    match sys::lstat(path) {
         Ok(st) => sys::kind_from_mode(st.st_mode as sys::Mode),
         Err(_) => EntryKind::Unknown,
     }
@@ -1465,7 +1447,7 @@ fn scan_folder(
                 alias.push(b'/');
                 alias.extend_from_slice(&inner);
                 let entry = Entry {
-                    dir: &scope_dir,
+                    dir_path: &scope_path,
                     alias: &alias,
                     name: &inner,
                     kind: inner_kind,
@@ -1479,7 +1461,7 @@ fn scan_folder(
             continue;
         }
         let entry = Entry {
-            dir: &dir,
+            dir_path: folder_path,
             alias: &name,
             name: &name,
             kind,
@@ -1717,7 +1699,7 @@ fn plan_isolated(
                     || (entry.kind != EntryKind::SymLink && contains(workspace_names, entry.alias))
                     || public_hoist_matches(manager, entry.alias)
                     || (entry.kind == EntryKind::SymLink
-                        && store_link_target(entry.dir, entry.name)
+                        && store_link_target(&join(entry.dir_path, entry.name))
                             .is_some_and(|target| contains(&removed_store, &target)))
             },
             plan,
@@ -1731,16 +1713,18 @@ fn layout_mismatch(plan: &Plan, layout: Layout, store_present: bool) -> bool {
         Layout::Isolated => {
             !store_present && plan.removals.iter().any(|r| r.kind == EntryKind::Directory)
         }
-        Layout::Hoisted => plan.removals.iter().any(|r| {
-            r.kind == EntryKind::SymLink && store_link_target(plan.dir(r.folder), &r.name).is_some()
-        }),
+        Layout::Hoisted => plan
+            .removals
+            .iter()
+            .any(|r| r.kind == EntryKind::SymLink && store_link_target(&plan.path(r)).is_some()),
     }
 }
 
-fn store_link_target(dir: &Dir, name: &[u8]) -> Option<Box<[u8]>> {
-    let z = zname(name);
+/// `link_path` is relative to the cwd.
+fn store_link_target(link_path: &[u8]) -> Option<Box<[u8]>> {
+    let z = zname(link_path);
     let mut buf = bun_paths::path_buffer_pool::get();
-    let len = sys::readlinkat(dir.fd(), ZStr::from_slice_with_nul(&z), buf.as_mut_slice()).ok()?;
+    let len = sys::readlink(ZStr::from_slice_with_nul(&z), buf.as_mut_slice()).ok()?;
     let mut components = strings::tokenize_any(&buf.as_slice()[..len], b"/\\");
     while let Some(component) = components.next() {
         if component == b".bun" {

@@ -2,16 +2,16 @@ use bstr::BStr;
 
 use bun_core::strings;
 use bun_core::{Global, Output};
-use bun_paths::{AbsPath, PathBuffer, platform, resolve_path};
-use bun_sys::{self as sys, Dir, Fd, FdDirExt};
+use bun_paths::{AbsPath, PathBuffer, path_options::AssumeOk, platform, resolve_path};
+use bun_sys::{self as sys, Dir};
 
 use bun_install::Features;
 use bun_install::bin as stub_bin;
 use bun_install::bin_real as bin;
 use bun_install::lockfile_real::{Lockfile, package::Package};
 use bun_install::package_manager_real::{
-    self as pm, CommandLineArguments, Subcommand, attempt_to_create_package_json,
-    global_link_dir_path, options::LogLevel, package_manager_options, setup_global_dir,
+    self as pm, CommandLineArguments, Subcommand, attempt_to_create_package_json, global_link_dir,
+    global_link_dir_path, options::LogLevel, setup_global_dir,
 };
 
 use crate::command::ContextData;
@@ -135,36 +135,10 @@ fn unlink(ctx: &mut ContextData) -> crate::Result<()> {
         }
 
         // Step 2. Setup the global directory
-        let node_modules: Dir = 'brk: {
-            bin::Linker::ensure_umask();
-            let explicit_global_dir: &[u8] = match &ctx.install {
-                Some(install_) => install_.global_dir.as_deref().unwrap_or(b""),
-                None => b"",
-            };
-            manager.global_dir = Some(Dir::from_fd(package_manager_options::open_global_dir(
-                explicit_global_dir,
-            )?));
-
-            setup_global_dir(manager, &&mut *ctx)?;
-
-            match manager
-                .global_dir
-                .as_ref()
-                .unwrap()
-                .make_open_path(b"node_modules", Default::default())
-            {
-                Ok(d) => break 'brk d,
-                Err(e) => {
-                    if manager.options.log_level != LogLevel::Silent {
-                        bun_core::pretty_errorln!(
-                            "<r><red>error:<r> failed to create node_modules in global dir due to error {}",
-                            BStr::new(e.name()),
-                        );
-                    }
-                    Global::crash();
-                }
-            }
-        };
+        bin::Linker::ensure_umask();
+        setup_global_dir(manager, &&mut *ctx)?;
+        let node_modules_fd = global_link_dir(manager);
+        let node_modules = Dir::borrow(&node_modules_fd);
 
         // Step 3b. Link any global bins
         if package.bin.tag != stub_bin::Tag::None {
@@ -173,29 +147,10 @@ fn unlink(ctx: &mut ContextData) -> crate::Result<()> {
             let mut link_rel_buf = PathBuffer::uninit();
 
             // `target_node_modules_path` (`&`) and `node_modules_path` (`&mut`)
-            // cannot alias the same value, so resolve the fd path twice
-            // (cheap: one `getFdPath` syscall) into two independent `AbsPath`
-            // buffers.
-            let mut node_modules_path =
-                match <AbsPath>::init_fd_path(Fd::from_std_dir(&node_modules)) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        if manager.options.log_level != LogLevel::Silent {
-                            Output::err(e, "failed to link binary", ());
-                        }
-                        Global::crash();
-                    }
-                };
-            let target_node_modules_path =
-                match <AbsPath>::init_fd_path(Fd::from_std_dir(&node_modules)) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        if manager.options.log_level != LogLevel::Silent {
-                            Output::err(e, "failed to link binary", ());
-                        }
-                        Global::crash();
-                    }
-                };
+            // cannot alias the same value, so build two independent `AbsPath` buffers.
+            let global_link_dir_path = global_link_dir_path(manager);
+            let mut node_modules_path = <AbsPath>::from(global_link_dir_path).assume_ok();
+            let target_node_modules_path = <AbsPath>::from(global_link_dir_path).assume_ok();
 
             let mut bin_linker = bin::Linker {
                 target_node_modules_path: &raw const target_node_modules_path,

@@ -1689,3 +1689,82 @@ describe.concurrent("dot specifiers resolve to the directory index, not a siblin
     expect(exitCode).toBe(0);
   });
 });
+
+// File symlinks need elevation on Windows CI; the resolver code path is shared.
+describe.skipIf(isWindows)("--preserve-symlinks", () => {
+  // app/link.mjs -> ../real/entry.mjs; entry imports ./deplink.mjs, which is a
+  // symlink both next to the link (app/deplink.mjs) and next to the target
+  // (real/deplink.mjs -> dep.mjs). Which one is loaded, and under which URL,
+  // depends on whether the entry and/or other modules preserve symlinks —
+  // matching `node --preserve-symlinks[-main]`.
+  const fixture = {
+    "real/dep.mjs": `export const depUrl = import.meta.url;`,
+    "real/entry.mjs": `import { depUrl } from "./deplink.mjs";
+      const rel = s => String(s).slice(String(s).indexOf("/", "file:///".length + 1)).split("/").slice(-2).join("/");
+      console.log(JSON.stringify({ entry: rel(import.meta.url), main: import.meta.main, dep: rel(depUrl) }));`,
+  };
+  async function run(flags: string[]) {
+    using dir = tempDir("preserve-symlinks", fixture);
+    const root = String(dir);
+    mkdirSync(join(root, "app"));
+    symlinkSync(join(root, "real/entry.mjs"), join(root, "app/link.mjs"));
+    symlinkSync(join(root, "real/dep.mjs"), join(root, "app/deplink.mjs"));
+    symlinkSync("dep.mjs", join(root, "real/deplink.mjs"));
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...flags, "./link.mjs"],
+      env: bunEnv,
+      cwd: join(root, "app"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout);
+  }
+
+  test("default follows every symlink", async () => {
+    expect(await run([])).toEqual({ entry: "real/entry.mjs", main: true, dep: "real/dep.mjs" });
+  });
+  test("--preserve-symlinks keeps non-entry modules at the symlink path", async () => {
+    expect(await run(["--preserve-symlinks"])).toEqual({
+      entry: "real/entry.mjs",
+      main: true,
+      dep: "real/deplink.mjs",
+    });
+  });
+  test("--preserve-symlinks-main keeps only the entry at the symlink path", async () => {
+    expect(await run(["--preserve-symlinks-main"])).toEqual({ entry: "app/link.mjs", main: true, dep: "real/dep.mjs" });
+  });
+  test("both flags keep everything at the symlink path", async () => {
+    expect(await run(["--preserve-symlinks", "--preserve-symlinks-main"])).toEqual({
+      entry: "app/link.mjs",
+      main: true,
+      dep: "app/deplink.mjs",
+    });
+  });
+
+  test("--preserve-symlinks-main with the entry under a symlinked directory still follows that directory for other modules", async () => {
+    using dir = tempDir("preserve-symlinks-dir", {
+      "real/pkg/bin.mjs": `const dep = await import("./dep.mjs");
+        const again = await import(process.argv[2]);
+        const rel = s => String(s).split("/").slice(-3).join("/");
+        console.log(JSON.stringify({ entry: rel(import.meta.path), dep: rel(dep.url), same: dep === again }));`,
+      "real/pkg/dep.mjs": `export const url = import.meta.url;`,
+    });
+    const root = String(dir);
+    mkdirSync(join(root, "app", "node_modules"), { recursive: true });
+    symlinkSync(join(root, "real", "pkg"), join(root, "app", "node_modules", "pkg"));
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--preserve-symlinks-main", "./node_modules/pkg/bin.mjs", join(root, "real", "pkg", "dep.mjs")],
+      env: bunEnv,
+      cwd: join(root, "app"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ entry: "node_modules/pkg/bin.mjs", dep: "real/pkg/dep.mjs", same: true });
+    expect(exitCode).toBe(0);
+  });
+});

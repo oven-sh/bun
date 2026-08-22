@@ -64,12 +64,22 @@ pub fn is_windows_absolute_path_missing_drive_letter<T: Ch + From<u8>>(chars: &[
     bun_core::strings::is_windows_absolute_path_missing_drive_letter(chars)
 }
 
+/// UTF-16 → UTF-8, dropping a Win32 `\\?\` namespace prefix (`\\?\UNC\x`
+/// becomes `\\x`).
 pub fn from_w_path<'a>(buf: &'a mut [u8], utf16: &[u16]) -> &'a ZStr {
     debug_assert!(!buf.is_empty());
-    let to_copy = strings::trim_prefix_comptime::<u16>(utf16, &windows::LONG_PATH_PREFIX);
+    let (start, to_copy) = if utf16.starts_with(bun_core::w!("\\\\?\\UNC\\")) {
+        buf[..2].copy_from_slice(b"\\\\");
+        (2, &utf16[8..])
+    } else {
+        (
+            0,
+            strings::trim_prefix_comptime::<u16>(utf16, &windows::LONG_PATH_PREFIX),
+        )
+    };
     let last = buf.len() - 1;
-    let encode_into_result = strings::copy_utf16_into_utf8(&mut buf[..last], to_copy);
-    let written = encode_into_result.written as usize;
+    let encode_into_result = strings::copy_utf16_into_utf8(&mut buf[start..last], to_copy);
+    let written = start + encode_into_result.written as usize;
     debug_assert!(written < buf.len());
     buf[written] = 0;
     ZStr::from_buf(buf, written)
@@ -352,6 +362,18 @@ pub fn to_kernel32_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
         wbuf[..4].copy_from_slice(&windows::LONG_PATH_PREFIX);
         let n = to_w_path(&mut wbuf[4..], path).len();
         return wstr_in_buf(wbuf, n + 4);
+    }
+    // `\\server\share\…` → `\\?\UNC\server\share\…`
+    if utf8.len() > 2
+        && resolve_path::is_sep_any(utf8[0])
+        && resolve_path::is_sep_any(utf8[1])
+        && !resolve_path::is_sep_any(utf8[2])
+        && utf8[2] != b'.'
+        && utf8[2] != b'?'
+    {
+        wbuf[..8].copy_from_slice(bun_core::w!("\\\\?\\UNC\\"));
+        let n = to_w_path(&mut wbuf[8..], &utf8[2..]).len();
+        return wstr_in_buf(wbuf, n + 8);
     }
     to_w_path(wbuf, path)
 }

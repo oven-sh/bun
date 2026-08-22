@@ -46,9 +46,9 @@ use bun_paths::PathBuffer;
 use bun_paths::platform;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 use bun_paths::resolve_path::join_z_buf_spill;
+use bun_sys::{self as sys, E, Tag};
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
-use bun_sys::FdExt;
-use bun_sys::{self as sys, E, Fd, Tag};
+use bun_sys::{Fd, FdExt};
 use bun_threading::Mutex;
 #[cfg(not(windows))]
 use bun_wyhash::hash;
@@ -437,38 +437,29 @@ pub(crate) fn watch(
 
     let manager = PathWatcherManager::get()?;
 
+    // inotify checks read permission itself when the watch is added; the
+    // kqueue/FSEvents backends never open the path, so do it here to report
+    // EACCES up front as Node does.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    let st = sys::stat(path);
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    let st = sys::open(path, sys::O::RDONLY | sys::O::CLOEXEC, 0).and_then(|fd| {
+        let st = sys::fstat(fd);
+        let _ = sys::close(fd);
+        st
+    });
+    let is_file = match st {
+        Ok(st) => !sys::S::ISDIR(st.st_mode as _),
+        Err(e) => return Err(e.without_path()),
+    };
     // Resolve to a canonical path so `fs.watch("./x")` and `fs.watch("/abs/x")` dedup;
     // FSEvents reports events by realpath so macOS needs this for prefix matching too.
-    //
-    // Open with O_PATH|O_DIRECTORY first and retry without O_DIRECTORY on ENOTDIR —
-    // that tells us file-vs-dir without a separate stat, follows symlinks, and the
-    // resulting fd feeds `getFdPath` for the realpath. One or two syscalls instead
-    // of lstat + open + (stat) in the old code. `O.PATH` is 0 on macOS (degrades to
-    // O_RDONLY, which is what F_GETPATH needs anyway).
     let mut resolve_buf = path::path_buffer_pool::get();
-    let mut is_file = false;
-    let probe_fd: Fd = match sys::open(path, sys::O::PATH | sys::O::DIRECTORY | sys::O::CLOEXEC, 0)
-    {
-        Ok(f) => f,
-        Err(e) => {
-            if e.get_errno() == E::ENOTDIR {
-                is_file = true;
-                match sys::open(path, sys::O::PATH | sys::O::CLOEXEC, 0) {
-                    Ok(f) => f,
-                    Err(e2) => return Err(e2.without_path()),
-                }
-            } else {
-                return Err(e.without_path());
-            }
-        }
-    };
-    let _close_probe = sys::CloseOnDrop::new(probe_fd);
-    let resolved: &ZStr = match sys::get_fd_path(probe_fd, &mut resolve_buf) {
+    let resolved: &ZStr = match sys::realpath(path, &mut resolve_buf) {
         Err(_) => path, // fall back to the caller's path; best effort
         Ok(r) => {
             let len = r.len();
             resolve_buf[len] = 0;
-            // SAFETY: resolve_buf[len] == 0 written above; buf lives for the rest of this fn.
             ZStr::from_buf(&resolve_buf[..], len)
         }
     };

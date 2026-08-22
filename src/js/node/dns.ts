@@ -1,5 +1,6 @@
 // Hardcoded module "node:dns"
 const dns = Bun.dns;
+let activeHandles;
 const utilPromisifyCustomSymbol = Symbol.for("nodejs.util.promisify.custom");
 const { isIP } = require("internal/net/isIP");
 const { guardCallback } = require("internal/shared");
@@ -322,9 +323,12 @@ function lookup(hostname, options, callback) {
   }
 
   callback = guardCallback(callback);
-  dns
-    .lookup(hostname, options)
+  const promise = dns.lookup(hostname, options);
+  activeHandles ??= require("internal/active_handles");
+  const reqWrap = activeHandles.noteRequestStart(new activeHandles.GetAddrInfoReqWrap(), "GetAddrInfoReqWrap");
+  promise
     .then(res => {
+      activeHandles.noteRequestEnd(reqWrap);
       throwIfEmpty(res);
 
       if (options.order == "ipv4first") {
@@ -341,6 +345,7 @@ function lookup(hostname, options, callback) {
       }
     })
     .catch(err => {
+      activeHandles.noteRequestEnd(reqWrap);
       if (err.code?.startsWith("DNS_")) err.code = err.code.slice(4);
       // Node.js getaddrinfo errors (DNSException) carry the looked-up
       // hostname both as a property and at the end of the message.
@@ -366,11 +371,16 @@ function lookupService(address, port, callback) {
   validatePort(port, "port");
 
   callback = guardCallback(callback);
-  dns.lookupService(address, +port).then(
+  const promise = dns.lookupService(address, +port);
+  activeHandles ??= require("internal/active_handles");
+  const reqWrap = activeHandles.noteRequestStart(new activeHandles.GetNameInfoReqWrap(), "GetNameInfoReqWrap");
+  promise.then(
     results => {
+      activeHandles.noteRequestEnd(reqWrap);
       callback(null, ...results);
     },
     error => {
+      activeHandles.noteRequestEnd(reqWrap);
       callback(withTranslatedError(error));
     },
   );
@@ -801,10 +811,23 @@ const promises = {
       return Promise.$resolve(options.all ? [obj] : obj);
     }
 
+    const promise = dns.lookup(hostname, options);
+    activeHandles ??= require("internal/active_handles");
+    const reqWrap = activeHandles.noteRequestStart(new activeHandles.GetAddrInfoReqWrap(), "GetAddrInfoReqWrap");
+    const settled = promise.then(
+      res => {
+        activeHandles.noteRequestEnd(reqWrap);
+        return res;
+      },
+      err => {
+        activeHandles.noteRequestEnd(reqWrap);
+        throw err;
+      },
+    );
     if (options.all) {
-      return translateErrorCode(dns.lookup(hostname, options).then(promisifyLookupAll(options.order)));
+      return translateErrorCode(settled.then(promisifyLookupAll(options.order)));
     }
-    return translateErrorCode(dns.lookup(hostname, options).then(promisifyLookup(options.order)));
+    return translateErrorCode(settled.then(promisifyLookup(options.order)));
   },
 
   lookupService(address, port) {
@@ -816,7 +839,20 @@ const promises = {
     validatePort(port, "port");
 
     try {
-      return translateErrorCode(dns.lookupService(address, +port)).then(([hostname, service]) => ({
+      const promise = dns.lookupService(address, +port);
+      activeHandles ??= require("internal/active_handles");
+      const reqWrap = activeHandles.noteRequestStart(new activeHandles.GetNameInfoReqWrap(), "GetNameInfoReqWrap");
+      const settled = promise.then(
+        res => {
+          activeHandles.noteRequestEnd(reqWrap);
+          return res;
+        },
+        err => {
+          activeHandles.noteRequestEnd(reqWrap);
+          throw err;
+        },
+      );
+      return translateErrorCode(settled).then(([hostname, service]) => ({
         hostname,
         service,
       }));

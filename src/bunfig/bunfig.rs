@@ -1563,6 +1563,10 @@ impl<'a> Parser<'a> {
             install.hoist = Some(v);
         }
 
+        if let Some(v) = install_obj.get(b"offline").and_then(|e| e.as_bool()) {
+            install.offline = Some(v);
+        }
+
         Ok(())
     }
 

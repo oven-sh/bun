@@ -18,6 +18,7 @@
 #include "JSReadableStream.h"
 #include "JSReadableStreamDefaultReader.h"
 #include "JSStreamsRuntime.h"
+#include "ObjectBindings.h"
 #include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
@@ -777,10 +778,10 @@ static JSValue intoArrayLoop(JSC::VM& vm, JSGlobalObject* globalObject, WebCore:
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* domGlobalObject = defaultGlobalObject(globalObject);
+    auto* runtime = JSStreamsRuntime::from(globalObject);
     JSValue many = manyResult;
     while (true) {
         if (auto* manyPromise = dynamicDowncast<JSPromise>(many)) {
-            auto* runtime = JSStreamsRuntime::from(globalObject);
             auto* context = InternalFieldTuple::create(vm, domGlobalObject->internalFieldTupleStructure(), reader, chunks);
             auto* derived = JSPromise::create(vm, globalObject->promiseStructure());
             manyPromise->performPromiseThenWithContext(vm, globalObject, runtime->onIntoArrayReadManyFulfilled(), runtime->onIntoArrayReadManyRejected(), derived, context);
@@ -791,9 +792,7 @@ static JSValue intoArrayLoop(JSC::VM& vm, JSGlobalObject* globalObject, WebCore:
             throwTypeError(globalObject, scope, "readMany() did not return an object"_s);
             return {};
         }
-        JSValue doneValue = result->get(globalObject, vm.propertyNames->done);
-        RETURN_IF_EXCEPTION(scope, {});
-        JSValue value = result->get(globalObject, vm.propertyNames->value);
+        auto [doneValue, value] = runtime->readManyResult(globalObject, result);
         RETURN_IF_EXCEPTION(scope, {});
         if (auto* valueArray = dynamicDowncast<JSArray>(value)) {
             unsigned valueLength = valueArray->length();
@@ -1555,9 +1554,7 @@ static bool intoArrayStep(JSC::VM& vm, JSGlobalObject* globalObject, JSReadableS
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!readResult.isObject()) [[unlikely]]
         return true;
-    JSValue done = asObject(readResult)->get(globalObject, vm.propertyNames->done);
-    RETURN_IF_EXCEPTION(scope, true);
-    JSValue value = asObject(readResult)->get(globalObject, vm.propertyNames->value);
+    auto [done, value] = Bun::getIteratorResult(globalObject, asObject(readResult));
     RETURN_IF_EXCEPTION(scope, true);
     if (done.toBoolean(globalObject))
         return true;
@@ -1622,7 +1619,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onDirectConsumeLoopReadFulfilled, (
     auto* context = uncheckedDowncast<InternalFieldTuple>(callFrame->uncheckedArgument(1));
     bool done = false;
     if (JSObject* result = callFrame->argument(0).getObject()) {
-        JSValue doneValue = result->get(globalObject, vm.propertyNames->done);
+        JSValue doneValue = Bun::getIteratorResult(globalObject, result).first;
         RETURN_IF_EXCEPTION(scope, {});
         done = doneValue.toBoolean(globalObject);
     }

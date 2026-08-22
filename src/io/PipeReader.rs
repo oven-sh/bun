@@ -1233,7 +1233,18 @@ impl WindowsBufferedReader {
         let limit = self.limit;
         // Never empty: reads are only issued while the limit has not been reached (`start_reading`, `on_read`), and libuv treats an empty buffer as an error.
         debug_assert!(!limit.reached());
-        self._buffer.reserve(limit.clamp_len(suggested_size));
+        let size = limit.clamp_len(suggested_size);
+        // Tty reads must not target `_buffer`: libuv can retain the pointer
+        // past reader teardown (see `uv::Tty::read_scratch` for the contract).
+        if matches!(self.source, Some(Source::Tty(_))) {
+            let scratch = self
+                .source
+                .as_mut()
+                .and_then(|s| s.tty_read_scratch(size))
+                .expect("tty source matched above");
+            return MaxBuf::clamp_read_buf(maxbuf, limit.clamp(scratch));
+        }
+        self._buffer.reserve(size);
         // SAFETY: returning spare capacity for libuv to write into; len updated in on_read.
         let buf = unsafe { bun_core::vec::spare_bytes_mut(&mut self._buffer) };
         MaxBuf::clamp_read_buf(maxbuf, limit.clamp(buf))
@@ -1396,7 +1407,22 @@ impl WindowsBufferedReader {
                 // (libuv's `read_cb` hands us `*const`).
                 let mut b = unsafe { *buf };
                 let slice = unsafe { b.slice_mut() };
-                this.on_read(sys::Result::Ok(len), &mut slice[..len], ReadState::Progress);
+                let data = &mut slice[..len];
+                if matches!(this.source, Some(Source::Tty(_))) {
+                    // Tty chunks arrive in the tty-owned scratch; stage them
+                    // into `_buffer` so `on_read` commits them like a pipe chunk.
+                    this._buffer.reserve(len);
+                    // SAFETY: `_buffer` has `len` spare bytes, disjoint from
+                    // `this` and the scratch.
+                    let staged = unsafe {
+                        let dst = bun_core::vec::spare_bytes_mut(&mut this._buffer).as_mut_ptr();
+                        core::ptr::copy_nonoverlapping(data.as_ptr(), dst, len);
+                        core::slice::from_raw_parts_mut(dst, len)
+                    };
+                    this.on_read(sys::Result::Ok(len), staged, ReadState::Progress);
+                } else {
+                    this.on_read(sys::Result::Ok(len), data, ReadState::Progress);
+                }
             }
         }
     }
@@ -1736,10 +1762,12 @@ impl WindowsBufferedReader {
                     if crate::source::stdin_tty::is_stdin_tty(p) {
                         // Node only ever closes stdin on process exit.
                     } else {
-                        // SAFETY: tty is a live heap-allocated uv_tty_t*.
+                        // SAFETY: tty is a live heap-allocated Tty*;
+                        // `Tty::close` keeps whole-struct provenance so
+                        // on_tty_close may reclaim the Box.
                         unsafe {
-                            (*p).data = p.cast::<c_void>();
-                            (*p).close(Self::on_tty_close);
+                            (*p).uv.data = p.cast::<c_void>();
+                            crate::source::Tty::close(p, Self::on_tty_close);
                         }
                     }
 
@@ -1783,24 +1811,25 @@ impl WindowsBufferedReader {
     /// before Drop; both paths are idempotent over an already-taken source.
     pub fn deinit(&mut self) {
         MaxBuf::remove_from_pipereader(&mut self.maxbuf);
-        self._buffer = Vec::new();
-        let Some(source) = self.source.take() else {
-            return;
-        };
-        if !source.is_closed() {
-            // closeImpl will take care of freeing the source.
-            // Dropping the `Box<Pipe>` here would free a uv_pipe_t still
-            // linked into the loop's handle queue → UAF. Restore the source so
-            // close_impl can do the proper take + hand-off to libuv
-            // (into_raw + uv_close).
-            self.source = Some(source);
-            self.close_impl::<false>();
-        } else {
-            // Already closing/closed: a uv close callback may still be pending
-            // on this allocation; dropping the Box would free memory libuv
-            // still owns, so leak it instead.
-            core::mem::forget(source);
+        if let Some(source) = self.source.take() {
+            if !source.is_closed() {
+                // closeImpl will take care of freeing the source.
+                // Dropping the `Box<Pipe>` here would free a uv_pipe_t still
+                // linked into the loop's handle queue → UAF. Restore the source
+                // so close_impl can do the proper take + hand-off to libuv
+                // (into_raw + uv_close). close_impl also parks `_buffer` on
+                // the File for an in-flight uv_fs_read (orphaned_read_buf),
+                // which is why `_buffer` is freed after this, not before.
+                self.source = Some(source);
+                self.close_impl::<false>();
+            } else {
+                // Already closing/closed: a uv close callback may still be
+                // pending on this allocation; dropping the Box would free
+                // memory libuv still owns, so leak it instead.
+                core::mem::forget(source);
+            }
         }
+        self._buffer = Vec::new();
     }
 
     #[cfg(windows)]
@@ -1815,12 +1844,13 @@ impl WindowsBufferedReader {
     #[cfg(windows)]
     extern "C" fn on_tty_close(handle: *mut uv::uv_tty_t) {
         // `close_impl` set `handle.data = handle` and called `uv_close(handle)`;
-        // libuv passes the same pointer back, so `handle` *is* the tty ptr.
-        // Caller already gates on `!is_stdin_tty` before scheduling close, so
-        // `handle` is heap-allocated (open_tty heap::alloc). Reclaim and drop.
-        debug_assert!(!crate::source::stdin_tty::is_stdin_tty(handle));
+        // libuv passes the same pointer back; `Tty::from_uv` recovers the
+        // owning `Tty`. Caller gates on `!is_stdin_tty`, so it is heap-owned,
+        // and no request is pending once this runs (`uv::Tty::read_scratch`).
+        let tty = crate::source::Tty::from_uv(handle);
+        debug_assert!(!crate::source::stdin_tty::is_stdin_tty(tty));
         // SAFETY: non-stdin tty is heap-allocated; sole owner after uv_close.
-        drop(unsafe { bun_core::heap::take(handle) });
+        drop(unsafe { bun_core::heap::take(tty) });
     }
 
     fn on_read(&mut self, amount: sys::Result<usize>, slice: &mut [u8], has_more: ReadState) {

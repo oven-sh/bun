@@ -267,7 +267,7 @@ impl ASTMemoryAllocator {
     /// Per-iteration reset for hot reuse paths (`initialize_mini_store`'s
     /// per-workspace-child re-entry). Thin delegate to
     /// [`bun_alloc::Arena::reset_retain_with_limit`]; the cold init paths
-    /// (`bundler::ThreadPool::Worker::init`, `BundleThread::generate_in_new_
+    /// (`bundler::ThreadPool::Worker::create`, `BundleThread::generate_in_new_
     /// thread`) keep calling [`Self::reset`].
     pub fn reset_retain_with_limit(&mut self, limit: usize) {
         if self.arena_dirty {

@@ -1251,7 +1251,7 @@ fn print_summary_tree(
     Output::enable_buffering();
     let writer = Output::writer_buffered();
     // Runtime bool → const-generic dispatch.
-    let _ = if Output::enable_ansi_colors_stdout() {
+    let printed = if Output::enable_ansi_colors_stdout() {
         LockfilePrinter::Tree::print::<_, true>(
             &printer,
             // SAFETY: `mgr` is the sole provenance root; `Tree::print` writes only fields
@@ -1270,6 +1270,9 @@ fn print_summary_tree(
             log_level,
         )
     };
+    if let Err(crate::Error::Alloc(bun_alloc::AllocError)) = printed {
+        bun_core::out_of_memory();
+    }
 }
 
 #[cold]

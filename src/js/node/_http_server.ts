@@ -1328,8 +1328,6 @@ function detachSocketListenersForHandoff(socket) {
   socket.removeListener("timeout", onNodeHTTPServerSocketTimeout);
   socket.on("end", onReadableStreamEnd);
 }
-// 'close' listener for a handed-off CONNECT/Upgrade socket: settles the promise
-// that keeps the native request callback open.
 function resolveHandoffPromise(promise) {
   $resolvePromise(promise, undefined);
 }

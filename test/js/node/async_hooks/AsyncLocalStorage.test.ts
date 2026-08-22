@@ -200,6 +200,82 @@ describe("AsyncLocalStorage", () => {
       alsA.disable();
     }
   });
+
+  // Debug builds assert that run() restored the previous store. The assertion
+  // message used to be built with Bun.inspect(previousStore) on every exit from
+  // run(), so a store whose custom inspect re-enters run() recursed until
+  // "Maximum call stack size exceeded". Release builds strip the assertions,
+  // so this only fails on a debug build. Subprocess: isolates the overflow.
+  test.concurrent("run() does not inspect a store whose custom inspect re-enters run()", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { AsyncLocalStorage } = require("async_hooks");
+         const { inspect } = require("util");
+         const als = new AsyncLocalStorage();
+         const store = {
+           [inspect.custom]() {
+             return als.run("inner", () => "store");
+           },
+         };
+         als.run(store, () => {
+           als.run("nested", () => {});
+           console.log(inspect(store));
+         });
+         console.log(als.getStore());`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("store\nundefined\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // Same assertions, observed directly: the context array and the store that
+  // run() restores (a previous value or the defaultValue) go into the debug
+  // assertions as values. Formatting them eagerly ran the store's custom
+  // inspect on every set() and every exit from run(). Debug builds only.
+  test.concurrent("never inspects the stores it holds", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { AsyncLocalStorage } = require("async_hooks");
+         let inspected = 0;
+         const store = {
+           [Symbol.for("nodejs.util.inspect.custom")]() {
+             inspected++;
+             return "store";
+           },
+         };
+         const als = new AsyncLocalStorage();
+         // store is in the context array and is the value the nested calls restore
+         als.run(store, () => {
+           als.run("nested", () => {});
+           als.exit(() => {});
+           als.getStore();
+         });
+         als.enterWith(store);
+         als.run("other", () => {});
+         als.disable();
+         // no previous value: run() checks that defaultValue is visible again
+         const withDefault = new AsyncLocalStorage({ defaultValue: store });
+         withDefault.run("value", () => {});
+         console.log(inspected);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("0\n");
+    expect(exitCode).toBe(0);
+  });
 });
 
 test("AsyncResource", () => {

@@ -29,6 +29,7 @@ declare function $debug(...args: any[]): void;
  * inlined in the message, but in addition you can pass additional messages.
  *
  * @note gets removed in release builds. Do not put code with side effects in the `check`.
+ * @note the `message` arguments are evaluated on every call. Pass values, not `Bun.inspect(value)`.
  */
 declare function $assert(check: any, ...message: any[]): asserts check;
 

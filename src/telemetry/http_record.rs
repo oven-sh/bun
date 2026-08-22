@@ -18,6 +18,9 @@ pub const FLAG_HANDLER_ERROR: u8 = 4;
 pub const FLAG_HAS_QUERY: u8 = 8;
 /// An exception was recorded on the span (it carries `error.type` already).
 pub const FLAG_HAS_ERROR_TYPE: u8 = 16;
+/// The request method is not one `Method` can name: `http.request.method`
+/// is `_OTHER` and the span already carries `http.request.method_original`.
+pub const FLAG_METHOD_OTHER: u8 = 32;
 
 /// `http.request.method`: the canonical token for known methods, `_OTHER`
 /// otherwise (semconv requires a bounded set).
@@ -714,7 +717,11 @@ fn encode_head(
     s: &Strings<'_>,
     limits: &Limits,
 ) -> usize {
-    let method = method_name(facts.method).as_bytes();
+    let method: &[u8] = if facts.flags & FLAG_METHOD_OTHER != 0 {
+        b"_OTHER"
+    } else {
+        method_name(facts.method).as_bytes()
+    };
     // semconv: the span name uses `HTTP` for methods outside the known set.
     let method_in_name: &[u8] = if method == b"_OTHER" { b"HTTP" } else { method };
     let (host, ua, route) = (s.host, s.user_agent, s.route);
@@ -760,7 +767,8 @@ fn encode_head(
         budget,
     };
     a.put("http.request.method", Value::Str(method));
-    if method == b"_OTHER" {
+    // (with FLAG_METHOD_OTHER the original was captured as a span attribute at begin)
+    if method == b"_OTHER" && facts.flags & FLAG_METHOD_OTHER == 0 {
         a.put(
             "http.request.method_original",
             Value::Str(facts.method.as_str().as_bytes()),

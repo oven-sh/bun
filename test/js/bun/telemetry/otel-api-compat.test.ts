@@ -12,6 +12,8 @@ import {
 } from "@opentelemetry/api";
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import { AsyncLocalStorage } from "node:async_hooks";
+import http from "node:http";
 
 const spans: any[] = [];
 Bun.otel.start({
@@ -167,7 +169,6 @@ describe("@opentelemetry/api", () => {
       propagation.setBaggage(ROOT_CONTEXT, propagation.createBaggage({ k: { value: "v" } })),
       () =>
         new Promise<void>((resolve, reject) => {
-          const http = require("node:http");
           http
             .get(`http://127.0.0.1:${upstream.port}/b`, (res: any) => {
               res.resume();
@@ -193,7 +194,6 @@ describe("@opentelemetry/api", () => {
   });
 
   test("startActiveSpan restores the context when the callback throws after mutating an AsyncLocalStorage store", () => {
-    const { AsyncLocalStorage } = require("node:async_hooks");
     const als = new AsyncLocalStorage();
     const tracer = trace.getTracer("compat");
     expect(() =>

@@ -1298,7 +1298,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             if bun_telemetry::enabled(bun_telemetry::Instrument::HttpServer) {
                 match crate::telemetry::server::begin(
                     global,
-                    method.unwrap_or(bun_http::Method::GET),
+                    method,
                     &uws::AnyRequest::H1(std::ptr::from_mut::<uws_sys::Request>(req)),
                     any_response_from::<SSL>(std::ptr::from_mut(resp)),
                     SSL,

@@ -465,7 +465,9 @@ pub extern "Rust" fn ${e.symbol}(${sig}) -> ${e.ret} {
     case "generic": {
       for (const p of e.params)
         if (p.extraLen && e.params.some(q => q.name === `${p.name}_len`))
-          throw new Error(`${loc}: slice param \`${p.name}\` needs a synthesized \`${p.name}_len\`, which collides with an existing param`);
+          throw new Error(
+            `${loc}: slice param \`${p.name}\` needs a synthesized \`${p.name}_len\`, which collides with an existing param`,
+          );
       const sig = e.params
         .map(p => (p.extraLen ? `${p.name}: ${p.cTy}, ${p.name}_len: usize` : `${p.name}: ${p.cTy}`))
         .join(", ");

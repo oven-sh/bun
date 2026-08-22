@@ -14,6 +14,24 @@ pub struct ExportPayload {
     /// Encoded `ExportTraceServiceRequest`.
     pub body: Vec<u8>,
     pub span_count: u32,
+    /// Exporters still to report on this payload, and whether any succeeded:
+    /// spans are counted exported/dropped once, when the last one reports.
+    pending: core::sync::atomic::AtomicU32,
+    any_ok: core::sync::atomic::AtomicBool,
+}
+
+impl ExportPayload {
+    pub fn new(body: Vec<u8>, span_count: u32) -> Self {
+        Self {
+            body,
+            span_count,
+            pending: core::sync::atomic::AtomicU32::new(0),
+            any_ok: core::sync::atomic::AtomicBool::new(false),
+        }
+    }
+    fn expect(&self, exporters: usize) {
+        self.pending.fetch_add(exporters as u32, Ordering::AcqRel);
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -386,10 +404,7 @@ impl Processor {
                 p.spare = scopes;
             }
         }
-        Some(Arc::new(ExportPayload {
-            body,
-            span_count: count,
-        }))
+        Some(Arc::new(ExportPayload::new(body, count)))
     }
 
     /// Export everything pending now (non-blocking).
@@ -408,26 +423,33 @@ impl Processor {
             .last_export_ns
             .store(clock::now_unix_nanos(), Ordering::Relaxed);
         self.inflight.fetch_add(exporters.len(), Ordering::AcqRel);
+        payload.expect(exporters.len());
         for e in exporters {
             e.export(self, Arc::clone(&payload), 0);
         }
         true
     }
 
+    /// One exporter's verdict on `payload`. `exports_*` count per exporter;
+    /// `spans_*` count each span once: exported if any exporter delivered
+    /// it, dropped if none did.
     fn record_result(&self, payload: &ExportPayload, result: ExportResult) {
         match result {
             ExportResult::Success => {
                 self.stats.exports_ok.fetch_add(1, Ordering::Relaxed);
-                self.stats
-                    .spans_exported
-                    .fetch_add(payload.span_count as u64, Ordering::Relaxed);
+                payload.any_ok.store(true, Ordering::Relaxed);
             }
             ExportResult::Failure => {
                 self.stats.exports_failed.fetch_add(1, Ordering::Relaxed);
-                self.stats
-                    .spans_dropped
-                    .fetch_add(payload.span_count as u64, Ordering::Relaxed);
             }
+        }
+        if payload.pending.fetch_sub(1, Ordering::AcqRel) == 1 {
+            let counter = if payload.any_ok.load(Ordering::Relaxed) {
+                &self.stats.spans_exported
+            } else {
+                &self.stats.spans_dropped
+            };
+            counter.fetch_add(payload.span_count as u64, Ordering::Relaxed);
         }
     }
 
@@ -438,8 +460,9 @@ impl Processor {
     }
 
     /// An export handed to an exporter whose event loop is exiting can no
-    /// longer run; stop waiting for it. Not counted as a failure: the owner
-    /// is being torn down deliberately.
+    /// longer run; stop waiting for it. Not counted as a failure (the owner
+    /// is being torn down deliberately), and that payload's spans are then
+    /// counted in neither `spans_exported` nor `spans_dropped`.
     pub fn export_abandoned(&self) {
         self.finish_one();
     }
@@ -498,7 +521,9 @@ impl Processor {
             self.record_result(&r.payload, result);
         }
         if let Some(payload) = self.take_payload() {
-            for e in self.exporters.read().clone() {
+            let exporters = self.exporters.read().clone();
+            payload.expect(exporters.len());
+            for e in exporters {
                 let result = e.export_blocking(&payload, deadline);
                 self.record_result(&payload, result);
             }

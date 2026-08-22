@@ -174,6 +174,13 @@ test.each([
   ["The `--foo option is broken.\n\nFixes #1234.\n\nUses `Bun.serve()` now.", [1234]],
   ["Reverts HEAD~~ which broke CI.\n\nFixes #1234.\n\nAlso see abc~~ for context.", [1234]],
   ["Adds a retry to the loader\nFix #1", [1]],
+  ["This will\nfix #1", [1]],
+  ["* Fixes #1", [1]],
+  ["Fixes #1 *and* fixes #2", [1, 2]],
+  ["Adds a placeholder:\n```html\n<!-- TODO: wire this up\n```\n\nFixes #1234 and #5678", [1234, 5678]],
+  ["> <!-- Please describe\n\nFixes #1234", [1234]],
+  ["<!--\n```\n-->\nFixes #1", [1]],
+  ["Intro <!-- note --> Fixes #1", [1]],
 ] as [string, (number | string)[]][])("finds %j", async (body, expected) => {
   expect(await refs(body)).toEqual(expected);
 });
@@ -217,11 +224,19 @@ test.each([
   "Reverts #100 which fixed #1.",
   "Depends on #100, which fixes #1.",
   "Stacked on #100 that resolves #1.",
+  "Reverts #100, which\nfixed #1.",
+  "Depends on #100,\nwhich fixes #1.",
+  "Reverts #100 (which fixed #1).",
+  "[#100](https://github.com/oven-sh/bun/pull/100) supersedes #1",
+  "See [#100](https://github.com/oven-sh/bun/pull/100), which fixed #1.",
+  "(#100) fixes #1",
+  "**#100** fixes #1",
   // an infinitive says nothing about what the PR does
   "I was unable to fix #1 here.",
   "Decided not to close #1.",
   "How to fix #1: run the test twice.",
   "Changes the parser to fix #1 and #2.",
+  "I was unable to\nfix #1.",
   // the number is part of a longer word
   "This supersedes #33130's right-sized-copy optimisation.",
   "Fixes #1abc",

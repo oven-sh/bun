@@ -140,27 +140,54 @@ jobs:
             }
 
             // Whether the keyword at `index` states that the PR closes what follows.
-            // Decided by the word before it.
+            // Decided by what comes before it.
             function isClosingStatement(tokens, index, keyword) {
               const k = skipAdverbsBack(tokens, index - 1);
               const before = tokens[k];
+              if (before === undefined) return true;
               // "#100 supersedes #1": another pull request is the subject. A line
               // break ends that reading: "Fixes #1\nFixes #2" is two statements.
-              if (before?.kind === "ref") return false;
-              if (before === undefined) return true;
+              if (endsWithReference(tokens, k)) return false;
               if (before.kind === "newline") {
-                // A disqualifier still applies across a wrapped line: "does not\nfix #1".
-                const wrapped = tokens[skipAdverbsBack(tokens, k - 1)];
-                return !(wrapped?.kind === "word" && DISQUALIFIERS.has(wrapped.text));
+                // A word wrapped onto the previous line still applies: "does not\nfix #1",
+                // "unable to\nfix #1", "#100, which\nfixed #1". A line that starts with
+                // "Fix #1" after prose still counts.
+                const w = skipAdverbsBack(tokens, k - 1);
+                const wrapped = tokens[w];
+                if (wrapped?.kind !== "word") return true;
+                if (DISQUALIFIERS.has(wrapped.text) || isRelativeToReference(tokens, w)) return false;
+                return !(BASE_FORMS.has(keyword) && wrapped.text === "to");
               }
               if (before.kind !== "word") return true;
-              // "Reverts #100, which fixed #1": the same, through a relative pronoun.
-              if (before.text === "which" || before.text === "that") {
-                const antecedent = tokens[isPunct(tokens[k - 1], ",") ? k - 2 : k - 1];
-                if (antecedent?.kind === "ref") return false;
-              }
+              if (isRelativeToReference(tokens, k)) return false;
               if (DISQUALIFIERS.has(before.text)) return false;
               return !BASE_FORMS.has(keyword) || VERB_MARKERS.has(before.text);
+            }
+
+            // "which" or "that" at `k` with a reference as its antecedent: "Reverts
+            // #100, which fixed #1", "Reverts #100 (which fixed #1)".
+            function isRelativeToReference(tokens, k) {
+              const word = tokens[k];
+              if (word.kind !== "word" || (word.text !== "which" && word.text !== "that")) return false;
+              let p = k - 1;
+              if (tokens[p]?.kind === "newline") p--;
+              if (isPunct(tokens[p], ",") || isPunct(tokens[p], "(")) p--;
+              return endsWithReference(tokens, p);
+            }
+
+            // Whether a reference ends at `k`: "#100", "(#100)", "**#100**",
+            // "[#100](url)" or "[text](issue url)".
+            function endsWithReference(tokens, k) {
+              let p = k;
+              while (p >= 0 && tokens[p].kind === "punct" && (tokens[p].text === "*" || tokens[p].text === "_")) p--;
+              const token = tokens[p];
+              if (token === undefined) return false;
+              if (token.kind === "ref") return true;
+              if (!isPunct(token, ")")) return false;
+              if (tokens[p - 1]?.kind === "ref" && isPunct(tokens[p - 2], "(")) return true;
+              if (!isPunct(tokens[p - 2], "(") || !isPunct(tokens[p - 3], "]")) return false;
+              if (tokens[p - 1]?.kind === "ref") return true;
+              return tokens[p - 4]?.kind === "ref" && isPunct(tokens[p - 5], "[");
             }
 
             function skipAdverbsBack(tokens, k) {
@@ -196,38 +223,35 @@ jobs:
               return null;
             }
 
-            // Removes HTML comments, fenced code blocks, blockquotes, code spans and
+            // Removes fenced code blocks, blockquotes, HTML comments, code spans and
             // struck-through text.
             function stripNonProse(body) {
-              let text = removeHtmlComments(body.replaceAll("\r\n", "\n"));
-              text = removeFencesAndQuotes(text);
+              let text = removeBlocks(body.replaceAll("\r\n", "\n"));
               text = removeSpans(text, "`");
               text = removeSpans(text, "~", 2);
               return text;
             }
 
-            function removeHtmlComments(text) {
-              let out = "";
-              let i = 0;
-              while (i < text.length) {
-                const start = text.indexOf("<!--", i);
-                if (start === -1) {
-                  out += text.slice(i);
-                  break;
-                }
-                out += text.slice(i, start) + " ";
-                const end = text.indexOf("-->", start + 4);
-                if (end === -1) break;
-                i = end + 3;
-              }
-              return out;
-            }
-
-            function removeFencesAndQuotes(text) {
+            // Blanks fenced code blocks, blockquote lines and HTML comments in one pass
+            // over the lines, so a marker inside one of them opens nothing else: "<!--"
+            // in a fence is code, and "```" in a comment is comment. An unclosed
+            // comment runs to the end, as in CommonMark.
+            function removeBlocks(text) {
               const kept = [];
               let fence = null;
+              let comment = false;
               for (const line of text.split("\n")) {
-                const trimmed = line.trim();
+                let rest = line;
+                if (comment) {
+                  const end = rest.indexOf("-->");
+                  if (end === -1) {
+                    kept.push("");
+                    continue;
+                  }
+                  comment = false;
+                  rest = rest.slice(end + 3);
+                }
+                const trimmed = rest.trim();
                 if (fence !== null) {
                   if (trimmed.startsWith(fence) && isRunOf(trimmed.slice(fence.length), fence[0])) fence = null;
                   kept.push("");
@@ -239,11 +263,29 @@ jobs:
                 if (isFence) {
                   fence = opening;
                   kept.push("");
-                } else if (trimmed.startsWith(">")) {
-                  kept.push("");
-                } else {
-                  kept.push(line);
+                  continue;
                 }
+                if (trimmed.startsWith(">")) {
+                  kept.push("");
+                  continue;
+                }
+                let out = "";
+                let i = 0;
+                while (i < rest.length) {
+                  const start = rest.indexOf("<!--", i);
+                  if (start === -1) {
+                    out += rest.slice(i);
+                    break;
+                  }
+                  out += rest.slice(i, start) + " ";
+                  const end = rest.indexOf("-->", start + 4);
+                  if (end === -1) {
+                    comment = true;
+                    break;
+                  }
+                  i = end + 3;
+                }
+                kept.push(out);
               }
               return kept.join("\n");
             }

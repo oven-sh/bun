@@ -2481,6 +2481,66 @@ console.log(<div {...obj} key="after" />);`),
     );
   });
 
+  // JSXAttributeValue is a string, `{expr}`, or a bare JSXElement / JSXFragment
+  // (https://facebook.github.io/jsx/), so `<a b=<c /> />` means `<a b={<c />} />`.
+  // Babel, TypeScript and esbuild accept the bare form; Bun used to fail with
+  // 'Expected "{" but found "<"'.
+  describe("JSX element or fragment as an unbraced attribute value", () => {
+    const jsx = new Bun.Transpiler({
+      loader: "jsx",
+      define: { "process.env.NODE_ENV": JSON.stringify("development") },
+    });
+    const tsx = new Bun.Transpiler({
+      loader: "tsx",
+      define: { "process.env.NODE_ENV": JSON.stringify("development") },
+    });
+
+    it("self-closing element", () => {
+      expect(jsx.transformSync("export var x = <a b=<c /> />")).toBe(
+        `export var x = jsxDEV_7x81h0kn("a", {
+  b: jsxDEV_7x81h0kn("c", {}, undefined, false, undefined, this)
+}, undefined, false, undefined, this);
+`,
+      );
+    });
+
+    it("fragment", () => {
+      expect(jsx.transformSync("export var x = <Trans values=<>x</> />")).toBe(
+        `export var x = jsxDEV_7x81h0kn(Trans, {
+  values: jsxDEV_7x81h0kn(Fragment_8vg9x3sq, {
+    children: "x"
+  }, undefined, false, undefined, this)
+}, undefined, false, undefined, this);
+`,
+      );
+    });
+
+    it.each([
+      ["<a b=<c/>/>", "<a b={<c/>}/>"],
+      ["<a b=<></> />", "<a b={<></>} />"],
+      ["<a b=<c>hi</c>>child</a>", "<a b={<c>hi</c>}>child</a>"],
+      ["<a b=<c/>>child</a>", "<a b={<c/>}>child</a>"],
+      ['<a b=<c d=<e /> /> f="1" g />', '<a b={<c d={<e />} />} f="1" g />'],
+      ["<a b=<c d={1} {...e}>{f}<g /></c> />", "<a b={<c d={1} {...e}>{f}<g /></c>} />"],
+      ["<A b=<C.D /> />", "<A b={<C.D />} />"],
+      ["<a key=<c /> />", "<a key={<c />} />"],
+    ])("%s transpiles like %s", (unbraced, braced) => {
+      expect(jsx.transformSync(`export var x = ${unbraced}`)).toBe(jsx.transformSync(`export var x = ${braced}`));
+    });
+
+    it("tsx: tags with type arguments", () => {
+      expect(tsx.transformSync("export var x = <A<T> b=<C<U> /> />")).toBe(
+        tsx.transformSync("export var x = <A<T> b={<C<U> />} />"),
+      );
+    });
+
+    it("the value is parsed as a regular element, so its tags must still match", () => {
+      expect(() => jsx.transformSync("export var x = <a b=<c></d> />")).toThrow(
+        'Expected closing JSX tag to match opening tag "<c>"',
+      );
+    });
+  });
+
   it("JSX tag names containing '-' or ':' are string tags regardless of case", () => {
     // Matches esbuild/Babel/TypeScript: a dashed (custom element) or namespaced
     // name is never a component reference, even when it starts uppercase.

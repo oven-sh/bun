@@ -392,6 +392,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             p.lexer.next_inside_jsx_element()?;
             Ok(expr)
+        } else if p.lexer.token == T::TLessThan {
+            // <a b=<c /> /> or <a b=<>..</> />
+            let loc = p.lexer.loc();
+            p.lexer.next_inside_jsx_element()?;
+            let value = p.parse_jsx_element(loc)?;
+
+            // parse_jsx_element() leaves the closing ">" unconsumed; more attributes follow it
+            p.lexer.next_inside_jsx_element()?;
+            Ok(value)
         } else {
             // Use Expect() not ExpectInsideJSXElement() so we can parse expression tokens
             p.lexer.expect(T::TOpenBrace)?;

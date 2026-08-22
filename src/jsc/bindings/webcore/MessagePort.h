@@ -79,8 +79,8 @@ public:
     // The worker's entry module finished evaluating: a start() requested before that takes effect now.
     void entrySettled();
     void close();
-    // Called on the entangled peer when this side closes: dispatches a
-    // 'close' event and releases the event-loop ref so the loop can idle.
+    // Called on the entangled peer when this side closes: drops the peer's
+    // loop refs, then fires its 'close' event.
     void peerClosed();
     void dispatchCloseEvent();
 
@@ -114,8 +114,10 @@ public:
     JSValue tryTakeMessage(JSGlobalObject*, bool& hadMessage);
 
     void jsRef(JSGlobalObject*);
-    void jsUnref(JSGlobalObject*);
-    // Report the actual loop-ref state (matches Node's uv_has_ref), not the intent flag.
+    // .unref(); also drops every loop ref on close, transfer, or context stop. Idempotent.
+    void jsUnref();
+    // The actual loop-ref state, not the intent flag: node's hasRef() stays true
+    // until the handle closes, right before its 'close' event fires.
     bool jsHasRef() { return m_hasRef || m_listenerLoopRefActive; }
 
 private:
@@ -126,7 +128,7 @@ private:
 
     // ActiveDOMObject.
     void contextDestroyed() final;
-    void stop() final { close(); }
+    void stop() final;
     bool virtualHasPendingActivity() const final;
 
     // Deliver messages already queued when close() is called, before teardown.

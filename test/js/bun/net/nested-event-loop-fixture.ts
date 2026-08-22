@@ -209,5 +209,6 @@ test("closing a pipe server from its connection handler while more accepts are p
   Bun.sleepSync(100);
   await Promise.all(clients);
   await closed.promise;
+  unlink();
   expect(accepted).toBeGreaterThanOrEqual(1);
 });

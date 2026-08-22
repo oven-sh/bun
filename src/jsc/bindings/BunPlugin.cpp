@@ -543,7 +543,7 @@ static void resolveModuleMockSpecifier(Zig::GlobalObject* globalObject, JSC::JSG
         // propagates.
         auto result = JSValue::decode(Bun__resolveSyncWithSourceIfExists(globalObject, JSValue::encode(specifierString), &from, true));
         if (scope.exception()) [[unlikely]]
-            return false;
+            return;
 
         if (result.isString()) {
             auto* resolvedStr = result.toString(globalObject);

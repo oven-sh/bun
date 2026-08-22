@@ -520,17 +520,181 @@ it("isBinary", async () => {
 it("onmessage", done => {
   const wss = new WebSocketServer({ port: 0 });
   wss.on("connection", ws => {
-    ws.onmessage = e => {
-      expect(e.data).toEqual(Buffer.from("hello"));
+    const handler = e => {
+      expect(e.data).toBe("hello");
+      expect(ws.onmessage).toBe(handler);
       done();
       wss.close();
     };
+    ws.onmessage = handler;
   });
 
   const ws = new WebSocket("ws://localhost:" + wss.address().port);
   ws.onopen = () => {
     ws.send("hello");
   };
+});
+
+it("assigning a non-function to onmessage clears the handler", async () => {
+  const wss = new WebSocketServer({ port: 0 });
+  let called = 0;
+  const observed: unknown[] = [];
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+  wss.on("connection", ws => {
+    observed.push(ws.onmessage);
+    ws.onmessage = () => called++;
+    ws.onmessage = null;
+    observed.push(ws.onmessage);
+    ws.addEventListener("message", () => resolve());
+    ws.on("error", reject);
+  });
+
+  const ws = new WebSocket("ws://localhost:" + wss.address().port);
+  try {
+    ws.on("error", reject);
+    ws.on("open", () => ws.send("hello"));
+
+    await promise;
+    expect(observed).toEqual([null, null]);
+    expect(called).toBe(0);
+  } finally {
+    wss.close();
+    ws.close();
+  }
+});
+
+// https://github.com/oven-sh/bun/issues/36060
+it("addEventListener('message') converts text frames to strings", async () => {
+  const wss = new WebSocketServer({ port: 0 });
+  const events: any[] = [];
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+  wss.on("connection", ws => {
+    ws.addEventListener("message", event => {
+      events.push(event);
+      if (events.length === 2) resolve();
+    });
+    ws.on("error", reject);
+  });
+
+  const ws = new WebSocket("ws://localhost:" + wss.address().port);
+  try {
+    ws.on("error", reject);
+    ws.on("open", () => {
+      ws.send("hello");
+      ws.send(Buffer.from([1, 2, 3]));
+    });
+
+    await promise;
+    expect(events[0].type).toBe("message");
+    expect(events[0].data).toBe("hello");
+    expect(events[1].type).toBe("message");
+    expect(Buffer.isBuffer(events[1].data)).toBeTrue();
+    expect(events[1].data).toEqual(Buffer.from([1, 2, 3]));
+  } finally {
+    wss.close();
+    ws.close();
+  }
+});
+
+it("text frames stay Buffer/string when binaryType is 'blob'", async () => {
+  const wss = new WebSocketServer({ port: 0 });
+  const emitted: [unknown, boolean][] = [];
+  const events: any[] = [];
+  let serverSocket: any;
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+  wss.on("connection", ws => {
+    serverSocket = ws;
+    ws.binaryType = "blob";
+    ws.on("message", (data, isBinary) => emitted.push([data, isBinary]));
+    ws.addEventListener("message", event => {
+      events.push(event);
+      if (events.length === 2) resolve();
+    });
+    ws.on("error", reject);
+  });
+
+  const ws = new WebSocket("ws://localhost:" + wss.address().port);
+  try {
+    ws.on("error", reject);
+    ws.on("open", () => {
+      ws.send("hello");
+      ws.send(Buffer.from([1, 2, 3]));
+    });
+
+    await promise;
+    // binaryType only affects binary frames, like npm ws
+    expect(Buffer.isBuffer(emitted[0][0])).toBeTrue();
+    expect(emitted[0][1]).toBeFalse();
+    expect(events[0].type).toBe("message");
+    expect(events[0].target).toBe(serverSocket);
+    expect(events[0].data).toBe("hello");
+    expect(emitted[1][0]).toBeInstanceOf(Blob);
+    expect(emitted[1][1]).toBeTrue();
+    expect(events[1].type).toBe("message");
+    expect(events[1].target).toBe(serverSocket);
+    expect(events[1].data).toBeInstanceOf(Blob);
+  } finally {
+    wss.close();
+    ws.close();
+  }
+});
+
+it("addEventListener supports { once: true } and removeEventListener", async () => {
+  const wss = new WebSocketServer({ port: 0 });
+  let onceCount = 0;
+  let removedCount = 0;
+  let sharedCount = 0;
+  let directCount = 0;
+  const seen: string[] = [];
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+  wss.on("connection", ws => {
+    ws.addEventListener("message", () => onceCount++, { once: true });
+    const removed = () => removedCount++;
+    ws.addEventListener("message", removed);
+    ws.removeEventListener("message", removed);
+    // removeEventListener must skip on-event-attribute handlers, even when the
+    // same function was also registered via addEventListener. The onmessage
+    // wrapper sits first in the listener list, so a non-skipping implementation
+    // removes it instead; reassigning onmessage afterwards then leaks the
+    // addEventListener wrapper and shared keeps firing.
+    const shared = () => sharedCount++;
+    ws.onmessage = shared;
+    ws.addEventListener("message", shared);
+    ws.removeEventListener("message", shared);
+    ws.onmessage = () => {};
+    // plain .on() subscriptions are invisible to removeEventListener,
+    // and non-function listeners must not match anything
+    const direct = () => directCount++;
+    ws.on("message", direct);
+    ws.removeEventListener("message", direct);
+    ws.removeEventListener("message", undefined);
+    ws.addEventListener("message", event => {
+      seen.push(event.data);
+      if (seen.length === 2) resolve();
+    });
+    ws.on("error", reject);
+  });
+
+  const ws = new WebSocket("ws://localhost:" + wss.address().port);
+  try {
+    ws.on("error", reject);
+    ws.on("open", () => {
+      ws.send("first");
+      ws.send("second");
+    });
+
+    await promise;
+    expect(seen).toEqual(["first", "second"]);
+    expect(onceCount).toBe(1);
+    expect(removedCount).toBe(0);
+    // removeEventListener took the addEventListener registration and the
+    // onmessage reassignment replaced the rest, so shared never fires
+    expect(sharedCount).toBe(0);
+    expect(directCount).toBe(2);
+  } finally {
+    wss.close();
+    ws.close();
+  }
 });
 
 // https://github.com/oven-sh/bun/issues/7896
@@ -561,7 +725,7 @@ it("close event", async () => {
   const wss = new WebSocketServer({ port: 0 });
   wss.on("connection", ws => {
     ws.onmessage = e => {
-      expect(e.data).toEqual(Buffer.from("hello"));
+      expect(e.data).toBe("hello");
       setTimeout(() => ws.close(), 10);
     };
   });

@@ -29,6 +29,7 @@ use crate::webcore::streams::{
 use crate::webcore::{self, ByteStream, DrainResult, ReadableStream, Response, SinkHandle};
 use bun_core::String as BunString;
 use bun_core::ZigStringSlice;
+use bun_jsc::JSString;
 // `ZigString` re-exports `bun_core::ZigString`; JSC-side methods
 // (`to_js`, `with_encoding`, …) come from the `ZigStringJsc` extension trait.
 use bun_jsc::ZigStringJsc as _;
@@ -69,19 +70,43 @@ fn system_error(code: &'static str, message: &'static str) -> SystemError {
 // (string, `?ContentOptions`, `JSValue`) are open-coded here as small
 // helpers.
 
+/// A ToString'd argument: the `JSString` that owns the characters, kept alive
+/// for as long as the UTF-8 view of them is in use. A later argument's
+/// `toString`/getter can run user JS and GC before lol-html copies the bytes,
+/// so a bare view into an unrooted temporary would dangle.
+pub(crate) struct StringArg<'a> {
+    string: &'a JSString,
+    utf8: ZigStringSlice,
+}
+
+impl StringArg<'_> {
+    #[inline]
+    pub(crate) fn slice(&self) -> &[u8] {
+        self.utf8.slice()
+    }
+}
+
+impl Drop for StringArg<'_> {
+    fn drop(&mut self) {
+        self.string.ensure_still_alive();
+    }
+}
+
 /// Decode arm for a string — eat next arg, throw "Missing argument" if
-/// absent, "Expected string" if undefined/null, otherwise ToString it into a
-/// slice that owns (or holds a ref on) its bytes. A borrowed view of the
-/// temporary `JSString` would not survive the user JS (a later argument's
-/// `toString`/getter) that runs before lol-html copies the bytes.
-fn eat_string(iter: &mut ArgumentsSlice<'_>, global: &JSGlobalObject) -> JsResult<ZigStringSlice> {
+/// absent, "Expected string" if undefined/null, otherwise ToString it once.
+fn eat_string<'a>(
+    iter: &mut ArgumentsSlice<'_>,
+    global: &'a JSGlobalObject,
+) -> JsResult<StringArg<'a>> {
     let Some(value) = iter.next_eat() else {
         return Err(global.throw_invalid_arguments(format_args!("Missing argument")));
     };
     if value.is_undefined_or_null() {
         return Err(global.throw_invalid_arguments(format_args!("Expected string")));
     }
-    value.to_slice(global)
+    let string = value.to_js_string(global)?;
+    let utf8 = string.to_slice(global);
+    Ok(StringArg { string, utf8 })
 }
 
 /// Decode arm for `JSValue` (required) — eat next arg or
@@ -111,10 +136,10 @@ fn eat_content_options(
 /// Common `(content: string, contentOptions: ?ContentOptions)` pair —
 /// every `before/after/replace/append/prepend/setInnerContent` wrapper
 /// decodes exactly this shape.
-fn eat_content_args(
-    global: &JSGlobalObject,
+fn eat_content_args<'a>(
+    global: &'a JSGlobalObject,
     call_frame: &CallFrame,
-) -> JsResult<(ZigStringSlice, Option<ContentOptions>)> {
+) -> JsResult<(StringArg<'a>, Option<ContentOptions>)> {
     let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), call_frame.arguments());
     let content = eat_string(&mut iter, global)?;
     let opts = eat_content_options(&mut iter, global)?;
@@ -155,7 +180,7 @@ macro_rules! lol_content_ops {
             callback: fn(&mut $Raw, &str, lol_html::html_content::ContentType),
             this_object: JSValue,
             global_object: &JSGlobalObject,
-            content: &ZigStringSlice,
+            content: &StringArg<'_>,
             content_options: Option<ContentOptions>,
         ) -> JsResult<JSValue> {
             let Some(raw) = self.$field.get_mut() else {
@@ -169,11 +194,11 @@ macro_rules! lol_content_ops {
 
         $(
             $(#[$attr])*
-            pub fn $name_(
+            pub(crate) fn $name_(
                 &self,
                 call_frame: &CallFrame,
                 global_object: &JSGlobalObject,
-                content: &ZigStringSlice,
+                content: &StringArg<'_>,
                 content_options: Option<ContentOptions>,
             ) -> JsResult<JSValue> {
                 self.content_handler(
@@ -365,7 +390,7 @@ impl HTMLRewriter {
     pub(crate) fn on_(
         &self,
         global: &JSGlobalObject,
-        selector_name: &ZigStringSlice,
+        selector_name: &StringArg<'_>,
         call_frame: &CallFrame,
         listener: JSValue,
     ) -> JsResult<JSValue> {
@@ -3049,7 +3074,7 @@ impl Element {
     pub(crate) fn get_attribute_(
         &self,
         global_object: &JSGlobalObject,
-        name: &ZigStringSlice,
+        name: &StringArg<'_>,
     ) -> JsResult<JSValue> {
         let Some(el) = self.element.get_mut() else {
             return Ok(JSValue::NULL);
@@ -3066,7 +3091,7 @@ impl Element {
     pub(crate) fn has_attribute_(
         &self,
         global: &JSGlobalObject,
-        name: &ZigStringSlice,
+        name: &StringArg<'_>,
     ) -> JsResult<JSValue> {
         let Some(el) = self.element.get_mut() else {
             return Ok(JSValue::FALSE);
@@ -3080,8 +3105,8 @@ impl Element {
         &self,
         call_frame: &CallFrame,
         global_object: &JSGlobalObject,
-        name: &ZigStringSlice,
-        value: &ZigStringSlice,
+        name: &StringArg<'_>,
+        value: &StringArg<'_>,
     ) -> JsResult<JSValue> {
         let Some(el) = self.element.get_mut() else {
             return Ok(JSValue::UNDEFINED);
@@ -3105,7 +3130,7 @@ impl Element {
         &self,
         call_frame: &CallFrame,
         global_object: &JSGlobalObject,
-        name: &ZigStringSlice,
+        name: &StringArg<'_>,
     ) -> JsResult<JSValue> {
         let Some(el) = self.element.get_mut() else {
             return Ok(JSValue::UNDEFINED);

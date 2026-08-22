@@ -2033,10 +2033,15 @@ void test_v8_cpu_profiler_title_api(const FunctionCallbackInfo<Value> &info) {
   LOG_EXPR(profiler->StopProfiling(empty_title) == nullptr);
 
   // Both APIs share one set of sessions: a session started by id carries its
-  // title, blocks a title-keyed start, and can be stopped by title.
+  // title, blocks a second start of that title through either API (which
+  // reports the running session), and can be stopped by title.
   CpuProfilingResult by_id = profiler->Start(
       title_b, kLeafNodeLineNumbers, true, CpuProfilingOptions::kNoSampleLimit);
   LOG_EXPR((int)by_id.status);
+  CpuProfilingResult by_id_again = profiler->Start(
+      title_b, kLeafNodeLineNumbers, true, CpuProfilingOptions::kNoSampleLimit);
+  LOG_EXPR((int)by_id_again.status);
+  LOG_EXPR(by_id_again.id == by_id.id);
   LOG_EXPR((int)profiler->StartProfiling(title_b, false));
   busy();
   CpuProfile *profile_by_id = profiler->StopProfiling(title_b);

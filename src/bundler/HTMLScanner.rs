@@ -140,9 +140,10 @@ impl<'a> HTMLScanner<'a> {
         path: &[u8],
         url_attribute: &[u8],
         kind: ImportKind,
-    ) {
+    ) -> TagAction {
         let _ = url_attribute;
         let _ = self.create_import_record(path, kind);
+        TagAction::Keep
     }
 
     pub(crate) fn scan(&mut self, input: &[u8]) -> Result<(), Error> {
@@ -156,6 +157,78 @@ type Processor<'a> = HTMLProcessor<HTMLScanner<'a>, false>;
 // HTMLProcessor — generic over visitor `T` and `VISIT_DOCUMENT_TAGS`
 // ───────────────────────────────────────────────────────────────────────────
 
+/// Returned by `on_tag`; `HTMLProcessor::run` applies it to the element.
+pub(crate) enum TagAction {
+    Keep,
+    Replace(Vec<u8>),
+    Remove,
+}
+
+pub(crate) struct SrcsetCandidate<'a> {
+    pub url: &'a [u8],
+    pub descriptor: &'a [u8],
+}
+
+/// <https://html.spec.whatwg.org/multipage/images.html#parsing-a-srcset-attribute>
+pub(crate) fn parse_srcset(input: &[u8]) -> Vec<SrcsetCandidate<'_>> {
+    let mut out = Vec::new();
+    let mut pos = 0usize;
+    loop {
+        while pos < input.len() && (input[pos].is_ascii_whitespace() || input[pos] == b',') {
+            pos += 1;
+        }
+        if pos >= input.len() {
+            return out;
+        }
+        let url_start = pos;
+        while pos < input.len() && !input[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        let mut url_end = pos;
+        if url_end > url_start && input[url_end - 1] == b',' {
+            while url_end > url_start && input[url_end - 1] == b',' {
+                url_end -= 1;
+            }
+            if url_end > url_start {
+                out.push(SrcsetCandidate {
+                    url: &input[url_start..url_end],
+                    descriptor: b"",
+                });
+            }
+            continue;
+        }
+        while pos < input.len() && input[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        let desc_start = pos;
+        let mut in_parens = false;
+        while pos < input.len() {
+            let c = input[pos];
+            if in_parens {
+                if c == b')' {
+                    in_parens = false;
+                }
+            } else if c == b'(' {
+                in_parens = true;
+            } else if c == b',' {
+                break;
+            }
+            pos += 1;
+        }
+        let mut desc_end = pos;
+        while desc_end > desc_start && input[desc_end - 1].is_ascii_whitespace() {
+            desc_end -= 1;
+        }
+        out.push(SrcsetCandidate {
+            url: &input[url_start..url_end],
+            descriptor: &input[desc_start..desc_end],
+        });
+        if pos < input.len() && input[pos] == b',' {
+            pos += 1;
+        }
+    }
+}
+
 /// Trait capturing the methods `HTMLProcessor` calls on `T`.
 pub(crate) trait HTMLProcessorHandler {
     fn on_tag(
@@ -164,7 +237,7 @@ pub(crate) trait HTMLProcessorHandler {
         path: &[u8],
         url_attribute: &[u8],
         kind: ImportKind,
-    );
+    ) -> TagAction;
     fn on_write_html(&mut self, bytes: &[u8]);
     fn on_html_parse_error(&mut self, message: &[u8]);
 
@@ -189,7 +262,7 @@ impl<'a> HTMLProcessorHandler for HTMLScanner<'a> {
         path: &[u8],
         url_attribute: &[u8],
         kind: ImportKind,
-    ) {
+    ) -> TagAction {
         HTMLScanner::on_tag(self, element, path, url_attribute, kind)
     }
     fn on_write_html(&mut self, bytes: &[u8]) {
@@ -301,6 +374,68 @@ fn element_entry<'h>(
     ))
 }
 
+fn apply_tag_action(element: &mut Element<'_, '_>, attr: &str, action: TagAction) {
+    match action {
+        TagAction::Keep => {}
+        TagAction::Replace(value) => match core::str::from_utf8(&value) {
+            Ok(value) => {
+                if element.set_attribute(attr, value).is_err() {
+                    bun_core::Output::panic(format_args!(
+                        "unexpected error from Element.setAttribute"
+                    ));
+                }
+            }
+            Err(_) => {
+                bun_core::Output::panic(format_args!("unexpected error from Element.setAttribute"))
+            }
+        },
+        TagAction::Remove => element.remove(),
+    }
+}
+
+fn process_srcset<T: HTMLProcessorHandler>(
+    this: &mut T,
+    element: &mut Element<'_, '_>,
+    value: &[u8],
+    kind: ImportKind,
+) {
+    let candidates = parse_srcset(value);
+    if candidates.is_empty() {
+        return;
+    }
+    let mut rebuilt = Vec::<u8>::new();
+    let mut changed = false;
+    let mut kept = 0usize;
+    for cand in &candidates {
+        let action = this.on_tag(element, cand.url, b"srcset", kind);
+        let url: &[u8] = match &action {
+            TagAction::Keep => cand.url,
+            TagAction::Replace(v) => {
+                changed = true;
+                v.as_slice()
+            }
+            TagAction::Remove => {
+                changed = true;
+                continue;
+            }
+        };
+        if kept > 0 {
+            rebuilt.extend_from_slice(b", ");
+        }
+        kept += 1;
+        rebuilt.extend_from_slice(url);
+        if !cand.descriptor.is_empty() {
+            rebuilt.push(b' ');
+            rebuilt.extend_from_slice(cand.descriptor);
+        }
+    }
+    if kept == 0 {
+        element.remove_attribute("srcset");
+    } else if changed {
+        apply_tag_action(element, "srcset", TagAction::Replace(rebuilt));
+    }
+}
+
 impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
     HTMLProcessor<T, VISIT_DOCUMENT_TAGS>
 {
@@ -326,13 +461,18 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
                             // SAFETY: `this_ptr` was derived from `run`'s `&mut T`,
                             // which is not reborrowed while the rewriter — the only
                             // holder of these closures — is alive.
-                            unsafe {
-                                (*this_ptr).on_tag(
+                            let this = unsafe { &mut *this_ptr };
+                            let attr = tag_info.url_attribute;
+                            if attr == "srcset" {
+                                process_srcset(this, element, value.as_bytes(), tag_info.kind);
+                            } else {
+                                let action = this.on_tag(
                                     element,
                                     value.as_bytes(),
-                                    tag_info.url_attribute.as_bytes(),
+                                    attr.as_bytes(),
                                     tag_info.kind,
                                 );
+                                apply_tag_action(element, attr, action);
                             }
                         }
                     }

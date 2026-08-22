@@ -9714,6 +9714,10 @@ pub(crate) fn zig_delete_tree(
             let entry = match stack[top_idx].iter.next() {
                 Ok(Some(e)) => e,
                 Ok(None) => break,
+                // A concurrent deleter removed the directory we iterate:
+                // getdents on a dead dir reports ENOENT. Nothing is left to
+                // enumerate, and the rmdir below tolerates ENOENT.
+                Err(err) if err.get_errno() == E::ENOENT => break,
                 Err(err) => return Err(dt_err(err.get_errno())),
             };
             // `entry.name` borrows the iterator's internal buffer and
@@ -9987,6 +9991,8 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
                 let entry = match dir_it.next() {
                     Ok(Some(e)) => e,
                     Ok(None) => break 'dir_it,
+                    // Same as the in-stack walk: the dir vanished mid-iteration.
+                    Err(err) if err.get_errno() == E::ENOENT => break 'dir_it,
                     Err(err) => break 'scan_dir Err(dt_err(err.get_errno())),
                 };
                 let entry_name: Vec<u8> = entry.name.slice().to_vec();

@@ -139,7 +139,16 @@ impl Dir {
         });
 
         'process_stack: while let Some(top) = stack.last_mut() {
-            while let Some(entry) = top.iter.next()? {
+            loop {
+                let entry = match top.iter.next() {
+                    Ok(Some(e)) => e,
+                    Ok(None) => break,
+                    // A concurrent deleter removed the directory we iterate:
+                    // getdents on a dead dir reports ENOENT. The rmdir below
+                    // tolerates ENOENT.
+                    Err(e) if e.get_errno() == E::ENOENT => break,
+                    Err(e) => return Err(e),
+                };
                 let mut treat_as_dir = matches!(entry.kind, EntryKind::Directory);
                 'handle_entry: loop {
                     if treat_as_dir {

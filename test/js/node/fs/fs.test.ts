@@ -5875,14 +5875,18 @@ const outcome = async fn => {
 // against a concurrent deleter must keep walking instead of bailing out. The
 // bail-out left the rest of the tree behind (and on Windows surfaced
 // EFAULT/EPERM). A real concurrent deleter is not deterministic, so LD_PRELOAD
-// a shim that plays one through `unlinkat` (the one libc symbol on the walk's
-// path; dir opens go through raw syscalls on Linux and cannot be interposed):
+// a shim that plays one through `unlinkat` and `syscall` (the libc symbols on
+// the walk's path; dir opens go through raw syscalls on Linux and cannot be
+// interposed):
 // - a marked file is really unlinked, then reported as ENOENT: the loser of
 //   an unlink race.
 // - a marked dir is really removed, then reported as ENOTEMPTY: rmdir raced a
 //   deleter that was still emptying the dir, and the re-open that follows
 //   finds it gone. The marked dir sits 16 levels deep so the walk reaches it
 //   through the min-stack hand-off, the site that used to abort the walk.
+// - a second marked dir is really removed from inside getdents64, so the
+//   kernel itself reports ENOENT for the directory the walk is iterating
+//   (same mechanism as the readdir shim above).
 // glibc-only, same as the statfs shim above.
 it.skipIf(!isGlibc || !cc)("fs.rm recursive keeps walking when a concurrent deleter wins (#39708)", () => {
   const deepChain = Array.from({ length: 15 }, (_, i) => `d${i}`).join("/");
@@ -5892,9 +5896,15 @@ it.skipIf(!isGlibc || !cc)("fs.rm recursive keeps walking when a concurrent dele
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
+#include <stdarg.h>
+#include <stdio.h>
 #include <string.h>
+#include <sys/syscall.h>
+#include <unistd.h>
 
 static int (*next_unlinkat)(int, const char *, int);
+static long (*next_syscall)(long, ...);
 
 int unlinkat(int dirfd, const char *path, int flags) {
   if (!next_unlinkat) next_unlinkat = dlsym(RTLD_NEXT, "unlinkat");
@@ -5917,6 +5927,32 @@ int unlinkat(int dirfd, const char *path, int flags) {
     return -1;
   }
   return next_unlinkat(dirfd, path, flags);
+}
+
+long syscall(long nr, ...) {
+  va_list ap;
+  va_start(ap, nr);
+  long a1 = va_arg(ap, long), a2 = va_arg(ap, long), a3 = va_arg(ap, long);
+  long a4 = va_arg(ap, long), a5 = va_arg(ap, long), a6 = va_arg(ap, long);
+  va_end(ap);
+  if (!next_syscall) next_syscall = dlsym(RTLD_NEXT, "syscall");
+  if (nr == SYS_getdents64) {
+    int fd = (int)a1;
+    char link[64], target[PATH_MAX];
+    snprintf(link, sizeof link, "/proc/self/fd/%d", fd);
+    ssize_t n = readlink(link, target, sizeof target - 1);
+    if (n > 0) {
+      target[n] = 0;
+      const char *base = strrchr(target, '/');
+      base = base ? base + 1 : target;
+      if (strcmp(base, "bun-race-doomed-iter-dir") == 0) {
+        // The concurrent deleter rmdirs the dir mid-iteration; the real
+        // getdents64 on the dead dir then reports ENOENT.
+        rmdir(target);
+      }
+    }
+  }
+  return next_syscall(nr, a1, a2, a3, a4, a5, a6);
 }
 `,
     "bun-shim-probe-keep.txt": "probe",
@@ -5944,6 +5980,8 @@ if (fs.existsSync("root")) {
   // 15 nested dirs fill the walk's 16-slot stack (root is slot 1), so the
   // marked dir at the bottom is handed to the min-stack fallback.
   fs.mkdirSync(path.join(String(dir), "root", deepChain, "bun-race-doomed-ne-dir"), { recursive: true });
+  // Empty dir whose getdents64 the shim turns into the dead-dir ENOENT.
+  fs.mkdirSync(path.join(String(dir), "root", "bun-race-doomed-iter-dir"));
 
   const soPath = path.join(String(dir), "shim.so");
   const compile = Bun.spawnSync({

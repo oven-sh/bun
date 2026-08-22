@@ -233,6 +233,13 @@ impl Watcher {
 
     pub fn start(&mut self) -> Result<(), crate::Error> {
         debug_assert!(!self.watchloop_handle.load());
+        // Windows records changes only while a read is outstanding, and the
+        // watcher thread can get scheduled after the user's first write.
+        #[cfg(windows)]
+        if let Err(err) = self.platform.arm() {
+            self.platform.stop();
+            return Err(err.into());
+        }
         self.watchloop_handle.store(true);
         // Watcher must be Send across the spawned thread boundary; we pass a
         // raw pointer (as usize) and uphold the safety contract manually.
@@ -254,23 +261,30 @@ impl Watcher {
             std::thread::sleep(std::time::Duration::from_millis(10));
             spawn().map_err(|_| first)
         });
-        self.thread = Some(handle.map_err(|e| {
-            self.watchloop_handle.store(false);
-            // Windows: raw_os_error() is a Win32 GetLastError() code, so
-            // route it through the u32 (Win32Error) mapper rather than
-            // from_errno's i64 discriminant-cast path.
-            #[cfg(windows)]
-            let errno = e
-                .raw_os_error()
-                .and_then(|c| bun_errno::SystemErrno::init(c as u32))
-                .unwrap_or(bun_errno::SystemErrno::EAGAIN);
-            #[cfg(not(windows))]
-            let errno = e
-                .raw_os_error()
-                .map(bun_errno::from_errno)
-                .unwrap_or(bun_errno::SystemErrno::EAGAIN);
-            crate::Error::Sys(errno)
-        })?);
+        let handle = match handle {
+            Ok(handle) => handle,
+            Err(e) => {
+                self.watchloop_handle.store(false);
+                // The read armed above points into `self`, which the caller frees.
+                #[cfg(windows)]
+                self.platform.stop();
+                // Windows: raw_os_error() is a Win32 GetLastError() code, so
+                // route it through the u32 (Win32Error) mapper rather than
+                // from_errno's i64 discriminant-cast path.
+                #[cfg(windows)]
+                let errno = e
+                    .raw_os_error()
+                    .and_then(|c| bun_errno::SystemErrno::init(c as u32))
+                    .unwrap_or(bun_errno::SystemErrno::EAGAIN);
+                #[cfg(not(windows))]
+                let errno = e
+                    .raw_os_error()
+                    .map(bun_errno::from_errno)
+                    .unwrap_or(bun_errno::SystemErrno::EAGAIN);
+                return Err(crate::Error::Sys(errno));
+            }
+        };
+        self.thread = Some(handle);
         Ok(())
     }
 
@@ -363,7 +377,12 @@ impl Watcher {
                 }
                 running
             }
-            Ok(()) => false,
+            Ok(()) => {
+                // `thread_main` frees `self` next; the last cycle re-armed a read into it.
+                #[cfg(windows)]
+                self.platform.stop();
+                false
+            }
         };
 
         // deinit and close descriptors if needed

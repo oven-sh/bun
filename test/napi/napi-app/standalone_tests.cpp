@@ -2245,9 +2245,11 @@ test_napi_create_external_buffer_empty(const Napi::CallbackInfo &info) {
     printf("PASS: napi_create_external_buffer with nullptr and zero length\n");
   }
 
-  // Test 2: non-null data with zero length
+  // Test 2: non-null data with zero length. Node wraps the pointer
+  // (node::Buffer::New only detaches when data is NULL), so the info calls
+  // hand back the caller's pointer and the ArrayBuffer is not detached.
   {
-    char dummy = 0;
+    static char dummy = 0;
     napi_value buffer;
     napi_status status = napi_create_external_buffer(
         env, 0, &dummy, empty_buffer_finalizer, nullptr, &buffer);
@@ -2276,13 +2278,33 @@ test_napi_create_external_buffer_empty(const Napi::CallbackInfo &info) {
       return env.Undefined();
     }
 
+    napi_value arraybuffer;
+    void *typedarray_data = nullptr;
+    NODE_API_CALL(env, napi_get_typedarray_info(env, buffer, nullptr, nullptr,
+                                                &typedarray_data, &arraybuffer,
+                                                nullptr));
+    bool detached = true;
+    NODE_API_CALL(env,
+                  napi_is_detached_arraybuffer(env, arraybuffer, &detached));
+    void *arraybuffer_data = nullptr;
+    size_t arraybuffer_length = 999;
+    NODE_API_CALL(env,
+                  napi_get_arraybuffer_info(env, arraybuffer, &arraybuffer_data,
+                                            &arraybuffer_length));
+    printf(
+        "non-null data, zero length: buffer_info_data_is_caller_pointer=%d "
+        "typedarray_info_data_is_caller_pointer=%d arraybuffer_detached=%d "
+        "arraybuffer_data_is_caller_pointer=%d arraybuffer_byte_length=%zu\n",
+        data == &dummy, typedarray_data == &dummy, detached,
+        arraybuffer_data == &dummy, arraybuffer_length);
+
     printf("PASS: napi_create_external_buffer with non-null data and zero "
            "length\n");
   }
 
   // Test 3: nullptr finalizer
   {
-    char dummy = 0;
+    static char dummy = 0;
     napi_value buffer;
     napi_status status =
         napi_create_external_buffer(env, 0, &dummy, nullptr, nullptr, &buffer);
@@ -2560,6 +2582,62 @@ static napi_value test_external_buffer_data_lifetime(const Napi::CallbackInfo &i
 
   NODE_API_CALL(env, napi_delete_reference(env, ab_ref));
   return ok(env);
+}
+
+// Helpers for test_external_buffer_zero_length_driver (module.js): external
+// Buffers of length 0 over real pointers, one per slot, so the driver can
+// check from JS that they are attached and that each finalize_cb is delivered
+// once after the Buffer is collected. (What the Node-API info calls report for
+// such a Buffer is covered by test_napi_create_external_buffer_empty above.)
+static constexpr uint32_t kZeroLengthSlots = 4;
+static char zero_length_slots[kZeroLengthSlots];
+static int zero_length_finalize_calls[kZeroLengthSlots];
+static int zero_length_finalize_unexpected_args = 0;
+
+static void zero_length_external_buffer_finalizer(napi_env, void *data,
+                                                  void *hint) {
+  if (hint == zero_length_finalize_calls) {
+    for (uint32_t slot = 0; slot < kZeroLengthSlots; slot++) {
+      if (data == &zero_length_slots[slot]) {
+        zero_length_finalize_calls[slot]++;
+        return;
+      }
+    }
+  }
+  zero_length_finalize_unexpected_args++;
+}
+
+// create_zero_length_external_buffer(slot): a Buffer of length 0 over the
+// slot's address, with a finalize_cb that records which slot it ran for.
+static napi_value
+create_zero_length_external_buffer(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  uint32_t slot;
+  NODE_API_CALL(env, napi_get_value_uint32(env, info[0], &slot));
+  NODE_API_ASSERT(env, slot < kZeroLengthSlots);
+
+  napi_value buffer;
+  NODE_API_CALL(
+      env, napi_create_external_buffer(env, 0, &zero_length_slots[slot],
+                                       zero_length_external_buffer_finalizer,
+                                       zero_length_finalize_calls, &buffer));
+  return buffer;
+}
+
+// { calls: finalize_cb calls per slot, unexpectedArgs: calls whose data or
+// hint was not what the slot's buffer was created with }
+static napi_value
+zero_length_external_buffer_finalize_state(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  Napi::Array calls = Napi::Array::New(env, kZeroLengthSlots);
+  for (uint32_t i = 0; i < kZeroLengthSlots; i++) {
+    calls.Set(i, Napi::Number::New(env, zero_length_finalize_calls[i]));
+  }
+  Napi::Object state = Napi::Object::New(env);
+  state.Set("calls", calls);
+  state.Set("unexpectedArgs",
+            Napi::Number::New(env, zero_length_finalize_unexpected_args));
+  return state;
 }
 
 // Regression test: napi_create_external_arraybuffer uses the armable
@@ -4500,6 +4578,8 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_empty_buffer_info);
   REGISTER_FUNCTION(env, exports, napi_get_typeof);
   REGISTER_FUNCTION(env, exports, test_external_buffer_data_lifetime);
+  REGISTER_FUNCTION(env, exports, create_zero_length_external_buffer);
+  REGISTER_FUNCTION(env, exports, zero_length_external_buffer_finalize_state);
   REGISTER_FUNCTION(env, exports, test_external_arraybuffer_finalizer);
   REGISTER_FUNCTION(env, exports,
                     test_external_arraybuffer_with_pending_exception);

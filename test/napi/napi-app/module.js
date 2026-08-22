@@ -1784,6 +1784,55 @@ nativeTests.test_reference_ref_after_collect_driver = async gc => {
   nativeTests.test_reference_ref_after_collect(gc, ext);
 };
 
+// napi_create_external_buffer with length 0 and a real pointer. Node only
+// detaches the ArrayBuffer when the pointer is NULL, so from JS this is an
+// ordinary attached empty Buffer, and its finalize_cb is delivered once when
+// the Buffer is collected.
+nativeTests.test_external_buffer_zero_length_driver = async () => {
+  const inspect = buf => {
+    const checks = {
+      "Buffer.isBuffer(buf)": () => Buffer.isBuffer(buf),
+      "buf.length": () => buf.length,
+      "buf.buffer.detached": () => buf.buffer.detached,
+      "buf.buffer.byteLength": () => buf.buffer.byteLength,
+      "new Uint8Array(buf).length": () => new Uint8Array(buf).length,
+      "Buffer.from(buf).length": () => Buffer.from(buf).length,
+      "Buffer.concat([buf, Buffer.from('ab')]).toString()": () => Buffer.concat([buf, Buffer.from("ab")]).toString(),
+      "buf.toString()": () => buf.toString(),
+      "buf.equals(Buffer.alloc(0))": () => buf.equals(Buffer.alloc(0)),
+    };
+    for (const [expression, evaluate] of Object.entries(checks)) {
+      let result;
+      try {
+        result = JSON.stringify(evaluate());
+      } catch (e) {
+        result = `threw ${e.constructor.name}`;
+      }
+      console.log(`${expression}: ${result}`);
+    }
+  };
+  const finalizeCalls = () => nativeTests.zero_length_external_buffer_finalize_state().calls;
+
+  let buffers = finalizeCalls().map((_, slot) => nativeTests.create_zero_length_external_buffer(slot));
+  inspect(buffers[0]);
+  const finalizedWhileAlive = finalizeCalls().some(n => n > 0);
+  console.log("finalized while alive:", finalizedWhileAlive);
+
+  buffers = null;
+  // A conservative stack scan can pin any one buffer, so wait for at least one
+  // slot to be finalized rather than for all of them.
+  await gcUntil(() => finalizeCalls().some(n => n > 0));
+  // Further collections must not deliver a slot's finalize_cb a second time.
+  await tryGcUntil(() => false, 5);
+
+  const { calls, unexpectedArgs } = nativeTests.zero_length_external_buffer_finalize_state();
+  const someSlotFinalizedOnce = calls.some(n => n === 1);
+  const someSlotFinalizedTwice = calls.some(n => n > 1);
+  console.log("some slot finalized once:", someSlotFinalizedOnce);
+  console.log("some slot finalized more than once:", someSlotFinalizedTwice);
+  console.log("finalize_cb calls with unexpected data or hint:", unexpectedArgs);
+};
+
 // Microtasks queued by one threadsafe-function callback must be drained before
 // the next callback in the same dispatch, and not before the first one.
 nativeTests.test_threadsafe_function_microtask_order = async () => {

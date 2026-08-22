@@ -1228,8 +1228,7 @@ impl PublishCommand {
                 } else {
                     Output::enable_ansi_colors_stdout()
                 };
-                // The heading is static text with markup. The box holds the URL the
-                // registry sent, so it is written as is, with plain ANSI codes.
+                // The box holds the URL the registry sent, so it is not tag-walked.
                 let heading: &str = if auth_url_is_web {
                     "\nAuthenticate your account at (press <b>ENTER<r> to open in browser):\n"
                 } else {

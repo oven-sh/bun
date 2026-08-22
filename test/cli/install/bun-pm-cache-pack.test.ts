@@ -231,6 +231,23 @@ it("bun pm cache unpack refuses hostile packs", async () => {
   expect(r.code).not.toBe(0);
   expect((await readdirSorted(cache)).filter(n => n.startsWith("chain"))).toEqual([]);
 
+  // same attack with the records in the opposite order (the escaping link first)
+  await writeFile(
+    join(dir, "chain2.pack"),
+    Buffer.concat([
+      MAGIC,
+      rec(1, "chain2@1.0.0", 0, ""),
+      rec(4, "a", 0o755, ""),
+      rec(3, "out", 0o777, "a/up/../.."),
+      rec(3, "a/up", 0o777, ".."),
+      rec(0, "", 0, ""),
+    ]),
+  );
+  r = await run(["pm", "cache", "unpack", join(dir, "chain2.pack")], dir, cacheViaVictim);
+  expect(r.err).toContain("passes through another symlink");
+  expect(r.code).not.toBe(0);
+  expect((await readdirSorted(cache)).filter(n => n.startsWith("chain2"))).toEqual([]);
+
   // an absurd symlink target length
   await writeFile(
     join(dir, "long.pack"),

@@ -6,6 +6,7 @@ import {
   VerdaccioRegistry,
   bunEnv,
   bunExe,
+  installEnv,
   normalizeBunSnapshot,
   readdirSorted,
   runBunInstall,
@@ -48,15 +49,9 @@ function storeEntryName(name: string, resolution: string): string {
   return `${name}@${resolution.slice(0, CUT_RESOLUTION_LEN)}+${urlHash(resolution)}`;
 }
 
-// The cases run concurrently, so every install pins the cache to the case's
-// own directory: CI exports a per-file BUN_INSTALL_CACHE_DIR, which overrides
-// the `cache` each case's bunfig names, and concurrent installs that share one
-// cache (and so one global store, `<cache>/links`) race on Windows. Cases that
-// go through `registry.createTestDir` get this env from it; this is the same
-// env for the cases that build their project with `tempDir`.
-function installEnv(dir: string, env: NodeJS.Dict<string> = bunEnv) {
-  return { ...env, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") };
-}
+// The cases run concurrently, so every install runs with the `env` that pins
+// the cache to the case's own project: from `registry.createTestDir`, or
+// `installEnv` for the cases that build their project with `tempDir`.
 
 // Everything bun wrote to stderr, except the two progress lines it prints to a
 // non-TTY stderr while it resolves: the count in "Resolved, downloaded and

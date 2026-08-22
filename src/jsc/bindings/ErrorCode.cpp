@@ -16,6 +16,7 @@
 #include "JavaScriptCore/JSType.h"
 #include "JavaScriptCore/Symbol.h"
 #include "wtf/Assertions.h"
+#include "wtf/HexNumber.h"
 #include "wtf/Vector.h"
 #include "wtf/text/ASCIIFastPath.h"
 #include "wtf/text/ASCIILiteral.h"
@@ -277,8 +278,6 @@ JSObject* createError(Zig::JSGlobalObject* globalObject, ErrorCode code, JSC::JS
 // on one line ("Received { abc: 123 }") the way Node does.
 extern "C" BunString Bun__inspect_singleline(JSC::JSGlobalObject* globalObject, JSValue value);
 
-// util.inspect's quoted-string escaping (https://github.com/nodejs/node/blob/main/lib/internal/util/inspect.js
-// strEscape). Bun.inspect double-quotes; Node's messages use single quotes.
 template<typename CharType>
 static void appendEscapedQuotedChar(WTF::StringBuilder& builder, CharType c, char quote)
 {
@@ -308,16 +307,54 @@ static void appendEscapedQuotedChar(WTF::StringBuilder& builder, CharType c, cha
             return;
         }
         // Node escapes C0 (0x00-0x1F), DEL, and the C1 range (0x80-0x9F);
-        // its meta table runs through index 0x9F.
+        // its meta table runs through index 0x9F and spells the hex digits in uppercase.
         if (c < 0x20 || (c >= 0x7f && c <= 0x9f)) {
-            static constexpr char hex[] = "0123456789abcdef";
             builder.append("\\x"_s);
-            builder.append(hex[(c >> 4) & 0xf]);
-            builder.append(hex[c & 0xf]);
+            builder.append(hex(static_cast<uint8_t>(c), 2));
             return;
         }
         builder.append(c);
     }
+}
+
+// util.inspect's strEscape (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/inspect.js#L787),
+// which is how Node renders the value in ERR_INVALID_ARG_VALUE messages. Bun.inspect double-quotes instead.
+static void appendQuotedLikeInspect(WTF::StringBuilder& builder, WTF::StringView str)
+{
+    // Single quotes, unless the string contains one: then double quotes, then backticks, and if
+    // the string contains all three (or a "${"), single quotes with \' escaped. Only the chosen
+    // quote gets escaped, and the first two fallbacks are only chosen when it does not occur.
+    char quote = '\'';
+    if (str.contains('\'')) {
+        if (!str.contains('"'))
+            quote = '"';
+        else if (!str.contains('`') && !str.contains("${"_s))
+            quote = '`';
+    }
+
+    builder.append(quote);
+    if (str.is8Bit()) {
+        for (const auto c : str.span<Latin1Character>())
+            appendEscapedQuotedChar(builder, c, quote);
+    } else {
+        const auto span = str.span<char16_t>();
+        for (size_t i = 0; i < span.size(); i++) {
+            const char16_t c = span[i];
+            if (!U16_IS_SURROGATE(c)) {
+                appendEscapedQuotedChar(builder, c, quote);
+                continue;
+            }
+            if (U16_IS_LEAD(c) && i + 1 < span.size() && U16_IS_TRAIL(span[i + 1])) {
+                builder.append(c);
+                builder.append(span[++i]);
+                continue;
+            }
+            // A lone surrogate becomes \uXXXX; node formats it with Number#toString(16), hence lowercase.
+            builder.append("\\u"_s);
+            builder.append(hex(static_cast<uint16_t>(c), 4, Lowercase));
+        }
+    }
+    builder.append(quote);
 }
 
 void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& builder, JSValue arg, bool quotesLikeInspect = false)
@@ -337,16 +374,7 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& 
         auto str = jsString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, );
         if (quotesLikeInspect) {
-            const char quote = str->contains('\'') ? '"' : '\'';
-            builder.append(quote);
-            if (str->is8Bit()) {
-                for (const auto c : str->span<Latin1Character>())
-                    appendEscapedQuotedChar(builder, c, quote);
-            } else {
-                for (const auto c : str->span<char16_t>())
-                    appendEscapedQuotedChar(builder, c, quote);
-            }
-            builder.append(quote);
+            appendQuotedLikeInspect(builder, str);
             return;
         }
         builder.append(str);

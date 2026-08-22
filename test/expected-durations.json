@@ -28,10 +28,10 @@
     "windows": 16380
   },
   "bake/dev/bundle.test.ts": {
-    "default": 44320,
-    "asan": 47287,
-    "musl": 43410,
-    "windows": 41254
+    "default": 29700,
+    "asan": 31700,
+    "musl": 29100,
+    "windows": 27600
   },
   "bake/dev/css.test.ts": {
     "default": 52237,

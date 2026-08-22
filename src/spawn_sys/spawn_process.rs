@@ -349,7 +349,7 @@ pub struct PosixSpawnOptions {
     /// signal between vfork and exec in posix_spawn_bun, so the kernel kills
     /// it when the spawning thread dies. When null, defaults to SIGKILL if
     /// no-orphans mode is enabled (see `ParentDeathWatchdog`), else 0 (no
-    /// PDEATHSIG). Not exposed to JS yet.
+    /// PDEATHSIG). Exposed to JS as `deathSignal` in `Bun.spawn` options.
     pub linux_pdeathsig: Option<u8>,
     /// Linux only. Directory fd of a cgroup the child starts inside
     /// (`CLONE_INTO_CGROUP`, else a pre-exec `cgroup.procs` write). Caller owns the fd.

@@ -6673,6 +6673,34 @@ describe("pm trust", async () => {
     expect(await exited).toBe(0);
   });
 
+  test("--default --json", async () => {
+    await writeFile(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+      }),
+    );
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "pm", "default-trusted", "--json"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(err).toBe("");
+    const names = JSON.parse(out);
+    expect(Array.isArray(names)).toBeTrue();
+    expect(names.length).toBeGreaterThan(100);
+    expect(names.every((name: unknown) => typeof name === "string")).toBeTrue();
+    expect(names).toContain("esbuild");
+    expect(names).toEqual([...names].sort());
+    expect(out).toEndWith("]\n");
+    expect(exitCode).toBe(0);
+  });
+
   describe("--all", async () => {
     test("no dependencies", async () => {
       await writeFile(

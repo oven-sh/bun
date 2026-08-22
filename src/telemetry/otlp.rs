@@ -185,30 +185,36 @@ pub fn write_key_value(out: &mut Vec<u8>, field: u32, key: &[u8], v: &Value<'_>)
     let kv = len_field_len(f::KV_KEY, key.len()) + len_field_len(f::KV_VALUE, av);
     out.reserve(len_field_len(field, kv));
     if kv < 128 && field < 16 {
-        // One-byte varints throughout: header bytes are pushed inline and the
-        // key/value bytes copied straight into `out` (no staging buffer).
-        out.push((field << 3 | 2) as u8);
-        out.push(kv as u8);
-        out.push((f::KV_KEY << 3 | 2) as u8);
-        out.push(key.len() as u8);
+        // One-byte varints throughout: the headers are fixed-size stores and
+        // the key/value bytes are copied straight into `out`.
+        out.extend_from_slice(&[
+            (field << 3 | 2) as u8,
+            kv as u8,
+            (f::KV_KEY << 3 | 2) as u8,
+            key.len() as u8,
+        ]);
         out.extend_from_slice(key);
-        out.push((f::KV_VALUE << 3 | 2) as u8);
-        out.push(av as u8);
+        let value_tag = (f::KV_VALUE << 3 | 2) as u8;
         match *v {
             Value::Str(s) => {
-                out.push((f::AV_STRING << 3 | 2) as u8);
-                out.push(s.len() as u8);
+                out.extend_from_slice(&[
+                    value_tag,
+                    av as u8,
+                    (f::AV_STRING << 3 | 2) as u8,
+                    s.len() as u8,
+                ]);
                 out.extend_from_slice(s);
             }
             Value::Bool(x) => {
-                out.push((f::AV_BOOL << 3) as u8);
-                out.push(x as u8);
+                out.extend_from_slice(&[value_tag, av as u8, (f::AV_BOOL << 3) as u8, x as u8]);
             }
             Value::Int(i) if (0..128).contains(&i) => {
-                out.push((f::AV_INT << 3) as u8);
-                out.push(i as u8);
+                out.extend_from_slice(&[value_tag, av as u8, (f::AV_INT << 3) as u8, i as u8]);
             }
-            _ => write_any_value_body(out, v),
+            _ => {
+                out.extend_from_slice(&[value_tag, av as u8]);
+                write_any_value_body(out, v);
+            }
         }
         return;
     }

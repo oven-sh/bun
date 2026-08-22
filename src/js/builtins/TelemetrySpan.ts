@@ -1,35 +1,51 @@
 // Prototype methods of Bun.otel / @opentelemetry/api spans (JSTelemetrySpan).
 //
-// Internal fields (JSTelemetrySpan.h):
-//   0 state   int32: bit0 recording, bit1 ended, bit2 native-owned
-//   1 attrs   null | [key0, value0, key1, value1, ...]
-//   2 name    string | null
-//   3 extra   null | { e: events, l: links, s: status, m: message, t: traceState, b: baggage }
-//
-// Nothing here calls into native unless the span is native-owned (e.g. a
-// Bun.serve request span), whose name/attributes live in a native slot.
-//
-// $telemetryNativeSpanOp(span, op, a, b, c) ops: 0 setAttribute(key, value)
-// 1 setName(name) 2 setStatus(code, message) 3 addEvent(name, flatAttrs, time)
-// 4 addLink(ctx, flatAttrs)
+// A JS-owned span keeps everything in its internal fields until end(), which
+// hands it all to native code at once; nothing here calls into native unless
+// the span is native-owned (e.g. a Bun.serve request span), whose state lives
+// in a native slot and is reached through the $telemetry* private functions
+// (JSTelemetrySpan.cpp).
+
+// JSTelemetrySpan::Field (src/jsc/bindings/JSTelemetrySpan.h).
+const enum Field {
+  State = 0,
+  Attributes = 1,
+  Name = 2,
+  Events = 3,
+  Links = 4,
+  StatusCode = 5,
+  StatusMessage = 6,
+}
+
+// JSTelemetrySpan::State
+const enum State {
+  Recording = 1,
+  Ended = 2,
+  Native = 4,
+}
+
+// Loose bound on what a JS-owned span buffers (TelemetryABI.h
+// kTelemetryMaxGather); the configured limits are lower and applied natively.
+const enum MaxBuffered {
+  LinkValues = 16384,
+}
 
 export function setAttribute(this: unknown, key: unknown, value: unknown) {
   if (!$isTelemetrySpan(this)) throw new TypeError("not a Span");
-  const state = $getInternalField(this, 0) as number;
-  if (!(state & 1) || value == null) return this;
-  if (state & 4) {
-    $telemetryNativeSpanOp(this, 0, key + "", value);
-    return this;
-  }
-  const attrs = $getInternalField(this, 1) as unknown[] | null;
+  const state = $getInternalField(this, Field.State) as number;
+  if (!(state & State.Recording) || value == null) return this;
   key = key + "";
-  if (attrs === null) {
-    $putInternalField(this, 1, [key, value]);
+  if (state & State.Native) {
+    $telemetrySetAttribute(this, key, value);
     return this;
   }
+  const attrs = $getInternalField(this, Field.Attributes) as unknown[] | null;
+  if (attrs === null) {
+    $putInternalField(this, Field.Attributes, [key, value]);
+    return this;
+  }
+  // Keys stay unique: a repeated key overwrites in place (keys are few).
   const n = attrs.length;
-  // Overwrite in place if the key is already present (keys are few; the
-  // native encoder relies on this to apply the count limit correctly).
   for (let i = 0; i < n; i += 2) {
     if (attrs[i] === key) {
       attrs[i + 1] = value;
@@ -43,23 +59,23 @@ export function setAttribute(this: unknown, key: unknown, value: unknown) {
 
 export function setAttributes(this: unknown, attributes: unknown) {
   if (!$isTelemetrySpan(this)) throw new TypeError("not a Span");
-  const state = $getInternalField(this, 0) as number;
-  if (!(state & 1) || attributes == null || typeof attributes !== "object") return this;
-  if (state & 4) {
+  const state = $getInternalField(this, Field.State) as number;
+  if (!(state & State.Recording) || attributes == null || typeof attributes !== "object") return this;
+  if (state & State.Native) {
     for (const key in attributes as object) {
       const value = attributes[key];
-      if (value != null) $telemetryNativeSpanOp(this, 0, key, value);
+      if (value != null) $telemetrySetAttribute(this, key, value);
     }
     return this;
   }
-  let attrs = $getInternalField(this, 1) as unknown[] | null;
+  let attrs = $getInternalField(this, Field.Attributes) as unknown[] | null;
   const existing = attrs === null ? 0 : attrs.length;
   for (const key in attributes as object) {
     const value = attributes[key];
     if (value == null) continue;
     if (attrs === null) {
       attrs = [key, value];
-      $putInternalField(this, 1, attrs);
+      $putInternalField(this, Field.Attributes, attrs);
       continue;
     }
     let i = 0;
@@ -79,27 +95,25 @@ export function setAttributes(this: unknown, attributes: unknown) {
 
 export function updateName(this: unknown, name: unknown) {
   if (!$isTelemetrySpan(this)) throw new TypeError("not a Span");
-  const state = $getInternalField(this, 0) as number;
-  if (!(state & 1)) return this;
-  if (state & 4) {
-    $telemetryNativeSpanOp(this, 1, name + "", undefined);
-    return this;
-  }
-  $putInternalField(this, 2, name + "");
+  const state = $getInternalField(this, Field.State) as number;
+  if (!(state & State.Recording)) return this;
+  name = name + "";
+  if (state & State.Native) $telemetrySetName(this, name);
+  else $putInternalField(this, Field.Name, name);
   return this;
 }
 
 export function isRecording(this: unknown) {
   if (!$isTelemetrySpan(this)) throw new TypeError("not a Span");
-  return (($getInternalField(this, 0) as number) & 1) !== 0;
+  return (($getInternalField(this, Field.State) as number) & State.Recording) !== 0;
 }
 
 // setStatus({ code, message }) — or setStatus(code, message?)
 export function setStatus(this: unknown, status: any, messageArg?: unknown) {
   if (!$isTelemetrySpan(this)) throw new TypeError("not a Span");
-  const state = $getInternalField(this, 0) as number;
-  if (!(state & 1) || status == null) return this;
-  // api SpanStatusCode: UNSET=0 OK=1 ERROR=2
+  const state = $getInternalField(this, Field.State) as number;
+  if (!(state & State.Recording) || status == null) return this;
+  // api SpanStatusCode: UNSET 0, OK 1, ERROR 2
   let code: number, msg: unknown;
   if (typeof status === "number") {
     code = status | 0;
@@ -110,27 +124,22 @@ export function setStatus(this: unknown, status: any, messageArg?: unknown) {
   }
   if (code !== 1 && code !== 2) return this;
   const message = code === 2 && msg != null ? msg + "" : "";
-  if (state & 4) {
-    $telemetryNativeSpanOp(this, 2, code, message);
+  if (state & State.Native) {
+    $telemetrySetStatus(this, code, message);
     return this;
   }
-  let x = $getInternalField(this, 3) as any;
-  if (x === null) {
-    x = { e: null, l: null, s: 0, m: "", t: "", b: "" };
-    $putInternalField(this, 3, x);
-  } else if (x.s === 1) {
-    return this; // Ok is final
-  }
-  x.s = code;
-  x.m = message;
+  // OK is final.
+  if (($getInternalField(this, Field.StatusCode) as number) === 1) return this;
+  $putInternalField(this, Field.StatusCode, code);
+  $putInternalField(this, Field.StatusMessage, message);
   return this;
 }
 
 // addEvent(name, attributesOrStartTime?, startTime?)
 export function addEvent(this: unknown, name: unknown, a?: unknown, b?: unknown) {
   if (!$isTelemetrySpan(this)) throw new TypeError("not a Span");
-  const state = $getInternalField(this, 0) as number;
-  if (!(state & 1)) return this;
+  const state = $getInternalField(this, Field.State) as number;
+  if (!(state & State.Recording)) return this;
   let attributes: unknown, time: unknown;
   if (typeof a === "number" || $isJSArray(a) || a instanceof Date) {
     time = a;
@@ -138,6 +147,7 @@ export function addEvent(this: unknown, name: unknown, a?: unknown, b?: unknown)
     attributes = a;
     time = b;
   }
+  // { k: v, … } → [k, v, …] without null/undefined values
   let flat: unknown[] | null = null;
   if (attributes != null && typeof attributes === "object") {
     flat = [];
@@ -149,22 +159,7 @@ export function addEvent(this: unknown, name: unknown, a?: unknown, b?: unknown)
       }
     }
   }
-  if (state & 4) {
-    $telemetryNativeSpanOp(this, 3, name + "", flat, time);
-    return this;
-  }
-  let x = $getInternalField(this, 3) as any;
-  if (x === null) {
-    x = { e: null, l: null, s: 0, m: "", t: "", b: "" };
-    $putInternalField(this, 3, x);
-  }
-  if (x.e === null) x.e = [];
-  // Loose cap; the configured event limit is applied natively at end().
-  if (x.e.length < 4096 * 3) {
-    $arrayPush(x.e, name + "");
-    $arrayPush(x.e, time === undefined ? $telemetryNativeSpanOp(undefined, 5, undefined, undefined) : time);
-    $arrayPush(x.e, flat);
-  }
+  $telemetryAddEvent(this, name + "", flat, time);
   return this;
 }
 
@@ -190,12 +185,16 @@ export function recordException(this: any, exception: any, time?: unknown) {
 
 export function addLink(this: unknown, link: any) {
   if (!$isTelemetrySpan(this)) throw new TypeError("not a Span");
-  const state = $getInternalField(this, 0) as number;
-  if (!(state & 1) || link == null || typeof link !== "object") return this;
+  const state = $getInternalField(this, Field.State) as number;
+  if (!(state & State.Recording) || link == null || typeof link !== "object") return this;
   const ctx = link.context;
   if (ctx == null || typeof ctx.traceId !== "string" || typeof ctx.spanId !== "string") return this;
-  let flat: unknown[] | null = null;
+  const traceId = ctx.traceId + "";
+  const spanId = ctx.spanId + "";
+  const traceFlags = ctx.traceFlags | 0;
   const attributes = link.attributes;
+  // { k: v, … } → [k, v, …] without null/undefined values
+  let flat: unknown[] | null = null;
   if (attributes != null && typeof attributes === "object") {
     flat = [];
     for (const key in attributes as object) {
@@ -206,22 +205,21 @@ export function addLink(this: unknown, link: any) {
       }
     }
   }
-  if (state & 4) {
-    $telemetryNativeSpanOp(this, 4, ctx, flat);
+  if (state & State.Native) {
+    $telemetryAddLink(this, traceId, spanId, traceFlags, flat);
     return this;
   }
-  let x = $getInternalField(this, 3) as any;
-  if (x === null) {
-    x = { e: null, l: null, s: 0, m: "", t: "", b: "" };
-    $putInternalField(this, 3, x);
+  let links = $getInternalField(this, Field.Links) as unknown[] | null;
+  if (links === null) {
+    links = [];
+    $putInternalField(this, Field.Links, links);
+  } else if (links.length >= MaxBuffered.LinkValues) {
+    return this;
   }
-  if (x.l === null) x.l = [];
-  if (x.l.length < 4096 * 4) {
-    $arrayPush(x.l, ctx.traceId + "");
-    $arrayPush(x.l, ctx.spanId + "");
-    $arrayPush(x.l, ctx.traceFlags | 0);
-    $arrayPush(x.l, flat);
-  }
+  $arrayPush(links, traceId);
+  $arrayPush(links, spanId);
+  $arrayPush(links, traceFlags);
+  $arrayPush(links, flat);
   return this;
 }
 

@@ -1,79 +1,81 @@
 #pragma once
 #include "root.h"
+#include "TelemetryABI.h"
 #include <JavaScriptCore/JSInternalFieldObjectImpl.h>
-
-namespace Zig {
-class GlobalObject;
-}
 
 namespace Bun {
 using namespace JSC;
 
-// Mirrors bun_telemetry::SpanStub (#[repr(C)]).
-struct SpanStub {
-    uint8_t traceId[16];
-    uint8_t spanId[8];
-    uint8_t flags;
-    uint8_t parentSpanId[8];
-    uint64_t startNs;
-
-    static constexpr uint8_t Sampled = 0x01;
-    static constexpr uint8_t Remote = 0x10;
-    static constexpr uint8_t NonRecording = 0x40;
-    bool isRecording() const { return startNs != 0 && (flags & (Sampled | NonRecording)) == Sampled; }
-};
-static_assert(sizeof(SpanStub) == 48);
-
 // A span. Identity and timing are plain members; everything JS builtins touch
-// on the hot path is an internal field so `setAttribute` & co. are a couple of
-// @getInternalField/@putInternalField ops with no native call.
+// is an internal field so `setAttribute` & co. are a couple of
+// @getInternalField/@putInternalField ops with no native call
+// (src/js/builtins/TelemetrySpan.ts mirrors Field and State as const enums).
 //
 // Two flavours share the class:
-//  - JS-owned (tracer.startSpan): name/attributes live in the fields and are
-//    encoded once, natively, at end().
-//  - native-owned (Bun.serve request spans, …): `m_native` is a
-//    bun_telemetry::pool handle; the slot holds name/attributes and the owning
-//    integration ends it. JS mutators forward to the slot.
-class JSTelemetrySpan final : public JSC::JSInternalFieldObjectImpl<6> {
+//  - JS-owned (tracer.startSpan): everything lives in the fields and is
+//    handed to Rust once, at end().
+//  - native-owned (Bun.serve request spans, node:http client, …): `m_native`
+//    is a bun_telemetry::pool handle; name/attributes/events live in that
+//    slot, JS mutators forward to it and the owning integration ends it.
+class JSTelemetrySpan final : public JSC::JSInternalFieldObjectImpl<11> {
 public:
-    using Base = JSC::JSInternalFieldObjectImpl<6>;
+    using Base = JSC::JSInternalFieldObjectImpl<11>;
     static constexpr JSC::JSType Type = static_cast<JSC::JSType>(JSC::BunTelemetrySpanType);
 
-    enum class Field : uint32_t {
-        // int32: bit0 recording, bit1 ended, bit2 native-owned
+    enum class Field : unsigned {
+        // int32 of State bits
         State = 0,
-        // null | JSArray [key0, value0, key1, value1, ...]
-        Attributes,
-        // JSString (JS-owned) | null (native-owned; name is in the slot)
-        Name,
-        // null | { events, links, status, statusMessage, traceState, baggage }
-        Extra,
+        // null | JSArray [key0, value0, key1, value1, …]; keys are unique strings
+        Attributes = 1,
+        // JSString (JS-owned) | null (native-owned: the slot has it)
+        Name = 2,
+        // null | JSArray [name, time (TimeInput | epoch ms), flatAttributes | null, …]
+        Events = 3,
+        // null | JSArray [traceIdHex, spanIdHex, traceFlags, flatAttributes | null, …]
+        Links = 4,
+        // int32 @opentelemetry/api SpanStatusCode (UNSET 0, OK 1, ERROR 2)
+        StatusCode = 5,
+        // null | JSString
+        StatusMessage = 6,
+        // null | resolved JSString: W3C `tracestate` header inherited from the parent
+        TraceState = 7,
+        // null | resolved JSString: W3C `baggage` header inherited from the parent
+        Baggage = 8,
         // async-context slot value displaced by enter(); empty when not entered
-        Restore,
-        // cached spanContext() object
-        Context,
+        Restore = 9,
+        // cached spanContext() object; empty until asked for
+        Context = 10,
     };
-    static constexpr unsigned numberOfInternalFields = 6;
-    static constexpr int32_t StateRecording = 1;
-    static constexpr int32_t StateEnded = 2;
-    static constexpr int32_t StateNative = 4;
+    static constexpr unsigned numberOfInternalFields = 11;
+
+    enum State : int32_t {
+        Recording = 1,
+        Ended = 2,
+        Native = 4,
+    };
 
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);
     static Structure* createStructure(VM&, JSGlobalObject*);
     DECLARE_EXPORT_INFO;
     DECLARE_VISIT_CHILDREN;
 
-    static JSTelemetrySpan* create(VM&, Zig::GlobalObject*, const SpanStub&, uint16_t scope, uint8_t kind, JSValue name, uint64_t nativeHandle);
+    // `kind` is the @opentelemetry/api SpanKind; `name` is a JSString or null (native-owned).
+    static JSTelemetrySpan* create(VM&, Zig::GlobalObject*, const TelemetrySpanStub&, uint16_t scope, uint8_t kind, JSValue name, uint64_t nativeHandle);
 
     WriteBarrier<Unknown>& field(Field f) { return internalField(static_cast<unsigned>(f)); }
     JSValue get(Field f) const { return internalField(static_cast<unsigned>(f)).get(); }
+    // Fields that hold `null | JSString`.
+    JSString* string(Field f) const
+    {
+        JSValue v = get(f);
+        return v.isString() ? asString(v) : nullptr;
+    }
     int32_t state() const { return get(Field::State).asInt32(); }
-    void setState(VM& vm, int32_t s) { field(Field::State).setWithoutWriteBarrier(jsNumber(s)); }
-    bool isRecording() const { return state() & StateRecording; }
-    bool ended() const { return state() & StateEnded; }
-    bool isNativeOwned() const { return m_native != 0; }
+    void setState(int32_t s) { field(Field::State).setWithoutWriteBarrier(jsNumber(s)); }
+    bool isRecording() const { return state() & Recording; }
+    bool ended() const { return state() & Ended; }
 
-    SpanStub m_stub;
+    TelemetrySpanStub m_stub;
     uint64_t m_native { 0 };
     uint16_t m_scope { 0 };
     uint8_t m_kind { 0 };
@@ -83,48 +85,23 @@ private:
         : Base(vm, structure)
     {
     }
-    void finishCreation(VM&, const SpanStub&, uint16_t scope, uint8_t kind, JSValue name, uint64_t nativeHandle);
+    void finishCreation(VM&, const TelemetrySpanStub&, uint16_t scope, uint8_t kind, JSValue name, uint64_t nativeHandle);
 };
 
-JSTelemetrySpan* toTelemetrySpan(JSValue);
-
-// `Bun.otel.tracer(name)` / api `trace.getTracer(name)`.
-class JSTelemetryTracer final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    DECLARE_EXPORT_INFO;
-    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);
-    static JSTelemetryTracer* create(VM&, Zig::GlobalObject*, uint16_t scope, JSValue name, JSValue version);
-
-    uint16_t m_scope { 0 };
-
-private:
-    JSTelemetryTracer(VM& vm, Structure* structure)
-        : Base(vm, structure)
-    {
-    }
-};
-
-// Holder for the `createSpan` fast path so DFG can emit it as CallDOM.
-class JSTelemetryBinding final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    DECLARE_EXPORT_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSTelemetryBinding, Base);
-        return &vm.plainObjectSpace();
-    }
-    static JSTelemetryBinding* create(VM&, Zig::GlobalObject*);
-
-private:
-    JSTelemetryBinding(VM& vm, Structure* structure)
-        : Base(vm, structure)
-    {
-    }
-};
+inline JSTelemetrySpan* toTelemetrySpan(JSValue v)
+{
+    if (!v || !v.isCell() || v.asCell()->type() != JSTelemetrySpan::Type)
+        return nullptr;
+    return uncheckedDowncast<JSTelemetrySpan>(v.asCell());
+}
 
 JSC::JSObject* createTelemetrySpanPrototype(VM&, Zig::GlobalObject*);
+
+// Private globals for src/js/builtins/TelemetrySpan.ts (native-owned span mutators).
+JSC_DECLARE_HOST_FUNCTION(jsTelemetrySetAttribute);
+JSC_DECLARE_HOST_FUNCTION(jsTelemetrySetName);
+JSC_DECLARE_HOST_FUNCTION(jsTelemetrySetStatus);
+JSC_DECLARE_HOST_FUNCTION(jsTelemetryAddEvent);
+JSC_DECLARE_HOST_FUNCTION(jsTelemetryAddLink);
 
 } // namespace Bun

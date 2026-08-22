@@ -31,6 +31,9 @@ unsafe extern "C" {
     safe fn Bun__TelemetrySpan__stub(cell: *mut c_void) -> *const SpanStub;
     safe fn Bun__Telemetry__activeNativeHandle(global: &JSGlobalObject) -> u64;
     safe fn Bun__TelemetrySpan__nativeEnded(cell: JSValue);
+    /// Borrowed (not ref'd) header strings of a JS-owned span; Empty otherwise.
+    safe fn Bun__TelemetrySpan__traceState(cell: JSValue) -> bun_core::String;
+    safe fn Bun__TelemetrySpan__baggage(cell: JSValue) -> bun_core::String;
 }
 
 /// `rt::Hooks::active_span` — `global` is a `JSGlobalObject*`.
@@ -88,44 +91,24 @@ pub(crate) fn release_cell(js_cell: bun_telemetry::JsCellRef) {
 /// `f(trace_state, baggage)` for the active span (W3C headers to forward).
 pub fn with_active_propagation<R>(global: &JSGlobalObject, f: impl FnOnce(&[u8], &[u8]) -> R) -> R {
     let native = active_native(global);
-    let owned = if native.is_some() {
-        local(global)
+    if native.is_some() {
+        let owned = local(global)
             .and_then(|l| {
                 pool::with_ref(&l.pool, native, |s| {
                     [s.trace_state.clone(), s.baggage.clone()]
                 })
             })
-            .unwrap_or_default()
-    } else {
-        // JS-owned spans keep inherited tracestate/baggage in their `extra`
-        // object; read through C++.
-        extra_propagation(global, active_js(global))
-    };
-    f(&owned[0], &owned[1])
-}
-
-fn extra_propagation(global: &JSGlobalObject, cell: JSValue) -> [Vec<u8>; 2] {
-    let mut out = [Vec::new(), Vec::new()];
-    if Bun__TelemetrySpan__fromJS(cell).is_null() {
-        return out;
+            .unwrap_or_default();
+        return f(&owned[0], &owned[1]);
     }
-    unsafe extern "C" {
-        safe fn Bun__TelemetrySpan__extraString(
-            global: &JSGlobalObject,
-            cell: JSValue,
-            which: u8,
-        ) -> JSValue;
-    }
-    for (i, which) in b"tb".iter().enumerate() {
-        let v = Bun__TelemetrySpan__extraString(global, cell, *which);
-        if v.is_string() {
-            match v.to_slice(global) {
-                Ok(s) => out[i].extend_from_slice(s.slice()),
-                Err(_) => _ = global.clear_exception_except_termination(),
-            }
-        }
-    }
-    out
+    // JS-owned spans keep the inherited headers in their TraceState/Baggage fields.
+    let cell = active_js(global);
+    let (ts, bg) = (
+        Bun__TelemetrySpan__traceState(cell),
+        Bun__TelemetrySpan__baggage(cell),
+    );
+    let (ts, bg) = (ts.to_utf8_without_ref(), bg.to_utf8_without_ref());
+    f(ts.slice(), bg.slice())
 }
 
 /// Create the JS cell for a native-owned span (request spans etc.). The
@@ -305,230 +288,366 @@ pub fn discard_native(global: &JSGlobalObject, span: NativeSpan) {
 }
 
 // ───────────────────── ABI for JSTelemetrySpan.cpp ─────────────────────
+//
+// Mirrors src/jsc/bindings/TelemetryABI.h. Strings arrive as borrowed
+// (not ref'd) WTFStringImpl-backed `BunString`s that C++ keeps alive for the
+// duration of the call; nothing here retains them.
 
-/// A JS string as JSC holds it: Latin-1 or UTF-16 code units.
+use bun_core::String as JsString;
+use bun_core::strings;
+
+/// bun_telemetry::Instrument::Sqlite's enable bit, for JSSQLStatement.cpp.
+#[unsafe(no_mangle)]
+pub static Bun__Telemetry__SQLITE_MASK: u32 = bun_telemetry::Instrument::Sqlite.bit();
+
+/// `AttrRef::kind` (TelemetryAttrKind); values are only ever produced by C++.
+mod attr_kind {
+    pub(super) const STRING: u8 = 0;
+    pub(super) const BOOL: u8 = 1;
+    pub(super) const INT: u8 = 2;
+    pub(super) const DOUBLE: u8 = 3;
+    pub(super) const ARRAY: u8 = 4;
+}
+
+/// `items[start .. start + length]` of an [`AttrPool`] (`array_items` when
+/// it is an attribute value, `items` everywhere else).
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct StrRef {
-    ptr: *const u8,
-    len: u32,
-    is16: u8,
+struct AttrSlice {
+    start: u32,
+    length: u32,
 }
-
-impl StrRef {
-    /// Append as UTF-8.
-    fn append_to(&self, out: &mut Vec<u8>) {
-        if self.ptr.is_null() || self.len == 0 {
-            return;
-        }
-        if self.is16 != 0 {
-            // SAFETY: C++ fills StrRef from a live WTF::StringImpl; `is16` means `ptr` is its 2-byte-aligned char16 buffer.
-            #[allow(clippy::cast_ptr_alignment)]
-            let s =
-                unsafe { core::slice::from_raw_parts(self.ptr.cast::<u16>(), self.len as usize) };
-            bun_core::strings::convert_utf16_to_utf8_append(out, s);
-        } else {
-            // SAFETY: C++ fills StrRef from a live WTF::StringImpl (latin1 here).
-            let s = unsafe { core::slice::from_raw_parts(self.ptr, self.len as usize) };
-            if bun_core::strings::is_all_ascii(s) {
-                out.extend_from_slice(s);
-            } else {
-                let at = out.len();
-                let taken = core::mem::take(out);
-                *out = bun_core::strings::allocate_latin1_into_utf8_with_list(taken, at, s);
-            }
-        }
-    }
-
-    fn range(&self, scratch: &mut Vec<u8>) -> (usize, usize) {
-        let start = scratch.len();
-        self.append_to(scratch);
-        (start, scratch.len() - start)
-    }
-
-    fn to_vec(&self) -> Vec<u8> {
-        let mut v = Vec::new();
-        self.append_to(&mut v);
-        v
-    }
-}
-
-/// Attribute value kinds (matches JSTelemetrySpan.cpp).
-const ATTR_STR: u8 = 0;
-const ATTR_BOOL: u8 = 1;
-const ATTR_INT: u8 = 2;
-const ATTR_DOUBLE: u8 = 3;
-const ATTR_ARRAY: u8 = 4;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct ArrayRef {
-    items: *const AttrRef,
-    n: u32,
-}
-
-#[repr(C)]
 union AttrValue {
-    str_: core::mem::ManuallyDrop<StrRef>,
-    num: f64,
-    int: i64,
-    /// kind == ATTR_ARRAY: `items[..n]` (their keys are unused).
-    array: ArrayRef,
+    string: JsString,
+    /// Also Bool (0/1).
+    integer: i64,
+    number: f64,
+    array: AttrSlice,
 }
 
 #[repr(C)]
 pub struct AttrRef {
-    key_ptr: *const u8,
-    key_len: u32,
-    key_is16: u8,
+    key: JsString,
     kind: u8,
-    u: AttrValue,
+    value: AttrValue,
 }
 
-const _: () = assert!(core::mem::size_of::<AttrRef>() == 32);
-
-impl AttrRef {
-    #[inline]
-    fn key(&self) -> StrRef {
-        StrRef {
-            ptr: self.key_ptr,
-            len: self.key_len,
-            is16: self.key_is16,
-        }
-    }
+#[repr(C)]
+pub struct AttrPool {
+    items: *const AttrRef,
+    array_items: *const AttrRef,
+    n_items: u32,
+    n_array_items: u32,
 }
 
 #[repr(C)]
 pub struct EventRef {
-    name: StrRef,
+    name: JsString,
+    /// 0 = not given (now).
     time_ns: u64,
-    attrs: *const AttrRef,
-    n_attrs: u32,
+    attrs: AttrSlice,
 }
 
 #[repr(C)]
 pub struct LinkRef {
-    trace_id: StrRef,
-    span_id: StrRef,
-    flags: u8,
-    attrs: *const AttrRef,
-    n_attrs: u32,
+    trace_id: JsString,
+    span_id: JsString,
+    attrs: AttrSlice,
+    trace_flags: u8,
 }
 
+/// Everything a JS-owned span gathered, handed over once at end().
 #[repr(C)]
 pub struct EndDesc {
     stub: *const SpanStub,
-    scope: u16,
-    kind: u8,
-    status: u8,
+    /// 0 = now.
     end_ns: u64,
-    name: StrRef,
-    status_message: StrRef,
-    trace_state: StrRef,
-    attrs: *const AttrRef,
-    n_attrs: u32,
-    dropped_attrs: u32,
-    /// Pre-encoded `Span.attributes` entries (JSTelemetrySpan.cpp fast path).
-    encoded_attrs: *const u8,
-    encoded_attrs_len: u32,
-    n_encoded_attrs: u32,
+    name: JsString,
+    status_message: JsString,
+    trace_state: JsString,
+    pool: AttrPool,
+    attrs: AttrSlice,
     events: *const EventRef,
-    n_events: u32,
     links: *const LinkRef,
+    n_events: u32,
     n_links: u32,
+    /// Attributes C++ did not pass (beyond its gather cap).
+    dropped_attrs: u32,
+    scope: u16,
+    /// @opentelemetry/api SpanKind.
+    kind: u8,
+    /// @opentelemetry/api SpanStatusCode.
+    status: u8,
 }
 
-/// `(count limit, value length limit)` for the C++ fast path.
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__Telemetry__attributeLimits(value_length_limit: &mut u32) -> u32 {
-    let l = limits();
-    *value_length_limit = l.attribute_value_length;
-    l.attributes as u32
+/// Size and field offsets the C++ mirror static_asserts too.
+macro_rules! abi_layout {
+    ($T:ty, $size:expr; $($field:ident @ $off:expr),+ $(,)?) => {
+        const _: () = {
+            assert!(core::mem::size_of::<$T>() == $size);
+            $(assert!(core::mem::offset_of!($T, $field) == $off);)+
+        };
+    };
 }
 
-impl StrRef {
-    /// Borrow as UTF-8 if the JS string is Latin-1 and pure ASCII (the common
-    /// case); otherwise transcode into `scratch` and borrow that.
-    #[inline]
-    fn utf8<'a>(&'a self, scratch: &'a mut Vec<u8>) -> &'a [u8] {
-        if self.ptr.is_null() || self.len == 0 {
+abi_layout!(SpanStub, 48; ctx @ 0, parent @ 25, start_ns @ 40);
+const _: () = assert!(core::mem::size_of::<JsString>() == 24);
+abi_layout!(AttrSlice, 8; start @ 0, length @ 4);
+abi_layout!(AttrRef, 56; key @ 0, kind @ 24, value @ 32);
+abi_layout!(AttrPool, 24; items @ 0, array_items @ 8, n_items @ 16, n_array_items @ 20);
+abi_layout!(EventRef, 40; name @ 0, time_ns @ 24, attrs @ 32);
+abi_layout!(LinkRef, 64; trace_id @ 0, span_id @ 24, attrs @ 48, trace_flags @ 56);
+abi_layout!(
+    EndDesc, 152;
+    stub @ 0, end_ns @ 8, name @ 16, status_message @ 40, trace_state @ 64, pool @ 88, attrs @ 112,
+    events @ 120, links @ 128, n_events @ 136, n_links @ 140, dropped_attrs @ 144, scope @ 148,
+    kind @ 150, status @ 151
+);
+
+/// UTF-8 view of a borrowed JS string: zero-copy when it is Latin-1 and pure
+/// ASCII (nearly always), otherwise transcoded into `scratch`.
+#[inline(always)]
+fn utf8<'a>(s: &'a JsString, scratch: &'a mut Vec<u8>) -> &'a [u8] {
+    if s.is_utf16() {
+        scratch.clear();
+        strings::convert_utf16_to_utf8_append(scratch, s.utf16());
+        return &scratch[..];
+    }
+    let bytes = s.latin1();
+    if strings::is_all_ascii(bytes) {
+        return bytes;
+    }
+    *scratch = strings::allocate_latin1_into_utf8_with_list(core::mem::take(scratch), 0, bytes);
+    &scratch[..]
+}
+
+/// `utf8` appended to `out`; returns the range written.
+fn append_utf8(s: &JsString, out: &mut Vec<u8>) -> core::ops::Range<usize> {
+    let start = out.len();
+    if s.is_utf16() {
+        strings::convert_utf16_to_utf8_append(out, s.utf16());
+    } else {
+        let bytes = s.latin1();
+        if strings::is_all_ascii(bytes) {
+            out.extend_from_slice(bytes);
+        } else {
+            *out = strings::allocate_latin1_into_utf8_with_list(core::mem::take(out), start, bytes);
+        }
+    }
+    start..out.len()
+}
+
+impl AttrPool {
+    fn items(&self) -> &[AttrRef] {
+        if self.n_items == 0 {
             return &[];
         }
-        if self.is16 == 0 {
-            // SAFETY: C++ fills StrRef from a live WTF::StringImpl (latin1 here).
-            let s = unsafe { core::slice::from_raw_parts(self.ptr, self.len as usize) };
-            if bun_core::strings::is_all_ascii(s) {
-                return s;
-            }
+        // SAFETY: C++ passes `n_items` live entries (TelemetryAttrGatherer).
+        unsafe { core::slice::from_raw_parts(self.items, self.n_items as usize) }
+    }
+    fn array_items(&self) -> &[AttrRef] {
+        if self.n_array_items == 0 {
+            return &[];
         }
-        scratch.clear();
-        self.append_to(scratch);
-        &scratch[..]
+        // SAFETY: as above.
+        unsafe { core::slice::from_raw_parts(self.array_items, self.n_array_items as usize) }
+    }
+    fn slice(&self, s: AttrSlice) -> &[AttrRef] {
+        let items = self.items();
+        let start = (s.start as usize).min(items.len());
+        let end = (start + s.length as usize).min(items.len());
+        &items[start..end]
+    }
+    fn array(&self, s: AttrSlice) -> &[AttrRef] {
+        let items = self.array_items();
+        let start = (s.start as usize).min(items.len());
+        let end = (start + s.length as usize).min(items.len());
+        &items[start..end]
     }
 }
 
-/// Decode `attrs[..n]` and hand each `(key, value)` to `emit`. No allocation
-/// unless a string needs transcoding or a value is an array.
-fn with_attrs(
-    attrs: *const AttrRef,
-    n: u32,
+/// A scalar attribute value with any string bytes owned elsewhere (`bytes`).
+#[derive(Clone, Copy)]
+enum Scalar {
+    Str(usize, usize),
+    Bool(bool),
+    Int(i64),
+    Double(f64),
+}
+
+impl Scalar {
+    /// `None` for arrays (and unknown kinds).
+    fn read(a: &AttrRef, bytes: &mut Vec<u8>) -> Option<Scalar> {
+        Some(match a.kind {
+            attr_kind::STRING => {
+                // SAFETY: `kind` selects the live union member (TelemetryAttrGatherer::fill).
+                let r = append_utf8(unsafe { &a.value.string }, bytes);
+                Scalar::Str(r.start, r.end)
+            }
+            // SAFETY: as above.
+            attr_kind::BOOL => Scalar::Bool(unsafe { a.value.integer } != 0),
+            // SAFETY: as above.
+            attr_kind::INT => Scalar::Int(unsafe { a.value.integer }),
+            // SAFETY: as above.
+            attr_kind::DOUBLE => Scalar::Double(unsafe { a.value.number }),
+            _ => return None,
+        })
+    }
+    fn value<'a>(&self, bytes: &'a [u8], value_limit: usize) -> Value<'a> {
+        match *self {
+            Scalar::Str(s, e) => Value::Str(bun_telemetry::otlp::truncate_utf8(
+                &bytes[s..e],
+                value_limit,
+            )),
+            Scalar::Bool(b) => Value::Bool(b),
+            Scalar::Int(i) => Value::Int(i),
+            Scalar::Double(d) => Value::Double(d),
+        }
+    }
+}
+
+/// Decode `refs` and hand each `(key, value)` to `emit`, in order. Top-level
+/// strings borrow the JS characters directly when they are ASCII; `scratch`
+/// ([key, value, array bytes]) absorbs the rest so nothing allocates per call
+/// once warm.
+#[inline]
+fn each_attr(
+    refs: &[AttrRef],
+    pool: &AttrPool,
+    value_limit: usize,
     scratch: &mut [Vec<u8>; 3],
     mut emit: impl FnMut(&[u8], &Value<'_>),
 ) {
-    if n == 0 || attrs.is_null() {
-        return;
-    }
-    // SAFETY: C++ passes a stack array of `n` AttrRefs.
-    let attrs = unsafe { core::slice::from_raw_parts(attrs, n as usize) };
-    let [ks, vs, _] = scratch;
-    for a in attrs {
-        let key_ref = a.key();
-        let key = key_ref.utf8(ks);
+    let [key_buf, val_buf, arr_buf] = scratch;
+    for a in refs {
+        let key = utf8(&a.key, key_buf);
         if key.is_empty() {
             continue;
         }
         match a.kind {
-            // SAFETY: `kind` selects the live union member (written by JSTelemetrySpan.cpp).
-            ATTR_STR => emit(key, &Value::Str(unsafe { &a.u.str_ }.utf8(vs))),
+            attr_kind::STRING => {
+                // SAFETY: `kind` selects the live union member (TelemetryAttrGatherer::fill).
+                let s = utf8(unsafe { &a.value.string }, val_buf);
+                emit(
+                    key,
+                    &Value::Str(bun_telemetry::otlp::truncate_utf8(s, value_limit)),
+                );
+            }
             // SAFETY: as above.
-            ATTR_BOOL => emit(key, &Value::Bool(unsafe { a.u.int } != 0)),
+            attr_kind::BOOL => emit(key, &Value::Bool(unsafe { a.value.integer } != 0)),
             // SAFETY: as above.
-            ATTR_INT => emit(key, &Value::Int(unsafe { a.u.int })),
+            attr_kind::INT => emit(key, &Value::Int(unsafe { a.value.integer })),
             // SAFETY: as above.
-            ATTR_DOUBLE => emit(key, &Value::Double(unsafe { a.u.num })),
-            ATTR_ARRAY => {
+            attr_kind::DOUBLE => emit(key, &Value::Double(unsafe { a.value.number })),
+            attr_kind::ARRAY => {
+                arr_buf.clear();
                 // SAFETY: as above.
-                let arr = unsafe { a.u.array };
-                // SAFETY: C++ passes `n` items alongside the pointer.
-                let items = unsafe { core::slice::from_raw_parts(arr.items, arr.n as usize) };
-                // Own every string first, then borrow.
-                let mut bytes: Vec<u8> = Vec::new();
-                let mut ranges: Vec<(u8, usize, usize, i64, f64)> = Vec::with_capacity(items.len());
-                for it in items {
-                    match it.kind {
-                        ATTR_STR => {
-                            // SAFETY: `kind` selects the live union member.
-                            let (s, n) = unsafe { &it.u.str_ }.range(&mut bytes);
-                            ranges.push((ATTR_STR, s, n, 0, 0.0));
-                        }
-                        // SAFETY: int/num are plain-old-data; the unused one is ignored downstream.
-                        k => ranges.push((k, 0, 0, unsafe { it.u.int }, unsafe { it.u.num })),
-                    }
-                }
-                let vals: Vec<Value<'_>> = ranges
+                let items = pool.array(unsafe { a.value.array });
+                let scalars: Vec<Scalar> = items
                     .iter()
-                    .map(|&(k, s, n, i, d)| match k {
-                        ATTR_STR => Value::Str(&bytes[s..s + n]),
-                        ATTR_BOOL => Value::Bool(i != 0),
-                        ATTR_INT => Value::Int(i),
-                        _ => Value::Double(d),
-                    })
+                    .filter_map(|it| Scalar::read(it, arr_buf))
                     .collect();
-                emit(key, &Value::Array(&vals));
+                let values: Vec<Value<'_>> = scalars
+                    .iter()
+                    .map(|s| s.value(arr_buf, value_limit))
+                    .collect();
+                emit(key, &Value::Array(&values));
             }
             _ => {}
         }
     }
+}
+
+/// Event/link attributes must all be alive at once for `SpanWriter::event` /
+/// `link`, so they are owned: string bytes in one buffer, then borrowed.
+struct OwnedAttrs {
+    bytes: Vec<u8>,
+    /// (key range, value) — `Err(range into arrays)` for array values.
+    entries: Vec<(
+        core::ops::Range<usize>,
+        Result<Scalar, core::ops::Range<usize>>,
+    )>,
+    arrays: Vec<Scalar>,
+}
+
+impl OwnedAttrs {
+    fn collect(refs: &[AttrRef], pool: &AttrPool) -> OwnedAttrs {
+        let mut o = OwnedAttrs {
+            bytes: Vec::new(),
+            entries: Vec::with_capacity(refs.len()),
+            arrays: Vec::new(),
+        };
+        for a in refs {
+            let key = append_utf8(&a.key, &mut o.bytes);
+            if key.is_empty() {
+                continue;
+            }
+            let value = match Scalar::read(a, &mut o.bytes) {
+                Some(s) => Ok(s),
+                None if a.kind == attr_kind::ARRAY => {
+                    let start = o.arrays.len();
+                    // SAFETY: kind == ARRAY selects the live union member.
+                    for it in pool.array(unsafe { a.value.array }) {
+                        if let Some(s) = Scalar::read(it, &mut o.bytes) {
+                            o.arrays.push(s);
+                        }
+                    }
+                    Err(start..o.arrays.len())
+                }
+                None => continue,
+            };
+            o.entries.push((key, value));
+        }
+        o
+    }
+
+    fn with<R>(&self, value_limit: usize, f: impl FnOnce(&[(&[u8], Value<'_>)]) -> R) -> R {
+        let arrays: Vec<Vec<Value<'_>>> = self
+            .entries
+            .iter()
+            .filter_map(|(_, v)| v.as_ref().err())
+            .map(|r| {
+                self.arrays[r.clone()]
+                    .iter()
+                    .map(|s| s.value(&self.bytes, value_limit))
+                    .collect()
+            })
+            .collect();
+        let mut next_array = arrays.iter();
+        let pairs: Vec<(&[u8], Value<'_>)> = self
+            .entries
+            .iter()
+            .map(|(k, v)| {
+                let value = match v {
+                    Ok(s) => s.value(&self.bytes, value_limit),
+                    Err(_) => Value::Array(next_array.next().map(Vec::as_slice).unwrap_or(&[])),
+                };
+                (&self.bytes[k.clone()], value)
+            })
+            .collect();
+        f(&pairs)
+    }
+}
+
+fn status_code(api: u8) -> StatusCode {
+    match api {
+        1 => StatusCode::Ok,
+        2 => StatusCode::Error,
+        _ => StatusCode::Unset,
+    }
+}
+
+fn link_context(link: &LinkRef, scratch: &mut Vec<u8>) -> Option<SpanContext> {
+    let trace_id = TraceId::from_hex(utf8(&link.trace_id, scratch))?;
+    let span_id = SpanId::from_hex(utf8(&link.span_id, scratch))?;
+    Some(SpanContext {
+        trace_id,
+        span_id,
+        flags: Flags(link.trace_flags & Flags::SAMPLED),
+    })
 }
 
 /// Ids, sampling decision and start time for a new span.
@@ -564,28 +683,83 @@ pub extern "C" fn Bun__Telemetry__stubStart(
     );
 }
 
-/// A non-recording carrier for a (possibly remote) span context.
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__Telemetry__stubWrap(
-    out: &mut SpanStub,
-    trace_id: &[u8; 16],
-    span_id: &[u8; 8],
-    w3c_flags: u8,
-    remote: bool,
-) {
-    *out = SpanStub {
+fn carrier(ctx: SpanContext, remote: bool) -> SpanStub {
+    SpanStub {
         ctx: SpanContext {
-            trace_id: TraceId(*trace_id),
-            span_id: SpanId(*span_id),
             flags: Flags(
-                (w3c_flags & Flags::SAMPLED)
+                (ctx.flags.0 & Flags::SAMPLED)
                     | Flags::NON_RECORDING
                     | if remote { Flags::REMOTE } else { 0 },
             ),
+            ..ctx
         },
         parent: SpanId::INVALID,
         start_ns: 1,
+    }
+}
+
+/// A non-recording carrier for a (possibly remote) span context given as hex ids.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__Telemetry__stubFromHexIds(
+    out: &mut SpanStub,
+    trace_id: &JsString,
+    span_id: &JsString,
+    trace_flags: u8,
+    remote: bool,
+) -> bool {
+    let mut scratch = Vec::new();
+    let Some(trace_id) = TraceId::from_hex(utf8(trace_id, &mut scratch)) else {
+        return false;
     };
+    let Some(span_id) = SpanId::from_hex(utf8(span_id, &mut scratch)) else {
+        return false;
+    };
+    let flags = Flags(trace_flags);
+    *out = carrier(
+        SpanContext {
+            trace_id,
+            span_id,
+            flags,
+        },
+        remote,
+    );
+    true
+}
+
+/// W3C `traceparent` for `stub` into `out[..55]`.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__Telemetry__formatTraceparent(
+    stub: &SpanStub,
+    out: &mut [u8; bun_telemetry::propagation::TRACEPARENT_LEN],
+) {
+    bun_telemetry::propagation::format_traceparent(&stub.ctx, out);
+}
+
+/// Parse a W3C `traceparent` into a remote, non-recording carrier.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__Telemetry__parseTraceparent(header: &JsString, out: &mut SpanStub) -> bool {
+    let mut scratch = Vec::new();
+    match bun_telemetry::propagation::parse_traceparent(utf8(header, &mut scratch)) {
+        Some(ctx) => {
+            *out = carrier(ctx, true);
+            true
+        }
+        None => false,
+    }
+}
+
+/// Lowercase hex of `bytes[..n]` into `out[..2n]` (span/trace id getters).
+#[unsafe(no_mangle)]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "C" fn Bun__Telemetry__hexLower(bytes: *const u8, n: usize, out: *mut u8) {
+    // SAFETY: C++ passes `n` readable bytes and `2n` writable bytes.
+    let (bytes, out) = unsafe {
+        (
+            core::slice::from_raw_parts(bytes, n),
+            core::slice::from_raw_parts_mut(out, n * 2),
+        )
+    };
+    bun_core::fmt::bytes_to_hex_lower(bytes, out);
 }
 
 #[unsafe(no_mangle)]
@@ -598,14 +772,6 @@ pub extern "C" fn Bun__Telemetry__userScope() -> u16 {
     ScopeId::from(bun_telemetry::Instrument::User).0
 }
 
-fn status_from_u8(s: u8) -> StatusCode {
-    match s {
-        1 => StatusCode::Ok,
-        2 => StatusCode::Error,
-        _ => StatusCode::Unset,
-    }
-}
-
 /// Encode a JS-owned span that just ended into the VM's batch.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Telemetry__encodeSpan(global: &JSGlobalObject, desc: &EndDesc) {
@@ -614,96 +780,77 @@ pub extern "C" fn Bun__Telemetry__encodeSpan(global: &JSGlobalObject, desc: &End
     if !stub.is_recording() {
         return;
     }
-    let scope = ScopeId(desc.scope);
-    let l = limits();
-    let n_attrs = desc
-        .n_attrs
-        .min((l.attributes as u32).saturating_sub(desc.n_encoded_attrs));
-    let n_events = desc.n_events.min(l.events as u32);
-    let n_links = desc.n_links.min(l.links as u32);
+    let lim = limits();
+    let value_limit = lim.attribute_value_length as usize;
+    let end_ns = if desc.end_ns == 0 {
+        clock::now_unix_nanos()
+    } else {
+        desc.end_ns
+    };
+    let attrs = desc.pool.slice(desc.attrs);
+    let kept_attrs = &attrs[..attrs.len().min(lim.attributes as usize)];
+    let events: &[EventRef] = if desc.n_events == 0 {
+        &[]
+    } else {
+        // SAFETY: C++ passes `n_events` entries alongside the pointer.
+        unsafe { core::slice::from_raw_parts(desc.events, desc.n_events as usize) }
+    };
+    let links: &[LinkRef] = if desc.n_links == 0 {
+        &[]
+    } else {
+        // SAFETY: C++ passes `n_links` entries alongside the pointer.
+        unsafe { core::slice::from_raw_parts(desc.links, desc.n_links as usize) }
+    };
+    let kept_events = &events[..events.len().min(lim.events as usize)];
+    let kept_links = &links[..links.len().min(lim.links as usize)];
     {
         let Some(mut lo) = local(global) else { return };
         let Local {
             batch, scratch: sc, ..
         } = &mut *lo;
+        // The name borrows scratch[2] for the whole encode; attribute keys/values use [0]/[1]/[2'].
         let mut name_buf = core::mem::take(&mut sc[2]);
-        let name = desc.name.utf8(&mut name_buf);
-        batch::record(batch, scope, &mut |buf: &mut Vec<u8>| {
-            let mut w =
-                SpanWriter::begin(buf, stub, name, SpanKind::from_api(desc.kind), desc.end_ns);
-            if desc.trace_state.len != 0 {
-                w.trace_state(&desc.trace_state.to_vec());
+        let name = utf8(&desc.name, &mut name_buf);
+        batch::record(batch, ScopeId(desc.scope), &mut |buf: &mut Vec<u8>| {
+            let mut w = SpanWriter::begin(buf, stub, name, SpanKind::from_api(desc.kind), end_ns);
+            if !desc.trace_state.is_empty() {
+                let mut tmp = Vec::new();
+                w.trace_state(utf8(&desc.trace_state, &mut tmp));
             }
-            if desc.encoded_attrs_len != 0 {
-                // SAFETY: (ptr,len) of the cell's encoded-attribute buffer, alive for this call.
-                w.raw(unsafe {
-                    core::slice::from_raw_parts(desc.encoded_attrs, desc.encoded_attrs_len as usize)
-                });
-            }
-            with_attrs(desc.attrs, n_attrs, sc, |k, v| match *v {
-                Value::Str(s) if s.len() > l.attribute_value_length as usize => {
-                    w.attr_bytes_key(
-                        k,
-                        Value::Str(bun_telemetry::otlp::truncate_utf8(
-                            s,
-                            l.attribute_value_length as usize,
-                        )),
-                    );
-                }
-                _ => {
-                    w.attr_bytes_key(k, *v);
-                }
+            each_attr(kept_attrs, &desc.pool, value_limit, sc, |k, v| {
+                w.attr_bytes_key(k, *v);
             });
-            if n_events != 0 {
-                // SAFETY: C++ passes `n_events` entries.
-                let events = unsafe { core::slice::from_raw_parts(desc.events, n_events as usize) };
-                for e in events {
-                    let ename = e.name.to_vec();
-                    let mut pairs: Vec<(Vec<u8>, OwnedFlat)> = Vec::new();
-                    with_attrs(e.attrs, e.n_attrs, sc, |k, v| {
-                        pairs.push((k.to_vec(), OwnedFlat::from(v)))
-                    });
-                    let borrowed: Vec<(&[u8], Value<'_>)> =
-                        pairs.iter().map(|(k, v)| (&k[..], v.value())).collect();
-                    w.event(&ename, e.time_ns, &borrowed);
-                }
+            for e in kept_events {
+                let mut tmp = Vec::new();
+                let ename = utf8(&e.name, &mut tmp);
+                let time_ns = if e.time_ns == 0 { end_ns } else { e.time_ns };
+                OwnedAttrs::collect(desc.pool.slice(e.attrs), &desc.pool)
+                    .with(value_limit, |pairs| w.event(ename, time_ns, pairs));
             }
-            if n_links != 0 {
-                // SAFETY: C++ passes `n_links` entries.
-                let links = unsafe { core::slice::from_raw_parts(desc.links, n_links as usize) };
-                for lk in links {
-                    let (Some(t), Some(sid)) = (
-                        TraceId::from_hex(&lk.trace_id.to_vec()),
-                        SpanId::from_hex(&lk.span_id.to_vec()),
-                    ) else {
-                        continue;
-                    };
-                    let ctx = SpanContext {
-                        trace_id: t,
-                        span_id: sid,
-                        flags: Flags(lk.flags & Flags::SAMPLED),
-                    };
-                    let mut pairs: Vec<(Vec<u8>, OwnedFlat)> = Vec::new();
-                    with_attrs(lk.attrs, lk.n_attrs, sc, |k, v| {
-                        pairs.push((k.to_vec(), OwnedFlat::from(v)))
-                    });
-                    let borrowed: Vec<(&[u8], Value<'_>)> =
-                        pairs.iter().map(|(k, v)| (&k[..], v.value())).collect();
-                    w.link(&ctx, &borrowed);
-                }
+            for lk in kept_links {
+                let mut tmp = Vec::new();
+                let Some(ctx) = link_context(lk, &mut tmp) else {
+                    continue;
+                };
+                OwnedAttrs::collect(desc.pool.slice(lk.attrs), &desc.pool)
+                    .with(value_limit, |pairs| w.link(&ctx, pairs));
             }
-            let dropped_attrs = desc.dropped_attrs + (desc.n_attrs - n_attrs);
+            let dropped_attrs = desc.dropped_attrs + (attrs.len() - kept_attrs.len()) as u32;
             if dropped_attrs != 0 {
                 w.dropped_attributes(dropped_attrs);
             }
-            if desc.n_events != n_events {
-                w.dropped_events(desc.n_events - n_events);
+            if events.len() != kept_events.len() {
+                w.dropped_events((events.len() - kept_events.len()) as u32);
             }
-            if desc.n_links != n_links {
-                w.dropped_links(desc.n_links - n_links);
+            if links.len() != kept_links.len() {
+                w.dropped_links((links.len() - kept_links.len()) as u32);
             }
             if desc.status != 0 {
-                w.status(status_from_u8(desc.status), &desc.status_message.to_vec());
+                let mut tmp = Vec::new();
+                w.status(
+                    status_code(desc.status),
+                    utf8(&desc.status_message, &mut tmp),
+                );
             }
             w.finish();
         });
@@ -712,35 +859,7 @@ pub extern "C" fn Bun__Telemetry__encodeSpan(global: &JSGlobalObject, desc: &End
     super::after_record(global);
 }
 
-/// Flat owned attribute value for the (rare) event/link paths.
-enum OwnedFlat {
-    Str(Vec<u8>),
-    Bool(bool),
-    Int(i64),
-    Double(f64),
-}
-impl OwnedFlat {
-    fn from(v: &Value<'_>) -> OwnedFlat {
-        match *v {
-            Value::Str(s) => OwnedFlat::Str(s.to_vec()),
-            Value::Bytes(s) => OwnedFlat::Str(s.to_vec()),
-            Value::Bool(b) => OwnedFlat::Bool(b),
-            Value::Int(i) => OwnedFlat::Int(i),
-            Value::Double(d) => OwnedFlat::Double(d),
-            Value::Array(_) => OwnedFlat::Str(Vec::new()),
-        }
-    }
-    fn value(&self) -> Value<'_> {
-        match self {
-            OwnedFlat::Str(s) => Value::Str(s),
-            OwnedFlat::Bool(b) => Value::Bool(*b),
-            OwnedFlat::Int(i) => Value::Int(*i),
-            OwnedFlat::Double(d) => Value::Double(*d),
-        }
-    }
-}
-
-// ─────────────── native-owned span mutations from JS ───────────────
+// ─────────────── native-owned (pooled) spans ───────────────
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Telemetry__nativeIsLive(global: &JSGlobalObject, handle: u64) -> bool {
@@ -792,7 +911,7 @@ pub extern "C" fn Bun__Telemetry__poolMaterialize(global: &JSGlobalObject, handl
         if cell.is_some() {
             return JSValue::from_encoded(cell.0);
         }
-        let v = Bun__TelemetrySpan__createNative(global, &stub, scope.0, kind.to_api(), native.0);
+        let v = create_native_cell(global, &stub, scope, kind, native);
         v.protect();
         if let Some(mut l) = local(global) {
             pool::with(&mut l.pool, native, |s| {
@@ -806,36 +925,42 @@ pub extern "C" fn Bun__Telemetry__poolMaterialize(global: &JSGlobalObject, handl
         return JSValue::UNDEFINED;
     }
     // SAFETY: non-null `stub_ptr` points at a pool slot; copied while the pool is borrowed.
-    let mut stub = unsafe { *p };
+    let stub = unsafe { *p };
     drop(l);
-    stub.ctx.flags = Flags(stub.ctx.flags.0 | Flags::NON_RECORDING);
-    Bun__TelemetrySpan__createNative(global, &stub, 0, 0, 0)
+    Bun__TelemetrySpan__createNative(global, &carrier(stub.ctx, false), 0, 0, 0)
 }
 
+/// Apply every `pool.items` entry as a span attribute (last write wins per key).
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__Telemetry__nativeSetAttribute(
+pub extern "C" fn Bun__Telemetry__nativeSetAttributes(
     global: &JSGlobalObject,
     handle: u64,
-    attr: &AttrRef,
+    attrs: &AttrPool,
 ) {
     let lim = limits();
     let Some(mut l) = local(global) else { return };
     let Local { pool, scratch, .. } = &mut *l;
-    with_attrs(attr, 1, scratch, |k, v| {
-        pool::with(pool, NativeSpan(handle), |s| s.set_attribute(k, v, lim));
-    });
+    each_attr(
+        attrs.items(),
+        attrs,
+        lim.attribute_value_length as usize,
+        scratch,
+        |k, v| {
+            pool::with(pool, NativeSpan(handle), |s| s.set_attribute(k, v, lim));
+        },
+    );
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Telemetry__nativeSetName(
     global: &JSGlobalObject,
     handle: u64,
-    name: &StrRef,
+    name: &JsString,
 ) {
-    let n = name.to_vec();
-    if let Some(mut l) = local(global) {
-        pool::with(&mut l.pool, NativeSpan(handle), |s| s.set_name(&n));
-    }
+    let Some(mut l) = local(global) else { return };
+    let Local { pool, scratch, .. } = &mut *l;
+    let name = utf8(name, &mut scratch[0]);
+    pool::with(pool, NativeSpan(handle), |s| s.set_name(name));
 }
 
 #[unsafe(no_mangle)]
@@ -843,14 +968,14 @@ pub extern "C" fn Bun__Telemetry__nativeSetStatus(
     global: &JSGlobalObject,
     handle: u64,
     code: u8,
-    message: &StrRef,
+    message: &JsString,
 ) {
-    let m = message.to_vec();
-    if let Some(mut l) = local(global) {
-        pool::with(&mut l.pool, NativeSpan(handle), |s| {
-            s.set_status(status_from_u8(code), &m)
-        });
-    }
+    let Some(mut l) = local(global) else { return };
+    let Local { pool, scratch, .. } = &mut *l;
+    let message = utf8(message, &mut scratch[0]);
+    pool::with(pool, NativeSpan(handle), |s| {
+        s.set_status(status_code(code), message)
+    });
 }
 
 #[unsafe(no_mangle)]
@@ -858,18 +983,17 @@ pub extern "C" fn Bun__Telemetry__nativeAddEvent(
     global: &JSGlobalObject,
     handle: u64,
     event: &EventRef,
+    attrs: &AttrPool,
 ) {
-    let name = event.name.to_vec();
-    let mut pairs: Vec<(Vec<u8>, OwnedFlat)> = Vec::new();
+    let lim = limits();
+    let owned = OwnedAttrs::collect(attrs.slice(event.attrs), attrs);
     let Some(mut l) = local(global) else { return };
     let Local { pool, scratch, .. } = &mut *l;
-    with_attrs(event.attrs, event.n_attrs, scratch, |k, v| {
-        pairs.push((k.to_vec(), OwnedFlat::from(v)))
-    });
-    let borrowed: Vec<(&[u8], Value<'_>)> =
-        pairs.iter().map(|(k, v)| (&k[..], v.value())).collect();
-    pool::with(pool, NativeSpan(handle), |s| {
-        s.add_event(&name, event.time_ns, &borrowed, limits())
+    let name = utf8(&event.name, &mut scratch[0]);
+    owned.with(lim.attribute_value_length as usize, |pairs| {
+        pool::with(pool, NativeSpan(handle), |s| {
+            s.add_event(name, event.time_ns, pairs, lim)
+        });
     });
 }
 
@@ -878,60 +1002,68 @@ pub extern "C" fn Bun__Telemetry__nativeAddLink(
     global: &JSGlobalObject,
     handle: u64,
     link: &LinkRef,
+    attrs: &AttrPool,
 ) {
-    let (Some(t), Some(sid)) = (
-        TraceId::from_hex(&link.trace_id.to_vec()),
-        SpanId::from_hex(&link.span_id.to_vec()),
-    ) else {
+    let lim = limits();
+    let mut scratch = Vec::new();
+    let Some(ctx) = link_context(link, &mut scratch) else {
         return;
     };
-    let ctx = SpanContext {
-        trace_id: t,
-        span_id: sid,
-        flags: Flags(link.flags & Flags::SAMPLED),
-    };
-    let mut pairs: Vec<(Vec<u8>, OwnedFlat)> = Vec::new();
+    let owned = OwnedAttrs::collect(attrs.slice(link.attrs), attrs);
     let Some(mut l) = local(global) else { return };
-    let Local { pool, scratch, .. } = &mut *l;
-    with_attrs(link.attrs, link.n_attrs, scratch, |k, v| {
-        pairs.push((k.to_vec(), OwnedFlat::from(v)))
-    });
-    let borrowed: Vec<(&[u8], Value<'_>)> =
-        pairs.iter().map(|(k, v)| (&k[..], v.value())).collect();
-    pool::with(pool, NativeSpan(handle), |s| {
-        s.add_link(&ctx, &borrowed, limits())
+    owned.with(lim.attribute_value_length as usize, |pairs| {
+        pool::with(&mut l.pool, NativeSpan(handle), |s| {
+            s.add_link(&ctx, pairs, lim)
+        });
     });
 }
 
-/// The slot's current name as UTF-8 (for the `.name` getter). Writes up to
-/// `cap` bytes and returns the full length.
+/// The slot's current name (for the `.name` getter); +1 ref, caller adopts.
 #[unsafe(no_mangle)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn Bun__Telemetry__nativeName(
+pub extern "C" fn Bun__Telemetry__nativeName(global: &JSGlobalObject, handle: u64) -> JsString {
+    let Some(l) = local(global) else {
+        return JsString::empty();
+    };
+    pool::with_ref(&l.pool, NativeSpan(handle), |s| {
+        JsString::clone_utf8(&s.name)
+    })
+    .unwrap_or(JsString::empty())
+}
+
+/// W3C `tracestate` / `baggage` a native-owned span received (+1 refs, caller
+/// adopts). False, with both Empty, when it carries neither.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__Telemetry__nativePropagation(
     global: &JSGlobalObject,
     handle: u64,
-    out: *mut u8,
-    cap: usize,
-) -> usize {
-    let Some(l) = local(global) else { return 0 };
+    trace_state: &mut JsString,
+    baggage: &mut JsString,
+) -> bool {
+    *trace_state = JsString::empty();
+    *baggage = JsString::empty();
+    let Some(l) = local(global) else {
+        return false;
+    };
     pool::with_ref(&l.pool, NativeSpan(handle), |s| {
-        let n = s.name.len().min(cap);
-        // SAFETY: caller provides `cap` writable bytes at `out`.
-        unsafe { core::ptr::copy_nonoverlapping(s.name.as_ptr(), out, n) };
-        s.name.len()
+        if s.trace_state.is_empty() && s.baggage.is_empty() {
+            return false;
+        }
+        *trace_state = JsString::clone_utf8(&s.trace_state);
+        *baggage = JsString::clone_utf8(&s.baggage);
+        true
     })
-    .unwrap_or(0)
+    .unwrap_or(false)
 }
 
-/// `startLeafSpan(instrument, name, kind)` support: start a native-owned span
-/// for a JS-implemented built-in instrumentation (node:http client). Returns
-/// the JS cell or undefined when the instrumentation should not record.
+/// Start a native-owned span for a JS-implemented built-in instrumentation
+/// (node:http client). Returns the JS cell, or undefined when it should not
+/// record.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Telemetry__startInstrumentSpan(
     global: &JSGlobalObject,
     instrument: u32,
-    name: &StrRef,
-    kind: u8,
+    name: &JsString,
+    api_kind: u8,
 ) -> JSValue {
     let Some(i) = bun_telemetry::Instrument::ALL
         .get(instrument as usize)
@@ -943,44 +1075,19 @@ pub extern "C" fn Bun__Telemetry__startInstrumentSpan(
     if !stub.is_some() {
         return JSValue::UNDEFINED;
     }
-    let n = name.to_vec();
-    let kind = SpanKind::from_api(kind);
+    let mut scratch = Vec::new();
+    let name = utf8(name, &mut scratch);
+    let kind = SpanKind::from_api(api_kind);
     let native = with_active_propagation(global, |ts, bg| {
         let Some(mut l) = local(global) else {
             return NativeSpan::NONE;
         };
-        pool::begin_with(&mut l.pool, stub, ScopeId::from(i), &n, kind, |s| {
+        pool::begin_with(&mut l.pool, stub, ScopeId::from(i), name, kind, |s| {
             s.trace_state.extend_from_slice(ts);
             s.baggage.extend_from_slice(bg);
         })
     });
     create_native_cell(global, &stub, ScopeId::from(i), kind, native)
-}
-
-/// tracestate (`which == b't'`) or baggage (`b'b'`) of a native-owned span.
-/// Writes up to `cap` bytes; returns the full length.
-#[unsafe(no_mangle)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub extern "C" fn Bun__Telemetry__nativePropagation(
-    global: &JSGlobalObject,
-    handle: u64,
-    which: u8,
-    out: *mut u8,
-    cap: usize,
-) -> usize {
-    let Some(l) = local(global) else { return 0 };
-    pool::with_ref(&l.pool, NativeSpan(handle), |s| {
-        let src = if which == b't' {
-            &s.trace_state
-        } else {
-            &s.baggage
-        };
-        let n = src.len().min(cap);
-        // SAFETY: caller provides `cap` writable bytes at `out`.
-        unsafe { core::ptr::copy_nonoverlapping(src.as_ptr(), out, n) };
-        src.len()
-    })
-    .unwrap_or(0)
 }
 
 /// bit 0: W3C trace context, bit 1: baggage.

@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isMusl, isWindows, nodeExe, tempDir } from "harness";
-import { closeSync, existsSync, openSync, readFileSync, readSync } from "node:fs";
+import { bunEnv, bunExe, isMusl, isWindows, nodeExe, primeToolchain, tempDir } from "harness";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
   mustGenerateOrderFile,
@@ -333,30 +333,12 @@ async function compileMsvc(cwd: string, source: string, out: string, link: strin
   if (exitCode !== 0) throw new Error(`${compiler} exited ${exitCode}:\n${stdout}${stderr}`);
 }
 
-/**
- * Nothing else in the suite runs the C toolchain, so on a CI lane (a fresh VM)
- * the first compile here pages the 100 MB compiler, 70 MB linker and 50 MB
- * static CRT in from a cold cloud disk one fault at a time: 7s, 3s and 4s on an
- * Azure VM, against a second each to read through first, which leaves the
- * faults to the disk's cache.
- */
-function primeMsvcToolchain() {
-  const libDirs = (process.env.LIB ?? "").split(";").filter(Boolean);
-  const files = [
-    compiler!,
-    join(dirname(compiler!), "lld-link.exe"),
-    ...["libcmt.lib", "libucrt.lib", "libvcruntime.lib"].flatMap(lib => libDirs.map(dir => join(dir, lib))),
-  ];
-  const buffer = Buffer.allocUnsafe(4 << 20);
-  for (const file of files.filter(file => existsSync(file))) {
-    const fd = openSync(file, "r");
-    try {
-      while (readSync(fd, buffer, 0, buffer.length, null) > 0);
-    } finally {
-      closeSync(fd);
-    }
-  }
-}
+/** The static CRT the fixtures link, wherever %LIB% (set by the VS shell) puts it. */
+const msvcCrt = () =>
+  (process.env.LIB ?? "")
+    .split(";")
+    .filter(Boolean)
+    .flatMap(dir => ["libcmt.lib", "libucrt.lib", "libvcruntime.lib"].map(lib => join(dir, lib)));
 
 /** The linker options that write a binary's two maps where the generator looks for them (see windows-symbols.ts). */
 const mapsFor = (exe: string): string[] => [`/map:${symbolMapFor(exe)}`, `/lldmap:${linkerMapFor(exe)}`];
@@ -723,7 +705,8 @@ describe.skipIf(!canTrace || !isWindows)("windows tracer", () => {
     tracer = join(root, "functrace.exe");
     const exe = (name: string) => join(root, `${name}.exe`);
 
-    primeMsvcToolchain();
+    // The compiler, the lld-link beside it that clang-cl links with, and the CRT: see primeToolchain.
+    primeToolchain([compiler!, join(dirname(compiler!), "lld-link.exe"), ...msvcCrt()]);
     await Promise.all([
       compileMsvc(root, join(orderfile, "functrace-windows.c"), tracer),
       // No folding: `after` has the same body as f1, and the trace is checked
@@ -748,7 +731,10 @@ describe.skipIf(!canTrace || !isWindows)("windows tracer", () => {
 
   afterAll(() => dir?.[Symbol.dispose]());
 
-  /** Runs `target` under the tracer, armed with its own starts unless told otherwise, and has it write `<name>.trace`. */
+  /**
+   * Runs `target` under the tracer, in `root`, armed with its own starts unless
+   * told otherwise, and has it write `<name>.trace`.
+   */
   async function trace(
     name: string,
     target: Built,
@@ -758,6 +744,7 @@ describe.skipIf(!canTrace || !isWindows)("windows tracer", () => {
     const out = join(root, `${name}.trace`);
     await using proc = Bun.spawn({
       cmd: [tracer, target.exe, ...args],
+      cwd: root,
       env: { ...bunEnv, ...env, BUN_FUNCTRACE_STARTS: starts, BUN_FUNCTRACE_OUT: out },
       stdin,
       stdout: "pipe",
@@ -788,13 +775,15 @@ describe.skipIf(!canTrace || !isWindows)("windows tracer", () => {
   });
 
   it.concurrent("reports the debuggee's exit code, and refuses a binary the starts are not for", async () => {
-    // Addresses far outside any code section: a starts file for some other binary.
-    const elsewhere = join(root, "elsewhere.starts");
-    await writeStarts(elsewhere, [0x7ff600000000, 0x7ff600000010]);
+    // Addresses far outside any code section: a starts file for some other
+    // binary. Named relative to the tracer's cwd: the message echoes the name,
+    // and the tracer prints it in the C locale, where a temp path under a
+    // non-ASCII user name would not survive.
+    await writeStarts(join(root, "elsewhere.starts"), [0x7ff600000000, 0x7ff600000010]);
 
     const [traced, refused] = await Promise.all([
       trace("exit", child, ["a", "b"]),
-      trace("refused", child, [], { starts: elsewhere }),
+      trace("refused", child, [], { starts: "elsewhere.starts" }),
     ]);
 
     // 43 is the child's argc + 40: both arguments reached it, and its exit code
@@ -807,7 +796,8 @@ describe.skipIf(!canTrace || !isWindows)("windows tracer", () => {
       traced: { stdout: "", stderr: "", exitCode: 43 },
       refused: {
         stdout: "",
-        stderr: `functrace: none of the 2 function starts in ${elsewhere} fall inside the command's code — is it the binary they were read from?\r\n`,
+        stderr:
+          "functrace: none of the 2 function starts in elsewhere.starts fall inside the command's code — is it the binary they were read from?\r\n",
         exitCode: 2,
       },
     });

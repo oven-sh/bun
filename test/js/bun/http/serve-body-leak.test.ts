@@ -8,19 +8,20 @@ const zeroCopyPayload = new Blob([payload]);
 const zeroCopyJSONPayload = new Blob([JSON.stringify({ bun: payload })]);
 
 const concurrency = 40;
-// Requests per scenario. The fixture reports RSS only after a full GC and a synchronous
-// scavenge, so the samples sit within a few MB of each other when nothing leaks, and the
-// signal of a leaked 512 KB body does not need thousands of requests to clear the noise:
-// over the requests after the first checkpoint it is 0.75 * requestCount * 512 KB, i.e.
-// 180 MB (release) or 120 MB (ASAN/debug, where each request is several times slower).
-const requestCount = isASAN || isDebug ? 320 : 480;
+// Each scenario sends requestCount requests and samples the fixture's settled RSS at
+// `checkpoints` evenly spaced points. Growth is measured from the first checkpoint, so it
+// covers the last 3/4 of the requests. Sizing: a retained 512 KB body per request grows RSS
+// by 360 MB (release) or 150 MB (ASAN/debug), and a retained 64 KB chunk per request by
+// 46 MB on release, where requests are cheap enough to afford the larger count.
+const requestCount = isASAN || isDebug ? 400 : 960;
 const checkpoints = 4;
 // Warmup requests per route: enough to JIT the handlers, grow the heap to its steady
 // state and, under ASAN, fill the 256 MB free-memory quarantine before anything is measured.
 const warmupCount = 80;
-// ASAN's quarantine recycles in 256 MB FIFO order, so the per-scenario plateau shifts by
-// more than the release allocator's does when the allocation pattern changes.
-const maxGrowthMB = isASAN ? 48 : 32;
+// Settled samples of a leak-free scenario stay within a few MB on release. Under ASAN the
+// free-memory quarantine drains to 90% of its 256 MB whenever it fills, so a settled reading
+// moves by up to 26 MB with no leak, and the retained bytes of a real leak show up damped.
+const maxGrowthMB = isASAN ? 64 : 32;
 // Absolute bound on the settled RSS after a scenario: the release fixture sits near 40 MB,
 // the ASAN one near 600 MB (340 MB baseline plus the quarantine).
 const maxRssMB = isASAN || isDebug ? 768 : 256;
@@ -79,11 +80,11 @@ async function sendRequests(url: URL, { path, body, expected }: Scenario, count:
 
 const toMB = (bytes: number) => Math.round(bytes / 1024 / 1024);
 
-async function measureMemoryGrowth(url: URL, scenario: Scenario) {
+async function measureMemoryGrowth(url: URL, scenario: Scenario, count: number) {
   const startMB = toMB(await getMemoryUsage(url));
   const samplesMB: number[] = [];
   for (let i = 0; i < checkpoints; i++) {
-    await sendRequests(url, scenario, requestCount / checkpoints);
+    await sendRequests(url, scenario, count / checkpoints);
     samplesMB.push(toMB(await getMemoryUsage(url)));
   }
   // The first checkpoint is the baseline so that a one-time step (heap growth, allocator
@@ -128,7 +129,7 @@ describe("request body leak", () => {
       async () => {
         // fail fast with the exit code instead of a ConnectionRefused cascade if a prior scenario crashed the fixture
         expect(fixture.exitCode ?? fixture.signalCode).toBeNull();
-        const report = await measureMemoryGrowth(url, scenario);
+        const report = await measureMemoryGrowth(url, scenario, requestCount);
         console.log(scenario.path, report);
         expect(report.growthMB).toBeLessThanOrEqual(maxGrowthMB);
         expect(report.endMB).toBeLessThanOrEqual(maxRssMB);
@@ -136,6 +137,22 @@ describe("request body leak", () => {
       isDebug || isASAN ? 60_000 : 30_000,
     );
   }
+
+  // Positive control: the fixture keeps every body it receives on this route, which is the
+  // leak the scenarios above guard against, so the same measurement must flag it. 360 bodies
+  // are retained after the first checkpoint (180 MB). It runs last because they stay
+  // resident until the fixture exits.
+  it(
+    "detects a retained body",
+    async () => {
+      expect(fixture.exitCode ?? fixture.signalCode).toBeNull();
+      const scenario = { name: "retain", path: "/retain", body: zeroCopyPayload, expected: "Ok" };
+      const report = await measureMemoryGrowth(url, scenario, 480);
+      console.log(scenario.path, report);
+      expect(report.growthMB).toBeGreaterThan(maxGrowthMB);
+    },
+    isDebug || isASAN ? 60_000 : 30_000,
+  );
 });
 
 // A client disconnecting while a direct response stream is suspended inside pull() must not

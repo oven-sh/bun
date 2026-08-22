@@ -20,6 +20,9 @@ async function settledMemoryUsage(): Promise<number> {
   return previous;
 }
 
+// Positive control for the test's leak detection: /retain keeps every body alive.
+const retainedBodies: Uint8Array[] = [];
+
 const server = Bun.serve({
   port: 0,
   idleTimeout: 0,
@@ -56,6 +59,8 @@ const server = Bun.serve({
           "Content-Type": "application/octet-stream",
         },
       });
+    } else if (url.endsWith("/retain")) {
+      retainedBodies.push(await req.bytes());
     }
     return new Response("Ok");
   },

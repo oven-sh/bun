@@ -279,15 +279,15 @@ static void telemetryEndSpan(Zig::GlobalObject* globalObject, JSTelemetrySpan* s
     }
 
     if (JSArray* list = telemetryArray(span->get(Field::Links))) {
-        unsigned n = std::min<unsigned>(list->length() / 4, kTelemetryMaxGather);
+        unsigned n = std::min<unsigned>(list->length() / 5, kTelemetryMaxGather);
         links.reserveInitialCapacity(n);
         for (unsigned i = 0; i < n; ++i) {
-            JSString* traceId = telemetryArrayString(list, i * 4);
-            JSString* spanId = telemetryArrayString(list, i * 4 + 1);
-            JSValue flags = list->tryGetIndexQuickly(i * 4 + 2);
+            JSString* traceId = telemetryArrayString(list, i * 5);
+            JSString* spanId = telemetryArrayString(list, i * 5 + 1);
+            JSValue flags = list->tryGetIndexQuickly(i * 5 + 2);
             if (!traceId || !spanId)
                 continue;
-            links.append({ telemetryBorrow(traceId), telemetryBorrow(spanId), gatherer.gather(list->tryGetIndexQuickly(i * 4 + 3)), static_cast<uint8_t>(flags.isInt32() ? flags.asInt32() : 0) });
+            links.append({ telemetryBorrow(traceId), telemetryBorrow(spanId), telemetryBorrow(telemetryArrayString(list, i * 5 + 4)), gatherer.gather(list->tryGetIndexQuickly(i * 5 + 3)), static_cast<uint8_t>(flags.isInt32() ? flags.asInt32() : 0) });
         }
     }
 
@@ -401,11 +401,11 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetryAddLink, (JSGlobalObject * lexicalGlobalObje
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto* span = toTelemetrySpan(callFrame->argument(0));
-    JSValue traceId = callFrame->argument(1), spanId = callFrame->argument(2), flags = callFrame->argument(3);
+    JSValue traceId = callFrame->argument(1), spanId = callFrame->argument(2), flags = callFrame->argument(3), traceState = callFrame->argument(5);
     if (!span || !span->m_native || !traceId.isString() || !spanId.isString())
         return JSValue::encode(jsUndefined());
     TelemetryAttrGatherer gatherer;
-    TelemetryLinkRef link { telemetryBorrow(asString(traceId)), telemetryBorrow(asString(spanId)), gatherer.gather(callFrame->argument(4)), static_cast<uint8_t>(flags.isInt32() ? flags.asInt32() : 0) };
+    TelemetryLinkRef link { telemetryBorrow(asString(traceId)), telemetryBorrow(asString(spanId)), telemetryBorrow(traceState.isString() ? asString(traceState) : nullptr), gatherer.gather(callFrame->argument(4)), static_cast<uint8_t>(flags.isInt32() ? flags.asInt32() : 0) };
     TelemetryAttrPool pool = gatherer.pool();
     Bun__Telemetry__nativeAddLink(globalObject, span->m_native, &link, &pool);
     return JSValue::encode(jsUndefined());

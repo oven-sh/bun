@@ -55,7 +55,7 @@ pub fn begin_message(
             );
             s.push_attribute(b"websocket.message.length", &Value::Int(size as i64), l);
             if link.is_valid() {
-                s.add_link(link, &[], l);
+                s.add_link(link, b"", &[], l);
             }
         },
     );

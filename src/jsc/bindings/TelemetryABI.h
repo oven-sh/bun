@@ -108,14 +108,16 @@ static_assert(offsetof(TelemetryEventRef, attrs) == 32);
 struct TelemetryLinkRef {
     BunString traceId; // hex
     BunString spanId; // hex
+    BunString traceState; // W3C header form, may be Empty
     TelemetryAttrSlice attrs;
     uint8_t traceFlags;
 };
-static_assert(sizeof(TelemetryLinkRef) == 64);
+static_assert(sizeof(TelemetryLinkRef) == 88);
 static_assert(offsetof(TelemetryLinkRef, traceId) == 0);
 static_assert(offsetof(TelemetryLinkRef, spanId) == 24);
-static_assert(offsetof(TelemetryLinkRef, attrs) == 48);
-static_assert(offsetof(TelemetryLinkRef, traceFlags) == 56);
+static_assert(offsetof(TelemetryLinkRef, traceState) == 48);
+static_assert(offsetof(TelemetryLinkRef, attrs) == 72);
+static_assert(offsetof(TelemetryLinkRef, traceFlags) == 80);
 
 // Everything a JS-owned span has gathered, handed to Rust once at end().
 struct TelemetryEndDesc {

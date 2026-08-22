@@ -151,7 +151,25 @@ describe("Bun.QR", () => {
     });
 
     test("unparseable color throws", () => {
-      expect(() => Bun.QR.generate("x", { format: "svg", dark: "not a color" })).toThrow(TypeError);
+      const unparseable = () => Bun.QR.generate("x", { format: "svg", dark: "not a color" });
+      expect(unparseable).toThrow(TypeError);
+      expect(unparseable).toThrow("options.dark must be a color accepted by Bun.color");
+    });
+
+    test("colors without a fixed value throw", () => {
+      // Bun.color() accepts these, but they only mean something inside a
+      // document, so there is nothing to paint.
+      for (const color of ["currentColor", "light-dark(white, black)", "Canvas"]) {
+        const contextual = () => Bun.QR.generate("x", { format: "svg", light: color });
+        expect(contextual).toThrow(TypeError);
+        expect(contextual).toThrow("options.light must be a concrete color");
+      }
+    });
+
+    test("null light/dark mean the defaults", () => {
+      expect(Bun.QR.generate("x", { format: "svg", light: null as any, dark: null as any })).toBe(
+        Bun.QR.generate("x", { format: "svg" }),
+      );
     });
   });
 
@@ -311,6 +329,9 @@ describe("Bun.QR", () => {
       expect(() => Bun.QR.generate("x", { scale: 2.5 })).toThrow(TypeError);
       expect(() => Bun.QR.generate("x", { mask: "3" as any })).toThrow(TypeError);
       expect(() => Bun.QR.parse({ matrix: new Uint8Array(21 * 21), size: "21" as any })).toThrow(TypeError);
+      // null is rejected like any other non-number.
+      expect(() => Bun.QR.generate("x", { minVersion: null as any })).toThrow(TypeError);
+      expect(() => Bun.QR.generate("x", { mask: null as any })).toThrow(TypeError);
       // undefined is the same as absent.
       expect(Bun.QR.generate("x", { minVersion: undefined, mask: undefined }).version).toBe(1);
     });

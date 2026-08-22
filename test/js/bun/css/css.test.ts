@@ -7600,6 +7600,45 @@ describe("css tests", () => {
     minify_test("@page \\31 st{margin:1em}", "@page \\31 st{margin:1em}");
   });
 
+  describe("layer", () => {
+    // The first declaration of a layer fixes its position in the cascade
+    // order, so an empty `@layer x {}` block is not dead: it has to survive as
+    // an `@layer x;` statement. Here the source order is (a, b), so `b` wins.
+    minify_test(
+      "@layer a {} @layer b { .x { color: red } } @layer a { .x { color: blue } }",
+      "@layer a;@layer b{.x{color:red}}@layer a{.x{color:#00f}}",
+    );
+    minify_test("@layer a {}", "@layer a;");
+    minify_test("@layer a.b {}", "@layer a.b;");
+    minify_test("@layer a {} @layer b {} .x { color: red }", "@layer a,b;.x{color:red}");
+    minify_test("@layer a, b; @layer c {}", "@layer a,b,c;");
+    minify_test("@layer a {} @layer b;", "@layer a;@layer b;");
+    minify_test("@layer a {} .x { color: red } @layer b {}", "@layer a;.x{color:red}@layer b;");
+    // A block whose contents are minified away still declares its layer.
+    minify_test("@layer a { @media not all { .x { color: red } } }", "@layer a;");
+    // Layers declared inside a conditional rule only join the order when the
+    // condition matches, so the statement has to stay inside it.
+    minify_test("@media screen { @layer a {} }", "@media screen{@layer a;}");
+    minify_test("@supports (display: grid) { @layer a {} }", "@supports (display: grid){@layer a;}");
+    minify_test("@layer a { @layer b {} @layer c {} }", "@layer a{@layer b,c;}");
+    // An anonymous layer can never be referenced again, so an empty one has no
+    // effect on anything and can go.
+    minify_test("@layer {} .x { color: red }", ".x{color:red}");
+    minify_test("@layer a, b; @layer a { .x { color: red } }", "@layer a,b;@layer a{.x{color:red}}");
+    // Nested in a style rule, only the block form is a valid nested group rule
+    // (browsers ignore a nested `@layer a;`, see WPT css/css-nesting/nesting-layer.html
+    // and Bun's own parser rejects it), so there the empty block stays a block.
+    minify_test(".foo { color: red; @layer a {} }", ".foo{color:red;@layer a{}}");
+    minify_test(".foo { color: red; @media screen { @layer a {} } }", ".foo{color:red;@media screen{@layer a{}}}");
+    minify_test(".foo { color: red; @layer {} }", ".foo{color:red}");
+    // The style rule's own nesting does not leak into the rules after it.
+    minify_test(".foo { color: red; .bar { color: blue } } @layer a {}", ".foo{color:red;& .bar{color:#00f}}@layer a;");
+    minify_test(
+      "@layer a { .foo { color: red; @layer b {} } @layer c {} }",
+      "@layer a{.foo{color:red;@layer b{}}@layer c;}",
+    );
+  });
+
   describe("container", () => {
     minify_test("@container (width > 100px) { a { color: red } }", "@container (width>100px){a{color:red}}");
     minify_test("@container not (width > 100px) { a { color: red } }", "@container not (width>100px){a{color:red}}");

@@ -549,7 +549,22 @@ impl<R> CssRuleList<R> {
                     CssRule::LayerBlock(lay) => {
                         lay.rules.minify(context, parent_is_unused)?;
                         if lay.rules.v.is_empty() {
-                            break 'arm;
+                            if lay.name.is_none() {
+                                break 'arm;
+                            }
+                            if !context.in_style_rule
+                                && let Some(name) = lay.name.take()
+                            {
+                                if let Some(CssRule::LayerStatement(last_rule)) = rules.last_mut() {
+                                    last_rule.names.append(name);
+                                    break 'arm;
+                                }
+                                let loc = lay.loc;
+                                *rule = CssRule::LayerStatement(layer::LayerStatementRule {
+                                    names: css::SmallList::with_one(name),
+                                    loc,
+                                });
+                            }
                         }
                     }
                     CssRule::LayerStatement(_lay) => {
@@ -1242,4 +1257,9 @@ pub struct MinifyContext<'a, 'bump> {
     /// Running total of selectors that compiling nested rules for the targets
     /// will expand to, checked against [`MAX_SELECTOR_EXPANSION`].
     pub(crate) selector_expansion_total: u32,
+    /// Set while minifying the rules nested inside a style rule. A `@layer`
+    /// statement is not a nested group rule (browsers ignore one nested in a
+    /// style rule, see WPT css/css-nesting/nesting-layer.html), so an empty
+    /// `@layer` block must stay a block there instead of becoming a statement.
+    pub(crate) in_style_rule: bool,
 }

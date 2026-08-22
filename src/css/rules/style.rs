@@ -450,7 +450,9 @@ impl<R> StyleRule<R> {
             &mut context.handler_context,
             &mut handler_context,
         );
+        let saved_in_style_rule = core::mem::replace(&mut context.in_style_rule, true);
         let result = self.rules.minify(context, parent_is_unused);
+        context.in_style_rule = saved_in_style_rule;
         core::mem::swap::<PropertyHandlerContext<'_>>(
             &mut context.handler_context,
             &mut handler_context,

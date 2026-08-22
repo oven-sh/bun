@@ -179,8 +179,8 @@ function startRegistry(advisories: Record<string, Advisory[]>, options: Registry
 
 type Upstream = { status: number; contentType: string; body: string | ArrayBuffer };
 
-// Verdaccio's answers do not change while the file runs, so every registry shares one copy of each of them. Package
-// documents are kept as text: the accept header is part of the key because it selects the abbreviated document.
+// Verdaccio's answers do not change while the file runs, so every registry shares one copy of each successful one.
+// Package documents are kept as text: the accept header is part of the key because it selects the abbreviated document.
 const upstreamResponses = new Map<string, Promise<Upstream>>();
 
 function fromVerdaccio(method: string, path: string, headers: Headers) {
@@ -190,6 +190,7 @@ function fromVerdaccio(method: string, path: string, headers: Headers) {
   if (!response) {
     response = fetch(new URL(path, verdaccio.registryUrl()), { method, headers: { accept } }).then(
       async (up): Promise<Upstream> => {
+        if (!up.ok) upstreamResponses.delete(key);
         const contentType = up.headers.get("content-type") ?? "application/octet-stream";
         const isDocument = up.ok && contentType.includes("json");
         return { status: up.status, contentType, body: isDocument ? await up.text() : await up.arrayBuffer() };
@@ -253,6 +254,8 @@ function installedTree(files: DirectoryTree, ...laterPkgJsons: object[]) {
   if (!tree) {
     tree = installTemplate(files, laterPkgJsons);
     installedTrees.set(key, tree);
+    // A failed install fails the case that started it; the next case installs the template again.
+    tree.catch(() => installedTrees.delete(key));
   }
   return tree;
 }

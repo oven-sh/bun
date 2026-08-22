@@ -82,7 +82,7 @@ public:
 
         bool hasVirtualModules() const { return virtualModules != nullptr; }
 
-        void addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mock);
+        void addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mock, bool needsExpensiveRelativeLookup);
 
         std::optional<String> resolveVirtualModule(const String& path, const String& from);
 
@@ -119,6 +119,6 @@ class GlobalObject;
 } // namespace Zig
 
 namespace Bun {
-JSC::JSValue runVirtualModule(Zig::GlobalObject*, BunString* specifier, bool& wasModuleMock);
+JSC::JSValue runVirtualModule(Zig::GlobalObject*, BunString* specifier, bool& wasModuleMock, bool& suppressESModuleInterop);
 JSC::Structure* createModuleMockStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 }

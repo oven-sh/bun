@@ -1,5 +1,6 @@
 import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir, tmpdirSync } from "harness";
+import { resolveObjectURL } from "node:buffer";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -23,11 +24,79 @@ import wt, {
   workerData,
 } from "worker_threads";
 
-// Worker startup under debug/ASAN is slow enough that several tests here cannot
-// finish inside the 5s default.
-setDefaultTimeout(isDebug ? 90_000 : 10_000);
+// Worker and subprocess startup under ASAN (CI's ASAN lane, and debug builds,
+// which are ASAN too) is several times slower, and the tests below overlap, so
+// each one's own wall time includes waiting on the others. On release builds
+// the 10s here is stricter than the runner's own per-test timeout.
+setDefaultTimeout(isASAN || isDebug ? 90_000 : 10_000);
 
-test("support eval in worker", async () => {
+// Nearly every test below owns its Worker / MessageChannel / subprocess outright,
+// so they are test.concurrent: the file's cost is startup latency (a worker or a
+// bun subprocess per test), which overlaps. A plain test() in between is a
+// barrier that runs alone once the tests before it have finished; the few that
+// stay serial say why ("terminate with work in flight" needs the parent to react
+// within milliseconds). The two tests in this describe hook process-wide state
+// ('worker' event listeners, process.emit) that would observe any other test's
+// Worker, so they run first, before anything else has created a Worker.
+describe("worker event", () => {
+  test("is emitted on the next tick with the right value", () => {
+    const { promise, resolve } = Promise.withResolvers();
+    let worker: Worker | undefined = undefined;
+    let called = false;
+    process.once("worker", eventWorker => {
+      called = true;
+      expect(eventWorker as any).toBe(worker);
+      resolve();
+    });
+    worker = new Worker(new URL("data:text/javascript,"));
+    expect(called).toBeFalse();
+    return promise;
+  });
+
+  test("uses an overridden process.emit function", async () => {
+    const previousEmit = process.emit;
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      let worker: Worker | undefined;
+      // should not actually emit the event
+      process.on("worker", expect.unreachable);
+      worker = new Worker("", { eval: true });
+      // should look up process.emit on the next tick, not synchronously during the Worker constructor
+      (process as any).emit = (event, value) => {
+        try {
+          expect(event).toBe("worker");
+          expect(value).toBe(worker);
+          resolve();
+        } catch (e) {
+          reject(e);
+        }
+      };
+      await promise;
+    } finally {
+      process.emit = previousEmit;
+      process.off("worker", expect.unreachable);
+    }
+  });
+
+  // Spawned: the TypeError surfaces as a process-level uncaught exception.
+  test.concurrent("throws if process.emit is not a function", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "emit-non-function-fixture.js"],
+      env: bunEnv,
+      cwd: __dirname,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ uncaught: stdout ? JSON.parse(stdout) : stdout, stderr, exitCode }).toEqual({
+      uncaught: { name: "TypeError", message: expect.stringContaining("5 is not a function") },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+test.concurrent("support eval in worker", async () => {
   const worker = new Worker(`postMessage(1 + 1)`, {
     eval: true,
   });
@@ -38,7 +107,7 @@ test("support eval in worker", async () => {
   await worker.terminate();
 });
 
-test("all worker_threads module properties are present", () => {
+test.concurrent("all worker_threads module properties are present", () => {
   expect(wt).toHaveProperty("getEnvironmentData");
   expect(wt).toHaveProperty("isMainThread");
   expect(wt).toHaveProperty("markAsUntransferable");
@@ -90,7 +159,7 @@ test("all worker_threads module properties are present", () => {
 
 // The markers are JSC private names (node uses v8 Privates): invisible to user code,
 // unforgeable via the registry symbol or a public property, and not removable.
-test("markAsUncloneable and markAsUntransferable markers are private, unforgeable, and permanent", () => {
+test.concurrent("markAsUncloneable and markAsUntransferable markers are private, unforgeable, and permanent", () => {
   const expectDataCloneError = (fn: () => void) => {
     let err: any;
     try {
@@ -138,7 +207,7 @@ test("markAsUncloneable and markAsUntransferable markers are private, unforgeabl
   expectDataCloneError(() => structuredClone(unmarkAttempt));
 });
 
-test("all worker_threads worker instance properties are present", async () => {
+test.concurrent("all worker_threads worker instance properties are present", async () => {
   const worker = new Worker(new URL("./worker.js", import.meta.url));
   expect(worker).toHaveProperty("threadId");
   expect(worker).toHaveProperty("ref");
@@ -196,7 +265,7 @@ test("all worker_threads worker instance properties are present", async () => {
   await worker.terminate();
 });
 
-test("threadId module and worker property is consistent", async () => {
+test.concurrent("threadId module and worker property is consistent", async () => {
   const worker1 = new Worker(new URL("./worker-thread-id.ts", import.meta.url));
   expect(threadId).toBe(0);
   expect(worker1.threadId).toBeGreaterThan(0);
@@ -208,7 +277,7 @@ test("threadId module and worker property is consistent", async () => {
   await worker2.terminate();
 });
 
-test("receiveMessageOnPort works across threads", async () => {
+test.concurrent("receiveMessageOnPort works across threads", async () => {
   const { port1, port2 } = new MessageChannel();
   const worker = new Worker(new URL("./worker.js", import.meta.url), {
     workerData: port2,
@@ -223,9 +292,9 @@ test("receiveMessageOnPort works across threads", async () => {
   expect(message).toBeDefined();
   expect(message!.message).toBe("done!");
   await worker.terminate();
-}, 9999999);
+});
 
-test("receiveMessageOnPort works as FIFO", () => {
+test.concurrent("receiveMessageOnPort works as FIFO", () => {
   const { port1, port2 } = new MessageChannel();
 
   const message1 = { hello: "world" };
@@ -255,9 +324,10 @@ test("receiveMessageOnPort works as FIFO", () => {
       receiveMessageOnPort(value);
     }).toThrow();
   }
-}, 9999999);
+  port2.close();
+});
 
-test("you can override globalThis.postMessage", async () => {
+test.concurrent("you can override globalThis.postMessage", async () => {
   const worker = new Worker(new URL("./worker-override-postMessage.js", import.meta.url));
   const message = await new Promise(resolve => {
     worker.on("message", resolve);
@@ -267,7 +337,7 @@ test("you can override globalThis.postMessage", async () => {
   await worker.terminate();
 });
 
-test("support require in eval", async () => {
+test.concurrent("support require in eval", async () => {
   const worker = new Worker(`postMessage(require('process').argv[0])`, { eval: true });
   const result = await new Promise(resolve => {
     worker.on("message", resolve);
@@ -277,13 +347,11 @@ test("support require in eval", async () => {
   await worker.terminate();
 });
 
-test("support require in eval for a file", async () => {
+test.concurrent("support require in eval for a file", async () => {
   const cwd = process.cwd();
-  console.log("cwd", cwd);
   const dir = import.meta.dir;
   const testfile = resolve(dir, "fixture-argv.js");
   const realpath = relative(cwd, testfile).replaceAll("\\", "/");
-  console.log("realpath", realpath);
   expect(() => fs.accessSync(join(cwd, realpath))).not.toThrow();
   const worker = new Worker(`postMessage(require('./${realpath}').argv[0])`, { eval: true });
   const result = await new Promise(resolve => {
@@ -294,7 +362,7 @@ test("support require in eval for a file", async () => {
   await worker.terminate();
 });
 
-test("support require in eval for a file that doesnt exist", async () => {
+test.concurrent("support require in eval for a file that doesnt exist", async () => {
   const worker = new Worker(`postMessage(require('./fixture-invalid.js').argv[0])`, { eval: true });
   const result = await new Promise(resolve => {
     worker.on("message", resolve);
@@ -304,7 +372,7 @@ test("support require in eval for a file that doesnt exist", async () => {
   await worker.terminate();
 });
 
-test("support worker eval that throws", async () => {
+test.concurrent("support worker eval that throws", async () => {
   const worker = new Worker(`postMessage(throw new Error("boom"))`, { eval: true });
   const result = await new Promise(resolve => {
     worker.on("message", resolve);
@@ -315,25 +383,25 @@ test("support worker eval that throws", async () => {
   await worker.terminate();
 });
 
-describe("execArgv option", async () => {
+describe.concurrent("execArgv option", async () => {
   // this needs to be a subprocess to ensure that the parent's execArgv is not empty
   // otherwise we could not distinguish between the worker inheriting the parent's execArgv
   // vs. the worker getting a fresh empty execArgv
   async function run(execArgv: string, expected: string) {
-    const proc = Bun.spawn({
+    await using proc = Bun.spawn({
       // pass --smol so that the parent thread has some known, non-empty execArgv
       cmd: [bunExe(), "--smol", "fixture-execargv.js", execArgv],
       env: bunEnv,
       cwd: __dirname,
+      stdout: "pipe",
+      stderr: "pipe",
     });
-    await proc.exited;
-    expect(proc.exitCode).toBe(0);
-    expect(await proc.stdout.text()).toBe(expected);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ execArgv, stdout, stderr, exitCode }).toEqual({ execArgv, stdout: expected, stderr: "", exitCode: 0 });
   }
 
   it("inherits the parent's execArgv when falsy or unspecified", async () => {
-    await run("null", '["--smol"]\n');
-    await run("0", '["--smol"]\n');
+    await Promise.all([run("null", '["--smol"]\n'), run("0", '["--smol"]\n')]);
   });
   it("provides empty execArgv when passed an empty array", async () => {
     // empty array should result in empty execArgv, not inherited from parent thread
@@ -345,21 +413,47 @@ describe("execArgv option", async () => {
   // TODO(@190n) get our handling of non-string array elements in line with Node's
 });
 
-test("eval does not leak source code", async () => {
-  const proc = Bun.spawn({
+// An eval worker's source is served to it through a blob: URL; the entry is
+// released as soon as the worker exits (not left to GC), so by 'exit' nothing
+// resolves the URL any more.
+test.concurrent("eval: the blob: URL holding the source is revoked when the worker exits", async () => {
+  const source = `require("worker_threads").parentPort.postMessage(__filename);`;
+  const worker = new Worker(source, { eval: true });
+  const exited = new Promise<number>(resolve => worker.once("exit", resolve));
+  const [url] = await once(worker, "message");
+  const whileRunning = resolveObjectURL(url);
+  expect(whileRunning).toBeInstanceOf(Blob);
+  expect(whileRunning!.size).toBe(source.length);
+  expect(await exited).toBe(0);
+  expect(resolveObjectURL(url)).toBeUndefined();
+});
+
+// Spawned: the measurement is the growth of a whole process across repeated
+// eval workers with 100 MiB sources.
+test.concurrent("eval does not leak source code", async () => {
+  await using proc = Bun.spawn({
     cmd: [bunExe(), "eval-source-leak-fixture.js"],
     env: bunEnv,
     cwd: __dirname,
+    stdout: "pipe",
     stderr: "pipe",
-    stdout: "ignore",
   });
-  await proc.exited;
-  const errors = await proc.stderr.text();
-  if (errors.length > 0) throw new Error(errors);
-  expect(proc.exitCode).toBe(0);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const report = stdout ? JSON.parse(stdout) : stdout;
+  expect({ report, stderr, exitCode }).toEqual({
+    report: { eachSizeMiB: 100, iterations: 5, deltaMiB: expect.any(Number) },
+    stderr: "",
+    exitCode: 0,
+  });
+  // Retaining the copies measures as roughly eachSizeMiB * iterations, but often a
+  // little under it (480 to 515 on release builds with the revoke stubbed out), so
+  // the nominal size itself is not a usable bound. A healthy run measures about 0,
+  // give or take one copy that was still being torn down at either reading. The
+  // bound sits in the middle of that gap.
+  expect(report.deltaMiB).toBeLessThan((report.eachSizeMiB * report.iterations) / 2);
 });
 
-describe("captured stdio backpressure", () => {
+describe.concurrent("captured stdio backpressure", () => {
   // node flow control (lib/internal/worker/io.js): a writev batch's callback is
   // withheld until the reader acks (STDIO_WANTS_MORE_DATA), so 'drain' must not
   // fire while the parent is not consuming worker.stdout.
@@ -480,7 +574,7 @@ describe("captured stdio backpressure", () => {
 // A synchronous worker exit leaves no loop turns for the reader's ack to release
 // the parked writev, so everything buffered behind it must be flushed from the
 // worker's process 'exit' (node's flushSync).
-describe("stdio is flushed when the worker exits synchronously", () => {
+describe.concurrent("stdio is flushed when the worker exits synchronously", () => {
   const N = 300;
 
   test.each(["stdout", "stderr"] as const)("captured %s: console + raw write, then process.exit(0)", async name => {
@@ -575,66 +669,12 @@ describe("stdio is flushed when the worker exits synchronously", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toBe(`error boom\n${JSON.stringify({ code: 42, out: "hello\nexit handler 1 true\n" })}\n`);
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 });
 
-describe("worker event", () => {
-  test("is emitted on the next tick with the right value", () => {
-    const { promise, resolve } = Promise.withResolvers();
-    let worker: Worker | undefined = undefined;
-    let called = false;
-    process.once("worker", eventWorker => {
-      called = true;
-      expect(eventWorker as any).toBe(worker);
-      resolve();
-    });
-    worker = new Worker(new URL("data:text/javascript,"));
-    expect(called).toBeFalse();
-    return promise;
-  });
-
-  test("uses an overridden process.emit function", async () => {
-    const previousEmit = process.emit;
-    try {
-      const { promise, resolve, reject } = Promise.withResolvers();
-      let worker: Worker | undefined;
-      // should not actually emit the event
-      process.on("worker", expect.unreachable);
-      worker = new Worker("", { eval: true });
-      // should look up process.emit on the next tick, not synchronously during the Worker constructor
-      (process as any).emit = (event, value) => {
-        try {
-          expect(event).toBe("worker");
-          expect(value).toBe(worker);
-          resolve();
-        } catch (e) {
-          reject(e);
-        }
-      };
-      await promise;
-    } finally {
-      process.emit = previousEmit;
-      process.off("worker", expect.unreachable);
-    }
-  });
-
-  test("throws if process.emit is not a function", async () => {
-    const proc = Bun.spawn({
-      cmd: [bunExe(), "emit-non-function-fixture.js"],
-      env: bunEnv,
-      cwd: __dirname,
-      stderr: "pipe",
-      stdout: "ignore",
-    });
-    await proc.exited;
-    const errors = await proc.stderr.text();
-    if (errors.length > 0) throw new Error(errors);
-    expect(proc.exitCode).toBe(0);
-  });
-});
-
-test("terminate() of a running, idle worker resolves 1 like Node", async () => {
+test.concurrent("terminate() of a running, idle worker resolves 1 like Node", async () => {
   const worker = new Worker(
     `const { parentPort } = require("worker_threads"); parentPort.on("message", () => {}); parentPort.postMessage("ready");`,
     { eval: true },
@@ -643,7 +683,7 @@ test("terminate() of a running, idle worker resolves 1 like Node", async () => {
   expect(await worker.terminate()).toBe(1);
 });
 
-describe("environmentData", () => {
+describe.concurrent("environmentData", () => {
   test("can pass a value to a child", async () => {
     setEnvironmentData("foo", new Map([["hello", "world"]]));
     const worker = new Worker(
@@ -664,38 +704,35 @@ describe("environmentData", () => {
     expect(getEnvironmentData("does_not_exist")).toBeUndefined();
   });
 
+  // Spawned: both fixtures need a main thread whose environmentData is in a
+  // known state (set exactly once / never touched).
   test("is deeply inherited", async () => {
-    const proc = Bun.spawn({
+    await using proc = Bun.spawn({
       cmd: [bunExe(), "environmentdata-inherit-fixture.js"],
       env: bunEnv,
       cwd: __dirname,
       stderr: "pipe",
       stdout: "pipe",
     });
-    await proc.exited;
-    const errors = await proc.stderr.text();
-    if (errors.length > 0) throw new Error(errors);
-    expect(proc.exitCode).toBe(0);
-    const out = await proc.stdout.text();
-    expect(out).toBe("foo\n".repeat(5));
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // one line per nesting level
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "foo\n".repeat(5), stderr: "", exitCode: 0 });
   });
 
   test("can be used if parent thread had not imported worker_threads", async () => {
-    const proc = Bun.spawn({
+    await using proc = Bun.spawn({
       cmd: [bunExe(), "environmentdata-empty-fixture.js"],
       env: bunEnv,
       cwd: __dirname,
+      stdout: "pipe",
       stderr: "pipe",
-      stdout: "ignore",
     });
-    await proc.exited;
-    const errors = await proc.stderr.text();
-    if (errors.length > 0) throw new Error(errors);
-    expect(proc.exitCode).toBe(0);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: '{"foo":"bar"}\n', stderr: "", exitCode: 0 });
   });
 });
 
-describe("error event", () => {
+describe.concurrent("error event", () => {
   test("is fired with a copy of the error value", async () => {
     const worker = new Worker("throw new TypeError('oh no')", { eval: true });
     const [err] = await once(worker, "error");
@@ -717,7 +754,7 @@ describe("error event", () => {
   });
 });
 
-describe("getHeapSnapshot", () => {
+describe.concurrent("getHeapSnapshot", () => {
   test("throws if the wrong options are passed", () => {
     const worker = new Worker("", { eval: true });
     // @ts-expect-error
@@ -830,7 +867,7 @@ describe("getHeapSnapshot", () => {
   });
 });
 
-test("failed Worker construction restores transferred FileHandles", async () => {
+test.concurrent("failed Worker construction restores transferred FileHandles", async () => {
   const dir = tmpdirSync("worker-fh-transfer");
   const file = join(dir, "x.txt");
   fs.writeFileSync(file, "hello");
@@ -846,7 +883,7 @@ test("failed Worker construction restores transferred FileHandles", async () => 
   await fh.close();
 });
 
-test("transferred FileHandles are not neutered when name/filename validation rejects", async () => {
+test.concurrent("transferred FileHandles are not neutered when name/filename validation rejects", async () => {
   const dir = tmpdirSync("worker-fh-transfer");
   const file = join(dir, "x.txt");
   fs.writeFileSync(file, "hello");
@@ -873,7 +910,7 @@ test("transferred FileHandles are not neutered when name/filename validation rej
   }
 });
 
-test("worker name survives parent-side GC and terminate cycles", async () => {
+test.concurrent("worker name survives parent-side GC and terminate cycles", async () => {
   // options.name is materialized as a worker-heap JSString, so it must not
   // share a (possibly atomized) parent-heap StringImpl — both threads would
   // ref/deref a non-atomic refcount. Stress the path in a subprocess so
@@ -908,11 +945,10 @@ test("worker name survives parent-side GC and terminate cycles", async () => {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout.trim()).toBe("done");
-  expect(exitCode).toBe(0);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "done\n", stderr: "", exitCode: 0 });
 });
 
-test("partially transferred FileHandles are restored when a later transfer throws", async () => {
+test.concurrent("partially transferred FileHandles are restored when a later transfer throws", async () => {
   const dir = tmpdirSync("worker-fh-transfer");
   const file = join(dir, "x.txt");
   fs.writeFileSync(file, "hello");
@@ -929,7 +965,7 @@ test("partially transferred FileHandles are restored when a later transfer throw
   await fh2.close();
 });
 
-test("a FileHandle referenced twice in workerData deserializes to one instance", async () => {
+test.concurrent("a FileHandle referenced twice in workerData deserializes to one instance", async () => {
   const dir = tmpdirSync("worker-fh-transfer");
   const file = join(dir, "x.txt");
   fs.writeFileSync(file, "hello");
@@ -952,7 +988,7 @@ test("a FileHandle referenced twice in workerData deserializes to one instance",
   expect(message).toEqual({ same: true, closed: true });
 });
 
-test("duplicate FileHandle transferList entries throw DataCloneError and roll back", async () => {
+test.concurrent("duplicate FileHandle transferList entries throw DataCloneError and roll back", async () => {
   const dir = tmpdirSync("worker-fh-transfer");
   const file = join(dir, "x.txt");
   fs.writeFileSync(file, "hello");
@@ -966,7 +1002,7 @@ test("duplicate FileHandle transferList entries throw DataCloneError and roll ba
   await fh.close();
 });
 
-test("a FileHandle in transferList but not in workerData is detached without leaking", async () => {
+test.concurrent("a FileHandle in transferList but not in workerData is detached without leaking", async () => {
   const dir = tmpdirSync("worker-fh-transfer");
   const file = join(dir, "x.txt");
   fs.writeFileSync(file, "hello");
@@ -993,7 +1029,7 @@ test("a FileHandle in transferList but not in workerData is detached without lea
   expect(closedOrRecycled).toBe(true);
 });
 
-test("failed construction restores an unreferenced transferred FileHandle intact", async () => {
+test.concurrent("failed construction restores an unreferenced transferred FileHandle intact", async () => {
   const dir = tmpdirSync("worker-fh-transfer");
   const file = join(dir, "x.txt");
   fs.writeFileSync(file, "hello");
@@ -1009,7 +1045,7 @@ test("failed construction restores an unreferenced transferred FileHandle intact
   await fh.close();
 });
 
-test("FileHandles nested in Map and Set workerData are transferred", async () => {
+test.concurrent("FileHandles nested in Map and Set workerData are transferred", async () => {
   const dir = tmpdirSync("worker-fh-transfer");
   const file = join(dir, "x.txt");
   fs.writeFileSync(file, "hello");
@@ -1037,7 +1073,7 @@ test("FileHandles nested in Map and Set workerData are transferred", async () =>
   expect(message).toEqual({ sameInstance: true, text: "hello" });
 });
 
-test("MessagePort.hasRef() reports actual loop-ref state", () => {
+test.concurrent("MessagePort.hasRef() reports actual loop-ref state", () => {
   const { port1 } = new MessageChannel();
   expect(port1.hasRef()).toBe(false);
   port1.on("message", () => {});
@@ -1053,7 +1089,7 @@ test("MessagePort.hasRef() reports actual loop-ref state", () => {
 // scope's `self.onmessage` is not a channel there (as in node). Libraries that
 // install both a parentPort listener and self.onmessage as a node/web shim
 // must see one delivery, not two.
-test("a parent message reaches parentPort only, not self.onmessage, in a node worker", async () => {
+test.concurrent("a parent message reaches parentPort only, not self.onmessage, in a node worker", async () => {
   const w = new Worker(
     `const { parentPort } = require("node:worker_threads");
      let count = 0;
@@ -1070,7 +1106,7 @@ test("a parent message reaches parentPort only, not self.onmessage, in a node wo
 
 // node's setupPortReferencing tracks 'message' listeners only: a 'messageerror'
 // handler alone neither starts the port nor keeps the loop alive.
-test("onmessageerror alone does not ref the port", () => {
+test.concurrent("onmessageerror alone does not ref the port", () => {
   const { port1 } = new MessageChannel();
   port1.onmessageerror = () => {};
   const errorOnly = port1.hasRef();
@@ -1087,7 +1123,7 @@ test("onmessageerror alone does not ref the port", () => {
 
 // Collecting the unreferenced peer must not look like a peer close: node never
 // closes a channel because a port was garbage-collected, so ref() still works.
-test("hasRef() survives collection of the unreferenced peer", () => {
+test.concurrent("hasRef() survives collection of the unreferenced peer", () => {
   const { port1 } = new MessageChannel(); // port2 unreachable from birth
   Bun.gc(true);
   Bun.gc(true);
@@ -1101,7 +1137,7 @@ test("hasRef() survives collection of the unreferenced peer", () => {
 
 // markAsUncloneable blocks *cloning*, not transfer: a marked port in the transfer
 // list is moved, so node lets it through and it still works on the far side.
-test("markAsUncloneable blocks cloning a port but not transferring it", async () => {
+test.concurrent("markAsUncloneable blocks cloning a port but not transferring it", async () => {
   const { port1, port2 } = new MessageChannel();
   const { port1: a, port2: b } = new MessageChannel();
   markAsUncloneable(a);
@@ -1127,7 +1163,7 @@ test("markAsUncloneable blocks cloning a port but not transferring it", async ()
 
 // postMessageToThread routes through a Map of thread -> port. A user-replaced
 // Map.prototype must not be able to break cross-thread delivery.
-test("postMessageToThread survives a tampered Map prototype", async () => {
+test.concurrent("postMessageToThread survives a tampered Map prototype", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -1154,15 +1190,14 @@ test("postMessageToThread survives a tampered Map prototype", async () => {
     env: bunEnv,
     stderr: "pipe",
   });
-  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout.trim()).toBe("pong");
-  expect(exitCode).toBe(0);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "pong\n", stderr: "", exitCode: 0 });
 });
 
 // The listener registry must not route through user-overridable Map/Set/WeakMap:
 // not their methods, not the `size` getter, not their iterators. Spawned, because
 // it clobbers prototypes and would poison the whole runner.
-test("the listener registry survives tampered Map/Set/WeakMap prototypes", async () => {
+test.concurrent("the listener registry survives tampered Map/Set/WeakMap prototypes", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -1196,14 +1231,17 @@ test("the listener registry survives tampered Map/Set/WeakMap prototypes", async
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(JSON.parse(stdout)).toEqual({ c1: 1, names: ["close", "message"], c2: 0, after: [] });
-  expect(exitCode).toBe(0);
+  expect({ registry: stdout ? JSON.parse(stdout) : stdout, stderr, exitCode }).toEqual({
+    registry: { c1: 1, names: ["close", "message"], c2: 0, after: [] },
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 // EventTarget dedupes on (type, callback): the first registration of a listener
 // wins outright, including its once-ness, and later adds of the same function
 // are no-ops. Wrapping each add in a fresh closure defeated that.
-test.each([
+test.concurrent.each([
   ["on+on", (p, fn) => (p.on("message", fn), p.on("message", fn)), { count: 1, calls: 1, persists: true }],
   ["on+once", (p, fn) => (p.on("message", fn), p.once("message", fn)), { count: 1, calls: 1, persists: true }],
   ["once+on", (p, fn) => (p.once("message", fn), p.on("message", fn)), { count: 1, calls: 1, persists: false }],
@@ -1228,7 +1266,7 @@ test.each([
 
 // off() used to resolve the wrapper through a single slot stamped on the user's
 // function, so one listener shared across two events (or two ports) lost track.
-test("off() removes only the listener it names, per event and per port", () => {
+test.concurrent("off() removes only the listener it names, per event and per port", () => {
   const fn = () => {};
   {
     const { port1, port2 } = new MessageChannel();
@@ -1259,8 +1297,8 @@ test("off() removes only the listener it names, per event and per port", () => {
 // bun collects entangled ports; node never does. A worker that drops its transferred
 // port must therefore still notify the peer, or the peer's loop ref is never released
 // and the parent hangs forever. Spawned: the symptom is "the process never exits".
-test("a collected port in a worker does not strand its peer", async () => {
-  const proc = Bun.spawn({
+test.concurrent("a collected port in a worker does not strand its peer", async () => {
+  await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
@@ -1278,10 +1316,11 @@ test("a collected port in a worker does not strand its peer", async () => {
     env: bunEnv,
     stderr: "pipe",
   });
-  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   // signalCode null => it exited on its own rather than being killed.
-  expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
-    stdout: "Meow",
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "Meow\n",
+    stderr: "",
     exitCode: 0,
     signalCode: null,
   });
@@ -1290,7 +1329,7 @@ test("a collected port in a worker does not strand its peer", async () => {
 // A peer that sends then closes before this side has any listener: node delivers the
 // queued messages first and 'close' last, whichever listener was registered first.
 // registerCloseContext()'s retroactive peer-Closed notify used to jump the queue.
-test.each([
+test.concurrent.each([
   ["close listener first", true],
   ["message listener first", false],
 ])("queued messages arrive before the peer's close (%s)", async (_name, closeFirst) => {
@@ -1313,7 +1352,7 @@ test.each([
 });
 
 // An orphaned transferred endpoint IS a real close -- node fires 'close' on its peer.
-test("dropping a transferred port notifies its peer", async () => {
+test.concurrent("dropping a transferred port notifies its peer", async () => {
   const { port1, port2 } = new MessageChannel();
   const { port1: a, port2: b } = new MessageChannel();
   const { promise, resolve } = Promise.withResolvers<void>();
@@ -1327,7 +1366,7 @@ test("dropping a transferred port notifies its peer", async () => {
 
 // close() outside a dispatch drops whatever is queued; close() from inside a
 // 'message' handler lets the in-flight drain finish. Both are node's behaviour.
-test("close() drops queued messages unless it runs inside a dispatch", async () => {
+test.concurrent("close() drops queued messages unless it runs inside a dispatch", async () => {
   {
     const { port1, port2 } = new MessageChannel();
     let got = 0;
@@ -1356,7 +1395,7 @@ test("close() drops queued messages unless it runs inside a dispatch", async () 
 
 // node reports every bad transfer-list entry the same way, from both the array
 // overload and the options bag, and accepts any iterable -- not just arrays.
-describe("postMessage transfer list", () => {
+describe.concurrent("postMessage transfer list", () => {
   const dataClone = expect.objectContaining({ name: "DataCloneError", code: 25 });
 
   test.each([
@@ -1438,7 +1477,7 @@ describe("postMessage transfer list", () => {
   });
 });
 
-test("MessagePort NodeEventTarget methods", () => {
+test.concurrent("MessagePort NodeEventTarget methods", () => {
   const { port1 } = new MessageChannel();
   expect(typeof port1.listenerCount).toBe("function");
   expect(typeof port1.eventNames).toBe("function");
@@ -1459,8 +1498,8 @@ test("MessagePort NodeEventTarget methods", () => {
 // jsRef() only gated on m_isDetached, so .ref()/onmessage= after the peer closed
 // re-took an event-loop ref that nothing releases and the process hung. Node no-ops
 // both. Spawned, because the symptom is "the process never exits".
-test("ref()/onmessage after the peer closes does not pin the loop", async () => {
-  const proc = Bun.spawn({
+test.concurrent("ref()/onmessage after the peer closes does not pin the loop", async () => {
+  await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
@@ -1479,10 +1518,11 @@ test("ref()/onmessage after the peer closes does not pin the loop", async () => 
     env: bunEnv,
     stderr: "pipe",
   });
-  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // signalCode null ⇒ it exited on its own rather than being killed by a timeout.
-  expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
-    stdout: "hasRef=false",
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // signalCode null => it exited on its own rather than being killed by a timeout.
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "hasRef=false\n",
+    stderr: "",
     exitCode: 0,
     signalCode: null,
   });
@@ -1490,7 +1530,7 @@ test("ref()/onmessage after the peer closes does not pin the loop", async () => 
 
 // EventTarget removes a {once:true} listener natively, so the JS-side registry
 // backing listenerCount()/eventNames() has to drop it too.
-test("a fired once() listener stops being counted", async () => {
+test.concurrent("a fired once() listener stops being counted", async () => {
   const { port1, port2 } = new MessageChannel();
   let fired = 0;
   port1.once("message", () => fired++);
@@ -1509,7 +1549,7 @@ test("a fired once() listener stops being counted", async () => {
 
 // once() re-points listener[wrappedListener] at the self-purging wrapper, so
 // off() must still find it through the user's original function.
-test("off() removes a pending once() listener", () => {
+test.concurrent("off() removes a pending once() listener", () => {
   const { port1, port2 } = new MessageChannel();
   const fn = () => {};
   port1.once("message", fn);
@@ -1520,7 +1560,7 @@ test("off() removes a pending once() listener", () => {
   port2.close();
 });
 
-test("close(cb) interleaves with other close listeners in registration order", async () => {
+test.concurrent("close(cb) interleaves with other close listeners in registration order", async () => {
   // node's mechanism is `this.once('close', cb)`, so cb interleaves with other
   // close listeners in the order they were registered (verified against node).
   const { port1 } = new MessageChannel();
@@ -1541,7 +1581,7 @@ test("close(cb) interleaves with other close listeners in registration order", a
   expect(order2).toEqual(["B", "C"]);
 });
 
-test("getHeapStatistics settles when terminated mid-request", async () => {
+test.concurrent("getHeapStatistics settles when terminated mid-request", async () => {
   const w = new Worker("setInterval(() => {}, 1e6)", { eval: true });
   await once(w, "online");
   const p = w.getHeapStatistics();
@@ -1555,7 +1595,7 @@ test("getHeapStatistics settles when terminated mid-request", async () => {
   ).resolves.toMatch(/^(ok|ERR_WORKER_NOT_RUNNING)$/);
 });
 
-test("*Internal introspection methods are DontEnum on Worker.prototype", () => {
+test.concurrent("*Internal introspection methods are DontEnum on Worker.prototype", () => {
   const enumerable: string[] = [];
   for (const k in globalThis.Worker.prototype) enumerable.push(k);
   expect(enumerable).not.toContain("startCpuProfileInternal");
@@ -1563,7 +1603,7 @@ test("*Internal introspection methods are DontEnum on Worker.prototype", () => {
   expect(enumerable).not.toContain("cpuUsageInternal");
 });
 
-test("env: process.env reads in a worker module are evaluated at runtime against the worker's env", async () => {
+test.concurrent("env: process.env reads in a worker module are evaluated at runtime against its own env", async () => {
   using dir = tempDir("worker-threads-env-runtime-reads", {
     "worker.js": `
       const { parentPort } = require("node:worker_threads");
@@ -1603,12 +1643,13 @@ test("env: process.env reads in a worker module are evaluated at runtime against
   });
 });
 
-describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide one", () => {
+describe.concurrent("env: SHARE_ENV shares the spawning thread's env, not a process-wide one", () => {
   async function run(mode: string) {
-    const proc = Bun.spawn({
+    await using proc = Bun.spawn({
       cmd: [bunExe(), "fixture-share-env-tree.js", mode],
       env: bunEnv,
       cwd: __dirname,
+      stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -1648,7 +1689,7 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
   // accessor is also unrepresentable here: it would land on the base object while
   // reads hit the store first, so the getter would be silently shadowed.
   it("rejects an accessor defined on process.env, on both the regular and shared map", async () => {
-    const proc = Bun.spawn({
+    await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
@@ -1723,9 +1764,8 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
       env: bunEnv,
       stderr: "pipe",
     });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout.trim()).toBe(want);
-    expect(exitCode).toBe(0);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: want + "\n", stderr: "", exitCode: 0 });
   });
 
   // Integer-like keys reach JSC through the indexed hooks; without ByIndex overrides
@@ -1756,7 +1796,7 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
   // Founding a tree replaces process.env; Bun.env is reified from the same object
   // at startup and must not be left observing the orphaned pre-swap env.
   it("keeps Bun.env pointing at process.env after founding a tree", async () => {
-    const proc = Bun.spawn({
+    await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
@@ -1771,13 +1811,16 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
       env: bunEnv,
       stderr: "pipe",
     });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(JSON.parse(stdout)).toEqual({ same: true, bunEnv: "x" });
-    expect(exitCode).toBe(0);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ parsed: stdout ? JSON.parse(stdout) : stdout, stderr, exitCode }).toEqual({
+      parsed: { same: true, bunEnv: "x" },
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });
 
-test("postMessage with a non-object transfer element throws DataCloneError", () => {
+test.concurrent("postMessage with a non-object transfer element throws DataCloneError", () => {
   // Both the array-form and options-bag paths converge on Node's
   // DataCloneError, not TypeError / ERR_INVALID_ARG_TYPE.
   const { port1 } = new MessageChannel();
@@ -1797,7 +1840,7 @@ test("postMessage with a non-object transfer element throws DataCloneError", () 
   port1.close();
 });
 
-test("MessageEvent ports validation walks the iterator once and gives a detailed error for any iterable", () => {
+test.concurrent("MessageEvent ports validation walks the iterator once and reports a bad entry of any iterable", () => {
   expect(() => new MessageEvent("message", { ports: new Set([{}]) })).toThrow(
     /Expected eventInitDict\.ports\[0\] \("\{\}"\) to be an instance of MessagePort/,
   );
@@ -1818,7 +1861,7 @@ test("MessageEvent ports validation walks the iterator once and gives a detailed
   port1.close();
 });
 
-test("MessagePort: transferring a port from inside its own close()'s flush window throws DataCloneError", async () => {
+test.concurrent("MessagePort: transferring a port inside its own close() flush throws DataCloneError", async () => {
   // Queue two messages. The first handler calls A.close(); close()'s flush
   // (running because m_inMessageDispatch is true) delivers the second, whose
   // handler tries to transfer A. A is m_isClosing at that point, so the
@@ -1854,7 +1897,7 @@ test("MessagePort: transferring a port from inside its own close()'s flush windo
   B2.close();
 });
 
-test("MessagePort: peer closing while a port is in transit still delivers 'close' and doesn't hang", async () => {
+test.concurrent("MessagePort: peer closing while a port is in transit still delivers 'close' and exits", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -1887,42 +1930,34 @@ test("MessagePort: peer closing while a port is in transit still delivers 'close
   });
 });
 
-test("workerData is not unwrapped for a non-node globalThis.Worker", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `const src = 'const wt = require("worker_threads"); self.postMessage({ workerData: wt.workerData });';
-       const url = URL.createObjectURL(new Blob([src]));
-       const w = new globalThis.Worker(url, { workerData: { "@@bunWorkerThreadsMessaging": {}, data: 1 } });
-       w.onerror = e => { console.error(e.message || e); process.exit(1); };
-       w.onmessage = e => { console.log(JSON.stringify(e.data)); w.terminate(); };`,
-    ],
-    env: bunEnv,
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const out = JSON.parse(stdout);
-  // The unwrap block was skipped: workerData is the original object, not `.data`.
-  expect({ workerData: out.workerData, stderr, exitCode }).toEqual({
-    workerData: { "@@bunWorkerThreadsMessaging": {}, data: 1 },
-    stderr,
-    exitCode: 0,
-  });
+test.concurrent("workerData is not unwrapped for a non-node globalThis.Worker", async () => {
+  const url = URL.createObjectURL(
+    new Blob(['const wt = require("worker_threads"); self.postMessage({ workerData: wt.workerData });']),
+  );
+  try {
+    const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+    const w = new globalThis.Worker(url, { workerData: { "@@bunWorkerThreadsMessaging": {}, data: 1 } } as any);
+    w.onerror = e => reject(e.error ?? new Error(e.message));
+    w.onmessage = e => resolve(e.data);
+    // The unwrap block was skipped: workerData is the original object, not `.data`.
+    expect(await promise).toEqual({ workerData: { "@@bunWorkerThreadsMessaging": {}, data: 1 } });
+    w.terminate();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 });
 
 // process.debugPort defaults to 9229 on the main thread (node parity). Lives here, not
 // in the vendored test/js/node/test/parallel/test-set-process-debug-port.js, which should
 // stay byte-identical to upstream.
-test("process.debugPort defaults to 9229 on the main thread", async () => {
+test.concurrent("process.debugPort defaults to 9229 on the main thread", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", "console.log(process.debugPort)"],
     env: bunEnv,
     stderr: "pipe",
   });
-  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout.trim()).toBe("9229");
-  expect(exitCode).toBe(0);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "9229\n", stderr: "", exitCode: 0 });
 });
 
 // Founding a SHARE_ENV tree replaces the founding thread's process.env object. If the
@@ -1931,7 +1966,7 @@ test("process.debugPort defaults to 9229 on the main thread", async () => {
 // so this guards the swap -- it cannot observe Windows' SetEnvironmentVariableW, which
 // has no JS-visible reader.
 
-test("the SHARE_ENV founding thread's process.env stays live after the swap", async () => {
+test.concurrent("the SHARE_ENV founding thread's process.env stays live after the swap", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -1954,57 +1989,41 @@ test("the SHARE_ENV founding thread's process.env stays live after the swap", as
     env: bunEnv,
     stderr: "pipe",
   });
-  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout.trim()).toBe("yes,unset");
-  expect(exitCode).toBe(0);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "yes,unset\n", stderr: "", exitCode: 0 });
 });
 
-test("terminating a worker stops the workers it spawned", async () => {
-  // The leaf heartbeats to the main thread over a MessagePort routed through the
-  // middle worker. Terminating the middle worker must stop the leaf, which the main
+test.concurrent("terminating a worker stops the workers it spawned", async () => {
+  // The leaf heartbeats to this thread over a MessagePort routed through the
+  // middle worker. Terminating the middle worker must stop the leaf, which this
   // thread observes as its end of the channel closing.
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
-        const { Worker, MessageChannel } = require("worker_threads");
-        const { port1, port2 } = new MessageChannel();
-        const middle = new Worker(
-          \`const { Worker, workerData, parentPort } = require("worker_threads");
-           const leaf = new Worker(
-             'const { workerData } = require("worker_threads");' +
-             'setInterval(() => workerData.port.postMessage("beat"), 5);',
-             { eval: true, workerData: { port: workerData.port }, transferList: [workerData.port] });
-           leaf.on("online", () => parentPort.postMessage("leaf-online"));\`,
-          { eval: true, workerData: { port: port2 }, transferList: [port2] },
-        );
-        let beats = 0;
-        port1.on("message", () => { beats++; });
-        middle.on("message", async m => {
-          if (m !== "leaf-online") return;
-          while (beats === 0) await new Promise(r => setImmediate(r));
-          port1.on("close", () => {
-            console.log("leaf port closed");
-            port1.close();
-          });
-          await middle.terminate();
-        });
-      `,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "inherit",
-  });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(stdout.trim()).toBe("leaf port closed");
-  expect(exitCode).toBe(0);
+  const { port1, port2 } = new MessageChannel();
+  const middle = new Worker(
+    `const { Worker, workerData, parentPort } = require("worker_threads");
+     const leaf = new Worker(
+       'const { workerData } = require("worker_threads");' +
+       'setInterval(() => workerData.port.postMessage("beat"), 5);',
+       { eval: true, workerData: { port: workerData.port }, transferList: [workerData.port] });
+     leaf.on("online", () => parentPort.postMessage("leaf-online"));`,
+    { eval: true, workerData: { port: port2 }, transferList: [port2] },
+  );
+  const errors: unknown[] = [];
+  middle.on("error", e => errors.push(e));
+  const firstBeat = new Promise<unknown>(resolve => port1.once("message", resolve));
+  const [leafState] = await once(middle, "message");
+  expect(leafState).toBe("leaf-online");
+  expect(await firstBeat).toBe("beat");
+  const leafPortClosed = new Promise<void>(resolve => port1.once("close", resolve));
+  expect(await middle.terminate()).toBe(1);
+  await leafPortClosed;
+  expect(errors).toEqual([]);
+  port1.close();
 });
 
 // parentPort is a real MessagePort entangled with the parent Worker's public
 // port, so it follows Node's lifecycle: a 'message' listener keeps the thread
 // alive, and close()/unref() let it exit.
-test("parentPort.close() ends a worker that is only listening for messages", async () => {
+test.concurrent("parentPort.close() ends a worker that is only listening for messages", async () => {
   const w = new Worker(
     `const { parentPort } = require("worker_threads");
      parentPort.on("message", m => { parentPort.postMessage("got " + m); if (m === "close") parentPort.close(); });`,
@@ -2019,7 +2038,7 @@ test("parentPort.close() ends a worker that is only listening for messages", asy
   expect(messages).toEqual(["got hello", "got close"]);
 });
 
-test("parentPort.unref() lets a listening worker exit", async () => {
+test.concurrent("parentPort.unref() lets a listening worker exit", async () => {
   const w = new Worker(
     `const { parentPort } = require("worker_threads");
      parentPort.on("message", () => {});
@@ -2030,7 +2049,7 @@ test("parentPort.unref() lets a listening worker exit", async () => {
   expect(await exited).toBe(0);
 });
 
-test("receiveMessageOnPort distinguishes an undefined message from an empty queue", () => {
+test.concurrent("receiveMessageOnPort distinguishes an undefined message from an empty queue", () => {
   const { port1, port2 } = new MessageChannel();
   port1.postMessage(undefined);
   port1.postMessage(0);
@@ -2045,7 +2064,7 @@ test("receiveMessageOnPort distinguishes an undefined message from an empty queu
 // worker's entry module has evaluated (Node's ordering). Delivered early, an
 // uncaught throw from the listener raced the still-loading entry and the exit
 // handler's exitCode was overwritten.
-test("parent messages are delivered after the worker's entry evaluated; exit handler's exitCode wins", async () => {
+test.concurrent("parent messages are delivered after the entry evaluated; exit handler's exitCode wins", async () => {
   const w = new Worker(
     `const { parentPort } = require("worker_threads");
      parentPort.once("message", () => {
@@ -2064,7 +2083,7 @@ test("parent messages are delivered after the worker's entry evaluated; exit han
 
 // node: assigning a non-function to parentPort.onmessage clears the handler and
 // releases the ref the previous handler took, so the worker can exit.
-test("parentPort.onmessage = <not a function> lets the worker exit", async () => {
+test.concurrent("parentPort.onmessage = <not a function> lets the worker exit", async () => {
   const w = new Worker(
     `const { parentPort } = require("worker_threads");
      parentPort.onmessage = () => { throw new Error("must not be called"); };
@@ -2079,7 +2098,7 @@ test("parentPort.onmessage = <not a function> lets the worker exit", async () =>
 // #15408: a worker whose top-level await has not settled is started (Node) —
 // its parentPort listener registered before the await receives messages, and
 // the await keeps running in the normal event loop.
-test("parentPort messages are delivered while a top-level await is pending", async () => {
+test.concurrent("parentPort messages are delivered while a top-level await is pending", async () => {
   const w = new Worker(
     `import { parentPort } from "worker_threads";
      parentPort.on("message", m => { parentPort.postMessage("got " + m); if (m === "bye") process.exit(0); });
@@ -2100,7 +2119,7 @@ test("parentPort messages are delivered while a top-level await is pending", asy
 // A top-level await that rejects while other work keeps the loop alive fails the
 // worker at rejection time (Node), not when the loop eventually drains.
 // (Subprocess: inside `bun test` a worker's uncaught error counts as handled.)
-test("a top-level await rejecting while the loop is alive fails the worker then", async () => {
+test.concurrent("a top-level await rejecting while the loop is alive fails the worker then", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -2124,7 +2143,7 @@ test("a top-level await rejecting while the loop is alive fails the worker then"
 
 // Static imports that are still being read/transpiled are loading, not a
 // top-level await: 'online' and message delivery wait for the graph to execute.
-test("a file worker's static imports load before it counts as started", async () => {
+test.concurrent("a file worker's static imports load before it counts as started", async () => {
   using dir = tempDir("worker-static-import-start", {
     "dep.js": `export const listeners = [];\n${"// filler\n".repeat(2000)}`,
     "w.js": `import { listeners } from "./dep.js";
@@ -2144,6 +2163,11 @@ parentPort.on("message", m => parentPort.postMessage("got " + m + " " + listener
 // refusal / wait paths of VM teardown; a broken build crashes or trips ASAN
 // rather than failing an assertion.
 describe("terminate with work in flight", () => {
+  // The first three tests stay serial (and so run with an otherwise idle parent):
+  // each worker posts "go" the moment its job is queued, and terminate() has to
+  // reach it while the job is still in flight. The jobs take milliseconds, so a
+  // parent that is busy with other tests reacts too late, the worker has exited
+  // on its own, and terminate() resolves 0 instead of 1.
   test("a transpile queued on the thread pool that starts after terminate()", async () => {
     using dir = tempDir("worker-terminate-transpile", {
       // large enough that the pool job is still queued/running at terminate
@@ -2186,7 +2210,7 @@ describe("terminate with work in flight", () => {
     }
   });
 
-  test("a fetch whose body is still streaming at terminate(), then process exit", async () => {
+  test.concurrent("a fetch whose body is still streaming at terminate(), then process exit", async () => {
     // Subprocess: the exiting main thread must not touch the dead worker's fetch.
     await using proc = Bun.spawn({
       cmd: [
@@ -2221,7 +2245,7 @@ describe("terminate with work in flight", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("the main thread exits while a worker is mid-way through sqlite statements", async () => {
+  test.concurrent("the main thread exits while a worker is mid-way through sqlite statements", async () => {
     using dir = tempDir("worker-sqlite-main-exit", {});
     await using proc = Bun.spawn({
       cmd: [
@@ -2248,7 +2272,7 @@ describe("terminate with work in flight", () => {
     expect(await proc.exited).toBe(0);
   });
 
-  test("a fetch still in flight when the main thread exits", async () => {
+  test.concurrent("a fetch still in flight when the main thread exits", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -2271,7 +2295,7 @@ describe("terminate with work in flight", () => {
 
 // A JS preload's modules are not the entry: the worker counts as started (online,
 // parent messages delivered) only once its own entry graph has executed.
-test("a worker with a preload is not started before its entry module runs", async () => {
+test.concurrent("a worker with a preload is not started before its entry module runs", async () => {
   using dir = tempDir("worker-preload-start", {
     "setup.js": `globalThis.setupRan = true;`,
     "dep.js": `export const dep = 1;\n${"// filler\n".repeat(3000)}`,
@@ -2288,7 +2312,7 @@ parentPort.on("message", m => parentPort.postMessage(["got", m, dep, globalThis.
 
 // Releasing the last keep-alive from an immediate (after the tick, before the
 // poll) must be noticed before the loop parks.
-test("closing the only ref'd port from setImmediate lets the process exit", async () => {
+test.concurrent("closing the only ref'd port from setImmediate lets the process exit", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -2313,7 +2337,7 @@ test("closing the only ref'd port from setImmediate lets the process exit", asyn
 // for them again once the poll returns. With a parentPort listener keeping the
 // loop alive, nothing else ends that poll: the exit used to wait for the idle GC
 // timer (about a second), and without it (disabled here) never happened.
-describe("a worker that stops itself from an immediate exits right away", () => {
+describe.concurrent("a worker that stops itself from an immediate exits right away", () => {
   test.concurrent.each([
     ["process.exit()", "process.exit(7);", { errors: [], code: 7 }],
     [
@@ -2354,7 +2378,7 @@ describe("a worker that stops itself from an immediate exits right away", () => 
 
 // Node's setupPortReferencing: the parent side of parentPort keeps the parent
 // alive while the Worker has 'message' listeners, independently of unref().
-test("an unref'ed worker with a 'message' listener still delivers to the parent", async () => {
+test.concurrent("an unref'ed worker with a 'message' listener still delivers to the parent", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -2373,77 +2397,66 @@ test("an unref'ed worker with a 'message' listener still delivers to the parent"
   expect(exitCode).toBe(0);
 });
 
-// A Bun.build whose plugin never answers, in a worker that is terminated: the
-// build is cancelled with the worker, and the process-wide bundle thread stays
-// usable for the parent.
-test("terminating a worker mid-Bun.build (plugin pending) does not wedge the bundler", async () => {
-  using dir = tempDir("worker-build-cancel", {
-    "entry.js": `import "./dep.js"; console.log("entry");`,
-    "dep.js": `console.log("dep");`,
-    "w.js": `
-      const { parentPort } = require("worker_threads");
-      Bun.build({
-        entrypoints: ["./entry.js"],
-        // onLoad never answers; it tells the parent once the bundler is waiting on it.
-        plugins: [{ name: "hang", setup(b) { b.onLoad({ filter: /dep\\.js$/ }, () => { parentPort.postMessage("pending"); return new Promise(() => {}); }); } }],
-      }).then(() => parentPort.postMessage("built"), e => parentPort.postMessage("failed"));
-    `,
+// Bun.build runs on a process-wide bundler thread that calls back into the
+// worker's JS for plugins; a worker that goes away mid-build must cancel the
+// build rather than leave either side waiting on the other.
+describe.concurrent("Bun.build in a worker that goes away mid-build", () => {
+  // A Bun.build whose plugin never answers, in a worker that is terminated: the
+  // build is cancelled with the worker, and the process-wide bundle thread stays
+  // usable for the parent.
+  test("terminate() with a plugin callback pending does not wedge the bundler", async () => {
+    using dir = tempDir("worker-build-cancel", {
+      "entry.js": `import "./dep.js"; console.log("entry");`,
+      "dep.js": `console.log("dep");`,
+      "w.js": `
+        const { parentPort } = require("worker_threads");
+        Bun.build({
+          entrypoints: ["./entry.js"],
+          // onLoad never answers; it tells the parent once the bundler is waiting on it.
+          plugins: [{ name: "hang", setup(b) { b.onLoad({ filter: /dep\\.js$/ }, () => { parentPort.postMessage("pending"); return new Promise(() => {}); }); } }],
+        }).then(() => parentPort.postMessage("built"), e => parentPort.postMessage("failed"));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("worker_threads");
+         const w = new Worker("./w.js");
+         w.once("message", async m => {
+           console.log("worker:", m);
+           await w.terminate();
+           const out = await Bun.build({ entrypoints: ["./entry.js"] });
+           console.log("parent build:", out.success, out.outputs.length > 0);
+           process.exit(0);
+         });`,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("worker: pending\nparent build: true true\n");
+    expect(exitCode).toBe(0);
   });
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `const { Worker } = require("worker_threads");
-       const w = new Worker("./w.js");
-       w.once("message", async m => {
-         console.log("worker:", m);
-         await w.terminate();
-         const out = await Bun.build({ entrypoints: ["./entry.js"] });
-         console.log("parent build:", out.success, out.outputs.length > 0);
-         process.exit(0);
-       });`,
-    ],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "inherit",
-  });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(stdout).toBe("worker: pending\nparent build: true true\n");
-  expect(exitCode).toBe(0);
-});
 
-// The worker gets its own copies of options.argv/execArgv strings (they live in
-// the parent's WorkerOptions); empty strings included.
-test("worker argv/execArgv option strings, read repeatedly in the worker", async () => {
-  const src = `const { parentPort } = require("node:worker_threads");
-    for (let i = 0; i < 200; i++) { process.argv; process.execArgv }
-    parentPort.postMessage({ argv: process.argv.slice(2), execArgv: process.execArgv })`;
-  const ws = Array.from(
-    { length: 4 },
-    (_, i) => new Worker(src, { eval: true, argv: ["", "a" + i, "\u00fc\u2603", ""], execArgv: ["", "--x"] }),
-  );
-  const got = await Promise.all(ws.map(w => new Promise(res => w.once("message", res))));
-  expect(got).toEqual([0, 1, 2, 3].map(i => ({ argv: ["", "a" + i, "\u00fc\u2603", ""], execArgv: ["", "--x"] })));
-  await Promise.all(ws.map(w => w.terminate()));
-});
-
-// A build whose plugin answers slowly (async setup + async onLoad) is in every
-// possible phase when the worker goes away; each must cancel, not wait on the
-// worker's JS thread for an answer that will never come.
-test("terminate()/exit while Bun.build with a slow plugin is mid-flight in the worker", async () => {
-  using dir = tempDir("worker-build-slow-plugin", {
-    "entry.ts":
-      Array.from({ length: 20 }, (_, i) => `export * as n${i} from "./m${i}.ts"`).join("\n") +
-      `\nimport data from "virtual:data"\nexport { data }\n`,
-    ...Object.fromEntries(
-      Array.from({ length: 20 }, (_, i) => [
-        `m${i}.ts`,
-        `import { v as a } from "./m${(i + 1) % 20}.ts"\nexport const v: number = ${i}\nexport function f${i}(x: number) { return x + a }\n`,
-      ]),
-    ),
-  });
-  const workerSrc = `
+  // A build whose plugin answers slowly (async setup + async onLoad) is in every
+  // possible phase when the worker goes away; each must cancel, not wait on the
+  // worker's JS thread for an answer that will never come.
+  test("terminate()/exit while Bun.build with a slow plugin is mid-flight in the worker", async () => {
+    using dir = tempDir("worker-build-slow-plugin", {
+      "entry.ts":
+        Array.from({ length: 20 }, (_, i) => `export * as n${i} from "./m${i}.ts"`).join("\n") +
+        `\nimport data from "virtual:data"\nexport { data }\n`,
+      ...Object.fromEntries(
+        Array.from({ length: 20 }, (_, i) => [
+          `m${i}.ts`,
+          `import { v as a } from "./m${(i + 1) % 20}.ts"\nexport const v: number = ${i}\nexport function f${i}(x: number) { return x + a }\n`,
+        ]),
+      ),
+    });
+    const workerSrc = `
     import { join } from "node:path";
     const SRC = process.env.SRC, OUT = process.env.OUT;
     const slow = { name: "slow", setup(build) {
@@ -2458,11 +2471,11 @@ test("terminate()/exit while Bun.build with a slow plugin is mid-flight in the w
     (function pump() { while (inflight < 3) { inflight++; Promise.resolve().then(one).catch(() => {}).finally(() => { inflight--; setImmediate(pump) }) } })();
     postMessage("busy");
   `;
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `const url = URL.createObjectURL(new Blob([${JSON.stringify(workerSrc)}]));
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const url = URL.createObjectURL(new Blob([${JSON.stringify(workerSrc)}]));
        for (let r = 0; r < 6; r++) {
          const door = r % 2 ? "exit" : "terminate";
          const ws = Array.from({ length: 1 + (r % 3) }, (_, i) => new Worker(url, { env: { ...process.env, OUT: process.env.OUT + "/r" + r + "w" + i } }));
@@ -2473,20 +2486,36 @@ test("terminate()/exit while Bun.build with a slow plugin is mid-flight in the w
          await Promise.all(closed);
        }
        console.log("PASS");`,
-    ],
-    env: { ...bunEnv, SRC: String(dir), OUT: join(String(dir), "out") },
-    stdout: "pipe",
-    stderr: "inherit",
-  });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(stdout).toBe("PASS\n");
-  expect(exitCode).toBe(0);
-}, 60_000);
+      ],
+      env: { ...bunEnv, SRC: String(dir), OUT: join(String(dir), "out") },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("PASS\n");
+    expect(exitCode).toBe(0);
+  }, 60_000);
+});
+
+// The worker gets its own copies of options.argv/execArgv strings (they live in
+// the parent's WorkerOptions); empty strings included.
+test.concurrent("worker argv/execArgv option strings, read repeatedly in the worker", async () => {
+  const src = `const { parentPort } = require("node:worker_threads");
+    for (let i = 0; i < 200; i++) { process.argv; process.execArgv }
+    parentPort.postMessage({ argv: process.argv.slice(2), execArgv: process.execArgv })`;
+  const ws = Array.from(
+    { length: 4 },
+    (_, i) => new Worker(src, { eval: true, argv: ["", "a" + i, "\u00fc\u2603", ""], execArgv: ["", "--x"] }),
+  );
+  const got = await Promise.all(ws.map(w => new Promise(res => w.once("message", res))));
+  expect(got).toEqual([0, 1, 2, 3].map(i => ({ argv: ["", "a" + i, "\u00fc\u2603", ""], execArgv: ["", "--x"] })));
+  await Promise.all(ws.map(w => w.terminate()));
+});
 
 // The IPC channel belongs to the process; a worker in a forked child sees the
 // inherited NODE_CHANNEL_FD but must not open a second endpoint on it (Node:
 // process.send is undefined in worker threads).
-test("a worker inside a process with an IPC channel has no process.send of its own", async () => {
+test.concurrent("a worker inside a process with an IPC channel has no process.send of its own", async () => {
   using dir = tempDir("worker-no-ipc", {
     "main.js": `
       if (process.argv[2] === "child") {
@@ -2522,7 +2551,7 @@ test("a worker inside a process with an IPC channel has no process.send of its o
   expect(exitCode).toBe(0);
 });
 
-describe("VM teardown ordering", () => {
+describe.concurrent("VM teardown ordering", () => {
   // The exiting main thread must not park the process-wide HTTP thread while a
   // child can still start a request: the child then waits for a hand-back that
   // never comes and the parent waits for the child.
@@ -2612,32 +2641,32 @@ describe("VM teardown ordering", () => {
     expect(stdout).toBe("exit 1\n");
     expect(exitCode).toBe(0);
   });
-});
 
-// A native completion on the worker's own loop (here: a dns lookup finishing)
-// after the parent requested termination must not settle a promise with the
-// empty value its interrupted JS conversion produced.
-test("terminate() while dns lookups keep completing in the worker", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `const { Worker } = require("worker_threads");
-       const w = new Worker(
-         'const dns = require("dns"); const { parentPort } = require("worker_threads");' +
-         'let n = 0;' +
-         '(function go() { dns.lookup("localhost", () => {}); dns.promises.lookup("localhost").catch(() => {}); if (++n === 50) parentPort.postMessage("going"); setImmediate(go); })();',
-         { eval: true });
-       w.once("message", async () => { console.log("exit", await w.terminate()); process.exit(0); });`,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "inherit",
-  });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(stdout).toBe("exit 1\n");
-  expect(exitCode).toBe(0);
-}, 30_000);
+  // A native completion on the worker's own loop (here: a dns lookup finishing)
+  // after the parent requested termination must not settle a promise with the
+  // empty value its interrupted JS conversion produced.
+  test("terminate() while dns lookups keep completing in the worker", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("worker_threads");
+           const w = new Worker(
+             'const dns = require("dns"); const { parentPort } = require("worker_threads");' +
+             'let n = 0;' +
+             '(function go() { dns.lookup("localhost", () => {}); dns.promises.lookup("localhost").catch(() => {}); if (++n === 50) parentPort.postMessage("going"); setImmediate(go); })();',
+             { eval: true });
+           w.once("message", async () => { console.log("exit", await w.terminate()); process.exit(0); });`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("exit 1\n");
+    expect(exitCode).toBe(0);
+  }, 30_000);
+});
 
 // What a worker's own handlers may observe of its stop, in what order. Every
 // callback the worker could run appends a tag to a shared log the parent reads
@@ -2649,7 +2678,7 @@ test("terminate() while dns lookups keep completing in the worker", async () => 
 //    that, so none of their handlers follow.
 // In both the parent's loop returns to idle afterwards (nothing the worker held
 // keeps it alive) — the test process exiting at all is that check.
-describe("worker stop ordering as seen by the worker's own handlers", () => {
+describe.concurrent("worker stop ordering as seen by the worker's own handlers", () => {
   const TAG = {
     exitHandler: 1,
     serverClose: 2,
@@ -2657,7 +2686,6 @@ describe("worker stop ordering as seen by the worker's own handlers", () => {
     socketError: 4,
     udpClose: 5,
     watcherClose: 6,
-    intervalTick: 7,
     streamCancel: 8,
     portClose: 9,
     beforeExit: 10,
@@ -2675,7 +2703,11 @@ describe("worker stop ordering as seen by the worker's own handlers", () => {
     server.on("close", () => put(${TAG.serverClose}));
     const udp = dgram.createSocket("udp4"); udp.bind(0, "127.0.0.1"); udp.on("close", () => put(${TAG.udpClose}));
     const watcher = fs.watch(os.tmpdir(), () => {}); watcher.on("close", () => put(${TAG.watcherClose}));
-    setInterval(() => put(${TAG.intervalTick}), 1).unref();
+    // A timer that is still firing when the stop arrives. It does not log: its ticks
+    // are legitimate right up to the stop, so logging them would only fill the log
+    // while a busy parent gets around to answering "ready", and give terminate()
+    // a put() to land in the middle of.
+    setInterval(() => {}, 1).unref();
     const { port1, port2 } = new MessageChannel(); port1.on("message", () => {}); port1.on("close", () => put(${TAG.portClose})); globalThis.keepPeer = port2;
     Bun.serve({ port: 0, development: false, fetch: () => new Response("x") });
     new ReadableStream({ pull() {}, cancel() { put(${TAG.streamCancel}); } }).getReader().read();
@@ -2709,7 +2741,7 @@ describe("worker stop ordering as seen by the worker's own handlers", () => {
       code = await exited;
     }
     const n = Math.min(Atomics.load(log, 0), log.length - 1);
-    const tags = Array.from(log.slice(1, 1 + n)).filter(t => t !== TAG.intervalTick);
+    const tags = Array.from(log.slice(1, 1 + n));
     return { code, tags, errors };
   }
 

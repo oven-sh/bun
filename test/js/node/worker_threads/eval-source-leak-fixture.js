@@ -1,6 +1,6 @@
-// Create a worker with extremely large source code which completes instantly and the `eval` option
-// set to true. Ensure that the Blob created to hold the source code is not kept in memory after the
-// worker exits.
+// Run `eval: true` Workers whose source is very large and completes instantly,
+// and report how much the process grew. Each Worker copies its source into the
+// Blob behind its blob: URL; that copy must be released once the Worker exits.
 const { Worker } = require("node:worker_threads");
 
 const eachSizeMiB = 100;
@@ -10,12 +10,17 @@ const rss =
     ? Bun.unsafe.memoryFootprint
     : process.memoryUsage.rss;
 
+// One source string for every Worker: the per-Worker allocation under test is the
+// Blob copy, not the string. A block comment is the cheapest thing of this size
+// for the worker to evaluate.
+const code = "/*" + Buffer.alloc(eachSizeMiB * 1024 * 1024 - 4, 0x20).toString() + "*/";
+
 function test() {
-  const code = " ".repeat(eachSizeMiB * 1024 * 1024);
   return new Promise((resolve, reject) => {
     const worker = new Worker(code, { eval: true });
-    worker.on("exit", () => resolve());
-    worker.on("error", e => reject(e));
+    // A worker that did not run its source did not make the copy being measured.
+    worker.on("exit", exitCode => (exitCode === 0 ? resolve() : reject(new Error(`worker exited with ${exitCode}`))));
+    worker.on("error", reject);
   });
 }
 
@@ -36,9 +41,7 @@ for (let i = 0; i < iterations; i++) {
   await reallyGC();
 }
 const after = rss();
-// The bug is that the source code passed to `new Worker` would never be freed.
-// If this bug is present, then the memory growth likely won't be much more than the total amount
-// of source code, but it's impossible for the memory growth to be less than the source code size.
-// On macOS before fixing this bug, deltaMiB was around 503.
-const deltaMiB = (after - before) / 1024 / 1024;
-if (deltaMiB >= eachSizeMiB * iterations) throw new Error(`leaked ${deltaMiB} MiB`);
+// The copies have to be this large: allocations of this size go back to the OS
+// when freed, so a healthy run reads about 0 and retained copies read about
+// eachSizeMiB * iterations; the test draws the line between the two.
+console.log(JSON.stringify({ eachSizeMiB, iterations, deltaMiB: Math.round((after - before) / 1024 / 1024) }));

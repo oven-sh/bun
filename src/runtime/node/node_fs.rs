@@ -3194,6 +3194,17 @@ pub mod args {
         Ok(encoding)
     }
 
+    /// Node's `validateBoolean(value, name)`, where `name` is the dotted path
+    /// node reports (`"options.recursive"`). `validators::validate_boolean` is
+    /// not used here because it still renders Bun's older `..., got <typeof>`
+    /// wording and node:fs errors have to match node's text.
+    fn validate_boolean_option(ctx: &JSGlobalObject, value: JSValue, name: &str) -> JsResult<bool> {
+        if value.is_boolean() {
+            return Ok(value.as_boolean());
+        }
+        Err(ctx.throw_invalid_argument_type_value(name, "boolean", value))
+    }
+
     pub struct Unlink {
         pub path: PathLike,
     }
@@ -3267,23 +3278,13 @@ pub mod args {
                             val.get(ctx, name)
                         }
                     };
-                    if let Some(boolean) = get_option("recursive")? {
-                        if boolean.is_boolean() {
-                            recursive = boolean.to_boolean();
-                        } else {
-                            return Err(ctx.throw_invalid_arguments(format_args!(
-                                "The \"options.recursive\" property must be of type boolean."
-                            )));
-                        }
+                    // Validated in the order node's `validateRmOptions` uses, so an
+                    // options bag with several bad values reports the same one.
+                    if let Some(force_) = get_option("force")? {
+                        force = validate_boolean_option(ctx, force_, "options.force")?;
                     }
-                    if let Some(boolean) = get_option("force")? {
-                        if boolean.is_boolean() {
-                            force = boolean.to_boolean();
-                        } else {
-                            return Err(ctx.throw_invalid_arguments(format_args!(
-                                "The \"options.force\" property must be of type boolean."
-                            )));
-                        }
+                    if let Some(recursive_) = get_option("recursive")? {
+                        recursive = validate_boolean_option(ctx, recursive_, "options.recursive")?;
                     }
                     if let Some(delay) = get_option("retryDelay")? {
                         retry_delay = c_uint::try_from(validators::validate_integer(
@@ -3306,9 +3307,7 @@ pub mod args {
                         .expect("infallible: validated range");
                     }
                 } else if !val.is_undefined() {
-                    return Err(ctx.throw_invalid_arguments(format_args!(
-                        "The \"options\" argument must be of type object."
-                    )));
+                    return Err(ctx.throw_invalid_argument_type_value(b"options", b"object", val));
                 }
             }
             Ok(RmDir {
@@ -3355,8 +3354,8 @@ pub mod args {
             if let Some(val) = arguments.next() {
                 arguments.eat();
                 if val.is_object() {
-                    if let Some(b) = val.get_boolean_strict(ctx, "recursive")? {
-                        recursive = b;
+                    if let Some(recursive_) = val.get(ctx, "recursive")? {
+                        recursive = validate_boolean_option(ctx, recursive_, "options.recursive")?;
                     }
                     if let Some(mode_) = val.get(ctx, "mode")? {
                         mode = node::mode_from_js(ctx, mode_)?.unwrap_or(mode);
@@ -3436,11 +3435,16 @@ pub mod args {
                     _ => {
                         if val.is_object() {
                             encoding = get_encoding(val, ctx, encoding)?;
-                            if let Some(r) = val.get_boolean_strict(ctx, "recursive")? {
-                                recursive = r;
+                            if let Some(recursive_) = val.get(ctx, "recursive")? {
+                                recursive =
+                                    validate_boolean_option(ctx, recursive_, "options.recursive")?;
                             }
-                            if let Some(w) = val.get_boolean_strict(ctx, "withFileTypes")? {
-                                with_file_types = w;
+                            if let Some(with_file_types_) = val.get(ctx, "withFileTypes")? {
+                                with_file_types = validate_boolean_option(
+                                    ctx,
+                                    with_file_types_,
+                                    "options.withFileTypes",
+                                )?;
                             }
                         }
                     }

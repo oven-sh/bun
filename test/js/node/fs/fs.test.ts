@@ -1076,7 +1076,179 @@ describe("mkdirSync", () => {
         // @ts-expect-error
         { recursive: "lalala" },
       ),
-    ).toThrow('The "recursive" property must be of type boolean, got string');
+    ).toThrow(`The "options.recursive" property must be of type boolean. Received type string ('lalala')`);
+  });
+});
+
+// Node validates these option-bag booleans with `validateBoolean(value, 'options.<name>')`,
+// so the message names the option as a property and ends with node's description of
+// the value that was received. Every message below is node v26.3.0's text.
+describe("fs boolean options report ERR_INVALID_ARG_TYPE like node", () => {
+  type Thrown = { name: string; code: string; message: string };
+  const pick = (e: any): Thrown => ({ name: e.name, code: e.code, message: e.message });
+  const invalidArgType = (message: string): Thrown => ({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message });
+  const recursiveMessage = (received: string) =>
+    `The "options.recursive" property must be of type boolean. Received ${received}`;
+
+  function thrownBy(fn: () => unknown): Thrown {
+    try {
+      fn();
+    } catch (e) {
+      return pick(e);
+    }
+    throw new Error("expected the call to throw");
+  }
+  async function rejectedBy(promise: Promise<unknown>): Promise<Thrown> {
+    return promise.then(
+      () => {
+        throw new Error("expected the promise to reject");
+      },
+      e => pick(e),
+    );
+  }
+  // The callback APIs hand the error to the callback or, like node for these
+  // options, throw it synchronously; either way it is the native parser's error.
+  function failedCallback(call: (callback: (err: any) => void) => void): Promise<Thrown> {
+    const { promise, resolve, reject } = Promise.withResolvers<Thrown>();
+    try {
+      call(err => (err ? resolve(pick(err)) : reject(new Error("expected the callback to receive an error"))));
+    } catch (e) {
+      resolve(pick(e));
+    }
+    return promise;
+  }
+
+  describe("mkdir options.recursive", () => {
+    const cases: [value: unknown, received: string][] = [
+      ["x", "type string ('x')"],
+      [1, "type number (1)"],
+      [null, "null"],
+      [[], "an instance of Array"],
+    ];
+
+    it.each(cases)("mkdirSync(path, { recursive: %p })", (recursive, received) => {
+      using dir = tempDir("fs-mkdir-recursive-option", {});
+      const target = join(String(dir), "a", "b");
+      expect(thrownBy(() => mkdirSync(target, { recursive } as any))).toEqual(
+        invalidArgType(recursiveMessage(received)),
+      );
+      expect(existsSync(target)).toBe(false);
+    });
+
+    it("mkdir (callback) and promises.mkdir use the same message", async () => {
+      using dir = tempDir("fs-mkdir-recursive-option-async", {});
+      const target = join(String(dir), "a", "b");
+      expect(await failedCallback(cb => fs.mkdir(target, { recursive: "x" } as any, cb))).toEqual(
+        invalidArgType(recursiveMessage("type string ('x')")),
+      );
+      expect(await rejectedBy(promises.mkdir(target, { recursive: 1 } as any))).toEqual(
+        invalidArgType(recursiveMessage("type number (1)")),
+      );
+      expect(existsSync(target)).toBe(false);
+    });
+  });
+
+  describe("readdir options.recursive / options.withFileTypes", () => {
+    const withFileTypesMessage = (received: string) =>
+      `The "options.withFileTypes" property must be of type boolean. Received ${received}`;
+
+    it("readdirSync", () => {
+      using dir = tempDir("fs-readdir-boolean-options", { "file.txt": "" });
+      const d = String(dir);
+      expect(thrownBy(() => readdirSync(d, { recursive: "x" } as any))).toEqual(
+        invalidArgType(recursiveMessage("type string ('x')")),
+      );
+      expect(thrownBy(() => readdirSync(d, { recursive: {} } as any))).toEqual(
+        invalidArgType(recursiveMessage("an instance of Object")),
+      );
+      // node does not validate withFileTypes (it coerces it); Bun keeps rejecting
+      // a non-boolean here, using the same wording it would have in node.
+      expect(thrownBy(() => readdirSync(d, { withFileTypes: "x" } as any))).toEqual(
+        invalidArgType(withFileTypesMessage("type string ('x')")),
+      );
+      // recursive is validated first, as in node.
+      expect(thrownBy(() => readdirSync(d, { recursive: "x", withFileTypes: "y" } as any))).toEqual(
+        invalidArgType(recursiveMessage("type string ('x')")),
+      );
+      // Valid values still work through the same parser.
+      expect(readdirSync(d, { recursive: false, withFileTypes: false })).toEqual(["file.txt"]);
+    });
+
+    it("readdir (callback) and promises.readdir use the same message", async () => {
+      using dir = tempDir("fs-readdir-boolean-options-async", { "file.txt": "" });
+      const d = String(dir);
+      expect(await failedCallback(cb => fs.readdir(d, { recursive: "x" } as any, cb))).toEqual(
+        invalidArgType(recursiveMessage("type string ('x')")),
+      );
+      expect(await failedCallback(cb => fs.readdir(d, { withFileTypes: 1 } as any, cb))).toEqual(
+        invalidArgType(withFileTypesMessage("type number (1)")),
+      );
+      expect(await rejectedBy(promises.readdir(d, { recursive: "x" } as any))).toEqual(
+        invalidArgType(recursiveMessage("type string ('x')")),
+      );
+      expect(await rejectedBy(promises.readdir(d, { withFileTypes: null } as any))).toEqual(
+        invalidArgType(withFileTypesMessage("null")),
+      );
+    });
+  });
+
+  describe("rm options", () => {
+    const forceMessage = (received: string) =>
+      `The "options.force" property must be of type boolean. Received ${received}`;
+    const optionsMessage = (received: string) => `The "options" argument must be of type object. Received ${received}`;
+
+    it("rmSync", () => {
+      using dir = tempDir("fs-rm-boolean-options", { "file.txt": "" });
+      const file = join(String(dir), "file.txt");
+      expect(thrownBy(() => rmSync(file, { recursive: "x" } as any))).toEqual(
+        invalidArgType(recursiveMessage("type string ('x')")),
+      );
+      // node spreads the caller's options over its defaults, so an own key holding
+      // undefined is validated (and rejected) too.
+      expect(thrownBy(() => rmSync(file, { recursive: undefined }))).toEqual(
+        invalidArgType(recursiveMessage("undefined")),
+      );
+      expect(thrownBy(() => rmSync(file, { force: "x" } as any))).toEqual(
+        invalidArgType(forceMessage("type string ('x')")),
+      );
+      expect(thrownBy(() => rmSync(file, { force: null } as any))).toEqual(invalidArgType(forceMessage("null")));
+      // node's validateRmOptions checks force before recursive.
+      expect(thrownBy(() => rmSync(file, { recursive: "x", force: "y" } as any))).toEqual(
+        invalidArgType(forceMessage("type string ('y')")),
+      );
+      expect(thrownBy(() => rmSync(file, "x" as any))).toEqual(invalidArgType(optionsMessage("type string ('x')")));
+      expect(thrownBy(() => rmSync(file, null as any))).toEqual(invalidArgType(optionsMessage("null")));
+      // Validation fails before anything is removed.
+      expect(existsSync(file)).toBe(true);
+    });
+
+    it("rm (callback) and promises.rm use the same messages", async () => {
+      using dir = tempDir("fs-rm-boolean-options-async", { "file.txt": "" });
+      const file = join(String(dir), "file.txt");
+      expect(await failedCallback(cb => fs.rm(file, { recursive: "x" } as any, cb))).toEqual(
+        invalidArgType(recursiveMessage("type string ('x')")),
+      );
+      expect(await failedCallback(cb => fs.rm(file, { force: 1 } as any, cb))).toEqual(
+        invalidArgType(forceMessage("type number (1)")),
+      );
+      expect(await rejectedBy(promises.rm(file, { recursive: "x", force: "y" } as any))).toEqual(
+        invalidArgType(forceMessage("type string ('y')")),
+      );
+      expect(await rejectedBy(promises.rm(file, { recursive: [] } as any))).toEqual(
+        invalidArgType(recursiveMessage("an instance of Array")),
+      );
+      expect(await rejectedBy(promises.rm(file, "x" as any))).toEqual(
+        invalidArgType(optionsMessage("type string ('x')")),
+      );
+      expect(existsSync(file)).toBe(true);
+    });
+
+    it("rmdirSync shares the options argument check", () => {
+      using dir = tempDir("fs-rmdir-options-argument", { "sub": {} });
+      const sub = join(String(dir), "sub");
+      expect(thrownBy(() => rmdirSync(sub, "x" as any))).toEqual(invalidArgType(optionsMessage("type string ('x')")));
+      expect(existsSync(sub)).toBe(true);
+    });
   });
 });
 

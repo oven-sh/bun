@@ -10,8 +10,12 @@ using namespace JSC;
 JSObject* transformConstructor(JSGlobalObject* lexicalGlobalObject)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    JSValue transform = globalObject->internalModuleRegistry()->requireId(lexicalGlobalObject, globalObject->vm(), InternalModuleRegistry::Field::InternalStreamsTransform);
-    return transform ? transform.getObject() : nullptr;
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue transform = globalObject->internalModuleRegistry()->requireId(lexicalGlobalObject, vm, InternalModuleRegistry::Field::InternalStreamsTransform);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    RELEASE_ASSERT(transform.isObject());
+    return transform.getObject();
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsLazyTransformStateGetter, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName propertyName))

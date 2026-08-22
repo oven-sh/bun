@@ -11,7 +11,8 @@ namespace Bun {
 JSC_DECLARE_CUSTOM_GETTER(jsLazyTransformStateGetter);
 JSC_DECLARE_CUSTOM_SETTER(jsLazyTransformStateSetter);
 
-// internal/streams/transform's Transform constructor (loads the streams modules on first use).
+// internal/streams/transform's Transform constructor. Loads the streams modules on first use, which can
+// throw; otherwise never null.
 JSC::JSObject* transformConstructor(JSC::JSGlobalObject*);
 
 } // namespace Bun

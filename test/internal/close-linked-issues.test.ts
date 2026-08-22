@@ -191,6 +191,8 @@ test.each([
   ["We fix #1.", [1]],
   ["Here we fix #1.", [1]],
   ["Note that this fixes #1.", [1]],
+  ["This PR fixes #1.", [1]],
+  ["Title\n===\nFixes #1", [1]],
   ["Repro from the log:\n\n    abc123 Fixes #1234: handle null\n\nFixes #5678", [5678]],
   ["> quoted\n\nFixes #1", [1]],
   ["> quoted\n- Fixes #1", [1]],
@@ -206,6 +208,9 @@ test.each([
   ["<section>Fixes #1</section>", [1]],
   ["para\n    ```\nFixes #1\n```", [1]],
   ["> quoted\n---\nFixes #1", [1]],
+  ["> # Old plan\nFixes #1", [1]],
+  ["> ---\nFixes #1", [1]],
+  [">\nFixes #1", [1]],
   ["> quoted\n***\nFixes #1", [1]],
 ] as [string, (number | string)[]][])("finds %j", async (body, expected) => {
   expect(await refs(body)).toEqual(expected);
@@ -253,6 +258,9 @@ test.each([
   "Unless we replace #1, keep the shim.",
   "When they have fixed #1 this will work.",
   "Once we\nfix #1, this can land.",
+  "If this PR fixes #1, the crash goes away.",
+  "Once the change fixes #1, this can land.",
+  "Unless this PR replaces #1, keep the shim.",
   "If\nthis fixes #1, the crash goes away.",
   // the keyword as an adjective or a noun
   "Supersedes the closed #26040.",
@@ -302,6 +310,7 @@ test.each([
   "```\n$ bun test\n```\n    ✓ Fixes #1234 (5ms)",
   "## Fix\n    abc123 Fixes #1234",
   "---\n    abc123 Fixes #1234",
+  "Fix\n===\n    abc123 Fixes #1234",
   "* * *\n    abc123 Fixes #1234",
   "<!-- paste the log below -->\n    abc123 Fixes #1234",
   "<!-- a\nb -->\n    abc123 Fixes #1234",

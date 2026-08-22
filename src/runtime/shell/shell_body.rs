@@ -139,6 +139,7 @@ pub mod test {
         Dollar,
         Asterisk,
         DoubleAsterisk,
+        GlobText(&'a [u8]),
         Eq,
         Semicolon,
         Newline,
@@ -183,6 +184,9 @@ pub mod test {
                 Token::Dollar => TestToken::Dollar,
                 Token::Asterisk => TestToken::Asterisk,
                 Token::DoubleAsterisk => TestToken::DoubleAsterisk,
+                Token::GlobText(txt) => {
+                    TestToken::GlobText(&buf[txt.start as usize..txt.end as usize])
+                }
                 Token::Eq => TestToken::Eq,
                 Token::Semicolon => TestToken::Semicolon,
                 Token::Newline => TestToken::Newline,
@@ -226,6 +230,11 @@ pub mod test {
                 T::Dollar => unit!("Dollar"),
                 T::Asterisk => unit!("Asterisk"),
                 T::DoubleAsterisk => unit!("DoubleAsterisk"),
+                T::GlobText(s) => {
+                    w.write_str("{\"GlobText\":")?;
+                    encode_json_string(w, s)?;
+                    w.write_char('}')
+                }
                 T::Eq => unit!("Eq"),
                 T::Semicolon => unit!("Semicolon"),
                 T::Newline => unit!("Newline"),
@@ -640,7 +649,7 @@ impl<'a> ShellSrcBuilder<'a> {
             // marker recognized regardless of quote context (e.g. inside single quotes).
             if needs_escape_bunstr(bunstr)
                 || is_if_clause_keyword_bunstr(bunstr)
-                || self.outbuf_ends_with_var_ref()
+                || self.position_needs_ref()
             {
                 self.append_js_str_ref(bunstr)?;
                 return Ok(true);
@@ -670,7 +679,7 @@ impl<'a> ShellSrcBuilder<'a> {
         if ALLOW_ESCAPE {
             if needs_escape_utf8_ascii_latin1(utf8)
                 || IfClauseTok::from_text(utf8).is_some()
-                || self.outbuf_ends_with_var_ref()
+                || self.position_needs_ref()
             {
                 let bunstr = OwnedString::new(BunString::clone_utf8(utf8));
                 self.append_js_str_ref(bunstr.get())?;
@@ -680,6 +689,29 @@ impl<'a> ShellSrcBuilder<'a> {
 
         self.append_utf8_impl(utf8)?;
         Ok(true)
+    }
+
+    /// A value with nothing to escape is spliced into the source as is, which
+    /// is only safe where plain text cannot become syntax: not right after a
+    /// `$`, and not inside a `[...]` the template opened, where `!` or `a-z`
+    /// would shape the class (see `SimpleAtom::GlobText`). The marker that
+    /// `append_js_str_ref` emits instead keeps the lexer from forming either.
+    fn position_needs_ref(&self) -> bool {
+        self.outbuf_ends_with_var_ref() || self.outbuf_ends_inside_bracket()
+    }
+
+    fn outbuf_ends_inside_bracket(&self) -> bool {
+        let word_start =
+            strings::last_index_of_any(&self.outbuf[..], b" \t\r\n;|&()<>").map_or(0, |i| i + 1);
+        let word = &self.outbuf[word_start..];
+        match (
+            strings::last_index_of_char(word, b'['),
+            strings::last_index_of_char(word, b']'),
+        ) {
+            (Some(open), Some(close)) => close < open,
+            (Some(_), None) => true,
+            (None, _) => false,
+        }
     }
 
     fn outbuf_ends_with_var_ref(&self) -> bool {

@@ -847,10 +847,103 @@ booga"
       })
       .runAsTest("Should work with a different cwd");
 
+    describe("metacharacters written in the template keep their glob meaning", () => {
+      // Only a literal `*` makes a word glob, but once it does, `?` and `[...]`
+      // written in the template are pattern syntax as in bash. The quoted,
+      // escaped, and interpolated (next block) forms of the same bytes match
+      // themselves only.
+      TestBuilder.command`ls [ab]*`
+        .ensureTempDir()
+        .file("apple", "")
+        .file("banana", "")
+        .file("cherry", "")
+        .stdout(out => expect(sortedShellOutput(out)).toEqual(["apple", "banana"]))
+        .runAsTest("[...] class");
+
+      TestBuilder.command`ls *.[jt]s`
+        .ensureTempDir()
+        .file("x.js", "")
+        .file("y.ts", "")
+        .file("z.md", "")
+        .stdout(out => expect(sortedShellOutput(out)).toEqual(["x.js", "y.ts"]))
+        .runAsTest("[...] class after the *");
+
+      TestBuilder.command`ls [a-b]*`
+        .ensureTempDir()
+        .file("apple", "")
+        .file("banana", "")
+        .file("cherry", "")
+        .stdout(out => expect(sortedShellOutput(out)).toEqual(["apple", "banana"]))
+        .runAsTest("[...] range");
+
+      TestBuilder.command`ls [!a]*`
+        .ensureTempDir()
+        .file("apple", "")
+        .file("banana", "")
+        .stdout("banana\n")
+        .runAsTest("negated [!...] class");
+
+      TestBuilder.command`ls a?*`
+        .ensureTempDir()
+        .file("a", "")
+        .file("ax.txt", "")
+        .stdout("ax.txt\n")
+        .runAsTest("? wildcard");
+
+      TestBuilder.command`ls "[ab]"*`
+        .ensureTempDir()
+        .file("apple", "")
+        .file("[ab]c", "")
+        .stdout("[ab]c\n")
+        .runAsTest("quoted [...] is literal");
+
+      TestBuilder.command`ls \[ab\]*`
+        .ensureTempDir()
+        .file("apple", "")
+        .file("[ab]c", "")
+        .stdout("[ab]c\n")
+        .runAsTest("escaped [...] is literal");
+
+      TestBuilder.command`ls [\!a]*`
+        .ensureTempDir()
+        .file("apple", "")
+        .file("banana", "")
+        .file("[!a]c", "")
+        .stdout("[!a]c\n")
+        .runAsTest("an escape inside the class makes the whole class literal");
+
+      // The brace variants are expanded by the glob walker as well, so the
+      // class has to survive brace expansion of the same word.
+      TestBuilder.command`echo {x,y}*.[jt]s`
+        .ensureTempDir()
+        .file("x1.js", "")
+        .file("y2.ts", "")
+        .file("x3.md", "")
+        .file("z4.js", "")
+        .stdout(out => {
+          expect(out).toContain("x1.js");
+          expect(out).toContain("y2.ts");
+          expect(out).not.toContain("x3.md");
+          expect(out).not.toContain("z4.js");
+        })
+        .runAsTest("[...] class combined with brace expansion");
+
+      TestBuilder.command`echo [ab] hi?`
+        .ensureTempDir()
+        .file("apple", "")
+        .file("hi1", "")
+        .stdout("[ab] hi?\n")
+        .runAsTest("without a * the word does not glob");
+
+      TestBuilder.command`FOO=a?[b]c; echo $FOO x?y [z] w]`
+        .stdout("a?[b]c x?y [z] w]\n")
+        .runAsTest("words that do not glob are assembled unchanged");
+    });
+
     describe("interpolated values cannot inject glob syntax", () => {
-      // Only `*`/`**` written literally in the template act as glob syntax.
-      // Metacharacters arriving via `${...}` interpolation are data and must
-      // match only files containing them literally.
+      // Only `*`/`**`, `?` and `[...]` written literally in the template act as
+      // glob syntax. Metacharacters arriving via `${...}` interpolation are
+      // data and must match only files containing them literally.
       TestBuilder.command`echo ${"**/"}*`
         .ensureTempDir()
         .file("f.txt", "f")
@@ -892,6 +985,56 @@ booga"
           expect(out).not.toContain("ac.txt");
         })
         .runAsTest("injected [...] is literal");
+
+      // A class the template opens is only a class when all of it comes from
+      // the template. Anything injected into it turns the whole `[...]` into
+      // text, so an injected `!`, range or `]` cannot negate, widen or cut it.
+      // (`!` and `a-z` need no escaping on their own, so this is the case the
+      // builder has to catch by position.)
+      TestBuilder.command`ls [${"!"}a]*`
+        .ensureTempDir()
+        .file("apple", "")
+        .file("banana", "")
+        .file("[!a]c", "")
+        .stdout("[!a]c\n")
+        .runAsTest("injected ! inside a template class does not negate it");
+
+      TestBuilder.command`ls [${"a-z"}]*`
+        .ensureTempDir()
+        .file("apple", "")
+        .file("[a-z]c", "")
+        .stdout("[a-z]c\n")
+        .runAsTest("injected range inside a template class is literal");
+
+      TestBuilder.command`ls [${"]"}]*`
+        .ensureTempDir()
+        .file("apple", "")
+        .file("[]]c", "")
+        .stdout("[]]c\n")
+        .runAsTest("injected ] inside a template class is literal");
+
+      TestBuilder.command`ls [${["!", "a"]}]*`
+        .ensureTempDir()
+        .file("apple", "")
+        .file("[!", "")
+        .file("a]c", "")
+        .stdout(out => expect(sortedShellOutput(out)).toEqual(["[!", "a]c"]))
+        .runAsTest("injected array inside a template class is literal");
+
+      TestBuilder.command`X='!'; ls [$X]*`
+        .ensureTempDir()
+        .file("apple", "")
+        .file("[!]c", "")
+        .stdout("[!]c\n")
+        .runAsTest("variable inside a template class makes it literal");
+
+      TestBuilder.command`ls ["!"a]*`
+        .ensureTempDir()
+        .file("apple", "")
+        .file("banana", "")
+        .file("[!a]c", "")
+        .stdout("[!a]c\n")
+        .runAsTest("quoted text inside a template class makes it literal");
 
       TestBuilder.command`echo ${"foo"}*`
         .ensureTempDir()

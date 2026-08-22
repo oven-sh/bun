@@ -408,6 +408,29 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
+    test(".load of a file with an ill-formed byte in a preserved comment still evaluates it", async () => {
+      // The transpiler passes `/*! */` comments through verbatim, so the program
+      // handed to the evaluator can contain ill-formed UTF-8. It has to be decoded
+      // the way module sources are (the bad byte becomes U+FFFD); decoding it with
+      // WTF::String::fromUTF8 turned the whole program into a null string, so
+      // nothing in the file was defined.
+      using dir = tempDir("repl-load-ill-formed", {
+        "bad.js": Buffer.concat([
+          Buffer.from("function tagged() {\n  /*! "),
+          Buffer.from([0xe9]),
+          Buffer.from(" */\n}\nvar loadedWithComment = 1;\n"),
+        ]),
+      });
+      const filePath = path.join(String(dir), "bad.js");
+      const { stdout, exitCode } = await runRepl([
+        `.load ${filePath}`,
+        'JSON.stringify([loadedWithComment, tagged.toString().split("\\uFFFD").length])',
+        ".exit",
+      ]);
+      expect(stripAnsi(stdout)).toContain("[1,2]");
+      expect(exitCode).toBe(0);
+    });
+
     test(".load with nonexistent file shows error", async () => {
       // Use a relative path so Windows doesn't choke on forward-slash absolute paths (EINVAL).
       const { stdout, stderr, exitCode } = await runRepl([

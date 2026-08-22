@@ -2411,73 +2411,54 @@ impl<'a> LinkerContext<'a> {
         }
     }
 
+    /// Mixes into `hash` the isolated hash of chunk `index` and of every chunk
+    /// it transitively depends on (plus the paths of the assets they reference),
+    /// in depth-first postorder.
+    ///
+    /// Explicit-stack DFS (was per-edge recursive, one call per imported
+    /// chunk). `Enter` pushes a chunk's contributions in the order the
+    /// recursion made them (imported chunks, then what its output pieces
+    /// reference, then its own hash) and reverses that tail so they pop, and
+    /// are hashed, in that order.
     pub(crate) fn append_isolated_hashes_for_imported_chunks(
         &self,
         hash: &mut ContentHasher,
-        chunks: &mut [Chunk],
+        chunks: &[Chunk],
         index: u32,
         chunk_visit_map: &mut AutoBitSet,
     ) {
-        // Only visit each chunk at most once. This is important because there may be
-        // cycles in the chunk import graph. If there's a cycle, we want to include
-        // the hash of every chunk involved in the cycle (along with all of their
-        // dependencies). This depth-first traversal will naturally do that.
-        if chunk_visit_map.is_set(index as usize) {
-            return;
+        enum Frame {
+            Enter(u32),
+            /// An asset referenced from the output of the given chunk.
+            Asset {
+                chunk_index: u32,
+                source_index: u32,
+            },
+            Leave(u32),
         }
-        chunk_visit_map.set(index as usize);
+        let mut stack = vec![Frame::Enter(index)];
 
-        // Visit the other chunks that this chunk imports before visiting this chunk
-        // Note: reshaped for borrowck — collect imports first to avoid aliasing &chunks[index] with recursive &mut chunks
-        let cross_chunk_imports: Vec<u32> = chunks[index as usize]
-            .cross_chunk_imports
-            .slice()
-            .iter()
-            .map(|import| import.chunk_index)
-            .collect();
-        for chunk_index in cross_chunk_imports {
-            self.append_isolated_hashes_for_imported_chunks(
-                hash,
-                chunks,
-                chunk_index,
-                chunk_visit_map,
-            );
-        }
-
-        // Mix in hashes for content referenced via output pieces. JS chunks
-        // express cross-chunk dependencies via `cross_chunk_imports` above, but
-        // HTML (and CSS) chunks only reference other chunks through pieces, so
-        // recurse on those too.
-        // Note: reshaped for borrowck — collect piece queries first so the
-        // `&chunks[index]` borrow is dropped before the recursive `&mut chunks`
-        // calls in the Chunk/Scb arms below. `final_rel_path` is re-indexed per
-        // Asset arm (not hoisted) because it is now `Box<[u8]>` (not `Copy`).
-        let piece_queries: Vec<(crate::chunk::QueryKind, u32)> =
-            if let crate::chunk::IntermediateOutput::Pieces(pieces) =
-                &chunks[index as usize].intermediate_output
-            {
-                pieces
-                    .slice()
-                    .iter()
-                    .map(|p| (p.query.kind(), p.query.index()))
-                    .collect()
-            } else {
-                Vec::new()
-            };
-
-        for (kind, piece_index) in piece_queries {
-            match kind {
-                crate::chunk::QueryKind::Asset => {
+        while let Some(frame) = stack.pop() {
+            let index = match frame {
+                Frame::Enter(index) => index,
+                Frame::Leave(index) => {
+                    // Mix in the hash for this chunk
+                    hash.write(&chunks[index as usize].isolated_hash.to_ne_bytes());
+                    continue;
+                }
+                Frame::Asset {
+                    chunk_index,
+                    source_index,
+                } => {
                     let mut from_chunk_dir = bun_paths::resolve_path::dirname::<
                         bun_paths::resolve_path::platform::Posix,
                     >(
-                        &chunks[index as usize].final_rel_path
+                        &chunks[chunk_index as usize].final_rel_path
                     );
                     if from_chunk_dir == b"." {
                         from_chunk_dir = b"";
                     }
 
-                    let source_index = piece_index;
                     let parse_graph = self.parse_graph();
                     let additional_files: &[AdditionalFile] =
                         parse_graph.input_files.items_additional_files()[source_index as usize]
@@ -2495,30 +2476,53 @@ impl<'a> LinkerContext<'a> {
                         }
                         AdditionalFile::SourceIndex(_) => {}
                     }
+                    continue;
                 }
-                crate::chunk::QueryKind::Chunk => {
-                    self.append_isolated_hashes_for_imported_chunks(
-                        hash,
-                        chunks,
-                        piece_index,
-                        chunk_visit_map,
-                    );
-                }
-                crate::chunk::QueryKind::Scb => {
-                    self.append_isolated_hashes_for_imported_chunks(
-                        hash,
-                        chunks,
-                        self.graph.files.items_entry_point_chunk_index()[piece_index as usize],
-                        chunk_visit_map,
-                    );
-                }
-                crate::chunk::QueryKind::None | crate::chunk::QueryKind::HtmlImport => {}
-            }
-        }
+            };
 
-        // Mix in the hash for this chunk
-        let chunk = &chunks[index as usize];
-        hash.write(&chunk.isolated_hash.to_ne_bytes());
+            // Only visit each chunk at most once. This is important because there may be
+            // cycles in the chunk import graph. If there's a cycle, we want to include
+            // the hash of every chunk involved in the cycle (along with all of their
+            // dependencies). This depth-first traversal will naturally do that.
+            if chunk_visit_map.is_set(index as usize) {
+                continue;
+            }
+            chunk_visit_map.set(index as usize);
+
+            let chunk = &chunks[index as usize];
+            let mark = stack.len();
+
+            // Visit the other chunks that this chunk imports before visiting this chunk
+            for import in chunk.cross_chunk_imports.slice() {
+                stack.push(Frame::Enter(import.chunk_index));
+            }
+
+            // Mix in hashes for content referenced via output pieces. JS chunks
+            // express cross-chunk dependencies via `cross_chunk_imports` above, but
+            // HTML (and CSS) chunks only reference other chunks through pieces, so
+            // follow those too.
+            if let crate::chunk::IntermediateOutput::Pieces(pieces) = &chunk.intermediate_output {
+                for piece in pieces.slice() {
+                    match piece.query.kind() {
+                        crate::chunk::QueryKind::Asset => stack.push(Frame::Asset {
+                            chunk_index: index,
+                            source_index: piece.query.index(),
+                        }),
+                        crate::chunk::QueryKind::Chunk => {
+                            stack.push(Frame::Enter(piece.query.index()));
+                        }
+                        crate::chunk::QueryKind::Scb => stack.push(Frame::Enter(
+                            self.graph.files.items_entry_point_chunk_index()
+                                [piece.query.index() as usize],
+                        )),
+                        crate::chunk::QueryKind::None | crate::chunk::QueryKind::HtmlImport => {}
+                    }
+                }
+            }
+
+            stack.push(Frame::Leave(index));
+            stack[mark..].reverse();
+        }
     }
 
     // Sort cross-chunk exports by chunk name for determinism

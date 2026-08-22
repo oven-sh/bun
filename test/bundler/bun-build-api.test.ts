@@ -673,6 +673,296 @@ describe("Bun.build", () => {
     expect(x.logs[0].message).toContain("Maximum call stack size exceeded while generating code for this file");
   });
 
+  // The linker's graph walks run on the bundle thread, which has a 2 MiB
+  // stack. Each walk below used to recurse once per edge and overflowed it on
+  // a long enough chain; the chains here are longer than what overflowed a
+  // debug build. Bun.build() runs in a child process so that an overflow shows
+  // up as a signal exit instead of taking down the test runner. The long
+  // chains build in well under a second on a release build but take 5-20s on
+  // a debug build with ASAN (more when the tests run concurrently), hence the
+  // timeout.
+  const deepGraphTimeout = 120_000;
+  const deepGraphBuildScript = `
+    import { basename } from "path";
+    const { entrypoints, ...options } = JSON.parse(process.argv[2]);
+    const result = await Bun.build({
+      ...options,
+      entrypoints: entrypoints.map(entry => import.meta.dir + "/" + entry),
+      outdir: import.meta.dir + "/out",
+      throw: false,
+    });
+    console.log(
+      JSON.stringify({
+        success: result.success,
+        outputs: result.outputs.length,
+        logs: result.logs.map(log => ({
+          message: log.message,
+          file: log.position && basename(log.position.file),
+          lineText: log.position?.lineText,
+          notes: (log.notes ?? []).map(note => ({
+            message: note.message,
+            file: note.position && basename(note.position.file),
+          })),
+        })),
+        entryText: result.success ? await result.outputs[0].text() : undefined,
+      }),
+    );
+  `;
+
+  interface DeepGraphBuildResult {
+    success: boolean;
+    outputs: number;
+    logs: {
+      message: string;
+      file: string | null;
+      lineText: string | undefined;
+      notes: { message: string; file: string | null }[];
+    }[];
+    entryText: string | undefined;
+  }
+
+  async function buildDeepGraphInChild(
+    dir: string,
+    options: { entrypoints: string[]; splitting?: boolean },
+  ): Promise<DeepGraphBuildResult> {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build-deep-graph.ts", JSON.stringify(options)],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout);
+  }
+
+  function cssImportChain(length: number): Record<string, string> {
+    const files: Record<string, string> = { "build-deep-graph.ts": deepGraphBuildScript };
+    for (let i = 0; i < length; i++) {
+      files[`c${i}.css`] = (i + 1 < length ? `@import "./c${i + 1}.css";\n` : "") + `.c${i} { color: red; }\n`;
+    }
+    return files;
+  }
+
+  function cssRuleOrder(css: string): number[] {
+    return Array.from(css.matchAll(/\.c(\d+) \{/g), match => Number(match[1]));
+  }
+
+  test.concurrent(
+    "bundles a chain of 50 CSS @imports in import order",
+    async () => {
+      using dir = tempDir("build-api-css-import-chain", cssImportChain(50));
+      const result = await buildDeepGraphInChild(String(dir), { entrypoints: ["c0.css"] });
+      expect(result.logs).toEqual([]);
+      expect(result.success).toBe(true);
+      expect(result.outputs).toBe(1);
+      // Depth-first postorder: the deepest file comes first.
+      expect(cssRuleOrder(result.entryText!)).toEqual(Array.from({ length: 50 }, (_, i) => 49 - i));
+    },
+    deepGraphTimeout,
+  );
+
+  test.concurrent(
+    "a chain of 1000 CSS @imports either bundles or fails with a build error",
+    async () => {
+      // `find_imported_files_in_css_order` still recurses per @import, but it
+      // checks the remaining stack first. How deep it gets before giving up
+      // depends on the build (a debug build crashed between 300 and 400 files,
+      // a release build gets past 1000), so both outcomes are valid here; what
+      // is not is the child dying.
+      const length = 1000;
+      using dir = tempDir("build-api-css-import-chain-deep", cssImportChain(length));
+      const result = await buildDeepGraphInChild(String(dir), { entrypoints: ["c0.css"] });
+      if (result.success) {
+        expect(result.logs).toEqual([]);
+        expect(result.outputs).toBe(1);
+        expect(cssRuleOrder(result.entryText!)).toEqual(Array.from({ length }, (_, i) => length - 1 - i));
+      } else {
+        expect(result.outputs).toBe(0);
+        expect(result.logs).toEqual([
+          {
+            message: 'Maximum call stack size exceeded while following this "@import" chain',
+            file: expect.stringMatching(/^c\d+\.css$/),
+            lineText: expect.stringContaining("@import"),
+            notes: [],
+          },
+        ]);
+      }
+    },
+    deepGraphTimeout,
+  );
+
+  test.concurrent(
+    "bundles a chain of 1000 CSS module classes composing each other",
+    async () => {
+      // Both walks over the composes graph (the property conflict check in
+      // `scan_imports_and_exports` and the exports object generation in
+      // `generate_code_for_lazy_export`) used to recurse per composed class; a
+      // debug build crashed between 600 and 900 classes. Every class's export
+      // lists all the classes below it in the chain, so the output is quadratic
+      // in the chain length, which is what keeps this one shorter.
+      const length = 1000;
+      let css = "";
+      for (let i = 0; i < length; i++) {
+        css += i + 1 < length ? `.c${i} { composes: c${i + 1}; }\n` : `.c${i} { color: red; }\n`;
+      }
+      using dir = tempDir("build-api-composes-chain", {
+        "build-deep-graph.ts": deepGraphBuildScript,
+        "styles.module.css": css,
+        "entry.js": `import styles from "./styles.module.css";\nconsole.log(styles.c0);\n`,
+      });
+      const result = await buildDeepGraphInChild(String(dir), { entrypoints: ["entry.js"] });
+      expect(result.logs).toEqual([]);
+      expect(result.success).toBe(true);
+      // The JS chunk and the CSS chunk.
+      expect(result.outputs).toBe(2);
+      // c0's class list has the end of the chain first and c0 itself last.
+      expect(result.entryText).toMatch(new RegExp(`c0: "c${length - 1}_[\\w-]+ ([\\w-]+ ){${length - 2}}c0_[\\w-]+"`));
+    },
+    deepGraphTimeout,
+  );
+
+  test.concurrent(
+    "bundles a composes cycle that does not pass through the class being exported",
+    async () => {
+      // The exports object generation marked a class as visited only after
+      // walking what it composes, so while generating `.x` it went around
+      // `.b` -> `.c` -> `.b` forever (a stack overflow): the only mark set in
+      // advance was `.x`'s, which that cycle never reaches.
+      using dir = tempDir("build-api-composes-cycle", {
+        "build-deep-graph.ts": deepGraphBuildScript,
+        "styles.module.css": `.x { composes: b; }\n.b { composes: c; }\n.c { composes: b; }\n`,
+        "entry.js": `import styles from "./styles.module.css";\nconsole.log(styles.x);\n`,
+      });
+      const result = await buildDeepGraphInChild(String(dir), { entrypoints: ["entry.js"] });
+      expect(result.logs).toEqual([]);
+      expect(result.success).toBe(true);
+      expect(result.entryText).toMatch(/x: "c_[\w-]+ b_[\w-]+ x_[\w-]+"/);
+      expect(result.entryText).toMatch(/b: "c_[\w-]+ b_[\w-]+"/);
+      expect(result.entryText).toMatch(/c: "b_[\w-]+ c_[\w-]+"/);
+    },
+    deepGraphTimeout,
+  );
+
+  test.concurrent(
+    "reports a property set on both ends of a composes chain",
+    async () => {
+      // The walk records a class's properties after those of the classes it
+      // composes, so the class at the end of the chain counts as the first
+      // definition and the conflict is reported on the class composing it.
+      using dir = tempDir("build-api-composes-conflict", {
+        "build-deep-graph.ts": deepGraphBuildScript,
+        "a.module.css": `.a { composes: b from "./b.module.css"; color: red; }\n`,
+        "b.module.css": `.b { composes: c from "./c.module.css"; }\n`,
+        "c.module.css": `.c { color: blue; }\n`,
+        "entry.js": `import styles from "./a.module.css";\nconsole.log(styles.a);\n`,
+      });
+      const result = await buildDeepGraphInChild(String(dir), { entrypoints: ["entry.js"] });
+      expect(result.logs).toEqual([
+        {
+          message: "The value of color in the class a is undefined.",
+          file: "a.module.css",
+          lineText: expect.stringContaining(".a {"),
+          notes: [
+            { message: "The first definition of color is in this style rule:", file: "c.module.css" },
+            {
+              message: expect.stringContaining('The specification of "composes" does not define an order'),
+              file: null,
+            },
+          ],
+        },
+      ]);
+    },
+    deepGraphTimeout,
+  );
+
+  function exportStarChain(length: number, tail: string): Record<string, string> {
+    const files: Record<string, string> = {
+      "build-deep-graph.ts": deepGraphBuildScript,
+      "entry.js": `import { v } from "./m0.js";\nconsole.log(v);\n`,
+    };
+    for (let i = 0; i < length; i++) {
+      files[`m${i}.js`] = i + 1 < length ? `export * from "./m${i + 1}.js";\n` : tail;
+    }
+    return files;
+  }
+
+  async function runBuiltEntry(dir: string): Promise<string> {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(dir, "out", "entry.js")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return stdout;
+  }
+
+  // `ExportStarContext::add_exports` resolved `export *` recursively; a debug
+  // build crashed between 1050 and 1100 files.
+  test.concurrent(
+    "bundles a chain of 1500 `export *` re-exports",
+    async () => {
+      using dir = tempDir("build-api-export-star-chain", exportStarChain(1500, `export const v = "esm tail";\n`));
+      const result = await buildDeepGraphInChild(String(dir), { entrypoints: ["entry.js"] });
+      expect(result.logs).toEqual([]);
+      expect(result.success).toBe(true);
+      expect(await runBuiltEntry(String(dir))).toBe("esm tail\n");
+    },
+    deepGraphTimeout,
+  );
+
+  test.concurrent(
+    "bundles a chain of 1500 `export *` re-exports ending in a CommonJS module",
+    async () => {
+      // Every module in the chain gets dynamic exports from the CommonJS tail,
+      // which `DependencyWrapper` also used to discover recursively.
+      using dir = tempDir(
+        "build-api-export-star-chain-cjs",
+        exportStarChain(1500, `module.exports = { v: "cjs tail" };\n`),
+      );
+      const result = await buildDeepGraphInChild(String(dir), { entrypoints: ["entry.js"] });
+      expect(result.logs).toEqual([]);
+      expect(result.success).toBe(true);
+      expect(await runBuiltEntry(String(dir))).toBe("cjs tail\n");
+    },
+    deepGraphTimeout,
+  );
+
+  test.concurrent(
+    "bundles a chain of 2200 chunks that import each other",
+    async () => {
+      // With splitting, every import() target becomes its own chunk, and each
+      // chunk's hash covers the chunks it imports. That walk
+      // (`append_isolated_hashes_for_imported_chunks`) used to recurse per
+      // imported chunk; a debug build crashed at about 1560 chunks.
+      const length = 2200;
+      const files: Record<string, string> = {
+        "build-deep-graph.ts": deepGraphBuildScript,
+        "entry.js": `import { m0 } from "./m0.js";\nexport const entry = m0;\n`,
+      };
+      for (let i = 0; i < length; i++) {
+        files[`m${i}.js`] =
+          i + 1 < length
+            ? `export const m${i} = () => import("./m${i + 1}.js");\n`
+            : `export const m${i} = () => ${i};\n`;
+      }
+      using dir = tempDir("build-api-chunk-chain", files);
+      const result = await buildDeepGraphInChild(String(dir), { entrypoints: ["entry.js"], splitting: true });
+      expect(result.logs).toEqual([]);
+      expect(result.success).toBe(true);
+      // The entry chunk (with m0 in it), one chunk per import() target (m1 on),
+      // and the chunk with the runtime helpers that every other chunk imports.
+      expect(result.outputs).toBe(1 + (length - 1) + 1);
+    },
+    deepGraphTimeout,
+  );
+
   test.concurrent("warnings do not fail a build", async () => {
     const x = await Bun.build({
       entrypoints: [join(import.meta.dir, "./fixtures/jsx-warning/index.jsx")],

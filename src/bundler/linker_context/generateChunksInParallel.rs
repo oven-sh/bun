@@ -624,6 +624,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         c: unsafe { bun_ptr::detach_lifetime_ref::<LinkerContext>(c) },
         cache: bun_collections::ArrayHashMap::default(),
         visited: AutoBitSet::init_empty(c.graph.files.len()).expect("oom"),
+        stack: Vec::new(),
     };
 
     // For standalone mode, resolve JS/CSS chunks so we can inline their content into HTML.

@@ -94,10 +94,36 @@ pub(crate) fn generate_code_for_lazy_export(
             // `defer inner_visited.deinit(...)` — handled by Drop.
             let mut composes_visited: ArrayHashMap<Ref, ()> = ArrayHashMap::new();
             // `defer composes_visited.deinit()` — handled by Drop.
+            let mut stack: Vec<Frame> = Vec::new();
+
+            /// A class whose `composes` declarations are being walked, and
+            /// how far along them the walk is.
+            #[derive(Clone, Copy)]
+            struct Frame {
+                idx: IndexInt,
+                css_ref: CssRef,
+                compose_index: usize,
+                name_index: usize,
+                /// Append the class's own name once its `composes` are done.
+                /// False for the root class, whose name the caller appends.
+                append_name: bool,
+            }
+
+            impl Frame {
+                fn next_name(&mut self) {
+                    self.name_index += 1;
+                }
+
+                fn next_compose(&mut self) {
+                    self.compose_index += 1;
+                    self.name_index = 0;
+                }
+            }
 
             struct Visitor<'a> {
                 inner_visited: &'a mut BitSet,
                 composes_visited: &'a mut ArrayHashMap<Ref, ()>,
+                stack: &'a mut Vec<Frame>,
                 parts: &'a mut Vec<E::TemplatePart>,
                 all_import_records: &'a [bun_ast::import_record::List<'a>],
                 // `BundledAst.css` SoA column.
@@ -116,17 +142,39 @@ pub(crate) fn generate_code_for_lazy_export(
                     self.composes_visited.clear_retaining_capacity();
                 }
 
-                fn visit_name(&mut self, ast: &BundlerStyleSheet, ref_: CssRef, idx: IndexInt) {
+                /// Starts walking a composed class's own `composes` unless it has
+                /// been reached already. Its name is appended when that walk
+                /// completes, after the names it composes.
+                ///
+                /// The class is marked as reached on the way in. The recursive
+                /// form marked it on the way out, which appended the same names
+                /// in the same order whenever it terminated, but recursed forever
+                /// on a `composes` cycle that did not pass through the root class.
+                fn visit_name(&mut self, ref_: CssRef, idx: IndexInt) {
                     debug_assert!(ref_.can_be_composed());
                     let real_ref = ref_.to_real_ref(idx);
-                    let from_this_file = idx == self.source_index;
-                    if (from_this_file && self.inner_visited.is_set(ref_.inner_index() as usize))
-                        || (!from_this_file && self.composes_visited.contains_key(&real_ref))
-                    {
-                        return;
+                    if idx == self.source_index {
+                        if self.inner_visited.is_set(ref_.inner_index() as usize) {
+                            return;
+                        }
+                        self.inner_visited.set(ref_.inner_index() as usize);
+                    } else {
+                        if self.composes_visited.contains_key(&real_ref) {
+                            return;
+                        }
+                        self.composes_visited.insert(real_ref, ());
                     }
 
-                    self.visit_composes(ast, ref_, idx);
+                    self.stack.push(Frame {
+                        idx,
+                        css_ref: ref_,
+                        compose_index: 0,
+                        name_index: 0,
+                        append_name: true,
+                    });
+                }
+
+                fn append_name(&mut self, real_ref: Ref) {
                     self.parts.push(E::TemplatePart {
                         value: Expr::init(
                             E::NameOfSymbol {
@@ -138,12 +186,6 @@ pub(crate) fn generate_code_for_lazy_export(
                         tail: E::TemplateContents::Cooked(E::String::init(b" ")),
                         tail_loc: self.loc,
                     });
-
-                    if from_this_file {
-                        self.inner_visited.set(ref_.inner_index() as usize);
-                    } else {
-                        self.composes_visited.insert(real_ref, ());
-                    }
                 }
 
                 fn warn_non_single_class_composes(
@@ -174,116 +216,137 @@ pub(crate) fn generate_code_for_lazy_export(
                     );
                 }
 
-                fn visit_composes(
-                    &mut self,
-                    ast: &BundlerStyleSheet,
-                    css_ref: CssRef,
-                    idx: IndexInt,
-                ) {
-                    let ref_ = css_ref.to_real_ref(idx);
-                    if ast.composes.count() > 0 {
-                        let Some(composes) = ast.composes.get(&ref_) else {
-                            return;
+                /// Appends the name of every class that `css_ref` (a class in
+                /// the file `idx`, already marked as reached) transitively
+                /// composes, each after the names it composes itself.
+                ///
+                /// Explicit-stack DFS (was recursive, one `visit_composes` and
+                /// `visit_name` call per composed class). Each iteration handles
+                /// one name of one `composes` declaration of the class on top of
+                /// the stack, so the names, the `from global` strings and the
+                /// diagnostics come out in the order the recursion produced them.
+                fn visit_composes(&mut self, css_ref: CssRef, idx: IndexInt) {
+                    debug_assert!(self.stack.is_empty());
+                    self.stack.push(Frame {
+                        idx,
+                        css_ref,
+                        compose_index: 0,
+                        name_index: 0,
+                        append_name: false,
+                    });
+
+                    let all_css_asts = self.all_css_asts;
+                    while let Some(frame) = self.stack.last_mut() {
+                        let idx = frame.idx;
+                        let css_ref = frame.css_ref;
+                        // Every class on the stack was found in a file's CSS AST.
+                        let ast: &BundlerStyleSheet = all_css_asts[idx as usize]
+                            .as_deref()
+                            .expect("composed class comes from a CSS file");
+                        let composes = ast.composes.get(&css_ref.to_real_ref(idx));
+                        let Some(compose) = composes.and_then(|composes| {
+                            composes.composes.slice().get(frame.compose_index)
+                        }) else {
+                            let frame = self.stack.pop().expect("stack is non-empty");
+                            if frame.append_name {
+                                self.append_name(css_ref.to_real_ref(idx));
+                            }
+                            continue;
                         };
                         // while parsing we check that we only allow `composes` on single class selectors
                         debug_assert!(css_ref.tag().contains(CssRefTag::CLASS));
 
-                        for compose in composes.composes.slice() {
-                            match &compose.from {
-                                // it is imported
-                                Some(CssSpecifier::ImportRecordIndex(import_record_idx)) => {
-                                    let import_records = &self.all_import_records[idx as usize];
-                                    let import_record =
-                                        &import_records[*import_record_idx as usize];
-                                    if import_record.source_index.is_valid() {
-                                        let Some(other_file) = self.all_css_asts
-                                            [import_record.source_index.get() as usize]
-                                            .as_deref()
-                                        else {
-                                            self.log.add_error_fmt(
-                                                &self.all_sources[idx as usize],
-                                                compose.loc,
-                                                format_args!(
-                                                    "Cannot use the \"composes\" property with the {} file (it is not a CSS file)",
-                                                    bun_fmt::quote(
-                                                        self.all_sources
-                                                            [import_record.source_index.get() as usize]
-                                                            .path
-                                                            .pretty
-                                                    ),
-                                                ),
-                                            );
-                                            continue;
-                                        };
-                                        for name in compose.names.slice() {
-                                            let name_v = name.v();
-                                            let Some(other_name_entry) =
-                                                other_file.local_scope.get(name_v)
-                                            else {
-                                                continue;
-                                            };
-                                            let other_name_ref = other_name_entry.ref_;
-                                            if !other_name_ref.can_be_composed() {
-                                                self.warn_non_single_class_composes(
-                                                    other_file,
-                                                    other_name_ref,
-                                                    import_record.source_index.get(),
-                                                    compose.loc,
-                                                );
-                                            } else {
-                                                self.visit_name(
-                                                    other_file,
-                                                    other_name_ref,
-                                                    import_record.source_index.get(),
-                                                );
-                                            }
-                                        }
-                                    }
+                        match &compose.from {
+                            // it is imported
+                            Some(CssSpecifier::ImportRecordIndex(import_record_idx)) => {
+                                let import_record = &self.all_import_records[idx as usize]
+                                    [*import_record_idx as usize];
+                                if !import_record.source_index.is_valid() {
+                                    frame.next_compose();
+                                    continue;
                                 }
-                                Some(CssSpecifier::Global) => {
-                                    // E.g.: `composes: foo from global`
-                                    //
-                                    // In this example `foo` is global and won't be rewritten to a locally scoped
-                                    // name, so we can just add it as a string.
-                                    for name in compose.names.slice() {
-                                        let name_v = name.v();
-                                        self.parts.push(E::TemplatePart {
-                                            value: Expr::init(E::String::init(name_v), self.loc),
-                                            tail: E::TemplateContents::Cooked(E::String::init(
-                                                b" ",
-                                            )),
-                                            tail_loc: self.loc,
-                                        });
-                                    }
+                                let other_idx = import_record.source_index.get();
+                                let Some(other_file) = all_css_asts[other_idx as usize].as_deref()
+                                else {
+                                    frame.next_compose();
+                                    self.log.add_error_fmt(
+                                        &self.all_sources[idx as usize],
+                                        compose.loc,
+                                        format_args!(
+                                            "Cannot use the \"composes\" property with the {} file (it is not a CSS file)",
+                                            bun_fmt::quote(
+                                                self.all_sources[other_idx as usize].path.pretty
+                                            ),
+                                        ),
+                                    );
+                                    continue;
+                                };
+                                let Some(name) = compose.names.slice().get(frame.name_index) else {
+                                    frame.next_compose();
+                                    continue;
+                                };
+                                frame.next_name();
+                                let Some(other_name_entry) = other_file.local_scope.get(name.v())
+                                else {
+                                    continue;
+                                };
+                                let other_name_ref = other_name_entry.ref_;
+                                if !other_name_ref.can_be_composed() {
+                                    self.warn_non_single_class_composes(
+                                        other_file,
+                                        other_name_ref,
+                                        other_idx,
+                                        compose.loc,
+                                    );
+                                } else {
+                                    self.visit_name(other_name_ref, other_idx);
                                 }
-                                None => {
-                                    // it is from the current file
-                                    for name in compose.names.slice() {
-                                        let name_v = name.v();
-                                        let Some(name_entry) = ast.local_scope.get(name_v) else {
-                                            self.log.add_error_fmt(
-                                                &self.all_sources[idx as usize],
-                                                compose.loc,
-                                                format_args!(
-                                                    "The name {} never appears in {} as a CSS modules locally scoped class name. Note that \"composes\" only works with single class selectors.",
-                                                    bun_fmt::quote(name_v),
-                                                    bun_fmt::quote(self.all_sources[idx as usize].path.pretty),
-                                                ),
-                                            );
-                                            continue;
-                                        };
-                                        let name_ref = name_entry.ref_;
-                                        if !name_ref.can_be_composed() {
-                                            self.warn_non_single_class_composes(
-                                                ast,
-                                                name_ref,
-                                                idx,
-                                                compose.loc,
-                                            );
-                                        } else {
-                                            self.visit_name(ast, name_ref, idx);
-                                        }
-                                    }
+                            }
+                            Some(CssSpecifier::Global) => {
+                                // E.g.: `composes: foo from global`
+                                //
+                                // In this example `foo` is global and won't be rewritten to a locally scoped
+                                // name, so we can just add it as a string.
+                                frame.next_compose();
+                                for name in compose.names.slice() {
+                                    let name_v = name.v();
+                                    self.parts.push(E::TemplatePart {
+                                        value: Expr::init(E::String::init(name_v), self.loc),
+                                        tail: E::TemplateContents::Cooked(E::String::init(b" ")),
+                                        tail_loc: self.loc,
+                                    });
+                                }
+                            }
+                            None => {
+                                // it is from the current file
+                                let Some(name) = compose.names.slice().get(frame.name_index) else {
+                                    frame.next_compose();
+                                    continue;
+                                };
+                                frame.next_name();
+                                let name_v = name.v();
+                                let Some(name_entry) = ast.local_scope.get(name_v) else {
+                                    self.log.add_error_fmt(
+                                        &self.all_sources[idx as usize],
+                                        compose.loc,
+                                        format_args!(
+                                            "The name {} never appears in {} as a CSS modules locally scoped class name. Note that \"composes\" only works with single class selectors.",
+                                            bun_fmt::quote(name_v),
+                                            bun_fmt::quote(self.all_sources[idx as usize].path.pretty),
+                                        ),
+                                    );
+                                    continue;
+                                };
+                                let name_ref = name_entry.ref_;
+                                if !name_ref.can_be_composed() {
+                                    self.warn_non_single_class_composes(
+                                        ast,
+                                        name_ref,
+                                        idx,
+                                        compose.loc,
+                                    );
+                                } else {
+                                    self.visit_name(name_ref, idx);
                                 }
                             }
                         }
@@ -315,6 +378,7 @@ pub(crate) fn generate_code_for_lazy_export(
                 let mut visitor = Visitor {
                     inner_visited: &mut inner_visited,
                     composes_visited: &mut composes_visited,
+                    stack: &mut stack,
                     source_index,
                     parts: &mut template_parts,
                     all_import_records,
@@ -329,7 +393,7 @@ pub(crate) fn generate_code_for_lazy_export(
                 visitor.clear_all();
                 visitor.inner_visited.set(ref_.inner_index() as usize);
                 if ref_.tag().contains(CssRefTag::CLASS) {
-                    visitor.visit_composes(css_ast, ref_, source_index);
+                    visitor.visit_composes(ref_, source_index);
                 }
 
                 if !template_parts.is_empty() {

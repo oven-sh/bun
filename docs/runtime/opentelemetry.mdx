@@ -186,7 +186,7 @@ These are native: `span`, and the functions `wrap` returns, call your function d
 
 For library instrumentation, `Bun.otel.tracer(name, version?)` returns an `@opentelemetry/api`-compatible `Tracer` (`startSpan`, `startActiveSpan`) whose spans carry that instrumentation scope.
 
-The active span follows `await`, timers, promise callbacks and event-loop callbacks registered while it was active. `AsyncLocalStorage` keeps working alongside it.
+The active span follows `await`, promise callbacks, `queueMicrotask`, `process.nextTick`, timers and event-loop callbacks registered while it was active. `AsyncLocalStorage` keeps working alongside it (they share the same context slot).
 
 ---
 

@@ -137,6 +137,32 @@ describe("bundler", () => {
       },
     },
   });
+  // A non-ASCII byte anywhere in the output (here: preserved legal comments)
+  // makes the runtime decode the chunk as UTF-8; the bytecode has to be keyed
+  // on that same string or the cache never hits.
+  for (const format of ["cjs", "esm"] as const) {
+    itBundled("compile/BytecodeNonAsciiSource+" + format, {
+      compile: true,
+      bytecode: true,
+      format,
+      files: {
+        "/entry.ts": `
+          /*! (c) Jimmy Wärting */
+          import { greet } from "./lib";
+          console.log(greet("café"));
+        `,
+        "/lib.ts": `
+          //! © üñîçødé
+          export function greet(s: string) { return "héllo " + s + " ☃"; }
+        `,
+      },
+      run: {
+        stdout: "héllo café ☃",
+        stderr: ["[Disk Cache] Cache hit for sourceCode", "[Disk Cache] Cache miss for sourceCode"].join("\n"),
+        env: { BUN_JSC_verboseDiskCache: "1" },
+      },
+    });
+  }
 
   // `import defer * as ns from "..."` must not break bytecode generation.
   // The bundler inlines the deferred module into the entry chunk (documented

@@ -1178,11 +1178,20 @@ describe("spawn stdin ReadableStream", () => {
           for (const mode of ["idle", "backpressure"]) {
             for (const how of ["terminate", "exit"]) {
               const w = new Worker(__filename, { workerData: mode });
-              await new Promise(resolve => w.once("message", resolve));
+              const failed = new Promise((_, reject) => {
+                w.once("error", reject);
+                w.once("exit", code => reject(new Error("worker exited early: " + code)));
+              });
+              await Promise.race([new Promise(resolve => w.once("message", resolve)), failed]);
               if (how === "terminate") await w.terminate();
               else {
+                const exited = new Promise((resolve, reject) => {
+                  w.removeAllListeners("exit");
+                  w.once("exit", resolve);
+                  w.once("error", reject);
+                });
                 w.postMessage("exit");
-                await new Promise(resolve => w.once("exit", resolve));
+                await exited;
               }
             }
           }

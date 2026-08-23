@@ -19,7 +19,6 @@ public:
     ~DOMIsoSubspaces();
     /*-- BUN --*/
     IsoSubspace* m_subspaceForBunClassConstructor { nullptr };
-    IsoSubspace* m_subspaceForBufferList { nullptr };
     IsoSubspace* m_subspaceForFFIFunction { nullptr };
     IsoSubspace* m_subspaceForWrappingFunction { nullptr };
     IsoSubspace* m_subspaceForNapiClass { nullptr };

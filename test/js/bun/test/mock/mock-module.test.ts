@@ -7,7 +7,8 @@
 // - Write test for export {foo} from "./foo"
 // - Write test for import {foo} from "./foo"; export {foo}
 
-import { expect, mock, spyOn, test } from "bun:test";
+import { describe, expect, mock, spyOn, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { default as defaultValue, fn, iCallFn, rexported, rexportedAs, variable } from "./mock-module-fixture";
 import * as spyFixture from "./spymodule-fixture";
 
@@ -212,4 +213,101 @@ test("onResolve plugin errors surface from mock.module; an unresolvable specifie
   } finally {
     Bun.plugin.clearAll();
   }
+});
+
+// A factory export getter runs while the mocked module is being created. If it loads a module that imports the
+// mocked specifier, the loader meets its own in-progress entry. The nested load must not produce a second record
+// for the same key: every importer, and the registry, have to end up on the one record.
+describe("a factory export getter that loads a module which imports the mocked specifier", () => {
+  // The getter counts its calls so that the two candidate records are distinguishable: the nested load creates the
+  // module first (call 2), and that is the record the registry keeps. The outer call's record (call 1) is dropped.
+  const files = {
+    "bunfig.toml": `[test]\npreload = ["./preload.ts"]\n`,
+    "preload.ts": `
+      import { mock } from "bun:test";
+      let calls = 0;
+      mock.module("virt-cycle", () => ({
+        get g() {
+          calls++;
+          if (calls === 1) {
+            globalThis.n = require("./n.ts");
+            return "outer";
+          }
+          return "inner";
+        },
+      }));
+    `,
+    "n.ts": `
+      import * as v from "virt-cycle";
+      export * from "./s.ts";
+      export const vg = v.g;
+      export const vns = v;
+    `,
+    "s.ts": `export const s = 1;`,
+    "c.cjs": `
+      const v = require("virt-cycle");
+      module.exports = { v, g: v.g };
+    `,
+  };
+
+  async function runTest(files: Record<string, string>) {
+    using dir = tempDir("mock-module-getter-cycle", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "main.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const line = stdout.split("\n").find(l => l.startsWith("{"));
+    expect(line, stderr).toBeDefined();
+    return { result: JSON.parse(line!), stderr, exitCode };
+  }
+
+  test.concurrent("through require()", async () => {
+    const { result, stderr, exitCode } = await runTest({
+      ...files,
+      "main.test.ts": `
+        import { test } from "bun:test";
+        test("one record", () => {
+          const c = require("./c.cjs");
+          const n = globalThis.n;
+          console.log(JSON.stringify({
+            cG: c.g,
+            nVg: n.vg,
+            sameNamespace: c.v === n.vns,
+            reexport: n.s,
+            requireAgain: require("virt-cycle") === c.v,
+          }));
+        });
+      `,
+    });
+    expect(result).toEqual({ cG: "inner", nVg: "inner", sameNamespace: true, reexport: 1, requireAgain: true });
+    expect(stderr).toContain(" 1 pass");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("through import", async () => {
+    const { result, stderr, exitCode } = await runTest({
+      ...files,
+      "main.test.ts": `
+        import { test } from "bun:test";
+        import * as v from "virt-cycle";
+        test("one record", () => {
+          const n = globalThis.n;
+          console.log(JSON.stringify({
+            vG: v.g,
+            nVg: n.vg,
+            sameNamespace: v === n.vns,
+            reexport: n.s,
+            requireAgain: require("virt-cycle") === v,
+          }));
+        });
+      `,
+    });
+    expect(result).toEqual({ vG: "inner", nVg: "inner", sameNamespace: true, reexport: 1, requireAgain: true });
+    expect(stderr).toContain(" 1 pass");
+    expect(exitCode).toBe(0);
+  });
 });

@@ -224,7 +224,7 @@ pub struct PendingValue {
     pub task: Option<NonNull<c_void>>,
 
     /// runs after the data is available.
-    pub(crate) on_receive_value: Option<fn(ctx: NonNull<c_void>, value: &mut Value)>,
+    pub(crate) on_receive_value: Option<ReceiveValue>,
 
     /// A consumer that wants the whole body (`.text()`/`.json()`/…,
     /// `Bun.write`) has started waiting on it without realising a stream.
@@ -244,6 +244,25 @@ pub struct PendingValue {
 
     pub(crate) deinit: bool,
     pub(crate) action: Action,
+}
+
+/// The native consumer waiting on a [`PendingValue`] (`on_receive_value`).
+pub(crate) enum ReceiveValue {
+    /// Called with [`PendingValue::task`], which the registrant retargeted to
+    /// its own context.
+    Ctx(fn(ctx: NonNull<c_void>, value: &mut Value)),
+    /// `Bun.serve` waiting to render a `Response` whose body was still
+    /// pending; the context's `body_value_ref` is the ref this holds.
+    Server(crate::server::AnyRequestContext),
+}
+
+impl ReceiveValue {
+    fn call(self, task: Option<NonNull<c_void>>, value: &mut Value) {
+        match self {
+            ReceiveValue::Ctx(callback) => callback(task.unwrap(), value),
+            ReceiveValue::Server(ctx) => ctx.render_pending_body_value(value),
+        }
+    }
 }
 
 impl PendingValue {
@@ -283,8 +302,8 @@ impl PendingValue {
         self.on_start_buffering = None;
         self.on_start_streaming = None;
         self.on_readable_stream_available = None;
-        if self.on_receive_value.is_none() {
-            // A registered `on_receive_value` means `task` is the consumer's
+        if !matches!(self.on_receive_value, Some(ReceiveValue::Ctx(_))) {
+            // A registered `ReceiveValue::Ctx` means `task` is the consumer's
             // ctx (overwriting the producer), read by `resolve()`.
             self.task = None;
         }
@@ -535,9 +554,11 @@ const POOL_SIZE: usize = if bun_alloc::heap_breakdown::ENABLED {
 } else {
     256
 };
-pub(crate) type HiveRef = bun_collections::HiveRef<Value, POOL_SIZE>;
+/// The pooled slot is shared by a `Request` and the `RequestContext` serving
+/// it (each holds a `+1`), so the value sits in a `JsCell`.
+pub(crate) type HiveRef = bun_collections::HiveRef<JsCell<Value>, POOL_SIZE>;
 pub(crate) type HiveAllocator = bun_collections::hive_array::Fallback<HiveRef, POOL_SIZE>;
-pub(crate) type BodyHiveHandle = bun_collections::HiveRefHandle<Value, POOL_SIZE>;
+pub(crate) type BodyHiveHandle = bun_collections::HiveRefHandle<JsCell<Value>, POOL_SIZE>;
 
 /// Moves `value` into a pooled `HiveRef` slot and returns an owning handle
 /// (ref_count = 1).
@@ -548,7 +569,7 @@ pub(crate) fn hive_alloc(value: Value) -> BodyHiveHandle {
     // heap-stable `Box<HiveAllocator>` for the VM lifetime.
     let pool = unsafe { &raw const **(*state).body_value_pool };
     // SAFETY: `pool` outlives every handle (process lifetime).
-    unsafe { BodyHiveHandle::new(value, pool) }
+    unsafe { BodyHiveHandle::new(JsCell::new(value), pool) }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
@@ -1073,7 +1094,7 @@ impl Value {
             }
 
             if let Some(callback) = locked.on_receive_value.take() {
-                callback(locked.task.unwrap(), new);
+                callback.call(locked.task, new);
                 return Ok(());
             }
 
@@ -1346,9 +1367,9 @@ impl Value {
             }
 
             if let Some(on_receive_value) = locked.on_receive_value.take() {
-                // `task` is the live request-ctx pointer registered alongside
-                // this callback.
-                on_receive_value(locked.task.unwrap(), self);
+                // For `ReceiveValue::Ctx`, `task` is the live consumer pointer
+                // registered alongside this callback.
+                on_receive_value.call(locked.task, self);
             }
 
             if was_disturbed {

@@ -359,7 +359,9 @@ pub enum CreateJsRequest {
 pub struct PreparedRequest<const SSL: bool, const DEBUG: bool> {
     pub(crate) js_request: JSValue,
     pub(crate) request_object: *mut crate::webcore::Request,
-    pub ctx: *mut ServerRequestContext<SSL, DEBUG>,
+    /// Live for the dispatching frame: the context's in-flight ref cannot be
+    /// released past `defer_deinit_until_callback_completes` while it runs.
+    pub ctx: bun_ptr::ThisPtr<ServerRequestContext<SSL, DEBUG>>,
 }
 
 impl<const SSL: bool, const DEBUG: bool> PreparedRequest<SSL, DEBUG> {
@@ -374,15 +376,10 @@ impl<const SSL: bool, const DEBUG: bool> PreparedRequest<SSL, DEBUG> {
         // By saving a request, all information from `req` must be
         // copied since the provided uws.Request will be re-used for
         // future requests (stack allocated).
-        // SAFETY: `ctx`/`request_object` are the freshly-allocated
-        // `RequestContext` slot and heap `Request` produced by
-        // `prepare_js_request_context` for this frame.
-        unsafe {
-            (*self.ctx).to_async(
-                std::ptr::from_mut::<uws_sys::Request>(req).cast::<c_void>(),
-                &mut *self.request_object,
-            );
-        }
+        // SAFETY: `request_object` is the freshly-allocated heap `Request`
+        // produced by `prepare_js_request_context` for this frame.
+        self.ctx
+            .to_async(uws::AnyRequest::H1(req), unsafe { &*self.request_object });
 
         SavedRequest {
             js_request: jsc::StrongOptional::create(self.js_request, global),
@@ -414,8 +411,8 @@ impl Drop for DetachRequestOnDrop {
     fn drop(&mut self) {
         // SAFETY: per `new()` contract — `self.0` is the heap allocation
         // produced by `Request::new`; kept alive by `ctx.request_weakref`
-        // until `RequestContext::deinit` releases it.
-        unsafe { (*self.0).request_context.detach_request() };
+        // until the context's teardown releases it.
+        unsafe { &*self.0 }.request_context.get().detach_request();
     }
 }
 
@@ -701,11 +698,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         method: Option<bun_http_types::Method::Method>,
     ) -> Option<PreparedRequest<SSL, DEBUG>> {
         jsc::mark_binding!();
-        // SAFETY: `this`/`resp` are live for the duration of the uWS callback.
-        // Shared reborrow: everything below only needs `&Self` (the pending-
-        // request counter is a `Cell`), and `ctx.create()` stores `this` — the
-        // raw pointer, not this borrow — as the backref.
-        let server = unsafe { &*this };
+        // SAFETY: `this` is the live heap server registered as the uWS
+        // userdata (write provenance); it owns the request pool and outlives
+        // every context, which is the backref `create()` stores. Everything
+        // below only needs `&Self` (the pending-request counter is a `Cell`).
+        let server = unsafe { bun_ptr::BackRef::from_raw_mut(this) };
         // S008: `Response<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
         let resp_ref = bun_opaque::opaque_deref_mut(resp);
 
@@ -764,27 +761,17 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // SAFETY: `request_pool` points at a process-static (or
         // server-owned) `HiveArray::Fallback`; valid for the server's lifetime.
-        // The `HiveSlot` token is leaked deliberately: the slot is recycled by
-        // `RequestContext::deinit` via `put_raw`, never via `HiveSlot::Drop`.
-        let ctx_slot = std::mem::ManuallyDrop::new(unsafe { (*server.request_pool).claim() })
-            .addr()
-            .as_ptr();
-        // SAFETY: `claim` hands out an uninitialized slot; `create()` fully
-        // initializes it via `MaybeUninit::write`.
-        let ctx_uninit = unsafe {
-            &mut *ctx_slot.cast::<core::mem::MaybeUninit<ServerRequestContext<SSL, DEBUG>>>()
-        };
-        ServerRequestContext::<SSL, DEBUG>::create(
-            ctx_uninit,
-            this,
-            std::ptr::from_mut::<uws_sys::Request>(req).cast::<c_void>(),
+        // The slot is recycled by the context's last ref (`RequestContext::destroy`).
+        let ctx_slot = unsafe { (*server.request_pool).claim() };
+        let ctx = ServerRequestContext::<SSL, DEBUG>::create(
+            ctx_slot,
+            server,
+            uws::AnyRequest::H1(req),
             any_response_from::<SSL>(resp),
             should_deinit_context,
             method,
         );
-        let ctx: *mut ServerRequestContext<SSL, DEBUG> = ctx_slot;
-        // SAFETY: fully initialized by `create()`.
-        let ctx_ref = unsafe { &*ctx };
+        let ctx_ref = ctx.get();
 
         server
             .vm()
@@ -795,10 +782,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // Allocate the pooled body slot (ref_count = 1).
         let body_hive = crate::webcore::body::hive_alloc(crate::webcore::body::Value::Null);
-        // Raw payload pointer for the deferred Locked write below.
-        // SAFETY: slot stays live — both `ctx.request_body` and `Request.body` hold a +1.
-        let body_value: *mut crate::webcore::body::Value =
-            unsafe { core::ptr::addr_of_mut!((*body_hive.as_ptr()).value) };
         // Bump once so the ctx and JS Request each
         // own a +1 on the same slot (streamed bytes buffered into the ctx
         // surface on `request.body`/`request.json()`).
@@ -814,7 +797,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // ownership: `Request::new` is `bun.TrivialNew` — the heap
         // allocation is handed to the JS GC via `to_js`/`to_js_for_bake` (C++
         // wrapper finalizer frees it), or, for `CreateJsRequest::No`, retained
-        // by `ctx.request_weakref` until `RequestContext::deinit` releases it.
+        // by `ctx.request_weakref` until the context's teardown releases it.
         // `body_hive` (the original +1) moves into the Request — paired drop in
         // `Request::finalize`.
         let request_object: *mut crate::webcore::Request =
@@ -826,10 +809,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 body_hive,
             )));
         // SAFETY: freshly leaked from `heap::into_raw`, so `request_object`
-        // carries the allocation's provenance, as `init_ref` requires.
-        ctx_ref
-            .request_weakref
-            .set(unsafe { bun_ptr::WeakPtr::init_ref(request_object) });
+        // carries the allocation's provenance, as `init_ref` requires; kept
+        // alive by `ctx.request_weakref` until the context's teardown
+        // releases it, so the shared view is valid for this frame.
+        let request_ref = unsafe {
+            ctx_ref
+                .request_weakref
+                .set(bun_ptr::WeakPtr::init_ref(request_object));
+            &*request_object
+        };
 
         // (H3 eager-url/header population is unreachable on this path.)
 
@@ -852,36 +840,27 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // we defer pre-allocating the body until we receive the first chunk
                 // that way if the client is lying about how big the body is or the client aborts
                 // we don't waste memory
-                // SAFETY: `body_value` is the freshly-initialized hive payload.
-                unsafe {
-                    *body_value =
-                        crate::webcore::body::Value::Locked(crate::webcore::body::PendingValue {
-                            task: Some(core::ptr::NonNull::new(ctx).unwrap().cast::<c_void>()),
-                            global: std::ptr::from_ref(global),
-                            on_start_buffering: Some(
-                                ServerRequestContext::<SSL, DEBUG>::on_start_buffering_callback,
-                            ),
-                            on_start_streaming: Some(
-                                ServerRequestContext::<SSL, DEBUG>::on_start_streaming_request_body_callback,
-                            ),
-                            on_readable_stream_available: Some(
-                                ServerRequestContext::<SSL, DEBUG>::on_request_body_readable_stream_available,
-                            ),
-                            producer: crate::webcore::streams::SourceHandle::ServerRequestBody(
-                                AnyRequestContext::init(ctx),
-                            ),
-                            ..Default::default()
-                        });
-                }
+                ctx_ref.set_pending_request_body(crate::webcore::body::PendingValue {
+                    task: Some(core::ptr::NonNull::from(ctx).cast::<c_void>()),
+                    global: std::ptr::from_ref(global),
+                    on_start_buffering: Some(
+                        ServerRequestContext::<SSL, DEBUG>::on_start_buffering_callback,
+                    ),
+                    on_start_streaming: Some(
+                        ServerRequestContext::<SSL, DEBUG>::on_start_streaming_request_body_callback,
+                    ),
+                    on_readable_stream_available: Some(
+                        ServerRequestContext::<SSL, DEBUG>::on_request_body_readable_stream_available,
+                    ),
+                    producer: crate::webcore::streams::SourceHandle::ServerRequestBody(
+                        AnyRequestContext::init(ctx),
+                    ),
+                    ..Default::default()
+                });
                 ctx_ref.flags.set_is_waiting_for_request_body(true);
 
-                resp_ref.on_data(
-                    |u: *mut ServerRequestContext<SSL, DEBUG>,
-                     _: &mut uws_sys::NewAppResponse<SSL>,
-                     chunk: &[u8],
-                     last: bool| {
-                        ServerRequestContext::<SSL, DEBUG>::on_buffered_body_chunk(u, chunk, last)
-                    },
+                any_response_from::<SSL>(resp).on_data_this(
+                    ServerRequestContext::<SSL, DEBUG>::on_buffered_body_chunk,
                     ctx,
                 );
             }
@@ -889,18 +868,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         Some(PreparedRequest {
             js_request: match create_js_request {
-                // SAFETY: `request_object` is the freshly-allocated heap
-                // `Request`; ownership transfers to the JS wrapper.
-                CreateJsRequest::Yes => unsafe { (*request_object).to_js(global) },
-                CreateJsRequest::Bake => {
-                    // SAFETY: `request_object` is the freshly-allocated heap
-                    // `Request`; ownership transfers to the JS wrapper.
-                    match unsafe { (*request_object).to_js_for_bake(global) } {
-                        Ok(v) => v,
-                        Err(jsc::JsError::OutOfMemory) => bun_core::out_of_memory(),
-                        Err(_) => return None,
-                    }
-                }
+                // Ownership of the heap `Request` transfers to the JS wrapper.
+                CreateJsRequest::Yes => request_ref.to_js(global),
+                CreateJsRequest::Bake => match request_ref.to_js_for_bake(global) {
+                    Ok(v) => v,
+                    Err(jsc::JsError::OutOfMemory) => bun_core::out_of_memory(),
+                    Err(_) => return None,
+                },
                 CreateJsRequest::No => JSValue::ZERO,
             },
             request_object,
@@ -954,9 +928,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     .get()
                     .expect("Request was unexpectedly freed"),
                 request_object: data.request,
-                // SAFETY: `SavedRequest` was produced by `PreparedRequest::save`
-                // for this exact (SSL,DEBUG) monomorphization, so the erased
-                // `AnyRequestContext` payload is `ServerRequestContext<SSL,DEBUG>`.
+                // `SavedRequest` was produced by `PreparedRequest::save` for
+                // this exact (SSL,DEBUG) monomorphization (the tag says so), and
+                // holds a ref on the context.
                 ctx: data
                     .ctx
                     .get::<ServerRequestContext<SSL, DEBUG>>()
@@ -991,9 +965,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // the request's lifetime.
         let _detach_guard = is_stack.then(|| unsafe { DetachRequestOnDrop::new(request_object) });
 
-        // SAFETY: `ctx` was just allocated (or saved) by this server; the
-        // `defer_deinit_...` flag set below keeps it alive across `on_response`.
-        let ctx_ref = unsafe { &*ctx };
+        // `ctx` was just allocated (or saved) by this server; the
+        // `defer_deinit_...` flag set below keeps it allocated across `on_response`.
+        let ctx_ref = ctx.get();
         let original_state = ctx_ref.defer_deinit_until_callback_completes.get();
         let should_deinit_context = core::cell::Cell::new(false);
         ctx_ref
@@ -1008,7 +982,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         prepared.js_request.ensure_still_alive();
 
         if should_deinit_context.get() {
-            ctx_ref.deinit();
+            ServerRequestContext::<SSL, DEBUG>::deinit(ctx);
             return;
         }
 
@@ -1024,10 +998,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // SAFETY: `r` is the live stack `uws::Request`; `request_object`
                 // is the heap `Request` kept alive by `ctx.request_weakref`.
                 ctx_ref.to_async(
-                    std::ptr::from_ref::<uws::Request>(r)
-                        .cast_mut()
-                        .cast::<c_void>(),
-                    unsafe { &mut *request_object },
+                    uws::AnyRequest::H1(std::ptr::from_ref::<uws::Request>(r).cast_mut()),
+                    unsafe { &*request_object },
                 );
             }
             SavedRequestUnion::Saved(_) => {} // info already copied
@@ -1056,13 +1028,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // uWS request will not live longer than this function
         // SAFETY: `request_object` is the heap allocation produced by
         // `Request::new`; kept alive by `ctx.request_weakref` until
-        // `RequestContext::deinit` releases it.
+        // the context's teardown releases it.
         let _detach_guard = unsafe { DetachRequestOnDrop::new(request_object) };
 
-        // SAFETY: `ctx` was allocated by `prepare_js_request_context` for this
-        // frame and cannot be freed while `defer_deinit_...` is set (it is set
-        // by the caller until cleared below).
-        let (ctx_ref, this) = unsafe { (&*ctx, &*this) };
+        // `ctx` was allocated by `prepare_js_request_context` for this frame
+        // and stays allocated while `defer_deinit_...` is set (it is set by the
+        // caller until cleared below).
+        // SAFETY: `this` is the live server backref for this request.
+        let (ctx_ref, this) = (ctx.get(), unsafe { &*this });
         ctx_ref.on_response(this, prepared.js_request, response_value);
         // Reference in the stack here in case it is not for whatever reason
         prepared.js_request.ensure_still_alive();
@@ -1070,7 +1043,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         ctx_ref.defer_deinit_until_callback_completes.set(None);
 
         if should_deinit_context.get() {
-            ctx_ref.deinit();
+            ServerRequestContext::<SSL, DEBUG>::deinit(ctx);
             return;
         }
 
@@ -1083,10 +1056,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // copied since the provided uws.Request will be re-used for future
         // requests (stack allocated).
         // SAFETY: `request_object` is the live heap `Request` (see above).
-        ctx_ref.to_async(
-            std::ptr::from_mut::<uws_sys::Request>(req).cast::<c_void>(),
-            unsafe { &mut *request_object },
-        );
+        ctx_ref.to_async(uws::AnyRequest::H1(req), unsafe { &*request_object });
     }
 
     /// Dispatch the user `fetch` handler.
@@ -3482,7 +3452,7 @@ mod trampoline {
 // Fallback::{get,put,claim}` take `&mut self` with no internal synchronization;
 // a process-static would race when two `Bun.serve` instances run on distinct
 // Worker threads (each Worker has its own event loop and may host a server).
-pub trait ServerPools<const SSL: bool, const DEBUG: bool>: Sized {
+pub trait ServerPools<const SSL: bool, const DEBUG: bool>: ServerLike + 'static {
     fn request_pool() -> *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, false>;
     fn mux_request_pool()
     -> *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, true>;
@@ -3604,14 +3574,24 @@ fn throw_ssl_error_if_necessary(global: &JSGlobalObject) -> bool {
     false
 }
 
+mod sealed {
+    pub trait Sealed {}
+    impl<const SSL: bool, const DEBUG: bool> Sealed for super::NewServer<SSL, DEBUG> {}
+}
+
 // `RequestContext` reaches back into its server via this; mirrors the
 // field/method surface the per-request state machine needs without naming
-// `NewServer` (avoids a generic-parameter cycle).
-pub trait ServerLike {
-    fn global_this(&self) -> &jsc::JSGlobalObject;
+// `NewServer` (avoids a generic-parameter cycle). Sealed: `RequestContext`'s
+// `NativePromiseContext` tag identifies its type by `(SSL, DEBUG, H3)` alone.
+pub trait ServerLike: sealed::Sealed + Sized {
+    const SSL: bool;
+    const DEBUG: bool;
+    fn global_this(&self) -> &'static jsc::JSGlobalObject;
     fn vm(&self) -> &jsc::VirtualMachine;
     fn config(&self) -> &ServerConfig;
-    fn on_request_complete(&mut self);
+    /// A request the server was counting finished. Runs the server's idle
+    /// pass, which may free it.
+    fn on_request_complete(this: bun_ptr::BackRef<Self, bun_ptr::Mut>);
     fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer>;
     fn js_value(&self) -> &jsc::JsRef;
     fn h3_alt_svc(&self) -> Option<&[u8]>;
@@ -3624,14 +3604,16 @@ pub trait ServerLike {
 }
 
 impl<const SSL: bool, const DEBUG: bool> ServerLike for NewServer<SSL, DEBUG> {
+    const SSL: bool = SSL;
+    const DEBUG: bool = DEBUG;
     // These trait-method forwards are on the per-request hot path (called via
     // `RequestContext::server.vm()` etc.). Without `#[inline]` a generic trait
     // impl is not eligible for cross-crate inlining at all, so each accessor
     // would compile to a real `call` even though the inherent method it
     // forwards to is itself one instruction.
     #[inline(always)]
-    fn global_this(&self) -> &jsc::JSGlobalObject {
-        Self::global_this(self)
+    fn global_this(&self) -> &'static jsc::JSGlobalObject {
+        bun_opaque::opaque_deref(self.global_this)
     }
     #[inline(always)]
     fn vm(&self) -> &jsc::VirtualMachine {
@@ -3642,8 +3624,8 @@ impl<const SSL: bool, const DEBUG: bool> ServerLike for NewServer<SSL, DEBUG> {
         &self.config
     }
     #[inline]
-    fn on_request_complete(&mut self) {
-        Self::on_request_complete(self)
+    fn on_request_complete(this: bun_ptr::BackRef<Self, bun_ptr::Mut>) {
+        AnyServer::from(this.as_ptr().cast_const()).on_request_complete()
     }
     #[inline]
     fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer> {

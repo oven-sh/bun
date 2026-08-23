@@ -5074,7 +5074,9 @@ pub(crate) fn write_file_internal(
                     };
                     let producer_hook = locked.on_start_buffering.take().zip(locked.task);
                     locked.task = Some(NonNull::new(task).unwrap().cast::<c_void>());
-                    locked.on_receive_value = Some(WriteFileWaitFromLockedValueTask::then_wrap);
+                    locked.on_receive_value = Some(crate::webcore::body::ReceiveValue::Ctx(
+                        WriteFileWaitFromLockedValueTask::then_wrap,
+                    ));
                     // SAFETY: `task` was just heap-allocated; consumed in `then_wrap`.
                     let promise = unsafe { (*task).promise.value() };
                     // Signalled last (see `PendingValue::on_start_buffering`):

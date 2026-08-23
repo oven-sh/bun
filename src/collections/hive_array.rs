@@ -454,6 +454,24 @@ impl<'h, T, const CAPACITY: usize> HiveSlot<'h, T, CAPACITY> {
         p
     }
 
+    /// [`write`](Self::write) an intrusively refcounted `value` (constructed with
+    /// its count at 1) and return that first ref. `T`'s refcount destructor
+    /// must be one that returns the slot to *this* pool ([`Fallback::put`]),
+    /// not the default `Box` reclaim.
+    #[inline]
+    pub fn write_ref(self, value: T) -> bun_ptr::RefPtr<T>
+    where
+        T: bun_ptr::AnyRefCounted,
+    {
+        let p = self.write(value);
+        // SAFETY: `p` is the just-initialized slot; its only ref is the one
+        // adopted here.
+        unsafe {
+            debug_assert!(T::rc_has_one_ref(p.as_ptr()));
+            bun_ptr::RefPtr::from_raw(p.as_ptr())
+        }
+    }
+
     /// Caller has fully initialized the slot by writing through
     /// [`addr`](Self::addr). Consumes the token.
     ///

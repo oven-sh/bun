@@ -1041,8 +1041,10 @@ pub struct HTTPServerWritable<const SSL: bool> {
     /// `Http3Response::markDone()` makes the H3 `resp` still safe to use.
     pub(crate) ended_response: bool,
 
-    pub(crate) on_first_write: Option<fn(Option<*mut c_void>)>,
-    pub ctx: Option<*mut c_void>,
+    /// The owning `RequestContext`, until the first write has flushed its
+    /// status and headers (or it decides to render them itself). The context
+    /// owns this sink and destroys it before it is released.
+    pub(crate) first_write_ctx: Option<crate::server::AnyRequestContext>,
 
     pub(crate) auto_flusher: AutoFlusher,
 }
@@ -1067,8 +1069,7 @@ impl<const SSL: bool> Default for HTTPServerWritable<SSL> {
             source_pending_pull: false,
             end_len: 0,
             ended_response: false,
-            on_first_write: None,
-            ctx: None,
+            first_write_ctx: None,
             auto_flusher: AutoFlusher::default(),
         }
     }
@@ -1108,6 +1109,14 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
 /// `pub const JSSink = Sink.JSSink(@This(), name)`.
 pub type HTTPServerWritableJSSink<const SSL: bool> =
     crate::webcore::sink::JSSink<HTTPServerWritable<SSL>>;
+
+/// The heap sink as its `RequestContext` owns it. The JS controller
+/// (`JSSink::assign_to_stream`) and the auto-flusher hold the same address and
+/// re-enter it from JS, so the owner reaches it through the `JsCell` in short,
+/// closure-scoped borrows rather than through a `Box<Self>` it would have to
+/// keep unaliased.
+pub type OwnedHTTPServerWritable<const SSL: bool> =
+    Box<bun_ptr::JsCell<HTTPServerWritable<SSL>>>;
 
 // `HTTPServerWritable` is exposed to JS via `Sink.JSSink(@This(), name)` where
 // `name` ∈ {HTTPResponseSink, HTTPSResponseSink}. Const-generics
@@ -1173,9 +1182,8 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
     }
 
     fn handle_first_write_if_necessary(&mut self) {
-        if let Some(on_first_write) = self.on_first_write.take() {
-            let ctx = self.ctx.take();
-            on_first_write(ctx);
+        if let Some(ctx) = self.first_write_ctx.take() {
+            ctx.on_first_stream_write();
         }
     }
 
@@ -1243,7 +1251,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         // callback (RequestContext.renderMetadata) writes status/headers through
         // the same uWS response. `AnyResponse` is `Copy` and dispatches to
         // zero-sized opaque handles, so reusing `res` across the re-entrant
-        // `on_first_write` invocation cannot alias any Rust-visible memory.
+        // first-write callback cannot alias any Rust-visible memory.
 
         if self.requested_end && !res.state().is_http_write_called() {
             self.handle_first_write_if_necessary();
@@ -1295,7 +1303,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
     /// of `self.buffer` through `from_raw_parts` to dodge the `&mut self`
     /// borrow. Mirrors `send_without_auto_flusher` but re-slices `self.buffer`
     /// after each `&mut self` step; `unregister_auto_flusher` and the
-    /// `on_first_write` callback (RequestContext.renderMetadata) only touch
+    /// first-write callback (RequestContext.renderMetadata) only touch
     /// uWS response state, never `self.buffer`/`self.offset`, so the re-slice
     /// observes the same bytes the laundered slice would have.
     fn send_readable(&mut self, from: usize) -> bool {
@@ -1317,7 +1325,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             return false;
         };
         // `res` is `Copy` (raw uWS handle); see the note in
-        // `send_without_auto_flusher` re: holding it across `on_first_write`.
+        // `send_without_auto_flusher` re: holding it across the first-write callback.
 
         if self.requested_end && !res.state().is_http_write_called() {
             self.handle_first_write_if_necessary();
@@ -1838,33 +1846,19 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         bun_sys::Result::Ok(JSValue::from(self.wrote))
     }
 
-    /// Takes `*mut Self`, not `&mut self`: closing the signal runs the controller's
-    /// JS `onClose`, which can cancel the stream, drain microtasks, and free this
-    /// sink. A `&mut self` argument protector must not be live across that free.
-    ///
-    /// # Safety
-    /// `this` must point at the live sink owned by the `RequestContext`.
-    pub(crate) unsafe fn abort(this: *mut Self) {
+    /// The response was aborted: mark the sink dead and settle what is parked
+    /// on it. Returns the source for the caller to `close(None)` once no borrow
+    /// of this sink is live: the close fires the JS `onClose` callback, and the
+    /// teardown it can re-enter (cancel, microtask drain) frees this sink.
+    #[must_use = "close the returned source after releasing the sink borrow"]
+    pub(crate) fn abort(&mut self) -> SourceHandle {
         bun_core::scoped_log!(HTTPServerWritableLog, "onAborted()");
-        // SAFETY: caller contract — `this` is live, and every access here is scoped
-        // so no borrow spans the signal close below, which may free `*this`.
-        unsafe {
-            (*this).state = HTTPServerWritableState::Aborted;
-            (*this).res = None;
-            (*this).unregister_auto_flusher();
-        }
-
-        // SAFETY: nothing above freed `*this`; exclusive borrow scoped to the call.
-        unsafe { (*this).flush_promise() };
-        // SAFETY: as above.
-        unsafe { (*this).finalize() };
-
-        // Close the source last and through a stack copy: the close fires the JS
-        // onClose callback, and the teardown it can re-enter frees this sink, so
-        // no reference into the allocation may be live across the call.
-        // SAFETY: as above; `source` is copied out before the close.
-        let mut source = unsafe { (*this).source };
-        source.close(None);
+        self.state = HTTPServerWritableState::Aborted;
+        self.res = None;
+        self.unregister_auto_flusher();
+        self.flush_promise();
+        self.finalize();
+        self.source
     }
 
     fn unregister_auto_flusher(&mut self) {
@@ -1922,29 +1916,24 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         false
     }
 
-    /// # Safety
-    /// `this` must be a valid, uniquely-owned heap pointer to `Self` produced
-    /// by `bun_core::heap::into_raw`; the caller transfers ownership.
-    // Forwards `this` to `bun_core::heap::take` without dereferencing it here;
-    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) fn destroy(this: *mut Self) {
+    /// Tear down the sink its owning `RequestContext` allocated (as
+    /// [`OwnedHTTPServerWritable`]); the JS controller must already be
+    /// detached (`JSSink::detach`).
+    pub(crate) fn destroy(this: OwnedHTTPServerWritable<SSL>) {
         bun_core::scoped_log!(HTTPServerWritableLog, "destroy()");
-        // SAFETY: this was heap-allocated; destroy takes sole ownership. Reclaim
-        // the Box first so we never hold a `&mut *this` alongside the Box's
-        // unique pointer.
-        let mut this = unsafe { bun_core::heap::take(this) };
-        // Callers may tear this sink down without routing through
-        // flushPromise() (e.g. handleResolveStream / handleRejectStream).
-        // Drop the GC root so the promise can be collected.
-        this.pending.result = Writable::Done;
-        this.pending.run();
-        if let Some(prom) = this.pending_flush.take() {
-            // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
-            JSPromise::opaque_ref(prom).to_js().unprotect();
-        }
-        this.buffer.clear_and_free();
-        this.unregister_auto_flusher();
+        this.with_mut(|this| {
+            // Callers may tear this sink down without routing through
+            // flushPromise() (e.g. handleResolveStream / handleRejectStream).
+            // Drop the GC root so the promise can be collected.
+            this.pending.result = Writable::Done;
+            this.pending.run();
+            if let Some(prom) = this.pending_flush.take() {
+                // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
+                JSPromise::opaque_ref(prom).to_js().unprotect();
+            }
+            this.buffer.clear_and_free();
+            this.unregister_auto_flusher();
+        });
         drop(this);
     }
 

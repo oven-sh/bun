@@ -1338,7 +1338,7 @@ impl WriteFileWaitFromLockedValueTask {
                 // Re-registering for a future callback — `this` stays alive.
                 // Restore the moved-out blob so the next `then()` has its store.
                 this.file_blob = file_blob;
-                locked.on_receive_value = Some(Self::then_wrap);
+                locked.on_receive_value = Some(body::ReceiveValue::Ctx(Self::then_wrap));
                 locked.task = Some(
                     NonNull::new(bun_core::heap::into_raw(this))
                         .unwrap()

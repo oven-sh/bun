@@ -18,12 +18,8 @@ use bun_sys::windows::libuv::UvHandle as _;
 use bun_threading::Mutex;
 
 use super::node_fs_watcher::WatchEventKind;
-// The callbacks are *associated functions* on `FSWatcher`, not free fns.
 use crate::node::node_fs_watcher::{Event, FSWatcher, StringOrBytesToDecode};
-#[allow(non_upper_case_globals)]
-const on_path_update_fn: fn(Option<*mut c_void>, Event, bool) = FSWatcher::ON_PATH_UPDATE;
-#[allow(non_upper_case_globals)]
-const on_update_end_fn: fn(Option<*mut c_void>) = FSWatcher::on_update_end;
+use bun_ptr::BackRef;
 
 bun_output::declare_scope!(PathWatcherManager, visible);
 // Rust identifiers cannot contain '.', so
@@ -148,7 +144,14 @@ pub struct PathWatcher {
     // LIFETIMES.tsv: BACKREF → Option<*mut PathWatcherManager>
     manager: Cell<Option<*mut PathWatcherManager>>,
     emit_in_progress: Cell<bool>,
-    handlers: JsCell<ArrayHashMap<*mut c_void, ChangeEvent>>,
+    /// The JS `FSWatcher`s sharing this watch, keyed by address. Each removes
+    /// itself (drops its [`Registration`]) before it goes away.
+    handlers: JsCell<ArrayHashMap<usize, (BackRef<FSWatcher>, ChangeEvent)>>,
+}
+
+#[inline]
+fn handler_key(owner: &FSWatcher) -> usize {
+    core::ptr::from_ref(owner) as usize
 }
 
 #[derive(Clone, Copy)]
@@ -222,19 +225,18 @@ impl PathWatcher {
             me.emit_in_progress.set(true);
 
             let keys: Vec<_> = me.handlers.get().keys().iter().copied().collect();
-            for ctx in keys {
-                if !me.handlers.get().contains_key(&ctx) {
+            for key in keys {
+                let Some(owner) = me.handlers.get().get(&key).map(|(owner, _)| *owner) else {
                     continue;
-                }
-                on_path_update_fn(
-                    Some(ctx),
+                };
+                owner.on_path_update_windows(
                     Event::Error {
                         err: err.clone(),
                         close: true,
                     },
                     false,
                 );
-                on_update_end_fn(Some(ctx));
+                owner.on_update_end();
             }
 
             me.emit_in_progress.set(false);
@@ -254,12 +256,12 @@ impl PathWatcher {
             // Forward `(event, null)` to every handler like node, unsuppressed.
             me.emit_in_progress.set(true);
             let keys: Vec<_> = me.handlers.get().keys().iter().copied().collect();
-            for ctx in keys {
-                if !me.handlers.get().contains_key(&ctx) {
+            for key in keys {
+                let Some(owner) = me.handlers.get().get(&key).map(|(owner, _)| *owner) else {
                     continue;
-                }
-                on_path_update_fn(Some(ctx), Event::NoFilename(event_type), false);
-                on_update_end_fn(Some(ctx));
+                };
+                owner.on_path_update_windows(Event::NoFilename(event_type), false);
+                owner.on_update_end();
             }
             me.emit_in_progress.set(false);
             Self::maybe_deinit(this);
@@ -292,30 +294,26 @@ impl PathWatcher {
 
             let keys: Vec<_> = me.handlers.get().keys().iter().copied().collect();
             for key in keys {
-                let Some(fire) = me
-                    .handlers
-                    .with_mut(|h| h.get_mut(&key).map(|v| v.emit(hash, timestamp, event_type)))
-                else {
+                let Some(owner) = me.handlers.with_mut(|h| {
+                    h.get_mut(&key).and_then(|(owner, change)| {
+                        change.emit(hash, timestamp, event_type).then_some(*owner)
+                    })
+                }) else {
                     continue;
                 };
-                if fire {
-                    let ctx: *mut FSWatcher = key.cast::<FSWatcher>();
-                    // SAFETY: handlers keys are `*mut FSWatcher` erased to `*mut c_void` in `watch()`.
-                    let encoding = unsafe { (*ctx).encoding };
-                    // `EventPathString` on Windows is `StringOrBytesToDecode`.
-                    let payload = match encoding {
-                        crate::node::Encoding::Utf8 => {
-                            StringOrBytesToDecode::String(BunString::clone_utf8(path))
-                        }
-                        _ => StringOrBytesToDecode::BytesToFree(Box::<[u8]>::from(path)),
-                    };
-                    on_path_update_fn(Some(ctx.cast()), event_type.to_event(payload), is_file);
-                    #[cfg(debug_assertions)]
-                    {
-                        debug_count += 1;
+                // `EventPathString` on Windows is `StringOrBytesToDecode`.
+                let payload = match owner.encoding {
+                    crate::node::Encoding::Utf8 => {
+                        StringOrBytesToDecode::String(BunString::clone_utf8(path))
                     }
-                    on_update_end_fn(Some(ctx.cast()));
+                    _ => StringOrBytesToDecode::BytesToFree(Box::<[u8]>::from(path)),
+                };
+                owner.on_path_update_windows(event_type.to_event(payload), is_file);
+                #[cfg(debug_assertions)]
+                {
+                    debug_count += 1;
                 }
+                owner.on_update_end();
             }
 
             #[cfg(debug_assertions)]
@@ -439,10 +437,8 @@ impl PathWatcher {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    /// JS-thread entry point from `FSWatcher.detach()`. Signature matches the posix
-    /// `path_watcher::PathWatcher::detach` (associated fn over `*mut Self`) so the
-    /// caller in `node_fs_watcher.rs` is platform-agnostic.
-    pub(crate) fn detach(this: *mut PathWatcher, handler: *mut c_void) {
+    /// JS-thread entry point from [`Registration`]'s drop.
+    fn detach(this: *mut PathWatcher, handler: usize) {
         // SAFETY: `this` is the live `heap::alloc`'d pointer returned from `watch()`;
         // it stays valid until `maybe_deinit` self-destroys on the last handler.
         let removed = unsafe { &*this }
@@ -507,12 +503,28 @@ impl PathWatcher {
 
 // ──────────────────────────────────────────────────────────────────────────
 
+/// One `FSWatcher`'s handler on a shared [`PathWatcher`]. Dropping it detaches
+/// the handler (and with the last handler, the libuv watch).
+pub(crate) struct Registration {
+    watcher: *mut PathWatcher,
+    handler: usize,
+}
+
+impl Drop for Registration {
+    fn drop(&mut self) {
+        PathWatcher::detach(self.watcher, self.handler);
+    }
+}
+
+/// Attach `owner` to the (shared, per path) libuv watch for `path`, creating
+/// it if this is the first. `owner` keeps the returned registration for as
+/// long as — and no longer than — it lives at that address.
 pub(crate) fn watch(
     vm: &'static jsc::VirtualMachineRef,
     path: &ZStr,
     recursive: bool,
-    ctx: *mut c_void,
-) -> sys::Result<*mut PathWatcher> {
+    owner: BackRef<FSWatcher>,
+) -> sys::Result<Registration> {
     #[cfg(not(windows))]
     compile_error!("win_watcher should only be used on Windows");
 
@@ -543,9 +555,10 @@ pub(crate) fn watch(
         sys::Result::Err(err) => return sys::Result::Err(err),
         sys::Result::Ok(w) => w,
     };
+    let handler = handler_key(&owner);
     // SAFETY: watcher is a valid freshly-returned heap pointer.
     unsafe { &*watcher }.handlers.with_mut(|h| {
-        h.insert(ctx, ChangeEvent::default());
+        h.insert(handler, (owner, ChangeEvent::default()));
     });
-    sys::Result::Ok(watcher)
+    sys::Result::Ok(Registration { watcher, handler })
 }

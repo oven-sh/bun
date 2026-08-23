@@ -302,12 +302,11 @@ pub(crate) fn run_task(
             };
         }
         task_tag::StatWatcherHop => {
-            // SAFETY: posted by `StatWatcher::post_to_js_thread` with a ref held.
+            // SAFETY: boxed in `StatWatcher::post_to_js_thread`; the arm consumes it.
             unsafe {
-                crate::node::node_fs_stat_watcher::StatWatcher::run_hop(cast_ptr!(
-                    crate::node::node_fs_stat_watcher::StatWatcher
-                ))
-            }?;
+                bun_core::heap::take(cast_ptr!(crate::node::node_fs_stat_watcher::StatWatcherHop))
+            }
+            .run()?;
         }
         task_tag::ManagedTask => {
             // SAFETY: `task.ptr` was produced by `heap::alloc` in `ManagedTask::new`
@@ -398,16 +397,9 @@ pub(crate) fn run_task(
         // ── bake dev-server (cold — hoisted to `run_task_cold`) ──────────
         task_tag::BakeHotReloadEvent => run_task_cold(task),
         task_tag::FSWatchTask => {
-            // The task is heap-allocated
-            // (cloned from `FSWatcher.current_task` at enqueue). `deinit` is
-            // explicit (not `Drop`) so the embedded `current_task` field never
-            // runs it.
-            let t = cast_ptr!(FSWatchTask);
-            // SAFETY: tag identifies pointee; live Box'd FSWatchTask.
-            let ran = unsafe { (*t).run() };
-            // SAFETY: paired with heap::alloc in `FSWatchTask::enqueue`.
-            unsafe { FSWatchTask::deinit(t) };
-            ran?;
+            // SAFETY: boxed by the watcher's `EventSink` / `enqueue_one`; the
+            // arm consumes it.
+            unsafe { bun_core::heap::take(cast_ptr!(FSWatchTask)) }.run()?;
         }
 
         // ── node:fs libuv-request ops (Windows) ──────────────────────────
@@ -592,6 +584,34 @@ const _: () = assert!(
     task_tag::COUNT == 61,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
+
+// ── tag ↔ payload for the boxed fs watcher tasks ────────────────────────────
+// The payload types are plain owned boxes with safe `run`/`release_unrun`; the
+// raw-pointer reclaim lives here next to the arms that do the same.
+
+impl bun_event_loop::Taskable for FSWatchTask {
+    const TAG: bun_event_loop::TaskTag = task_tag::FSWatchTask;
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — the box queued under this tag.
+        FSWatchTask::release_unrun(unsafe { bun_core::heap::take(this) });
+    }
+}
+
+impl bun_event_loop::Taskable for crate::node::node_fs_stat_watcher::StatWatcherHop {
+    const TAG: bun_event_loop::TaskTag = task_tag::StatWatcherHop;
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — the box queued under this tag.
+        Self::release_unrun(unsafe { bun_core::heap::take(this) });
+    }
+}
+
+impl bun_event_loop::Taskable for crate::node::node_fs_stat_watcher::StatWatcherTimerUpdate {
+    const TAG: bun_event_loop::TaskTag = task_tag::StatWatcherTimerUpdate;
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — the box queued under this tag.
+        Self::release_unrun(unsafe { bun_core::heap::take(this) });
+    }
+}
 
 // ────────────────────────────────────────────────────────────────────────────
 // `tick_queue_with_count` — the full drain loop.
@@ -995,9 +1015,12 @@ pub(crate) unsafe fn __bun_fire_timer(
                 (*c).on_fire(&mut *vm, &*now)
             })
         }
+        // `timer_callback` takes refs on the scheduler for the pass it starts,
+        // hence the `ThisPtr`.
         EventLoopTimerTag::StatWatcherScheduler => {
-            timer_arm!(StatWatcherScheduler, event_loop_timer, |c, _now, _vm| (*c)
-                .timer_callback())
+            timer_arm!(StatWatcherScheduler, event_loop_timer, |c, _now, _vm| {
+                StatWatcherScheduler::timer_callback(bun_ptr::ThisPtr::new(c))
+            })
         }
         EventLoopTimerTag::UpgradedDuplex => {
             timer_arm!(UpgradedDuplex, event_loop_timer, |c, _now, _vm| (*c)
@@ -1285,7 +1308,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::StatWatcherTimerUpdate => {
             release!(crate::node::node_fs_stat_watcher::StatWatcherTimerUpdate)
         }
-        task_tag::StatWatcherHop => release!(crate::node::node_fs_stat_watcher::StatWatcher),
+        task_tag::StatWatcherHop => release!(crate::node::node_fs_stat_watcher::StatWatcherHop),
         task_tag::AsyncCpTask => release!(crate::node::fs::AsyncCpTask),
         task_tag::ShellAsyncCpTask => release!(crate::node::fs::ShellAsyncCpTask),
         task_tag::StreamPending => release!(StreamPending),

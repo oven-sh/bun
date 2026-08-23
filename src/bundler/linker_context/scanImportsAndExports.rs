@@ -1244,17 +1244,15 @@ impl DependencyWrapper<'_> {
 struct ExportStarContext<'a> {
     import_records_list: *mut [ImportRecordList<'a>],
     source_index_stack: Vec<IndexInt>,
-    /// `on_stack[i]` mirrors "`i` is in `source_index_stack`". The cycle check
-    /// used to scan the stack, which made a chain of N re-exporting files cost
-    /// O(N^3) (every file starts its own walk, every level scans the path).
+    /// `on_stack[i]` == "`i` is in `source_index_stack`": an O(1) cycle check.
+    /// Scanning the stack made a chain of N re-exporting files cost O(N^3).
     on_stack: Vec<bool>,
     exports_kind: *mut [ExportsKind],
     named_exports: *mut [NamedExports],
     imports_to_bind: *mut [RefImportData],
     export_star_records: *mut [bun_alloc::AstVec<u32>],
-    /// `add_exports` recurses once per `export *` level. A chain of several
-    /// thousand re-exporting files would otherwise run off the end of the
-    /// thread's stack (the `Bun.build()` thread has 4 MiB) and kill the process.
+    /// `add_exports` recurses once per `export *` level; a chain of thousands
+    /// of files must fail the build, not overflow the thread's stack.
     stack_check: bun_core::StackCheck,
     stack_overflow: bool,
 }

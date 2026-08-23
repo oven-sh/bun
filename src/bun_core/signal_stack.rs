@@ -1,23 +1,15 @@
-//! Per-thread alternate signal stack for the crash handler.
-//!
-//! A native stack overflow faults on the thread's guard page. The kernel has
-//! no room to push a signal frame on that stack, so a handler runs only when
-//! the signal is delivered on an alternate stack: `SA_ONSTACK` on the handler
-//! and `sigaltstack(2)` on the faulting thread. Without both, the default
-//! action runs instead and the process dies with SIGSEGV and no output.
-//!
-//! The main thread gets its alternate stack from `bun_crash_handler::init`
-//! (a static buffer). Every other thread bun creates gets one here, from
-//! `Output::Source::configure_thread`, and frees it when the thread exits.
+//! Per-thread alternate signal stack for the crash handler. A stack overflow
+//! faults on the guard page, so the kernel can deliver the signal only onto an
+//! alternate stack (`SA_ONSTACK` handler + `sigaltstack(2)` on the thread).
+//! `Output::Source::configure_thread` installs one on every bun thread; the
+//! main thread uses the crash handler's static buffer.
 
 use core::cell::Cell;
 
-/// Size of one alternate signal stack, excluding the guard page below it.
-/// The crash handler formats the report and walks the faulting frames on it.
+/// Excludes the guard page below it. The crash handler runs its report on it.
 pub const ALT_STACK_SIZE: usize = 512 * 1024;
 
-/// The mapping behind this thread's alternate stack. The thread-local
-/// destructor drops it when the thread exits.
+/// This thread's alternate stack mapping; dropped by the thread-local destructor.
 struct Mapping {
     base: *mut libc::c_void,
     len: usize,
@@ -39,11 +31,8 @@ thread_local! {
     static MAPPING: Cell<Option<Mapping>> = const { Cell::new(None) };
 }
 
-/// Register an alternate signal stack for the calling thread.
-///
-/// No-op when the thread already has one: the main thread (static buffer from
-/// the crash handler), a thread that called this before, or a thread ASAN set
-/// up. Failure is silent: the thread then behaves as before this existed.
+/// Register an alternate signal stack for the calling thread. No-op when one is
+/// already active (main thread, a repeat call, or ASAN's). Failure is silent.
 pub fn install_for_current_thread() {
     let mut current: libc::stack_t = crate::ffi::zeroed();
     // SAFETY: a null `ss` only queries; `current` is a valid out-pointer.
@@ -73,8 +62,8 @@ pub fn install_for_current_thread() {
     if base == libc::MAP_FAILED {
         return;
     }
-    // Guard page at the low end: if the handler itself overflows, it faults
-    // here instead of writing into whatever the kernel mapped below.
+    // Guard page: an overflow of the handler itself faults instead of writing
+    // into the mapping below.
     // SAFETY: `base` is page-aligned and the first page belongs to the mapping.
     unsafe { libc::mprotect(base, page, libc::PROT_NONE) };
 

@@ -97,9 +97,8 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         visited: Vec<Index>,
         order: Vec<CssImportOrder>,
 
-        /// `visit` recurses once per `@import` level. A chain of several
-        /// thousand files would otherwise run off the end of the thread's
-        /// stack (the `Bun.build()` thread has 4 MiB) and kill the process.
+        /// `visit` recurses once per `@import` level; a chain of thousands of
+        /// files must fail the build, not overflow the thread's stack.
         stack_check: bun_core::StackCheck,
         stack_overflow: bool,
     }
@@ -338,8 +337,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
     }
 
     if visitor.stack_overflow {
-        // Split-borrow — see `LinkerContext::log_disjoint`. `link()` turns the
-        // logged error into a failed build once `compute_chunks` returns.
+        // Split-borrow — see `LinkerContext::log_disjoint`.
         this.log_disjoint().add_error(
             None,
             bun_ast::Loc::EMPTY,

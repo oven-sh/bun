@@ -127,10 +127,8 @@ pub(crate) mod js_bindings {
         Ok(JSValue::UNDEFINED)
     }
 
-    /// Recurses until the calling thread runs out of native stack. The fault
-    /// lands on the guard page, so the kernel can only deliver it on an
-    /// alternate signal stack: this exercises that the active SIGSEGV handler
-    /// has `SA_ONSTACK` and that the thread (main or worker) registered one.
+    /// Recurses until the calling thread runs out of native stack: a guard-page
+    /// fault that only an `SA_ONSTACK` handler on a `sigaltstack` can report.
     #[bun_jsc::host_fn]
     fn js_stack_overflow(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         crash_handler::suppress_core_dumps_if_necessary();
@@ -141,8 +139,7 @@ pub(crate) mod js_bindings {
             let mut frame = [0u8; 1024];
             frame[depth % frame.len()] = depth as u8;
             core::hint::black_box(&mut frame);
-            // `frame` is read after the call, so this is not a tail call and
-            // every level keeps its own frame alive.
+            // Reading `frame` after the call keeps this from being a tail call.
             recurse(depth + 1) + usize::from(frame[0])
         }
 

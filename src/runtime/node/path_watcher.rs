@@ -583,29 +583,24 @@ pub(crate) fn watch(
 // Platform backends
 // ────────────────────────────────────────────────────────────────────────────────
 
-/// Shared directory walk for Linux and Kqueue: open `abs_dir`, iterate, and for
-/// every entry call `cb` with (abs, rel, is_file), descending into subdirectories
-/// in depth-first pre-order (an entry, then its contents, then its next sibling).
-/// Iterative, with the open directories on a heap-allocated stack: each level holds
-/// an 8 KiB `getdents` buffer, so recursing through a tree a few hundred levels deep
-/// (renamed into a recursive watch, or present at the initial crawl) overflowed the
-/// watcher thread's or the main thread's stack. When `DIRS_ONLY`, non-directory
-/// entries are skipped entirely (inotify delivers file events on the parent dir's
-/// wd so we only need a watch per directory; kqueue needs an fd per file too).
-/// Best-effort — an unreadable subdirectory just ends that branch (matches Node).
+/// Shared directory walk for Linux and Kqueue: call `cb` with (abs, rel, is_file)
+/// for every entry under `abs_dir`, depth-first pre-order. Iterative, with the
+/// open directories on a heap `Vec`: each level holds an 8 KiB `getdents` buffer,
+/// and a tree a few hundred levels deep overflowed the watcher thread's stack.
+/// `DIRS_ONLY` skips non-directories (inotify reports files on the parent's wd;
+/// kqueue needs an fd per file). Best-effort: an unreadable subdirectory just
+/// ends that branch (matches Node).
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 fn walk_subtree<const DIRS_ONLY: bool>(
     abs_dir: &ZStr,
     rel_dir: &[u8],
     cb: &mut impl FnMut(&ZStr, &[u8], bool),
 ) {
-    /// One open directory on the walk's stack: its fd, the iterator over it, and
-    /// the directory's own paths, which the child paths are joined onto.
+    /// One open directory on the walk's stack.
     struct Frame {
         _close: sys::CloseOnDrop,
-        /// Boxed: `IteratorResult.name` is a raw-pointer borrow into the iterator's
-        /// inline buffer, so the iterator must not move while a name is live. The
-        /// box's heap block stays put when `Vec<Frame>` grows.
+        /// Boxed: `IteratorResult.name` points into the iterator's inline buffer,
+        /// which must not move when `Vec<Frame>` grows.
         it: Box<sys::dir_iterator::WrappedIterator>,
         abs: ZBox,
         rel: Box<[u8]>,

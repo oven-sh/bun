@@ -634,8 +634,7 @@ mod draft {
         Trap(usize),
         /// Windows-only
         DatatypeMisalignment,
-        /// Windows: `EXCEPTION_STACK_OVERFLOW`. POSIX: a SIGSEGV/SIGBUS whose
-        /// fault address is next to the stack pointer (the guard page).
+        /// Windows: `EXCEPTION_STACK_OVERFLOW`. POSIX: a guard-page SIGSEGV/SIGBUS.
         StackOverflow,
 
         /// Either `main` returned an error, or somewhere else in the code a trace string is printed.
@@ -649,9 +648,8 @@ mod draft {
         /// been printed. Signal-originated crashes re-raise the original
         /// fault so the parent process (and core-dump analyzers) see the
         /// real cause instead of a misleading SIGILL/SIGTRAP from a trap
-        /// instruction; everything else (panics, OOM) uses SIGABRT. On POSIX a
-        /// `StackOverflow` is a guard-page SIGSEGV that
-        /// `handle_segfault_posix` classified.
+        /// instruction; everything else (panics, OOM) uses SIGABRT. A POSIX
+        /// `StackOverflow` is a classified SIGSEGV.
         #[cfg(unix)]
         fn terminal_signal(&self) -> c_int {
             match self {
@@ -1503,8 +1501,7 @@ mod draft {
         ARCH_DISPLAY_STRING,
     );
 
-    /// Registers of the faulting frame, read from the `ucontext_t` the kernel
-    /// hands the signal handler.
+    /// Registers of the faulting frame, from the signal handler's `ucontext_t`.
     #[cfg(unix)]
     #[derive(Clone, Copy)]
     struct FaultRegisters {
@@ -1515,10 +1512,8 @@ mod draft {
 
     #[cfg(unix)]
     impl FaultRegisters {
-        /// A fault at an address just past the stack pointer is the guard page:
-        /// the thread ran out of stack. Below `sp` covers a `push`/`call` and
-        /// the x86-64 red zone. Above `sp` covers a frame that was allocated in
-        /// one step and then written to, and stack probes.
+        /// A fault next to `sp` is the guard page. Below: `push`/`call` and the
+        /// x86-64 red zone. Above: a frame allocated in one step, stack probes.
         fn is_stack_overflow(self, fault_addr: usize) -> bool {
             const BELOW: usize = 4096;
             const ABOVE: usize = 256 * 1024;
@@ -1527,11 +1522,9 @@ mod draft {
         }
     }
 
-    /// Extract the faulting frame's registers from the `ucontext_t` the
-    /// kernel hands the signal handler. `pc`/`fp` seed the frame-pointer walk
-    /// from the faulting frame. Returns `None` on arch/OS combos we don't have
-    /// register offsets for (the caller then falls back to a current-stack
-    /// capture).
+    /// `pc`/`fp` seed the frame-pointer walk from the faulting frame. `None` on
+    /// arch/OS combos without register offsets (the caller then captures the
+    /// current stack).
     #[cfg(unix)]
     fn fault_context_from_ucontext(ctx: *mut c_void) -> Option<FaultRegisters> {
         debug_assert!(!ctx.is_null());
@@ -1624,15 +1617,10 @@ mod draft {
         );
     }
 
-    /// JSC's `WTF::SignalHandlers::finalize()` (run by the first `VM`
-    /// construction) re-registers SIGSEGV and SIGBUS for the JIT with
-    /// `sa_flags = SA_SIGINFO` only, and chains to the previous handler for
-    /// faults it does not own. Without `SA_ONSTACK` the kernel cannot deliver
-    /// a guard-page fault (a native stack overflow): the faulting thread has
-    /// no stack left for the signal frame, so the default action runs and the
-    /// process dies with no report. Put the flag back on whatever handler is
-    /// installed now. The handler function does not care which stack it runs
-    /// on.
+    /// `WTF::SignalHandlers::finalize()` (first `VM` construction) re-registers
+    /// SIGSEGV/SIGBUS with `SA_SIGINFO` only and chains to the previous handler.
+    /// Without `SA_ONSTACK` a guard-page fault (stack overflow) cannot be
+    /// delivered and the process dies with no report. Put the flag back.
     #[cfg(unix)]
     #[unsafe(no_mangle)]
     extern "C" fn CrashHandler__keepSignalHandlersOnAltStack() {
@@ -1691,8 +1679,7 @@ mod draft {
                     DID_REGISTER_SIGALTSTACK.store(true, Ordering::Relaxed);
                 }
             }
-            // Every re-install (not only the first) must keep the flag, or a
-            // later `reset_on_posix()` silently drops stack overflow reports.
+            // Keep the flag on every re-install, not only the first.
             if DID_REGISTER_SIGALTSTACK.load(Ordering::Relaxed) {
                 act_.sa_flags |= libc::SA_ONSTACK;
             }

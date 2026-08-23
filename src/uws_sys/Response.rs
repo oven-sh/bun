@@ -588,6 +588,26 @@ impl<const SSL: bool> Response<SSL> {
         );
     }
 
+    /// [`upgrade`](Self::upgrade) for a [`WebSocketHandlerRef`](crate::web_socket::WebSocketHandlerRef)
+    /// handler: the socket's user-data slot takes over `data`'s ref, released
+    /// after `on_close`.
+    pub fn upgrade_ref<D: crate::web_socket::WebSocketHandlerRef>(
+        &mut self,
+        data: bun_ptr::RefPtr<D>,
+        sec_web_socket_key: &[u8],
+        sec_web_socket_protocol: &[u8],
+        sec_web_socket_extensions: &[u8],
+        ctx: Option<&mut WebSocketUpgradeContext>,
+    ) -> *mut Socket {
+        self.upgrade(
+            data.into_raw(),
+            sec_web_socket_key,
+            sec_web_socket_protocol,
+            sec_web_socket_extensions,
+            ctx,
+        )
+    }
+
     pub fn upgrade<D>(
         &mut self,
         data: *mut D,

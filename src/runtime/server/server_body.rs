@@ -2115,13 +2115,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         // These get re-applied when we set the static routes again.
-        self.dev_server.with_mut(|dev| {
-            if let Some(dev_server) = dev.as_deref_mut() {
+        if let Some(dev) = self.dev_server.get() {
+            dev.with_mut(|dev_server| {
                 // Prevent a use-after-free in the hash table keys.
                 dev_server.html_router.clear();
                 dev_server.html_router.fallback = None;
-            }
-        });
+            });
+        }
 
         self.config.with_mut(|c| {
             // NOTE: `Vec<StaticRouteEntry>` impls `Drop`, so
@@ -3220,9 +3220,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             httplog!("{} - {}", BStr::new(&m), BStr::new(&u));
         }
 
-        let dev_server_guard = server.dev_server.get();
+        let dev_server_guard = server.dev_server.get().as_ref().map(|d| d.get());
         let authorized = 'brk: {
-            let Some(dev_server) = dev_server_guard.as_deref() else {
+            let Some(dev_server) = dev_server_guard else {
                 break 'brk false;
             };
 
@@ -3248,7 +3248,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             req.set_yield(true);
             return;
         }
-        let root: &[u8] = &dev_server_guard.as_deref().expect("authorized").root;
+        let root: &[u8] = &dev_server_guard.expect("authorized").root;
 
         // They need a 16 byte uuid. It needs to be somewhat consistent. We don't want to store this field anywhere.
 

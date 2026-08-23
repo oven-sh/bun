@@ -2552,7 +2552,7 @@ pub mod parse_worker {
         // TYPE_ONLY mirrors of `bake.Framework`. Project the fields the parser
         // reads into the parser-side mirror and bump-alloc
         // so `opts` can borrow it.
-        opts.framework = topts.framework.map(|f| {
+        opts.framework = topts.framework.as_deref().map(|f| {
             // `Framework` is bump-allocated below, so `Drop` never runs — use arena-owned slices.
             let projected = js_parser::options::Framework {
                 is_built_in_react: f.is_built_in_react,

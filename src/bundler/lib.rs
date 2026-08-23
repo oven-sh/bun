@@ -354,6 +354,16 @@ bun_dispatch::link_interface! {
         fn register_barrel_export(barrel_path: &[u8], alias: &[u8]);
     }
 }
+impl DevServerHandle {
+    /// The handle for a dev server reached through a dispatch-time `ThisPtr`
+    /// (whose invariant — the pointee stays live for every use through it and
+    /// its copies — is exactly `of`'s).
+    #[inline]
+    pub fn from_this<T: DevServerHandleOwner>(this: bun_ptr::ThisPtr<T>) -> Self {
+        // SAFETY: see doc comment.
+        unsafe { Self::of(this.as_ptr()) }
+    }
+}
 // SAFETY: the handle is `{ kind, owner: *mut () }`; the raw pointer is what
 // defeats the auto-impl. `owner` is the single per-process `bake::DevServer`
 // (established at `unsafe fn new()`), which outlives every bundler worker

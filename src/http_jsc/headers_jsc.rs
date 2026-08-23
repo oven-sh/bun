@@ -143,6 +143,34 @@ pub fn to_fetch_headers(
     )
 }
 
+/// [`to_fetch_headers`], owning the result.
+pub fn to_fetch_headers_ref(
+    this: &Headers,
+    global: &JSGlobalObject,
+) -> JsResult<bun_jsc::fetch_headers::HeadersRef> {
+    use bun_http_types::ETag::HeaderEntryColumns;
+    use bun_jsc::JsError;
+    if this.entries.len() == 0 {
+        return Ok(bun_jsc::fetch_headers::HeadersRef::create_empty());
+    }
+    let names: &[StringPointer] = this.entries.items_name();
+    let values: &[StringPointer] = this.entries.items_value();
+    // SAFETY: `names`/`values` point into live slices of `this.entries.len()`
+    // entries; C++ reads exactly `count_` of each and does not retain the pointers.
+    bun_jsc::fetch_headers::HeadersRef::create(
+        global,
+        // C++ side reads only; cast_mut() is safe (no mutation).
+        names.as_ptr().cast_mut(),
+        values.as_ptr().cast_mut(),
+        // `from_bytes` scans for
+        // non-ASCII and tags UTF-8; `init` would leave the buffer Latin-1
+        // and mojibake any UTF-8 header value bytes ≥0x80.
+        &ZigString::from_bytes(this.buf.as_slice()),
+        this.entries.len() as u32,
+    )
+    .ok_or(JsError::Thrown)
+}
+
 struct H2TestingAPIs;
 
 impl H2TestingAPIs {

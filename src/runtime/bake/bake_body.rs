@@ -1165,10 +1165,7 @@ impl Framework {
         // The bundler crate (lower tier) carries a TYPE_ONLY projection
         // (`bake_types::Framework`); construct it here and give it arena
         // lifetime so `BundleOptions<'a>` can borrow it for the bundle pass.
-        // NOTE: interior `Box<[u8]>` in the projection are not dropped by
-        // bumpalo — bounded per-session, revisit when `bake_types::BuiltInModule`
-        // is reshaped to `&'a [u8]`.
-        out.options.framework = Some(&*arena.alloc(self.as_bundler_view()));
+        out.options.framework = Some(std::sync::Arc::new(self.as_bundler_view()));
         out.options.inline_entrypoint_import_meta_main = true;
         if let Some(ignore) = bundler_options.ignore_dce_annotations {
             out.options.ignore_dce_annotations = ignore;

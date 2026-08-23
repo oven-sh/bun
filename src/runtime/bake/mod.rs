@@ -18,7 +18,7 @@ use std::borrow::Cow;
 pub(crate) mod bake_body;
 
 #[path = "DevServer.rs"]
-mod dev_server_body;
+pub mod dev_server_body;
 pub(crate) use dev_server_body::get_deinit_count_for_testing;
 pub(crate) use dev_server_body::is_allowed_dev_host;
 pub(crate) use dev_server_body::is_allowed_host_header;
@@ -178,27 +178,28 @@ impl Framework {
     /// version operates on the keystone `BuildConfigSubset` (which omits
     /// `conditions`/`env`/`define`/`drop` until the schema types are
     /// const-constructible — those paths default).
-    /// Returns the arena slot for the `bake_types::Framework` projection; caller must `drop_in_place` it.
+    /// The transpiler is boxed because its linker holds pointers into it.
     pub(crate) fn init_transpiler<'a>(
         &mut self,
         arena: &'a bun_alloc::Arena,
         log: &mut bun_ast::Log,
         mode: Mode,
         renderer: Graph,
-        out: &mut core::mem::MaybeUninit<bun_bundler::Transpiler<'a>>,
         bundler_options: &BuildConfigSubset,
-    ) -> crate::Result<*mut bun_bundler::bake_types::Framework> {
+    ) -> crate::Result<Box<bun_bundler::Transpiler<'a>>> {
         use bun_options_types::schema as bun_schema;
 
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
         let _ast_scope = ast_memory_allocator.enter();
 
-        let out: &mut bun_bundler::Transpiler = out.write(bun_bundler::Transpiler::init(
+        // Boxed before `configure_linker`, which records pointers into it.
+        let mut transpiler = Box::new(bun_bundler::Transpiler::init(
             arena,
             log,
             bun_schema::api::TransformOptions::default(),
             None,
         )?);
+        let out = &mut *transpiler;
 
         out.options.target = match renderer {
             Graph::Client => bun_ast::Target::Browser,
@@ -249,13 +250,8 @@ impl Framework {
         out.options.minify_whitespace = mode != Mode::Development;
         out.options.css_chunking = true;
         // The bundler crate (lower tier) carries a TYPE_ONLY
-        // projection (`bake_types::Framework`); construct it here and give it
-        // arena lifetime so `BundleOptions<'a>` can borrow it for the bundle pass.
-        let framework_view: *mut bun_bundler::bake_types::Framework =
-            arena.alloc(self.as_bundler_view());
-        // SAFETY: `arena.alloc` returns a non-null, initialized pointer backed by `arena: &'a Arena`,
-        // which outlives `out: &mut Transpiler<'a>`, so borrowing it as `&'a Framework` is sound.
-        out.options.framework = Some(unsafe { &*framework_view });
+        // projection (`bake_types::Framework`).
+        out.options.framework = Some(std::sync::Arc::new(self.as_bundler_view()));
         out.options.inline_entrypoint_import_meta_main = true;
         if let Some(ignore) = bundler_options.ignore_dce_annotations {
             out.options.ignore_dce_annotations = ignore;
@@ -328,7 +324,7 @@ impl Framework {
         // Re-sync after define/naming mutations so the
         // resolver sees the final option set.
         out.sync_resolver_opts();
-        Ok(framework_view)
+        Ok(transpiler)
     }
 
     /// Resolves built-in module

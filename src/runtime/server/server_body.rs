@@ -856,7 +856,7 @@ impl AnyRoute {
 
 pub struct ServerInitContext<'a> {
     pub(crate) dedupe_html_bundle_map:
-        HashMap<*const HTMLBundle, bun_ptr::BackRef<html_bundle::Route, bun_ptr::Mut>>,
+        HashMap<*const HTMLBundle, bun_ptr::BackRef<html_bundle::Route, bun_ptr::Root>>,
     pub(crate) js_string_allocations: bake::StringRefList,
     pub global: &'a JSGlobalObject,
     pub(crate) framework_router_list: Vec<bake::FileSystemRouterType>,

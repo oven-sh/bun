@@ -863,7 +863,7 @@ impl JSGlobalObject {
     pub fn queue_microtask_boxed<T: MicrotaskCallback>(
         &self,
         task: Box<T>,
-    ) -> bun_ptr::BackRef<T, bun_ptr::Mut> {
+    ) -> bun_ptr::BackRef<T, bun_ptr::Root> {
         unsafe extern "C" fn run<T: MicrotaskCallback>(ctx: *mut c_void) {
             // SAFETY: `ctx` is the `Box<T>` leaked below; the microtask queue
             // invokes each callback exactly once.
@@ -873,7 +873,7 @@ impl JSGlobalObject {
         self.queue_microtask_callback(task, run::<T>);
         // SAFETY: `task` is the live leaked box; see the doc comment for the
         // holder's obligation.
-        unsafe { bun_ptr::BackRef::from_raw_mut(task) }
+        unsafe { bun_ptr::BackRef::from_root(task) }
     }
 
     pub fn queue_microtask(&self, function: JSValue, args: &[JSValue]) {
@@ -1456,18 +1456,17 @@ unsafe extern "C" fn Zig__GlobalObject__resolve(
     let (global, specifier, source) = unsafe { (&*global, *specifier, *source) };
     // SAFETY: C++ passes valid non-null pointers.
     let (res, query) = unsafe { (&mut *res, &mut *query) };
-    match VirtualMachine::resolve(
+    if VirtualMachine::resolve(
         res,
         global,
         specifier,
         source,
         Some(query),
         crate::virtual_machine::ResolveMode::Esm,
-    ) {
-        Ok(()) => {}
-        Err(_) => {
-            debug_assert!(!res.success);
-        }
+    )
+    .is_err()
+    {
+        debug_assert!(global.has_exception());
     }
 }
 

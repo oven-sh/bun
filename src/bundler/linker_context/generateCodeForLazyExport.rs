@@ -373,9 +373,8 @@ pub(crate) fn generate_code_for_lazy_export(
         loc: stmt.loc,
     };
 
-    // `require(<asset path>)` from the napi loader and the `--compile` text
-    // loader prints as the runtime's `__require` outside CommonJS output, so
-    // the part that holds the call has to import that symbol.
+    // `require(<asset>)` prints as the runtime's `__require` outside CommonJS
+    // output, so the part that holds the call must import it.
     let calls_runtime_require = matches!(expr.data, ExprData::ECall(ref c)
         if matches!(c.target.data, ExprData::ERequireCallTarget))
         && this.options.output_format != crate::options::OutputFormat::Cjs;

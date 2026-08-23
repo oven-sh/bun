@@ -568,8 +568,7 @@ JSValue fetchBuiltinModuleWithoutResolution(
             RELEASE_AND_RETURN(scope, jsNumber(-1));
         }
 
-        // A text file embedded by `bun build --compile`: the value is the
-        // string itself, which becomes `module.exports` directly.
+        // A text file embedded by `bun build --compile`: the string is `module.exports`.
         case SyntheticModuleType::ExportDefaultObject: {
             return JSC::JSValue::decode(res->result.value.jsvalue_for_export);
         }
@@ -1071,8 +1070,7 @@ static JSValue fetchESMSourceCode(
             BUN_FOREACH_LAZY_ESM_NATIVE_MODULE(LAZY_CASE)
 #undef LAZY_CASE
 
-        // A text file embedded by `bun build --compile`: a module whose
-        // default export is the already-decoded string.
+        // A text file embedded by `bun build --compile`: the string is the default export.
         case SyntheticModuleType::ExportDefaultObject: {
             JSC::JSValue value = JSC::JSValue::decode(res->result.value.jsvalue_for_export);
             if (!value) {

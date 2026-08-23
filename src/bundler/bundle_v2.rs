@@ -4194,11 +4194,8 @@ pub mod bv2_impl {
                         let loader = loaders[index];
                         let target = targets[index];
                         let mut template: options::PathTemplate = if loader == Loader::Text {
-                            // A text module embedded by `--compile` (ParseTask's
-                            // `Loader::Text` arm) is only ever addressed through
-                            // the bunfs path the bundler prints into the chunk, so
-                            // `--asset-naming` does not apply: without `[hash]`
-                            // two same-named files would silently share one path.
+                            // Text modules ignore `--asset-naming`: without `[hash]`
+                            // two same-named files would share one path.
                             options::PathTemplate::ASSET.into()
                         } else {
                             let mut template: options::PathTemplate =
@@ -7109,11 +7106,8 @@ pub mod bv2_impl {
                     if !result.unique_key_for_additional_file.is_empty()
                         && result.loader == Loader::Text
                     {
-                        // A text module embedded as an asset by `--compile`. The
-                        // importer-side count in `process_resolve_queue` only
-                        // covers `should_copy_for_bundling()` loaders, and
-                        // `process_files_to_copy` skips the whole pass when the
-                        // count is zero.
+                        // `process_resolve_queue` only counts `should_copy_for_bundling()`
+                        // loaders, and a zero count skips `process_files_to_copy`.
                         this.graph.estimated_file_loader_count += 1;
                     }
                     if !result.unique_key_for_additional_file.is_empty()

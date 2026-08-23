@@ -653,9 +653,7 @@ pub mod parse_worker {
         pub(crate) content_hash: u64,
     }
 
-    /// Registers `source` as an embedded asset: the returned unique key is
-    /// replaced with the asset's final path when the chunk is printed, and
-    /// `process_files_to_copy` emits the bytes as an `OutputKind::Asset`.
+    /// Returns the unique key the printer replaces with the asset's final path.
     fn register_embedded_asset<'b>(
         bump: &'b Bump,
         source: &Source,
@@ -682,10 +680,8 @@ pub mod parse_worker {
         unique_key
     }
 
-    /// `require("<unique key>")`. The printer turns the call target into the
-    /// CommonJS `require` or the runtime's `__require` to match the output
-    /// format (`generateCodeForLazyExport` imports the latter), so the chunk
-    /// stays free of `import.meta` and `--bytecode` can compile it.
+    /// `require("<unique key>")`. Unlike `import.meta.require`, the call target
+    /// prints per output format, so `--bytecode` (CommonJS) can compile it.
     fn require_embedded_asset(unique_key: &[u8]) -> Expr {
         let import_path = Expr::init(
             E::String {
@@ -940,14 +936,10 @@ pub mod parse_worker {
                 return result;
             }
             Loader::Text => {
-                // In a standalone executable the text is embedded as an asset
-                // and the module becomes `export default require("<bunfs path>")`.
-                // The runtime answers with a string that aliases the section
-                // bytes (`StandaloneModuleGraph::encode_text_module`). A string
-                // literal would ship the text twice (module source + bytecode
-                // constant) and parse it on load. Browser chunks of a
-                // full-stack build cannot reach the embedded graph and keep
-                // the literal.
+                // A standalone executable embeds the text as a string body the
+                // runtime aliases without a copy (`encode_text_module`), so the
+                // module becomes `export default require("<bunfs path>")`.
+                // Browser chunks cannot reach the embedded graph.
                 let root = if topts.compile_mode.is_executable() && topts.target.is_bun() {
                     require_embedded_asset(register_embedded_asset(
                         bump,
@@ -2699,8 +2691,7 @@ pub mod parse_worker {
             loader,
             package_name: task.package_name,
 
-            // Hash the files in here so that we do it in parallel. Zero unless
-            // the loader registered an asset (`FileLoaderHash` default).
+            // Hash the files in here so that we do it in parallel.
             content_hash_for_additional_file: unique_key_for_additional_file.content_hash,
         })
     }

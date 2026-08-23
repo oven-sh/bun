@@ -4009,16 +4009,12 @@ export default db;
             }
 
             if file.is_text_module() {
-                // A text import embedded by `--compile`. The bytes are already
-                // a Latin-1/UTF-16 string body (`encode_text_module`), so the
-                // default export is a JSString over the section: no parse, no
-                // bytecode, no copy.
+                // The bytes are already a string body (`encode_text_module`):
+                // the default export is a JSString over the section, no copy.
                 // SAFETY: per fn contract — `global` is the live global object.
                 let global = unsafe { &*global };
                 let string = file.to_wtf_string();
-                // `jsString(vm, String(impl))` over the cached static impl;
-                // only a `Dead` string throws and `to_wtf_string` never
-                // produces one.
+                // Only a `Dead` string throws; `to_wtf_string` never yields one.
                 let value = bun_jsc::bun_string_jsc::to_js(&string, global)
                     .expect("embedded text module string is never dead");
                 string.deref();

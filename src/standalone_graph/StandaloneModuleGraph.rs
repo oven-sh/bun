@@ -349,12 +349,9 @@ pub enum Encoding {
     Binary = 0,
     #[default]
     Latin1 = 1,
-    /// Little-endian UTF-16 code units (the native order of every compile
-    /// target), 2-byte aligned in the section. Only produced for
-    /// `Loader::Text` modules whose text does not fit in Latin-1. Takes the
-    /// value of the never-written `Utf8` variant, so a runtime from before
-    /// this variant reads it through its plain-copy arm instead of an invalid
-    /// discriminant.
+    /// Little-endian UTF-16 code units at an even section offset. Reuses the
+    /// value of the never-written `Utf8` variant so an older runtime reads it
+    /// through its plain-copy arm, not as an invalid discriminant.
     Utf16 = 2,
 }
 
@@ -488,15 +485,13 @@ pub struct File {
 }
 
 impl File {
-    /// A `Loader::Text` import that `--compile` embedded as a module (see
-    /// `encode_text_module`). Its bytes are a string body, not the file.
+    /// A text import stored as a string body by `encode_text_module`.
     pub fn is_text_module(&self) -> bool {
         self.loader == Loader::Text
     }
 
     pub fn appears_in_embedded_files_array(&self) -> bool {
-        // Text modules are imports, not assets, and their bytes are not the
-        // file's UTF-8: a `Blob` over them would decode wrong.
+        // A text module's bytes are not the file's UTF-8.
         !self.is_text_module()
             && (self.side == FileSide::Client || !self.loader.is_javascript_like())
     }
@@ -530,9 +525,8 @@ impl File {
                 }
                 Encoding::Utf16 => {
                     let bytes = self.contents.as_bytes();
-                    // `to_bytes` pads to an even section offset; the section
-                    // base is page-aligned on every platform (the bytecode
-                    // cache relies on the same property at 128 bytes).
+                    // `to_bytes` pads to an even offset and the section base is
+                    // page-aligned (the 128-byte bytecode alignment relies on it).
                     debug_assert!(bytes.as_ptr().addr() % align_of::<u16>() == 0);
                     // SAFETY: even byte count at a 2-byte-aligned offset of a
                     // section that is never freed.
@@ -849,20 +843,14 @@ unsafe fn slice_to_z(base: *const u8, len: usize, ptr: StringPointer) -> &'stati
     unsafe { ZStr::from_raw(base.add(off), n) }
 }
 
-/// A `Loader::Text` import that the bundler emitted as an embedded asset (the
-/// `Loader::Text` arm of `ParseTask` under `CompileMode::Executable`). The
-/// chunk that imports it does `require("<bunfs path>")`, and the runtime
-/// answers with a string that aliases the section bytes, so the bytes are
-/// stored already in WTF string form rather than as UTF-8.
+/// A text import the bundler emitted as an asset (`Loader::Text` arm of
+/// `ParseTask` in compile mode). The runtime aliases its bytes as a string.
 fn is_text_module_output(output_file: &OutputFile) -> bool {
     output_file.loader == Loader::Text && output_file.output_kind == options::OutputKind::Asset
 }
 
-/// Write `utf8` as the in-memory representation of a `WTF::StringImpl`: Latin-1
-/// when every code point fits in a byte (the all-ASCII case needs no
-/// transcoding at all), else UTF-16 at an even offset so the runtime can point
-/// a `char16_t*` at it. Returns the contents pointer and the encoding to record
-/// on the module.
+/// Writes `utf8` as a `WTF::StringImpl` body: Latin-1 when every code point
+/// fits, else UTF-16 at an even offset so the runtime can alias a `char16_t*`.
 fn encode_text_module(
     string_builder: &mut bun_core::StringBuilder,
     utf8: &[u8],
@@ -900,8 +888,7 @@ fn encode_text_module(
     let start = string_builder.len;
     let byte_len = units.len() * 2;
     let dst = string_builder.writable();
-    // Every `--compile` target is little-endian, so this is the byte order the
-    // runtime's `char16_t*` view expects whatever the build host is.
+    // Every `--compile` target is little-endian, whatever the build host is.
     for (dst, unit) in dst.chunks_exact_mut(2).zip(units.iter()) {
         dst.copy_from_slice(&unit.to_le_bytes());
     }
@@ -955,8 +942,7 @@ pub(crate) fn to_bytes(
 
                 string_builder.count_z(bytes);
                 if is_text_module_output(output_file) {
-                    // Worst case for `encode_text_module`: every byte widens to
-                    // a UTF-16 unit, plus alignment padding and a 2-byte NUL.
+                    // UTF-16 worst case: 2 bytes per byte, padding, 2-byte NUL.
                     string_builder.cap += bytes.len() + 3;
                 }
                 module_count += 1;
@@ -978,8 +964,7 @@ pub(crate) fn to_bytes(
 
     let mut modules: Vec<CompiledModuleGraphFile> = Vec::with_capacity(module_count);
     let mut entry_point_id: Option<usize> = None;
-    // `Graph::from_bytes` keys files by path, so a repeated path would shift
-    // `entry_point_id` and every later index by one.
+    // `Graph::from_bytes` keys files by path; a repeat would shift `entry_point_id`.
     let mut seen_paths: StringArrayHashMap<()> = StringArrayHashMap::new();
 
     let mut source_map_header_list: Vec<u8> = Vec::new();
@@ -1006,8 +991,7 @@ pub(crate) fn to_bytes(
         let dest_path: &[u8] =
             path::resolve_path::platform_to_posix_buf::<u8>(dest_path, &mut dest_path_buf);
 
-        // Two assets can print to one path: same `[name]` and `[hash]` means the
-        // same bytes, so the first copy serves both importers.
+        // Same `[name]` and `[hash]` means the same bytes: keep the first copy.
         if seen_paths.get_or_put(dest_path)?.found_existing {
             continue;
         }

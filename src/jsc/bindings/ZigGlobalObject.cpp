@@ -228,6 +228,7 @@
 #endif
 
 #include <wtf/NumberOfCores.h>
+#include <wtf/Scope.h>
 
 using namespace Bun;
 
@@ -3359,13 +3360,21 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     JSValue referrer, RefPtr<JSC::ScriptFetcher>, bool)
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     ErrorableString res;
     res.success = false;
 
-    BunString keyZ;
+    BunString keyZ = BunStringEmpty;
+    BunString referrerZ = BunStringEmpty;
+    auto derefStrings = WTF::makeScopeExit([&] {
+        keyZ.deref();
+        referrerZ.deref();
+    });
     if (key.isString()) {
         auto moduleName = uncheckedDowncast<JSString>(key)->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
         if (moduleName->startsWith("file://"_s)) {
             auto url = WTF::URL(moduleName);
             if (url.isValid() && !url.isEmpty()) {
@@ -3379,12 +3388,16 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
 
     } else {
         keyZ = Bun::toStringRef(globalObject, key);
+        RETURN_IF_EXCEPTION(scope, {});
     }
-    BunString referrerZ = referrer && !referrer.isUndefinedOrNull() && referrer.isString() ? Bun::toStringRef(globalObject, referrer) : BunStringEmpty;
+    if (referrer && referrer.isString()) {
+        referrerZ = Bun::toStringRef(globalObject, referrer);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
 
     if (globalObject->onLoadPlugins.hasVirtualModules()) {
         if (auto resolvedString = globalObject->onLoadPlugins.resolveVirtualModule(keyZ.toWTFString(), referrerZ.toWTFString())) {
-            return Identifier::fromString(globalObject->vm(), resolvedString.value());
+            return Identifier::fromString(vm, resolvedString.value());
         }
     } else {
         ASSERT(!globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup);
@@ -3408,35 +3421,31 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
             auto ns = keyStr.left(colon);
             for (const auto& registered : globalObject->onLoadPlugins.namespaces) {
                 if (registered == ns) {
-                    keyZ.deref();
-                    referrerZ.deref();
-                    return Identifier::fromString(globalObject->vm(), keyStr);
+                    return Identifier::fromString(vm, keyStr);
                 }
             }
         }
     }
 
-    BunString queryString = { BunStringTag::Empty, nullptr };
+    BunString queryString = BunStringEmpty;
     Zig__GlobalObject__resolve(&res, globalObject, &keyZ, &referrerZ, &queryString);
-    keyZ.deref();
-    referrerZ.deref();
+    RETURN_IF_EXCEPTION(scope, {});
 
-    if (res.success) {
-        if (!queryString.isEmpty()) {
-            auto result = JSC::Identifier::fromString(globalObject->vm(), makeString(res.result.value.toWTFString(BunString::ZeroCopy), queryString.toWTFString(BunString::ZeroCopy)));
-            res.result.value.deref();
-            queryString.deref();
-            return result;
-        }
-
-        auto result = Identifier::fromString(globalObject->vm(), res.result.value.toWTFString(BunString::ZeroCopy));
-        res.result.value.deref();
-        return result;
-    } else {
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (!res.success) {
         throwException(scope, res.result.err, globalObject);
-        return globalObject->vm().propertyNames->emptyIdentifier;
+        return {};
     }
+
+    if (!queryString.isEmpty()) {
+        auto result = JSC::Identifier::fromString(vm, makeString(res.result.value.toWTFString(BunString::ZeroCopy), queryString.toWTFString(BunString::ZeroCopy)));
+        res.result.value.deref();
+        queryString.deref();
+        return result;
+    }
+
+    auto result = Identifier::fromString(vm, res.result.value.toWTFString(BunString::ZeroCopy));
+    res.result.value.deref();
+    return result;
 }
 
 JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalObject,
@@ -3501,7 +3510,12 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         ErrorableString resolved;
         memset(&resolved, 0, sizeof(resolved));
 
-        BunString moduleNameZ;
+        BunString moduleNameZ = BunStringEmpty;
+        BunString sourceOriginZ = BunStringEmpty;
+        auto derefStrings = WTF::makeScopeExit([&] {
+            moduleNameZ.deref();
+            sourceOriginZ.deref();
+        });
         String moduleStringHolder;
         if (moduleName.startsWith("file://"_s)) {
             auto url = WTF::URL(moduleName);
@@ -3515,21 +3529,13 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
             moduleNameZ = Bun::toStringRef(moduleName);
         }
 
-        BunString queryString = { BunStringTag::Empty, nullptr };
-        auto sourceOriginZ = Bun::toStringRef(sourceOriginStringHolder);
+        BunString queryString = BunStringEmpty;
+        sourceOriginZ = Bun::toStringRef(sourceOriginStringHolder);
 
         Zig__GlobalObject__resolve(&resolved, globalObject, &moduleNameZ, &sourceOriginZ, &queryString);
-
-        // If resolution failed, make sure it becomes a pending exception
-        if (!resolved.success && !scope.exception()) [[unlikely]] {
+        RETURN_IF_EXCEPTION(scope, JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope));
+        if (!resolved.success) [[unlikely]] {
             throwException(scope, resolved.result.err, globalObject);
-        }
-
-        // And convert that pending exception into a rejected promise.
-        if (scope.exception()) [[unlikely]] {
-            moduleNameZ.deref();
-            sourceOriginZ.deref();
-
             return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
         }
 
@@ -3541,8 +3547,6 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         }
 
         resolved.result.value.deref();
-        moduleNameZ.deref();
-        sourceOriginZ.deref();
     }
 
     // The C++ module loader now extracts `with.type` into a

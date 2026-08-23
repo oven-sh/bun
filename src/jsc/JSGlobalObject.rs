@@ -1456,7 +1456,7 @@ unsafe extern "C" fn Zig__GlobalObject__resolve(
     let (global, specifier, source) = unsafe { (&*global, *specifier, *source) };
     // SAFETY: C++ passes valid non-null pointers.
     let (res, query) = unsafe { (&mut *res, &mut *query) };
-    match VirtualMachine::resolve(
+    if let Err(_) = VirtualMachine::resolve(
         res,
         global,
         specifier,
@@ -1464,10 +1464,7 @@ unsafe extern "C" fn Zig__GlobalObject__resolve(
         Some(query),
         crate::virtual_machine::ResolveMode::Esm,
     ) {
-        Ok(()) => {}
-        Err(_) => {
-            debug_assert!(!res.success);
-        }
+        debug_assert!(global.has_exception());
     }
 }
 

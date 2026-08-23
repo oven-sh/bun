@@ -648,7 +648,7 @@ impl ServerWebSocket {
             data,
         ];
         if let Err(e) = cb.call(global_this, JSValue::UNDEFINED, &args) {
-            let err = global_this.take_exception(e);
+            let err = global_this.take_error(e);
             bun_output::scoped_log!(WebSocketServer, "onPing error");
             handler.run_error_callback(on_error, global_this, err)?;
         }
@@ -680,7 +680,7 @@ impl ServerWebSocket {
             data,
         ];
         if let Err(e) = cb.call(global_this, JSValue::UNDEFINED, &args) {
-            let err = global_this.take_exception(e);
+            let err = global_this.take_error(e);
             bun_output::scoped_log!(WebSocketServer, "onPong error");
             handler.run_error_callback(on_error, global_this, err)?;
         }
@@ -771,7 +771,7 @@ impl ServerWebSocket {
             let message_js = match jsc::bun_string_jsc::create_utf8_for_js(global_object, message) {
                 Ok(v) => v,
                 Err(e) => {
-                    let err = global_object.take_exception(e);
+                    let err = global_object.take_error(e);
                     bun_output::scoped_log!(
                         WebSocketServer,
                         "onClose error (message) {}",
@@ -783,7 +783,7 @@ impl ServerWebSocket {
 
             let call_args = [cached_this, JSValue::js_number(code as f64), message_js];
             if let Err(e) = on_close_handler.call(global_object, JSValue::UNDEFINED, &call_args) {
-                let err = global_object.take_exception(e);
+                let err = global_object.take_error(e);
                 bun_output::scoped_log!(WebSocketServer, "onClose error {}", was_not_empty);
                 return handler.run_error_callback(on_error, global_object, err);
             }

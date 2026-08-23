@@ -1119,6 +1119,72 @@ describe.concurrent("bun run", () => {
     },
   );
 
+  // bun.exe runs the .bunx launcher in-process first. When the metadata fails
+  // validation, the launcher has to hand control back so `bun run` spawns the
+  // `<bin>.exe` shim, which reports the corruption itself. A bun.exe built with
+  // assertions panics if the in-process launcher prints that error instead.
+  it.if(isWindows)("falls back to the shim executable when the .bunx metadata fails validation", async () => {
+    using dir = tempDir("bun-run-bunx-fallback", {
+      "package.json": JSON.stringify({
+        name: "consumer",
+        version: "0.0.0",
+        dependencies: { "print-marker": "file:./print-marker" },
+      }),
+      "print-marker": {
+        "package.json": JSON.stringify({
+          name: "print-marker",
+          version: "0.0.0",
+          bin: { "print-marker": "./bin.js" },
+        }),
+        "bin.js": `#!/usr/bin/env node\nprocess.stdout.write("marker");\n`,
+      },
+    });
+
+    {
+      await using install = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        install.stdout.text(),
+        install.stderr.text(),
+        install.exited,
+      ]);
+      expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    }
+
+    const run = async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "print-marker"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+
+    expect(await run()).toEqual({ stdout: "marker", stderr: "", exitCode: 0 });
+
+    // The last u16 of a .bunx file is the flags word; its top 13 bits are the
+    // format version the launcher validates.
+    const bunxPath = join(String(dir), "node_modules", ".bin", "print-marker.bunx");
+    const bytes = new Uint8Array(await Bun.file(bunxPath).arrayBuffer());
+    bytes[bytes.byteLength - 1] ^= 0x80;
+    await Bun.write(bunxPath, bytes);
+
+    const corrupt = await run();
+    expect({
+      stdout: corrupt.stdout,
+      message: corrupt.stderr.includes("error: bin metadata is corrupt (validate)"),
+      exitCode: corrupt.exitCode,
+    }).toEqual({ stdout: "", message: true, exitCode: 255 });
+  });
+
   // https://github.com/oven-sh/bun/issues/30711 — nested `--bun` used to rewrite
   // the BUN_NODE_DIR/{bun,node} shim to point at ITSELF. After the OUTER `--bun`
   // prepends BUN_NODE_DIR to PATH, the INNER bun's argv[0] (PATH-resolved) is

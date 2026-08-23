@@ -6,6 +6,14 @@ use core::ptr::NonNull;
 
 use crate::{JsResult, Task};
 
+/// The context of a [`ManagedTask::new_boxed`] task.
+pub trait RunOnce: Sized {
+    fn run(self) -> JsResult<()>;
+    /// The task was released unrun (its VM is tearing down: script is
+    /// forbidden, the JSC heap is still alive). Default: just drop.
+    fn cancelled(self) {}
+}
+
 pub struct ManagedTask {
     // Opaque userdata pointer round-tripped through `new`/`run`; raw by design.
     pub ctx: Option<NonNull<c_void>>,
@@ -59,6 +67,26 @@ impl ManagedTask {
             },
             ctx: NonNull::new(ctx.cast::<c_void>()),
             cleanup: None,
+        }));
+        ManagedTask::task(managed)
+    }
+
+    /// A task that owns `ctx` and [`run`](RunOnce::run)s it (or drops it if
+    /// the queue is released unrun).
+    pub fn new_boxed<T: RunOnce>(ctx: Box<T>) -> Task {
+        fn run<T: RunOnce>(p: *mut c_void) -> JsResult<()> {
+            // SAFETY: `p` is the `Box<T>` `new_boxed` leaked into `ctx`; `run`
+            // passes it back exactly once.
+            T::run(*unsafe { Box::from_raw(p.cast::<T>()) })
+        }
+        fn drop_ctx<T: RunOnce>(p: *mut c_void) {
+            // SAFETY: `p` is the `Box<T>` `new_boxed` leaked into `ctx`.
+            T::cancelled(*unsafe { Box::from_raw(p.cast::<T>()) });
+        }
+        let managed = bun_core::heap::into_raw(Box::new(ManagedTask {
+            callback: run::<T>,
+            ctx: NonNull::new(Box::into_raw(ctx).cast::<c_void>()),
+            cleanup: Some(drop_ctx::<T>),
         }));
         ManagedTask::task(managed)
     }

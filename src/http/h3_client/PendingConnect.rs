@@ -156,6 +156,40 @@ impl PendingConnect {
     }
 }
 
+/// A [`PendingConnect`] parked on the DNS cache until its lookup resolves;
+/// consumed by exactly one of [`notify`](Self::notify) /
+/// [`notify_threadsafe`](Self::notify_threadsafe). Dropping it unconsumed
+/// leaks (it is never freed off the HTTP thread).
+pub struct DnsPendingConnect(NonNull<PendingConnect>);
+
+// SAFETY: `notify_threadsafe` is the documented cross-thread entry (it only
+// queues the pointer under `RESOLVED`'s lock and wakes the HTTP thread);
+// `notify` is HTTP-thread-only, like every other `PendingConnect` method.
+unsafe impl Send for DnsPendingConnect {}
+
+impl DnsPendingConnect {
+    #[inline]
+    pub fn new(pc: Box<PendingConnect>) -> Self {
+        Self(NonNull::from(Box::leak(pc)))
+    }
+
+    /// The lookup resolved. HTTP thread only (the registrant's thread), like
+    /// every other `PendingConnect` method; use
+    /// [`notify_threadsafe`](Self::notify_threadsafe) anywhere else.
+    #[inline]
+    pub fn notify(self) {
+        // SAFETY: the box `new` leaked, consumed once here.
+        unsafe { PendingConnect::on_dns_resolved(self.0.as_ptr()) }
+    }
+
+    /// The lookup resolved (any thread).
+    #[inline]
+    pub fn notify_threadsafe(self) {
+        // SAFETY: the box `new` leaked, consumed once here.
+        unsafe { PendingConnect::on_dns_resolved_threadsafe(self.0.as_ptr()) }
+    }
+}
+
 /// Heap-allocated `PendingConnect` handed from DNS worker → HTTP thread.
 /// `*mut T` is `!Send` by default; this wrapper asserts the actual contract:
 /// the pointee is touched by exactly one thread at a time (producer pushes,

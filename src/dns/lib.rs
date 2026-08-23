@@ -498,21 +498,21 @@ pub mod internal {
         fn Bun__addrinfo_registerQuic(request: *mut c_void, pc: *mut c_void);
     }
 
-    unsafe extern "Rust" {
+    unsafe extern "C" {
         /// `bun.dns.internal.prefetch` — kick off an async DNS resolution for
         /// `(hostname, port)` so the result is cached by the time the connect
         /// path needs it. The resolver/event-loop machinery lives in
         /// `bun_runtime::dns_jsc::internal::prefetch`; lower-tier crates
         /// (`bun_install`) reach it via this link-time extern to avoid a crate
-        /// cycle. Defined `#[no_mangle]` in `bun_runtime::dns_jsc`.
+        /// cycle. Defined (as a `HOST_EXPORT`) in `bun_runtime::dns_jsc`.
         fn __bun_dns_prefetch(loop_: *mut c_void, hostname: *const u8, len: usize, port: u16);
     }
 
     #[inline]
     pub fn prefetch<L>(loop_: *mut L, hostname: &[u8], port: u16) {
-        // SAFETY: link-time extern; `hostname` is NUL-terminated and live for
-        // the call. Prefetch is a perf hint — the body short-circuits if no
-        // resolver is available.
+        // SAFETY: link-time extern; `loop_` is this thread's live uws loop and
+        // `hostname` is live for the call. Prefetch is a perf hint — the body
+        // short-circuits if no resolver is available.
         unsafe {
             __bun_dns_prefetch(
                 loop_.cast::<c_void>(),

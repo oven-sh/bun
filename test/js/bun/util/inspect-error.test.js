@@ -255,8 +255,9 @@ describe.concurrent("DOMException formats as an error", () => {
     const inspected = Bun.inspect(err);
     expect(inspected).toContain("[Circular]");
     expect(inspected).not.toContain("INDEX_SIZE_ERR");
-    // The header must not repeat once per recursion level.
-    expect(inspected.split("AbortError: x").length - 1).toBeLessThanOrEqual(3);
+    // Once for the error, once for the appended self reference. Not once
+    // per recursion level.
+    expect(inspected.split("AbortError: x").length - 1).toBe(2);
   });
 });
 

@@ -206,6 +206,314 @@ devTest("export { default as y }", {
     await dev.fetch("/").equals("Value: 2");
   },
 });
+// A module that takes part in an import cycle is evaluated while its partner is
+// still on the stack. Its partner's exported function declarations are already
+// initialized, the same as with `bun run` and with `bun build`.
+devTest("import cycle: a top level read of the cyclic import", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    // `index.ts` enters the cycle through `load-client.ts`, so `router.ts` is
+    // the module that evaluates inside the cycle.
+    "index.ts": `
+      import { replaceRouteChunk } from './load-client';
+      import { RouterCore } from './router';
+      if (typeof RouterCore.prototype.replaceRouteChunk !== 'function')
+        throw new Error('the cyclic import was not linked: ' + typeof RouterCore.prototype.replaceRouteChunk);
+      if (replaceRouteChunk() !== 'chunk:info') throw new Error('wrong value: ' + replaceRouteChunk());
+      console.log('PASS');
+    `,
+    "load-client.ts": `
+      import { getInfo } from './router';
+      export function replaceRouteChunk() { return 'chunk:' + getInfo(); }
+    `,
+    "router.ts": `
+      import { replaceRouteChunk } from './load-client';
+      export function getInfo() { return 'info'; }
+      export class RouterCore {}
+      RouterCore.prototype.replaceRouteChunk = replaceRouteChunk;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("PASS");
+  },
+});
+// The same cycle, read after both modules evaluate. `patchImporters` repairs
+// this one, and it must keep working with the two phase link.
+devTest("import cycle: a deferred read of the cyclic import", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import './load-client';
+      import { RouterCore } from './router';
+      if (new RouterCore().replaceRouteChunk() !== 'chunk:info') throw new Error('wrong value');
+      console.log('PASS');
+    `,
+    "load-client.ts": `
+      import { getInfo } from './router';
+      export function replaceRouteChunk() { return 'chunk:' + getInfo(); }
+    `,
+    "router.ts": `
+      import { replaceRouteChunk } from './load-client';
+      export function getInfo() { return 'info'; }
+      export class RouterCore {
+        replaceRouteChunk() { return replaceRouteChunk(); }
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("PASS");
+  },
+});
+// Each export form of the module inside the cycle is read by its partner
+// while the module is still on the stack: a class, a reassigned `let`, an
+// `export * as` namespace, a default export of an object, an alias, and a
+// constant that the lowering moves into the namespace object.
+devTest("import cycle: each export form of the module inside the cycle", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    // `index.ts` enters the cycle through `reader.ts`, so `shapes.ts`
+    // evaluates inside the cycle and calls `read` while `reader.ts` is still
+    // on the stack.
+    "index.ts": `
+      import { read } from './reader';
+      import { reading } from './shapes';
+      if (reading !== 'function,2,leaf,made,renamed,moved') throw new Error('wrong value: ' + reading);
+      if (read() !== reading) throw new Error('the later read differs: ' + read());
+      console.log('PASS');
+    `,
+    "reader.ts": `
+      import made, { Shape, counter, ns, renamed, movable } from './shapes';
+      export function read() {
+        return [typeof Shape, counter, ns.leaf, made.kind, renamed, movable].join(',');
+      }
+    `,
+    "shapes.ts": `
+      import { read } from './reader';
+      export class Shape {}
+      export let counter = 1;
+      counter = 2;
+      export * as ns from './leaf';
+      export default { kind: 'made' };
+      const local = 'renamed';
+      export { local as renamed };
+      export const movable = 'moved';
+      export const reading = read();
+    `,
+    "leaf.ts": `
+      export const leaf = 'leaf';
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("PASS");
+  },
+});
+// A read of a binding that the module inside the cycle has not declared yet
+// is a temporal dead zone error, the same as with `bun run`: not `undefined`,
+// and not a `TypeError` on a missing namespace.
+devTest("import cycle: a read of a binding before its declaration throws", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    // `index.ts` enters the cycle through `shapes.ts`, so `reader.ts`
+    // evaluates before `shapes.ts` declares `Shape`.
+    "index.ts": `
+      import { Shape } from './shapes';
+      import { seen } from './reader';
+      if (seen !== 'ReferenceError') throw new Error('expected the temporal dead zone, got: ' + seen);
+      if (typeof Shape !== 'function') throw new Error('the class is not exported');
+      console.log('PASS');
+    `,
+    "reader.ts": `
+      import { Shape } from './shapes';
+      let seen;
+      try { seen = typeof Shape; } catch (error) { seen = error.constructor.name; }
+      export { seen };
+    `,
+    "shapes.ts": `
+      import './reader';
+      export class Shape {}
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("PASS");
+  },
+});
+// A module with top level await keeps the single phase form: its namespace
+// object exists only after its body. Its partner reads it after both evaluate.
+devTest("import cycle through a module with top level await: a deferred read", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { describe } from './partner';
+      import { waited, partnerName } from './waiter';
+      if (describe() !== 'waited:partner') throw new Error('wrong value: ' + describe());
+      if (partnerName() !== 'partner') throw new Error('wrong value: ' + partnerName());
+      console.log('PASS');
+    `,
+    "partner.ts": `
+      import { waited } from './waiter';
+      export const name = 'partner';
+      export function describe() { return waited + ':' + name; }
+    `,
+    "waiter.ts": `
+      import { name } from './partner';
+      export const waited = await Promise.resolve('waited');
+      export function partnerName() { return name; }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("PASS");
+  },
+});
+// A module with top level await keeps the single phase form, so its namespace
+// object stays empty until its body ends. A top level read of it from inside
+// the cycle answers `undefined`. `bun run` throws
+// `ReferenceError: Cannot access 'value' before initialization` for the same
+// files, and the dev server of 1.4.0 throws `TypeError: null is not an
+// object`. This test documents the middle state, which no longer stops the
+// page.
+devTest("import cycle through a module with top level await: a top level read", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { seen } from './waiter';
+      console.log('seen: ' + seen);
+    `,
+    "waiter.ts": `
+      import { describe } from './partner';
+      export const value = await Promise.resolve('waited');
+      export const seen = describe();
+    `,
+    "partner.ts": `
+      import { value } from './waiter';
+      export function describe() { return String(value); }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("seen: undefined");
+  },
+});
+// A module with `export * from` keeps the single phase form too, because the
+// spread copies the re-exported values. Its partner reads it after both
+// evaluate.
+devTest("import cycle through an export star barrel: a deferred read", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { read } from './reader';
+      import * as barrel from './barrel';
+      if (read() !== 'leaf+reader') throw new Error('wrong value: ' + read());
+      if (barrel.leaf !== 'leaf') throw new Error('wrong value: ' + barrel.leaf);
+      console.log('PASS');
+    `,
+    "reader.ts": `
+      import { leaf, own } from './barrel';
+      export const tag = 'reader';
+      export function read() { return leaf + '+' + own(); }
+    `,
+    "barrel.ts": `
+      import { tag } from './reader';
+      export * from './leaf';
+      export function own() { return tag; }
+    `,
+    "leaf.ts": `
+      export const leaf = 'leaf';
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("PASS");
+  },
+});
+// A hot update replaces the module inside the cycle and links it again with
+// its partner, which did not change.
+devTest("import cycle: a hot update of the module inside the cycle", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import './load-client';
+      import { RouterCore } from './router';
+      console.log('value ' + new RouterCore().replaceRouteChunk());
+      import.meta.hot.accept();
+    `,
+    "load-client.ts": `
+      import { getInfo } from './router';
+      export function replaceRouteChunk() { return 'chunk:' + getInfo(); }
+    `,
+    "router.ts": `
+      import { replaceRouteChunk } from './load-client';
+      export function getInfo() { return 'info 1'; }
+      export class RouterCore {
+        replaceRouteChunk() { return replaceRouteChunk(); }
+      }
+      RouterCore.prototype.chunkAtLoad = replaceRouteChunk();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("value chunk:info 1");
+    await dev.patch("router.ts", {
+      find: "info 1",
+      replace: "info 2",
+    });
+    await c.expectMessage("value chunk:info 2");
+  },
+});
+// A module with no imports gets no `yield`, so the instantiation phase runs
+// its whole body. A throw there must be recorded on the module, the way a
+// throw in the evaluation phase is: the next import of that id repeats the
+// error instead of handing out a module that never finished.
+devTest("a module that throws while it instantiates keeps the failure", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      async function attempt(label) {
+        try {
+          await import('./boom');
+          console.log(label + ': no error');
+        } catch (error) {
+          console.log(label + ': ' + error.message);
+        }
+      }
+      void (async () => {
+        await attempt('first');
+        await attempt('second');
+      })();
+    `,
+    // No imports, so the bundler emits no `yield` for this module.
+    "boom.ts": `
+      throw new Error('boom');
+      export const unreachable = 1;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client({ errors: ["error: boom"] });
+    await c.expectMessage("first: boom", "second: boom");
+  },
+});
 devTest("export * as namespace", {
   files: {
     "index.html": emptyHtmlFile({

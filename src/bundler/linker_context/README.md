@@ -1008,6 +1008,7 @@ This function is essential for maintaining JavaScript module semantics across di
 **Key functions**:
 
 - HMR-specific code generation
+- Emits the ESM module body as a generator: a `yield` separates the instantiation (hoisted functions, the namespace object, `updateImport`) from the evaluation, so that the HMR runtime links an import cycle the way the ECMAScript module link does
 - Development-time optimizations
 - Live reload integration
 

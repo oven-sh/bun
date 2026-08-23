@@ -357,9 +357,8 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                     bun_ast::StmtData::SLocal(mut st) if st.is_export => {
                         // convertStmt: strip `export`, then visitBindingToExport
                         // for each decl. AstBuilder only emits `B.Identifier`
-                        // bindings with `kind != .import` and
-                        // `has_been_assigned_to == false`, so the simple
-                        // `'abc,'` arm of visitRefToExport applies.
+                        // bindings, and every export of an HMR module is a
+                        // getter, as in `ConvertESMExportsForHmr`.
                         st.is_export = false;
                         for i in 0..st.decls.len_u32() as usize {
                             let binding = st.decls.slice()[i].binding;
@@ -369,14 +368,12 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                                     self.symbols[ref_.inner_index() as usize].original_name;
                                 // ImportScanner.recordExportedBinding → recordExport
                                 self.record_export(binding.loc, original_name.slice(), ref_)?;
-                                export_props.push(G::Property {
-                                    key: Some(Expr::init(
-                                        E::String::init(original_name.slice()),
-                                        binding.loc,
-                                    )),
-                                    value: Some(Expr::init_identifier(ref_, binding.loc)),
-                                    ..Default::default()
-                                });
+                                let property = self.hmr_export_getter(
+                                    original_name.slice(),
+                                    ref_,
+                                    binding.loc,
+                                );
+                                export_props.push(property);
                             }
                         }
                         hmr_stmts.push(*stmt);
@@ -401,11 +398,8 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                             .symbol_uses
                             .put(temp_id, symbol::Use { count_estimate: 1 })?;
                         VecExt::append(&mut self.current_scope_mut().generated, temp_id);
-                        export_props.push(G::Property {
-                            key: Some(Expr::init(E::String::init(b"default"), stmt.loc)),
-                            value: Some(Expr::init_identifier(temp_id, stmt.loc)),
-                            ..Default::default()
-                        });
+                        let property = self.hmr_export_getter(b"default", temp_id, stmt.loc);
+                        export_props.push(property);
                         hmr_stmts.push(Stmt::alloc(
                             S::Local {
                                 kind: S::Kind::KConst,
@@ -574,6 +568,36 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         self.new_symbol(SymbolKind::Other, name.unwrap_or(b"temp"))
             .expect("OOM")
         // Rust aborts on OOM by default; explicit expect for clarity
+    }
+
+    /// `get name() { return name }` for the namespace object of an HMR module.
+    /// A data property reads the binding when the object is built, and the dev
+    /// server builds that object while the module instantiates, which is
+    /// before the `const` declarations of the body run.
+    fn hmr_export_getter(&mut self, key_name: &[u8], ref_: Ref, loc: Loc) -> G::Property {
+        let body_stmts = self.bump.alloc_slice_copy(&[Stmt::alloc(
+            S::Return {
+                value: Some(Expr::init_identifier(ref_, loc)),
+            },
+            loc,
+        )]);
+        G::Property {
+            kind: G::PropertyKind::Get,
+            key: Some(Expr::init(E::String::init(key_name), loc)),
+            value: Some(Expr::init(
+                E::Function {
+                    func: G::Fn {
+                        body: G::FnBody {
+                            stmts: bun_ast::StoreSlice::new_mut(body_stmts),
+                            loc,
+                        },
+                        ..Default::default()
+                    },
+                },
+                loc,
+            )),
+            ..Default::default()
+        }
     }
 
     pub(crate) fn record_export(&mut self, _loc: Loc, alias: &[u8], ref_: Ref) -> Result<(), OOM> {

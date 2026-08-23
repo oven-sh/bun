@@ -47,9 +47,27 @@ declare type UnloadedESM = [
   deps: EncodedDependencyArray,
   exportKeys: string[],
   starImports: Id[],
-  load: (mod: import("./hmr-module").HMRModule) => Promise<void>,
+  load: EsmTwoPhaseLoad | EsmSinglePhaseLoad,
   isAsync: boolean,
 ];
+/** An ESM module links in two phases. The bundler emits the module body as a
+ * generator whose single `yield` separates them:
+ *
+ * - Before the `yield` (instantiate): the hoisted declarations, `hmr.exports`
+ *   and `hmr.updateImport`. No statement of the module body runs.
+ * - After the `yield` (evaluate): `hmr.imports` is destructured, then the rest
+ *   of the module body runs.
+ *
+ * The runtime instantiates a module before it loads the dependencies of the
+ * module, and binds the import of the importer as soon as a dependency
+ * instantiates. So a module in an import cycle observes a live namespace
+ * object for a partner that has not evaluated yet. */
+declare type EsmTwoPhaseLoad = (mod: import("./hmr-module").HMRModule) => EsmLink;
+declare type EsmLink = Generator<void, void, void>;
+/** A module with top-level await must be able to suspend on `await`, so the
+ * bundler emits its body in one phase. The `isAsync` slot of `UnloadedESM`
+ * selects this form. */
+declare type EsmSinglePhaseLoad = (mod: import("./hmr-module").HMRModule) => Promise<void>;
 declare type EncodedDependencyArray = (string | number)[];
 declare type UnloadedCommonJS = (
   hmr: import("./hmr-module").HMRModule,

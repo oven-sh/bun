@@ -280,6 +280,53 @@ devTest("deleting imported file shows error then recovers", {
 // client_graph.disconnectAndDeleteFile which frees that key. Previously the
 // Dep was left pointing at freed memory, and the next directory-watch event
 // that re-resolved that Dep read it (use-after-free, caught by ASAN).
+// A `"use client"` module is replaced on the server by a client reference
+// proxy, which the transform in `AstBuilder` generates. The dev server builds
+// the namespace object of a module while the module instantiates, which is
+// before the `const` declarations of its body run, so every property of that
+// object must be a getter. A data property reads its binding at once, and the
+// update of the proxy then throws `ReferenceError: Cannot access 'marker'
+// before initialization` inside the server runtime.
+devTest("the server reads the namespace of a client reference proxy after an update", {
+  // separateSSRGraph puts the proxy in the server graph, where an update
+  // instantiates it again.
+  framework: {
+    ...minimalFramework,
+    serverComponents: {
+      ...minimalFramework.serverComponents!,
+      separateSSRGraph: true,
+    },
+  },
+  files: {
+    "routes/index.ts": `
+      import * as Comp from '../components/Comp';
+      export default function (req, meta) {
+        return new Response(
+          'keys: ' + Object.keys(Comp).sort().join(',') +
+          ' | value: ' + typeof Comp.marker.value +
+          ' | uid: ' + Comp.marker.uid,
+        );
+      }
+    `,
+    "components/Comp.ts": `
+      "use client";
+      export const marker = "one";
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("keys: marker | value: function | uid: marker");
+    await dev.write(
+      "components/Comp.ts",
+      `
+        "use client";
+        export const marker = "two";
+      `,
+    );
+    // Without a getter the proxy throws while it instantiates, and this
+    // request answers 500.
+    await dev.fetch("/").equals("keys: marker | value: function | uid: marker");
+  },
+});
 devTest("removing 'use client' from a component with a pending resolution failure", {
   // separateSSRGraph is required so the "use client" file is parsed with the
   // browser target; otherwise the resolution failure is attributed to the

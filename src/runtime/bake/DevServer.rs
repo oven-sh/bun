@@ -2872,7 +2872,10 @@ impl DevServer {
         if any {
             w.extend_from_slice(b"  ");
         }
-        w.extend_from_slice(b"], [], [], () => {}, false],\n");
+        // The load function of an HTML route is a generator like every other
+        // module without top-level await: the runtime resumes it once to
+        // instantiate and once to evaluate.
+        w.extend_from_slice(b"], [], [], function* () {}, false],\n");
 
         // Avoid-recloning if it is was moved to the heap
         Ok(array.into_boxed_slice())

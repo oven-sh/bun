@@ -12,6 +12,9 @@ const totalCount = isASAN || isDebug ? 3_000 : 10_000;
 const zeroCopyPayload = new Blob([payload]);
 const zeroCopyJSONPayload = new Blob([JSON.stringify({ bun: payload })]);
 
+let fetchOptions: { protocol?: "http2"; tls?: { rejectUnauthorized: boolean } } = {};
+const fetch = (url: string | URL, init: RequestInit = {}) => globalThis.fetch(url, { ...fetchOptions, ...init });
+
 async function getMemoryUsage(url: URL): Promise<number> {
   return (await fetch(`${url.origin}/report`).then(res => res.json())) as number;
 }
@@ -130,21 +133,25 @@ async function calculateMemoryLeak(fn: (url: URL) => Promise<void>, url: URL) {
 // test (and re-running the 10k-request warmup each time) was the dominant cost
 // on ASAN. Sequential reuse keeps the RSS assertions meaningful because a real
 // body leak compounds across scenarios instead of being hidden by a restart.
-describe("request body leak", () => {
+describe.each([false, true])("request body leak (http2: %p)", http2 => {
   let fixture: Subprocess;
   let url: URL;
 
   beforeAll(async () => {
+    fetchOptions = http2 ? { protocol: "http2", tls: { rejectUnauthorized: false } } : {};
     const defer = Promise.withResolvers<string>();
-    fixture = Bun.spawn([bunExe(), "--smol", join(import.meta.dirname, "body-leak-test-fixture.ts")], {
-      env: bunEnv,
-      stdout: "inherit",
-      stderr: "inherit",
-      stdin: "ignore",
-      ipc(message) {
-        defer.resolve(message);
+    fixture = Bun.spawn(
+      [bunExe(), "--smol", join(import.meta.dirname, "body-leak-test-fixture.ts"), ...(http2 ? ["--http2"] : [])],
+      {
+        env: bunEnv,
+        stdout: "inherit",
+        stderr: "inherit",
+        stdin: "ignore",
+        ipc(message) {
+          defer.resolve(message);
+        },
       },
-    });
+    );
     fixture.exited.then(code => defer.reject(new Error(`body-leak fixture exited (${code}) before sending its URL`)));
     url = new URL(await defer.promise);
     await warmup(url);

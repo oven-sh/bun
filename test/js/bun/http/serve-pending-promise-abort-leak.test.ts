@@ -12,22 +12,29 @@ async function stopAndAssertDrained(server: ReturnType<typeof Bun.serve>) {
   expect(server.pendingRequests).toBe(0);
 }
 
-test("RequestContext is freed when client aborts before Promise<Response> settles", async () => {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), join(import.meta.dir, "serve-pending-promise-abort-leak-fixture.ts")],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+test.each([false, true])(
+  "RequestContext is freed when client aborts before Promise<Response> settles (http2: %p)",
+  async http2 => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        join(import.meta.dir, "serve-pending-promise-abort-leak-fixture.ts"),
+        ...(http2 ? ["--http2"] : []),
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  const result = JSON.parse(stdout.trim());
-  expect(result.pending).toBe(0);
-  expect(result.abortCount).toBe(result.iterations);
-  expect(exitCode).toBe(0);
-});
+    expect(stderr).toBe("");
+    const result = JSON.parse(stdout.trim());
+    expect(result.pending).toBe(0);
+    expect(result.abortCount).toBe(result.iterations);
+    expect(exitCode).toBe(0);
+  },
+);
 
 test("Promise<Response> still works normally when not aborted", async () => {
   using server = Bun.serve({

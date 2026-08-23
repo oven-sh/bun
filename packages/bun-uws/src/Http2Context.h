@@ -1169,7 +1169,9 @@ inline bool Http2Connection::handleFrame(uint8_t type, uint8_t flags, uint32_t s
         if (!stream || stream->remoteClosed) {
             if (streamId > lastStreamId || (streamId & 1) == 0) return connectionError(http2::ERR_PROTOCOL_ERROR);
             if (stream) return streamError(streamId, stream, http2::ERR_STREAM_CLOSED);
-            writeRstStream(streamId, http2::ERR_STREAM_CLOSED);
+            /* Retired stream: usually one we reset (response finished before
+             * the request body) and this DATA was already in flight; §5.1
+             * says ignore. Already counted against the connection window. */
             return true;
         }
         return handleData(stream, flags, payload, length);

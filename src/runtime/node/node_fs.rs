@@ -8886,11 +8886,11 @@ fn map_anyerror_to_errno_rm_tree(err: &crate::Error) -> E {
     }
 }
 
-// `rm` non-recursive unlink/rmdir fallback — narrower table; anything not
-// listed here falls through to EFAULT.
+// `rm` non-recursive unlink — narrower table; anything not listed here falls
+// through to EFAULT.
 //
-// `bun_sys::unlink`/`bun_sys::posix_rmdir` yield a raw errno. Notably raw EPERM —
-// like EISDIR/ENOTDIR/ENOTEMPTY — intentionally falls through to EFAULT here.
+// `bun_sys::unlink` yields a raw errno. Notably raw EPERM — like
+// EISDIR/ENOTDIR/ENOTEMPTY — intentionally falls through to EFAULT here.
 fn map_rm_errno_narrow(e: E) -> E {
     match e {
         E::EACCES => E::EACCES,

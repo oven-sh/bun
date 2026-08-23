@@ -206,15 +206,17 @@ test.if(isWindows && isDebug)("Windows: segfault inside a system DLL captures th
   expect(span).toBeLessThan(2n ** 31n);
 });
 
-// The frames of a trace string `{base}/{version}/{payload}`, decoded the way
-// bun.report's parser decodes them. The payload is the platform, command and
-// format characters, 7 characters of commit, two VLQs of feature bits, then
-// one frame per VLQ (an offset in bun; a leading 1 introduces a name length,
-// the name, and an offset in that image; `_` is unknown; `=` is JS) until a
-// VLQ of 0 ends the list. A frame in bun's own image decodes with the object
-// `<bun>`: the encoder writes names from `[A-Za-z0-9._-]` only, so no image
-// (not even an executable named `bun`) can decode to that.
-function decodeTraceFrames(payload: string): { object: string; address: number }[] {
+// The feature bits and the frames of a trace string `{base}/{version}/{payload}`,
+// decoded the way bun.report's parser decodes them. The payload is the
+// platform, command and format characters, 7 characters of commit, the feature
+// bits as two VLQs (the high 32 bits, then the low 32 bits; bit i is feature i
+// of `crash_handler.getFeatureData().features`), then one frame per VLQ (an
+// offset in bun; a leading 1 introduces a name length, the name, and an offset
+// in that image; `_` is unknown; `=` is JS) until a VLQ of 0 ends the list. A
+// frame in bun's own image decodes with the object `<bun>`: the encoder writes
+// names from `[A-Za-z0-9._-]` only, so no image (not even an executable named
+// `bun`) can decode to that.
+function decodeTrace(payload: string): { features: bigint; frames: { object: string; address: number }[] } {
   const digits = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   let i = 3 + 7;
   function vlq(): number {
@@ -226,8 +228,10 @@ function decodeTraceFrames(payload: string): { object: string; address: number }
       if (!(digit & 32)) return value % 2 ? -Math.floor(value / 2) : value / 2;
     }
   }
-  vlq();
-  vlq();
+  // Each half is encoded as the signed 32-bit reinterpretation of its bits.
+  const high = BigInt.asUintN(32, BigInt(vlq()));
+  const low = BigInt.asUintN(32, BigInt(vlq()));
+  const features = (high << 32n) | low;
   const frames = [];
   while (i < payload.length) {
     if (payload[i] === "_" || payload[i] === "=") {
@@ -235,7 +239,7 @@ function decodeTraceFrames(payload: string): { object: string; address: number }
       continue;
     }
     let address = vlq();
-    if (address === 0) return frames;
+    if (address === 0) return { features, frames };
     let object = "<bun>";
     if (address === 1) {
       const length = vlq();
@@ -249,9 +253,8 @@ function decodeTraceFrames(payload: string): { object: string; address: number }
 }
 
 // Crashes bun with `args`, receives the report it uploads, and returns the
-// crash's stderr and exit code together with the decoded frames of the
-// uploaded trace string.
-async function uploadedCrashFrames(args: string[]) {
+// crash's stderr and exit code together with the decoded uploaded trace string.
+async function uploadedCrash(args: string[]) {
   const uploaded = Promise.withResolvers<string>();
   using server = Bun.serve({
     port: 0,
@@ -287,7 +290,7 @@ async function uploadedCrashFrames(args: string[]) {
   // `/` is also a VLQ digit, so the payload cannot be split out on it.
   const payload = pathname.match(/^\/[^/]+\/(.*)\/ack$/)?.[1];
   expect(payload, pathname).toBeDefined();
-  return { stderr, exitCode, frames: decodeTraceFrames(payload!) };
+  return { stderr, exitCode, ...decodeTrace(payload!) };
 }
 
 // A frame outside bun's own executable is encoded with the basename of the
@@ -297,7 +300,7 @@ async function uploadedCrashFrames(args: string[]) {
 // frame as unknown, and Linux encoded them as bun offsets, which symbolized to
 // unrelated bun functions. The fault here is inside libc, so frame 0 is libc's.
 test.if(isPosix)("the uploaded trace string names the image of a frame outside bun", async () => {
-  const { stderr, exitCode, frames } = await uploadedCrashFrames([
+  const { stderr, exitCode, frames } = await uploadedCrash([
     path.join(import.meta.dir, "fixture-crash.js"),
     "segfaultInDll",
   ]);
@@ -324,7 +327,7 @@ test.if(isPosix)("the uploaded trace string names the image of a frame outside b
 // 60 levels of JS recursion under the crash give the walk more than 20 frames
 // to find.
 test.if(isPosix)("the uploaded trace string holds more than 20 frames", async () => {
-  const { stderr, exitCode, frames } = await uploadedCrashFrames([
+  const { stderr, exitCode, frames } = await uploadedCrash([
     "-e",
     `const { crash_handler } = require("bun:internal-for-testing");
      function recurse(depth) { return depth === 0 ? crash_handler.segfault() : recurse(depth - 1) + 1; }
@@ -335,6 +338,34 @@ test.if(isPosix)("the uploaded trace string holds more than 20 frames", async ()
   expect(frames.length).toBeGreaterThan(20);
   expect(frames.length).toBeLessThanOrEqual(64);
   expect(exitCode).not.toBe(0);
+});
+
+// The crash header on stderr says "(main thread)" when the crash is on the
+// main thread, but the upload carried nothing about the thread. The encoder
+// now adds the `crash_off_main_thread` feature bit on any other thread, and
+// bun.report turns every feature bit into a Sentry tag. A report with that tag
+// and no bun frame at all is a crash on a thread an addon started (BUN-2PFR);
+// one without the tag is a crash on the JS thread. A Worker crashes bun on a
+// thread other than the main one without needing an addon.
+test.if(isPosix)("the uploaded trace string tells a crash off the main thread from one on it", async () => {
+  const bit = crash_handler.getFeatureData().features.indexOf("crash_off_main_thread");
+  expect(bit).toBeGreaterThanOrEqual(0);
+  const flag = 1n << BigInt(bit);
+
+  const panic = `require("bun:internal-for-testing").crash_handler.panic()`;
+  const [onMainThread, onWorkerThread] = await Promise.all([
+    uploadedCrash(["-e", panic]),
+    uploadedCrash(["-e", `new (require("node:worker_threads").Worker)(${JSON.stringify(panic)}, { eval: true })`]),
+  ]);
+
+  expect(onMainThread.stderr).toContain("panic(main thread): invoked crashByPanic() handler");
+  expect(onMainThread.features & flag).toBe(0n);
+
+  expect(onWorkerThread.stderr).toContain("panic: invoked crashByPanic() handler");
+  expect(onWorkerThread.features & flag).toBe(flag);
+
+  expect(onMainThread.exitCode).not.toBe(0);
+  expect(onWorkerThread.exitCode).not.toBe(0);
 });
 
 // The Windows crash handler is a Vectored Exception Handler, which sees every

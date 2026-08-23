@@ -310,25 +310,14 @@ impl Response {
     pub(crate) fn clear_on_data(&mut self) {
         c::uws_h3_res_on_data(self, None, ptr::null_mut())
     }
-    pub(crate) fn corked(&mut self, handler: impl FnOnce()) {
-        // H3 has no corking; call the handler immediately.
-        let _ = self;
-        handler();
-    }
-    pub(crate) fn run_corked_with_type<UD>(&mut self, handler: fn(*mut UD), ud: *mut UD) {
-        // cork is synchronous, so we stack-allocate the (handler, ud) pair and
-        // recover it inside the trampoline — same shape as H1's
-        // `Response::run_corked_with_type` so `AnyResponse` can dispatch uniformly.
-        type Ctx<UD> = (fn(*mut UD), *mut UD);
-        // Safe fn item: nested local thunk, only coerced to the C-ABI
-        // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
-        extern "C" fn cb<UD>(p: *mut c_void) {
-            // SAFETY: p points at a stack Ctx<UD> valid for this synchronous call.
-            let ctx = unsafe { &*p.cast::<Ctx<UD>>() };
-            (ctx.0)(ctx.1);
+    pub(crate) fn corked<F: FnOnce()>(&mut self, f: F) {
+        extern "C" fn handle<F: FnOnce()>(user_data: *mut c_void) {
+            // SAFETY: user_data points at a stack `ManuallyDrop<F>` valid for this synchronous call.
+            let f = unsafe { core::ptr::read(user_data.cast::<F>()) };
+            f();
         }
-        let mut ctx: Ctx<UD> = (handler, ud);
-        c::uws_h3_res_cork(self, (&raw mut ctx).cast(), cb::<UD>)
+        let mut f = core::mem::ManuallyDrop::new(f);
+        c::uws_h3_res_cork(self, (&raw mut *f).cast::<c_void>(), handle::<F>);
     }
 }
 

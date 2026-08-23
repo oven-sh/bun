@@ -208,6 +208,9 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     /* The parser writes this through a bool& (getHeaders / consumePostPadded),
      * so it cannot live in `state`. */
     bool isConnectRequest = false;
+    /* Any bytes have arrived on this connection; the HTTP/2 preface check
+     * only applies before that. */
+    bool seenData = false;
 
     /* Chunk-extension bytes consumed on the current chunk-size line, reset per
      * chunk (llhttp's on_chunk_header); capped at MAX_CHUNK_EXTENSION_SIZE for

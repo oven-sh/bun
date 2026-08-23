@@ -62,6 +62,7 @@ pub struct ServerConfig {
     pub(crate) allow_hot: bool,
     pub(crate) ipv6_only: bool,
     pub(crate) http3: bool,
+    pub(crate) http2: bool,
     pub(crate) http1: bool,
 
     pub(crate) had_routes_object: bool,
@@ -96,6 +97,7 @@ impl Default for ServerConfig {
             allow_hot: true,
             ipv6_only: false,
             http3: false,
+            http2: false,
             http1: true,
             had_routes_object: false,
             static_routes: Vec::new(),
@@ -268,7 +270,7 @@ impl ServerConfig {
         // The sole caller is
         // `self.config = self.config.clone_for_reloading_static_routes()?;`.
         // Move every owning field into `that` and leave the Copy scalars in
-        // place on `self` (idle_timeout, development, reuse_port, http1/http3,
+        // place on `self` (idle_timeout, development, reuse_port, http1/2/3,
         // etc. retained; resources gone), ensuring the assignment-drop of the
         // residual `self` is a no-op.
         let mut that = ServerConfig {
@@ -294,6 +296,7 @@ impl ServerConfig {
             allow_hot: self.allow_hot,
             ipv6_only: self.ipv6_only,
             http3: self.http3,
+            http2: self.http2,
             http1: self.http1,
             had_routes_object: self.had_routes_object,
             static_routes: core::mem::take(&mut self.static_routes),
@@ -420,6 +423,58 @@ fn serves_head(method: &http_method::Optional) -> bool {
     }
 }
 
+/// The route-registration surface shared by `uws::h2::App` and
+/// `uws::h3::App`. Both dispatch `uws::h3::Request` (a decoded header list);
+/// only the response handle type differs.
+pub(crate) trait MuxApp {
+    type Response: 'static;
+    fn any<UD, H>(&mut self, pattern: &[u8], ud: *mut UD, handler: H)
+    where
+        H: Fn(&mut UD, &mut uws::h3::Request, &mut Self::Response) + Copy + 'static;
+    fn head<UD, H>(&mut self, pattern: &[u8], ud: *mut UD, handler: H)
+    where
+        H: Fn(&mut UD, &mut uws::h3::Request, &mut Self::Response) + Copy + 'static;
+    fn method<UD, H>(&mut self, method: Method, pattern: &[u8], ud: *mut UD, handler: H)
+    where
+        H: Fn(&mut UD, &mut uws::h3::Request, &mut Self::Response) + Copy + 'static;
+    fn any_response(resp: &mut Self::Response) -> bun_uws_sys::AnyResponse;
+}
+
+macro_rules! impl_mux_app {
+    ($app:ty, $resp:ty, $variant:ident) => {
+        impl MuxApp for $app {
+            type Response = $resp;
+            #[inline]
+            fn any<UD, H>(&mut self, p: &[u8], ud: *mut UD, h: H)
+            where
+                H: Fn(&mut UD, &mut uws::h3::Request, &mut $resp) + Copy + 'static,
+            {
+                <$app>::any(self, p, ud, h)
+            }
+            #[inline]
+            fn head<UD, H>(&mut self, p: &[u8], ud: *mut UD, h: H)
+            where
+                H: Fn(&mut UD, &mut uws::h3::Request, &mut $resp) + Copy + 'static,
+            {
+                <$app>::head(self, p, ud, h)
+            }
+            #[inline]
+            fn method<UD, H>(&mut self, m: Method, p: &[u8], ud: *mut UD, h: H)
+            where
+                H: Fn(&mut UD, &mut uws::h3::Request, &mut $resp) + Copy + 'static,
+            {
+                <$app>::method(self, m, p, ud, h)
+            }
+            #[inline]
+            fn any_response(resp: &mut $resp) -> bun_uws_sys::AnyResponse {
+                bun_uws_sys::AnyResponse::$variant(resp)
+            }
+        }
+    };
+}
+impl_mux_app!(uws::h2::App, uws::h2::Response, H2);
+impl_mux_app!(uws::h3::App, uws::h3::Response, H3);
+
 /// # Safety
 /// `entry` must be a live route pointer that outlives `app` — it is registered
 /// as the uWS userdata and dereferenced from request callbacks for the lifetime
@@ -428,9 +483,9 @@ fn serves_head(method: &http_method::Optional) -> bool {
 // dereferencing it here; not_unsafe_ptr_arg_deref is a false positive on
 // opaque-token forwarding.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub(crate) fn apply_static_route_h3<T>(
+pub(crate) fn apply_static_route_mux<T, A: MuxApp + 'static>(
     server: AnyServer,
-    app: &mut uws::h3::App,
+    app: &mut A,
     entry: *mut T,
     path: &[u8],
     method: http_method::Optional,
@@ -441,50 +496,50 @@ pub(crate) fn apply_static_route_h3<T>(
     // SAFETY: caller passes a live route pointer for the lifetime of the app.
     unsafe { T::set_server(entry, server) };
 
-    fn handler<T: StaticRouteLike<false>>(
+    fn handler<T: StaticRouteLike<false>, A: MuxApp + 'static>(
         route: &mut T,
         req: &mut uws::h3::Request,
-        resp: &mut uws::h3::Response,
+        resp: &mut A::Response,
     ) {
         // SAFETY: `route` is the `entry` userdata kept alive by the route table.
         unsafe {
             T::on_request(
                 route,
                 bun_uws_sys::AnyRequest::H3(req),
-                bun_uws_sys::AnyResponse::H3(resp),
+                A::any_response(resp),
             )
         };
     }
-    fn head<T: StaticRouteLike<false>>(
+    fn head<T: StaticRouteLike<false>, A: MuxApp + 'static>(
         route: &mut T,
         req: &mut uws::h3::Request,
-        resp: &mut uws::h3::Response,
+        resp: &mut A::Response,
     ) {
         // SAFETY: see `handler` above.
         unsafe {
             T::on_head_request(
                 route,
                 bun_uws_sys::AnyRequest::H3(req),
-                bun_uws_sys::AnyResponse::H3(resp),
+                A::any_response(resp),
             )
         };
     }
 
     if !path_has_user_head_route && serves_head(&method) {
-        app.head(path, entry, head::<T>);
+        app.head(path, entry, head::<T, A>);
     }
     match method {
-        http_method::Optional::Any => app.any(path, entry, handler::<T>),
+        http_method::Optional::Any => app.any(path, entry, handler::<T, A>),
         http_method::Optional::Method(m) => {
             let mut iter = m.iter();
             while let Some(method_) = iter.next() {
-                app.method(method_, path, entry, handler::<T>);
+                app.method(method_, path, entry, handler::<T, A>);
             }
         }
     }
 }
 
-/// Per-route trait that `apply_static_route{,_h3}` monomorphizes over
+/// Per-route trait that `apply_static_route{,_mux}` monomorphizes over
 /// (`StaticRoute`/`FileRoute`/`HTMLBundle.Route`).
 /// Receivers are raw `*mut Self` because the route is registered as the uWS
 /// userdata pointer and the inherent impls (`StaticRoute::on_request` etc.) need
@@ -1332,6 +1387,13 @@ impl ServerConfig {
             return Err(JsError::Thrown);
         }
 
+        if let Some(v) = arg.get(global, "http2")? {
+            args.http2 = v.to_boolean();
+        }
+        if global.has_exception() {
+            return Err(JsError::Thrown);
+        }
+
         if let Some(v) = arg.get(global, "http1")? {
             args.http1 = v.to_boolean();
         }
@@ -1471,18 +1533,17 @@ impl ServerConfig {
             }
         }
 
-        if args.http3 {
-            if args.ssl_config.is_none() {
-                return Err(
-                    global.throw_invalid_arguments(format_args!("HTTP/3 requires 'tls' to be set"))
-                );
-            }
-        } else if !args.http1 {
+        if args.http3 && args.ssl_config.is_none() {
+            return Err(
+                global.throw_invalid_arguments(format_args!("HTTP/3 requires 'tls' to be set"))
+            );
+        }
+        if !args.http1 && !args.http2 && !args.http3 {
             return Err(global.throw_invalid_arguments(format_args!(
-                "Cannot disable http1 without enabling http3"
+                "Cannot disable http1 without enabling http2 or http3"
             )));
         }
-        if !args.http1 && matches!(args.address, Address::Unix(_)) {
+        if !args.http1 && !args.http2 && matches!(args.address, Address::Unix(_)) {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Cannot disable http1 with a unix socket — HTTP/3 over AF_UNIX is not supported",
             )));

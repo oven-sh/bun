@@ -194,6 +194,10 @@ private:
             for (auto &f : httpContextData->filterHandlers) {
                 f((HttpResponse<SSL> *) s, 1);
             }
+
+            if (httpContextData->onHttp2 && !us_socket_is_closed(s) && us_socket_alpn_is_h2(s)) {
+                httpContextData->onHttp2(httpContextData->http2Context, s, nullptr, 0);
+            }
         }
     }
 
@@ -301,6 +305,14 @@ private:
         return s;
     }
 
+    /* http1: false with HTTP/2 attached: an HTTP/1.x client gets one 505. */
+    static us_socket_t *rejectHttp1(us_socket_t *s) {
+        static const char response[] = "HTTP/1.1 505 HTTP Version Not Supported\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+        us_socket_write(s, response, sizeof(response) - 1);
+        us_socket_shutdown(s);
+        return us_socket_close(s, 0, nullptr);
+    }
+
     template <bool IsNodeHttp>
     static us_socket_t *onData(us_socket_t *s, char *data, int length) {
         // ref the socket to make sure we process it entirely before it is closed
@@ -323,6 +335,31 @@ private:
         }
 
         HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext(s);
+
+        /* HTTP/2: a cleartext connection that opens with the prior-knowledge
+         * preface (RFC 9113 §3.3) moves to the Http2Context before the
+         * HTTP/1 parser ever sees "PRI * HTTP/2.0". Only checked on a
+         * connection's first bytes. */
+        if constexpr (!SSL && !IsNodeHttp) {
+            if (httpContextData->onHttp2 && !httpResponseData->seenData) {
+                unsigned int n = length < 24 ? (unsigned int) length : 24;
+                if (n >= 4 && memcmp(data, "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", n) == 0) {
+                    us_socket_unref(s);
+                    return httpContextData->onHttp2(httpContextData->http2Context, s, data, length);
+                }
+                if (!httpContextData->allowHttp1) {
+                    us_socket_unref(s);
+                    return rejectHttp1(s);
+                }
+            }
+        }
+        if constexpr (SSL && !IsNodeHttp) {
+            if (httpContextData->onHttp2 && !httpContextData->allowHttp1 && !httpResponseData->seenData) {
+                us_socket_unref(s);
+                return rejectHttp1(s);
+            }
+        }
+        httpResponseData->seenData = true;
 
         /* node:http compat: HTTP parsing stopped on this connection (a parse error
          * was already delivered to 'clientError', or the JS layer freed the

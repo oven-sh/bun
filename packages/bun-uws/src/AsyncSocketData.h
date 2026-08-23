@@ -65,6 +65,13 @@ struct BackPressure {
         }
     }
 
+    /* erase() that keeps the allocation when fully drained, for buffers that
+     * refill every event (HTTP/2 connection output). */
+    void consume(size_t n) {
+        head += n;
+        if (head >= tail) head = tail = 0;
+    }
+
     void clear() {
         head = tail = 0;
         release();

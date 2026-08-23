@@ -1557,7 +1557,7 @@ fn on_report_error_request(dev: &mut DevServer, req: &mut Request, resp: AnyResp
         AnyResponse::TCP(r) => {
             ErrorReportRequest::run(dev, req, bun_uws_sys::response::TCPResponse::as_handle(r))
         }
-        AnyResponse::H3(_) => not_found(resp),
+        AnyResponse::H3(_) | AnyResponse::H2(_) => not_found(resp),
     }
 }
 
@@ -1570,7 +1570,7 @@ fn on_unref_source_map_request(dev: &mut DevServer, req: &mut Request, resp: Any
         AnyResponse::TCP(r) => {
             UnrefSourceMapRequest::run(dev, req, bun_uws_sys::response::TCPResponse::as_handle(r))
         }
-        AnyResponse::H3(_) => not_found(resp),
+        AnyResponse::H3(_) | AnyResponse::H2(_) => not_found(resp),
     }
 }
 

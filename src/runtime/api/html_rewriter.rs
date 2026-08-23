@@ -706,6 +706,7 @@ pub type HTMLRewriterTransform = RewriterPipe;
 /// turn ([`Self::schedule_background_pull`]), so a synchronous source such as
 /// a regular file is never read through inside a single call.
 #[derive(bun_ptr::CellRefCounted)]
+#[repr(align(16))]
 pub struct RewriterPipe {
     pub(crate) global: GlobalRef,
     /// The owning `JSHTMLRewriterTransform` wrapper cell (whose `m_ctx` is this

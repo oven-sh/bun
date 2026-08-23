@@ -244,9 +244,6 @@ public:
     JSC::JSObject* NetworkSink() { return m_JSNetworkSinkClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue NetworkSinkPrototype() const { return m_JSNetworkSinkClassStructure.prototypeInitializedOnMainThread(this); }
 
-    JSC::Structure* H3ResponseSinkStructure() const { return m_JSH3ResponseSinkClassStructure.getInitializedOnMainThread(this); }
-    JSC::JSObject* H3ResponseSink() { return m_JSH3ResponseSinkClassStructure.constructorInitializedOnMainThread(this); }
-    JSC::JSValue H3ResponseSinkPrototype() const { return m_JSH3ResponseSinkClassStructure.prototypeInitializedOnMainThread(this); }
 
     JSC::Structure* FetchRequestBodySinkStructure() const { return m_JSFetchRequestBodySinkClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* FetchRequestBodySink() { return m_JSFetchRequestBodySinkClassStructure.constructorInitializedOnMainThread(this); }
@@ -415,22 +412,31 @@ public:
         Bun__FileSink__onRejectStream,
         Bun__CronJob__onPromiseResolve,
         Bun__CronJob__onPromiseReject,
-        Bun__HTTPRequestContextH3__onReject,
-        Bun__HTTPRequestContextH3__onRejectStream,
-        Bun__HTTPRequestContextH3__onResolve,
-        Bun__HTTPRequestContextH3__onResolveStream,
-        Bun__HTTPRequestContextDebugH3__onReject,
-        Bun__HTTPRequestContextDebugH3__onRejectStream,
-        Bun__HTTPRequestContextDebugH3__onResolve,
-        Bun__HTTPRequestContextDebugH3__onResolveStream,
+        Bun__HTTPRequestContextMux__onReject,
+        Bun__HTTPRequestContextMux__onRejectStream,
+        Bun__HTTPRequestContextMux__onResolve,
+        Bun__HTTPRequestContextMux__onResolveStream,
+        Bun__HTTPRequestContextMuxTLS__onReject,
+        Bun__HTTPRequestContextMuxTLS__onRejectStream,
+        Bun__HTTPRequestContextMuxTLS__onResolve,
+        Bun__HTTPRequestContextMuxTLS__onResolveStream,
+        Bun__HTTPRequestContextDebugMux__onReject,
+        Bun__HTTPRequestContextDebugMux__onRejectStream,
+        Bun__HTTPRequestContextDebugMux__onResolve,
+        Bun__HTTPRequestContextDebugMux__onResolveStream,
+        Bun__HTTPRequestContextDebugMuxTLS__onReject,
+        Bun__HTTPRequestContextDebugMuxTLS__onRejectStream,
+        Bun__HTTPRequestContextDebugMuxTLS__onResolve,
+        Bun__HTTPRequestContextDebugMuxTLS__onResolveStream,
         Bun__FetchTasklet__onResolveRequestStream,
         Bun__FetchTasklet__onRejectRequestStream,
         Bun__S3UploadStream__onResolveStream,
         Bun__S3UploadStream__onRejectStream,
         Bun__HTMLRewriter__onResolveInputStream,
         Bun__HTMLRewriter__onRejectInputStream,
+        Count_,
     };
-    static constexpr size_t promiseFunctionsSize = 48;
+    static constexpr size_t promiseFunctionsSize = static_cast<size_t>(PromiseFunctions::Count_);
 
     static PromiseFunctions promiseHandlerID(SYSV_ABI EncodedJSValue (*handler)(JSC::JSGlobalObject* arg0, JSC::CallFrame* arg1));
 
@@ -583,7 +589,6 @@ public:
     V(private, LazyClassStructure, m_JSHTTPResponseSinkClassStructure)                                       \
     V(private, LazyClassStructure, m_JSHTTPSResponseSinkClassStructure)                                      \
     V(private, LazyClassStructure, m_JSNetworkSinkClassStructure)                                            \
-    V(private, LazyClassStructure, m_JSH3ResponseSinkClassStructure)                                         \
     V(private, LazyClassStructure, m_JSFetchRequestBodySinkClassStructure)                                   \
     V(private, LazyClassStructure, m_JSHTMLRewriterSinkClassStructure)                                       \
                                                                                                              \

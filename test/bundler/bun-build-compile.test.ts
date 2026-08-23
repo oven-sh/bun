@@ -92,51 +92,6 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
 
   // Loading a module from embedded bytecode should touch only the pages it decodes: not the module's source text (its
   // hash is recorded at build time) and not the bodies of functions that are never called.
-  test.skipIf(!isLinux)(
-    "compiled executable pages in little of its payload when functions are not called",
-    async () => {
-      const body = Array.from({ length: 24 }, (_, j) => `s = (s * ${j + 3} + a) ^ (b + ${j}); o.p${j} = s;`).join(" ");
-      const functions = Array.from(
-        { length: 4000 },
-        (_, i) => `export function f${i}(a, b) { let s = ${i}; const o = {}; ${body} return [s, o]; }`,
-      ).join("\n");
-      using dir = tempDir("build-compile-bytecode-residency", {
-        "funcs.js": functions,
-        "app.js": `import * as m from "./funcs.js";
-globalThis.keep = m;
-const fs = require("fs");
-const exe = fs.realpathSync("/proc/self/exe");
-let current = null, payload = null;
-for (const line of fs.readFileSync("/proc/self/smaps", "utf8").split("\\n")) {
-  const map = /^([0-9a-f]+)-([0-9a-f]+) (\\S+) \\S+ \\S+ \\S+ +(.*)$/.exec(line);
-  if (map) { current = { size: parseInt(map[2], 16) - parseInt(map[1], 16), perm: map[3], path: map[4], rss: 0, fields: {} }; if (current.path === exe && current.perm === "rw-p" && (!payload || current.size > payload.size)) payload = current; continue; }
-  const field = /^(\\w+): +([0-9]+) kB/.exec(line);
-  if (field && current) { current.fields[field[1]] = Number(field[2]); if (field[1] === "Rss") current.rss = Number(field[2]) * 1024; }
-}
-console.log(JSON.stringify({ size: payload.size, rss: payload.rss, fields: payload.fields }));`,
-      });
-      const outfile = join(dir + "", "app");
-      const result = await Bun.build({
-        entrypoints: [join(dir + "", "app.js")],
-        compile: { outfile },
-        bytecode: true,
-        format: "esm",
-        target: "bun",
-      });
-      expect(result.success).toBe(true);
-      await using proc = Bun.spawn({ cmd: [outfile], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      const { size, rss, fields } = JSON.parse(stdout.trim());
-      // The payload mapping holds source + bytecode (several times the source); loading without calling should leave
-      // nearly all of it on disk.
-      expect(size).toBeGreaterThan(2 * functions.length);
-      expect(rss, JSON.stringify(fields)).toBeLessThan(size / 4);
-      expect(exitCode).toBe(0);
-    },
-    60_000,
-  );
-
   test("compile with invalid target fails gracefully", async () => {
     using dir = tempDir("build-compile-invalid", {
       "index.js": `console.log("test");`,

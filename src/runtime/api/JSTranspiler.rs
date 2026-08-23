@@ -749,11 +749,16 @@ impl TransformTask {
         // `self.transpiler` is a `ManuallyDrop` bytewise copy of the
         // `JSTranspiler`'s long-lived transpiler (`ptr::read` in `create()`),
         // so its `macro_context` may alias a box the `JSTranspiler` still owns
-        // — and that box's `resolver`/`remap` raw pointers point at the
-        // *original* transpiler, not this copy. Null it so `parse()` lazily
-        // creates a fresh one whose self-refs target this copy, then reclaim
-        // the fresh box on every return path (mirrors `RuntimeTranspilerStore`).
-        self.transpiler.macro_context = None;
+        // — whose back-pointer is the *original* transpiler, not this copy.
+        // Give the copy its own (reclaimed on every return path), tied to the
+        // VM this job is for so stopping that VM interrupts a macro it waits
+        // on (as `RuntimeTranspilerStore` does).
+        let waiting_vm: jsc::VmHandle = vm.handle();
+        {
+            let mut ctx = bun_js_parser::Macro::MacroContext::init(&mut *self.transpiler);
+            ctx.waiting_vm = (&raw const waiting_vm).cast();
+            self.transpiler.macro_context = Some(ctx);
+        }
         let _macro_ctx_guard = scopeguard::guard(
             core::ptr::addr_of_mut!(self.transpiler.macro_context),
             |slot| {

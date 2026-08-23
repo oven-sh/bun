@@ -688,15 +688,23 @@ struct MacroHostSeed {
 
 impl MacroHostSeed {
     fn new(caller: &Transpiler<'_>) -> MacroHostSeed {
-        let transpiler: &Transpiler<'_> = match VirtualMachine::get_main_thread_vm() {
+        match VirtualMachine::get_main_thread_vm() {
             // SAFETY: the main-thread VM outlives every transpile in the
-            // process; its options and env are only read here.
-            Some(vm) => unsafe { &(*vm).transpiler },
-            None => caller,
-        };
-        MacroHostSeed {
-            transform_options: (*transpiler.options.transform_options).clone(),
-            env_map: bun_core::handle_oom(transpiler.env().map.clone_with_allocator()),
+            // process; its options are only read here, and its env map is
+            // cloned under the lock its writers (`process.env` setters) take,
+            // as a Worker does.
+            Some(vm) => unsafe {
+                let vm = &*vm;
+                let _env_lock = vm.proxy_env_storage.lock();
+                MacroHostSeed {
+                    transform_options: (*vm.transpiler.options.transform_options).clone(),
+                    env_map: bun_core::handle_oom(vm.transpiler.env().map.clone_with_allocator()),
+                }
+            },
+            None => MacroHostSeed {
+                transform_options: (*caller.options.transform_options).clone(),
+                env_map: bun_core::handle_oom(caller.env().map.clone_with_allocator()),
+            },
         }
     }
 }

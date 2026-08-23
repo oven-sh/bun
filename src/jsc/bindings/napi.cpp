@@ -3418,6 +3418,20 @@ extern "C" bool NapiEnv__hasPendingException(napi_env env)
     return scope.exception() != nullptr;
 }
 
+// The wrapper that bun:ffi cc() compiles around a function with a napi_env
+// calls this after the function returns. napi_throw* only schedules the
+// exception on the env; Node throws it when the native function returns, and
+// this is that return. True means an exception is pending and the wrapper
+// hands JSC the empty value instead of a result.
+extern "C" bool NapiEnv__throwPendingException(napi_env env)
+{
+    if (env->throwPendingException()) {
+        return true;
+    }
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(env->vm());
+    return scope.exception() != nullptr;
+}
+
 extern "C" uint32_t napi_internal_get_version(napi_env env)
 {
     return env->napiModule().nm_version;

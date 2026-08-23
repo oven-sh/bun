@@ -355,6 +355,31 @@ devTest("export star through a CommonJS module", {
     await c.expectMessage("PASS");
   },
 });
+devTest("later CommonJS star re-export wins for a duplicate name", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "a.cts": `
+      module.exports = { shared: "from-a" };
+    `,
+    "b.cts": `
+      module.exports = { shared: "from-b" };
+    `,
+    "barrel.ts": `
+      export * from './a.cts';
+      export * from './b.cts';
+    `,
+    "index.ts": `
+      import { shared } from './barrel';
+      console.log(shared);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("from-b");
+  },
+});
 devTest("export star from a module with top-level await", {
   files: {
     "index.html": emptyHtmlFile({
@@ -392,6 +417,28 @@ devTest("require of a throwing ESM module throws again on retry", {
       let first, second;
       try { require('./boom'); } catch (e) { first = e.message; }
       try { require('./boom'); } catch (e) { second = e.message; }
+      console.log(first + " " + second);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("boom boom");
+  },
+});
+devTest("dynamic import of a throwing top-level-await module rejects again on retry", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "boom.ts": `
+      export const x = 1;
+      await 0;
+      throw new Error("boom");
+    `,
+    "index.ts": `
+      let first, second;
+      try { await import('./boom'); } catch (e) { first = e.message; }
+      try { await import('./boom'); } catch (e) { second = e.message; }
       console.log(first + " " + second);
     `,
   },

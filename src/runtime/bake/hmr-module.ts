@@ -555,15 +555,22 @@ function finishLoadModuleAsync(mod: HMRModule, load: UnloadedESM[3], stars: Id[]
     const p = load(mod) as Promise<void> | undefined;
     mod.imports = modules;
     if (p) {
-      return p.then(() => {
-        mod.state = State.Loaded;
-        if (mod.exports === exportsBefore) mod.exports = {};
-        const lateStars = mergeStarExports(mod, stars);
-        if (lateStars) mergeLateStarExports(mod, lateStars);
-        mod.cjs = null;
-        if (shouldPatchImporters) patchImporters(mod);
-        return mod;
-      });
+      return p.then(
+        () => {
+          mod.state = State.Loaded;
+          if (mod.exports === exportsBefore) mod.exports = {};
+          const lateStars = mergeStarExports(mod, stars);
+          if (lateStars) mergeLateStarExports(mod, lateStars);
+          mod.cjs = null;
+          if (shouldPatchImporters) patchImporters(mod);
+          return mod;
+        },
+        e => {
+          mod.state = State.Error;
+          mod.failure = e;
+          throw e;
+        },
+      );
     }
     if (mod.exports === exportsBefore) mod.exports = {};
     const lateStars = mergeStarExports(mod, stars);
@@ -687,12 +694,16 @@ function mergeStarExports(mod: HMRModule, stars: Id[]): Id[] | null {
  * names the static merge could not define. */
 function mergeLateStarExports(mod: HMRModule, lateIds: Id[]) {
   const exp = mod.exports;
+  // Snapshot the keys the static merge defined (own exports and ESM star
+  // names) so they win, while a later late star can still overwrite a key
+  // an earlier one added (last-wins, like the static merge).
+  const preKeys = new Set(Object.keys(exp));
   for (const starId of lateIds) {
     const starMod = registry.get(starId);
     if (!starMod) continue;
     const ns = getEsmExports(starMod);
     for (const key of Object.keys(ns)) {
-      if (key === "default" || Object.prototype.hasOwnProperty.call(exp, key)) continue;
+      if (key === "default" || preKeys.has(key)) continue;
       Object.defineProperty(exp, key, {
         get: () => getEsmExports(starMod)[key],
         enumerable: true,

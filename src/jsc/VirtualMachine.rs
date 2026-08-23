@@ -6850,15 +6850,19 @@ fn wrap_unhandled_rejection_error_for_uncaught_exception(
     if reason_str.is_string() {
         // SAFETY: `as_string()` returns a non-null `*mut JSString` when
         // `is_string()` is true; `view()` borrows it for the `write!` below.
-        let Ok(view) = (unsafe { (*reason_str.as_string()).view(global_object) }) else {
-            return JSValue::ZERO;
-        };
-        return global_object
-            .err(
-                crate::ErrorCode::ERR_UNHANDLED_REJECTION,
-                format_args!("{MSG_1}{view}\"."),
-            )
-            .to_js();
+        match unsafe { (*reason_str.as_string()).view(global_object) } {
+            Ok(view) => {
+                return global_object
+                    .err(
+                        crate::ErrorCode::ERR_UNHANDLED_REJECTION,
+                        format_args!("{MSG_1}{view}\"."),
+                    )
+                    .to_js();
+            }
+            // As with the stringification above: this is already the error-reporting path, so a reason that
+            // cannot be printed degrades to the generic message.
+            Err(_) => global_object.clear_exception(),
+        }
     }
     global_object
         .err(

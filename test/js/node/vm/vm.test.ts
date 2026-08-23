@@ -2039,13 +2039,11 @@ describe("deferred work of a context that is collected while the work is pending
   async function run(code: string) {
     await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-    return stdout;
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "done\n", stderr: "", exitCode: 0 });
   }
 
   test.concurrent("a FinalizationRegistry cleanup job queued before the collection does not run", async () => {
-    const stdout = await run(
+    await run(
       fixture(`
         function setup() {
           const context = createContext({});
@@ -2060,11 +2058,10 @@ describe("deferred work of a context that is collected while the work is pending
         function afterRound() {}
       `),
     );
-    expect(stdout).toBe("done\n");
   });
 
   test.concurrent("a notify for the collected context's Atomics.waitAsync does not run its wake-up", async () => {
-    const stdout = await run(
+    await run(
       fixture(`
         const i32 = new Int32Array(new SharedArrayBuffer(4));
         let wakeUps = 0;
@@ -2084,6 +2081,5 @@ describe("deferred work of a context that is collected while the work is pending
         }
       `),
     );
-    expect(stdout).toBe("done\n");
   });
 });

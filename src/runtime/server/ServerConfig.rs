@@ -713,7 +713,7 @@ impl ServerConfig {
 
             // SAFETY: `get_object()` returned Some, so the pointer is a live JSObject.
             let static_obj: &bun_jsc::JSObject = unsafe { &*static_obj };
-            let mut iter = JSPropertyIterator::init(
+            let iter = JSPropertyIterator::init(
                 global,
                 static_obj,
                 bun_jsc::JSPropertyIteratorOptions {
@@ -741,15 +741,13 @@ impl ServerConfig {
             // Vec<StaticRouteEntry> drops elements (which deref route)
             // automatically on error.
 
-            while let Some(key) = iter.next()? {
+            while let Some((key, value)) = iter.next()? {
                 // NOTE: `to_owned_slice_returning_all_ascii` not yet on
                 // `bun_core::String`; split into `to_owned_slice()` + `is_all_ascii`.
                 let path_vec = key.to_owned_slice();
                 let is_ascii = strings::is_all_ascii(&path_vec);
                 let path: Box<[u8]> = path_vec.into_boxed_slice();
                 // The path Box drops on error.
-
-                let value: JSValue = iter.value;
 
                 if value.is_undefined() {
                     continue;

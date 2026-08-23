@@ -114,26 +114,5 @@ extern "C" fn node_module_paths_js_value(
         SEP_STR,
     )));
 
-    list.to_js_array(global).or_pending_exception()
-}
-
-/// `[bun.String]::to_js_array` lives on the `StringArrayJsc` ext trait below.
-trait StringArrayJsc {
-    fn to_js_array(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
-}
-impl StringArrayJsc for [BunString] {
-    fn to_js_array(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        unsafe extern "C" {
-            fn BunString__createArray(
-                global: &JSGlobalObject,
-                ptr: *const BunString,
-                len: usize,
-            ) -> JSValue;
-        }
-        // SAFETY: `self` is a live slice, so `self.as_ptr()` is valid for `self.len()`
-        // reads of `BunString` for the duration of the FFI call.
-        crate::host_fn::from_js_host_call(global, || unsafe {
-            BunString__createArray(global, self.as_ptr(), self.len())
-        })
-    }
+    crate::bun_string_jsc::to_js_array(global, &list).or_pending_exception()
 }

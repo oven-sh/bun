@@ -276,7 +276,7 @@ impl Stringifier {
     }
 
     fn stringify_object(&mut self, global: &JSGlobalObject, value: JSValue) -> StringifyResult<()> {
-        let mut iter = jsc::JSPropertyIterator::init(
+        let iter = jsc::JSPropertyIterator::init(
             global,
             value.to_object(global)?,
             jsc::JSPropertyIteratorOptions {
@@ -296,11 +296,8 @@ impl Stringifier {
         match self.space {
             Space::Minified => {
                 let mut first = true;
-                while let Some(prop_name) = iter.next()? {
-                    if iter.value.is_undefined()
-                        || iter.value.is_symbol()
-                        || iter.value.is_function()
-                    {
+                while let Some((prop_name, value)) = iter.next()? {
+                    if value.is_undefined() || value.is_symbol() || value.is_function() {
                         continue;
                     }
                     if !first {
@@ -309,17 +306,14 @@ impl Stringifier {
                     first = false;
                     self.append_key(&prop_name);
                     self.builder.append_lchar(b':');
-                    self.stringify_value(global, iter.value)?;
+                    self.stringify_value(global, value)?;
                 }
             }
             Space::Number(_) | Space::Str(_) => {
                 self.indent += 1;
                 let mut first = true;
-                while let Some(prop_name) = iter.next()? {
-                    if iter.value.is_undefined()
-                        || iter.value.is_symbol()
-                        || iter.value.is_function()
-                    {
+                while let Some((prop_name, value)) = iter.next()? {
+                    if value.is_undefined() || value.is_symbol() || value.is_function() {
                         continue;
                     }
                     if !first {
@@ -329,7 +323,7 @@ impl Stringifier {
                     self.newline();
                     self.append_key(&prop_name);
                     self.builder.append_latin1(b": ");
-                    self.stringify_value(global, iter.value)?;
+                    self.stringify_value(global, value)?;
                 }
                 self.indent -= 1;
                 if !first {

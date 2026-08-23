@@ -328,13 +328,13 @@ impl Stringifier {
                         ))
                         .into());
                 }
-                let mut iter = jsc::JSPropertyIterator::init(
+                let iter = jsc::JSPropertyIterator::init(
                     global,
                     attributes.to_object(global)?,
                     iter_options(),
                 )?;
-                while let Some(attr_name) = iter.next()? {
-                    match self.scalar(global, iter.value, "an attribute value")? {
+                while let Some((attr_name, prop_value)) = iter.next()? {
+                    match self.scalar(global, prop_value, "an attribute value")? {
                         Scalar::Skip | Scalar::Empty => {}
                         Scalar::Text(text) => self.append_attribute(global, &attr_name, &text)?,
                     }
@@ -550,10 +550,10 @@ impl Stringifier {
         document: JSValue,
     ) -> StringifyResult<()> {
         let mut root: Option<(bun_core::StringView<'_>, JSValue)> = None;
-        let mut iter =
+        let iter =
             jsc::JSPropertyIterator::init(global, document.to_object(global)?, iter_options())?;
-        while let Some(key) = iter.next()? {
-            let value = iter.value.unwrap_boxed_primitive(global)?;
+        while let Some((key, prop_value)) = iter.next()? {
+            let value = prop_value.unwrap_boxed_primitive(global)?;
             if skipped(value) {
                 continue;
             }
@@ -704,9 +704,8 @@ impl Stringifier {
         self.builder.append_string(name);
         let mut has_elements = false;
         let mut has_text = false;
-        let mut iter = jsc::JSPropertyIterator::init(global, object, iter_options())?;
-        while let Some(key) = iter.next()? {
-            let child = iter.value;
+        let iter = jsc::JSPropertyIterator::init(global, object, iter_options())?;
+        while let Some((key, child)) = iter.next()? {
             if skipped(child) {
                 continue;
             }
@@ -743,9 +742,8 @@ impl Stringifier {
         if pretty {
             self.indent += 1;
         }
-        let mut iter = jsc::JSPropertyIterator::init(global, object, iter_options())?;
-        while let Some(key) = iter.next()? {
-            let child = iter.value;
+        let iter = jsc::JSPropertyIterator::init(global, object, iter_options())?;
+        while let Some((key, child)) = iter.next()? {
             if skipped(child) || key.has_prefix_comptime(b"@") {
                 continue;
             }

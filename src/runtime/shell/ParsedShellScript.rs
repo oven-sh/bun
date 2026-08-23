@@ -144,7 +144,7 @@ impl ParsedShellScript {
             return Err(global.throw_invalid_arguments(format_args!("env must be an object")));
         };
 
-        let mut object_iter = JSPropertyIterator::init(
+        let object_iter = JSPropertyIterator::init(
             global,
             value1,
             JSPropertyIteratorOptions {
@@ -162,8 +162,7 @@ impl ParsedShellScript {
         // If the env object does not include a $PATH, it must disable path lookup for argv[0]
         // PATH = "";
 
-        while let Some(key) = object_iter.next()? {
-            let value = object_iter.value;
+        while let Some((key, value)) = object_iter.next()? {
             if value.is_undefined() {
                 continue;
             }

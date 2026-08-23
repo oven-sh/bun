@@ -4307,7 +4307,7 @@ impl H2FrameParser {
                 };
 
                 let mut count: usize = 0;
-                let mut iter = bun_jsc::JSPropertyIterator::init(
+                let iter = bun_jsc::JSPropertyIterator::init(
                     global_object,
                     custom_settings_obj,
                     bun_jsc::JSPropertyIteratorOptions {
@@ -4317,7 +4317,7 @@ impl H2FrameParser {
                     },
                 )?;
 
-                while let Some(prop_name) = iter.next()? {
+                while let Some((prop_name, setting_value)) = iter.next()? {
                     count += 1;
                     if count > MAX_CUSTOM_SETTINGS {
                         return global_object
@@ -4349,7 +4349,6 @@ impl H2FrameParser {
                     }
 
                     // Validate setting value is in range [0, 2^32-1]
-                    let setting_value = iter.value;
                     if setting_value.is_number() {
                         let value = setting_value.as_number();
                         if value < 0.0 || value > MAX_HEADER_TABLE_SIZE_F64 {
@@ -5618,7 +5617,7 @@ impl H2FrameParser {
         // max header name length for lshpack
         let mut name_buffer = [0u8; 4096];
 
-        let mut iter = bun_jsc::JSPropertyIterator::init(
+        let iter = bun_jsc::JSPropertyIterator::init(
             global_object,
             headers_obj,
             bun_jsc::JSPropertyIteratorOptions {
@@ -5631,7 +5630,7 @@ impl H2FrameParser {
         let mut single_value_headers = [false; SINGLE_VALUE_HEADERS_LEN];
 
         // Encode trailer headers using HPACK
-        while let Some(header_name) = iter.next()? {
+        while let Some((header_name, js_value)) = iter.next()? {
             if header_name.length() == 0 {
                 continue;
             }
@@ -5650,7 +5649,6 @@ impl H2FrameParser {
                 return Err(global_object.throw_value(exception));
             }
 
-            let js_value = iter.value;
             if js_value.is_undefined_or_null() {
                 let exception = global_object.to_type_error(
                     bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE,
@@ -6106,7 +6104,7 @@ impl H2FrameParser {
         // A PUSH_PROMISE carries a REQUEST, so request pseudo-headers are valid even on the server.
         // Pseudo-headers must be encoded first, so iterate twice.
         for ignore_pseudo_headers in 0..2usize {
-            let mut iter = bun_jsc::JSPropertyIterator::init(
+            let iter = bun_jsc::JSPropertyIterator::init(
                 global_object,
                 headers_obj,
                 bun_jsc::JSPropertyIteratorOptions {
@@ -6115,7 +6113,7 @@ impl H2FrameParser {
                     ..Default::default()
                 },
             )?;
-            while let Some(header_name) = iter.next()? {
+            while let Some((header_name, js_value)) = iter.next()? {
                 if header_name.length() == 0 {
                     continue;
                 }
@@ -6155,7 +6153,6 @@ impl H2FrameParser {
                 } else if ignore_pseudo_headers == 0 {
                     continue;
                 }
-                let js_value = iter.value;
                 if js_value.is_empty_or_undefined_or_null() {
                     continue;
                 }
@@ -6698,7 +6695,7 @@ impl H2FrameParser {
         }) {
             // Note: `bun_jsc::JSPropertyIterator` (runtime-options variant) lacks `.reset()`;
             // re-initialize per pass instead — the observable property walk is the same.
-            let mut iter = bun_jsc::JSPropertyIterator::init(
+            let iter = bun_jsc::JSPropertyIterator::init(
                 global_object,
                 headers_obj,
                 bun_jsc::JSPropertyIteratorOptions {
@@ -6708,7 +6705,7 @@ impl H2FrameParser {
                 },
             )?;
 
-            while let Some(header_name) = iter.next()? {
+            while let Some((header_name, js_value)) = iter.next()? {
                 if header_name.length() == 0 {
                     continue;
                 }
@@ -6754,7 +6751,6 @@ impl H2FrameParser {
                     continue;
                 }
 
-                let js_value = iter.value;
                 if js_value.is_undefined_or_null() {
                     let exception = global_object.to_type_error(
                         bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE,

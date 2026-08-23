@@ -1357,7 +1357,7 @@ impl Expect {
         // SAFETY: already checked that args[0] is an object
         let matchers_to_register = args[0].get_object().expect("unreachable");
         {
-            let mut iter = JSPropertyIterator::init(
+            let iter = JSPropertyIterator::init(
                 global_this,
                 matchers_to_register,
                 bun_jsc::JSPropertyIteratorOptions {
@@ -1369,8 +1369,7 @@ impl Expect {
                 },
             )?;
 
-            while let Some(matcher_name) = iter.next()? {
-                let matcher_fn: JSValue = iter.value;
+            while let Some((matcher_name, matcher_fn)) = iter.next()? {
 
                 if !matcher_fn.js_type().is_function() {
                     let type_name = if matcher_fn.is_null() {

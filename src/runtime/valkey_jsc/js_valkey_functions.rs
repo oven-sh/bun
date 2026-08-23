@@ -1088,7 +1088,7 @@ impl JSValkeyClient {
                 return Err(global.throw_invalid_argument_type(bname(command), "fields", "object"));
             };
 
-            let mut object_iter = JSPropertyIterator::init(
+            let object_iter = JSPropertyIterator::init(
                 global,
                 obj,
                 jsc::PropertyIteratorOptions {
@@ -1099,11 +1099,11 @@ impl JSValkeyClient {
 
             args.ensure_total_capacity(1 + object_iter.len * 2);
 
-            while let Some(field_name) = object_iter.next()? {
+            while let Some((field_name, value)) = object_iter.next()? {
                 let field_slice = field_name.to_utf8();
                 args.push(field_slice);
 
-                let value_str = object_iter.value.to_bun_string(global)?;
+                let value_str = value.to_bun_string(global)?;
                 args.push(value_str.to_utf8());
             }
         } else if second_arg.is_array() {

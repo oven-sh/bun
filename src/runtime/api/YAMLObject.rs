@@ -292,7 +292,7 @@ impl Stringifier {
         }
 
         // const generics: <SKIP_EMPTY_NAME, INCLUDE_VALUE>
-        let mut iter = JSPropertyIterator::init(
+        let iter = JSPropertyIterator::init(
             global,
             unwrapped.to_object(global)?,
             JSPropertyIteratorOptions {
@@ -302,11 +302,11 @@ impl Stringifier {
             },
         )?;
 
-        while let Some(prop_name) = iter.next()? {
-            if iter.value.is_undefined() || iter.value.is_symbol() || iter.value.is_function() {
+        while let Some((prop_name, value)) = iter.next()? {
+            if value.is_undefined() || value.is_symbol() || value.is_function() {
                 continue;
             }
-            self.find_anchors_and_aliases(global, iter.value, ValueOrigin::PropValue(&prop_name))?;
+            self.find_anchors_and_aliases(global, value, ValueOrigin::PropValue(&prop_name))?;
         }
 
         Ok(())
@@ -489,7 +489,7 @@ impl Stringifier {
         }
 
         // const generics: <SKIP_EMPTY_NAME, INCLUDE_VALUE>
-        let mut iter = JSPropertyIterator::init(
+        let iter = JSPropertyIterator::init(
             global,
             unwrapped.to_object(global)?,
             JSPropertyIteratorOptions {
@@ -508,11 +508,8 @@ impl Stringifier {
             Space::Minified => {
                 self.builder.append_lchar(b'{');
                 let mut first = true;
-                while let Some(prop_name) = iter.next()? {
-                    if iter.value.is_undefined()
-                        || iter.value.is_symbol()
-                        || iter.value.is_function()
-                    {
+                while let Some((prop_name, value)) = iter.next()? {
+                    if value.is_undefined() || value.is_symbol() || value.is_function() {
                         continue;
                     }
 
@@ -524,7 +521,7 @@ impl Stringifier {
                     self.append_string(&prop_name);
                     self.builder.append_latin1(b": ");
 
-                    self.stringify(global, iter.value)?;
+                    self.stringify(global, value)?;
                 }
                 self.builder.append_lchar(b'}');
             }
@@ -532,11 +529,8 @@ impl Stringifier {
                 self.builder.ensure_unused_capacity(iter.len * b": ".len());
 
                 let mut first = true;
-                while let Some(prop_name) = iter.next()? {
-                    if iter.value.is_undefined()
-                        || iter.value.is_symbol()
-                        || iter.value.is_function()
-                    {
+                while let Some((prop_name, value)) = iter.next()? {
+                    if value.is_undefined() || value.is_symbol() || value.is_function() {
                         continue;
                     }
 
@@ -550,7 +544,7 @@ impl Stringifier {
 
                     self.indent += 1;
 
-                    let prop_value = iter.value.unwrap_boxed_primitive(global)?;
+                    let prop_value = value.unwrap_boxed_primitive(global)?;
                     if prop_value_needs_newline(prop_value) {
                         self.newline();
                     }

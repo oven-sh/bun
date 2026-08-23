@@ -394,17 +394,16 @@ fn store_option(
 /// `iter` alive for as long as `option_definitions` is used.
 fn parse_option_definitions<'a>(
     global: &JSGlobalObject,
-    iter: &mut bun_jsc::JSPropertyIterator<'a>,
+    iter: &'a bun_jsc::JSPropertyIterator<'_>,
     option_definitions: &mut Vec<OptionDefinition<'a>>,
     default_roots: &mut MarkedArgumentBuffer,
 ) -> JsResult<()> {
-    while let Some(long_option) = iter.next()? {
+    while let Some((long_option, obj)) = iter.next()? {
         let mut option = OptionDefinition {
             long_name: long_option,
             ..Default::default()
         };
 
-        let obj: JSValue = iter.value;
         validators::validate_object(
             global,
             obj,
@@ -982,7 +981,7 @@ fn parse_args_impl(
 
     // Phase 0.C: Parse the options definitions
 
-    let mut options_iter = if !config_options.is_undefined_or_null() {
+    let options_iter = if !config_options.is_undefined_or_null() {
         validators::validate_object(global, config_options, "options", Default::default())?;
         Some(bun_jsc::JSPropertyIterator::init(
             global,
@@ -995,7 +994,7 @@ fn parse_args_impl(
 
     let mut option_defs: Vec<OptionDefinition> = Vec::new();
 
-    if let Some(iter) = &mut options_iter {
+    if let Some(iter) = &options_iter {
         parse_option_definitions(global, iter, &mut option_defs, default_roots)?;
     }
 

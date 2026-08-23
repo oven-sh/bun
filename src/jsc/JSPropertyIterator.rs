@@ -1,3 +1,4 @@
+use core::cell::Cell;
 use core::ptr::NonNull;
 
 use crate::host_fn::from_js_host_call_generic;
@@ -99,19 +100,14 @@ impl IntoIterObject for &mut JSObject {
 
 pub struct JSPropertyIterator<'a> {
     pub len: usize,
-    pub(crate) i: u32,
-    pub(crate) iter_i: u32,
+    /// Index of the property last yielded by `next()`.
+    pub(crate) i: Cell<u32>,
+    iter_i: Cell<u32>,
     /// null if and only if `object` has no properties (i.e. `len == 0`)
     pub(crate) impl_: Option<NonNull<JSPropertyIteratorImpl>>,
 
     pub(crate) global_object: &'a JSGlobalObject,
     pub(crate) object: *mut JSObject,
-    /// Current property value being yielded (only meaningful when
-    /// `options.include_value` is set).
-    // The bare JSValue field is sound because this struct is stack-only (`'a` borrow);
-    // conservative stack scan keeps it alive. Do NOT box this struct.
-    pub value: JSValue,
-
     options: JSPropertyIteratorOptions,
 }
 
@@ -157,32 +153,31 @@ impl<'a> JSPropertyIterator<'a> {
 
         Ok(Self {
             len,
-            i: 0,
-            iter_i: 0,
+            i: Cell::new(0),
+            iter_i: Cell::new(0),
             impl_,
             global_object,
             object,
-            value: JSValue::ZERO,
             options,
         })
     }
 
-    /// The name is borrowed from the iterator (C++ `Bun::toString`, no ref);
-    /// it is valid until the iterator is dropped. `'a` (the global borrow) is
-    /// wider than that, but tying the view to `&mut self` would forbid reading
-    /// `self.value` while holding the name, which every caller does.
-    pub fn next(&mut self) -> JsResult<Option<bun_core::StringView<'a>>> {
-        // Reuse stack space.
+    /// The name is borrowed from the iterator (C++ `Bun::toString`, no ref).
+    /// The value is `JSValue::ZERO` unless `options.include_value`.
+    /// The name borrows the C++ iterator's storage and is valid until `self`
+    /// drops (hence `&self`: a yielded name may be held across later calls).
+    pub fn next(&self) -> JsResult<Option<(bun_core::StringView<'_>, JSValue)>> {
         loop {
-            let i: usize = self.iter_i as usize;
+            let i: usize = self.iter_i.get() as usize;
             if i >= self.len {
-                self.i = self.iter_i;
+                self.i.set(self.iter_i.get());
                 return Ok(None);
             }
 
-            self.i = self.iter_i;
-            self.iter_i += 1;
+            self.i.set(self.iter_i.get());
+            self.iter_i.set(self.iter_i.get() + 1);
             let mut name = bun_core::StringView::DEAD;
+            let mut value = JSValue::ZERO;
             if self.options.include_value {
                 let iter = self.impl_.expect("len > 0 implies impl_ is Some").as_ptr();
                 // `JSPropertyIteratorImpl`/`JSObject` are opaque ZST handles;
@@ -210,7 +205,7 @@ impl<'a> JSPropertyIterator<'a> {
                     continue;
                 }
                 current.ensure_still_alive();
-                self.value = current;
+                value = current;
             } else {
                 // Exception check is unnecessary here because it won't throw.
                 let iter = self.impl_.expect("len > 0 implies impl_ is Some").as_ptr();
@@ -231,7 +226,7 @@ impl<'a> JSPropertyIterator<'a> {
                 continue;
             }
 
-            return Ok(Some(name));
+            return Ok(Some((name, value)));
         }
     }
 }

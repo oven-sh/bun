@@ -50,7 +50,7 @@ impl IniTestingAPIs {
             let Some(envobj) = envjs.get_object() else {
                 return Err(global.throw_type_error(format_args!("env must be an object")));
             };
-            let mut object_iter = bun_jsc::JSPropertyIterator::init(
+            let object_iter = bun_jsc::JSPropertyIterator::init(
                 global,
                 envobj,
                 bun_jsc::JSPropertyIteratorOptions::new(
@@ -60,9 +60,8 @@ impl IniTestingAPIs {
 
             envmap.ensure_total_capacity(object_iter.len)?;
 
-            while let Some(key) = object_iter.next()? {
+            while let Some((key, value)) = object_iter.next()? {
                 let keyslice = key.to_owned_slice();
-                let value = object_iter.value;
                 if value.is_undefined() {
                     continue;
                 }

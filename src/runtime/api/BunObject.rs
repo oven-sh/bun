@@ -1154,7 +1154,7 @@ fn resolve_with_args<const IS_FILE_PATH: bool>(
 
     let decoded_specifier;
     let specifier_for_resolve = if specifier.has_prefix_comptime(b"file://") {
-        decoded_specifier = jsc::URL::path_from_file_url(specifier);
+        decoded_specifier = bun_url::path_from_file_url(specifier);
         &decoded_specifier
     } else {
         specifier

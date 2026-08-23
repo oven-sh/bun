@@ -2125,7 +2125,7 @@ fn append_envp_from_js(
     path: &mut &[u8],
     storage: &mut Vec<ZBox>,
 ) -> JsResult<()> {
-    let mut object_iter = JSPropertyIterator::init(
+    let object_iter = JSPropertyIterator::init(
         global_this,
         object,
         jsc::PropertyIteratorOptions {
@@ -2143,8 +2143,7 @@ fn append_envp_from_js(
         .saturating_sub(envp.len()),
     );
     storage.reserve(object_iter.len);
-    while let Some(key) = object_iter.next()? {
-        let value = object_iter.value;
+    while let Some((key, value)) = object_iter.next()? {
         if value.is_undefined() {
             continue;
         }

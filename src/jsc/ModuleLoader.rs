@@ -1,14 +1,14 @@
-//! The `ModuleLoader` struct, `FetchFlags`, and the `HardcodedModule`
-//! re-export compile against the `lib.rs` stub surface.
-//! `transpile_source_code` / `fetch_builtin_module` / `resolve_embedded_file`
-//! and the `Bun__*` extern entry points reach into `bun_runtime::node::fs` /
-//! `bun_transpiler` internals / gated bundler types (forward-dep cycle on
-//! `bun_jsc`).
+//! The `ModuleLoader` struct, `FetchFlags`, and the builtin-module lookup
+//! helpers. `transpile_source_code` / `fetch_builtin_module` and the
+//! `Bun__transpile*` / `Bun__resolve*` C++ entry points live in
+//! `bun_runtime::jsc_hooks` (they reach into `node::fs`, the transpiler, and
+//! the standalone graph); this crate calls the first two through link-time
+//! `extern "Rust"` decls.
 
 use core::ffi::c_void;
-use core::ptr::NonNull;
 
 use bun_alloc::Arena as ArenaAllocator;
+use bun_bundler::transpiler::PluginRunner;
 use bun_options_types::LoaderExt as _;
 
 use crate::virtual_machine::VirtualMachine;
@@ -110,21 +110,10 @@ impl FetchFlags {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// §Dispatch — `bun_runtime` loader vtable.
-//
-// `transpile_source_code` / `fetch_builtin_module` / `Bun__transpileFile`
-// reach into `bun_runtime::node::fs` (read-file), `bun_transpiler::ParseResult`,
-// `bun_bundler::analyze_transpiled_module`, the source-code printer pool, and
-// `webcore::Blob` — every one a forward-dep on `bun_jsc`. Per PORTING.md
-// §Dispatch (cold-path: called per-import, not per-tick), the low tier owns
-// the extern-"C" symbol and a manual vtable; `bun_runtime` installs the body.
-// ──────────────────────────────────────────────────────────────────────────
-
 /// `transpile_source_code` parameters that name only low-tier types. The
 /// remaining params (`path: Fs.Path`, `loader: options.Loader`,
 /// `module_type: options.ModuleType`, `printer: *BufferPrinter`) are passed
-/// through the `extra: *mut c_void` slot — the high-tier hook owns the cast.
+/// through the `extra: *mut c_void` slot — `bun_runtime` owns the cast.
 pub struct TranspileArgs<'a> {
     pub specifier: &'a [u8],
     pub referrer: &'a [u8],
@@ -133,184 +122,71 @@ pub struct TranspileArgs<'a> {
     pub virtual_source: Option<&'a bun_ast::Source>,
     pub global_object: *mut JSGlobalObject,
     pub flags: FetchFlags,
-    /// `*mut TranspileExtra` — opaque, owned by the high tier. Null when
-    /// called from the low-tier `Bun__*` shims (the hook recomputes them from
-    /// `specifier`).
+    /// `*mut TranspileExtra`; never null.
     pub extra: *mut c_void,
 }
 
-/// Concrete shape behind [`TranspileArgs::extra`]. Declared here (not in
-/// `bun_runtime`) so both tiers agree on layout; every field type is already a
-/// `bun_jsc` dep (`bun_resolver`, `bun_bundler::options`, `bun_js_printer`).
-///
-/// Bundled into one struct (rather than positional params)
-/// because the §Dispatch fn-ptr signature must be
-/// stable across the crate boundary.
+/// Concrete shape behind [`TranspileArgs::extra`].
 #[repr(C)]
 pub struct TranspileExtra {
     pub path: bun_resolver::fs::Path<'static>,
     pub loader: bun_ast::Loader,
     pub module_type: bun_bundler::options::ModuleType,
-    /// `*js_printer.BufferPrinter` — the per-VM shared printer. Never null
-    /// when `extra` itself is non-null.
+    /// `*js_printer.BufferPrinter` — the per-VM shared printer. Never null.
     pub source_code_printer: *mut bun_js_printer::BufferPrinter,
     /// `?*?*jsc.JSInternalPromise` — out-param for the async-module path.
     /// Null forbids async resolution.
     pub promise_ptr: *mut *mut JSInternalPromise,
 }
 
-pub struct LoaderHooks {
-    /// `ModuleLoader.transpileSourceCode(...)` — full body.
-    pub transpile_source_code: unsafe fn(
+unsafe extern "Rust" {
+    /// Defined in `bun_runtime::jsc_hooks`.
+    fn __bun_transpile_source_code(
         jsc_vm: *mut VirtualMachine,
         args: &TranspileArgs<'_>,
-    ) -> Result<ResolvedSource, crate::CrateError>,
-    /// `ModuleLoader.fetchBuiltinModule(jsc_vm, specifier)` — `None` when the
-    /// specifier is not a builtin / standalone-graph module.
-    pub fetch_builtin_module: unsafe fn(
+    ) -> Result<ResolvedSource, crate::CrateError>;
+    /// Defined in `bun_runtime::jsc_hooks`. `None` when the specifier is not a
+    /// builtin / standalone-graph module.
+    fn __bun_fetch_builtin_module(
         jsc_vm: *mut VirtualMachine,
-        global: *mut JSGlobalObject,
+        global: &JSGlobalObject,
         specifier: &bun_core::String,
         referrer: &bun_core::String,
-    ) -> Option<ResolvedSource>,
-    /// `ModuleLoader.getHardcodedModule(jsc_vm, specifier, hardcoded)` —
-    /// per-variant body of the builtin-module fast path. `None` ⇒ recognised
-    /// but not currently servable.
-    pub get_hardcoded_module: unsafe fn(
-        jsc_vm: *mut VirtualMachine,
-        specifier: &bun_core::String,
-        hardcoded: bun_resolve_builtins::Module,
-    ) -> Option<ResolvedSource>,
-    /// `ModuleLoader.resolveEmbeddedFile(vm, &path_buf, input_path, "node")`
-    /// — extracts an embedded `.node` addon
-    /// from the standalone-module graph to a real on-disk temp file and
-    /// returns its path. Body lives in `bun_runtime` (reaches into `node::fs` +
-    /// `StandaloneModuleGraph`).
-    pub resolve_embedded_node_file: fn(path: &bun_core::String) -> Option<bun_core::String>,
-    /// `Bun__transpileVirtualModule` body —
-    /// transpiles plugin-provided source through the per-thread `BufferPrinter`
-    /// (a `bun_runtime` thread-local). Writes `*ret` (always — `.ok` or `.err`)
-    /// and always returns `true`
-    /// (the C++ caller already proved `plugin_runner != null`).
-    pub transpile_virtual_module: unsafe fn(
-        global: *mut JSGlobalObject,
-        specifier: *const bun_core::String,
-        referrer: *const bun_core::String,
-        source_code: *const bun_core::ZigString,
-        loader: bun_options_types::schema::api::Loader,
-        ret: *mut ErrorableResolvedSource,
-    ) -> bool,
-    /// `Bun__transpileFile` body — needs `options.getLoaderAndVirtualSource`,
-    /// `node_module_module`, `webcore.Blob`, the concurrent-transpiler queue.
-    /// Returns the in-flight promise when `allow_promise && async`, else null
-    /// (result is in `*ret`).
-    pub transpile_file: unsafe fn(
-        jsc_vm: *mut VirtualMachine,
-        global: *mut JSGlobalObject,
-        specifier: *const bun_core::String,
-        referrer: *const bun_core::String,
-        type_attribute: *const bun_core::String,
-        ret: *mut ErrorableResolvedSource,
-        allow_promise: bool,
-        is_commonjs_require: bool,
-        force_loader: u8,
-    ) -> *mut c_void,
+    ) -> Option<ResolvedSource>;
 }
 
-unsafe extern "Rust" {
-    /// The single `&'static` instance, defined `#[no_mangle]` in
-    /// `bun_runtime::jsc_hooks`. Link-time resolved — no `AtomicPtr`, no
-    /// init-order hazard. `LoaderHooks` is a `#[repr(Rust)]` POD of fn-ptrs
-    /// with a single immutable definition; reading it has no precondition
-    /// beyond the link succeeding → `safe static`.
-    safe static __BUN_LOADER_HOOKS: LoaderHooks;
-}
-
-#[inline]
-fn loader_hooks() -> &'static LoaderHooks {
-    &__BUN_LOADER_HOOKS
-}
-
-/// `ModuleLoader.transpileSourceCode(...)` — thin shim over the §Dispatch
-/// hook. PERF: the indirection
-/// is one fn-ptr per import, dwarfed by the parser/printer work it does.
 pub(crate) fn transpile_source_code(
     jsc_vm: &mut VirtualMachine,
     args: &TranspileArgs<'_>,
 ) -> Result<ResolvedSource, crate::CrateError> {
-    let hooks = loader_hooks();
-    // SAFETY: hook contract — `jsc_vm` is the live per-thread VM.
-    unsafe { (hooks.transpile_source_code)(jsc_vm, args) }
+    // SAFETY: `jsc_vm` is the live per-thread VM; `args.extra` points at a
+    // live `TranspileExtra`.
+    unsafe { __bun_transpile_source_code(jsc_vm, args) }
 }
 
-/// `ModuleLoader.fetchBuiltinModule(jsc_vm, specifier)`.
 pub(crate) fn fetch_builtin_module(
     jsc_vm: &mut VirtualMachine,
-    global: NonNull<JSGlobalObject>,
+    global: &JSGlobalObject,
     specifier: &bun_core::String,
     referrer: &bun_core::String,
 ) -> Option<ResolvedSource> {
-    let hooks = loader_hooks();
-    // SAFETY: hook contract — `jsc_vm` is the live per-thread VM; `global` is
-    // the live JS-thread global passed through opaquely to the §Dispatch hook.
-    unsafe { (hooks.fetch_builtin_module)(jsc_vm, global.as_ptr(), specifier, referrer) }
+    // SAFETY: `jsc_vm` is the live per-thread VM.
+    unsafe { __bun_fetch_builtin_module(jsc_vm, global, specifier, referrer) }
 }
 
-/// `VirtualMachine.processFetchLog(global, specifier, referrer, log, &errorable,
-/// err)` — synthesizes a JS error from the parser/resolve `log` and writes it
-/// into `errorable` so the C++ side (`Bun__onFulfillAsyncModule`,
-/// ModuleLoader.cpp:473) rejects the import promise with a real Error instead
-/// of `undefined`.
 pub use crate::virtual_machine::process_fetch_log;
-
-// ──────────────────────────────────────────────────────────────────────────
-// extern "C" entry points — these are the symbols C++ calls. Bodies dispatch
-// through `LoaderHooks`; the high tier owns the real logic.
-// ──────────────────────────────────────────────────────────────────────────
-
-#[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__transpileFile(
-    jsc_vm: *mut VirtualMachine,
-    global_object: *mut JSGlobalObject,
-    specifier_ptr: *const bun_core::String,
-    referrer: *const bun_core::String,
-    type_attribute: *const bun_core::String,
-    ret: *mut ErrorableResolvedSource,
-    allow_promise: bool,
-    is_commonjs_require: bool,
-    force_loader_type: u8, // bun.schema.api.Loader — passed as raw u8 across the cycle
-) -> *mut c_void {
-    jsc::mark_binding();
-    let hooks = loader_hooks();
-    // SAFETY: hook contract — all pointers are valid for the call (C++ ABI).
-    unsafe {
-        (hooks.transpile_file)(
-            jsc_vm,
-            global_object,
-            specifier_ptr,
-            referrer,
-            type_attribute,
-            ret,
-            allow_promise,
-            is_commonjs_require,
-            force_loader_type,
-        )
-    }
-}
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__fetchBuiltinModule(
     jsc_vm: *mut VirtualMachine,
-    global_object: *mut JSGlobalObject,
+    global_object: &JSGlobalObject,
     specifier: &bun_core::String,
     referrer: &bun_core::String,
     ret: &mut ErrorableResolvedSource,
 ) -> bool {
     jsc::mark_binding();
-    // SAFETY: `jsc_vm` is the live per-thread VM and `global_object` is the
-    // live JS-thread global. JSC never passes null.
-    let (jsc_vm, global_object) = unsafe { (&mut *jsc_vm, NonNull::new_unchecked(global_object)) };
-    match fetch_builtin_module(jsc_vm, global_object, specifier, referrer) {
+    // SAFETY: `jsc_vm` is the live per-thread VM.
+    match unsafe { __bun_fetch_builtin_module(jsc_vm, global_object, specifier, referrer) } {
         Some(resolved) => {
             *ret = ErrorableResolvedSource::ok(resolved);
             true
@@ -322,7 +198,7 @@ unsafe extern "C" fn Bun__fetchBuiltinModule(
 /// Linear scan over the `BUN_ALIASES` const tables (PERF: could replace with
 /// a `comptime_string_map!`).
 #[inline]
-fn bun_aliases_get(name: &[u8]) -> Option<bun_resolve_builtins::Alias> {
+pub fn bun_aliases_get(name: &[u8]) -> Option<bun_resolve_builtins::Alias> {
     // Keep the raw-table scan in agreement with `Alias::get`'s flag gate so
     // `require.resolve.paths` / `Module._resolveLookupPaths` (which reach
     // here via `ModuleLoader__isBuiltin`) don't report a gated-off specifier
@@ -353,55 +229,6 @@ pub fn exposed_internal_tag(spec: &[u8]) -> Option<(Vec<u8>, crate::ResolvedSour
     Some((name, tag))
 }
 
-/// C++ entry point: if `specifier` names a builtin module, writes its resolved source into `ret` and returns `true`.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__resolveAndFetchBuiltinModule(
-    jsc_vm: *mut VirtualMachine,
-    specifier: *const bun_core::String,
-    ret: *mut ErrorableResolvedSource,
-) -> bool {
-    jsc::mark_binding();
-    // SAFETY: C++ passed valid pointers; `jsc_vm` is the live per-thread VM.
-    let specifier = unsafe { &*specifier };
-    let spec_utf8 = specifier.to_utf8();
-    if let Some((_, tag)) = exposed_internal_tag(spec_utf8.slice()) {
-        // The `InternalModuleRegistryFlag` consumer reads only `tag`.
-        let resolved = ResolvedSource {
-            tag,
-            ..ResolvedSource::default()
-        };
-        // SAFETY: C++ passed a valid out-param.
-        unsafe { ret.write(ErrorableResolvedSource::ok(resolved)) };
-        return true;
-    }
-    let Some(alias) = bun_aliases_get(spec_utf8.slice()) else {
-        return false;
-    };
-    let Some(&hardcoded) = bun_resolve_builtins::Module::MAP.get(alias.path.as_bytes()) else {
-        debug_assert!(false);
-        return false;
-    };
-    let hooks = loader_hooks();
-    // SAFETY: hook contract — `jsc_vm` is the live per-thread VM.
-    let Some(resolved) = (unsafe { (hooks.get_hardcoded_module)(jsc_vm, specifier, hardcoded) })
-    else {
-        return false;
-    };
-    // SAFETY: C++ passed a valid out-param.
-    unsafe { ret.write(ErrorableResolvedSource::ok(resolved)) };
-    true
-}
-
-/// Support embedded .node files. `Dead` when `path` is not an embedded file.
-#[unsafe(no_mangle)]
-extern "C" fn Bun__resolveEmbeddedNodeFile(path: &bun_core::String) -> bun_core::String {
-    jsc::mark_binding();
-    if VirtualMachine::get().standalone_module_graph.is_none() {
-        return bun_core::String::dead();
-    }
-    (loader_hooks().resolve_embedded_node_file)(path).unwrap_or(bun_core::String::dead())
-}
-
 /// C++ entry point: whether `data[..len]` names a builtin module.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn ModuleLoader__isBuiltin(data: *const u8, len: usize) -> bool {
@@ -409,25 +236,6 @@ unsafe extern "C" fn ModuleLoader__isBuiltin(data: *const u8, len: usize) -> boo
     let str = unsafe { bun_core::ffi::slice(data, len) };
     bun_aliases_get(str).is_some() || exposed_internal_tag(str).is_some()
 }
-
-// The pure byte-string
-// `extractNamespace` / `couldBePlugin` helpers live in
-// `bun_bundler::transpiler::PluginRunner` — `bun_bundler` is already a
-// `bun_jsc` dep, so `Bun__runVirtualModule` calls them directly rather than
-// duplicating them here.
-use bun_bundler::transpiler::PluginRunner;
-
-// `ModuleLoader.resolveEmbeddedFile`
-// lives in `bun_runtime::jsc_hooks::resolve_embedded_file_to_buf`
-// per PORTING.md §Forbidden ("dep-cycle: MOVE the code to the right crate") —
-// the body reaches into `bun_standalone_graph` + `bun_sys::Tmpfile` +
-// `node::fs`, none of which are `bun_jsc` deps. Three callers live in
-// `bun_runtime`:
-//   - `Bun__resolveEmbeddedNodeFile` above (extname `"node"`, goes through
-//     `LoaderHooks::resolve_embedded_node_file` to bridge the crate gap).
-//   - The `.sqlite` arm of `transpileSourceCode`.
-//   - `ffi_body::FFI::open` (extname `"so"`/`"dylib"`/`"dll"`; same-crate
-//     call to `resolve_embedded_file_to_buf`, no hook needed).
 
 /// C++ entry point: picks the loader for a specifier from its file extension and the VM's loader map.
 #[unsafe(no_mangle)]
@@ -449,28 +257,6 @@ extern "C" fn Bun__getDefaultLoader(
         return api::Loader::js;
     }
     loader
-}
-
-/// C++ entry point: transpiles a plugin-provided virtual module's source, writing the result into `ret`.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__transpileVirtualModule(
-    global: *mut JSGlobalObject,
-    specifier: *const bun_core::String,
-    referrer: *const bun_core::String,
-    source_code: *const bun_core::ZigString,
-    loader: bun_options_types::schema::api::Loader,
-    ret: *mut ErrorableResolvedSource,
-) -> bool {
-    jsc::mark_binding();
-    // Body drives `transpileSourceCode` through the per-thread `BufferPrinter`
-    // (a `bun_runtime` thread-local), so per §Dispatch the low tier owns the
-    // extern symbol and dispatches; `bun_runtime` installs the body. Same
-    // shape as `Bun__transpileFile` above.
-    let hooks = loader_hooks();
-    // SAFETY: hook contract — all pointers are valid for the call (C++ ABI).
-    unsafe {
-        (hooks.transpile_virtual_module)(global, specifier, referrer, source_code, loader, ret)
-    }
 }
 
 /// C++ entry point: runs the plugin for a virtual-module specifier, returning its exports (or zero when no plugin runner is set).

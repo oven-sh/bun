@@ -754,7 +754,7 @@ impl<'a> TablePrinter<'a> {
                     }
                 }
             } else {
-                let mut cols_iter = jsc::JSPropertyIterator::init(
+                let cols_iter = jsc::JSPropertyIterator::init(
                     self.global_object,
                     obj,
                     jsc::PropertyIteratorOptions {
@@ -763,9 +763,7 @@ impl<'a> TablePrinter<'a> {
                     },
                 )?;
 
-                while let Some(col_key) = cols_iter.next()? {
-                    let value = cols_iter.value;
-
+                while let Some((col_key, value)) = cols_iter.next()? {
                     // find or create the column for the property
                     let col_idx: usize = 'brk: {
                         // reshaped for borrowck — split find/append.
@@ -958,7 +956,7 @@ impl<'a> TablePrinter<'a> {
                 }
             } else {
                 let tabular_obj = self.tabular_data.to_object(global_object)?;
-                let mut rows_iter = jsc::JSPropertyIterator::init(
+                let rows_iter = jsc::JSPropertyIterator::init(
                     global_object,
                     tabular_obj,
                     jsc::PropertyIteratorOptions {
@@ -967,13 +965,13 @@ impl<'a> TablePrinter<'a> {
                     },
                 )?;
 
-                while let Some(row_key) = rows_iter.next()? {
+                while let Some((row_key, value)) = rows_iter.next()? {
                     let key = RowKey::str(&row_key);
                     let row = self.collect_row::<ENABLE_ANSI_COLORS>(
                         &mut cell_text,
                         &mut columns,
                         key,
-                        rows_iter.value,
+                        value,
                     )?;
                     rows.push(row);
                 }
@@ -5072,7 +5070,7 @@ pub mod formatter {
                     }
                     return Ok(());
                 };
-                let mut props_iter = jsc::JSPropertyIterator::init(
+                let props_iter = jsc::JSPropertyIterator::init(
                     self.global_this,
                     props_obj,
                     jsc::PropertyIteratorOptions {
@@ -5089,13 +5087,11 @@ pub mod formatter {
                         let count_without_children =
                             props_iter.len - usize::from(children_prop.is_some());
 
-                        while let Some(prop) = props_iter.next()? {
-                            let props_i = props_iter.i as usize;
+                        while let Some((prop, property_value)) = props_iter.next()? {
                             if prop.eql_comptime("children") {
                                 continue;
                             }
 
-                            let property_value = props_iter.value;
                             let tag =
                                 Tag::get_advanced(property_value, self.global_this, tag_opts)?;
 
@@ -5115,6 +5111,7 @@ pub mod formatter {
                                 pf!("<d>"),
                                 pf!("<r>")
                             ));
+                            let props_i = props_iter.i.get() as usize;
 
                             if tag.cell.is_string_like() && C {
                                 writer.write_all(pfmt!("<r><green>", true).as_bytes());

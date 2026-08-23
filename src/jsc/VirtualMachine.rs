@@ -4198,9 +4198,8 @@ impl VirtualMachine {
     ) -> crate::CrateResult<ResolvedSource> {
         debug_assert!(VirtualMachine::is_loaded());
 
-        let global_ptr = core::ptr::NonNull::from(global_object);
         if let Some(resolved) =
-            ModuleLoader::fetch_builtin_module(jsc_vm, global_ptr, specifier, referrer)
+            ModuleLoader::fetch_builtin_module(jsc_vm, global_object, specifier, referrer)
         {
             return Ok(resolved);
         }
@@ -6238,7 +6237,7 @@ impl VirtualMachine {
             let mut saw_cause = false;
             // SAFETY: `is_error_instance` ⇒ object.
             let error_obj = unsafe { error_instance.get_object().unwrap_unchecked() };
-            let mut iterator = crate::JSPropertyIterator::init(
+            let iterator = crate::JSPropertyIterator::init(
                 global_ref,
                 error_obj,
                 crate::JSPropertyIteratorOptions {
@@ -6251,8 +6250,7 @@ impl VirtualMachine {
             )?;
             let longest_name = iterator.get_longest_property_name().min(10);
             let mut is_first_property = true;
-            while let Some(field) = iterator.next()? {
-                let value = iterator.value;
+            while let Some((field, value)) = iterator.next()? {
                 if field.eql_comptime(b"message")
                     || field.eql_comptime(b"name")
                     || field.eql_comptime(b"stack")

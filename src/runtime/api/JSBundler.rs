@@ -62,7 +62,7 @@ pub mod js_bundler {
             );
         };
 
-        let mut files_iter = jsc::JSPropertyIterator::init(
+        let files_iter = jsc::JSPropertyIterator::init(
             global_this,
             files_obj,
             jsc::JSPropertyIteratorOptions {
@@ -74,9 +74,7 @@ pub mod js_bundler {
 
         this.map.reserve(files_iter.len);
 
-        while let Some(prop) = files_iter.next()? {
-            let property_value = files_iter.value;
-
+        while let Some((prop, property_value)) = files_iter.next()? {
             // Parse the value as BlobOrStringOrBuffer using async mode for thread safety.
             // Async mode `protect()`s any JS-backed buffer; adopt into a
             // `ThreadSafe` so the guard unprotects + drops at end of iteration.
@@ -1054,7 +1052,7 @@ pub mod js_bundler {
             if let Some(define) = config.get_own_object(global_this, "define")? {
                 // SAFETY: `get_own_object` only returns non-null live JSObject*.
                 let define_ref = unsafe { &*define };
-                let mut define_iter = jsc::JSPropertyIterator::init(
+                let define_iter = jsc::JSPropertyIterator::init(
                     global_this,
                     define_ref,
                     jsc::JSPropertyIteratorOptions {
@@ -1064,8 +1062,7 @@ pub mod js_bundler {
                     },
                 )?;
 
-                while let Some(prop) = define_iter.next()? {
-                    let property_value = define_iter.value;
+                while let Some((prop, property_value)) = define_iter.next()? {
                     let value_type = property_value.js_type();
 
                     if !value_type.is_string_like() {
@@ -1094,7 +1091,7 @@ pub mod js_bundler {
             if let Some(loaders) = config.get_own_object(global_this, "loader")? {
                 // SAFETY: `get_own_object` only returns non-null live JSObject*.
                 let loaders_ref = unsafe { &*loaders };
-                let mut loader_iter = jsc::JSPropertyIterator::init(
+                let loader_iter = jsc::JSPropertyIterator::init(
                     global_this,
                     loaders_ref,
                     jsc::JSPropertyIteratorOptions {
@@ -1116,7 +1113,7 @@ pub mod js_bundler {
                 loader_names.reserve_exact(loader_iter.len);
                 loader_values.reserve_exact(loader_iter.len);
 
-                while let Some(prop) = loader_iter.next()? {
+                while let Some((prop, value)) = loader_iter.next()? {
                     let prop_slice = prop.to_utf8();
                     if !prop_slice.slice().starts_with(b".") || prop.length() < 2 {
                         return Err(global_this.throw_invalid_arguments(format_args!(
@@ -1125,7 +1122,7 @@ pub mod js_bundler {
                     }
                     drop(prop_slice);
 
-                    loader_values.push(loader_iter.value.to_enum_from_map(
+                    loader_values.push(value.to_enum_from_map(
                         global_this,
                         "loader",
                         &options::LOADER_API_NAMES,

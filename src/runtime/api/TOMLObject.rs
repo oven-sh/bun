@@ -86,7 +86,6 @@ fn stringify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         stack_check: StackCheck::init(),
         builder: wtf::StringBuilder::init(),
         visiting: HashMap::default(),
-        path: Vec::new(),
         wrote: false,
     };
 
@@ -132,31 +131,34 @@ enum Layout {
     Skip,
 }
 
-struct Stringifier<'a> {
+struct Stringifier {
     stack_check: StackCheck,
     builder: wtf::StringBuilder,
     // NOTE: `JSValue` keys live on the heap here, but every entry is also
     // live on the native stack via the `stringify` recursion chain, so the
     // conservative GC scan keeps them alive.
     visiting: HashMap<JSValue, ()>,
-    /// Header path of the table currently being emitted. Entries are
-    /// borrowed, not ref-counted: each is pushed and popped within the one
-    /// `JSPropertyIterator` loop body whose iterator keeps the name alive
-    /// (the iterator's strings carry no extra reference).
-    path: Vec<bun_core::StringView<'a>>,
     /// Whether any line has been written (controls blank lines before headers).
     wrote: bool,
 }
 
-impl<'a> Stringifier<'a> {
-    fn stringify_root(&mut self, global: &'a JSGlobalObject, root: JSValue) -> StringifyResult<()> {
+/// Header path of the table being emitted: a parent-linked chain of
+/// iterator-borrowed keys on the `stringify_table_body` recursion stack.
+#[derive(Clone, Copy)]
+struct Path<'p> {
+    parent: Option<&'p Path<'p>>,
+    key: &'p BunString,
+}
+
+impl Stringifier {
+    fn stringify_root(&mut self, global: &JSGlobalObject, root: JSValue) -> StringifyResult<()> {
         self.mark_visiting(global, root)?;
-        self.stringify_table_body(global, root, false)?;
+        self.stringify_table_body(global, root, None, false)?;
         self.visiting.remove(&root);
         Ok(())
     }
 
-    fn mark_visiting(&mut self, global: &'a JSGlobalObject, value: JSValue) -> StringifyResult<()> {
+    fn mark_visiting(&mut self, global: &JSGlobalObject, value: JSValue) -> StringifyResult<()> {
         let was_present = self
             .visiting
             .get_or_put(value)
@@ -172,7 +174,7 @@ impl<'a> Stringifier<'a> {
 
     /// Decides the layout of one (already unboxed) property value. Reads
     /// array elements when classifying arrays.
-    fn layout_of(&mut self, global: &'a JSGlobalObject, value: JSValue) -> StringifyResult<Layout> {
+    fn layout_of(&mut self, global: &JSGlobalObject, value: JSValue) -> StringifyResult<Layout> {
         if value.is_undefined() || value.is_symbol() || value.is_function() {
             return Ok(Layout::Skip);
         }
@@ -211,8 +213,9 @@ impl<'a> Stringifier<'a> {
     /// `own_header` defers `[path]`: a sub-section reached first implies it.
     fn stringify_table_body(
         &mut self,
-        global: &'a JSGlobalObject,
+        global: &JSGlobalObject,
         table: JSValue,
+        path: Option<&Path<'_>>,
         own_header: bool,
     ) -> StringifyResult<()> {
         if !self.stack_check.is_safe_to_recurse() {
@@ -227,10 +230,9 @@ impl<'a> Stringifier<'a> {
         };
 
         // Pass 1: keyvals.
-        let mut iter =
-            jsc::JSPropertyIterator::init(global, table.to_object(global)?, iter_options)?;
-        while let Some(prop_name) = iter.next()? {
-            let value = iter.value.unwrap_boxed_primitive(global)?;
+        let iter = jsc::JSPropertyIterator::init(global, table.to_object(global)?, iter_options)?;
+        while let Some((prop_name, prop_value)) = iter.next()? {
+            let value = prop_value.unwrap_boxed_primitive(global)?;
             if value.is_null() {
                 return Err(self.err_null_value(global, &prop_name));
             }
@@ -241,7 +243,7 @@ impl<'a> Stringifier<'a> {
             };
             if header_pending {
                 header_pending = false;
-                self.append_header(false);
+                self.append_header(path, false);
             }
             self.append_key_segment(&prop_name);
             self.builder.append_latin1(b" = ");
@@ -252,24 +254,28 @@ impl<'a> Stringifier<'a> {
 
         // Pass 2: sections. Values are re-read; an array-of-tables element
         // that is no longer a plain object during emission gets an error.
-        let mut iter =
-            jsc::JSPropertyIterator::init(global, table.to_object(global)?, iter_options)?;
-        while let Some(prop_name) = iter.next()? {
-            let value = iter.value.unwrap_boxed_primitive(global)?;
+        let iter = jsc::JSPropertyIterator::init(global, table.to_object(global)?, iter_options)?;
+        while let Some((prop_name, prop_value)) = iter.next()? {
+            let value = prop_value.unwrap_boxed_primitive(global)?;
             match self.layout_of(global, value)? {
                 Layout::Keyval | Layout::TemporalKeyval(_) | Layout::Skip => {}
                 Layout::Table => {
                     header_pending = false;
                     self.mark_visiting(global, value)?;
-                    self.path.push(prop_name);
-                    self.stringify_table_body(global, value, true)?;
-                    self.path.pop();
+                    let child = Path {
+                        parent: path,
+                        key: &prop_name,
+                    };
+                    self.stringify_table_body(global, value, Some(&child), true)?;
                     self.visiting.remove(&value);
                 }
                 Layout::ArrayOfTables => {
                     header_pending = false;
                     self.mark_visiting(global, value)?;
-                    self.path.push(prop_name);
+                    let child = Path {
+                        parent: path,
+                        key: &prop_name,
+                    };
                     let mut items = value.array_iterator(global)?;
                     while let Some(item) = items.next()? {
                         let item = item.unwrap_boxed_primitive(global)?;
@@ -279,15 +285,13 @@ impl<'a> Stringifier<'a> {
                             || item.is_function()
                             || temporal_object_type(item).is_some()
                         {
-                            self.path.pop();
                             return Err(self.err_changed(global));
                         }
                         self.mark_visiting(global, item)?;
-                        self.append_header(true);
-                        self.stringify_table_body(global, item, false)?;
+                        self.append_header(Some(&child), true);
+                        self.stringify_table_body(global, item, Some(&child), false)?;
                         self.visiting.remove(&item);
                     }
-                    self.path.pop();
                     self.visiting.remove(&value);
                 }
             }
@@ -295,7 +299,7 @@ impl<'a> Stringifier<'a> {
 
         // An empty table is materialized only by its header.
         if header_pending {
-            self.append_header(false);
+            self.append_header(path, false);
         }
 
         Ok(())
@@ -306,7 +310,7 @@ impl<'a> Stringifier<'a> {
     /// classification `layout_of` already computed for it, if any.
     fn stringify_inline_value(
         &mut self,
-        global: &'a JSGlobalObject,
+        global: &JSGlobalObject,
         value: JSValue,
         known_temporal: Option<TemporalType>,
     ) -> StringifyResult<()> {
@@ -371,7 +375,7 @@ impl<'a> Stringifier<'a> {
 
         // A plain object inside an inline context becomes an inline table.
         self.mark_visiting(global, value)?;
-        let mut iter = jsc::JSPropertyIterator::init(
+        let iter = jsc::JSPropertyIterator::init(
             global,
             value.to_object(global)?,
             jsc::JSPropertyIteratorOptions {
@@ -381,8 +385,8 @@ impl<'a> Stringifier<'a> {
             },
         )?;
         let mut first = true;
-        while let Some(prop_name) = iter.next()? {
-            let prop_value = iter.value.unwrap_boxed_primitive(global)?;
+        while let Some((prop_name, value)) = iter.next()? {
+            let prop_value = value.unwrap_boxed_primitive(global)?;
             if prop_value.is_undefined() || prop_value.is_symbol() || prop_value.is_function() {
                 continue;
             }
@@ -404,29 +408,28 @@ impl<'a> Stringifier<'a> {
 
     // ── output pieces ──────────────────────────────────────────────────────
 
-    /// `[a.b.c]` or `[[a.b.c]]` from `self.path`, preceded by a blank line
-    /// when the document already has content.
-    fn append_header(&mut self, array_of_tables: bool) {
+    /// `[a.b.c]` or `[[a.b.c]]`, preceded by a blank line when the document
+    /// already has content.
+    fn append_header(&mut self, path: Option<&Path<'_>>, array_of_tables: bool) {
         if self.wrote {
             self.builder.append_lchar(b'\n');
         }
         self.builder
             .append_latin1(if array_of_tables { b"[[" } else { b"[" });
-        for (i, seg) in self.path.iter().enumerate() {
-            if i > 0 {
-                self.builder.append_lchar(b'.');
-            }
-            // Inlined `append_key_segment` to avoid borrowing `self.path`
-            // across a `&mut self` call.
-            if is_bare_key(seg) {
-                self.builder.append_string(seg);
-            } else {
-                append_basic_quoted_to(&mut self.builder, seg);
-            }
+        if let Some(path) = path {
+            self.append_path(path);
         }
         self.builder
             .append_latin1(if array_of_tables { b"]]\n" } else { b"]\n" });
         self.wrote = true;
+    }
+
+    fn append_path(&mut self, path: &Path<'_>) {
+        if let Some(parent) = path.parent {
+            self.append_path(parent);
+            self.builder.append_lchar(b'.');
+        }
+        self.append_key_segment(path.key);
     }
 
     fn append_key_segment(&mut self, name: &BunString) {
@@ -478,11 +481,7 @@ impl<'a> Stringifier<'a> {
     /// A JS Date as a TOML offset date-time (`1979-05-27T07:32:00.999Z`).
     /// A TOML offset date-time is RFC 3339, which the 24-byte
     /// `YYYY-MM-DDTHH:mm:ss.sssZ` form of `Date.prototype.toISOString` is.
-    fn append_datetime(
-        &mut self,
-        global: &'a JSGlobalObject,
-        value: JSValue,
-    ) -> StringifyResult<()> {
+    fn append_datetime(&mut self, global: &JSGlobalObject, value: JSValue) -> StringifyResult<()> {
         let mut buf = [0u8; 64];
         let Some(iso) = value.to_iso_string(global, &mut buf) else {
             return Err(global
@@ -520,7 +519,7 @@ impl<'a> Stringifier<'a> {
     /// `PlainYearMonth`/`PlainMonthDay`/`Duration` have no TOML form and throw.
     fn append_temporal(
         &mut self,
-        global: &'a JSGlobalObject,
+        global: &JSGlobalObject,
         value: JSValue,
         temporal_type: TemporalType,
     ) -> StringifyResult<()> {
@@ -557,7 +556,7 @@ impl<'a> Stringifier<'a> {
 
     // ── errors ─────────────────────────────────────────────────────────────
 
-    fn err_null_value(&mut self, global: &'a JSGlobalObject, key: &BunString) -> StringifyError {
+    fn err_null_value(&mut self, global: &JSGlobalObject, key: &BunString) -> StringifyError {
         global
             .throw(format_args!(
                 "TOML cannot represent null (key '{key}'); remove the key or use a sentinel value",
@@ -565,7 +564,7 @@ impl<'a> Stringifier<'a> {
             .into()
     }
 
-    fn err_in_array(&mut self, global: &'a JSGlobalObject, value: JSValue) -> StringifyError {
+    fn err_in_array(&mut self, global: &JSGlobalObject, value: JSValue) -> StringifyError {
         let what: &str = if value.is_null() {
             "null"
         } else if value.is_undefined() {
@@ -580,7 +579,7 @@ impl<'a> Stringifier<'a> {
             .into()
     }
 
-    fn err_changed(&mut self, global: &'a JSGlobalObject) -> StringifyError {
+    fn err_changed(&mut self, global: &JSGlobalObject) -> StringifyError {
         global
             .throw(format_args!(
                 "TOML.stringify cannot serialize a value that changed during serialization"

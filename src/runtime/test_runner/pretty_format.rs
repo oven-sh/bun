@@ -2043,7 +2043,7 @@ impl<'a> Formatter<'a> {
                         // trailing " />" is skipped) and restore unconditionally afterward.
                         let inner: JsResult<bool> = (|| {
                         let Some(props_obj) = props.get_object() else { return Ok(false); };
-                        let mut props_iter = JSPropertyIterator::init(
+                        let props_iter = JSPropertyIterator::init(
                             self.global_this,
                             props_obj,
                             jsc::PropertyIteratorOptions {
@@ -2063,13 +2063,12 @@ impl<'a> Formatter<'a> {
                                 // `JSPropertyIterator::i` is private upstream;
                                 // track the 1-based iteration index locally.
                                 let mut iter_i: usize = 0;
-                                while let Some(prop) = props_iter.next()? {
+                                while let Some((prop, property_value)) = props_iter.next()? {
                                     iter_i += 1;
                                     if prop.eql_comptime(b"children") {
                                         continue;
                                     }
 
-                                    let property_value = props_iter.value;
                                     let tag = Tag::get(property_value, self.global_this)?;
 
                                     if tag.cell.is_hidden() {

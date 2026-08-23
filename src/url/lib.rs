@@ -42,31 +42,39 @@ use route_param::List as ParamsList;
 // stay in tier-6 `bun_jsc` as extension methods — they need JSValue/JSGlobalObject.
 // Everything else is a thin extern-"C" wrapper around WTF::URL and is JSC-agnostic.
 pub mod whatwg {
+    use core::ptr::NonNull;
+
     use super::BunString as String;
     use super::strings;
 
-    /// Opaque handle to a heap-allocated WTF::URL (C++). Always behind `*mut URL`.
-    /// Construct via `from_string`/`from_utf8`; free via `deinit`.
-    #[repr(C)]
-    pub struct URL {
-        _opaque: [u8; 0],
+    bun_opaque::opaque_ffi! {
+        /// Opaque handle to a heap-allocated `WTF::URL` (C++). Construct via
+        /// `from_string`/`from_utf8`; the caller owns it and frees via
+        /// `destroy` (or use [`Parsed`]).
+        pub struct URL;
     }
 
-    // Getters take `&URL` (C++ never mutates on read); `deinit` takes `&mut URL`
-    // (it `delete`s). String inputs are `const BunString*` on the C++ side, so
-    // `&String`; string returns are +1 (`Bun::toStringRef`), declared as `String`.
+    // Getters take `&URL` (C++ never mutates on read). String inputs are
+    // `const BunString*`; string returns are +1 (`Bun::toStringRef`), declared
+    // as owning `String`. `URL__deinit` frees the allocation, so it stays
+    // `unsafe fn`. `URL__fromJS` / `URL__getHrefFromJS` live in
+    // `bun_jsc::URLJsc`.
     unsafe extern "C" {
-        // `URL__fromJS` / `URL__getHrefFromJS` intentionally omitted — tier-6 (bun_jsc).
-        safe fn URL__fromString(str: &String) -> Option<core::ptr::NonNull<URL>>;
+        safe fn URL__fromString(str: &String) -> Option<NonNull<URL>>;
         safe fn URL__protocol(url: &URL) -> String;
         safe fn URL__href(url: &URL) -> String;
+        safe fn URL__username(url: &URL) -> String;
+        safe fn URL__password(url: &URL) -> String;
+        safe fn URL__host(url: &URL) -> String;
         safe fn URL__hostname(url: &URL) -> String;
-        safe fn URL__deinit(url: &mut URL);
+        safe fn URL__port(url: &URL) -> u32;
         safe fn URL__pathname(url: &URL) -> String;
+        safe fn URL__fragmentIdentifier(url: &URL) -> String;
+        fn URL__deinit(url: *mut URL);
         safe fn URL__getHref(input: &String) -> String;
         safe fn URL__getFileURLString(input: &String) -> String;
+        safe fn URL__pathFromFileURL(input: &String) -> String;
         safe fn URL__getHrefJoin(base: &String, relative: &String) -> String;
-        safe fn URL__fragmentIdentifier(url: &URL) -> String;
         fn URL__originLength(latin1_slice: *const u8, len: usize) -> usize;
     }
 
@@ -80,6 +88,9 @@ pub mod whatwg {
     }
     pub fn file_url_from_string(str: &String) -> String {
         URL__getFileURLString(str)
+    }
+    pub fn path_from_file_url(str: &String) -> String {
+        URL__pathFromFileURL(str)
     }
     /// Returns the origin (`scheme://host[:port]`) prefix of `slice` as a borrowed
     /// subslice, or `None` if `slice` does not parse as a valid WHATWG URL.
@@ -99,11 +110,17 @@ pub mod whatwg {
     }
 
     impl URL {
-        pub(crate) fn from_string(str: &String) -> Option<core::ptr::NonNull<URL>> {
+        pub fn from_string(str: &String) -> Option<NonNull<URL>> {
             URL__fromString(str)
         }
-        pub fn from_utf8(input: &[u8]) -> Option<core::ptr::NonNull<URL>> {
+        pub fn from_utf8(input: &[u8]) -> Option<NonNull<URL>> {
             Self::from_string(&String::borrow_utf8(input))
+        }
+        /// # Safety
+        /// `this` came from `from_string`/`from_utf8` and is freed exactly once.
+        pub unsafe fn destroy(this: *mut Self) {
+            // SAFETY: forwarded to caller.
+            unsafe { URL__deinit(this) }
         }
         /// The URL fragment (the part after `#`), excluding the leading '#'.
         pub fn fragment_identifier(&self) -> String {
@@ -115,10 +132,21 @@ pub mod whatwg {
         pub fn href(&self) -> String {
             URL__href(self)
         }
-        /// Returns the host WITH the port.
+        pub fn username(&self) -> String {
+            URL__username(self)
+        }
+        pub fn password(&self) -> String {
+            URL__password(self)
+        }
+        /// The host WITHOUT the port (JS `hostname`).
         ///
-        /// Note that this does NOT match JS `hostname`, which excludes the port (that
-        /// port-less form is `bun_jsc::URL::host`).
+        /// ```text
+        /// URL("http://example.com:8080").host() => "example.com"
+        /// ```
+        pub fn host(&self) -> String {
+            URL__host(self)
+        }
+        /// The host WITH the port (JS `host`).
         ///
         /// ```text
         /// URL("http://example.com:8080").hostname() => "example.com:8080"
@@ -126,16 +154,17 @@ pub mod whatwg {
         pub fn hostname(&self) -> String {
             URL__hostname(self)
         }
+        /// `u32::MAX` if the port is not set; otherwise within `u16` range.
+        pub fn port(&self) -> u32 {
+            URL__port(self)
+        }
         pub fn pathname(&self) -> String {
             URL__pathname(self)
-        }
-        pub fn deinit(&mut self) {
-            URL__deinit(self)
         }
     }
 
     /// A `URL` this handle owns; `Drop` frees it.
-    pub struct Parsed(core::ptr::NonNull<URL>);
+    pub struct Parsed(NonNull<URL>);
 
     impl Parsed {
         pub fn from_utf8(input: &[u8]) -> Option<Self> {
@@ -154,13 +183,15 @@ pub mod whatwg {
     impl Drop for Parsed {
         fn drop(&mut self) {
             // SAFETY: this handle is the only owner of the `WTF::URL`, so it is deleted once.
-            unsafe { self.0.as_mut() }.deinit();
+            unsafe { URL::destroy(self.0.as_ptr()) }
         }
     }
 }
 // Re-export the free helpers at crate root so lower-tier callers can write
 // `bun_url::join(...)` / `bun_url::href_from_string(...)` (install, http, bake, js_parser).
-pub use whatwg::{file_url_from_string, href_from_string, join, origin_from_slice};
+pub use whatwg::{
+    file_url_from_string, href_from_string, join, origin_from_slice, path_from_file_url,
+};
 
 // URL is a pure view struct — every field is a slice into `href` (or a
 // literal default).

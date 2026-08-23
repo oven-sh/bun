@@ -158,7 +158,7 @@ function ptrify(ty: string): { cTy: string; deref: (n: string) => string; extraL
   }
   // Other slice shapes (`&'a [T]`) and `&str` are NOT FFI-safe; reject.
   if (/^&[^\[]*\[/.test(ty) || /^&\s*str\b/.test(ty)) {
-    throw new Error(`slice/str param \`${ty}\` is not FFI-safe; use \`&[T]\` (const) or (ptr, len)`);
+    throw new Error(`slice/str param \`${ty}\` is not FFI-safe; use \`&[T]\`, \`&mut [T]\`, or (ptr, len)`);
   }
   // `Option<&CStr>` — C passes a (possibly null) NUL-terminated `const char*`.
   if (/^Option\s*<\s*&\s*(?:(?:::)?(?:core|std)::ffi::)?CStr\s*>$/.test(ty)) {

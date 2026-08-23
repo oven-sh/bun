@@ -345,11 +345,10 @@ impl TextDecoder {
                 // However, this is also what WebKit seems to do.
                 //
                 // => The reason we need to encode it is because TextDecoder "latin1" is actually CP1252, while WebKit latin1 is 8-bit utf-16
-                let out_length = strings::element_length_cp1252_into_utf16(buffer_slice);
-                let mut units: Vec<u16> = vec![0; out_length];
-                let out = strings::copy_cp1252_into_utf16(&mut units, buffer_slice);
-                units.truncate(out.written as usize);
-                bun_string_jsc::owned_utf16_into_js(global_this, units)
+                bun_string_jsc::owned_utf16_into_js(
+                    global_this,
+                    strings::cp1252_to_utf16_alloc(buffer_slice),
+                )
             }
             EncodingLabel::Utf8 => {
                 // Prepend the partial UTF-8 sequence carried over from the

@@ -502,7 +502,9 @@ fn byte_length_u8<const ENCODING: u8>(input: &[u8]) -> usize {
     }
 }
 
-/// [`write_u8`] for a UTF-16 source.
+/// [`write_u8`] for a UTF-16 source. `input` is a JS string's characters and
+/// `to` an `ArrayBuffer`'s storage, which never share memory (the C++
+/// declarations say so too), so every arm is a plain copy.
 pub(crate) fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
     input: &[u16],
     to: &mut [u8],
@@ -565,11 +567,8 @@ fn construct_from_u8<const ENCODING: u8>(input: &[u8]) -> Vec<u8> {
             // (`copy_latin1_into_utf16` is exactly that loop). Write the bytes
             // directly into a `Vec<u8>` so we never depend on an allocator-
             // layout-dependent `Vec<u16> → Vec<u8>` header reinterpret.
-            let mut to: Vec<u8> = vec![0; input.len() * 2];
-            let (pairs, _) = to.as_chunks_mut::<2>();
-            for (out, &b) in pairs.iter_mut().zip(input) {
-                *out = u16::from(b).to_ne_bytes();
-            }
+            let mut to: Vec<u8> = Vec::new();
+            strings::append_latin1_as_utf16_bytes(&mut to, input);
             to
         }
 
@@ -634,13 +633,11 @@ fn construct_from_hex<Char: strings::HexChar>(input: &[Char]) -> Vec<u8> {
         return Vec::new();
     }
 
-    let mut to: Vec<u8> = vec![0; outlen];
-    let wrote = strings::decode_hex_to_bytes_truncate(&mut to, input);
+    let mut to: Vec<u8> = Vec::new();
     // `create_buffer` frees nothing for an empty slice, so an empty result must not own memory.
-    if wrote == 0 {
+    if strings::decode_hex_append(&mut to, input) == 0 {
         return Vec::new();
     }
-    to.truncate(wrote);
     to
 }
 

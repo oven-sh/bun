@@ -230,11 +230,14 @@ function onNodeHTTPServerSocketTimeout() {
 }
 
 function emitListeningNextTick(self, hostname, port) {
-  if ((self.listening = !!self[serverSymbol])) {
-    // TODO: remove the arguments
-    // Note does not pass any arguments.
-    self.emit("listening", null, hostname, port);
-  }
+  // Nothing to announce if close() ran in the same tick as listen().
+  if (!self[serverSymbol]) return;
+  // Node passes no arguments. The extra ones are a Bun extension.
+  self.emit("listening", null, hostname, port);
+}
+
+function emitListenErrorNextTick(self, err) {
+  self.emit("error", err);
 }
 
 // Node.js only requests a client certificate when `requestCert: true`.
@@ -501,6 +504,7 @@ Server.prototype.close = function (optionalCallback?) {
   if (typeof optionalCallback === "function") setCloseCallback(this, optionalCallback);
   this.listening = false;
   server.closeIdleConnections();
+  // stop() queues the task that emits 'close', which holds the loop one more turn, as node's uv_close() does.
   server.stop();
   return this;
 };
@@ -548,7 +552,7 @@ Server.prototype.address = function () {
 
 Server.prototype.listen = function () {
   const server = this;
-  let port, host, onListen;
+  let port, host;
   let socketPath;
   let fd;
   let tls = this[tlsSymbol];
@@ -599,14 +603,15 @@ Server.prototype.listen = function () {
 
   const lastArg = arguments[argc - 1];
   if ($isCallable(lastArg)) {
-    onListen = lastArg;
+    // Before the bind, as in node, so a listen() retried from the 'error' handler still calls it.
+    this.once("listening", lastArg);
   }
 
   try {
     // listenInCluster
 
     if (isPrimary) {
-      server[kRealListen](tls, port, host, socketPath, false, onListen, fd);
+      server[kRealListen](tls, port, host, socketPath, false, fd);
       return this;
     }
 
@@ -638,12 +643,16 @@ Server.prototype.listen = function () {
       if (typeof fd === "number" && fd >= 0 && process.connected) {
         if (process.platform === "win32") {
           server.removeListener("listening", notifyListening);
-          process.nextTick(emitListenErrorNT, server, new ExceptionWithHostPort(uv().UV_EINVAL, "listen", null, 0));
+          process.nextTick(
+            emitListenErrorNextTick,
+            server,
+            new ExceptionWithHostPort(uv().UV_EINVAL, "listen", null, 0),
+          );
           return this;
         }
         cluster._sendInternal(
           { act: "shareListenFd", fd, addressType: 4 },
-          onShareListenFdReply.bind(null, server, notifyListening, listeningId, tls, port, host, socketPath, onListen),
+          onShareListenFdReply.bind(null, server, notifyListening, listeningId, tls, port, host, socketPath),
         );
         return this;
       }
@@ -652,17 +661,17 @@ Server.prototype.listen = function () {
       if (askPrimary) {
         cluster._sendInternal(
           { act: "probePort", address: host ?? null, port, addressType: 4 },
-          onProbePortReply.bind(null, server, notifyListening, listeningId, tls, port, host, socketPath, onListen),
+          onProbePortReply.bind(null, server, notifyListening, listeningId, tls, port, host, socketPath),
         );
       } else {
-        server[kRealListen](tls, port, host, socketPath, true, onListen, fd);
+        server[kRealListen](tls, port, host, socketPath, true, fd);
       }
     } catch (err) {
       server.removeListener("listening", notifyListening);
       throw err;
     }
   } catch (err) {
-    setTimeout(() => server.emit("error", err), 1);
+    process.nextTick(emitListenErrorNextTick, server, err);
   }
 
   return this;
@@ -674,23 +683,7 @@ function closeSharedFd(fd) {
   } catch {}
 }
 
-// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2043-L2045
-function emitListenErrorNT(server, err) {
-  server.emit("error", err);
-}
-
-function onShareListenFdReply(
-  server,
-  notifyListening,
-  listeningId,
-  tls,
-  port,
-  host,
-  socketPath,
-  onListen,
-  reply,
-  receivedFd,
-) {
+function onShareListenFdReply(server, notifyListening, listeningId, tls, port, host, socketPath, reply, receivedFd) {
   const sharedFd = typeof receivedFd === "number" && receivedFd >= 0 ? receivedFd : undefined;
   if (listeningId !== server._listeningId) {
     server.removeListener("listening", notifyListening);
@@ -705,7 +698,7 @@ function onShareListenFdReply(
     return;
   }
   try {
-    server[kRealListen](tls, port, host, socketPath, true, onListen, sharedFd);
+    server[kRealListen](tls, port, host, socketPath, true, sharedFd);
   } catch (err) {
     server.removeListener("listening", notifyListening);
     closeSharedFd(sharedFd);
@@ -713,7 +706,7 @@ function onShareListenFdReply(
   }
 }
 
-function onProbePortReply(server, notifyListening, listeningId, tls, port, host, socketPath, onListen, reply) {
+function onProbePortReply(server, notifyListening, listeningId, tls, port, host, socketPath, reply) {
   const replyErrno = reply.errno;
   if (listeningId !== server._listeningId) {
     server.removeListener("listening", notifyListening);
@@ -729,7 +722,7 @@ function onProbePortReply(server, notifyListening, listeningId, tls, port, host,
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/child.js#L75-L114 (indexesKey/handles)
   server[kClusterProbeKey] = reply.key;
   try {
-    server[kRealListen](tls, port, host, socketPath, true, onListen);
+    server[kRealListen](tls, port, host, socketPath, true);
   } catch (err) {
     server.removeListener("listening", notifyListening);
     server[kClusterProbeKey] = undefined;
@@ -738,7 +731,7 @@ function onProbePortReply(server, notifyListening, listeningId, tls, port, host,
   }
 }
 
-Server.prototype[kRealListen] = function realListen(tls, port, host, socketPath, reusePort, onListen, fd) {
+Server.prototype[kRealListen] = function realListen(tls, port, host, socketPath, reusePort, fd) {
   {
     const ResponseClass = this[optionsSymbol].ServerResponse || ServerResponse;
     const RequestClass = this[optionsSymbol].IncomingMessage || IncomingMessage;
@@ -1177,6 +1170,8 @@ Server.prototype[kRealListen] = function realListen(tls, port, host, socketPath,
       },
     });
 
+    // Bun.serve() has bound and listened by now, so the flag is true at once, as node's getter is.
+    this.listening = true;
     getBunServerAllClosedPromise(this[serverSymbol]).$then(emitCloseNTServer.bind(this));
     applyServerCustomOptions(this);
 
@@ -1184,11 +1179,8 @@ Server.prototype[kRealListen] = function realListen(tls, port, host, socketPath,
       this[serverSymbol]?.unref?.();
     }
 
-    if ($isCallable(onListen)) {
-      this.once("listening", onListen);
-    }
-
-    setTimeout(emitListeningNextTick, 1, this, this[serverSymbol]?.hostname, this[serverSymbol]?.port);
+    // A tick, not a timer, as in node: a timer never fires on its own under jest.useFakeTimers().
+    process.nextTick(emitListeningNextTick, this, this[serverSymbol]?.hostname, this[serverSymbol]?.port);
   }
 };
 

@@ -661,6 +661,52 @@ test.each(["net", "http"])("cluster 'listening' reports the address a %s server 
   }
 });
 
+// Node registers the listen() callback before the worker's own 'listening' listener that notifies
+// the primary. So the callback still sees worker.state 'online', and the primary receives what the
+// callback sends before cluster emits 'listening'.
+const listenCallbackOrderFixture = `
+const cluster = require("node:cluster");
+
+if (cluster.isPrimary) {
+  const order = [];
+  const worker = cluster.fork();
+  const done = () => {
+    if (order.length < 2) return;
+    console.log(JSON.stringify(order));
+    worker.kill();
+    process.exit(0);
+  };
+  worker.on("message", message => {
+    order.push("callback:" + message.state);
+    done();
+  });
+  cluster.on("listening", () => {
+    order.push("cluster:listening");
+    done();
+  });
+  worker.on("exit", (code, signal) => {
+    console.error("worker exited before it finished listening (" + code + ", " + signal + ")");
+    process.exit(1);
+  });
+} else {
+  const { createServer } = require("node:" + process.env.MODULE);
+  createServer(() => {}).listen(0, () => process.send({ state: cluster.worker.state }));
+}
+`;
+
+test.each(["net", "http"])(
+  "a %s server's listen() callback runs before the worker reports 'listening'",
+  async moduleName => {
+    const dir = tempDirWithFiles("cluster-listen-callback", { "fixture.js": listenCallbackOrderFixture });
+    const { stdout, stderr, exitCode } = await bunRun(joinP(dir, "fixture.js"), { MODULE: moduleName });
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify(["callback:online", "cluster:listening"]),
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
+
 test("round-robin worker connection socket has connecting=false and remoteAddress synchronously", async () => {
   const dir = tempDirWithFiles("bun-test", {
     "main.ts": `

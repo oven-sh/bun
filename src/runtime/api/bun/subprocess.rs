@@ -349,7 +349,7 @@ pub(crate) unsafe extern "C" fn on_abort_signal(ctx: *mut c_void, reason: JSValu
 }
 
 bun_spawn::link_impl_ProcessExit! {
-    Subprocess for Subprocess => |this| {
+    Subprocess for Subprocess<'static> => |this| {
         // `process` forwarded raw (not reborrowed) so `on_process_exit` can
         // hand it to `VirtualMachine::on_subprocess_exit` without a const→mut
         // provenance cast.

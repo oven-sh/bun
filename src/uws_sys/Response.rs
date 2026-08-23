@@ -17,6 +17,7 @@ use crate::thunk;
 use crate::thunk::OpaqueHandle;
 use crate::us_socket_t;
 use bun_core::{BoundedArray, Fd};
+use bun_ptr::ThisPtr;
 
 // ─── Forward-declared opaques (cycle-break: were `bun_uws::*`, tier > 0) ───
 /// Remote socket address as returned by uWS. The IP text is copied into
@@ -85,6 +86,16 @@ impl<const SSL: bool> Response<SSL> {
     #[inline]
     pub fn cast_res(res: *mut c::uws_res) -> *mut Response<SSL> {
         res.cast::<Response<SSL>>()
+    }
+
+    /// The `AnyResponse` variant for this `SSL` flag.
+    #[inline]
+    pub fn res_to_any(res: *mut c::uws_res) -> AnyResponse {
+        if SSL {
+            AnyResponse::SSL(res.cast())
+        } else {
+            AnyResponse::TCP(res.cast())
+        }
     }
 
     #[inline]
@@ -625,7 +636,7 @@ unsafe impl<const SSL: bool> OpaqueHandle for Response<SSL> {}
 // align 1; C++ owns the real bytes.
 unsafe impl OpaqueHandle for H3Response {}
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum AnyResponse {
     SSL(*mut TLSResponse),
     TCP(*mut TCPResponse),
@@ -924,6 +935,38 @@ impl AnyResponse {
             <U, H: [Fn(*mut U, AnyResponse) + Copy + 'static]>
             |u; r, any| -> () { thunk::zst::<H>()(u, any) }
         }
+    }
+
+    /// [`on_writable`](Self::on_writable) for a handler owned by an
+    /// intrusively-refcounted `U`: the registrant passes the `ThisPtr` it was
+    /// dispatched with and keeps a ref on `U` until it clears the handler, so
+    /// the trampoline can hand the handler a `ThisPtr` again.
+    pub fn on_writable_this<U: 'static, H>(self, _handler: H, this: ThisPtr<U>)
+    where
+        H: Fn(ThisPtr<U>, u64, AnyResponse) -> bool + Copy + 'static,
+    {
+        self.on_writable(
+            |u: *mut U, off, any| {
+                // SAFETY: `u` is the `ThisPtr` registered below; the registrant holds a ref on it until the handler is cleared.
+                thunk::zst::<H>()(unsafe { ThisPtr::new(u) }, off, any)
+            },
+            this.as_ptr(),
+        )
+    }
+
+    /// [`on_aborted`](Self::on_aborted) counterpart of
+    /// [`on_writable_this`](Self::on_writable_this).
+    pub fn on_aborted_this<U: 'static, H>(self, _handler: H, this: ThisPtr<U>)
+    where
+        H: Fn(ThisPtr<U>, AnyResponse) + Copy + 'static,
+    {
+        self.on_aborted(
+            |u: *mut U, any| {
+                // SAFETY: `u` is the `ThisPtr` registered below; the registrant holds a ref on it until the handler is cleared.
+                thunk::zst::<H>()(unsafe { ThisPtr::new(u) }, any)
+            },
+            this.as_ptr(),
+        )
     }
 
     pub fn clear_aborted(self) {

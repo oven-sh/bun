@@ -644,10 +644,7 @@ mod draft {
         ZigError(&'static [u8]),
 
         OutOfMemory {
-            /// Size of the allocation that failed. Known in `rust_alloc_error_hook`,
-            /// unknown to `bun_alloc::out_of_memory()` callers, which only have an
-            /// `AllocError`. Printed to stderr only: the trace string encodes every
-            /// OOM the same way.
+            /// `None` when the caller only has an `AllocError`.
             requested_bytes: Option<usize>,
         },
     }
@@ -711,8 +708,6 @@ mod draft {
     }
 
     /// ` (failed to allocate N bytes)`, or nothing when the size is unknown.
-    /// Shared by the `CrashReason` `Display` impl and the release-mode
-    /// "oh no" message in `crash_handler`.
     struct RequestedBytes(Option<usize>);
 
     impl fmt::Display for RequestedBytes {
@@ -1743,22 +1738,10 @@ mod draft {
         std::alloc::set_alloc_error_hook(rust_alloc_error_hook);
     }
 
-    /// `std::alloc` error hook: an infallible allocation (`Vec` growth,
-    /// `Box::new`, ...) got null from the global allocator.
-    ///
-    /// Without it std prints `memory allocation of N bytes failed` and calls
-    /// `abort()`. On POSIX the SIGABRT handler then reports `abort() called`
-    /// with the trace seeded inside libc's `abort`/`raise`, which have no
-    /// frame pointers, so the report has one unresolvable frame and neither
-    /// the reason nor the size. On Windows std aborts with `__fastfail`, which
-    /// no exception handler sees. Here the allocating frames are still on the
-    /// stack.
-    ///
-    /// A hook rather than a null check in `GlobalAlloc` because a null return
-    /// is also how `try_reserve` and the other fallible paths report failure.
-    ///
-    /// Must not allocate: a failure inside the report re-enters here and is
-    /// cut short by the `PANIC_STAGE` guard in `crash_handler`.
+    /// Reports a failed infallible allocation (`Vec` growth, `Box::new`) as
+    /// out of memory before std aborts, with the allocating frames still on
+    /// the stack. A hook, not a null check in `GlobalAlloc`: a null return is
+    /// also how `try_reserve` reports failure. Must not allocate.
     #[cold]
     #[inline(never)]
     fn rust_alloc_error_hook(layout: core::alloc::Layout) {

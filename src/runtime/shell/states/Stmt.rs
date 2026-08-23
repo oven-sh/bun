@@ -94,7 +94,6 @@ impl Stmt {
         if let Some(exec) = exec {
             interp.deinit_node(exec);
         }
-        interp.as_stmt_mut(this).base.end_scope();
     }
 
     #[inline]

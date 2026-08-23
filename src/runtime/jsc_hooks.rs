@@ -102,6 +102,10 @@ pub(crate) struct RuntimeState {
     /// The resolver's PackageManager wake-handler context (module queue + VM
     /// handle); the resolver holds a raw pointer to it. Freed with the state.
     pub(crate) wake_ctx: Option<Box<bun_jsc::async_module::WakeContext>>,
+    /// In-process `Bun.cron()` jobs that `--hot` reload / worker teardown must
+    /// stop; one ref per entry, released by `CronJob::remove_from_list` /
+    /// `clear_all_for_vm`.
+    pub(crate) cron_jobs: Vec<bun_ptr::RefPtr<crate::api::cron::CronJob>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -196,6 +200,17 @@ pub(crate) fn timer_all_mut() -> &'static mut timer::All {
 }
 
 #[inline]
+pub(crate) fn cron_jobs_mut() -> Option<&'static mut Vec<bun_ptr::RefPtr<crate::api::cron::CronJob>>>
+{
+    let state = runtime_state();
+    if state.is_null() {
+        return None;
+    }
+    // SAFETY: live boxed per-thread `RuntimeState`; single JS thread.
+    Some(unsafe { &mut (*state).cron_jobs })
+}
+
+#[inline]
 pub(crate) fn active_handles() -> Option<&'static mut ActiveHandles> {
     let state = runtime_state();
     if state.is_null() {
@@ -267,12 +282,8 @@ pub(crate) unsafe fn runtime_state_of(vm: *mut VirtualMachine) -> *mut RuntimeSt
 /// (`RareData.default_client_ssl_ctx`) is in `bun_jsc` but population requires
 /// `RuntimeState.ssl_ctx_cache` (this crate). The cached `SSL_CTX*` is held
 /// for the VM's lifetime so the weak-cache entry never tombstones.
-///
-/// # Safety
-/// `vm` must be the live per-thread VM; called only from the JS thread.
-pub(crate) unsafe fn default_client_ssl_ctx(vm: *mut VirtualMachine) -> *mut bun_uws::SslCtx {
-    // SAFETY: per fn contract; `rare_data()` lazy-inits the box.
-    let rare = unsafe { (*vm).rare_data() };
+pub(crate) fn default_client_ssl_ctx(vm: &VirtualMachine) -> *mut bun_uws::SslCtx {
+    let rare = vm.as_mut().rare_data();
     if rare.default_client_ssl_ctx.is_none() {
         let mut err = bun_uws::create_bun_socket_error_t::none;
         let state = runtime_state();
@@ -306,13 +317,11 @@ pub(crate) unsafe fn default_client_ssl_ctx(vm: *mut VirtualMachine) -> *mut bun
 /// body. Per-VM digest-keyed weak `SSL_CTX*` cache; returns +1 ref or `None`
 /// on BoringSSL rejection (`err` populated).
 ///
-/// # Safety
-/// `vm` must be the live per-thread VM; called only from the JS thread.
-unsafe fn ssl_ctx_cache_get_or_create(
-    _vm: *mut VirtualMachine,
+fn ssl_ctx_cache_get_or_create(
+    _vm: &VirtualMachine,
     opts: &bun_uws::SocketContext::BunSocketContextOptions,
     err: &mut bun_uws::create_bun_socket_error_t,
-) -> Option<*mut bun_uws::SslCtx> {
+) -> Option<bun_boringssl::c::OwnedSslCtx> {
     let state = runtime_state();
     debug_assert!(
         !state.is_null(),
@@ -321,7 +330,10 @@ unsafe fn ssl_ctx_cache_get_or_create(
     // SAFETY: per-thread `RuntimeState`; `ssl_ctx_cache` has a stable
     // address for the VM's lifetime and is only touched from the JS thread.
     let cache = unsafe { &mut (*state).ssl_ctx_cache };
-    cache.get_or_create_opts(opts, err)
+    cache
+        .get_or_create_opts(opts, err)
+        // SAFETY: `get_or_create_opts` returns a +1 ref.
+        .and_then(|ctx| unsafe { bun_boringssl::c::OwnedSslCtx::from_raw(ctx) })
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -399,6 +411,7 @@ unsafe fn init_runtime_state(
         },
         active_handles: ActiveHandles::default(),
         wake_ctx: None,
+        cron_jobs: Vec::new(),
     }));
     RUNTIME_STATE.with(|c| c.set(state));
 
@@ -682,7 +695,9 @@ unsafe fn deinit_runtime_state(_vm: *mut VirtualMachine, state: OpaqueRuntimeSta
         // SAFETY: per fn contract — `state` is the unique `heap::alloc` result
         // from `init_runtime_state`; the TLS was just cleared so no other live
         // alias exists on this thread.
-        drop(unsafe { bun_core::heap::take(state.cast::<RuntimeState>()) });
+        let state = unsafe { bun_core::heap::take(state.cast::<RuntimeState>()) };
+        debug_assert!(state.cron_jobs.is_empty());
+        drop(state);
     }
     // Free the thread-local AST stores allocated by `Transpiler::init_in_place`
     // (via `Store::create()`). They live in TLS without a Drop, so each worker
@@ -1463,7 +1478,7 @@ mod vm_loader_ctx {
     // (`main`, `blob_loader`) form a transient `&VirtualMachine` scoped to the
     // single call, which never spans the re-entrant path.
     bun_bundler::link_impl_VmLoaderCtx! {
-        Runtime for VirtualMachine => |this| {
+        Runtime for extern VirtualMachine => |this| {
             origin_host() => (*this).origin.host,
             origin_path() => (*this).origin.path,
             loaders() => &raw const (*this).transpiler.options.loaders,
@@ -1801,10 +1816,11 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResu
                 // SAFETY: live until it unregisters in `on_close`.
                 crate::socket::udp_socket::UDPSocket::stop_for_vm_teardown(unsafe { u.as_ref() })
             }
-            // SAFETY: live until it unregisters in `deinit`.
-            ActiveHandle::DuplexUpgrade(c) => unsafe {
-                crate::socket::DuplexUpgradeContext::stop_for_vm_teardown(c.as_ptr())
-            },
+            ActiveHandle::DuplexUpgrade(c) => {
+                // SAFETY: live until it unregisters in `deinit`.
+                let c = unsafe { bun_ptr::ThisPtr::new(c.as_ptr()) };
+                crate::socket::DuplexUpgradeContext::stop_for_vm_teardown(c)
+            }
             // SAFETY: live until it unregisters when its deinit task runs.
             #[cfg(windows)]
             ActiveHandle::WindowsNamedPipe(c) => unsafe {
@@ -3535,7 +3551,7 @@ fn transpile_source_code_inner(
             let html_bundle = crate::api::HTMLBundle::init(global, path.text);
             use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
             Ok(OwnedResolvedSource::from(ResolvedSource {
-                jsvalue_for_export: crate::api::HTMLBundle::to_js(html_bundle.into_raw(), global),
+                jsvalue_for_export: crate::api::HTMLBundle::to_js(html_bundle, global),
                 specifier: input_specifier.dupe_ref(),
                 source_url: create_if_different(input_specifier, path.text),
                 tag: ResolvedSourceTag::ExportDefaultObject,
@@ -3880,7 +3896,7 @@ fn get_hardcoded_module(
 /// `jsc_vm` is the live per-thread VM; `out` is a valid out-param.
 unsafe fn fetch_builtin_module(
     jsc_vm: *mut VirtualMachine,
-    _global: *mut JSGlobalObject,
+    global: *mut JSGlobalObject,
     specifier: &bun_core::String,
     _referrer: &bun_core::String,
     out: *mut ErrorableResolvedSource,
@@ -3986,6 +4002,29 @@ export default db;
                         specifier: specifier.dupe_ref(),
                         source_url: specifier.dupe_ref(),
                         source_code_needs_deref: false,
+                        ..ResolvedSource::default()
+                    });
+                }
+                return FetchBuiltinResult::Found;
+            }
+
+            if file.is_text_module() {
+                // The bytes are already a string body (`encode_text_module`):
+                // the default export is a JSString over the section, no copy.
+                // SAFETY: per fn contract — `global` is the live global object.
+                let global = unsafe { &*global };
+                let string = file.to_wtf_string();
+                // Only a `Dead` string throws; `to_wtf_string` never yields one.
+                let value = bun_jsc::bun_string_jsc::to_js(&string, global)
+                    .expect("embedded text module string is never dead");
+                string.deref();
+                // No `specifier`/`source_url`: the ExportDefaultObject consumers
+                // never read or deref them.
+                // SAFETY: per fn contract — `out` is a valid out-param.
+                unsafe {
+                    *out = ErrorableResolvedSource::ok(ResolvedSource {
+                        jsvalue_for_export: value,
+                        tag: bun_jsc::resolved_source::Tag::ExportDefaultObject,
                         ..ResolvedSource::default()
                     });
                 }

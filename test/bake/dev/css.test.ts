@@ -242,12 +242,12 @@ devTest("css url resolve error on hot reload is recoverable", {
           errors: ['styles.css:2:21: error: Could not resolve: "./missing.png"'],
         },
       );
-      expect((await dev.fetch("/")).status).toBe(500);
     }
-    // Recovery is checked without a connected client: when a failed CSS root
-    // recovers, the patch currently ships the HTML route as a JS module
-    // without the route-reload flag, which trips a client-side debug assert
-    // (tracked in https://github.com/oven-sh/bun/issues/31908).
+    // The failing route is fetched and recovered without a connected client: a
+    // fetch re-bundles the route, and both that and the recovery ship the HTML
+    // route as a JS module without the route-reload flag, which trips a
+    // client-side debug assert (tracked in https://github.com/oven-sh/bun/issues/31908).
+    expect((await dev.fetch("/")).status).toBe(500);
     await dev.write(
       "styles.css",
       `

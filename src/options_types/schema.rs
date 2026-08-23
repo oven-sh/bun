@@ -258,6 +258,8 @@ pub mod api {
         pub public_hoist_pattern: Option<PnpmMatcher>,
         pub hoist_pattern: Option<PnpmMatcher>,
         pub hoist: Option<bool>,
+        /// `offline = true`: `bun install` never touches the network.
+        pub offline: Option<bool>,
     }
 
     #[repr(u8)]

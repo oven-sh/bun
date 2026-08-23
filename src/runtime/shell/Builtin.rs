@@ -1012,12 +1012,6 @@ impl Builtin {
                 Some(kind),
                 format_args!("{}\n", bstr::BStr::new(s)),
             ),
-            ShellErr::InvalidArguments { val } => Self::fmt_error_arena(
-                interp,
-                cmd,
-                Some(kind),
-                format_args!("{}\n", bstr::BStr::new(val)),
-            ),
             ShellErr::Todo(s) => Self::fmt_error_arena(
                 interp,
                 cmd,

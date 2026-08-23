@@ -385,8 +385,8 @@ impl Route {
         if let Err(err) = bun_bundler::bundle_v2::singleton::start::<JSBundleCompletionTask>() {
             let mut log = Log::init();
             log.add_error_fmt(None, bun_ast::Loc::EMPTY, format_args!("{err}"));
-            self.set_build_error(server, log);
-            self.finish_building();
+            this.set_build_error(server, log);
+            this.finish_building();
             return Ok(());
         }
 

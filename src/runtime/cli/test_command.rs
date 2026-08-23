@@ -2325,6 +2325,18 @@ impl TestCommand {
             vm.global().vm().enable_control_flow_profiler();
         }
 
+        // `--cpu-prof*` / `--heap-prof*`: start profiling before any test file
+        // loads. The profiles are written on the `on_exit()` path below.
+        if ctx.runtime_options.cpu_prof.enabled || ctx.runtime_options.heap_prof.enabled {
+            let vm_ptr: *mut VirtualMachine = vm;
+            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
+            // `run_with_api_lock` takes `&self` only, so the closure holds the
+            // unique mutable access on this single-threaded path.
+            vm.run_with_api_lock(|| {
+                super::run_command::start_profilers(unsafe { &mut *vm_ptr }, &*ctx);
+            });
+        }
+
         // For tests, we default to UTC time zone
         // unless the user inputs TZ="", in which case we use local time zone
         let mut tz_name: &[u8] =

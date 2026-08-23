@@ -339,6 +339,37 @@ test("--heap-prof-interval equal to the default is a noop without --heap-prof, l
   expect(exitCode).toBe(0);
 });
 
+// https://github.com/oven-sh/bun/issues/40184: the test runner accepted the
+// profiling flags but never set up the profiler, so no profile was written.
+test("bun test --heap-prof writes a profile", async () => {
+  using dir = tempDir("heap-prof-bun-test", {
+    "alloc.test.js": `
+      import { test, expect } from "bun:test";
+      test("allocates", () => {
+        const arr = [];
+        for (let i = 0; i < 100; i++) arr.push({ x: i, y: "hello" + i });
+        expect(arr.length).toBe(100);
+      });
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--heap-prof", "--heap-prof-name", "test-run.heapprofile", "alloc.test.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("1 pass");
+  expect(exitCode).toBe(0);
+
+  const profile = await readProfile(String(dir), "test-run.heapprofile");
+  expectV8HeapSnapshotShape(profile);
+});
+
 test("--heap-prof --heap-prof-interval is accepted", async () => {
   using dir = tempDir("heap-prof-interval-test", {});
 

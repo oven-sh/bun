@@ -444,4 +444,75 @@ describe.concurrent("--cpu-prof", () => {
     const mdContent = readFileSync(join(String(dir), mdFiles[0]), "utf-8");
     expect(mdContent).toContain("# CPU Profile");
   });
+
+  // https://github.com/oven-sh/bun/issues/40184: the test runner accepted the
+  // profiling flags but never started the profiler, so no profile was written.
+  test("bun test --cpu-prof writes a profile", async () => {
+    using dir = tempDir("cpu-prof-bun-test", {
+      "busy.test.js": `
+        import { test, expect } from "bun:test";
+        test("burns cpu", () => {
+          function fibonacci(n) {
+            if (n <= 1) return n;
+            return fibonacci(n - 1) + fibonacci(n - 2);
+          }
+          const end = performance.now() + 100;
+          let out = 0;
+          while (performance.now() < end) out += fibonacci(16);
+          expect(out).toBeGreaterThan(0);
+        });
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--cpu-prof", "--cpu-prof-name", "test-run.cpuprofile", "busy.test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("1 pass");
+    expect(exitCode).toBe(0);
+
+    const profileContent = readFileSync(join(String(dir), "test-run.cpuprofile"), "utf-8");
+    const profile = JSON.parse(profileContent);
+    expect(profile).toHaveProperty("nodes");
+    expect(profile).toHaveProperty("samples");
+    expect(profile).toHaveProperty("timeDeltas");
+    expect(Array.isArray(profile.nodes)).toBe(true);
+    expect(profile.nodes.length).toBeGreaterThan(0);
+  });
+
+  test("bun test --cpu-prof-md writes a markdown profile", async () => {
+    using dir = tempDir("cpu-prof-md-bun-test", {
+      "busy.test.js": `
+        import { test, expect } from "bun:test";
+        test("burns cpu", () => {
+          const end = performance.now() + 100;
+          let out = 0;
+          while (performance.now() < end) out += Math.sqrt(out + 1);
+          expect(out).toBeGreaterThan(0);
+        });
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--cpu-prof-md", "--cpu-prof-name", "test-run.md", "busy.test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("1 pass");
+    expect(exitCode).toBe(0);
+
+    const mdContent = readFileSync(join(String(dir), "test-run.md"), "utf-8");
+    expect(mdContent).toContain("# CPU Profile");
+  });
 });

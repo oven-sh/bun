@@ -1269,6 +1269,10 @@ impl<'a> Linker<'a> {
         match sys::symlink_running_executable(rel_target, abs_dest) {
             sys::Result::Err(err) => {
                 if err.get_errno() != sys::Errno::EEXIST && err.get_errno() != sys::Errno::ENOENT {
+                    if Self::symlink_unsupported(err.get_errno()) {
+                        self.copy_bin_fallback(abs_target, abs_dest, global);
+                        return;
+                    }
                     self.err = Some(err.into());
                     Self::chmod_on_ok(self.err, abs_target);
                     return;
@@ -1291,6 +1295,10 @@ impl<'a> Linker<'a> {
 
                     match sys::symlink_running_executable(rel_target, abs_dest) {
                         sys::Result::Err(real_error) => {
+                            if Self::symlink_unsupported(real_error.get_errno()) {
+                                self.copy_bin_fallback(abs_target, abs_dest, global);
+                                return;
+                            }
                             // It was just created, no need to delete destination and symlink again
                             self.err = Some(real_error.into());
                             Self::chmod_on_ok(self.err, abs_target);
@@ -1315,9 +1323,62 @@ impl<'a> Linker<'a> {
         // delete and try again
         let _ = sys::delete_tree_absolute(abs_dest.as_bytes());
         if let Err(err) = sys::symlink_running_executable(rel_target, abs_dest) {
+            if Self::symlink_unsupported(err.get_errno()) {
+                self.copy_bin_fallback(abs_target, abs_dest, global);
+                return;
+            }
             self.err = Some(err.into());
         }
         Self::chmod_on_ok(self.err, abs_target);
+    }
+
+    /// FUSE filesystems (e.g. Android SDCARD) reject symlink creation with
+    /// EACCES or EPERM.
+    #[cfg(not(windows))]
+    fn symlink_unsupported(errno: sys::Errno) -> bool {
+        errno == sys::Errno::EACCES || errno == sys::Errno::EPERM
+    }
+
+    /// Fall back to copying the bin target when the filesystem does not
+    /// support symlinks, matching the `linkat` -> `copyfile` fallback in
+    /// `PackageInstall.rs`.
+    #[cfg(not(windows))]
+    fn copy_bin_fallback(&mut self, abs_target: &ZStr, abs_dest: &ZStr, global: bool) {
+        let mut result = Self::copy_bin_file(abs_target, abs_dest);
+        if let Err(err) = &result {
+            // `.bin` may not exist yet; create it and retry, like the
+            // symlink path does.
+            if err.get_errno() == sys::Errno::ENOENT && !global {
+                let node_modules_path_save = self.node_modules_path.len();
+                let _ = self.node_modules_path.append(b".bin");
+                let _ = sys::Dir::cwd().make_path(self.node_modules_path.slice());
+                self.node_modules_path.set_length(node_modules_path_save);
+                result = Self::copy_bin_file(abs_target, abs_dest);
+            }
+        }
+        if let Err(err) = result {
+            self.err = Some(err.into());
+        }
+        Self::chmod_on_ok(self.err, abs_target);
+    }
+
+    #[cfg(not(windows))]
+    fn copy_bin_file(abs_target: &ZStr, abs_dest: &ZStr) -> sys::Result<()> {
+        let src = sys::File::open(abs_target, sys::O::RDONLY | sys::O::CLOEXEC, 0)?;
+        // Unlink first: the destination could be a symlink, and O_TRUNC
+        // through it would clobber the file it points to.
+        let _ = sys::unlink(abs_dest);
+        let mode = 0o777 & !(UMASK.load(Ordering::Acquire) as Mode);
+        let dest = sys::File::open(
+            abs_dest,
+            sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC | sys::O::CLOEXEC,
+            mode,
+        )?;
+        sys::copy_file(src.fd(), dest.fd())?;
+        // The kernel applies the process umask at O_CREAT; fchmod sets the
+        // exact bits. Best effort: FUSE mounts often reject chmod.
+        let _ = sys::fchmod(dest.fd(), mode);
+        Ok(())
     }
 
     #[cfg(not(windows))]

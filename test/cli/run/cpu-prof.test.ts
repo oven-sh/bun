@@ -475,7 +475,6 @@ describe.concurrent("--cpu-prof", () => {
     const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).toContain("1 pass");
-    expect(exitCode).toBe(0);
 
     const profileContent = readFileSync(join(String(dir), "test-run.cpuprofile"), "utf-8");
     const profile = JSON.parse(profileContent);
@@ -484,6 +483,7 @@ describe.concurrent("--cpu-prof", () => {
     expect(profile).toHaveProperty("timeDeltas");
     expect(Array.isArray(profile.nodes)).toBe(true);
     expect(profile.nodes.length).toBeGreaterThan(0);
+    expect(exitCode).toBe(0);
   });
 
   test("bun test --cpu-prof-md writes a markdown profile", async () => {
@@ -510,9 +510,9 @@ describe.concurrent("--cpu-prof", () => {
     const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).toContain("1 pass");
-    expect(exitCode).toBe(0);
 
     const mdContent = readFileSync(join(String(dir), "test-run.md"), "utf-8");
     expect(mdContent).toContain("# CPU Profile");
+    expect(exitCode).toBe(0);
   });
 });

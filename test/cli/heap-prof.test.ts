@@ -364,10 +364,10 @@ test("bun test --heap-prof writes a profile", async () => {
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toContain("1 pass");
-  expect(exitCode).toBe(0);
 
   const profile = await readProfile(String(dir), "test-run.heapprofile");
   expectV8HeapSnapshotShape(profile);
+  expect(exitCode).toBe(0);
 });
 
 test("--heap-prof --heap-prof-interval is accepted", async () => {

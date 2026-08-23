@@ -1900,6 +1900,7 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout.trim()).toBe("ERR_THROWING_INIT init threw on purpose");
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 
@@ -1908,7 +1909,8 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
     // the TypeError instead (it used to crash).
     it("on a detached ArrayBuffer fails with a pending TypeError", async () => {
       const output = await runOn(bunExe(), "test_napi_dataview_detached", []);
-      expect(output).toContain("status_ok=0 result_null=1 pending=1");
+      // 10 = napi_pending_exception
+      expect(output).toContain("status=10 result_null=1 pending=1 error=TypeError");
     });
 
     it("should validate bounds and provide consistent error messages", async () => {

@@ -1780,12 +1780,16 @@ static napi_value test_napi_dataview_detached(const Napi::CallbackInfo &info) {
   napi_status status = napi_create_dataview(env, 0, arraybuffer, 0, &dataview);
   bool pending = false;
   napi_is_exception_pending(env, &pending);
-  printf("status_ok=%d result_null=%d pending=%d\n", status == napi_ok ? 1 : 0,
-         dataview == nullptr ? 1 : 0, pending ? 1 : 0);
+  char name[64] = "";
   if (pending) {
-    napi_value exc;
+    napi_value exc, ctor, name_val;
     napi_get_and_clear_last_exception(env, &exc);
+    napi_get_named_property(env, exc, "constructor", &ctor);
+    napi_get_named_property(env, ctor, "name", &name_val);
+    napi_get_value_string_utf8(env, name_val, name, sizeof(name), NULL);
   }
+  printf("status=%d result_null=%d pending=%d error=%s\n", (int)status,
+         dataview == nullptr ? 1 : 0, pending ? 1 : 0, name);
   return ok(env);
 }
 

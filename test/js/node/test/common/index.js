@@ -291,40 +291,10 @@ function installBunExposeInternalsRequireInterceptor() {
       }
       const vendored = requireVendoredNodeInternal(id);
       if (vendored !== undefined) {
-        // Some vendored internals export freshly-minted look-alike symbols;
-        // anything Bun holds module-private must be recovered from the live
-        // objects and override key-for-key, or prototype lookups miss.
-        const override = harnessInternalOverrides[id];
-        if (override !== undefined) {
-          const cached = mergedInternals[id];
-          if (cached !== undefined) return cached;
-          return (mergedInternals[id] = { ...vendored, ...override() });
-        }
         return vendored;
       }
     }
     return originalRequire.apply(this, arguments);
-  };
-  const harnessInternalOverrides = {
-    __proto__: null,
-    // internal/net: the per-socket option symbols are module-private in Bun's
-    // node:net; recover the real ones from a probe socket (the constructor
-    // always sets them) and the prototype.
-    'internal/net': () => {
-      const net = originalRequire.call(module, 'node:net');
-      const probe = net._normalizeArgs([]);
-      const socketProbe = new net.Socket();
-      const bySymbolName = name =>
-        Object.getOwnPropertySymbols(socketProbe).find(s => s.description === name) ??
-        Object.getOwnPropertySymbols(net.Socket.prototype).find(s => s.description === name);
-      return {
-        normalizedArgsSymbol: Object.getOwnPropertySymbols(probe).find(s => s.description === 'normalizedArgs'),
-        kSetNoDelay: bySymbolName('kSetNoDelay'),
-        kSetKeepAlive: bySymbolName('kSetKeepAlive'),
-        kSetKeepAliveInitialDelay: bySymbolName('kSetKeepAliveInitialDelay'),
-        kReinitializeHandle: bySymbolName('kReinitializeHandle'),
-      };
-    },
   };
   // http2-specific internal modules (internal/http2/util, …) are
   // served separately via Bun.plugin module shims backed by the

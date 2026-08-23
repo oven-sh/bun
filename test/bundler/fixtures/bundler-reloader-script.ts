@@ -5,6 +5,9 @@
 //    That way, if the developer changes a file, we will see the change.
 //
 // 2. Checks the file descriptor count to make sure we're not leaking any files between re-builds.
+//
+// The directory entry cache is invalidated by a per-build generation counter,
+// not by mtime, so no delay is needed between writing a file and rebuilding.
 
 import { closeSync, openSync, realpathSync, unlinkSync } from "fs";
 import { tmpdir } from "os";
@@ -18,18 +21,16 @@ try {
 } catch (e) {}
 await Bun.write(input, "import value from './mutate.js';\n" + `export default value;` + "\n");
 
-await Bun.sleep(1000);
-
-try {
-  await Bun.build({
-    entrypoints: [input],
-  });
-  // If the build succeeded something is very wrong
-  process.exit(1);
-} catch {}
+const first = await Bun.build({
+  entrypoints: [input],
+  throw: false,
+});
+// The first build must fail because mutate.js does not exist yet, and for no other reason.
+const firstLogs = first.logs.map(log => log.message);
+if (first.success || firstLogs.length !== 1 || firstLogs[0] !== 'Could not resolve: "./mutate.js"') {
+  throw new Error("Expected the first build to fail on the missing import, but got\n\n" + JSON.stringify(firstLogs));
+}
 await Bun.write(mutate, "export default 1;\n");
-
-await Bun.sleep(1000);
 
 const maxfd = openSync(process.execPath, 0);
 closeSync(maxfd);
@@ -47,4 +48,5 @@ if (newMax !== maxfd) {
   throw new Error("File descriptors leaked! Expected " + maxfd + " but got " + newMax + "");
 }
 
+console.log("OK");
 process.exit(0);

@@ -1875,8 +1875,7 @@ impl EString {
         true
     }
 
-    /// Flatten the rope in place. For the pass that owns the node (the parser).
-    /// Readers of an AST shared with other threads use [`Self::flattened`].
+    /// Flatten in place. Parser only; shared-AST readers use [`Self::flattened`].
     pub fn resolve_rope_if_needed(&mut self, bump: &Bump) {
         if self.next.is_none() || !self.is_utf8() {
             return;
@@ -1885,9 +1884,7 @@ impl EString {
         self.next = None;
     }
 
-    /// Copy of `self` with the rope flattened into `bump`; `self` and its chain
-    /// are only read. The bundler prints one module into every chunk that
-    /// includes it, in parallel, so the printer must not write to the node.
+    /// Copy with the rope flattened into `bump`; `self` is only read (the printer runs in parallel).
     pub fn flattened(&self, bump: &Bump) -> EString {
         let mut copy = self.shallow_clone();
         if copy.next.is_some() && copy.is_utf8() {

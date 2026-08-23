@@ -153,11 +153,12 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                         let name = p.symbols[symbol.ref_.inner_index() as usize].original_name;
                         if ReactRefresh::is_componentish_name(name.slice()) {
                             // Lower to a function statement, and reference the function in the export list.
-                            self.export_props.push(G::Property {
-                                key: Some(Expr::init(E::EString::init(b"default"), stmt.loc)),
-                                value: Some(Expr::init_identifier(symbol.ref_, stmt.loc)),
-                                ..Default::default()
-                            });
+                            self.visit_ref_to_export(
+                                p,
+                                symbol.ref_,
+                                Some(bun_ast::StoreStr::new(b"default")),
+                                stmt.loc,
+                            )?;
                             break 'stmt *s;
                         }
                         // All other functions can be properly moved.

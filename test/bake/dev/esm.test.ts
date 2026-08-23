@@ -379,21 +379,24 @@ devTest("export star from a module with top-level await", {
     await c.expectMessage("PASS");
   },
 });
+/** Mirrors the real react-refresh runtime: isLikelyComponentType is true
+ * only for functions, never for the exports object itself. */
+const realisticRefreshRuntimeStub = {
+  "node_modules/react-refresh/runtime.js": /* js */ `
+    exports.performReactRefresh = () => console.log("performReactRefresh");
+    exports.injectIntoGlobalHook = () => {};
+    exports.isLikelyComponentType = t => typeof t === "function" && /^[A-Z]/.test(t.name || "");
+    exports.register = () => {};
+    exports.createSignatureFunctionForTransform = () => fn => fn;
+  `,
+};
 devTest("an arrow function component export stays a fast refresh boundary", {
   // The exports object exposes non-function-declaration exports through
   // getters. isReactRefreshBoundary must read through them, or a module
   // that exports an arrow component stops self-accepting and every edit
-  // causes a full page reload. The mock mirrors the real react-refresh
-  // runtime: isLikelyComponentType is true only for functions, never for
-  // the exports object itself.
+  // causes a full page reload.
   files: {
-    "node_modules/react-refresh/runtime.js": /* js */ `
-      exports.performReactRefresh = () => console.log("performReactRefresh");
-      exports.injectIntoGlobalHook = () => {};
-      exports.isLikelyComponentType = t => typeof t === "function" && /^[A-Z]/.test(t.name || "");
-      exports.register = () => {};
-      exports.createSignatureFunctionForTransform = () => fn => fn;
-    `,
+    ...realisticRefreshRuntimeStub,
     "index.html": emptyHtmlFile({
       scripts: ["index.ts"],
     }),
@@ -414,6 +417,28 @@ devTest("an arrow function component export stays a fast refresh boundary", {
     await dev.patch("App.tsx", { find: "version 1", replace: "version 2" });
     await c.expectMessage("performReactRefresh");
     expect(await c.js`return globalThis.renderApp()`).toBe("version 2");
+  },
+});
+devTest("reassigned componentish default export stays live under fast refresh", {
+  files: {
+    ...realisticRefreshRuntimeStub,
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "App.tsx": `
+      export default function App() {
+        return "original";
+      }
+      App = () => "wrapped";
+    `,
+    "index.ts": `
+      import App from './App';
+      console.log(App());
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("wrapped");
   },
 });
 devTest("cyclic import with a top-level read (#40248)", {

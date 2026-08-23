@@ -82,13 +82,13 @@ macro_rules! intrusive_work_task {
     // Generic/lifetime form. The leading `[..]` disambiguates from the
     // plain-type arm so the `:ty` fragment below never sees a `<const ..>`
     // and hard-errors.
-    ([$($gen:tt)*] $ty:ty, $field:ident) => {
-        ::bun_core::intrusive_field!([$($gen)*] $ty, $field: $crate::work_pool::Task);
+    ([$($gen:tt)*] $ty:ty, $($field:ident).+) => {
+        ::bun_core::intrusive_field!([$($gen)*] $ty, $($field).+: $crate::work_pool::Task);
         // SAFETY: `IntrusiveField<Task>` impl above supplies the offset/field.
         unsafe impl<$($gen)*> $crate::work_pool::IntrusiveWorkTask for $ty {}
     };
-    ($ty:ty, $field:ident) => {
-        ::bun_core::intrusive_field!($ty, $field: $crate::work_pool::Task);
+    ($ty:ty, $($field:ident).+) => {
+        ::bun_core::intrusive_field!($ty, $($field).+: $crate::work_pool::Task);
         // SAFETY: `IntrusiveField<Task>` impl above supplies the offset/field.
         unsafe impl $crate::work_pool::IntrusiveWorkTask for $ty {}
     };
@@ -106,28 +106,34 @@ macro_rules! intrusive_work_task {
 /// safety obligation
 /// ("all fields are sound to move across threads") is restated once here
 /// rather than at every `WorkPool::schedule(addr_of_mut!((*p).task))` site.
+///
+/// `run = path` names the worker-thread body explicitly (a `fn(Box<Self>)`)
+/// instead of the inherent `run_owned`; the field may be a nested path
+/// (`task.task`).
 #[macro_export]
 macro_rules! owned_task {
-    ([$($gen:tt)*] $ty:ty, $field:ident) => {
-        $crate::intrusive_work_task!([$($gen)*] $ty, $field);
+    ([$($gen:tt)*] $ty:ty, $($field:ident).+ $(, run = $run:path)?) => {
+        $crate::intrusive_work_task!([$($gen)*] $ty, $($field).+);
         // SAFETY: see macro doc — the type is moved to a worker thread by design.
         unsafe impl<$($gen)*> ::core::marker::Send for $ty {}
         // SAFETY: `run` forwards to the inherent `run_owned`.
         unsafe impl<$($gen)*> $crate::work_pool::OwnedTask for $ty {
             #[inline]
-            fn run(self: ::std::boxed::Box<Self>) { <$ty>::run_owned(self) }
+            fn run(self: ::std::boxed::Box<Self>) { $crate::owned_task!(@run self, $ty $(, $run)?) }
         }
     };
-    ($ty:ty, $field:ident) => {
-        $crate::intrusive_work_task!($ty, $field);
+    ($ty:ty, $($field:ident).+ $(, run = $run:path)?) => {
+        $crate::intrusive_work_task!($ty, $($field).+);
         // SAFETY: see macro doc — the type is moved to a worker thread by design.
         unsafe impl ::core::marker::Send for $ty {}
         // SAFETY: `run` forwards to the inherent `run_owned`.
         unsafe impl $crate::work_pool::OwnedTask for $ty {
             #[inline]
-            fn run(self: ::std::boxed::Box<Self>) { <$ty>::run_owned(self) }
+            fn run(self: ::std::boxed::Box<Self>) { $crate::owned_task!(@run self, $ty $(, $run)?) }
         }
     };
+    (@run $self:ident, $ty:ty) => { <$ty>::run_owned($self) };
+    (@run $self:ident, $ty:ty, $run:path) => { $run($self) };
 }
 
 static POOL: OnceLock<ThreadPool> = OnceLock::new();

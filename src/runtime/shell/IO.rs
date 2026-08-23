@@ -1,13 +1,13 @@
 //! Carries stdin/stdout/stderr for a state node.
 //!
-//! `IO` is a plain `Clone` value; `IOReader`/`IOWriter` are `Arc`-refcounted.
+//! `IO` is a plain `Clone` value; `IOReader`/`IOWriter` are `Rc`-refcounted.
 
 use bun_collections::VecExt;
 
-use crate::api::bun_spawn::stdio::{Capture, Stdio};
-use crate::shell::interpreter::OutputNeedsIOSafeGuard;
-use crate::shell::io_reader::IOReader;
-use crate::shell::io_writer::IOWriter;
+use crate::api::bun_spawn::stdio::Stdio;
+use crate::shell::interpreter::{CapturedBuf, OutputNeedsIOSafeGuard};
+use crate::shell::io_reader::IOReaderRef;
+use crate::shell::io_writer::IOWriterRef;
 use crate::shell::shell_body::subproc::ShellIO;
 
 #[derive(Clone, Default)]
@@ -29,7 +29,7 @@ impl IO {
 
     /// Maps the state-node IO triple onto
     /// `subproc::Stdio` for [`ShellSubprocess::spawn_async`], and stashes the
-    /// owning `IOWriter` Arcs on `shellio` so [`PipeReader`]'s captured-writer
+    /// owning `IOWriter` `Rc`s on `shellio` so [`PipeReader`]'s captured-writer
     /// path can tee subprocess output back into the JS-side buffers.
     pub(crate) fn to_subproc_stdio(&self, stdio: &mut [Stdio; 3], shellio: &mut ShellIO) {
         stdio[0] = self.stdin.to_subproc_stdio();
@@ -40,7 +40,7 @@ impl IO {
 
 #[derive(Clone, Default)]
 pub enum InKind {
-    Fd(std::sync::Arc<IOReader>),
+    Fd(IOReaderRef),
     #[default]
     Ignore,
 }
@@ -55,36 +55,12 @@ pub enum OutKind {
     Ignore,
 }
 
-// Clone: bitwise OK for `captured` — it is a non-owning backref into
-// `ShellExecEnv::_buffered_{stdout,stderr}`; the env owns the Vec. `writer`
-// is `Arc` so it ref-counts on clone.
 #[derive(Clone)]
 pub struct OutFd {
-    pub(crate) writer: std::sync::Arc<IOWriter>,
+    pub(crate) writer: IOWriterRef,
     /// If set, also append every chunk to this buffer (the JS-side captured
-    /// stdout/stderr). Points into `ShellExecEnv::_buffered_{stdout,stderr}`.
-    pub(crate) captured: Option<*mut Vec<u8>>,
-}
-
-impl OutFd {
-    /// Mutably borrow the JS-side captured stdout/stderr buffer if configured.
-    ///
-    /// `captured` is a non-owning backref into `ShellExecEnv::_buffered_*`
-    /// (see field doc); the owning `ShellExecEnv` outlives every `Cmd`/builtin
-    /// that holds an `OutFd`. Localises the per-callsite raw deref so callers
-    /// can `if let Some(buf) = fd.captured_mut() { buf.extend_from_slice(...) }`.
-    ///
-    /// # Safety
-    /// Caller must ensure no other `&`/`&mut` to the target `Vec<u8>` is live
-    /// (including via the parent `ShellExecEnv`) for the returned borrow's
-    /// lifetime. The `(&self) -> &mut T` shape cannot encode this, hence
-    /// `unsafe fn`.
-    #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub(crate) unsafe fn captured_mut(&self) -> Option<&mut Vec<u8>> {
-        // SAFETY: caller contract — single-threaded shell, env outlives `self`.
-        self.captured.map(|p| unsafe { &mut *p })
-    }
+    /// stdout/stderr, shared with `ShellExecEnv::buffered_{stdout,stderr}`).
+    pub(crate) captured: Option<CapturedBuf>,
 }
 
 impl InKind {
@@ -106,10 +82,8 @@ impl InKind {
 impl OutFd {
     fn memory_cost(&self) -> usize {
         let mut cost = self.writer.memory_cost();
-        if let Some(captured) = self.captured {
-            // SAFETY: `captured` points into a live `ShellExecEnv` buffer;
-            // the env outlives the IO that borrows it.
-            cost += unsafe { (*captured).memory_cost() };
+        if let Some(captured) = &self.captured {
+            cost += captured.borrow().memory_cost();
         }
         cost
     }
@@ -133,20 +107,15 @@ impl OutKind {
         }
     }
 
-    /// Retains the `IOWriter` Arc on
+    /// Retains the `IOWriter` on
     /// `shellio` so the subprocess's `PipeReader::captured_writer` can drain
     /// captured bytes into it after the spawn returns.
-    fn to_subproc_stdio(&self, shellio: &mut Option<std::sync::Arc<IOWriter>>) -> Stdio {
+    fn to_subproc_stdio(&self, shellio: &mut Option<IOWriterRef>) -> Stdio {
         match self {
             OutKind::Fd(val) => {
-                *shellio = Some(std::sync::Arc::clone(&val.writer));
-                if let Some(cap) = val.captured {
-                    #[cfg(not(any(target_os = "linux", target_os = "android")))]
-                    let _ = cap;
-                    Stdio::Capture(Capture {
-                        #[cfg(any(target_os = "linux", target_os = "android"))]
-                        buf: cap,
-                    })
+                *shellio = Some(val.writer.clone());
+                if val.captured.is_some() {
+                    Stdio::Capture
                 } else {
                     // `IOWriter::fd()` (IOWriter.rs) returns `Fd::INVALID`
                     // once the fd has been handed off to libuv, so the

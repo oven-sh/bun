@@ -817,6 +817,15 @@ impl ConcurrentPoster {
         matches!(self, ConcurrentPoster::Js(..))
     }
 
+    /// Post a node armed by `EventLoopTask::arm_boxed` to whichever loop this
+    /// poster targets.
+    pub fn post(&self, task: bun_event_loop::ArmedLoopTask) {
+        match task {
+            bun_event_loop::ArmedLoopTask::Js(t) => self.post_js(t),
+            bun_event_loop::ArmedLoopTask::Mini(t) => self.post_mini(t),
+        }
+    }
+
     /// Post a JS-loop `ConcurrentTask`. Panics (debug) if this poster is `Mini`.
     pub fn post_js(&self, task: NonNull<ConcurrentTaskItem>) {
         match self {

@@ -2,8 +2,8 @@
 //!
 //! See the doc comment on `Yield` for the design. The Rust port carries
 //! `NodeId`s (indices into `Interpreter::nodes`) instead of `&mut State`
-//! borrows — the only `&mut` is the `&Interpreter` threaded through
-//! `run`.
+//! borrows; state is reached through the `&Interpreter` threaded through
+//! `run` (per-node `RefCell`s).
 
 use core::cell::Cell;
 

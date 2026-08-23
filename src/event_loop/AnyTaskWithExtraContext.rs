@@ -68,6 +68,27 @@ impl AnyTaskWithExtraContext {
         }
     }
 
+    /// Leak `owner` and arm the node it embeds (`node(owner)`) so the mini
+    /// loop hands the box to `R::run_from_loop_thread`. No allocation.
+    pub fn arm_boxed<T, R: BoxedMiniTaskRunner<T>>(
+        owner: Box<T>,
+        node: fn(&mut T) -> &mut AnyTaskWithExtraContext,
+    ) -> NonNull<AnyTaskWithExtraContext> {
+        let raw: *mut T = bun_core::heap::into_raw(owner);
+        // SAFETY: `raw` was just leaked; this thread owns it exclusively until
+        // the node is queued.
+        Self::arm_at::<T, R>(node(unsafe { &mut *raw }), raw)
+    }
+
+    /// Arm `at` (a node inside the leaked box `raw`) for `R`.
+    pub(crate) fn arm_at<T, R: BoxedMiniTaskRunner<T>>(
+        at: &mut AnyTaskWithExtraContext,
+        raw: *mut T,
+    ) -> NonNull<AnyTaskWithExtraContext> {
+        *at = New::<T, ()>::init(raw, mini_boxed_trampoline::<T, R>);
+        NonNull::from(at)
+    }
+
     /// Initializes `self` in place to call `callback(of, extra)`.
     // The unit context means the callee is effectively `fn(*T)` only; mapped
     // to `*mut ()` to keep the two-arg stored ABI uniform.
@@ -77,12 +98,43 @@ impl AnyTaskWithExtraContext {
         std::ptr::from_mut::<Self>(self)
     }
 
-    pub(crate) fn run(&mut self, extra: *mut c_void) {
-        let callback = self.callback;
-        let ctx = self.ctx;
-        // SAFETY: caller contract — `ctx` was set by `init`/`from*` to a live pointer.
-        callback(ctx.expect("ctx is non-null").as_ptr(), extra.cast::<()>());
+    /// Copy the node's two words out so running it borrows nothing from the
+    /// allocation it lives in (the callback may free that allocation).
+    ///
+    /// # Safety
+    /// `this` is a queued node, live at the time of the call.
+    pub(crate) unsafe fn load(this: *const Self) -> Runnable {
+        // SAFETY: fn contract.
+        let (callback, ctx) = unsafe { ((*this).callback, (*this).ctx) };
+        Runnable { callback, ctx }
     }
+}
+
+/// A dequeued [`AnyTaskWithExtraContext`], detached from its storage.
+pub(crate) struct Runnable {
+    callback: fn(*mut (), *mut ()),
+    ctx: Option<NonNull<()>>,
+}
+
+impl Runnable {
+    pub(crate) fn run(self, extra: *mut c_void) {
+        (self.callback)(
+            self.ctx.expect("ctx is non-null").as_ptr(),
+            extra.cast::<()>(),
+        );
+    }
+}
+
+/// Receives a boxed payload back on the mini loop's thread
+/// ([`AnyTaskWithExtraContext::arm_boxed`]).
+pub trait BoxedMiniTaskRunner<T> {
+    fn run_from_loop_thread(owner: Box<T>);
+}
+
+fn mini_boxed_trampoline<T, R: BoxedMiniTaskRunner<T>>(this: *mut T, _extra: *mut ()) {
+    // SAFETY: `this` is the box `arm_boxed` leaked into its own node; the loop
+    // copied the node out (`load`) and fires it once.
+    R::run_from_loop_thread(unsafe { bun_core::heap::take(this) });
 }
 
 /// Stable Rust cannot take a fn value as a const generic, so `Callback` moves to

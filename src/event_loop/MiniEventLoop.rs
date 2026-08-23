@@ -315,8 +315,9 @@ impl MiniEventLoop {
         }
 
         while let Some(task) = self.tasks.read_item() {
-            // SAFETY: tasks are pushed by enqueue_task* and remain valid until run() consumes them.
-            unsafe { (*task).run(context) };
+            // SAFETY: tasks are pushed by enqueue_task* and remain valid until loaded here.
+            let task = unsafe { AnyTaskWithExtraContext::load(task) };
+            task.run(context);
         }
     }
 
@@ -325,7 +326,8 @@ impl MiniEventLoop {
             let _ = self.tick_concurrent_with_count();
             while let Some(task) = self.tasks.read_item() {
                 // SAFETY: see tick_once.
-                unsafe { (*task).run(context) };
+                let task = unsafe { AnyTaskWithExtraContext::load(task) };
+                task.run(context);
             }
 
             // SAFETY: see `loop_ptr()` invariant.

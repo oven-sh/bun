@@ -333,7 +333,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             // no aliasing `&mut` exists across this call.
             let mini = unsafe { &mut *mini };
             let code = match crate::shell::Interpreter::init_and_run_from_source(
-                ctx,
+                &*ctx,
                 mini,
                 name,
                 &copy_script,
@@ -918,7 +918,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let path_z = ZStr::from_buf(&path_buf[..], entry_path.len());
         let src = sys::File::read_from(Fd::cwd(), path_z)?;
 
-        crate::shell::Interpreter::init_and_run_from_file(ctx, mini, entry_path, &src)
+        crate::shell::Interpreter::init_and_run_from_file(&*ctx, mini, entry_path, &src)
     }
 
     /// `VirtualMachine::init`,

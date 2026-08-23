@@ -8,10 +8,10 @@ use bun_jsc::{
     JsRef, JsResult, MarkedArgumentBuffer, StringJsc as _,
 };
 
+use super::EnvStr;
 use super::env_map::EnvMap;
 use super::interpreter::ShellArgs;
 use super::shell_body::shell_cmd_from_js;
-use super::{EnvStr, Interpreter};
 
 // NOTE: `pub const js = jsc.Codegen.JSParsedShellScript;` and the
 // `toJS`/`fromJS`/`fromJSDirect` re-exports are provided by the
@@ -233,48 +233,20 @@ fn create_parsed_shell_script_impl(
         marked_argument_buffer,
     )?;
 
-    // Reshaped for borrowck — `out_parser`/`out_lex_result` borrow
-    // `shargs.__arena`, so they're scoped to a block that ends before
-    // `shargs.script_ast = script` below. The arena reference is taken via raw
-    // pointer so the `&shargs` borrow doesn't outlive the call (the returned
-    // `ast::Script` is lifetime-erased).
-    let arena_ptr: *const bun_alloc::Arena = shargs.arena();
-    let script_ast = {
-        // SAFETY: `shargs` lives on this stack frame for the whole block; arena
-        // is not moved/dropped while `out_parser`/`out_lex_result` borrow it.
-        let arena = unsafe { &*arena_ptr };
-        let mut out_parser: Option<bun_shell_parser::Parser<'_>> = None;
-        let mut out_lex_result: Option<bun_shell_parser::LexResult<'_>> = None;
-        match Interpreter::parse(
-            arena,
-            &script[..],
-            &mut jsobjs[..],
-            &jsstrings[..],
-            &mut out_parser,
-            &mut out_lex_result,
-        ) {
-            Ok(ast) => ast,
-            Err(err) => {
-                // `out_lex_result.is_some()` ⇔ `err == ParseError::Lex` — `Interpreter::parse`
-                // only populates `out_lex_result` on the Lex error path.
-                if let Some(lex) = out_lex_result.as_ref() {
-                    debug_assert!(!lex.errors.is_empty());
-                    let str = lex.combine_errors(arena);
-                    return Err(global.throw(format_args!("{}", bstr::BStr::new(str))));
-                }
-
-                if let Some(p) = out_parser.as_mut() {
-                    debug_assert!(!p.errors.is_empty());
-                    let errstr = p.combine_errors();
-                    return Err(global.throw(format_args!("{}", bstr::BStr::new(errstr))));
-                }
-
-                return Err(global.throw_error(err, "failed to lex/parse shell"));
+    if let Err(err) = shargs.parse(&script[..], &jsstrings[..], jsobjs.len() as u32) {
+        use bun_shell_parser::ParseFailure;
+        return Err(match err {
+            ParseFailure::Diagnostic(msg) => {
+                global.throw(format_args!("{}", bstr::BStr::new(&msg)))
             }
-        }
-    };
-
-    shargs.set_script_ast(script_ast);
+            ParseFailure::Lexer(e) => {
+                global.throw_error(crate::Error::from(e), "failed to lex/parse shell")
+            }
+            ParseFailure::Other(e) => {
+                global.throw_error(crate::Error::from(e), "failed to lex/parse shell")
+            }
+        });
+    }
 
     let mut parsed_shell_script = Box::new(ParsedShellScript {
         args: JsCell::new(Some(shargs)),

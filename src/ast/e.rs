@@ -1685,8 +1685,7 @@ pub struct EString {
 // Also exported as `String`; `EString` avoids colliding with bun_core::String.
 pub use EString as String;
 
-/// Result of [`EString::flattened`]: the node itself when it is not a rope, else
-/// a local copy whose `data` is the flattened rope.
+/// [`EString::flattened`] result: the node itself, or an owned copy when a rope was flattened.
 pub enum Flattened<'a> {
     Borrowed(&'a EString),
     Owned(EString),
@@ -1902,8 +1901,7 @@ impl EString {
         self.next = None;
     }
 
-    /// `self` when it is not a rope, else a copy with the rope flattened into
-    /// `bump`. Never writes to `self`: the printer runs in parallel on shared nodes.
+    /// `self` if not a rope, else a copy flattened into `bump`. Never writes to `self`.
     pub fn flattened(&self, bump: &Bump) -> Flattened<'_> {
         if self.next.is_none() || !self.is_utf8() {
             return Flattened::Borrowed(self);

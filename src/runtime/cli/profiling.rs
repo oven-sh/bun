@@ -3,6 +3,7 @@ use core::sync::atomic::Ordering;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_options_types::context::RuntimeOptions;
 
+/// Call on the JS thread while holding the JSC API lock.
 pub(crate) fn configure(vm: &mut VirtualMachine, runtime_options: &RuntimeOptions) {
     if runtime_options.cpu_prof.enabled {
         let opts = &runtime_options.cpu_prof;

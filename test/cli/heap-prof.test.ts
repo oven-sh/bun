@@ -221,10 +221,77 @@ test("bun test rejects heap profiling with multiple parallel workers", async () 
 
   expect(stdout).toBe("");
   expect(stderr).toBe(
-    "error: profiling is not supported with bun test --parallel\n" +
+    "error: profiling is not supported with multiple bun test --parallel workers\n" +
       "note: Use --parallel=1 or remove --parallel to profile the test process.\n",
   );
   expect(exitCode).toBe(1);
+});
+
+test("bun test --bail writes a heap profile", async () => {
+  using dir = tempDir("heap-prof-test-bail", {
+    "profile.test.ts": `import { expect, test } from "bun:test"; test("failure", () => expect(1).toBe(2));`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--bail=1", "--heap-prof-md", "--heap-prof-name", "bail-profile.md"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toContain("bun test");
+  expect(stderr).toContain("Bailed out after 1 failure");
+  expect(await Bun.file(join(String(dir), "bail-profile.md")).text()).toContain("# Bun Heap Profile");
+  expect(exitCode).toBe(1);
+});
+
+test("bun test writes a heap profile after a top-level load error", async () => {
+  using dir = tempDir("heap-prof-test-load-error", {
+    "profile.test.ts": `import "./missing-module";`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--heap-prof", "--heap-prof-name", "load-error.heapprofile"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toContain("bun test");
+  expect(stderr).toContain("Cannot find module");
+  expectV8HeapSnapshotShape(await readProfile(String(dir), "load-error.heapprofile"));
+  expect(exitCode).toBe(1);
+});
+
+test("bun test writes a heap profile after a snapshot persistence error", async () => {
+  using dir = tempDir("heap-prof-test-snapshot-error", {
+    __snapshots__: "not a directory",
+    "profile.test.ts": `
+      import { expect, test } from "bun:test";
+      test("snapshot", () => expect({ profiled: true }).toMatchSnapshot());
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--update-snapshots", "--heap-prof", "--heap-prof-name", "snapshot-error.heapprofile"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toContain("bun test");
+  expect(stderr.length).toBeGreaterThan(0);
+  expectV8HeapSnapshotShape(await readProfile(String(dir), "snapshot-error.heapprofile"));
+  expect(exitCode).not.toBe(0);
 });
 
 test("--heap-prof-dir specifies the output directory", async () => {

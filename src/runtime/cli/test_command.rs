@@ -1527,7 +1527,7 @@ impl CommandLineReporter {
                     Output::flush();
                     this.write_junit_report_if_needed();
                     this.write_timings_if_needed();
-                    Global::exit(1);
+                    exit_after_writing_profiles(1);
                 }
             }
         }
@@ -1861,7 +1861,7 @@ impl CommandLineReporter {
                                 (),
                             );
                             Output::print_error(format_args!("\n{}", err));
-                            Global::exit(1);
+                            exit_after_writing_profiles(1);
                         }
                         bun_sys::Result::Ok(f) => {
                             // Accumulate in a `Vec<u8>` (impl `bun_io::Write`)
@@ -2033,7 +2033,7 @@ impl CommandLineReporter {
                     ),
                 ) {
                     Output::err(err, "Failed to save lcov.info file", ());
-                    Global::exit(1);
+                    exit_after_writing_profiles(1);
                 }
             }
         } else {
@@ -2344,6 +2344,7 @@ impl TestCommand {
             let _api_lock = vm.global().vm().get_api_lock();
             crate::cli::profiling::configure(vm, &ctx.runtime_options);
         }
+        scopeguard::defer! { write_test_profiles(); }
 
         if ctx.test_options.test_worker {
             // Worker mode: skip discovery; files arrive over stdin and
@@ -2406,7 +2407,10 @@ impl TestCommand {
                             // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
                             // `run_with_api_lock` takes `&self` only and `global_exit()`
                             // diverges, so the closure is the sole mutator.
-                            vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
+                            vm.run_with_api_lock(|| unsafe {
+                                (*vm_ptr).write_profiles();
+                                (*vm_ptr).global_exit()
+                            });
                         }
                     }
                 }
@@ -2503,7 +2507,10 @@ impl TestCommand {
                     // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
                     // `run_with_api_lock` takes `&self` only and `global_exit()`
                     // diverges, so the closure is the sole mutator.
-                    vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
+                    vm.run_with_api_lock(|| unsafe {
+                        (*vm_ptr).write_profiles();
+                        (*vm_ptr).global_exit()
+                    });
                 }
             }
         }
@@ -2540,7 +2547,7 @@ impl TestCommand {
                     Ok(r) => r,
                     Err(err) => {
                         Output::err(err, "--changed: unable to determine affected tests", ());
-                        Global::exit(1);
+                        exit_after_writing_profiles(1);
                     }
                 };
                 changed_module_graph_files = result.module_graph_files;
@@ -3296,6 +3303,7 @@ impl TestCommand {
 
                         vm.exit_handler.exit_code = 1;
                         vm.is_shutting_down = true;
+                        vm.write_profiles();
                         // `global_exit()` diverges, so the `exit_file()` defer
                         // above never fires. Release the active file's
                         // `Strong`s and the preload-hook scope here so
@@ -3407,5 +3415,16 @@ pub(crate) fn handle_top_level_test_error_before_javascript_start(err: &crate::E
             bun_core::debug_warn!("Unhandled error: {}", err.name());
         }
     }
-    Global::exit(1);
+    exit_after_writing_profiles(1);
+}
+
+fn exit_after_writing_profiles(exit_code: u32) -> ! {
+    write_test_profiles();
+    Global::exit(exit_code);
+}
+
+fn write_test_profiles() {
+    let vm = VirtualMachine::get().as_mut();
+    let _api_lock = vm.global().vm().get_api_lock();
+    vm.write_profiles();
 }

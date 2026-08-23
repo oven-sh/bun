@@ -45,9 +45,6 @@ bun_opaque::opaque_ffi! {
 }
 
 impl VM {
-    // Note: `JSC__VM__create` was removed from bindings.cpp (Bun creates
-    // its VM via `Zig::GlobalObject::create` → `WebWorker__createVM` instead).
-
     // Note: not `impl Drop` — takes a `global_object` param and `VM` is an opaque FFI handle.
 
     pub fn enable_control_flow_profiler(&self) {

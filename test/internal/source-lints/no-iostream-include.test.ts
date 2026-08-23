@@ -31,10 +31,10 @@ test("C++ sources compiled into Bun do not include <iostream>", async () => {
     }
   };
 
-  // The translation units are exactly the ones the build compiles, from the
-  // same patterns the build expands.
+  // The translation units the build compiles: the patterns it expands, plus
+  // the Windows-only sources scripts/build/bun.ts adds by hand.
   let compiled = 0;
-  for (const pattern of patterns.cxx.paths) {
+  for (const pattern of [...patterns.cxx.paths, "src/jsc/bindings/windows/*.cpp"]) {
     for await (const rel of new Glob(pattern).scan({ cwd: repoRoot })) {
       compiled++;
       check(rel);

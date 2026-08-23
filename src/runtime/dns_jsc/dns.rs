@@ -645,7 +645,7 @@ impl Drop for CAresNameInfo {
 pub(crate) struct GetNameInfoRequest {
     /// The VM-global resolver (pinned for the VM's lifetime, so it outlives
     /// every request).
-    resolver_for_caching: Option<BackRef<Resolver, bun_ptr::Mut>>,
+    resolver_for_caching: Option<BackRef<Resolver, bun_ptr::Root>>,
     /// See [`PendingEntry`].
     pending_slot: Option<u8>,
     head: CAresNameInfo,
@@ -1553,7 +1553,7 @@ pub mod internal {
     }
 
     struct Waiting {
-        request: BackRef<Request, bun_ptr::Mut>,
+        request: BackRef<Request, bun_ptr::Root>,
         owners: Vec<DNSRequestOwner>,
     }
 
@@ -1574,7 +1574,7 @@ pub mod internal {
         fn waiting_index(&self, request: ThisPtr<Request>) -> Option<usize> {
             self.waiting
                 .iter()
-                .position(|w| core::ptr::eq(w.request.as_ptr(), request.as_ptr()))
+                .position(|w| core::ptr::eq(w.request.as_const_ptr(), request.as_ptr().cast_const()))
         }
 
         fn add_waiter(&mut self, request: ThisPtr<Request>, owner: DNSRequestOwner) {
@@ -1879,7 +1879,7 @@ pub mod internal {
         }
     }
 
-    fn work_pool_callback(req: BackRef<Request, bun_ptr::Mut>) {
+    fn work_pool_callback(req: BackRef<Request, bun_ptr::Root>) {
         let mut service_buf = [0u8; 21];
         let port = req.key.port;
         let service: Option<&CStr> = if port > 0 {
@@ -1943,7 +1943,7 @@ pub mod internal {
 
     /// Complete an internal request: build an addrinfo chain and reuse `process_results` (happy-eyeballs order).
     #[cfg(target_os = "macos")]
-    pub(super) fn dns_sd_complete(req: BackRef<Request, bun_ptr::Mut>) {
+    pub(super) fn dns_sd_complete(req: BackRef<Request, bun_ptr::Root>) {
         let (results, empty_status) = req
             .dns_sd
             .with_mut(|query| (query.take_results(), query.empty_status()));
@@ -2187,7 +2187,7 @@ pub mod internal {
     /// per-thread mDNSResponder connection went away with its thread is
     /// finished (see `SharedConnection::close_for_terminate`). The request's
     /// in-flight `refcount` keeps it alive until `after_result`.
-    pub(super) fn run_on_work_pool(req: BackRef<Request, bun_ptr::Mut>) {
+    pub(super) fn run_on_work_pool(req: BackRef<Request, bun_ptr::Root>) {
         let _ = bun_threading::work_pool::WorkPool::go(req, work_pool_callback);
     }
 
@@ -2582,7 +2582,7 @@ impl Drop for Resolver {
 #[cfg(windows)]
 pub(crate) struct UvDnsPoll {
     /// The resolver whose `polls` map owns this poll (so outlives it).
-    parent: BackRef<Resolver, bun_ptr::Mut>,
+    parent: BackRef<Resolver, bun_ptr::Root>,
     socket: c_ares::ares_socket_t,
 }
 

@@ -792,12 +792,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         else {
                             return;
                         };
-
-                        if !matches!(macro_result.data, Data::ETemplate(..)) {
-                            *e = macro_result;
-                            p.visit_expr(e);
-                            return;
-                        }
+                        *e = macro_result;
+                        p.visit_expr(e);
+                        return;
                     }
                 }
             }
@@ -2225,11 +2222,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 };
 
-                if !matches!(macro_result.data, Data::ECall(..)) {
-                    *e = macro_result;
-                    p.visit_expr(e);
-                    return;
-                }
+                *e = macro_result;
+                p.visit_expr(e);
+                return;
             }
         }
 

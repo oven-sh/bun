@@ -3067,8 +3067,8 @@ where
         //
         // We first validate the self-reported request body length so that
         // we avoid needing to worry as much about what memory to free.
-        // RFC 9113 §8.2.2 / RFC 9114 §4.2: an HTTP/2 or HTTP/3 message
-        // containing a transfer-encoding header field is malformed.
+        // RFC 9114 §4.2: an HTTP/3 message containing transfer-encoding is
+        // malformed (HTTP/2 rejects it with RST_STREAM before dispatch).
         if Ctx::IS_MUX {
             if ReqLike::header(req, b"transfer-encoding").is_some() {
                 RespLike::write_status(resp, b"400 Bad Request");

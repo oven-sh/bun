@@ -13,6 +13,7 @@ import tls from "node:tls";
 const fixtureSource = (opts: { tls: boolean; http1?: boolean; extra?: string }) => `
 import { serve } from "bun";
 const big = Buffer.alloc(5 * 1024 * 1024, "abcdefghijklmnop");
+let lateRead;
 const server = serve({
   port: 0,
   ${opts.tls ? `tls: ${JSON.stringify(tlsCert)},` : ""}
@@ -83,11 +84,16 @@ const server = serve({
         if (server.upgrade(req)) return;
         return new Response("upgrade failed", { status: 400 });
       case "/late-read": {
-        await Bun.sleep(Number(url.searchParams.get("ms") ?? "200"));
+        // Reads the body only once GET /release-late-read arrives.
+        await (lateRead ??= Promise.withResolvers()).promise;
         let n = 0;
         for await (const c of req.body) n += c.length;
         return new Response(String(n));
       }
+      case "/release-late-read":
+        (lateRead ??= Promise.withResolvers()).resolve();
+        lateRead = undefined;
+        return new Response("released");
       case "/slow": {
         await Bun.sleep(Number(url.searchParams.get("ms") ?? "50"));
         return new Response("slow");
@@ -743,14 +749,16 @@ for (const secure of [true, false]) {
     test("request body: stream window stays at the initial 64 KB until the handler reads, then opens", async () => {
       const raw = await RawH2.connect(fx.port, secure);
       await raw.waitFor(f => f.type === T.SETTINGS && (f.flags & F.ACK) !== 0);
-      raw.headers(1, [...baseHeaders("/late-read?ms=300", "POST"), ["content-length", String(1 << 20)]], F.END_HEADERS);
+      raw.headers(1, [...baseHeaders("/late-read", "POST"), ["content-length", String(1 << 20)]], F.END_HEADERS);
       // Fill exactly the advertised 64 KB stream window.
       for (let i = 0; i < 4; i++) raw.write(frame(T.DATA, 0, 1, Buffer.alloc(16384, 1)));
       raw.write(frame(T.PING, 0, 0, Buffer.from("windowed")));
       await raw.waitFor(f => f.type === T.PING && f.payload.toString() === "windowed");
       // Handler hasn't touched req.body yet: no stream-level WINDOW_UPDATE.
       expect(raw.frames.some(f => f.type === T.WINDOW_UPDATE && f.streamId === 1)).toBe(false);
-      // Once it starts reading, the window opens and the rest of the body is accepted.
+      // Let the handler start reading; the window opens and the rest of the body is accepted.
+      raw.headers(3, baseHeaders("/release-late-read"));
+      expect((await raw.body(3)).toString()).toBe("released");
       const wu = await raw.waitFor(f => f.type === T.WINDOW_UPDATE && f.streamId === 1);
       expect(wu.payload.readUInt32BE(0)).toBeGreaterThanOrEqual((1 << 20) - 65536);
       for (let sent = 65536; sent < 1 << 20; sent += 16384) {
@@ -892,6 +900,7 @@ for (const secure of [true, false]) {
         ["uppercase field name", [...baseHeaders("/hello"), ["X-Upper", "1"]]],
         ["connection header", [...baseHeaders("/hello"), ["connection", "keep-alive"]]],
         ["te: gzip", [...baseHeaders("/hello"), ["te", "gzip"]]],
+        ["transfer-encoding header", [...baseHeaders("/hello"), ["transfer-encoding", "chunked"]]],
         [
           "empty :path",
           [

@@ -1439,7 +1439,7 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
         } else {
             sawRegular = true;
             if (name == "connection" || name == "upgrade" || name == "keep-alive" || name == "proxy-connection" ||
-                (name == "te" && value != "trailers")) { malformed = true; break; }
+                name == "transfer-encoding" || (name == "te" && value != "trailers")) { malformed = true; break; }
             if (name == "content-length") {
                 uint64_t v = 0;
                 auto r = std::from_chars(value.data(), value.data() + value.size(), v);

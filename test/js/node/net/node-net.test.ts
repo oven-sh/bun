@@ -1727,6 +1727,26 @@ it("pause() in a 'connect' listener leaves the peer's bytes unread until resume(
   }
 });
 
+// A 'readable' listener sets flowing to false as well, but the read() has asked for data: Node's
+// handle is reading then, so ours must keep reading (the https-over-proxy CONNECT does this).
+it("read() and once('readable') in a 'connect' listener still receive the peer's bytes", async () => {
+  const server = createServer(socket => socket.write("reply"));
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    const port = (server.address() as import("node:net").AddressInfo).port;
+    const readable = Promise.withResolvers<string>();
+    const client: Socket = connect(port, "127.0.0.1", () => {
+      client.read();
+      client.once("readable", () => readable.resolve(String(client.read())));
+    });
+    client.on("error", readable.reject);
+    expect(await readable.promise).toBe("reply");
+    client.destroy();
+  } finally {
+    server.close();
+  }
+});
+
 describe.concurrent("pauseOnConnect", () => {
   it("reads server.pauseOnConnect per connection, like node", async () => {
     const server = createServer();

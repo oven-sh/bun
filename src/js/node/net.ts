@@ -3384,7 +3384,7 @@ function afterConnect(status, handle, req, readable, writable) {
       self._handle.setKeepAlive(true, self[kSetKeepAliveInitialDelay]);
     }
 
-    // Ours already reads, Node's starts at the read(0) below: stop a paused plain socket now and re-check after the listeners.
+    // Ours already reads, Node's starts at read(): stop a paused plain socket now, and after the listeners unless one asked for a read.
     const pausedBeforeConnect = self.isPaused();
     if (pausedBeforeConnect && !self.encrypted) readStop(self, self._handle);
 
@@ -3399,7 +3399,7 @@ function afterConnect(status, handle, req, readable, writable) {
     // this doesn't actually consume any bytes, because len=0.
     // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L1695-L1696
     if (readable && !self.isPaused()) self.read(0);
-    else if (!pausedBeforeConnect && !self.encrypted) readStop(self, self._handle);
+    else if (!pausedBeforeConnect && !self.encrypted && !self._readableState.reading) readStop(self, self._handle);
   } else {
     let details;
     const localAddress = req.localAddress;

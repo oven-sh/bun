@@ -13,8 +13,8 @@ bun_opaque::opaque_ffi! {
 // ABI-identical to non-null `*mut String`. `URL__deinit` consumes the C++
 // allocation, so it keeps a raw pointer and stays `unsafe fn`.
 unsafe extern "C" {
-    safe fn URL__fromJS(value: JSValue, global: &JSGlobalObject) -> *mut URL;
-    safe fn URL__fromString(input: &mut String) -> *mut URL;
+    safe fn URL__fromJS(value: JSValue, global: &JSGlobalObject) -> Option<NonNull<URL>>;
+    safe fn URL__fromString(input: &mut String) -> Option<NonNull<URL>>;
     safe fn URL__protocol(url: &URL) -> String;
     safe fn URL__username(url: &URL) -> String;
     safe fn URL__password(url: &URL) -> String;
@@ -25,6 +25,28 @@ unsafe extern "C" {
     safe fn URL__getHrefFromJS(value: JSValue, global: &JSGlobalObject) -> String;
     safe fn URL__getFileURLString(input: &mut String) -> String;
     safe fn URL__pathFromFileURL(input: &mut String) -> String;
+}
+
+/// Owns the `new WTF::URL` handed back by `URL__fromJS` / `URL__fromString` and deletes it on drop.
+#[repr(transparent)]
+pub struct OwnedURL(NonNull<URL>);
+
+impl core::ops::Deref for OwnedURL {
+    type Target = URL;
+
+    #[inline]
+    fn deref(&self) -> &URL {
+        // SAFETY: `self.0` is the live heap `WTF::URL` this handle owns until `drop`.
+        unsafe { self.0.as_ref() }
+    }
+}
+
+impl Drop for OwnedURL {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: `self.0` is a C++ `new WTF::URL` and this handle is its only owner.
+        unsafe { URL__deinit(self.0.as_ptr()) }
+    }
 }
 
 impl URL {
@@ -46,20 +68,18 @@ impl URL {
     }
 
     #[track_caller]
-    pub fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<NonNull<URL>>> {
-        crate::call_check_slow(global, || URL__fromJS(value, global)).map(NonNull::new)
+    pub fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<OwnedURL>> {
+        crate::call_check_slow(global, || URL__fromJS(value, global).map(OwnedURL))
     }
 
-    pub fn from_utf8(input: &[u8]) -> Option<NonNull<URL>> {
+    pub fn from_utf8(input: &[u8]) -> Option<OwnedURL> {
         Self::from_string(String::borrow_utf8(input))
     }
 
-    pub fn from_string(str: String) -> Option<NonNull<URL>> {
+    pub fn from_string(str: String) -> Option<OwnedURL> {
         let mut input = str;
-        NonNull::new(URL__fromString(&mut input))
+        URL__fromString(&mut input).map(OwnedURL)
     }
-    // from_js/from_string/from_utf8 return an owned C++ heap pointer that the
-    // caller must destroy().
 
     pub fn protocol(&self) -> String {
         URL__protocol(self)
@@ -85,17 +105,9 @@ impl URL {
         URL__host(self)
     }
 
-    /// Returns `u32::MAX` if the port is not set. Otherwise, `port`
-    /// is guaranteed to be within the `u16` range.
-    pub fn port(&self) -> u32 {
-        URL__port(self)
-    }
-
-    // Kept as explicit destroy (not Drop) — URL is an opaque #[repr(C)] FFI
-    // handle constructed/destroyed across the C++ boundary.
-    pub unsafe fn destroy(this: *mut Self) {
-        // SAFETY: `this` is a valid *URL from C++; freed exactly once
-        unsafe { URL__deinit(this) }
+    /// `None` when the URL has no port, which `URL__port` encodes as `u32::MAX`.
+    pub fn port(&self) -> Option<u16> {
+        u16::try_from(URL__port(self)).ok()
     }
 
     pub fn pathname(&self) -> String {

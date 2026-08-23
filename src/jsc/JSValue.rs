@@ -1589,28 +1589,34 @@ impl JSValue {
         JSArrayIterator::init(self, global)
     }
 
-    /// `JSValue.jsonStringify`.
+    /// `JSON.stringify(this, null, indent)`. Returns the +1 WTF ref as an
+    /// `OwnedString` so the release is the caller's scope exit.
     pub fn json_stringify(
         self,
         global: &JSGlobalObject,
         indent: u32,
-        out: &mut bun_core::String,
-    ) -> JsResult<()> {
+    ) -> JsResult<bun_core::OwnedString> {
+        let mut out = bun_core::String::empty();
         host_fn::from_js_host_call_generic(global, || {
-            JSC__JSValue__jsonStringify(self, global, indent, out)
-        })
+            JSC__JSValue__jsonStringify(
+                self,
+                global,
+                JSValue::js_number_from_uint64(indent as u64),
+                &mut out,
+            )
+        })?;
+        Ok(bun_core::OwnedString::new(out))
     }
 
-    /// `JSValue.jsonStringifyFast` — `JSON.stringify(this)`
-    /// with no indent / no replacer (fast path used by SQL value binders).
-    pub fn json_stringify_fast(
-        self,
-        global: &JSGlobalObject,
-        out: &mut bun_core::String,
-    ) -> JsResult<()> {
+    /// `JSON.stringify(this)` with no indent / no replacer. Passing `undefined`
+    /// as `space` selects JSC's FastStringifier, which is significantly faster
+    /// than the general Stringifier used whenever `space` is a number (even 0).
+    pub fn json_stringify_fast(self, global: &JSGlobalObject) -> JsResult<bun_core::OwnedString> {
+        let mut out = bun_core::String::empty();
         host_fn::from_js_host_call_generic(global, || {
-            JSC__JSValue__jsonStringifyFast(self, global, out)
-        })
+            JSC__JSValue__jsonStringify(self, global, JSValue::UNDEFINED, &mut out)
+        })?;
+        Ok(bun_core::OwnedString::new(out))
     }
 
     pub fn temporal_type(self) -> TemporalType {
@@ -2030,12 +2036,7 @@ unsafe extern "C" {
     safe fn JSC__JSValue__jsonStringify(
         this: JSValue,
         global: &JSGlobalObject,
-        indent: u32,
-        out: &mut bun_core::String,
-    );
-    safe fn JSC__JSValue__jsonStringifyFast(
-        this: JSValue,
-        global: &JSGlobalObject,
+        space: JSValue,
         out: &mut bun_core::String,
     );
     safe fn JSC__JSValue__toError_(this: JSValue) -> JSValue;

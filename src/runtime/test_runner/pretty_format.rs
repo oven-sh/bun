@@ -1818,9 +1818,7 @@ impl<'a> Formatter<'a> {
                     writer.write_all(b"\n");
                 }
                 Tag::JSON => {
-                    let mut str = bun_core::OwnedString::new(bun_core::String::empty());
-
-                    value.json_stringify(self.global_this, self.indent, &mut str)?;
+                    let str = value.json_stringify(self.global_this, self.indent)?;
                     self.add_for_new_line(str.length());
                     if js_type == JSType::JSDate {
                         // in the code for printing dates, it never exceeds this amount

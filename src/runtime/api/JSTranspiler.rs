@@ -303,7 +303,6 @@ impl Config {
                     break 'tsconfig;
                 }
                 let kind = tsconfig.js_type();
-                let mut out = OwnedString::new(BunString::empty());
 
                 if kind.is_array() {
                     return Err(global.throw_invalid_arguments(format_args!(
@@ -311,12 +310,11 @@ impl Config {
                     )));
                 }
 
-                if !kind.is_string_like() {
-                    // Use jsonStringifyFast for SIMD-optimized serialization
-                    tsconfig.json_stringify_fast(global, &mut out)?;
+                let out = if !kind.is_string_like() {
+                    tsconfig.json_stringify_fast(global)?
                 } else {
-                    out = OwnedString::new(tsconfig.to_bun_string(global)?);
-                }
+                    OwnedString::new(tsconfig.to_bun_string(global)?)
+                };
 
                 if out.is_empty() {
                     break 'tsconfig;
@@ -355,14 +353,12 @@ impl Config {
                     );
                 }
 
-                let mut out = OwnedString::new(BunString::empty());
                 // TODO: write a converter between JSC types and Bun AST types
-                if is_object {
-                    // Use jsonStringifyFast for SIMD-optimized serialization
-                    macros.json_stringify_fast(global, &mut out)?;
+                let out = if is_object {
+                    macros.json_stringify_fast(global)?
                 } else {
-                    out = OwnedString::new(macros.to_bun_string(global)?);
-                }
+                    OwnedString::new(macros.to_bun_string(global)?)
+                };
 
                 if out.is_empty() {
                     break 'macros;

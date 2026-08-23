@@ -166,10 +166,8 @@ pub(crate) fn write_bind<Context: WriterContext>(
         };
         match effective_tag {
             types::Tag::jsonb | types::Tag::json => {
-                let mut str = bun_core::OwnedString::new(BunString::empty());
-                // Use jsonStringifyFast for SIMD-optimized serialization
-                value
-                    .json_stringify_fast(global, &mut str)
+                let str = value
+                    .json_stringify_fast(global)
                     .map_err(js_error_to_postgres)?;
                 let slice = str.to_utf8_without_ref();
                 let l = writer.length()?;

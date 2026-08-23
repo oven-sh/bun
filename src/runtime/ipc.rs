@@ -551,15 +551,7 @@ mod json {
         value: JSValue,
         is_internal: IsInternal,
     ) -> Result<usize, IPCSerializationError> {
-        let mut out: BunString = BunString::default();
-        // Use jsonStringifyFast which passes undefined for the space parameter,
-        // triggering JSC's SIMD-optimized FastStringifier code path.
-        value.json_stringify_fast(global, &mut out)?;
-        // `bun_core::String` is `Copy` (no `Drop`),
-        // so the +1 ref written by `json_stringify_fast` is wrapped in
-        // `OwnedString` immediately so every exit path (Dead, OOM in
-        // `ensure_unused_capacity`, success) releases it.
-        let out = bun_core::OwnedString::new(out);
+        let out = value.json_stringify_fast(global)?;
 
         if out.tag() == bun_core::Tag::Dead {
             return Err(IPCSerializationError::SerializationFailed);

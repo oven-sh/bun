@@ -945,22 +945,16 @@ impl Response {
                 return Err(global_this.throw_value(err));
             }
 
-            let mut str = BunString::empty();
-            // Use jsonStringifyFast which passes undefined for the space parameter,
-            // triggering JSC's FastStringifier optimization. This is significantly faster
-            // than jsonStringify which passes 0 for space and uses the slower Stringifier.
-            json_value.json_stringify_fast(global_this, &mut str)?;
+            let str = json_value.json_stringify_fast(global_this)?;
 
             if global_this.has_exception() {
                 return Ok(JSValue::ZERO);
             }
 
             if !str.is_empty() {
-                // `bun_core::String.value` is private; use
-                // `leak_wtf_impl()` to take ownership of the +1 ref as a raw
-                // `*mut WTFStringImplStruct`. `String` is intentionally
-                // non-`Drop`, so consuming it here is a plain bitwise read.
-                let wtf = str.leak_wtf_impl();
+                // `into_inner` disarms the `OwnedString`; `leak_wtf_impl`
+                // hands us its +1 ref as a raw `*mut WTFStringImplStruct`.
+                let wtf = str.into_inner().leak_wtf_impl();
                 debug_assert!(!wtf.is_null());
                 // `json_stringify_fast` populated a WTF-backed string; `wtf` is a
                 // live +1 impl pointer until we deref/transfer it below.

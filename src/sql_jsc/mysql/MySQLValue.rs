@@ -406,10 +406,8 @@ impl Value {
             }
 
             FieldType::MYSQL_TYPE_JSON => {
-                let mut str = OwnedString::new(BunString::empty());
-                // Use jsonStringifyFast for SIMD-optimized serialization
-                value
-                    .json_stringify_fast(global_object, &mut str)
+                let str = value
+                    .json_stringify_fast(global_object)
                     .map_err(js_error_to_mysql)?;
                 Ok(Value::String(str.to_utf8()))
             }

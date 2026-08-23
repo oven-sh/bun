@@ -2602,12 +2602,7 @@ pub mod formatter {
                             }
 
                             PercentTag::J => {
-                                // JSON.stringify the value using FastStringifier
-                                // for SIMD optimization
-                                // `OwnedString` releases the
-                                // +1 WTF ref on every exit (incl. the `?` below).
-                                let mut str = OwnedString::new(BunString::empty());
-                                next_value.json_stringify_fast(global, &mut str)?;
+                                let str = next_value.json_stringify_fast(global)?;
                                 writer.add_for_new_line(str.length());
                                 writer.print(format_args!("{str}"));
                             }
@@ -4211,9 +4206,7 @@ pub mod formatter {
                 failed: false,
                 estimated_line_length: &mut self.estimated_line_length,
             };
-            let mut str = OwnedString::new(BunString::empty());
-
-            value.json_stringify(self.global_this, self.indent, &mut str)?;
+            let str = value.json_stringify(self.global_this, self.indent)?;
             writer.add_for_new_line(str.length());
             if js_type == jsc::JSType::JSDate {
                 // in the code for printing dates, it never exceeds this amount

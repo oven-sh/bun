@@ -21,7 +21,6 @@
 
 #include "HttpParser.h"
 #include "AsyncSocketData.h"
-#include "ProxyParser.h"
 #include "HttpContext.h"
 
 #include "MoveOnlyFunction.h"
@@ -228,10 +227,6 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
             || ((state & HTTP_NODE_RECEIVED_FIN) && nodeHttpQueuedPipelinedCount == 0)
             || ((state & HTTP_CLOSE_WHEN_IDLE) && this->isIdle);
     }
-
-#ifdef UWS_WITH_PROXY
-    ProxyParser proxyParser;
-#endif
 };
 
 /* Per-connection state that only node:http compat servers need.

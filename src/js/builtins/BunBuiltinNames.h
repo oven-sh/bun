@@ -57,7 +57,6 @@ using namespace JSC;
     macro(bunNativePtr) \
     macro(bytes) \
     macro(cancel) \
-    macro(checkBufferRead) \
     macro(checks) \
     macro(close) \
     macro(cmd) \
@@ -68,7 +67,6 @@ using namespace JSC;
     macro(createUninitializedArrayBuffer) \
     macro(ctimeMs) \
     macro(data) \
-    macro(dataView) \
     macro(decode) \
     macro(dest) \
     macro(dirname) \

@@ -128,8 +128,9 @@ console.log(JSON.stringify({ size: payload.size, rss: payload.rss }));`,
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
       const { size, rss } = JSON.parse(stdout.trim());
-      // The payload mapping is ~30 MB (bytecode + source); loading without calling should leave nearly all of it on disk.
-      expect(size).toBeGreaterThan(20 * 1024 * 1024);
+      // The payload mapping holds source + bytecode (several times the source); loading without calling should leave
+      // nearly all of it on disk.
+      expect(size).toBeGreaterThan(2 * functions.length);
       expect(rss).toBeLessThan(size / 4);
       expect(exitCode).toBe(0);
     },

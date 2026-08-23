@@ -465,24 +465,23 @@ function ClientRequest(input, options, cb) {
     if (auth && !this.getHeader("Authorization")) {
       this.setHeader("Authorization", "Basic " + Buffer.from(auth).toString("base64"));
     }
-
-    if (otelHttpClientEnabled()) otelClientRequestStart(this, protocol, host, port);
-  } else if (otelHttpClientEnabled()) {
-    optionsHeaders = otelClientRequestStart(this, protocol, host, port, optionsHeaders);
   }
 
-  // Everything after the client span starts can throw synchronously (proxy
-  // rewriting, invalid headers, bad options, createConnection): the span must
-  // then end with that error rather than be orphaned.
-  if (this[kOtelSpan] === undefined)
+  if (!otelHttpClientEnabled()) {
     finishInit.$call(this, options, optsWithoutSignal, headersArray, optionsHeaders, thisAgent);
-  else
-    try {
-      finishInit.$call(this, options, optsWithoutSignal, headersArray, optionsHeaders, thisAgent);
-    } catch (e) {
-      otelClientRequestEnd(this, undefined, e);
-      throw e;
-    }
+    return;
+  }
+  // Everything from the moment the client span exists can throw synchronously
+  // (header injection over user arrays, proxy rewriting, invalid headers, bad
+  // options, createConnection): the span then ends with that error.
+  try {
+    if (headersArray) optionsHeaders = otelClientRequestStart(this, protocol, host, port, optionsHeaders);
+    else otelClientRequestStart(this, protocol, host, port);
+    finishInit.$call(this, options, optsWithoutSignal, headersArray, optionsHeaders, thisAgent);
+  } catch (e) {
+    otelClientRequestEnd(this, undefined, e);
+    throw e;
+  }
 }
 
 function finishInit(this: any, options, optsWithoutSignal, headersArray, optionsHeaders, thisAgent) {

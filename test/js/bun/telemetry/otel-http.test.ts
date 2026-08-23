@@ -374,8 +374,17 @@ describe("node:http", () => {
     expect(() => http.request({ host: "127.0.0.1", port: 1, headers: ["bad name!", "v"] as any })).toThrow();
     // throws after the headers were stored (option validation in the constructor tail)
     expect(() => http.request({ host: "127.0.0.1", port: 1, uniqueHeaders: [null] } as any)).toThrow();
+    // throws while the header array is scanned for an existing traceparent
+    const hostile = new Proxy(["x-a", "1"], {
+      get(t, k, r) {
+        if (k === "0") throw new Error("hostile headers");
+        return Reflect.get(t, k, r);
+      },
+    });
+    expect(() => http.request({ host: "127.0.0.1", port: 1, headers: hostile as any })).toThrow("hostile headers");
     const got = byName(await collect(), "bun.http.client");
     expect(got.map(s => [s.status.code, typeof s.attributes["error.type"]])).toEqual([
+      [2, "string"],
       [2, "string"],
       [2, "string"],
       [2, "string"],

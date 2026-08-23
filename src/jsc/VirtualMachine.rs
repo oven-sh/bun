@@ -450,6 +450,14 @@ pub(crate) struct VMHolder;
 static MAIN_THREAD_VM: core::sync::atomic::AtomicPtr<VirtualMachine> =
     core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
+/// The main thread VM's permanent libuv loop, cached once in `init()` for
+/// [`VirtualMachine::main_thread_uv_loop`]. The live `event_loop_handle`
+/// field is rewritten after init (spawnSync swaps in a short-lived loop and
+/// restores it), so that field cannot be read off-thread.
+#[cfg(windows)]
+static MAIN_THREAD_UV_LOOP: core::sync::atomic::AtomicPtr<crate::PlatformEventLoop> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
 // `#[thread_local]` (bare `__thread` slot) instead of `thread_local!` macro:
 // `LocalKey::__getit` adds a lazy-init check + on some targets a
 // `pthread_getspecific` round-trip per access. `get_or_null()` (which reads `VM`) is the
@@ -804,19 +812,11 @@ impl VirtualMachine {
         if p.is_null() { None } else { Some(p) }
     }
 
-    /// The main thread VM's libuv loop, or null before the main VM's `init()`
-    /// has installed it. Callable from any thread: `MAIN_THREAD_VM` and
-    /// `event_loop_handle` are both written once during `init()`, before user
-    /// code (and so any N-API addon) can run.
+    /// The main thread VM's permanent libuv loop, or null before the main
+    /// VM's `init()` has cached it. Callable from any thread.
     #[cfg(windows)]
     pub fn main_thread_uv_loop() -> *mut crate::PlatformEventLoop {
-        let Some(vm) = Self::get_main_thread_vm() else {
-            return core::ptr::null_mut();
-        };
-        // SAFETY: raw field projection so no `&VirtualMachine` is formed off
-        // the JS thread; the main VM allocation is never freed.
-        unsafe { core::ptr::addr_of!((*vm).event_loop_handle).read() }
-            .unwrap_or(core::ptr::null_mut())
+        MAIN_THREAD_UV_LOOP.load(core::sync::atomic::Ordering::Acquire)
     }
 
     #[inline]
@@ -2665,6 +2665,16 @@ impl VirtualMachine {
         if opts.is_main_thread {
             // SAFETY: `vm` is the freshly-initialised per-thread VM singleton.
             bun_io::ParentDeathWatchdog::install_on_event_loop(unsafe { Self::event_loop_ctx(vm) });
+            // Cache the permanent loop for `main_thread_uv_loop()` while
+            // `event_loop_handle` still holds what `ensure_waker()` installed.
+            #[cfg(windows)]
+            MAIN_THREAD_UV_LOOP.store(
+                // SAFETY: `vm` is the live per-thread VM; raw projection, no
+                // `&VirtualMachine` formed.
+                unsafe { core::ptr::addr_of!((*vm).event_loop_handle).read() }
+                    .unwrap_or(core::ptr::null_mut()),
+                core::sync::atomic::Ordering::Release,
+            );
         }
 
         if opts.smol {

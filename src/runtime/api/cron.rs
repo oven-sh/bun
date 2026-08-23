@@ -1374,7 +1374,7 @@ pub struct CronJob {
     ref_count: Cell<u32>,
     /// Set from the allocating `RefPtr` so `&self` host fns can reach the
     /// `ThisPtr`-taking paths that may release refs.
-    self_ref: Cell<BackRef<CronJob, bun_ptr::Mut>>,
+    self_ref: Cell<BackRef<CronJob, bun_ptr::Root>>,
     // pub: `bun_core::from_field_ptr!(CronJob, event_loop_timer)` needs `offset_of!` visibility.
     // `JsCell` is `#[repr(transparent)]`, so the byte offset of the inner
     // `EventLoopTimer` is identical and the dispatch.rs `owner!` macro works

@@ -5496,6 +5496,8 @@ pub mod darwin {
     /// kqueue fflags (Darwin).
     pub mod NOTE {
         pub const EXIT: u32 = libc::NOTE_EXIT;
+        /// `EVFILT_MEMORYSTATUS` fflags (xnu `<sys/event_private.h>`). Values are
+        /// ABI-stable; libdispatch depends on them for `DISPATCH_MEMORYPRESSURE_*`.
         pub const MEMORYSTATUS_PRESSURE_WARN: u32 = 0x00000002;
         pub const MEMORYSTATUS_PRESSURE_CRITICAL: u32 = 0x00000004;
     }

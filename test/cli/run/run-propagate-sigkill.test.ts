@@ -36,14 +36,14 @@ test.skipIf(!isPosix)("bun run propagates SIGKILL from a child without hitting u
 // The message names the signal with the OS's name for its number (SIGUSR1 is
 // 30 on macOS, which the Linux table called SIGPWR; 16 on Linux is SIGSTKFLT,
 // which was printed as "code 16"), and bun run then dies from the same signal.
-// Signal 40 is a Linux real-time signal with no name at all: nothing is
-// printed, and bun run used to exit 1 instead of dying from it.
+// Signal 40 is a Linux real-time signal with no name at all: it is printed as
+// its number, and bun run used to exit 1 instead of dying from it.
 const signaled: [number, string][] = [
   [constants.signals.SIGUSR1, "terminated by signal SIGUSR1"],
   ...(isLinux
     ? ([
         [constants.signals.SIGSTKFLT, "terminated by signal SIGSTKFLT"],
-        [40, ""],
+        [40, "terminated by signal code 40"],
       ] as [number, string][])
     : []),
 ];
@@ -63,8 +63,7 @@ test.skipIf(!isPosix).each(signaled)("bun run reports and re-raises signal %d", 
 
   const lines = stderr.trim().split("\n");
   expect(lines[0]).toBe(`$ kill -${signal} $$`);
-  if (message) expect(lines[1]).toContain(message);
-  else expect(lines).toHaveLength(1);
+  expect(lines[1]).toContain(message);
   expect(stdout).toBe("");
   expect(exitCode).toBe(128 + signal);
 });

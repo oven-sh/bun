@@ -1,7 +1,6 @@
 use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::interpreter::{EnvRc, Interpreter, Node, NodeId, StateKind, log};
-use crate::shell::io::IO;
 use crate::shell::states::base::Base;
 use crate::shell::yield_::Yield;
 use std::rc::Rc;
@@ -12,16 +11,17 @@ pub struct Stmt {
     pub(crate) idx: usize,
     pub(crate) last_exit_code: Option<ExitCode>,
     pub(crate) currently_executing: Option<NodeId>,
-    pub(crate) io: IO,
 }
 
 impl Stmt {
+    /// A statement runs its children with its parent's (`Script`/`If`) env
+    /// and IO, so it stores neither an IO of its own nor a separate env
+    /// handle beyond `base.shell`.
     pub(crate) fn init(
         interp: &Interpreter,
         shell: EnvRc,
         node: bun_ptr::BackRef<ast::Stmt>,
         parent: NodeId,
-        io: IO,
     ) -> NodeId {
         let id = interp.alloc_node(Node::Stmt(Stmt {
             base: Base::new(parent, shell),
@@ -29,7 +29,6 @@ impl Stmt {
             idx: 0,
             last_exit_code: None,
             currently_executing: None,
-            io,
         }));
         log!("Stmt {} init", id);
         id
@@ -44,21 +43,20 @@ impl Stmt {
     }
 
     pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
-        let (idx, len, parent, last, shell, node, io) = {
+        let (idx, shell, node, io) = {
             let me = interp.as_stmt(this);
+            if me.idx >= Self::expr_count(&me) {
+                let (parent, last) = (me.base.parent, me.last_exit_code);
+                drop(me);
+                return interp.child_done(parent, this, last.unwrap_or(0));
+            }
             (
                 me.idx,
-                Self::expr_count(&me),
-                me.base.parent,
-                me.last_exit_code,
                 Rc::clone(&me.base.shell),
                 me.node,
-                me.io.clone(),
+                interp.io_of(me.base.parent),
             )
         };
-        if idx >= len {
-            return interp.child_done(parent, this, last.unwrap_or(0));
-        }
         let expr = &node.get().exprs[idx];
         let (child, y) = interp.spawn_expr(&shell, expr, this, io);
         interp.as_stmt_mut(this).currently_executing = child;

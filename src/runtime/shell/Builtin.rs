@@ -3,7 +3,7 @@
 
 use bun_collections::VecExt;
 use bun_jsc::PinnedArrayBuffer;
-use core::cell::{Ref, RefMut};
+use bun_ptr::{JsCellRef, JsCellRefMut};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -59,13 +59,13 @@ pub(crate) trait BuiltinState: Sized {
     /// Project `&mut Impl` → `&mut Self`. `unreachable!` on variant mismatch.
     fn extract(impl_: &mut Impl) -> &mut Self;
 
-    /// Borrow this builtin's state out of the Cmd node. A `RefMut` into the
-    /// node: keep it short and never hold it across a call that touches the
-    /// same Cmd (`Builtin::of*`, `write_no_io`, `done`, ...).
-    #[inline]
+    /// Borrow this builtin's state out of the Cmd node. An exclusive borrow
+    /// of the node: keep it short and never hold it across a call that
+    /// touches the same Cmd (`Builtin::of*`, `write_no_io`, `done`, ...).
+    #[inline(always)]
     #[track_caller]
-    fn state_mut(interp: &Interpreter, cmd: NodeId) -> RefMut<'_, Self> {
-        RefMut::map(Builtin::of_mut(interp, cmd), |b| {
+    fn state_mut(interp: &Interpreter, cmd: NodeId) -> JsCellRefMut<'_, Self> {
+        JsCellRefMut::map(Builtin::of_mut(interp, cmd), |b| {
             Self::extract(&mut b.impl_)
         })
     }
@@ -156,13 +156,30 @@ macro_rules! shell_builtins {
                 }
             }
 
-            /// Hoisted dispatch for the `onIOWriterChunk` callback.
+            /// Hoisted dispatch for the `onIOWriterChunk` callback. `seq != 0`
+            /// names a parked [`OutputTask`](crate::shell::interpreter::OutputTask)
+            /// chunk of an ls/mkdir/touch/cp.
             pub fn on_io_writer_chunk(
                 interp: &Interpreter,
                 cmd: NodeId,
+                seq: u32,
                 written: usize,
                 err: Option<bun_sys::SystemError>,
             ) -> Yield {
+                use crate::shell::interpreter::OutputTask;
+                use crate::shell::builtins::{cp::Cp, ls::Ls, mkdir::Mkdir, touch::Touch};
+                if seq != 0 {
+                    return match Self::kind_of(interp, cmd) {
+                        Kind::Ls => OutputTask::<Ls>::on_chunk(interp, cmd, seq, written, err),
+                        Kind::Mkdir => OutputTask::<Mkdir>::on_chunk(interp, cmd, seq, written, err),
+                        Kind::Touch => OutputTask::<Touch>::on_chunk(interp, cmd, seq, written, err),
+                        Kind::Cp => OutputTask::<Cp>::on_chunk(interp, cmd, seq, written, err),
+                        // rm numbers its verbose chunks only so that each is
+                        // called back.
+                        Kind::Rm => crate::shell::builtins::rm::Rm::on_io_writer_chunk(interp, cmd, written, err),
+                        other => unreachable!("{} queues no numbered chunks", other.as_str()),
+                    };
+                }
                 match Self::kind_of(interp, cmd) {
                     $( Kind::$UV => crate::shell::builtins::$u_mod::$UT::on_io_writer_chunk(interp, cmd, written, err), )*
                     $( Kind::$IV => crate::shell::builtins::$i_mod::$IT::on_io_writer_chunk(interp, cmd, written, err), )*
@@ -869,22 +886,22 @@ impl Builtin {
         Cmd::on_exec_done(interp, cmd, exit_code)
     }
 
-    /// Look up the Builtin inside a Cmd's `exec` slot. A `Ref` into the Cmd
-    /// node: it must be released before anything borrows that node mutably.
-    #[inline]
+    /// Look up the Builtin inside a Cmd's `exec` slot. A shared borrow of the
+    /// Cmd node: release it before anything borrows that node exclusively.
+    #[inline(always)]
     #[track_caller]
-    pub(crate) fn of(interp: &Interpreter, cmd: NodeId) -> Ref<'_, Builtin> {
-        Ref::map(interp.as_cmd(cmd), |c| match &c.exec {
+    pub(crate) fn of(interp: &Interpreter, cmd: NodeId) -> JsCellRef<'_, Builtin> {
+        JsCellRef::map(interp.as_cmd(cmd), |c| match &c.exec {
             crate::shell::states::cmd::Exec::Builtin(b) => &**b,
             _ => panic!("Cmd {} is not running a builtin", cmd),
         })
     }
 
     /// [`of`](Self::of), mutably.
-    #[inline]
+    #[inline(always)]
     #[track_caller]
-    pub(crate) fn of_mut(interp: &Interpreter, cmd: NodeId) -> RefMut<'_, Builtin> {
-        RefMut::map(interp.as_cmd_mut(cmd), |c| match &mut c.exec {
+    pub(crate) fn of_mut(interp: &Interpreter, cmd: NodeId) -> JsCellRefMut<'_, Builtin> {
+        JsCellRefMut::map(interp.as_cmd_mut(cmd), |c| match &mut c.exec {
             crate::shell::states::cmd::Exec::Builtin(b) => &mut **b,
             _ => panic!("Cmd {} is not running a builtin", cmd),
         })

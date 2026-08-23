@@ -59,7 +59,7 @@ impl Script {
     }
 
     pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
-        let (idx, shell, node, io) = {
+        let (idx, shell, node) = {
             let mut me = interp.as_script_mut(this);
             let len = Self::stmt_count_of(&me);
             let ScriptState::Normal { idx } = &mut me.state;
@@ -68,10 +68,10 @@ impl Script {
             }
             let i = *idx;
             *idx += 1;
-            (i, Rc::clone(&me.base.shell), me.node, me.io.clone())
+            (i, Rc::clone(&me.base.shell), me.node)
         };
         let stmt_node = bun_ptr::BackRef::new(&node.get().stmts[idx]);
-        let stmt = Stmt::init(interp, shell, stmt_node, this, io);
+        let stmt = Stmt::init(interp, shell, stmt_node, this);
         Stmt::start(interp, stmt)
     }
 

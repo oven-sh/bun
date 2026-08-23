@@ -158,11 +158,8 @@ impl If {
             return match action {
                 Action::Done(exit) => interp.child_done(parent, this, exit),
                 Action::SpawnStmt(stmt_node) => {
-                    let (shell, io) = {
-                        let me = interp.as_if(this);
-                        (Rc::clone(&me.base.shell), me.io.clone())
-                    };
-                    let new_stmt = Stmt::init(interp, shell, stmt_node, this, io);
+                    let shell = Rc::clone(&interp.as_if(this).base.shell);
+                    let new_stmt = Stmt::init(interp, shell, stmt_node, this);
                     Stmt::start(interp, new_stmt)
                 }
             };

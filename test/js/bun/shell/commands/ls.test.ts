@@ -9,6 +9,19 @@ const fileExists = async (path: string): Promise<boolean> =>
 
 $.nothrow();
 
+// Each directory listing is one OutputTask; once the reader side of the pipe is
+// gone (EPIPE) the remaining tasks must still complete.
+test("ls of many directories into a closed pipe finishes", async () => {
+  const files: Record<string, string> = {};
+  for (let i = 0; i < 300; i++) files[`sub${i % 30}/file${i}.txt`] = "";
+  using dir = tempDir("ls-epipe", files);
+  const subs = Array.from({ length: 30 }, (_, i) => `sub${i}`).join(" ");
+  const r = await $`ls ${{ raw: subs }} | head -1`.cwd(String(dir)).quiet();
+  // Listings complete in any order; each starts with its `subN:` header.
+  expect(r.stdout.toString()).toMatch(/^sub\d+:\n$/);
+  expect(r.exitCode).toBe(0);
+});
+
 beforeAll(() => {
   setDefaultTimeout(1000 * 60 * 5);
 });

@@ -41,6 +41,7 @@ pub struct ExecState {
     pub(crate) error_signal: AtomicBool,
     pub(crate) output_done: AtomicUsize,
     pub(crate) output_count: AtomicUsize,
+    pub(crate) verbose_seq: u32,
     pub(crate) tasks_done: usize,
     pub(crate) started: bool,
 }
@@ -250,6 +251,7 @@ impl Rm {
                                 error_signal: AtomicBool::new(false),
                                 output_done: AtomicUsize::new(0),
                                 output_count: AtomicUsize::new(0),
+                                verbose_seq: 0,
                                 tasks_done: 0,
                                 started: false,
                             });
@@ -473,7 +475,16 @@ impl Rm {
         let stdout_needs_io = Builtin::of(interp, cmd).stdout.needs_io();
 
         if let Some(safeguard) = stdout_needs_io {
-            let child = ChildPtr::new(cmd, WriterTag::Builtin);
+            // One chunk per DirTask can be in flight; number them so each is
+            // called back (a failed writer calls equal children back once).
+            let seq = match &mut Self::state_mut(interp, cmd).state {
+                RmState::Exec(exec) => {
+                    exec.verbose_seq += 1;
+                    exec.verbose_seq
+                }
+                _ => 1,
+            };
+            let child = ChildPtr::builtin_task(cmd, seq);
             return Builtin::write_out(interp, cmd, IoKind::Stdout, child, &buf, safeguard);
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
@@ -552,8 +563,8 @@ impl Rm {
     }
 
     #[inline]
-    fn state_mut(interp: &Interpreter, cmd: NodeId) -> core::cell::RefMut<'_, Rm> {
-        core::cell::RefMut::map(Builtin::of_mut(interp, cmd), |b| match &mut b.impl_ {
+    fn state_mut(interp: &Interpreter, cmd: NodeId) -> bun_ptr::JsCellRefMut<'_, Rm> {
+        bun_ptr::JsCellRefMut::map(Builtin::of_mut(interp, cmd), |b| match &mut b.impl_ {
             crate::shell::builtin::Impl::Rm(r) => &mut **r,
             _ => unreachable!(),
         })

@@ -1,24 +1,22 @@
 use bun_paths::resolve_path;
 
 use crate::node::PathLike;
-use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
+use crate::shell::builtin::{Builtin, BuiltinState, Kind};
 use crate::shell::interpreter::{
-    FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable, OutputWrite,
+    FlagParser, Interpreter, NodeId, OutputQueue, OutputSrc, OutputTask, OutputTaskVTable,
     ParseFlagResult, ShellTask, unsupported_flag,
 };
-use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 use crate::shell::{ExitCode, ShellErr};
+use bun_ptr::JsCellRefMut;
 
 #[derive(Default)]
 pub struct Cp {
     pub(crate) opts: Opts,
     pub(crate) state: State,
-    /// FIFO of in-flight OutputTasks awaiting an IOWriter chunk completion
-    /// (see mkdir.rs `Exec::output_queue`). Lives on `Cp` (not `ExecState`)
-    /// because `print_shell_cp_task` is also driven from `State::Ebusy` on
-    /// Windows; both states must be able to park/pop.
-    pub(crate) output_queue: std::collections::VecDeque<Box<OutputTask<Cp>>>,
+    /// Lives on `Cp` (not `ExecState`) because `print_shell_cp_task` is also
+    /// driven from `State::Ebusy` on Windows; both states park tasks.
+    pub(crate) output: OutputQueue<Cp>,
 }
 
 #[derive(Default)]
@@ -41,8 +39,6 @@ pub struct ExecState {
     pub(crate) target_idx: usize,
     pub(crate) started: bool,
     pub(crate) tasks_count: u32,
-    pub(crate) output_waiting: u32,
-    pub(crate) output_done: u32,
     pub(crate) err: Option<ShellErr>,
     #[cfg(windows)]
     pub(crate) ebusy: EbusyState,
@@ -89,8 +85,6 @@ impl Cp {
             target_idx,
             started: false,
             tasks_count: 0,
-            output_waiting: 0,
-            output_done: 0,
             err: None,
             #[cfg(windows)]
             ebusy: EbusyState::default(),
@@ -113,13 +107,14 @@ impl Cp {
             Failed,
             AlreadyDone,
         }
+        let output_drained = Self::state_mut(interp, cmd).output.drained();
         let action = match &mut Self::state_mut(interp, cmd).state {
             State::Idle => panic!(
                 "Invalid state for \"Cp\": idle, this indicates a bug in Bun. Please file a GitHub issue"
             ),
             State::Exec(exec) => {
                 if exec.started {
-                    if exec.tasks_count == 0 && exec.output_done >= exec.output_waiting {
+                    if exec.tasks_count == 0 && output_drained {
                         let exit_code: ExitCode = if exec.err.is_some() { 1 } else { 0 };
                         exec.err = None;
                         #[cfg(windows)]
@@ -203,14 +198,14 @@ impl Cp {
         written: usize,
         e: Option<bun_sys::SystemError>,
     ) -> Yield {
-        if matches!(Self::state_mut(interp, cmd).state, State::WaitingWriteErr) {
-            return Builtin::done(interp, cmd, 1);
-        }
-        let pending = Self::state_mut(interp, cmd).output_queue.pop_front();
-        if let Some(task) = pending {
-            return OutputTask::<Cp>::on_io_writer_chunk(task, interp, written, e);
-        }
-        Self::next(interp, cmd)
+        // Only the usage error is written directly; task output goes through
+        // `OutputTask::on_chunk`.
+        let _ = (written, e);
+        debug_assert!(matches!(
+            Self::state_mut(interp, cmd).state,
+            State::WaitingWriteErr
+        ));
+        Builtin::done(interp, cmd, 1)
     }
 
     /// Windows-only post-processing of tasks that failed with EBUSY: if some
@@ -327,69 +322,10 @@ impl Cp {
 }
 
 impl OutputTaskVTable for Cp {
-    fn write_err(
-        interp: &Interpreter,
-        cmd: NodeId,
-        child: Box<OutputTask<Self>>,
-        errbuf: &[u8],
-    ) -> OutputWrite<Self> {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_waiting += 1;
-        }
-        let stderr_needs_io = Builtin::of(interp, cmd).stderr.needs_io();
-        if let Some(safeguard) = stderr_needs_io {
-            // Park it so on_io_writer_chunk can route the completion back to
-            // the OutputTask state machine (there is no WriterTag for it).
-            Self::state_mut(interp, cmd).output_queue.push_back(child);
-            let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            return OutputWrite::Enqueued(Builtin::write_out(
-                interp,
-                cmd,
-                IoKind::Stderr,
-                childptr,
-                errbuf,
-                safeguard,
-            ));
-        }
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, errbuf);
-        OutputWrite::Done(child)
+    fn output_queue(interp: &Interpreter, cmd: NodeId) -> JsCellRefMut<'_, OutputQueue<Self>> {
+        JsCellRefMut::map(Self::state_mut(interp, cmd), |me| &mut me.output)
     }
-    fn on_write_err(interp: &Interpreter, cmd: NodeId) {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_done += 1;
-        }
-    }
-    fn write_out(
-        interp: &Interpreter,
-        cmd: NodeId,
-        child: Box<OutputTask<Self>>,
-    ) -> OutputWrite<Self> {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_waiting += 1;
-        }
-        let stdout_needs_io = Builtin::of(interp, cmd).stdout.needs_io();
-        if let Some(safeguard) = stdout_needs_io {
-            let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            return OutputWrite::Enqueued(Builtin::write_out_with(
-                interp,
-                cmd,
-                IoKind::Stdout,
-                childptr,
-                safeguard,
-                |buf| {
-                    buf.extend_from_slice(child.output.slice());
-                    Self::state_mut(interp, cmd).output_queue.push_back(child);
-                },
-            ));
-        }
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, child.output.slice());
-        OutputWrite::Done(child)
-    }
-    fn on_write_out(interp: &Interpreter, cmd: NodeId) {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_done += 1;
-        }
-    }
+
     fn on_done(interp: &Interpreter, cmd: NodeId) -> Yield {
         Self::next(interp, cmd)
     }

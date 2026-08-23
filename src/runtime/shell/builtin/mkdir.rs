@@ -1,13 +1,13 @@
 use crate::node::fs::{MkdirCtx, NodeFS, args as fs_args};
 use crate::node::types::PathLike;
 use crate::shell::ExitCode;
-use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
+use crate::shell::builtin::{Builtin, BuiltinState, Kind};
 use crate::shell::interpreter::{
-    FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable, OutputWrite,
+    FlagParser, Interpreter, NodeId, OutputQueue, OutputSrc, OutputTask, OutputTaskVTable,
     ParseFlagResult, ShellTask, unsupported_flag,
 };
-use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
+use bun_ptr::JsCellRefMut;
 
 #[derive(Default)]
 pub struct Mkdir {
@@ -28,19 +28,12 @@ pub struct Exec {
     pub(crate) started: bool,
     pub(crate) tasks_count: usize,
     pub(crate) tasks_done: usize,
-    pub(crate) output_waiting: u16,
-    pub(crate) output_done: u16,
     /// Index into `Builtin::args` where filepath args start (storing the
     /// index keeps the lifetime tied to the Cmd's argv without a
     /// self-reference).
     pub(crate) args_start: usize,
     pub(crate) err: Option<bun_sys::Error>,
-    /// FIFO of in-flight OutputTasks awaiting an IOWriter chunk completion
-    /// (`WriterTag` cannot name an OutputTask): `write_err`/`write_out`
-    /// push, `on_io_writer_chunk` pops and forwards to
-    /// `OutputTask::on_io_writer_chunk` so the writeErr→writeOut→onDone
-    /// state machine runs.
-    pub(crate) output_queue: std::collections::VecDeque<Box<OutputTask<Mkdir>>>,
+    pub(crate) output: OutputQueue<Mkdir>,
 }
 
 impl Mkdir {
@@ -66,11 +59,9 @@ impl Mkdir {
             started: false,
             tasks_count: 0,
             tasks_done: 0,
-            output_waiting: 0,
-            output_done: 0,
             args_start,
             err: None,
-            output_queue: std::collections::VecDeque::new(),
+            output: OutputQueue::default(),
         });
         Self::next(interp, cmd)
     }
@@ -86,9 +77,7 @@ impl Mkdir {
             State::Idle => panic!("Invalid state"),
             State::Exec(exec) => {
                 if exec.started {
-                    if exec.tasks_done >= exec.tasks_count
-                        && exec.output_done >= exec.output_waiting
-                    {
+                    if exec.tasks_done >= exec.tasks_count && exec.output.drained() {
                         let exit_code: ExitCode = if exec.err.is_some() { 1 } else { 0 };
                         exec.err = None;
                         NextAction::Done(exit_code)
@@ -135,18 +124,14 @@ impl Mkdir {
         written: usize,
         e: Option<bun_sys::SystemError>,
     ) -> Yield {
-        let pending = match &mut Self::state_mut(interp, cmd).state {
-            State::WaitingWriteErr => Err(()),
-            State::Exec(exec) => Ok(exec.output_queue.pop_front()),
-            State::Idle | State::Done => panic!("Invalid state"),
-        };
-        let Ok(pending) = pending else {
-            return Builtin::done(interp, cmd, 1);
-        };
-        if let Some(task) = pending {
-            return OutputTask::<Mkdir>::on_io_writer_chunk(task, interp, written, e);
+        // Only the usage error is written directly; task output goes through
+        // `OutputTask::on_chunk`.
+        let _ = (written, e);
+        match Self::state_mut(interp, cmd).state {
+            State::WaitingWriteErr => {}
+            State::Exec(_) | State::Idle | State::Done => panic!("Invalid state"),
         }
-        Self::next(interp, cmd)
+        Builtin::done(interp, cmd, 1)
     }
 
     /// The caller ([`ShellMkdirTask::run_from_main_thread`]) owns the heap
@@ -179,80 +164,11 @@ enum NextAction {
 }
 
 impl OutputTaskVTable for Mkdir {
-    fn write_err(
-        interp: &Interpreter,
-        cmd: NodeId,
-        child: Box<OutputTask<Self>>,
-        errbuf: &[u8],
-    ) -> OutputWrite<Self> {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_waiting += 1;
-        }
-        let stderr_needs_io = Builtin::of(interp, cmd).stderr.needs_io();
-        if let Some(safeguard) = stderr_needs_io {
-            // OutputTask has no `WriterTag` of its own (it is not directly
-            // dispatchable as an IOWriter child), so the enqueue is tagged
-            // `WriterTag::Builtin` and `child` is parked on `output_queue`;
-            // `on_io_writer_chunk` pops it to route the completion back to
-            // the OutputTask state machine.
-            if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-                exec.output_queue.push_back(child);
-            }
-            let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            return OutputWrite::Enqueued(Builtin::write_out(
-                interp,
-                cmd,
-                IoKind::Stderr,
-                childptr,
-                errbuf,
-                safeguard,
-            ));
-        }
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, errbuf);
-        OutputWrite::Done(child)
-    }
-
-    fn on_write_err(interp: &Interpreter, cmd: NodeId) {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_done += 1;
-        }
-    }
-
-    fn write_out(
-        interp: &Interpreter,
-        cmd: NodeId,
-        child: Box<OutputTask<Self>>,
-    ) -> OutputWrite<Self> {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_waiting += 1;
-        }
-        let stdout_needs_io = Builtin::of(interp, cmd).stdout.needs_io();
-        if let Some(safeguard) = stdout_needs_io {
-            // See write_err — park `child` so the chunk callback routes to
-            // OutputTask::on_io_writer_chunk.
-            let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            return OutputWrite::Enqueued(Builtin::write_out_with(
-                interp,
-                cmd,
-                IoKind::Stdout,
-                childptr,
-                safeguard,
-                |buf| {
-                    buf.extend_from_slice(child.output.slice());
-                    if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-                        exec.output_queue.push_back(child);
-                    }
-                },
-            ));
-        }
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, child.output.slice());
-        OutputWrite::Done(child)
-    }
-
-    fn on_write_out(interp: &Interpreter, cmd: NodeId) {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_done += 1;
-        }
+    fn output_queue(interp: &Interpreter, cmd: NodeId) -> JsCellRefMut<'_, OutputQueue<Self>> {
+        JsCellRefMut::map(Self::state_mut(interp, cmd), |me| match &mut me.state {
+            State::Exec(exec) => &mut exec.output,
+            _ => unreachable!("mkdir output outside Exec"),
+        })
     }
 
     fn on_done(interp: &Interpreter, cmd: NodeId) -> Yield {

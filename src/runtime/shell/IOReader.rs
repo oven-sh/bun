@@ -3,8 +3,9 @@
 //! *NOTE* This type is reference counted via `Rc`; see the `Drop` impl note.
 
 use bun_jsc::JsCell;
+use bun_ptr::JsRefCell;
 use bun_ptr::{CellRefCounted as _, RefPtr, ThisPtr};
-use core::cell::{Cell, RefCell};
+use core::cell::Cell;
 #[cfg(not(windows))]
 use core::ffi::c_void;
 
@@ -53,12 +54,12 @@ pub struct IOReader {
     /// sits in its own cell that the callbacks never touch.
     reader: JsCell<ReaderImpl>,
     fd: Fd,
-    buf: RefCell<Vec<u8>>,
-    readers: RefCell<Readers>,
+    buf: JsRefCell<Vec<u8>>,
+    readers: JsRefCell<Readers>,
     /// The raw `sys::Error`. `SystemError` is not `Clone`
     /// in the Rust port yet, so we keep the source error to re-derive a fresh
     /// `SystemError` per callee in `on_reader_done_cb`.
-    raw_err: RefCell<Option<sys::Error>>,
+    raw_err: JsRefCell<Option<sys::Error>>,
     evtloop: EventLoopHandle,
     #[cfg(windows)]
     is_reading: Cell<bool>,
@@ -90,9 +91,9 @@ impl IOReader {
             self_root,
             reader: JsCell::new(reader),
             fd,
-            buf: RefCell::new(Vec::new()),
-            readers: RefCell::new(Readers::new()),
-            raw_err: RefCell::new(None),
+            buf: JsRefCell::new(Vec::new()),
+            readers: JsRefCell::new(Readers::new()),
+            raw_err: JsRefCell::new(None),
             evtloop,
             #[cfg(windows)]
             is_reading: Cell::new(false),

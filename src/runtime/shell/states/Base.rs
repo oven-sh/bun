@@ -3,7 +3,7 @@
 //! The interpreter is passed as `&Interpreter` to every method, so only
 //! `parent: NodeId` and the shell env handle are stored here.
 
-use core::cell::{Ref, RefMut};
+use bun_ptr::{JsCellRef, JsCellRefMut};
 
 use crate::shell::interpreter::{EnvRc, NodeId, ShellExecEnv};
 
@@ -31,13 +31,13 @@ impl Base {
 
     #[inline]
     #[track_caller]
-    pub fn shell(&self) -> Ref<'_, ShellExecEnv> {
+    pub fn shell(&self) -> JsCellRef<'_, ShellExecEnv> {
         self.shell.borrow()
     }
 
     #[inline]
     #[track_caller]
-    pub(crate) fn shell_mut(&self) -> RefMut<'_, ShellExecEnv> {
+    pub(crate) fn shell_mut(&self) -> JsCellRefMut<'_, ShellExecEnv> {
         self.shell.borrow_mut()
     }
 }

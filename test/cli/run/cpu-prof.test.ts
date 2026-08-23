@@ -343,8 +343,8 @@ describe.concurrent("--cpu-prof", () => {
 
     expect(stdout).toContain("bun test");
     expect(stderr).toContain("1 pass");
-    expect(await Bun.file(join(String(dir), "test-profile.md")).text()).toContain("# CPU Profile");
     expect(exitCode).toBe(0);
+    expect(await Bun.file(join(String(dir), "test-profile.md")).text()).toContain("# CPU Profile");
   });
 
   test("bun test --cpu-prof writes a JSON profile", async () => {
@@ -370,10 +370,10 @@ describe.concurrent("--cpu-prof", () => {
 
     expect(stdout).toContain("bun test");
     expect(stderr).toContain("1 pass");
+    expect(exitCode).toBe(0);
     const profile = JSON.parse(await Bun.file(join(String(dir), "test-profile.cpuprofile")).text());
     expect(profile).toHaveProperty("nodes");
     expect(profile.samples.length).toBeGreaterThan(0);
-    expect(exitCode).toBe(0);
   });
 
   test("bun test --bail writes a CPU profile", async () => {
@@ -400,8 +400,8 @@ describe.concurrent("--cpu-prof", () => {
 
     expect(stdout).toContain("bun test");
     expect(stderr).toContain("Bailed out after 1 failure");
-    expect(await Bun.file(join(String(dir), "bail-profile.md")).text()).toContain("# CPU Profile");
     expect(exitCode).toBe(1);
+    expect(await Bun.file(join(String(dir), "bail-profile.md")).text()).toContain("# CPU Profile");
   });
 
   test("bun repl --cpu-prof writes a profile", async () => {
@@ -424,13 +424,13 @@ describe.concurrent("--cpu-prof", () => {
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const profile = JSON.parse(await Bun.file(join(String(dir), "repl-profile.cpuprofile")).text());
 
     expect(stdout).toBe("");
     expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    const profile = JSON.parse(await Bun.file(join(String(dir), "repl-profile.cpuprofile")).text());
     expect(profile).toHaveProperty("nodes");
     expect(profile.samples.length).toBeGreaterThan(0);
-    expect(exitCode).toBe(0);
   });
 
   test("bun test profiling works with --parallel=1", async () => {
@@ -459,8 +459,8 @@ describe.concurrent("--cpu-prof", () => {
 
     expect(stdout).toContain("1x PARALLEL");
     expect(stderr).toContain("1 pass");
-    expect(await Bun.file(join(String(dir), "test-profile.md")).text()).toContain("# CPU Profile");
     expect(exitCode).toBe(0);
+    expect(await Bun.file(join(String(dir), "test-profile.md")).text()).toContain("# CPU Profile");
   });
 
   test("bun test rejects CPU profiling with multiple parallel workers", async () => {

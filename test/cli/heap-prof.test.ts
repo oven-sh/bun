@@ -178,8 +178,8 @@ test("bun test --heap-prof-md writes a profile", async () => {
   expect(stdout).toContain("bun test");
   expect(stderr).toContain("1 pass");
   expect(stderr).toContain("Heap profile written to:");
-  expect(await Bun.file(join(String(dir), "test-profile.md")).text()).toContain("# Bun Heap Profile");
   expect(exitCode).toBe(0);
+  expect(await Bun.file(join(String(dir), "test-profile.md")).text()).toContain("# Bun Heap Profile");
 });
 
 test("bun test --heap-prof writes a V8 profile", async () => {
@@ -199,8 +199,8 @@ test("bun test --heap-prof writes a V8 profile", async () => {
 
   expect(stdout).toContain("bun test");
   expect(stderr).toContain("1 pass");
-  expectV8HeapSnapshotShape(await readProfile(String(dir), "test-profile.heapprofile"));
   expect(exitCode).toBe(0);
+  expectV8HeapSnapshotShape(await readProfile(String(dir), "test-profile.heapprofile"));
 });
 
 test("bun test rejects heap profiling with multiple parallel workers", async () => {
@@ -244,8 +244,8 @@ test("bun test --bail writes a heap profile", async () => {
 
   expect(stdout).toContain("bun test");
   expect(stderr).toContain("Bailed out after 1 failure");
-  expect(await Bun.file(join(String(dir), "bail-profile.md")).text()).toContain("# Bun Heap Profile");
   expect(exitCode).toBe(1);
+  expect(await Bun.file(join(String(dir), "bail-profile.md")).text()).toContain("# Bun Heap Profile");
 });
 
 test("bun test writes a heap profile after a top-level load error", async () => {
@@ -265,8 +265,8 @@ test("bun test writes a heap profile after a top-level load error", async () => 
 
   expect(stdout).toContain("bun test");
   expect(stderr).toContain("Cannot find module");
-  expectV8HeapSnapshotShape(await readProfile(String(dir), "load-error.heapprofile"));
   expect(exitCode).toBe(1);
+  expectV8HeapSnapshotShape(await readProfile(String(dir), "load-error.heapprofile"));
 });
 
 test("bun test writes a heap profile after a snapshot persistence error", async () => {
@@ -290,8 +290,8 @@ test("bun test writes a heap profile after a snapshot persistence error", async 
 
   expect(stdout).toContain("bun test");
   expect(stderr.length).toBeGreaterThan(0);
-  expectV8HeapSnapshotShape(await readProfile(String(dir), "snapshot-error.heapprofile"));
   expect(exitCode).not.toBe(0);
+  expectV8HeapSnapshotShape(await readProfile(String(dir), "snapshot-error.heapprofile"));
 });
 
 test("--heap-prof-dir specifies the output directory", async () => {

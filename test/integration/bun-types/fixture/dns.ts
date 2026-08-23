@@ -32,9 +32,11 @@ expectType(Bun.dns.resolve("example.com", "TXT")).is<Promise<string[][]>>();
 expectType(Bun.dns.resolve("example.com", "MX")).is<Promise<dns.MxRecord[]>>();
 expectType(Bun.dns.resolve("example.com", "SRV")).is<Promise<dns.SrvRecord[]>>();
 expectType(Bun.dns.resolve("example.com", "SOA")).is<Promise<dns.SoaRecord>>();
-expectType(Bun.dns.resolve("example.com", "NAPTR")).is<Promise<dns.NaptrRecord[]>>();
 expectType(Bun.dns.resolve("example.com", "CAA")).is<Promise<dns.CaaRecord[]>>();
 expectType(Bun.dns.resolve("example.com", "ANY")).is<Promise<dns.AnyRecord[]>>();
+// The runtime's resolve() rejects NAPTR (ERR_INVALID_ARG_VALUE); only resolveNaptr serves it.
+// @ts-expect-error
+Bun.dns.resolve("example.com", "NAPTR");
 
 // resolve* family
 expectType(Bun.dns.resolveSrv("example.com")).is<Promise<dns.SrvRecord[]>>();

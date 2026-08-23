@@ -2600,7 +2600,8 @@ declare module "bun" {
      * Resolve records for a hostname with the DNS protocol.
      *
      * `rrtype` selects the record type and defaults to `"A"`. Lowercase
-     * record type names are also accepted.
+     * record type names are also accepted. NAPTR records are only available
+     * through {@link dns.resolveNaptr}.
      *
      * @param hostname The hostname to resolve
      * @param rrtype The DNS record type
@@ -2617,7 +2618,6 @@ declare module "bun" {
     function resolve(hostname: string, rrtype: "MX" | "mx"): Promise<import("node:dns").MxRecord[]>;
     function resolve(hostname: string, rrtype: "SRV" | "srv"): Promise<import("node:dns").SrvRecord[]>;
     function resolve(hostname: string, rrtype: "SOA" | "soa"): Promise<import("node:dns").SoaRecord>;
-    function resolve(hostname: string, rrtype: "NAPTR" | "naptr"): Promise<import("node:dns").NaptrRecord[]>;
     function resolve(hostname: string, rrtype: "CAA" | "caa"): Promise<import("node:dns").CaaRecord[]>;
     function resolve(hostname: string, rrtype: "ANY" | "any"): Promise<import("node:dns").AnyRecord[]>;
 

@@ -1331,8 +1331,7 @@ pub(crate) mod upgrade_js_bindings {
 
     // Process-global, not threadlocal: if open/close are invoked from different
     // threads (main vs worker VM) a `thread_local!` would make the close see
-    // `None` and leak the HANDLE. Use a `RacyCell`; access is test-only and
-    // effectively single-threaded.
+    // `None` and leak the HANDLE.
     #[cfg(windows)]
     static TEMPDIR_FD: bun_threading::Guarded<Option<sys::Fd>> = bun_threading::Guarded::new(None);
 

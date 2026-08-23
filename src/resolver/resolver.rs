@@ -5905,9 +5905,6 @@ impl<'a> Resolver<'a> {
                             dec_ret!(Some(LoadResult {
                                 path: {
                                     if query.entry().abs_path().is_empty() {
-                                        // SAFETY: `dir` is `&'static [u8]` (DirnameStore-interned),
-                                        // copied out so no `&Entry` borrow survives into the
-                                        // `&mut Entry` write below.
                                         let entry_dir = query.entry().dir;
                                         let new_abs = if !entry_dir.is_empty()
                                             && entry_dir[entry_dir.len() - 1] == SEP

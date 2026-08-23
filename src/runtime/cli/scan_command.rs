@@ -31,10 +31,6 @@ impl ScanCommand {
         );
         Output::flush();
 
-        // Reshaped for borrowck — `manager.lockfile.load_from_cwd(&mut self,
-        // Some(manager), log)` would alias `&mut *manager.lockfile` with `&mut *manager`.
-        // Project disjoint raw pointers from the singleton first; `load_from_cwd` only
-        // reads `manager.options`/migration helpers and never re-borrows `manager.lockfile`.
         {
             let log_level = manager.options.log_level;
             let load_result = manager.load_lockfile_from_cwd::<true>();

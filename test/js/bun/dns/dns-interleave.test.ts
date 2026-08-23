@@ -15,7 +15,7 @@ import { bunEnv, bunExe, isLinux, isMusl } from "harness";
 // each scenario runs in its own process. Every test also does a real fetch()
 // through the seeded entry, which is consumed by usockets via
 // Bun__addrinfo_getRequestResult and start_connections().
-async function run(body: string, timeoutMs = 10_000) {
+async function run(body: string, timeoutMs = 10_000, execArgs: string[] = []) {
   const fixture = /* js */ `
     const { dnsCacheSeed } = require("bun:internal-for-testing");
     if (typeof dnsCacheSeed !== "function") {
@@ -26,7 +26,7 @@ async function run(body: string, timeoutMs = 10_000) {
     ${body}
   `;
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", fixture],
+    cmd: [bunExe(), ...execArgs, "-e", fixture],
     env: {
       ...bunEnv,
       HTTP_PROXY: undefined,
@@ -195,4 +195,134 @@ describe.concurrent("getaddrinfo interleave (RFC 8305)", () => {
     },
     20_000,
   );
+});
+
+// https://github.com/oven-sh/bun/issues/40178: the connect-path cache ignored
+// --dns-result-order and dns.setDefaultResultOrder; the first getaddrinfo
+// family always led the interleave.
+describe.concurrent("dns result order reaches the connect path", () => {
+  test("--dns-result-order=ipv4first leads the interleave with IPv4", async () => {
+    const { out, stderr, exitCode, signal } = await run(
+      /* js */ `
+        const order = dnsCacheSeed("order-v4flag.test", ["::1", "::1", "127.0.0.1", "127.0.0.1"]);
+        console.log(JSON.stringify({ ok: true, order }));
+        process.exit(0);
+      `,
+      10_000,
+      ["--dns-result-order=ipv4first"],
+    );
+    expect({ out, stderr, exitCode, signal }).toEqual({
+      out: { ok: true, order: [4, 6, 4, 6] },
+      stderr: "",
+      exitCode: 0,
+      signal: null,
+    });
+  });
+
+  test("--dns-result-order=ipv6first leads the interleave with IPv6", async () => {
+    const { out, stderr, exitCode, signal } = await run(
+      /* js */ `
+        const order = dnsCacheSeed("order-v6flag.test", ["127.0.0.1", "127.0.0.1", "::1", "::1"]);
+        console.log(JSON.stringify({ ok: true, order }));
+        process.exit(0);
+      `,
+      10_000,
+      ["--dns-result-order=ipv6first"],
+    );
+    expect({ out, stderr, exitCode, signal }).toEqual({
+      out: { ok: true, order: [6, 4, 6, 4] },
+      stderr: "",
+      exitCode: 0,
+      signal: null,
+    });
+  });
+
+  test("--dns-result-order=verbatim keeps the resolver's first family first", async () => {
+    const { out, stderr, exitCode, signal } = await run(
+      /* js */ `
+        const order = dnsCacheSeed("order-verbatim.test", ["::1", "127.0.0.1"]);
+        console.log(JSON.stringify({ ok: true, order }));
+        process.exit(0);
+      `,
+      10_000,
+      ["--dns-result-order=verbatim"],
+    );
+    expect({ out, stderr, exitCode, signal }).toEqual({
+      out: { ok: true, order: [6, 4] },
+      stderr: "",
+      exitCode: 0,
+      signal: null,
+    });
+  });
+
+  test("ipv4first with a single-family answer keeps the answer intact", async () => {
+    const { out, stderr, exitCode, signal } = await run(
+      /* js */ `
+        const order = dnsCacheSeed("order-v6only.test", ["::1", "::1", "::1"]);
+        console.log(JSON.stringify({ ok: true, order }));
+        process.exit(0);
+      `,
+      10_000,
+      ["--dns-result-order=ipv4first"],
+    );
+    expect({ out, stderr, exitCode, signal }).toEqual({
+      out: { ok: true, order: [6, 6, 6] },
+      stderr: "",
+      exitCode: 0,
+      signal: null,
+    });
+  });
+
+  test("dns.setDefaultResultOrder('ipv4first') applies to later connect-path lookups", async () => {
+    const { out, stderr, exitCode, signal } = await run(/* js */ `
+      require("node:dns").setDefaultResultOrder("ipv4first");
+      const order = dnsCacheSeed("order-sdro.test", ["::1", "::1", "127.0.0.1", "127.0.0.1"]);
+      console.log(JSON.stringify({ ok: true, order }));
+      process.exit(0);
+    `);
+    expect({ out, stderr, exitCode, signal }).toEqual({
+      out: { ok: true, order: [4, 6, 4, 6] },
+      stderr: "",
+      exitCode: 0,
+      signal: null,
+    });
+  });
+
+  test("changing the order drops completed cache entries packed with the old order", async () => {
+    const { out, stderr, exitCode, signal } = await run(/* js */ `
+      dnsCacheSeed("order-stale.test", ["::1", "127.0.0.1"]);
+      const before = Bun.dns.getCacheStats().size;
+      require("node:dns").setDefaultResultOrder("ipv4first");
+      const after = Bun.dns.getCacheStats().size;
+      console.log(JSON.stringify({ ok: true, before, after }));
+      process.exit(0);
+    `);
+    expect({ out, stderr, exitCode, signal }).toEqual({
+      out: { ok: true, before: 1, after: 0 },
+      stderr: "",
+      exitCode: 0,
+      signal: null,
+    });
+  });
+
+  test("fetch() connects through an ipv4first-seeded entry", async () => {
+    const { out, stderr, exitCode, signal } = await run(
+      /* js */ `
+        using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("ok") });
+        const port = server.port;
+        const order = dnsCacheSeed("order-fetch-" + port + ".test", ["::1", "127.0.0.1"]);
+        const res = await fetch("http://order-fetch-" + port + ".test:" + port + "/");
+        console.log(JSON.stringify({ ok: true, order, body: await res.text() }));
+        process.exit(0);
+      `,
+      10_000,
+      ["--dns-result-order=ipv4first"],
+    );
+    expect({ out, stderr, exitCode, signal }).toEqual({
+      out: { ok: true, order: [4, 6], body: "ok" },
+      stderr: "",
+      exitCode: 0,
+      signal: null,
+    });
+  });
 });

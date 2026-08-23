@@ -2465,14 +2465,23 @@ pub mod internal {
     // Pack getaddrinfo results into one allocation with address families
     // interleaved (RFC 8305 §4) so an unroutable family can never fill all
     // CONCURRENT_CONNECTIONS parallel connect attempts. See #4938 / #33278.
+    // The family that leads the interleave follows the process default order
+    // (`--dns-result-order` / `dns.setDefaultResultOrder`); `verbatim` keeps
+    // the resolver's first family first. See #40178.
     fn process_results(info: *mut AddrInfo) -> Box<[ResultEntry]> {
         let mut count: usize = 0;
         let mut n_first: usize = 0;
-        let first_family = if info.is_null() {
-            netc::AF_UNSPEC
-        } else {
-            // SAFETY: info is a live addrinfo node; freed by caller after we return.
-            unsafe { (*info).ai_family }
+        let first_family = match bun_dns::Order::global_default() {
+            bun_dns::Order::Ipv4first => netc::AF_INET,
+            bun_dns::Order::Ipv6first => netc::AF_INET6,
+            bun_dns::Order::Verbatim => {
+                if info.is_null() {
+                    netc::AF_UNSPEC
+                } else {
+                    // SAFETY: info is a live addrinfo node; freed by caller after we return.
+                    unsafe { (*info).ai_family }
+                }
+            }
         };
         let mut info_: *mut AddrInfo = info;
         while !info_.is_null() {
@@ -3192,6 +3201,38 @@ pub mod internal {
     extern "C" fn get_request_result(req: *mut Request) -> *mut RequestResult {
         // SAFETY: caller (usockets) only invokes this after notify, when result is set
         unsafe { std::ptr::from_mut::<RequestResult>((*req).result.as_mut().unwrap()) }
+    }
+
+    /// Change the process default result order. Completed cache entries were
+    /// packed with the old order, so drop them; otherwise the new order would
+    /// only take effect once they expire (up to the cache TTL). In-flight
+    /// entries pack with the new order when they complete, so they stay.
+    pub(crate) fn set_default_order(order: bun_dns::Order) {
+        if bun_dns::Order::global_default() == order {
+            return;
+        }
+        bun_dns::Order::set_global_default(order);
+
+        let mut guard = global_cache().lock();
+        let mut i: usize = 0;
+        while i < guard.len {
+            let entry = guard.cache[i];
+            // SAFETY: entries 0..len are valid heap Requests; refcount/valid
+            // are only mutated under `global_cache().lock()`, held here.
+            unsafe {
+                if (*entry).result.is_some() {
+                    (*entry).valid = false;
+                    if (*entry).refcount == 0 {
+                        let len = guard.len;
+                        let _ = guard.delete_entry_at(len, i);
+                        Request::deinit(entry);
+                        // delete_entry_at swapped the last entry into slot i.
+                        continue;
+                    }
+                }
+            }
+            i += 1;
+        }
     }
 
     // FFI exports.
@@ -6007,6 +6048,28 @@ impl Resolver {
         };
         order.to_js(global_this)
     }
+
+    // FFI shim emitted by `export_host_fn!` below (JS2Native link name).
+    // `dns.setDefaultResultOrder` body: beyond the JS-side `node:dns` lookup
+    // default, the order must reach the connect-path DNS cache that fetch()
+    // and Bun.connect() dial through (Node applies it there via undici's
+    // `dns.lookup`). See #40178.
+    pub(crate) fn set_runtime_default_result_order_option(
+        global_this: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let args = frame.arguments();
+        if args.is_empty() || !args[0].is_string() {
+            return Ok(JSValue::UNDEFINED);
+        }
+        let slice = args[0].to_slice(global_this)?;
+        if let Some(order) = Order::from_string(slice.slice()) {
+            // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
+            global_this.bun_vm().as_mut().dns_result_order = order as u8;
+            internal::set_default_order(order);
+        }
+        Ok(JSValue::UNDEFINED)
+    }
 }
 
 // ───────── JS host-fn FFI exports ─────────
@@ -6065,6 +6128,10 @@ export_host_fn!(
 export_host_fn!(
     Resolver::get_runtime_default_result_order_option,
     "JS2Rust___src_runtime_dns_jsc_dns_rs__Resolver_getRuntimeDefaultResultOrderOption"
+);
+export_host_fn!(
+    Resolver::set_runtime_default_result_order_option,
+    "JS2Rust___src_runtime_dns_jsc_dns_rs__Resolver_setRuntimeDefaultResultOrderOption"
 );
 export_host_fn!(
     internal::seed_cache_for_testing,

@@ -371,7 +371,10 @@ export const context: TestContext = {
       }
     }
 
-    this.__subscriberClientPool = [];
+    // Empty the array in place: valkey.test.ts spreads this context into one
+    // copy per connection type, and the copies share this array. Assigning a
+    // new array here would leave the other copy's subscribers uncleaned.
+    this.__subscriberClientPool.length = 0;
   },
 };
 export { context as ctx };

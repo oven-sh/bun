@@ -564,13 +564,13 @@ struct Http2Context {
         data->http2Context = this;
         data->allowHttp1 = allowHttp1;
         detachFromParent = [](void *p, Http2Context *ctx) { ctx->detach((HttpContextData<SSL> *) p); };
-        data->onHttp2 = [](void *ctx, us_socket_t *s, char *initialData, int initialLength) {
+        data->onHttp2 = [](void *ctx, us_socket_t *s, char *initialData, int initialLength, unsigned prefaceConsumed) {
             if (us_socket_is_closed(s) || us_socket_is_shut_down(s)) return s;
             HttpResponseData<SSL> *rd = (HttpResponseData<SSL> *) us_socket_ext(s);
             bool filteredOpen = rd->filteredOpen, filteredAccept = rd->filteredAccept;
             ((AsyncSocket<SSL> *) s)->uncorkWithoutSending();
             rd->~HttpResponseData<SSL>();
-            return ((Http2Context *) ctx)->adopt(s, filteredOpen, filteredAccept, initialData, initialLength);
+            return ((Http2Context *) ctx)->adopt(s, filteredOpen, filteredAccept, initialData, initialLength, prefaceConsumed);
         };
         notifyParentClosed = [](void *p, us_socket_t *s, bool filteredOpen, bool filteredAccept) {
             HttpContextData<SSL> *d = (HttpContextData<SSL> *) p;
@@ -595,12 +595,14 @@ struct Http2Context {
     }
 
     /* Take over `s`, whose previous ext has already been destructed. Bytes
-     * that arrived with the preface are fed straight in. */
-    us_socket_t *adopt(us_socket_t *s, bool filteredOpen, bool filteredAccept, const char *initialData, int initialLength) {
+     * that arrived with the preface are fed straight in; `prefaceConsumed`
+     * preface bytes were already matched by the caller. */
+    us_socket_t *adopt(us_socket_t *s, bool filteredOpen, bool filteredAccept, const char *initialData, int initialLength, unsigned prefaceConsumed) {
         us_socket_adopt(s, &group, US_SOCKET_KIND_DYNAMIC, -1, -1);
         Http2Connection *conn = new Http2Connection(s, this);
         conn->filteredOpen = filteredOpen;
         conn->filteredAccept = filteredAccept;
+        conn->prefaceOffset = (uint8_t) prefaceConsumed;
         *(Http2Connection **) us_socket_ext(s) = conn;
         connections.push_back(conn);
         s->flags.allow_half_open = 0;
@@ -773,6 +775,16 @@ private:
      * connection): streams in flight are aborted through onClose. */
     static us_socket_t *onTimeout(us_socket_t *s) {
         Http2Connection *conn = connection(s);
+        conn->busy++;
+        std::vector<Http2Response *> open = conn->streams;
+        for (Http2Response *stream : open) {
+            if (!stream->dead && stream->data.onTimeout) stream->data.onTimeout(stream, stream->data.userData);
+        }
+        conn->busy--;
+        if (conn->closed) {
+            if (conn->busy == 0) delete conn;
+            return s;
+        }
         if (!conn->goawaySent) conn->writeGoaway(http2::ERR_NO_ERROR);
         conn->flush();
         return us_socket_close(s, 0, nullptr);
@@ -1410,7 +1422,7 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
         }
     }
     if (!malformed) {
-        malformed = isConnect ? (seen & (1 | 8)) != (1 | 8) : (seen & 7) != 7;
+        malformed = isConnect ? seen != (1 | 8) : (seen & 7) != 7;
     }
     if (!malformed && endStream && contentLength > 0) malformed = true;
     if (malformed) {

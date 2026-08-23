@@ -380,7 +380,6 @@ impl SinkHandle {
             // SAFETY: live backref; transform detaches before the JSSink is finalized.
             SinkHandle::HttpsResponse(mut p) => unsafe { p.get_mut() }.write(data),
             // SAFETY: live backref; transform detaches before the JSSink is finalized.
-            // SAFETY: live backref; transform detaches before the JSSink is finalized.
             SinkHandle::ArrayBuffer(mut p) => unsafe { p.get_mut() }.write(data),
         }
     }

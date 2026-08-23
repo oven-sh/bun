@@ -1170,6 +1170,49 @@ describe("Bun.serve http2 with http1: false", () => {
     expect(noAlpn).toStartWith("HTTP/1.1 505 ");
   });
 
+  test("cleartext: preface trickled in 1-3 byte reads is still HTTP/2; a short HTTP/1 first read is replayed", async () => {
+    await using fx = await startFixture({ tls: false });
+    // h2: "PR", "I", " * H", rest — the first two reads are too short to decide.
+    const sock = net.connect(fx.port, "127.0.0.1");
+    await new Promise<void>(r => sock.once("connect", () => r()));
+    const writeAndFlush = (b: Buffer | string) =>
+      new Promise<void>((res, rej) => sock.write(b, e => (e ? rej(e) : setTimeout(res, 20))));
+    await writeAndFlush(PREFACE.subarray(0, 2));
+    await writeAndFlush(PREFACE.subarray(2, 3));
+    await writeAndFlush(PREFACE.subarray(3, 7));
+    sock.write(Buffer.concat([PREFACE.subarray(7), frame(T.SETTINGS, 0, 0)]));
+    sock.write(frame(T.HEADERS, F.END_HEADERS | F.END_STREAM, 1, hpackLiteral(baseHeaders("/hello"))));
+    const got = await new Promise<string>(resolve => {
+      let buf = Buffer.alloc(0);
+      sock.on("data", d => {
+        buf = Buffer.concat([buf, d]);
+        for (let off = 0; off + 9 <= buf.length; ) {
+          const len = buf.readUIntBE(off, 3);
+          if (off + 9 + len > buf.length) break;
+          if (buf[off + 3] === T.DATA && (buf.readUInt32BE(off + 5) & 0x7fffffff) === 1)
+            return resolve(buf.subarray(off + 9, off + 9 + len).toString());
+          off += 9 + len;
+        }
+      });
+    });
+    expect(got).toBe("hello");
+    sock.destroy();
+
+    // HTTP/1: "PR" alone matches the preface prefix and is held; the next read
+    // decides against HTTP/2 and both pieces reach the HTTP/1 parser.
+    const h1 = net.connect(fx.port, "127.0.0.1");
+    await new Promise<void>(r => h1.once("connect", () => r()));
+    await new Promise<void>((res, rej) => h1.write("PR", e => (e ? rej(e) : setTimeout(res, 20))));
+    h1.write("OPFIND /hello HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    const response = await new Promise<string>(resolve => {
+      let out = "";
+      h1.on("data", d => (out += d));
+      h1.on("close", () => resolve(out));
+    });
+    expect(response).toStartWith("HTTP/1.1 200 OK\r\n");
+    expect(response).toEndWith("hello");
+  });
+
   test("cleartext: prior-knowledge works, HTTP/1.1 gets 505", async () => {
     await using fx = await startFixture({ tls: false, http1: false });
     const session = await connectH2(fx.port, false);

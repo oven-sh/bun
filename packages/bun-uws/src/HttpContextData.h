@@ -95,7 +95,7 @@ private:
      * onHttp2, which destructs our ext, adopts the socket and feeds it the
      * bytes already read. */
     Http2Context *http2Context = nullptr;
-    us_socket_t *(*onHttp2)(void *http2Context, us_socket_t *s, char *data, int length) = nullptr;
+    us_socket_t *(*onHttp2)(void *http2Context, us_socket_t *s, char *data, int length, unsigned prefaceConsumed) = nullptr;
     /* With HTTP/2 attached: whether HTTP/1.x is still served (ALPN fallback
      * and non-preface cleartext). */
     bool allowHttp1 = true;

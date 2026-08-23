@@ -55,7 +55,7 @@ use bun_core::{String as BunString, Tag as BunStringTag, ZigStringSlice};
 use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _, MimeType};
 use bun_http_jsc::method_jsc;
 use bun_http_types::Method::Method;
-use bun_jsc::{HTTPHeaderName, StringJsc as _, SysErrorJsc as _};
+use bun_jsc::{HTTPHeaderName, StringJsc as _};
 use bun_paths::{self, PathBuffer};
 use bun_sys::FdExt as _;
 // `FromJsEnum for FetchRedirect` lives in bun_http_jsc; importing the impl crate
@@ -371,6 +371,11 @@ fn reject_on_exception(
         },
     };
     Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(global_this, err))
+}
+
+/// Same `TypeError` shape as the network errors from `FetchTasklet::on_reject`.
+fn request_body_file_error(err: &bun_sys::Error, global_this: &JSGlobalObject) -> JSValue {
+    jsc::SystemError::from(err.to_system_error()).to_type_error_instance(global_this)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1714,7 +1719,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
             let opened_fd = match opened_fd_res {
                 Err(err) => {
-                    let err_js = err.to_js(global_this);
+                    let err_js = request_body_file_error(&err, global_this);
                     let rejected_value =
                         JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                             global_this,
@@ -1813,7 +1818,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     let rejected_value =
                         JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                             global_this,
-                            err.to_js(global_this),
+                            request_body_file_error(&err, global_this),
                         );
                     body.detach();
                     return Ok(rejected_value);

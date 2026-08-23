@@ -349,11 +349,13 @@ pub enum Encoding {
     Binary = 0,
     #[default]
     Latin1 = 1,
-    // Not used yet.
-    Utf8 = 2,
-    /// Native-endian UTF-16 code units, 2-byte aligned in the section. Only
-    /// produced for `Loader::Text` modules whose text does not fit in Latin-1.
-    Utf16 = 3,
+    /// Little-endian UTF-16 code units (the native order of every compile
+    /// target), 2-byte aligned in the section. Only produced for
+    /// `Loader::Text` modules whose text does not fit in Latin-1. Takes the
+    /// value of the never-written `Utf8` variant, so a runtime from before
+    /// this variant reads it through its plain-copy arm instead of an invalid
+    /// discriminant.
+    Utf16 = 2,
 }
 
 #[repr(u8)]
@@ -486,8 +488,17 @@ pub struct File {
 }
 
 impl File {
+    /// A `Loader::Text` import that `--compile` embedded as a module (see
+    /// `encode_text_module`). Its bytes are a string body, not the file.
+    pub fn is_text_module(&self) -> bool {
+        self.loader == Loader::Text
+    }
+
     pub fn appears_in_embedded_files_array(&self) -> bool {
-        self.side == FileSide::Client || !self.loader.is_javascript_like()
+        // Text modules are imports, not assets, and their bytes are not the
+        // file's UTF-8: a `Blob` over them would decode wrong.
+        !self.is_text_module()
+            && (self.side == FileSide::Client || !self.loader.is_javascript_like())
     }
 
     pub fn stat(&self) -> Stat {
@@ -510,7 +521,7 @@ impl File {
         }
         if self.wtf_string.is_empty() {
             match self.encoding {
-                Encoding::Binary | Encoding::Utf8 => {
+                Encoding::Binary => {
                     self.wtf_string = BunString::clone_utf8(self.contents.as_bytes());
                 }
                 Encoding::Latin1 => {
@@ -838,20 +849,20 @@ unsafe fn slice_to_z(base: *const u8, len: usize, ptr: StringPointer) -> &'stati
     unsafe { ZStr::from_raw(base.add(off), n) }
 }
 
-/// A `Loader::Text` import that the bundler emitted as an embedded asset (see
-/// the `Loader::Text` arm of `ParseTask` under `CompileMode::Executable`). The
-/// chunk that imports it does `import.meta.require("<bunfs path>")`, and the
-/// runtime answers with a string that aliases the section bytes, so the bytes
-/// are stored already in WTF string form rather than as UTF-8.
-fn is_text_module(output_file: &OutputFile) -> bool {
+/// A `Loader::Text` import that the bundler emitted as an embedded asset (the
+/// `Loader::Text` arm of `ParseTask` under `CompileMode::Executable`). The
+/// chunk that imports it does `require("<bunfs path>")`, and the runtime
+/// answers with a string that aliases the section bytes, so the bytes are
+/// stored already in WTF string form rather than as UTF-8.
+fn is_text_module_output(output_file: &OutputFile) -> bool {
     output_file.loader == Loader::Text && output_file.output_kind == options::OutputKind::Asset
 }
 
 /// Write `utf8` as the in-memory representation of a `WTF::StringImpl`: Latin-1
 /// when every code point fits in a byte (the all-ASCII case needs no
-/// transcoding at all), else native-endian UTF-16 at an even offset so the
-/// runtime can point a `char16_t*` at it. Returns the contents pointer and the
-/// encoding to record on the module.
+/// transcoding at all), else UTF-16 at an even offset so the runtime can point
+/// a `char16_t*` at it. Returns the contents pointer and the encoding to record
+/// on the module.
 fn encode_text_module(
     string_builder: &mut bun_core::StringBuilder,
     utf8: &[u8],
@@ -859,8 +870,7 @@ fn encode_text_module(
     if strings::first_non_ascii(utf8).is_none() {
         return (string_builder.append_count_z(utf8), Encoding::Latin1);
     }
-    // Invalid UTF-8 becomes U+FFFD, matching what the text loader's
-    // `export default "..."` string would have held.
+    // Invalid UTF-8 becomes U+FFFD, as with `TextDecoder`.
     let units = match strings::to_utf16_alloc(utf8, false, false) {
         Ok(Some(units)) => units,
         // `None` only for all-ASCII input, handled above.
@@ -890,8 +900,10 @@ fn encode_text_module(
     let start = string_builder.len;
     let byte_len = units.len() * 2;
     let dst = string_builder.writable();
+    // Every `--compile` target is little-endian, so this is the byte order the
+    // runtime's `char16_t*` view expects whatever the build host is.
     for (dst, unit) in dst.chunks_exact_mut(2).zip(units.iter()) {
-        dst.copy_from_slice(&unit.to_ne_bytes());
+        dst.copy_from_slice(&unit.to_le_bytes());
     }
     dst[byte_len] = 0;
     dst[byte_len + 1] = 0;
@@ -915,7 +927,12 @@ pub(crate) fn to_bytes(
     // RAII trace handle ends on drop.
     let _serialize_trace = bun_perf::trace(bun_perf::PerfEvent::StandaloneModuleGraphSerialize);
 
-    let mut entry_point_id: Option<usize> = None;
+    let is_entry_point = |output_file: &OutputFile| {
+        output_file.output_kind == options::OutputKind::EntryPoint
+            && (output_file.side.is_none() || output_file.side == Some(options::Side::Server))
+    };
+
+    let mut has_entry_point = false;
     let mut string_builder = bun_core::StringBuilder::default();
     let mut module_count: usize = 0;
     for output_file in output_files {
@@ -934,17 +951,10 @@ pub(crate) fn to_bytes(
             } else if output_file.output_kind == options::OutputKind::ModuleInfo {
                 string_builder.cap += bytes.len();
             } else {
-                if entry_point_id.is_none() {
-                    if output_file.side.is_none() || output_file.side == Some(options::Side::Server)
-                    {
-                        if output_file.output_kind == options::OutputKind::EntryPoint {
-                            entry_point_id = Some(module_count);
-                        }
-                    }
-                }
+                has_entry_point |= is_entry_point(output_file);
 
                 string_builder.count_z(bytes);
-                if is_text_module(output_file) {
+                if is_text_module_output(output_file) {
                     // Worst case for `encode_text_module`: every byte widens to
                     // a UTF-16 unit, plus alignment padding and a 2-byte NUL.
                     string_builder.cap += bytes.len() + 3;
@@ -954,7 +964,7 @@ pub(crate) fn to_bytes(
         }
     }
 
-    if module_count == 0 || entry_point_id.is_none() {
+    if module_count == 0 || !has_entry_point {
         return Ok(Vec::new());
     }
 
@@ -967,6 +977,10 @@ pub(crate) fn to_bytes(
     string_builder.allocate()?;
 
     let mut modules: Vec<CompiledModuleGraphFile> = Vec::with_capacity(module_count);
+    let mut entry_point_id: Option<usize> = None;
+    // `Graph::from_bytes` keys files by path, so a repeated path would shift
+    // `entry_point_id` and every later index by one.
+    let mut seen_paths: StringArrayHashMap<()> = StringArrayHashMap::new();
 
     let mut source_map_header_list: Vec<u8> = Vec::new();
     let mut source_map_string_list: Vec<u8> = Vec::new();
@@ -991,6 +1005,15 @@ pub(crate) fn to_bytes(
         #[cfg(windows)]
         let dest_path: &[u8] =
             path::resolve_path::platform_to_posix_buf::<u8>(dest_path, &mut dest_path_buf);
+
+        // Two assets can print to one path: same `[name]` and `[hash]` means the
+        // same bytes, so the first copy serves both importers.
+        if seen_paths.get_or_put(dest_path)?.found_existing {
+            continue;
+        }
+        if entry_point_id.is_none() && is_entry_point(output_file) {
+            entry_point_id = Some(modules.len());
+        }
 
         let bytecode: StringPointer = 'brk: {
             if output_file.bytecode_index != u32::MAX {
@@ -1122,7 +1145,7 @@ pub(crate) fn to_bytes(
             bstr::BStr::new(prefix),
             bstr::BStr::new(dest_path)
         ));
-        let (contents, encoding) = if is_text_module(output_file) {
+        let (contents, encoding) = if is_text_module_output(output_file) {
             encode_text_module(&mut string_builder, buf_bytes)
         } else {
             (
@@ -1190,8 +1213,11 @@ pub(crate) fn to_bytes(
             modules.len() * size_of::<CompiledModuleGraphFile>(),
         )
     };
+    let Some(entry_point_id) = entry_point_id else {
+        return Ok(Vec::new());
+    };
     let offsets = Offsets {
-        entry_point_id: entry_point_id.unwrap() as u32,
+        entry_point_id: entry_point_id as u32,
         modules_ptr: string_builder.append_count(modules_as_bytes),
         compile_exec_argv_ptr: string_builder.append_count_z(compile_exec_argv),
         byte_count: string_builder.len,

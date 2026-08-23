@@ -4191,28 +4191,39 @@ pub mod bv2_impl {
                     let index = reachable_source.get() as usize;
                     let key: &[u8] = &unique_key_for_additional_files[index];
                     if !key.is_empty() {
-                        let mut template: options::PathTemplate =
-                            if self.graph.html_imports.server_source_indices.len() != 0
-                                && self.transpiler.options.asset_naming.is_empty()
-                            {
-                                options::PathTemplate::ASSET_WITH_TARGET.into()
-                            } else {
-                                options::PathTemplate::ASSET.into()
-                            };
-
+                        let loader = loaders[index];
                         let target = targets[index];
-                        // SAFETY: see `self_ptr` note above — `transpiler_for_target` needs
-                        // `&mut self` only to pick between two stored `*mut Transpiler`s; it
-                        // never touches `graph.input_files`.
-                        let asset_naming = unsafe {
-                            &(*self_ptr)
-                                .transpiler_for_target(target)
-                                .options
-                                .asset_naming
+                        let mut template: options::PathTemplate = if loader == Loader::Text {
+                            // A text module embedded by `--compile` (ParseTask's
+                            // `Loader::Text` arm) is only ever addressed through
+                            // the bunfs path the bundler prints into the chunk, so
+                            // `--asset-naming` does not apply: without `[hash]`
+                            // two same-named files would silently share one path.
+                            options::PathTemplate::ASSET.into()
+                        } else {
+                            let mut template: options::PathTemplate =
+                                if self.graph.html_imports.server_source_indices.len() != 0
+                                    && self.transpiler.options.asset_naming.is_empty()
+                                {
+                                    options::PathTemplate::ASSET_WITH_TARGET.into()
+                                } else {
+                                    options::PathTemplate::ASSET.into()
+                                };
+
+                            // SAFETY: see `self_ptr` note above — `transpiler_for_target` needs
+                            // `&mut self` only to pick between two stored `*mut Transpiler`s; it
+                            // never touches `graph.input_files`.
+                            let asset_naming = unsafe {
+                                &(*self_ptr)
+                                    .transpiler_for_target(target)
+                                    .options
+                                    .asset_naming
+                            };
+                            if !asset_naming.is_empty() {
+                                template.data.clone_from(asset_naming);
+                            }
+                            template
                         };
-                        if !asset_naming.is_empty() {
-                            template.data.clone_from(asset_naming);
-                        }
 
                         let source = &mut sources[index];
 
@@ -4252,8 +4263,6 @@ pub mod bv2_impl {
                                 .expect("oom");
                             v.into_boxed_slice()
                         };
-
-                        let loader = loaders[index];
 
                         // Hand the existing `source.contents` buffer to the
                         // OutputFile — no copy: move the contents
@@ -7100,10 +7109,11 @@ pub mod bv2_impl {
                     if !result.unique_key_for_additional_file.is_empty()
                         && result.loader == Loader::Text
                     {
-                        // Text embedded as an asset by `--compile` (ParseTask);
-                        // the importer-side bookkeeping for copied loaders
-                        // never saw it, so count it here or
-                        // `process_files_to_copy` skips the whole pass.
+                        // A text module embedded as an asset by `--compile`. The
+                        // importer-side count in `process_resolve_queue` only
+                        // covers `should_copy_for_bundling()` loaders, and
+                        // `process_files_to_copy` skips the whole pass when the
+                        // count is zero.
                         this.graph.estimated_file_loader_count += 1;
                     }
                     if !result.unique_key_for_additional_file.is_empty()

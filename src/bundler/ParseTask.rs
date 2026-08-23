@@ -653,6 +653,60 @@ pub mod parse_worker {
         pub(crate) content_hash: u64,
     }
 
+    /// Registers `source` as an embedded asset: the returned unique key is
+    /// replaced with the asset's final path when the chunk is printed, and
+    /// `process_files_to_copy` emits the bytes as an `OutputKind::Asset`.
+    fn register_embedded_asset<'b>(
+        bump: &'b Bump,
+        source: &Source,
+        unique_key_prefix: u64,
+        unique_key_for_additional_file: &mut FileLoaderHash,
+    ) -> &'b [u8] {
+        use core::fmt::Write as _;
+        let mut buf = bun_alloc::ArenaString::new_in(bump);
+        write!(
+            &mut buf,
+            "{}",
+            crate::chunk::UniqueKey {
+                prefix: unique_key_prefix,
+                kind: crate::chunk::QueryKind::Asset,
+                index: source.index.0,
+            },
+        )
+        .expect("unreachable");
+        let unique_key = buf.into_bump_str().as_bytes();
+        *unique_key_for_additional_file = FileLoaderHash {
+            key: ast::StoreStr::new(unique_key),
+            content_hash: ContentHasher::run(&source.contents),
+        };
+        unique_key
+    }
+
+    /// `require("<unique key>")`. The printer turns the call target into the
+    /// CommonJS `require` or the runtime's `__require` to match the output
+    /// format (`generateCodeForLazyExport` imports the latter), so the chunk
+    /// stays free of `import.meta` and `--bytecode` can compile it.
+    fn require_embedded_asset(unique_key: &[u8]) -> Expr {
+        let import_path = Expr::init(
+            E::String {
+                data: unique_key.into(),
+                ..Default::default()
+            },
+            Loc { start: 0 },
+        );
+        Expr::init(
+            E::Call {
+                target: Expr {
+                    data: ast::ExprData::ERequireCallTarget,
+                    loc: Loc { start: 0 },
+                },
+                args: bun_ast::ExprNodeList::from_arena_slice(&[import_path]),
+                ..Default::default()
+            },
+            Loc { start: 0 },
+        )
+    }
+
     // ───────────────────────────────────────────────────────────────────────────
     // CSS Symbol bridge — `bun_ast::Symbol` ↔ `bun_ast::Symbol`
     //
@@ -886,81 +940,30 @@ pub mod parse_worker {
                 return result;
             }
             Loader::Text => {
-                if topts.compile_mode.is_executable() {
-                    // In a standalone executable the text is embedded as an
-                    // asset and the module becomes
-                    // `export default import.meta.require("<bunfs path>")`; the
-                    // runtime answers with a string that aliases the section
-                    // bytes (`StandaloneModuleGraph::encode_text_module`).
-                    // Inlining it as a string literal instead would ship the
-                    // text twice (source + bytecode constant) and parse it on
-                    // load.
-                    let mut buf = bun_alloc::ArenaString::new_in(bump);
-                    write!(
-                        &mut buf,
-                        "{}",
-                        crate::chunk::UniqueKey {
-                            prefix: unique_key_prefix,
-                            kind: crate::chunk::QueryKind::Asset,
-                            index: source.index.0,
-                        },
-                    )
-                    .expect("unreachable");
-                    let unique_key = buf.into_bump_str().as_bytes();
-                    *unique_key_for_additional_file = FileLoaderHash {
-                        key: ast::StoreStr::new(unique_key),
-                        content_hash: ContentHasher::run(&source.contents),
-                    };
-                    let import_path = Expr::init(
+                // In a standalone executable the text is embedded as an asset
+                // and the module becomes `export default require("<bunfs path>")`.
+                // The runtime answers with a string that aliases the section
+                // bytes (`StandaloneModuleGraph::encode_text_module`). A string
+                // literal would ship the text twice (module source + bytecode
+                // constant) and parse it on load. Browser chunks of a
+                // full-stack build cannot reach the embedded graph and keep
+                // the literal.
+                let root = if topts.compile_mode.is_executable() && topts.target.is_bun() {
+                    require_embedded_asset(register_embedded_asset(
+                        bump,
+                        source,
+                        unique_key_prefix,
+                        unique_key_for_additional_file,
+                    ))
+                } else {
+                    Expr::init(
                         E::String {
-                            data: unique_key.into(),
+                            data: source.contents().into(),
                             ..Default::default()
                         },
                         Loc { start: 0 },
-                    );
-                    let import_meta = Expr::init(E::ImportMeta {}, Loc { start: 0 });
-                    let require_property = Expr::init(
-                        E::Dot {
-                            target: import_meta,
-                            name_loc: Loc::EMPTY,
-                            name: b"require".into(),
-                            ..Default::default()
-                        },
-                        Loc { start: 0 },
-                    );
-                    let require_args = bump.alloc_slice_fill_default::<Expr>(1);
-                    require_args[0] = import_path;
-                    let root = Expr::init(
-                        E::Call {
-                            target: require_property,
-                            // SAFETY: bump-owned slice; never grown via this Vec.
-                            args: unsafe { bun_ast::ExprNodeList::from_bump_slice(require_args) },
-                            ..Default::default()
-                        },
-                        Loc { start: 0 },
-                    );
-                    let mut ast = JSAst::init(
-                        js_parser::new_lazy_export_ast(
-                            bump,
-                            &mut topts.define,
-                            opts,
-                            log,
-                            root,
-                            source,
-                            b"",
-                        )?
-                        .ok_or(AnyError::ParserError)?,
-                    );
-                    ast.add_url_for_css(bump, source, None, Some(unique_key), false);
-                    return Ok(ast);
-                }
-                let root = Expr::init(
-                    E::String {
-                        data: source.contents().into(),
-                        ..Default::default()
-                    },
-                    Loc { start: 0 },
-                );
+                    )
+                };
                 let mut ast = JSAst::init(
                     js_parser::new_lazy_export_ast(
                         bump,
@@ -1035,29 +1038,15 @@ pub mod parse_worker {
                     return Err(crate::Error::ParserError);
                 }
 
-                let path_to_use: &[u8] = 'brk: {
-                    // Implements embedded sqlite
-                    if loader == Loader::SqliteEmbedded {
-                        let mut buf = bun_alloc::ArenaString::new_in(bump);
-                        write!(
-                            &mut buf,
-                            "{}",
-                            crate::chunk::UniqueKey {
-                                prefix: unique_key_prefix,
-                                kind: crate::chunk::QueryKind::Asset,
-                                index: source.index.0,
-                            },
-                        )
-                        .expect("unreachable");
-                        let embedded_path = buf.into_bump_str().as_bytes();
-                        *unique_key_for_additional_file = FileLoaderHash {
-                            key: ast::StoreStr::new(embedded_path),
-                            content_hash: ContentHasher::run(&source.contents),
-                        };
-                        break 'brk embedded_path;
-                    }
-
-                    break 'brk source.path.text;
+                let path_to_use: &[u8] = if loader == Loader::SqliteEmbedded {
+                    register_embedded_asset(
+                        bump,
+                        source,
+                        unique_key_prefix,
+                        unique_key_for_additional_file,
+                    )
+                } else {
+                    source.path.text
                 };
 
                 // This injects the following code:
@@ -1156,50 +1145,16 @@ pub mod parse_worker {
                     return Err(crate::Error::ParserError);
                 }
 
-                let mut buf = bun_alloc::ArenaString::new_in(bump);
-                write!(
-                    &mut buf,
-                    "{}",
-                    crate::chunk::UniqueKey {
-                        prefix: unique_key_prefix,
-                        kind: crate::chunk::QueryKind::Asset,
-                        index: source.index.0,
-                    },
-                )
-                .expect("unreachable");
-                let unique_key = buf.into_bump_str().as_bytes();
                 // This injects the following code:
                 //
                 // require(unique_key)
                 //
-                let import_path = Expr::init(
-                    E::String {
-                        data: unique_key.into(),
-                        ..Default::default()
-                    },
-                    Loc { start: 0 },
-                );
-
-                let require_args = bump.alloc_slice_fill_default::<Expr>(1);
-                require_args[0] = import_path;
-
-                let root = Expr::init(
-                    E::Call {
-                        target: Expr {
-                            data: ast::ExprData::ERequireCallTarget,
-                            loc: Loc { start: 0 },
-                        },
-                        // SAFETY: bump-owned slice; never grown via this Vec.
-                        args: unsafe { bun_ast::ExprNodeList::from_bump_slice(require_args) },
-                        ..Default::default()
-                    },
-                    Loc { start: 0 },
-                );
-
-                *unique_key_for_additional_file = FileLoaderHash {
-                    key: ast::StoreStr::new(unique_key),
-                    content_hash: ContentHasher::run(&source.contents),
-                };
+                let root = require_embedded_asset(register_embedded_asset(
+                    bump,
+                    source,
+                    unique_key_prefix,
+                    unique_key_for_additional_file,
+                ));
                 return Ok(JSAst::init(
                     js_parser::new_lazy_export_ast(
                         bump,

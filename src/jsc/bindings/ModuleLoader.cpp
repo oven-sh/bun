@@ -568,6 +568,12 @@ JSValue fetchBuiltinModuleWithoutResolution(
             RELEASE_AND_RETURN(scope, jsNumber(-1));
         }
 
+        // A text file embedded by `bun build --compile`: the value is the
+        // string itself, which becomes `module.exports` directly.
+        case SyntheticModuleType::ExportDefaultObject: {
+            return JSC::JSValue::decode(res->result.value.jsvalue_for_export);
+        }
+
         default: {
             if (tag & SyntheticModuleType::InternalModuleRegistryFlag) {
                 constexpr auto mask = (SyntheticModuleType::InternalModuleRegistryFlag - 1);
@@ -1064,6 +1070,21 @@ static JSValue fetchESMSourceCode(
     }
             BUN_FOREACH_LAZY_ESM_NATIVE_MODULE(LAZY_CASE)
 #undef LAZY_CASE
+
+        // A text file embedded by `bun build --compile`: a module whose
+        // default export is the already-decoded string.
+        case SyntheticModuleType::ExportDefaultObject: {
+            JSC::JSValue value = JSC::JSValue::decode(res->result.value.jsvalue_for_export);
+            if (!value) {
+                RELEASE_AND_RETURN(scope, reject(JSC::createSyntaxError(globalObject, "Failed to parse Object"_s)));
+            }
+            auto function = generateJSValueExportDefaultObjectSourceCode(globalObject, value);
+            auto source = JSC::SourceCode(
+                JSC::SyntheticSourceProvider::create(WTF::move(function),
+                    JSC::SourceOrigin(), WTF::move(moduleKey)));
+            JSC::ensureStillAliveHere(value);
+            RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTF::move(source))));
+        }
 
         // CommonJS modules from src/js/*
         default: {

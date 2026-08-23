@@ -4008,10 +4008,10 @@ export default db;
                 return FetchBuiltinResult::Found;
             }
 
-            if file.loader == Loader::Text {
+            if file.is_text_module() {
                 // A text import embedded by `--compile`. The bytes are already
                 // a Latin-1/UTF-16 string body (`encode_text_module`), so the
-                // default export is a JSString over the section — no parse, no
+                // default export is a JSString over the section: no parse, no
                 // bytecode, no copy.
                 // SAFETY: per fn contract — `global` is the live global object.
                 let global = unsafe { &*global };

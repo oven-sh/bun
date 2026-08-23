@@ -945,7 +945,10 @@ impl ServerConfig {
                         // bundle, so it stays alive for this scope.
                         let path = unsafe { &(*bundle).path };
                         if let Some(dir) = bun_paths::dirname(path) {
-                            if !html_entry_dirs.iter().any(|d| bun_core::strings::eql(d, dir)) {
+                            if !html_entry_dirs
+                                .iter()
+                                .any(|d| bun_core::strings::eql(d, dir))
+                            {
                                 html_entry_dirs.push(dir);
                             }
                         }

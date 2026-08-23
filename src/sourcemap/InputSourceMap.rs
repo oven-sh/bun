@@ -12,6 +12,11 @@ use crate::ParsedSourceMap;
 pub struct InputSourceMap {
     pub map: Arc<ParsedSourceMap>,
     pub sources_content: Box<[Box<[u8]>]>,
+    /// Byte offset of the trailing `//# sourceMappingURL=` line in the
+    /// original source (`0` when parsed from raw JSON). The linker strips
+    /// the comment from the emitted slot-0 `sourcesContent` so the inner
+    /// map isn't shipped twice.
+    pub comment_start: usize,
 }
 
 impl InputSourceMap {
@@ -25,8 +30,10 @@ impl InputSourceMap {
     /// for no/non-`data:` URL (external `.map` resolution is the
     /// caller's) or a malformed payload.
     pub fn parse_from_source(source: &[u8]) -> Option<Box<InputSourceMap>> {
-        let url = find_source_mapping_url(source)?;
-        parse_data_url(url)
+        let (comment_start, url) = find_source_mapping_url(source)?;
+        let mut map = parse_data_url(url)?;
+        map.comment_start = comment_start;
+        Some(map)
     }
 }
 
@@ -140,13 +147,14 @@ fn parse_internal(json_bytes: &[u8]) -> Result<Box<InputSourceMap>, InvalidSourc
     Ok(Box::new(InputSourceMap {
         map: Arc::new(psm),
         sources_content: sources_content_slice.into_boxed_slice(),
+        comment_start: 0,
     }))
 }
 
 /// Find the trailing `//# sourceMappingURL=<url>` comment. Anchored to the
 /// final line (spec: the comment MUST be the last line) so a string literal
 /// containing the needle can't hijack the lookup.
-fn find_source_mapping_url(source: &[u8]) -> Option<&[u8]> {
+fn find_source_mapping_url(source: &[u8]) -> Option<(usize, &[u8])> {
     // Trim trailing whitespace/newlines so a file that ends with
     // `\n//# sourceMappingURL=...\n\n` still resolves to its final line.
     let mut end = source.len();
@@ -173,6 +181,7 @@ fn find_source_mapping_url(source: &[u8]) -> Option<&[u8]> {
     if !last_line.starts_with(NEEDLE) {
         return None;
     }
+    let comment_start = last_line_start;
     let mut url = &last_line[NEEDLE.len()..];
     // Trim spaces/tabs/CR around the URL: `= data:...` is spec-invalid but
     // some toolchains emit it.
@@ -190,7 +199,7 @@ fn find_source_mapping_url(source: &[u8]) -> Option<&[u8]> {
             break;
         }
     }
-    Some(url)
+    Some((comment_start, url))
 }
 
 /// Decode `data:application/json[;...;base64],...` payloads. Returns `None`

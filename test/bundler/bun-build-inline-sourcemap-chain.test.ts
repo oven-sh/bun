@@ -61,6 +61,13 @@ describe.concurrent("Bun.build chains inline input sourcemaps", () => {
     expect(authoredIdx).toBeGreaterThanOrEqual(0);
     expect(parsed.sourcesContent[authoredIdx]).toBe(authoredSrc);
     expect(parsed.sourcesContent[authoredIdx]).not.toMatch(/sourceMappingURL/);
+
+    // The intermediate's slot must carry its code but not the inline map
+    // comment: that payload already ships decoded in the inner slots.
+    const intermediateIdx = parsed.sources.findIndex((s: string) => s.endsWith("intermediate.js"));
+    expect(intermediateIdx).toBeGreaterThanOrEqual(0);
+    expect(parsed.sourcesContent[intermediateIdx]).toContain("export const x = 5;");
+    expect(parsed.sourcesContent[intermediateIdx]).not.toContain("sourceMappingURL");
   });
 
   // Non-base64 `data:application/json,<json>` must work too — some

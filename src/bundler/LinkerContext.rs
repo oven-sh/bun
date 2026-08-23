@@ -1113,10 +1113,27 @@ impl<'a> LinkerContext<'a> {
                         b",\n    "
                     };
                     j.push_static(sep);
-                    let content = quoted_source_map_contents[index as usize]
-                        .as_deref()
-                        .unwrap_or(b"null");
-                    j.push_static(if content.is_empty() { b"null" } else { content });
+                    // For a chained file, strip the trailing comment from
+                    // slot 0: the inner map would otherwise ship twice
+                    // (base64 here + decoded in slots 1..N).
+                    let file_contents: &[u8] = &sources[index as usize].contents;
+                    match input_source_maps.and_then(|m| m[index as usize].as_deref()) {
+                        Some(ism)
+                            if ism.comment_start > 0
+                                && ism.comment_start <= file_contents.len() =>
+                        {
+                            let truncated = &file_contents[..ism.comment_start];
+                            let mut quote_buf = MutableString::init(truncated.len() + 2)?;
+                            js_printer::quote_for_json(truncated, &mut quote_buf, false)?;
+                            j.push_owned(quote_buf.to_default_owned());
+                        }
+                        _ => {
+                            let content = quoted_source_map_contents[index as usize]
+                                .as_deref()
+                                .unwrap_or(b"null");
+                            j.push_static(if content.is_empty() { b"null" } else { content });
+                        }
+                    }
                     emitted_contents += 1;
                 }
                 // Slots 1..N: inner sources' contents, if any.

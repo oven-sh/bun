@@ -27,8 +27,6 @@
 
 namespace WebCore {
 
-class JSPerformanceObject;
-
 class JSPerformance : public JSEventTarget {
 public:
     using Base = JSEventTarget;

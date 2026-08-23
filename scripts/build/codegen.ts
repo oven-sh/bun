@@ -662,13 +662,17 @@ function emitHostExports({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "generate-host-exports.ts");
   const output = resolve(cfg.codegenDir, "generated_host_exports.rs");
 
-  // Inputs: every .rs under src/runtime + src/jsc (the scrape scope). The
+  // Inputs: every .rs under src/runtime + src/jsc + src/http_jsc (the scrape scope). The
   // `sources.rust` glob already covers these plus Cargo manifests; filter to
-  // the two crates so unrelated edits (e.g. src/bundler) don't re-run the
+  // those crates so unrelated edits (e.g. src/bundler) don't re-run the
   // scrape. restat=1 + writeIfNotChanged means a no-marker-change edit
   // produces identical output and the cargo step is pruned.
   const slashed = (p: string) => p.replace(/\\/g, "/");
-  const scrapeDirs = [slashed(`${cfg.cwd}/src/runtime/`), slashed(`${cfg.cwd}/src/jsc/`)];
+  const scrapeDirs = [
+    slashed(`${cfg.cwd}/src/runtime/`),
+    slashed(`${cfg.cwd}/src/jsc/`),
+    slashed(`${cfg.cwd}/src/http_jsc/`),
+  ];
   const rsInputs = sources.rust.filter(p => {
     const q = slashed(p);
     return q.endsWith(".rs") && scrapeDirs.some(d => q.includes(d)) && !q.endsWith("generated_host_exports.rs");

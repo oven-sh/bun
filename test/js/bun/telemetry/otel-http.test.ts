@@ -427,7 +427,7 @@ describe("node:http", () => {
         const spans = [];
         Bun.otel.start({ exporters: [{ export: b => spans.push(...b) }], instrumentations: { http: true } });
         process.on("uncaughtException", () => {});
-        const server = http.createServer(() => { throw new Error("boom"); });
+        const server = http.createServer(() => { throw new TypeError("boom"); });
         await new Promise(r => server.listen(0, r));
         const res = await fetch("http://localhost:" + server.address().port + "/boom");
         await res.text();
@@ -435,6 +435,8 @@ describe("node:http", () => {
         await Bun.otel.forceFlush();
         const srv = spans.find(s => s.scope.name === "bun.http.server");
         console.log(res.status, srv.attributes["http.response.status_code"], srv.status.code, Bun.otel.activeSpan());
+        // the synchronous throw is described like an async rejection: exception event + error.type + message
+        console.log(srv.attributes["error.type"], srv.status.message, srv.events[0]?.name, srv.events[0]?.attributes["exception.type"]);
         server.close();
         `,
       ],
@@ -446,7 +448,9 @@ describe("node:http", () => {
     // node:http currently answers 200 (empty body) when a handler throws with an
     // uncaughtException listener installed — pre-existing behaviour on main. What
     // this test pins is that the span is ERROR (2) and matches what was sent.
-    expect(stdout.trim(), stderr).toMatch(/^(200 200|500 500) 2 undefined$/);
+    const [line1, line2] = stdout.trim().split("\n");
+    expect(line1, stderr).toMatch(/^(200 200|500 500) 2 undefined$/);
+    expect(line2).toBe("TypeError boom exception TypeError");
     expect(exitCode, stderr).toBe(0);
   });
 
@@ -694,6 +698,18 @@ describe("client.address", () => {
 });
 
 describe("limits", () => {
+  test("attributeValueLengthLimit applies to leaf spans too (fetch url.full)", async () => {
+    using server = Bun.serve({ port: 0, fetch: () => new Response("x") });
+    Bun.otel.start({
+      exporters: [{ export: (b: any[]) => spans.push(...b) }],
+      instrumentations: { fetch: true },
+      limits: { attributeValueLengthLimit: 20 },
+    });
+    await (await fetch(`http://127.0.0.1:${server.port}/${"p".repeat(64)}`)).text();
+    const [client] = byName(await collect(), "bun.http.client");
+    expect(client.attributes["url.full"].length).toBe(20);
+  });
+
   test("a reconfigured attributeValueLengthLimit applies to requests of an already-seen shape", async () => {
     using server = Bun.serve({ port: 0, fetch: () => new Response("x") });
     const ua = "x".repeat(40);

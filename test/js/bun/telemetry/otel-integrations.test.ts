@@ -33,6 +33,9 @@ describe("bun:sqlite", () => {
     insert.run("a");
     db.query("SELECT * FROM t WHERE id > ?").all(0);
     db.query("select count(*) c from t").get();
+    insert.run("b");
+    // .iterate(): one span for the execution, not one per row fetched
+    expect([...db.query("SELECT name FROM t ORDER BY id").iterate()].length).toBe(2);
     expect(() => db.query("SELECT * FROM missing").all()).toThrow();
     db.close();
     const got = await collect("bun.sqlite");
@@ -41,6 +44,8 @@ describe("bun:sqlite", () => {
       ["INSERT app.db", 2, "INSERT INTO t (name) VALUES (?)", 0],
       ["SELECT app.db", 2, "SELECT * FROM t WHERE id > ?", 0],
       ["SELECT app.db", 2, "select count(*) c from t", 0],
+      ["INSERT app.db", 2, "INSERT INTO t (name) VALUES (?)", 0],
+      ["SELECT app.db", 2, "SELECT name FROM t ORDER BY id", 0],
       ["SELECT app.db", 2, "SELECT * FROM missing", 2],
     ]);
     expect(got[0].attributes).toMatchObject({
@@ -48,10 +53,10 @@ describe("bun:sqlite", () => {
       "db.namespace": "app.db",
       "db.operation.name": "CREATE",
     });
-    expect(got[4].attributes["error.type"]).toBe("SQLITE_ERROR");
-    expect(got[4].attributes["db.response.status_code"]).toBe("SQLITE_ERROR");
-    expect(got[4].events[0]).toMatchObject({ name: "exception", attributes: { "exception.type": "SQLITE_ERROR" } });
-    expect(got[4].status.message).toContain("no such table");
+    expect(got[6].attributes["error.type"]).toBe("SQLITE_ERROR");
+    expect(got[6].attributes["db.response.status_code"]).toBe("SQLITE_ERROR");
+    expect(got[6].events[0]).toMatchObject({ name: "exception", attributes: { "exception.type": "SQLITE_ERROR" } });
+    expect(got[6].status.message).toContain("no such table");
   });
 
   test("nested under the active span and captureDbStatement: false", async () => {

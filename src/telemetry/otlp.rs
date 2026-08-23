@@ -335,6 +335,10 @@ pub fn find_attribute(attrs: &[u8], key: &[u8]) -> Option<(usize, usize)> {
 pub struct SpanWriter<'a> {
     out: &'a mut Vec<u8>,
     nested: Nested<SPAN_LEN_RESERVE>,
+    /// `attributeValueLengthLimit` for string values written through
+    /// `attr*`/`fail` (leaf spans); `usize::MAX` when the caller already
+    /// truncated (pooled, JS-owned and HTTP-server spans).
+    value_limit: usize,
 }
 
 impl<'a> SpanWriter<'a> {
@@ -387,7 +391,11 @@ impl<'a> SpanWriter<'a> {
         n += 6;
         out.extend_from_slice(&b[..n]);
         proto::write_bytes(out, f::NAME, name);
-        SpanWriter { out, nested }
+        SpanWriter {
+            out,
+            nested,
+            value_limit: usize::MAX,
+        }
     }
 
     #[inline]
@@ -402,15 +410,34 @@ impl<'a> SpanWriter<'a> {
         self
     }
 
+    /// Apply `attributeValueLengthLimit` to string values written from here on.
+    #[inline]
+    pub fn limit_values(&mut self, max: u32) -> &mut Self {
+        self.value_limit = max as usize;
+        self
+    }
+
+    #[inline]
+    fn limited<'v>(&self, v: Value<'v>) -> Value<'v> {
+        match v {
+            Value::Str(s) if s.len() > self.value_limit => {
+                Value::Str(truncate_utf8(s, self.value_limit))
+            }
+            v => v,
+        }
+    }
+
     #[inline]
     pub fn attr<'v>(&mut self, key: &str, v: impl Into<Value<'v>>) -> &mut Self {
-        write_key_value(self.out, f::ATTRIBUTES, key.as_bytes(), &v.into());
+        let v = self.limited(v.into());
+        write_key_value(self.out, f::ATTRIBUTES, key.as_bytes(), &v);
         self
     }
 
     #[inline]
     pub fn attr_bytes_key<'v>(&mut self, key: &[u8], v: impl Into<Value<'v>>) -> &mut Self {
-        write_key_value(self.out, f::ATTRIBUTES, key, &v.into());
+        let v = self.limited(v.into());
+        write_key_value(self.out, f::ATTRIBUTES, key, &v);
         self
     }
 
@@ -418,7 +445,8 @@ impl<'a> SpanWriter<'a> {
     #[inline]
     pub fn attr_opt(&mut self, key: &str, v: &[u8]) -> &mut Self {
         if !v.is_empty() {
-            write_key_value(self.out, f::ATTRIBUTES, key.as_bytes(), &Value::Str(v));
+            let v = self.limited(Value::Str(v));
+            write_key_value(self.out, f::ATTRIBUTES, key.as_bytes(), &v);
         }
         self
     }

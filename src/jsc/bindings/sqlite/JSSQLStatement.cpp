@@ -219,11 +219,11 @@ namespace Bun {
 /// off: a single relaxed load in the constructor.
 class SQLiteQuerySpan {
 public:
-    ALWAYS_INLINE SQLiteQuerySpan(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, sqlite3* db)
+    ALWAYS_INLINE SQLiteQuerySpan(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, sqlite3* db, bool record = true)
         : m_scope(scope)
         , m_db(db)
     {
-        if (__atomic_load_n(&Bun__Telemetry__enabled, __ATOMIC_RELAXED) & Bun__Telemetry__SQLITE_MASK) [[unlikely]]
+        if (record && (__atomic_load_n(&Bun__Telemetry__enabled, __ATOMIC_RELAXED) & Bun__Telemetry__SQLITE_MASK)) [[unlikely]]
             begin(globalObject);
     }
 
@@ -2281,9 +2281,14 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionIterate, (JSC::JS
     CHECK_PREPARED
 
     int busy = sqlite3_stmt_busy(stmt);
+    // `.iterate()` calls this once per row: one span for the first step (the
+    // query executing), none for the row fetches that follow.
+    Bun::SQLiteQuerySpan telemetry(lexicalGlobalObject, scope, castedThis->version_db->db, !busy);
+    telemetry.setStatement(stmt);
     if (!busy) {
         int statusCode = sqlite3_reset(stmt);
         if (statusCode != SQLITE_OK) [[unlikely]] {
+            telemetry.setError(statusCode);
             throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, sqlite3_db_handle(stmt)));
             return {};
         }
@@ -2316,6 +2321,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionIterate, (JSC::JS
     if (status == SQLITE_DONE || status == SQLITE_OK || status == SQLITE_ROW) {
         RELEASE_AND_RETURN(scope, JSValue::encode(result));
     } else {
+        telemetry.setError(status);
         throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, sqlite3_db_handle(stmt)));
         sqlite3_reset(stmt);
         return {};

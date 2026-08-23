@@ -1475,6 +1475,17 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         match &http_result {
             HttpResult::Exception(err) | HttpResult::Rejection(err) => {
+                if !node_http_response.is_null() {
+                    // Like the async rejection path: the thrown value is described
+                    // on the request span (exception event, error.type, message).
+                    // SAFETY: see `nhr` above.
+                    let nhr = unsafe { &*node_http_response };
+                    let span = nhr.otel_span.get();
+                    if span.is_some() {
+                        nhr.otel_handler_error.set(true);
+                        let _ = crate::telemetry::span::record_exception(global, span, *err);
+                    }
+                }
                 // SAFETY: `vm` is the process-static VirtualMachine; `&mut`
                 // scoped to this call.
                 let _ = unsafe {

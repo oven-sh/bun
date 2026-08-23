@@ -145,6 +145,7 @@ pub fn end_leaf_at(
     let recorded = with_local(global, |l| {
         batch::record(&mut l.batch, ScopeId::from(i), &mut |buf: &mut Vec<u8>| {
             let mut w = SpanWriter::begin(buf, stub, name, kind, end_ns);
+            w.limit_values(limits().attribute_value_length);
             write(&mut w);
             w.finish();
         });

@@ -334,8 +334,9 @@ void WorkerMessagingProxy::drainMessagesToWorkerGlobalScope(ScriptExecutionConte
     // top-level await) completes, or earlier when the script installs a message handler (HTML's
     // onmessage setter). Dispatching sooner fires the events at nothing and loses the messages, so
     // park them: workerEntryModuleSettled() and the first 'message' listener
-    // (GlobalEventScope::onDidChangeListenerImpl) re-schedule this drain.
-    if (!m_entryModuleSettled && !globalObject.globalEventScope->hasActiveEventListeners(eventNames().messageEvent)) {
+    // (GlobalEventScope::onDidChangeListenerImpl) re-schedule this drain. Any handler counts, so
+    // hasEventListeners, not hasActiveEventListeners: a passive listener still receives the event.
+    if (!m_entryModuleSettled && !globalObject.globalEventScope->hasEventListeners(eventNames().messageEvent)) {
         Locker locker { m_toWorker.lock };
         m_toWorker.drainScheduled = false;
         return;

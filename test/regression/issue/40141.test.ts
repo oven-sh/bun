@@ -82,6 +82,12 @@ test.concurrent(
           worker.terminate();
         }
       };
+      // Failsafe so the failure mode is a diagnostic, not a hang.
+      const failsafe = setTimeout(() => {
+        console.log("TIMEOUT " + JSON.stringify(got));
+        process.exit(1);
+      }, 15_000);
+      failsafe.unref?.();
     `,
     });
     await using proc = Bun.spawn({

@@ -350,10 +350,14 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
     auto* valueToTransfer = constructEmptyArray(globalObject, nullptr, 2);
     RETURN_IF_EXCEPTION(throwScope, {});
     valueToTransfer->putDirectIndex(globalObject, 0, workerData);
+    RETURN_IF_EXCEPTION(throwScope, {});
     auto* environmentData = globalObject->nodeWorkerEnvironmentData();
     // If node:worker_threads has not been imported, environment data will not be set up yet.
     valueToTransfer->putDirectIndex(globalObject, 1, environmentData ? environmentData : jsUndefined());
+    RETURN_IF_EXCEPTION(throwScope, {});
 
+    // Reports a DataCloneError through ExceptionOr, but a getter or toJSON that throws during serialization
+    // leaves that exception on the VM and returns normally.
     ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*lexicalGlobalObject, valueToTransfer, WTF::move(transferList), ports, SerializationForStorage::No, SerializationContext::WorkerPostMessage);
     if (serialized.hasException()) {
         WebCore::propagateException(*lexicalGlobalObject, throwScope, serialized.releaseException());

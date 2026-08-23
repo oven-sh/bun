@@ -102,6 +102,10 @@ pub(crate) struct RuntimeState {
     /// The resolver's PackageManager wake-handler context (module queue + VM
     /// handle); the resolver holds a raw pointer to it. Freed with the state.
     pub(crate) wake_ctx: Option<Box<bun_jsc::async_module::WakeContext>>,
+    /// In-process `Bun.cron()` jobs that `--hot` reload / worker teardown must
+    /// stop; one ref per entry, released by `CronJob::remove_from_list` /
+    /// `clear_all_for_vm`.
+    pub(crate) cron_jobs: Vec<bun_ptr::RefPtr<crate::api::cron::CronJob>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -193,6 +197,17 @@ pub(crate) fn timer_all_mut() -> &'static mut timer::All {
     // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
     // single JS thread so no concurrent `&mut`.
     unsafe { &mut (*state).timer }
+}
+
+#[inline]
+pub(crate) fn cron_jobs_mut() -> Option<&'static mut Vec<bun_ptr::RefPtr<crate::api::cron::CronJob>>>
+{
+    let state = runtime_state();
+    if state.is_null() {
+        return None;
+    }
+    // SAFETY: live boxed per-thread `RuntimeState`; single JS thread.
+    Some(unsafe { &mut (*state).cron_jobs })
 }
 
 #[inline]
@@ -396,6 +411,7 @@ unsafe fn init_runtime_state(
         },
         active_handles: ActiveHandles::default(),
         wake_ctx: None,
+        cron_jobs: Vec::new(),
     }));
     RUNTIME_STATE.with(|c| c.set(state));
 
@@ -679,7 +695,9 @@ unsafe fn deinit_runtime_state(_vm: *mut VirtualMachine, state: OpaqueRuntimeSta
         // SAFETY: per fn contract — `state` is the unique `heap::alloc` result
         // from `init_runtime_state`; the TLS was just cleared so no other live
         // alias exists on this thread.
-        drop(unsafe { bun_core::heap::take(state.cast::<RuntimeState>()) });
+        let state = unsafe { bun_core::heap::take(state.cast::<RuntimeState>()) };
+        debug_assert!(state.cron_jobs.is_empty());
+        drop(state);
     }
     // Free the thread-local AST stores allocated by `Transpiler::init_in_place`
     // (via `Store::create()`). They live in TLS without a Drop, so each worker
@@ -1460,7 +1478,7 @@ mod vm_loader_ctx {
     // (`main`, `blob_loader`) form a transient `&VirtualMachine` scoped to the
     // single call, which never spans the re-entrant path.
     bun_bundler::link_impl_VmLoaderCtx! {
-        Runtime for VirtualMachine => |this| {
+        Runtime for extern VirtualMachine => |this| {
             origin_host() => (*this).origin.host,
             origin_path() => (*this).origin.path,
             loaders() => &raw const (*this).transpiler.options.loaders,

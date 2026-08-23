@@ -9535,7 +9535,7 @@ fn sink_tty_winsize(_fd: Fd) -> Option<bun_core::Winsize> {
 
 // Backs `bun_core::OutputSink[Sys]` — stderr/mkdir/open/QuietWriter.
 bun_core::link_impl_OutputSink! {
-    Sys for () => |_this| {
+    Sys for extern () => |_this| {
         stderr() => bun_core::output::File(Fd::stderr()),
         make_path(cwd, dir) => mkdir_recursive_at(cwd, dir).map_err(|_| bun_core::Error::Unexpected),
         create_file(cwd, path) =>

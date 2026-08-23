@@ -1922,7 +1922,7 @@ where
         }
 
         let server = self.server();
-        FileResponseStream::start(&file_response_stream::StartOptions {
+        FileResponseStream::start(file_response_stream::StartOptions {
             fd,
             auto_close,
             resp,
@@ -1936,10 +1936,12 @@ where
                 None
             },
             idle_timeout: server.config().idle_timeout,
-            ctx: self.as_ctx_ptr().cast::<c_void>(),
-            on_complete: Self::on_file_stream_complete,
-            on_abort: Some(Self::on_file_stream_abort),
-            on_error: Self::on_file_stream_error,
+            owner: file_response_stream::StreamOwner::Ctx {
+                ctx: self.as_ctx_ptr().cast::<c_void>(),
+                on_complete: Self::on_file_stream_complete,
+                on_abort: Some(Self::on_file_stream_abort),
+                on_error: Self::on_file_stream_error,
+            },
         });
     }
 

@@ -29,7 +29,7 @@ pub use js_cell::JsCell;
 // impl moved down to `bun_core::external_shared` (cycle-break for the
 // `bun_string → bun_core` merge); re-exported here unchanged.
 pub use bun_core::external_shared;
-pub use bun_core::{ExternalShared, ExternalSharedDescriptor, ExternalSharedOptional, WTFString};
+pub use bun_core::{ExternalShared, ExternalSharedDescriptor, WTFString};
 // `cast_fn_ptr` and `RawSlice` likewise moved to `bun_core`; re-export.
 pub use bun_core::{RawSlice, cast_fn_ptr};
 
@@ -193,6 +193,33 @@ impl<T: ?Sized, P> BackRef<T, P> {
         // SAFETY: BackRef invariant — pointee outlives holder; non-null,
         // aligned, dereferenceable.
         unsafe { self.0.as_ref() }
+    }
+}
+
+impl<T: AnyRefCounted> BackRef<T, Mut>
+where
+    T::DestructorCtx: Default,
+{
+    /// View the pointee as a [`ThisPtr`] for the refcounted-dispatch entry
+    /// points that take one. Safe under the `BackRef` invariant: the pointee is
+    /// live for as long as this back-reference is held, which is exactly
+    /// [`ThisPtr::new`]'s precondition; `Mut` records that the pointer carries
+    /// the allocation's root provenance (it came from a `ThisPtr`), so the
+    /// callee may release refs through it.
+    #[inline]
+    pub fn this_ptr(&self) -> ThisPtr<T> {
+        // SAFETY: BackRef invariant — pointee is live and non-null.
+        unsafe { ThisPtr::new(self.0.as_ptr()) }
+    }
+}
+
+impl<T> From<ThisPtr<T>> for BackRef<T, Mut> {
+    /// Record a dispatch-time [`ThisPtr`] as a back-reference. The holder takes
+    /// on the `BackRef` invariant: it must drop/clear this before the pointee
+    /// can be freed.
+    #[inline]
+    fn from(p: ThisPtr<T>) -> Self {
+        BackRef(p.0, core::marker::PhantomData)
     }
 }
 

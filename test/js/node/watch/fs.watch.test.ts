@@ -8,7 +8,6 @@ import {
   isDebug,
   isLinux,
   isMacOS,
-  isPosix,
   isWindows,
   tempDir,
   tempDirWithFiles,
@@ -1020,8 +1019,9 @@ describe("fs.watch", () => {
 
   // The initial crawl of a recursive watch runs on the calling thread and used
   // the same recursion, so a tree deep enough for the 8 MiB main stack crashed
-  // fs.watch() itself. 1300 levels of "a/" is 2600 bytes, well under PATH_MAX.
-  test.skipIf(!isPosix)("recursive watch of a tree deeper than the stack allows does the initial crawl", async () => {
+  // fs.watch() itself. 1300 levels of "a/" is 2600 bytes: under Linux's 4096
+  // PATH_MAX, over macOS's 1024 (macOS uses FSEvents and has no crawl).
+  test.skipIf(!isLinux)("recursive watch of a tree deeper than the stack allows does the initial crawl", async () => {
     const depth = 1300;
 
     using dir = tempDir("fs-watch-deep-crawl", {});

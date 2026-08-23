@@ -144,9 +144,15 @@ describe.if(isPosix)("native stack overflow is reported", () => {
   // The one-line ASAN report is enough; symbolizing its frames takes seconds.
   const env = { ...noReportEnv, ASAN_OPTIONS: [noReportEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":") };
 
+  // The CI agents run with `ulimit -s unlimited`, where the main thread's stack
+  // grows until it exhausts memory instead of hitting a guard page. Give the
+  // child the usual 8 MiB so the overflow is a fault, not an OOM kill.
   test.concurrent("on the main thread", async () => {
     await using proc = Bun.spawn({
       cmd: [
+        "/bin/sh",
+        "-c",
+        'ulimit -s 8192; exec "$0" "$@"',
         bunExe(),
         path.join(import.meta.dir, "fixture-crash.js"),
         "stackOverflow",

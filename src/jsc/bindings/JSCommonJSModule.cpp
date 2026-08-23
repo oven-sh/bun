@@ -78,6 +78,7 @@
 #include "wtf/NakedPtr.h"
 #include "wtf/URL.h"
 #include "wtf/text/StringImpl.h"
+#include <wtf/text/StringBuilder.h>
 #include "JSCommonJSExtensions.h"
 
 #include "ErrorCode.h"
@@ -1449,15 +1450,80 @@ void JSCommonJSModule::evaluate(
     evaluateCommonJSModuleOnce(vm, globalObject, this, this->m_dirname.get(), this->m_filename.get());
 }
 
+// Accepts the two shapes of wrapped CommonJS source, the transpiler's
+//   (function(exports, require, module, __filename, __dirname) {\n...\n});\n       ("(function(){})" for an empty .cjs file)
+// and the verbatim output of `bun build --target=bun --format=cjs`
+//   [#!...\n]// @bun [@bytecode ]@bun-cjs\n(function(exports, require, module, __filename, __dirname) {...})\n
+// each optionally followed by "//# sourceMappingURL=" style comment lines. Skipped leading lines become
+// empty lines so the body keeps its line numbers; nullopt for anything else (e.g. a --footer with code).
+static std::optional<WTF::String> commonJSSourceWithoutWrapper(const WTF::String& source)
+{
+    StringView text { source };
+
+    unsigned linesBeforeWrapper = 0;
+    unsigned wrapperStart = 0;
+    while (text.hasInfixStartingAt("//"_s, wrapperStart) || text.hasInfixStartingAt("#!"_s, wrapperStart)) {
+        size_t lineEnd = text.find('\n', wrapperStart);
+        if (lineEnd == WTF::notFound)
+            return std::nullopt;
+        wrapperStart = lineEnd + 1;
+        linesBeforeWrapper++;
+    }
+    if (!text.hasInfixStartingAt("(function("_s, wrapperStart))
+        return std::nullopt;
+    size_t openingBrace = text.find('{', wrapperStart);
+    if (openingBrace == WTF::notFound)
+        return std::nullopt;
+    unsigned bodyStart = openingBrace + 1;
+
+    unsigned end = text.length();
+    unsigned lineStart = 0;
+    while (true) {
+        while (end > bodyStart && isASCIIWhitespace(text[end - 1]))
+            end--;
+        if (end <= bodyStart)
+            return std::nullopt;
+        size_t previousNewline = text.reverseFind('\n', end - 1);
+        lineStart = previousNewline == WTF::notFound ? 0 : previousNewline + 1;
+        if (lineStart < bodyStart || !text.hasInfixStartingAt("//"_s, lineStart))
+            break;
+        end = lineStart;
+    }
+    if (text[end - 1] == ';')
+        end--;
+    if (end < bodyStart + 2 || text[end - 2] != '}' || text[end - 1] != ')')
+        return std::nullopt;
+    unsigned bodyEnd = end - 2;
+    // A "})" ending a line of other code closes something in a --footer, not the wrapper.
+    if (lineStart != bodyEnd && lineStart >= bodyStart)
+        return std::nullopt;
+
+    StringView afterWrapper = text.substring(bodyEnd + 2);
+    if (afterWrapper.startsWith(';'))
+        afterWrapper = afterWrapper.substring(1);
+    if (afterWrapper.containsOnly<isASCIIWhitespace>())
+        afterWrapper = {};
+
+    if (!linesBeforeWrapper && afterWrapper.isEmpty())
+        return source.substring(bodyStart, bodyEnd - bodyStart);
+
+    StringBuilder result;
+    for (unsigned i = 0; i < linesBeforeWrapper; i++)
+        result.append('\n');
+    result.append(text.substring(bodyStart, bodyEnd - bodyStart));
+    result.append(afterWrapper);
+    return result.toString();
+}
+
 void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
     Zig::GlobalObject* globalObject,
     const WTF::String& key,
     JSValue keyJSString,
     ResolvedSource& source)
 {
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (JSValue compileFunction = this->m_overriddenCompile.get()) {
-        auto& vm = globalObject->vm();
-        auto scope = DECLARE_THROW_SCOPE(vm);
         if (!compileFunction) {
             throwTypeError(globalObject, scope, "overridden module._compile is not a function (called from overridden Module._extensions)"_s);
             return;
@@ -1468,32 +1534,22 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
             return;
         }
         WTF::String sourceString = source.source_code.toWTFString(BunString::ZeroCopy);
-        RETURN_IF_EXCEPTION(scope, );
-        if (source.needsDeref) {
-            source.needsDeref = false;
-            source.source_code.deref();
-        }
-        // Remove the wrapper from the source string, since the transpiler has added it.
-        auto trimStart = sourceString.find('\n');
-        WTF::String sourceStringWithoutWrapper;
-        if (trimStart != WTF::notFound) {
-            auto wrapperStart = globalObject->m_moduleWrapperStart;
-            auto wrapperEnd = globalObject->m_moduleWrapperEnd;
-            sourceStringWithoutWrapper = sourceString.substring(trimStart, sourceString.length() - trimStart - 4);
-        } else {
-            sourceStringWithoutWrapper = sourceString;
-        }
-        RETURN_IF_EXCEPTION(scope, );
+        // Module.prototype._compile wraps the body again; a source without a recognizable wrapper is evaluated as-is below.
+        if (auto body = commonJSSourceWithoutWrapper(sourceString)) {
+            if (source.needsDeref) {
+                source.needsDeref = false;
+                source.source_code.deref();
+            }
 
-        // _compile(source, filename)
-        MarkedArgumentBuffer arguments;
-        arguments.append(jsString(vm, sourceStringWithoutWrapper));
-        arguments.append(keyJSString);
-        JSC::profiledCall(globalObject, ProfilingReason::API, compileFunction, callData, this, arguments);
-        RETURN_IF_EXCEPTION(scope, );
-        return;
+            MarkedArgumentBuffer arguments;
+            arguments.append(jsString(vm, WTF::move(*body)));
+            arguments.append(keyJSString);
+            JSC::profiledCall(globalObject, ProfilingReason::API, compileFunction, callData, this, arguments);
+            RETURN_IF_EXCEPTION(scope, );
+            return;
+        }
     }
-    this->evaluate(globalObject, key, source, false);
+    RELEASE_AND_RETURN(scope, this->evaluate(globalObject, key, source, false));
 }
 
 static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL);

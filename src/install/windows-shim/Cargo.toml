@@ -5,8 +5,8 @@
 # The same source file (`bun_shim_impl.rs`) is compiled *twice*:
 #
 #   1. As a `mod` of `bun_install` (no `shim_standalone` feature) — exposes
-#      `try_startup_from_bun_js` / `read_without_launch` so bun.exe can run
-#      the launcher logic in-process and skip a CreateProcessW round-trip.
+#      `try_startup_from_bun_js` so bun.exe can run the launcher logic
+#      in-process and skip a CreateProcessW round-trip.
 #   2. As this crate's `[[bin]]` (with `shim_standalone`) — produces the tiny
 #      `bun_shim_impl.exe` that `bun_install` then `include_bytes!`s.
 #

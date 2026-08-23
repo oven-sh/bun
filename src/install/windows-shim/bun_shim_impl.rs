@@ -45,7 +45,6 @@
 
 use core::ffi::c_void;
 use core::fmt::Write as _;
-use core::marker::ConstParamTy;
 use core::mem::{MaybeUninit, size_of};
 
 // Standalone PE: depend ONLY on `bun_windows_sys` (leaf, no native C, no
@@ -435,37 +434,8 @@ const NT_OBJECT_PREFIX: [u16; 4] = ['\\' as u16, '?' as u16, '?' as u16, '\\' as
 // "The maximum length of this string is 32,767 characters, including the Unicode terminating null character."
 const BUF2_U16_LEN: usize = 32767 + 1;
 
-#[derive(Clone, Copy, PartialEq, Eq, ConstParamTy)]
-pub(crate) enum LauncherMode {
-    Launch,
-    ReadWithoutLaunch,
-}
-
-impl LauncherMode {
-    #[cold]
-    #[inline(never)]
-    fn fail(self, reason: FailReason) -> LauncherRet {
-        match self {
-            LauncherMode::Launch => {
-                fail_and_exit_with_reason(reason);
-            }
-            LauncherMode::ReadWithoutLaunch => {
-                LauncherRet::Read(ReadWithoutLaunchResult::Err(reason))
-            }
-        }
-    }
-}
-
-/// Unified return type for `launcher`. See note on `LauncherMode`.
-enum LauncherRet {
-    /// `.launch` in non-standalone returned (validation fallback path).
-    LaunchFellThrough,
-    /// `.read_without_launch` result.
-    Read(ReadWithoutLaunchResult),
-}
-
-/// Abstraction over `()` (standalone), `FromBunRunContext`, and `FromBunShellContext`
-/// for the `bun_ctx` parameter of `launcher`.
+/// Abstraction over `()` (standalone) and `FromBunRunContext` for the
+/// `bun_ctx` parameter of `launcher`.
 trait BunCtx {
     fn base_path(&self) -> *mut u16;
     fn base_path_len(&self) -> usize;
@@ -474,11 +444,6 @@ trait BunCtx {
     fn force_use_bun(&self) -> bool;
     fn direct_launch_with_bun_js(&self, wpath: &mut [u16]);
     fn environment(&self) -> Option<*const u16>;
-    /// Caller-provided output buffer of `BUF2_U16_LEN` u16s for
-    /// `LauncherMode::ReadWithoutLaunch`. `None` for contexts that launch in-place.
-    fn out_buf(&self) -> Option<*mut u16> {
-        None
-    }
 }
 
 impl BunCtx for () {
@@ -505,8 +470,10 @@ impl BunCtx for () {
     }
 }
 
+/// Returns only in the non-standalone build, when shim validation fails and
+/// the caller should fall back to spawning the shim executable.
 #[allow(clippy::too_many_lines)]
-fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet {
+fn launcher<Ctx: BunCtx>(bun_ctx: Ctx) {
     // peb! w.teb is a couple instructions of inline asm
     let teb: *mut w::TEB = w::teb();
     // SAFETY: TEB/PEB are valid for the process lifetime.
@@ -678,9 +645,9 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                 debug!("error opening: {}", rc.0);
             }
             if rc == NTSTATUS::OBJECT_NAME_NOT_FOUND {
-                return LauncherMode::fail(MODE, FailReason::ShimNotFound);
+                fail_and_exit_with_reason(FailReason::ShimNotFound);
             }
-            return LauncherMode::fail(MODE, FailReason::CouldNotOpenShim);
+            fail_and_exit_with_reason(FailReason::CouldNotOpenShim);
         }
     } else {
         metadata_handle = bun_ctx.handle();
@@ -806,9 +773,8 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             left -= 1;
             if left == 0 {
                 // Ownership contract: launcher consumes `metadata_handle` (see NtClose below).
-                // ReadWithoutLaunch returns to a live process, so close on error too.
                 let _ = nt::NtClose(metadata_handle);
-                return LauncherMode::fail(MODE, FailReason::NoDirname);
+                fail_and_exit_with_reason(FailReason::NoDirname);
             }
             ptr = unsafe { ptr.sub(1) };
             if DBG {
@@ -827,7 +793,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             left -= 1;
             if left == 0 {
                 let _ = nt::NtClose(metadata_handle);
-                return LauncherMode::fail(MODE, FailReason::NoDirname);
+                fail_and_exit_with_reason(FailReason::NoDirname);
             }
             ptr = unsafe { ptr.sub(1) };
             if DBG {
@@ -895,7 +861,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                 debug!("error reading: {}", rc.0);
             }
             let _ = nt::NtClose(metadata_handle);
-            return LauncherMode::fail(MODE, FailReason::CouldNotReadShim);
+            fail_and_exit_with_reason(FailReason::CouldNotReadShim);
         }
     };
 
@@ -945,11 +911,11 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     if !flags.is_valid() {
         // We want to return control flow back into bun.exe's main code, so that it can fall
         // back to the slow path. For more explanation, see the comment on top of `tryStartupFromBunJS`.
-        if !IS_STANDALONE && MODE == LauncherMode::Launch {
-            return LauncherRet::LaunchFellThrough;
+        if !IS_STANDALONE {
+            return;
         }
 
-        return LauncherMode::fail(MODE, FailReason::InvalidShimValidation);
+        fail_and_exit_with_reason(FailReason::InvalidShimValidation);
     }
 
     let mut spawn_command_line: *mut u16 = if !flags.has_shebang() {
@@ -987,7 +953,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                 + 2 /* "\x00".len */
                 > BUF1_LEN * 2
             {
-                return LauncherMode::fail(MODE, FailReason::InvalidShimBounds);
+                fail_and_exit_with_reason(FailReason::InvalidShimBounds);
             }
             if !user_arguments_u8.is_empty() {
                 // SAFETY: argument_start_ptr is within buf1 with room for user_arguments_u8.
@@ -1069,17 +1035,10 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                     debug!("read_len: {}", read_len);
                 }
 
-                return LauncherMode::fail(MODE, FailReason::InvalidShimBounds);
+                fail_and_exit_with_reason(FailReason::InvalidShimBounds);
             }
 
-            // Gated on `Launch`: the `.read_without_launch` instantiation must never reach
-            // `bun_ctx.direct_launch_with_bun_js` (FromBunShellContext's impl is a runtime
-            // `unreachable!()`), so guard explicitly to preserve the invariant.
-            if MODE == LauncherMode::Launch
-                && !IS_STANDALONE
-                && flags.is_node_or_bun()
-                && bun_ctx.force_use_bun()
-            {
+            if !IS_STANDALONE && flags.is_node_or_bun() && bun_ctx.force_use_bun() {
                 // If we are running `bun --bun ...` and the script is already set to run
                 // in node.exe or bun.exe, we can just directly launch it by calling Run.boot
                 //
@@ -1106,7 +1065,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                     '"' as u16
                 );
                 bun_ctx.direct_launch_with_bun_js(launch_slice);
-                return LauncherMode::fail(MODE, FailReason::CouldNotDirectLaunch);
+                fail_and_exit_with_reason(FailReason::CouldNotDirectLaunch);
             }
 
             // Copy the shebang bin path
@@ -1136,7 +1095,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                 + 2 /* "\x00".len */
                 > BUF2_U16_LEN * 2
             {
-                return LauncherMode::fail(MODE, FailReason::InvalidShimBounds);
+                fail_and_exit_with_reason(FailReason::InvalidShimBounds);
             }
 
             // SAFETY: copying shebang_arg_len_u8 bytes from buf1 into buf2; both in bounds
@@ -1186,10 +1145,10 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             // The filename must end with a quote character as per the bunx file format.
             // If it doesn't, the file is corrupt - fall back to the slow path in non-standalone mode.
             if filename_u16.is_empty() || filename_u16[filename_u16.len() - 1] != '"' as u16 {
-                if !IS_STANDALONE && MODE == LauncherMode::Launch {
-                    return LauncherRet::LaunchFellThrough;
+                if !IS_STANDALONE {
+                    return;
                 }
-                return LauncherMode::fail(MODE, FailReason::InvalidShimValidation);
+                fail_and_exit_with_reason(FailReason::InvalidShimValidation);
             }
 
             // SAFETY: buf2 has room for shebang_arg_len_u8 + 2 + length_of_filename_u8 bytes.
@@ -1251,32 +1210,10 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         }
     };
 
-    if MODE == LauncherMode::ReadWithoutLaunch {
-        // Early-return the assembled command line to the caller instead of spawning.
-        // The spawn path must be dead for `ReadWithoutLaunch`
-        // (FromBunShellContext's `environment` impl is `unreachable!()`), hence
-        // the explicit branch-out here.
-        //
-        // Copy into the caller-provided buffer so the returned pointer outlives this stack
-        // frame (covers both the buf1-backed no-shebang path and the buf2-backed shebang path).
-        // SAFETY: spawn_command_line is NUL-terminated (terminator written above).
-        let len = unsafe { bun_core::ffi::wstr_units(spawn_command_line) }.len();
-        let dst = bun_ctx
-            .out_buf()
-            .expect("ReadWithoutLaunch requires BunCtx::out_buf() (would otherwise return a dangling stack pointer)");
-        debug_assert!(len + 1 <= BUF2_U16_LEN);
-        // SAFETY: dst points to BUF2_U16_LEN u16s; src is valid for len+1 u16s.
-        unsafe { core::ptr::copy(spawn_command_line, dst, len + 1) };
-        return LauncherRet::Read(ReadWithoutLaunchResult::CommandLine(dst, len));
-    }
-
     #[cfg(not(feature = "shim_standalone"))]
-    if MODE == LauncherMode::Launch {
+    {
         // Prepare stdio for the child process, as after this we are going to *immediatly* exit
         // it is likely that the c-runtime's atexit will not be called as we end the process ourselves.
-        //
-        // Gated on `Launch` so `ReadWithoutLaunch` does not irreversibly mutate the
-        // parent process's stdio state.
         bun_core::output::source::stdio::restore();
         // Declared locally as `safe fn` (the `bun_sys::windows` re-export
         // forwards `bun_windows_sys::externs::windows_enable_stdio_inheritance`,
@@ -1466,10 +1403,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                                             .starts_with(bun_core::w!("bun "))
                                         );
                                     }
-                                    return LauncherMode::fail(
-                                        MODE,
-                                        FailReason::InterpreterNotFoundBun,
-                                    );
+                                    fail_and_exit_with_reason(FailReason::InterpreterNotFoundBun);
                                 }
                             }
 
@@ -1481,10 +1415,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                                             .starts_with(bun_core::w!("bun "))
                                     );
                                 }
-                                return LauncherMode::fail(
-                                    MODE,
-                                    FailReason::InterpreterNotFoundBun,
-                                );
+                                fail_and_exit_with_reason(FailReason::InterpreterNotFoundBun);
                             }
 
                             // This UTF16 -> UTF-8 conversion is intentionally very lossy, and assuming that ascii text is provided.
@@ -1505,9 +1436,9 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                             // Safe atomic store of the length; the pointer half is implicit
                             // (always `FAILURE_REASON_DATA.as_ptr()` — see the static's doc).
                             FAILURE_REASON_LEN.store(len, core::sync::atomic::Ordering::Relaxed);
-                            return LauncherMode::fail(MODE, FailReason::InterpreterNotFound);
+                            fail_and_exit_with_reason(FailReason::InterpreterNotFound);
                         } else {
-                            return LauncherMode::fail(MODE, FailReason::BinNotFound);
+                            fail_and_exit_with_reason(FailReason::BinNotFound);
                         }
                     }
 
@@ -1518,10 +1449,10 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                     // https://learn.microsoft.com/en-us/windows/security/application-security/application-control/user-account-control/how-it-works#user
                     // https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shellexecutew
                     w::Win32Error::ELEVATION_REQUIRED => {
-                        return LauncherMode::fail(MODE, FailReason::ElevationRequired);
+                        fail_and_exit_with_reason(FailReason::ElevationRequired);
                     }
 
-                    _ => return LauncherMode::fail(MODE, FailReason::CreateProcessFailed),
+                    _ => fail_and_exit_with_reason(FailReason::CreateProcessFailed),
                 };
             }
 
@@ -1641,95 +1572,7 @@ pub fn try_startup_from_bun_js(context: FromBunRunContext) {
     debug_assert!(!context.base_path_slice().starts_with(&NT_OBJECT_PREFIX));
     const _: () = assert!(!IS_STANDALONE);
     const _: () = assert!(bun_core::feature_flags::WINDOWS_BUNX_FAST_PATH);
-    match launcher::<{ LauncherMode::Launch }, _>(&context) {
-        LauncherRet::LaunchFellThrough => {}
-        LauncherRet::Read(_) => unreachable!(),
-    }
-}
-
-pub struct FromBunShellContext {
-    /// Path like 'C:\Users\chloe\project\node_modules\.bin\foo.bunx'
-    pub(crate) base_path: *mut u16,
-    pub(crate) base_path_len: usize,
-    /// Command line arguments which does NOT include the bin name:
-    /// like '--port 3000 --config ./config.json'
-    pub(crate) arguments: *mut u16,
-    pub(crate) arguments_len: usize,
-    /// Handle to the successfully opened metadata file
-    pub(crate) handle: HANDLE,
-    /// Was --bun passed?
-    pub(crate) force_use_bun: bool,
-    /// A pointer to memory needed to store the command line.
-    /// Kept as a raw pointer so the
-    /// `BunCtx` impl (which only sees `&Self`) can hand out a writable pointer without
-    /// laundering provenance through a shared reborrow of `&mut [_; N]`.
-    pub(crate) buf: *mut FromBunShellContextBuf,
-}
-
-pub(crate) type FromBunShellContextBuf = [u16; BUF2_U16_LEN];
-
-impl FromBunShellContext {
-    /// View `base_path[0..base_path_len]` as a slice. Centralises the (ptr, len)
-    /// → slice reconstruction so callers don't open-code `from_raw_parts`.
-    #[inline]
-    fn base_path_slice(&self) -> &[u16] {
-        // SAFETY: caller of `read_without_launch` sets `base_path`/`base_path_len`
-        // from a live `[u16]` buffer it owns for the duration of the call.
-        // Borrow tied to `&self`.
-        unsafe { bun_core::ffi::slice(self.base_path, self.base_path_len) }
-    }
-}
-
-impl BunCtx for &FromBunShellContext {
-    fn base_path(&self) -> *mut u16 {
-        self.base_path
-    }
-    fn base_path_len(&self) -> usize {
-        self.base_path_len
-    }
-    fn arguments(&self) -> &[u16] {
-        // SAFETY: caller guarantees arguments is valid for arguments_len.
-        unsafe { bun_core::ffi::slice(self.arguments, self.arguments_len) }
-    }
-    fn handle(&self) -> HANDLE {
-        self.handle
-    }
-    fn force_use_bun(&self) -> bool {
-        self.force_use_bun
-    }
-    fn direct_launch_with_bun_js(&self, _: &mut [u16]) {
-        unreachable!()
-    }
-    fn environment(&self) -> Option<*const u16> {
-        unreachable!()
-    }
-    fn out_buf(&self) -> Option<*mut u16> {
-        Some(self.buf.cast::<u16>())
-    }
-}
-
-pub enum ReadWithoutLaunchResult {
-    /// enum which has a predefined custom formatter
-    Err(FailReason),
-    CommandLine(*const u16, usize),
-}
-
-/// Given the path and handle to a .bunx file, do everything needed to execute it,
-/// *except* for spawning it. This is used by the Bun shell to skip spawning the
-/// bun_shim_impl.exe executable. The returned command line is fed into the shell's
-/// method for launching a process.
-///
-/// The cost of spawning is about 5-12ms, and the unicode conversions are way
-/// faster than that, so this is a huge win.
-#[cfg(not(feature = "shim_standalone"))]
-pub fn read_without_launch(context: FromBunShellContext) -> ReadWithoutLaunchResult {
-    debug_assert!(!context.base_path_slice().starts_with(&NT_OBJECT_PREFIX));
-    const _: () = assert!(!IS_STANDALONE);
-    const _: () = assert!(bun_core::feature_flags::WINDOWS_BUNX_FAST_PATH);
-    match launcher::<{ LauncherMode::ReadWithoutLaunch }, _>(&context) {
-        LauncherRet::Read(r) => r,
-        LauncherRet::LaunchFellThrough => unreachable!(),
-    }
+    launcher(&context);
 }
 
 /// Main function for `bun_shim_impl.exe`
@@ -1740,7 +1583,7 @@ pub(crate) fn main() -> ! {
     // The standalone crate enforces the single-threaded, CRT-free build shape
     // structurally via `#![no_std]` / `#![no_main]` and its link configuration
     // (see `main.rs` and `scripts/build/rust.ts`).
-    launcher::<{ LauncherMode::Launch }, _>(());
+    launcher(());
     unreachable!();
 }
 

@@ -339,19 +339,6 @@ pub fn host_fn_this<T, R: IntoHostFnReturn>(
     host_fn_result(global, || f(this, global, callframe))
 }
 
-/// Prototype method (passThis): `fn(&mut self, &JSGlobalObject, &CallFrame, JSValue) -> R`.
-#[track_caller]
-#[inline]
-pub fn host_fn_this_value<T, R: IntoHostFnReturn>(
-    this: &mut T,
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
-    js_this: JSValue,
-    f: impl FnOnce(&mut T, &JSGlobalObject, &CallFrame, JSValue) -> R,
-) -> JSValue {
-    host_fn_result(global, || f(this, global, callframe, js_this))
-}
-
 /// Prototype getter: `fn(&mut self, &JSGlobalObject) -> R`.
 #[track_caller]
 #[inline]

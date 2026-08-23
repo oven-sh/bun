@@ -263,6 +263,8 @@ declare function $resolveSync(
   isESM?: boolean,
   isUserRequireResolve?: boolean,
   paths?: string[],
+  parentModule?: JSCommonJSModule,
+  resolveFilenameOptions?: unknown,
 ): string;
 declare function $self(): TODO;
 declare function $size(): TODO;

@@ -4,17 +4,12 @@
 test/bake/dev/production.test.ts
 test/cli/install/bun-install-lifecycle-scripts.test.ts
 test/integration/vite-build/vite-build.test.ts
-test/js/bun/resolve/import-meta.test.js
-test/js/bun/resolve/resolve.test.ts
 test/js/bun/test/parallel/test-integration-rspack.ts
 test/js/bun/util/BunObject.test.ts
 test/js/bun/util/fuzzy-wuzzy.test.ts
-test/js/node/module/module-resolve-filename-paths.test.js
 test/js/node/module/node-module-module.test.js
 test/js/node/test/parallel/test-vm-module-referrer-realm.mjs
 test/js/third_party/astro/astro-post.test.js
-test/js/web/websocket/websocket.test.js
-test/regression/issue/ctrl-c.test.ts
 
 # hit a debug assert
 test/bundler/bundler_compile.test.ts
@@ -79,13 +74,9 @@ test/napi/node-napi-tests/test/node-api/test_env_teardown_gc/do.test.ts
 test/napi/node-napi-tests/test/node-api/test_general/do.test.ts
 
 # normalizeCryptoAlgorithmParameters
-test/js/bun/crypto/wpt-webcrypto.generateKey.test.ts
 test/js/deno/crypto/webcrypto.test.ts
 test/js/node/crypto/node-crypto.test.js
-test/js/node/test/parallel/test-crypto-webcrypto-aes-decrypt-tag-too-small.js
-test/js/node/test/parallel/test-webcrypto-encrypt-decrypt-aes.js
 test/js/third_party/pg/pg.test.ts
-test/js/web/crypto/web-crypto.test.ts
 vendor/elysia/test/aot/response.test.ts
 vendor/elysia/test/cookie/response.test.ts
 vendor/elysia/test/cookie/signature.test.ts
@@ -95,23 +86,13 @@ vendor/elysia/test/validator/body.test.ts
 vendor/elysia/test/ws/message.test.ts
 
 
-# TODO: WebCore fixes
-test/js/web/urlpattern/urlpattern.test.ts
-
 # TODO: jsc
 test/js/bun/jsonl/jsonl-parse.test.ts
-test/regression/issue/isArray-proxy-crash.test.ts
 
 # Third-party SDK with unchecked exception path in JSArray pushInline
 test/js/third_party/@azure/service-bus/azure-service-bus.test.ts
 
-# The napi addon fixture's Init() calls napi_create_function then
-# napi_set_named_property without checking the status in between, like most
-# real addons. Under validateExceptionChecks every scope simulates a throw, so
-# the second call trips the assertion at the napi boundary.
-test/bundler/native-plugin.test.ts
-# `bun run build` in the react templates loads bun-plugin-tailwind's napi
-# addon, same Init() pattern.
+# `bun run build` in the react templates loads bun-plugin-tailwind's napi addon.
 test/cli/init/init.test.ts
 
 # JSC JSONP fast path (Interpreter::executeProgram doGet lambda) does an

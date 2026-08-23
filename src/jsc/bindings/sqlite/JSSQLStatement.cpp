@@ -32,11 +32,7 @@
 #include "GCDefferalContext.h"
 
 #include <JavaScriptCore/DOMJITAbstractHeap.h>
-#include "DOMJITIDLConvert.h"
-#include "DOMJITIDLType.h"
 #include "JSBuffer.h"
-#include "DOMJITIDLTypeFilter.h"
-#include "DOMJITHelpers.h"
 #include <JavaScriptCore/DFGAbstractHeap.h>
 #include "wtf/SIMDUTF.h"
 #include <JavaScriptCore/ObjectPrototype.h>

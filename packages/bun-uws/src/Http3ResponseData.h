@@ -77,7 +77,6 @@ struct Http3ResponseData {
     uint32_t wtCloseCode = 0;
 
     uint64_t offset = 0;
-    uint64_t totalSize = 0;
     uint8_t state = 0;
 
     void appendHeader(const char *name, unsigned nlen, const char *value, unsigned vlen) {
@@ -111,7 +110,6 @@ struct Http3ResponseData {
         wtCloseReason.shrink(0);
         wtCloseCode = 0;
         offset = 0;
-        totalSize = 0;
         state = HTTP_RESPONSE_PENDING;
     }
 };

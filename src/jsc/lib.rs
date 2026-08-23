@@ -772,7 +772,7 @@ pub use abort_signal::{AbortSignal, AbortSignalRef};
 // re-exported here so `crate::VM` and `crate::vm::VM` name the same nominal
 // type (and likewise for `JSGlobalObject`). Both structs carry `UnsafeCell`
 // so `&T → *mut T` for FFI is sound under Stacked Borrows.
-pub use self::js_global_object::{GlobalRef, JSGlobalObject};
+pub use self::js_global_object::{GlobalRef, JSGlobalObject, MicrotaskCallback};
 pub use self::vm::VM;
 
 /// Options for `JSGlobalObject::validate_integer_range` / `validate_bigint_range`.
@@ -1020,8 +1020,6 @@ unsafe extern "C" {
     ) -> JSValue;
     safe fn ZigString__toValueGC(this: &bun_core::ZigString, global: &JSGlobalObject) -> JSValue;
     // ZigString__toExternalValue: use the generated `cpp::` re-export (canonical signature).
-    safe fn ZigString__toJSONObject(this: &bun_core::ZigString, global: &JSGlobalObject)
-    -> JSValue;
     // safe: `ZigString`/`JSGlobalObject` are `#[repr(C)]`/opaque-ZST handles (`&`
     // is ABI-identical to non-null `*const`); `ctx` is an opaque round-trip
     // pointer C++ stores into the external string's finalizer slot and forwards
@@ -1476,7 +1474,7 @@ pub trait ZigStringJsc: Sized {
     /// buffer to JSC's external-string finalizer.
     fn to_external_value(&self, global: &JSGlobalObject) -> JSValue;
     /// `ZigString.toJSONObject` — `JSON.parse` over the bytes.
-    fn to_json_object(&self, global: &JSGlobalObject) -> JSValue;
+    fn to_json_object(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
     /// `ZigString.external` — like `to_external_value` but with a caller-supplied
     /// `ctx` + finalizer callback (used to keep a `Blob::Store` ref alive).
     ///
@@ -1551,8 +1549,9 @@ impl ZigStringJsc for bun_core::ZigString {
         unsafe { cpp::ZigString__toExternalValue(self, global.as_ptr()) }
     }
     #[inline]
-    fn to_json_object(&self, global: &JSGlobalObject) -> JSValue {
-        ZigString__toJSONObject(self, global)
+    fn to_json_object(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        // SAFETY: `self` is a live `&ZigString` for the duration of the call.
+        unsafe { crate::cpp::ZigString__toJSONObject(self, global) }
     }
     #[inline]
     unsafe fn external(

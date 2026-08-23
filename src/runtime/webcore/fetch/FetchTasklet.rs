@@ -1150,7 +1150,6 @@ impl FetchTasklet {
 
         let tracker = self.tracker;
         tracker.will_dispatch(&global_this);
-        // defer block:
         let dispatch_cleanup = |_this: &mut FetchTasklet| {
             bun_output::scoped_log!(FetchTasklet, "onProgressUpdate: promise_value is not null");
             tracker.did_dispatch(&global_this);

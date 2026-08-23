@@ -285,6 +285,9 @@ declare module "bun" {
      * - if `nodebuffer`, binary data is returned as `Buffer` objects. **(default)**
      * - if `arraybuffer`, binary data is returned as `ArrayBuffer` objects.
      * - if `uint8array`, binary data is returned as `Uint8Array` objects.
+     * - if `blob`, binary data is returned as `Blob` objects.
+     *
+     * This applies to binary messages and to the payloads of pings and pongs.
      *
      * @example
      * ```ts
@@ -295,7 +298,7 @@ declare module "bun" {
      * });
      * ```
      */
-    binaryType?: "nodebuffer" | "arraybuffer" | "uint8array";
+    binaryType?: "nodebuffer" | "arraybuffer" | "uint8array" | "blob";
 
     /**
      * Custom data you can assign to a client. It can be read and written at any time.
@@ -411,6 +414,9 @@ declare module "bun" {
      * - if `nodebuffer`, then the message is a `Buffer`.
      * - if `arraybuffer`, then the message is an `ArrayBuffer`.
      * - if `uint8array`, then the message is a `Uint8Array`.
+     * - if `blob`, then the message is a `Blob`.
+     *
+     * The declared type of `message` is the one of the default `binaryType`.
      *
      * @param ws The websocket that sent the message
      * @param message The message received
@@ -444,6 +450,9 @@ declare module "bun" {
     /**
      * Called when a ping is received.
      *
+     * Like a binary message, `data` has the type that `binaryType` selects.
+     * The declared type is the one of the default `binaryType`.
+     *
      * @param ws The websocket that received the ping
      * @param data The data sent with the ping
      */
@@ -451,6 +460,9 @@ declare module "bun" {
 
     /**
      * Called when a pong is received.
+     *
+     * Like a binary message, `data` has the type that `binaryType` selects.
+     * The declared type is the one of the default `binaryType`.
      *
      * @param ws The websocket that received the pong
      * @param data The data sent with the pong

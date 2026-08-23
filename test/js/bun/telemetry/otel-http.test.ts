@@ -637,6 +637,30 @@ describe("baggage propagation", () => {
   });
 });
 
+describe("upgrade", () => {
+  test("a rejected upgrade (unsupported Sec-WebSocket-Version → 426) records the status on the request span", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req, server) {
+        if (server.upgrade(req)) return;
+        return new Response("no", { status: 400 });
+      },
+      websocket: { message() {} },
+    });
+    const res = await fetch(server.url, {
+      headers: {
+        Upgrade: "websocket",
+        Connection: "Upgrade",
+        "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
+        "Sec-WebSocket-Version": "12",
+      },
+    });
+    expect(res.status).toBe(426);
+    const [srv] = byName(await collect(), "bun.http.server");
+    expect(srv.attributes["http.response.status_code"]).toBe(426);
+  });
+});
+
 describe("Bun.otel.set", () => {
   test("Bun.otel.set annotates the active request span without materializing a Span", async () => {
     using server = Bun.serve({

@@ -1993,11 +1993,10 @@ where
         // answered with an HTTP error and a |Sec-WebSocket-Version| header
         // listing the versions the server understands.
         if sec_websocket_version.slice() != b"13" {
-            resp.write_status(b"426 Upgrade Required");
-            resp.write_header(b"Sec-WebSocket-Version", b"13");
             // SAFETY: upgrader_ptr is live (ref_() above)
             let upgrader = unsafe { &*upgrader_ptr };
-            upgrader.flags.set_has_written_status(true);
+            upgrader.write_status(426);
+            resp.write_header(b"Sec-WebSocket-Version", b"13");
             upgrader.end_without_body(true);
             return Ok(JSValue::FALSE);
         }

@@ -1,8 +1,8 @@
+import { ROOT_CONTEXT as API_ROOT, context as apiContext, propagation as apiPropagation } from "@opentelemetry/api";
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import http from "node:http";
-import { context as apiContext, propagation as apiPropagation, ROOT_CONTEXT as API_ROOT } from "@opentelemetry/api";
 
 const spans: any[] = [];
 function restore() {

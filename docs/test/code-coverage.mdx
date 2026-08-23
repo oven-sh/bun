@@ -68,13 +68,13 @@ coverageThreshold = 0.9
 coverageThreshold = { lines = 0.9, functions = 0.9 }
 ```
 
-Setting either key makes `bun test --coverage` exit with a non-zero exit code when line or function coverage is below its threshold; a key you omit keeps the `0.9` default. Bun accepts a `statements` key but does not currently enforce it. Outside `--parallel`, the check only runs when the `text` reporter is enabled (the default); a run with only `--coverage-reporter=lcov` currently exits 0 regardless of the threshold.
+Setting either key makes `bun test --coverage` exit with a non-zero exit code when line or function coverage is below its threshold; a key you omit keeps the `0.9` default. Bun accepts a `statements` key but does not currently enforce it.
 
 ## Coverage Reporters
 
 By default, Bun prints coverage reports to the console.
 
-To save a report for CI or other tools, pass `--coverage-reporter=lcov` on the command line or set `coverageReporter` in `bunfig.toml`.
+To save a report for CI or other tools, pass `--coverage-reporter=lcov` or `--coverage-reporter=cobertura` on the command line, or set `coverageReporter` in `bunfig.toml`.
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
@@ -84,10 +84,11 @@ coverageDir = "path/to/somewhere"    # default "coverage"
 
 ### Available Reporters
 
-| Reporter | Description                                          |
-| -------- | ---------------------------------------------------- |
-| `text`   | Prints a text summary of the coverage to the console |
-| `lcov`   | Save coverage in lcov format                         |
+| Reporter    | Description                                          |
+| ----------- | ---------------------------------------------------- |
+| `text`      | Prints a text summary of the coverage to the console |
+| `lcov`      | Save coverage in lcov format                         |
+| `cobertura` | Save coverage in Cobertura XML format                |
 
 ### LCOV Coverage Reporter
 
@@ -106,7 +107,7 @@ bun test --coverage --coverage-reporter=lcov
 Tools and services that read the LCOV format include:
 
 - **Code editors**: VS Code extensions can show coverage inline
-- **CI/CD services**: GitHub Actions, GitLab CI, CircleCI
+- **CI/CD services**: GitHub Actions, CircleCI
 - **Coverage services**: Codecov, Coveralls
 - **IDEs**: WebStorm, IntelliJ IDEA
 
@@ -128,6 +129,20 @@ jobs:
         uses: codecov/codecov-action@v3
         with:
           file: ./coverage/lcov.info
+```
+
+### Cobertura Coverage Reporter
+
+The cobertura reporter writes a `cobertura.xml` file to the coverage directory. GitLab coverage visualization reads this format.
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+coverageReporter = "cobertura"
+```
+
+```bash terminal icon="terminal"
+# Or via CLI
+bun test --coverage --coverage-reporter=cobertura
 ```
 
 ## Excluding Files from Coverage
@@ -276,16 +291,20 @@ jobs:
 
 ### GitLab CI Example
 
+GitLab's coverage visualization reads Cobertura XML. Pass `--coverage-reporter=cobertura` and publish `coverage/cobertura.xml`.
+
 ```yaml title=".gitlab-ci.yml"
 test:coverage:
   stage: test
   script:
     - bun install
-    - bun test --coverage --coverage-reporter=text --coverage-reporter=lcov
+    - bun test --coverage --coverage-reporter=text --coverage-reporter=cobertura
   coverage: '/All files\s*\|\s*[\d.]+\s*\|\s*(\d+\.\d+)/'
   artifacts:
-    paths:
-      - coverage/lcov.info
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage/cobertura.xml
 ```
 
 ## Interpreting Coverage Reports

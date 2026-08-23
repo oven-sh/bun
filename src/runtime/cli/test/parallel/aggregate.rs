@@ -7,15 +7,12 @@ use bstr::BStr;
 
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::strings;
-use bun_core::{self, Output, ZBox};
+use bun_core::{self, Global, Output, ZBox};
 use bun_options_types::code_coverage_options::{CodeCoverageOptions, Fraction as CoverageFraction};
-use bun_paths::{self, PathBuffer};
-use bun_sourcemap_jsc::code_coverage::text as CoverageReportText;
+use bun_sourcemap_jsc::code_coverage::{cobertura, text as CoverageReportText};
 use bun_sys::{self, Fd, File, O};
 
 use crate::cli::test::parallel::coordinator::Coordinator;
-use crate::node::PathLike;
-use crate::node::fs::{NodeFS, args as fs_args};
 use crate::test_command;
 use crate::test_runner::jest::Summary;
 use bun_collections::index_sort;
@@ -245,53 +242,63 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
         .collect();
 
     if opts.reporters.lcov {
-        let mut fs = NodeFS::default();
-        let _ = fs.mkdir_recursive(&fs_args::Mkdir {
-            path: PathLike::EncodedSlice(bun_core::zig_string::Slice::from_utf8_never_free(
-                &opts.reports_directory,
-            )),
-            always_return_none: true,
-            ..Default::default()
-        });
-        let mut path_buf = PathBuffer::uninit();
-        let out_path = bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Auto>(
-            bun_paths::fs::FileSystem::instance().top_level_dir(),
-            &mut path_buf.0,
-            &[&opts.reports_directory, b"lcov.info"],
-        );
-        match File::openat(
-            Fd::cwd(),
-            out_path,
-            O::CREAT | O::WRONLY | O::TRUNC | O::CLOEXEC,
-            0o644,
-        ) {
-            bun_sys::Result::Err(e) => Output::err(
+        // Build the whole report in a Vec, then write it atomically.
+        let mut w: Vec<u8> = Vec::with_capacity(64 * 1024);
+        for &i in &order {
+            let fc = &by_file.values()[i];
+            let lines = &merged[i];
+            let _ = write!(
+                &mut w,
+                "TN:\nSF:{}\nFNF:{}\nFNH:{}\n",
+                BStr::new(&fc.path),
+                fc.fnf,
+                fc.fnh
+            );
+            let mut lh: u32 = 0;
+            for &(ln, hits) in lines {
+                lh += (hits > 0) as u32;
+                let _ = writeln!(&mut w, "DA:{},{}", ln, hits);
+            }
+            let _ = write!(&mut w, "LF:{}\nLH:{}\nend_of_record\n", lines.len(), lh);
+        }
+        if let Err(e) = test_command::write_coverage_artifact(&opts.reports_directory, b"lcov.info", &w)
+        {
+            Output::err(
                 crate::Error::lcovCoverageError,
                 "Failed to write merged lcov.info\n{}",
                 (e,),
-            ),
-            bun_sys::Result::Ok(f) => {
-                // Build the whole report in a Vec, then issue one write_all.
-                let mut w: Vec<u8> = Vec::with_capacity(64 * 1024);
-                for &i in &order {
-                    let fc = &by_file.values()[i];
-                    let lines = &merged[i];
-                    let _ = write!(
-                        &mut w,
-                        "TN:\nSF:{}\nFNF:{}\nFNH:{}\n",
-                        BStr::new(&fc.path),
-                        fc.fnf,
-                        fc.fnh
-                    );
-                    let mut lh: u32 = 0;
-                    for &(ln, hits) in lines {
-                        lh += (hits > 0) as u32;
-                        let _ = writeln!(&mut w, "DA:{},{}", ln, hits);
-                    }
-                    let _ = write!(&mut w, "LF:{}\nLH:{}\nend_of_record\n", lines.len(), lh);
-                }
-                let _ = File::write_all(&f, &w);
-            }
+            );
+            Global::exit(1);
+        }
+    }
+
+    if opts.reporters.cobertura {
+        let files: Vec<cobertura::FileCoverage<'_>> = order
+            .iter()
+            .map(|&i| cobertura::FileCoverage {
+                path: &by_file.values()[i].path,
+                lines: &merged[i],
+            })
+            .collect();
+        let mut w: Vec<u8> = Vec::with_capacity(64 * 1024);
+        if cobertura::write_files(&files, bun_core::time::milli_timestamp() as u64, &mut w).is_err()
+        {
+            Output::err(
+                crate::Error::coberturaCoverageError,
+                "Failed to render merged cobertura.xml",
+                (),
+            );
+            Global::exit(1);
+        }
+        if let Err(e) =
+            test_command::write_coverage_artifact(&opts.reports_directory, b"cobertura.xml", &w)
+        {
+            Output::err(
+                crate::Error::coberturaCoverageError,
+                "Failed to write merged cobertura.xml\n{}",
+                (e,),
+            );
+            Global::exit(1);
         }
     }
 

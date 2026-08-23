@@ -40,6 +40,19 @@ pub struct Report {
 }
 
 impl Report {
+    /// Coverage fractions for this report, marked failing against `base`.
+    /// The single source of the threshold pass/fail rule: statement coverage
+    /// is computed but deliberately excluded from the decision.
+    pub fn compute_fraction(&self, base: &Fraction) -> Fraction {
+        let mut fraction = *base;
+        fraction.functions = self.function_coverage_fraction();
+        fraction.lines = self.lines_coverage_fraction();
+        fraction.stmts = self.stmts_coverage_fraction();
+        fraction.failing =
+            fraction.functions < base.functions || fraction.lines < base.lines;
+        fraction
+    }
+
     pub(crate) fn lines_coverage_fraction(&self) -> f64 {
         let mut intersected = self
             .executable_lines
@@ -192,15 +205,8 @@ pub mod text {
         writer: &mut impl bun_io::Write,
     ) -> bun_io::Result<()> {
         let failing = *fraction;
-        let fns = report.function_coverage_fraction();
-        let lines = report.lines_coverage_fraction();
-        let stmts = report.stmts_coverage_fraction();
-        fraction.functions = fns;
-        fraction.lines = lines;
-        fraction.stmts = stmts;
-
-        let failed = fns < failing.functions || lines < failing.lines; // || stmts < failing.stmts;
-        fraction.failing = failed;
+        *fraction = report.compute_fraction(&failing);
+        let failed = fraction.failing;
 
         let mut filename = report.source_url.slice();
         if !base_path.is_empty() {
@@ -349,6 +355,189 @@ pub mod lcov {
         writeln!(writer, "LH:{}", report.lines_which_have_executed.count())?;
 
         writer.write_all(b"end_of_record\n")?;
+        Ok(())
+    }
+}
+
+/// Cobertura XML (`coverage-04.dtd`). GitLab coverage visualization reads this
+/// format. Branch metrics are emitted as zero because JSC does not report
+/// them, and `<methods/>` is left empty because JSC does not expose function
+/// names (matching the lcov reporter, which omits FN records).
+pub mod cobertura {
+    use super::*;
+    use std::borrow::Cow;
+
+    use bun_collections::index_sort;
+    use bun_core::strings;
+    use bun_paths::resolve_path::{self, platform};
+
+    pub struct FileCoverage<'a> {
+        pub path: &'a [u8],
+        pub lines: &'a [(u32, u32)],
+    }
+
+    /// Per-file coverage extracted from a [`Report`], with the path
+    /// relativized against `base_path` and converted to posix separators.
+    /// Lets the caller drop each `Report` as soon as it is extracted instead
+    /// of retaining every report until the XML is written.
+    pub struct OwnedFileCoverage {
+        pub path: Vec<u8>,
+        pub lines: Vec<(u32, u32)>,
+    }
+
+    impl OwnedFileCoverage {
+        pub fn from_report(report: &Report, base_path: &[u8]) -> OwnedFileCoverage {
+            let mut filename = report.source_url.slice();
+            if !base_path.is_empty() {
+                filename = resolve_path::relative(base_path, filename);
+            }
+            let mut path = filename.to_vec();
+            resolve_path::slashes_to_posix_in_place(&mut path);
+
+            let line_hits = report.line_hits.slice();
+            let mut lines = Vec::with_capacity(report.executable_lines.count());
+            let mut iter = report.executable_lines.iterator::<true, true>();
+            while let Some(line) = iter.next() {
+                lines.push((line as u32 + 1, line_hits[line]));
+            }
+            OwnedFileCoverage { path, lines }
+        }
+    }
+
+    fn to_posix(path: &[u8]) -> Cow<'_, [u8]> {
+        if !strings::contains_char(path, b'\\') {
+            return Cow::Borrowed(path);
+        }
+        let mut owned = path.to_vec();
+        resolve_path::slashes_to_posix_in_place(&mut owned);
+        Cow::Owned(owned)
+    }
+
+    /// Sort/grouping key, computed once per file: posix path, the length of
+    /// its package (dirname) prefix, and the covered-line count.
+    struct Key<'a> {
+        posix: Cow<'a, [u8]>,
+        pkg_len: usize,
+        covered: u32,
+    }
+
+    impl Key<'_> {
+        fn package(&self) -> &[u8] {
+            if self.pkg_len == 0 {
+                b"."
+            } else {
+                &self.posix[..self.pkg_len]
+            }
+        }
+    }
+
+    pub fn write_files(
+        files: &[FileCoverage<'_>],
+        timestamp_millis: u64,
+        writer: &mut impl bun_io::Write,
+    ) -> bun_io::Result<()> {
+        let keys: Vec<Key<'_>> = files
+            .iter()
+            .map(|file| {
+                let posix = to_posix(file.path);
+                let pkg_len = resolve_path::dirname::<platform::Posix>(&posix).len();
+                let covered = file.lines.iter().filter(|&&(_, hits)| hits > 0).count() as u32;
+                Key {
+                    posix,
+                    pkg_len,
+                    covered,
+                }
+            })
+            .collect();
+
+        let mut total_lines_valid: u64 = 0;
+        let mut total_lines_covered: u64 = 0;
+        for (file, key) in files.iter().zip(&keys) {
+            total_lines_valid += file.lines.len() as u64;
+            total_lines_covered += u64::from(key.covered);
+        }
+        let line_rate = if total_lines_valid > 0 {
+            total_lines_covered as f64 / total_lines_valid as f64
+        } else {
+            1.0
+        };
+
+        writer.write_all(b"<?xml version=\"1.0\" ?>\n")?;
+        writer.write_all(
+            b"<!DOCTYPE coverage SYSTEM \"http://cobertura.sourceforge.net/xml/coverage-04.dtd\">\n",
+        )?;
+        write!(
+            writer,
+            "<coverage lines-valid=\"{total_lines_valid}\" lines-covered=\"{total_lines_covered}\" line-rate=\"{line_rate:.4}\" branches-valid=\"0\" branches-covered=\"0\" branch-rate=\"0\" timestamp=\"{timestamp_millis}\" complexity=\"0\" version=\"0.1\">\n"
+        )?;
+        writer.write_all(b"    <sources>\n        <source>.</source>\n    </sources>\n    <packages>\n")?;
+
+        let mut order: Vec<usize> = (0..files.len()).collect();
+        index_sort::sort_slice_by(&mut order, |&a, &b| {
+            keys[a]
+                .package()
+                .cmp(keys[b].package())
+                .then_with(|| keys[a].posix.as_ref().cmp(keys[b].posix.as_ref()))
+        });
+
+        for group in order.chunk_by(|&a, &b| keys[a].package() == keys[b].package()) {
+            let mut pkg_valid: u64 = 0;
+            let mut pkg_covered: u64 = 0;
+            for &idx in group {
+                pkg_valid += files[idx].lines.len() as u64;
+                pkg_covered += u64::from(keys[idx].covered);
+            }
+            let pkg_rate = if pkg_valid > 0 {
+                pkg_covered as f64 / pkg_valid as f64
+            } else {
+                1.0
+            };
+
+            writer.write_all(b"        <package name=\"")?;
+            strings::write_xml_escaped(keys[group[0]].package(), writer)?;
+            write!(
+                writer,
+                "\" line-rate=\"{pkg_rate:.4}\" branch-rate=\"0\" complexity=\"0\">\n"
+            )?;
+
+            for &idx in group {
+                write_class(&files[idx], &keys[idx], writer)?;
+            }
+            writer.write_all(b"        </package>\n")?;
+        }
+
+        writer.write_all(b"    </packages>\n</coverage>\n")?;
+        Ok(())
+    }
+
+    fn write_class(
+        file: &FileCoverage<'_>,
+        key: &Key<'_>,
+        writer: &mut impl bun_io::Write,
+    ) -> bun_io::Result<()> {
+        let basename = bun_paths::basename(&key.posix);
+        let lines_valid = file.lines.len() as u32;
+        let line_rate = if lines_valid > 0 {
+            key.covered as f64 / lines_valid as f64
+        } else {
+            1.0
+        };
+
+        writer.write_all(b"            <class name=\"")?;
+        strings::write_xml_escaped(basename, writer)?;
+        writer.write_all(b"\" filename=\"")?;
+        strings::write_xml_escaped(&key.posix, writer)?;
+        write!(
+            writer,
+            "\" line-rate=\"{line_rate:.4}\" branch-rate=\"0.0\" complexity=\"0.0\">\n                <methods/>\n                <lines>\n"
+        )?;
+        for &(number, hits) in file.lines {
+            writeln!(
+                writer,
+                "                    <line number=\"{number}\" hits=\"{hits}\"/>"
+            )?;
+        }
+        writer.write_all(b"                </lines>\n            </class>\n")?;
         Ok(())
     }
 }

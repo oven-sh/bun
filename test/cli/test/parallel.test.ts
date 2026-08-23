@@ -621,6 +621,28 @@ test("--parallel --coverage prints merged text table", async () => {
   expect(exitCode).toBe(0);
 });
 
+test("--parallel --coverage writes cobertura.xml", async () => {
+  using dir = tempDir("parallel-coverage-cobertura", {
+    "shared.js": `export const n = 1;`,
+    "a.test.js": `import {test,expect} from "bun:test"; import {n} from "./shared.js"; test("a",()=>expect(n).toBe(1));`,
+    "b.test.js": `import {test,expect} from "bun:test"; import {n} from "./shared.js"; test("b",()=>expect(n).toBe(1));`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2", "--coverage", "--coverage-reporter=cobertura", "--coverage-dir=./cov"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("PARALLEL");
+  expect(stderr).toContain("2 pass");
+  const xml = await Bun.file(String(dir) + "/cov/cobertura.xml").text();
+  expect(xml).toContain("<!DOCTYPE coverage SYSTEM \"http://cobertura.sourceforge.net/xml/coverage-04.dtd\">");
+  expect(xml).toContain('filename="shared.js"');
+  expect(exitCode).toBe(0);
+});
+
 test("--parallel --coverage enforces coverageThreshold with lcov-only reporter", async () => {
   using dir = tempDir("parallel-coverage-threshold", {
     "bunfig.toml": `[test]\ncoverageThreshold = 0.9\ncoverageSkipTestFiles = true\n`,

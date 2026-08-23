@@ -36,7 +36,7 @@ bun_output::declare_scope!(bun_test, hidden);
 // directly with `<ENABLE_ANSI_COLORS>`.
 mod coverage {
     pub(super) use bun_sourcemap_jsc::code_coverage::{
-        ByteRangeMapping, Fraction, Report as CodeCoverageReport, lcov as Lcov,
+        ByteRangeMapping, Fraction, Report as CodeCoverageReport, cobertura, lcov as Lcov,
     };
 
     /// Less-than predicate adapted to the `Ordering` shape `sort_by` wants.
@@ -142,44 +142,106 @@ mod bun_test {
     }
 }
 
+/// Atomically write a coverage artifact: ensure `reports_directory` exists
+/// under the project root, write to a random `.tmp` sibling, then rename over
+/// `final_name`. Shared by the lcov and cobertura reporters in both the
+/// single-process and `--parallel` merge paths.
+pub(crate) fn write_coverage_artifact(
+    reports_directory: &[u8],
+    final_name: &[u8],
+    bytes: &[u8],
+) -> bun_sys::Result<()> {
+    let mut fs = crate::node::fs::NodeFS::default();
+    let _ = fs.mkdir_recursive(&crate::node::fs::args::Mkdir {
+        path: crate::node::PathLike::EncodedSlice(ZigStringSlice::from_utf8_never_free(
+            reports_directory,
+        )),
+        always_return_none: true,
+        recursive: true,
+        ..Default::default()
+    });
+
+    let top_level_dir = FileSystem::get().top_level_dir;
+
+    let mut random = [0u8; 8];
+    bun_boringssl_sys::rand_bytes(&mut random);
+    let mut shortname_buf = [0u8; 512];
+    // Temp name: `.<final_name>.<lowercase hex of 8 random bytes>.tmp`.
+    let tmpname = {
+        use std::io::Write as _;
+        let mut cursor = &mut shortname_buf[..];
+        let _ = cursor.write_all(b".");
+        let _ = cursor.write_all(final_name);
+        let _ = cursor.write_all(b".");
+        let _ = write!(cursor, "{}", bun_core::fmt::hex_lower(&random));
+        let _ = cursor.write_all(b".tmp\0");
+        let s = bun_core::slice_to_nul(&shortname_buf);
+        bun_core::ZStr::from_buf(&shortname_buf[..], s.len())
+    };
+
+    let mut name_buf = PathBuffer::uninit();
+    let tmp_path = resolve_path::join_abs_string_buf_z::<bun_path::platform::Auto>(
+        top_level_dir,
+        &mut name_buf,
+        &[reports_directory, tmpname.as_bytes()],
+    );
+    let file = File::openat(
+        Fd::cwd(),
+        tmp_path,
+        bun_sys::O::CREAT | bun_sys::O::WRONLY | bun_sys::O::TRUNC | bun_sys::O::CLOEXEC,
+        0o644,
+    )?;
+    if let Err(err) = file.write_all(bytes) {
+        let _ = file.close();
+        let _ = bun_sys::unlink(tmp_path);
+        return Err(err);
+    }
+    let _ = file.close();
+    if let Err(err) = bun_sys::move_file_z(
+        Fd::cwd(),
+        tmp_path,
+        Fd::cwd(),
+        resolve_path::join_abs_string_z::<bun_path::platform::Auto>(
+            top_level_dir,
+            &[reports_directory, final_name],
+        ),
+    ) {
+        let _ = bun_sys::unlink(tmp_path);
+        return Err(err);
+    }
+    Ok(())
+}
+
+fn write_cobertura_report(
+    opts: &CodeCoverageOptions,
+    files: &[coverage::cobertura::OwnedFileCoverage],
+) -> crate::Result<()> {
+    let borrowed: Vec<coverage::cobertura::FileCoverage<'_>> = files
+        .iter()
+        .map(|file| coverage::cobertura::FileCoverage {
+            path: &file.path,
+            lines: &file.lines,
+        })
+        .collect();
+    let mut xml: Vec<u8> = Vec::with_capacity(64 * 1024);
+    coverage::cobertura::write_files(
+        &borrowed,
+        bun_core::time::milli_timestamp() as u64,
+        &mut xml,
+    )?;
+    if let Err(err) = write_coverage_artifact(&opts.reports_directory, b"cobertura.xml", &xml) {
+        Output::err(
+            crate::Error::coberturaCoverageError,
+            "Failed to save cobertura.xml file\n{}",
+            (err,),
+        );
+        Global::exit(1);
+    }
+    Ok(())
+}
+
 pub(crate) fn escape_xml(str_: &[u8], writer: &mut impl bun_io::Write) -> crate::Result<()> {
-    let mut last: usize = 0;
-    let mut i: usize = 0;
-    let len = str_.len();
-    while i < len {
-        let c = str_[i];
-        match c {
-            b'&' | b'<' | b'>' | b'"' | b'\'' => {
-                if i > last {
-                    writer.write_all(&str_[last..i])?;
-                }
-                writer.write_all(bun_core::strings::xml_escape_entity(c).unwrap())?;
-                last = i + 1;
-            }
-            b'\t' | b'\n' | b'\r' => {
-                // Valid XML 1.0 Char. Emit as a numeric reference so the literal
-                // byte survives attribute-value normalisation (XML 1.0 §3.3.3).
-                if i > last {
-                    writer.write_all(&str_[last..i])?;
-                }
-                write!(writer, "&#{};", c)?;
-                last = i + 1;
-            }
-            0..=0x1f => {
-                // Any other C0 control character is not a valid XML 1.0 Char and
-                // cannot be represented even as a numeric reference, so drop it.
-                if i > last {
-                    writer.write_all(&str_[last..i])?;
-                }
-                last = i + 1;
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    if len > last {
-        writer.write_all(&str_[last..])?;
-    }
+    bun_core::strings::write_xml_escaped(str_, writer)?;
     Ok(())
 }
 
@@ -1581,11 +1643,11 @@ impl CommandLineReporter {
         &mut self,
         vm: &mut VirtualMachine,
         opts: &mut CodeCoverageOptions,
-        reporters_text: bool,
-        reporters_lcov: bool,
         enable_ansi_colors: bool,
     ) -> crate::Result<()> {
-        if !reporters_text && !reporters_lcov {
+        let reporters = opts.reporters;
+        if !reporters.text && !reporters.lcov && !reporters.cobertura && !opts.fail_on_low_coverage
+        {
             return Ok(());
         }
 
@@ -1609,14 +1671,7 @@ impl CommandLineReporter {
 
         index_sort::sort_slice_by(&mut byte_ranges, coverage::is_less_than_cmp);
 
-        self.print_code_coverage(
-            vm,
-            opts,
-            &mut byte_ranges,
-            reporters_text,
-            reporters_lcov,
-            enable_ansi_colors,
-        )
+        self.print_code_coverage(vm, opts, &mut byte_ranges, enable_ansi_colors)
     }
 
     pub(crate) fn render_lcov(
@@ -1675,10 +1730,11 @@ impl CommandLineReporter {
         vm: &mut VirtualMachine,
         opts: &mut CodeCoverageOptions,
         byte_ranges: &mut [&mut ByteRangeMapping],
-        reporters_text: bool,
-        reporters_lcov: bool,
         enable_ansi_colors: bool,
     ) -> crate::Result<()> {
+        let reporters_text = opts.reporters.text;
+        let reporters_lcov = opts.reporters.lcov;
+        let reporters_cobertura = opts.reporters.cobertura;
         // Both spellings are compile-time constants; pick one by the runtime flag.
         macro_rules! pretty_lit {
             ($fmt:literal) => {
@@ -1690,20 +1746,7 @@ impl CommandLineReporter {
             };
         }
         // `perf::Ctx` ends its span on Drop.
-        let _trace = if reporters_text && reporters_lcov {
-            bun::perf::trace("TestCommand.printCodeCoverageLCovAndText")
-        } else if reporters_text {
-            bun::perf::trace("TestCommand.printCodeCoverageText")
-        } else if reporters_lcov {
-            bun::perf::trace("TestCommand.printCodeCoverageLCov")
-        } else {
-            // Unreachable by construction.
-            unreachable!("No reporters enabled")
-        };
-
-        if !reporters_text && !reporters_lcov {
-            unreachable!("No reporters enabled");
-        }
+        let _trace = bun::perf::trace("TestCommand.printCodeCoverage");
 
         let relative_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
 
@@ -1807,86 +1850,16 @@ impl CommandLineReporter {
         let mut avg_count: f64 = 0.0;
         // --- Text ---
 
-        // --- LCOV ---
-        let mut lcov_name_buf = PathBuffer::uninit();
-        let mut lcov_state: Option<(File, &bun_core::ZStr, /*buffered*/ Vec<u8>)> =
-            if reporters_lcov {
-                'brk: {
-                    // Ensure the directory exists
-                    let mut fs = crate::node::fs::NodeFS::default();
-                    let _ = fs.mkdir_recursive(&crate::node::fs::args::Mkdir {
-                        path: crate::node::PathLike::EncodedSlice(
-                            ZigStringSlice::from_utf8_never_free(&opts.reports_directory),
-                        ),
-                        always_return_none: true,
-                        recursive: true,
-                        ..Default::default()
-                    });
-
-                    // Write the lcov.info file to a temporary file we atomically rename to the final name after it succeeds
-                    let mut base64_bytes = [0u8; 8];
-                    let mut shortname_buf = [0u8; 512];
-                    bun_boringssl_sys::rand_bytes(&mut base64_bytes);
-                    // Temp name: `.lcov.info.<lowercase hex of 8 random bytes>.tmp`.
-                    let tmpname = {
-                        use std::io::Write as _;
-                        let mut cursor = &mut shortname_buf[..];
-                        let _ = cursor.write_all(b".lcov.info.");
-                        let _ = write!(cursor, "{}", bun_core::fmt::hex_lower(&base64_bytes));
-                        let _ = cursor.write_all(b".tmp\0");
-                        let s = bun_core::slice_to_nul(&shortname_buf);
-                        // NUL written above; `slice_to_nul` returns the prefix before it.
-                        bun_core::ZStr::from_buf(&shortname_buf[..], s.len())
-                    };
-                    let path = resolve_path::join_abs_string_buf_z::<bun_path::platform::Auto>(
-                        relative_dir,
-                        &mut lcov_name_buf,
-                        &[&opts.reports_directory, tmpname.as_bytes()],
-                    );
-                    let file = File::openat(
-                        Fd::cwd(),
-                        path,
-                        bun_sys::O::CREAT
-                            | bun_sys::O::WRONLY
-                            | bun_sys::O::TRUNC
-                            | bun_sys::O::CLOEXEC,
-                        0o644,
-                    );
-
-                    match file {
-                        bun_sys::Result::Err(err) => {
-                            Output::err(
-                                crate::Error::lcovCoverageError,
-                                "Failed to create lcov file",
-                                (),
-                            );
-                            Output::print_error(format_args!("\n{}", err));
-                            Global::exit(1);
-                        }
-                        bun_sys::Result::Ok(f) => {
-                            // Accumulate in a `Vec<u8>` (impl `bun_io::Write`)
-                            // and flush to the fd via `write_all` on success
-                            // below.
-                            let buffered: Vec<u8> = Vec::with_capacity(64 * 1024);
-                            break 'brk Some((f, path, buffered));
-                        }
-                    }
-                }
-            } else {
-                None
-            };
-        let mut lcov_guard = scopeguard::guard(
-            &mut lcov_state,
-            |s: &mut Option<(File, &bun_core::ZStr, Vec<u8>)>| {
-                if reporters_lcov {
-                    if let Some((file, name, _)) = s.take() {
-                        let _ = file.close(); // close error is non-actionable
-                        let _ = bun_sys::unlink(name);
-                    }
-                }
-            },
-        );
-        // --- LCOV ---
+        // --- LCOV / Cobertura ---
+        // Both persistent reporters accumulate in a `Vec<u8>` per file inside
+        // the loop and are written atomically (temp file + rename) at the end
+        // via `write_coverage_artifact`.
+        let mut lcov_buffer: Vec<u8> = if reporters_lcov {
+            Vec::with_capacity(64 * 1024)
+        } else {
+            Vec::new()
+        };
+        let mut cobertura_files: Vec<coverage::cobertura::OwnedFileCoverage> = Vec::new();
 
         for entry in byte_ranges.iter_mut() {
             // Check if this file should be ignored based on coveragePathIgnorePatterns
@@ -1913,40 +1886,46 @@ impl CommandLineReporter {
                 continue;
             };
 
-            if reporters_text {
+            if reporters_text || opts.fail_on_low_coverage {
                 let mut fraction = base_fraction;
-                if coverage::Text::write_format(
-                    &report,
-                    max_filepath_length,
-                    &mut fraction,
-                    relative_dir,
-                    console_writer,
-                    enable_ansi_colors,
-                )
-                .is_err()
-                {
-                    continue;
+                if reporters_text {
+                    if coverage::Text::write_format(
+                        &report,
+                        max_filepath_length,
+                        &mut fraction,
+                        relative_dir,
+                        console_writer,
+                        enable_ansi_colors,
+                    )
+                    .is_err()
+                    {
+                        continue;
+                    }
+                    console_writer.extend_from_slice(b"\n");
+                    avg.functions += fraction.functions;
+                    avg.lines += fraction.lines;
+                    avg.stmts += fraction.stmts;
+                    avg_count += 1.0;
+                } else {
+                    fraction = report.compute_fraction(&base_fraction);
                 }
-                avg.functions += fraction.functions;
-                avg.lines += fraction.lines;
-                avg.stmts += fraction.stmts;
-                avg_count += 1.0;
                 if fraction.failing {
                     failing = true;
                 }
-
-                console_writer.extend_from_slice(b"\n");
             }
 
-            if reporters_lcov {
-                if let Some((_, _, buffered)) = lcov_guard.as_mut() {
-                    if coverage::Lcov::write_format(&report, relative_dir, buffered).is_err() {
-                        continue;
-                    }
-                }
+            if reporters_lcov
+                && coverage::Lcov::write_format(&report, relative_dir, &mut lcov_buffer).is_err()
+            {
+                continue;
             }
 
-            drop(report);
+            if reporters_cobertura {
+                cobertura_files.push(coverage::cobertura::OwnedFileCoverage::from_report(
+                    &report,
+                    relative_dir,
+                ));
+            }
         }
 
         if reporters_text {
@@ -1988,56 +1967,40 @@ impl CommandLineReporter {
 
             console.write_all(&console_buffer)?;
             console.write_all(pretty_lit!("<r><d>"))?;
-            // Disarm the lcov cleanup guard before the early `Ok(())`; the
-            // temp file is left for the OS.
             if console
                 .splat_byte_all(b'-', max_filepath_length + 2)
                 .is_err()
             {
-                let _ = scopeguard::ScopeGuard::into_inner(lcov_guard);
                 return Ok(());
             }
             if console
                 .write_all(pretty_lit!("|---------|---------|-------------------<r>\n"))
                 .is_err()
             {
-                let _ = scopeguard::ScopeGuard::into_inner(lcov_guard);
                 return Ok(());
             }
 
             opts.fractions.failing = failing;
             Output::flush();
+        } else if opts.fail_on_low_coverage {
+            opts.fractions.failing = failing;
         }
 
         if reporters_lcov {
-            // `try lcov_writer.flush()` — keep the errdefer guard armed across the
-            // write so an error here still closes + unlinks the temp file.
-            if let Some((lcov_file, _, buffered)) = &mut **lcov_guard {
-                if let bun_sys::Result::Err(e) = lcov_file.write_all(buffered) {
-                    // `lcov_guard` drops on this early return → close + unlink.
-                    return Err(crate::Error::from(e));
-                }
+            if let Err(err) =
+                write_coverage_artifact(&opts.reports_directory, b"lcov.info", &lcov_buffer)
+            {
+                Output::err(
+                    crate::Error::lcovCoverageError,
+                    "Failed to save lcov.info file\n{}",
+                    (err,),
+                );
+                Global::exit(1);
             }
-            // Flush succeeded — disarm the errdefer cleanup.
-            let state = scopeguard::ScopeGuard::into_inner(lcov_guard);
-            if let Some((lcov_file, lcov_name, _)) = state.take() {
-                let _ = lcov_file.close();
-                let cwd = Fd::cwd();
-                if let Err(err) = bun_sys::move_file_z(
-                    cwd,
-                    lcov_name,
-                    cwd,
-                    resolve_path::join_abs_string_z::<bun_path::platform::Auto>(
-                        relative_dir,
-                        &[&opts.reports_directory, b"lcov.info"],
-                    ),
-                ) {
-                    Output::err(err, "Failed to save lcov.info file", ());
-                    Global::exit(1);
-                }
-            }
-        } else {
-            let _ = scopeguard::ScopeGuard::into_inner(lcov_guard);
+        }
+
+        if reporters_cobertura {
+            write_cobertura_report(opts, &cobertura_files)?;
         }
         Ok(())
     }
@@ -2841,15 +2804,9 @@ impl TestCommand {
             pretty_error!("\n");
 
             if coverage_options.enabled && !ran_parallel {
-                let (text, lcov) = (
-                    coverage_options.reporters.text,
-                    coverage_options.reporters.lcov,
-                );
                 reporter.generate_code_coverage(
                     vm,
                     &mut coverage_options,
-                    text,
-                    lcov,
                     Output::enable_ansi_colors_stderr(),
                 )?;
             }

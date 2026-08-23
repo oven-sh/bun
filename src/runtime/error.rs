@@ -266,6 +266,8 @@ pub enum Error {
     JUnitReportFailed,
     #[error("lcovCoverageError")]
     lcovCoverageError,
+    #[error("coberturaCoverageError")]
+    coberturaCoverageError,
     #[error("HTTP404")]
     HTTP404,
     #[error("GitHubIsDown")]
@@ -701,6 +703,7 @@ impl Error {
             Self::ProcessWatchFailed => "ProcessWatchFailed",
             Self::JUnitReportFailed => "JUnitReportFailed",
             Self::lcovCoverageError => "lcovCoverageError",
+            Self::coberturaCoverageError => "coberturaCoverageError",
             Self::HTTP404 => "HTTP404",
             Self::GitHubIsDown => "GitHubIsDown",
             Self::UpgradeFailedMissingExecutable => "UpgradeFailedMissingExecutable",

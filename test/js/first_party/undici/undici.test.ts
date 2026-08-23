@@ -202,6 +202,54 @@ describe("undici", () => {
       expect(json.headers["x-foo"]).toBe("bar");
     });
 
+    describe("body.dump()", () => {
+      it("drains the body and resolves null", async () => {
+        const { body } = await request(`${hostUrl}/get`);
+        expect(typeof body.dump).toBe("function");
+        expect(await body.dump()).toBeNull();
+        // A second dump after close resolves null as well.
+        expect(await body.dump()).toBeNull();
+      });
+
+      it("destroys the body past the limit but still resolves null", async () => {
+        await using server = Bun.serve({
+          port: 0,
+          fetch: () => new Response(Buffer.alloc(1024 * 1024, "x")),
+        });
+        const { body } = await request(server.url.href);
+        expect(await body.dump({ limit: 1024 })).toBeNull();
+      });
+
+      it("rejects with the signal reason when the signal is already aborted", async () => {
+        const { body } = await request(`${hostUrl}/get`);
+        const reason = new Error("stop");
+        const controller = new AbortController();
+        controller.abort(reason);
+        await expect(body.dump({ signal: controller.signal })).rejects.toBe(reason);
+        body.destroy();
+      });
+
+      it("rejects a value that is not an AbortSignal", async () => {
+        const { body } = await request(`${hostUrl}/get`);
+        await expect(body.dump({ signal: 42 })).rejects.toThrow("signal must be an AbortSignal");
+        body.destroy();
+      });
+    });
+
+    it("body.bytes() returns the body as a Uint8Array", async () => {
+      await using server = Bun.serve({
+        port: 0,
+        fetch: () => new Response("hello bytes"),
+      });
+      const { body } = await request(server.url.href);
+      expect(typeof body.bytes).toBe("function");
+      const bytes = await body.bytes();
+      expect(bytes).toBeInstanceOf(Uint8Array);
+      expect(new TextDecoder().decode(bytes)).toBe("hello bytes");
+      expect(body.bodyUsed).toBe(true);
+      await expect(body.bytes()).rejects.toThrow("unusable");
+    });
+
     // it("should allow the use of FormData", async () => {
     //   const form = new FormData();
     //   form.append("foo", "bar");

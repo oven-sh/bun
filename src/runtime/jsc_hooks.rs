@@ -1057,8 +1057,6 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
                 &mut timespec,
                 has_pending_immediate,
                 quic_next_tick_us,
-                // SAFETY: per fn contract.
-                unsafe { &*vm },
                 &mut now,
             );
             let now_ns = now.map_or(bun_uws::NOW_NS_UNKNOWN, |t| t.ns());
@@ -1166,8 +1164,6 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
                 &mut timespec,
                 has_pending_immediate,
                 quic_next_tick_us,
-                // SAFETY: per fn contract.
-                unsafe { &*vm },
                 &mut now,
             );
             let now_ns = now.map_or(bun_uws::NOW_NS_UNKNOWN, |t| t.ns());

@@ -579,15 +579,17 @@ impl All {
         all.ensure_uv_timer();
     }
 
+    /// Disarm `timer`: unlink it if it is linked (a slot that already left the
+    /// heap — popped to fire, or never inserted — is fine) and mark it
+    /// `CANCELLED`. This is the one "remove if armed" entry point; callers need
+    /// not check first.
     pub(crate) fn remove(&self, timer: TimerRef) {
         self.assert_js_thread();
         match timer.in_heap() {
             InHeap::Regular => self.timers.remove(timer),
             InHeap::Fake => self.fake_timers.timers.remove(timer),
-            // can't remove a timer that was not inserted
-            InHeap::None | InHeap::Wtf => {
-                debug_assert!(false, "remove: timer is in {:?}", timer.in_heap())
-            }
+            InHeap::None => {}
+            InHeap::Wtf => debug_assert!(false, "use wtf_disarm"),
         }
         timer.set_state(EventLoopTimerState::CANCELLED);
     }
@@ -606,12 +608,12 @@ impl All {
         self.insert(timer);
     }
 
-    /// (Re)arm a `WTFTimer`. Any thread.
+    /// (Re)arm a `WTFTimer`. Any thread; the slot is only touched under the
+    /// `wtf_timers` lock.
     fn wtf_arm(&self, timer: TimerRef, time: Timespec) {
-        debug_assert!(timer.tag() == EventLoopTimerTag::WTFTimer);
         {
             let wtf = self.wtf_timers.lock();
-            // The slot's state and heap links only change under this guard.
+            debug_assert!(timer.tag() == EventLoopTimerTag::WTFTimer);
             if timer.state() == EventLoopTimerState::ACTIVE {
                 wtf.remove(timer);
             }
@@ -625,25 +627,23 @@ impl All {
         }
     }
 
-    /// Disarm a `WTFTimer`; no-op if it is not linked. Any thread.
+    /// Disarm a `WTFTimer`; no-op if it is not linked. Any thread; the slot
+    /// is only touched under the `wtf_timers` lock.
     fn wtf_disarm(&self, timer: TimerRef) {
-        debug_assert!(timer.tag() == EventLoopTimerTag::WTFTimer);
         let wtf = self.wtf_timers.lock();
-        // The slot's state and heap links only change under this guard.
+        debug_assert!(timer.tag() == EventLoopTimerTag::WTFTimer);
         if timer.state() == EventLoopTimerState::ACTIVE {
             wtf.remove(timer);
             timer.set_state(EventLoopTimerState::CANCELLED);
         }
     }
 
-    fn drain_due_wtf_timers(
-        &self,
-        maybe_now: &mut Option<Timespec>,
-        vm: &VirtualMachine,
-    ) -> Option<Timespec> {
+    /// Fire every due `WTFTimer` and return the next WTF deadline, if any. The
+    /// popped slot is only read under the lock; once it drops nothing here
+    /// touches the slot again (a GC thread may re-arm it concurrently).
+    fn drain_due_wtf_timers(&self, maybe_now: &mut Option<Timespec>) -> Option<Timespec> {
         loop {
-            let (min, now) = {
-                // The guard drops before `fire`.
+            let min = {
                 let wtf = self.wtf_timers.lock();
                 let min_next = wtf.peek()?.next();
                 let now = *maybe_now
@@ -653,13 +653,11 @@ impl All {
                 }
                 let min = wtf.delete_min().expect("peek succeeded");
                 min.set_state(EventLoopTimerState::FIRED);
-                (min, now)
+                min
             };
-            let fired = crate::dispatch::fire_timer(min, &now, vm);
-            // WTF timers run JSC-internal work, not user JS; a stop found here
-            // is the loop's to act on at its next gate, and the heap's next
-            // deadline is still reported to the poll.
-            let _ = fold_timer(vm, fired);
+            // Only `WTFTimer`s are ever in this heap. They run JSC-internal
+            // work, not user JS, so there is nothing to fold.
+            crate::dispatch::fire_wtf_timer(min);
         }
     }
 
@@ -683,7 +681,6 @@ impl All {
         spec: &mut Timespec,
         has_pending_immediate: bool,
         quic_next_tick_us: Option<i64>,
-        vm: &VirtualMachine,
         now_out: &mut Option<Timespec>,
     ) -> bool {
         #[cfg(unix)]
@@ -696,7 +693,7 @@ impl All {
 
         let maybe_now: &mut Option<Timespec> = now_out;
 
-        let wtf_next = self.drain_due_wtf_timers(maybe_now, vm);
+        let wtf_next = self.drain_due_wtf_timers(maybe_now);
         let reg_next = self.timers.peek().map(TimerRef::next);
 
         let Some(next) = Self::soonest(wtf_next, reg_next) else {
@@ -760,7 +757,7 @@ impl All {
     /// holds a borrow of the heap across `fire_timer`.
     pub(crate) fn drain_timers(&self, vm: &VirtualMachine) {
         let mut wtf_now: Option<Timespec> = None;
-        let _ = self.drain_due_wtf_timers(&mut wtf_now, vm);
+        let _ = self.drain_due_wtf_timers(&mut wtf_now);
 
         let mut now = Timespec { sec: 0, nsec: 0 };
         let mut has_set_now = false;

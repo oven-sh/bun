@@ -893,6 +893,18 @@ macro_rules! timer_owner_this {
     }};
 }
 
+/// Fire the `WTFTimer` whose slot `t` was just popped from `All.wtf_timers`.
+/// Does not read the slot (a GC thread may be re-arming it under the lock).
+pub(crate) fn fire_wtf_timer(t: TimerRef) {
+    use crate::timer::WTFTimer;
+    // SAFETY: only `WTFTimer`s are linked into `All.wtf_timers` (`wtf_arm`),
+    // and the C++ `TimerBase` that owns it is alive while it is scheduled. The
+    // borrow ends before `fire`, which may destroy it.
+    let timer = unsafe { &*bun_core::from_field_ptr!(WTFTimer, event_loop_timer, t.as_ptr()) };
+    let run_loop_timer = timer.take_for_fire();
+    crate::timer::wtf_timer::RunLoopTimer::fire(run_loop_timer);
+}
+
 /// The tag→`container_of` match that fires a due timer.
 ///
 /// Reached from [`crate::timer::All::drain_timers`] (every due heap timer),
@@ -907,7 +919,7 @@ macro_rules! timer_owner_this {
 /// `t` was just popped from a heap; the handler may free its owner, so `t` is
 /// dead once this returns.
 pub(crate) fn fire_timer(t: TimerRef, now: &ElTimespec, vm: &VirtualMachine) -> JsResult<()> {
-    use crate::timer::{ImmediateObject, TimeoutObject, TimerObject, WTFTimer};
+    use crate::timer::{ImmediateObject, TimeoutObject, TimerObject};
 
     /// Recover the embedding container from `t` (the popped timer slot).
     macro_rules! owner {
@@ -956,11 +968,7 @@ pub(crate) fn fire_timer(t: TimerRef, now: &ElTimespec, vm: &VirtualMachine) -> 
             Ok(())
         }
         EventLoopTimerTag::WTFTimer => {
-            let c: *mut WTFTimer = owner!(WTFTimer, event_loop_timer);
-            // SAFETY: `TimerOwner` contract — `c` is a live `WTFTimer`. The
-            // borrow ends before `fire`, which may destroy it.
-            let run_loop_timer = unsafe { &*c }.take_for_fire();
-            crate::timer::wtf_timer::RunLoopTimer::fire(run_loop_timer);
+            fire_wtf_timer(t);
             Ok(())
         }
         EventLoopTimerTag::AbortSignalTimeout => {
@@ -1083,6 +1091,7 @@ pub(crate) fn fire_timer(t: TimerRef, now: &ElTimespec, vm: &VirtualMachine) -> 
             Ok(())
         }
         EventLoopTimerTag::DevServerMemoryVisualizerTick => {
+            t.set_state(bun_event_loop::EventLoopTimer::State::FIRED);
             // SAFETY: per fn contract; `t` is the `memory_visualizer_timer`
             // field of a live DevServer.
             DevServer::emit_memory_visualizer_message_timer(unsafe { &mut *t.as_ptr() }, unsafe {

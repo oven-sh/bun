@@ -3518,7 +3518,6 @@ function Server(options?, connectionListener?) {
   this._usingWorkers = false;
   this.workers = [];
   this._unref = false;
-  this.listeningId = 1;
 
   this[bunSocketServerOptions] = undefined;
   // Server option coercion matches Node's Server constructor:

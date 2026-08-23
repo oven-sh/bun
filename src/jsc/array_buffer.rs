@@ -164,28 +164,29 @@ impl ArrayBuffer {
     pub const MAX_SIZE: c_uint = c_uint::MAX;
 }
 
-/// An `ArrayBuffer`'s (or view's) bytes for a pool [`Job`](crate::Job) to
-/// read: the buffer is pinned (it cannot be detached or transferred, and —
-/// being non-resizable or a growable `SharedArrayBuffer` — cannot move or
-/// shrink) and its cell GC-protected until this is dropped. Like
-/// [`ThreadSafe`](crate::node_path::ThreadSafe), it is made on the JS thread
-/// and released there when the job comes back; in between, the job reads the
-/// bytes under its [`Ticket`](crate::Ticket) (proof the heap is still alive).
+/// An `ArrayBuffer`'s (or view's) bytes handed to a pool [`Job`](crate::Job)
+/// without copying them on the JS thread: the buffer is pinned (it cannot be
+/// detached or transferred, and — being neither resizable nor shared — cannot
+/// move, shrink, or be written by another agent) and its cell GC-protected
+/// until this is dropped. JS on the owning thread can still store into it
+/// while the job runs, so the job never views it as a `&[u8]`; it takes a
+/// snapshot with [`to_vec`](Self::to_vec) under its [`Ticket`](crate::Ticket).
+/// Like [`ThreadSafe`](crate::node_path::ThreadSafe), it is made on the JS
+/// thread and released there when the job comes back.
 pub struct PinnedArrayBuffer(ArrayBuffer);
 
-// SAFETY: the only off-thread operation is `bytes`, which demands a `Ticket`
-// (VM alive) and reads memory that is pinned in place and protected for as
-// long as `self` lives; `Drop` releases pin/protect only on a JS thread (see
+// SAFETY: the only off-thread operation is `to_vec`, which demands a `Ticket`
+// (VM alive) and raw-copies memory that is pinned in place and protected for
+// as long as `self` lives; `Drop` releases pin/protect only on a JS thread (see
 // there) and is a leak, not a race, anywhere else.
 unsafe impl Send for PinnedArrayBuffer {}
 
 impl PinnedArrayBuffer {
-    /// Pin and protect `value` if it is an `ArrayBuffer` or view whose bytes
-    /// stay put while pinned; `None` otherwise (not a buffer, or a resizable
-    /// non-shared one, whose `resize()` can decommit pages regardless of the pin).
+    /// Pin and protect `value` if it is a non-shared, non-resizable
+    /// `ArrayBuffer` or view; `None` otherwise (the caller copies instead).
     pub fn pin(global: &JSGlobalObject, value: JSValue) -> Option<Self> {
         let buffer = value.as_pinned_arraybuffer(global)?;
-        if buffer.resizable && !buffer.shared {
+        if buffer.resizable || buffer.shared {
             buffer.unpin();
             return None;
         }
@@ -193,10 +194,27 @@ impl PinnedArrayBuffer {
         Some(Self(buffer))
     }
 
-    /// The bytes, from any thread that holds a job's ticket.
-    #[inline]
-    pub fn bytes<'a>(&'a self, _vm_alive: &crate::Ticket) -> &'a [u8] {
-        self.0.byte_slice()
+    pub fn byte_len(&self) -> usize {
+        self.0.byte_len
+    }
+
+    /// A copy of the bytes as they are now, from any thread that holds a
+    /// job's ticket. The owning JS thread may be storing into the buffer
+    /// concurrently; what such a racing store contributes is unspecified.
+    pub fn to_vec(&self, _vm_alive: &crate::Ticket) -> Vec<u8> {
+        let len = self.0.byte_len;
+        let mut out = Vec::<u8>::with_capacity(len);
+        if len != 0 {
+            // SAFETY: `ptr[..len]` is the pinned, protected backing store (alive
+            // while the VM is, which the ticket proves); `out` has `len` bytes of
+            // capacity and the two cannot overlap. Read through a raw pointer,
+            // never a `&[u8]`, because JS may write it meanwhile.
+            unsafe {
+                core::ptr::copy_nonoverlapping(self.0.ptr.cast_const(), out.as_mut_ptr(), len);
+                out.set_len(len);
+            }
+        }
+        out
     }
 }
 

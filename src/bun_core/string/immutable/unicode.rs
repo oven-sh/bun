@@ -456,18 +456,16 @@ pub fn copy_latin1_into_utf16(buf_: &mut [u16], latin1_: &[u8]) -> EncodeIntoRes
 
 /// [`copy_cp1252_into_utf16`] into a fresh, exactly-sized `Vec<u16>` (no zero-fill).
 pub fn cp1252_to_utf16_alloc(cp1252: &[u8]) -> Vec<u16> {
-    let mut out: Vec<u16> = Vec::with_capacity(cp1252.len());
-    let spare = &mut out.spare_capacity_mut()[..cp1252.len()];
-    // SAFETY: `MaybeUninit<u16>` and `u16` have the same layout; the slice is
-    // handed write-only to `copy_cp1252_into_utf16`, which stores one unit per
-    // input byte and reads none of it, so all `cp1252.len()` units are then set.
-    unsafe {
-        let dst = &mut *(core::ptr::from_mut(spare) as *mut [u16]);
-        let r = copy_cp1252_into_utf16(dst, cp1252);
-        debug_assert_eq!(r.written as usize, cp1252.len());
-        out.set_len(r.written as usize);
-    }
-    out
+    cp1252
+        .iter()
+        .map(|&b| {
+            if b < 0x80 {
+                u16::from(b)
+            } else {
+                cp1252_to_codepoint_bytes_assume_not_ascii16(u32::from(b))
+            }
+        })
+        .collect()
 }
 
 /// Each Latin-1 byte widened to one native-endian UTF-16 code unit, appended

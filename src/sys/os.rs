@@ -247,12 +247,13 @@ impl ProcessorCpuLoadInfo {
 #[cfg(target_os = "macos")]
 impl Drop for ProcessorCpuLoadInfo {
     fn drop(&mut self) {
-        // SAFETY: the `info_size`-word buffer `host_processor_info` mapped into this task.
+        // SAFETY: the buffer `host_processor_info` mapped into this task:
+        // `info_size` `integer_t`s starting at `info`.
         unsafe {
             let _ = libc::vm_deallocate(
                 crate::c::mach_task_self(),
                 self.info as usize,
-                self.info_size as usize,
+                self.info_size as usize * core::mem::size_of::<libc::integer_t>(),
             );
         }
     }

@@ -613,6 +613,9 @@ pub(crate) struct All {
     pub(crate) thread_id: std::thread::ThreadId,
     pub(crate) timers: TimerHeap,
     pub(crate) active_timer_count: i32,
+    /// `active_timer_count` went positive on `Bun.spawnSync`'s isolated loop.
+    #[cfg(not(windows))]
+    timer_refd_spawn_sync_loop: bool,
     #[cfg(windows)]
     pub(crate) uv_timer: bun_sys::windows::libuv::Timer,
     /// Whether we have emitted a warning for passing a negative timeout duration
@@ -623,6 +626,9 @@ pub(crate) struct All {
     /// TimerObjectInternals.epoch. Masked to 25 bits on increment.
     pub(crate) epoch: u32,
     pub(crate) immediate_ref_count: i32,
+    /// `immediate_ref_count` went positive on `Bun.spawnSync`'s isolated loop.
+    #[cfg(not(windows))]
+    immediate_refd_spawn_sync_loop: bool,
     #[cfg(windows)]
     pub(crate) uv_idle: bun_sys::windows::libuv::uv_idle_t,
     pub(crate) event_loop_delay: EventLoopDelayMonitor,
@@ -632,6 +638,29 @@ pub(crate) struct All {
     pub(crate) wtf_timers: Guarded<TimerHeap>,
 }
 
+/// Whether `uws_loop`, the VM's current loop, is `Bun.spawnSync`'s isolated loop.
+#[cfg(not(windows))]
+fn is_spawn_sync_loop(uws_loop: *mut bun_uws_sys::Loop) -> bool {
+    uws_loop != bun_uws_sys::Loop::get()
+}
+
+/// The loop a ref was taken on: the current loop `uws_loop` when the ref was
+/// taken on the isolated `spawnSync` loop, else the thread's loop.
+#[cfg(not(windows))]
+fn refd_loop(
+    spawn_sync_loop: bool,
+    uws_loop: *mut bun_uws_sys::Loop,
+) -> &'static mut bun_uws_sys::Loop {
+    let loop_ = if spawn_sync_loop {
+        uws_loop
+    } else {
+        bun_uws_sys::Loop::get()
+    };
+    // SAFETY: the caller passes the VM's live current loop, and the thread's
+    // loop lives as long as the VM.
+    unsafe { &mut *loop_ }
+}
+
 impl All {
     pub(crate) fn init() -> Self {
         Self {
@@ -639,12 +668,16 @@ impl All {
             thread_id: std::thread::current().id(),
             timers: TimerHeap::default(),
             active_timer_count: 0,
+            #[cfg(not(windows))]
+            timer_refd_spawn_sync_loop: false,
             #[cfg(windows)]
             uv_timer: bun_core::ffi::zeroed(),
             warned_negative_number: false,
             warned_not_number: false,
             epoch: 0,
             immediate_ref_count: 0,
+            #[cfg(not(windows))]
+            immediate_refd_spawn_sync_loop: false,
             #[cfg(windows)]
             uv_idle: bun_core::ffi::zeroed(),
             event_loop_delay: EventLoopDelayMonitor::default(),
@@ -1135,8 +1168,11 @@ impl All {
         self.immediate_ref_count = new;
         if old <= 0 && new > 0 {
             #[cfg(not(windows))]
-            // SAFETY: caller passes the VM's live uws loop
-            unsafe { &mut *uws_loop }.ref_();
+            {
+                self.immediate_refd_spawn_sync_loop = is_spawn_sync_loop(uws_loop);
+                // SAFETY: caller passes the VM's live uws loop
+                unsafe { &mut *uws_loop }.ref_();
+            }
             #[cfg(windows)]
             {
                 // Lazy-init the idle handle and start
@@ -1153,8 +1189,7 @@ impl All {
             }
         } else if old > 0 && new <= 0 {
             #[cfg(not(windows))]
-            // SAFETY: caller passes the VM's live uws loop
-            unsafe { &mut *uws_loop }.unref();
+            refd_loop(self.immediate_refd_spawn_sync_loop, uws_loop).unref();
             #[cfg(windows)]
             if !self.uv_idle.data.is_null() {
                 self.uv_idle.stop();
@@ -1186,8 +1221,11 @@ impl All {
         self.active_timer_count = new;
         if old <= 0 && new > 0 {
             #[cfg(not(windows))]
-            // SAFETY: caller passes the VM's live uws loop
-            unsafe { &mut *uws_loop }.ref_();
+            {
+                self.timer_refd_spawn_sync_loop = is_spawn_sync_loop(uws_loop);
+                // SAFETY: caller passes the VM's live uws loop
+                unsafe { &mut *uws_loop }.ref_();
+            }
             // `uv_timer.ref()` is intentionally unconditional (no `data !=
             // null` guard). Invariant: every path that reaches a positive
             // `active_timer_count` first inserts a timer, and `insert`
@@ -1197,8 +1235,7 @@ impl All {
             self.uv_timer.ref_();
         } else if old > 0 && new <= 0 {
             #[cfg(not(windows))]
-            // SAFETY: caller passes the VM's live uws loop
-            unsafe { &mut *uws_loop }.unref();
+            refd_loop(self.timer_refd_spawn_sync_loop, uws_loop).unref();
             #[cfg(windows)]
             self.uv_timer.unref();
         }

@@ -4807,8 +4807,6 @@ impl Resolver {
                 Async::posix_event_loop::poll_tag::DNS_RESOLVER,
                 self.as_ctx_ptr().cast::<()>(),
             );
-            // SAFETY: `event_loop_handle` is set once VM is initialized; live for VM lifetime.
-            let loop_ = unsafe { &mut *self.vm().event_loop_handle.unwrap() };
             // SAFETY: single-JS-thread; the `&mut PollsMap` borrow does not span
             // any re-entrant call (`FilePoll::register` is a syscall wrapper).
             let polls = unsafe { self.polls.get_mut() };
@@ -4838,12 +4836,12 @@ impl Resolver {
                 // direction armed would busy-loop on level-triggered writable
                 // once the socket connects. Full resync is the simplest
                 // correct path and c-ares DNS fds are short-lived.
-                let _ = poll.unregister(loop_, false);
+                let _ = poll.unregister(ctx, false);
                 if readable {
-                    let _ = poll.register(loop_, Async::PollKind::Readable, false);
+                    let _ = poll.register(ctx, Async::PollKind::Readable, false);
                 }
                 if writable {
-                    let _ = poll.register(loop_, Async::PollKind::Writable, false);
+                    let _ = poll.register(ctx, Async::PollKind::Writable, false);
                 }
             } else {
                 // Only adding directions (or no change). register() issues a
@@ -4851,10 +4849,10 @@ impl Resolver {
                 // on kqueue EV_ADD creates a separate (ident, filter) knote
                 // without disturbing the existing one.
                 if readable && !have_readable {
-                    let _ = poll.register(loop_, Async::PollKind::Readable, false);
+                    let _ = poll.register(ctx, Async::PollKind::Readable, false);
                 }
                 if writable && !have_writable {
-                    let _ = poll.register(loop_, Async::PollKind::Writable, false);
+                    let _ = poll.register(ctx, Async::PollKind::Writable, false);
                 }
             }
         }

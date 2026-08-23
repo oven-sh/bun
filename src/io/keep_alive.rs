@@ -13,6 +13,8 @@ use crate::posix_event_loop::js_vm_ctx;
 #[derive(Default)]
 pub struct KeepAlive {
     status: Status,
+    /// `ref_` counted on `Bun.spawnSync`'s isolated loop, not the thread's loop.
+    spawn_sync_loop: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
@@ -45,10 +47,11 @@ impl KeepAlive {
             return;
         }
         self.status = Status::Inactive;
+        let loop_ = event_loop_ctx.loop_for(self.spawn_sync_loop);
         #[cfg(not(windows))]
-        event_loop_ctx.loop_unref();
+        loop_.unref();
         #[cfg(windows)]
-        event_loop_ctx.loop_sub_active(1);
+        loop_.sub_active(1);
     }
 
     /// Prevent a poll from keeping the process alive on the next tick.
@@ -56,6 +59,10 @@ impl KeepAlive {
         if self.status != Status::Active {
             return;
         }
+        debug_assert!(
+            !self.spawn_sync_loop,
+            "deferred unref of a spawnSync loop ref"
+        );
         self.status = Status::Inactive;
         // vm.pending_unref_counter +|= 1;
         #[cfg(not(windows))]
@@ -70,6 +77,7 @@ impl KeepAlive {
             return;
         }
         self.status = Status::Active;
+        self.spawn_sync_loop = event_loop_ctx.is_spawn_sync_loop();
         event_loop_ctx.loop_ref();
     }
 

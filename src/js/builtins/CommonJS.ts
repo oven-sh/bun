@@ -31,8 +31,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string) {
   return $requireCommonJSModule.$call(this, originalId);
 }
 
-// `this` anchors resolution; a 3rd argument (passed only by the native `Module._load`) is the `parent`
-// the caller gave, handed to an overridden `_resolveFilename` and recorded as `module.parent`.
+// `this` anchors resolution; a 3rd argument (only from the native `Module._load`) is the caller's `parent`.
 $overriddenName = "require";
 $visibility = "Private";
 export function requireCommonJSModule(this: JSCommonJSModule, originalId: string, options?: { paths?: string[] }) {

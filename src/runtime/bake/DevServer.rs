@@ -6157,9 +6157,9 @@ impl EntryPointList {
 /// `<'a>` retained only for the owning `DevServer<'a>`'s `Transpiler` borrows.
 #[derive(Default)]
 pub struct HTMLRouter {
-    pub(crate) map: StringHashMap<bun_ptr::BackRef<HTMLBundleRoute, bun_ptr::Mut>>,
+    pub(crate) map: StringHashMap<bun_ptr::BackRef<HTMLBundleRoute, bun_ptr::Root>>,
     /// If a catch-all route exists, it is not stored in map, but here.
-    pub(crate) fallback: Option<bun_ptr::BackRef<HTMLBundleRoute, bun_ptr::Mut>>,
+    pub(crate) fallback: Option<bun_ptr::BackRef<HTMLBundleRoute, bun_ptr::Root>>,
 }
 
 impl HTMLRouter {
@@ -6181,7 +6181,7 @@ impl HTMLRouter {
     pub(crate) fn put(
         &mut self,
         path: &[u8],
-        route: bun_ptr::BackRef<HTMLBundleRoute, bun_ptr::Mut>,
+        route: bun_ptr::BackRef<HTMLBundleRoute, bun_ptr::Root>,
     ) -> crate::Result<()> {
         if path == b"/*" {
             self.fallback = Some(route);

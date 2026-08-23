@@ -357,25 +357,13 @@ pub enum CreateJsRequest {
 /// per-request `RequestContext` (`Ctx`: HTTP/1 or HTTP/3 flavour).
 pub struct PreparedRequestFor<Ctx> {
     pub(crate) js_request: JSValue,
-    /// The heap `Request` (owned by its JS wrapper once created): a weak
-    /// handle of our own, so the dispatch frame can still reach it after the
-    /// context lets go of its one (`server.upgrade()`), borrowed only at each
-    /// point of use.
-    pub(crate) request: crate::webcore::request::WeakRef,
     /// The `Request` allocation's root pointer, for the C++ route-list call
-    /// that wraps it.
+    /// that wraps it. The `Request` itself is reached through
+    /// `ctx.request_weakref`, which pins it for the request's lifetime.
     pub(crate) request_ptr: NonNull<crate::webcore::Request>,
     /// Self-owned (refcounted, pool-slot token inside); outlives the dispatch
     /// frame that holds this.
     pub ctx: bun_ptr::BackRef<Ctx>,
-}
-
-impl<Ctx> PreparedRequestFor<Ctx> {
-    /// The heap `Request`, unless its owner already finalized it.
-    #[inline]
-    pub(crate) fn request(&self) -> Option<&crate::webcore::Request> {
-        self.request.peek()
-    }
 }
 
 /// The HTTP/1 instantiation; H3 callers never `save()`.
@@ -383,14 +371,26 @@ pub type PreparedRequest<const SSL: bool, const DEBUG: bool> =
     PreparedRequestFor<ServerRequestContext<SSL, DEBUG>>;
 
 impl<const SSL: bool, const DEBUG: bool> PreparedRequest<SSL, DEBUG> {
-    /// `ctx.to_async(..)`, or — if the `Request` is already gone — just arm the
-    /// abort handler it would have.
-    fn to_async(
-        ctx: &ServerRequestContext<SSL, DEBUG>,
-        req: *mut c_void,
-        request: &crate::webcore::request::WeakRef,
-    ) {
-        match request.peek() {
+    /// The heap `Request`, while the context still holds it.
+    #[inline]
+    pub(crate) fn request(&self) -> Option<&crate::webcore::Request> {
+        self.ctx.get().request_weakref.get().peek()
+    }
+
+    /// Detach the borrowed stack `uws::Request` from the heap `Request` so the
+    /// JS object never dangles a pointer past the uWS frame it borrowed.
+    #[inline]
+    fn detach_uws_request(ctx: &ServerRequestContext<SSL, DEBUG>) {
+        if let Some(request) = ctx.request_weakref.get().peek() {
+            request.request_context.get().detach_request();
+        }
+    }
+
+    /// `ctx.to_async(..)` (which also detaches the stack `uws::Request`), or —
+    /// if the `Request` is already gone — just arm the abort handler.
+    #[inline]
+    fn to_async(ctx: &ServerRequestContext<SSL, DEBUG>, req: *mut c_void) {
+        match ctx.request_weakref.get().peek() {
             Some(request) => ctx.to_async(req, request),
             None => ctx.set_abort_handler(),
         }
@@ -407,32 +407,18 @@ impl<const SSL: bool, const DEBUG: bool> PreparedRequest<SSL, DEBUG> {
         // By saving a request, all information from `req` must be
         // copied since the provided uws.Request will be re-used for
         // future requests (stack allocated).
+        let ctx = self.ctx.get();
         Self::to_async(
-            self.ctx.get(),
+            ctx,
             std::ptr::from_mut::<uws_sys::Request>(req).cast::<c_void>(),
-            &self.request,
         );
 
         SavedRequest {
             js_request: jsc::StrongOptional::create(self.js_request, global),
-            request: self.request.clone(),
+            request: ctx.request_weakref.get().clone(),
             request_ptr: self.request_ptr,
             ctx: AnyRequestContext::init(self.ctx.as_const_ptr()),
             response: any_response_from::<SSL>(resp),
-        }
-    }
-}
-
-/// RAII: on drop, detaches the borrowed stack `uws::Request` from the heap
-/// `webcore::Request` so the JS request
-/// object never dangles a pointer past the uWS frame it borrowed.
-pub(crate) struct DetachRequestOnDrop<'a>(&'a crate::webcore::request::WeakRef);
-
-impl Drop for DetachRequestOnDrop<'_> {
-    #[inline]
-    fn drop(&mut self) {
-        if let Some(request) = self.0.peek() {
-            request.request_context.get().detach_request();
         }
     }
 }
@@ -968,7 +954,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     .js_request
                     .get()
                     .expect("Request was unexpectedly freed"),
-                request: data.request.clone(),
                 request_ptr: data.request_ptr,
                 // `SavedRequest` was produced by `PreparedRequest::save`
                 // for this exact (SSL,DEBUG) monomorphization, so the erased
@@ -998,12 +983,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             Err(err) => global.take_exception(err),
         };
 
+        // The uWS request will not live longer than this function: on every
+        // exit below it is detached from the `Request` — only when it's the
+        // stack-allocated original (a saved request already copied everything).
         let is_stack = matches!(req, SavedRequestUnion::Stack(_));
         let ctx_ref = prepared.ctx.get();
-        // uWS request will not live longer than this function — only detach
-        // when it's the stack-allocated original (a saved request already
-        // copied everything it needs).
-        let _detach_guard = is_stack.then(|| DetachRequestOnDrop(&prepared.request));
 
         let original_state = ctx_ref.defer_deinit_until_callback_completes.get();
         let should_deinit_context = Cell::new(false);
@@ -1019,11 +1003,17 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         prepared.js_request.ensure_still_alive();
 
         if should_deinit_context.get() {
+            if is_stack {
+                PreparedRequest::<SSL, DEBUG>::detach_uws_request(ctx_ref);
+            }
             ctx_ref.deinit();
             return;
         }
 
         if ctx_ref.should_render_missing() {
+            if is_stack {
+                PreparedRequest::<SSL, DEBUG>::detach_uws_request(ctx_ref);
+            }
             ctx_ref.render_missing();
             return;
         }
@@ -1037,7 +1027,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     std::ptr::from_ref::<uws::Request>(r)
                         .cast_mut()
                         .cast::<c_void>(),
-                    &prepared.request,
                 );
             }
             SavedRequestUnion::Saved(_) => {} // info already copied
@@ -1061,9 +1050,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     ) {
         let ctx_ref = prepared.ctx.get();
 
-        // uWS request will not live longer than this function
-        let _detach_guard = DetachRequestOnDrop(&prepared.request);
-
+        // The uWS request will not live longer than this function: on every
+        // exit below it is detached from the `Request`.
         ctx_ref.on_response(self, prepared.js_request, response_value);
         // Reference in the stack here in case it is not for whatever reason
         prepared.js_request.ensure_still_alive();
@@ -1071,11 +1059,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         ctx_ref.defer_deinit_until_callback_completes.set(None);
 
         if should_deinit_context.get() {
+            PreparedRequest::<SSL, DEBUG>::detach_uws_request(ctx_ref);
             ctx_ref.deinit();
             return;
         }
 
         if ctx_ref.should_render_missing() {
+            PreparedRequest::<SSL, DEBUG>::detach_uws_request(ctx_ref);
             ctx_ref.render_missing();
             return;
         }
@@ -1086,7 +1076,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         PreparedRequest::<SSL, DEBUG>::to_async(
             ctx_ref,
             std::ptr::from_mut::<uws_sys::Request>(req).cast::<c_void>(),
-            &prepared.request,
         );
         prepared.js_request.ensure_still_alive();
     }

@@ -221,26 +221,27 @@ impl Route {
         };
 
         if server.config().is_development() {
-            let handled = server.with_dev_server_mut(|dev| {
+            if let Some(dev) = server.dev_server_cell() {
                 // DevServer's HMR path is *uws.Request-typed; H3 isn't routed
                 // there (no h3_app on plain-HTTP debug servers in practice),
                 // but stay defensive.
                 match req {
                     AnyRequest::H1(h1) => {
                         // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
-                        bun_core::handle_oom(dev.respond_for_html_bundle(
-                            this,
-                            bun_opaque::opaque_deref_mut(h1),
-                            resp,
-                        ));
+                        bun_core::handle_oom(
+                            crate::bake::DevServer::DevServer::respond_for_html_bundle(
+                                &dev,
+                                this,
+                                bun_opaque::opaque_deref_mut(h1),
+                                resp,
+                            ),
+                        );
                     }
                     AnyRequest::H3(_) => {
                         resp.write_status(b"503 Service Unavailable");
                         resp.end(b"DevServer HMR is HTTP/1.1 only", true);
                     }
                 }
-            });
-            if handled.is_some() {
                 return;
             }
 

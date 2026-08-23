@@ -175,6 +175,7 @@ impl HmrSocket {
                 let _ = ws.send(&response, Opcode::Binary, false, true);
             }
             x if x == IncomingMessageId::TestingBatchEvents as u8 => {
+                let mut bundle = None;
                 let close = dev_cell.with_mut(|dev| match &dev.testing_batch_events {
                     super::TestingBatchEvents::Disabled => {
                         if dev.current_bundle.is_some() {
@@ -212,12 +213,17 @@ impl HmrSocket {
                             return false;
                         }
 
-                        let timer = std::time::Instant::now();
-                        dev.start_async_bundle(event.entry_points, true, timer)
-                            .expect("OOM");
+                        bundle = Some(super::BundleRequest {
+                            entry_points: event.entry_points,
+                            had_reload_event: true,
+                            timer: std::time::Instant::now(),
+                        });
                         false
                     }
                 });
+                if let Some(bundle) = bundle {
+                    DevServer::start_async_bundle(&dev_cell, bundle).expect("OOM");
+                }
                 if close {
                     ws.close();
                 }

@@ -31,9 +31,6 @@ pub struct Assets {
     pub(crate) needs_reindex: bool,
 }
 
-// SAFETY: `Assets` is only ever constructed as the `assets` field of
-// `DevServer` (which is `Box`-allocated and never moved post-init).
-
 impl Assets {
     pub(crate) fn get_hash(&self, path: &[u8]) -> Option<u64> {
         self.path_map

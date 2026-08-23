@@ -613,7 +613,7 @@ impl BuildCommand {
         let opt_output_format = this_transpiler.options.output_format;
         let opt_source_map = this_transpiler.options.source_map;
         let opt_transform_only = this_transpiler.options.transform_only;
-        let env: &mut bun_dotenv::Loader = this_transpiler.env_mut();
+        let env: &bun_dotenv::Loader = this_transpiler.env();
 
         let mut output_files: Vec<options::OutputFile> = 'brk: {
             if ctx.bundler_options.transform_only {

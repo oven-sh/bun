@@ -2221,7 +2221,7 @@ pub use bun_options_types::compile_target::CompileTarget;
 /// two `download*` fns below in this crate.
 pub(crate) fn download_to_path(
     target: &CompileTarget,
-    env: &mut bun_dotenv::Loader,
+    env: &bun_dotenv::Loader,
     dest_z: &ZStr,
 ) -> crate::Result<()> {
     bun_http::http_thread::init(&Default::default());
@@ -2479,7 +2479,7 @@ pub fn to_executable(
     root_dir: Fd,
     module_prefix: &[u8],
     outfile: &[u8],
-    env: &mut bun_dotenv::Loader,
+    env: &bun_dotenv::Loader,
     output_format: Format,
     windows_options: &WindowsOptions,
     compile_exec_argv: &[u8],

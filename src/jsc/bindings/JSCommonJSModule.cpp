@@ -1397,6 +1397,88 @@ void RequireResolveFunctionPrototype::finishCreation(JSC::VM& vm)
     Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
+struct UnwrappedCommonJSModule {
+    // One "\n" per line the wrapper header occupied, then the text between the wrapper's braces, so line numbers survive re-wrapping.
+    WTF::String body;
+    // What followed the closing "})": ";", newlines and "//" comments such as sourceMappingURL.
+    WTF::String trailer;
+};
+
+// Undoes the wrapper emitted by js_parser (WrapMode::BunCommonjs) and by `bun build --format=cjs --target=bun`; nullopt when the source is not shaped like that.
+static std::optional<UnwrappedCommonJSModule> unwrapCommonJSModule(const WTF::String& source)
+{
+    unsigned headerStart = 0;
+    while (source.hasInfixStartingAt("//"_s, headerStart) || source.hasInfixStartingAt("#!"_s, headerStart)) {
+        auto lineEnd = source.find('\n', headerStart);
+        if (lineEnd == WTF::notFound)
+            return std::nullopt;
+        headerStart = lineEnd + 1;
+    }
+    if (!source.hasInfixStartingAt("(function("_s, headerStart))
+        return std::nullopt;
+
+    auto bodyStart = source.find('{', headerStart);
+    auto bodyEnd = source.reverseFind("})"_s);
+    if (bodyStart == WTF::notFound || bodyEnd == WTF::notFound || bodyEnd <= bodyStart)
+        return std::nullopt;
+    bodyStart += 1;
+    if (bodyEnd != bodyStart && source[bodyEnd - 1] != '\n')
+        return std::nullopt;
+
+    auto trailerStart = bodyEnd + 2;
+    for (unsigned i = trailerStart; i < source.length();) {
+        if (source.hasInfixStartingAt("//"_s, i)) {
+            auto lineEnd = source.find('\n', i);
+            if (lineEnd == WTF::notFound)
+                break;
+            i = lineEnd + 1;
+            continue;
+        }
+        auto c = source[i];
+        if (c != ';' && !isASCIIWhitespace(c))
+            return std::nullopt;
+        i++;
+    }
+
+    unsigned headerLines = 0;
+    for (unsigned i = 0; i < bodyStart; i++) {
+        if (source[i] == '\n')
+            headerLines++;
+    }
+
+    return UnwrappedCommonJSModule {
+        makeString(pad('\n', headerLines, ""_s), StringView(source).substring(bodyStart, bodyEnd - bodyStart)),
+        source.substring(trailerStart),
+    };
+}
+
+// Replaces the transpiler's wrapper with the one assigned to require("node:module").wrapper.
+static void applyOverriddenModuleWrapper(Zig::GlobalObject* globalObject, JSValue filename, ResolvedSource& source, bool isBuiltIn)
+{
+    if (!globalObject->hasOverriddenModuleWrapper) [[likely]]
+        return;
+
+    // -e / stdin code is transpiled without a wrapper and run as a script.
+    if (Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(filename)))
+        return;
+
+    auto unwrapped = unwrapCommonJSModule(source.source_code.toWTFString(BunString::ZeroCopy));
+    if (!unwrapped)
+        return;
+
+    // Zig::SourceProvider::create derefs the replacement under the same condition.
+    if (source.needsDeref && !isBuiltIn) {
+        source.needsDeref = false;
+        source.source_code.deref();
+    }
+    source.source_code = Bun::toStringRef(makeString(
+        globalObject->m_moduleWrapperStart,
+        unwrapped->body,
+        globalObject->m_moduleWrapperEnd,
+        unwrapped->trailer));
+    source.needsDeref = true;
+}
+
 void JSCommonJSModule::evaluate(
     Zig::GlobalObject* globalObject,
     const WTF::String& key,
@@ -1405,23 +1487,7 @@ void JSCommonJSModule::evaluate(
 {
     auto& vm = JSC::getVM(globalObject);
 
-    if (globalObject->hasOverriddenModuleWrapper) [[unlikely]] {
-        auto string = source.source_code.toWTFString(BunString::ZeroCopy);
-        auto trimStart = string.find('\n');
-        if (trimStart != WTF::notFound) {
-            if (source.needsDeref && !isBuiltIn) {
-                source.needsDeref = false;
-                source.source_code.deref();
-            }
-            auto wrapperStart = globalObject->m_moduleWrapperStart;
-            auto wrapperEnd = globalObject->m_moduleWrapperEnd;
-            source.source_code = Bun::toStringRef(makeString(
-                wrapperStart,
-                string.substring(trimStart, string.length() - trimStart - 4),
-                wrapperEnd));
-            source.needsDeref = true;
-        }
-    }
+    applyOverriddenModuleWrapper(globalObject, this->m_filename.get(), source, isBuiltIn);
 
     auto sourceProvider = Zig::SourceProvider::create(globalObject, source, JSC::SourceProviderSourceType::Program, isBuiltIn);
     this->ignoreESModuleAnnotation = source.tag == ResolvedSourceTagPackageJSONTypeModule;
@@ -1469,25 +1535,21 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
         }
         WTF::String sourceString = source.source_code.toWTFString(BunString::ZeroCopy);
         RETURN_IF_EXCEPTION(scope, );
+        auto unwrapped = unwrapCommonJSModule(sourceString);
+        if (!unwrapped) {
+            // _compile would wrap the wrapper; run the source as it is instead.
+            scope.release();
+            this->evaluate(globalObject, key, source, false);
+            return;
+        }
         if (source.needsDeref) {
             source.needsDeref = false;
             source.source_code.deref();
         }
-        // Remove the wrapper from the source string, since the transpiler has added it.
-        auto trimStart = sourceString.find('\n');
-        WTF::String sourceStringWithoutWrapper;
-        if (trimStart != WTF::notFound) {
-            auto wrapperStart = globalObject->m_moduleWrapperStart;
-            auto wrapperEnd = globalObject->m_moduleWrapperEnd;
-            sourceStringWithoutWrapper = sourceString.substring(trimStart, sourceString.length() - trimStart - 4);
-        } else {
-            sourceStringWithoutWrapper = sourceString;
-        }
-        RETURN_IF_EXCEPTION(scope, );
 
         // _compile(source, filename)
         MarkedArgumentBuffer arguments;
-        arguments.append(jsString(vm, sourceStringWithoutWrapper));
+        arguments.append(jsString(vm, unwrapped->body));
         arguments.append(keyJSString);
         JSC::profiledCall(globalObject, ProfilingReason::API, compileFunction, callData, this, arguments);
         RETURN_IF_EXCEPTION(scope, );
@@ -1533,14 +1595,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             requireMapKey = JSC::jsString(vm, WTF::String("."_s));
         }
 
-        if (globalObject->hasOverriddenModuleWrapper) [[unlikely]] {
-            auto concat = makeString(
-                globalObject->m_moduleWrapperStart,
-                source.source_code.toWTFString(BunString::ZeroCopy),
-                globalObject->m_moduleWrapperEnd);
-            source.source_code.deref();
-            source.source_code = Bun::toStringRef(concat);
-        }
+        applyOverriddenModuleWrapper(globalObject, filename, source, isBuiltIn);
 
         auto sourceProvider = Zig::SourceProvider::create(globalObject, source, JSC::SourceProviderSourceType::Program, isBuiltIn);
         if (!isBuiltIn && !globalObject->hasOverriddenModuleWrapper && Bun::IsolatedModuleCache::canUse(vm, globalObject->bunVM())) {

@@ -285,6 +285,30 @@ describe.concurrent("OTLP/HTTP exporter", () => {
     expect(c.spans().map((s: any) => s.name)).toEqual(["retried", "retried"]);
   });
 
+  test("after a forceFlush(), later failed exports keep their backoff (are not retried in a burst)", async () => {
+    // Batch 1 succeeds and is flushed. Batch 2 then gets 503s: it must be
+    // parked for its backoff, not burned through every attempt at once.
+    let n = 0;
+    using c = collector(i => (n++, i === 0 ? undefined : new Response("busy", { status: 503 })));
+    const { stdout, exitCode } = await run(
+      `
+        Bun.otel.start({ endpoint: process.env.COLLECTOR, batch: { delayMs: 10 } });
+        Bun.otel.tracer("t").startSpan("first").end();
+        await Bun.otel.forceFlush();
+        Bun.otel.tracer("t").startSpan("second").end();
+        await Bun.sleep(300); // > delayMs, < the first backoff step (1s)
+        console.log(JSON.stringify(Bun.otel.stats()));
+        process.exit(0);
+      `,
+      { COLLECTOR: c.url, OTEL_BSP_EXPORT_TIMEOUT: "1" },
+    );
+    const stats = JSON.parse(stdout.trim());
+    // one success, then a single parked attempt for "second" (not 5 in a row)
+    expect([stats.exportsSucceeded, stats.exportsFailed]).toEqual([1, 0]);
+    expect(c.received.length).toBe(2);
+    expect(exitCode).toBe(0);
+  });
+
   test("unreachable collector: retried export does not stall process exit", async () => {
     // A collector that drops every connection: the export fails (retryable)
     // and is parked; exit must not wait out OTEL_BSP_EXPORT_TIMEOUT for it.

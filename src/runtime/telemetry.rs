@@ -949,6 +949,11 @@ pub fn force_flush(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSVa
 
 pub(crate) fn resolve_flush_waiters() {
     let Some(s) = current_vm_state() else { return };
+    // The idle hook stays installed after the first forceFlush(); with nobody
+    // waiting, parked retries keep their backoff.
+    if s.flush_waiters.borrow().is_empty() {
+        return;
+    }
     if processor().pending_retries() != 0 {
         // A flush is waiting on a payload that got parked: retry it now
         // rather than after its backoff.

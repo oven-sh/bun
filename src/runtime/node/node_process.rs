@@ -97,9 +97,8 @@ extern "C" fn Bun__NODE_NO_WARNINGS() -> bool {
     env_var::NODE_NO_WARNINGS.get() == Some(b"1")
 }
 
-/// `--redirect-warnings=<path>` value, if set. Returns false when unset.
+/// `--redirect-warnings=<path>` value; `Dead` when unset.
 #[unsafe(no_mangle)]
-/// `Dead` when unset.
 pub(crate) extern "C" fn Bun__Node__getRedirectWarnings() -> bun_core::String {
     match crate::cli::Bun__Node__RedirectWarnings.get() {
         Some(path) => bun_core::String::clone_utf8(path),

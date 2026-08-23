@@ -228,7 +228,6 @@
 #endif
 
 #include <wtf/NumberOfCores.h>
-#include <wtf/Scope.h>
 
 using namespace Bun;
 
@@ -3363,40 +3362,28 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    ErrorableString res;
-    res.success = false;
-
-    BunString keyZ = BunStringEmpty;
-    BunString referrerZ = BunStringEmpty;
-    auto derefStrings = WTF::makeScopeExit([&] {
-        keyZ.deref();
-        referrerZ.deref();
-    });
+    WTF::String keyString;
     if (key.isString()) {
-        auto moduleName = uncheckedDowncast<JSString>(key)->value(globalObject);
+        keyString = uncheckedDowncast<JSString>(key)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        if (moduleName->startsWith("file://"_s)) {
-            auto url = WTF::URL(moduleName);
+        if (keyString.startsWith("file://"_s)) {
+            auto url = WTF::URL(keyString);
             if (url.isValid() && !url.isEmpty()) {
-                keyZ = Bun::toStringRef(url.fileSystemPath());
-            } else {
-                keyZ = Bun::toStringRef(moduleName);
+                keyString = url.fileSystemPath();
             }
-        } else {
-            keyZ = Bun::toStringRef(moduleName);
         }
-
     } else {
-        keyZ = Bun::toStringRef(globalObject, key);
+        keyString = key.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
     }
+    WTF::String referrerString;
     if (referrer && referrer.isString()) {
-        referrerZ = Bun::toStringRef(globalObject, referrer);
+        referrerString = referrer.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
     }
 
     if (globalObject->onLoadPlugins.hasVirtualModules()) {
-        if (auto resolvedString = globalObject->onLoadPlugins.resolveVirtualModule(keyZ.toWTFString(), referrerZ.toWTFString())) {
+        if (auto resolvedString = globalObject->onLoadPlugins.resolveVirtualModule(keyString, referrerString)) {
             return Identifier::fromString(vm, resolvedString.value());
         }
     } else {
@@ -3414,36 +3401,36 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     // as "ns:..." in source. The proper fix is for moduleLoaderImportModule
     // to mark keys it already resolved so we can skip only those.
     if (!globalObject->onLoadPlugins.namespaces.isEmpty()) {
-        auto keyStr = keyZ.toWTFString();
-        if (auto colon = keyStr.find(':'); colon != WTF::notFound && !(colon == 1 && isASCIIAlpha(keyStr[0]))) {
+        if (auto colon = keyString.find(':'); colon != WTF::notFound && !(colon == 1 && isASCIIAlpha(keyString[0]))) {
             // colon == 1 with a leading ASCII letter is a Windows drive
             // ("C:\\..."), never a plugin namespace.
-            auto ns = keyStr.left(colon);
+            auto ns = keyString.left(colon);
             for (const auto& registered : globalObject->onLoadPlugins.namespaces) {
                 if (registered == ns) {
-                    return Identifier::fromString(vm, keyStr);
+                    return Identifier::fromString(vm, keyString);
                 }
             }
         }
     }
 
-    BunString queryString = BunStringEmpty;
-    Zig__GlobalObject__resolve(&res, globalObject, &keyZ, &referrerZ, &queryString);
+    ErrorableString res;
+    res.success = false;
+    BunString keyZ = Bun::toString(keyString);
+    BunString referrerZ = Bun::toString(referrerString);
+    BunString queryZ = BunStringEmpty;
+    Zig__GlobalObject__resolve(&res, globalObject, &keyZ, &referrerZ, &queryZ);
     RETURN_IF_EXCEPTION(scope, {});
-
     if (!res.success) {
         throwException(scope, res.result.err, globalObject);
         return {};
     }
-    auto derefResult = WTF::makeScopeExit([&] {
-        res.result.value.deref();
-        queryString.deref();
-    });
+    auto resolved = res.result.value.transferToWTFString();
+    auto query = queryZ.transferToWTFString();
 
-    if (!queryString.isEmpty()) {
-        return JSC::Identifier::fromString(vm, makeString(res.result.value.toWTFString(BunString::ZeroCopy), queryString.toWTFString(BunString::ZeroCopy)));
+    if (!query.isEmpty()) {
+        return Identifier::fromString(vm, makeString(resolved, query));
     }
-    return Identifier::fromString(vm, res.result.value.toWTFString(BunString::ZeroCopy));
+    return Identifier::fromString(vm, resolved);
 }
 
 JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalObject,
@@ -3505,46 +3492,31 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     }
 
     {
-        ErrorableString resolved;
-        memset(&resolved, 0, sizeof(resolved));
-
-        BunString moduleNameZ = BunStringEmpty;
-        BunString sourceOriginZ = BunStringEmpty;
-        auto derefStrings = WTF::makeScopeExit([&] {
-            moduleNameZ.deref();
-            sourceOriginZ.deref();
-        });
-        String moduleStringHolder;
         if (moduleName.startsWith("file://"_s)) {
             auto url = WTF::URL(moduleName);
             if (url.isValid() && !url.isEmpty()) {
-                moduleStringHolder = url.fileSystemPath();
-                moduleNameZ = Bun::toStringRef(moduleStringHolder);
-            } else {
-                moduleNameZ = Bun::toStringRef(moduleName);
+                moduleName = url.fileSystemPath();
             }
-        } else {
-            moduleNameZ = Bun::toStringRef(moduleName);
         }
 
-        BunString queryString = BunStringEmpty;
-        sourceOriginZ = Bun::toStringRef(sourceOriginStringHolder);
-
-        Zig__GlobalObject__resolve(&resolved, globalObject, &moduleNameZ, &sourceOriginZ, &queryString);
+        ErrorableString res;
+        res.success = false;
+        BunString moduleNameZ = Bun::toString(moduleName);
+        BunString sourceOriginZ = Bun::toString(sourceOriginStringHolder);
+        BunString queryZ = BunStringEmpty;
+        Zig__GlobalObject__resolve(&res, globalObject, &moduleNameZ, &sourceOriginZ, &queryZ);
         RETURN_IF_EXCEPTION(scope, JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope));
-        if (!resolved.success) [[unlikely]] {
-            throwException(scope, resolved.result.err, globalObject);
+        if (!res.success) [[unlikely]] {
+            throwException(scope, res.result.err, globalObject);
             return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
         }
-        auto derefResult = WTF::makeScopeExit([&] {
-            resolved.result.value.deref();
-            queryString.deref();
-        });
+        auto resolved = res.result.value.transferToWTFString();
+        auto query = queryZ.transferToWTFString();
 
-        if (queryString.isEmpty()) {
-            resolvedIdentifier = JSC::Identifier::fromString(vm, resolved.result.value.toWTFString());
+        if (query.isEmpty()) {
+            resolvedIdentifier = JSC::Identifier::fromString(vm, resolved);
         } else {
-            resolvedIdentifier = JSC::Identifier::fromString(vm, makeString(resolved.result.value.toWTFString(BunString::ZeroCopy), queryString.toWTFString(BunString::ZeroCopy)));
+            resolvedIdentifier = JSC::Identifier::fromString(vm, makeString(resolved, query));
         }
     }
 

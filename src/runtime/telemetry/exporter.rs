@@ -458,9 +458,10 @@ fn span_to_js(
 
     let links = JSValue::create_empty_array(global, 0)?;
     for link in span.links() {
-        let l = JSValue::create_empty_object(global, 4);
+        let l = JSValue::create_empty_object(global, 5);
         l.put(global, b"traceId", hex_js(global, link.trace_id)?);
         l.put(global, b"spanId", hex_js(global, link.span_id)?);
+        l.put(global, b"flags", JSValue::js_number(link.flags as f64));
         if !link.trace_state.is_empty() {
             l.put(global, b"traceState", str_js(global, link.trace_state)?);
         }

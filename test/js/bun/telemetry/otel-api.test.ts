@@ -271,7 +271,7 @@ describe("Bun.otel", () => {
     const span = tracer.startSpan("rich", { links: [{ context: other.spanContext(), attributes: { l: 1 } }] });
     span.addEvent("ev1", { a: 1 });
     span.addEvent("ev2", Date.now());
-    span.addLink({ context: { ...other.spanContext(), traceState: "vendor=abc" } });
+    span.addLink({ context: { ...other.spanContext(), traceState: "vendor=abc", isRemote: true } });
     span.recordException(new TypeError("boom"));
     span.setStatus({ code: 2, message: "bad" });
     span.setStatus({ code: 1 }); // Ok overrides Error; message dropped
@@ -291,7 +291,9 @@ describe("Bun.otel", () => {
     expect(s.links[0].spanId).toBe(other.spanId);
     expect(s.links[0].attributes).toEqual({ l: 1 });
     expect(s.links[0].traceState).toBeUndefined();
+    expect(s.links[0].flags).toBe(0x101); // sampled, known-local
     expect(s.links[1].traceState).toBe("vendor=abc");
+    expect(s.links[1].flags).toBe(0x301); // sampled, known-remote (isRemote: true)
     expect(s.status).toEqual({ code: 1 });
   });
 

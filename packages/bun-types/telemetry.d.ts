@@ -239,7 +239,14 @@ declare module "bun" {
       endTime: number;
       attributes: Record<string, string | number | boolean | Array<string | number | boolean>>;
       events: { name: string; time: number; attributes: ExportedSpan["attributes"] }[];
-      links: { traceId: string; spanId: string; traceState?: string; attributes: ExportedSpan["attributes"] }[];
+      links: {
+        traceId: string;
+        spanId: string;
+        traceState?: string;
+        /** OTLP link flags: low byte = W3C trace flags, 0x100 = is-remote known, 0x200 = is remote. */
+        flags: number;
+        attributes: ExportedSpan["attributes"];
+      }[];
       status: { code: SpanStatusCode; message?: string };
       traceFlags: number;
       traceState?: string;

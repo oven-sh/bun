@@ -250,7 +250,8 @@ export function telemetryAddOneLink(span: unknown, state: number, link: any) {
   if (ctx == null || typeof ctx.traceId !== "string" || typeof ctx.spanId !== "string") return;
   const traceId = ctx.traceId + "";
   const spanId = ctx.spanId + "";
-  const traceFlags = ctx.traceFlags | 0;
+  // low nibble: W3C flags; 0x10: the linked context is remote (Flags::REMOTE natively)
+  const traceFlags = (ctx.traceFlags & 0x0f) | (ctx.isRemote === true ? 0x10 : 0);
   // api TraceState (has serialize()) or a raw header string
   const ts = ctx.traceState;
   const traceState =

@@ -620,7 +620,7 @@ fn link_context(link: &LinkRef) -> Option<SpanContext> {
     Some(SpanContext {
         trace_id,
         span_id,
-        flags: Flags(link.trace_flags & Flags::SAMPLED),
+        flags: Flags(link.trace_flags & (Flags::SAMPLED | Flags::REMOTE)),
     })
 }
 

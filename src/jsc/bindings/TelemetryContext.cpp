@@ -24,8 +24,10 @@ JSValue TelemetryContextSlot::build(JSGlobalObject* globalObject, JSValue header
         values.append(header);
         values.append(hasExtras ? extras : jsNull());
     }
-    for (unsigned i = 0; i < storeValues; ++i)
-        values.append(stores.array->getIndexQuickly(stores.storesStart + i));
+    for (unsigned i = 0; i < storeValues; ++i) {
+        JSValue v = stores.array->tryGetIndexQuickly(stores.storesStart + i);
+        values.append(v ? v : jsUndefined());
+    }
     RELEASE_ASSERT(!values.hasOverflowed());
     return constructArray(globalObject, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), values);
 }

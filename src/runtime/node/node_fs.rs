@@ -4496,8 +4496,7 @@ pub struct NodeFS {
     /// the heap allocated buffer on the NodeFS struct
     pub(crate) sync_error_buf: PathBuffer, // must be align_of::<u16>()-aligned — enforced via #[repr(C)] + field order, see above
     pub(crate) vm: Option<NonNull<VirtualMachine>>,
-    /// The VM this operation serves: a read-until-EOF loop stops at the next
-    /// chunk once it stops. `None` for the internal callers.
+    /// The VM this operation serves; a read-until-EOF loop stops once it stops.
     pub(crate) vm_handle: Option<bun_jsc::VmHandle>,
 }
 
@@ -6890,9 +6889,7 @@ impl NodeFS {
         }
     }
 
-    /// Between two reads: nobody wants the bytes once the caller's `signal`
-    /// aborted or the VM this read serves was asked to stop. A pipe or a
-    /// device has no EOF, and the worker's teardown waits for this loop.
+    /// Nobody wants the next chunk: the caller's `signal` aborted, or the VM this read serves stopped.
     fn read_abandoned(&self, args: &args::ReadFile) -> bool {
         args.aborted()
             || self

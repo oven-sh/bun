@@ -10,8 +10,9 @@ const fileExists = async (path: string): Promise<boolean> =>
 $.nothrow();
 
 // Each directory listing is one OutputTask; once the reader side of the pipe is
-// gone (EPIPE) the remaining tasks must still complete.
-test("ls of many directories into a closed pipe finishes", async () => {
+// gone (EPIPE) the remaining tasks must still complete. `head` is not a shell
+// builtin, so this needs a system `head` (POSIX only).
+test.skipIf(!isPosix)("ls of many directories into a closed pipe finishes", async () => {
   const files: Record<string, string> = {};
   for (let i = 0; i < 300; i++) files[`sub${i % 30}/file${i}.txt`] = "";
   using dir = tempDir("ls-epipe", files);

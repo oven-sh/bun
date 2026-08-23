@@ -849,7 +849,12 @@ function getTestBunStep(platform, options, testOptions = {}) {
     // never starts is not something soft_fail can convert.
     retry: platform.tier === "beta" ? { manual: { permit_on_passed: true }, automatic: false } : getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    // One beta box: one shard, and it cannot block a merge.
+    // One beta box: one shard. soft_fail keeps a failing run from
+    // failing the build, and the lane is never added on the merge queue
+    // (see betaDarwinTestPlatforms). One window stays open: the box was
+    // connected at upload but drops off during the build wait, so the
+    // step sits `scheduled` with nobody to take it. That holds only this
+    // PR's own build, and a cancel clears it.
     parallelism: platform.tier === "beta" ? 1 : os === "darwin" ? 2 : os === "windows" ? 8 : 20,
     ...(platform.tier === "beta" ? { soft_fail: true } : {}),
     timeout_in_minutes: profile === "asan" || os === "windows" || os === "darwin" ? 45 : 30,

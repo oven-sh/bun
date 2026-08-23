@@ -356,18 +356,30 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
     // `hmr.exports` object exist after it), the second resume evaluates the
     // body. Instantiation happens before the dependencies load, so a module
     // in an import cycle reads this module's namespace object, not `null`.
-    const gen = load(mod) as ModuleLoadGenerator;
-    const exportsBefore = mod.exports;
-    gen.next();
-    if (mod.exports === exportsBefore) mod.exports = {};
-    const lateStars = mergeStarExports(mod, stars);
-    const { list: depsList } = parseEsmDependencies(mod, deps, loadModuleSync);
-    if (lateStars) mergeLateStarExports(mod, lateStars);
-    mod.imports = depsList.map(getEsmExports);
-    gen.next();
-    mod.imports = depsList;
-    mod.cjs = null;
-    mod.state = State.Loaded;
+    try {
+      const gen = load(mod) as ModuleLoadGenerator;
+      const exportsBefore = mod.exports;
+      gen.next();
+      if (mod.exports === exportsBefore) mod.exports = {};
+      const lateStars = mergeStarExports(mod, stars);
+      const { list: depsList } = parseEsmDependencies(mod, deps, loadModuleSync);
+      if (lateStars) mergeLateStarExports(mod, lateStars);
+      mod.imports = depsList.map(getEsmExports);
+      gen.next();
+      mod.imports = depsList;
+      mod.cjs = null;
+      mod.state = State.Loaded;
+    } catch (e) {
+      if (e instanceof AsyncImportError) {
+        // A dependency needs top-level await, so this module cannot be
+        // required. Its body did not run; a dynamic import can retry it.
+        mod.state = State.Stale;
+      } else {
+        mod.state = State.Error;
+        mod.failure = e;
+      }
+      throw e;
+    }
   }
 
   return mod;

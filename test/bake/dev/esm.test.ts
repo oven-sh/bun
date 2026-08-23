@@ -379,6 +379,27 @@ devTest("export star from a module with top-level await", {
     await c.expectMessage("PASS");
   },
 });
+devTest("require of a throwing ESM module throws again on retry", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "boom.ts": `
+      export const x = 1;
+      throw new Error("boom");
+    `,
+    "index.ts": `
+      let first, second;
+      try { require('./boom'); } catch (e) { first = e.message; }
+      try { require('./boom'); } catch (e) { second = e.message; }
+      console.log(first + " " + second);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("boom boom");
+  },
+});
 /** Mirrors the real react-refresh runtime: isLikelyComponentType is true
  * only for functions, never for the exports object itself. */
 const realisticRefreshRuntimeStub = {

@@ -603,26 +603,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             VecExt::append(&mut p.current_scope_mut().generated, arg1);
 
             // 'get abc() { return abc }'
-            let body_stmts = p
-                .arena
-                .alloc_slice_copy(&[Stmt::alloc(S::Return { value: Some(id) }, loc)]);
-            self.export_props.push(G::Property {
-                kind: G::PropertyKind::Get,
-                key: Some(key),
-                value: Some(Expr::init(
-                    E::Function {
-                        func: G::Fn {
-                            body: G::FnBody {
-                                stmts: bun_ast::StoreSlice::new_mut(body_stmts),
-                                loc,
-                            },
-                            ..Default::default()
-                        },
-                    },
-                    loc,
-                )),
-                ..Default::default()
-            });
+            self.export_props.push(getter_prop(p.arena, key, id, loc));
             // no setter is added since live bindings are read-only
         } else {
             // 'abc,'
